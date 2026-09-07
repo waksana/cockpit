@@ -1,0 +1,23 @@
+{
+  "name": "@cockpit/server",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@cockpit/core": "workspace:*",
+    "@cockpit/protocol": "workspace:*",
+    "@fastify/static": "^9.1.3",
+    "fastify": "^5.2.0",
+    "pino": "^9.5.0",
+    "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "@types/web-push": "^3.6.4",
+    "tsx": "^4.19.2"
+  }
+}

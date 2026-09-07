@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="cockpitBg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#073642"/>
+      <stop offset="1" stop-color="#002b36"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#cockpitBg)"/>
+  <circle cx="256" cy="256" r="150" fill="none" stroke="#2aa198" stroke-width="22"/>
+  <path d="M256 150 L334 350 L256 308 L178 350 Z" fill="#fdf6e3"/>
+</svg>

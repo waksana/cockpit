@@ -1,0 +1,96 @@
+// Base / global reset — ported from tweb base.scss (the parts that apply to a
+// single-fixed-viewport app). Establishes the global interaction primitives:
+//   • box-sizing reset + antialiasing + transparent tap-highlight
+//   • the long-press-no-select policy (user-select:none globally, text only
+//     where it's meaningful) — THE thing that makes touch feel native
+//   • document never scrolls/rubber-bands (the shell owns scrolling)
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  font-size: 16px;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+}
+
+html, body {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  background-color: var(--body-background-color);
+  color: var(--primary-text-color);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica,
+    Arial, sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol';
+  font-size: var(--font-size);
+  line-height: var(--line-height);
+
+  // Long-press-no-select primitive: the whole app is non-selectable, so a
+  // long-press never grabs random UI text or pops the iOS callout/loupe.
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+#root { height: 100%; overflow: hidden; }
+
+// Re-enable selection on reading surfaces — chat messages, rendered markdown,
+// the info panel content, editable fields, explicitly selectable text. Only the
+// interactive chrome that uses long-press menus (sidebar `.chatlist-chat` rows,
+// topbar, etc.) stays non-selectable so a long-press opens the menu instead of
+// selecting text / popping the iOS loupe.
+input, textarea, [contenteditable='true'],
+.chat-messages, .message-body, .info-panel-body,
+.selectable, .user-select-text {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+button { font-family: inherit; }
+a { color: var(--link-color); text-decoration: none; }
+
+// `.rp` — press-host utility (formerly the ripple host). The ripple animation
+// was removed (owner directive: no motion); the class is retained only so the
+// elements that carry it keep clipping their content to a relative box.
+.rp { position: relative; overflow: hidden; }
+
+// Thin, faint scrollbar for internal scroll containers (matches tweb's quiet
+// chrome). Only the thumb is tinted; track is transparent.
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-color) transparent;
+}
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-color);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-track { background: transparent; }
+
+// ErrorBoundary fallback (render crash) — minimal centered notice.
+.crash-fallback {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 2rem;
+  text-align: center;
+  color: var(--secondary-text-color);
+  background: var(--background-color);
+  button {
+    appearance: none; cursor: pointer; font: inherit;
+    padding: 0.5rem 1.1rem; border: none; border-radius: var(--border-radius-medium);
+    background: var(--primary-color); color: #fff;
+  }
+}

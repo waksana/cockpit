@@ -1,0 +1,16 @@
+// Scrollable container — internal scroll surfaces (sidebar list, chat thread).
+// Momentum + contained overscroll so the document never rubber-bands; thin
+// scrollbar from base.scss. Touch pans vertically.
+.scrollable {
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  min-height: 0;
+}
+.scrollable-x {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior: contain;
+}

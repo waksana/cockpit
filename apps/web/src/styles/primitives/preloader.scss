@@ -1,0 +1,34 @@
+// Loading primitives — a shimmer/skeleton sweep + a small circular spinner.
+// Used for the search-box loading state and inline "loading older messages".
+
+// Shimmer sweep over a skeleton block.
+.shimmer {
+  position: relative;
+  overflow: hidden;
+  background: var(--skeleton-color);
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg,
+      transparent,
+      color-mix(in srgb, var(--surface-color) 60%, transparent),
+      transparent);
+    animation: shimmer-sweep 1.2s ease-in-out infinite;
+  }
+  @media (prefers-reduced-motion: reduce) { &::after { animation: none; } }
+}
+@keyframes shimmer-sweep { to { transform: translateX(100%); } }
+
+// Small spinner (search loading, inline). Two-tone ring.
+.spinner {
+  display: inline-block;
+  width: 1.05rem; height: 1.05rem;
+  border-radius: 50%;
+  border: 2px solid var(--ripple-color);
+  border-top-color: var(--primary-color);
+  animation: spinner-rotate 0.7s linear infinite;
+  @media (prefers-reduced-motion: reduce) { animation-duration: 1.6s; }
+}
+@keyframes spinner-rotate { to { transform: rotate(360deg); } }

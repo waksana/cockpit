@@ -1,0 +1,50 @@
+# ── Dependencies ────────────────────────────────────────────────────────────
+node_modules/
+
+# ── Build output (rebuilt via pnpm build; the MCP/web run from dist) ─────────
+dist/
+*.tsbuildinfo
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── Runtime secrets & state — NEVER COMMIT ───────────────────────────────────
+# apps/server/data holds the web-push VAPID *private key* (vapid.json) and the
+# subscribers' push endpoints (push-subscriptions.json). Both are secrets/PII.
+apps/server/data/
+
+# Local env / credential files (defense in depth — none are in-repo today, but
+# guard so a future .env/key dropped here can never be committed). The real
+# secrets live OUTSIDE the repo: ~/.config/cockpit/secrets.env (Azure Speech key)
+# and nginx (auth cookie / htpasswd).
+.env
+.env.*
+!.env.example
+secrets.env
+*.pem
+*.key
+*.p12
+*.pfx
+*credentials*
+*secret*.json
+
+# ── Runtime databases / prefs (live under ~/.copilot, but guard in-repo too) ──
+*.db
+*.sqlite
+*.sqlite3
+cockpit-prefs.json
+session-store.db
+
+# ── Uploads (served from ~/.copilot/cockpit-uploads; guard any local copy) ───
+uploads/
+cockpit-uploads/
+
+# ── POC scratch ──────────────────────────────────────────────────────────────
+poc/
+
+# ── OS / editor noise ────────────────────────────────────────────────────────
+.DS_Store
+*.swp
+.idea/
+.vscode/

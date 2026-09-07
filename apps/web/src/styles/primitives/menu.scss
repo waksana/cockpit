@@ -1,0 +1,59 @@
+// Context menu — ported from tweb _button.scss .btn-menu / .btn-menu-item.
+// Frosted translucent surface (--menu-background-color + --menu-backdrop-filter),
+// radius 16 (the tweb scale-in was removed — motion removed). Items are 3rem
+// tall with a leading icon column. Destructive items tint danger.
+
+.btn-menu {
+  position: fixed;
+  z-index: 100;
+  min-width: 11.25rem;
+  width: max-content;
+  font-size: 1rem;
+  -webkit-touch-callout: none;
+  padding: 0.25rem 0;
+  border-radius: var(--border-radius-medium);
+  background-color: var(--menu-background-color);
+  backdrop-filter: var(--menu-backdrop-filter);
+  -webkit-backdrop-filter: var(--menu-backdrop-filter);
+  box-shadow: var(--menu-box-shadow);
+}
+
+.btn-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+  height: 3rem;
+  padding: 0 2.5rem 0 1rem;
+  font-size: var(--font-size-16);
+  line-height: var(--line-height-16);
+  color: var(--primary-text-color);
+  cursor: pointer;
+  white-space: nowrap;
+  position: relative;          // .rp ripple host
+  overflow: hidden;
+  border: none;
+  background: transparent;
+  width: 100%;
+  text-align: start;
+
+  &-icon {
+    flex: none;
+    width: 1.5rem; height: 1.5rem;
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--secondary-text-color);
+    font-size: 1.5rem;
+  }
+  &-text { flex: 1 1 auto; }
+
+  @media (hover: hover) {
+    &:hover { background-color: var(--ripple-color); }
+  }
+  &:disabled, &.disabled {
+    opacity: var(--disabled-opacity);
+    pointer-events: none;
+  }
+  &.danger {
+    color: var(--danger-color);
+    .btn-menu-item-icon { color: var(--danger-color); }
+  }
+}

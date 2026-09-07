@@ -1,0 +1,122 @@
+// Modal dialog — tweb popup contract: dimmed scrim + centered card, scale-in.
+// Used for rename (text input), compact / rewind confirms.
+
+.dialog-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.32);
+}
+
+.dialog-card {
+  width: 100%;
+  max-width: 22rem;
+  padding: 1.1rem 1.2rem 0.9rem;
+  border-radius: var(--border-radius-medium);
+  background: var(--surface-color);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
+}
+
+.dialog-title {
+  margin: 0 0 0.4rem;
+  font-size: var(--font-size-17, 1.0625rem);
+  font-weight: 600;
+  color: var(--primary-text-color);
+}
+
+.dialog-message {
+  margin: 0 0 0.8rem;
+  font-size: var(--font-size-14);
+  line-height: 1.5;
+  color: var(--secondary-text-color);
+}
+
+.dialog-input {
+  width: 100%;
+  margin: 0.2rem 0 0.9rem;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid color-mix(in srgb, var(--primary-text-color) 16%, transparent);
+  border-radius: var(--border-radius-medium);
+  background: var(--background-color-true);
+  color: var(--primary-text-color);
+  font-size: var(--font-size-15, 0.9375rem);
+  font-family: inherit;
+  &:focus { outline: none; border-color: var(--primary-color); }
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.2rem;
+}
+
+.dialog-btn {
+  padding: 0.4rem 0.95rem;
+  border: none;
+  border-radius: var(--border-radius-medium);
+  background: transparent;
+  color: var(--primary-color);
+  font-size: var(--font-size-15, 0.9375rem);
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  &.primary { background: var(--primary-color); color: #fff; }
+  &.primary.danger { background: var(--danger-color); }
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+}
+
+// ── Folder picker (new-session working directory chooser) ───────────────────
+.dialog-card.dirpicker {
+  max-width: 26rem;
+  display: flex;
+  flex-direction: column;
+  max-height: min(34rem, 80vh);
+}
+.dirpicker-path {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin: 0.2rem 0 0.6rem;
+  .dialog-input { margin: 0; flex: 1 1 auto; font-size: var(--font-size-13); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .btn-icon { flex: none; color: var(--secondary-text-color); }
+}
+.dirpicker-list {
+  flex: 1 1 auto;
+  min-height: 6rem;
+  overflow-y: auto;
+  margin-bottom: 0.7rem;
+  border-radius: var(--border-radius);
+  background: color-mix(in srgb, var(--primary-text-color) 4%, transparent);
+}
+.dirpicker-row {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: none;
+  background: transparent;
+  color: var(--primary-text-color);
+  font-size: var(--font-size-14);
+  font-family: inherit;
+  text-align: start;
+  cursor: pointer;
+  position: relative;        // ripple host
+  overflow: hidden;
+  .dirpicker-ico { flex: none; display: inline-flex; color: var(--secondary-text-color); &.folder { color: var(--primary-color); } }
+  .dirpicker-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .dirpicker-enter { flex: none; color: var(--tertiary-text-color); transform: rotate(-90deg); }
+  &.up { color: var(--secondary-text-color); }
+}
+.dirpicker-empty {
+  padding: 1.5rem 1rem;
+  text-align: center;
+  color: var(--tertiary-text-color);
+  font-size: var(--font-size-13);
+}
+

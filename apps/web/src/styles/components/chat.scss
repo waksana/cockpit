@@ -1,0 +1,629 @@
+// Chat detail pane — topbar + thread + composer. Ported structure from tweb
+// _chatTopbar / _chat / _chatBubble / _input, with cockpit's signature deviation
+// (assistant replies are NOT bubbles — they read as a document).
+
+// ── Topbar (two-line: title + status/model subtitle, symmetric height) ──────
+.chat-topbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  height: var(--header-height);
+  min-height: var(--header-height);
+  padding: 0 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--surface-color);
+}
+.chat-back { flex: none; }
+.chat-topbar-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 0.05rem;
+  padding-inline-start: 0.25rem;
+  // It's a <button> (opens the info panel) — strip chrome.
+  border: none;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+  font-family: inherit;
+  color: inherit;
+  overflow: hidden;
+}
+.chat-topbar-content:hover .chat-topbar-title { color: inherit; }
+.chat-topbar-title {
+  max-width: 100%;
+  font-size: var(--font-size-16);
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chat-topbar-subtitle {
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  font-size: var(--font-size-13);
+  line-height: 1.2;
+  color: var(--secondary-text-color);
+}
+.chat-topbar-model {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+// Mode button — a tweb-style icon button (round ripple, from .btn-icon) showing
+// the current interaction mode's glyph, tinted per mode for at-a-glance reading.
+.chat-topbar-mode {
+  flex: none;
+  &[data-mode='plan'] { color: var(--link-color); }
+  &[data-mode='autopilot'] { color: var(--primary-color); }
+}
+.chat-topbar-more { flex: none; }
+
+// Mode switcher popover — a compact horizontal row of icon-only buttons; the
+// active mode tints itself + a matching subtle fill (no text/checkmark). Unlike
+// the text context-menus, this menu must size to its icon row — so it opts out of
+// the base .btn-menu 11.25rem min-width (which otherwise leaves dead space on the
+// right of the icons).
+.mode-menu { padding: 0.25rem; min-width: 0; }
+.mode-menu-note {
+  font-size: var(--font-size-12);
+  color: var(--tertiary-text-color);
+  padding: 0.15rem 0.4rem 0.3rem;
+  text-align: center;
+  white-space: nowrap;
+}
+.mode-menu-row { display: flex; justify-content: center; gap: 0.15rem; }
+.mode-menu-item {
+  flex: none;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 2.5rem; height: 2.5rem;
+  border: none; border-radius: var(--border-radius);
+  background: transparent;
+  color: var(--secondary-text-color);
+  cursor: pointer; position: relative; overflow: hidden;
+  &[data-mode='plan'] { color: var(--link-color); }
+  &[data-mode='autopilot'] { color: var(--primary-color); }
+  &[data-active='true'] { background: color-mix(in srgb, currentColor 15%, transparent); }
+  @media (hover: hover) {
+    &:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+  }
+}
+
+// Inline model/effort/context selects in the subtitle (flat, label-less).
+.model-select {
+  flex: 0 1 auto;
+  min-width: 0; max-width: 14rem;
+  appearance: none; -webkit-appearance: none;
+  border: none; background: transparent; color: inherit;
+  font: inherit; font-size: var(--font-size-13);
+  cursor: pointer;
+  text-overflow: ellipsis;
+  &:hover, &:focus { color: var(--primary-color); outline: none; }
+  option { color: var(--primary-text-color); background: var(--surface-color); }
+}
+
+// ── Thread (scroll area) ────────────────────────────────────────────────────
+.chat-messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem clamp(0.5rem, 4vw, 1.5rem);
+  & > :first-child { margin-top: auto; }   // pin content to bottom
+}
+
+.msg-group { display: flex; flex-direction: column; }
+
+// User → right bubble (tweb is-out), time tucked inside.
+.message.is-out {
+  align-self: flex-end;
+  max-width: 78%;
+  margin: 0.15rem 0;
+  padding: 0.4rem 0.65rem 0.45rem;
+  border-radius: var(--border-radius-medium);
+  background-color: var(--message-out-background-color);
+  position: relative;
+  .message-time {
+    float: right;
+    margin: 0.2rem 0 0 0.6rem;
+    font-size: var(--font-size-12);
+    color: var(--light-secondary-text-color);
+  }
+}
+
+// ask_user reply — same out-bubble, but a subtle tag marks it as an answer to a
+// prompt (visually consistent with a normal message, semantically distinct).
+.message.is-out.is-ask-reply {
+  .ask-reply-tag {
+    display: block;
+    margin-bottom: 0.15rem;
+    font-size: var(--font-size-12);
+    font-weight: 600;
+    color: var(--light-secondary-text-color);
+    opacity: 0.85;
+  }
+}
+
+// Uploaded attachment in an out-bubble. An image renders edge-to-edge inside the
+// bubble (TG photo); a file renders as a compact document card (TG document).
+// File/image attachments. The shared layout applies in BOTH the user bubble
+// (.is-out) and the assistant document (.is-doc); only the bubble's padding/time
+// and the doc card's own surface differ (a bubble already provides a background).
+.message.is-attachment {
+  .attach-image {
+    display: block;
+    border-radius: var(--border-radius);
+    overflow: hidden;
+    img {
+      display: block;
+      max-width: min(20rem, 60vw);
+      max-height: 22rem;
+      width: auto; height: auto;
+      object-fit: cover;
+    }
+  }
+  .attach-file {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0.7rem;
+    min-width: 12rem;
+    max-width: min(20rem, 70vw);
+    border-radius: var(--border-radius);
+    text-decoration: none;
+    color: inherit;
+    .attach-file-ico {
+      flex: none;
+      width: 2.4rem; height: 2.4rem;
+      display: grid; place-items: center;
+      border-radius: 50%;
+      background: var(--primary-color);
+      color: var(--badge-text-color);
+    }
+    .attach-file-meta { display: flex; flex-direction: column; min-width: 0; }
+    .attach-file-name {
+      font-size: var(--font-size-14);
+      color: var(--primary-text-color);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .attach-file-size { font-size: var(--font-size-12); color: var(--light-secondary-text-color); }
+    .attach-file-dl {
+      flex: none;
+      margin-inline-start: auto;
+      color: var(--secondary-text-color);
+    }
+  }
+}
+
+// User upload — the attachment sits inside the outgoing bubble (TG photo /
+// document-on-bubble); the time renders below it.
+.message.is-out.is-attachment {
+  padding: 0.25rem;
+  .message-time {
+    float: none;
+    display: block;
+    text-align: right;
+    margin: 0.2rem 0.2rem 0;
+  }
+}
+
+// Agent attachment — a figure within the assistant document. There's no bubble
+// behind it, so the file card gets its own surface; separate it from the caption.
+.message.is-doc.is-attachment {
+  .attach-image, .attach-file { margin-top: 0.5rem; }
+  .attach-file { background: var(--ripple-color); }
+}
+
+// Assistant → full-width document, NO bubble (cockpit signature).
+.message.is-doc {
+  align-self: stretch;
+  margin: 0.1rem 0 0.4rem;
+  padding: 0 0.1rem;
+  .doc-byline {
+    display: flex; align-items: center; gap: 0.4rem;
+    margin: 0.35rem 0 0.3rem;
+    color: var(--secondary-text-color);
+  }
+  .doc-mark {
+    width: 1.4rem; height: 1.4rem; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    background: var(--light-primary-color);
+    color: var(--primary-color);
+  }
+  .doc-name { font-size: var(--font-size-13); font-weight: 600; color: var(--primary-text-color); }
+  .doc-time { font-size: var(--font-size-12); color: var(--tertiary-text-color); }
+}
+
+// System → quiet centered note.
+.message.is-system {
+  align-self: center;
+  max-width: 80%;
+  margin: 0.3rem 0;
+  font-size: var(--font-size-12);
+  color: var(--secondary-text-color);
+  text-align: center;
+  // Runtime error/warning notices get a distinct pill so they stand out from the
+  // quiet neutral system note.
+  &[data-level='error'],
+  &[data-level='warning'] {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.25rem 0.7rem;
+    border-radius: 999px;
+    text-align: start;
+  }
+  &[data-level='error'] {
+    color: var(--danger-color);
+    background-color: color-mix(in srgb, var(--danger-color) 12%, transparent);
+  }
+  &[data-level='warning'] {
+    color: var(--warning-color);
+    background-color: color-mix(in srgb, var(--warning-color) 14%, transparent);
+  }
+  .sys-ico { display: inline-flex; }
+}
+
+// Skill-activation pill (CLI-style): a quiet centered chip showing which skill
+// the agent loaded — "⚡ skill <name>". Distinct from error notices.
+.message.is-skill {
+  align-self: center;
+  margin: 0.3rem 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.2rem 0.7rem;
+  border-radius: 999px;
+  font-size: var(--font-size-12);
+  background-color: color-mix(in srgb, var(--primary-color) 12%, transparent);
+  color: var(--secondary-text-color);
+  .skill-ico { display: inline-flex; color: var(--primary-color); }
+  .skill-label { color: var(--secondary-text-color); opacity: 0.8; }
+  .skill-name { color: var(--primary-text-color); font-weight: 500; }
+}
+
+// Date separator (Telegram "Today" pill).
+.date-separator {
+  align-self: center;
+  margin: 0.6rem 0 0.4rem;
+  padding: 0.15rem 0.7rem;
+  border-radius: 999px;
+  font-size: var(--font-size-12);
+  background-color: color-mix(in srgb, var(--primary-text-color) 9%, transparent);
+  color: var(--secondary-text-color);
+}
+
+// Thinking block — quiet faint quote, behind a collapsible toggle.
+.msg-thought-block {
+  margin: 0.1rem 0 0.3rem;
+  .thought-toggle {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    padding: 0.1rem 0.2rem 0.1rem 0;
+    border: none; background: transparent; cursor: pointer;
+    font-size: var(--font-size-13);
+    color: var(--secondary-text-color);
+    .tgico { color: var(--tertiary-text-color); }
+  }
+  &[data-live='true'] .thought-toggle { color: var(--primary-color); }
+}
+.msg-thought {
+  margin: 0.15rem 0 0.2rem;
+  padding-inline-start: 0.6rem;
+  border-inline-start: 2px solid color-mix(in srgb, var(--primary-text-color) 18%, transparent);
+  color: var(--light-secondary-text-color);
+  font-size: var(--font-size-14);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+// Tool-call rows — CLI-style: intent line + tool-name badge + collapsible detail
+// (args + output). Detail toggle shows only when there's data to expand.
+.msg-tools { display: flex; flex-direction: column; gap: 0.15rem; margin: 0.15rem 0 0.4rem; }
+.msg-tool {
+  font-size: var(--font-size-14);
+  color: var(--secondary-text-color);
+  .tool-head { display: flex; align-items: center; gap: 0.45rem; min-width: 0; }
+  .tool-ico { flex: none; display: inline-flex; width: 1rem; height: 1rem; align-items: center; justify-content: center; }
+  &[data-status='completed'] .tool-ico { color: var(--green-color); }
+  &[data-status='failed'] .tool-ico { color: var(--danger-color); }
+  &[data-status='in_progress'] .tool-ico { color: var(--primary-color); }
+  &[data-status='pending'] .tool-ico { color: var(--tertiary-text-color); }
+}
+.tool-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.tool-name {
+  flex: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--font-size-12);
+  color: var(--tertiary-text-color);
+  padding: 0.05rem 0.35rem;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--primary-text-color) 7%, transparent);
+}
+.tool-toggle {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 1.3rem; height: 1.3rem; padding: 0;
+  border: none; background: transparent; cursor: pointer;
+  color: var(--tertiary-text-color);
+  border-radius: var(--border-radius-small, 6px);
+  &:hover { color: var(--secondary-text-color); }
+}
+.tool-detail { margin: 0.15rem 0 0.25rem 1.45rem; display: flex; flex-direction: column; gap: 0.2rem; }
+.tool-args, .tool-output {
+  margin: 0;
+  padding: 0.4rem 0.6rem;
+  max-height: 18rem;
+  overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--font-size-13);
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+  border-radius: var(--border-radius-small, 6px);
+}
+.tool-args { color: var(--primary-text-color); }
+.tool-output { color: var(--secondary-text-color); }
+
+// Sub-agent card — one collapsible unit for a `task`-spawned sub-agent. Header
+// shows agent + status; expanding reveals its full inner work (nested thread).
+.subagent-card {
+  margin: 0.3rem 0;
+  border: 1px solid color-mix(in srgb, var(--primary-color) 28%, transparent);
+  border-radius: var(--border-radius-medium);
+  background: color-mix(in srgb, var(--primary-color) 5%, transparent);
+  overflow: hidden;
+  &[data-status='running'] { border-color: var(--primary-color); }
+  &[data-status='failed'] { border-color: color-mix(in srgb, var(--danger-color) 50%, transparent); }
+}
+.subagent-head {
+  display: flex; align-items: center; gap: 0.5rem; width: 100%;
+  padding: 0.5rem 0.7rem;
+  border: none; background: transparent; cursor: pointer;
+  font: inherit; color: inherit; text-align: start;
+}
+.subagent-ico { flex: none; font-size: 1rem; }
+.subagent-name { flex: 0 1 auto; min-width: 0; font-weight: 600; color: var(--primary-text-color); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.subagent-status {
+  flex: none; margin-inline-start: auto;
+  font-size: var(--font-size-12); color: var(--secondary-text-color);
+}
+.subagent-card[data-status='running'] .subagent-status { color: var(--primary-color); }
+.subagent-card[data-status='failed'] .subagent-status { color: var(--danger-color); }
+.subagent-chevron { flex: none; display: inline-flex; color: var(--tertiary-text-color); }
+.subagent-desc {
+  padding: 0 0.7rem 0.5rem 2.2rem;
+  font-size: var(--font-size-13); color: var(--secondary-text-color);
+}
+.subagent-body {
+  padding: 0.2rem 0.7rem 0.5rem;
+  border-top: 1px solid color-mix(in srgb, var(--primary-text-color) 8%, transparent);
+}
+.subagent-prompt {
+  margin: 0.4rem 0;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--border-radius-small, 6px);
+  background: color-mix(in srgb, var(--primary-text-color) 5%, transparent);
+  font-size: var(--font-size-13);
+}
+.subagent-prompt-label { font-weight: 600; color: var(--secondary-text-color); margin-bottom: 0.2rem; }
+.subagent-error {
+  margin: 0.4rem 0; padding: 0.4rem 0.6rem;
+  border-radius: var(--border-radius-small, 6px);
+  color: var(--danger-color);
+  background: color-mix(in srgb, var(--danger-color) 10%, transparent);
+  font-size: var(--font-size-13);
+}
+.subagent-msg { margin: 0.3rem 0; padding: 0; }
+.subagent-empty { padding: 0.4rem 0; font-size: var(--font-size-13); color: var(--tertiary-text-color); }
+
+// Markdown body shared (document + bubble).
+.message-body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-size: var(--messages-text-size);
+  line-height: var(--messages-line-height);
+  & > :first-child { margin-top: 0; }
+  & > :last-child { margin-bottom: 0; }
+  p { margin: 0.25rem 0; }
+  ul, ol { margin: 0.25rem 0; padding-inline-start: 1.4rem; white-space: normal; }
+  li { margin: 0.1rem 0; }
+  li > p { margin: 0; }
+  a { color: var(--link-color); text-decoration: underline; }
+  pre {
+    margin: 0.4rem 0; padding: 0.5rem 0.7rem;
+    background: color-mix(in srgb, var(--primary-text-color) 8%, transparent);
+    border-radius: var(--border-radius); overflow-x: auto; white-space: pre;
+  }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+  :not(pre) > code {
+    padding: 0.05em 0.3em;
+    background: color-mix(in srgb, var(--primary-text-color) 12%, transparent);
+    border-radius: 0.2rem;
+  }
+  table {
+    border-collapse: collapse; margin: 0.4rem 0; font-size: 0.95em;
+    display: block; overflow-x: auto; max-width: 100%; white-space: normal;
+  }
+  th, td { border: 1px solid var(--border-color); padding: 0.25rem 0.5rem; text-align: start; vertical-align: top; }
+  thead th { background: color-mix(in srgb, var(--primary-text-color) 8%, transparent); }
+  blockquote {
+    margin: 0.3rem 0; padding-inline-start: 0.7rem;
+    border-inline-start: 2px solid var(--primary-color); opacity: 0.85;
+  }
+  h1, h2, h3, h4 { margin: 0.5rem 0 0.25rem; font-size: 1em; font-weight: 600; }
+  img { max-width: 100%; height: auto; }
+}
+
+// Empty / typing / error / loading states.
+.chat-empty-hint, .chat-loading-older {
+  align-self: center; padding: 0.6rem; text-align: center;
+  font-size: var(--font-size-14); color: var(--secondary-text-color);
+}
+// Read-only footer for a trashed-session preview (replaces the composer).
+.chat-readonly-note {
+  flex: none;
+  padding: 0.7rem 1rem calc(0.7rem + env(safe-area-inset-bottom, 0px));
+  text-align: center;
+  font-size: var(--font-size-12);
+  color: var(--tertiary-text-color);
+  border-top: 1px solid var(--border-color);
+}
+.chat-typing {
+  align-self: flex-start; margin: 0.25rem 0;
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  font-size: var(--font-size-14); color: var(--secondary-text-color);
+}
+// Inline stop affordance after "回复中…" — subtle text link, not a chunky button.
+.chat-typing-stop {
+  padding: 0; border: none; background: none; cursor: pointer;
+  font: inherit; font-size: var(--font-size-14);
+  color: var(--danger-color);
+  &::before { content: '('; color: var(--secondary-text-color); }
+  &::after { content: ')'; color: var(--secondary-text-color); }
+  &:hover { text-decoration: underline; }
+}
+.chat-error {
+  align-self: stretch; margin: 0.3rem 0; padding: 0.5rem 0.7rem;
+  border-radius: var(--border-radius);
+  background: color-mix(in srgb, var(--danger-color) 12%, transparent);
+  color: var(--danger-color); font-size: var(--font-size-14);
+}
+.new-msg-badge {
+  position: sticky; bottom: 0.5rem; align-self: center;
+  padding: 0.3rem 0.8rem; border-radius: 999px; border: none; cursor: pointer;
+  background: var(--primary-color); color: var(--badge-text-color);
+  font-size: var(--font-size-13); box-shadow: var(--menu-box-shadow);
+}
+
+// ── Composer ────────────────────────────────────────────────────────────────
+.chat-input {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  padding: 0.5rem clamp(0.5rem, 4vw, 1rem) calc(0.5rem + env(safe-area-inset-bottom, 0px));
+  background-color: var(--surface-color);
+}
+.chat-input-message {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 2.6rem;
+  max-height: 9rem;
+  padding: 0.6rem 0.85rem;
+  border: none;
+  border-radius: var(--border-radius-medium);
+  background-color: var(--input-search-background-color);
+  color: var(--primary-text-color);
+  font: inherit;
+  font-size: var(--messages-text-size);
+  line-height: var(--messages-line-height);
+  resize: none;
+  field-sizing: content;
+  outline: none;
+  overflow-y: auto;
+  touch-action: pan-y;
+  &::placeholder { color: var(--input-message-placeholder-color); }
+}
+.chat-input-btn {
+  flex: none;
+  width: 2.6rem; height: 2.6rem;
+  border: none; border-radius: 50%;
+  display: grid; place-items: center;
+  cursor: pointer;
+  position: relative; overflow: hidden;     // ripple host
+}
+.chat-input-btn.mic {
+  background-color: var(--ripple-color);
+  color: var(--secondary-text-color);
+  &[data-listening='true'] { background-color: color-mix(in srgb, var(--danger-color) 16%, transparent); color: var(--danger-color); }
+}
+.chat-input-btn.attach {
+  background-color: var(--ripple-color);
+  color: var(--secondary-text-color);
+  &:disabled { opacity: var(--disabled-opacity); }
+}
+.chat-input-btn.send {
+  background-color: var(--primary-color);
+  color: var(--badge-text-color);
+  &:disabled { opacity: var(--disabled-opacity); }
+}
+// Transient voice-input notice (e.g. mic unsupported / Azure not configured).
+// Sits above the input row; tap to dismiss. No border (surface + spacing only).
+.chat-input-notice {
+  flex: 0 0 auto; appearance: none; font: inherit; text-align: left; cursor: pointer;
+  margin: 0 clamp(0.5rem, 4vw, 1rem); padding: 0.5rem 0.7rem;
+  border: none; border-radius: var(--border-radius-medium);
+  background: color-mix(in srgb, var(--danger-color) 12%, transparent);
+  color: var(--danger-color); font-size: var(--font-size-13); line-height: 1.4;
+}
+
+// ── ask_user / queue / permission surfaces ──────────────────────────────────
+.chat-ask {
+  align-self: stretch; margin: 0.4rem 0; padding: 0.7rem 0.8rem;
+  border-radius: var(--border-radius-medium);
+  background: color-mix(in srgb, var(--primary-color) 8%, transparent);
+}
+.chat-ask-q { font-weight: 500; margin-bottom: 0.4rem; }
+.chat-ask-choices { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.chat-ask-choice {
+  appearance: none; cursor: pointer; font: inherit; font-size: var(--font-size-14);
+  padding: 0.4rem 0.8rem; border-radius: var(--border-radius);
+  border: none; background: var(--ripple-color); color: var(--primary-text-color);
+  position: relative; overflow: hidden;
+  @media (hover: hover) { &:hover { background: var(--light-primary-color); } }
+  // The SDK's recommended plan-exit action — filled accent so it reads as primary.
+  &.is-recommended {
+    background: var(--primary-color);
+    color: var(--badge-text-color);
+    @media (hover: hover) { &:hover { background: var(--primary-color); filter: brightness(1.05); } }
+  }
+}
+// Pending card variants (plan / elicitation) reuse the ask card shell.
+.chat-pending-head { font-weight: 600; margin-bottom: 0.3rem; color: var(--primary-color); }
+// The plan summary is rendered markdown (reuses MessageBody), capped so a long
+// plan scrolls inside the card instead of pushing the action buttons off-screen.
+.chat-pending-summary {
+  margin-bottom: 0.5rem; max-height: 17rem; overflow: auto;
+  .message-body { font-size: var(--font-size-14); }
+  // Tighten the document rhythm so it reads as a compact card, not a page.
+  .message-body > :first-child { margin-top: 0; }
+  .message-body > :last-child { margin-bottom: 0; }
+}
+.chat-pending-detail {
+  margin: 0.3rem 0 0.5rem; font-size: var(--font-size-13);
+  summary { cursor: pointer; color: var(--secondary-text-color); }
+}
+.chat-pending-pre {
+  margin: 0.3rem 0 0; padding: 0.5rem 0.6rem; max-height: 16rem; overflow: auto;
+  border-radius: var(--border-radius);
+  background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+  font-size: var(--font-size-13); line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere;
+  color: var(--secondary-text-color);
+}
+// Quiet affordance: you can answer a plan with free text/voice, not only the buttons.
+.chat-pending-hint {
+  margin-top: 0.5rem; font-size: var(--font-size-13); color: var(--secondary-text-color);
+}
+.chat-queue {
+  align-self: stretch; display: flex; flex-direction: column; gap: 0.25rem;
+  margin: 0.3rem 0; padding: 0 clamp(0.5rem, 4vw, 1rem); box-sizing: border-box;
+}
+.chat-queue-item {
+  display: flex; align-items: center; gap: 0.4rem; min-width: 0;
+  padding: 0.3rem 0.4rem 0.3rem 0.7rem; border-radius: var(--border-radius);
+  background: var(--ripple-color); font-size: var(--font-size-13);
+}
+.chat-queue-text { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--secondary-text-color); }
+.chat-queue-remove { flex: none; width: 1.5rem; height: 1.5rem; display: grid; place-items: center; border: none; border-radius: 50%; background: transparent; cursor: pointer; color: var(--secondary-text-color); font-size: 1.1rem; line-height: 1; }
+

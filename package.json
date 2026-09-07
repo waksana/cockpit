@@ -1,0 +1,24 @@
+{
+  "name": "cockpit",
+  "private": true,
+  "version": "0.1.0",
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev:server": "pnpm --filter @cockpit/server dev",
+    "dev:web": "pnpm --filter @cockpit/web dev",
+    "build": "pnpm -r build",
+    "start": "node scripts/start.mjs",
+    "test": "pnpm --filter @cockpit/core test && pnpm --filter @cockpit/server test && node --test scripts/heap-config.test.mjs",
+    "e2e": "node scripts/e2e.mjs",
+    "perf": "cd packages/core && node --import tsx ../../scripts/perf.mjs",
+    "regress": "pnpm --filter @cockpit/core regress"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "typescript": "^5.9.3"
+  }
+}

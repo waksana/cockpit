@@ -1,0 +1,304 @@
+// Session info panel — ported from tweb #column-right + .sidebar-left-section.
+// Slides in from the inline-end. Three responsive tiers (Telegram-style):
+//   • narrowest (<600px): full page (covers the chat)
+//   • medium (600–1199px): floating overlay over the chat + scrim
+//   • wide (≥1200px): docked — the chat compresses to make room, no scrim
+// Rounded section cards inside; read-only.
+
+.info-panel-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.32);
+  opacity: 0;
+  visibility: hidden;
+  &[data-open='true'] { opacity: 1; visibility: visible; }
+  // Wide/docked tier: the panel takes its own space, so no scrim.
+  @media (min-width: 1200px) { display: none; }
+}
+
+.info-panel {
+  --info-panel-w: 24rem;
+  position: fixed;
+  inset-block: 0;
+  inset-inline-end: 0;
+  z-index: 41;
+  width: 100%;
+  max-width: var(--info-panel-w);
+  display: flex;
+  flex-direction: column;
+  background: var(--background-color);
+  border-inline-start: 1px solid var(--border-color);
+  transform: translateX(100%);
+  &[data-open='true'] { transform: translateX(0); }
+  // Narrowest tier: full page.
+  @media (max-width: 599px) { max-width: 100%; }
+}
+
+// Wide/docked tier: when the panel is open, compress the chat by the panel
+// width so both are fully visible side by side (the fixed panel sits flush over
+// that reserved strip). The squeeze is instant (motion removed).
+@media (min-width: 1200px) {
+  .cockpit-shell[data-info-open='true'] .detail-pane {
+    padding-inline-end: 24rem;
+  }
+}
+
+.info-panel-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: var(--header-height);
+  min-height: var(--header-height);
+  padding: 0 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+.info-panel-title { font-size: var(--font-size-16); font-weight: 500; }
+
+.info-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.75rem;
+  background: color-mix(in srgb, var(--primary-text-color) 4%, var(--background-color));
+}
+
+// Rounded section card (tweb .sidebar-left-section).
+.info-section {
+  background: var(--surface-color);
+  border-radius: var(--border-radius-big);
+  margin-bottom: 0.75rem;
+  overflow: hidden;
+}
+.info-section-name {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.7rem 1rem 0.4rem;
+  color: var(--primary-color);
+  font-size: var(--font-size-15);
+  font-weight: 600;
+  width: 100%;
+  background: transparent;
+  border: none;
+  text-align: start;
+}
+.info-section-name-right {
+  font-weight: 400;
+  color: var(--secondary-text-color);
+  display: inline-flex;
+  align-items: center;
+}
+.info-section-toggle { cursor: pointer; }
+.info-section-content { padding: 0 1rem 0.7rem; }
+.info-meta-cwd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--font-size-13);
+  color: var(--secondary-text-color);
+  word-break: break-all;
+}
+.info-meta-id {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--font-size-13);
+  color: var(--secondary-text-color);
+  word-break: break-all;
+}
+.info-meta-id-label {
+  display: inline-block;
+  margin-inline-end: 0.4rem;
+  font-size: var(--font-size-12);
+  color: var(--tertiary-text-color);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.info-loading, .info-empty {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0;
+  font-size: var(--font-size-14);
+  color: var(--secondary-text-color);
+}
+
+// TODO checklist groups + items.
+.todo-group { margin-top: 0.5rem; &:first-child { margin-top: 0; } }
+.todo-group-label {
+  font-size: var(--font-size-12);
+  color: var(--secondary-text-color);
+  margin: 0.3rem 0 0.2rem;
+}
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.35rem 0;
+  &[data-status='done'] .todo-item-title { color: var(--secondary-text-color); text-decoration: line-through; }
+}
+.todo-item-ico {
+  flex: none;
+  width: 1.25rem; height: 1.25rem;
+  margin-top: 0.1rem;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  &[data-status='done'] { color: var(--green-color); }
+  &[data-status='blocked'] { color: var(--danger-color); }
+  &[data-status='in_progress'] { color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 18%, transparent); }
+  &[data-status='pending'] { color: var(--tertiary-text-color); }
+}
+.todo-item-body { flex: 1 1 auto; min-width: 0; }
+.todo-item-title { font-size: var(--font-size-14); line-height: var(--line-height-14); }
+.todo-item-desc {
+  font-size: var(--font-size-12);
+  color: var(--secondary-text-color);
+  margin-top: 0.1rem;
+  overflow-wrap: anywhere;
+}
+
+// plan.md rendered markdown (reuse .message-body styles).
+.info-plan { font-size: var(--font-size-14); }
+.info-plan .message-body { white-space: normal; }
+
+// Changed files list (diff-review).
+.info-files { display: flex; flex-direction: column; gap: 0.1rem; }
+.info-file {
+  display: flex; align-items: baseline; gap: 0.45rem;
+  padding: 0.15rem 0;
+  font-size: var(--font-size-13);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.info-file-op {
+  flex: none; width: 0.9rem; text-align: center; font-weight: 700;
+}
+.info-file[data-op='create'] .info-file-op { color: var(--green-color); }
+.info-file[data-op='edit'] .info-file-op { color: var(--warning-color); }
+.info-file-path {
+  min-width: 0; overflow-wrap: anywhere;
+  color: var(--secondary-text-color);
+}
+
+// Read-mostly panel rows (skills / mcp / tasks / instructions / schedule).
+.info-panel-list { display: flex; flex-direction: column; gap: 0.15rem; }
+.info-panel-row {
+  display: flex; align-items: baseline; gap: 0.5rem;
+  padding: 0.2rem 0;
+  font-size: var(--font-size-14);
+  &[data-enabled='false'] { opacity: 0.55; }
+}
+.info-panel-row-label { color: var(--primary-text-color); overflow-wrap: anywhere; }
+.info-panel-row-sub {
+  flex: none;
+  font-size: var(--font-size-12);
+  color: var(--tertiary-text-color);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.info-panel-row-off {
+  flex: none; margin-inline-start: auto;
+  font-size: var(--font-size-12);
+  color: var(--tertiary-text-color);
+}
+
+// MCP status rows: a header line (name + status pill pushed to the end) and an
+// optional reason line below (server error or a static hint when not connected).
+.info-mcp-row {
+  display: flex; flex-direction: column; gap: 0.1rem;
+  padding: 0.25rem 0;
+  &[data-enabled='false'] { opacity: 0.6; }
+}
+.info-mcp-head {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-size: var(--font-size-14);
+  .mcp-status { margin-inline-start: auto; }
+}
+.info-mcp-reason {
+  font-size: var(--font-size-12);
+  color: var(--tertiary-text-color);
+  overflow-wrap: anywhere;
+}
+
+// Schedule rows: a header (cadence + next-fire pushed to the end) and the prompt.
+.info-sched-row {
+  display: flex; flex-direction: column; gap: 0.1rem;
+  padding: 0.3rem 0;
+}
+.info-sched-head {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-size: var(--font-size-14);
+}
+.info-sched-cadence {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  color: var(--primary-text-color);
+  .tgico { color: var(--secondary-text-color); }
+}
+.info-sched-next {
+  margin-inline-start: auto; flex: none;
+  font-size: var(--font-size-12);
+  color: var(--secondary-text-color);
+}
+.info-sched-prompt {
+  font-size: var(--font-size-12);
+  color: var(--tertiary-text-color);
+  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+// Hook / flow rows (Butler trigger layer): a header (event/name + action pushed to
+// the end) over a sub line (filter / template / target). Same shape as schedule rows.
+.info-hook-row {
+  display: flex; flex-direction: column; gap: 0.1rem;
+  padding: 0.3rem 0;
+}
+.info-hook-head {
+  display: flex; align-items: center; gap: 0.5rem;
+  font-size: var(--font-size-14);
+}
+.info-hook-event { color: var(--primary-text-color); min-width: 0; overflow-wrap: anywhere; }
+.info-hook-action {
+  margin-inline-start: auto; flex: none;
+  font-size: var(--font-size-12);
+  color: var(--secondary-text-color);
+}
+.info-hook-sub {
+  font-size: var(--font-size-12);
+  color: var(--tertiary-text-color);
+  overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+
+// Model controls (model / effort / context) — labeled rows in the info panel.
+.info-controls { display: flex; flex-direction: column; gap: 0.5rem; padding-top: 0.2rem; }
+// A single labeled option row with a trailing control (e.g. the keep-loaded toggle).
+.info-option-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
+}
+.info-option-text { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
+.info-option-label { font-size: var(--font-size-14); color: var(--primary-text-color); }
+.info-option-hint { font-size: var(--font-size-12); color: var(--tertiary-text-color); }
+.info-control {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+.info-control-label {
+  flex: none;
+  font-size: var(--font-size-14);
+  color: var(--secondary-text-color);
+}
+.info-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 60%;
+  appearance: none; -webkit-appearance: none;
+  border: none;
+  border-radius: var(--border-radius);
+  padding: 0.4rem 0.6rem;
+  background: var(--input-search-background-color);
+  color: var(--primary-text-color);
+  font: inherit;
+  font-size: var(--font-size-14);
+  cursor: pointer;
+  text-align: end;
+  text-overflow: ellipsis;
+  &:focus { outline: none; background: color-mix(in srgb, var(--primary-color) 12%, transparent); }
+  option { color: var(--primary-text-color); background: var(--surface-color); text-align: start; }
+}
