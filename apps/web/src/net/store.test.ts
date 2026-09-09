@@ -1,0 +1,3242 @@
+import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
+import { createECDH } from 'node:crypto';
+import { setImmediate } from 'node:timers/promises';
+import { test, type TestContext } from 'node:test';
+import type { IntentBody, IntentName, IntentResult } from '@cockpit/protocol';
+import { intentUrl } from '../lib/config';
+import { dismissUxError, getUxErrors } from '../lib/errorReporter';
+import { IntentHttpError, isSessionUnloadedError, SessionUnloadedError } from './client';
+import { createCockpitStore, useCockpit } from './store';
+import { createSessionDrafts } from '../lib/attachmentSend';
+import { createKeyedAsync } from '../lib/keyedAsync';
+import type { Attachment, ChatMessage, HistoryPage, ServerEvent, SessionMeta, UploadedFile } from './types';
+
+type Store = ReturnType<typeof createCockpitStore>;
+type State = ReturnType<Store['getState']>;
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+function meta(sessionId: string): SessionMeta {
+  return {
+    sessionId, title: sessionId, cwd: '.', lastActivity: 1,
+    status: 'idle', loaded: true, error: null, queue: [], ask: null,
+  };
+}
+
+function message(id: string, content = id): ChatMessage {
+  return { id, role: 'assistant', content, timestamp: 1 };
+}
+
+function session(id = 'a', store: Store = useCockpit) {
+  const result = store.getState().sessions.find((item) => item.sessionId === id);
+  assert.ok(result, `Missing session ${id}`);
+  return result;
+}
+
+function replaceGlobal(t: TestContext, key: string, value: unknown) {
+  const original = Object.getOwnPropertyDescriptor(globalThis, key);
+  Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+  t.after(() => {
+    if (original) Object.defineProperty(globalThis, key, original);
+    else Reflect.deleteProperty(globalThis, key);
+  });
+}
+
+let now = 1_000_000;
+
+function setup(t: TestContext, store: Store = useCockpit) {
+  const requests: {
+    url: string;
+    init: RequestInit | undefined;
+    response: ReturnType<typeof deferred<Response>>;
+  }[] = [];
+  t.mock.method(globalThis, 'fetch', (input: string | URL | Request, init?: RequestInit) => {
+    const response = deferred<Response>();
+    requests.push({ url: String(input), init, response });
+    return response.promise;
+  });
+  now += 60_000;
+  t.mock.method(Date, 'now', () => now);
+  t.mock.method(console, 'error', () => {});
+  t.mock.method(console, 'warn', (...args: unknown[]) => {
+    assert.fail(`Unexpected invalid SSE fixture: ${JSON.stringify(args)}`);
+  });
+  for (const error of getUxErrors()) dismissUxError(error.id);
+
+  const sources: FakeEventSource[] = [];
+  class FakeEventSource {
+    static readonly OPEN = 1;
+    static readonly CLOSED = 2;
+    readyState = 0;
+    onopen: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+
+    constructor() { sources.push(this); }
+    close() { this.readyState = FakeEventSource.CLOSED; }
+    open() {
+      this.readyState = FakeEventSource.OPEN;
+      assert.ok(this.onopen);
+      this.onopen();
+    }
+    drop() {
+      this.readyState = 0;
+      assert.ok(this.onerror);
+      this.onerror();
+    }
+    emit(event: ServerEvent) {
+      assert.ok(this.onmessage);
+      this.onmessage({ data: JSON.stringify(event) });
+    }
+  }
+
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'EventSource');
+  Object.defineProperty(globalThis, 'EventSource', {
+    configurable: true, writable: true, value: FakeEventSource,
+  });
+  const viewers: { store: Store; cleanup: () => void }[] = [];
+  t.after(async () => {
+    for (const viewer of viewers) viewer.cleanup();
+    for (const request of requests) request.response.resolve(Response.json({ ok: true }));
+    await setImmediate();
+    for (const viewer of viewers) viewer.store.setState(viewer.store.getInitialState());
+    for (const error of getUxErrors()) dismissUxError(error.id);
+    if (original) Object.defineProperty(globalThis, 'EventSource', original);
+    else Reflect.deleteProperty(globalThis, 'EventSource');
+  });
+
+  function request(index: number) {
+    const result = requests[index];
+    assert.ok(result, `Missing POST ${index}`);
+    return result;
+  }
+  function assertPost<K extends IntentName>(index: number, name: K, body: IntentBody<K>) {
+    const result = request(index);
+    assert.equal(result.url, intentUrl(name));
+    let init = result.init;
+    if (name.startsWith('push/') || name === 'session/history' || name === 'session/peek') {
+      assert.ok(init?.signal instanceof AbortSignal, 'push requests must have an abort deadline');
+      const { signal, ...rest } = init;
+      if (name.startsWith('push/')) assert.equal(signal.aborted, false);
+      init = rest;
+    }
+    const { body: json, ...options } = init ?? {};
+    assert.deepEqual(options, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      credentials: 'include',
+    });
+    assert.equal(typeof json, 'string');
+    assert.deepEqual(JSON.parse(json as string), {
+      ...body,
+      ...(name === 'session/history' && !('beforeMsgId' in body) && !('afterMsgId' in body) && !('resume' in body) ? { resume: {} } : {}),
+      ...(name === 'session/history' || name === 'session/peek' ? { details: 'summary' } : {}),
+      ...(name === 'session/peek' ? { limit: 30 } : {}),
+    });
+    return result.response;
+  }
+  async function reply(index: number, body: unknown) {
+    request(index).response.resolve(Response.json(body));
+    await setImmediate();
+  }
+  async function history(index: number, page: HistoryPage) {
+    assert.equal(request(index).url, intentUrl('session/history'));
+    // Ordinary completed fixture pages opt into the new wire status. Explicit
+    // pending/unavailable tests supply their own status; native fences are tested
+    // with the actual reader, not simulated by this store-only transport helper.
+    const body = JSON.parse(String(request(index).init?.body));
+    await reply(index, body.resume && !page.resume ? {
+      ...page, resume: { status: 'ready', ...(page.messages.length ? { token: `checkpoint-${page.sessionId}` } : {}) },
+    } : page);
+  }
+  function addViewer(next: Store) {
+    next.setState(next.getInitialState());
+    const sourceIndex = sources.length;
+    const disconnect = next.getState().init();
+    let closed = false;
+    const cleanup = () => {
+      if (closed) return;
+      closed = true;
+      disconnect();
+    };
+    viewers.push({ store: next, cleanup });
+    assert.equal(sources.length, sourceIndex + 1);
+    const source = sources[sourceIndex];
+    assert.ok(source);
+
+    function snapshot(
+      ids = ['a'],
+      extra: Partial<Extract<ServerEvent, { type: 'snapshot' }>> = {},
+    ) {
+      source.emit({
+        type: 'snapshot', agentStatus: 'up', permissionPolicy: 'allow-all',
+        models: [], sessions: ids.map(meta), ...extra,
+      });
+    }
+    function upsert(id: string, msg: ChatMessage) {
+      source.emit({ type: 'msg/upsert', sessionId: id, message: msg });
+    }
+    async function load(id: string, messages: ChatMessage[], hasMore = true) {
+      const index = requests.length;
+      next.getState().setActiveId(id);
+      assertPost(index, 'session/history', { sessionId: id, limit: 30 });
+      await history(index, { sessionId: id, messages, hasMore, latest: true });
+    }
+    function reconnect(ids = ['a']) {
+      source.drop();
+      assert.equal(next.getState().connState, 'connecting');
+      const count = requests.length;
+      source.open();
+      assert.equal(next.getState().connState, 'open');
+      assert.equal(requests.length, count, 'onopen must wait for a fresh snapshot');
+      snapshot(ids);
+    }
+    return { store: next, source, snapshot, upsert, load, reconnect, cleanup };
+  }
+  return {
+    ...addViewer(store), sources, requests, request, assertPost, reply, history, addViewer,
+  };
+}
+
+function observe<T>(promise: Promise<T>): Promise<T> {
+  void promise.catch(() => {});
+  return promise;
+}
+
+test('latest reentry and same-connection snapshots keep live-only text without using it as a durable boundary', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  await h.load('a', [message('durable')]);
+  h.upsert('a', message('stream', 'partial'));
+  assert.equal(session('a', store).resumeAfter, 'durable');
+  h.snapshot(['a', 'b']);
+  h.assertPost(1, 'session/history', { sessionId: 'a', resume: { token: 'checkpoint-a' }, limit: 30 });
+  await h.history(1, { sessionId: 'a', messages: [message('durable')], append: true, hasMore: false });
+  assert.deepEqual(session('a', store).messages, [message('durable'), message('stream', 'partial')]);
+  assert.equal(session('a', store).historyStale, false);
+  store.getState().setActiveId(null);
+  assert.equal(session('a', store).resumeToken, undefined);
+  store.getState().setActiveId('a');
+  h.assertPost(2, 'session/history', { sessionId: 'a', resume: {}, limit: 30 });
+  await h.history(2, { sessionId: 'a', messages: [message('durable')], latest: true, hasMore: false });
+  assert.deepEqual(session('a', store).messages, [message('durable'), message('stream', 'partial')]);
+  assert.equal(session('a', store).error, null);
+  store.getState().setActiveId(null);
+  store.getState().setActiveId('a');
+  await h.history(3, {
+    sessionId: 'a', messages: [message('durable'), message('stream', 'complete')], latest: true, hasMore: false,
+  });
+  assert.deepEqual(session('a', store).messages, [message('durable'), message('stream', 'complete')]);
+  assert.deepEqual(session('a', store).liveMessageIds, []);
+  assert.equal(session('a', store).resumeAfter, 'stream');
+});
+
+test('missed rewind during a connection gap cannot resurrect previously live-only rows on reentry', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot();
+  await h.load('a', [message('durable')]);
+  h.upsert('a', message('later-rewound'));
+  store.getState().setActiveId(null);
+  h.reconnect();
+  assert.deepEqual(session('a', store).messages, [message('durable'), message('later-rewound')], 'last readable cache remains until authoritative reconciliation');
+  store.getState().setActiveId('a');
+  await h.history(1, { sessionId: 'a', messages: [message('durable')], latest: true, hasMore: false });
+  assert.deepEqual(session('a', store).messages, [message('durable')]);
+  assert.deepEqual(session('a', store).liveMessageIds, []);
+  assert.equal(session('a', store).historyStale, false);
+});
+
+test('old live updates before the latest page do not shift the next older cursor across a gap', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot();
+  const rows = Array.from({ length: 39 }, (_, i) => message(String(i + 1)));
+  await h.load('a', rows.slice(0, 30));
+  h.upsert('a', message('1', 'older card update'));
+  store.getState().setActiveId(null);
+  store.getState().setActiveId('a');
+  h.upsert('a', message('1', 'older card update during fresh read'));
+  await h.history(1, { sessionId: 'a', messages: rows.slice(9), latest: true, hasMore: true });
+  assert.deepEqual(session('a', store).messages, rows.slice(9));
+  store.getState().loadMore('a');
+  h.assertPost(2, 'session/history', { sessionId: 'a', beforeMsgId: '10', limit: 30 });
+  await h.history(2, { sessionId: 'a', messages: rows.slice(0, 9), hasMore: false });
+  assert.deepEqual(session('a', store).messages, rows);
+});
+
+test('fresh entry replaces a disjoint old page and ignores aborted older HTTP from the previous entry', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  await h.load('a', [message('old-first'), message('old-last')]);
+  store.getState().loadMore('a');
+  store.getState().setActiveId(null);
+  store.getState().setActiveId('a');
+  assert.deepEqual(session('a', store).messages, [message('old-first'), message('old-last')]);
+  h.assertPost(2, 'session/history', { sessionId: 'a', resume: {}, limit: 30 });
+  await h.history(2, { sessionId: 'a', messages: [message('new-page')], latest: true, hasMore: true });
+  await h.history(1, { sessionId: 'a', messages: [message('late-older')], hasMore: true });
+  assert.equal(h.request(1).init?.signal?.aborted, true);
+  assert.deepEqual(session('a', store).messages, [message('new-page')]);
+  store.getState().loadMore('a');
+  h.assertPost(3, 'session/history', { sessionId: 'a', beforeMsgId: 'new-page', limit: 30 });
+});
+
+test('three reading windows use user recency A-B-C-A-D, not metadata, and home preserves hot content', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a', 'b', 'c', 'd']);
+  for (const id of ['a', 'b', 'c']) await h.load(id, [message(`${id}-tail`)]);
+  store.getState().setActiveId('a');
+  assert.deepEqual(session('a', store).messages, [message('a-tail')]);
+  assert.equal(session('a', store).materialized, true);
+  h.assertPost(3, 'session/history', { sessionId: 'a', resume: {}, limit: 30 });
+  await h.history(3, { sessionId: 'a', messages: [message('a-tail')], latest: true, hasMore: true });
+  await h.load('d', [message('d-tail')]);
+  assert.deepEqual(store.getState().sessions.filter(s => s.materialized).map(s => s.sessionId).sort(), ['a', 'c', 'd']);
+  h.source.emit({ type: 'session/patch', sessionId: 'b', lastActivity: 9999, pinned: true });
+  h.upsert('b', message('offscreen'));
+  assert.deepEqual(session('b', store).messages, []);
+  store.getState().setActiveId(null);
+  assert.equal(store.getState().activeId, null);
+  assert.equal(store.getState().sessions.filter(s => s.materialized).length, 3);
+  store.getState().setActiveId('a');
+  assert.deepEqual(session('a', store).messages, [message('a-tail')]);
+  await h.history(5, { sessionId: 'a', messages: [message('a-tail')], latest: true, hasMore: true });
+  store.getState().setActiveId('b');
+  assert.equal(session('b', store).materialized, false);
+  h.assertPost(6, 'session/history', { sessionId: 'b', resume: {}, limit: 30 });
+  assert.ok(h.requests.every(request => request.url !== intentUrl('inbox/seen')));
+});
+
+test('reconnect within the same mounted chat preserves loaded scrollback until its complete suffix arrives', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  const storage = new Map<string, string>();
+  replaceGlobal(t, 'localStorage', {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => { storage.set(key, value); },
+    removeItem: (key: string) => { storage.delete(key); },
+  });
+  const range = (start: number, length = 30) => Array.from({ length }, (_, i) => message(`m${start + i}`));
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  await h.load('a', range(120));
+  for (const [index, start] of [90, 60, 30, 0].entries()) {
+    store.getState().loadMore('a');
+    await h.history(index + 1, { sessionId: 'a', messages: range(start), hasMore: start > 0 });
+  }
+  store.getState().setDraft('a', 'independent draft');
+  h.reconnect(['a', 'b']);
+  assert.equal(session('a', store).materialized, true);
+  assert.deepEqual(session('a', store).messages, range(0, 150));
+  await h.history(5, {
+    sessionId: 'a', messages: range(120), hasMore: true, resume: { status: 'pending', token: 'part-2' },
+  });
+  assert.deepEqual(session('a', store).messages, range(0, 150), 'pending delivery is not committed');
+  assert.equal(session('a', store).loadingHistory, true);
+  h.assertPost(6, 'session/history', { sessionId: 'a', resume: { token: 'part-2' }, limit: 30 });
+  h.upsert('a', message('m160'));
+  await h.history(6, {
+    sessionId: 'a', messages: range(150, 10), hasMore: true, append: true,
+    resume: { status: 'ready', token: 'new-checkpoint' },
+  });
+  assert.deepEqual(session('a', store).messages, range(0, 161));
+  assert.equal(session('a', store).historyStale, false);
+  assert.equal(session('a', store).resumeToken, 'new-checkpoint');
+  assert.equal(store.getState().getDraft('a'), 'independent draft');
+  store.getState().setActiveId(null);
+  assert.deepEqual(session('a', store).messages, range(131, 30));
+  assert.equal(session('a', store).resumeToken, undefined);
+  store.getState().setActiveId('a');
+  h.assertPost(7, 'session/history', { sessionId: 'a', resume: {}, limit: 30 });
+  await h.history(7, { sessionId: 'a', messages: range(180), hasMore: true, latest: true });
+  assert.deepEqual(session('a', store).messages, range(180), 'a disjoint new latest page does not resurrect an old live tail');
+  assert.ok(h.requests.every(request => request.url !== intentUrl('inbox/seen')));
+});
+
+test('unavailable resume preserves cache, explicit retry refreshes, and an inactive reset defeats a late response', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  await h.load('a', [message('old')]);
+  store.getState().setActiveId(null);
+  store.getState().setActiveId('a');
+  await h.history(1, { sessionId: 'a', messages: [], hasMore: false, resume: { status: 'unavailable', reason: 'expired' } });
+  assert.deepEqual(session('a', store).messages, [message('old')]);
+  assert.match(session('a', store).error ?? '', /历史同步中断/);
+  store.getState().retryHistory('a');
+  h.assertPost(2, 'session/history', { sessionId: 'a', resume: {}, limit: 30 });
+  await h.history(2, { sessionId: 'a', messages: [message('current')], hasMore: false, latest: true });
+  assert.deepEqual(session('a', store).messages, [message('current')]);
+  store.getState().setActiveId(null);
+  store.getState().setActiveId('a');
+  store.getState().setActiveId('b');
+  h.source.emit({ type: 'session/reset', page: { sessionId: 'a', messages: [message('reset')], hasMore: false } });
+  await h.history(3, { sessionId: 'a', messages: [message('current'), message('obsolete')], append: true, hasMore: false });
+  assert.deepEqual(session('a', store).messages, []);
+  assert.equal(session('a', store).materialized, false);
+  assert.equal(store.getState().activeId, 'b');
+  assert.equal(h.request(3).init?.signal?.aborted, true);
+});
+
+test('one late mutation failure retains its dispatch source and one global report after navigation', async t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a', 'b'], { sessions: [{ ...meta('a'), title: 'Original A' }, meta('b')] });
+  const failure = new Error('held tool update denied');
+  const pending = useCockpit.getState().mcpToggleSession('a', 'original-tool', false);
+  const rejected = assert.rejects(pending, error => error === failure);
+  const response = h.assertPost(0, 'mcp/session-toggle', { sessionId: 'a', name: 'original-tool', on: false });
+  h.source.emit({ type: 'session/patch', sessionId: 'a', title: 'New A title' });
+  await h.load('b', [message('b')]);
+  response.reject(failure);
+  await rejected;
+  await setImmediate();
+  assert.equal(getUxErrors().length, 1);
+  assert.match(getUxErrors()[0].message, /Original A.*\(a\).*original-tool.*mcp\/session-toggle.*held tool update denied/);
+  assert.doesNotMatch(getUxErrors()[0].message, /New A title/);
+  assert.equal(useCockpit.getState().activeId, 'b');
+  assert.equal(session('b').error, null);
+  assert.match(session('a').error ?? '', /Original A.*original-tool.*held tool update denied/);
+  assert.equal(h.requests.length, 2, 'one mutation plus B history; no automatic retry');
+});
+
+test('two distinct commands with identical rejection text each produce one global notice', async t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  const first = useCockpit.getState().mcpToggleSession('a', 'fixture-tool', false);
+  const second = useCockpit.getState().mcpToggleSession('a', 'fixture-tool', false);
+  const rejected = [assert.rejects(first, /independent failure/), assert.rejects(second, /independent failure/)];
+  for (const request of h.requests) request.response.resolve(Response.json({ error: 'independent failure' }, { status: 500 }));
+  await Promise.all(rejected);
+  await setImmediate();
+  assert.equal(getUxErrors().length, 2);
+  assert.equal(getUxErrors()[0].message, getUxErrors()[1].message);
+  assert.equal(h.requests.length, 2);
+});
+
+function expectRejection(promise: Promise<unknown>, matcher?: RegExp) {
+  return observe(matcher ? assert.rejects(promise, matcher) : assert.rejects(promise));
+}
+
+async function expectOffline(
+  h: ReturnType<typeof setup>, send: () => Promise<unknown>, returnsNull = false,
+) {
+  const before = h.requests.length;
+  const pending = observe(send());
+  const checked = returnsNull
+    ? observe(pending.then((value) => assert.equal(value, null)))
+    : expectRejection(pending, /未连接/);
+  await setImmediate();
+  const unexpected = h.requests.slice(before);
+  for (const request of unexpected) request.response.reject(new Error('未连接: unexpected disconnected POST'));
+  await checked;
+  assert.equal(unexpected.length, 0, 'disconnected operations must not POST');
+}
+
+const submissions: {
+  name: IntentName;
+  body: IntentBody<'prompt' | 'respondAsk' | 'respondPlan' | 'planSupersede' | 'respondElicitation'>;
+  send: () => Promise<boolean>;
+}[] = [
+  {
+    name: 'prompt', body: { sessionId: 'a', text: 'keep this draft' },
+    send: () => useCockpit.getState().sendPrompt('a', 'keep this draft'),
+  },
+  {
+    name: 'respondAsk', body: { sessionId: 'a', requestId: 'ask', answer: 'custom answer', wasFreeform: true },
+    send: () => useCockpit.getState().respondAsk('a', 'ask', 'custom answer', true),
+  },
+  {
+    name: 'respondPlan', body: { sessionId: 'a', requestId: 'plan', action: 'autopilot' },
+    send: () => useCockpit.getState().respondPlan('a', 'plan', 'autopilot'),
+  },
+  {
+    name: 'planSupersede', body: { sessionId: 'a', requestId: 'plan', message: 'revised instructions' },
+    send: () => useCockpit.getState().planSupersede('a', 'plan', 'revised instructions'),
+  },
+  {
+    name: 'respondElicitation', body: { sessionId: 'a', requestId: 'elicitation', action: 'accept' },
+    send: () => useCockpit.getState().respondElicitation('a', 'elicitation', 'accept'),
+  },
+];
+
+for (const submission of submissions) {
+  test(`${submission.name} acknowledges true only after POST and its JSON body resolve`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    const before = session();
+    let settled = false;
+    const pending = submission.send().then((result) => { settled = true; return result; });
+    const response = h.assertPost(0, submission.name, submission.body);
+    await setImmediate();
+    assert.equal(settled, false);
+    assert.strictEqual(session(), before, 'sending must not optimistically modify the projection');
+
+    const json = deferred<{ ok: boolean }>();
+    const http = Response.json({ ok: true });
+    t.mock.method(http, 'json', () => json.promise);
+    response.resolve(http);
+    await setImmediate();
+    assert.equal(settled, false, 'HTTP headers alone are not an acknowledgement');
+    json.resolve({ ok: true });
+    assert.equal(await pending, true);
+    assert.strictEqual(session(), before);
+    assert.equal(h.requests.length, 1);
+    assert.deepEqual(getUxErrors(), []);
+  });
+
+  for (const failure of ['rejected', 'transport', 'HTTP', 'ok:false', 'invalid acknowledgement'] as const) {
+    test(`${submission.name} returns false for ${failure}, with local errors and no retry or prompt`, async (t) => {
+      const h = setup(t);
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      h.source.open();
+      h.snapshot(['a', 'b']);
+      const other = session('b');
+      const before = session();
+      const pending = submission.send();
+      const response = h.assertPost(0, submission.name, submission.body);
+      if (failure === 'rejected') response.reject(new Error('denied'));
+      else if (failure === 'transport') response.reject(new TypeError('offline'));
+      else if (failure === 'HTTP') response.resolve(Response.json({ error: 'denied' }, { status: 403 }));
+      else response.resolve(Response.json({ ok: failure === 'ok:false' ? false : 'true' }));
+
+      assert.equal(await pending, false);
+      assert.match(session().error ?? '', /未确认发送/);
+      assert.match(session().error ?? '', /草稿已保留/);
+      assert.deepEqual(session(), { ...before, error: session().error });
+      assert.strictEqual(session('b'), other);
+      const diagnostics = getUxErrors();
+      assert.equal(diagnostics.length, failure === 'ok:false' ? 0 : 1);
+      if (diagnostics.length) assert.ok(diagnostics[0].message.includes(submission.name));
+      t.mock.timers.tick(60_000);
+      await setImmediate();
+      assert.equal(h.requests.length, 1);
+      h.assertPost(0, submission.name, submission.body);
+    });
+  }
+
+  test(`${submission.name} returns false without POST while offline or after cleanup`, async (t) => {
+    const h = setup(t);
+    h.snapshot();
+    assert.equal(await submission.send(), false);
+    assert.match(session().error ?? '', /未连接/);
+    h.source.open();
+    h.source.drop();
+    assert.equal(await submission.send(), false);
+    h.cleanup();
+    assert.equal(await submission.send(), false);
+    await setImmediate();
+    assert.equal(h.requests.length, 0);
+    assert.deepEqual(getUxErrors(), []);
+  });
+}
+
+test('cold history waits for open plus snapshot and materializes only its direct HTTP JSON', async (t) => {
+  const h = setup(t);
+  useCockpit.getState().setActiveId('a');
+  h.source.open();
+  assert.equal(h.requests.length, 0);
+  h.snapshot();
+  const response = h.assertPost(0, 'session/history', { sessionId: 'a', limit: 30 });
+  assert.equal(useCockpit.getState().permissionPolicy, 'allow-all');
+  assert.equal(session().loadingHistory, true);
+  assert.equal(session().materialized, false);
+  useCockpit.getState().setActiveId('a');
+  useCockpit.getState().loadMore('a');
+  assert.equal(h.requests.length, 1);
+
+  const json = deferred<HistoryPage>();
+  const http = Response.json({});
+  t.mock.method(http, 'json', () => json.promise);
+  response.resolve(http);
+  await setImmediate();
+  assert.equal(session().loadingHistory, true);
+  assert.equal(session().materialized, false);
+  json.resolve({ sessionId: 'a', messages: [message('first')], latest: true, hasMore: true, resume: { status: 'ready', token: 'checkpoint-a' } });
+  await setImmediate();
+  assert.deepEqual(session().messages, [message('first')]);
+  assert.equal(session().materialized, true);
+  assert.equal(session().historyStale, false);
+  assert.equal(session().loadingHistory, false);
+  h.upsert('a', message('first', 'streamed'));
+  h.upsert('a', message('second'));
+  assert.deepEqual(session().messages, [message('first', 'streamed'), message('second')]);
+  assert.equal(session().lastActivity, 1, 'streaming does not synthesize session metadata');
+  useCockpit.getState().setActiveId('a');
+  assert.equal(h.requests.length, 1);
+});
+
+test('cold HTTP history overlays new streamed IDs and the newest same-ID version since request start', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a', 'cold']);
+  h.upsert('cold', message('unrequested'));
+  assert.deepEqual(session('cold').messages, []);
+  useCockpit.getState().setActiveId('a');
+  h.upsert('a', message('overlap', 'delta 1'));
+  h.upsert('a', message('new'));
+  h.upsert('a', message('overlap', 'delta 2'));
+  await h.history(0, {
+    sessionId: 'a', messages: [message('old'), message('overlap', 'stale HTTP')],
+    latest: true, hasMore: true,
+  });
+  assert.deepEqual(session().messages, [
+    message('old'), message('overlap', 'delta 2'), message('new'),
+  ]);
+  assert.equal(session().materialized, true);
+  assert.equal(session().loadingHistory, false);
+  assert.equal(session().historyStale, false);
+  assert.deepEqual(session('cold').messages, []);
+});
+
+test('snapshot-first selection waits for open, and optional lifecycle metadata stays server-owned', async (t) => {
+  const h = setup(t);
+  useCockpit.getState().setActiveId('a');
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), loading: true, closing: false, cancelling: true }] });
+  assert.equal(h.requests.length, 0);
+  assert.equal(session().loading, true);
+  assert.equal(session().closing, false);
+  assert.equal(session().cancelling, true);
+  h.source.open();
+  h.assertPost(0, 'session/history', { sessionId: 'a', limit: 30 });
+  h.source.emit({ type: 'session/patch', sessionId: 'a', loading: false, closing: true, cancelling: false });
+  await h.history(0, { sessionId: 'a', messages: [], hasMore: false, latest: true });
+  assert.equal(session().loading, false);
+  assert.equal(session().closing, true);
+  assert.equal(session().cancelling, false);
+  assert.equal(session().loadingHistory, false);
+});
+
+test('active switching aborts and releases history; late responses and inactive pagination cannot repopulate it', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  useCockpit.getState().setActiveId('a');
+  useCockpit.getState().setActiveId('b');
+  h.assertPost(0, 'session/history', { sessionId: 'a', limit: 30 });
+  h.assertPost(1, 'session/history', { sessionId: 'b', limit: 30 });
+  await h.history(1, { sessionId: 'b', messages: [message('b-only')], latest: true, hasMore: false });
+  const b = session('b');
+  await h.history(0, { sessionId: 'a', messages: [message('a-only')], latest: true, hasMore: true });
+  assert.equal(useCockpit.getState().activeId, 'b');
+  assert.strictEqual(session('b'), b);
+  assert.deepEqual(session('a').messages, []);
+  assert.equal(h.request(0).init?.signal?.aborted, true);
+  assert.equal(session('a').materialized, false);
+  assert.equal(session('a').loadingHistory, false);
+
+  useCockpit.getState().loadMore('a');
+  useCockpit.getState().retryHistory('a');
+  h.upsert('a', message('inactive-stream'));
+  assert.deepEqual(session('a').messages, []);
+  assert.strictEqual(session('b'), b);
+  assert.equal(h.requests.length, 2);
+});
+
+for (const oldResult of ['success', 'failure'] as const) {
+  test(`rapid A-B-A discards request overlays and ignores late ${oldResult} for either inactive generation`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot(['a', 'b']);
+    useCockpit.getState().setActiveId('a');
+    h.upsert('a', message('old-overlay'));
+    useCockpit.getState().setActiveId('b');
+    h.upsert('b', message('b-overlay'));
+    useCockpit.getState().setActiveId('a');
+    assert.deepEqual(session().messages, []);
+    assert.deepEqual(session('b').messages, []);
+    assert.equal(h.request(0).init?.signal?.aborted, true);
+    assert.equal(h.request(1).init?.signal?.aborted, true);
+    h.assertPost(2, 'session/history', { sessionId: 'a', limit: 30 });
+    h.upsert('a', message('current-overlay'));
+    for (const [index, sid] of [[0, 'a'], [1, 'b']] as const) {
+      if (oldResult === 'success') await h.history(index, { sessionId: sid, messages: [message('obsolete')], hasMore: true, latest: true });
+      else h.request(index).response.reject(new Error('obsolete error'));
+    }
+    await h.history(2, { sessionId: 'a', messages: [message('fresh')], hasMore: false, latest: true });
+    assert.deepEqual(session().messages.map((m) => m.id), ['fresh', 'current-overlay']);
+    assert.equal(session().error, null);
+    assert.deepEqual(session('b').messages, []);
+    assert.equal(h.requests.length, 3);
+  });
+}
+
+test('active scrollback is uncapped until departure retains the latest page independently of metadata and drafts', async (t) => {
+  const h = setup(t);
+  const storage = new Map<string, string>();
+  replaceGlobal(t, 'localStorage', {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => { storage.set(key, value); },
+    removeItem: (key: string) => { storage.delete(key); },
+  });
+  h.source.open();
+  h.snapshot([], { sessions: [{ ...meta('a'), attention: 'ready', attnId: 5, seenId: 4 }] });
+  useCockpit.getState().setDraft('a', 'unsent caption');
+  await h.load('a', Array.from({ length: 30 }, (_, i) => message(`new-${i}`)));
+  for (let i = 0; i < 4; i++) {
+    useCockpit.getState().loadMore('a');
+    await h.history(i + 1, {
+      sessionId: 'a', messages: Array.from({ length: 30 }, (_, j) => message(`older-${i}-${j}`)), hasMore: true,
+    });
+  }
+  assert.equal(session().messages.length, 150, 'reading older history must never be evicted');
+  h.source.emit({ type: 'session/patch', sessionId: 'a', error: 'authoritative error' });
+  const before = session();
+  useCockpit.getState().setActiveId(null);
+  assert.deepEqual(session(), {
+    ...before, messages: before.messages.slice(-30),
+    historyStale: true, hasMore: true, loadingHistory: false, resumeAfter: undefined, resumeToken: undefined,
+  });
+  assert.equal(useCockpit.getState().getDraft('a'), 'unsent caption');
+  h.source.emit({ type: 'session/reset', page: { sessionId: 'a', messages: [message('remote reset')], hasMore: true } });
+  h.upsert('a', message('remote stream'));
+  assert.deepEqual(session().messages, []);
+  assert.equal(session().error, 'authoritative error');
+  assert.equal(useCockpit.getState().unreadCount, 1);
+  assert.ok(h.requests.every((request) => request.url !== intentUrl('inbox/seen')));
+});
+
+for (const accepted of [false, true]) {
+  test(`route release preserves staged attachments and revised captions through a late send ACK=${accepted}`, async (t) => {
+    const h = setup(t);
+    const values = new Map<string, string>();
+    const storage = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value); },
+    };
+    const drafts = createSessionDrafts(storage);
+    const draft = drafts('a');
+    draft.edit('submitted caption');
+    await draft.selectAttachment(new File(['data'], 'file.txt', { type: 'text/plain' }), async () => ({
+      kind: 'file', name: 'file.txt', url: '/uploads/file.txt', path: '/fixture/file.txt', size: 4, mime: 'text/plain',
+    }));
+    h.source.open();
+    h.snapshot(['a', 'b']);
+    await h.load('a', [message('history')]);
+    const sending = draft.send((text, attachment) => useCockpit.getState().sendPrompt('a', text, attachment));
+    useCockpit.getState().setActiveId('b');
+    assert.deepEqual(session().messages, [message('history')]);
+    draft.edit('new caption while away');
+    await draft.selectAttachment(new File(['new'], 'new.txt'), async () => ({
+      kind: 'file', name: 'new.txt', url: '/uploads/new.txt', path: '/fixture/new.txt', size: 3, mime: 'text/plain',
+    }));
+    useCockpit.getState().setActiveId('a');
+    await h.history(3, { sessionId: 'a', messages: [message('history'), message('fresh')], append: true, hasMore: false });
+    await h.reply(1, { ok: accepted });
+    assert.equal(await sending, accepted);
+    assert.equal(drafts('a'), draft);
+    assert.equal(draft.getSnapshot().text, 'new caption while away');
+    assert.equal(draft.getSnapshot().staged?.attachment?.url, '/uploads/new.txt');
+    assert.deepEqual(session().messages, [message('history'), message('fresh')]);
+    if (!accepted) assert.match(session().error ?? '', /草稿已保留/);
+    const persisted = JSON.parse(values.get('cockpit:composer:a')!);
+    assert.equal(persisted.text, 'new caption while away');
+    assert.equal(persisted.attachment.url, '/uploads/new.txt');
+    assert.equal(h.requests.filter((request) => request.url === intentUrl('prompt')).length, 1);
+  });
+}
+
+test('child history is passive even for unloaded or trashed sessions and does not materialize a root window', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot([], { sessions: [{ ...meta('a'), loaded: false }] });
+  const before = session();
+  for (const sid of ['a', 'trash']) {
+    const index = h.requests.length;
+    const controller = new AbortController();
+    const pending = useCockpit.getState().subagentHistory(sid, 'native-spawn', { limit: 30 }, controller.signal);
+    assert.equal(h.request(index).url, intentUrl('session/subagent-history'));
+    assert.equal(h.request(index).init?.signal, controller.signal);
+    assert.deepEqual(JSON.parse(h.request(index).init?.body as string), {
+      sessionId: sid, toolCallId: 'native-spawn', limit: 30, details: 'summary',
+    });
+    await h.reply(index, {
+      sessionId: sid, toolCallId: 'native-spawn', messages: [message('child')], hasMore: false,
+      subagent: { name: 'explore', displayName: 'Explorer', status: 'completed', prompt: 'Full task' },
+    });
+    assert.equal((await pending).messages[0].id, 'child');
+    assert.strictEqual(session(), before);
+  }
+  assert.equal(h.requests.length, 2);
+});
+
+test('a late failed send remains visible when the newly selected history finishes afterwards', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  await h.load('a', [message('old')]);
+  const pending = useCockpit.getState().sendPrompt('a', 'keep caption');
+  useCockpit.getState().setActiveId('b');
+  useCockpit.getState().setActiveId('a');
+  await h.reply(1, { ok: false });
+  assert.equal(await pending, false);
+  const diagnostic = session().error;
+  assert.match(diagnostic ?? '', /草稿已保留/);
+  await h.history(3, { sessionId: 'a', append: true, messages: [message('old'), message('fresh')], hasMore: false });
+  assert.equal(session().error, diagnostic);
+  assert.deepEqual(session().messages, [message('old'), message('fresh')]);
+  assert.deepEqual(session('b').messages, []);
+});
+
+test('factory stores own independent viewers, HTTP pages, streaming overlays and cleanup', async (t) => {
+  const singleton = useCockpit.getState();
+  const first = createCockpitStore();
+  const second = createCockpitStore();
+  assert.notStrictEqual(first, second);
+  assert.notStrictEqual(first, useCockpit);
+  assert.equal(typeof first, 'function', 'factory returns a Zustand hook store');
+  const h = setup(t, first);
+  const other = h.addViewer(second);
+  assert.equal(h.sources.length, 2);
+  for (const viewer of [h, other]) {
+    viewer.source.open();
+    viewer.snapshot();
+    viewer.store.getState().setActiveId('a');
+  }
+  h.assertPost(0, 'session/history', { sessionId: 'a', limit: 30 });
+  h.assertPost(1, 'session/history', { sessionId: 'a', limit: 30 });
+  await h.history(1, { sessionId: 'a', messages: [message('second')], latest: true, hasMore: false });
+  assert.equal(session('a', first).materialized, false);
+  assert.equal(session('a', first).loadingHistory, true);
+  h.upsert('a', message('first-live'));
+  await h.history(0, { sessionId: 'a', messages: [message('first')], latest: true, hasMore: true });
+  assert.deepEqual(session('a', first).messages, [message('first'), message('first-live')]);
+  assert.deepEqual(session('a', second).messages, [message('second')]);
+  first.getState().loadMore('a');
+  h.assertPost(2, 'session/history', { sessionId: 'a', beforeMsgId: 'first', limit: 30 });
+  const secondWindow = session('a', second);
+  await h.history(2, { sessionId: 'a', messages: [message('first-older')], hasMore: false });
+  assert.strictEqual(session('a', second), secondWindow);
+  h.cleanup();
+  assert.equal(other.source.readyState, 1);
+  other.upsert('a', message('second-live'));
+  assert.deepEqual(session('a', second).messages, [message('second'), message('second-live')]);
+  assert.strictEqual(useCockpit.getState(), singleton);
+});
+
+test('each connecting callback and every snapshot increments generation, including open-to-open snapshots', (t) => {
+  const h = setup(t);
+  let generation = useCockpit.getState().connectionGeneration;
+  assert.ok(Number.isInteger(generation));
+  h.source.drop();
+  assert.equal(useCockpit.getState().connectionGeneration, ++generation);
+  h.source.drop();
+  assert.equal(useCockpit.getState().connectionGeneration, ++generation);
+  h.source.open();
+  assert.equal(useCockpit.getState().connectionGeneration, generation);
+  h.snapshot();
+  assert.equal(useCockpit.getState().connectionGeneration, ++generation);
+  h.snapshot();
+  assert.equal(useCockpit.getState().connState, 'open');
+  assert.equal(useCockpit.getState().connectionGeneration, generation + 1);
+});
+
+for (const outcome of ['success', 'application failure', 'transport failure'] as const) {
+  for (const invalidation of ['connecting', 'snapshot', 'reset', 'removal', 'cleanup'] as const) {
+    test(`${invalidation} immediately invalidates old HTTP ${outcome} without touching its successor`, async (t) => {
+      const h = setup(t);
+      h.source.open();
+      h.snapshot();
+      await h.load('a', [message('anchor')]);
+      useCockpit.getState().loadMore('a');
+      const old = h.assertPost(1, 'session/history', { sessionId: 'a', beforeMsgId: 'anchor', limit: 30 });
+      if (invalidation === 'connecting') h.source.drop();
+      else if (invalidation === 'snapshot') h.snapshot();
+      else if (invalidation === 'reset') {
+        h.source.emit({
+          type: 'session/reset', page: { sessionId: 'a', messages: [message('reset')], hasMore: true },
+        });
+        useCockpit.getState().loadMore('a');
+        h.assertPost(2, 'session/history', { sessionId: 'a', beforeMsgId: 'reset', limit: 30 });
+      } else if (invalidation === 'removal') {
+        h.source.emit({ type: 'session/removed', sessionId: 'a' });
+        assert.deepEqual(useCockpit.getState().sessions, []);
+        assert.equal(useCockpit.getState().activeId, 'a', 'removal does not navigate');
+        h.source.emit({ type: 'session/added', session: meta('a') });
+        useCockpit.getState().setActiveId('a');
+        h.assertPost(2, 'session/history', { sessionId: 'a', limit: 30 });
+      } else h.cleanup();
+      const current = session();
+      if (outcome === 'success') {
+        old.resolve(Response.json({ sessionId: 'a', messages: [message('obsolete')], latest: true, hasMore: false }));
+      } else old.reject(outcome === 'transport failure' ? new TypeError('old offline') : new Error('old denied'));
+      await setImmediate();
+      assert.strictEqual(session(), current);
+      assert.equal(useCockpit.getState().activeId, 'a');
+      if (invalidation === 'connecting') {
+        assert.equal(h.requests.length, 2, 'invalidation must happen before any reconnect snapshot');
+        assert.equal(session().loadingHistory, false);
+        assert.equal(session().historyStale, true);
+        h.source.open();
+        assert.equal(h.requests.length, 2);
+        h.snapshot();
+        h.assertPost(2, 'session/history', { sessionId: 'a', resume: { token: 'checkpoint-a' }, limit: 30 });
+      } else if (invalidation !== 'cleanup') {
+        assert.equal(session().loadingHistory, true);
+      }
+    });
+  }
+}
+
+test('generation guards also reject a success whose HTTP headers arrived before disconnect', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  useCockpit.getState().setActiveId('a');
+  const json = deferred<HistoryPage>();
+  const http = Response.json({});
+  t.mock.method(http, 'json', () => json.promise);
+  h.request(0).response.resolve(http);
+  await setImmediate();
+  h.source.drop();
+  const invalidated = session();
+  json.resolve({ sessionId: 'a', messages: [message('obsolete')], latest: true, hasMore: false });
+  await setImmediate();
+  assert.strictEqual(session(), invalidated);
+  h.source.open();
+  h.snapshot();
+  h.assertPost(1, 'session/history', { sessionId: 'a', limit: 30 });
+  await h.history(1, { sessionId: 'a', messages: [message('current')], latest: true, hasMore: false });
+  assert.deepEqual(session().messages, [message('current')]);
+});
+
+test('inactive chats retain only accepted transcript across reconnects and reconcile on actual return', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a', 'b', 'cold']);
+  await h.load('b', [message('b-old'), message('b-anchor', 'partial')]);
+  await h.load('a', [message('a-anchor')]);
+  h.reconnect(['a', 'b', 'cold']);
+  h.assertPost(2, 'session/history', { sessionId: 'a', resume: { token: 'checkpoint-a' }, limit: 30 });
+  h.upsert('b', message('b-live'));
+  h.upsert('cold', message('ignored'));
+  assert.deepEqual(session('cold').messages, []);
+  assert.equal(session('b').resumeAfter, undefined);
+  assert.equal(session('b').loadingHistory, false);
+  assert.equal(session('b').historyStale, true);
+  assert.equal(session('b').hasMore, true);
+  assert.deepEqual(session('b').messages, [message('b-old'), message('b-anchor', 'partial')]);
+  await h.history(2, { sessionId: 'a', messages: [message('a-anchor'), message('a-live')], append: true, hasMore: false });
+  h.reconnect(['a', 'b', 'cold']);
+  h.assertPost(3, 'session/history', { sessionId: 'a', resume: { token: 'checkpoint-a' }, limit: 30 });
+  h.upsert('b', message('b-live-2'));
+  useCockpit.getState().loadMore('b');
+  assert.equal(h.requests.length, 4);
+  assert.equal(session('b').resumeAfter, undefined);
+  useCockpit.getState().setActiveId('b');
+  h.assertPost(4, 'session/history', { sessionId: 'b', resume: {}, limit: 30 });
+  assert.equal(h.request(3).init?.signal?.aborted, true);
+  assert.deepEqual(session('a').messages, [message('a-anchor'), message('a-live')]);
+  useCockpit.getState().setActiveId('b');
+  useCockpit.getState().loadMore('b');
+  assert.equal(h.requests.length, 5);
+  h.upsert('b', message('b-anchor', 'streamed anchor'));
+  h.upsert('b', message('b-live-2', 'streamed tail'));
+  h.upsert('b', message('b-during'));
+  await h.history(4, {
+    sessionId: 'b', latest: true, hasMore: true,
+    messages: [
+      message('b-old'), message('b-anchor', 'HTTP anchor'), message('b-missed'), message('b-live'),
+      message('b-live-2', 'HTTP tail'),
+    ],
+  });
+  assert.deepEqual(session('b').messages, [
+    message('b-old'), message('b-anchor', 'streamed anchor'), message('b-missed'),
+    message('b-live'), message('b-live-2', 'streamed tail'), message('b-during'),
+  ]);
+  assert.equal(session('b').historyStale, false);
+  assert.equal(session('b').resumeAfter, 'b-live-2');
+  assert.equal(session('b').loadingHistory, false);
+  assert.equal(session('b').hasMore, true, 'tail hasMore does not discard older-page availability');
+  useCockpit.getState().loadMore('b');
+  h.assertPost(5, 'session/history', { sessionId: 'b', beforeMsgId: 'b-old', limit: 30 });
+  h.upsert('b', message('b-old', 'streamed overlap'));
+  await h.history(5, {
+    sessionId: 'b', messages: [message('b-oldest'), message('b-old', 'stale page')], hasMore: false,
+  });
+  assert.deepEqual(session('b').messages.slice(0, 2), [message('b-oldest'), message('b-old', 'streamed overlap')]);
+  assert.equal(session('b').messages.filter((m) => m.id === 'b-old').length, 1);
+  assert.equal(session('b').hasMore, false);
+  assert.equal(session('b').loadingHistory, false);
+  useCockpit.getState().loadMore('b');
+  assert.equal(h.requests.length, 6);
+});
+
+for (const streaming of [false, true]) {
+  test(`returning from a global page uses latest and allows retry of a genuine fresh-read failure with streaming=${streaming}`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    await h.load('a', [message('A')]);
+    useCockpit.getState().loadMore('a');
+    h.assertPost(1, 'session/history', { sessionId: 'a', beforeMsgId: 'A', limit: 30 });
+    await h.history(1, { sessionId: 'a', messages: [message('older')], hasMore: true });
+    useCockpit.getState().setActiveId(null);
+    h.reconnect();
+    h.upsert('a', message('B'));
+    h.upsert('a', message('C'));
+    h.reconnect();
+    assert.equal(session().materialized, true);
+    assert.equal(session().resumeAfter, undefined);
+    assert.deepEqual(session().messages, [message('older'), message('A')]);
+    assert.equal(h.requests.length, 2);
+
+    useCockpit.getState().setActiveId('a');
+    h.assertPost(2, 'session/history', { sessionId: 'a', resume: {}, limit: 30 });
+    await h.history(2, { sessionId: 'a', messages: [], hasMore: false, resume: { status: 'unavailable', reason: 'expired' } });
+    assert.deepEqual(session().messages, [message('older'), message('A')]);
+    useCockpit.getState().retryHistory('a');
+    h.assertPost(3, 'session/history', { sessionId: 'a', resume: {}, limit: 30 });
+    if (streaming) {
+      h.upsert('a', message('A', 'current cursor delta'));
+      h.upsert('a', message('during'));
+    }
+    await h.history(3, {
+      sessionId: 'a', latest: true, messages: [message('A', 'HTTP')], hasMore: false,
+    });
+    assert.deepEqual(session().messages, streaming
+      ? [message('A', 'current cursor delta'), message('during')]
+      : [message('A', 'HTTP')]);
+    assert.equal(session().historyStale, false);
+    assert.equal(session().resumeAfter, 'A');
+    assert.equal(session().loadingHistory, false);
+    assert.equal(session().hasMore, false);
+    assert.equal(h.requests.length, 4);
+  });
+}
+
+test('an empty cached window never adopts a post-gap streamed cursor and latest replaces pre-request data', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  await h.load('a', [], false);
+  useCockpit.getState().setActiveId(null);
+  h.reconnect();
+  h.upsert('a', message('pre-request'));
+  h.reconnect();
+  h.upsert('a', message('pre-request-2'));
+  assert.equal(session().resumeAfter, undefined);
+  assert.equal(h.requests.length, 1);
+  useCockpit.getState().setActiveId('a');
+  h.assertPost(1, 'session/history', { sessionId: 'a', limit: 30 });
+  h.upsert('a', message('during', 'live'));
+  await h.history(1, { sessionId: 'a', messages: [message('latest'), message('during', 'stale')], latest: true, hasMore: false });
+  assert.deepEqual(session().messages, [message('latest'), message('during', 'live')]);
+  assert.equal(session().historyStale, false);
+  assert.equal(session().loadingHistory, false);
+});
+
+test('an unavailable resume cannot silently replace stale scrollback with an ambiguous latest response', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  await h.load('a', [message('old'), message('removed-anchor')]);
+  h.upsert('a', message('pre-request'));
+  h.reconnect();
+  h.assertPost(1, 'session/history', { sessionId: 'a', resume: { token: 'checkpoint-a' }, limit: 30 });
+  h.upsert('a', message('new', 'live'));
+  await h.history(1, {
+    sessionId: 'a', messages: [], hasMore: false, resume: { status: 'unavailable', reason: 'expired' },
+  });
+  assert.deepEqual(session().messages, [message('old'), message('removed-anchor'), message('pre-request'), message('new', 'live')]);
+  assert.equal(session().hasMore, true);
+  assert.equal(session().historyStale, true);
+  assert.equal(session().resumeAfter, undefined);
+  assert.equal(session().historyStale, true);
+  assert.equal(session().resumeToken, undefined);
+});
+
+for (const messages of [[], [message('missing-anchor')]]) {
+  test(`resume without accepted overlap (${messages.length} messages) remains explicitly unavailable without closing the gap`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    await h.load('a', [message('old'), message('anchor')]);
+    h.reconnect();
+    h.upsert('a', message('live'));
+    const before = session();
+    await h.history(1, { sessionId: 'a', append: true, messages, hasMore: false });
+    assert.deepEqual(session().messages, before.messages);
+    assert.equal(session().loadingHistory, false);
+    assert.equal(session().historyStale, true);
+    assert.equal(session().resumeAfter, undefined);
+    assert.equal(session().hasMore, true);
+    assert.equal(session().historyStale, true);
+    assert.equal(session().resumeToken, undefined);
+    useCockpit.getState().loadMore('a');
+    assert.equal(h.requests.length, 2);
+    useCockpit.getState().retryHistory('a');
+    h.assertPost(2, 'session/history', { sessionId: 'a', resume: {}, limit: 30 });
+    await h.history(2, { sessionId: 'a', latest: true, messages: [message('anchor'), message('live')], hasMore: false });
+    assert.equal(session().historyStale, false);
+    assert.equal(session().error, null);
+  });
+}
+
+test('reset discards pre-reset streaming, accepts post-reset upserts and supersedes an unfinished cold read', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a', 'cold']);
+  useCockpit.getState().setActiveId('a');
+  h.upsert('a', message('pre-reset'));
+  h.upsert('a', message('anchor', 'pre-reset version'));
+  h.source.emit({
+    type: 'session/reset',
+    page: { sessionId: 'a', messages: [message('anchor', 'reset version')], hasMore: true },
+  });
+  assert.deepEqual(session().messages, [message('anchor', 'reset version')]);
+  assert.equal(session().materialized, true);
+  assert.equal(session().historyStale, false);
+  assert.equal(session().loadingHistory, false);
+  h.upsert('a', message('anchor', 'post-reset version'));
+  h.upsert('a', message('post-reset'));
+  useCockpit.getState().loadMore('a');
+  h.assertPost(1, 'session/history', { sessionId: 'a', beforeMsgId: 'anchor', limit: 30 });
+  const current = session();
+  await h.history(0, { sessionId: 'a', latest: true, messages: [message('obsolete')], hasMore: false });
+  assert.strictEqual(session(), current);
+  await h.history(1, { sessionId: 'a', messages: [message('older'), message('anchor', 'stale page')], hasMore: false });
+  assert.deepEqual(session().messages, [message('older'), message('anchor', 'post-reset version'), message('post-reset')]);
+  h.source.emit({
+    type: 'session/reset', page: { sessionId: 'cold', messages: [message('unrequested')], hasMore: false },
+  });
+  assert.equal(session('cold').materialized, false);
+  assert.deepEqual(session('cold').messages, []);
+});
+
+for (const failure of ['transport', 'application'] as const) {
+  for (const kind of ['latest', 'pagination', 'resume'] as const) {
+    test(`current ${kind} ${failure} failure retains data and cursor, clears only its spinner, and never retries`, async (t) => {
+      const h = setup(t);
+      t.mock.timers.enable({ apis: ['setTimeout'] });
+      h.source.open();
+      h.snapshot();
+      let index = 0;
+      if (kind === 'latest') useCockpit.getState().setActiveId('a');
+      else {
+        await h.load('a', [message('old'), message('anchor')]);
+        index = 1;
+        if (kind === 'resume') h.reconnect();
+        else useCockpit.getState().loadMore('a');
+      }
+      const before = session();
+      h.request(index).response.reject(failure === 'transport' ? new TypeError('offline') : new Error('denied'));
+      await setImmediate();
+      assert.deepEqual(session().messages, before.messages);
+      assert.equal(session().loadingHistory, false);
+      assert.equal(session().materialized, before.materialized);
+      assert.equal(session().historyStale, before.historyStale);
+      assert.equal(session().hasMore, before.hasMore);
+      assert.equal(session().resumeAfter, before.resumeAfter);
+      if (failure === 'transport') {
+        assert.match(session().error ?? '', /加载失败: offline/);
+        assert.deepEqual(getUxErrors(), []);
+      } else {
+        assert.match(session().error ?? '', /加载失败: denied/);
+        assert.equal(getUxErrors().length, 1);
+      }
+      t.mock.timers.tick(60_000);
+      await setImmediate();
+      assert.equal(h.requests.length, index + 1);
+      if (kind === 'pagination') useCockpit.getState().loadMore('a');
+      else {
+        useCockpit.getState().loadMore('a');
+        assert.equal(h.requests.length, index + 1);
+        useCockpit.getState().retryHistory('a');
+      }
+      h.assertPost(index + 1, 'session/history', kind === 'pagination'
+        ? { sessionId: 'a', beforeMsgId: 'old', limit: 30 }
+          : { sessionId: 'a', limit: 30 });
+      assert.equal(session().loadingHistory, true);
+    });
+  }
+}
+
+for (const invalid of [
+  { ok: true },
+  { sessionId: 'b', messages: [message('wrong-session')], hasMore: false, latest: true },
+  { sessionId: 'a', messages: 'not an array', hasMore: false },
+]) {
+  test(`invalid HTTP history cannot materialize or contaminate a different session: ${JSON.stringify(invalid)}`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot(['a', 'b']);
+    useCockpit.getState().setActiveId('a');
+    const other = session('b');
+    await h.reply(0, invalid);
+    assert.equal(session().materialized, false);
+    assert.equal(session().loadingHistory, false);
+    assert.equal(session().historyStale, true);
+    assert.ok(session().error);
+    assert.deepEqual(session().messages, []);
+    assert.strictEqual(session('b'), other);
+    assert.equal(h.requests.length, 1);
+  });
+}
+
+function peekPage(
+  sessionId: string, messages: ChatMessage[], hasMore = true,
+): IntentResult<'session/peek'> {
+  return { sessionId, title: `Preview ${sessionId}`, cwd: './fixture', messages, hasMore };
+}
+
+test('preview is read-only, deduplicates pagination and never changes the active session or live list', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  await h.load('a', [message('live')]);
+  const live = session();
+  useCockpit.getState().openPreview('trash');
+  h.assertPost(1, 'session/peek', { sessionId: 'trash' });
+  useCockpit.getState().openPreview('trash');
+  useCockpit.getState().loadMorePreview();
+  assert.equal(h.requests.length, 2);
+  await h.reply(1, peekPage('trash', [message('anchor', 'latest')]));
+  assert.equal(useCockpit.getState().preview?.title, 'Preview trash');
+  assert.equal(useCockpit.getState().preview?.cwd, './fixture');
+  assert.equal(useCockpit.getState().preview?.loadingHistory, false);
+  useCockpit.getState().loadMorePreview();
+  h.assertPost(2, 'session/peek', { sessionId: 'trash', beforeMsgId: 'anchor' });
+  useCockpit.getState().loadMorePreview();
+  assert.equal(h.requests.length, 3);
+  await h.reply(2, peekPage('trash', [message('older'), message('anchor', 'stale overlap')], false));
+  assert.deepEqual(useCockpit.getState().preview?.messages, [message('older'), message('anchor', 'latest')]);
+  assert.equal(useCockpit.getState().preview?.hasMore, false);
+  useCockpit.getState().loadMorePreview();
+  assert.equal(h.requests.length, 3);
+  assert.strictEqual(session(), live);
+  assert.equal(useCockpit.getState().sessions.length, 1);
+  assert.equal(useCockpit.getState().activeId, 'a');
+  useCockpit.getState().closePreview();
+  assert.equal(useCockpit.getState().preview, null);
+  assert.strictEqual(session(), live);
+});
+
+for (const oldKind of ['latest', 'pagination'] as const) {
+  for (const outcome of ['success', 'failure'] as const) {
+    test(`closing and reopening the same preview SID ignores old ${oldKind} ${outcome}`, async (t) => {
+      const h = setup(t);
+      h.source.open();
+      h.snapshot();
+      useCockpit.getState().openPreview('trash');
+      let oldIndex = 0;
+      if (oldKind === 'pagination') {
+        await h.reply(0, peekPage('trash', [message('old-anchor')]));
+        useCockpit.getState().loadMorePreview();
+        h.assertPost(1, 'session/peek', { sessionId: 'trash', beforeMsgId: 'old-anchor' });
+        oldIndex = 1;
+      }
+      useCockpit.getState().closePreview();
+      useCockpit.getState().openPreview('trash');
+      h.assertPost(oldIndex + 1, 'session/peek', { sessionId: 'trash' });
+      const reopened = useCockpit.getState().preview;
+      if (outcome === 'success') await h.reply(oldIndex, peekPage('trash', [message('obsolete')], false));
+      else {
+        h.request(oldIndex).response.reject(new Error('obsolete preview failure'));
+        await setImmediate();
+      }
+      assert.strictEqual(useCockpit.getState().preview, reopened);
+      assert.equal(useCockpit.getState().preview?.loadingHistory, true);
+      await h.reply(oldIndex + 1, peekPage('trash', [message('current')], false));
+      assert.deepEqual(useCockpit.getState().preview?.messages, [message('current')]);
+      assert.equal(useCockpit.getState().preview?.error, null);
+    });
+  }
+}
+
+for (const invalidation of ['connecting', 'snapshot', 'cleanup', 'close', 'switch'] as const) {
+  for (const outcome of ['success', 'failure'] as const) {
+    test(`preview ${invalidation} invalidates old HTTP ${outcome} immediately`, async (t) => {
+      const h = setup(t);
+      h.source.open();
+      h.snapshot();
+      useCockpit.getState().openPreview('trash');
+      await h.reply(0, peekPage('trash', [message('anchor')]));
+      useCockpit.getState().loadMorePreview();
+      h.assertPost(1, 'session/peek', { sessionId: 'trash', beforeMsgId: 'anchor' });
+      if (invalidation === 'connecting') h.source.drop();
+      else if (invalidation === 'snapshot') {
+        h.snapshot();
+        h.assertPost(2, 'session/peek', { sessionId: 'trash' });
+      } else if (invalidation === 'cleanup') h.cleanup();
+      else if (invalidation === 'close') useCockpit.getState().closePreview();
+      else {
+        useCockpit.getState().openPreview('other-trash');
+        h.assertPost(2, 'session/peek', { sessionId: 'other-trash' });
+      }
+      const current = useCockpit.getState().preview;
+      if (outcome === 'success') await h.reply(1, peekPage('trash', [message('obsolete')], false));
+      else {
+        h.request(1).response.reject(new Error('old preview denied'));
+        await setImmediate();
+      }
+      assert.strictEqual(useCockpit.getState().preview, current);
+      if (invalidation === 'connecting') {
+        assert.equal(h.requests.length, 2);
+        h.source.open();
+        assert.equal(h.requests.length, 2);
+        h.snapshot();
+        h.assertPost(2, 'session/peek', { sessionId: 'trash' });
+      }
+      if (invalidation === 'snapshot' || invalidation === 'connecting') {
+        await h.reply(2, peekPage('trash', [message('replacement')], false));
+        assert.deepEqual(useCockpit.getState().preview?.messages, [message('replacement')]);
+        assert.equal(useCockpit.getState().preview?.historyStale, false);
+      }
+    });
+  }
+}
+
+for (const kind of ['latest', 'pagination'] as const) {
+  for (const failure of ['transport', 'HTTP', 'invalid', 'wrong SID'] as const) {
+    test(`preview ${kind} ${failure} keeps cached data and exposes an error`, async (t) => {
+      const h = setup(t);
+      h.source.open();
+      h.snapshot();
+      useCockpit.getState().openPreview('trash');
+      await h.reply(0, peekPage('trash', [message('cached')]));
+      if (kind === 'latest') h.snapshot();
+      else useCockpit.getState().loadMorePreview();
+      const before = useCockpit.getState().preview;
+      assert.ok(before);
+      const response = h.assertPost(1, 'session/peek', kind === 'latest'
+        ? { sessionId: 'trash' } : { sessionId: 'trash', beforeMsgId: 'cached' });
+      if (failure === 'transport') response.reject(new TypeError('offline'));
+      else if (failure === 'HTTP') response.resolve(Response.json({ error: 'peek denied' }, { status: 403 }));
+      else response.resolve(Response.json(failure === 'invalid' ? { ok: true } : peekPage('wrong', [message('wrong')])));
+      await setImmediate();
+      const after = useCockpit.getState().preview;
+      assert.ok(after);
+      assert.deepEqual(after.messages, before.messages);
+      assert.equal(after.title, before.title);
+      assert.equal(after.cwd, before.cwd);
+      assert.equal(after.hasMore, before.hasMore);
+      assert.equal(after.loadingHistory, false);
+      assert.ok(after.error);
+      assert.equal(h.requests.length, 2);
+    });
+  }
+}
+
+test('preview cold failure can retry the same identity without closing it', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  useCockpit.getState().openPreview('trash');
+  h.request(0).response.reject(new Error('peek failed'));
+  await setImmediate();
+  assert.equal(useCockpit.getState().preview?.loadingHistory, false);
+  assert.ok(useCockpit.getState().preview?.error);
+  useCockpit.getState().openPreview('trash');
+  h.assertPost(1, 'session/peek', { sessionId: 'trash' });
+  await h.reply(1, peekPage('trash', [message('retry')], false));
+  assert.deepEqual(useCockpit.getState().preview?.messages, [message('retry')]);
+  assert.equal(useCockpit.getState().preview?.error, null);
+});
+
+test('preview older failure retries the same accepted cursor explicitly once, never from scroll', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  useCockpit.getState().openPreview('trash');
+  await h.reply(0, peekPage('trash', [message('anchor'), message('tail')]));
+  useCockpit.getState().loadMorePreview();
+  h.request(1).response.resolve(Response.json({ error: 'older denied' }, { status: 500 }));
+  await setImmediate();
+  const failed = useCockpit.getState().preview!;
+  useCockpit.getState().loadMorePreview();
+  useCockpit.getState().loadMorePreview();
+  assert.equal(h.requests.length, 2);
+  assert.deepEqual(failed.messages, [message('anchor'), message('tail')]);
+  assert.equal(getUxErrors().length, 1);
+  useCockpit.getState().retryPreview(failed);
+  useCockpit.getState().retryPreview(failed);
+  useCockpit.getState().loadMorePreview();
+  assert.equal(h.requests.length, 3);
+  h.assertPost(2, 'session/peek', { sessionId: 'trash', beforeMsgId: 'anchor' });
+  await h.reply(2, peekPage('trash', [message('older'), message('anchor')], false));
+  assert.deepEqual(useCockpit.getState().preview?.messages, [message('older'), message('anchor'), message('tail')]);
+  assert.equal(useCockpit.getState().preview?.error, null);
+  useCockpit.getState().retryPreview(failed);
+  assert.equal(h.requests.length, 3);
+});
+
+for (const boundary of ['refresh', 'snapshot', 'reopen', 'switch', 'reset'] as const) {
+  test(`preview ${boundary} invalidates a failed older retry ticket`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    useCockpit.getState().openPreview('trash');
+    await h.reply(0, peekPage('trash', [message('anchor')]));
+    useCockpit.getState().loadMorePreview();
+    h.request(1).response.resolve(Response.json({ error: 'old cursor failed' }, { status: 500 }));
+    await setImmediate();
+    const failed = useCockpit.getState().preview!;
+    if (boundary === 'refresh') useCockpit.getState().refreshPreview('trash');
+    else if (boundary === 'snapshot') h.snapshot();
+    else if (boundary === 'reopen') {
+      useCockpit.getState().closePreview();
+      useCockpit.getState().openPreview('trash');
+    } else if (boundary === 'switch') useCockpit.getState().openPreview('other');
+    else h.source.emit({ type: 'session/reset', page: {
+      sessionId: 'trash', messages: [message('reset')], hasMore: false, latest: true,
+    } });
+    const count = h.requests.length;
+    useCockpit.getState().retryPreview(failed);
+    assert.equal(h.requests.length, count);
+    assert.equal(useCockpit.getState().preview?.error, null);
+    if (boundary !== 'reset') {
+      h.assertPost(2, 'session/peek', { sessionId: boundary === 'switch' ? 'other' : 'trash' });
+      h.request(2).response.resolve(Response.json({ error: 'latest failed' }, { status: 500 }));
+      await setImmediate();
+      const latestFailed = useCockpit.getState().preview!;
+      useCockpit.getState().retryPreview(failed);
+      assert.equal(h.requests.length, count);
+      useCockpit.getState().retryPreview(latestFailed);
+      h.assertPost(3, 'session/peek', { sessionId: latestFailed.sessionId });
+    }
+  });
+}
+
+test('preview single snapshot dispatches one latest request and aborts old pending page', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  useCockpit.getState().openPreview('trash');
+  await h.reply(0, peekPage('trash', [message('anchor')]));
+  useCockpit.getState().loadMorePreview();
+  const signal = h.request(1).init?.signal;
+  h.snapshot();
+  assert.equal(signal?.aborted, true);
+  assert.equal(h.requests.length, 3);
+  h.assertPost(2, 'session/peek', { sessionId: 'trash' });
+  await h.reply(2, peekPage('trash', [message('replacement')], false));
+  h.request(1).response.resolve(Response.json({ error: 'obsolete' }, { status: 500 }));
+  await setImmediate();
+  assert.equal(getUxErrors().length, 0);
+  assert.deepEqual(useCockpit.getState().preview?.messages, [message('replacement')]);
+  h.snapshot();
+  assert.equal(h.requests.length, 4);
+});
+
+test('preview opened offline waits for snapshot and initial failure has explicit retry', async (t) => {
+  const h = setup(t);
+  useCockpit.getState().openPreview('trash');
+  assert.equal(h.requests.length, 0);
+  assert.equal(useCockpit.getState().preview?.loadingHistory, false);
+  h.source.open();
+  h.snapshot();
+  assert.equal(h.requests.length, 1);
+  h.request(0).response.reject(new Error('initial failed'));
+  await setImmediate();
+  const failed = useCockpit.getState().preview!;
+  useCockpit.getState().retryPreview(failed);
+  h.assertPost(1, 'session/peek', { sessionId: 'trash' });
+});
+
+test('automatic naming is never triggered by snapshots, completed replies, browsing, reconnect or another web client', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  assert.equal(h.requests.length, 0);
+  await h.load('a', [message('completed')], false);
+  h.upsert('a', message('next-completed'));
+  h.source.emit({ type: 'session/patch', sessionId: 'a', status: 'idle' });
+  h.source.emit({ type: 'session/patch', sessionId: 'a', autoNaming: true });
+  h.source.emit({ type: 'session/patch', sessionId: 'a', title: 'Native automatic title', autoNaming: false });
+  assert.equal(session().title, 'Native automatic title');
+  assert.equal(h.requests.length, 1);
+  useCockpit.getState().setActiveId(null);
+  h.reconnect(['a', 'b']);
+  const other = h.addViewer(createCockpitStore());
+  other.source.open();
+  other.snapshot(['a', 'b']);
+  other.source.emit({ type: 'session/patch', sessionId: 'a', autoNameError: 'query unavailable' });
+  await h.load('b', [], false);
+  assert.equal(h.requests.length, 2);
+  assert.ok(h.requests.every((request) => request.url === intentUrl('session/history')));
+});
+
+test('explicit unloaded auto-name awaits its exact POST and leaves native loading and titles to SSE', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), loaded: false, status: 'unloaded' }] });
+  const before = session();
+  const pending = useCockpit.getState().autoNameSession('a');
+  const response = h.assertPost(0, 'session/auto-name', { sessionId: 'a' });
+  let settled = false;
+  void pending.then(() => { settled = true; });
+  await setImmediate();
+  assert.equal(settled, false);
+  assert.strictEqual(session(), before);
+  const result = { ok: true, applied: true, title: 'Accepted native title' };
+  response.resolve(Response.json(result));
+  assert.deepEqual(await pending, result);
+  assert.strictEqual(session(), before);
+  assert.equal(h.requests.length, 1);
+  h.source.emit({ type: 'session/patch', sessionId: 'a', title: result.title, loaded: true, status: 'idle' });
+  assert.equal(session().title, result.title);
+  assert.equal(session().loaded, true);
+});
+
+for (const reason of ['user-named', 'no-context', 'not-applied', undefined] as const) {
+  test(`auto-name ${reason ?? 'unapplied'} returns an ordinary typed result without chat errors or title writes`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    const before = session();
+    const pending = useCockpit.getState().autoNameSession('a');
+    h.assertPost(0, 'session/auto-name', { sessionId: 'a' });
+    const result = { ok: true, applied: false, title: null, ...(reason ? { reason } : {}) };
+    await h.reply(0, result);
+    assert.deepEqual(await pending, result);
+    assert.strictEqual(session(), before);
+    assert.deepEqual(getUxErrors(), []);
+    assert.equal(h.requests.length, 1);
+  });
+}
+
+for (const failure of ['query', 'busy', 'transport', 'malformed'] as const) {
+  test(`auto-name ${failure} failure remains a local API error and never marks the chat failed`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot(['a', 'b']);
+    const before = session();
+    const other = session('b');
+    const pending = useCockpit.getState().autoNameSession('a');
+    const rejected = expectRejection(pending);
+    const response = h.assertPost(0, 'session/auto-name', { sessionId: 'a' });
+    if (failure === 'transport') response.reject(new TypeError('network unavailable'));
+    else if (failure === 'malformed') response.resolve(Response.json({ ok: true, title: 'missing applied' }));
+    else response.resolve(Response.json({
+      error: failure === 'busy' ? 'Wait until idle' : 'Naming query failed',
+      ...(failure === 'busy' ? { code: 'SESSION_BUSY' } : {}),
+    }, { status: failure === 'busy' ? 409 : 500 }));
+    await rejected;
+    assert.strictEqual(session(), before);
+    assert.strictEqual(session('b'), other);
+    assert.equal(session().status, 'idle');
+    assert.equal(session().error, null);
+    assert.equal(getUxErrors().length, 1);
+    assert.equal(h.requests.length, 1);
+  });
+}
+
+test('naming metadata and POST outcomes leave unread attention, drafts and materialized messages unchanged', async (t) => {
+  const storage = new Map<string, string>();
+  replaceGlobal(t, 'localStorage', {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => { storage.set(key, value); },
+    removeItem: (key: string) => { storage.delete(key); },
+  });
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), attention: 'ready', attnId: 4, seenId: 2 }], unreadCount: 1 });
+  await h.load('a', [message('completed')], false);
+  useCockpit.getState().setDraft('a', 'Unsent draft');
+  const drafts = createSessionDrafts();
+  const draft = drafts('a');
+  draft.edit('Composer draft');
+  const draftBefore = draft.getSnapshot();
+  const storedBefore = new Map(storage);
+  const before = session();
+  const unread = useCockpit.getState().unreadCount;
+  h.source.emit({ type: 'session/patch', sessionId: 'a', autoNaming: true });
+  assert.equal(session().status, 'idle');
+  h.source.emit({ type: 'session/patch', sessionId: 'a', autoNaming: false, autoNameError: 'Native query unavailable' });
+  assert.equal(session().error, null);
+  const pending = useCockpit.getState().autoNameSession('a');
+  h.assertPost(1, 'session/auto-name', { sessionId: 'a' });
+  await h.reply(1, { ok: true, applied: false, title: null, reason: 'no-context' });
+  await pending;
+  assert.strictEqual(session().messages, before.messages);
+  assert.equal(session().attention, before.attention);
+  assert.equal(session().attnId, before.attnId);
+  assert.equal(session().seenId, before.seenId);
+  assert.equal(useCockpit.getState().unreadCount, unread);
+  assert.strictEqual(draft.getSnapshot(), draftBefore);
+  assert.deepEqual(storage, storedBefore);
+  assert.equal(h.requests.length, 2);
+});
+
+test('late auto-name acknowledgement never applies another route title or overwrites a newer manual rename', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  const pending = useCockpit.getState().autoNameSession('a');
+  h.assertPost(0, 'session/auto-name', { sessionId: 'a' });
+  await h.load('b', [message('b-message')], false);
+  const other = session('b');
+  h.source.emit({ type: 'session/patch', sessionId: 'a', title: 'Newer manual name' });
+  await h.reply(0, { ok: true, applied: true, title: 'Obsolete query name' });
+  await pending;
+  assert.equal(useCockpit.getState().activeId, 'b');
+  assert.equal(session().title, 'Newer manual name');
+  assert.strictEqual(session('b'), other);
+  assert.equal(h.requests.length, 2);
+});
+
+test('ordinary rename retains its exact API and an unapplied auto-name preserves the authoritative manual name', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  const renamed = useCockpit.getState().renameSession('a', 'My name');
+  h.assertPost(0, 'session/rename', { sessionId: 'a', name: 'My name' });
+  await h.reply(0, { ok: true, title: 'My name' });
+  await renamed;
+  h.source.emit({ type: 'session/patch', sessionId: 'a', title: 'My name' });
+  const generated = useCockpit.getState().autoNameSession('a');
+  h.assertPost(1, 'session/auto-name', { sessionId: 'a' });
+  await h.reply(1, { ok: true, applied: false, title: 'My name', reason: 'user-named' });
+  assert.equal((await generated).applied, false);
+  assert.equal(session().title, 'My name');
+  assert.equal(session().error, null);
+  assert.deepEqual(getUxErrors(), []);
+  assert.equal(h.requests.length, 2);
+});
+
+test('keyed naming confirmation suppresses duplicate clicks and discards results after leaving the route', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  const action = createKeyedAsync<void>('auto-name:a', useCockpit.getState);
+  action.activate();
+  let applied = false;
+  let accepted = 0;
+  const confirm = () => action.run(async () => {
+    applied = (await useCockpit.getState().autoNameSession('a')).applied;
+  }, () => { if (applied) accepted++; }, true);
+  const first = confirm();
+  assert.equal(action.getSnapshot().pending, true);
+  assert.equal(await confirm(), false);
+  h.assertPost(0, 'session/auto-name', { sessionId: 'a' });
+  assert.equal(h.requests.length, 1);
+  action.deactivate();
+  await h.reply(0, { ok: true, applied: true, title: 'Late result' });
+  assert.equal(await first, false);
+  assert.equal(accepted, 0);
+  assert.equal(session().title, 'a');
+});
+
+interface MutationCase {
+  name: IntentName;
+  body: IntentBody<IntentName>;
+  send: (state: State) => Promise<void>;
+  success: unknown;
+  sessionId?: string;
+  changesHistory?: boolean;
+}
+
+const mcpSuccess: IntentResult<'mcp/session-toggle'> = {
+  ok: true, applied: true, sessionId: 'a', name: 'fixture-mcp', enabled: true, status: 'connected',
+  operation: { id: 'operation', desiredEnabled: true, state: 'succeeded', startedAt: 1, status: 'connected' },
+};
+
+const mutations: MutationCase[] = [
+  { name: 'cancel', body: { sessionId: 'a' }, send: (s) => s.cancel('a'), success: { ok: true }, sessionId: 'a' },
+  {
+    name: 'setModel', body: { sessionId: 'a', modelId: 'model', reasoningEffort: 'high', contextTier: 'long_context' },
+    send: (s) => s.setModel('a', 'model', { reasoningEffort: 'high', contextTier: 'long_context' }),
+    success: { ok: true }, sessionId: 'a',
+  },
+  { name: 'session/delete', body: { sessionId: 'a' }, send: (s) => s.deleteSession('a'), success: { ok: true }, sessionId: 'a' },
+  { name: 'session/restore', body: { sessionId: 'a' }, send: (s) => s.restoreSession('a'), success: { ok: true }, sessionId: 'a' },
+  { name: 'session/unload', body: { sessionId: 'a' }, send: (s) => s.unloadSession('a'), success: { ok: true }, sessionId: 'a' },
+  {
+    name: 'session/reload', body: { sessionId: 'a' }, send: (s) => s.reloadSession('a'),
+    success: { ok: true }, sessionId: 'a', changesHistory: true,
+  },
+  {
+    name: 'session/pin', body: { sessionId: 'a', pinned: true }, send: (s) => s.pinSession('a', true),
+    success: { ok: true, pinned: true }, sessionId: 'a',
+  },
+  {
+    name: 'session/rename', body: { sessionId: 'a', name: 'renamed' }, send: (s) => s.renameSession('a', 'renamed'),
+    success: { ok: true, title: 'renamed' }, sessionId: 'a',
+  },
+  {
+    name: 'session/compact', body: { sessionId: 'a' }, send: (s) => s.compactSession('a'),
+    success: { ok: true }, sessionId: 'a', changesHistory: true,
+  },
+  {
+    name: 'session/rewind', body: { sessionId: 'a', toMsgId: 'anchor' }, send: (s) => s.rewindSession('a', 'anchor'),
+    success: { ok: true }, sessionId: 'a', changesHistory: true,
+  },
+  { name: 'setMode', body: { sessionId: 'a', mode: 'plan' }, send: (s) => s.setMode('a', 'plan'), success: { ok: true }, sessionId: 'a' },
+  {
+    name: 'queue/remove', body: { sessionId: 'a', itemId: 'queued' }, send: (s) => s.removeQueued('a', 'queued'),
+    success: { ok: true }, sessionId: 'a',
+  },
+  { name: 'session/refresh', body: {}, send: (s) => s.refreshList(), success: { ok: true } },
+  { name: 'mcp/global-default', body: { name: 'fixture-mcp', on: true }, send: (s) => s.mcpSetDefault('fixture-mcp', true), success: { ok: true } },
+  { name: 'mcp/refresh', body: {}, send: (s) => s.mcpRefresh(), success: { ok: true } },
+  {
+    name: 'skills/global-toggle', body: { name: 'fixture-skill', enabled: false },
+    send: (s) => s.skillsSetGlobal('fixture-skill', false), success: { ok: true },
+  },
+  {
+    name: 'mcp/session-toggle', body: { sessionId: 'a', name: 'fixture-mcp', on: true },
+    send: (s) => s.mcpToggleSession('a', 'fixture-mcp', true), success: mcpSuccess, sessionId: 'a',
+  },
+  {
+    name: 'skills/session-toggle', body: { sessionId: 'a', name: 'fixture-skill', enabled: false },
+    send: (s) => s.skillsToggleSession('a', 'fixture-skill', false), success: { ok: true }, sessionId: 'a',
+  },
+];
+
+for (const kind of ['MCP', 'Skill'] as const) {
+  for (const failure of ['ok:false', 'HTTP', 'rejected'] as const) {
+    test(`global ${kind} late ${failure} keeps complete dispatch name and one report after selecting Q`, async t => {
+      const h = setup(t);
+      h.source.open();
+      h.snapshot(['a', 'b']);
+      const name = 'P-项目中文长名称/review-source & <tools> "目录"';
+      const cwd = '/original/discovery';
+      const pending = kind === 'MCP'
+        ? useCockpit.getState().mcpSetDefault(name, true)
+        : useCockpit.getState().skillsSetGlobal(name, false, cwd);
+      const response = h.assertPost(0, kind === 'MCP' ? 'mcp/global-default' : 'skills/global-toggle',
+        kind === 'MCP' ? { name, on: true } : { name, enabled: false, cwd });
+      useCockpit.setState({ activeId: 'b' });
+      const other = session('b');
+      const original = new Error('original transport failure');
+      const rejected = assert.rejects(pending, error => failure === 'rejected'
+        ? error === original
+        : error instanceof Error && error.message === (failure === 'HTTP' ? 'permission denied' : '服务器未确认操作'));
+      if (failure === 'rejected') response.reject(original);
+      else if (failure === 'HTTP') response.resolve(Response.json({ error: 'permission denied' }, { status: 500 }));
+      else response.resolve(Response.json({ ok: false }));
+      await rejected;
+      assert.equal(getUxErrors().length, 1);
+      assert.ok(getUxErrors()[0].message.includes(name));
+      if (failure === 'ok:false') assert.equal(getUxErrors()[0].message, `设置 Copilot 全局 ${kind} ${name}失败：服务器未确认操作`);
+      else assert.ok(getUxErrors()[0].message.startsWith(`${name}：接口 `));
+      assert.strictEqual(session('b'), other);
+      assert.equal(useCockpit.getState().activeId, 'b');
+      assert.equal(h.requests.length, 1);
+    });
+  }
+  test(`global ${kind} separate void negative acknowledgements each report their dispatch name once`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    for (const name of ['P-文档工具', 'Q-其它工具']) {
+      if (kind === 'MCP') void useCockpit.getState().mcpSetDefault(name, true);
+      else void useCockpit.getState().skillsSetGlobal(name, false);
+    }
+    for (let i = 0; i < 2; i++) h.assertPost(i, kind === 'MCP' ? 'mcp/global-default' : 'skills/global-toggle',
+      kind === 'MCP' ? { name: i === 0 ? 'P-文档工具' : 'Q-其它工具', on: true }
+        : { name: i === 0 ? 'P-文档工具' : 'Q-其它工具', enabled: false }).resolve(Response.json({ ok: false }));
+    await setImmediate();
+    assert.equal(getUxErrors().length, 2);
+    assert.ok(getUxErrors().some(e => e.message.includes('P-文档工具')));
+    assert.ok(getUxErrors().some(e => e.message.includes('Q-其它工具')));
+    assert.equal(h.requests.length, 2);
+  });
+}
+
+for (const reject of [false, true]) {
+  test(`interrupt keeps session ownership after navigation with late ${reject ? 'failure' : 'false ACK'}`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot(['a', 'b']);
+    const beforeA = session('a');
+    const beforeB = session('b');
+    const pending = useCockpit.getState().interrupt('a');
+    const rejected = reject ? assert.rejects(pending, /uncertain/) : null;
+    const response = h.assertPost(0, 'session/interrupt', { sessionId: 'a' });
+    useCockpit.setState({ activeId: 'b' });
+    if (reject) response.reject(new Error('uncertain'));
+    else response.resolve(Response.json({ ok: true, interrupted: false }));
+    if (rejected) await rejected;
+    else assert.deepEqual(await pending, { ok: true, interrupted: false });
+    assert.deepEqual(session('a'), beforeA);
+    assert.deepEqual(session('b'), beforeB);
+    assert.equal(h.requests.length, 1);
+  });
+}
+
+test('interrupt never resumes an unloaded session or sends while disconnected', async t => {
+  const h = setup(t);
+  await assert.rejects(useCockpit.getState().interrupt('a'), /未连接/);
+  h.source.open();
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), loaded: false, status: 'unloaded' }] });
+  await assert.rejects(useCockpit.getState().interrupt('a'), SessionUnloadedError);
+  assert.equal(h.requests.length, 0);
+});
+
+for (const mutation of mutations) {
+  test(`${mutation.name} returns Promise<void> and waits for JSON acknowledgement without optimistic domain changes`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot(['a', 'b']);
+    const before = session();
+    const other = session('b');
+    const pending: Promise<void> = mutation.send(useCockpit.getState());
+    assert.ok(pending instanceof Promise);
+    let settled = false;
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    const response = h.assertPost(0, mutation.name, mutation.body);
+    await setImmediate();
+    assert.equal(settled, false);
+    const json = deferred<unknown>();
+    const http = Response.json({});
+    t.mock.method(http, 'json', () => json.promise);
+    response.resolve(http);
+    await setImmediate();
+    assert.equal(settled, false);
+    json.resolve(mutation.success);
+    assert.equal(await pending, undefined);
+    assert.equal(session().title, before.title);
+    assert.equal(session().status, before.status);
+    assert.equal(session().loaded, before.loaded);
+    assert.equal(session().pinned, before.pinned);
+    assert.equal(session().currentModelId, before.currentModelId);
+    assert.equal(session().currentMode, before.currentMode);
+    assert.deepEqual(session().queue, before.queue);
+    assert.deepEqual(session().messages, before.messages);
+    assert.strictEqual(session('b'), other);
+    assert.equal(useCockpit.getState().activeId, null);
+    assert.equal(h.requests.length, 1);
+    assert.deepEqual(getUxErrors(), []);
+  });
+
+  for (const failure of ['rejected', 'transport', 'HTTP', 'ok:false', 'invalid acknowledgement'] as const) {
+    test(`${mutation.name} rejects its original promise on ${failure} and reports local diagnostics`, async (t) => {
+      const h = setup(t);
+      h.source.open();
+      h.snapshot(['a', 'b']);
+      const before = session();
+      const other = session('b');
+      const pending = mutation.send(useCockpit.getState());
+      assert.ok(pending instanceof Promise);
+      const rejected = expectRejection(pending);
+      const response = h.assertPost(0, mutation.name, mutation.body);
+      if (failure === 'rejected') response.reject(new Error('denied'));
+      else if (failure === 'transport') response.reject(new TypeError('offline'));
+      else if (failure === 'HTTP') response.resolve(Response.json({ error: 'denied' }, { status: 403 }));
+      else response.resolve(Response.json({ ...mutation.success as object, ok: failure === 'ok:false' ? false : 'true' }));
+      await rejected;
+      await setImmediate();
+      assert.ok(getUxErrors().length > 0);
+      if (mutation.sessionId) assert.ok(session().error);
+      assert.deepEqual(session().messages, before.messages);
+      assert.equal(session().title, before.title);
+      assert.equal(session().loadingHistory, false);
+      assert.strictEqual(session('b'), other);
+      assert.equal(h.requests.length, 1);
+    });
+  }
+
+  test(`${mutation.name} remains safe when void-called and its unobserved original promise rejects`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    void mutation.send(useCockpit.getState());
+    h.assertPost(0, mutation.name, mutation.body).reject(new Error('void-call denied'));
+    await setImmediate();
+    await setImmediate();
+    assert.ok(getUxErrors().some((error) => error.message.includes('void-call denied')));
+    if (mutation.sessionId) assert.match(session().error ?? '', /void-call denied/);
+    assert.equal(h.requests.length, 1);
+  });
+
+  test(`${mutation.name} rejects rather than succeeding while uninitialized, connecting, dropped or cleaned up`, async (t) => {
+    const h = setup(t);
+    const fresh = createCockpitStore();
+    await expectOffline(h, () => mutation.send(fresh.getState()));
+    h.snapshot();
+    await expectOffline(h, () => mutation.send(useCockpit.getState()));
+    h.source.open();
+    h.source.drop();
+    await expectOffline(h, () => mutation.send(useCockpit.getState()));
+    h.cleanup();
+    await expectOffline(h, () => mutation.send(useCockpit.getState()));
+    assert.equal(h.requests.length, 0);
+  });
+}
+
+test('MCP toggle ok:true with applied:false still rejects and surfaces the operation error', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  const pending = useCockpit.getState().mcpToggleSession('a', 'fixture-mcp', true);
+  const rejected = expectRejection(pending, /not applied/);
+  await h.reply(0, { ...mcpSuccess, applied: false, error: 'not applied' });
+  await rejected;
+  assert.match(session().error ?? '', /not applied/);
+  assert.ok(getUxErrors().some((error) => error.message.includes('not applied')));
+});
+
+for (const mutation of mutations.filter((item) => item.changesHistory)) {
+  test(`${mutation.name} rejection reconciles the unchanged active window without hiding diagnostics or retrying the mutation`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    await h.load('a', [message('old'), message('anchor')]);
+    const pending = mutation.send(useCockpit.getState());
+    const rejected = expectRejection(pending, /服务器未确认操作/);
+    h.assertPost(1, mutation.name, mutation.body);
+    await h.reply(1, { ok: false });
+    await rejected;
+    const diagnostic = session().error;
+    assert.match(diagnostic ?? '', /服务器未确认操作/);
+    assert.deepEqual(session().messages, [message('old'), message('anchor')]);
+    assert.equal(session().historyStale, true);
+    assert.equal(session().loadingHistory, true);
+    h.assertPost(2, 'session/history', { sessionId: 'a', resume: { token: 'checkpoint-a' }, limit: 30 });
+    h.upsert('a', message('anchor', 'current delta'));
+    h.upsert('a', message('during'));
+    await h.history(2, { sessionId: 'a', append: true, messages: [message('anchor')], hasMore: false });
+    assert.deepEqual(session().messages, [message('old'), message('anchor', 'current delta'), message('during')]);
+    assert.equal(session().historyStale, false);
+    assert.equal(session().loadingHistory, false);
+    assert.equal(session().error, diagnostic);
+    assert.equal(useCockpit.getState().activeId, 'a');
+    assert.equal(h.requests.length, 3, 'only the history read is retried automatically');
+    assert.ok(getUxErrors().some((error) => error.message.includes('服务器未确认操作')));
+
+    useCockpit.getState().loadMore('a');
+    h.assertPost(3, 'session/history', { sessionId: 'a', beforeMsgId: 'old', limit: 30 });
+    await h.history(3, { sessionId: 'a', messages: [message('older')], hasMore: false });
+    assert.equal(session().error, diagnostic);
+    const retry = mutation.send(useCockpit.getState());
+    h.assertPost(4, mutation.name, mutation.body);
+    await h.reply(4, mutation.success);
+    await retry;
+    h.assertPost(5, 'session/history', { sessionId: 'a', resume: { token: 'checkpoint-a' }, limit: 30 });
+    await h.history(5, { sessionId: 'a', messages: [], hasMore: false, resume: { status: 'unavailable', reason: 'changed' } });
+    assert.equal(session().historyStale, true);
+    assert.equal(session().resumeToken, undefined);
+    useCockpit.getState().retryHistory('a');
+    h.assertPost(6, 'session/history', { sessionId: 'a', resume: {}, limit: 30 });
+    await h.history(6, { sessionId: 'a', latest: true, messages: [message('replacement')], hasMore: false });
+    assert.equal(session().historyStale, false);
+    assert.equal(session().loadingHistory, false);
+    assert.equal(session().error, null);
+    assert.equal(h.requests.length, 7);
+  });
+
+  test(`${mutation.name} rejection after deselection leaves history stale until selection and retains its diagnostic`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot(['a', 'b']);
+    await h.load('b', [message('other')]);
+    await h.load('a', [message('old'), message('anchor')]);
+    const pending = mutation.send(useCockpit.getState());
+    const rejected = expectRejection(pending, /inactive mutation denied/);
+    h.assertPost(2, mutation.name, mutation.body);
+    useCockpit.getState().setActiveId('b');
+    h.assertPost(3, 'session/history', { sessionId: 'b', resume: {}, limit: 30 });
+    const other = session('b');
+    h.request(2).response.reject(new Error('inactive mutation denied'));
+    await rejected;
+    await setImmediate();
+    const diagnostic = session().error;
+    assert.match(diagnostic ?? '', /inactive mutation denied/);
+    assert.equal(session().historyStale, true);
+    assert.equal(session().loadingHistory, false);
+    assert.deepEqual(session().messages, [message('old'), message('anchor')]);
+    assert.strictEqual(session('b'), other);
+    assert.equal(h.requests.length, 4);
+    useCockpit.getState().setActiveId('a');
+    h.assertPost(4, 'session/history', { sessionId: 'a', resume: {}, limit: 30 });
+    await h.history(4, { sessionId: 'a', latest: true, messages: [message('anchor')], hasMore: false });
+    assert.equal(session().historyStale, false);
+    assert.equal(session().loadingHistory, false);
+    assert.equal(session().error, diagnostic);
+    assert.equal(h.requests.length, 5);
+  });
+
+  test(`${mutation.name} acknowledgement without a reset starts an owned HTTP refresh`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    await h.load('a', [message('anchor')]);
+    const pending = mutation.send(useCockpit.getState());
+    h.assertPost(1, mutation.name, mutation.body);
+    assert.equal(session().loadingHistory, true);
+    h.request(1).response.resolve(Response.json(mutation.success));
+    assert.equal(await pending, undefined);
+    h.assertPost(2, 'session/history', { sessionId: 'a', resume: { token: 'checkpoint-a' }, limit: 30 });
+    assert.equal(session().loadingHistory, true);
+    await h.history(2, { sessionId: 'a', messages: [], hasMore: false, resume: { status: 'unavailable', reason: 'changed' } });
+    assert.deepEqual(session().messages, [message('anchor')]);
+    assert.equal(session().historyStale, true);
+    assert.equal(session().resumeToken, undefined);
+    useCockpit.getState().retryHistory('a');
+    h.assertPost(3, 'session/history', { sessionId: 'a', resume: {}, limit: 30 });
+    await h.history(3, { sessionId: 'a', messages: [message('replacement')], latest: true, hasMore: false });
+    assert.deepEqual(session().messages, [message('replacement')]);
+    assert.equal(session().loadingHistory, false);
+    assert.equal(session().historyStale, false);
+  });
+
+  for (const oldKind of ['latest', 'pagination', 'resume'] as const) {
+    for (const outcome of ['success', 'failure'] as const) {
+      test(`${mutation.name} invalidates ${oldKind} at START; reset and newer paging survive late ${outcome}`, async (t) => {
+        const h = setup(t);
+        h.source.open();
+        h.snapshot();
+        let oldIndex = 0;
+        if (oldKind === 'latest') useCockpit.getState().setActiveId('a');
+        else {
+          await h.load('a', [message('old'), message('anchor')]);
+          oldIndex = 1;
+          if (oldKind === 'pagination') useCockpit.getState().loadMore('a');
+          else h.reconnect();
+        }
+        const mutationIndex = h.requests.length;
+        const pending = mutation.send(useCockpit.getState());
+        assert.ok(pending instanceof Promise);
+        h.assertPost(mutationIndex, mutation.name, mutation.body);
+        const mutating = session();
+        assert.equal(mutating.historyStale, true);
+        assert.equal(mutating.loadingHistory, true);
+        useCockpit.getState().setActiveId('a');
+        useCockpit.getState().loadMore('a');
+        assert.equal(h.requests.length, mutationIndex + 1);
+        if (outcome === 'success') {
+          await h.history(oldIndex, { sessionId: 'a', latest: true, messages: [message('obsolete')], hasMore: false });
+        } else {
+          h.request(oldIndex).response.reject(new Error('obsolete history failure'));
+          await setImmediate();
+        }
+        assert.strictEqual(session(), mutating, 'history is invalid before the mutation acknowledgement');
+        h.upsert('a', message('pre-reset'));
+        h.source.emit({
+          type: 'session/reset', page: { sessionId: 'a', messages: [message('reset-anchor')], hasMore: true },
+        });
+        assert.deepEqual(session().messages, [message('reset-anchor')]);
+        assert.equal(session().loadingHistory, false, 'a genuine reset settles the window before the POST');
+        h.upsert('a', message('post-reset'));
+        useCockpit.getState().loadMore('a');
+        const pageIndex = mutationIndex + 1;
+        h.assertPost(pageIndex, 'session/history', { sessionId: 'a', beforeMsgId: 'reset-anchor', limit: 30 });
+        const newer = session();
+        if (outcome === 'success') {
+          await h.reply(mutationIndex, mutation.success);
+          assert.equal(await pending, undefined);
+        } else {
+          const rejected = expectRejection(pending, /late mutation/);
+          h.request(mutationIndex).response.reject(new Error('late mutation failure'));
+          await rejected;
+          await setImmediate();
+        }
+        assert.strictEqual(session(), newer, 'late mutation must not settle or overwrite a newer history request');
+        assert.equal(session().loadingHistory, true);
+        await h.history(pageIndex, { sessionId: 'a', messages: [message('older')], hasMore: false });
+        assert.deepEqual(session().messages, [message('older'), message('reset-anchor'), message('post-reset')]);
+        assert.equal(session().loadingHistory, false);
+        assert.equal(h.requests.length, pageIndex + 1);
+      });
+    }
+  }
+
+  for (const outcome of ['success', 'failure'] as const) {
+    test(`late ${mutation.name} ${outcome} cannot clear a newer reconnect spinner`, async (t) => {
+      const h = setup(t);
+      h.source.open();
+      h.snapshot();
+      await h.load('a', [message('anchor')]);
+      const pending = mutation.send(useCockpit.getState());
+      h.assertPost(1, mutation.name, mutation.body);
+      h.reconnect();
+      h.assertPost(2, 'session/history', { sessionId: 'a', resume: { token: 'checkpoint-a' }, limit: 30 });
+      const newer = session();
+      if (outcome === 'success') {
+        await h.reply(1, mutation.success);
+        await pending;
+      } else {
+        const rejected = expectRejection(pending, /late mutation/);
+        h.request(1).response.reject(new Error('late mutation denied'));
+        await rejected;
+        await setImmediate();
+      }
+      assert.strictEqual(session(), newer);
+      assert.equal(session().loadingHistory, true);
+      assert.equal(session().error, null);
+      await h.history(2, { sessionId: 'a', append: true, messages: [message('anchor'), message('current')], hasMore: false });
+      assert.equal(session().loadingHistory, false);
+    });
+  }
+}
+
+test('failed reload recovery retains history and mutation diagnostics through a failed history read and manual retry', async (t) => {
+  const h = setup(t);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  h.source.open();
+  h.snapshot();
+  await h.load('a', [message('old'), message('anchor')]);
+  const rejected = expectRejection(useCockpit.getState().reloadSession('a'), /reload denied/);
+  h.assertPost(1, 'session/reload', { sessionId: 'a' }).reject(new Error('reload denied'));
+  await rejected;
+  const diagnostic = session().error;
+  assert.match(diagnostic ?? '', /reload denied/);
+  h.assertPost(2, 'session/history', { sessionId: 'a', resume: { token: 'checkpoint-a' }, limit: 30 }).reject(new Error('history unavailable'));
+  await setImmediate();
+  assert.deepEqual(session().messages, [message('old'), message('anchor')]);
+  assert.equal(session().historyStale, true);
+  assert.equal(session().resumeAfter, 'anchor');
+  assert.equal(session().loadingHistory, false);
+  assert.equal(session().error, diagnostic);
+  assert.ok(getUxErrors().some((error) => error.message.includes('history unavailable')));
+  t.mock.timers.tick(60_000);
+  await setImmediate();
+  useCockpit.getState().loadMore('a');
+  assert.equal(h.requests.length, 3, 'neither mutation nor failed recovery read is automatically repeated');
+  useCockpit.getState().setActiveId('a');
+  h.assertPost(3, 'session/history', { sessionId: 'a', resume: { token: 'checkpoint-a' }, limit: 30 });
+  await h.history(3, { sessionId: 'a', append: true, messages: [message('anchor'), message('current')], hasMore: true });
+  assert.deepEqual(session().messages, [message('old'), message('anchor'), message('current')]);
+  assert.equal(session().historyStale, false);
+  assert.equal(session().loadingHistory, false);
+  assert.equal(session().error, diagnostic);
+  assert.equal(h.requests.length, 4);
+});
+
+test('rewind with unsupported rollbackFiles rejects and reconciles the active window without clearing its error', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  await h.load('a', [message('old'), message('anchor')]);
+  const pending = useCockpit.getState().rewindSession('a', 'anchor', true);
+  assert.ok(pending instanceof Promise);
+  const rejected = expectRejection(pending, /rollback|unsupported|不支持/i);
+  h.assertPost(1, 'session/rewind', { sessionId: 'a', toMsgId: 'anchor', rollbackFiles: true })
+    .resolve(Response.json({ error: 'rollbackFiles unsupported' }, { status: 400 }));
+  await rejected;
+  const diagnostic = session().error;
+  assert.match(diagnostic ?? '', /rollbackFiles unsupported/);
+  h.assertPost(2, 'session/history', { sessionId: 'a', resume: { token: 'checkpoint-a' }, limit: 30 });
+  await h.history(2, { sessionId: 'a', append: true, messages: [message('anchor')], hasMore: false });
+  assert.deepEqual(session().messages, [message('old'), message('anchor')]);
+  assert.equal(session().historyStale, false);
+  assert.equal(session().loadingHistory, false);
+  assert.equal(session().error, diagnostic);
+  assert.ok(getUxErrors().length > 0);
+  assert.equal(h.requests.length, 3);
+});
+
+interface ResourceCase {
+  label: string;
+  name: IntentName;
+  body: IntentBody<IntentName>;
+  read: (state: State) => Promise<unknown>;
+  response: unknown;
+  expected: unknown;
+}
+
+const plan: IntentResult<'session/plan'> = {
+  planMarkdown: 'fixture plan', todos: [{ id: 'todo', title: 'Read fixture', status: 'pending' }],
+};
+const panels: IntentResult<'session/panels'> = {
+  skills: [], mcpServers: [], tasks: [], instructionSources: [], schedules: [],
+};
+const schedule: IntentResult<'schedule/list'>['entries'][number] = {
+  id: 7, prompt: 'fixture reminder', recurring: true, nextRunAt: 1234, intervalMs: 60_000,
+};
+const globalMcp: IntentResult<'mcp/global'>['servers'] = [
+  { name: 'fixture-mcp', detail: 'fixture command', defaultOn: true },
+];
+const sessionMcp: IntentResult<'mcp/session'>['servers'] = [
+  { name: 'fixture-mcp', detail: 'fixture command', status: 'connected', enabled: true },
+];
+const globalSkills: IntentResult<'skills/global'>['skills'] = [{ name: 'fixture-skill', description: 'fixture', enabled: false }];
+const sessionSkills: IntentResult<'skills/session'>['skills'] = [{ name: 'fixture-skill', enabled: true }];
+const skill: IntentResult<'skills/read'> = { name: 'fixture-skill', body: 'fixture body', enabled: false };
+const trash: IntentResult<'session/trash-list'>['entries'] = [
+  { sessionId: 'trash', title: 'Fixture trash', cwd: '.', at: '2026-09-07T00:00:00Z' },
+];
+const directory: IntentResult<'fs/listDir'> = { path: '/fixture', parent: '/', entries: [] };
+const resources: ResourceCase[] = [
+  { label: 'getPlan', name: 'session/plan', body: { sessionId: 'a' }, read: (s) => s.getPlan('a'), response: plan, expected: plan },
+  { label: 'getPanels', name: 'session/panels', body: { sessionId: 'a' }, read: (s) => s.getPanels('a'), response: panels, expected: panels },
+  { label: 'scheduleList', name: 'schedule/list', body: { sessionId: 'a' }, read: (s) => s.scheduleList('a'), response: { entries: [schedule] }, expected: [schedule] },
+  {
+    label: 'scheduleAdd', name: 'schedule/add', body: { prompt: 'fixture reminder', interval: '1m', sessionId: 'a' },
+    read: (s) => s.scheduleAdd('a', { prompt: 'fixture reminder', interval: '1m' }),
+    response: { ok: true, entry: schedule }, expected: { ok: true, entry: schedule },
+  },
+  { label: 'scheduleStop', name: 'schedule/stop', body: { sessionId: 'a', id: 7 }, read: (s) => s.scheduleStop('a', 7), response: { ok: true }, expected: { ok: true } },
+  { label: 'mcpGlobal', name: 'mcp/global', body: {}, read: (s) => s.mcpGlobal(), response: { servers: globalMcp }, expected: globalMcp },
+  { label: 'mcpSession', name: 'mcp/session', body: { sessionId: 'a' }, read: (s) => s.mcpSession('a'), response: { loaded: true, servers: sessionMcp }, expected: sessionMcp },
+  { label: 'skillsGlobal()', name: 'skills/global', body: {}, read: (s) => s.skillsGlobal(), response: { skills: globalSkills }, expected: globalSkills },
+  { label: 'skillsGlobal(cwd)', name: 'skills/global', body: { cwd: './fixture' }, read: (s) => s.skillsGlobal('./fixture'), response: { skills: globalSkills }, expected: globalSkills },
+  { label: 'skillsRead', name: 'skills/read', body: { name: 'fixture-skill' }, read: (s) => s.skillsRead('fixture-skill'), response: skill, expected: skill },
+  { label: 'skillsRead(cwd)', name: 'skills/read', body: { name: 'fixture-skill', cwd: './fixture' }, read: (s) => s.skillsRead('fixture-skill', './fixture'), response: skill, expected: skill },
+  { label: 'skillsSession', name: 'skills/session', body: { sessionId: 'a' }, read: (s) => s.skillsSession('a'), response: { skills: sessionSkills }, expected: sessionSkills },
+  { label: 'trashList', name: 'session/trash-list', body: {}, read: (s) => s.trashList(), response: { entries: trash }, expected: trash },
+  { label: 'listDir()', name: 'fs/listDir', body: {}, read: (s) => s.listDir(), response: directory, expected: directory },
+  { label: 'listDir(path)', name: 'fs/listDir', body: { path: '/fixture' }, read: (s) => s.listDir('/fixture'), response: directory, expected: directory },
+];
+
+const nativeResources = resources.filter((r) =>
+  ['session/plan', 'session/panels', 'mcp/session', 'skills/session', 'schedule/list'].includes(r.name));
+const unloadedMessage = 'Native session data is unavailable while unloaded; explicitly resume the session first.';
+const unloadedResponse = () => Response.json({
+  code: 'SESSION_UNLOADED', message: unloadedMessage,
+}, { status: 409 });
+
+for (const resource of nativeResources) {
+  for (const state of ['unloaded', 'missing loaded', 'missing session'] as const) {
+    test(`${resource.label} rejects ${state} locally without POST, diagnostics or invented state`, async (t) => {
+      const h = setup(t);
+      h.source.open();
+      h.snapshot([], { sessions: state === 'missing session' ? [] : [{ ...meta('a'), loaded: false }] });
+      if (state === 'missing loaded') {
+        const row = { ...session() };
+        Reflect.deleteProperty(row, 'loaded');
+        useCockpit.setState({ sessions: [row] });
+      }
+      const before = useCockpit.getState().sessions;
+      await assert.rejects(resource.read(useCockpit.getState()), (error: unknown) => {
+        assert.ok(error instanceof SessionUnloadedError);
+        assert.equal(isSessionUnloadedError(error), true);
+        assert.match(error.message, /会话.*未加载.*请先.*恢复/);
+        assert.equal(error instanceof IntentHttpError, false, 'local guards must not fabricate an HTTP conflict');
+        return true;
+      });
+      assert.strictEqual(useCockpit.getState().sessions, before);
+      assert.equal(h.requests.length, 0);
+      assert.deepEqual(getUxErrors(), []);
+    });
+  }
+
+  test(`${resource.label} reconciles a real unloaded race once without guessing loaded or retrying`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    const before = session();
+    const checked = observe(assert.rejects(resource.read(useCockpit.getState()), (error: unknown) => {
+      assert.ok(error instanceof IntentHttpError);
+      assert.equal(error.status, 409);
+      assert.equal(error.code, 'SESSION_UNLOADED');
+      assert.equal(error.message, unloadedMessage);
+      return true;
+    }));
+    h.assertPost(0, resource.name, resource.body).resolve(unloadedResponse());
+    await checked;
+    h.assertPost(1, 'session/refresh', {});
+    assert.strictEqual(session(), before);
+    assert.equal(session().loaded, true);
+    await h.reply(1, { ok: true });
+    assert.strictEqual(session(), before, 'refresh ACK alone is not authoritative metadata');
+    h.source.emit({ type: 'session/patch', sessionId: 'a', loaded: false });
+    assert.equal(session().loaded, false);
+    await assert.rejects(resource.read(useCockpit.getState()), SessionUnloadedError);
+    assert.equal(h.requests.length, 2, 'only the detail read and passive refresh may POST');
+    assert.deepEqual(getUxErrors(), []);
+  });
+}
+
+test('concurrent unloaded races across sessions share one refresh even after its ACK', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  const before = useCockpit.getState().sessions;
+  const reads = [
+    expectRejection(useCockpit.getState().getPlan('a'), /Native session data/),
+    expectRejection(useCockpit.getState().getPanels('b'), /Native session data/),
+    expectRejection(useCockpit.getState().skillsSession('a'), /Native session data/),
+    expectRejection(useCockpit.getState().scheduleList('b'), /Native session data/),
+  ];
+  h.assertPost(0, 'session/plan', { sessionId: 'a' }).resolve(unloadedResponse());
+  await reads[0];
+  h.assertPost(4, 'session/refresh', {});
+  h.assertPost(1, 'session/panels', { sessionId: 'b' }).resolve(unloadedResponse());
+  await reads[1];
+  assert.equal(h.requests.length, 5);
+  const duringRefresh = expectRejection(useCockpit.getState().getPlan('b'), /Native session data/);
+  await h.reply(4, { ok: true });
+  h.assertPost(2, 'skills/session', { sessionId: 'a' }).resolve(unloadedResponse());
+  h.assertPost(3, 'schedule/list', { sessionId: 'b' }).resolve(unloadedResponse());
+  h.assertPost(5, 'session/plan', { sessionId: 'b' }).resolve(unloadedResponse());
+  await Promise.all([...reads, duringRefresh]);
+  assert.equal(h.requests.length, 6, 'late failures from overlapping reads must not refresh again');
+  assert.strictEqual(useCockpit.getState().sessions, before);
+
+  const later = expectRejection(useCockpit.getState().getPlan('a'), /Native session data/);
+  h.assertPost(6, 'session/plan', { sessionId: 'a' }).resolve(unloadedResponse());
+  await later;
+  h.assertPost(7, 'session/refresh', {});
+  await h.reply(7, { ok: true });
+  assert.equal(h.requests.length, 8, 'a later independent race can reconcile again');
+  assert.strictEqual(useCockpit.getState().sessions, before);
+  assert.deepEqual(getUxErrors(), []);
+});
+
+for (const obsolete of ['snapshot', 'reconnect', 'replacement client', 'cleanup'] as const) {
+  test(`an unloaded response from before ${obsolete} cannot refresh the current connection`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    const checked = expectRejection(useCockpit.getState().getPlan('a'), /Native session data/);
+    if (obsolete === 'snapshot') h.snapshot();
+    else if (obsolete === 'reconnect') h.reconnect();
+    else if (obsolete === 'cleanup') h.cleanup();
+    else {
+      const cleanup = useCockpit.getState().init();
+      t.after(cleanup);
+      h.sources[1].open();
+      h.sources[1].emit({
+        type: 'snapshot', agentStatus: 'up', permissionPolicy: 'allow-all', models: [], sessions: [meta('a')],
+      });
+    }
+    const before = useCockpit.getState().sessions;
+    h.assertPost(0, 'session/plan', { sessionId: 'a' }).resolve(unloadedResponse());
+    await checked;
+    assert.equal(h.requests.length, 1);
+    assert.strictEqual(useCockpit.getState().sessions, before);
+    assert.deepEqual(getUxErrors(), []);
+  });
+}
+
+test('failed passive reconciliation preserves the unloaded rejection and authoritative loaded state', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  const before = session();
+  const checked = expectRejection(useCockpit.getState().getPanels('a'), /Native session data/);
+  h.assertPost(0, 'session/panels', { sessionId: 'a' }).resolve(unloadedResponse());
+  await checked;
+  h.assertPost(1, 'session/refresh', {}).resolve(Response.json({ error: 'refresh denied' }, { status: 403 }));
+  await setImmediate();
+  assert.strictEqual(session(), before);
+  assert.equal(h.requests.length, 2);
+  assert.ok(getUxErrors().every((error) => !error.message.includes(unloadedMessage)));
+});
+
+for (const { status, code } of [
+  { status: 409, code: undefined },
+  { status: 409, code: 'OTHER_CONFLICT' },
+  { status: 403, code: 'SESSION_UNLOADED' },
+]) {
+  test(`native HTTP ${status}/${code} does not passively refresh based on an unloaded message`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    const before = session();
+    const checked = expectRejection(useCockpit.getState().getPlan('a'), /Native session data/);
+    h.assertPost(0, 'session/plan', { sessionId: 'a' }).resolve(Response.json({
+      message: unloadedMessage, code,
+    }, { status }));
+    await checked;
+    assert.strictEqual(session(), before);
+    assert.equal(h.requests.length, 1);
+    assert.equal(getUxErrors().length, 1);
+  });
+}
+
+test('unloaded history stays passive and MCP is gated without runtime loading', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot([], { sessions: ['a', 'b'].map((id) => ({ ...meta(id), loaded: false })) });
+  await h.load('a', [message('a-history')], false);
+  useCockpit.getState().setActiveId('a');
+  assert.equal(h.requests.length, 1, 'unchanged history selection must not fetch again');
+  await h.load('b', [message('b-history')], false);
+  useCockpit.getState().setActiveId('a');
+  h.assertPost(2, 'session/history', { sessionId: 'a', resume: {}, limit: 30 });
+  await h.history(2, { sessionId: 'a', messages: [message('a-history')], latest: true, hasMore: false });
+  assert.equal(h.requests.length, 3, 'returning reads fresh history without loading runtime');
+
+  await assert.rejects(useCockpit.getState().mcpSession('a'), SessionUnloadedError);
+  assert.equal(h.requests.length, 3);
+  useCockpit.getState().openPreview('trash');
+  h.assertPost(3, 'session/peek', { sessionId: 'trash' });
+  await h.reply(3, { sessionId: 'trash', title: 'Trash', cwd: '.', messages: [], hasMore: false });
+  const refresh = useCockpit.getState().refreshList();
+  h.assertPost(4, 'session/refresh', {}).resolve(Response.json({ ok: true }));
+  await refresh;
+  assert.equal(useCockpit.getState().activeId, 'a');
+  assert.deepEqual(session().messages, [message('a-history')]);
+  assert.ok(useCockpit.getState().sessions.every((row) => row.loaded === false));
+  assert.equal(h.requests.length, 5);
+  assert.deepEqual(getUxErrors(), []);
+});
+
+test('MCP loaded:false race requests passive metadata reconciliation instead of a false empty result', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  const before = session();
+  const checked = observe(assert.rejects(useCockpit.getState().mcpSession('a'), SessionUnloadedError));
+  h.assertPost(0, 'mcp/session', { sessionId: 'a' }).resolve(Response.json({ loaded: false, servers: [] }));
+  await checked;
+  h.assertPost(1, 'session/refresh', {});
+  assert.strictEqual(session(), before);
+  await h.reply(1, { ok: true });
+  assert.equal(session().loaded, true, 'only server metadata may update loaded');
+  h.source.emit({ type: 'session/patch', sessionId: 'a', loaded: false });
+  await assert.rejects(useCockpit.getState().mcpSession('a'), SessionUnloadedError);
+  assert.equal(h.requests.length, 2);
+  assert.deepEqual(getUxErrors(), []);
+});
+
+test('global MCP and Skills remain readable and mutable without any session or optimistic selection state', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot([]);
+  const before = useCockpit.getState().sessions;
+  const mcp = useCockpit.getState().mcpGlobal();
+  const skills = useCockpit.getState().skillsGlobal();
+  const detail = useCockpit.getState().skillsRead('fixture-skill');
+  const toggle = useCockpit.getState().skillsSetGlobal('fixture-skill', true);
+  h.assertPost(0, 'mcp/global', {}).resolve(Response.json({ servers: globalMcp }));
+  h.assertPost(1, 'skills/global', {}).resolve(Response.json({ skills: globalSkills }));
+  h.assertPost(2, 'skills/read', { name: 'fixture-skill' }).resolve(Response.json(skill));
+  h.assertPost(3, 'skills/global-toggle', { name: 'fixture-skill', enabled: true }).resolve(Response.json({ ok: true }));
+  assert.deepEqual(await mcp, globalMcp);
+  assert.deepEqual(await skills, globalSkills);
+  assert.deepEqual(await detail, skill);
+  await toggle;
+  assert.strictEqual(useCockpit.getState().sessions, before);
+  assert.equal(useCockpit.getState().activeId, null);
+  assert.equal(h.requests.length, 4);
+  assert.deepEqual(getUxErrors(), []);
+});
+
+test('explicit reload remains available while unloaded and only metadata enables native detail reads', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot([], { sessions: [{ ...meta('a'), loaded: false }] });
+  const reload = useCockpit.getState().reloadSession('a');
+  h.assertPost(0, 'session/reload', { sessionId: 'a' }).resolve(Response.json({ ok: true }));
+  await reload;
+  assert.equal(session().loaded, false);
+  await assert.rejects(useCockpit.getState().getPlan('a'), SessionUnloadedError);
+  assert.equal(h.requests.length, 1);
+  h.source.emit({ type: 'session/patch', sessionId: 'a', loaded: true });
+  const detail = useCockpit.getState().getPlan('a');
+  h.assertPost(1, 'session/plan', { sessionId: 'a' }).resolve(Response.json(plan));
+  assert.deepEqual(await detail, plan);
+  assert.equal(h.requests.length, 2);
+  assert.deepEqual(getUxErrors(), []);
+});
+
+for (const resource of resources) {
+  test(`${resource.label} returns the HTTP resource without changing the session projection`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    const before = session();
+    const pending = observe(resource.read(useCockpit.getState()));
+    assert.ok(pending instanceof Promise);
+    h.assertPost(0, resource.name, resource.body).resolve(Response.json(resource.response));
+    assert.deepEqual(await pending, resource.expected);
+    assert.strictEqual(session(), before);
+    assert.equal(h.requests.length, 1);
+    assert.deepEqual(getUxErrors(), []);
+  });
+
+  test(`${resource.label} rejects disconnected reads or mutations instead of returning empty data or success`, async (t) => {
+    const h = setup(t);
+    const fresh = createCockpitStore();
+    await expectOffline(h, () => resource.read(fresh.getState()));
+    h.snapshot();
+    await expectOffline(h, () => resource.read(useCockpit.getState()));
+    h.source.open();
+    h.source.drop();
+    await expectOffline(h, () => resource.read(useCockpit.getState()));
+    h.cleanup();
+    await expectOffline(h, () => resource.read(useCockpit.getState()));
+    assert.equal(h.requests.length, 0);
+  });
+
+  for (const failure of ['transport', 'HTTP', 'invalid JSON'] as const) {
+    test(`${resource.label} propagates ${failure} instead of silently fabricating a resource`, async (t) => {
+      const h = setup(t);
+      h.source.open();
+      h.snapshot();
+      const before = session();
+      const pending = resource.read(useCockpit.getState());
+      const rejected = expectRejection(pending);
+      const response = h.assertPost(0, resource.name, resource.body);
+      if (failure === 'transport') response.reject(new TypeError('offline'));
+      else if (failure === 'HTTP') response.resolve(Response.json({ error: 'resource denied' }, { status: 403 }));
+      else response.resolve(new Response('not JSON', { headers: { 'content-type': 'application/json' } }));
+      await rejected;
+      if (resource.name === 'schedule/add' || resource.name === 'schedule/stop') {
+        assert.ok(session().error);
+        assert.deepEqual(session(), { ...before, error: session().error });
+      } else {
+        assert.strictEqual(session(), before);
+      }
+      assert.equal(h.requests.length, 1);
+    });
+  }
+}
+
+for (const resource of resources.filter((r) => r.name === 'schedule/add' || r.name === 'schedule/stop')) {
+  test(`${resource.label} remains safe when void-called and exposes rejected acknowledgements`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    void resource.read(useCockpit.getState());
+    await h.reply(0, { ok: false });
+    assert.match(session().error ?? '', resource.name === 'schedule/add' ? /未能添加定时任务/ : /未能停止定时任务/);
+    assert.equal(getUxErrors().length, 1);
+    h.source.drop();
+    void resource.read(useCockpit.getState());
+    await setImmediate();
+    assert.match(session().error ?? '', /未连接/);
+  });
+}
+
+for (const reason of [undefined, '', ' \t ', '模拟：本会话定时任务数量已达上限，请停止一项后再添加。']) {
+  test(`scheduleAdd preserves negative acknowledgement reason or operation fallback: ${JSON.stringify(reason)}`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot(['a', 'b']);
+    const other = session('b');
+    const before = session();
+    const expected = reason?.trim() ? reason : '未能添加定时任务，请核对后再试。';
+    const pending = useCockpit.getState().scheduleAdd('a', { prompt: 'reminder', interval: '1s' });
+    const rejected = assert.rejects(pending, { message: expected });
+    await h.reply(0, { ok: false, ...(reason === undefined ? {} : { error: reason }) });
+    await rejected;
+    assert.equal(h.requests.length, 1);
+    assert.equal(getUxErrors().length, 1);
+    assert.ok(getUxErrors()[0].message.includes(`会话 a (a)：计划任务操作失败：${expected}`));
+    assert.deepEqual(session(), { ...before, error: session().error });
+    assert.strictEqual(session('b'), other);
+  });
+}
+
+test('scheduleStop rejects false with its own fallback and independent failures are not merged', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  for (let i = 0; i < 2; i++) {
+    const rejected = assert.rejects(useCockpit.getState().scheduleStop('a', 7), {
+      message: '未能停止定时任务，请刷新列表后核对。',
+    });
+    h.assertPost(i, 'schedule/stop', { sessionId: 'a', id: 7 }).resolve(Response.json({ ok: false }));
+    await rejected;
+  }
+  assert.equal(h.requests.length, 2);
+  assert.equal(getUxErrors().length, 2);
+  assert.notEqual(getUxErrors()[0].id, getUxErrors()[1].id);
+  assert.ok(getUxErrors().every(error => error.message.includes('会话 a (a)')));
+  assert.equal(session('b').error, null);
+});
+
+for (const failure of ['500', 'null-error'] as const) {
+  test(`scheduleAdd transport ${failure} keeps one diagnostic and does not use negative ACK fallback`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    const pending = useCockpit.getState().scheduleAdd('a', { prompt: 'reminder', interval: '1s' });
+    const rejected = assert.rejects(pending, failure === '500' ? /模拟暂时不可用/ : /error/);
+    h.assertPost(0, 'schedule/add', { sessionId: 'a', prompt: 'reminder', interval: '1s' })
+      .resolve(Response.json({ error: failure === '500' ? '模拟暂时不可用' : null, ok: false }, { status: failure === '500' ? 500 : 200 }));
+    await rejected;
+    await setImmediate();
+    assert.equal(getUxErrors().length, 1);
+    assert.doesNotMatch(getUxErrors()[0].message, /未能添加定时任务/);
+    assert.equal(h.requests.length, 1);
+  });
+}
+
+for (const kind of ['image', 'file'] as const) {
+  test(`sendPrompt forwards optional ${kind} attachment metadata, not UploadedFile server paths`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    const before = session();
+    const attachment: Attachment = {
+      kind, name: kind === 'image' ? 'fixture.png' : 'fixture.txt',
+      url: '/uploads/fixture', size: 12, mime: kind === 'image' ? 'image/png' : 'text/plain',
+    };
+    const uploaded: UploadedFile = {
+      ...attachment, size: 12, mime: attachment.mime!, path: '/fixture/uploads/fixture', storedName: 'fixture',
+    };
+    const pending: Promise<boolean> = useCockpit.getState().sendPrompt('a', 'inspect attachment', uploaded);
+    const response = h.assertPost(0, 'prompt', { sessionId: 'a', text: 'inspect attachment', attachment });
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await setImmediate();
+    assert.equal(settled, false);
+    assert.strictEqual(session(), before);
+    response.resolve(Response.json({ ok: true }));
+    assert.equal(await pending, true);
+    assert.strictEqual(session(), before);
+    assert.equal(uploaded.path, '/fixture/uploads/fixture');
+    assert.equal(h.requests.length, 1);
+    assert.deepEqual(getUxErrors(), []);
+  });
+}
+
+test('attached prompt failures keep the original false acknowledgement and local diagnostic contract', async (t) => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  const attachment: Attachment = { kind: 'file', name: 'fixture.txt', url: '/uploads/fixture.txt' };
+  const before = session();
+  const other = session('b');
+  const pending = useCockpit.getState().sendPrompt('a', 'keep draft', attachment);
+  h.assertPost(0, 'prompt', { sessionId: 'a', text: 'keep draft', attachment }).reject(new Error('attachment denied'));
+  assert.equal(await pending, false);
+  assert.match(session().error ?? '', /未确认发送/);
+  assert.match(session().error ?? '', /草稿已保留/);
+  assert.deepEqual(session(), { ...before, error: session().error });
+  assert.strictEqual(session('b'), other);
+  assert.equal(getUxErrors().length, 1);
+  assert.match(getUxErrors()[0].message, /prompt/);
+  assert.equal(h.requests.length, 1);
+});
+
+for (const addedBeforeReply of [false, true]) {
+  test(`forkSession returns new ID without sending, loading or selecting it (SSE first: ${addedBeforeReply})`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot(['a']);
+    const pending = useCockpit.getState().forkSession('a');
+    h.assertPost(0, 'session/fork', { sessionId: 'a' });
+    if (addedBeforeReply) h.source.emit({ type: 'session/added', session: { ...meta('child'), loaded: false, status: 'unloaded' } });
+    h.request(0).response.resolve(Response.json({ sessionId: 'child' }));
+    assert.equal(await pending, 'child');
+    if (!addedBeforeReply) h.source.emit({ type: 'session/added', session: { ...meta('child'), loaded: false, status: 'unloaded' } });
+    assert.equal(useCockpit.getState().activeId, null);
+    assert.equal(session('child').loaded, false);
+    assert.equal(h.requests.length, 1);
+  });
+
+  test(`newSession returns its SID but never selects it (added SSE before reply: ${addedBeforeReply})`, async (t) => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot(['a', 'b']);
+    await h.load('a', [message('a')], false);
+    await h.load('b', [message('b')], false);
+    await h.load('a', [message('a-fresh')], false);
+    const pending: Promise<string> = useCockpit.getState().newSession('./fixture');
+    h.assertPost(3, 'session/new', { cwd: './fixture' });
+    let settled = false;
+    void pending.then(() => { settled = true; });
+    await setImmediate();
+    assert.equal(settled, false);
+    assert.equal(useCockpit.getState().activeId, 'a');
+    if (addedBeforeReply) h.source.emit({ type: 'session/added', session: meta('created') });
+    useCockpit.getState().setActiveId('b');
+    h.request(3).response.resolve(Response.json({ sessionId: 'created' }));
+    assert.equal(await pending, 'created');
+    assert.equal(useCockpit.getState().activeId, 'b');
+    if (!addedBeforeReply) h.source.emit({ type: 'session/added', session: meta('created') });
+    assert.equal(useCockpit.getState().activeId, 'b');
+    assert.deepEqual(session('created').messages, []);
+    assert.equal(session('created').materialized, false);
+    assert.equal(h.requests.length, 5, 'only route selections read history, never creation');
+  });
+}
+
+test('forkSession propagates uncertain delivery once without retry or changing selection', async t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a']);
+  const pending = useCockpit.getState().forkSession('a');
+  const failure = new Error('delivery uncertain; inspect session list');
+  h.assertPost(0, 'session/fork', { sessionId: 'a' }).reject(failure);
+  await assert.rejects(pending, error => error === failure);
+  assert.equal(h.requests.length, 1);
+  assert.equal(getUxErrors().length, 1);
+});
+
+test('newSession rejects original failures and disconnected attempts without changing the selected session or double reporting', async (t) => {
+  const h = setup(t);
+  h.snapshot();
+  useCockpit.getState().setActiveId('a');
+  await expectOffline(h, () => useCockpit.getState().newSession('.'));
+  assert.equal(h.requests.length, 0);
+  h.source.open();
+  h.assertPost(0, 'session/history', { sessionId: 'a', limit: 30 });
+  await h.history(0, { sessionId: 'a', messages: [], latest: true, hasMore: false });
+  const pending = useCockpit.getState().newSession('.');
+  const failure = new Error('creation denied');
+  const errorsBefore = getUxErrors().length;
+  h.assertPost(1, 'session/new', { cwd: '.' }).reject(failure);
+  await assert.rejects(pending, error => error === failure);
+  assert.equal(getUxErrors().length, errorsBefore + 1);
+  assert.match(getUxErrors().at(-1)!.message, /接口 session\/new.*creation denied/);
+  assert.equal(useCockpit.getState().activeId, 'a');
+  h.source.drop();
+  await expectOffline(h, () => useCockpit.getState().newSession('.'));
+  h.cleanup();
+  await expectOffline(h, () => useCockpit.getState().newSession('.'));
+  assert.equal(h.requests.length, 2);
+});
+
+test('newSession HTTP failure stays rejected with its actionable reason and one report for each independent attempt', async t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot();
+  for (let i = 0; i < 2; i++) {
+    const pending = useCockpit.getState().newSession('/P');
+    h.assertPost(i, 'session/new', { cwd: '/P' }).resolve(Response.json({ error: 'P is not accessible; choose another directory' }, { status: 500 }));
+    await assert.rejects(pending, /P is not accessible; choose another directory/);
+    assert.equal(getUxErrors().length, i + 1);
+  }
+  assert.equal(h.requests.length, 2);
+});
+
+test('void newSession failures are observed without hiding rejection or retrying', async t => {
+  const h = setup(t);
+  void useCockpit.getState().newSession('/P');
+  await setImmediate();
+  assert.equal(getUxErrors().length, 1);
+  assert.match(getUxErrors()[0].message, /新建会话失败.*未连接/);
+  assert.equal(h.requests.length, 0);
+  h.source.open();
+  h.snapshot();
+  void useCockpit.getState().newSession('/P');
+  h.assertPost(0, 'session/new', { cwd: '/P' }).resolve(Response.json({ error: 'denied' }, { status: 500 }));
+  await setImmediate();
+  assert.equal(getUxErrors().length, 2);
+  assert.equal(h.requests.length, 1);
+});
+
+const applicationServerKey = new Uint8Array(createECDH('prime256v1').generateKeys());
+const vapidPublicKey = Buffer.from(applicationServerKey).toString('base64url');
+const subscription: IntentBody<'push/subscribe'>['subscription'] = {
+  endpoint: 'https://push.invalid/fixture', expirationTime: null,
+  keys: { p256dh: vapidPublicKey, auth: Buffer.alloc(16, 7).toString('base64url') },
+};
+
+function pushStatus(registered: boolean): IntentResult<'push/status'> {
+  return { configured: true, registered, publicKey: vapidPublicKey, subscriptionCount: registered ? 1 : 0 };
+}
+
+function browser(t: TestContext, permission: NotificationPermission = 'granted', push = false) {
+  let harness: ReturnType<typeof setup> | undefined;
+  t.after(() => harness?.cleanup());
+  const notifications: FakeNotification[] = [];
+  class FakeNotification {
+    static permission = permission;
+    static requestPermission = t.mock.fn(async () => {
+      FakeNotification.permission = 'granted';
+      return 'granted' as const;
+    });
+    onclick: (() => void) | null = null;
+    close = t.mock.fn();
+    readonly title: string;
+    readonly options?: NotificationOptions;
+    constructor(title: string, options?: NotificationOptions) {
+      this.title = title;
+      this.options = options;
+      notifications.push(this);
+    }
+  }
+  const localSubscription = {
+    endpoint: subscription.endpoint,
+    expirationTime: null,
+    options: { applicationServerKey: applicationServerKey.slice().buffer, userVisibleOnly: true },
+    getKey: (name: PushEncryptionKeyName) => Uint8Array.from(Buffer.from(subscription.keys[name], 'base64url')).buffer,
+    toJSON: () => subscription,
+    unsubscribe: t.mock.fn(async () => { local.subscription = null; return true; }),
+  } satisfies PushSubscription;
+  const local = { subscription: push ? localSubscription as PushSubscription : null, registered: push };
+  const osNotifications: { tag: string; data: unknown; close: () => void }[] = [];
+  const registration = {
+    active: { state: 'activated' as const }, installing: null, waiting: null,
+    pushManager: {
+      getSubscription: t.mock.fn(async () => local.subscription),
+      subscribe: t.mock.fn(async (_options: PushSubscriptionOptionsInit) => {
+        local.subscription = localSubscription;
+        return localSubscription;
+      }),
+    },
+    getNotifications: t.mock.fn(async () => osNotifications),
+    showNotification: t.mock.fn(async (_title: string, _options?: NotificationOptions) => {}),
+  };
+  const serviceWorker = {
+    register: t.mock.fn(async (_url: string, _options?: RegistrationOptions) => {
+      local.registered = true;
+      return registration;
+    }),
+    getRegistration: t.mock.fn(async (_scope?: string) => local.registered ? registration : undefined),
+    get ready(): Promise<ServiceWorkerRegistration> { return assert.fail('passive lookups must not wait on serviceWorker.ready'); },
+  };
+  const navigatorMock = { standalone: true, userActivation: { isActive: true }, serviceWorker };
+  const location = {
+    protocol: 'https:',
+    get href() { return 'https://cockpit.invalid/session/a'; },
+    set href(_value: string) { assert.fail('notifications must not navigate'); },
+    assign: t.mock.fn(() => assert.fail('notifications must not navigate')),
+    replace: t.mock.fn(() => assert.fail('notifications must not navigate')),
+  };
+  const windowMock = Object.assign(new EventTarget(), {
+    Notification: FakeNotification, navigator: navigatorMock, isSecureContext: true, PushManager: class {},
+    matchMedia: () => ({ matches: true }), focus: t.mock.fn(), location,
+    history: {
+      pushState: t.mock.fn(() => assert.fail('notifications must not navigate')),
+      replaceState: t.mock.fn(() => assert.fail('notifications must not navigate')),
+    },
+  });
+  const documentMock = Object.assign(new EventTarget(), { visibilityState: 'hidden' });
+  replaceGlobal(t, 'window', windowMock);
+  replaceGlobal(t, 'document', documentMock);
+  replaceGlobal(t, 'navigator', navigatorMock);
+  replaceGlobal(t, 'Notification', FakeNotification);
+  return {
+    window: windowMock, document: documentMock, notifications, Notification: FakeNotification,
+    local, localSubscription, registration, serviceWorker, osNotifications,
+    setup: (store: Store = createCockpitStore()) => {
+      harness = setup(t, store);
+      return harness;
+    },
+  };
+}
+
+test('browser notification click dispatches cockpit:open-session with SID and never selects or navigates', async (t) => {
+  const b = browser(t);
+  const h = b.setup(useCockpit);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  await h.load('a', [message('active')], false);
+  h.assertPost(1, 'push/status', {});
+  await h.reply(1, pushStatus(false));
+  const events: Event[] = [];
+  b.window.addEventListener('cockpit:open-session', (event) => events.push(event));
+  h.source.emit({
+    type: 'session/notify', sessionId: 'b', title: 'Fixture session', attention: 'choice', body: 'Needs input',
+  });
+  await setImmediate();
+  assert.equal(b.notifications.length, 1);
+  const notification = b.notifications[0];
+  assert.equal(notification.title, 'Fixture session');
+  assert.equal(notification.options?.body, 'Needs input');
+  assert.equal(notification.options?.tag, 'b');
+  assert.ok(notification.onclick);
+  notification.onclick();
+  assert.equal(events.length, 1);
+  assert.ok(events[0] instanceof CustomEvent);
+  assert.deepEqual(events[0].detail, { sessionId: 'b' });
+  assert.equal(b.window.focus.mock.callCount(), 1);
+  assert.equal(notification.close.mock.callCount(), 1);
+  assert.equal(useCockpit.getState().activeId, 'a');
+  assert.equal(h.requests.length, 2);
+  h.source.emit({ type: 'session/notify', sessionId: 'a', title: 'Active', attention: 'ready', body: 'Done' });
+  await setImmediate();
+  assert.equal(b.notifications.length, 2, 'a hidden active session still produces a page notification');
+  assert.equal(b.notifications[1].options?.tag, 'a');
+  b.document.visibilityState = 'visible';
+  h.source.emit({ type: 'session/notify', sessionId: 'b', title: 'Visible', attention: 'ready', body: 'Done' });
+  await setImmediate();
+  assert.equal(b.notifications.length, 2, 'a visible tab suppresses page notifications');
+  assert.equal(b.Notification.requestPermission.mock.callCount(), 0);
+  assert.equal(b.serviceWorker.register.mock.callCount(), 0);
+  assert.equal(b.registration.pushManager.subscribe.mock.callCount(), 0);
+  assert.deepEqual(getUxErrors(), []);
+});
+
+test('notification permission alone is not notification readiness and snapshots never ask permission', async (t) => {
+  const b = browser(t, 'granted', true);
+  const h = b.setup();
+  assert.equal(h.store.getState().notifPermission, 'granted');
+  assert.equal(h.store.getState().notifReady, false);
+  h.source.open();
+  h.snapshot();
+  assert.equal(h.store.getState().notifReady, false);
+  assert.equal(b.Notification.requestPermission.mock.callCount(), 0);
+  await setImmediate();
+  h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
+  await h.reply(0, { configured: false, registered: false, publicKey: null, subscriptionCount: 0 });
+  assert.equal(h.store.getState().notifReady, false);
+  assert.equal(h.store.getState().notifications.configured, false);
+  assert.equal(h.store.getState().notifications.busy, false);
+  assert.equal(b.Notification.requestPermission.mock.callCount(), 0);
+  assert.equal(b.registration.pushManager.subscribe.mock.callCount(), 0);
+  assert.equal(b.serviceWorker.register.mock.callCount(), 0);
+  assert.equal(h.requests.length, 1);
+});
+
+for (const permission of ['default', 'denied'] as const) {
+  test(`passive notification status never prompts or arms push with ${permission} permission`, async (t) => {
+    const b = browser(t, permission, true);
+    const h = b.setup();
+    h.source.open();
+    h.snapshot(['a'], { vapidPublicKey });
+    await setImmediate();
+    h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
+    await h.reply(0, pushStatus(true));
+    assert.equal(h.store.getState().notifReady, false);
+    assert.equal(h.store.getState().notifPermission, permission);
+    assert.equal(h.store.getState().notifications.registered, true);
+    assert.equal(b.Notification.requestPermission.mock.callCount(), 0);
+    assert.equal(b.registration.pushManager.subscribe.mock.callCount(), 0);
+    assert.equal(b.serviceWorker.register.mock.callCount(), 0);
+    assert.equal(h.requests.length, 1);
+  });
+}
+
+test('passive connect reuses a matching registered key and ready push suppresses page fallback', async (t) => {
+  const b = browser(t, 'granted', true);
+  const h = b.setup();
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  await setImmediate();
+  h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
+  assert.equal(h.store.getState().notifReady, false);
+  await h.reply(0, pushStatus(true));
+  assert.equal(h.store.getState().notifReady, true);
+  assert.equal(h.store.getState().notifications.ready, true);
+  assert.equal(h.store.getState().notifications.registered, true);
+  assert.equal(h.store.getState().notifications.error, null);
+  await h.load('a', [], false);
+  for (const sessionId of ['a', 'b']) {
+    h.source.emit({ type: 'session/notify', sessionId, title: sessionId, attention: 'ready', body: 'Done' });
+  }
+  await setImmediate();
+  assert.equal(b.document.visibilityState, 'hidden');
+  assert.equal(b.notifications.length, 0);
+  assert.equal(b.registration.showNotification.mock.callCount(), 0);
+  assert.equal(b.serviceWorker.register.mock.callCount(), 0);
+  assert.equal(b.registration.pushManager.subscribe.mock.callCount(), 0);
+  assert.equal(b.Notification.requestPermission.mock.callCount(), 0);
+  assert.equal(h.requests.length, 2);
+  assert.deepEqual(getUxErrors(), []);
+});
+
+for (const failure of ['ok:false', 'invalid acknowledgement', 'HTTP', 'transport'] as const) {
+  test(`push subscription ${failure} cannot set notifReady even with granted permission`, async (t) => {
+    const b = browser(t, 'default', true);
+    const h = b.setup();
+    h.source.open();
+    h.snapshot(['a'], { vapidPublicKey });
+    await setImmediate();
+    h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
+    await h.reply(0, pushStatus(false));
+    assert.equal(b.Notification.requestPermission.mock.callCount(), 0);
+    assert.equal(h.requests.length, 1);
+    const pending = h.store.getState().enableNotifications();
+    assert.equal(b.Notification.requestPermission.mock.callCount(), 1, 'permission is requested in the click stack');
+    await setImmediate();
+    assert.equal(b.Notification.requestPermission.mock.callCount(), 1);
+    assert.equal(h.store.getState().notifPermission, 'granted');
+    assert.equal(h.store.getState().notifReady, false);
+    h.assertPost(1, 'push/status', { endpoint: subscription.endpoint });
+    await h.reply(1, pushStatus(false));
+    const response = h.assertPost(2, 'push/subscribe', { subscription });
+    const rawError = `${subscription.endpoint}?auth=private-push-token`;
+    if (failure === 'transport') response.reject(new TypeError(rawError));
+    else if (failure === 'HTTP') response.resolve(Response.json({ error: rawError }, { status: 403 }));
+    else response.resolve(Response.json({ ok: failure === 'ok:false' ? false : 'true' }));
+    assert.equal(await pending, undefined, 'controller errors resolve into settings state');
+    assert.equal(h.store.getState().notifReady, false);
+    assert.equal(h.store.getState().notifications.ready, false);
+    assert.equal(h.store.getState().notifications.busy, false);
+    assert.match(h.store.getState().notifications.error!, /服务端未确认订阅注册/);
+    assert.doesNotMatch(JSON.stringify(h.store.getState().notifications), /push\.invalid|private-push-token/);
+    assert.deepEqual(getUxErrors(), [], 'push failures must not create raw global UI errors');
+    assert.equal(b.serviceWorker.register.mock.callCount(), 0);
+    assert.equal(b.registration.pushManager.subscribe.mock.callCount(), 0);
+    assert.equal(h.requests.length, 3);
+  });
+}
+
+test('notifReady waits for subscribe ACK and registered status, then resets immediately on connecting', async (t) => {
+  const b = browser(t, 'granted', true);
+  const h = b.setup();
+  h.source.open();
+  h.snapshot(['a'], { vapidPublicKey });
+  await setImmediate();
+  h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
+  await h.reply(0, pushStatus(false));
+  const response = h.assertPost(1, 'push/subscribe', { subscription });
+  assert.equal(h.store.getState().notifReady, false);
+  const json = deferred<{ ok: boolean }>();
+  const http = Response.json({});
+  t.mock.method(http, 'json', () => json.promise);
+  response.resolve(http);
+  await setImmediate();
+  assert.equal(h.store.getState().notifReady, false);
+  json.resolve({ ok: true });
+  await setImmediate();
+  assert.equal(h.store.getState().notifReady, false, 'ACK is not proof the endpoint is registered');
+  h.assertPost(2, 'push/status', { endpoint: subscription.endpoint });
+  await h.reply(2, pushStatus(true));
+  assert.equal(h.store.getState().notifReady, true);
+  h.source.drop();
+  assert.equal(h.store.getState().notifReady, false);
+  h.source.open();
+  h.snapshot(['a'], { vapidPublicKey });
+  await setImmediate();
+  h.assertPost(3, 'push/status', { endpoint: subscription.endpoint });
+  assert.equal(h.store.getState().notifReady, false);
+  await h.reply(3, pushStatus(true));
+  assert.equal(h.store.getState().notifReady, true);
+  assert.equal(h.store.getState().notifications.ready, true);
+  assert.equal(b.Notification.requestPermission.mock.callCount(), 0);
+  assert.equal(b.registration.pushManager.subscribe.mock.callCount(), 0);
+  assert.equal(b.serviceWorker.register.mock.callCount(), 0);
+  assert.equal(h.requests.length, 4);
+});
+
+for (const registered of [false, undefined]) {
+  test(`successful push ACK without registered:true (${registered}) remains unready`, async (t) => {
+    const b = browser(t, 'granted', true);
+    const h = b.setup();
+    h.source.open();
+    h.snapshot();
+    await setImmediate();
+    h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
+    await h.reply(0, pushStatus(false));
+    h.assertPost(1, 'push/subscribe', { subscription });
+    await h.reply(1, { ok: true });
+    h.assertPost(2, 'push/status', { endpoint: subscription.endpoint });
+    await h.reply(2, { ...pushStatus(false), registered });
+    assert.equal(h.store.getState().notifReady, false);
+    assert.equal(h.store.getState().notifications.busy, false);
+    assert.match(h.store.getState().notifications.error!, /服务端未确认订阅注册/);
+    assert.deepEqual(getUxErrors(), []);
+    assert.equal(h.requests.length, 3);
+  });
+}
+
+for (const outcome of ['success', 'failure'] as const) {
+  test(`a superseded push ${outcome} cannot set readiness or override the current registration`, async (t) => {
+    const b = browser(t, 'granted', true);
+    const h = b.setup();
+    h.source.open();
+    h.snapshot(['a'], { vapidPublicKey });
+    await setImmediate();
+    h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
+    await h.reply(0, pushStatus(false));
+    h.assertPost(1, 'push/subscribe', { subscription });
+    h.source.drop();
+    assert.equal(h.store.getState().notifReady, false);
+    h.source.open();
+    h.snapshot(['a'], { vapidPublicKey });
+    await setImmediate();
+    assert.equal(h.store.getState().notifReady, false);
+    if (outcome === 'success') {
+      await h.reply(1, { ok: true });
+    } else {
+      h.request(1).response.reject(new Error('obsolete push failure'));
+      await setImmediate();
+    }
+    assert.equal(h.store.getState().notifReady, false, 'an obsolete completion cannot confirm the new connection');
+    assert.equal(h.store.getState().notifications.error, null);
+    h.assertPost(2, 'push/status', { endpoint: subscription.endpoint });
+    await h.reply(2, pushStatus(true));
+    assert.equal(h.store.getState().notifReady, true);
+    assert.equal(h.store.getState().notifications.registered, true);
+    assert.equal(h.store.getState().notifications.error, null);
+    assert.deepEqual(getUxErrors(), []);
+    assert.equal(h.requests.length, 3, 'the obsolete operation must not verify or register again');
+    h.cleanup();
+    assert.equal(h.store.getState().notifReady, false);
+  });
+}
+
+test('foreground acknowledges only the observed attnId and delayed ACKs cannot clear newer or unrelated notifications', async (t) => {
+  const b = browser(t, 'granted', true);
+  const h = b.setup();
+  const note = (sessionId: string, attnId: number) => ({
+    tag: sessionId,
+    data: { type: 'notification', kind: 'ready', sessionId, attnId },
+    close: t.mock.fn(),
+  });
+  const old = note('a', 4);
+  const newer = note('a', 5);
+  const other = note('b', 8);
+  const unknown = note('not-in-snapshot', 1);
+  b.osNotifications.push(old, newer, other, unknown);
+  h.source.open();
+  h.snapshot([], {
+    sessions: [
+      { ...meta('a'), attention: 'ready', attnId: 4, seenId: 3 },
+      { ...meta('b'), attention: 'choice', attnId: 8, seenId: 7 },
+    ],
+    unreadCount: 7, inboxRevision: 20,
+  });
+  await setImmediate();
+  h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
+  await h.reply(0, pushStatus(true));
+  await h.load('a', [message('active')], false);
+  h.store.getState().observeAttention('a', 4, true);
+  assert.equal(h.requests.length, 2, 'selecting a hidden session does not acknowledge it');
+
+  b.document.visibilityState = 'visible';
+  b.document.dispatchEvent(new Event('visibilitychange'));
+  b.document.dispatchEvent(new Event('visibilitychange'));
+  b.window.dispatchEvent(new Event('online'));
+  await setImmediate();
+  h.assertPost(2, 'inbox/seen', { sessionId: 'a', attnId: 4 });
+  h.assertPost(3, 'push/status', { endpoint: subscription.endpoint });
+  assert.equal(h.requests.length, 4, 'repeated foreground events coalesce the same observed attention');
+  for (const notification of [old, newer, other, unknown]) {
+    assert.equal(notification.close.mock.callCount(), 0, 'foreground alone never clears OS notifications');
+  }
+  await h.reply(3, pushStatus(true));
+
+  h.source.emit({ type: 'session/patch', sessionId: 'a', attention: 'ready', attnId: 5 });
+  assert.equal(h.requests.length, 4, 'new attention is not read until the view actually renders it');
+  h.store.getState().observeAttention('a', 5, true);
+  h.assertPost(4, 'inbox/seen', { sessionId: 'a', attnId: 5 });
+  await h.reply(2, { ok: true });
+  assert.equal(session('a', h.store).attnId, 5);
+  assert.equal(session('a', h.store).attention, 'ready');
+  assert.equal(session('a', h.store).seenId, 3, 'HTTP ACK is not an authoritative seen patch');
+  assert.equal(h.store.getState().unreadCount, 7);
+  b.window.dispatchEvent(new Event('online'));
+  assert.equal(h.requests.length, 5, 'the old completion must not remove the newer in-flight seen guard');
+
+  h.source.emit({ type: 'session/patch', sessionId: 'a', attention: null, seenId: 4 });
+  await setImmediate();
+  assert.equal(session('a', h.store).attention, 'ready');
+  assert.equal(session('a', h.store).attnId, 5);
+  assert.equal(session('a', h.store).seenId, 4);
+  assert.equal(h.store.getState().unreadCount, 7);
+  assert.ok(old.close.mock.callCount() > 0);
+  assert.equal(newer.close.mock.callCount(), 0);
+  assert.equal(other.close.mock.callCount(), 0);
+  assert.equal(unknown.close.mock.callCount(), 0);
+
+  await h.reply(4, { ok: true });
+  assert.equal(session('a', h.store).attention, 'ready');
+  assert.equal(session('a', h.store).seenId, 4);
+  h.source.emit({ type: 'session/patch', sessionId: 'a', attention: null, attnId: 5, seenId: 5 });
+  await setImmediate();
+  assert.equal(h.store.getState().unreadCount, 6);
+  assert.equal(session('a', h.store).attention, null);
+  assert.equal(session('b', h.store).attention, 'choice');
+  assert.equal(session('b', h.store).seenId, 7);
+  assert.ok(newer.close.mock.callCount() > 0);
+  assert.equal(other.close.mock.callCount(), 0);
+  assert.equal(unknown.close.mock.callCount(), 0);
+  assert.deepEqual(getUxErrors(), []);
+  assert.equal(h.requests.length, 5);
+});
+
+test('active foreground chat does not acknowledge unread replies before visible fresh history', async (t) => {
+  const b = browser(t, 'denied', false);
+  const h = b.setup();
+  b.document.visibilityState = 'visible';
+  h.source.open();
+  h.snapshot([], { sessions: [{ ...meta('a'), attention: 'ready', attnId: 4, seenId: 3 }] });
+  h.store.getState().setActiveId('a');
+  assert.ok(h.requests.every((request) => request.url !== intentUrl('inbox/seen')));
+  h.store.getState().observeAttention('a', 4, true);
+  assert.ok(h.requests.every((request) => request.url !== intentUrl('inbox/seen')), 'unloaded history cannot be read');
+  const historyIndex = h.requests.findIndex((request) => request.url === intentUrl('session/history'));
+  await h.history(historyIndex, { sessionId: 'a', messages: [message('latest')], hasMore: false, latest: true });
+  h.store.getState().observeAttention('a', 4, false);
+  b.document.dispatchEvent(new Event('visibilitychange'));
+  assert.ok(h.requests.every((request) => request.url !== intentUrl('inbox/seen')), 'reading older content is not reading the latest reply');
+  h.store.getState().observeAttention('a', 4, true);
+  assert.equal(h.requests.at(-1)?.url, intentUrl('inbox/seen'));
+});
+
+test('snapshot-derived unread counts exclude seen choices without clearing their required decisions', (t) => {
+  const h = setup(t, createCockpitStore());
+  h.source.open();
+  h.snapshot([], {
+    sessions: [
+      { ...meta('seen-choice'), attention: 'choice', attnId: 4, seenId: 4 },
+      { ...meta('unread-choice'), attention: 'choice', attnId: 5, seenId: 4 },
+      { ...meta('seen-ready'), attention: 'ready', attnId: 3, seenId: 3 },
+      { ...meta('legacy-choice'), attention: 'choice' },
+    ],
+  });
+  assert.equal(h.store.getState().unreadCount, 1);
+  assert.equal(session('seen-choice', h.store).attention, 'choice');
+  h.source.emit({ type: 'session/patch', sessionId: 'unread-choice', seenId: 5 });
+  assert.equal(h.store.getState().unreadCount, 0);
+  assert.equal(session('unread-choice', h.store).attention, 'choice');
+  h.source.emit({ type: 'session/patch', sessionId: 'unread-choice', seenId: 4, title: 'Still needs a decision' });
+  assert.equal(session('unread-choice', h.store).seenId, 5);
+  assert.equal(session('unread-choice', h.store).title, 'Still needs a decision');
+  assert.equal(h.store.getState().unreadCount, 0);
+  assert.equal(h.requests.length, 0);
+});
+
+test('authoritative snapshot totals survive partial patches and adjust only by changed unread rows', (t) => {
+  const h = setup(t, createCockpitStore());
+  h.source.open();
+  const sessions: SessionMeta[] = [
+    { ...meta('a'), attention: null, attnId: 1, seenId: 1 },
+    { ...meta('b'), attention: 'choice', attnId: 3, seenId: 3 },
+  ];
+  h.snapshot([], { sessions, unreadCount: 8, inboxRevision: 40 });
+  assert.equal(h.store.getState().unreadCount, 8);
+  h.source.emit({ type: 'session/patch', sessionId: 'a', title: 'Renamed', lastActivity: 5 });
+  h.source.emit({ type: 'session/patch', sessionId: 'b', seenId: 1 });
+  assert.equal(h.store.getState().unreadCount, 8);
+  assert.equal(session('b', h.store).seenId, 3);
+  assert.equal(session('b', h.store).attention, 'choice');
+
+  for (let repeat = 0; repeat < 2; repeat++) {
+    h.source.emit({ type: 'session/patch', sessionId: 'a', attention: 'ready', attnId: 2 });
+    assert.equal(h.store.getState().unreadCount, 9);
+  }
+  h.upsert('a', message('streamed'));
+  assert.equal(h.store.getState().unreadCount, 9, 'message streaming is not an unread source');
+  h.source.emit({ type: 'session/patch', sessionId: 'a', attention: null, seenId: 2 });
+  assert.equal(h.store.getState().unreadCount, 8);
+  for (let repeat = 0; repeat < 2; repeat++) {
+    h.source.emit({ type: 'session/added', session: { ...meta('c'), attention: 'ready', attnId: 1, seenId: 0 } });
+    assert.equal(h.store.getState().unreadCount, 9);
+  }
+  h.source.emit({ type: 'session/removed', sessionId: 'c' });
+  assert.equal(h.store.getState().unreadCount, 8);
+  h.snapshot([], { sessions, unreadCount: 40, inboxRevision: 41 });
+  assert.equal(h.store.getState().unreadCount, 40, 'a fresh server total replaces the previous projection');
+  assert.equal(h.store.getState().inboxRevision, 41);
+  assert.equal(h.requests.length, 0);
+});
+
+for (const includeCount of [true, false]) {
+  test(`notify before its metadata patch is counted once (${includeCount ? 'authoritative' : 'derived'} total)`, (t) => {
+    const h = setup(t, createCockpitStore());
+    h.source.open();
+    h.snapshot([], {
+      sessions: [{ ...meta('a'), attention: null, attnId: 1, seenId: 1 }],
+      unreadCount: 5, inboxRevision: 10,
+    });
+    const notification: Extract<ServerEvent, { type: 'session/notify' }> = {
+      type: 'session/notify', sessionId: 'a', title: 'Ready', attention: 'ready', body: 'Done',
+      attnId: 2, inboxRevision: 11, ...(includeCount ? { unreadCount: 6 } : {}),
+    };
+    h.source.emit(notification);
+    assert.equal(h.store.getState().unreadCount, 6);
+    assert.equal(h.store.getState().inboxRevision, 11);
+    assert.equal(session('a', h.store).attention, 'ready');
+    assert.equal(session('a', h.store).attnId, 2);
+    h.source.emit({ type: 'session/patch', sessionId: 'a', attention: 'ready', attnId: 2 });
+    h.source.emit({ type: 'session/patch', sessionId: 'a', title: 'Renamed' });
+    h.source.emit(notification);
+    assert.equal(h.store.getState().unreadCount, 6);
+
+    h.source.emit({ ...notification, attnId: 3, inboxRevision: 9, unreadCount: 99 });
+    h.source.emit({ ...notification, attnId: 3, inboxRevision: undefined, unreadCount: 99 });
+    h.source.emit({ ...notification, attnId: 1, inboxRevision: 12, unreadCount: 99 });
+    assert.equal(h.store.getState().unreadCount, 6);
+    assert.equal(h.store.getState().inboxRevision, 11);
+    assert.equal(session('a', h.store).attnId, 2);
+
+    h.source.emit({ type: 'session/patch', sessionId: 'a', attention: null, seenId: 2 });
+    assert.equal(h.store.getState().unreadCount, 5);
+    h.source.emit({ ...notification, inboxRevision: 12, unreadCount: 99 });
+    assert.equal(h.store.getState().unreadCount, 5, 'a notification already seen cannot restore a stale total');
+    assert.equal(session('a', h.store).attention, null);
+    assert.equal(h.requests.length, 0);
+  });
+}

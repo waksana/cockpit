@@ -8,7 +8,7 @@
 // response correlation, no heartbeat plumbing.
 
 import { ServerEvent, Intents } from '@cockpit/protocol';
-import type { IntentName, IntentBody, IntentResult, ExitPlanModeAction } from '@cockpit/protocol';
+import type { Attachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction } from '@cockpit/protocol';
 import { EVENTS_URL, intentUrl } from '../lib/config';
 import { reportUxError, describeReason } from '../lib/errorReporter';
 
@@ -27,9 +27,34 @@ export function isTransportError(e: unknown): boolean {
   return e instanceof TypeError;
 }
 
+export class IntentHttpError extends Error {
+  readonly status: number;
+  readonly code?: string;
+
+  constructor(message: string, status: number, code?: string) {
+    super(message);
+    this.name = 'IntentHttpError';
+    this.status = status;
+    this.code = code;
+  }
+}
+
+export class SessionUnloadedError extends Error {
+  constructor() {
+    super('会话尚未加载，无法读取原生会话数据；请先显式恢复会话。');
+    this.name = 'SessionUnloadedError';
+  }
+}
+
+export function isSessionUnloadedError(e: unknown): e is SessionUnloadedError | IntentHttpError {
+  return e instanceof SessionUnloadedError
+    || (e instanceof IntentHttpError && e.status === 409 && e.code === 'SESSION_UNLOADED');
+}
+
 export interface NetClientCallbacks {
   onEvent: (ev: ServerEvent) => void;
   onStateChange: (state: ConnState) => void;
+  sessionTitle?: (sessionId: string) => string | undefined;
 }
 
 export class NetClient {
@@ -57,14 +82,18 @@ export class NetClient {
   connect(): void {
     this.closedByUser = false;
     this.clearReconnectTimer();
-    if (this.es) { try { this.es.close(); } catch { /* ignore */ } this.es = null; }
+    this.closeEventSource();
     this.cb.onStateChange('connecting');
     // withCredentials so the auth cookie is sent on the SSE request.
     const es = new EventSource(EVENTS_URL, { withCredentials: true });
     this.es = es;
-    es.onopen = () => { this.backoffMs = 0; this.cb.onStateChange('open'); };
+    es.onopen = () => {
+      if (this.closedByUser || this.es !== es) return;
+      this.backoffMs = 0;
+      this.cb.onStateChange('open');
+    };
     es.onerror = () => {
-      if (this.closedByUser) return;
+      if (this.closedByUser || this.es !== es) return;
       // EventSource only auto-reconnects on a transient network drop (readyState
       // stays CONNECTING). A non-2xx / non-event-stream response — e.g. nginx 502
       // while the backend restarts — puts it in CLOSED, where the browser gives up.
@@ -73,6 +102,7 @@ export class NetClient {
       else this.cb.onStateChange('connecting');
     };
     es.onmessage = (e) => {
+      if (this.closedByUser || this.es !== es) return;
       let parsed: unknown;
       try { parsed = JSON.parse(e.data); } catch { return; }
       const res = ServerEvent.safeParse(parsed);
@@ -84,11 +114,17 @@ export class NetClient {
     };
   }
 
+  private closeEventSource(): void {
+    const es = this.es;
+    this.es = null;
+    try { es?.close(); } catch { /* ignore */ }
+  }
+
   // Schedule a reconnect with exponential backoff (1s → 8s cap). Stays in the
   // 'connecting' state throughout so the UI reads as "reconnecting", not "failed".
   private scheduleReconnect(): void {
     if (this.closedByUser || this.reconnectTimer) return;
-    if (this.es) { try { this.es.close(); } catch { /* ignore */ } this.es = null; }
+    this.closeEventSource();
     this.cb.onStateChange('connecting');
     const delay = this.backoffMs || NetClient.BACKOFF_BASE;
     this.backoffMs = Math.min((this.backoffMs || NetClient.BACKOFF_BASE) * 1.7, NetClient.BACKOFF_MAX);
@@ -116,54 +152,90 @@ export class NetClient {
       window.removeEventListener('online', this.kick);
       document.removeEventListener('visibilitychange', this.onVisible);
     }
-    try { this.es?.close(); } catch { /* ignore */ }
-    this.es = null;
+    this.closeEventSource();
   }
 
   // Fire an intent. Throws on transport/HTTP error; returns the typed result.
-  async intent<K extends IntentName>(name: K, body: IntentBody<K>): Promise<IntentResult<K>> {
+  async intent<K extends IntentName>(name: K, body: IntentBody<K>, signal?: AbortSignal): Promise<IntentResult<K>> {
+    const sessionId = 'sessionId' in body && typeof body.sessionId === 'string' ? body.sessionId : undefined;
+    const target = sessionId ? `会话 ${this.cb.sessionTitle?.(sessionId) ?? sessionId} (${sessionId})` : undefined;
+    const resource = name === 'fs/listDir'
+      ? `目录 ${'path' in body && typeof body.path === 'string' ? body.path : '服务器主目录（未指定路径）'}`
+      : 'name' in body && typeof body.name === 'string' ? body.name : undefined;
+    const source = [target, resource].filter(Boolean).join(' · ');
+    const pushIntent = name.startsWith('push/');
+    const controller = pushIntent ? new AbortController() : null;
+    const timeout = controller ? setTimeout(() => controller.abort(), 15_000) : undefined;
     try {
+      // Upload responses may contain server paths; only shared prompt metadata
+      // belongs on the wire, even when callers pass extra runtime properties.
+      const payload = name === 'prompt' ? Intents.prompt.body.parse(body)
+        : name === 'session/history' || name === 'session/peek' || name === 'session/subagent-history'
+          ? { ...body, details: 'summary' as const } : body;
+      const expectedSessionId = 'sessionId' in payload ? payload.sessionId : undefined;
+      const expectedToolCallId = 'toolCallId' in payload ? payload.toolCallId : undefined;
       const res = await fetch(intentUrl(name), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(body),
+        body: JSON.stringify(payload),
+        ...(controller || signal ? { signal: controller?.signal ?? signal } : {}),
       });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error((json as { error?: string }).error ?? `intent ${name} failed (${res.status})`);
-      return Intents[name].result.parse(json) as IntentResult<K>;
+      const json: unknown = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const details = json && typeof json === 'object' ? json as Record<string, unknown> : {};
+        const message = typeof details.error === 'string' ? details.error
+          : typeof details.message === 'string' ? details.message : `intent ${name} failed (${res.status})`;
+        throw new IntentHttpError(message, res.status, typeof details.code === 'string' ? details.code : undefined);
+      }
+      const result = Intents[name].result.parse(json);
+      if ((name === 'session/history' || name === 'session/peek' || name === 'session/subagent-history' || name === 'session/usage')
+        && 'sessionId' in result && result.sessionId !== expectedSessionId) {
+        throw new Error(`intent ${name} returned sessionId ${JSON.stringify(result.sessionId)} instead of ${JSON.stringify(expectedSessionId)}`);
+      }
+      if (name === 'session/subagent-history') {
+        const child = result as IntentResult<'session/subagent-history'>;
+        if (child.toolCallId !== expectedToolCallId
+          || (child.subagent.toolCallId !== undefined && child.subagent.toolCallId !== expectedToolCallId)) {
+          throw new Error(`intent ${name} returned a different toolCallId`);
+        }
+      }
+      return result as IntentResult<K>;
     } catch (e) {
-      // Auto-report API failures to the current session — EXCEPT (a) the `prompt`
-      // intent, because an error report IS a prompt; reporting its failure would
-      // loop, (b) `speech/token`, which is a best-effort, self-healing warm-up
-      // (voice silently falls back to the Web Speech API on any failure, and the
-      // intent legitimately doesn't exist on an older backend during a deploy
-      // window) — reporting it would spam sessions with benign noise, and (c)
-      // transport-level failures (a dropped/blipped connection), because those are
-      // connectivity, not application bugs — the reconnect path already heals them,
-      // and reporting them spams the session with noise like "接口 session/history
-      // 调用失败：Load failed" every time the tab backgrounds or the server
-      // gracefully restarts. Genuine server errors (a real HTTP status) and schema
-      // mismatches still report. Re-throw either way so callers handle it as before.
-      if (name !== 'prompt' && name !== 'speech/token' && !isTransportError(e)) {
-        reportUxError(`接口 ${name} 调用失败：${describeReason(e, false)}`);
+      if (pushIntent) {
+        // HTTP/auth and platform failures may contain endpoint credentials.
+        // eslint-disable-next-line preserve-caught-error -- Deliberately discard private transport errors.
+        throw new Error('通知服务请求失败或超时，请检查连接后重试。');
+      }
+      // Diagnostics stay local. Never execute a prompt or retry an uncertain POST.
+      if (!signal?.aborted && !isSessionUnloadedError(e) && name !== 'speech/token' && (name !== 'session/history' || !isTransportError(e))) {
+        reportUxError(`${source ? `${source}：` : ''}接口 ${name} 调用失败：${describeReason(e, false)}`, { deduplicate: false });
       }
       throw e;
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
   // --- typed intent helpers --------------------------------------------------
   newSession(cwd: string) { return this.intent('session/new', { cwd }); }
-  history(sessionId: string, opts?: { beforeMsgId?: string; afterMsgId?: string; limit?: number }) {
-    return this.intent('session/history', { sessionId, ...opts });
+  forkSession(sessionId: string) { return this.intent('session/fork', { sessionId }); }
+  history(sessionId: string, opts?: { beforeMsgId?: string; afterMsgId?: string; limit?: number; resume?: { token?: string } }, signal?: AbortSignal) {
+    return this.intent('session/history', { ...opts, sessionId }, signal);
   }
-  peek(sessionId: string, opts?: { beforeMsgId?: string; limit?: number }) {
-    return this.intent('session/peek', { sessionId, ...opts });
+  peek(sessionId: string, opts?: { beforeMsgId?: string; limit?: number }, signal?: AbortSignal) {
+    return this.intent('session/peek', { ...opts, sessionId }, signal);
   }
-  prompt(sessionId: string, text: string, mode?: 'enqueue' | 'immediate') {
-    return this.intent('prompt', { sessionId, text, ...(mode ? { mode } : {}) });
+  subagentHistory(sessionId: string, toolCallId: string,
+    opts?: { beforeMsgId?: string; afterMsgId?: string; limit?: number }, signal?: AbortSignal) {
+    return this.intent('session/subagent-history', { ...opts, sessionId, toolCallId }, signal);
+  }
+  prompt(sessionId: string, text: string, attachment?: Attachment, mode?: 'enqueue' | 'immediate', attachments?: Attachment[]) {
+    return this.intent('prompt', { sessionId, text, ...(attachment ? { attachment } : {}),
+      ...(attachments?.length ? { attachments } : {}), ...(mode ? { mode } : {}) });
   }
   cancel(sessionId: string) { return this.intent('cancel', { sessionId }); }
+  interrupt(sessionId: string) { return this.intent('session/interrupt', { sessionId }); }
   setModel(sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) {
     return this.intent('setModel', { sessionId, modelId, ...opts });
   }
@@ -174,15 +246,18 @@ export class NetClient {
   reloadSession(sessionId: string) { return this.intent('session/reload', { sessionId }); }
   pinSession(sessionId: string, pinned: boolean) { return this.intent('session/pin', { sessionId, pinned }); }
   renameSession(sessionId: string, name: string) { return this.intent('session/rename', { sessionId, name }); }
+  autoNameSession(sessionId: string) { return this.intent('session/auto-name', { sessionId }); }
   compactSession(sessionId: string, customInstructions?: string) { return this.intent('session/compact', { sessionId, ...(customInstructions ? { customInstructions } : {}) }); }
   rewindSession(sessionId: string, toMsgId: string, rollbackFiles?: boolean) { return this.intent('session/rewind', { sessionId, toMsgId, ...(rollbackFiles ? { rollbackFiles } : {}) }); }
   setMode(sessionId: string, mode: 'interactive' | 'plan' | 'autopilot') { return this.intent('setMode', { sessionId, mode }); }
   getPlan(sessionId: string) { return this.intent('session/plan', { sessionId }); }
+  getUsage(sessionId: string, signal?: AbortSignal) { return this.intent('session/usage', { sessionId }, signal); }
   getPanels(sessionId: string) { return this.intent('session/panels', { sessionId }); }
   scheduleList(sessionId: string) { return this.intent('schedule/list', { sessionId }); }
-  hookList(ownerSession?: string) { return this.intent('hook/list', ownerSession ? { ownerSession } : {}); }
-  flowList() { return this.intent('flow/list', {}); }
-  flowScheduleList() { return this.intent('flow-schedule/list', {}); }
+  scheduleAdd(sessionId: string, input: Omit<IntentBody<'schedule/add'>, 'sessionId'>) {
+    return this.intent('schedule/add', { ...input, sessionId });
+  }
+  scheduleStop(sessionId: string, id: number) { return this.intent('schedule/stop', { sessionId, id }); }
   respondAsk(sessionId: string, requestId: string, answer: string, wasFreeform: boolean) {
     return this.intent('respondAsk', { sessionId, requestId, answer, wasFreeform });
   }
@@ -203,14 +278,22 @@ export class NetClient {
   mcpRefresh() { return this.intent('mcp/refresh', {}); }
   mcpSession(sessionId: string) { return this.intent('mcp/session', { sessionId }); }
   mcpToggleSession(sessionId: string, name: string, on: boolean) { return this.intent('mcp/session-toggle', { sessionId, name, on }); }
-  skillsGlobal() { return this.intent('skills/global', {}); }
-  skillsRead(name: string) { return this.intent('skills/read', { name }); }
+  skillsGlobal(cwd?: string) { return this.intent('skills/global', cwd === undefined ? {} : { cwd }); }
+  skillsRead(name: string, cwd?: string) { return this.intent('skills/read', { name, ...(cwd ? { cwd } : {}) }); }
+  skillsSetGlobal(name: string, enabled: boolean, cwd?: string) {
+    return this.intent('skills/global-toggle', { name, enabled, ...(cwd === undefined ? {} : { cwd }) });
+  }
   skillsSession(sessionId: string) { return this.intent('skills/session', { sessionId }); }
   skillsToggleSession(sessionId: string, name: string, enabled: boolean) { return this.intent('skills/session-toggle', { sessionId, name, enabled }); }
   listDir(path?: string) { return this.intent('fs/listDir', path ? { path } : {}); }
   subscribePush(subscription: PushSubscriptionJSON) {
     return this.intent('push/subscribe', { subscription: subscription as never });
   }
-  inboxSeen(sessionId: string) { return this.intent('inbox/seen', { sessionId }); }
+  pushStatus(endpoint?: string) { return this.intent('push/status', endpoint ? { endpoint } : {}); }
+  unsubscribePush(endpoint: string) { return this.intent('push/unsubscribe', { endpoint }); }
+  testPush(endpoint: string) { return this.intent('push/test', { endpoint, confirm: true }); }
+  inboxSeen(sessionId: string, attnId?: number) {
+    return this.intent('inbox/seen', { sessionId, ...(attnId === undefined ? {} : { attnId }) });
+  }
   speechToken() { return this.intent('speech/token', {}); }
 }

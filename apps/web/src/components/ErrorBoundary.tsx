@@ -1,4 +1,4 @@
-// Catches React render errors, reports them to the current session, and shows a
+// Catches React render errors, records local diagnostics, and shows a
 // minimal fallback (instead of a blank screen). Reload recovers.
 
 import { Component, type ErrorInfo, type ReactNode } from 'react';
@@ -23,7 +23,7 @@ export class ErrorBoundary extends Component<Props, State> {
     if (this.state.crashed) {
       return (
         <div className="crash-fallback">
-          <p>界面出错了，已自动上报给当前会话。</p>
+          <p>界面出错了，错误仅在本地记录，不会自动执行代理。</p>
           <button type="button" onClick={() => window.location.reload()}>重新加载</button>
         </div>
       );

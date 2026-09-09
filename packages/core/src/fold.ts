@@ -1,10 +1,11 @@
 // Event folding: turn the SDK's raw event stream into our ChatMessage model.
-// ONE fold function serves both history replay (session.getEvents()) and live
-// updates (session.on('*')), so the two can never diverge. Pure given a state
-// object it mutates; returns which message ids changed + whether session meta
+// ONE fold function serves both normalized persisted history and live events.
+// Mutates only the supplied state; returns changed message IDs and whether meta
 // changed, so the engine knows what to emit.
 
-import type { ChatMessage, ToolCall, Attachment } from '@cockpit/protocol';
+import { UploadUrl, type ChatMessage, type MessagePart, type ToolCall, type Attachment, type HistoryDetails } from '@cockpit/protocol';
+import type { SdkEvent } from './sdk-types.ts';
+import { toolImagesOf } from './tool-image.ts';
 
 export interface FoldState {
   messages: ChatMessage[];
@@ -12,23 +13,16 @@ export interface FoldState {
   toolMsg: Map<string, string>; // toolCallId -> messageId that owns it
   askToolIds: Set<string>; // toolCallIds that are ask_user prompts
   changedFiles: Map<string, 'create' | 'edit'>; // repo path -> latest operation
-  // Sub-agents (spawned via the `task` tool). Events carrying a top-level
-  // `agentId` (= the parent task's toolCallId) belong to that sub-agent, NOT the
-  // main thread — they're routed into a nested FoldState and surfaced inside one
-  // "sub-agent card" message. `subFolds` holds each sub-agent's own fold; `subCard`
-  // maps its toolCallId → the card message id in THIS (parent) fold; `pendingTask`
-  // captures the task tool's prompt/agent_type at request time (the subagent.started
-  // event doesn't carry the prompt).
+  // Child folds/cards are keyed by spawning toolCallId. Each child also remembers
+  // task-registry/envelope aliases, which need not equal that toolCallId.
   subFolds: Map<string, FoldState>;
   subCard: Map<string, string>;
+  agentIds: Set<string>;
   pendingTask: Map<string, { prompt?: string; description?: string; agentType?: string }>;
-  // Streaming/reasoning: reasoning (reasoningId) precedes the message (messageId)
-  // in a turn with no cross-reference, so we pair them by order. `streamingId` is
-  // the messages[] id of the current turn's assistant message (a reasoning-derived
-  // placeholder if reasoning came first); `msgAlias` maps the real messageId onto
-  // it so later message deltas/finals resolve to the same message.
+  // Reasoning has no messageId. Buffer it until the canonical message ID arrives;
+  // publishing a placeholder would leave stale client IDs and pagination anchors.
   streamingId?: string;
-  msgAlias: Map<string, string>;
+  pendingReasoning?: ChatMessage;
   // Active reasoning segment within the current turn. A turn can emit several
   // reasoning blocks (distinct reasoningId); `reasoningId` is the one currently
   // accumulating and `reasoningBase` is the thought text committed before it, so a
@@ -42,14 +36,25 @@ export function newFoldState(): FoldState {
   return {
     messages: [], byId: new Map(), toolMsg: new Map(),
     askToolIds: new Set(), changedFiles: new Map(),
-    subFolds: new Map(), subCard: new Map(), pendingTask: new Map(),
-    msgAlias: new Map(),
+    subFolds: new Map(), subCard: new Map(), agentIds: new Set(), pendingTask: new Map(),
   };
 }
 
 export interface FoldResult {
   changed: string[]; // message ids upserted
   metaChanged: boolean;
+}
+
+export interface FoldProjection {
+  toolOutput?: string;
+  toolImages?: ToolCall['images'];
+  toolArgs?: Map<string, string>;
+  scope?: FoldHistoryScope;
+}
+
+export interface FoldHistoryScope {
+  details: HistoryDetails;
+  toolCallId?: string;
 }
 
 function tsOf(ev: { timestamp?: string | number }): number {
@@ -78,44 +83,62 @@ function streamingMsg(state: FoldState): ChatMessage | undefined {
   return idx === undefined ? undefined : state.messages[idx];
 }
 
-// Does `state` or any descendant sub-fold own the task `tcId` (in its pendingTask)?
-function ownsTask(state: FoldState, tcId: string): boolean {
-  if (state.pendingTask.has(tcId)) return true;
-  for (const sub of state.subFolds.values()) if (ownsTask(sub, tcId)) return true;
-  return false;
+interface FoldRoute { fold: FoldState; cards: ChatMessage[] }
+
+function findRoute(state: FoldState, owns: (fold: FoldState) => boolean): FoldRoute | undefined {
+  if (owns(state)) return { fold: state, cards: [] };
+  for (const [tcId, sub] of state.subFolds) {
+    const route = findRoute(sub, owns);
+    const card = subCardMsg(state, tcId);
+    if (route && card) return { fold: route.fold, cards: [card, ...route.cards] };
+  }
+  return undefined;
 }
 
-// Does `state` or any descendant sub-fold own the sub-agent `agentId` (a sub-fold)?
-function ownsAgent(state: FoldState, agentId: string): boolean {
-  if (state.subFolds.has(agentId)) return true;
-  for (const sub of state.subFolds.values()) if (ownsAgent(sub, agentId)) return true;
-  return false;
+function stringOf(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined;
 }
 
-// Get-or-create the current turn's assistant message under `id`, marking it as
-// the streaming message. Used by reasoning (placeholder id) and message events.
+// Get-or-create a canonical assistant message, adopting any buffered reasoning.
 function ensureStreaming(state: FoldState, id: string, ts: number): ChatMessage {
   state.streamingId = id;
   const idx = state.byId.get(id);
   if (idx !== undefined) {
     const existing = state.messages[idx];
-    if (existing) return existing;
+    if (existing) {
+      if (state.pendingReasoning?.thought) existing.thought = state.pendingReasoning.thought;
+      state.pendingReasoning = undefined;
+      return existing;
+    }
   }
-  const msg: ChatMessage = { id, role: 'assistant', content: '', timestamp: ts };
+  const msg: ChatMessage = {
+    id, role: 'assistant', content: '', timestamp: ts,
+    ...(state.pendingReasoning?.thought ? { thought: state.pendingReasoning.thought } : {}),
+  };
+  state.pendingReasoning = undefined;
   upsert(state, msg);
   return msg;
 }
 
-// Resolve a real messageId to the streaming message's id (placeholder adoption).
-function resolveMsgId(state: FoldState, messageId: string): string {
-  return state.msgAlias.get(messageId) ?? messageId;
+function reasoningMsg(state: FoldState, rid: string, ts: number): ChatMessage {
+  return streamingMsg(state) ?? (state.pendingReasoning ??= {
+    id: `stream-${rid || state.messages.length}`, role: 'assistant', content: '', timestamp: ts,
+  });
+}
+
+function flushReasoning(state: FoldState): string[] {
+  const pending = state.pendingReasoning;
+  if (!pending?.thought) return [];
+  upsert(state, pending);
+  state.pendingReasoning = undefined;
+  return [pending.id];
 }
 
 // Reset the streaming/turn scratch state. Exported so the engine can clear it on
 // an out-of-band turn end (e.g. cancel/abort, which emits no final message).
 export function resetTurn(state: FoldState): void {
   state.streamingId = undefined;
-  state.msgAlias.clear();
+  state.pendingReasoning = undefined;
   state.reasoningId = undefined;
   state.reasoningBase = undefined;
 }
@@ -141,26 +164,28 @@ function subCardMsg(state: FoldState, toolCallId: string): ChatMessage | undefin
   return idx === undefined ? undefined : state.messages[idx];
 }
 
-interface RawEvent {
-  type: string;
-  data: Record<string, unknown>;
-  id?: string;
-  agentId?: string; // set on sub-agent events (= the parent task's toolCallId)
-  timestamp?: string | number;
-}
-
 interface ToolRequest { toolCallId?: string; name?: string; arguments?: unknown; description?: string; intentionSummary?: string; toolTitle?: string }
 
-// Extract the user's answer from an ask_user tool result. The SDK stores it as
-// `{ content, detailedContent }`, both prefixed with "User responded: ". Strip
-// the prefix so it reads as the user's own message.
-function askAnswerOf(result: unknown): string {
+function recordOf(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' ? value as Record<string, unknown> : {};
+}
+
+// Only affirmative persisted ask results become user bubbles. Native choice
+// answers use "User selected:", freeform/old journals use "User responded:".
+function askAnswerOf(data: Record<string, unknown>): string {
+  const result = data.result;
+  const outcome = recordOf(recordOf(data.toolTelemetry).properties).outcome;
+  if (data.success === false || data.error != null || data.dismissed === true
+    || (typeof outcome === 'string' && outcome !== 'answered')) return '';
   if (!result || typeof result !== 'object') return '';
-  const r = result as { content?: unknown; detailedContent?: unknown };
-  const raw = (typeof r.content === 'string' && r.content)
-    || (typeof r.detailedContent === 'string' && r.detailedContent) || '';
-  if (!raw) return '';
-  return raw.replace(/^User responded:\s*/, '').trim();
+  const r = recordOf(result);
+  if (r.dismissed === true || r.error != null || r.isError === true || r.success === false) return '';
+  for (const raw of [r.content, r.detailedContent]) {
+    if (typeof raw !== 'string') continue;
+    const answer = /^User (?:responded|selected):\s*([\s\S]*)$/.exec(raw.trim());
+    if (answer) return (answer[1] ?? '').trim();
+  }
+  return '';
 }
 
 const TOOL_DETAIL_CAP = 3000;
@@ -171,12 +196,12 @@ function cap(s: string): string {
 
 // Generic tool result → output text, capped. Used for the collapsible detail of
 // any tool that produces output (bash/view/grep/glob/web_fetch/…).
-function toolOutputOf(result: unknown): string {
-  if (!result || typeof result !== 'object') return '';
-  const r = result as { content?: unknown; detailedContent?: unknown };
+export function toolOutputOf(result: unknown, error?: unknown): string {
+  const r = recordOf(result);
   const raw = (typeof r.content === 'string' && r.content)
     || (typeof r.detailedContent === 'string' && r.detailedContent) || '';
-  return raw ? cap(raw) : '';
+  const failure = stringOf(recordOf(error).message);
+  return raw ? cap(raw) : failure ? cap(failure) : '';
 }
 
 // Parse the attributes of a <cockpit-attachment .../> marker into an Attachment.
@@ -191,7 +216,7 @@ function attachmentFromAttrs(attrs: string): Attachment | null {
     try { return decodeURIComponent(mm[1]); } catch { return mm[1]; }
   };
   const url = get('url');
-  if (!url || !url.startsWith('/uploads/')) return null;
+  if (!url || !UploadUrl.safeParse(url).success) return null;
   const kind = get('kind') === 'image' ? 'image' : 'file';
   const name = get('name') ?? 'file';
   const sizeNum = Number(get('size'));
@@ -217,18 +242,29 @@ function parseAttachment(content: string): { attachment: Attachment; caption: st
   return { attachment, caption: '' };
 }
 
-// Agent attachments: the marker may appear ANYWHERE in an assistant reply, and the
-// surrounding prose is a real caption that stays visible. Returns the FIRST valid
-// attachment + the text with ALL markers removed (a stray second marker must never
-// show as raw XML), or null if there's no valid marker.
 const ANY_ATTACHMENT_RE = /<cockpit-attachment\b([^>]*?)\/?>(?:<\/cockpit-attachment>)?/;
-function extractAttachment(content: string): { attachment: Attachment; text: string } | null {
-  const m = ANY_ATTACHMENT_RE.exec(content);
-  if (!m) return null;
-  const attachment = attachmentFromAttrs(m[1] ?? '');
-  if (!attachment) return null;
-  const text = content.replace(new RegExp(ANY_ATTACHMENT_RE.source, 'g'), '').trim();
-  return { attachment, text };
+
+// v2 markers carry user-visible file parts, not the old hidden read-path guidance.
+// Keep exact interleaving in parts and plain visible prose in content for clients
+// that don't render parts yet. No file bytes enter history or SSE here.
+function extractParts(content: string, user: boolean): Pick<ChatMessage, 'content' | 'attachment' | 'attachments' | 'parts'> | null {
+  const parts: MessagePart[] = [];
+  const attachments: Attachment[] = [];
+  const re = new RegExp(ANY_ATTACHMENT_RE.source, 'g');
+  let end = 0;
+  for (const match of content.matchAll(re)) {
+    if (user && !/\bversion="2"/.test(match[1] ?? '')) continue;
+    const attachment = attachmentFromAttrs(match[1] ?? '');
+    if (!attachment) continue;
+    if (match.index! > end) parts.push({ type: 'text', text: content.slice(end, match.index) });
+    parts.push({ type: 'file', attachment });
+    attachments.push(attachment);
+    end = match.index! + match[0].length;
+  }
+  if (!attachments.length) return null;
+  if (end < content.length) parts.push({ type: 'text', text: content.slice(end) });
+  return { content: parts.filter(p => p.type === 'text').map(p => p.text).join('').trim(),
+    attachment: attachments[0], attachments, parts };
 }
 
 // A session's auto-derived name/summary (when the user hasn't named it) is its
@@ -259,7 +295,7 @@ export function cleanSessionTitle(raw: string | undefined): string {
 // Format a tool's arguments into a readable, capped one-or-few-line detail (the
 // "what" behind the intent): `$ cmd` for bash, the path/range for view, a mini
 // diff for edit, the pattern for grep/glob, etc. Empty ⇒ no args detail.
-function toolArgsOf(name: string | undefined, args: unknown): string {
+export function toolArgsOf(name: string | undefined, args: unknown): string {
   if (!args || typeof args !== 'object') return '';
   // ask_user has its own pending-card + reply bubble; don't duplicate its
   // question/choices as a redundant tool detail.
@@ -293,61 +329,129 @@ function toolArgsOf(name: string | undefined, args: unknown): string {
   return out ? cap(out) : '';
 }
 
-export function foldEvent(state: FoldState, ev: RawEvent): FoldResult {
+function routeEvent(state: FoldState, ev: SdkEvent): FoldRoute | undefined {
+  const d = ev.data ?? {};
+  const lifecycle = ev.type === 'subagent.started' || ev.type === 'subagent.completed'
+    || ev.type === 'subagent.failed' || ev.type === 'subagent.configured';
+  const tcId = stringOf(d.toolCallId);
+  // parentAgentTaskId also appears on ordinary root user turns; it is not
+  // subagent routing metadata. Only explicit event/tool ownership is reliable.
+  const legacyOwner = stringOf(d.parentToolCallId) ?? ev.parentToolCallId;
+  const agentRoute = (id: string | undefined) => id
+    ? findRoute(state, (s) => s.agentIds.has(id)) : undefined;
+  let route: FoldRoute | undefined;
+  if (lifecycle) {
+    // Lifecycle events describe the child, but must be folded by its parent.
+    route = tcId ? findRoute(state, (s) => s.pendingTask.has(tcId) || s.subCard.has(tcId)) : undefined;
+    if (!route && ev.type === 'subagent.started') {
+      const parent = stringOf(d.parentId) ?? legacyOwner;
+      route = parent ? agentRoute(parent) : agentRoute(ev.agentId) ?? { fold: state, cards: [] };
+    } else if (!route) {
+      route = findRoute(state, (s) => [...s.subFolds.values()]
+        .some((sub) => !!ev.agentId && sub.agentIds.has(ev.agentId)));
+    }
+  } else {
+    route = agentRoute(ev.agentId) ?? agentRoute(legacyOwner);
+    if (!route && !ev.agentId && !legacyOwner) {
+      route = tcId && ev.type.startsWith('tool.')
+        ? findRoute(state, (s) => s.toolMsg.has(tcId)) : undefined;
+      route ??= { fold: state, cards: [] };
+    }
+    // Legacy ownership can establish the native registry ID before it is seen
+    // on a lifecycle event. Never infer ownership from the journal parentId.
+    if (route && ev.agentId && legacyOwner && !agentRoute(ev.agentId)) {
+      route.fold.agentIds.add(ev.agentId);
+    }
+  }
+  return route;
+}
+
+function visibleRoute(route: FoldRoute, scope: FoldHistoryScope): boolean {
+  if (!scope.toolCallId) return scope.details === 'full' || route.cards.length === 0;
+  return route.fold.agentIds.has(scope.toolCallId)
+    || (scope.details === 'full' && route.cards.some(card => card.id === `subagent-${scope.toolCallId}`));
+}
+
+/** Scope content before retaining a passive event; routing remains the canonical fold's. */
+export function isFoldContentVisible(state: FoldState, ev: SdkEvent, scope: FoldHistoryScope): boolean {
+  const route = routeEvent(state, ev);
+  return !!route && visibleRoute(route, scope);
+}
+
+function rememberTask(state: FoldState, request: ToolRequest, scope?: FoldHistoryScope): void {
+  if (request.name !== 'task' || typeof request.toolCallId !== 'string') return;
+  const a = recordOf(request.arguments);
+  state.pendingTask.set(request.toolCallId, {
+    ...(typeof a.prompt === 'string' && (!scope || scope.details === 'full' || scope.toolCallId === request.toolCallId)
+      ? { prompt: a.prompt } : {}),
+    ...(typeof a.description === 'string' ? { description: a.description } : {}),
+    ...(typeof a.agent_type === 'string' ? { agentType: a.agent_type } : {}),
+  });
+}
+
+export function foldEvent(state: FoldState, ev: SdkEvent, projection?: FoldProjection): FoldResult {
+  const route = routeEvent(state, ev);
+  // Bounded history can omit a spawning task. Unknown agent work is not main work.
+  if (!route) return { changed: [], metaChanged: false };
+  if (projection?.scope && !visibleRoute(route, projection.scope) && !ev.type.startsWith('subagent.')) {
+    if (ev.type === 'assistant.message' && Array.isArray(ev.data.toolRequests)) {
+      for (const request of ev.data.toolRequests as ToolRequest[]) {
+        rememberTask(route.fold, request, projection.scope);
+        if (typeof request.toolCallId === 'string') route.fold.toolMsg.set(request.toolCallId, '');
+      }
+    }
+    return { changed: [], metaChanged: false };
+  }
+  const result = foldLocalEvent(route.fold, ev, projection);
+  if (result.changed.length && route.cards[0]) {
+    return { changed: [route.cards[0].id], metaChanged: result.metaChanged };
+  }
+  return result;
+}
+
+function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProjection): FoldResult {
   const empty: FoldResult = { changed: [], metaChanged: false };
   const d = ev.data ?? {};
 
-  // --- Nested sub-agent routing (depth ≥ 2) -----------------------------------
-  // Sub-agent events are tagged with the sub-agent's OWN id (started/internal work
-  // carry agentId = that sub-agent's toolCallId). When the event belongs to a
-  // DESCENDANT sub-agent (its task lives in a child sub-fold's pendingTask, or its
-  // sub-fold lives inside a child), route it into that direct child and re-mirror
-  // the child's card so the nesting bubbles up. M3.
-  {
-    const startTc = ev.type === 'subagent.started'
-      ? (typeof d.toolCallId === 'string' ? d.toolCallId : ev.agentId) : undefined;
-    const isStartedForDescendant = startTc != null && !state.pendingTask.has(startTc) && !state.subCard.has(startTc);
-    const isAgentEventForDescendant = ev.agentId != null && !state.subFolds.has(ev.agentId);
-    if (isStartedForDescendant || isAgentEventForDescendant) {
-      for (const [childTc, sub] of state.subFolds) {
-        const owns = startTc != null ? ownsTask(sub, startTc) : ownsAgent(sub, ev.agentId!);
-        if (!owns) continue;
-        const r = foldEvent(sub, ev);
-        const card = subCardMsg(state, childTc);
-        if (card) { card.subMessages = sub.messages; return { changed: [card.id], metaChanged: r.metaChanged }; }
-        return empty;
-      }
-    }
-  }
-
-  // --- Sub-agent handling (must run BEFORE the agentId routing below) ---------
   if (ev.type === 'subagent.started') {
     const toolCallId = typeof d.toolCallId === 'string' ? d.toolCallId : (ev.agentId ?? '');
     if (!toolCallId) return empty;
     const cardId = `subagent-${toolCallId}`;
     const task = state.pendingTask.get(toolCallId);
+    const sub = state.subFolds.get(toolCallId) ?? newFoldState();
+    sub.agentIds.add(toolCallId);
+    if (ev.agentId && !state.agentIds.has(ev.agentId)) sub.agentIds.add(ev.agentId);
+    if (typeof d.agentId === 'string' && !state.agentIds.has(d.agentId)) sub.agentIds.add(d.agentId);
+    const previous = subCardMsg(state, toolCallId);
     const card: ChatMessage = {
-      id: cardId, role: 'assistant', subtype: 'subagent', content: '', timestamp: tsOf(ev),
+      id: cardId, role: 'assistant', subtype: 'subagent', content: '', timestamp: previous?.timestamp ?? tsOf(ev),
       subagent: {
+        ...previous?.subagent,
         name: typeof d.agentName === 'string' ? d.agentName : (task?.agentType ?? 'agent'),
         displayName: typeof d.agentDisplayName === 'string' ? d.agentDisplayName : '子代理',
         ...(typeof d.agentDescription === 'string' ? { description: d.agentDescription } : (task?.description ? { description: task.description } : {})),
         ...(typeof d.model === 'string' ? { model: d.model } : {}),
-        status: 'running',
+        status: previous?.subagent?.status ?? 'running',
         ...(task?.prompt ? { prompt: task.prompt } : {}),
       },
-      subMessages: [],
+      ...(projection?.scope?.details === 'summary' ? {} : { subMessages: sub.messages }),
     };
-    state.subFolds.set(toolCallId, newFoldState());
+    state.subFolds.set(toolCallId, sub);
     state.subCard.set(toolCallId, cardId);
     upsert(state, card);
     return { changed: [cardId], metaChanged: false };
   }
-  if (ev.type === 'subagent.completed' || ev.type === 'subagent.failed') {
-    const toolCallId = typeof d.toolCallId === 'string' ? d.toolCallId : (ev.agentId ?? '');
+  if (ev.type === 'subagent.completed' || ev.type === 'subagent.failed' || ev.type === 'subagent.configured') {
+    const toolCallId = stringOf(d.toolCallId)
+      ?? [...state.subFolds].find(([, sub]) => !!ev.agentId && sub.agentIds.has(ev.agentId))?.[0] ?? '';
     const card = subCardMsg(state, toolCallId);
     if (!card?.subagent) return empty;
-    card.subagent.status = ev.type === 'subagent.failed' ? 'failed' : 'completed';
+    if (ev.type !== 'subagent.configured') {
+      card.subagent.status = ev.type === 'subagent.failed' || d.cancelled === true ? 'failed' : 'completed';
+      const sub = state.subFolds.get(toolCallId);
+      if (sub) { flushReasoning(sub); endTurn(sub); }
+    }
+    if (typeof d.model === 'string') card.subagent.model = d.model;
     if (typeof d.totalToolCalls === 'number') card.subagent.toolCount = d.totalToolCalls;
     if (typeof d.error === 'string') card.subagent.error = d.error;
     return { changed: [card.id], metaChanged: false };
@@ -355,26 +459,15 @@ export function foldEvent(state: FoldState, ev: RawEvent): FoldResult {
   // subagent.selected/deselected carry agent metadata but no per-event work to fold.
   if (ev.type === 'subagent.selected' || ev.type === 'subagent.deselected') return empty;
 
-  // Route any event carrying a sub-agent's `agentId` into that sub-agent's own
-  // nested fold, then mirror its messages onto the card. The SAME foldEvent folds
-  // the sub-agent's inner conversation (tools + reasoning + messages).
-  if (ev.agentId && state.subFolds.has(ev.agentId)) {
-    const sub = state.subFolds.get(ev.agentId)!;
-    const r = foldEvent(sub, ev);
-    const card = subCardMsg(state, ev.agentId);
-    if (card) {
-      card.subMessages = sub.messages;
-      return { changed: [card.id], metaChanged: r.metaChanged };
-    }
-    return empty;
-  }
-
   switch (ev.type) {
+    case 'assistant.turn_end':
+    case 'assistant.idle':
+    case 'session.idle':
+    case 'abort':
     case 'assistant.turn_start': {
-      // Turn boundary — clear any leaked streaming state from a prior turn. (On
-      // live this is intercepted by the engine before fold; reached on replay.)
+      const changed = flushReasoning(state);
       endTurn(state);
-      return empty;
+      return { changed, metaChanged: false };
     }
 
     case 'user.message': {
@@ -387,18 +480,25 @@ export function foldEvent(state: FoldState, ev: RawEvent): FoldResult {
       // the `skill.invoked` event instead (CLI-style skill pill), so drop this.
       const source = typeof d.source === 'string' ? d.source : '';
       if (source.startsWith('skill-')) return empty;
+      const changed = flushReasoning(state);
+      endTurn(state);
       const id = ev.id ?? `u-${state.messages.length}`;
       // An uploaded file/image is sent as a `user.message` whose body leads with a
       // <cockpit-attachment .../> marker (carrying display metadata) followed by the
       // agent guidance (with the absolute path). Render the attachment as a card;
       // the guidance is machinery, hidden from display (the agent still has it).
+      const parts = extractParts(content, true);
+      if (parts) {
+        upsert(state, { id, role: 'user', ...parts, timestamp: tsOf(ev) });
+        return { changed: [...changed, id], metaChanged: false };
+      }
       const att = parseAttachment(content);
       if (att) {
         upsert(state, { id, role: 'user', content: att.caption, timestamp: tsOf(ev), attachment: att.attachment });
-        return { changed: [id], metaChanged: false };
+        return { changed: [...changed, id], metaChanged: false };
       }
       upsert(state, { id, role: 'user', content, timestamp: tsOf(ev) });
-      return { changed: [id], metaChanged: false };
+      return { changed: [...changed, id], metaChanged: false };
     }
 
     case 'skill.invoked': {
@@ -414,18 +514,17 @@ export function foldEvent(state: FoldState, ev: RawEvent): FoldResult {
     }
 
     case 'assistant.reasoning_delta': {
-      // Live streaming thinking (ephemeral). Stream into the current turn's
-      // assistant message, creating a reasoning-derived placeholder if the message
-      // hasn't started yet — so the user watches it think before the answer.
       const rid = typeof d.reasoningId === 'string' ? d.reasoningId : '';
       const delta = typeof d.deltaContent === 'string' ? d.deltaContent : '';
       if (!delta) return empty;
-      const m = streamingMsg(state) ?? ensureStreaming(state, `stream-${rid || state.messages.length}`, tsOf(ev));
+      const m = reasoningMsg(state, rid, tsOf(ev));
       // A new reasoning block commits the prior thought as a base, so multiple
       // blocks in one turn accumulate instead of overwriting (M2).
-      beginReasoningSegment(state, m, rid || `seg-${state.messages.length}`);
+      const previousRid = state.reasoningId;
+      const base = beginReasoningSegment(state, m, rid || `seg-${state.messages.length}`);
+      if (state.reasoningId !== previousRid) m.thought = base;
       m.thought = (m.thought ?? '') + delta;
-      return { changed: [m.id], metaChanged: false };
+      return { changed: state.pendingReasoning === m ? [] : [m.id], metaChanged: false };
     }
 
     case 'assistant.reasoning': {
@@ -435,18 +534,15 @@ export function foldEvent(state: FoldState, ev: RawEvent): FoldResult {
       const rid = typeof d.reasoningId === 'string' ? d.reasoningId : '';
       const content = typeof d.content === 'string' ? d.content : '';
       if (!content) return empty;
-      const m = streamingMsg(state) ?? ensureStreaming(state, `stream-${rid || state.messages.length}`, tsOf(ev));
+      const m = reasoningMsg(state, rid, tsOf(ev));
       const base = beginReasoningSegment(state, m, rid || `seg-${state.messages.length}`);
       m.thought = base + content;
-      return { changed: [m.id], metaChanged: false };
+      if (state.pendingReasoning === m) m.timestamp = tsOf(ev);
+      return { changed: state.pendingReasoning === m ? [] : [m.id], metaChanged: false };
     }
 
     case 'assistant.message_start': {
       const mid = (typeof d.messageId === 'string' && d.messageId) || ev.id || `a-${state.messages.length}`;
-      const cur = streamingMsg(state);
-      // A reasoning placeholder already opened this turn's message — adopt the
-      // real id onto it instead of creating a second message.
-      if (cur) { state.msgAlias.set(mid, cur.id); return { changed: [cur.id], metaChanged: false }; }
       const m = ensureStreaming(state, mid, tsOf(ev));
       return { changed: [m.id], metaChanged: false };
     }
@@ -455,23 +551,20 @@ export function foldEvent(state: FoldState, ev: RawEvent): FoldResult {
       const mid = typeof d.messageId === 'string' ? d.messageId : '';
       const delta = typeof d.deltaContent === 'string' ? d.deltaContent : '';
       if (!mid || !delta) return empty;
-      const id = resolveMsgId(state, mid);
-      const m = streamingMsg(state)?.id === id ? streamingMsg(state)! : ensureStreaming(state, id, tsOf(ev));
+      const m = ensureStreaming(state, mid, tsOf(ev));
       m.content += delta;
       return { changed: [m.id], metaChanged: false };
     }
 
     case 'assistant.message': {
       const mid = (typeof d.messageId === 'string' && d.messageId) || ev.id || `a-${state.messages.length}`;
-      // Adopt the streaming/placeholder id so reasoning + content land on ONE
-      // message, consistent across live and reload.
-      const id = state.msgAlias.get(mid) ?? state.streamingId ?? mid;
+      const id = mid;
       const rawContent = typeof d.content === 'string' ? d.content : '';
       // An agent can attach an image/file by emitting a <cockpit-attachment .../>
       // marker anywhere in its reply (after publishing the file via /upload). Pull
       // it out into message.attachment; the surrounding prose stays as the caption.
-      const extracted = extractAttachment(rawContent);
-      const content = extracted ? extracted.text : rawContent;
+      const extracted = extractParts(rawContent, false);
+      const content = extracted ? extracted.content : rawContent;
       const attachment = extracted?.attachment;
       const reqs = Array.isArray(d.toolRequests) ? (d.toolRequests as ToolRequest[]) : [];
       const toolCalls: ToolCall[] = reqs
@@ -497,7 +590,7 @@ export function foldEvent(state: FoldState, ev: RawEvent): FoldResult {
             status: 'pending' as const,
             ...(r.name ? { name: String(r.name) } : {}),
           };
-          const args = toolArgsOf(r.name, r.arguments);
+          const args = projection?.toolArgs?.get(r.toolCallId as string) ?? toolArgsOf(r.name, r.arguments);
           if (args) tc.args = args;
           return tc;
         });
@@ -509,14 +602,7 @@ export function foldEvent(state: FoldState, ev: RawEvent): FoldResult {
         if (r.name === 'ask_user') state.askToolIds.add(r.toolCallId);
         // `task` → capture the sub-agent's prompt/agent_type now; the
         // subagent.started event (which builds the card) doesn't carry the prompt.
-        if (r.name === 'task') {
-          const a = (r.arguments ?? {}) as Record<string, unknown>;
-          state.pendingTask.set(r.toolCallId, {
-            ...(typeof a.prompt === 'string' ? { prompt: a.prompt } : {}),
-            ...(typeof a.description === 'string' ? { description: a.description } : {}),
-            ...(typeof a.agent_type === 'string' ? { agentType: a.agent_type } : {}),
-          });
-        }
+        rememberTask(state, r, projection?.scope);
         // Track repo files the agent creates/edits for the info-panel diff section.
         if (r.name === 'create' || r.name === 'edit') {
           const p = (r.arguments as { path?: unknown } | undefined)?.path;
@@ -528,16 +614,12 @@ export function foldEvent(state: FoldState, ev: RawEvent): FoldResult {
       }
       // Preserve any thought (reasoning) already attached to this message.
       const prevIdx = state.byId.get(id);
-      const prevThought = prevIdx !== undefined ? state.messages[prevIdx]?.thought : undefined;
-      // Live, reasoning streams onto a placeholder so `prevThought` carries it. On
-      // replay, getEvents() holds no assistant.reasoning* events — but the final
-      // reasoning text is persisted on THIS message as `data.reasoningText`. Fall
-      // back to it so replay reconstructs the thinking the user saw live (the
-      // live==replay invariant). `d.reasoningText` is untyped (Record<string,
-      // unknown>), so narrow it the same way as `content`.
+      const prevThought = (prevIdx !== undefined ? state.messages[prevIdx]?.thought : undefined)
+        ?? state.pendingReasoning?.thought;
+      // The final text is authoritative, not another reasoning segment to append.
       const persistedThought = typeof d.reasoningText === 'string' && d.reasoningText.trim()
         ? d.reasoningText : undefined;
-      const thought = prevThought ?? persistedThought;
+      const thought = persistedThought ?? prevThought;
       // A message whose only tool was `task` (now a sub-agent card) and that has no
       // text/thought/attachment would render as an empty byline — skip it. Still end the turn.
       if (!content && toolCalls.length === 0 && !thought && prevIdx === undefined && !attachment) {
@@ -548,40 +630,49 @@ export function foldEvent(state: FoldState, ev: RawEvent): FoldResult {
         id, role: 'assistant', content, timestamp: tsOf(ev),
         ...(thought ? { thought } : {}),
         ...(toolCalls.length ? { toolCalls } : {}),
-        ...(attachment ? { attachment } : {}),
+        ...(extracted ?? {}),
       };
       upsert(state, msg);
       endTurn(state); // the turn's assistant message is finalized
       return { changed: [id], metaChanged: false };
     }
 
+    // The callback/request lifecycle belongs to Engine. Only the durable tool
+    // result is an answer; user_input.completed is ephemeral and may be empty.
+    case 'user_input.requested': {
+      const toolCallId = stringOf(d.toolCallId);
+      if (toolCallId) state.askToolIds.add(toolCallId);
+      return empty;
+    }
+
     case 'tool.execution_start':
     case 'tool.execution_complete': {
       const toolCallId = typeof d.toolCallId === 'string' ? d.toolCallId : '';
       if (!toolCallId) return empty;
+      if (ev.type === 'tool.execution_start' && d.toolName === 'ask_user') state.askToolIds.add(toolCallId);
       const msgId = state.toolMsg.get(toolCallId);
-      if (!msgId) return empty;
-      const idx = state.byId.get(msgId);
-      if (idx === undefined) return empty;
-      const msg = state.messages[idx];
-      if (!msg?.toolCalls) return empty;
-      const tc = msg.toolCalls.find((t) => t.toolCallId === toolCallId);
-      if (!tc) return empty;
-      if (ev.type === 'tool.execution_start') tc.status = 'in_progress';
-      else tc.status = d.success === false ? 'failed' : 'completed';
-      const changed = [msgId];
+      const idx = msgId ? state.byId.get(msgId) : undefined;
+      const tc = idx !== undefined ? state.messages[idx]?.toolCalls?.find((t) => t.toolCallId === toolCallId) : undefined;
+      const changed: string[] = [];
+      if (tc && msgId) {
+        tc.status = ev.type === 'tool.execution_start' ? 'in_progress'
+          : d.success === false || d.error != null ? 'failed' : 'completed';
+        changed.push(msgId);
+      }
       // Attach the (capped) tool output to the collapsible detail for ALL tools
       // (except ask_user, whose answer becomes its own reply bubble below).
-      if (ev.type === 'tool.execution_complete' && !state.askToolIds.has(toolCallId)) {
-        const out = toolOutputOf(d.result);
+      if (tc && ev.type === 'tool.execution_complete' && !state.askToolIds.has(toolCallId)) {
+        const out = projection?.toolOutput ?? toolOutputOf(d.result, d.error);
         if (out) tc.output = out;
+        const images = projection?.toolImages ?? toolImagesOf(ev);
+        if (images.length) tc.images = images;
       }
       // ask_user completion: surface the user's answer as a visible "my reply"
       // bubble. The result content is persisted (survives reload via getEvents),
       // so this is authoritative and identical for live + replay. Stable id keeps
       // the upsert idempotent across replays.
       if (ev.type === 'tool.execution_complete' && state.askToolIds.has(toolCallId)) {
-        const answer = askAnswerOf(d.result);
+        const answer = askAnswerOf(d);
         if (answer) {
           const replyId = `reply-${toolCallId}`;
           upsert(state, { id: replyId, role: 'user', subtype: 'ask-reply', content: answer, timestamp: tsOf(ev) });

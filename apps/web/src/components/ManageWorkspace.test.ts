@@ -1,0 +1,118 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { test, type TestContext } from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { ManageWorkspace } from './ManageWorkspace';
+import { useCockpit } from '../net/store';
+
+function renderWorkspace(t: TestContext, path: string, connected: boolean) {
+  const state = useCockpit.getInitialState();
+  const previous = { ...state };
+  Object.assign(state, { connState: connected ? 'open' : 'connecting', sessions: [] });
+  t.after(() => { Object.assign(state, previous); });
+  return renderToStaticMarkup(createElement(MemoryRouter, {
+    initialEntries: [path],
+    children: createElement(Routes, {
+      children: createElement(Route, { path: '/:section/:item?', element: createElement(ManageWorkspace) }),
+    }),
+  }));
+}
+
+for (const section of ['mcp', 'skills']) {
+  for (const connected of [true, false]) {
+    test(`global ${section} catalog is session-independent while ${connected ? 'connected' : 'offline'}`, (t) => {
+      const html = renderWorkspace(t, `/${section}`, connected);
+      assert.match(html, connected ? /加载中/ : /等待连接/);
+      assert.doesNotMatch(html, /恢复会话|没有配置 MCP 服务器|没有可用的 skill/);
+      if (section === 'mcp') {
+        assert.match(html, /全局 MCP/);
+        assert.doesNotMatch(html, /Copilot 全局配置|不改变已加载会话的连接/);
+        assert.match(html, /aria-label="刷新 Copilot MCP 配置缓存"/);
+      }
+    });
+  }
+}
+
+// The existing server renderer cannot run resource layout effects. Keep the
+// loaded-detail control contract covered alongside transport and resource tests.
+const source = readFileSync(new URL('./ManageWorkspace.tsx', import.meta.url), 'utf8').replace(/\s+/g, ' ');
+
+for (const section of ['mcp', 'skills', 'trash']) {
+  test(`${section} list has one parent back control and no global hamburger`, (t) => {
+    const html = renderWorkspace(t, `/${section}`, true);
+    assert.equal(html.match(/aria-label="返回会话列表"/g)?.length, 1);
+    assert.doesNotMatch(html, /aria-label="全局导航"|aria-haspopup="menu"/);
+  });
+}
+
+test('desktop master and narrow detail return one level without duplicate visible controls', () => {
+  assert.match(source, /up\(item === null \? '\/' : `\/\$\{section\}`\)/);
+  assert.match(source, /className="chat-back btn-icon rp lg:hidden".*onClick=\{\(\) => up\(\)\}/);
+  assert.match(source, /if \(item === null\) backRef.current\?\.focus\(\)/);
+  assert.match(source, /useLayoutEffect\(\(\) => \{ titleRef.current\?\.focus\(\); \}, \[item\]\)/);
+});
+
+test('global skill toggles render only authoritative booleans and never assume unknown means enabled', () => {
+  assert.match(source,
+    /typeof data.enabled === 'boolean' \? <SkillGlobalToggle name=\{data.name\} enabled=\{data.enabled\} disabled=\{!valid\} onChanged=\{onChanged\} \/>/);
+  assert.match(source, /Copilot 未提供全局启用状态/);
+  assert.match(source,
+    /<Toggle label="全局默认启用" on=\{enabled\} disabled=\{disabled \|\| !action.connected \|\| action.busy\}/);
+  assert.doesNotMatch(source, /enabled\s*\?\?\s*true|localStorage|sessionStorage/);
+});
+
+test('both global toggles refresh authoritative detail and list after success or failure', () => {
+  assert.match(source, /try \{ await mcpSetDefault\(name, !on\); \} finally \{ onChanged\(\); \}/);
+  assert.match(source, /try \{ await skillsSetGlobal\(name, next\); \} finally \{ onChanged\(\); \}/);
+  assert.match(source, /<McpList catalog=\{mcpCatalog\}/);
+  assert.match(source, /<SkillsList revision=\{refreshNonce\}/);
+  assert.match(source, /<McpDetail catalog=\{mcpCatalog\} name=\{item\} onChanged=\{refresh\}/);
+  assert.match(source, /<SkillDetail revision=\{refreshNonce\} name=\{item\} onChanged=\{refresh\}/);
+  assert.match(source, /role="alert">设置失败：\{action.error\}/);
+});
+
+test('MCP parent owns one route-independent catalog and disables it outside MCP', () => {
+  const parent = source.slice(source.indexOf('function ManagementContent'));
+  assert.equal(source.match(/useKeyedResource\('global:mcp'/g)?.length, 1);
+  assert.match(parent, /useKeyedResource\('global:mcp', mcpGlobal, refreshNonce, section === 'mcp'\)/);
+  assert.match(source, /<ManagementContent key=\{section\} section=\{section\} item=\{item\}/);
+  for (const [start, end] of [['function McpList', 'function McpDefault'], ['function McpDetail', 'function SkillsList']]) {
+    const consumer = source.slice(source.indexOf(start), source.indexOf(end));
+    assert.doesNotMatch(consumer, /useKeyedResource|mcpGlobal|revision:|useState/);
+    assert.match(consumer, /data: rows, status, failed.* = catalog/);
+  }
+});
+
+test('MCP detail derives the route target and write validity from the shared accepted catalog', () => {
+  const detail = source.slice(source.indexOf('function McpDetail'), source.indexOf('function SkillsList'));
+  assert.match(detail, /data: rows, status, failed, valid \} = catalog/);
+  assert.match(detail, /rows\?\.find\(\(server\) => server.name === name\)/);
+  assert.match(detail, /if \(!row\) return status \? <ResourceStatus/);
+  assert.match(detail, /未找到该 MCP 服务器/);
+  assert.match(detail, /<McpDefault name=\{row.name\} on=\{row.defaultOn\} disabled=\{!valid\}/);
+  assert.match(source, /useKeyedAction\(`global:mcp:\$\{name\}`\)/);
+});
+
+test('global MCP refresh invalidates configuration cache without invoking session lifecycle', () => {
+  assert.match(source, /if \(section === 'mcp'\) await mcpRefresh\(\);/);
+  assert.doesNotMatch(source, /reloadSession|unloadSession|mcpToggleSession/);
+  assert.match(source, /不改变已加载会话的连接/);
+  assert.match(source, /用于新建或卸载后重新加载的会话，不改变当前已加载会话/);
+  assert.doesNotMatch(source, /Cockpit 不保存偏好/);
+});
+
+test('trash body and title share the store preview without a second generation resource owner', () => {
+  const body = source.slice(source.indexOf('function SessionPreview'), source.indexOf('function MasterHeader'));
+  assert.doesNotMatch(body, /useKeyedResource|connectionGeneration|readSessionPreview/);
+  assert.match(body, /s.preview\?\.sessionId === sessionId \? s.preview : null/);
+  assert.match(body, /openPreview\(sessionId\)/);
+  assert.match(body, /closePreview\(\)/);
+  assert.match(source, /section === 'trash' && item !== null\) refreshPreview\(item\)/);
+  assert.match(body, /onClick=\{\(\) => retryPreview\(preview\)\}/);
+  assert.match(body, /disabled=\{!connected \|\| preview.loadingHistory\}/);
+  assert.match(body, /重试加载更早消息/);
+  assert.match(body, /重试加载预览/);
+  assert.match(body, /connected && !preview.error && !preview.historyStale/);
+});

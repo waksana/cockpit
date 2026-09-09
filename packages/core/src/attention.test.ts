@@ -7,9 +7,9 @@ import { nextAttention, applySeen } from './attention.ts';
 const idle = { status: 'idle', choicePending: false };
 const running = { status: 'running', choicePending: false };
 
-test('running → idle raises ready', () => {
+test('a confirmed native reply raises ready', () => {
   assert.equal(
-    nextAttention({ status: 'running', choicePending: false, attention: null }, idle),
+    nextAttention({ status: 'running', choicePending: false, attention: null }, { ...idle, replyReady: true }),
     'ready',
   );
 });
@@ -57,22 +57,21 @@ test('sending the next prompt (idle→running) clears ready', () => {
   );
 });
 
-test('choice cleared but turn ends immediately → ready', () => {
-  // prev had a choice; next is idle with no choice (was busy) → ready
+test('answering a choice without a native reply does not invent unread content', () => {
   assert.equal(
     nextAttention({ status: 'running', choicePending: true, attention: 'choice' }, idle),
-    'ready',
+    null,
   );
 });
 
-test('error / unloaded carry no attention', () => {
+test('error does not invent attention and unloading preserves unread replies', () => {
   assert.equal(
     nextAttention({ status: 'running', choicePending: false, attention: null }, { status: 'error', choicePending: false }),
     null,
   );
   assert.equal(
     nextAttention({ status: 'idle', choicePending: false, attention: 'ready' }, { status: 'unloaded', choicePending: false }),
-    null,
+    'ready',
   );
 });
 

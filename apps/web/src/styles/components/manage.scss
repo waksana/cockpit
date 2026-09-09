@@ -66,6 +66,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.manage-session-row {
+  .manage-row-name { flex-wrap: wrap; overflow-wrap: anywhere; }
+  .manage-row-sub { white-space: normal; overflow-wrap: anywhere; }
+}
+.manage-scope {
+  margin: 0 0.75rem 0.6rem;
+  font-size: var(--font-size-12);
+  line-height: 1.5;
+  color: var(--secondary-text-color);
+}
+// The existing list owns loading/empty state; no duplicate resource for the placeholder.
+.cockpit-shell:not(:has(.manage-list .manage-row)) .manage-selection-hint { visibility: hidden; }
 .manage-tag {
   flex: none;
   font-size: var(--font-size-11);
@@ -159,6 +171,7 @@
   padding: 1rem 1.1rem 2rem;
 }
 .manage-detail-title {
+  overflow-wrap: anywhere;
   margin: 0 0 0.3rem;
   font-size: var(--font-size-18);
   font-weight: 600;
@@ -169,50 +182,13 @@
   color: var(--secondary-text-color);
 }
 .manage-detail-line {
+  overflow-wrap: anywhere;
   margin: 0.7rem 0 0;
   font-size: var(--font-size-14);
   line-height: 1.55;
   color: var(--primary-text-color);
 }
 .manage-detail-body { margin-top: 0.9rem; }
-// A small section label inside a detail pane (e.g. Gate / 动作 / Prompt).
-.manage-detail-subhead {
-  margin: 1.1rem 0 0;
-  font-size: var(--font-size-12);
-  font-weight: 600;
-  color: var(--secondary-text-color);
-}
-// A muted explanatory line (e.g. the gate contract hint).
-.manage-detail-hint {
-  color: var(--secondary-text-color);
-  font-size: var(--font-size-12);
-}
-// A prompt body — preserve newlines like the config block, without the chrome.
-.manage-detail-prompt {
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-// Trigger list inside a flow's detail: each row is a kind chip + a description.
-.flow-trigger-list {
-  margin-top: 0.5rem;
-  display: flex; flex-direction: column; gap: 0.4rem;
-}
-.flow-trigger-row {
-  display: flex; align-items: baseline; gap: 0.5rem;
-  font-size: var(--font-size-14);
-  color: var(--primary-text-color);
-}
-.flow-trigger-kind {
-  flex: none;
-  font-size: var(--font-size-11);
-  padding: 0.05rem 0.4rem;
-  border-radius: 0.5rem;
-  color: var(--secondary-text-color);
-  background: var(--ripple-color);
-  &[data-kind='event'] { color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 14%, transparent); }
-  &[data-kind='time']  { color: var(--green-color);   background: color-mix(in srgb, var(--green-color) 14%, transparent); }
-}
-.flow-trigger-text { overflow-wrap: anywhere; }
 .manage-detail code {
   padding: 0.05rem 0.3rem;
   border-radius: calc(var(--border-radius) / 2);

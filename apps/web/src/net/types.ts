@@ -7,7 +7,7 @@ export type {
   ChatMessage, ToolCall, ChatRole, SessionMeta, SessionStatus, AgentStatus,
   ModelOption, QueuedItem, AskRequest, ServerEvent, HistoryPage, TodoProgress,
   TodoItem, SessionPlan, SessionPanels, PanelItem, Attachment, DirEntry, DirListing, TrashEntry,
-  ExitPlanModeAction,
+  ExitPlanModeAction, UploadedFile,
 } from '@cockpit/protocol';
 
 import type { ChatMessage, SessionMeta } from '@cockpit/protocol';
@@ -19,6 +19,10 @@ import type { ChatMessage, SessionMeta } from '@cockpit/protocol';
 export interface ChatSession extends SessionMeta {
   messages: ChatMessage[];
   materialized: boolean;
+  historyStale: boolean;
+  resumeAfter?: string;
   hasMore: boolean;
   loadingHistory: boolean;
+  resumeToken?: string;
+  liveMessageIds?: string[];
 }

@@ -8,13 +8,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { newFoldState, foldEvent, resetTurn, cleanSessionTitle } from './fold.ts';
+import { normalizeEvent, type SdkEvent } from './sdk-types.ts';
+import { partsPrompt, type MessagePart } from '@cockpit/protocol';
 
-interface Ev { type: string; data?: Record<string, unknown>; id?: string; agentId?: string; timestamp?: number }
+type Ev = Omit<SdkEvent, 'data'> & { data?: SdkEvent['data'] };
 
 // Replay: fold all events into a fresh state (mirrors loadSession getEvents()).
 function replay(events: Ev[]) {
   const st = newFoldState();
-  for (const ev of events) foldEvent(st, ev as never);
+  for (const ev of events) foldEvent(st, normalizeEvent({ ...ev, data: ev.data ?? {} }));
   return st;
 }
 
@@ -27,7 +29,7 @@ function live(events: Ev[], engineIntercepts: string[] = []) {
   const client = new Map<string, unknown>();
   for (const ev of events) {
     if (engineIntercepts.includes(ev.type)) continue;
-    const res = foldEvent(st, ev as never);
+    const res = foldEvent(st, normalizeEvent({ ...ev, data: ev.data ?? {} }));
     for (const id of res.changed) {
       const idx = st.byId.get(id);
       if (idx !== undefined) client.set(id, structuredClone(st.messages[idx]));
@@ -47,6 +49,57 @@ test('user + assistant message fold', () => {
   assert.equal(st.messages.length, 2);
   assert.equal(st.messages[0].role, 'user');
   assert.equal(st.messages[1].content, 'hello');
+});
+
+test('v2 retained files preserve multiple attachments and exact visible body order across replay', () => {
+  const parts: MessagePart[] = [
+    { type: 'text', text: 'before\n' },
+    { type: 'file', attachment: { kind: 'image', name: 'original.svg', mime: 'image/svg+xml', url: '/uploads/a.svg' } },
+    { type: 'text', text: '\nbetween\n' },
+    { type: 'file', attachment: { kind: 'file', name: 'video.mp4', mime: 'video/mp4', url: '/uploads/b.mp4' } },
+    { type: 'text', text: '\nafter' },
+  ];
+  const content = partsPrompt(parts);
+  const events = [userMsg(content, 'ordered-user'), asstMsg('ordered-assistant', content)]
+    .map(event => ({ ...event, timestamp: '2026-09-09T00:00:00.000Z' }));
+  const state = replay(events);
+  for (const message of state.messages) {
+    assert.deepEqual(message.parts, parts);
+    assert.deepEqual(message.attachments, parts.filter(p => p.type === 'file').map(p => p.attachment));
+    assert.equal(message.content, 'before\n\nbetween\n\nafter');
+    assert.equal(message.attachment?.name, 'original.svg');
+  }
+  assert.deepEqual([...live(events).client.values()], state.messages);
+});
+
+test('history summary folding keeps canonical lifecycle metadata without hydrating child messages', () => {
+  const state = newFoldState();
+  const events: Ev[] = [
+    userMsg('Root', 'u'),
+    asstMsg('spawn', '', { toolRequests: [
+      { toolCallId: 'outer', name: 'task', arguments: { prompt: 'Private spawn', description: 'Task' } },
+    ] }),
+    { type: 'subagent.started', data: { toolCallId: 'outer', agentId: 'native-child' } },
+    { ...asstMsg('child', 'Private child', { reasoningText: 'Private thought', toolRequests: [
+      { toolCallId: 'inner', name: 'task', arguments: { prompt: 'Private nested spawn' } },
+    ] }), agentId: 'native-child' },
+    { type: 'subagent.started', agentId: 'nested-agent', data: { toolCallId: 'inner' } },
+    { ...asstMsg('nested', 'Private nested child'), agentId: 'nested-agent' },
+    { type: 'subagent.completed', data: { toolCallId: 'outer', totalToolCalls: 9 } },
+  ];
+  for (const event of events) {
+    foldEvent(state, normalizeEvent({ ...event, data: event.data ?? {} }), { scope: { details: 'summary' } });
+  }
+  assert.equal(state.messages.length, 2);
+  assert.equal(state.messages[1]?.subMessages, undefined);
+  assert.equal(state.messages[1]?.subagent?.prompt, undefined);
+  assert.equal(state.messages[1]?.subagent?.toolCount, 9);
+  assert.equal(state.messages[1]?.subagent?.status, 'completed');
+  const child = state.subFolds.get('outer')!;
+  assert.ok(child.agentIds.has('native-child'));
+  assert.deepEqual(child.messages.map(message => message.id), ['subagent-inner']);
+  assert.deepEqual(child.subFolds.get('inner')!.messages, []);
+  assert.ok(!JSON.stringify([...state.pendingTask.values(), ...child.pendingTask.values()]).includes('Private'));
 });
 
 test('streaming deltas accumulate into one message', () => {
@@ -138,10 +191,8 @@ test('M2: multiple reasoning segments are preserved', () => {
 // form (what getEvents() returns) has NO reasoning events — only the final
 // assistant.message carrying `reasoningText`. The fold must reconstruct the
 // thought from that persisted field so a reload shows what the user saw live.
-// The message *id* is allowed to differ (live keeps the reasoning placeholder
-// `stream-…`, replay uses the real messageId) — that asymmetry is benign and
-// not user-visible, so these tests assert on the projected user-visible fields
-// (role/subtype/content/thought), not the id.
+// Canonical message IDs must also match: history before/after anchors and the
+// upsert-only live client cannot safely retain reasoning-placeholder IDs.
 
 // The live store projection in first-upsert (insertion) order.
 function liveProjection(events: Ev[]) {
@@ -174,7 +225,9 @@ test('D1: streaming reasoning survives reload — thought rebuilt from reasoning
   assert.equal(liveMsgs[0].thought, reasoningText);
   assert.equal(liveMsgs[0].content, 'The answer.');
 
-  // live == replay on the user-visible projection (id is allowed to differ).
+  // Live and replay share the canonical anchor, not only visible text.
+  assert.equal(liveMsgs[0].id, 'a1');
+  assert.equal(liveMsgs[0].id, replayed.messages[0].id);
   assert.equal(liveMsgs[0].thought, replayed.messages[0].thought);
   assert.equal(liveMsgs[0].content, replayed.messages[0].content);
 });
@@ -274,6 +327,7 @@ test('D1: sub-agent streaming reload — inner thought rebuilt inside the card',
   assert.equal(innerLive.length, 1);
   assert.equal(innerLive[0].thought, innerThought);
   assert.equal(innerLive[0].content, 'inner ans');
+  assert.equal(innerLive[0].id, innerReplay[0].id);
 });
 
 // --- tool calls ---

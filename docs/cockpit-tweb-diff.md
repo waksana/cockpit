@@ -6,9 +6,11 @@ imitating it: real structural tokens (`src/styles/tokens.scss` ← tweb
 ported near-verbatim from tweb partials. Components render tweb's DOM/class
 contract so the vendored CSS resolves.
 
-This file is the **single list of intentional deviations**. Everything *not*
-listed here should follow tweb. If something looks off and isn't here, it's a
-regression (we drifted), not a choice.
+This is a historical design reference, not a requirement to match every tweb
+behavior. Current Cockpit product constraints take precedence. Session menus use
+one shared, flat seven-page/four-action catalog; detail panels have no cross-page
+tabs or More navigation. Telegram's row/topbar menus differ, so their shared
+Cockpit catalog is an intentional simplification, not a claimed source parity.
 
 ## Deviations (cockpit on purpose)
 

@@ -4,7 +4,7 @@
 // (Per-session enable/disable already lives in index.ts.)
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { CockpitError, intent } from '../cockpit.js';
+import { CockpitError, protocolIntent as intent } from '../cockpit.js';
 import {
   ResponseFormat,
   ok,
@@ -13,8 +13,6 @@ import {
   cappedJson,
   shrinkList,
   type ToolResult,
-  type McpServerGlobal,
-  type SkillGlobal,
 } from '../shared.js';
 
 export function registerGlobalTools(server: McpServer): void {
@@ -32,13 +30,13 @@ export function registerGlobalTools(server: McpServer): void {
     },
     async ({ response_format }): Promise<ToolResult> => {
       try {
-        const { servers } = await intent<{ servers: McpServerGlobal[] }>('mcp/global');
+        const { servers } = await intent('mcp/global');
         const structured = { servers, count: servers.length };
         if (response_format === 'json')
-          return ok(cappedJson(structured, shrinkList(servers, 'servers', { keep: ['name', 'defaultOn'], clip: ['detail'] })), structured);
-        if (!servers.length) return ok('# Global MCP servers\n\n_None configured._', structured);
+          return ok(cappedJson(structured, shrinkList(servers, 'servers', { keep: ['name', 'defaultOn'], clip: ['detail'] })));
+        if (!servers.length) return ok('# Global MCP servers\n\n_None configured._');
         const lines = servers.map((s) => `- ${s.defaultOn ? '🟢' : '⚪'} ${s.name}${s.defaultOn ? ' (default-on)' : ''}\n    ${s.detail ?? ''}`);
-        return ok(capped(`# Global MCP servers (${servers.length})\n${lines.join('\n')}`), structured);
+        return ok(capped(`# Global MCP servers (${servers.length})\n${lines.join('\n')}`));
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }
@@ -51,8 +49,8 @@ export function registerGlobalTools(server: McpServer): void {
     {
       title: 'Set an MCP server default-on',
       description:
-        'Set whether a globally-configured MCP server is enabled BY DEFAULT for new sessions. ' +
-        'Does not change sessions that already have an explicit per-session choice. Get exact names ' +
+        'Write Copilot native user configuration to enable/disable this MCP server for future sessions. ' +
+        'Does not change current live connections or store a Cockpit preference. Get exact names ' +
         'from cockpit_list_global_mcp.',
       inputSchema: {
         name: z.string().min(1).describe('The MCP server name (from cockpit_list_global_mcp)'),
@@ -62,8 +60,8 @@ export function registerGlobalTools(server: McpServer): void {
     },
     async ({ name, on }): Promise<ToolResult> => {
       try {
-        const res = await intent<{ ok: boolean }>('mcp/global-default', { name, on });
-        return ok(`Set ${name} default-on=${on}.`, { ok: res.ok });
+        await intent('mcp/global-default', { name, on });
+        return ok(`Set ${name} default-on=${on}.`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }
@@ -76,17 +74,16 @@ export function registerGlobalTools(server: McpServer): void {
     {
       title: 'Reload the MCP config',
       description:
-        'Re-read ~/.copilot/mcp-config.json and hot-apply it to ALL loaded sessions: connect newly ' +
-        'added servers, drop removed ones, and re-spawn stdio servers (so a server whose CODE ' +
-        'changed is reloaded). Use after editing the global MCP config or rebuilding a server. To ' +
-        'reload just one session, use cockpit_reload_session_mcp.',
+        'Refresh Copilot native MCP configuration discovery without restarting sessions. ' +
+        'Use after editing native configuration. To reload one idle ' +
+        'session, use cockpit_reload_session_mcp.',
       inputSchema: {},
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (): Promise<ToolResult> => {
       try {
-        const res = await intent<{ ok: boolean }>('mcp/refresh');
-        return ok('Reloaded MCP config + reconnected servers across all loaded sessions.', { ok: res.ok });
+        await intent('mcp/refresh');
+        return ok('Refreshed Copilot native MCP configuration; live sessions were not restarted.');
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }
@@ -97,13 +94,12 @@ export function registerGlobalTools(server: McpServer): void {
   server.registerTool(
     'cockpit_reload_session_mcp',
     {
-      title: 'Restart one session\'s MCP servers',
+      title: 'Reload one session\'s native MCP connections',
       description:
-        "Reconnect a single session's enabled MCP servers — for a stdio server this RE-SPAWNS its " +
-        'process, so it picks up new server code without restarting the whole cockpit backend. Use ' +
-        'this after rebuilding an MCP server (e.g. the cockpit MCP itself) to load the new tools ' +
-        'into a specific session. Loads the session first if it is unloaded. Reconnecting the ' +
-        "calling session's own MCP is safe — this returns from the backend, not the MCP process.",
+        'Use native MCP reload on a loaded idle session to reread definitions and reconnect servers. ' +
+        'Native reload reapplies global defaults; temporary session choices may change. ' +
+        'It does not close/resume the Copilot session. Explicitly load an unloaded target first; ' +
+        "do not call it on the currently executing session's own MCP.",
       inputSchema: {
         session_id: z.string().min(1).describe('The session id whose MCP servers to reconnect'),
       },
@@ -111,11 +107,8 @@ export function registerGlobalTools(server: McpServer): void {
     },
     async ({ session_id }): Promise<ToolResult> => {
       try {
-        const res = await intent<{ ok: boolean; reconnected: number }>('mcp/reload-session', { sessionId: session_id });
-        return ok(`Reconnected ${res.reconnected} MCP server(s) on ${session_id} (stdio processes re-spawned).`, {
-          ok: res.ok,
-          reconnected: res.reconnected,
-        });
+        const res = await intent('mcp/reload-session', { sessionId: session_id });
+        return ok(`Native MCP reload completed for ${session_id}: ${res.reconnected} connected server(s), using Copilot global defaults.`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }
@@ -129,21 +122,28 @@ export function registerGlobalTools(server: McpServer): void {
       title: 'List all available skills',
       description:
         'List every skill cockpit knows (the global catalog from the skills directory), with its ' +
-        'description and source. Per-session enable/disable is separate ' +
+        'description, source and native global enabled state when available. Use cockpit_call_intent ' +
+        'with name:"skills/global-toggle", body:{name,enabled,cwd?} to change Copilot native global configuration. ' +
+        'Pass the discovery cwd for a project-only skill; the setting itself remains global. ' +
+        'Per-session enable/disable is separate ' +
         '(cockpit_list_session_skills / cockpit_set_session_skill). After adding/removing skills on ' +
-        'disk, use cockpit_refresh_skills so the catalog re-scans.',
-      inputSchema: { response_format: ResponseFormat.describe("'markdown' (human) or 'json' (machine)") },
+        'disk, use cockpit_refresh_skills so the catalog re-scans. Optional cwd selects project skills; ' +
+        'when omitted, the backend uses its own home directory (not the MCP client cwd).',
+      inputSchema: {
+        cwd: z.string().optional().describe('Backend working directory for skill discovery; defaults to server home'),
+        response_format: ResponseFormat.describe("'markdown' (human) or 'json' (machine)"),
+      },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async ({ response_format }): Promise<ToolResult> => {
+    async ({ cwd, response_format }): Promise<ToolResult> => {
       try {
-        const { skills } = await intent<{ skills: SkillGlobal[] }>('skills/global');
+        const { skills } = await intent('skills/global', cwd === undefined ? {} : { cwd });
         const structured = { skills, count: skills.length };
         if (response_format === 'json')
-          return ok(cappedJson(structured, shrinkList(skills, 'skills', { keep: ['name', 'source'], clip: ['description'] })), structured);
-        if (!skills.length) return ok('# Skills\n\n_None found._', structured);
-        const lines = skills.map((s) => `- ${s.name}${s.source ? ` (${s.source})` : ''}${s.description ? `\n    ${s.description.slice(0, 140)}` : ''}`);
-        return ok(capped(`# Skills (${skills.length})\n${lines.join('\n')}`), structured);
+          return ok(cappedJson(structured, shrinkList(skills, 'skills', { keep: ['name', 'source', 'enabled'], clip: ['description'] })));
+        if (!skills.length) return ok('# Skills\n\n_None found._');
+        const lines = skills.map((s) => `- ${s.name}${s.enabled === false ? ' (disabled globally)' : ''}${s.source ? ` (${s.source})` : ''}${s.description ? `\n    ${s.description.slice(0, 140)}` : ''}`);
+        return ok(capped(`# Skills (${skills.length})\n${lines.join('\n')}`));
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }

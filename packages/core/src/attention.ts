@@ -1,18 +1,5 @@
-// attention.ts — the authoritative derivation of a session's "needs the user"
-// state. This is the SINGLE place that decides whether a session needs attention
-// and of what kind; the client never re-derives it from raw events. Both
-// notification channels (client Notification + server Web Push) and the sidebar
-// badge consume the result.
-//
-//   'choice' — blocked mid-turn on a required decision (ask_user / plan confirm /
-//              elicitation). The agent literally cannot proceed. Strongest signal.
-//   'ready'  — the agent just finished its turn (running → idle) and awaits input;
-//              it persists until the user sends the next prompt.
-//   null     — nothing needed (running, freshly prompted, unloaded, error).
-//
-// 'ready' is edge-born (the running→idle moment), so this is a transition function
-// of (previous, next), not a pure function of the current snapshot — otherwise
-// every idle session on startup would falsely read as 'ready'.
+// Replies require a real native turn end, not a polling/status edge. Unloading
+// does not consume a reply; only seeing it or starting new work does.
 
 import type { Attention } from '@cockpit/protocol';
 
@@ -23,50 +10,47 @@ export interface AttentionInputs {
   // running→idle is NOT a fresh "ready" — the user is right there and asked for
   // it — so it must never raise attention or fire a notification.
   silent?: boolean;
+  replyReady?: boolean;
 }
 
 export function nextAttention(
   prev: AttentionInputs & { attention: Attention | null },
   next: AttentionInputs,
 ): Attention | null {
-  // A user-initiated transition never raises attention: the user is present and
-  // caused it (cancel), so there is nothing to alert them about. Clears any prior
-  // signal too — opening/acting on the session is the natural "seen".
-  if (next.silent) return null;
-  // A pending decision always wins — the agent is blocked on the user.
   if (next.choicePending) return 'choice';
-  // Actively working (or about to): nothing to ask, clear any prior signal.
   if (next.status === 'running') return null;
-  if (next.status === 'idle') {
-    // Only the moment of becoming idle-after-busy is a fresh "ready". An
-    // already-idle session that receives an unrelated patch keeps its state, so a
-    // 'ready' badge persists until the user prompts (status → running) and a
-    // freshly loaded idle session never spuriously reads ready.
-    const wasBusy = prev.status === 'running' || prev.choicePending;
-    return wasBusy ? 'ready' : (prev.attention ?? null);
-  }
-  // error / unloaded / starting → no attention.
-  return null;
+  if (next.status === 'idle' && next.replyReady && !next.silent) return 'ready';
+  return prev.attention === 'ready' ? 'ready' : null;
 }
 
-// applySeen — the OTHER half of the lifecycle: what happens when the user looks.
-// `nextAttention` decides when a session RAISES attention; this decides how a
-// raised attention RESOLVES on sight. The two kinds resolve differently, which is
-// the whole point of the design:
-//   'ready'  — a finished result. Seeing it IS completion → clears to null. This
-//              is what stops the badge from degrading into "every session" (an
-//              agent always ends a turn idle-and-ready, so a ready that only
-//              cleared on the next prompt would never leave the count).
-//   'choice' — a blocked process. Seeing only advances `seenId` (so the UI can
-//              show it demoted/muted); it stays raised and counted until ANSWERED
-//              (which clears it structurally via nextAttention, not here).
-// `seenId` is monotonic (max), so this is idempotent and commutative across the
-// user's devices — replaying a stale "seen" can never lower it.
+// Seeing completes a reply, not a decision. Late acknowledgements only advance
+// their observed waterline; they cannot consume a newer reply.
 export function applySeen(
   cur: { attention: Attention | null; attnId: number; seenId: number },
+  observedId = cur.attnId,
 ): { attention: Attention | null; seenId: number } {
+  const seenId = Math.max(cur.seenId, Math.min(observedId, cur.attnId));
   return {
-    seenId: Math.max(cur.seenId, cur.attnId),
-    attention: cur.attention === 'ready' ? null : cur.attention,
+    seenId,
+    attention: cur.attention === 'ready' && seenId >= cur.attnId ? null : cur.attention,
   };
+}
+
+export function notificationSummary(text: string, fallback: string): string {
+  const plain = text
+    .replace(/```[\s\S]*?(?:```|$)|~~~[\s\S]*?(?:~~~|$)/g, '')
+    .replace(/<cockpit-attachment\b[^>]*\/?>/gi, '')
+    .replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1>/gi, '')
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/https?:\/\/[^\s<>]+/gi, '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/&(?:nbsp|amp|lt|gt|quot|#39);/g, entity =>
+      ({ '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" })[entity] ?? '')
+    .replace(/[`*]/g, '')
+    .replace(/\b(?:Bearer\s+\S+|(?:sk-|gh[pousr]_|github_pat_)[A-Za-z0-9_-]+)/gi, '［已隐藏］')
+    .replace(/(?:\b(?:api[_-]?key|access[_-]?token|token|password|secret|authorization)|密码|密钥|口令)["']?\s*[:：=]\s*(?:"[^"]*"|'[^']*'|[^\s,;}]+)/gi, '［已隐藏］')
+    .replace(/[`*_#~>|]/g, '')
+    .replace(/[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069\s]+/g, ' ')
+    .trim();
+  return [...(plain || fallback)].slice(0, 100).join('');
 }

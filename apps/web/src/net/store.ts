@@ -13,34 +13,28 @@
 // server's attention/attnId/seenId, so it can never drift between devices.
 
 import { create } from 'zustand';
-import { NetClient } from './client';
+import { isSessionUnloadedError, NetClient, SessionUnloadedError } from './client';
 import type { ConnState } from './client';
-import { isTransportError } from './client';
 import type {
-  AgentStatus, ChatMessage, ChatSession, ModelOption, SessionMeta, ServerEvent,
+  AgentStatus, Attachment, ChatMessage, ChatSession, ModelOption, ServerEvent,
 } from './types';
-import { ensureNotificationPermission, notificationPermission, notify } from '../lib/notify';
-import { subscribeToPush, pushSupported, isStandalone, clearOsNotifications } from '../lib/push';
+import type { IntentBody, IntentResult } from '@cockpit/protocol';
+import { applyHistoryPage, applyResumedHistory, HISTORY_PAGE, HistoryRangeError, invalidateWindow, metaToSession, releaseWindow, retainLatestWindow } from './sessionWindow';
+import { notify } from '../lib/notify';
+import { clearOsNotifications } from '../lib/push';
 import { setBadge } from '../lib/badge';
-
-const HISTORY_PAGE = 30;
+import { createNotificationSettings, type NotificationSettingsState } from '../lib/notificationSettings';
+import { currentInboxRevision, isUnreadAttention, mergeAttentionPatch, patchedUnreadCount, unreadSessionCount } from '../lib/inboxProjection';
+import { describeReason, reportUxError } from '../lib/errorReporter';
 
 // Is the tab in the foreground? Used to decide whether opening/holding a session
 // counts as "seeing" its raised attention (it does only when visible).
 const isVisible = () => typeof document !== 'undefined' && document.visibilityState === 'visible';
 
-function metaToSession(m: SessionMeta, prev?: ChatSession): ChatSession {
-  return {
-    ...m,
-    messages: prev?.messages ?? [],
-    materialized: prev?.materialized ?? false,
-    hasMore: prev?.hasMore ?? false,
-    loadingHistory: prev?.loadingHistory ?? false,
-  };
-}
-
 interface CockpitState {
   connState: ConnState;
+  connectionGeneration: number;
+  permissionPolicy: 'allow-all';
   agentStatus: AgentStatus;
   sessions: ChatSession[];
   activeId: string | null;
@@ -50,55 +44,73 @@ interface CockpitState {
   // PWA on iOS, where Web Push is unavailable.
   notifPermission: NotificationPermission;
   notifSupported: boolean;
+  notifReady: boolean;
+  notifications: NotificationSettingsState;
+  unreadCount: number;
+  inboxRevision?: number;
   // lifecycle
   init: () => () => void;
   // intents
   setActiveId: (id: string | null) => void;
-  newSession: (cwd: string) => Promise<string | null>;
+  observeAttention: (sessionId: string, attnId: number, visible: boolean) => void;
+  newSession: (cwd: string) => Promise<string>;
+  forkSession: (sessionId: string) => Promise<string>;
   loadMore: (sessionId: string) => void;
-  sendPrompt: (sessionId: string, text: string) => boolean;
-  cancel: (sessionId: string) => void;
-  setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => void;
-  deleteSession: (sessionId: string) => void;
+  retryHistory: (sessionId: string) => void;
+  subagentHistory: (sessionId: string, toolCallId: string,
+    opts?: { beforeMsgId?: string; afterMsgId?: string; limit?: number },
+    signal?: AbortSignal) => Promise<import('@cockpit/protocol').SubagentHistoryPage>;
+  sendPrompt: (sessionId: string, text: string, attachment?: Attachment, attachments?: Attachment[]) => Promise<boolean>;
+  filesList: (body: IntentBody<'files/list'>, signal?: AbortSignal) => Promise<IntentResult<'files/list'>>;
+  filesGet: (url: string, signal?: AbortSignal) => Promise<IntentResult<'files/get'>>;
+  retainToolImage: (body: IntentBody<'files/from-tool-image'>) => Promise<IntentResult<'files/from-tool-image'>>;
+  cancel: (sessionId: string) => Promise<void>;
+  interrupt: (sessionId: string) => Promise<{ ok: true; interrupted: boolean }>;
+  setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => Promise<void>;
+  deleteSession: (sessionId: string) => Promise<void>;
   restoreSession: (sessionId: string) => Promise<void>;
   trashList: () => Promise<import('@cockpit/protocol').TrashEntry[]>;
-  unloadSession: (sessionId: string) => void;
-  reloadSession: (sessionId: string) => void;
-  pinSession: (sessionId: string, pinned: boolean) => void;
-  renameSession: (sessionId: string, name: string) => void;
-  compactSession: (sessionId: string) => void;
-  rewindSession: (sessionId: string, toMsgId: string, rollbackFiles?: boolean) => void;
-  setMode: (sessionId: string, mode: 'interactive' | 'plan' | 'autopilot') => void;
+  unloadSession: (sessionId: string) => Promise<void>;
+  reloadSession: (sessionId: string) => Promise<void>;
+  pinSession: (sessionId: string, pinned: boolean) => Promise<void>;
+  renameSession: (sessionId: string, name: string) => Promise<void>;
+  autoNameSession: (sessionId: string) => Promise<IntentResult<'session/auto-name'>>;
+  compactSession: (sessionId: string) => Promise<void>;
+  rewindSession: (sessionId: string, toMsgId: string, rollbackFiles?: boolean) => Promise<void>;
+  setMode: (sessionId: string, mode: 'interactive' | 'plan' | 'autopilot') => Promise<void>;
   getPlan: (sessionId: string) => Promise<import('./types').SessionPlan>;
+  getUsage: (sessionId: string, signal?: AbortSignal) => Promise<IntentResult<'session/usage'>>;
   getPanels: (sessionId: string) => Promise<import('./types').SessionPanels>;
   scheduleList: (sessionId: string) => Promise<import('@cockpit/protocol').ScheduleEntry[]>;
-  hookList: (ownerSession?: string) => Promise<import('@cockpit/protocol').HookEntry[]>;
-  flowList: () => Promise<import('@cockpit/protocol').Flow[]>;
-  flowScheduleList: () => Promise<import('@cockpit/protocol').FlowScheduleEntry[]>;
+  scheduleAdd: (sessionId: string, input: Omit<IntentBody<'schedule/add'>, 'sessionId'>) => Promise<IntentResult<'schedule/add'>>;
+  scheduleStop: (sessionId: string, id: number) => Promise<IntentResult<'schedule/stop'>>;
   // MCP + Skills management
   mcpGlobal: () => Promise<import('@cockpit/protocol').McpServerGlobal[]>;
   mcpSetDefault: (name: string, on: boolean) => Promise<void>;
   mcpRefresh: () => Promise<void>;
   mcpSession: (sessionId: string) => Promise<import('@cockpit/protocol').McpServerSession[]>;
   mcpToggleSession: (sessionId: string, name: string, on: boolean) => Promise<void>;
-  skillsGlobal: () => Promise<import('@cockpit/protocol').SkillGlobal[]>;
-  skillsRead: (name: string) => Promise<{ name: string; description?: string; source?: string; userInvocable?: boolean; body?: string }>;
+  skillsGlobal: (cwd?: string) => Promise<import('@cockpit/protocol').SkillGlobal[]>;
+  skillsRead: (name: string, cwd?: string) => Promise<IntentResult<'skills/read'>>;
+  skillsSetGlobal: (name: string, enabled: boolean, cwd?: string) => Promise<void>;
   // Read-only, paginated preview of a TRASHED session (rendered as a non-interactive
   // Thread). `preview` is a synthetic ChatSession kept OUT of `sessions` so it never
   // appears in the sidebar; pagination reads from disk via the `session/peek` intent.
   preview: ChatSession | null;
   openPreview: (sessionId: string) => void;
+  refreshPreview: (sessionId: string) => void;
+  retryPreview: (expected: ChatSession) => void;
   loadMorePreview: () => void;
   closePreview: () => void;
   skillsSession: (sessionId: string) => Promise<import('@cockpit/protocol').SkillSession[]>;
   skillsToggleSession: (sessionId: string, name: string, enabled: boolean) => Promise<void>;
   listDir: (path?: string) => Promise<import('@cockpit/protocol').DirListing>;
-  respondAsk: (sessionId: string, requestId: string, answer: string, wasFreeform: boolean) => void;
-  respondPlan: (sessionId: string, requestId: string, action: import('@cockpit/protocol').ExitPlanModeAction) => void;
-  planSupersede: (sessionId: string, requestId: string, message: string) => void;
-  respondElicitation: (sessionId: string, requestId: string, action: 'accept' | 'decline' | 'cancel') => void;
-  removeQueued: (sessionId: string, itemId: string) => void;
-  refreshList: () => void;
+  respondAsk: (sessionId: string, requestId: string, answer: string, wasFreeform: boolean) => Promise<boolean>;
+  respondPlan: (sessionId: string, requestId: string, action: import('@cockpit/protocol').ExitPlanModeAction) => Promise<boolean>;
+  planSupersede: (sessionId: string, requestId: string, message: string) => Promise<boolean>;
+  respondElicitation: (sessionId: string, requestId: string, action: 'accept' | 'decline' | 'cancel') => Promise<boolean>;
+  removeQueued: (sessionId: string, itemId: string) => Promise<void>;
+  refreshList: () => Promise<void>;
   getDraft: (sessionId: string) => string;
   setDraft: (sessionId: string, text: string) => void;
   // Mint a short-lived Azure Speech token (key stays server-side). enabled:false
@@ -108,27 +120,197 @@ interface CockpitState {
   // user gesture (iOS only honors a gesture-initiated permission request — calling
   // it on load/snapshot silently fails, which is why notifications never armed).
   enableNotifications: () => Promise<void>;
+  refreshNotifications: () => Promise<void>;
+  disableNotifications: () => Promise<void>;
+  testNotifications: (confirm: true) => Promise<void>;
 }
 
-// Module-local singletons (not reactive state).
-let client: NetClient | null = null;
-let pushDone = false;
-let vapidKey: string | null = null;
-
-export const useCockpit = create<CockpitState>((set, get) => {
+export const createCockpitStore = () => create<CockpitState>((set, get) => {
+  let client: NetClient | null = null;
+  const notifications = createNotificationSettings((state) => set({
+    notifications: state, notifReady: state.ready,
+    notifPermission: state.permission, notifSupported: state.supported,
+  }));
+  const seenRequests = new Map<string, number>();
   const patchLocal = (sid: string, fn: (s: ChatSession) => ChatSession) =>
     set((st) => ({ sessions: st.sessions.map((s) => (s.sessionId === sid ? fn(s) : s)) }));
+  let snapshotReady = false;
+  let observedAttention: { sessionId: string; attnId: number } | null = null;
+  let historyRequest: { sessionId: string; generation: number; streamed: Map<string, ChatMessage>; controller: AbortController } | null = null;
+  const mutationRequests = new Map<string, { released: boolean }>();
+  const historyRecoveryErrors = new Map<string, string>();
+  let recentWindows: string[] = [];
+  const visitWindow = (sid: string) => {
+    recentWindows = [...recentWindows.filter(id => id !== sid), sid];
+    const evicted = recentWindows.splice(0, Math.max(0, recentWindows.length - 3));
+    if (evicted.length) set(st => ({
+      sessions: st.sessions.map(s => evicted.includes(s.sessionId) ? releaseWindow(s) : s),
+    }));
+  };
+  let previewRequest: AbortController | null = null;
+  let nativeReadRefresh: { pending: boolean } | null = null;
+  const cancelHistory = (sid?: string) => {
+    if (!historyRequest || (sid !== undefined && historyRequest.sessionId !== sid)) return;
+    const request = historyRequest;
+    historyRequest = null;
+    request.streamed.clear();
+    request.controller.abort();
+  };
+  const cancelPreview = () => {
+    const request = previewRequest;
+    previewRequest = null;
+    request?.abort();
+  };
+
+  const connectedClient = () => {
+    if (!client?.isOpen) throw new Error('未连接');
+    return client;
+  };
+  const read = async <T,>(send: (net: NetClient) => Promise<T>): Promise<T> => send(connectedClient());
+
+  const nativeRead = async <T,>(sid: string, send: (net: NetClient) => Promise<T>): Promise<T> => {
+    const net = connectedClient();
+    if (get().sessions.find((s) => s.sessionId === sid)?.loaded !== true) throw new SessionUnloadedError();
+    const generation = get().connectionGeneration;
+    const refresh = nativeReadRefresh;
+    const refreshPending = refresh?.pending;
+    try {
+      return await send(net);
+    } catch (error) {
+      if (isSessionUnloadedError(error)
+        && client === net && generation === get().connectionGeneration
+        && !refreshPending && nativeReadRefresh === refresh) {
+        // One passive reconciliation per overlapping read batch, even if its ACK
+        // arrives before another unloaded result. Only server events change loaded.
+        const request = { pending: true };
+        nativeReadRefresh = request;
+        void get().refreshList().catch(() => {}).finally(() => { request.pending = false; });
+      }
+      throw error;
+    }
+  };
+
+  // Observe the original promise, not a swallowed replacement: legacy void callers
+  // get diagnostics, while awaiting dialogs still receive the rejection.
+  const mutation = (
+    sid: string | null,
+    operation: string,
+    send: (net: NetClient) => Promise<{ ok: boolean; applied?: boolean; error?: string }>,
+    changesHistory = false,
+  ): Promise<void> => {
+    const generation = get().connectionGeneration;
+    const origin = sid ? `会话 ${get().sessions.find((s) => s.sessionId === sid)?.title ?? sid} (${sid})：` : '';
+    let reportedByTransport = false;
+    const request = { released: false };
+    if (changesHistory && sid) {
+      cancelHistory(sid);
+      historyRecoveryErrors.delete(sid);
+      mutationRequests.set(sid, request);
+      patchLocal(sid, (s) => ({ ...invalidateWindow(s), liveMessageIds: undefined, loadingHistory: get().activeId === sid }));
+      if (get().preview?.sessionId === sid) {
+        cancelPreview();
+        set((st) => ({ preview: st.preview ? invalidateWindow(st.preview) : null }));
+      }
+    }
+    const current = () => generation === get().connectionGeneration
+      && (!changesHistory || mutationRequests.get(sid!) === request);
+    const promise = (async () => {
+      const result = await send(connectedClient()).catch((error) => {
+        reportedByTransport = !isSessionUnloadedError(error);
+        throw error;
+      });
+      if (!result.ok || result.applied === false) throw new Error(result.error || '服务器未确认操作');
+      if (changesHistory && sid && current()) {
+        mutationRequests.delete(sid);
+        patchLocal(sid, (s) => ({ ...s, loadingHistory: false }));
+        maybeMaterialize();
+      }
+    })();
+    void promise.catch((error) => {
+      const message = `${origin}${operation}失败：${describeReason(error, false)}`;
+      // HTTP/transport/schema errors have one request-owned global notice.
+      // Offline and negative acknowledgements originate here instead.
+      if (!reportedByTransport) reportUxError(message, { deduplicate: false });
+      if (sid && generation === get().connectionGeneration && (current() || request.released)) {
+        const owns = current();
+        if (changesHistory) {
+          if (owns) mutationRequests.delete(sid);
+          historyRecoveryErrors.set(sid, message);
+        }
+        patchLocal(sid, (s) => ({ ...s, error: message, ...(changesHistory && owns ? { loadingHistory: false } : {}) }));
+        if (changesHistory && owns && get().activeId === sid) maybeMaterialize();
+      }
+    });
+    return promise;
+  };
+
+  const scheduleMutation = <T extends { ok: boolean; error?: string },>(
+    sid: string, fallback: string, send: (net: NetClient) => Promise<T>,
+  ): Promise<T> => {
+    const generation = get().connectionGeneration;
+    const origin = `会话 ${get().sessions.find((s) => s.sessionId === sid)?.title ?? sid} (${sid})`;
+    let reportedByTransport = false;
+    const promise = read(net => send(net).catch((error) => {
+      reportedByTransport = !isSessionUnloadedError(error);
+      throw error;
+    })).then((result) => {
+      if (!result.ok) throw new Error(result.error?.trim() ? result.error : fallback);
+      return result;
+    });
+    void promise.catch((error) => {
+      const message = `${origin}：计划任务操作失败：${describeReason(error, false)}`;
+      if (!reportedByTransport) reportUxError(message, { deduplicate: false });
+      if (generation === get().connectionGeneration) patchLocal(sid, (s) => ({ ...s, error: message }));
+    });
+    return promise;
+  };
+
+  const acknowledged = async (sid: string, send: (net: NetClient) => Promise<{ ok: boolean }>): Promise<boolean> => {
+    if (!client?.isOpen) {
+      patchLocal(sid, (s) => ({ ...s, error: '未连接，消息未发送，草稿已保留' }));
+      return false;
+    }
+    try {
+      const result = await send(client);
+      if (!result.ok) throw new Error('服务器未确认发送，草稿已保留');
+      return true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      patchLocal(sid, (s) => ({ ...s, error: `未确认发送：${message}。草稿已保留，请核对会话后再重试。` }));
+      return false;
+    }
+  };
 
   // Tell the server "I'm looking at the active session now" when the tab is in the
   // foreground and that session actually has attention raised. The server then
   // clears a 'ready' on sight and demotes a 'choice'. Guarded so we never POST when
   // there's nothing to see; markSeen is idempotent server-side anyway.
   const seenActiveIfVisible = () => {
-    if (!isVisible()) return;
+    if (!isVisible() || !client?.isOpen || !snapshotReady) return;
     const { activeId, sessions } = get();
     if (!activeId) return;
     const s = sessions.find((x) => x.sessionId === activeId);
-    if (s && s.attention != null) client?.inboxSeen(activeId).catch(() => {});
+    if (!s || !isUnreadAttention(s)) return;
+    const observed = s.attnId ?? 0;
+    if (observedAttention?.sessionId !== activeId || observedAttention.attnId !== observed) return;
+    if (s.attention === 'ready' && (!s.materialized || s.historyStale || !s.messages.length)) return;
+    if (seenRequests.get(activeId) === observed) return;
+    const generation = get().connectionGeneration;
+    seenRequests.set(activeId, observed);
+    void client.inboxSeen(activeId, observed).finally(() => {
+      if (generation === get().connectionGeneration && seenRequests.get(activeId) === observed) {
+        seenRequests.delete(activeId);
+      }
+    }).catch(() => {});
+  };
+
+  const syncInbox = (removed: readonly string[] = [], removalRevision?: number, completeSnapshot = false) => {
+    if (!snapshotReady) return;
+    const state = get();
+    void setBadge(state.unreadCount, state.inboxRevision, state.sessions, {
+      removedSessions: removed, removalRevision, completeSnapshot,
+    });
+    void clearOsNotifications(state.sessions, removed);
   };
 
   // Fire the OS/browser notification for a session whose attention the Engine just
@@ -137,73 +319,154 @@ export const useCockpit = create<CockpitState>((set, get) => {
   // alert (and only while hidden, handled inside notify()). Clicking focuses the
   // app and opens that session. Tag is keyed by session so an escalation
   // (ready → choice) replaces the session's banner instead of stacking.
-  const fireAttention = (sessionId: string, title: string, kind: 'ready' | 'choice', body: string) =>
+  const fireAttention = (
+    sessionId: string, title: string, kind: 'ready' | 'choice', body: string,
+    attnId?: number, inboxRevision?: number,
+  ) =>
     notify({
       title,
       body,
       kind,
       tag: sessionId,
       sessionId,
-      onClick: () => get().setActiveId(sessionId),
+      attnId,
+      inboxRevision,
+      onClick: () => window.dispatchEvent(new CustomEvent('cockpit:open-session', { detail: { sessionId } })),
     });
 
-  // Materialize the active session's window once known + connected. On a
-  // (re)connect snapshot we RECONCILE: if we already have a window, resume from
-  // our newest message id (a DURABLE cursor — re-folding events.jsonl is
-  // deterministic, so it survives a server restart) and append only the tail that
-  // arrived while disconnected, preserving the paginated scrollback + scroll. Cold
-  // / first open fetches the latest window. If the cursor is gone (history was
-  // compacted/rewound while away) the server answers with a full session/reset.
-  const maybeMaterialize = (force = false) => {
+  const requestHistory = (sid: string, opts: NonNullable<Parameters<NetClient['history']>[1]>) => {
+    if (get().activeId !== sid) return;
+    cancelHistory();
+    const request = { sessionId: sid, generation: get().connectionGeneration,
+      streamed: new Map<string, ChatMessage>(), controller: new AbortController() };
+    historyRequest = request;
+    const initial = get().sessions.find((s) => s.sessionId === sid);
+    const errorAtStart = initial?.error;
+    patchLocal(sid, (s) => ({ ...s, loadingHistory: true }));
+    const current = () => historyRequest === request && get().activeId === sid
+      && request.generation === get().connectionGeneration;
+    void read(async (net) => {
+      let page = await net.history(sid, opts, request.controller.signal);
+      const staged: ChatMessage[] = [];
+      let token = opts.resume?.token;
+      while (opts.resume && current()) {
+        if (page.sessionId !== sid) throw new Error('History sessionId mismatch');
+        if (!page.resume) throw new Error('History response is missing explicit resume status');
+        if (page.resume.status === 'unavailable') break;
+        staged.push(...page.messages);
+        if (page.resume.status === 'ready') { page = { ...page, messages: staged }; break; }
+        if (page.resume.token === token) throw new Error('History continuation did not advance');
+        token = page.resume.token;
+        page = await net.history(sid, { resume: { token }, limit: HISTORY_PAGE }, request.controller.signal);
+      }
+      return page;
+    }).then((page) => {
+      if (!current()) return;
+      if (page.sessionId !== sid) throw new Error('History sessionId mismatch');
+      if (page.resume?.status === 'unavailable') {
+        throw new HistoryRangeError('历史同步中断，请重新读取最新历史');
+      }
+      if (!opts.resume && page.append && (!opts.afterMsgId || !page.messages.some((m) => m.id === opts.afterMsgId))) {
+        throw new Error('History response is missing the requested cursor');
+      }
+      patchLocal(sid, (s) => ({
+        ...(opts.resume?.token ? applyResumedHistory(s, page, request.streamed) : applyHistoryPage(s, {
+          ...page,
+          // An absent cursor returns a replacement, never a mutation SSE broadcast.
+          latest: page.latest || (!opts.beforeMsgId && !page.append),
+        }, request.streamed)),
+        // Recovering history does not make the rejected mutation successful.
+        ...(s.error === historyRecoveryErrors.get(sid) || (s.error && s.error !== errorAtStart) ? { error: s.error } : {}),
+      }));
+      historyRequest = null;
+      historyRecoveryErrors.delete(sid);
+    }).catch((error) => {
+      if (!current()) return;
+      historyRequest = null;
+      const raw = describeReason(error, false);
+      const message = /corrupt/i.test(raw) ? '会话文件有损坏行(可能写入时被中断),稍后重试或联系维护' : `加载失败: ${raw}`;
+      patchLocal(sid, (s) => ({
+        ...s, loadingHistory: false,
+        ...(error instanceof HistoryRangeError && { resumeToken: undefined, resumeAfter: undefined, liveMessageIds: undefined }),
+        // Retain a failed mutation's diagnostic through history retries, too.
+        ...(s.error !== historyRecoveryErrors.get(sid) ? { error: message } : {}),
+      }));
+    });
+  };
+
+  // Only the still-mounted reading window uses continuation on reconnect.
+  // Departed windows discard that checkpoint and always fetch a fresh latest page.
+  const maybeMaterialize = () => {
     const { activeId, connState, sessions } = get();
-    if (!activeId || connState !== 'open' || !client) return;
+    if (!snapshotReady || !activeId || connState !== 'open' || !client) return;
     const s = sessions.find((x) => x.sessionId === activeId);
     if (!s) return;
-    if (!force && (s.materialized || s.loadingHistory)) return;
-    const resumeFrom = force && s.materialized && s.messages.length > 0
-      ? s.messages[s.messages.length - 1]!.id : undefined;
-    patchLocal(activeId, (x) => ({ ...x, loadingHistory: true }));
-    const req = resumeFrom ? { afterMsgId: resumeFrom } : { limit: HISTORY_PAGE };
-    client.history(activeId, req).catch((e) => {
-      // A transport blip (tab backgrounded, server restart 502) is not a load
-      // failure to surface — the reconnect snapshot re-materializes this window
-      // automatically, and the connection state already tells the user we're
-      // reconnecting. Just clear the spinner; don't flash a sticky error.
-      if (isTransportError(e)) {
-        patchLocal(activeId, (x) => ({ ...x, loadingHistory: false }));
-        return;
-      }
-      const raw = e instanceof Error ? e.message : String(e);
-      const msg = /corrupt/i.test(raw) ? '会话文件有损坏行(可能写入时被中断),稍后重试或联系维护' : `加载失败: ${raw}`;
-      patchLocal(activeId, (x) => ({ ...x, loadingHistory: false, error: msg }));
+    if (!recentWindows.includes(activeId)) visitWindow(activeId);
+    if ((!s.historyStale && s.materialized) || s.loadingHistory || mutationRequests.has(activeId)) return;
+    requestHistory(activeId, { resume: { token: s.resumeToken }, limit: HISTORY_PAGE });
+  };
+
+  const requestPreview = (sid: string, beforeMsgId?: string) => {
+    cancelPreview();
+    const request = new AbortController();
+    const generation = get().connectionGeneration;
+    previewRequest = request;
+    set((st) => ({ preview: st.preview ? {
+      ...(beforeMsgId ? st.preview : { ...invalidateWindow(st.preview), error: null }),
+      loadingHistory: true,
+    } : null }));
+    const current = () => previewRequest === request && generation === get().connectionGeneration
+      && get().preview?.sessionId === sid;
+    void read((net) => net.peek(sid, { ...(beforeMsgId ? { beforeMsgId } : {}), limit: HISTORY_PAGE }, request.signal)).then((page) => {
+      if (!current()) return;
+      if (page.sessionId !== sid) throw new Error('Preview sessionId mismatch');
+      set((st) => ({ preview: st.preview ? {
+        ...applyHistoryPage(st.preview, { ...page, latest: !beforeMsgId }),
+        title: page.title || st.preview.title, cwd: page.cwd, error: null,
+      } : null }));
+      previewRequest = null;
+    }).catch((error) => {
+      if (!current()) return;
+      previewRequest = null;
+      set((st) => ({ preview: st.preview ? {
+        ...st.preview, loadingHistory: false, error: `预览加载失败：${describeReason(error, false)}`,
+      } : null }));
     });
+  };
+
+  const invalidateRequests = (discardLive = false) => {
+    snapshotReady = false;
+    cancelHistory();
+    mutationRequests.clear();
+    historyRecoveryErrors.clear();
+    cancelPreview();
+    nativeReadRefresh = null;
+    seenRequests.clear();
+    notifications.disconnect();
+    set((st) => ({
+      connectionGeneration: st.connectionGeneration + 1,
+      sessions: st.sessions.map(s => invalidateWindow(discardLive ? { ...s, liveMessageIds: undefined } : s)),
+      preview: st.preview ? { ...invalidateWindow(st.preview), error: null } : null,
+      notifReady: false,
+    }));
   };
 
   const onEvent = (ev: ServerEvent) => {
     switch (ev.type) {
       case 'snapshot': {
-        set({ agentStatus: ev.agentStatus });
-        if (ev.models?.length) set({ globalModels: ev.models });
-        if (ev.vapidPublicKey) {
-          vapidKey = ev.vapidPublicKey;
-          // Self-heal only: if permission was ALREADY granted (in a prior gesture),
-          // (re)subscribe across reconnects. NEVER request permission here — a
-          // non-gesture request is silently ineffective on iOS. The grant itself
-          // happens in enableNotifications(), from a user tap.
-          if (!pushDone && notificationPermission() === 'granted') {
-            pushDone = true;
-            void (async () => {
-              const sub = await subscribeToPush(ev.vapidPublicKey!);
-              if (sub) client?.subscribePush(sub).catch(() => {});
-              else pushDone = false;
-            })();
-          }
-        }
+        invalidateRequests();
+        snapshotReady = true;
+        set({ agentStatus: ev.agentStatus, permissionPolicy: ev.permissionPolicy, globalModels: ev.models });
         set((st) => {
           const byId = new Map(st.sessions.map((s) => [s.sessionId, s]));
-          return { sessions: ev.sessions.map((m) => metaToSession(m, byId.get(m.sessionId))) };
+          const sessions = ev.sessions.map((m) => invalidateWindow(metaToSession(m, byId.get(m.sessionId))));
+          return { sessions, unreadCount: ev.unreadCount ?? unreadSessionCount(sessions), inboxRevision: ev.inboxRevision };
         });
-        maybeMaterialize(true);
+        if (typeof window !== 'undefined' && get().connState === 'open' && client) notifications.connect(client);
+        syncInbox([], ev.inboxRevision, true);
+        maybeMaterialize();
+        const preview = get().preview;
+        if (preview && get().connState === 'open') requestPreview(preview.sessionId);
         // If we (re)connected straight into a session that already has attention
         // raised and the tab is in front, that counts as seeing it — clears a
         // 'ready' on cold deep-link, demotes a seen 'choice'.
@@ -214,8 +477,13 @@ export const useCockpit = create<CockpitState>((set, get) => {
         set({ agentStatus: ev.status });
         return;
       case 'session/added':
-        set((st) => (st.sessions.some((s) => s.sessionId === ev.session.sessionId)
-          ? st : { sessions: [metaToSession(ev.session), ...st.sessions] }));
+        set((st) => {
+          if (st.sessions.some((s) => s.sessionId === ev.session.sessionId)) return st;
+          const sessions = [metaToSession(ev.session), ...st.sessions];
+          return { sessions, unreadCount: patchedUnreadCount(st.unreadCount, st.sessions, sessions) };
+        });
+        syncInbox();
+        maybeMaterialize();
         return;
       case 'session/removed':
         // Drop the row. We deliberately DON'T clear activeId here: the URL is the
@@ -223,21 +491,40 @@ export const useCockpit = create<CockpitState>((set, get) => {
         // active session vanish from `sessions`, and the page derives a NotFound
         // pane from (routeId set, no matching session). A LOCAL delete navigates
         // back to the list itself (App.doDelete), so it never hits NotFound.
-        set((st) => ({ sessions: st.sessions.filter((s) => s.sessionId !== ev.sessionId) }));
+        cancelHistory(ev.sessionId);
+        mutationRequests.delete(ev.sessionId);
+        historyRecoveryErrors.delete(ev.sessionId);
+        recentWindows = recentWindows.filter(id => id !== ev.sessionId);
+        set((st) => {
+          const sessions = st.sessions.filter((s) => s.sessionId !== ev.sessionId);
+          const current = currentInboxRevision(st.inboxRevision, ev.inboxRevision);
+          return {
+            sessions,
+            inboxRevision: current ? ev.inboxRevision ?? st.inboxRevision : st.inboxRevision,
+            unreadCount: current && ev.unreadCount !== undefined ? ev.unreadCount
+              : patchedUnreadCount(st.unreadCount, st.sessions, sessions),
+          };
+        });
+        syncInbox([ev.sessionId], ev.inboxRevision);
         return;
       case 'session/patch': {
         const activeId = get().activeId;
-        set((st) => ({
-          sessions: st.sessions.map((s) => {
+        const { type, inboxRevision, unreadCount, ...patch } = ev;
+        void type;
+        set((st) => {
+          const sessions = st.sessions.map((s) => {
             if (s.sessionId !== ev.sessionId) return s;
-            // Apply exactly the fields present on the patch (mirrors the engine's
-            // spread). `sessionId` stays in `patch` (same value, harmless); only
-            // the `type` discriminator is dropped. No per-field list to maintain.
-            const { type, ...patch } = ev;
-            void type;
-            return { ...s, ...patch };
-          }),
-        }));
+            return mergeAttentionPatch(s, patch);
+          });
+          const current = currentInboxRevision(st.inboxRevision, inboxRevision);
+          return {
+            sessions,
+            inboxRevision: current ? inboxRevision ?? st.inboxRevision : st.inboxRevision,
+            unreadCount: current && unreadCount !== undefined ? unreadCount
+              : patchedUnreadCount(st.unreadCount, st.sessions, sessions),
+          };
+        });
+        if ('attention' in ev || 'attnId' in ev || 'seenId' in ev) syncInbox();
         // The sidebar dot + app-icon badge derive purely from the server's
         // attention/attnId/seenId we just merged — there is no per-device flag to
         // set, so a missed-while-offline raise or a remote handle can't leave a
@@ -245,45 +532,32 @@ export const useCockpit = create<CockpitState>((set, get) => {
         // looking at (tab visible), that IS seeing it: tell the server so a 'ready'
         // clears on sight and a 'choice' demotes. When hidden we leave it raised so
         // the OS notification (session/notify) still fires.
-        if (ev.attention != null && ev.sessionId === activeId) seenActiveIfVisible();
-        return;
-      }
-      case 'session/history-page': {
-        const p = ev.page;
-        set((st) => ({
-          sessions: st.sessions.map((s) => {
-            if (s.sessionId !== p.sessionId) return s;
-            // Reconnect resume: upsert-merge the tail by id (the cursor message may
-            // have grown mid-stream → replace it; genuinely-new messages append),
-            // keeping older scrollback + hasMore untouched. No scroll reset.
-            if (p.append) {
-              const tailIds = new Set(p.messages.map((m) => m.id));
-              const kept = s.messages.filter((m) => !tailIds.has(m.id));
-              return { ...s, messages: [...kept, ...p.messages], materialized: true, loadingHistory: false, error: null };
-            }
-            if (p.latest) return { ...s, messages: p.messages, hasMore: p.hasMore, materialized: true, loadingHistory: false, error: null };
-            const have = new Set(s.messages.map((m) => m.id));
-            const older = p.messages.filter((m) => !have.has(m.id));
-            return { ...s, messages: [...older, ...s.messages], hasMore: p.hasMore, loadingHistory: false };
-          }),
-        }));
+        if ((ev.attention != null || ev.attnId !== undefined) && ev.sessionId === activeId) seenActiveIfVisible();
         return;
       }
       case 'session/reset': {
         const p = ev.page;
+        cancelHistory(p.sessionId);
+        mutationRequests.delete(p.sessionId);
+        historyRecoveryErrors.delete(p.sessionId);
         set((st) => ({
-          sessions: st.sessions.map((s) => (
-            s.sessionId !== p.sessionId || !s.materialized ? s
-              : { ...s, messages: p.messages, hasMore: p.hasMore, loadingHistory: false }
-          )),
+          sessions: st.sessions.map((s) => s.sessionId !== p.sessionId ? s
+            : st.activeId !== p.sessionId ? releaseWindow(s)
+              : applyHistoryPage({ ...s, liveMessageIds: undefined }, { ...p, latest: true, append: false })),
         }));
+        if (get().preview?.sessionId === p.sessionId) {
+          cancelPreview();
+          set((st) => ({ preview: st.preview ? { ...applyHistoryPage(st.preview, { ...p, latest: true, append: false }), error: null } : null }));
+        }
         return;
       }
       case 'msg/upsert': {
+        if (historyRequest?.sessionId === ev.sessionId) historyRequest.streamed.set(ev.message.id, ev.message);
         set((st) => ({
           sessions: st.sessions.map((s) => {
             if (s.sessionId !== ev.sessionId) return s;
-            if (!s.materialized) return s;
+            if (st.activeId !== ev.sessionId) return s.materialized ? invalidateWindow(s) : s;
+            if (!s.materialized && !s.loadingHistory && s.messages.length === 0) return s;
             const idx = s.messages.findIndex((m) => m.id === ev.message.id);
             let messages: ChatMessage[];
             if (idx >= 0) { messages = s.messages.slice(); messages[idx] = ev.message; }
@@ -296,19 +570,33 @@ export const useCockpit = create<CockpitState>((set, get) => {
             // turn never raise the "needs you" signal either — that's the
             // authoritative `attention` field (session/patch), which appears once
             // when the session actually needs the user, not per reply.
-            return { ...s, messages };
+            return { ...s, messages, liveMessageIds: [...new Set([...(s.liveMessageIds ?? []), ev.message.id])] };
           }),
         }));
         return;
       }
       case 'session/notify': {
-        // The Engine raised this session's attention. Fire the OS/page alert
-        // (notify() is a no-op while the tab is visible). For the session you're
-        // already viewing, suppress it — you can see the prompt, and the active+
-        // visible case is auto-marked seen by the session/patch handler.
-        if (ev.sessionId !== get().activeId) {
-          fireAttention(ev.sessionId, ev.title, ev.attention, ev.body);
+        const state = get();
+        const row = state.sessions.find((s) => s.sessionId === ev.sessionId);
+        if (!currentInboxRevision(state.inboxRevision, ev.inboxRevision)
+          || (ev.attnId !== undefined && row
+            && (ev.attnId < (row.attnId ?? 0) || ev.attnId <= (row.seenId ?? 0)))) return;
+        set((st) => {
+          // A versioned notify can precede its metadata patch. Project the
+          // observed waterline now so that patch cannot double-count it later.
+          const sessions = st.sessions.map((s) =>
+            s.sessionId === ev.sessionId && ev.attnId !== undefined && ev.attnId > (s.attnId ?? 0)
+              ? mergeAttentionPatch(s, { attention: ev.attention, attnId: ev.attnId }) : s);
+          return {
+            sessions, inboxRevision: ev.inboxRevision ?? st.inboxRevision,
+            unreadCount: ev.unreadCount ?? patchedUnreadCount(st.unreadCount, st.sessions, sessions),
+          };
+        });
+        syncInbox();
+        if (!get().notifications.disabled && !get().notifications.deliveryOwned) {
+          fireAttention(ev.sessionId, ev.title, ev.attention, ev.body, ev.attnId, ev.inboxRevision);
         }
+        seenActiveIfVisible();
         return;
       }
       default:
@@ -317,197 +605,215 @@ export const useCockpit = create<CockpitState>((set, get) => {
   };
 
   const onStateChange = (state: ConnState) => {
+    // A missed reset cannot be distinguished from an undurable live-only tail.
+    // Keep the readable rows, but do not overlay their unverified provenance
+    // onto authoritative history after a connection gap.
+    if (state === 'connecting') invalidateRequests(true);
     set({ connState: state });
-    if (state === 'open') maybeMaterialize();
+    if (state === 'open' && snapshotReady) {
+      maybeMaterialize();
+      const preview = get().preview;
+      if (preview?.historyStale && !preview.loadingHistory) requestPreview(preview.sessionId);
+      if (typeof window !== 'undefined' && client) notifications.connect(client);
+      syncInbox();
+    }
   };
 
   return {
     connState: 'connecting',
+    connectionGeneration: 0,
+    permissionPolicy: 'allow-all',
     agentStatus: 'starting',
     sessions: [],
     activeId: null,
     globalModels: [],
     preview: null,
-    notifPermission: notificationPermission(),
-    notifSupported: pushSupported() && isStandalone(),
+    notifPermission: notifications.state().permission,
+    notifSupported: notifications.state().supported,
+    notifReady: false,
+    notifications: notifications.state(),
+    unreadCount: 0,
+    inboxRevision: undefined,
 
     init() {
-      client = new NetClient({ onEvent, onStateChange });
-      client.connect();
-      // NOTE: do NOT request notification permission here — it isn't a user
-      // gesture, so iOS ignores it. Enabling happens via enableNotifications()
-      // from the hamburger menu tap. We only reflect the current grant state.
-      set({ notifPermission: notificationPermission(), notifSupported: pushSupported() && isStandalone() });
+      client?.disconnect();
+      const net = new NetClient({ onEvent, onStateChange, sessionTitle: sid => get().sessions.find(s => s.sessionId === sid)?.title });
+      client = net;
+      net.connect();
       // Bringing the tab to the front counts as seeing the active session's raised
       // attention (clears a 'ready', demotes a 'choice') — covers "alert arrived
       // while I was on this session but had it backgrounded, then I came back".
-      // It also clears this device's lingering OS notification banners: once you're
-      // looking at the app, the in-app dots/badge are authoritative, so the popups
-      // are redundant noise.
-      const onVisible = () => { if (isVisible()) { seenActiveIfVisible(); void clearOsNotifications(); } };
+      const onVisible = () => { if (isVisible()) { seenActiveIfVisible(); syncInbox(); } };
       if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible);
-      // Initial load doesn't fire visibilitychange, so wipe any banners left from a
-      // previous (backgrounded) session right away when we open already-visible.
-      if (isVisible()) void clearOsNotifications();
+      if (typeof window !== 'undefined') window.addEventListener('online', onVisible);
       // One-time cleanup: pin is now backend-authoritative (session/pin), so the
       // legacy per-device localStorage pin list is obsolete — drop it if present.
       try { localStorage.removeItem('cockpit:pinned'); } catch { /* ignore */ }
       return () => {
         if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible);
-        client?.disconnect(); client = null;
+        if (typeof window !== 'undefined') window.removeEventListener('online', onVisible);
+        net.disconnect();
+        if (client !== net) return;
+        client = null;
+        invalidateRequests(true);
+        set({ connState: 'connecting' });
       };
     },
 
-    async enableNotifications() {
-      const granted = await ensureNotificationPermission();
-      set({ notifPermission: notificationPermission() });
-      if (!granted || !vapidKey) return;
-      const sub = await subscribeToPush(vapidKey);
-      if (sub) { pushDone = true; client?.subscribePush(sub).catch(() => {}); }
-    },
+    enableNotifications: notifications.enable,
+    refreshNotifications: notifications.refresh,
+    disableNotifications: notifications.disable,
+    testNotifications: notifications.sendTest,
 
     setActiveId(id) {
-      set({ activeId: id });
-      // Opening a session = seeing it. The server clears a 'ready' on sight and
-      // demotes a 'choice'; the dot/badge then update for every device from server
-      // truth. (seenActiveIfVisible guards on attention != null + tab visible.)
+      const previous = get().activeId;
+      if (id !== previous) {
+        observedAttention = null;
+        cancelHistory();
+        if (previous) {
+          const mutation = mutationRequests.get(previous);
+          if (mutation) mutation.released = true;
+          mutationRequests.delete(previous);
+          historyRecoveryErrors.delete(previous);
+          seenRequests.delete(previous);
+        }
+        set((st) => ({
+          activeId: id,
+          sessions: st.sessions.map((s) => s.sessionId === previous ? retainLatestWindow(s) : s),
+        }));
+        if (id && get().sessions.some(s => s.sessionId === id)) visitWindow(id);
+      }
       if (id) seenActiveIfVisible();
       maybeMaterialize();
     },
+    observeAttention(sessionId, attnId, visible) {
+      if (sessionId !== get().activeId) return;
+      if (visible) observedAttention = { sessionId, attnId };
+      else if (observedAttention?.sessionId === sessionId && observedAttention.attnId === attnId) observedAttention = null;
+      if (visible) seenActiveIfVisible();
+    },
 
-    async newSession(cwd) {
-      if (!client) return null;
-      try {
-        const res = await client.newSession(cwd);
-        get().setActiveId(res.sessionId);
-        return res.sessionId;
-      } catch (e) {
-        console.error('[cockpit] 新建 session 失败:', e instanceof Error ? e.message : String(e));
-        return null;
-      }
+    newSession(cwd) {
+      let reportedByTransport = false;
+      const promise = read(net => net.newSession(cwd).catch(error => {
+        reportedByTransport = !isSessionUnloadedError(error);
+        throw error;
+      })).then(result => result.sessionId);
+      void promise.catch(error => {
+        if (!reportedByTransport) reportUxError(`新建会话失败：${describeReason(error, false)}`, { deduplicate: false });
+      });
+      return promise;
+    },
+
+    forkSession(sessionId) {
+      return read(net => net.forkSession(sessionId)).then(result => result.sessionId);
     },
 
     loadMore(sid) {
-      if (!client) return;
+      if (get().activeId !== sid || !snapshotReady || get().connState !== 'open' || !client) return;
       const s = get().sessions.find((x) => x.sessionId === sid);
-      if (!s || !s.hasMore || s.loadingHistory || s.messages.length === 0) return;
+      if (!s || s.historyStale || !s.hasMore || s.loadingHistory || s.messages.length === 0) return;
       const oldest = s.messages[0]!.id;
-      patchLocal(sid, (x) => ({ ...x, loadingHistory: true }));
-      client.history(sid, { beforeMsgId: oldest, limit: HISTORY_PAGE }).catch(() => {
-        patchLocal(sid, (x) => ({ ...x, loadingHistory: false }));
+      requestHistory(sid, { beforeMsgId: oldest, limit: HISTORY_PAGE });
+    },
+
+    retryHistory(sid) {
+      if (get().activeId !== sid || !snapshotReady || get().connState !== 'open' || !client) return;
+      const s = get().sessions.find((x) => x.sessionId === sid);
+      if (!s || s.loadingHistory || mutationRequests.has(sid) || (!s.historyStale && s.materialized)) return;
+      requestHistory(sid, {
+        resume: {}, limit: HISTORY_PAGE,
       });
     },
 
-    sendPrompt(sid, text) {
-      if (!client || !client.isOpen) {
-        patchLocal(sid, (s) => ({ ...s, error: '未连接，消息未发送，请稍候重试' }));
-        return false;
-      }
-      client.prompt(sid, text).catch((e) => {
-        patchLocal(sid, (s) => ({ ...s, error: e instanceof Error ? e.message : String(e) }));
-      });
-      return true;
+    sendPrompt(sid, text, attachment, attachments) {
+      return acknowledged(sid, (net) => net.prompt(sid, text, attachment, undefined, attachments));
+    },
+    filesList(body, signal) { return read(net => net.intent('files/list', body, signal)); },
+    filesGet(url, signal) { return read(net => net.intent('files/get', { url }, signal)); },
+    retainToolImage(body) { return read(net => net.intent('files/from-tool-image', body)); },
+    subagentHistory(sid, toolCallId, opts, signal) {
+      return read((net) => net.subagentHistory(sid, toolCallId, opts, signal));
     },
 
-    cancel(sid) { client?.cancel(sid).catch(() => {}); },
-    setModel(sid, modelId, opts) { client?.setModel(sid, modelId, opts).catch(() => {}); },
-    deleteSession(sid) {
-      // Soft delete (→ trash): the caller confirms first, then we fire the intent.
-      // The row disappears when the server's `session/removed` event arrives.
-      // (For the focused session the caller navigates back to the list — see
-      // App.doDelete; the URL stays the source of truth.) Restorable from trash.
-      client?.deleteSession(sid).catch((e) => {
-        console.error('[cockpit] 移入垃圾桶失败:', e instanceof Error ? e.message : String(e));
-      });
-    },
-    restoreSession(sid) {
-      // The restored session re-appears via the server's `session/added` event.
-      return client ? client.restoreSession(sid).then(() => {}) : Promise.resolve();
-    },
-    trashList() { return client ? client.trashList().then((r) => r.entries) : Promise.resolve([]); },
-    unloadSession(sid) { client?.unloadSession(sid).catch(() => {}); },
-    reloadSession(sid) {
-      patchLocal(sid, (s) => ({ ...s, loadingHistory: true, error: null }));
-      client?.reloadSession(sid).catch((e) => {
-        patchLocal(sid, (s) => ({ ...s, loadingHistory: false, error: e instanceof Error ? e.message : String(e) }));
-      });
-    },
-    // Pin = keep-loaded (server-authoritative; the `pinned` field arrives back via
-    // session/patch — no optimistic insert). Fire-and-forget like the other toggles.
-    pinSession(sid, pinned) { client?.pinSession(sid, pinned).catch(() => {}); },
-    renameSession(sid, name) { client?.renameSession(sid, name).catch(() => {}); },
-    compactSession(sid) { client?.compactSession(sid).catch(() => {}); },
+    cancel(sid) { return mutation(sid, '取消', (net) => net.cancel(sid)); },
+    interrupt(sid) { return nativeRead(sid, (net) => net.interrupt(sid)); },
+    setModel(sid, modelId, opts) { return mutation(sid, '切换模型', (net) => net.setModel(sid, modelId, opts)); },
+    deleteSession(sid) { return mutation(sid, '移入垃圾桶', (net) => net.deleteSession(sid)); },
+    restoreSession(sid) { return mutation(sid, '恢复会话', (net) => net.restoreSession(sid)); },
+    trashList() { return read((net) => net.trashList()).then((r) => r.entries); },
+    unloadSession(sid) { return mutation(sid, '卸载会话', (net) => net.unloadSession(sid)); },
+    reloadSession(sid) { return mutation(sid, '重载会话', (net) => net.reloadSession(sid), true); },
+    pinSession(sid, pinned) { return mutation(sid, '置顶会话', (net) => net.pinSession(sid, pinned)); },
+    renameSession(sid, name) { return mutation(sid, '重命名会话', (net) => net.renameSession(sid, name)); },
+    // Naming is not a chat mutation. The transport reports failures locally;
+    // only authoritative server metadata changes titles or naming status.
+    autoNameSession(sid) { return read((net) => net.autoNameSession(sid)); },
+    compactSession(sid) { return mutation(sid, '压缩会话', (net) => net.compactSession(sid), true); },
     rewindSession(sid, toMsgId, rollbackFiles) {
-      patchLocal(sid, (s) => ({ ...s, loadingHistory: true }));
-      client?.rewindSession(sid, toMsgId, rollbackFiles).catch(() => {});
+      return mutation(sid, '回退会话', (net) => net.rewindSession(sid, toMsgId, rollbackFiles), true);
     },
-    setMode(sid, mode) { client?.setMode(sid, mode).catch(() => {}); },
-    respondAsk(sid, requestId, answer, wasFreeform) { client?.respondAsk(sid, requestId, answer, wasFreeform).catch(() => {}); },
-    respondPlan(sid, requestId, action) { client?.respondPlan(sid, requestId, action).catch(() => {}); },
-    planSupersede(sid, requestId, message) { client?.planSupersede(sid, requestId, message).catch(() => {}); },
-    respondElicitation(sid, requestId, action) { client?.respondElicitation(sid, requestId, action).catch(() => {}); },
-    removeQueued(sid, itemId) { client?.removeQueued(sid, itemId).catch(() => {}); },
-    refreshList() { client?.refresh().catch(() => {}); },
-    getPlan(sid) {
-      if (!client) return Promise.resolve({ planMarkdown: null, todos: [] });
-      return client.getPlan(sid);
+    setMode(sid, mode) { return mutation(sid, '切换模式', (net) => net.setMode(sid, mode)); },
+    respondAsk(sid, requestId, answer, wasFreeform) { return acknowledged(sid, (net) => net.respondAsk(sid, requestId, answer, wasFreeform)); },
+    respondPlan(sid, requestId, action) { return acknowledged(sid, (net) => net.respondPlan(sid, requestId, action)); },
+    planSupersede(sid, requestId, message) { return acknowledged(sid, (net) => net.planSupersede(sid, requestId, message)); },
+    respondElicitation(sid, requestId, action) { return acknowledged(sid, (net) => net.respondElicitation(sid, requestId, action)); },
+    removeQueued(sid, itemId) { return mutation(sid, '移除排队消息', (net) => net.removeQueued(sid, itemId)); },
+    refreshList() { return mutation(null, '刷新会话列表', (net) => net.refresh()); },
+    getPlan(sid) { return nativeRead(sid, (net) => net.getPlan(sid)); },
+    getUsage(sid, signal) { return nativeRead(sid, (net) => net.getUsage(sid, signal)); },
+    getPanels(sid) { return nativeRead(sid, (net) => net.getPanels(sid)); },
+    scheduleList(sid) { return nativeRead(sid, (net) => net.scheduleList(sid)).then((r) => r.entries); },
+    scheduleAdd(sid, input) { return scheduleMutation(sid, '未能添加定时任务，请核对后再试。', (net) => net.scheduleAdd(sid, input)); },
+    scheduleStop(sid, id) { return scheduleMutation(sid, '未能停止定时任务，请刷新列表后核对。', (net) => net.scheduleStop(sid, id)); },
+    mcpGlobal() { return read((net) => net.mcpGlobal()).then((r) => r.servers); },
+    mcpSetDefault(name, on) { return mutation(null, `设置 Copilot 全局 MCP ${name}`, (net) => net.mcpSetDefault(name, on)); },
+    mcpRefresh() { return mutation(null, '刷新 MCP 配置缓存', (net) => net.mcpRefresh()); },
+    mcpSession(sid) {
+      return nativeRead(sid, async (net) => {
+        const result = await net.mcpSession(sid);
+        if (!result.loaded) throw new SessionUnloadedError();
+        return result.servers;
+      });
     },
-    getPanels(sid) {
-      if (!client) return Promise.resolve({ skills: [], mcpServers: [], tasks: [], instructionSources: [], schedules: [] });
-      return client.getPanels(sid);
-    },
-    scheduleList(sid) { return client ? client.scheduleList(sid).then((r) => r.entries) : Promise.resolve([]); },
-    hookList(owner) { return client ? client.hookList(owner).then((r) => r.entries) : Promise.resolve([]); },
-    flowList() { return client ? client.flowList().then((r) => r.flows) : Promise.resolve([]); },
-    flowScheduleList() { return client ? client.flowScheduleList().then((r) => r.entries) : Promise.resolve([]); },
-    mcpGlobal() { return client ? client.mcpGlobal().then((r) => r.servers) : Promise.resolve([]); },
-    mcpSetDefault(name, on) { return client ? client.mcpSetDefault(name, on).then(() => {}) : Promise.resolve(); },
-    mcpRefresh() { return client ? client.mcpRefresh().then(() => {}) : Promise.resolve(); },
-    mcpSession(sid) { return client ? client.mcpSession(sid).then((r) => r.servers) : Promise.resolve([]); },
-    mcpToggleSession(sid, name, on) { return client ? client.mcpToggleSession(sid, name, on).then(() => {}) : Promise.resolve(); },
-    skillsGlobal() { return client ? client.skillsGlobal().then((r) => r.skills) : Promise.resolve([]); },
-    skillsRead(name) { return client ? client.skillsRead(name) : Promise.resolve({ name }); },
+    mcpToggleSession(sid, name, on) { return mutation(sid, `切换 MCP ${name}`, (net) => net.mcpToggleSession(sid, name, on)); },
+    skillsGlobal(cwd) { return read((net) => net.skillsGlobal(cwd)).then((r) => r.skills); },
+    skillsRead(name, cwd) { return read((net) => net.skillsRead(name, cwd)); },
+    skillsSetGlobal(name, enabled, cwd) { return mutation(null, `设置 Copilot 全局 Skill ${name}`, (net) => net.skillsSetGlobal(name, enabled, cwd)); },
     openPreview(sid) {
-      if (!client) return;
-      // Already showing this one (or its first page is loading) — don't refetch.
-      if (get().preview?.sessionId === sid) return;
+      const previous = get().preview;
+      if (previous?.sessionId === sid) {
+        if (get().connState === 'open' && !previous.loadingHistory && (previous.historyStale || previous.error)) requestPreview(sid);
+        return;
+      }
       const stub: ChatSession = {
         sessionId: sid, title: sid.slice(0, 8), cwd: '', lastActivity: Date.now(),
         status: 'idle', error: null, loaded: true, queue: [], ask: null,
-        messages: [], materialized: true, hasMore: false, loadingHistory: true,
+        messages: [], materialized: false, historyStale: true, hasMore: false, loadingHistory: false,
       };
       set({ preview: stub });
-      client.peek(sid).then((r) => {
-        // A newer openPreview/closePreview may have superseded this fetch.
-        if (get().preview?.sessionId !== sid) return;
-        set({ preview: { ...stub, title: r.title || stub.title, cwd: r.cwd, messages: r.messages, hasMore: r.hasMore, loadingHistory: false } });
-      }).catch((e) => {
-        if (get().preview?.sessionId !== sid) return;
-        set({ preview: { ...stub, loadingHistory: false, error: e instanceof Error ? e.message : String(e) } });
-      });
+      if (get().connState === 'open') requestPreview(sid);
+    },
+    refreshPreview(sid) {
+      if (get().connState === 'open' && get().preview?.sessionId === sid) requestPreview(sid);
+    },
+    retryPreview(expected) {
+      const p = get().preview;
+      // The accepted window itself is the retry ticket; refresh/reset/reconnect replace it.
+      if (p !== expected || !p?.error || p.loadingHistory || get().connState !== 'open') return;
+      requestPreview(p.sessionId, p.materialized && !p.historyStale ? p.messages[0]?.id : undefined);
     },
     loadMorePreview() {
       const p = get().preview;
-      if (!client || !p || !p.hasMore || p.loadingHistory) return;
+      if (!p || !p.hasMore || p.loadingHistory || p.historyStale || p.error || get().connState !== 'open') return;
       const before = p.messages[0]?.id;
       if (!before) return;
-      set({ preview: { ...p, loadingHistory: true } });
-      client.peek(p.sessionId, { beforeMsgId: before }).then((r) => {
-        const cur = get().preview;
-        if (!cur || cur.sessionId !== p.sessionId) return;
-        // Prepend the older page, de-duping by id against what we already hold.
-        const have = new Set(cur.messages.map((m) => m.id));
-        const older = r.messages.filter((m) => !have.has(m.id));
-        set({ preview: { ...cur, messages: [...older, ...cur.messages], hasMore: r.hasMore, loadingHistory: false } });
-      }).catch(() => {
-        const cur = get().preview;
-        if (cur && cur.sessionId === p.sessionId) set({ preview: { ...cur, loadingHistory: false } });
-      });
+      requestPreview(p.sessionId, before);
     },
-    closePreview() { if (get().preview) set({ preview: null }); },
-    skillsSession(sid) { return client ? client.skillsSession(sid).then((r) => r.skills) : Promise.resolve([]); },
-    skillsToggleSession(sid, name, enabled) { return client ? client.skillsToggleSession(sid, name, enabled).then(() => {}) : Promise.resolve(); },
-    listDir(path) { return client ? client.listDir(path) : Promise.resolve({ path: path ?? '/', parent: null, entries: [] }); },
+    closePreview() { cancelPreview(); set({ preview: null }); },
+    skillsSession(sid) { return nativeRead(sid, (net) => net.skillsSession(sid)).then((r) => r.skills); },
+    skillsToggleSession(sid, name, enabled) { return mutation(sid, `切换技能 ${name}`, (net) => net.skillsToggleSession(sid, name, enabled)); },
+    listDir(path) { return read((net) => net.listDir(path)); },
 
     getDraft(sid) {
       try { return localStorage.getItem(`cockpit:draft:${sid}`) ?? ''; } catch { return ''; }
@@ -519,19 +825,9 @@ export const useCockpit = create<CockpitState>((set, get) => {
       } catch { /* ignore */ }
     },
     speechToken() {
-      return client ? client.speechToken() : Promise.resolve({ enabled: false });
+      return read((net) => net.speechToken());
     },
   };
 });
 
-// App-icon badge ← authoritative attention count (how many sessions await me).
-// = (readies not yet seen) + (choices not yet answered): a 'ready' is cleared to
-// null by the server the moment it's seen, so this count can't degrade into "every
-// session you've talked to". Foreground sync: recompute whenever the projection
-// changes; the SW keeps it in sync while closed. setBadge no-ops where unsupported.
-let lastBadge = -1;
-useCockpit.subscribe((state) => {
-  let n = 0;
-  for (const s of state.sessions) if (s.attention != null) n++;
-  if (n !== lastBadge) { lastBadge = n; setBadge(n); }
-});
+export const useCockpit = createCockpitStore();

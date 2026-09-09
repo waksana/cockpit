@@ -9,80 +9,32 @@
 // app-shell caching; we just satisfy the injectManifest precache injection point
 // without registering routes.
 
+import { routeNotificationClick } from './lib/notificationRouting';
+import { reportNotificationFailure, showPushNotification } from './lib/notificationTransport';
+
 declare const self: ServiceWorkerGlobalScope & { __WB_MANIFEST: unknown };
 
 // injectManifest requires this reference to exist; we intentionally don't
 // precache (no offline shell).
 void self.__WB_MANIFEST;
 
-interface PushPayload { title?: string; body?: string; tag?: string; url?: string; kind?: string; sessionId?: string; badge?: number }
-
-self.addEventListener('install', () => {
+self.addEventListener('install', (event) => {
   // Activate immediately so push works on first load without a reload.
-  void self.skipWaiting();
+  event.waitUntil(self.skipWaiting().catch(() => reportNotificationFailure('Worker activation failed')));
 });
 
 self.addEventListener('activate', (event) => {
-  event.waitUntil(self.clients.claim());
+  event.waitUntil(self.clients.claim().catch(() => reportNotificationFailure('Worker client claim failed')));
 });
 
 self.addEventListener('push', (event) => {
-  let data: PushPayload;
-  try { data = event.data ? (event.data.json() as PushPayload) : {}; } catch { data = {}; }
-  const title = data.title || 'cockpit';
-  // A 'choice' is a blocking request for a decision — make it sticky (stays until
-  // acted on) and vibrate a touch more urgently than a plain 'ready'.
-  const isChoice = data.kind === 'choice';
-  event.waitUntil((async () => {
-    // App-icon badge (count of sessions awaiting the user). Carried on the push so
-    // the count is right even with the screen off; the foreground client keeps it
-    // in sync while open. Update it FIRST so the count stays correct even when we
-    // skip the banner below. No-op where the Badging API is unavailable.
-    const nav = self.navigator as unknown as { setAppBadge?: (n?: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
-    if (typeof data.badge === 'number' && nav.setAppBadge) {
-      try {
-        if (data.badge > 0) await nav.setAppBadge(data.badge);
-        else await nav.clearAppBadge?.();
-      } catch { /* ignore */ }
-    }
-    // The documented exception to "a push must show a notification": when the app
-    // is open and visible on THIS device, don't pop an OS banner — the in-app red
-    // dots + badge already convey it, and a banner over the app you're looking at
-    // is just noise. Only alert when no window is visible (backgrounded / screen
-    // off / home screen). Skipping while a client is visible is penalty-free (it
-    // does NOT trigger Chrome's "site updated in background"). Mirrors the same
-    // visibility gate the in-page notifier (notify.ts) already uses, so the two
-    // notification paths stay complementary rather than double-firing.
-    const wins = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    if (wins.some((c) => c.visibilityState === 'visible')) return;
-
-    await self.registration.showNotification(title, {
-      body: data.body || '已回复，等待你的输入',
-      tag: data.tag || 'copilot',
-      icon: '/icon-192.png',
-      badge: '/icon-192.png',
-      requireInteraction: isChoice,
-      vibrate: isChoice ? [60, 40, 60, 40, 60] : [80],
-      data: { url: data.url || '/', sessionId: data.sessionId },
-    } as NotificationOptions);
-  })());
+  let data: unknown;
+  try { data = event.data?.json(); } catch { /* The transport displays a safe invalid-payload fallback. */ }
+  event.waitUntil(showPushNotification(data, self.registration, self.navigator));
 });
 
 self.addEventListener('notificationclick', (event) => {
-  event.notification.close();
-  const info = (event.notification.data || {}) as { url?: string; sessionId?: string };
-  const url = info.url || '/';
-  event.waitUntil((async () => {
-    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const client of all) {
-      try { await client.focus(); } catch { /* ignore */ }
-      // Soft-route an already-open app to the session (no reload, no reconnect):
-      // the page listens for this and navigates the URL to `/session/<sessionId>`.
-      // Falls through to navigate() only if no client is open.
-      if (info.sessionId) { try { client.postMessage({ type: 'open-session', sessionId: info.sessionId }); } catch { /* ignore */ } }
-      else if ('navigate' in client) { try { await (client as WindowClient).navigate(url); } catch { /* ignore */ } }
-      return;
-    }
-    if (self.clients.openWindow) await self.clients.openWindow(url);
-  })());
+  try { event.notification.close(); } catch { reportNotificationFailure('Notification close failed'); }
+  event.waitUntil(routeNotificationClick(self.clients, self.location.origin, event.notification.data)
+    .catch(() => reportNotificationFailure('Notification click routing failed')));
 });

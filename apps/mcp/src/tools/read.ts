@@ -4,21 +4,8 @@
 // is the foundation: other tools depend on the ids it returns.
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { CockpitError, intent } from '../cockpit.js';
-import { ResponseFormat, ok, fail, capped, cappedJson, type ToolResult, type SessionMetaFull } from '../shared.js';
-
-interface PanelItem {
-  label: string;
-  detail?: string;
-  status?: string;
-}
-interface SessionPanels {
-  skills: PanelItem[];
-  mcpServers: PanelItem[];
-  tasks: PanelItem[];
-  instructionSources: PanelItem[];
-  schedules: PanelItem[];
-}
+import { CockpitError, protocolIntent as intent } from '../cockpit.js';
+import { ResponseFormat, ok, fail, capped, cappedJson, type ToolResult, type PanelItem } from '../shared.js';
 
 export function registerReadTools(server: McpServer): void {
   // ── cockpit_get_session ──────────────────────────────────────────────────────
@@ -32,7 +19,8 @@ export function registerReadTools(server: McpServer): void {
         'count, the pending queue (each {id,text}), any open ask / plan / elicitation request (with ' +
         'its requestId), and todo progress. This is the tool that gives you the IDS the action tools ' +
         'need: queue item id (cockpit_remove_queued), ask/plan/elicitation requestId ' +
-        '(cockpit_respond_*). Returns meta:null if the id is not a known live session.',
+        '(cockpit_respond_*). Unknown sessions return an error. Interaction mode is separate from the ' +
+        'runtime permissionPolicy: allow-all (always auto-approve), shown by cockpit_get_snapshot.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id'),
         response_format: ResponseFormat.describe("'markdown' (human) or 'json' (machine)"),
@@ -41,19 +29,20 @@ export function registerReadTools(server: McpServer): void {
     },
     async ({ session_id, response_format }): Promise<ToolResult> => {
       try {
-        const { meta } = await intent<{ meta: SessionMetaFull | null }>('session/get', { sessionId: session_id });
+        const { meta } = await intent('session/get', { sessionId: session_id });
         if (!meta) return fail(`No live session ${session_id} (trashed or unknown). Try cockpit_list_sessions.`);
-        const structured = meta as unknown as Record<string, unknown>;
-        if (response_format === 'json') return ok(cappedJson(meta), structured);
+        if (response_format === 'json') return ok(cappedJson(meta));
         const lines: string[] = [
           `# ${meta.title || '(untitled)'}`,
           `id: ${meta.sessionId}`,
-          `status: ${meta.status}${meta.launchState ? ` · ${meta.launchState}` : ''}${meta.loaded ? '' : ' (unloaded)'}${meta.pinned ? ' · pinned' : ''}`,
+          `status: ${meta.status}${meta.loaded ? '' : ' (unloaded)'}${meta.pinned ? ' · pinned' : ''}`,
           `cwd: ${meta.cwd}`,
           `model: ${meta.currentModelId ?? '—'}${meta.currentReasoningEffort ? ` (${meta.currentReasoningEffort})` : ''}` +
             `${meta.currentContextTier ? ` · ${meta.currentContextTier}` : ''}`,
-          `mode: ${meta.currentMode ?? '—'}`,
+          `interaction mode: ${meta.currentMode ?? '—'} (not a permission policy)`,
         ];
+        const operations = ['loading', 'closing', 'cancelling'] as const;
+        for (const operation of operations) if (meta[operation]) lines.push(`${operation}: true`);
         if (meta.scheduleCount) lines.push(`schedules: ${meta.scheduleCount}`);
         if (meta.queue && meta.queue.length) {
           lines.push(`queue (${meta.queue.length}):`);
@@ -64,9 +53,12 @@ export function registerReadTools(server: McpServer): void {
         if (meta.planRequest) lines.push(`PLAN pending (requestId ${meta.planRequest.requestId}): ${meta.planRequest.summary}`);
         if (meta.elicitation) lines.push(`ELICITATION pending (requestId ${meta.elicitation.requestId}): ${meta.elicitation.message}`);
         if (meta.todo) lines.push(`todo: ${meta.todo.done}/${meta.todo.total} done` +
-          (meta.todo.currentTitle ? ` · now: ${meta.todo.currentTitle}` : ''));
+          (meta.todo.intent ? ` · now: ${meta.todo.intent}` : ''));
+        if (meta.intent) lines.push(`intent: ${meta.intent}`);
+        if (meta.autoNaming) lines.push('automatic naming: in progress (not a chat turn)');
+        if (meta.autoNameError) lines.push(`naming error: ${meta.autoNameError}`);
         if (meta.error) lines.push(`error: ${meta.error}`);
-        return ok(capped(lines.join('\n')), structured);
+        return ok(capped(lines.join('\n')));
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }
@@ -80,8 +72,9 @@ export function registerReadTools(server: McpServer): void {
       title: 'Get a session info panels',
       description:
         "Read a session's info-panel contents — the same five panels the UI's info panel shows: " +
-        'skills (loaded), mcpServers (with status), tasks (sub-agents/tools), instructionSources ' +
-        '(AGENTS.md and friends in effect), and schedules. A read-only situational overview.',
+        'skills, mcpServers, tasks (sub-agents/tools), instructionSources ' +
+        '(AGENTS.md and friends in effect), and schedules, preserving each label, sublabel and enabled flag. ' +
+        'Requires a loaded session; explicitly use cockpit_reload_session if unloaded.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id'),
         response_format: ResponseFormat.describe("'markdown' (human) or 'json' (machine)"),
@@ -90,12 +83,11 @@ export function registerReadTools(server: McpServer): void {
     },
     async ({ session_id, response_format }): Promise<ToolResult> => {
       try {
-        const panels = await intent<SessionPanels>('session/panels', { sessionId: session_id });
-        const structured = panels as unknown as Record<string, unknown>;
-        if (response_format === 'json') return ok(cappedJson(panels), structured);
+        const panels = await intent('session/panels', { sessionId: session_id });
+        if (response_format === 'json') return ok(cappedJson(panels));
         const sect = (name: string, items: PanelItem[]) => {
           if (!items || !items.length) return `## ${name}\n_none_`;
-          return `## ${name}\n` + items.map((i) => `- ${i.label}${i.status ? ` · ${i.status}` : ''}${i.detail ? `\n    ${i.detail}` : ''}`).join('\n');
+          return `## ${name}\n` + items.map((i) => `- ${i.label}${i.enabled === undefined ? '' : i.enabled ? ' · enabled' : ' · disabled'}${i.sublabel ? `\n    ${i.sublabel}` : ''}`).join('\n');
         };
         const md = [
           `# Panels for ${session_id}`,
@@ -105,7 +97,7 @@ export function registerReadTools(server: McpServer): void {
           sect('Instruction sources', panels.instructionSources),
           sect('Schedules', panels.schedules),
         ].join('\n\n');
-        return ok(capped(md), structured);
+        return ok(capped(md));
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }
@@ -118,9 +110,10 @@ export function registerReadTools(server: McpServer): void {
     {
       title: 'Get a session plan',
       description:
-        "Read a session's current plan/todo board (the plan panel in the UI): the list of todo " +
+        "Read a session's current plan/todo board (the plan panel in the UI): planMarkdown and todo " +
         'items with their status. Useful to see what an autonomous or working session is doing ' +
-        'without reading the whole transcript.',
+        'without reading the whole transcript. Requires a loaded session; explicitly use ' +
+        'cockpit_reload_session if unloaded.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id'),
         response_format: ResponseFormat.describe("'markdown' (human) or 'json' (machine)"),
@@ -129,13 +122,18 @@ export function registerReadTools(server: McpServer): void {
     },
     async ({ session_id, response_format }): Promise<ToolResult> => {
       try {
-        const plan = await intent<Record<string, unknown>>('session/plan', { sessionId: session_id });
-        if (response_format === 'json') return ok(cappedJson(plan), plan);
-        const items = (plan.items as { id: string; title: string; status: string }[] | undefined) ?? [];
-        if (!items.length) return ok(`# Plan for ${session_id}\n\n_No plan items._`, plan);
-        const md = `# Plan for ${session_id} (${items.length})\n` +
-          items.map((i) => `- [${i.status}] ${i.title}`).join('\n');
-        return ok(capped(md), plan);
+        const plan = await intent('session/plan', { sessionId: session_id });
+        if (response_format === 'json') return ok(cappedJson(plan));
+        const sections = [
+          `# Plan for ${session_id}`,
+          plan.planMarkdown ?? '_No plan narrative._',
+          `## Todos (${plan.todos.length})\n` + (plan.todos.map((i) =>
+            `- [${i.status}] ${i.title} (${i.id})${i.description ? `\n    ${i.description}` : ''}`,
+          ).join('\n') || '_No todos._'),
+        ];
+        if (plan.changedFiles?.length) sections.push('## Changed files\n' +
+          plan.changedFiles.map((file) => `- ${file.operation}: ${file.path}`).join('\n'));
+        return ok(capped(sections.join('\n\n')));
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }

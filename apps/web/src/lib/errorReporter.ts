@@ -1,37 +1,50 @@
-// UX error reporter. Any uncaught frontend error or API failure is turned into a
-// prompt to the CURRENT session ("我在使用中发现了一个错误：…") so the agent can see
-// and fix it. The engine auto-queues the prompt when the session is busy.
-//
-// This module is intentionally standalone (no store/client imports) to avoid an
-// import cycle — the store registers a `sink` that performs the actual send.
-//
-// STORM SAFETY (critical — a self-reporting system must never feed itself):
-//  - `sink` excludes the `prompt` intent at the call site, so a failed error
-//    report can't trigger another report (the report IS a prompt).
-//  - `reporting` guard ignores errors thrown synchronously during a send.
-//  - dedup: the same message isn't re-sent within DEDUP_WINDOW_MS.
-//  - cooldown: minimum gap between any two sends.
-//  - rate cap: at most MAX_PER_WINDOW sends per WINDOW_MS.
-
-const PREFIX = '我在使用中发现了一个错误：';
-const MAX_LEN = 1500; // cap the error text so a giant stack can't bloat the prompt
+// Ephemeral, local-only diagnostics. No network, session state, or persistence.
+const MAX_LEN = 1500;
 const DEDUP_WINDOW_MS = 30_000;
-const COOLDOWN_MS = 4_000;
-const WINDOW_MS = 60_000;
-const MAX_PER_WINDOW = 5;
+const MAX_NOTIFICATIONS = 3;
+const MAX_RECENT = 50;
 
-// Returns true if the report was actually dispatched (a session was available
-// and connected); false otherwise.
-type Sink = (promptText: string) => boolean;
+export interface UxError {
+  readonly id: number;
+  readonly message: string;
+}
 
-let sink: Sink | null = null;
-let reporting = false;
-let lastSentAt = 0;
-const recent = new Map<string, number>(); // signature -> last sent ts
-let sentTimes: number[] = [];
+let errors: readonly UxError[] = Object.freeze([]);
+let nextId = 0;
+let publishing = false;
+const listeners = new Set<() => void>();
+const recent = new Map<string, number>();
 
-export function setErrorReportSink(s: Sink | null): void {
-  sink = s;
+export function getUxErrors(): readonly UxError[] {
+  return errors;
+}
+
+export function subscribeUxErrors(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+function notifyListeners(): void {
+  for (const listener of [...listeners]) {
+    try {
+      listener();
+    } catch {
+      // A broken observer must not cause another diagnostic or hide other notices.
+    }
+  }
+}
+
+export function dismissUxError(id: number): void {
+  if (publishing) return;
+  const remaining = errors.filter((error) => error.id !== id);
+  if (remaining.length === errors.length) return;
+  publishing = true;
+  try {
+    errors = Object.freeze(remaining);
+    notifyListeners();
+  } finally {
+    publishing = false;
+  }
 }
 
 // Turn an arbitrary thrown/rejected value into a human-readable string. The naive
@@ -68,43 +81,39 @@ export function describeReason(reason: unknown, includeStack = true): string {
   return `[${ctor}]`;
 }
 
-function signature(msg: string): string {
-  return msg.replace(/\s+/g, ' ').trim().slice(0, 160);
-}
-
-function prune(now: number): void {
-  for (const [sig, ts] of recent) if (now - ts > DEDUP_WINDOW_MS) recent.delete(sig);
-  sentTimes = sentTimes.filter((t) => now - t < WINDOW_MS);
-}
-
-// Report a UX/API error to the current session. Never throws.
-export function reportUxError(raw: string): void {
+// Publish a UX/API failure to the console and local notification UI. Never throws.
+export function reportUxError(raw: string, { deduplicate = true }: { deduplicate?: boolean } = {}): void {
+  if (publishing) return;
+  publishing = true;
   try {
-    if (reporting || !sink) return;
-    const msg = (raw ?? '').toString().trim();
+    const msg = raw.trim();
     if (!msg) return;
+    const message = msg.length > MAX_LEN ? `${msg.slice(0, MAX_LEN)}…（已截断）` : msg;
+    const sig = message.replace(/\s+/g, ' ');
     const now = Date.now();
-    if (now - lastSentAt < COOLDOWN_MS) return;
-    prune(now);
-    const sig = signature(msg);
-    if (recent.has(sig)) return;
-    if (sentTimes.length >= MAX_PER_WINDOW) return;
+    for (const [key, ts] of recent) {
+      if (now - ts >= DEDUP_WINDOW_MS) recent.delete(key);
+    }
+    if (deduplicate && recent.has(sig)) return;
+    if (deduplicate) recent.set(sig, now);
+    for (const key of recent.keys()) {
+      if (recent.size <= MAX_RECENT) break;
+      recent.delete(key);
+    }
 
-    const text = PREFIX + (msg.length > MAX_LEN ? `${msg.slice(0, MAX_LEN)}…（已截断）` : msg);
-
-    reporting = true;
-    let dispatched = false;
+    errors = Object.freeze([
+      ...errors.slice(-(MAX_NOTIFICATIONS - 1)),
+      Object.freeze({ id: ++nextId, message }),
+    ]);
     try {
-      dispatched = sink(text);
-    } finally {
-      reporting = false;
+      console.error('[cockpit] local error:', message);
+    } catch {
+      // Console failures must not prevent the visible notification.
     }
-    if (dispatched) {
-      lastSentAt = now;
-      recent.set(sig, now);
-      sentTimes.push(now);
-    }
+    notifyListeners();
   } catch {
-    // A reporter must never throw — that would be the worst kind of feedback loop.
+    // Diagnostics must never create another uncaught error.
+  } finally {
+    publishing = false;
   }
 }

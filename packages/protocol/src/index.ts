@@ -10,18 +10,12 @@ import { z } from 'zod';
 // ---------------------------------------------------------------------------
 
 // "Exactly one of these keys is set." Used by .superRefine() on the intent
-// bodies that document a mutual-exclusion invariant (schedule/hook/flow-schedule),
+// bodies that document a mutual-exclusion invariant (schedule),
 // so the shared gate — not hand-written engine dispatch — rejects none/several.
 const exactlyOne = (obj: Record<string, unknown>, keys: string[]): boolean =>
   keys.filter((k) => obj[k] !== undefined).length === 1;
 
-// A safe filesystem basename (mirrors engine-side flows.ts isSafeBasename):
-// must start alphanumeric, contain only [A-Za-z0-9._-], and never include a
-// ".." traversal token (the regex alone accepts "a..b", so the refine is
-// essential). Defense-in-depth for ids/names that become paths under ~/.copilot.
-const SafeBasename = z.string()
-  .regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, 'must be a safe basename (no separators/leading dot)')
-  .refine((s) => !s.includes('..'), 'must not contain ".."');
+const NotificationCounter = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
 // ---------------------------------------------------------------------------
 // Domain model
@@ -29,9 +23,6 @@ const SafeBasename = z.string()
 
 export const SessionStatus = z.enum(['unloaded', 'idle', 'running', 'error']);
 export type SessionStatus = z.infer<typeof SessionStatus>;
-export const SessionLaunchState = z.enum(['launching', 'launch_failed']);
-export type SessionLaunchState = z.infer<typeof SessionLaunchState>;
-
 // Process/engine readiness (in-process SDK: 'up' once auth is loaded).
 export const AgentStatus = z.enum(['starting', 'up', 'restarting']);
 export type AgentStatus = z.infer<typeof AgentStatus>;
@@ -52,6 +43,34 @@ export const ModelOption = z.object({
 });
 export type ModelOption = z.infer<typeof ModelOption>;
 
+// Native's default persisted binary limit; previews never raise that limit.
+export const MAX_TOOL_IMAGE_BYTES = 10 * 1024 * 1024;
+export const ToolImageRef = z.object({
+  eventId: z.string().min(1).max(200),
+  toolCallId: z.string().min(1).max(200),
+  part: z.number().int().nonnegative(),
+  cursor: z.string().min(1).max(16384).optional(),
+  count: z.number().int().min(1).max(1000).optional(),
+}).strict();
+export const ToolImage = ToolImageRef.extend({
+  mime: z.string().max(512),
+  byteLength: z.number().int().nonnegative().optional(),
+  unavailable: z.string().optional(),
+});
+export type ToolImage = z.infer<typeof ToolImage>;
+export const ToolImageRead = z.object({
+  sessionId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/),
+  image: ToolImageRef,
+}).strict();
+export type ToolImageRead = z.infer<typeof ToolImageRead>;
+export const ToolImageResult = z.object({
+  sessionId: z.string(), eventId: z.string(), toolCallId: z.string(),
+  part: z.number().int().nonnegative(),
+  mime: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']),
+  byteLength: z.number().int().min(1).max(MAX_TOOL_IMAGE_BYTES),
+  data: z.string().max(4 * Math.ceil(MAX_TOOL_IMAGE_BYTES / 3)),
+});
+
 export const ToolCall = z.object({
   toolCallId: z.string(),
   title: z.string(),
@@ -62,6 +81,7 @@ export const ToolCall = z.object({
   name: z.string().optional(),
   args: z.string().optional(),
   output: z.string().optional(),
+  images: z.array(ToolImage).optional(),
 });
 export type ToolCall = z.infer<typeof ToolCall>;
 
@@ -72,6 +92,7 @@ export type ChatRole = z.infer<typeof ChatRole>;
 // Its full internal work (tools + reasoning + messages) lives in the owning
 // message's `subMessages`, folded by the SAME fold on a nested state.
 export const SubagentInfo = z.object({
+  toolCallId: z.string().optional(),
   name: z.string(),          // internal agent_type (general-purpose/explore/…)
   displayName: z.string(),   // human-readable
   description: z.string().optional(),
@@ -84,8 +105,8 @@ export const SubagentInfo = z.object({
 export type SubagentInfo = z.infer<typeof SubagentInfo>;
 
 // A user-uploaded file/image attached to a message. The file lives in the fixed
-// upload folder; `url` serves it to the browser, the agent gets the absolute path
-// in the message's guidance text.
+// upload folder; `url` serves it to the browser. Structured prompts resolve the
+// stored file server-side and pass it as a native attachment to the agent.
 export const Attachment = z.object({
   kind: z.enum(['image', 'file']),
   name: z.string(),
@@ -94,6 +115,60 @@ export const Attachment = z.object({
   mime: z.string().optional(),
 });
 export type Attachment = z.infer<typeof Attachment>;
+
+export const UploadUrl = z.string().regex(
+  /^\/uploads\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}(?![\s\S])/,
+  'must be /uploads/<safe-basename>',
+).refine((url) => !url.includes('..'), 'upload basename must not contain ..')
+  .describe('Literal local upload URL; no traversal, percent escapes, query, hash, or external URL.');
+
+export const UploadedFile = Attachment.extend({
+  url: UploadUrl,
+  path: z.string().min(1).describe('Authoritative server path, returned for local file convenience; never accepted as a prompt path.'),
+  size: z.number().int().nonnegative().max(25 * 1024 * 1024),
+  mime: z.string().min(1).max(512),
+  storedName: z.string().optional(),
+  createdAt: z.number().int().nonnegative().optional(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  source: z.enum(['web', 'mcp', 'weixin', 'tool-image']).optional(),
+  sessionId: z.string().optional(),
+  sourceId: z.string().optional(),
+  sessions: z.array(z.string()).optional(),
+});
+export type UploadedFile = z.infer<typeof UploadedFile>;
+
+export const MessagePart = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('text'), text: z.string() }),
+  z.object({ type: z.literal('file'), attachment: Attachment.extend({ url: UploadUrl }) }),
+]);
+export type MessagePart = z.infer<typeof MessagePart>;
+
+export function attachmentMarkdown(attachment: Attachment): string {
+  const url = UploadUrl.parse(attachment.url);
+  const label = attachment.name.replace(/[\r\n\t]+/g, ' ').replace(/[\\`*_[\]<>]/g, '\\$&');
+  return `${attachment.kind === 'image' ? '!' : ''}[${label}](${url})`;
+}
+
+// Keep the existing fold-compatible marker without adding read-path guidance.
+export function attachmentMarker(attachment: Attachment): string {
+  const attrs = [
+    'version="2"',
+    `kind="${attachment.kind}"`,
+    `name="${encodeURIComponent(attachment.name)}"`,
+    `url="${encodeURIComponent(attachment.url)}"`,
+    ...(attachment.size !== undefined ? [`size="${attachment.size}"`] : []),
+    ...(attachment.mime !== undefined ? [`mime="${encodeURIComponent(attachment.mime)}"`] : []),
+  ];
+  return `<cockpit-attachment ${attrs.join(' ')}/>`;
+}
+
+export function attachmentPrompt(attachment: Attachment, caption: string): string {
+  return `${attachmentMarker(attachment)}${caption ? `\n${caption}` : ''}`;
+}
+
+export function partsPrompt(parts: MessagePart[]): string {
+  return parts.map(part => part.type === 'text' ? part.text : attachmentMarker(part.attachment)).join('');
+}
 
 // ChatMessage is recursive: a sub-agent card holds its inner conversation in
 // `subMessages` (each itself a ChatMessage, possibly with its own sub-agents).
@@ -112,6 +187,8 @@ export interface ChatMessage {
   subagent?: SubagentInfo;
   subMessages?: ChatMessage[];
   attachment?: Attachment;
+  attachments?: Attachment[];
+  parts?: MessagePart[];
 }
 export const ChatMessage: z.ZodType<ChatMessage> = z.lazy(() => z.object({
   id: z.string(),
@@ -125,7 +202,18 @@ export const ChatMessage: z.ZodType<ChatMessage> = z.lazy(() => z.object({
   subagent: SubagentInfo.optional(),
   subMessages: z.array(ChatMessage).optional(),
   attachment: Attachment.optional(),
+  attachments: z.array(Attachment).optional(),
+  parts: z.array(MessagePart).optional(),
 }));
+
+export function summarizeMessage(message: ChatMessage): ChatMessage {
+  if (message.subtype !== 'subagent' || !message.subagent) return message;
+  const { subMessages: _messages, subagent, ...summary } = message;
+  const { prompt: _prompt, ...info } = subagent;
+  const toolCallId = subagent.toolCallId
+    ?? (message.id.startsWith('subagent-') ? message.id.slice('subagent-'.length) : undefined);
+  return { ...summary, subagent: { ...info, ...(toolCallId ? { toolCallId } : {}) } };
+}
 
 // A message the user queued while a turn was running (CLI-style queue).
 export const QueuedItem = z.object({
@@ -158,6 +246,40 @@ export const SessionPlan = z.object({
   changedFiles: z.array(ChangedFile).optional(),
 });
 export type SessionPlan = z.infer<typeof SessionPlan>;
+
+const TokenCount = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+export const SessionUsage = z.object({
+  sessionId: z.string(),
+  sampledAt: z.number().int().nonnegative(),
+  context: z.object({
+    totalTokens: TokenCount,
+    modelId: z.string(),
+    modelSource: z.string(),
+    promptTokenLimit: TokenCount,
+    limit: TokenCount,
+    compactionThreshold: TokenCount,
+    categories: z.object({
+      systemPrompt: TokenCount, customInstructions: TokenCount, systemTools: TokenCount,
+      mcpTools: TokenCount, messages: TokenCount, freeSpace: TokenCount, buffer: TokenCount,
+    }),
+    compactions: z.object({ count: TokenCount }),
+  }).nullable(),
+  usage: z.object({
+    sessionStartTime: z.string(),
+    currentModel: z.string().optional(),
+    totalUserRequests: TokenCount,
+    lastCallInputTokens: TokenCount,
+    lastCallOutputTokens: TokenCount,
+    modelMetrics: z.record(z.object({
+      usage: z.object({
+        inputTokens: TokenCount, outputTokens: TokenCount,
+        cacheReadTokens: TokenCount, cacheWriteTokens: TokenCount,
+        reasoningTokens: TokenCount.optional(),
+      }),
+    }).optional()),
+  }),
+});
+export type SessionUsage = z.infer<typeof SessionUsage>;
 
 // Read-mostly info-panel sections (mcp/skills/tasks/instructions/schedule). The
 // SDK returns differently-shaped lists; the engine normalizes each item to this
@@ -193,155 +315,6 @@ export const ScheduleEntry = z.object({
 });
 export type ScheduleEntry = z.infer<typeof ScheduleEntry>;
 
-// ── Event hooks (Butler / Flow trigger layer) ────────────────────────────────
-// A hook is schedule's sibling: schedule fires on TIME, a hook fires on an
-// ECOSYSTEM EVENT. It says "when event E happens (possibly in another session),
-// deliver a prompt into the owner (butler) session, carrying the event's
-// context". The registry is engine-global (cross-session) — one session reacts
-// to the whole fleet. Two events exist:
-//   - session.first-turn-complete — a REAL session finished its first turn (the
-//     welcome trigger). Source-keyed: the ctx carries the source session.
-//   - session.error — a REAL session's turn ended in error (the triage trigger:
-//     autopilot crashed, a tool chain failed). Source-keyed; the ctx's `summary`
-//     carries the error message. R1 holds (a spawned worker's error never fires —
-//     a bad worker would otherwise trigger triage endlessly), and the engine rate-
-//     limits per source so a flapping session can't storm the bus.
-//   - session.trashed — a session was moved to the trash bin (soft-delete,
-//     REVERSIBLE — NOT purge). Source-keyed: the ctx carries the trashed session.
-//     UNLIKE the R1-guarded first-turn/error events, this fires for EVERY trashed
-//     session including spawned workers — a finished worker's transcript is itself a
-//     prime salvage target, and the consumer (the harvest pipeline) collapses a
-//     burst via its gate's single-flight + candidate dedup, so no R1 suppression is
-//     needed here. It lets harvest salvage a corpse the instant it's trashed instead
-//     of waiting for the cold-scan cron.
-//   - engine.boot-complete — the engine finished starting (a fresh boot or a
-//     restart). GLOBAL (source-less): the ctx's sessionId/cwd/title are empty.
-//     It lets a session re-drive itself precisely when the server comes back —
-//     e.g. a daemon verifying its own deploy restart — without polling.
-export const SessionEventType = z.enum(['session.first-turn-complete', 'session.error', 'session.trashed', 'engine.boot-complete']);
-export type SessionEventType = z.infer<typeof SessionEventType>;
-
-// The context delivered with an event (and interpolated into a prompt template).
-// For a global event (engine.boot-complete) the source fields are empty strings.
-export const SessionEventCtx = z.object({
-  event: SessionEventType,
-  sessionId: z.string(),   // the SOURCE session the event happened on ('' for global events)
-  cwd: z.string(),
-  title: z.string(),
-  // Event-specific detail. For session.error this is the error message/summary;
-  // empty/absent for events that carry no detail (first-turn-complete, boot).
-  summary: z.string().optional(),
-});
-export type SessionEventCtx = z.infer<typeof SessionEventCtx>;
-
-// Optional narrowing of which source events a hook reacts to.
-export const HookFilter = z.object({
-  cwdPrefix: z.string().optional(),   // source cwd must start with this
-  sessionId: z.string().optional(),   // only this exact source session
-  excludeSelf: z.boolean().optional(),// ignore events whose source IS the owner
-});
-export type HookFilter = z.infer<typeof HookFilter>;
-
-export const HookEntry = z.object({
-  id: z.string(),                      // stable id (used to stop)
-  ownerSession: z.string().min(1),     // session that RECEIVES the delivery (the butler); never '' (a '' owner would self-drop a boot hook)
-  event: SessionEventType,             // which event it subscribes to
-  filter: HookFilter.optional(),
-  // Action (revised per design §2.10): a hook points at a Flow (Phase B). Until
-  // the Flow layer lands, Phase A supports a minimal `promptTemplate` action:
-  // interpolate the event context and enqueue it into ownerSession.
-  flowId: z.string().optional(),
-  promptTemplate: z.string().optional(),
-  // `once` is only operative for the GLOBAL event (engine.boot-complete): fire on
-  // the next boot then auto-remove. For the source-keyed session.first-turn-complete
-  // dedup is the persisted welcomed-bit (markWelcomed/isWelcomed), so `once` is
-  // effectively a no-op there (the bit, not this flag, enforces once-per-source).
-  once: z.boolean().optional(),
-  createdAt: z.number(),
-});
-export type HookEntry = z.infer<typeof HookEntry>;
-
-// ── Flows (TRIGGER → FLOW → ACTION, design §2.10) ────────────────────────────
-// A Flow is the reusable middle layer between a trigger (hook/schedule) and its
-// effect: an optional cheap gate script (deterministic, no LLM — the cost gate)
-// plus an action. The same Flow can be driven by a hook OR a schedule. Flow
-// definitions live in ~/.copilot/flows/*.json (git-trackable, owner-authored).
-// mode is inlined here (== AgentMode, declared later) to avoid a TDZ forward-ref.
-export const GateSpec = z.object({
-  // Path to a LOCAL, owner-authored script run as a subprocess BEFORE the action.
-  // Contract: receives the event context (env COCKPIT_EVENT + stdin JSON); exit 0
-  // = go, non-zero = skip; stdout JSON (optional) = params merged into downstream
-  // interpolation. Security: owner-local scripts only, never third-party/downloaded.
-  script: z.string(),
-  timeoutMs: z.number().optional(),   // gate kill deadline (default 30s); a hang = skip (fail-safe)
-});
-export type GateSpec = z.infer<typeof GateSpec>;
-
-// The blueprint for a born-configured spawned session. String fields may contain
-// {event.*} / gate-param tokens, interpolated at spawn time.
-export const SessionTemplate = z.object({
-  cwd: z.string(),
-  prompt: z.string(),
-  // The worker session's display title. Supports {event.*} / {gate.*} tokens.
-  // Set on the SDK so it sticks (user-named — not re-derived from the prompt);
-  // omitted → falls back to the cwd basename.
-  title: z.string().optional(),
-  skills: z.array(z.string()).optional(),  // the ONLY skills kept enabled (all others disabled — tight match)
-  mcps: z.array(z.string()).optional(),    // the MCP servers enabled at birth
-  model: z.string().optional(),
-  mode: z.enum(['interactive', 'plan', 'autopilot']).optional(),
-});
-export type SessionTemplate = z.infer<typeof SessionTemplate>;
-
-export const FlowAction = z.discriminatedUnion('kind', [
-  // Spawn a fresh, born-configured session (a worker). It is marked spawnedBy=flowId
-  // (R1 non-trigger-source + UI folding). Per decision F7 the worker is KEPT (not
-  // auto-deleted) — folded in the UI, not trashed.
-  z.object({ kind: z.literal('spawn-session'), template: SessionTemplate }),
-  // Deliver a prompt into an existing session (the pre-Flow behavior).
-  z.object({ kind: z.literal('prompt-existing'), sessionId: z.string(), prompt: z.string() }),
-]);
-export type FlowAction = z.infer<typeof FlowAction>;
-
-export const Flow = z.object({
-  id: SafeBasename,
-  name: z.string().optional(),
-  gate: GateSpec.optional(),
-  action: FlowAction,
-});
-export type Flow = z.infer<typeof Flow>;
-
-// An inline action a flow-schedule can fire WITHOUT a flow definition file: deliver
-// a prompt into an existing session on each tick. This is how the old per-session
-// schedule's high-frequency usage ("fire this prompt into this session on a timer")
-// is expressed in the unified system — no flow JSON, no keep-loaded pin (the engine
-// ensureLoads the target session on fire, waking it if unloaded).
-export const InlineScheduleTarget = z.object({
-  kind: z.literal('prompt-existing'),
-  sessionId: z.string(),
-  prompt: z.string(),
-  displayPrompt: z.string().optional(), // user-facing label when prompt is a slash-command expansion
-});
-export type InlineScheduleTarget = z.infer<typeof InlineScheduleTarget>;
-
-// A server-level scheduled trigger. It runs in the always-on cockpit-server and
-// fires even with zero sessions loaded. Timing kinds: interval | cron | at. On
-// each tick it either runs a FLOW (flowId) or delivers an inline prompt-existing
-// target — exactly one of `flowId` / `target` is set.
-export const FlowScheduleEntry = z.object({
-  id: z.number(),                    // sequential, stable across restart
-  flowId: z.string().optional(),     // the flow to run on each tick (one-of with target)
-  target: InlineScheduleTarget.optional(), // inline prompt-existing action (one-of with flowId)
-  recurring: z.boolean(),            // true = re-arms (interval/cron); false = one-shot (at)
-  nextRunAt: z.number(),             // epoch ms of the next fire
-  intervalMs: z.number().optional(), // relative-interval schedules
-  cron: z.string().optional(),       // 5-field cron schedules
-  tz: z.string().optional(),         // IANA tz the cron is evaluated in
-  at: z.number().optional(),         // one-shot absolute-time schedules
-  label: z.string().optional(),      // optional human label
-});
-export type FlowScheduleEntry = z.infer<typeof FlowScheduleEntry>;
-
 // ── Directory listing (the new-session folder picker) ────────────────────────
 export const DirEntry = z.object({
   name: z.string(),
@@ -369,8 +342,7 @@ export const TrashEntry = z.object({
 export type TrashEntry = z.infer<typeof TrashEntry>;
 
 // ── MCP + Skills management (dedicated pages, not the info panel) ─────────────
-// Global MCP server (from ~/.copilot/mcp-config.json) + its default-on flag for
-// new sessions.
+// Native Copilot MCP configuration and its default for future sessions.
 export const McpServerGlobal = z.object({
   name: z.string(),
   detail: z.string(),       // command / url summary
@@ -382,8 +354,7 @@ export const McpServerGlobal = z.object({
 export type McpServerGlobal = z.infer<typeof McpServerGlobal>;
 
 // One session's view of an MCP server. `unloaded` means the owning session has no
-// live SDK handle, so the read intentionally returned persisted enablement without
-// materializing it merely to discover connection state.
+// live SDK handle. An unloaded response cannot claim per-session enabled state.
 export const McpServerStatus = z.enum([
   'connected',
   'failed',
@@ -442,6 +413,7 @@ export const SkillGlobal = z.object({
   description: z.string().optional(),
   source: z.string().optional(),
   userInvocable: z.boolean().optional(),
+  enabled: z.boolean().optional(),
 });
 export type SkillGlobal = z.infer<typeof SkillGlobal>;
 
@@ -485,6 +457,7 @@ export type PlanRequest = z.infer<typeof PlanRequest>;
 export const ElicitationRequest = z.object({
   requestId: z.string(),
   message: z.string(),
+  actions: z.array(z.enum(['accept', 'decline', 'cancel'])).optional(),
 });
 export type ElicitationRequest = z.infer<typeof ElicitationRequest>;
 
@@ -510,16 +483,31 @@ export type AgentMode = z.infer<typeof AgentMode>;
 // your reply" can't be a persistent todo):
 //   'choice' — blocked mid-turn on a required decision (ask_user / plan confirm /
 //              elicitation). The agent cannot proceed. SEEING it only demotes the
-//              alert; it stays raised (and counted) until the user ANSWERS.
+//              alert; it stays raised until the user ANSWERS, but is no longer unread.
 //   'ready'  — the agent finished its turn (idle) and the result is waiting. This
 //              is an unread RESULT, not a debt: SEEING it (opening the session)
 //              IS its completion, so it clears to null on sight.
 //   null     — nothing needed (running, freshly prompted, seen-ready, or handled).
-// 'choice' outranks 'ready' (a pending decision is the stronger signal). So the
-// app-icon badge = count(attention != null) = (unseen readies) + (unanswered
-// choices), and it can't degrade into "every session you ever talked to".
+// 'choice' outranks 'ready' (a pending decision is the stronger signal). The
+// app-icon badge counts only unread attention, not all unanswered choices.
 export const Attention = z.enum(['ready', 'choice']);
 export type Attention = z.infer<typeof Attention>;
+
+type AttentionMeta = {
+  attention?: Attention | null;
+  attnId?: number;
+  seenId?: number;
+};
+
+// Legacy absent IDs count as 0: attention with no IDs is known seen, not unread.
+// A seen but unanswered choice remains actionable without contributing a badge.
+export function isUnreadAttention(meta: AttentionMeta): boolean {
+  return meta.attention != null && (meta.attnId ?? 0) > (meta.seenId ?? 0);
+}
+
+export function unreadSessionCount(sessions: readonly AttentionMeta[]): number {
+  return sessions.reduce((count, meta) => count + (isUnreadAttention(meta) ? 1 : 0), 0);
+}
 
 export const SessionMeta = z.object({
   sessionId: z.string(),
@@ -529,10 +517,6 @@ export const SessionMeta = z.object({
   lastActivity: z.number(),
   status: SessionStatus,
   error: z.string().nullable(),
-  // Spawn-only lifecycle: a flow worker exists before its first user turn is durably
-  // accepted/persisted, or that first-turn launch failed. Distinguishes a real
-  // launch problem from a completed idle worker without fabricating transcript text.
-  launchState: SessionLaunchState.nullable().optional(),
   currentModelId: z.string().optional(),
   // Clearable: a non-reasoning model has no effort, so a patch must be able to
   // carry an explicit `null` to clear a stale value (engine emits null, not omit).
@@ -544,6 +528,11 @@ export const SessionMeta = z.object({
   currentMode: AgentMode.nullable().optional(),
   availableModels: z.array(ModelOption).optional(),
   loaded: z.boolean(),
+  loading: z.boolean().optional(),
+  closing: z.boolean().optional(),
+  cancelling: z.boolean().optional(),
+  autoNaming: z.boolean().optional(),
+  autoNameError: z.string().nullable().optional(),
   queue: z.array(QueuedItem),
   ask: AskRequest.nullable(),
   planRequest: PlanRequest.nullable().optional(),
@@ -557,15 +546,15 @@ export const SessionMeta = z.object({
   intent: z.string().nullable().optional(),
   attention: Attention.nullable().optional(),
   // Monotonic id of the CURRENTLY-raised attention (server-assigned, increments on
-  // each fresh raise; 0/absent = nothing raised). Pairs with `seenId` to drive the
-  // cross-device "seen" state without any per-device client truth.
-  attnId: z.number().optional(),
+  // each fresh raise; absent legacy IDs count as 0 / known seen). Pairs with
+  // `seenId` to drive cross-device "seen" state without per-device client truth.
+  attnId: NotificationCounter.optional(),
   // Highest `attnId` the user has SEEN (monotonic, per-user — synced across every
   // device via session/patch, never per-device). `seenId >= attnId` ⇒ the current
   // attention has been looked at: a 'ready' is then cleared to null by the Engine,
-  // a 'choice' is rendered demoted (muted) but stays counted until answered. Being
-  // server truth, it reconciles correctly on cold start / reconnect (no stale dot).
-  seenId: z.number().optional(),
+  // a 'choice' remains actionable but no longer counts as unread. Absent IDs
+  // count as 0. Server truth reconciles on cold start / reconnect (no stale dot).
+  seenId: NotificationCounter.optional(),
   // A pure UI mark: pin a session to sort it to the top of the list, synced across
   // devices. NOTE: pin no longer means keep-loaded — keep-loaded is now driven by
   // whether the session has an active per-session schedule (scheduleCount > 0).
@@ -574,16 +563,6 @@ export const SessionMeta = z.object({
   // badge). Re-derived from the SDK ScheduleRegistry on load + on
   // schedule_created/cancelled events; full details come from `schedule/list`.
   scheduleCount: z.number().optional(),
-  // Number of event hooks owned BY this session (this session is the receiver of
-  // their deliveries — the butler). Sibling of scheduleCount; drives the sidebar
-  // hook badge + info-panel HookSection. Full details come from `hook/list`.
-  hookCount: z.number().optional(),
-  // R1 (anti-fork-bomb): set to the flowId when this session was SPAWNED by a
-  // Flow (a worker). A spawnedBy session is a NON-TRIGGER-SOURCE — none of its
-  // lifecycle events fire any hook/flow — so a welcome-worker can never trigger
-  // another welcome. One mark, two uses: this guard + (Phase C) UI folding.
-  // Persisted in cockpit-prefs.json so it survives reload/restart.
-  spawnedBy: z.string().optional(),
   // Count of in-flight `task` sub-agent invocations (foreground OR background).
   // A background sub-agent outlives the turn that spawned it (status returns to
   // idle while it runs), so this is what lets the graceful-restart gate avoid
@@ -601,6 +580,8 @@ export const SessionMeta = z.object({
   // and graceful restart until the SDK work either settles or is explicitly
   // represented as a still-settling operation.
   activeMcpOperations: z.number().int().nonnegative().optional(),
+  activeOperations: z.number().int().nonnegative().optional(),
+  nativeProcessing: z.boolean().optional(),
 });
 export type SessionMeta = z.infer<typeof SessionMeta>;
 
@@ -613,7 +594,6 @@ export const SessionBrief = z.object({
   title: z.string(),
   cwd: z.string(),
   status: SessionStatus,
-  launchState: SessionLaunchState.nullable().optional(),
   loaded: z.boolean(),
   lastActivity: z.number(),
   currentModelId: z.string().optional(),
@@ -623,6 +603,18 @@ export type SessionBrief = z.infer<typeof SessionBrief>;
 // ---------------------------------------------------------------------------
 // Server → client events (delivered over a single SSE stream)
 // ---------------------------------------------------------------------------
+
+export const HistoryResume = z.object({ token: z.string().min(1).max(8192).optional() }).strict();
+export type HistoryResume = z.infer<typeof HistoryResume>;
+export const HistoryResumeResult = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('ready'), token: z.string().optional() }),
+  z.object({ status: z.literal('pending'), token: z.string() }),
+  z.object({
+    status: z.literal('unavailable'),
+    reason: z.enum(['locator', 'expired', 'changed', 'boundary', 'capacity']),
+  }),
+]);
+export type HistoryResumeResult = z.infer<typeof HistoryResumeResult>;
 
 export const HistoryPage = z.object({
   sessionId: z.string(),
@@ -634,25 +626,51 @@ export const HistoryPage = z.object({
   // to replace. Preserves the paginated scrollback + scroll position across a
   // reconnect (the cursor is the durable message id, so it survives a server restart).
   append: z.boolean().optional(),
+  // Pending parts are not independently continuous; commit only after ready.
+  resume: HistoryResumeResult.optional(),
 });
 export type HistoryPage = z.infer<typeof HistoryPage>;
 
+export const HistoryDetails = z.enum(['full', 'summary']);
+export type HistoryDetails = z.infer<typeof HistoryDetails>;
+export const SubagentHistoryPage = HistoryPage.extend({
+  toolCallId: z.string(),
+  subagent: SubagentInfo,
+});
+export type SubagentHistoryPage = z.infer<typeof SubagentHistoryPage>;
+
+export const Snapshot = z.object({
+  type: z.literal('snapshot'),
+  agentStatus: AgentStatus,
+  models: z.array(ModelOption),
+  vapidPublicKey: z.string().nullable().optional(),
+  sessions: z.array(SessionMeta),
+  // Core-owned global inbox projection. Persist revision across restarts; do not
+  // synthesize it from transport clocks. Legacy servers may omit these fields.
+  unreadCount: NotificationCounter.optional(),
+  inboxRevision: NotificationCounter.optional(),
+  permissionPolicy: z.literal('allow-all').describe(
+    'Permissions are always auto-approved. Independent of interactive, plan, and autopilot interaction modes.',
+  ),
+});
+export type Snapshot = z.infer<typeof Snapshot>;
+
 export const ServerEvent = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('snapshot'),
-    agentStatus: AgentStatus,
-    models: z.array(ModelOption),
-    vapidPublicKey: z.string().nullable().optional(),
-    sessions: z.array(SessionMeta),
-  }),
+  Snapshot,
   z.object({ type: z.literal('agent/status'), status: AgentStatus }),
   z.object({ type: z.literal('session/added'), session: SessionMeta }),
   // A partial SessionMeta patch: every field optional (carry only what changed),
   // `sessionId` required as the key. Derived from SessionMeta so adding a field
   // there automatically makes it patchable — no parallel field list to maintain.
-  SessionMeta.partial().required({ sessionId: true }).extend({ type: z.literal('session/patch') }),
-  z.object({ type: z.literal('session/removed'), sessionId: z.string() }),
-  z.object({ type: z.literal('session/history-page'), page: HistoryPage }),
+  SessionMeta.partial().required({ sessionId: true }).extend({
+    type: z.literal('session/patch'),
+    inboxRevision: NotificationCounter.optional(),
+    unreadCount: NotificationCounter.optional(),
+  }),
+  z.object({
+    type: z.literal('session/removed'), sessionId: z.string(),
+    inboxRevision: NotificationCounter.optional(), unreadCount: NotificationCounter.optional(),
+  }),
   z.object({ type: z.literal('session/reset'), page: HistoryPage }),
   z.object({ type: z.literal('msg/upsert'), sessionId: z.string(), message: ChatMessage }),
   // Transient "fire a notification now" signal, emitted by the Engine (the single
@@ -667,6 +685,10 @@ export const ServerEvent = z.discriminatedUnion('type', [
     title: z.string(),
     attention: Attention,
     body: z.string(),
+    // Emit these together from the same committed inbox state when available.
+    attnId: NotificationCounter.optional(),
+    inboxRevision: NotificationCounter.optional(),
+    unreadCount: NotificationCounter.optional(),
   }),
 ]);
 export type ServerEvent = z.infer<typeof ServerEvent>;
@@ -676,33 +698,129 @@ export type ServerEventType = ServerEvent['type'];
 // Client → server intents (each is a POST; some return a typed result)
 // ---------------------------------------------------------------------------
 
+// Field bounds are shared; the server also bounds the serialized payload bytes.
+// SW handoff: titles already include the ready/choice label; body is core's
+// concrete text. Route clicks using url/sessionId. Test must not mutate unread
+// state. Use persisted inboxRevision to reject stale badge updates when supplied;
+// absence is legacy, not revision zero. OS banners cannot be remotely cleared
+// reliably by acknowledging this inbox on another device.
+export const NotificationPayload = z.object({
+  type: z.literal('notification'),
+  kind: z.enum(['ready', 'choice', 'test']),
+  title: z.string().min(1).max(256),
+  body: z.string().max(2048),
+  tag: z.string().min(1).max(256),
+  url: z.string().min(1).max(4096),
+  sessionId: z.string().min(1).max(256).optional(),
+  attnId: NotificationCounter.optional(),
+  inboxRevision: NotificationCounter.optional(),
+  unreadCount: NotificationCounter.optional(),
+  badge: NotificationCounter.optional().describe('Legacy alias for unreadCount; prefer unreadCount when both are present.'),
+}).refine((payload) => payload.kind === 'test' || payload.sessionId !== undefined, {
+  message: 'sessionId is required for ready and choice notifications',
+  path: ['sessionId'],
+});
+export type NotificationPayload = z.infer<typeof NotificationPayload>;
+
+export const PushEndpoint = z.string().max(4096).url().refine((value) => {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password || value.includes('#')
+      || /[\s\\\u0000-\u001f\u007f]/.test(value)) return false;
+    const hostname = url.hostname.toLowerCase().replace(/\.$/, '');
+    if (hostname === 'localhost' || hostname.endsWith('.localhost')) return false;
+    if (hostname.startsWith('[')) {
+      const address = hostname.slice(1, -1);
+      return address !== '::' && address !== '::1' && !address.startsWith('::ffff:')
+        && !/^(?:f[cd]|fe[89ab]|ff)/.test(address);
+    }
+    // URL normalizes alternate IPv4 spellings (integer, octal, shortened, hex).
+    if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
+      const [a = 0, b = 0] = hostname.split('.').map(Number);
+      return !(a === 0 || a === 10 || a === 127 || a >= 224
+        || (a === 100 && b >= 64 && b <= 127)
+        || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
+        || (a === 192 && b === 168));
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}, 'endpoint must be public HTTPS without credentials, fragments, or whitespace')
+  .describe('Public HTTPS push endpoint; no provider allowlist. Literal checks do not replace sender-side DNS/network safeguards.');
+export type PushEndpoint = z.infer<typeof PushEndpoint>;
+
 export const PushSubscriptionJson = z.object({
-  endpoint: z.string().url().refine((u) => u.startsWith('https://'), 'endpoint must be https'),
-  expirationTime: z.number().nullable().optional(),
-  keys: z.record(z.string()).optional(),
+  endpoint: PushEndpoint,
+  expirationTime: z.number().finite().nonnegative().nullable().optional(),
+  // Canonical unpadded base64url; the manager validates the uncompressed EC point.
+  keys: z.object({
+    p256dh: z.string().length(87).regex(/^[A-Za-z0-9_-]{86}[AEIMQUYcgkosw048]$/),
+    auth: z.string().length(22).regex(/^[A-Za-z0-9_-]{21}[AQgw]$/),
+  }),
 });
 export type PushSubscriptionJson = z.infer<typeof PushSubscriptionJson>;
 
+export const PushDelivery = z.object({
+  status: z.enum(['accepted', 'failed', 'expired']).describe(
+    'accepted means push service acceptance, NOT delivery to or display on a phone.',
+  ),
+  at: z.number().finite().nonnegative(),
+  error: z.string().optional(),
+});
+export type PushDelivery = z.infer<typeof PushDelivery>;
+
+export const PushStatus = z.object({
+  configured: z.boolean(),
+  registered: z.boolean().optional(),
+  subscriptionCount: NotificationCounter,
+  publicKey: z.string().nullable(),
+  lastDelivery: PushDelivery.optional().describe('Process-local diagnostic, optionally scoped to the queried endpoint; not a delivery receipt or durable inbox.'),
+  error: z.string().optional(),
+});
+export type PushStatus = z.infer<typeof PushStatus>;
+
+const HistoryCursor = z.string().min(1);
+const HistoryLimit = z.number().int().positive().max(200);
+
 export const Intents = {
+  'runtime/snapshot': {
+    description: 'Read global models, readiness, permission policy (always auto-approve), and session metadata in one passive query. Interaction modes do not change permissions.',
+    body: z.object({}),
+    result: Snapshot,
+  },
   'session/new': {
-    // spawnedBy (optional): born-as-worker. A daemon/orchestrator spawning a child
-    // it drives passes its own flow/worker label here so the child gets the SAME R1
-    // mark a flow worker does — a non-trigger-source (its lifecycle fires no hook/flow)
-    // AND folded into the sidebar worker group. Omitted ⇒ a normal top-level session.
-    body: z.object({ cwd: z.string(), spawnedBy: z.string().optional() }),
+    body: z.object({ cwd: z.string() }),
     result: z.object({ sessionId: z.string() }),
   },
-  'session/history': {
-    body: z.object({ sessionId: z.string(), beforeMsgId: z.string().optional(), afterMsgId: z.string().optional(), limit: z.number().optional() }),
-    result: z.object({ ok: z.boolean() }),
+  'session/fork': {
+    description: 'Native history fork from a loaded, idle session. Optional toEventId is a root user.message event ID from session history, excluded from the child; omit for full history. Rejects unfinished boundaries and any inherited schedule history. Returns a new unloaded session ID; no prompt is sent. Native fork appends an informational record to the parent. Model/mode follow native persisted history; skills/MCP use cold-resume defaults, not a complete configuration clone. cwd/files are shared, not a worktree. Non-idempotent: on an uncertain error inspect session/list and source history before any retry.',
+    body: z.object({
+      sessionId: z.string().min(1),
+      toEventId: z.string().min(1).optional(),
+      name: z.string().trim().min(1).max(120).optional(),
+    }).strict(),
+    result: z.object({ sessionId: z.string().min(1) }),
   },
-  // Read-only, paginated preview of a session — a TRASHED (unlisted) one OR a live
-  // one (e.g. a flow worker on the 自动会话 page). A loaded session is read from its
-  // in-memory fold; an unloaded/trashed one is folded from disk into a transient
-  // cache that is NOT in the live session map — so it never leaks into the sidebar
-  // and cannot be interacted with. Same slicing as session/history.
+  'session/history': {
+    description: 'Passively read a history page without SSE events or loading a session. beforeMsgId, afterMsgId and resume are mutually exclusive; limit is 1..200 messages. details:summary omits nested transcripts; omitted details preserves full. resume:{} obtains a checkpoint; resume:{token} performs bounded continuation. Stage pending message parts until ready; unavailable requires explicit refresh and does not prove deletion.',
+    body: z.object({
+      sessionId: z.string(), beforeMsgId: HistoryCursor.optional(),
+      afterMsgId: HistoryCursor.optional(), limit: HistoryLimit.optional(),
+      details: HistoryDetails.optional(),
+      resume: HistoryResume.optional(),
+    }).refine((b) => [b.beforeMsgId, b.afterMsgId, b.resume].filter(value => value !== undefined).length <= 1, {
+      message: 'beforeMsgId, afterMsgId and resume are mutually exclusive',
+    }),
+    result: HistoryPage,
+  },
+  // Preview is passive for both live and trashed sessions.
   'session/peek': {
-    body: z.object({ sessionId: z.string(), beforeMsgId: z.string().optional(), limit: z.number().optional() }),
+    description: 'Passively preview live or trashed history without loading a session or emitting SSE events. Cursor must be nonempty; limit is a positive integer up to 200. Result is flat.',
+    body: z.object({
+      sessionId: z.string(), beforeMsgId: HistoryCursor.optional(),
+      limit: HistoryLimit.optional(), details: HistoryDetails.optional(),
+    }),
     result: z.object({
       sessionId: z.string(),
       title: z.string(),
@@ -711,13 +829,68 @@ export const Intents = {
       hasMore: z.boolean(),
     }),
   },
+  'session/subagent-history': {
+    description: 'Passively read one subagent transcript by its spawning toolCallId, without loading the session. Children are summary cards by default; details:full includes nested transcripts. Supports live, unloaded and trashed sessions.',
+    body: z.object({
+      sessionId: z.string(), toolCallId: z.string().min(1),
+      beforeMsgId: HistoryCursor.optional(), afterMsgId: HistoryCursor.optional(),
+      limit: HistoryLimit.optional(), details: HistoryDetails.optional(),
+    }).refine((body) => body.beforeMsgId === undefined || body.afterMsgId === undefined, {
+      message: 'beforeMsgId and afterMsgId are mutually exclusive',
+    }),
+    result: SubagentHistoryPage,
+  },
+  'session/tool-image': {
+    description: 'Read one native tool image privately, on demand, from persisted events without loading or resuming the session. Returns bounded base64 only for this explicit request, never a public URL. Event/tool/part must belong to the requested session. Deleted, omitted, unsupported or stale resources fail explicitly; refresh history for an expired cursor.',
+    body: ToolImageRead,
+    result: ToolImageResult,
+  },
+  'files/list': {
+    description: 'List retained Cockpit files only, including legacy files in the managed upload directory. Search names or filter session associations; never scans private directories. Paginated metadata only, no file buffers.',
+    body: z.object({
+      query: z.string().max(200).optional(), sessionId: z.string().min(1).max(200).optional(),
+      limit: z.number().int().min(1).max(100).optional(),
+      offset: z.number().int().nonnegative().optional(),
+    }).strict(),
+    result: z.object({ files: z.array(UploadedFile), hasMore: z.boolean(), nextOffset: z.number().optional(),
+      errors: z.array(z.object({ url: UploadUrl, error: z.string() })).optional() }),
+  },
+  'files/get': {
+    description: 'Resolve a retained upload to authoritative metadata and a safe native server path. Use the URL for protected original-byte downloads. Missing or corrupt storage fails explicitly.',
+    body: z.object({ url: UploadUrl }).strict(),
+    result: UploadedFile,
+  },
+  'files/associate': {
+    description: 'Associate an existing retained file with a session without copying, sending, or modifying native history.',
+    body: z.object({ url: UploadUrl, sessionId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/) }).strict(),
+    result: UploadedFile,
+  },
+  'files/from-tool-image': {
+    description: 'Explicitly retain one selected native tool image in Cockpit managed files for download or attachment delivery. Reads the existing persisted image on demand, never scans other images. Repeating the same source returns the same retained file; does not rewrite SDK history.',
+    body: ToolImageRead.extend({ name: z.string().min(1).max(200).optional() }),
+    result: UploadedFile,
+  },
   prompt: {
-    body: z.object({ sessionId: z.string(), text: z.string(), mode: z.enum(['enqueue', 'immediate']).optional() }),
+    description: 'Send text and retained files using attachment, attachments (in order before text), or ordered parts. These three forms are mutually exclusive. Only literal /uploads/<safe-basename> URLs are accepted; the server resolves authoritative metadata and native file paths. Transport support does not imply the selected model can interpret every format.',
+    body: z.object({
+      sessionId: z.string(), text: z.string(), mode: z.enum(['enqueue', 'immediate']).optional(),
+      attachment: Attachment.extend({ url: UploadUrl }).optional(),
+      attachments: z.array(Attachment.extend({ url: UploadUrl })).min(1).max(20).optional(),
+      parts: z.array(MessagePart).min(1).max(100).optional(),
+    }).refine(b => [b.attachment, b.attachments, b.parts].filter(v => v !== undefined).length <= 1,
+      'attachment, attachments and parts are mutually exclusive')
+      .refine(b => !b.parts || (b.text === '' && b.parts.filter(p => p.type === 'file').length <= 20),
+        'parts requires empty text and at most 20 files'),
     result: z.object({ ok: z.boolean(), queued: z.boolean().optional() }),
   },
   cancel: {
     body: z.object({ sessionId: z.string() }),
     result: z.object({ ok: z.boolean() }),
+  },
+  'session/interrupt': {
+    description: 'Interrupt the current main turn and continue the native queue in order, without clearing or replaying it. Background work survives and may delay the queue. The result acknowledges the request, not idle or completed execution; interrupted:false means no main turn was interrupted. Requires a loaded session; never automatically retry an uncertain result.',
+    body: z.object({ sessionId: z.string().min(1) }).strict(),
+    result: z.object({ ok: z.literal(true), interrupted: z.boolean() }),
   },
   setModel: {
     body: z.object({
@@ -732,15 +905,27 @@ export const Intents = {
     body: z.object({ sessionId: z.string(), name: z.string() }),
     result: z.object({ ok: z.boolean(), title: z.string().optional() }),
   },
+  'session/auto-name': {
+    description: 'Generate a short name through a native no-tools ephemeral query and save it with name.setAuto. Uses the existing session, never adds a chat turn or creates another session, and never overwrites a manual name. Requires an idle session; explicitly invoking it may resume an unloaded session. This is an additional model request.',
+    body: z.object({ sessionId: z.string().min(1) }),
+    result: z.object({
+      ok: z.literal(true),
+      applied: z.boolean(),
+      title: z.string().nullable(),
+      reason: z.enum(['user-named', 'no-context', 'not-applied']).optional(),
+    }),
+  },
   'session/compact': {
     body: z.object({ sessionId: z.string(), customInstructions: z.string().optional() }),
     result: z.object({ ok: z.boolean() }),
   },
   'session/rewind': {
+    description: 'Rewind to before a selected user message. rollbackFiles:true requests native file rollback; the backend validates runtime support and reports conflicts or partial failures rather than silently ignoring it.',
     body: z.object({ sessionId: z.string(), toMsgId: z.string(), rollbackFiles: z.boolean().optional() }),
     result: z.object({ ok: z.boolean() }),
   },
   setMode: {
+    description: 'Set interaction mode: interactive, plan, or autopilot. Permissions remain always auto-approved (allow-all) in every mode.',
     body: z.object({ sessionId: z.string(), mode: AgentMode }),
     result: z.object({ ok: z.boolean() }),
   },
@@ -763,15 +948,10 @@ export const Intents = {
     body: z.object({ sessionId: z.string(), pinned: z.boolean() }),
     result: z.object({ ok: z.boolean(), pinned: z.boolean() }),
   },
-  // Reclassify an EXISTING session as a worker (or change its worker label) by
-  // setting its spawnedBy mark through the engine. This is the durable, atomic
-  // backfill path: NEVER hand-edit cockpit-prefs.json while the engine is running —
-  // the engine's in-memory snapshot clobbers the edit on its next save (a real
-  // lost-write the review flagged). The mark folds the session into the sidebar
-  // worker group and makes it an R1 non-trigger-source.
-  'session/set-spawned-by': {
-    body: z.object({ sessionId: z.string(), spawnedBy: z.string().min(1) }),
-    result: z.object({ ok: z.boolean(), spawnedBy: z.string() }),
+  'session/usage': {
+    description: 'Read native context attribution and accumulated usage on an already-loaded session. Never resumes, infers, compacts or scans history. Context is native tokenization of current system/messages/tool definitions; promptTokenLimit is from that same native snapshot. Last-call input/output are the latest main-agent call, not current context. Model totals are the native available aggregate; persistence and auxiliary-call coverage are not guaranteed by this adapter. Null context means uninitialized, not zero.',
+    body: z.object({ sessionId: z.string().min(1) }),
+    result: SessionUsage,
   },
   'session/plan': {
     body: z.object({ sessionId: z.string() }),
@@ -823,17 +1003,36 @@ export const Intents = {
     result: z.object({ meta: SessionMeta.nullable() }),
   },
   'push/subscribe': {
+    description: 'Subscribe to Web Push notifications with a public HTTPS endpoint and required p256dh/auth keys.',
     body: z.object({ subscription: PushSubscriptionJson }),
     result: z.object({ ok: z.boolean() }),
   },
-  // "I'm looking at this session now" — advances the per-user `seenId` to the
-  // session's current `attnId` (monotonic). The Engine clears a 'ready' on sight
+  'push/status': {
+    description: 'Passively inspect push configuration and last service acceptance/failure; optionally check whether an endpoint is registered.',
+    body: z.object({ endpoint: PushEndpoint.optional() }),
+    result: PushStatus,
+  },
+  'push/test': {
+    description: 'Send a benign test only to the specified existing registered subscription with explicit confirmation. Never register an endpoint, create chat content, or change unread state. Acceptance is not phone delivery.',
+    body: z.object({ endpoint: PushEndpoint, confirm: z.literal(true) }),
+    result: PushDelivery,
+  },
+  'push/unsubscribe': {
+    description: 'Remove an existing push subscription by endpoint, including cleanup after failed registration.',
+    body: z.object({ endpoint: PushEndpoint }),
+    result: z.object({ ok: z.boolean() }),
+  },
+  // "I'm looking at this session now" — monotonically advances the per-user
+  // `seenId` to the observed `attnId`. The Engine clears a 'ready' on sight
   // (seeing a finished result IS its completion) and demotes a 'choice' (which
   // stays raised until answered). Fired by the client on open / on the tab
   // regaining focus / when attention is raised on the already-active visible
-  // session. Idempotent: re-firing with nothing new to see is a no-op.
+  // session. An observed stale attnId must not clear newer attention. Omitting
+  // attnId is the legacy explicit acknowledgement of the CURRENT attention.
+  // Idempotent: re-firing with nothing new to see is a no-op.
   'inbox/seen': {
-    body: z.object({ sessionId: z.string() }),
+    description: 'Acknowledge the observed attnId without clearing newer attention. Legacy callers omitting attnId explicitly acknowledge current attention. Seen unanswered choices remain actionable but are not unread.',
+    body: z.object({ sessionId: z.string(), attnId: NotificationCounter.optional() }),
     result: z.object({ ok: z.boolean() }),
   },
   // Mint a short-lived (10-min) Azure Speech authorization token so the browser
@@ -845,21 +1044,23 @@ export const Intents = {
     result: z.object({ enabled: z.boolean(), token: z.string().optional(), region: z.string().optional() }),
   },
   'mcp/global': {
+    description: 'Read Copilot native user MCP configuration and defaults without activating a session.',
     body: z.object({}),
     result: z.object({ servers: z.array(McpServerGlobal) }),
   },
   'mcp/global-default': {
+    description: 'Enable or disable a server in Copilot native user configuration for future sessions. Active session connections are unchanged.',
     body: z.object({ name: z.string(), on: z.boolean() }),
     result: z.object({ ok: z.boolean() }),
   },
   'mcp/refresh': {
+    description: 'Invalidate the native MCP configuration cache. Does not restart sessions or replay Cockpit preferences.',
     body: z.object({}),
     result: z.object({ ok: z.boolean() }),
   },
-  // Reconnect ONE session's MCP servers — for a stdio server this re-spawns its
-  // process, so it's how an MCP server whose CODE changed gets reloaded without
-  // restarting the whole backend (mcp/refresh does the same for every session).
+  // Native reload updates one loaded session and re-applies global defaults.
   'mcp/reload-session': {
+    description: 'Reload native MCP connections on an idle loaded session. Reapplies native global defaults; temporary session choices may change. Does not close/resume the session.',
     body: z.object({ sessionId: z.string() }),
     result: z.object({ ok: z.boolean(), reconnected: z.number() }),
   },
@@ -875,18 +1076,20 @@ export const Intents = {
     result: McpToggleResult,
   },
   'skills/global': {
-    body: z.object({}),
+    description: 'List global skills using optional cwd; omitted cwd uses the server home directory, never an arbitrary session.',
+    body: z.object({ cwd: z.string().min(1).optional() }),
     result: z.object({ skills: z.array(SkillGlobal) }),
   },
   // Read one skill's full detail incl. the SKILL.md body (lazy — only when its
   // detail pane opens), so the list payload stays lean.
   'skills/read': {
-    body: z.object({ name: z.string() }),
+    body: z.object({ name: z.string(), cwd: z.string().min(1).optional() }),
     result: z.object({
       name: z.string(),
       description: z.string().optional(),
       source: z.string().optional(),
       userInvocable: z.boolean().optional(),
+      enabled: z.boolean().optional(),
       body: z.string().optional(),
     }),
   },
@@ -898,13 +1101,14 @@ export const Intents = {
     body: z.object({ sessionId: z.string(), name: z.string(), enabled: z.boolean() }),
     result: z.object({ ok: z.boolean() }),
   },
-  // Re-scan the on-disk skills directory. The SDK caches the skill list at process
-  // start in a module-level memo keyed only on directory PATHS (not contents), with
-  // no public API to invalidate it — so a skill added/removed/edited on disk after
-  // boot is invisible until the process restarts. This arms a graceful self-restart
-  // (exits when all sessions are idle; systemd brings it back with a fresh scan).
-  // willRestartWhenIdle is false only when nothing is running (it restarts at once).
+  'skills/global-toggle': {
+    description: 'Enable or disable a skill in Copilot native global configuration. Optional cwd selects discovery context for project skills; persistence remains global. Does not create sessions or store a Cockpit override.',
+    body: z.object({ name: z.string().min(1), enabled: z.boolean(), cwd: z.string().min(1).optional() }),
+    result: z.object({ ok: z.boolean() }),
+  },
+  // Native skill reload no longer requires restarting Cockpit.
   'skills/refresh': {
+    description: 'Reload native skill definitions without restarting Cockpit. The retained willRestartWhenIdle field is false.',
     body: z.object({}),
     result: z.object({ ok: z.boolean(), willRestartWhenIdle: z.boolean() }),
   },
@@ -922,32 +1126,31 @@ export const Intents = {
     body: z.object({}),
     result: z.object({ entries: z.array(TrashEntry) }),
   },
-  // Permanent purge: real SDK delete. NOT exposed in the UI — only the cockpit MCP
-  // (used by the maintainer session, after salvaging) calls this.
+  // Permanent purge: real SDK delete, requiring explicit confirmation.
   'session/purge': {
-    body: z.object({ sessionId: z.string() }),
+    body: z.object({ sessionId: z.string(), confirm: z.literal(true) }),
     result: z.object({ ok: z.boolean() }),
   },
-  // ── Scheduled prompts (the SDK's per-session ScheduleRegistry) ───────────────
-  // Register a scheduled prompt on a session. Exactly one timing kind:
-  //   - interval: a relative interval string ("30s", "5m", "1h", "1d") — /every-style
-  //   - cron:     a 5-field cron expression, evaluated in `tz` (IANA, optional) — /every-style
-  //   - at:       an absolute epoch-ms fire time — /after-style one-shot
-  // `recurring` defaults to true for interval/cron and false for `at`. The prompt
-  // fires into the session as a queued user message on each tick.
+  // Native after/every supports relative delays and one-shot absolute times.
   'schedule/add': {
+    description: 'Schedule a native after/every prompt. The current runtime supports exactly one of interval or at, from 1 second to 24 hours. Interval uses s, m, h, or d and defaults to recurring; at is one-shot. Prompt must be single-line plain text, without command flags or a leading slash. Legacy cron, timezone, displayPrompt and recurring-at options are not supported and are rejected.',
     body: z.object({
       sessionId: z.string(),
-      prompt: z.string().min(1),
-      interval: z.string().optional(),
-      cron: z.string().optional(),
+      prompt: z.string().min(1).refine(
+        (text) => !!text.trim() && !/[\r\n]/.test(text) && !/(^|\s)--/.test(text) && !text.trimStart().startsWith('/'),
+        'use single-line plain text without command flags or a leading slash',
+      ),
+      interval: z.string().regex(/^[1-9]\d*[smhd]$/).refine((value) => {
+        const seconds = Number(value.slice(0, -1)) * ({ s: 1, m: 60, h: 3600, d: 86400 }[value.at(-1)!] ?? 0);
+        return Number.isSafeInteger(seconds) && seconds >= 1 && seconds <= 86400;
+      }, 'interval must be between 1 second and 24 hours').optional(),
       at: z.number().optional(),
       recurring: z.boolean().optional(),
-      tz: z.string().optional(),
-      displayPrompt: z.string().optional(),
-    }).superRefine((v, ctx) => {
-      if (!exactlyOne(v, ['interval', 'cron', 'at']))
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'provide exactly one of interval, cron, or at' });
+    }).strict().superRefine((v, ctx) => {
+      if (!exactlyOne(v, ['interval', 'at']))
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'provide exactly one of interval or at' });
+      if (v.at !== undefined && v.recurring === true)
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'absolute schedules are one-shot' });
     }),
     result: z.object({ ok: z.boolean(), entry: ScheduleEntry.optional(), error: z.string().optional() }),
   },
@@ -958,100 +1161,6 @@ export const Intents = {
   'schedule/list': {
     body: z.object({ sessionId: z.string() }),
     result: z.object({ entries: z.array(ScheduleEntry) }),
-  },
-  // ── Event hooks (Butler/Flow trigger layer — engine-global, cross-session) ───
-  // A hook subscribes the owner (butler) session to a fleet-wide event. v1 event
-  // = session.first-turn-complete. Phase A action = promptTemplate (interpolated
-  // event context, enqueued into ownerSession); flowId is the Phase B target.
-  'hook/add': {
-    body: z.object({
-      ownerSession: z.string().min(1),
-      event: SessionEventType,
-      filter: HookFilter.optional(),
-      flowId: z.string().optional(),
-      promptTemplate: z.string().optional(),
-      once: z.boolean().optional(),
-    }).superRefine((v, ctx) => {
-      if (!exactlyOne(v, ['flowId', 'promptTemplate']))
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'a hook needs exactly one of flowId or promptTemplate' });
-    }),
-    result: z.object({ ok: z.boolean(), entry: HookEntry.optional(), error: z.string().optional() }),
-  },
-  'hook/stop': {
-    body: z.object({ id: z.string() }),
-    result: z.object({ ok: z.boolean() }),
-  },
-  // List all hooks (engine-global), optionally narrowed to one owner session.
-  'hook/list': {
-    body: z.object({ ownerSession: z.string().optional() }),
-    result: z.object({ entries: z.array(HookEntry) }),
-  },
-  // ── Flows (TRIGGER → FLOW → ACTION) ──────────────────────────────────────────
-  // Flow definitions are loaded from ~/.copilot/flows/*.json. flow/run manually
-  // triggers a flow (run its gate, then its action) — useful for the human to
-  // summon/debug a flow; ctx is the optional event context for interpolation.
-  'flow/list': {
-    body: z.object({}),
-    result: z.object({ flows: z.array(Flow) }),
-  },
-  // Author a flow definition (write ~/.copilot/flows/<id>.json). The maintainer
-  // MCP uses this so an agent can compose flows, not just trigger pre-written
-  // ones. The id must be a safe basename (no path traversal). A gate.script is
-  // taken as-is (owner accepted authoring gate scripts via the maintainer MCP);
-  // write the script itself with flow/write-gate.
-  'flow/add': {
-    body: Flow,
-    result: z.object({ ok: z.boolean(), flow: Flow.optional(), error: z.string().optional() }),
-  },
-  'flow/remove': {
-    body: z.object({ id: SafeBasename }),
-    result: z.object({ ok: z.boolean(), error: z.string().optional() }),
-  },
-  // Write a gate script into ~/.copilot/flows/<name> (chmod +x) and return its
-  // absolute path, to reference as a flow's gate.script. `name` must be a safe
-  // basename. Confined to the flows dir (path-traversal rejected).
-  'flow/write-gate': {
-    body: z.object({ name: SafeBasename, script: z.string().min(1) }),
-    result: z.object({ ok: z.boolean(), path: z.string().optional(), error: z.string().optional() }),
-  },
-  'flow/run': {
-    body: z.object({ flowId: z.string(), ctx: SessionEventCtx.optional() }),
-    result: z.object({
-      ok: z.boolean(),
-      skipped: z.boolean().optional(),   // gate said skip
-      sessionId: z.string().optional(),  // a spawn-session action's new worker id
-      error: z.string().optional(),
-    }),
-  },
-  // ── Server-level flow schedules (time triggers; fire even with 0 sessions) ───
-  // The unified, engine-global timer — exactly one timing kind (interval | cron |
-  // at). On each tick it runs a FLOW (flowId) OR delivers an inline prompt-existing
-  // target — provide exactly one of flowId / target.
-  'flow-schedule/add': {
-    body: z.object({
-      flowId: z.string().optional(),
-      target: InlineScheduleTarget.optional(),
-      interval: z.string().optional(),
-      cron: z.string().optional(),
-      at: z.number().optional(),
-      recurring: z.boolean().optional(),
-      tz: z.string().optional(),
-      label: z.string().optional(),
-    }).superRefine((v, ctx) => {
-      if (!exactlyOne(v, ['flowId', 'target']))
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'provide exactly one of flowId or target' });
-      if (!exactlyOne(v, ['interval', 'cron', 'at']))
-        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'provide exactly one of interval, cron, or at' });
-    }),
-    result: z.object({ ok: z.boolean(), entry: FlowScheduleEntry.optional(), error: z.string().optional() }),
-  },
-  'flow-schedule/stop': {
-    body: z.object({ id: z.number() }),
-    result: z.object({ ok: z.boolean() }),
-  },
-  'flow-schedule/list': {
-    body: z.object({}),
-    result: z.object({ entries: z.array(FlowScheduleEntry) }),
   },
 } as const;
 

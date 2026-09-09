@@ -14,9 +14,9 @@
   },
   "dependencies": {
     "@cockpit/protocol": "workspace:*",
-    "@github/copilot": "1.0.63"
+    "@github/copilot-sdk": "1.0.13"
   },
   "devDependencies": {
-    "tsx": "^4.19.2"
+    "tsx": "^4.23.13"
   }
 }

@@ -43,10 +43,34 @@ await t('GET /status → running count + sessions[]', async () => {
   assert.equal(typeof b.restartPending, 'boolean');
 });
 
+await t('capabilities publishes the foundation contract without governance', async () => {
+  const response = await fetch(`${BASE}/capabilities`);
+  assert.equal(response.status, 200);
+  const catalog = await j(response);
+  const names = catalog.intents.map((entry) => entry.name);
+  for (const name of ['session/new', 'session/peek', 'prompt', 'cancel', 'schedule/list']) {
+    assert.ok(names.includes(name), `${name} is discoverable`);
+  }
+  assert.ok(!names.some((name) => /^(hook|flow|flow-schedule)\//.test(name)));
+  assert.ok(!names.includes('session/set-spawned-by'));
+  assert.ok(catalog.transports.some((entry) => entry.method === 'POST' && entry.path === '/upload'));
+  assert.ok(catalog.transports.some((entry) => entry.method === 'GET' && entry.path === '/uploads/:name'));
+  const detail = await j(await fetch(`${BASE}/capabilities?name=session%2Fpeek`));
+  assert.equal(detail.name, 'session/peek');
+  assert.equal(detail.inputSchema.type, 'object');
+  assert.equal(detail.resultSchema.type, 'object');
+});
+
 // ── intent validation ─────────────────────────────────────────────────────────
 await t('unknown intent → 404', async () => {
   const r = await intent('does/not/exist', {});
   assert.equal(r.status, 404);
+});
+
+await t('retired governance intents → 404', async () => {
+  for (const name of ['hook/list', 'flow/list', 'flow-schedule/list', 'session/set-spawned-by']) {
+    assert.equal((await intent(name, {})).status, 404, name);
+  }
 });
 
 await t('bad intent body → 4xx (zod rejects)', async () => {
@@ -170,7 +194,7 @@ await t('session/rename → applies + echoes an authoritative title', async () =
   assert.ok(typeof res.title === 'string' && res.title.length > 0, 'title echoed back');
 });
 
-await t('skills/session-toggle → per-session disable persists, then restore', async () => {
+await t('skills/session-toggle → native session readback, then restore', async () => {
   const id = globalThis.__e2eSession;
   const list = await j(await intent('skills/session', { sessionId: id }));
   assert.ok(Array.isArray(list.skills));
@@ -184,14 +208,13 @@ await t('skills/session-toggle → per-session disable persists, then restore', 
   }
 });
 
-await t('mcp/session-toggle → persists choice (no live connect when left off)', async () => {
+await t('mcp/session-toggle → native disabled state is confirmed', async () => {
   const id = globalThis.__e2eSession;
   const list = await j(await intent('mcp/session', { sessionId: id }));
   assert.ok(Array.isArray(list.servers));
   if (list.servers.length) {
     const name = list.servers[0].name;
-    // toggle to OFF (new sessions default off): exercises the persist path without
-    // spawning/connecting a real MCP server.
+    // Only change the throwaway session; native global defaults stay untouched.
     const res = await j(await intent('mcp/session-toggle', { sessionId: id, name, on: false }));
     assert.equal(res.ok, true);
     const after = await j(await intent('mcp/session', { sessionId: id }));
@@ -199,7 +222,7 @@ await t('mcp/session-toggle → persists choice (no live connect when left off)'
   }
 });
 
-await t('session/pin → keep-loaded flag applies, then release', async () => {
+await t('session/pin → UI mark applies, then release', async () => {
   const id = globalThis.__e2eSession;
   const on = await j(await intent('session/pin', { sessionId: id, pinned: true }));
   assert.equal(on.ok, true);
@@ -208,40 +231,57 @@ await t('session/pin → keep-loaded flag applies, then release', async () => {
   assert.equal(off.pinned, false, 'unpin applied');
 });
 
+await t('unloaded history stays passive; native details require explicit resume', async () => {
+  const sessionId = globalThis.__e2eSession;
+  assert.equal((await intent('session/unload', { sessionId })).status, 200);
+  try {
+    const history = await intent('session/history', { sessionId, limit: 10 });
+    assert.equal(history.status, 200);
+    assert.ok(Array.isArray((await j(history)).messages));
+    for (const name of ['session/plan', 'session/panels', 'skills/session', 'schedule/list']) {
+      const response = await intent(name, { sessionId });
+      assert.equal(response.status, 409, name);
+      assert.equal((await j(response)).code, 'SESSION_UNLOADED', name);
+    }
+    const current = await j(await intent('session/get', { sessionId }));
+    assert.equal(current.meta.loaded, false);
+    assert.equal(current.meta.error, null);
+  } finally {
+    assert.equal((await intent('session/reload', { sessionId })).status, 200);
+  }
+  assert.equal((await intent('session/plan', { sessionId })).status, 200);
+});
+
 // ── scheduled prompts (add → list → stop) ─────────────────────────────────────
 // Feature-detected. Non-destructive: uses a far-future one-shot + a long interval so
 // nothing actually fires during the test, and stops both before the session is purged.
 const scheduleSupported = (await intent('schedule/list', { sessionId: globalThis.__e2eSession })).status !== 404;
 if (scheduleSupported) {
-  await t('schedule/add interval + cron + at, list, then stop', async () => {
+  await t('schedule/add interval + at, list, then stop', async () => {
     const id = globalThis.__e2eSession;
     const r1 = await j(await intent('schedule/add', { sessionId: id, prompt: 'e2e interval', interval: '1h' }));
     assert.equal(r1.ok, true, r1.error ?? 'interval add failed');
     assert.equal(r1.entry.recurring, true);
     assert.equal(r1.entry.intervalMs, 3600000);
-    const r2 = await j(await intent('schedule/add', { sessionId: id, prompt: 'e2e cron', cron: '0 9 * * *', tz: 'Asia/Shanghai' }));
-    assert.equal(r2.ok, true, r2.error ?? 'cron add failed');
-    assert.equal(r2.entry.cron, '0 9 * * *');
     const r3 = await j(await intent('schedule/add', { sessionId: id, prompt: 'e2e once', at: Date.now() + 3600_000 }));
     assert.equal(r3.ok, true, r3.error ?? 'at add failed');
     assert.equal(r3.entry.recurring, false);
 
     const listed = await j(await intent('schedule/list', { sessionId: id }));
-    assert.ok(listed.entries.length >= 3, 'all three schedules listed');
+    assert.ok(listed.entries.length >= 2, 'both schedules listed');
 
-    for (const r of [r1, r2, r3]) {
+    for (const r of [r1, r3]) {
       const stop = await j(await intent('schedule/stop', { sessionId: id, id: r.entry.id }));
       assert.equal(stop.ok, true, `stop #${r.entry.id}`);
     }
     const after = await j(await intent('schedule/list', { sessionId: id }));
-    assert.ok(!after.entries.some((e) => [r1, r2, r3].some((r) => r.entry.id === e.id)), 'stopped schedules gone');
+    assert.ok(!after.entries.some((e) => [r1, r3].some((r) => r.entry.id === e.id)), 'stopped schedules gone');
   });
 
-  await t('schedule/add rejects a sub-10s interval with an error', async () => {
+  await t('schedule/add rejects a zero interval before native execution', async () => {
     const id = globalThis.__e2eSession;
-    const bad = await j(await intent('schedule/add', { sessionId: id, prompt: 'too fast', interval: '1s' }));
-    assert.equal(bad.ok, false);
-    assert.match(bad.error ?? '', /minimum/i);
+    const response = await intent('schedule/add', { sessionId: id, prompt: 'invalid delay', interval: '0s' });
+    assert.equal(response.status, 400);
   });
 }
 
@@ -273,7 +313,7 @@ if (trashSupported) {
     const id = globalThis.__e2eSession;
     // re-trash then purge (purge is the irreversible cleanup)
     await intent('session/delete', { sessionId: id, reason: 'e2e cleanup' });
-    const purge = await j(await intent('session/purge', { sessionId: id }));
+    const purge = await j(await intent('session/purge', { sessionId: id, confirm: true }));
     assert.equal(purge.ok, true);
     const tl = await j(await intent('session/trash-list', {}));
     assert.ok(!tl.entries.some((e) => e.sessionId === id), 'purged session not in trash');

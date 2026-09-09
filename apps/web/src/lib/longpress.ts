@@ -19,11 +19,11 @@ export interface LongPressHandlers {
   onContextMenu: (e: ReactPointerEvent | React.MouseEvent) => void;
 }
 
-// `open(x, y)` is called with viewport coords when the gesture fires.
+// `open(x, y, trigger)` is called with viewport coords when the gesture fires.
 // `firedRef` (optional) is set true while a long-press just opened the menu, so
 // the consumer can suppress the subsequent click/tap.
 export function useLongPress(
-  open: (x: number, y: number) => void,
+  open: (x: number, y: number, trigger?: HTMLElement) => void,
   firedRef?: { current: boolean },
 ): LongPressHandlers {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -39,9 +39,10 @@ export function useLongPress(
     if (firedRef) firedRef.current = false;
     clear();
     const { clientX, clientY } = e;
+    const trigger = e.currentTarget as HTMLElement;
     timer.current = setTimeout(() => {
       if (firedRef) firedRef.current = true;
-      open(clientX, clientY);
+      open(clientX, clientY, trigger);
     }, LONG_PRESS_MS);
   }, [open, firedRef, clear]);
 
@@ -57,7 +58,7 @@ export function useLongPress(
 
   const onContextMenu = useCallback((e: ReactPointerEvent | React.MouseEvent) => {
     e.preventDefault();
-    open(e.clientX, e.clientY);
+    open(e.clientX, e.clientY, e.currentTarget as HTMLElement);
   }, [open]);
 
   return { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onContextMenu };

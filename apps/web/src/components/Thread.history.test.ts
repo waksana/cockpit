@@ -1,0 +1,78 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import type { ChatSession } from '../net/types';
+import { Thread } from './Thread';
+
+const base: ChatSession = {
+  sessionId: 'history-display', title: 'History', cwd: '/project', lastActivity: 0,
+  status: 'idle', loaded: false, error: null, queue: [], ask: null,
+  messages: [], materialized: false, historyStale: true, hasMore: false, loadingHistory: true,
+};
+const render = (overrides: Partial<ChatSession>) => renderToStaticMarkup(createElement(Thread, {
+  session: { ...base, ...overrides }, readOnly: true,
+  onLoadMore() { assert.fail('render must not load history'); },
+  onRetryHistory() { assert.fail('render must not retry history'); },
+}));
+
+test('cold history loading is not presented as an empty conversation', () => {
+  const html = render({});
+  assert.match(html, /正在同步对话历史/);
+  assert.doesNotMatch(html, /开始对话吧|重新读取最新历史/);
+});
+
+test('failed history remains visibly unsynchronized and offers an explicit read retry', () => {
+  const html = render({ loadingHistory: false, error: '加载失败: offline' });
+  assert.match(html, /对话历史尚未同步/);
+  assert.match(html, /重新读取最新历史/);
+  assert.doesNotMatch(html, /开始对话吧/);
+});
+
+test('failed reconciliation keeps cached text with an explicit latest retry, without the old range warning', () => {
+  const html = render({
+    materialized: true, loadingHistory: false, error: '历史同步中断，请重新读取最新历史',
+    messages: [{ id: 'cached', role: 'assistant', content: 'Retained reading window', timestamp: 1 }],
+  });
+  assert.match(html, /Retained reading window/);
+  assert.doesNotMatch(html, /无法确认原阅读范围/);
+  assert.match(html, /重新读取最新历史/);
+  assert.doesNotMatch(html, /开始对话吧|正在同步对话历史/);
+});
+
+test('only an authoritative empty history displays the new conversation hint', () => {
+  const html = render({ materialized: true, historyStale: false, loadingHistory: false });
+  assert.match(html, /开始对话吧/);
+  assert.doesNotMatch(html, /尚未同步|重新读取最新历史/);
+});
+
+test('closed native child cards show summaries but neither render nor fetch inline transcripts', (t) => {
+  const fetch = t.mock.method(globalThis, 'fetch', async () => { throw new Error('Closed card must not fetch'); });
+  const html = render({
+    materialized: true, historyStale: false, loadingHistory: false,
+    messages: [{
+      id: 'card', role: 'assistant', content: '', timestamp: 1, subtype: 'subagent',
+      subagent: {
+        toolCallId: 'native-spawn', name: 'explore', displayName: 'Explorer', status: 'running',
+        description: 'Find the implementation', prompt: 'Private full task body',
+      },
+      subMessages: [{ id: 'child', role: 'assistant', content: 'Large nested transcript', timestamp: 1 }],
+    }],
+  });
+  assert.match(html, /Explorer/);
+  assert.match(html, /Find the implementation/);
+  assert.match(html, /aria-expanded="false"/);
+  assert.doesNotMatch(html, /Private full task body|Large nested transcript|正在读取子代理历史/);
+  assert.equal(fetch.mock.callCount(), 0);
+});
+
+test('all loaded message content remains mounted behind stable outer geometry markers', () => {
+  const messages = Array.from({ length: 120 }, (_, i) => ({
+    id: `message-${i}`, role: 'assistant' as const, content: `Retained text ${i}`, timestamp: i,
+  }));
+  const html = render({ materialized: true, historyStale: false, loadingHistory: false, messages });
+  assert.equal([...html.matchAll(/data-message-frame=/g)].length, messages.length);
+  assert.equal([...html.matchAll(/data-message-id=/g)].length, messages.length);
+  assert.doesNotMatch(html, /data-measured-layout|--message-height/);
+  for (const message of messages) assert.ok(html.includes(message.content));
+});

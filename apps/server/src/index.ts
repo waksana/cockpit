@@ -1,6 +1,7 @@
 // cockpit server — thin transport over the authoritative Engine.
 //  - GET  /events           SSE stream: full snapshot on connect, then live events
 //  - POST /intent/:name     validated intent dispatch (typed result)
+//  - GET  /capabilities     bounded intent listing or one generated schema pair
 //  - GET  /health
 //  - GET  /status           per-session status (ops; used by graceful-restart)
 //  - POST /admin/restart     arm graceful self-restart (exits when all idle)
@@ -17,15 +18,19 @@ import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Readable } from 'node:stream';
 import { Engine, sessionMetaBusy } from '@cockpit/core';
-import { Intents, type IntentName, type ServerEvent, type SessionMeta } from '@cockpit/protocol';
+import { Intents, UploadedFile, partsPrompt, unreadSessionCount, type MessagePart, type IntentBody, type IntentName, type IntentResult, type ServerEvent, type SessionMeta, type Snapshot } from '@cockpit/protocol';
 import { PushManager } from './push.ts';
 import { getSpeechToken } from './speech.ts';
-import { saveUpload, resolveUpload, openUpload, mimeForStored } from './uploads.ts';
+import { saveUploadStream, retainedSource, associateUpload, listUploads, uploadDetails, resolveUpload,
+  openUpload, verifyUpload, MAX_UPLOAD_BYTES, UploadError, validateUploadContext, type UploadContext } from './uploads.ts';
+import { isIntentName, registerCapabilities } from './capabilities.ts';
+import { drainForRestart } from './shutdown.ts';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.COCKPIT_PORT ?? 8771);
-const UPLOAD_BODY_LIMIT = 25 * 1024 * 1024; // 25MB
+const UPLOAD_BODY_LIMIT = MAX_UPLOAD_BYTES;
 
 // Optional single-process web serving (no reverse proxy). The canonical Linux
 // deploy fronts this with nginx serving apps/web/dist, so this stays OFF (env
@@ -38,17 +43,38 @@ const SERVE_WEB = process.env.COCKPIT_SERVE_WEB === '1' || process.env.COCKPIT_S
 const WEB_DIR = process.env.COCKPIT_WEB_DIR
   ?? join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'web', 'dist');
 
-export const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' } });
-// Raw binary parser for uploads: the browser POSTs a File as octet-stream with
-// the name + mime in the query string, so req.body is the file's Buffer.
-app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer', bodyLimit: UPLOAD_BODY_LIMIT },
-  (_req, body, done) => done(null, body));
+export const app = Fastify({
+  logger: { level: process.env.LOG_LEVEL ?? 'info' },
+  forceCloseConnections: true,
+});
+registerCapabilities(app);
+// Keep videos as bounded streams rather than buffering an entire upload in RAM.
+app.addContentTypeParser('application/octet-stream', (_req, body, done) => done(null, body));
 // engine/push are constructed in boot() (guarded) so importing this module for
 // unit tests (COCKPIT_NO_BOOT=1) builds the Fastify app + hooks WITHOUT reading the
 // real ~/.copilot prefs or binding the port. Definite-assignment: always set before
 // any request handler that derefs them can run (boot() runs at module entry).
-let engine!: Engine;
-let push!: PushManager;
+export type ServerEngine = Pick<Engine,
+  | 'login' | 'snapshot' | 'newSession' | 'forkSession' | 'history' | 'resumeHistory' | 'peekSession' | 'subagentHistory' | 'toolImage' | 'stop'
+  | 'prompt' | 'cancel' | 'interrupt' | 'setModel' | 'rename' | 'autoName' | 'compact' | 'rewind' | 'setMode'
+  | 'deleteSession' | 'restoreSession' | 'listTrash' | 'purgeSession' | 'unload'
+  | 'reload' | 'pin' | 'getPlan' | 'getUsage' | 'getPanels' | 'respondAsk' | 'respondPlan'
+  | 'planSupersede' | 'respondElicitation' | 'removeQueued' | 'refreshList'
+  | 'listLive' | 'getMeta' | 'markSeen' | 'listGlobalMcp' | 'setMcpDefault'
+  | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
+  | 'listGlobalSkills' | 'setGlobalSkill' | 'readSkillBody' | 'listSessionSkills' | 'toggleSessionSkill' | 'refreshSkills'
+  | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
+>;
+export type ServerPush = Pick<PushManager, 'subscribe' | 'status' | 'test' | 'unsubscribe' | 'sendAttention'>;
+let engine: ServerEngine;
+let push: ServerPush;
+
+// No SDK construction, preferences, listeners, or production dependency override.
+export function setTestDependencies(deps: { engine: ServerEngine; push: ServerPush }): void {
+  if (process.env.COCKPIT_NO_BOOT !== '1') throw new Error('test dependencies require COCKPIT_NO_BOOT=1');
+  engine = deps.engine;
+  push = deps.push;
+}
 
 // --- SSE fan-out -----------------------------------------------------------
 const clients = new Set<FastifyReply>();
@@ -77,14 +103,18 @@ type SseClient = { raw: SseRaw };
 // client was dropped. Exported for tests.
 export function sseWrite<T extends SseClient>(conns: Set<T>, reply: T, frame: string, hwm = SSE_HWM): boolean {
   const raw = reply.raw;
-  if (raw.writableLength > hwm) {
+  if (raw.writableLength + Buffer.byteLength(frame) > hwm) {
     conns.delete(reply);
     try { raw.destroy(); } catch { /* already torn down */ }
     app.log.warn({ writableLength: raw.writableLength, hwm }, 'SSE client over high-water-mark — dropped');
     return false;
   }
   try { raw.write(frame); return true; }
-  catch { conns.delete(reply); return false; }
+  catch {
+    conns.delete(reply);
+    try { raw.destroy(); } catch { /* already torn down */ }
+    return false;
+  }
 }
 
 // Fan one frame out to every connected client, dropping slow/closed ones. Deleting
@@ -93,8 +123,8 @@ export function broadcastFrame<T extends SseClient>(conns: Set<T>, frame: string
   for (const reply of conns) sseWrite(conns, reply, frame, hwm);
 }
 
-function sseSend(reply: FastifyReply, ev: ServerEvent): void {
-  sseWrite(clients, reply, `data: ${JSON.stringify(ev)}\n\n`);
+function sseSend(reply: FastifyReply, ev: ServerEvent): boolean {
+  return sseWrite(clients, reply, `data: ${JSON.stringify(ev)}\n\n`);
 }
 
 // Graceful self-restart: an in-memory "restart pending" flag. A turn (the in-memory
@@ -104,6 +134,12 @@ function sseSend(reply: FastifyReply, ev: ServerEvent): void {
 // each session's history from disk. Lets an agent deploy its own backend changes
 // without interrupting any work, including its own turn.
 let restartPending = false;
+let restarting = false;
+const pendingNotifications = new Set<Promise<unknown>>();
+
+app.addHook('onRequest', async (_req, reply) => {
+  if (restarting) return reply.code(503).header('Retry-After', '3').send({ error: 'Cockpit is restarting' });
+});
 
 // A session blocks a graceful restart if it is BUSY: either a turn is in flight
 // (status==='running') OR it is paused waiting on a user decision (ask_user / plan
@@ -136,6 +172,7 @@ function busyCount(): number {
 let gracefulExitTimer: ReturnType<typeof setTimeout> | null = null;
 
 function maybeGracefulExit(): void {
+  if (restarting) return;
   if (!restartPending) {
     if (gracefulExitTimer) clearTimeout(gracefulExitTimer);
     gracefulExitTimer = null;
@@ -157,19 +194,74 @@ function maybeGracefulExit(): void {
       maybeGracefulExit();
       return;
     }
-    process.exit(0);
+    restarting = true;
+    void (async () => {
+      await drainForRestart(engine, pendingNotifications);
+      for (const client of clients) client.raw.destroy();
+      clients.clear();
+      await app.close();
+      process.exit(0);
+    })().catch(error => {
+      restarting = false;
+      restartPending = false;
+      app.log.error({ err: error }, 'graceful restart failed; service was not force-killed');
+    });
   }, 500);
+}
+
+async function exitAfterRuntimeFailure(runtime: Engine, error: Error): Promise<void> {
+  restarting = true;
+  restartPending = false;
+  if (gracefulExitTimer) clearTimeout(gracefulExitTimer);
+  gracefulExitTimer = null;
+  app.log.fatal({ err: error }, 'Copilot runtime died; exiting for supervisor recovery without replaying requests');
+  try {
+    await drainForRestart(runtime, pendingNotifications);
+  } catch (cleanup) {
+    app.log.error({ err: cleanup }, 'dead runtime cleanup failed');
+  }
+  for (const client of clients) client.raw.destroy();
+  clients.clear();
+  try {
+    await app.close();
+  } catch (cleanup) {
+    app.log.error({ err: cleanup }, 'transport shutdown after runtime failure failed');
+  }
+  process.exit(1);
 }
 
 // SSE fan-out + notifications + restart-gate re-check on every engine event.
 // Registered on the engine in boot() (not here) so importing this module for unit
 // tests (COCKPIT_NO_BOOT=1) doesn't require a constructed engine.
-function onEngineEvent(ev: ServerEvent): void {
+function notificationSnapshot(snapshot: Snapshot): Snapshot {
+  return { ...snapshot, unreadCount: snapshot.unreadCount ?? unreadSessionCount(snapshot.sessions) };
+}
+
+export function onEngineEvent(ev: ServerEvent): void {
+  if (ev.type === 'snapshot') ev = notificationSnapshot(ev);
   broadcastFrame(clients, `data: ${JSON.stringify(ev)}\n\n`);
   // Notifications are driven by the Engine's authoritative `session/notify` signal
   // (one source of truth for both channels — see engine.patch).
   if (ev.type === 'session/notify') {
-    void push.sendAttention(ev.title, ev.sessionId, ev.attention, ev.body, engine.attentionCount());
+    const failed = () => app.log.warn(
+      { status: 'failed', at: Date.now(), error: 'Push notification failed' },
+      'push notification failed',
+    );
+    try {
+      const snapshot = engine.snapshot();
+      const delivery = push.sendAttention(
+        ev.title, ev.sessionId, ev.attention, ev.body,
+        ev.unreadCount ?? snapshot.unreadCount ?? unreadSessionCount(snapshot.sessions),
+        {
+          attnId: ev.attnId ?? engine.getMeta(ev.sessionId)?.attnId,
+          inboxRevision: ev.inboxRevision ?? snapshot.inboxRevision,
+        },
+      );
+      pendingNotifications.add(delivery);
+      void delivery.catch(failed).finally(() => pendingNotifications.delete(delivery));
+    } catch {
+      failed();
+    }
   } else if (ev.type === 'session/patch' || ev.type === 'session/removed') {
     // Re-check the graceful-restart gate on ANY session change. The gate exits
     // only when every session is non-busy (idle, no pending choice, no in-flight
@@ -185,7 +277,7 @@ function onEngineEvent(ev: ServerEvent): void {
 }
 
 // --- Origin / CSRF defense -------------------------------------------------
-// The process has NO in-process auth: it trusts nginx's basic-auth + cookie and
+// The process has NO in-process auth: it trusts nginx's passkey gate and
 // binds loopback only. That leaves a CSRF gap (dr-server-security N1): a
 // cross-origin browser POST that is a CORS "simple request" (text/plain or
 // bodiless — NO preflight) carries the operator's ambient cookie and reaches every
@@ -263,15 +355,28 @@ app.get('/health', async () => ({ ok: true, login: engine.login }));
 
 // File upload: raw binary body (octet-stream) + ?name=&mime= query. Saved to the
 // fixed upload folder (survives session deletion). Returns metadata for the client
-// to render a card + build the agent guidance prompt.
-app.post('/upload', { bodyLimit: UPLOAD_BODY_LIMIT }, async (req, reply) => {
-  const q = req.query as { name?: string; mime?: string };
+// to render a card or pass a structured attachment to the prompt intent.
+app.post<{ Querystring: Record<string, unknown> }>('/upload', { bodyLimit: UPLOAD_BODY_LIMIT }, async (req, reply) => {
+  const q = req.query;
   const body = req.body;
-  if (!Buffer.isBuffer(body) || body.length === 0) { reply.code(400); return { error: 'empty body' }; }
-  const name = typeof q.name === 'string' ? decodeURIComponent(q.name) : 'file';
-  const mime = typeof q.mime === 'string' ? decodeURIComponent(q.mime) : 'application/octet-stream';
-  const r = saveUpload(body, name, mime);
-  return { kind: r.kind, name: r.name, url: r.url, path: r.path, size: r.size, mime: r.mime };
+  if (!(body instanceof Readable)) { reply.code(400); return { error: 'binary body required' }; }
+  if (req.headers['content-length'] === '0') return reply.code(400).send({ error: 'Empty upload body' });
+  if (Number(req.headers['content-length']) > MAX_UPLOAD_BYTES) return reply.code(413).send({ error: 'Upload exceeds 25 MiB' });
+  if (Object.keys(q).some((key) => !['name', 'mime', 'source', 'sessionId', 'sourceId'].includes(key))
+    || (q.name !== undefined && typeof q.name !== 'string')
+    || (q.mime !== undefined && typeof q.mime !== 'string')
+    || ['source', 'sessionId', 'sourceId'].some(key => q[key] !== undefined && typeof q[key] !== 'string')) {
+    return reply.code(400).send({ error: 'upload accepts only single name, mime, source, sessionId and sourceId strings' });
+  }
+  // Fastify already decoded these values; literal percent signs are filenames.
+  const name = typeof q.name === 'string' ? q.name : 'file';
+  const mime = typeof q.mime === 'string' ? q.mime : 'application/octet-stream';
+  const context = validateUploadContext({
+    source: q.source as UploadContext['source'], sessionId: q.sessionId as string | undefined,
+    sourceId: q.sourceId as string | undefined,
+  });
+  const r = await saveUploadStream(body, name, mime, { source: 'web', ...context });
+  return UploadedFile.parse(r);
 });
 
 // Serve a stored upload (path-traversal guarded). Streams through the backend.
@@ -287,7 +392,30 @@ app.get('/uploads/:name', async (req, reply) => {
   reply.header('Cache-Control', 'private, max-age=31536000, immutable');
   reply.header('X-Content-Type-Options', 'nosniff');
   reply.header('Content-Security-Policy', "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'");
-  reply.type(mimeForStored(name));
+  reply.header('Accept-Ranges', 'bytes');
+  const disposition = (req.query as { download?: string }).download === '1' ? 'attachment' : 'inline';
+  reply.header('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(found.name).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16)}`)}`);
+  if (found.sha256) reply.header('ETag', `"${found.sha256}"`);
+  reply.type(found.mime);
+  const rangeHeader = req.headers.range;
+  if (rangeHeader && (!req.headers['if-range'] || req.headers['if-range'] === `"${found.sha256}"`)) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
+    const size = found.size;
+    let start = match?.[1] ? Number(match[1]) : 0;
+    let end = match?.[2] ? Number(match[2]) : size - 1;
+    if (match && !match[1] && match[2]) {
+      start = Math.max(0, size - Number(match[2]));
+      end = size - 1;
+    }
+    end = Math.min(end, size - 1);
+    if (!match || (!match[1] && !match[2]) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end)
+      || start > end || start < 0 || start >= size) {
+      return reply.code(416).header('Content-Range', `bytes */${size}`).send();
+    }
+    reply.code(206).header('Content-Range', `bytes ${start}-${end}/${size}`).header('Content-Length', end - start + 1);
+    return reply.send(openUpload(found.path, { start, end }));
+  }
+  reply.header('Content-Length', found.size);
   return reply.send(openUpload(found.path));
 });
 
@@ -333,9 +461,9 @@ app.get('/events', (req, reply) => {
     Connection: 'keep-alive',
     'X-Accel-Buffering': 'no',
   });
-  reply.raw.write('retry: 2000\n\n');
   clients.add(reply);
-  sseSend(reply, engine.snapshot());
+  req.raw.on('close', () => { clients.delete(reply); });
+  if (!sseWrite(clients, reply, 'retry: 2000\n\n') || !sseSend(reply, notificationSnapshot(engine.snapshot()))) return;
   // keep-alive comment ping so proxies don't time the stream out. Routed through
   // sseWrite so a stalled/zombie connection over the high-water-mark is dropped on
   // the next ping even between turns (its buffered ping bytes are the trigger).
@@ -344,309 +472,239 @@ app.get('/events', (req, reply) => {
 });
 
 // --- intent dispatch -------------------------------------------------------
-async function dispatch(name: IntentName, body: unknown): Promise<unknown> {
-  switch (name) {
-    case 'session/new': {
-      const b = Intents['session/new'].body.parse(body);
-      return { sessionId: await engine.newSession(b.cwd, b.spawnedBy) };
+type IntentHandlers = {
+  [K in IntentName]: (body: IntentBody<K>, signal?: AbortSignal) => IntentResult<K> | Promise<IntentResult<K>>;
+};
+
+const handlers: IntentHandlers = {
+  'runtime/snapshot': () => notificationSnapshot(engine.snapshot()),
+  'session/new': async (b) => ({ sessionId: await engine.newSession(b.cwd) }),
+  'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
+  'session/history': async (b) => b.resume
+    ? await engine.resumeHistory(b.sessionId, b.resume, b.limit, b.details)
+    : await engine.history(b.sessionId, b.beforeMsgId, b.limit, b.afterMsgId, b.details),
+  'session/peek': async (b) => await engine.peekSession(b.sessionId, b.beforeMsgId, b.limit, b.details),
+  'session/tool-image': (b, signal) => engine.toolImage(b, signal),
+  'files/list': b => listUploads(b),
+  'files/get': b => uploadDetails(b.url),
+  'files/associate': b => associateUpload(b.url, b.sessionId),
+  'files/from-tool-image': async (b, signal) => {
+    const source: UploadContext = { source: 'tool-image', sessionId: b.sessionId,
+      sourceId: JSON.stringify([b.image.eventId, b.image.toolCallId, b.image.part]) };
+    let existing;
+    try { existing = retainedSource(source); }
+    catch (error) {
+      if (!(error instanceof UploadError) || error.message !== 'Upload metadata is missing') throw error;
     }
-    case 'session/history': {
-      const b = Intents['session/history'].body.parse(body);
-      await engine.history(b.sessionId, b.beforeMsgId, b.limit, b.afterMsgId);
-      return { ok: true };
-    }
-    case 'session/peek': {
-      const b = Intents['session/peek'].body.parse(body);
-      return await engine.peekSession(b.sessionId, b.beforeMsgId, b.limit);
-    }
-    case 'prompt': {
-      const b = Intents.prompt.body.parse(body);
-      return await engine.prompt(b.sessionId, b.text, b.mode);
-    }
-    case 'cancel': {
-      const b = Intents.cancel.body.parse(body);
-      engine.cancel(b.sessionId);
-      return { ok: true };
-    }
-    case 'setModel': {
-      const b = Intents.setModel.body.parse(body);
-      await engine.setModel(b.sessionId, b.modelId, b.reasoningEffort, b.contextTier);
-      return { ok: true };
-    }
-    case 'session/rename': {
-      const b = Intents['session/rename'].body.parse(body);
-      const title = await engine.rename(b.sessionId, b.name);
-      return { ok: true, title };
-    }
-    case 'session/compact': {
-      const b = Intents['session/compact'].body.parse(body);
-      await engine.compact(b.sessionId, b.customInstructions);
-      return { ok: true };
-    }
-    case 'session/rewind': {
-      const b = Intents['session/rewind'].body.parse(body);
-      await engine.rewind(b.sessionId, b.toMsgId, b.rollbackFiles);
-      return { ok: true };
-    }
-    case 'setMode': {
-      const b = Intents.setMode.body.parse(body);
-      await engine.setMode(b.sessionId, b.mode);
-      return { ok: true };
-    }
-    case 'session/delete': {
-      const b = Intents['session/delete'].body.parse(body);
-      await engine.deleteSession(b.sessionId, b.reason);
-      return { ok: true };
-    }
-    case 'session/restore': {
-      const b = Intents['session/restore'].body.parse(body);
-      return { ok: await engine.restoreSession(b.sessionId) };
-    }
-    case 'session/trash-list': {
-      return { entries: await engine.listTrash() };
-    }
-    case 'session/purge': {
-      const b = Intents['session/purge'].body.parse(body);
-      await engine.purgeSession(b.sessionId);
-      return { ok: true };
-    }
-    case 'session/unload': {
-      const b = Intents['session/unload'].body.parse(body);
-      engine.unload(b.sessionId);
-      return { ok: true };
-    }
-    case 'session/reload': {
-      const b = Intents['session/reload'].body.parse(body);
-      await engine.reload(b.sessionId);
-      return { ok: true };
-    }
-    case 'session/pin': {
-      const b = Intents['session/pin'].body.parse(body);
-      const pinned = await engine.pin(b.sessionId, b.pinned);
-      return { ok: true, pinned };
-    }
-    case 'session/set-spawned-by': {
-      const b = Intents['session/set-spawned-by'].body.parse(body);
-      const spawnedBy = await engine.setSpawnedBy(b.sessionId, b.spawnedBy);
-      return { ok: true, spawnedBy };
-    }
-    case 'session/plan': {
-      const b = Intents['session/plan'].body.parse(body);
-      return engine.getPlan(b.sessionId);
-    }
-    case 'session/panels': {
-      const b = Intents['session/panels'].body.parse(body);
-      return engine.getPanels(b.sessionId);
-    }
-    case 'respondAsk': {
-      const b = Intents.respondAsk.body.parse(body);
-      engine.respondAsk(b.sessionId, b.requestId, b.answer, b.wasFreeform);
-      return { ok: true };
-    }
-    case 'respondPlan': {
-      const b = Intents.respondPlan.body.parse(body);
-      engine.respondPlan(b.sessionId, b.requestId, b.action);
-      return { ok: true };
-    }
-    case 'planSupersede': {
-      const b = Intents.planSupersede.body.parse(body);
-      await engine.planSupersede(b.sessionId, b.requestId, b.message);
-      return { ok: true };
-    }
-    case 'respondElicitation': {
-      const b = Intents.respondElicitation.body.parse(body);
-      engine.respondElicitation(b.sessionId, b.requestId, b.action);
-      return { ok: true };
-    }
-    case 'queue/remove': {
-      const b = Intents['queue/remove'].body.parse(body);
-      engine.removeQueued(b.sessionId, b.itemId);
-      return { ok: true };
-    }
-    case 'session/refresh': {
-      await engine.refreshList();
-      return { ok: true };
-    }
-    case 'session/list': {
-      return { sessions: engine.listLive() };
-    }
-    case 'session/get': {
-      const b = Intents['session/get'].body.parse(body);
-      return { meta: engine.getMeta(b.sessionId) };
-    }
-    case 'push/subscribe': {
-      const b = Intents['push/subscribe'].body.parse(body);
-      push.subscribe(b.subscription);
-      return { ok: true };
-    }
-    case 'inbox/seen': {
-      const b = Intents['inbox/seen'].body.parse(body);
-      engine.markSeen(b.sessionId);
-      return { ok: true };
-    }
-    case 'speech/token': {
-      // Server-level (not engine): exchange the Azure key for a 10-min token so
-      // the browser can dictate without ever holding the key. Self-disables when
-      // unconfigured → client falls back to the Web Speech API.
-      return await getSpeechToken();
-    }
-    case 'mcp/global': {
-      return { servers: engine.listGlobalMcp() };
-    }
-    case 'mcp/global-default': {
-      const b = Intents['mcp/global-default'].body.parse(body);
-      engine.setMcpDefault(b.name, b.on);
-      return { ok: true };
-    }
-    case 'mcp/refresh': {
-      await engine.refreshMcp();
-      return { ok: true };
-    }
-    case 'mcp/reload-session': {
-      const b = Intents['mcp/reload-session'].body.parse(body);
-      const r = await engine.reloadSessionMcp(b.sessionId);
-      return { ok: true, reconnected: r.reconnected };
-    }
-    case 'mcp/session': {
-      const b = Intents['mcp/session'].body.parse(body);
-      return await engine.listSessionMcp(b.sessionId);
-    }
-    case 'mcp/session-toggle': {
-      const b = Intents['mcp/session-toggle'].body.parse(body);
-      return await engine.toggleSessionMcp(b.sessionId, b.name, b.on);
-    }
-    case 'skills/global': {
-      return { skills: await engine.listGlobalSkills() };
-    }
-    case 'skills/read': {
-      const b = Intents['skills/read'].body.parse(body);
-      return await engine.readSkillBody(b.name);
-    }
-    case 'skills/session': {
-      const b = Intents['skills/session'].body.parse(body);
-      return { skills: await engine.listSessionSkills(b.sessionId) };
-    }
-    case 'skills/session-toggle': {
-      const b = Intents['skills/session-toggle'].body.parse(body);
-      await engine.toggleSessionSkill(b.sessionId, b.name, b.enabled);
-      return { ok: true };
-    }
-    case 'skills/refresh': {
-      // The SDK caches the skill directory scan in a module-level memo with no
-      // public invalidation API, so picking up on-disk skill changes requires a
-      // fresh process. Arm the graceful self-restart (exits when all sessions are
-      // idle; systemd restarts us with a clean scan).
-      restartPending = true;
-      const willRestartWhenIdle = busyCount() > 0;
-      maybeGracefulExit();
-      return { ok: true, willRestartWhenIdle };
-    }
-    case 'schedule/add': {
-      const b = Intents['schedule/add'].body.parse(body);
-      const res = await engine.addSchedule(b.sessionId, {
-        prompt: b.prompt,
-        ...(b.interval !== undefined ? { interval: b.interval } : {}),
-        ...(b.cron !== undefined ? { cron: b.cron } : {}),
-        ...(b.at !== undefined ? { at: b.at } : {}),
-        ...(b.recurring !== undefined ? { recurring: b.recurring } : {}),
-        ...(b.tz !== undefined ? { tz: b.tz } : {}),
-        ...(b.displayPrompt !== undefined ? { displayPrompt: b.displayPrompt } : {}),
-      });
-      return { ok: !res.error, ...(res.entry ? { entry: res.entry } : {}), ...(res.error ? { error: res.error } : {}) };
-    }
-    case 'schedule/stop': {
-      const b = Intents['schedule/stop'].body.parse(body);
-      return { ok: await engine.stopSchedule(b.sessionId, b.id) };
-    }
-    case 'schedule/list': {
-      const b = Intents['schedule/list'].body.parse(body);
-      return { entries: await engine.listSchedules(b.sessionId) };
-    }
-    case 'hook/add': {
-      const b = Intents['hook/add'].body.parse(body);
-      return engine.addHook({
-        ownerSession: b.ownerSession,
-        event: b.event,
-        ...(b.filter ? { filter: b.filter } : {}),
-        ...(b.flowId !== undefined ? { flowId: b.flowId } : {}),
-        ...(b.promptTemplate !== undefined ? { promptTemplate: b.promptTemplate } : {}),
-        ...(b.once !== undefined ? { once: b.once } : {}),
-      });
-    }
-    case 'hook/stop': {
-      const b = Intents['hook/stop'].body.parse(body);
-      return { ok: engine.stopHook(b.id) };
-    }
-    case 'hook/list': {
-      const b = Intents['hook/list'].body.parse(body);
-      return { entries: engine.listHooks(b.ownerSession) };
-    }
-    case 'flow/list': {
-      return { flows: engine.listFlows() };
-    }
-    case 'flow/add': {
-      const b = Intents['flow/add'].body.parse(body);
-      return engine.addFlow(b);
-    }
-    case 'flow/remove': {
-      const b = Intents['flow/remove'].body.parse(body);
-      return engine.removeFlow(b.id);
-    }
-    case 'flow/write-gate': {
-      const b = Intents['flow/write-gate'].body.parse(body);
-      return engine.writeGate(b.name, b.script);
-    }
-    case 'flow/run': {
-      const b = Intents['flow/run'].body.parse(body);
-      return engine.runFlow(b.flowId, b.ctx ?? null);
-    }
-    case 'flow-schedule/add': {
-      const b = Intents['flow-schedule/add'].body.parse(body);
-      return engine.addFlowSchedule({
-        ...(b.flowId !== undefined ? { flowId: b.flowId } : {}),
-        ...(b.target !== undefined ? { target: b.target } : {}),
-        ...(b.interval !== undefined ? { interval: b.interval } : {}),
-        ...(b.cron !== undefined ? { cron: b.cron } : {}),
-        ...(b.at !== undefined ? { at: b.at } : {}),
-        ...(b.recurring !== undefined ? { recurring: b.recurring } : {}),
-        ...(b.tz !== undefined ? { tz: b.tz } : {}),
-        ...(b.label !== undefined ? { label: b.label } : {}),
-      });
-    }
-    case 'flow-schedule/stop': {
-      const b = Intents['flow-schedule/stop'].body.parse(body);
-      return { ok: engine.stopFlowSchedule(b.id) };
-    }
-    case 'flow-schedule/list': {
-      return { entries: engine.listFlowSchedules() };
-    }
-    case 'fs/listDir': {
-      const b = Intents['fs/listDir'].body.parse(body);
-      return engine.listDir(b.path);
-    }
-    default: {
-      const _exhaustive: never = name;
-      throw new Error(`unknown intent: ${String(_exhaustive)}`);
-    }
+    if (existing) return verifyUpload(existing);
+    const image = await engine.toolImage({ sessionId: b.sessionId, image: b.image }, signal);
+    const bytes = Buffer.from(image.data, 'base64');
+    if (bytes.length !== image.byteLength) throw new UploadError('Native image length changed', 500);
+    const ext = image.mime.split('/')[1];
+    return saveUploadStream(Readable.from([bytes]), b.name ?? `tool-image-${b.image.part + 1}.${ext}`, image.mime, source);
+  },
+  'session/subagent-history': async (b) => await engine.subagentHistory(
+    b.sessionId, b.toolCallId, b.beforeMsgId, b.limit, b.afterMsgId, b.details,
+  ),
+  prompt: async (b) => {
+    if (!b.attachment && !b.attachments && !b.parts) return await engine.prompt(b.sessionId, b.text, b.mode);
+    const parts: MessagePart[] = b.parts ?? [
+      ...(b.attachments ?? (b.attachment ? [b.attachment] : [])).map(attachment => ({ type: 'file' as const, attachment })),
+      ...(b.text ? [{ type: 'text' as const, text: `\n${b.text}` }] : []),
+    ];
+    const attachments: { type: 'file'; path: string; displayName: string }[] = [];
+    const resolved = parts.map(part => {
+      if (part.type === 'text') return part;
+      const file = associateUpload(part.attachment.url, b.sessionId);
+      attachments.push({ type: 'file', path: file.path, displayName: file.name });
+      return { type: 'file' as const, attachment: file };
+    });
+    return await engine.prompt(b.sessionId, partsPrompt(resolved), b.mode, attachments);
+  },
+  cancel: async (b) => {
+    await engine.cancel(b.sessionId);
+    return { ok: true };
+  },
+  'session/interrupt': async (b) => await engine.interrupt(b.sessionId),
+  setModel: async (b) => {
+    await engine.setModel(b.sessionId, b.modelId, b.reasoningEffort, b.contextTier);
+    return { ok: true };
+  },
+  'session/rename': async (b) => ({ ok: true, title: await engine.rename(b.sessionId, b.name) }),
+  'session/auto-name': async (b) => await engine.autoName(b.sessionId),
+  'session/compact': async (b) => {
+    await engine.compact(b.sessionId, b.customInstructions);
+    return { ok: true };
+  },
+  'session/rewind': async (b) => {
+    await engine.rewind(b.sessionId, b.toMsgId, b.rollbackFiles);
+    return { ok: true };
+  },
+  setMode: async (b) => {
+    await engine.setMode(b.sessionId, b.mode);
+    return { ok: true };
+  },
+  'session/delete': async (b) => {
+    await engine.deleteSession(b.sessionId, b.reason);
+    return { ok: true };
+  },
+  'session/restore': async (b) => ({ ok: await engine.restoreSession(b.sessionId) }),
+  'session/trash-list': async () => ({ entries: await engine.listTrash() }),
+  'session/purge': async (b) => {
+    await engine.purgeSession(b.sessionId);
+    return { ok: true };
+  },
+  'session/unload': async (b) => {
+    await engine.unload(b.sessionId);
+    return { ok: true };
+  },
+  'session/reload': async (b) => {
+    await engine.reload(b.sessionId);
+    return { ok: true };
+  },
+  'session/pin': async (b) => ({ ok: true, pinned: await engine.pin(b.sessionId, b.pinned) }),
+  'session/usage': async (b) => await engine.getUsage(b.sessionId),
+  'session/plan': async (b) => await engine.getPlan(b.sessionId),
+  'session/panels': async (b) => await engine.getPanels(b.sessionId),
+  respondAsk: async (b) => {
+    await engine.respondAsk(b.sessionId, b.requestId, b.answer, b.wasFreeform);
+    return { ok: true };
+  },
+  respondPlan: async (b) => {
+    await engine.respondPlan(b.sessionId, b.requestId, b.action);
+    return { ok: true };
+  },
+  planSupersede: async (b) => {
+    await engine.planSupersede(b.sessionId, b.requestId, b.message);
+    return { ok: true };
+  },
+  respondElicitation: async (b) => {
+    await engine.respondElicitation(b.sessionId, b.requestId, b.action);
+    return { ok: true };
+  },
+  'queue/remove': async (b) => {
+    await engine.removeQueued(b.sessionId, b.itemId);
+    return { ok: true };
+  },
+  'session/refresh': async () => {
+    await engine.refreshList();
+    return { ok: true };
+  },
+  'session/list': async () => ({ sessions: await engine.listLive() }),
+  'session/get': async (b) => ({ meta: await engine.getMeta(b.sessionId) }),
+  'push/subscribe': (b) => {
+    push.subscribe(b.subscription);
+    return { ok: true };
+  },
+  'push/status': (b) => push.status(b.endpoint),
+  'push/test': (b) => push.test(b.endpoint, b.confirm),
+  'push/unsubscribe': (b) => {
+    push.unsubscribe(b.endpoint);
+    return { ok: true };
+  },
+  'inbox/seen': (b) => {
+    const meta = engine.getMeta(b.sessionId);
+    if (b.attnId !== undefined && b.attnId !== (meta?.attnId ?? 0)) return { ok: true };
+    // Keep the current-ID check and acknowledgement in the same synchronous turn.
+    if (b.attnId === undefined) engine.markSeen(b.sessionId);
+    else engine.markSeen(b.sessionId, b.attnId);
+    return { ok: true };
+  },
+  'speech/token': async () => await getSpeechToken(),
+  'mcp/global': async () => ({ servers: await engine.listGlobalMcp() }),
+  'mcp/global-default': async (b) => {
+    await engine.setMcpDefault(b.name, b.on);
+    return { ok: true };
+  },
+  'mcp/refresh': async () => {
+    await engine.refreshMcp();
+    return { ok: true };
+  },
+  'mcp/reload-session': async (b) => ({
+    ok: true, reconnected: (await engine.reloadSessionMcp(b.sessionId)).reconnected,
+  }),
+  'mcp/session': async (b) => await engine.listSessionMcp(b.sessionId),
+  'mcp/session-toggle': async (b) => await engine.toggleSessionMcp(b.sessionId, b.name, b.on),
+  'skills/global': async (b) => ({ skills: await engine.listGlobalSkills(b.cwd) }),
+  'skills/global-toggle': async (b) => {
+    await engine.setGlobalSkill(b.name, b.enabled, b.cwd);
+    return { ok: true };
+  },
+  'skills/read': async (b) => await engine.readSkillBody(b.name, b.cwd),
+  'skills/session': async (b) => ({ skills: await engine.listSessionSkills(b.sessionId) }),
+  'skills/session-toggle': async (b) => {
+    await engine.toggleSessionSkill(b.sessionId, b.name, b.enabled);
+    return { ok: true };
+  },
+  'skills/refresh': async () => {
+    await engine.refreshSkills();
+    return { ok: true, willRestartWhenIdle: false };
+  },
+  'schedule/add': async ({ sessionId, ...options }) => {
+    const res = await engine.addSchedule(sessionId, options);
+    return { ok: !res.error, ...(res.entry ? { entry: res.entry } : {}), ...(res.error ? { error: res.error } : {}) };
+  },
+  'schedule/stop': async (b) => ({ ok: await engine.stopSchedule(b.sessionId, b.id) }),
+  'schedule/list': async (b) => ({ entries: await engine.listSchedules(b.sessionId) }),
+  'fs/listDir': async (b) => await engine.listDir(b.path),
+};
+
+class IntentBoundaryError extends Error {
+  constructor(message: string, readonly statusCode: number, readonly code: string) {
+    super(message);
   }
 }
 
+async function dispatch<K extends IntentName>(name: K, body: unknown, signal?: AbortSignal): Promise<unknown> {
+  const input = Intents[name].body.safeParse(body === undefined ? {} : body);
+  if (!input.success) throw new IntentBoundaryError(input.error.message, 400, 'INVALID_INTENT_BODY');
+  // Zod's indexed schema union loses the key/value correlation; the mapped
+  // handlers retain it. This is the only assertion at the transport boundary.
+  const result = await handlers[name](input.data as IntentBody<K>, signal);
+  const output = Intents[name].result.safeParse(result);
+  if (!output.success) {
+    throw new IntentBoundaryError(`Invalid result for ${name}: ${output.error.message}`, 500, 'INVALID_INTENT_RESULT');
+  }
+  return output.data;
+}
+
+function errorStatus(error: unknown): number {
+  if (error && typeof error === 'object' && 'statusCode' in error
+    && typeof error.statusCode === 'number' && Number.isInteger(error.statusCode)
+    && error.statusCode >= 400 && error.statusCode <= 599) return error.statusCode;
+  return 500;
+}
+
 app.post('/intent/*', async (req, reply) => {
-  const name = (req.params as Record<string, string>)['*'] as IntentName;
-  if (!Object.hasOwn(Intents, name)) { reply.code(404); return { error: `unknown intent: ${name}` }; }
+  const name = (req.params as Record<string, string>)['*'];
+  if (name === undefined || !isIntentName(name)) { reply.code(404); return { error: `unknown intent: ${name}` }; }
+  const controller = new AbortController();
+  const cancel = () => { if (!reply.raw.writableFinished) controller.abort(); };
+  if (name === 'session/tool-image' || name === 'files/from-tool-image') {
+    reply.header('Cache-Control', 'private, no-store');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    reply.raw.on('close', cancel);
+  }
   try {
-    return await dispatch(name, req.body);
+    return await dispatch(name, req.body, controller.signal);
   } catch (e) {
     req.log.error({ err: e }, `intent ${name} failed`);
-    reply.code(400);
-    return { error: e instanceof Error ? e.message : String(e) };
+    reply.code(errorStatus(e));
+    return {
+      error: e instanceof Error ? e.message : String(e),
+      ...(e && typeof e === 'object' && 'code' in e && typeof e.code === 'string' ? { code: e.code } : {}),
+    };
+  } finally {
+    reply.raw.removeListener('close', cancel);
   }
 });
 
-async function main(): Promise<void> {
-  engine.vapidPublicKey = push.publicKey;
-  await engine.start();
-  app.log.info(`engine up (login=${engine.login}, push=${push.publicKey ? 'on' : 'off'})`);
+async function main(runtime: Engine, notifications: PushManager): Promise<void> {
+  runtime.vapidPublicKey = notifications.publicKey;
+  const pushStatus = notifications.status();
+  if (!pushStatus.configured) app.log.warn({ error: pushStatus.error }, 'push is unconfigured');
+  await runtime.start();
+  app.log.info(`engine up (login=${runtime.login}, push=${notifications.publicKey ? 'on' : 'off'})`);
   await registerStaticWeb();
   await app.listen({ host: HOST, port: PORT });
 }
@@ -659,7 +717,7 @@ async function main(): Promise<void> {
 // static wildcard and still win; mutating routes keep their Origin/CSRF guard. When
 // SERVE_WEB is off (the Linux default) this is a no-op — no static route, no
 // notFound handler — so existing behavior is untouched.
-async function registerStaticWeb(): Promise<void> {
+export async function registerStaticWeb(): Promise<void> {
   if (!SERVE_WEB) return;
   if (!existsSync(WEB_DIR)) {
     app.log.warn(`COCKPIT_SERVE_WEB set but web dir not found: ${WEB_DIR} (run \`pnpm --filter @cockpit/web build\`)`);
@@ -667,7 +725,9 @@ async function registerStaticWeb(): Promise<void> {
   }
   await app.register(fastifyStatic, { root: WEB_DIR, index: ['index.html'] });
   app.setNotFoundHandler((req, reply) => {
-    if (req.method === 'GET') return reply.sendFile('index.html'); // SPA deep-link fallback
+    const path = req.url.split('?')[0]!;
+    const webRoute = /^\/(?:session\/[^/]+(?:\/[^/]+)?|(?:mcp|skills|trash)(?:\/[^/]+)?|files|(?:flows|workers)(?:\/.*)?)?\/?$/.test(path);
+    if (req.method === 'GET' && webRoute) return reply.sendFile('index.html');
     reply.code(404).send({ error: 'not found' });
   });
   app.log.info(`serving web SPA from ${WEB_DIR}`);
@@ -678,11 +738,20 @@ async function registerStaticWeb(): Promise<void> {
 // Engine (which reads the real ~/.copilot prefs) or binding the port. Production
 // (`tsx src/index.ts`) runs with the env unset, so it boots normally.
 function boot(): void {
-  engine = new Engine();
-  engine.log = (msg, data) => app.log.warn(data ?? {}, msg);
-  push = new PushManager();
-  engine.onEvent(onEngineEvent);
-  main().catch((e) => { app.log.error(e); process.exit(1); });
+  const runtime = new Engine();
+  runtime.log = (msg, data) => app.log.warn(data ?? {}, msg);
+  const notifications = new PushManager({
+    log: ({ status, at, error }) => {
+      const fields = { status, at, ...(error === undefined ? {} : { error }) };
+      if (status === 'accepted') app.log.info(fields, 'push service accepted notification');
+      else app.log.warn(fields, 'push notification failed');
+    },
+  });
+  engine = runtime;
+  push = notifications;
+  runtime.onEvent(onEngineEvent);
+  runtime.onFatal(error => { void exitAfterRuntimeFailure(runtime, error); });
+  main(runtime, notifications).catch((e) => { app.log.error(e); process.exit(1); });
 }
 
 if (process.env.COCKPIT_NO_BOOT !== '1') boot();

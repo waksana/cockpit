@@ -8,12 +8,11 @@
 //
 // Everything is overridable from the environment before you run it:
 //   COCKPIT_PORT       listen port (default 8771)
-//   COCKPIT_HOME       state root (default ~/.copilot) — moves prefs/flows/sessions
+//   COCKPIT_HOME       state root (default ~/.copilot) — prefs/sessions/uploads
 //   COCKPIT_SERVE_WEB  serve the SPA from this process (default 1 here)
 //   COCKPIT_WEB_DIR    built SPA dir (default apps/web/dist)
-//   COCKPIT_PYTHON     interpreter for .py gates (default python on Windows / python3)
 //   COCKPIT_MAX_OLD_SPACE_MB  V8 old-space ceiling in MB for the server child
-//                             (default 8192; must be a positive integer or startup fails)
+//                             (unset: Node default; positive integer when supplied)
 //
 // Prereq: `pnpm install` and `pnpm --filter @cockpit/web build` have been run.
 import { spawn } from 'node:child_process';
@@ -35,9 +34,8 @@ if (env.COCKPIT_SERVE_WEB === '1' && !existsSync(join(webDir, 'index.html'))) {
   process.exit(1);
 }
 
-// Mirror the systemd ExecStart (GC exposed, raised old-space) for parity. The
-// old-space ceiling is resolved from COCKPIT_MAX_OLD_SPACE_MB (default 8192);
-// an invalid override throws here — fail loud, never silently shrink the heap.
+// The optional API heap override does not control the separate Copilot runtime.
+// Invalid overrides fail rather than silently falling back.
 let args;
 try {
   args = buildServerNodeArgs(env);

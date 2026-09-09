@@ -3,36 +3,43 @@
 // Notifications fire while the tab is backgrounded as long as permission is
 // granted. No-ops gracefully when the Notification API is unavailable.
 
-import { getSwRegistration } from './push';
+import { reportUxError } from './errorReporter';
+import { parseNotificationPayload, showPushNotification } from './notificationTransport';
+import { getSwRegistration, notificationEnvironment } from './push';
 
 let audioCtx: AudioContext | null = null;
 
 export function notificationsSupported(): boolean {
-  return typeof window !== 'undefined' && 'Notification' in window;
+  return notificationEnvironment().supported;
 }
 
 export function notificationPermission(): NotificationPermission {
   if (!notificationsSupported()) return 'denied';
-  return Notification.permission;
+  return window.Notification.permission;
 }
 
+// Call directly from a user gesture, before any asynchronous work.
 export async function ensureNotificationPermission(): Promise<boolean> {
   if (!notificationsSupported()) return false;
-  if (Notification.permission === 'granted') return true;
-  if (Notification.permission === 'denied') return false;
+  if (window.Notification.permission === 'granted') return true;
+  if (window.Notification.permission === 'denied') return false;
+  if (navigator.userActivation?.isActive !== true) return false;
   try {
-    const res = await Notification.requestPermission();
+    const res = await window.Notification.requestPermission();
     return res === 'granted';
   } catch {
+    reportUxError('Notification permission could not be requested. Check browser settings and retry from the notification button.');
     return false;
   }
 }
 
-function chime(kind: 'ready' | 'choice') {
+async function chime(kind: 'ready' | 'choice'): Promise<void> {
   try {
     audioCtx = audioCtx || new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
     const ctx = audioCtx;
-    if (ctx.state === 'suspended') ctx.resume();
+    if (ctx.state === 'suspended') await ctx.resume();
+    if (!notificationsSupported() || window.Notification.permission !== 'granted' ||
+        document.visibilityState === 'visible') return;
     const now = ctx.currentTime;
     // Two short notes; "choice" is a touch higher/urgent.
     const notes = kind === 'choice' ? [880, 1175] : [660, 880];
@@ -64,8 +71,10 @@ export interface NotifyOptions {
   tag?: string;
   // The session this alert is about. When set, the notification is shown through
   // the service worker so a click routes via the SW's notificationclick handler
-  // (which posts `open-session` to the page) and so it can be cleared on app open.
+  // (which posts `open-session` to the page) and can be cleared on confirmed read.
   sessionId?: string;
+  attnId?: number;
+  inboxRevision?: number;
   onClick?: () => void;
 }
 
@@ -75,51 +84,94 @@ export function notify(opts: NotifyOptions): void {
   const hidden = typeof document !== 'undefined' && document.visibilityState !== 'visible';
 
   if (onlyWhenHidden && !hidden) return;
+  if (!notificationsSupported() || window.Notification.permission !== 'granted') return;
 
-  // Always chime (audio is a nice in-tab cue too, but keep it to hidden case
-  // to avoid annoyance when the user is actively watching).
-  if (hidden) chime(kind);
-
-  if (!notificationsSupported() || Notification.permission !== 'granted') return;
-
-  void showNotification(opts, kind);
+  void showNotification(opts, kind).catch(() => {
+    reportUxError('The browser could not display the notification. Check notification settings and retry.');
+  });
 }
 
 // Prefer the service-worker registration so the banner is SW-owned: it can be
-// enumerated and closed via getNotifications() (so "clear on app open" wipes it),
-// it shares one tag-space with web push (no duplicate banner when both a hidden
-// page and the server fire for the same session), and its click is handled by the
-// SW notificationclick handler (focus window + postMessage `open-session`). Fall
-// back to a page-context Notification only when no SW is available.
+// selectively closed via getNotifications() and shares tags/click routing with
+// web push. The store owns suppression when server push is ready.
 async function showNotification(opts: NotifyOptions, kind: 'ready' | 'choice'): Promise<void> {
-  const reg = await getSwRegistration();
+  const data = {
+    type: 'notification',
+    kind,
+    title: opts.title,
+    body: opts.body ?? '',
+    tag: opts.tag ?? opts.sessionId,
+    url: opts.sessionId ? `/session/${encodeURIComponent(opts.sessionId)}` : '/',
+    sessionId: opts.sessionId,
+    attnId: opts.attnId,
+    inboxRevision: opts.inboxRevision,
+  };
+  const payload = parseNotificationPayload(data);
+  const options: NotificationOptions = {
+    body: data.body,
+    tag: data.tag,
+    icon: '/icon-refined-r4-192.png',
+    badge: '/badge-refined-r4-96.png',
+    requireInteraction: kind === 'choice',
+    data: payload ?? data,
+  };
+  let reg: ServiceWorkerRegistration | null = null;
+  try {
+    reg = await getSwRegistration();
+  } catch {
+    reportUxError('The notification service worker is unavailable. Trying a browser notification instead.');
+  }
+  if (!notificationsSupported() || window.Notification.permission !== 'granted' ||
+      ((opts.onlyWhenHidden ?? true) && document.visibilityState === 'visible')) return;
+  if (reg && payload) {
+    const registration = reg;
+    await showPushNotification(payload, {
+      getNotifications: (options) => registration.getNotifications(options),
+      showNotification: (title, options = {}) => displayNotification(opts, kind, title, options, registration),
+    }, navigator);
+    return;
+  }
+  await displayNotification(opts, kind, opts.title, options, reg);
+}
+
+// Run the page's visibility/permission gates and constructor fallback inside the
+// shared transport's display step, so its selected content and silence survive.
+async function displayNotification(
+  opts: NotifyOptions, kind: 'ready' | 'choice', title: string, options: NotificationOptions,
+  reg: ServiceWorkerRegistration | null,
+): Promise<void> {
+  if (!notificationsSupported() || window.Notification.permission !== 'granted' ||
+      ((opts.onlyWhenHidden ?? true) && document.visibilityState === 'visible')) return;
+  let displayed = false;
   if (reg) {
     try {
-      await reg.showNotification(opts.title, {
-        body: opts.body,
-        tag: opts.tag,
-        icon: '/icon.svg',
-        badge: '/icon.svg',
-        requireInteraction: kind === 'choice',
-        data: { url: opts.sessionId ? `/session/${opts.sessionId}` : '/', sessionId: opts.sessionId },
-      } as NotificationOptions);
+      await reg.showNotification(title, options);
+      displayed = true;
+    } catch {
+      reportUxError('The service worker could not display the notification. Trying a browser notification instead.');
+    }
+  }
+  if (!notificationsSupported() || window.Notification.permission !== 'granted' ||
+      ((opts.onlyWhenHidden ?? true) && document.visibilityState === 'visible')) return;
+  if (!displayed) {
+    try {
+      const n = new window.Notification(title, options);
+      n.onclick = () => {
+        try {
+          window.focus();
+          void Promise.resolve(opts.onClick?.()).catch(() => {
+            reportUxError('The notification target could not be opened. Open the session from the app.');
+          });
+        } catch {
+          reportUxError('The notification target could not be opened. Open the session from the app.');
+        } finally {
+          try { n.close(); } catch { reportUxError('The browser notification could not be closed.'); }
+        }
+      };
+    } catch {
+      reportUxError('The browser could not display the notification. Check notification settings and retry.');
       return;
-    } catch { /* fall through to a page Notification */ }
+    }
   }
-  try {
-    const n = new Notification(opts.title, {
-      body: opts.body,
-      tag: opts.tag,
-      icon: '/icon.svg',
-      badge: '/icon.svg',
-      requireInteraction: kind === 'choice',
-    });
-    n.onclick = () => {
-      window.focus();
-      opts.onClick?.();
-      n.close();
-    };
-  } catch {
-    /* ignore */
-  }
+  if (!options.silent && document.visibilityState !== 'visible') void chime(kind);
 }

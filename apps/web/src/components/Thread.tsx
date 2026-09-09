@@ -1,17 +1,21 @@
-// Chat window (detail pane). Faithfully ports evo-chat's best-tuned mechanics:
-//  - instant pin-to-bottom on session switch / first paint / keyboard rise
-//  - instant pin on new-message append only when already near bottom
-//  - "↓ N new" badge when scrolled up and messages arrive
-//  - touchmove on the list blurs the textarea (mobile keyboard dismiss)
-// Message bodies reuse evo-chat's markdown renderer + Solarized bubble CSS.
+// Chat window (detail pane). Reading position and explicit bottom-follow are
+// maintained by one scroll owner; message bodies reuse the markdown renderer.
 
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { MessageBody } from './MessageBody';
+import { ToolImages } from './ToolImages';
+import { MessageContent } from './MessageContent';
 import { Composer } from './Composer';
 import { Icon } from './Icon';
 import { ContextMenu, type MenuItem } from './ContextMenu';
 import type { ChatMessage, ChatSession, ToolCall, Attachment, ExitPlanModeAction } from '../net/types';
-import { BASE_URL } from '../lib/config';
+import { acknowledgeInView, sendThreadDraft } from '../lib/draft';
+import { getSessionDraft, type UploadFile } from '../lib/attachmentSend';
+import { observeThreadScroll, type ThreadScroll } from './threadScroll';
+import { canSkipMessageLayout, createMessageLayout } from './messageLayout';
+import { useCockpit } from '../net/store';
+import { createSubagentHistory } from '../lib/subagentHistory';
+import { useKeyedAction } from '../lib/useKeyedResource';
 
 // Plan-exit action → button label. The SDK offers a subset of these (incl.
 // autopilot_fleet); the card renders one button per offered action rather than a
@@ -36,47 +40,16 @@ function ToolStatusIcon({ status }: { status: ToolCall['status'] }) {
   }
 }
 
-function humanSize(bytes?: number): string {
-  if (!bytes || bytes <= 0) return '';
-  const u = ['B', 'KB', 'MB', 'GB'];
-  let n = bytes; let i = 0;
-  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
-  return `${n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)} ${u[i]}`;
-}
-
-// TG-style attachment: an image renders inline (tap to open full); any other file
-// renders as a document card (icon + name + size). Served from /uploads/* via the
-// backend; clicking opens the file in a new tab.
-function AttachmentView({ att }: { att: Attachment }) {
-  const href = `${BASE_URL}${att.url}`;
-  if (att.kind === 'image') {
-    return (
-      <a className="attach-image" href={href} target="_blank" rel="noreferrer">
-        <img src={href} alt={att.name} loading="lazy" />
-      </a>
-    );
-  }
-  return (
-    <a className="attach-file" href={href} download={att.name} title={`下载 ${att.name}`}>
-      <span className="attach-file-ico"><Icon name="file" size={22} /></span>
-      <span className="attach-file-meta">
-        <span className="attach-file-name">{att.name}</span>
-        {att.size ? <span className="attach-file-size">{humanSize(att.size)}</span> : null}
-      </span>
-      <span className="attach-file-dl" aria-hidden="true"><Icon name="arrow_down" size={18} /></span>
-    </a>
-  );
-}
-
-function ToolCallRow({ tc }: { tc: ToolCall }) {
+function ToolCallRow({ tc, sessionId }: { tc: ToolCall; sessionId: string }) {
   const [open, setOpen] = useState(false);
-  const hasDetail = !!(tc.args || tc.output);
+  const hasDetail = !!(tc.args || tc.output || tc.images?.length);
   return (
     <div className="msg-tool" data-status={tc.status ?? 'pending'}>
       <div className="tool-head">
         <ToolStatusIcon status={tc.status} />
         <span className="tool-title">{tc.title}</span>
         {tc.name && <span className="tool-name">{tc.name}</span>}
+        {!!tc.images?.length && <span className="tool-name">图片 {tc.images.length}</span>}
         {hasDetail && (
           <button type="button" className="tool-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label={open ? '收起细节' : '展开细节'}>
             <Icon name={open ? 'up' : 'down'} size={14} />
@@ -87,6 +60,7 @@ function ToolCallRow({ tc }: { tc: ToolCall }) {
         <div className="tool-detail">
           {tc.args && <pre className="tool-args">{tc.args}</pre>}
           {tc.output && <pre className="tool-output">{tc.output}</pre>}
+          {tc.images && <ToolImages images={tc.images} sessionId={sessionId} />}
         </div>
       )}
     </div>
@@ -119,10 +93,9 @@ function sameDay(a: number, b: number): boolean {
   const x = new Date(a), y = new Date(b);
   return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
 }
-function dateLabel(ts: number): string {
+function dateLabel(ts: number, today: number): string {
   const d = new Date(ts);
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const now = new Date(today);
   const that = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
   const dayMs = 86_400_000;
   if (that === today) return '今天';
@@ -134,17 +107,17 @@ function dateLabel(ts: number): string {
 // Renders the inner content of an assistant message (thought + tools + body).
 // Shared by top-level assistant messages and the nested messages inside a
 // sub-agent card.
-function MessageInner({ m }: { m: ChatMessage }) {
+function MessageInner({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
   return (
     <>
       {m.thought && <Thought text={m.thought} live={false} />}
       {m.toolCalls && m.toolCalls.length > 0 && (
         <div className="msg-tools">
-          {m.toolCalls.map((tc) => <ToolCallRow key={tc.toolCallId} tc={tc} />)}
+          {m.toolCalls.map((tc) => <ToolCallRow key={JSON.stringify([sessionId, m.id, tc.toolCallId])} tc={tc} sessionId={sessionId} />)}
         </div>
       )}
-      {m.content && <MessageBody body={m.content} />}
-      {m.subtype === 'subagent' && m.subagent && <SubagentCard m={m} />}
+      <MessageContent message={m} sessionId={sessionId} />
+      {m.subtype === 'subagent' && m.subagent && <SubagentCard key={m.subagent.toolCallId ?? m.id} m={m} sessionId={sessionId} />}
     </>
   );
 }
@@ -152,13 +125,14 @@ function MessageInner({ m }: { m: ChatMessage }) {
 // A sub-agent (spawned via the `task` tool) as one collapsible card. The header
 // shows the agent + status; expanding reveals its full inner work (tools,
 // thinking, messages) — the same rendering as the main thread, nested.
-function SubagentCard({ m }: { m: ChatMessage }) {
+function SubagentCard({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
   const [open, setOpen] = useState(false);
   const sa = m.subagent!;
   const sub = m.subMessages ?? [];
-  const toolCount = sa.toolCount ?? sub.reduce((n, x) => n + (x.toolCalls?.length ?? 0), 0);
+  const toolCount = sa.toolCount ?? (m.subMessages
+    ? sub.reduce((n, x) => n + (x.toolCalls?.length ?? 0), 0) : undefined);
   const statusLabel = sa.status === 'running' ? '运行中…'
-    : sa.status === 'failed' ? '失败' : `完成 · ${toolCount} 个工具`;
+    : sa.status === 'failed' ? '失败' : toolCount === undefined ? '完成' : `完成 · ${toolCount} 个工具`;
   return (
     <div className="subagent-card" data-status={sa.status}>
       <button type="button" className="subagent-head rp" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
@@ -168,23 +142,61 @@ function SubagentCard({ m }: { m: ChatMessage }) {
         <span className="subagent-chevron"><Icon name={open ? 'up' : 'down'} size={14} /></span>
       </button>
       {sa.description && !open && <div className="subagent-desc">{sa.description}</div>}
-      {open && (
-        <div className="subagent-body">
-          {sa.prompt && (
-            <div className="subagent-prompt">
-              <div className="subagent-prompt-label">任务</div>
-              <MessageBody body={sa.prompt} />
-            </div>
-          )}
-          {sa.error && <div className="subagent-error">{sa.error}</div>}
-          {sub.map((sm) => (
-            <article key={sm.id} className="message is-doc subagent-msg">
-              <MessageInner m={sm} />
-            </article>
-          ))}
-          {sub.length === 0 && sa.status === 'running' && <div className="subagent-empty">子代理正在工作…</div>}
+      {open && <SubagentDetails key={JSON.stringify([sessionId, sa.toolCallId])} m={m} sessionId={sessionId} />}
+    </div>
+  );
+}
+
+function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
+  const summary = m.subagent!;
+  const read = useCockpit((s) => s.subagentHistory);
+  const connected = useCockpit((s) => s.connState === 'open');
+  const generation = useCockpit((s) => s.connectionGeneration);
+  const toolCallId = summary.toolCallId;
+  const resource = useMemo(() => createSubagentHistory(
+    sessionId, toolCallId ?? '', read, useCockpit.getState,
+  ), [sessionId, toolCallId, read]);
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot, resource.getSnapshot);
+  useLayoutEffect(() => () => resource.deactivate(true), [resource]);
+  useLayoutEffect(() => {
+    if (connected && toolCallId) resource.activate();
+    return () => resource.deactivate();
+  }, [resource, connected, generation, toolCallId]);
+  const revision = JSON.stringify([summary.status, summary.toolCount, summary.error, m.content]);
+  useEffect(() => {
+    if (connected && toolCallId) void resource.refresh();
+  }, [resource, connected, generation, toolCallId, revision]);
+  const sa = snapshot.data?.subagent ?? summary;
+  const sub = snapshot.data?.messages ?? m.subMessages ?? [];
+  const pending = snapshot.pending || (connected && !!toolCallId && !snapshot.data && !snapshot.error);
+  return (
+    <div className="subagent-body" aria-busy={pending}>
+      {sa.prompt && (
+        <div className="subagent-prompt">
+          <div className="subagent-prompt-label">任务</div>
+          <MessageBody body={sa.prompt} />
         </div>
       )}
+      {sa.error && <div className="subagent-error">{sa.error}</div>}
+      {!connected && toolCallId && <div role="status">等待连接…</div>}
+      {pending && <div role="status">正在读取子代理历史…</div>}
+      {snapshot.error && <div className="subagent-error" role="alert">
+        加载失败：{snapshot.error}
+        <button type="button" disabled={!connected || pending} onClick={() => { void resource.retry(); }}>重试</button>
+      </div>}
+      {snapshot.data?.hasMore && <button type="button" disabled={!connected || pending} onClick={() => { void resource.loadOlder(); }}>
+        加载更早的消息
+      </button>}
+      {sub.map((sm) => (
+        <article key={sm.id} className="message is-doc subagent-msg">
+          <MessageInner m={sm} sessionId={sessionId} />
+        </article>
+      ))}
+      {toolCallId && <button type="button" disabled={!connected || pending} onClick={() => { void resource.refresh(); }}>刷新子代理历史</button>}
+      {summary.status === 'running' && <div className="subagent-empty">仅显示 SDK 已保存的历史；运行中的内容可能在任务结束后才可读取。</div>}
+      {!pending && !snapshot.error && !sub.length && <div className="subagent-empty">
+        {toolCallId ? '暂无已保存的子代理消息。' : '此历史记录未提供子代理读取标识。'}
+      </div>}
     </div>
   );
 }
@@ -194,20 +206,20 @@ function SubagentCard({ m }: { m: ChatMessage }) {
 //  - assistant replies are NOT bubbles — they read as a full-width document,
 //    with a light byline (icon + Copilot + time) shown once per assistant group;
 //  - system messages are a quiet centered note.
-const MessageRow = memo(function MessageRow({ m, showByline, thinkingLive, onMenu }: { m: ChatMessage; showByline: boolean; thinkingLive: boolean; onMenu: (e: React.MouseEvent, m: ChatMessage) => void }) {
+const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinkingLive, onMenu }: { m: ChatMessage; sessionId: string; showByline: boolean; thinkingLive: boolean; onMenu: (e: React.MouseEvent, m: ChatMessage) => void }) {
+  const hasAttachment = m.parts ? m.parts.some(part => part.type === 'file') : !!(m.attachments?.length || m.attachment);
   if (m.subtype === 'subagent' && m.subagent) {
-    return <div className="message is-doc" onContextMenu={(e) => onMenu(e, m)}><SubagentCard m={m} /></div>;
+    return <div className="message is-doc" data-message-id={m.id} onContextMenu={(e) => onMenu(e, m)}><SubagentCard key={m.subagent.toolCallId ?? m.id} m={m} sessionId={sessionId} /></div>;
   }
   if (m.role === 'user') {
     const isAskReply = m.subtype === 'ask-reply';
     const cls = ['message', 'is-out'];
     if (isAskReply) cls.push('is-ask-reply');
-    if (m.attachment) cls.push('is-attachment');
+    if (hasAttachment) cls.push('is-attachment');
     return (
-      <div className={cls.join(' ')} onContextMenu={(e) => onMenu(e, m)}>
+      <div className={cls.join(' ')} data-message-id={m.id} onContextMenu={(e) => onMenu(e, m)}>
         {isAskReply && <span className="ask-reply-tag" aria-label="对提问的回复">↩ 回复</span>}
-        {m.attachment && <AttachmentView att={m.attachment} />}
-        {m.content && <MessageBody body={m.content} />}
+        <MessageContent message={m} sessionId={sessionId} />
         <span className="message-time">{clock(m.timestamp)}</span>
       </div>
     );
@@ -215,69 +227,126 @@ const MessageRow = memo(function MessageRow({ m, showByline, thinkingLive, onMen
   if (m.role === 'system') {
     if (m.subtype === 'skill') {
       return (
-        <div className="message is-skill" onContextMenu={(e) => onMenu(e, m)}>
+        <div className="message is-skill" data-message-id={m.id} onContextMenu={(e) => onMenu(e, m)}>
           <span className="skill-ico" aria-hidden="true"><Icon name="skills" size={14} /></span>
           <span className="skill-label">skill</span>
-          <span className="skill-name">{m.content}</span>
+          <span className="skill-name">{m.parts ? <MessageContent message={m} sessionId={sessionId} /> : m.content}</span>
         </div>
       );
     }
     const level = m.level ?? 'info';
     return (
-      <div className="message is-system" data-level={level} onContextMenu={(e) => onMenu(e, m)}>
+      <div className="message is-system" data-message-id={m.id} data-level={level} onContextMenu={(e) => onMenu(e, m)}>
         {level === 'error' && <span className="sys-ico" aria-hidden="true"><Icon name="error" size={14} /></span>}
-        {m.content}
+        {m.parts || hasAttachment ? <MessageContent message={m} sessionId={sessionId} /> : m.content}
       </div>
     );
   }
   return (
-    <article className={`message is-doc${m.attachment ? ' is-attachment' : ''}`} onContextMenu={(e) => onMenu(e, m)}>
+    <article className={`message is-doc${hasAttachment ? ' is-attachment' : ''}`} onContextMenu={(e) => onMenu(e, m)}>
       {showByline && (
         <header className="doc-byline">
           <span className="doc-mark" aria-hidden="true"><Icon name="compose" size={15} /></span>
           <span className="doc-time">{clock(m.timestamp)}</span>
         </header>
       )}
-      {m.thought && <Thought text={m.thought} live={thinkingLive} />}
-      {m.toolCalls && m.toolCalls.length > 0 && (
-        <div className="msg-tools">
-          {m.toolCalls.map((tc) => <ToolCallRow key={tc.toolCallId} tc={tc} />)}
-        </div>
-      )}
-      {m.content && <MessageBody body={m.content} />}
-      {m.attachment && <AttachmentView att={m.attachment} />}
+      {/* Date/byline removal on prepend must not move the reading anchor. */}
+      <div data-message-id={m.id}>
+        {m.thought && <Thought text={m.thought} live={thinkingLive} />}
+        {m.toolCalls && m.toolCalls.length > 0 && (
+          <div className="msg-tools">
+            {m.toolCalls.map((tc) => <ToolCallRow key={JSON.stringify([sessionId, m.id, tc.toolCallId])} tc={tc} sessionId={sessionId} />)}
+          </div>
+        )}
+        <MessageContent message={m} sessionId={sessionId} />
+      </div>
     </article>
   );
 });
 
+type MessageMenu = (event: React.MouseEvent, message: ChatMessage) => void;
+
+const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline, live, layout, onMenu }: {
+  m: ChatMessage; sessionId: string; date?: string; showByline: boolean; live: boolean;
+  layout: ReturnType<typeof createMessageLayout>; onMenu: MessageMenu;
+}) {
+  const frame = useRef<HTMLDivElement | null>(null);
+  const skippable = canSkipMessageLayout(m, live);
+  useLayoutEffect(() => {
+    if (skippable && frame.current) return layout.observe(frame.current);
+  }, [layout, skippable, m, date, showByline]);
+  return (
+    <div ref={frame} className="msg-group" data-message-frame={m.id}>
+      {date && <div className="date-separator" aria-hidden="true">{date}</div>}
+      <MessageRow m={m} sessionId={sessionId} showByline={showByline} thinkingLive={live} onMenu={onMenu} />
+    </div>
+  );
+});
+
+const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionId, liveId, today, onMenu }: {
+  messages: ChatMessage[]; sessionId: string; liveId?: string; today: number; onMenu: MessageMenu;
+}) {
+  const layout = useMemo(() => createMessageLayout(), []);
+  useLayoutEffect(() => () => layout.dispose(), [layout]);
+  return messages.map((m, i) => {
+    const previous = messages[i - 1];
+    const newDay = !previous || !sameDay(previous.timestamp, m.timestamp);
+    return (
+      <MessageGroup key={m.id} m={m} sessionId={sessionId}
+        date={newDay ? dateLabel(m.timestamp, today) : undefined}
+        showByline={m.role === 'assistant' && (newDay || previous.role !== 'assistant')}
+        live={m.role === 'assistant' && m.id === liveId} layout={layout} onMenu={onMenu} />
+    );
+  });
+});
+
 interface ThreadProps {
   session: ChatSession;
-  initialDraft?: string;
-  onPersistDraft?: (text: string) => void;
-  onSend?: (text: string) => boolean;
-  onRespondAsk?: (requestId: string, answer: string, wasFreeform: boolean) => void;
-  onRespondPlan?: (requestId: string, action: ExitPlanModeAction) => void;
-  onPlanSupersede?: (requestId: string, message: string) => void;
-  onRespondElicitation?: (requestId: string, action: 'accept' | 'decline' | 'cancel') => void;
+  onSend?: (text: string, attachment?: Attachment, attachments?: Attachment[]) => Promise<boolean>;
+  uploadFile?: UploadFile;
+  onRespondAsk?: (requestId: string, answer: string, wasFreeform: boolean) => Promise<boolean>;
+  onRespondPlan?: (requestId: string, action: ExitPlanModeAction) => Promise<boolean>;
+  onPlanSupersede?: (requestId: string, message: string) => Promise<boolean>;
+  onRespondElicitation?: (requestId: string, action: 'accept' | 'decline' | 'cancel') => Promise<boolean>;
   onRemoveQueued?: (itemId: string) => void;
   onCancel?: () => void;
+  onInterrupt?: () => Promise<{ ok: true; interrupted: boolean }>;
   onLoadMore: () => void;
-  onAttach?: (file: File) => Promise<void>;
+  onRetryHistory?: () => void;
+  onAttentionVisible?: (attnId: number, visible: boolean) => void;
   // Read-only transcript (e.g. a trashed-session preview): renders the paginated
   // message list but hides the composer and every interactive banner, so the
   // conversation can be browsed but not driven.
   readOnly?: boolean;
 }
 
-export function Thread({ session, initialDraft, onPersistDraft, onSend, onRespondAsk, onRespondPlan, onPlanSupersede, onRespondElicitation, onRemoveQueued, onCancel, onLoadMore, onAttach, readOnly = false }: ThreadProps) {
+export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPlan, onPlanSupersede, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, onAttentionVisible, readOnly = false }: ThreadProps) {
+  const interruptAction = useKeyedAction(`interrupt:${session.sessionId}`);
+  const [interruptNotice, setInterruptNotice] = useState<{ sessionId: string; text: string } | null>(null);
+  const canInterrupt = !!onInterrupt && session.loaded && session.status === 'running'
+    && !session.loading && !session.closing && !session.cancelling && !session.compacting
+    && session.nativeProcessing !== false;
+  const draft = useMemo(() => getSessionDraft(session.sessionId), [session.sessionId]);
+  const { pending: actionPending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const scrollRef = useRef<HTMLDivElement | null>(null);
-  const atBottomRef = useRef(true);
-  // True from the moment THIS device sends until the turn ends — while set we
-  // force-follow the bottom so the just-sent message + the appearing stop button
-  // (which shrinks the scroll viewport) never strand the latest message out of
-  // view. Cleared if the user deliberately scrolls up.
-  const justSentRef = useRef(false);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const scrollOwnerRef = useRef<ThreadScroll | null>(null);
+  const [heldHead, setHeldHead] = useState<{ sessionId: string; id: string } | null>(null);
+  // Keep the existing DOM prefix under an active gesture. Only newly received
+  // older rows wait for settle; tail updates and already mounted history stay live.
+  const messages = useMemo(() => {
+    const start = heldHead?.sessionId === session.sessionId
+      ? session.messages.findIndex((message) => message.id === heldHead.id) : -1;
+    return start > 0 ? session.messages.slice(start) : session.messages;
+  }, [heldHead, session.sessionId, session.messages]);
+  const prependHeld = messages !== session.messages;
   const [newCount, setNewCount] = useState(0);
+  const actionScopeRef = useRef({ active: false });
+  useLayoutEffect(() => {
+    const scope = { active: true };
+    actionScopeRef.current = scope;
+    return () => { scope.active = false; };
+  }, [session.sessionId]);
   const [msgMenu, setMsgMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
   const openMsgMenu = useCallback((e: React.MouseEvent, m: ChatMessage) => {
     if (!m.content) return;
@@ -287,115 +356,72 @@ export function Thread({ session, initialDraft, onPersistDraft, onSend, onRespon
       items: [{ label: '复制', icon: 'compose', onClick: () => { void navigator.clipboard?.writeText(m.content).catch(() => {}); } }],
     });
   }, []);
-  const prevLenRef = useRef(session.messages.length);
-  const prevSidRef = useRef(session.sessionId);
-  // Pagination: remember the top message + scrollHeight before an older page is
-  // prepended, so we can restore the viewport anchor after it lands.
-  const prevFirstIdRef = useRef(session.messages[0]?.id);
-  const anchorRef = useRef<{ id: string | undefined; scrollHeight: number } | null>(null);
-
-  // pinToBottom: direct scrollTop=scrollHeight (evo-chat doctrine — robust to
-  // sentinel partial-visibility + Chromium JS-scroll-suppression). Used for
-  // initial load, session switch, keyboard rise, and streaming tokens.
-  const pinInstant = useCallback(() => {
+  const prevLastIdRef = useRef<string | undefined>(undefined);
+  const reportVisibleAttention = useCallback(() => {
     const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, []);
+    const choiceVisible = session.attention === 'choice' && !!(session.ask || session.planRequest || session.elicitation);
+    const latestVisible = session.materialized && !session.historyStale && session.messages.length > 0
+      && !!el && el.scrollHeight - el.clientHeight - el.scrollTop <= 2;
+    onAttentionVisible?.(session.attnId ?? 0, !readOnly && (choiceVisible || latestVisible));
+  }, [onAttentionVisible, readOnly, session.attention, session.attnId, session.ask, session.planRequest,
+    session.elicitation, session.materialized, session.historyStale, session.messages.length]);
+  useLayoutEffect(reportVisibleAttention, [reportVisibleAttention, session.messages]);
+  useEffect(() => {
+    const el = scrollRef.current;
+    el?.addEventListener('scroll', reportVisibleAttention, { passive: true });
+    document.addEventListener('visibilitychange', reportVisibleAttention);
+    window.addEventListener('focus', reportVisibleAttention);
+    reportVisibleAttention();
+    return () => {
+      el?.removeEventListener('scroll', reportVisibleAttention);
+      document.removeEventListener('visibilitychange', reportVisibleAttention);
+      window.removeEventListener('focus', reportVisibleAttention);
+      onAttentionVisible?.(session.attnId ?? 0, false);
+    };
+  }, [reportVisibleAttention, onAttentionVisible, session.attnId]);
+  useLayoutEffect(() => {
+    const el = scrollRef.current;
+    const content = contentRef.current;
+    if (!el || !content) return;
+    prevLastIdRef.current = undefined;
+    const owner = observeThreadScroll(el, content, () => setNewCount(0), (active) => {
+      const id = content.querySelector<HTMLElement>('[data-message-id]')?.dataset.messageId;
+      setHeldHead(active && id ? { sessionId: session.sessionId, id } : null);
+    });
+    scrollOwnerRef.current = owner.scroll;
+    return () => {
+      owner.dispose();
+      scrollOwnerRef.current = null;
+    };
+  }, [session.sessionId]);
 
-  // Track near-bottom (50px tolerance) for the new-message badge / auto-follow,
-  // and near-top (load older page when scrolled up to within 80px of the top).
+  // The scroll owner continuously remembers the visible message, not a
+  // request-time scrollHeight that can include unrelated loader/media growth.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
-      const bottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
-      atBottomRef.current = bottom;
-      if (bottom) setNewCount(0);
-      // A deliberate scroll away from the bottom cancels the post-send follow.
-      if (!bottom) justSentRef.current = false;
-      if (el.scrollTop < 80 && session.hasMore && !session.loadingHistory) {
-        anchorRef.current = { id: session.messages[0]?.id, scrollHeight: el.scrollHeight };
+      if (el.scrollTop < 80 && session.hasMore && !session.loadingHistory && !prependHeld) {
         onLoadMore();
       }
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
-  }, [session.hasMore, session.loadingHistory, session.messages, onLoadMore]);
+  }, [session.hasMore, session.loadingHistory, onLoadMore, prependHeld]);
 
-  // Keep the latest message pinned when the DOCK height changes (choice form
-  // appears, stop button toggles, multiline textarea grows). Pure CSS can't move
-  // an overflowing scroll on container resize, so — staying within the sanctioned
-  // scroll-position gray area (same as the new-message pin) — re-pin on the
-  // scroll viewport's own resize, but only if the user was already at the bottom
-  // (don't yank them while reading history).
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el || typeof ResizeObserver === 'undefined') return;
-    const ro = new ResizeObserver(() => { if (atBottomRef.current || justSentRef.current) pinInstant(); });
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [pinInstant]);
-
-  // touchmove → blur (dismiss mobile keyboard when dragging the list).
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const onTouchMove = () => {
-      const a = document.activeElement;
-      if (a instanceof HTMLElement && (a.tagName === 'TEXTAREA' || a.tagName === 'INPUT')) a.blur();
-    };
-    el.addEventListener('touchmove', onTouchMove, { passive: true });
-    return () => el.removeEventListener('touchmove', onTouchMove);
-  }, []);
-
-  // Switching sessions: snap instantly to the bottom, reset counters.
+  // Reconnect/metadata renders with identical geometry do not schedule a write.
+  // Count only messages after the previous tail, never an older-page prepend.
   useLayoutEffect(() => {
-    if (prevSidRef.current !== session.sessionId) {
-      prevSidRef.current = session.sessionId;
-      prevLenRef.current = session.messages.length;
-      atBottomRef.current = true;
-      setNewCount(0);
-      requestAnimationFrame(pinInstant);
+    const lastId = session.messages.at(-1)?.id;
+    if (!scrollOwnerRef.current?.following && prevLastIdRef.current && lastId !== prevLastIdRef.current) {
+      const previousTail = session.messages.findIndex((m) => m.id === prevLastIdRef.current);
+      if (previousTail >= 0) setNewCount((n) => n + session.messages.length - previousTail - 1);
     }
-  }, [session.sessionId, session.messages.length, pinInstant]);
+    prevLastIdRef.current = lastId;
+    scrollOwnerRef.current?.changed();
+  }, [messages, session.messages, session.status, session.compacting, session.error]);
 
-  // Message/stream updates. Distinguish an older-page PREPEND (top grows) from a
-  // new-message APPEND (bottom grows): prepend → restore the viewport anchor so
-  // the user stays put; append → follow if near bottom, else bump the badge.
-  useLayoutEffect(() => {
-    const el = scrollRef.current;
-    const len = session.messages.length;
-    const grew = len > prevLenRef.current;
-    const firstId = session.messages[0]?.id;
-    const prependedTop = firstId !== prevFirstIdRef.current && anchorRef.current != null;
-    prevLenRef.current = len;
-    prevFirstIdRef.current = firstId;
-
-    if (prependedTop && el) {
-      // Older page landed: keep the previously-top message visually fixed.
-      const delta = el.scrollHeight - anchorRef.current!.scrollHeight;
-      el.scrollTop = el.scrollTop + delta;
-      anchorRef.current = null;
-      return;
-    }
-    if (atBottomRef.current || justSentRef.current) {
-      pinInstant();
-    } else if (grew) {
-      setNewCount((n) => n + 1);
-    }
-  }, [session.messages, pinInstant]);
-
-  // Clear the post-send follow once the turn ends.
-  useEffect(() => {
-    if (session.status !== 'running') justSentRef.current = false;
-  }, [session.status]);
-
-  const jumpToBottom = useCallback(() => { setNewCount(0); atBottomRef.current = true; pinInstant(); }, [pinInstant]);
-
-  // Focusing the composer should NOT yank the view to the bottom while the user is
-  // reading history. Only re-pin if they were already at the bottom (the mobile
-  // keyboard-rise case, where staying pinned to the latest message is desirable).
-  const pinOnFocusIfAtBottom = useCallback(() => { if (atBottomRef.current) pinInstant(); }, [pinInstant]);
+  const jumpToBottom = useCallback(() => { scrollOwnerRef.current?.follow(); }, []);
 
   // Sending from THIS device: force-follow the bottom through the user-message
   // append + the stop button appearing (which shrinks the scroll viewport).
@@ -406,54 +432,71 @@ export function Thread({ session, initialDraft, onPersistDraft, onSend, onRespon
   // plan, leaves plan mode, and runs (planSupersede). Otherwise a normal prompt.
   const ask = session.ask;
   const planRequest = session.planRequest;
-  const handleSend = useCallback((text: string): boolean => {
-    if (ask) { onRespondAsk?.(ask.requestId, text, true); justSentRef.current = true; atBottomRef.current = true; return true; }
-    if (planRequest) { onPlanSupersede?.(planRequest.requestId, text); justSentRef.current = true; atBottomRef.current = true; return true; }
-    const ok = onSend?.(text) ?? false;
-    if (ok) { justSentRef.current = true; atBottomRef.current = true; }
-    return ok;
-  }, [ask, planRequest, onSend, onRespondAsk, onPlanSupersede]);
+  const runInView = useCallback((send: () => Promise<boolean>): Promise<boolean> => (
+    acknowledgeInView(actionScopeRef.current, send, {
+      scrollRevision: () => scrollOwnerRef.current?.revision ?? 0,
+      onAccepted: () => { scrollOwnerRef.current?.follow(); },
+    })
+  ), []);
 
-  const handleChoice = useCallback((choice: string) => {
-    if (!ask) return;
-    onRespondAsk?.(ask.requestId, choice, false);
-    justSentRef.current = true; atBottomRef.current = true;
-  }, [ask, onRespondAsk]);
+  const runAction = useCallback((send: () => Promise<boolean> | undefined): Promise<boolean> => (
+    runInView(() => draft.runAction(send))
+  ), [draft, runInView]);
+
+  const handleSend = useCallback((): Promise<boolean> => runInView(() => draft.send((text, attachment, attachments) => sendThreadDraft(text, {
+    askRequestId: ask?.requestId,
+    planRequestId: planRequest?.requestId,
+    onSend,
+    onRespondAsk,
+    onPlanSupersede,
+  }, attachment, attachments))), [draft, ask, planRequest, onSend, onRespondAsk, onPlanSupersede, runInView]);
+
+  const handleChoice = useCallback((choice: string): Promise<boolean> => runAction(
+    () => ask ? onRespondAsk?.(ask.requestId, choice, false) : undefined,
+  ), [ask, onRespondAsk, runAction]);
 
   return (
     <main className="chat">
-      <div ref={scrollRef} className="chat-messages">
-        {session.loadingHistory && session.messages.length > 0 && (
-          <div className="chat-loading-older" aria-live="polite">加载更早的消息…</div>
-        )}
-        {session.messages.length === 0 && !session.loadingHistory && (
-          <p className="chat-empty-hint">开始对话吧 — 工作目录 {session.cwd}</p>
-        )}
-        {session.messages.map((m, i) => {
-          const prev = session.messages[i - 1];
-          const newDay = !prev || !sameDay(prev.timestamp, m.timestamp);
-          const showByline = m.role === 'assistant' && (newDay || !prev || prev.role !== 'assistant');
-          // Reasoning streams expanded while the turn is live (last message +
-          // running), then auto-collapses when done.
-          const thinkingLive = m.role === 'assistant' && i === session.messages.length - 1 && session.status === 'running';
-          return (
-            <div key={m.id} className="msg-group">
-              {newDay && <div className="date-separator" aria-hidden="true">{dateLabel(m.timestamp)}</div>}
-              <MessageRow m={m} showByline={showByline} thinkingLive={thinkingLive} onMenu={openMsgMenu} />
-            </div>
-          );
-        })}
-
-        {session.compacting && (
-          <div className="chat-typing" aria-live="polite">正在压缩上下文…</div>
-        )}
-        {session.status === 'running' && !session.compacting && !ask && (
-          <div className="chat-typing" aria-live="polite">
-            {session.intent || '回复中…'}
-            <button type="button" className="chat-typing-stop" onClick={() => onCancel?.()}>停止</button>
+      <div className="chat-transcript">
+        {session.loadingHistory && (
+          <div className="chat-loading-older" role="status">
+            {session.historyStale || !session.materialized ? '正在同步对话历史…' : '加载更早的消息…'}
           </div>
         )}
-        {session.error && <p className="chat-error">错误: {session.error}</p>}
+        {!session.loadingHistory && (session.historyStale || !session.materialized) && (
+          <div className="chat-loading-older" role="status">
+            对话历史尚未同步。
+            {onRetryHistory && <button type="button" className="dialog-btn rp" onClick={() => {
+              scrollOwnerRef.current?.follow();
+              onRetryHistory();
+            }}>
+              重新读取最新历史
+            </button>}
+          </div>
+        )}
+        <div ref={scrollRef} className="chat-messages" tabIndex={0}>
+          <div ref={contentRef} className="chat-message-content">
+            {session.messages.length === 0 && session.materialized && !session.historyStale && !session.loadingHistory && (
+              <p className="chat-empty-hint">开始对话吧 — 工作目录 {session.cwd}</p>
+            )}
+            <TranscriptMessages messages={messages} sessionId={session.sessionId}
+              liveId={session.status === 'running' ? session.messages.at(-1)?.id : undefined}
+              today={new Date().setHours(0, 0, 0, 0)} onMenu={openMsgMenu} />
+
+            {session.compacting && (
+              <div className="chat-typing" aria-live="polite">正在压缩上下文…</div>
+            )}
+            {session.status === 'running' && !session.compacting && !ask && (
+              <div className="chat-typing" aria-live="polite">
+                {session.intent || '回复中…'}
+                <button type="button" className="chat-typing-stop" onClick={() => onCancel?.()}>
+                  {session.queue.length > 0 ? '停止并清空队列' : '停止'}
+                </button>
+              </div>
+            )}
+            {session.error && <p className="chat-error">错误: {session.error}</p>}
+          </div>
+        </div>
 
         {newCount > 0 && (
           <button className="new-msg-badge" type="button" onClick={jumpToBottom}>
@@ -468,7 +511,7 @@ export function Thread({ session, initialDraft, onPersistDraft, onSend, onRespon
           {ask.choices && ask.choices.length > 0 && (
             <div className="chat-ask-choices">
               {ask.choices.map((c) => (
-                <button key={c} type="button" className="chat-ask-choice" onClick={() => handleChoice(c)}>{c}</button>
+                <button key={c} type="button" className="chat-ask-choice" disabled={actionPending} onClick={() => { void handleChoice(c); }}>{c}</button>
               ))}
             </div>
           )}
@@ -501,7 +544,8 @@ export function Thread({ session, initialDraft, onPersistDraft, onSend, onRespon
                   key={a}
                   type="button"
                   className={`chat-ask-choice${a === pr.recommendedAction ? ' is-recommended' : ''}`}
-                  onClick={() => onRespondPlan?.(pr.requestId, a)}
+                  disabled={actionPending}
+                  onClick={() => { void runAction(() => onRespondPlan?.(pr.requestId, a)); }}
                 >
                   {PLAN_ACTION_LABEL[a]}
                 </button>
@@ -516,14 +560,35 @@ export function Thread({ session, initialDraft, onPersistDraft, onSend, onRespon
         <div className="chat-ask chat-pending" role="group" aria-label="需要你的输入">
           <div className="chat-ask-q">{session.elicitation.message}</div>
           <div className="chat-ask-choices">
-            <button type="button" className="chat-ask-choice" onClick={() => onRespondElicitation?.(session.elicitation!.requestId, 'accept')}>同意</button>
-            <button type="button" className="chat-ask-choice" onClick={() => onRespondElicitation?.(session.elicitation!.requestId, 'decline')}>拒绝</button>
+            {(session.elicitation.actions ?? ['accept', 'decline', 'cancel']).map(action => (
+              <button key={action} type="button" className="chat-ask-choice" disabled={actionPending}
+                onClick={() => { void runAction(() => onRespondElicitation?.(session.elicitation!.requestId, action)); }}>
+                {{ accept: '同意', decline: '拒绝', cancel: '取消' }[action]}
+              </button>
+            ))}
           </div>
         </div>
       )}
 
       {!readOnly && session.queue.length > 0 && (
         <div className="chat-queue" aria-label="排队中的消息">
+          {canInterrupt && (
+            <div className="chat-queue-action">
+              <button type="button" disabled={!interruptAction.connected || (!!session.activeOperations && !interruptAction.busy)}
+                aria-disabled={interruptAction.busy || undefined}
+                aria-describedby={`interrupt-help-${session.sessionId}`}
+                onClick={() => {
+                  let interrupted = false;
+                  void interruptAction.run(async () => {
+                    const result = await onInterrupt!();
+                    interrupted = result.interrupted;
+                  }, () => setInterruptNotice({ sessionId: session.sessionId, text: interrupted
+                    ? '已请求打断；队列由 Copilot 接着处理。'
+                    : '当前没有可打断的主回合；队列未改动。' }));
+                }}>{interruptAction.busy ? '正在请求…' : '打断并继续'}</button>
+              <span id={`interrupt-help-${session.sessionId}`}>只打断主回合，保留队列；后台任务继续，可能延后处理。</span>
+            </div>
+          )}
           {session.queue.map((q) => (
             <div key={q.id} className="chat-queue-item">
               <span className="chat-queue-text">{q.text}</span>
@@ -532,19 +597,24 @@ export function Thread({ session, initialDraft, onPersistDraft, onSend, onRespon
           ))}
         </div>
       )}
+      {!readOnly && (interruptAction.error || interruptNotice?.sessionId === session.sessionId) && (
+        <p className="chat-interrupt-status" role={interruptAction.error ? 'alert' : 'status'}>
+          {interruptAction.error ? `打断未确认：${interruptAction.error}。请核对会话状态，不要直接重试。` : interruptNotice?.text}
+        </p>
+      )}
 
       {readOnly ? (
         <div className="chat-readonly-note" aria-label="只读会话">已删除的会话 · 只读</div>
       ) : (
         <Composer
+          key={session.sessionId}
           busy={session.status === 'running' && !ask}
           disabled={!!session.compacting && session.status !== 'running'}
           placeholder={(session.compacting && session.status !== 'running') ? '正在压缩上下文，请稍候…' : (ask ? (ask.allowFreeform ? '选择上方选项，或输入你的回答…' : '选择上方一个选项…') : (planRequest ? '选择上方操作，或直接输入新指令让我照做…' : '输入消息…'))}
-          initialDraft={initialDraft}
-          onPersistDraft={onPersistDraft}
+          draft={draft}
           onSend={handleSend}
-          onAttach={onAttach}
-          onFocusPin={pinOnFocusIfAtBottom}
+          uploadFile={uploadFile}
+          attachmentBlocked={!!ask || !!planRequest}
         />
       )}
       {msgMenu && (

@@ -4,76 +4,92 @@
 // subdirectories, and a confirm that returns the currently-shown directory.
 // Modal styled like Dialog (scrim + centered card).
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useCockpit } from '../net/store';
+import { useKeyedAction, useKeyedResource } from '../lib/useKeyedResource';
+import { readDirectory } from '../lib/directoryResource';
 import { Icon } from './Icon';
+import { DirectoryModal } from './Dialog';
 
-export function DirPicker({ initialPath, onPick, onCancel }: {
-  initialPath: string;
-  onPick: (path: string) => void;
+export interface DirPickerProps {
+  initialPath?: string;
+  onPick: (path: string) => Promise<string>;
+  onCreated: (sessionId: string) => void;
   onCancel: () => void;
-}) {
+}
+
+export function DirPicker(props: DirPickerProps) {
+  return <DirectoryDialog key={props.initialPath ?? ''} {...props} />;
+}
+
+function DirectoryDialog({ initialPath, onPick, onCreated, onCancel }: DirPickerProps) {
   const listDir = useCockpit((s) => s.listDir);
-  const [path, setPath] = useState(initialPath);
-  const [parent, setParent] = useState<string | null>(null);
-  const [entries, setEntries] = useState<{ name: string; isDir: boolean }[] | null>(null);
-  const [edit, setEdit] = useState(initialPath);
+  const [requestedPath, setRequestedPath] = useState(initialPath);
+  const [editedPath, setEditedPath] = useState<string | null>(null);
+  const read = useCallback(() => readDirectory(listDir, requestedPath), [listDir, requestedPath]);
+  const key = JSON.stringify(['directory', requestedPath]);
+  const resource = useKeyedResource(key, read);
+  const action = useKeyedAction(key);
+  const path = resource.data?.path;
+  const parent = resource.data?.parent;
+  const entries = resource.data?.entries.filter((entry) => entry.isDir);
+  const edit = editedPath ?? path ?? requestedPath ?? '';
+  const load = (next: string | undefined) => {
+    if (!resource.connected || action.busy) return;
+    setEditedPath(null);
+    if (next === requestedPath) void resource.refresh();
+    else setRequestedPath(next);
+  };
+  const cancel = useCallback(() => { if (!action.busy) onCancel(); }, [action.busy, onCancel]);
+  const canPick = resource.valid && Boolean(path) && edit === path && !action.busy;
 
-  const load = useCallback((p: string) => {
-    setEntries(null);
-    listDir(p).then((r) => {
-      setPath(r.path);
-      setEdit(r.path);
-      setParent(r.parent);
-      setEntries(r.entries.filter((e) => e.isDir));
-    }).catch(() => setEntries([]));
-  }, [listDir]);
-
-  // Load the initial directory once when the picker opens. `load` sets state
-  // (the listing) — that's the picker's whole job, so the synchronous-setState
-  // lint is expected here.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { load(initialPath); }, [load, initialPath]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onCancel]);
-
+  const create = () => {
+    if (!canPick || !path) return;
+    let created: string | undefined;
+    void action.run(async () => { created = await onPick(path); }, () => {
+      if (created === undefined) return;
+      onCreated(created);
+      onCancel();
+    });
+  };
   return (
-    <div className="dialog-scrim" onPointerDown={onCancel}>
-      <div className="dialog-card dirpicker" role="dialog" aria-modal="true" aria-label="选择工作目录" onPointerDown={(e) => e.stopPropagation()}>
+    <DirectoryModal busy={action.busy} onCancel={cancel}>
         <h3 className="dialog-title">选择工作目录</h3>
 
         <div className="dirpicker-path">
           <input
             className="dialog-input"
             value={edit}
-            onChange={(e) => setEdit(e.target.value)}
-            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); load(edit); } }}
+            onChange={(e) => setEditedPath(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); load(edit.trim() || undefined); } }}
+            disabled={action.busy}
+            placeholder="服务器主目录"
             spellCheck={false} autoCapitalize="off" autoCorrect="off"
             aria-label="当前路径"
           />
-          <button type="button" className="btn-icon rp" aria-label="前往" title="前往" onClick={() => load(edit)}>
+          <button type="button" className="btn-icon rp" aria-label="前往" title="前往"
+            disabled={!resource.connected || resource.pending || action.busy} onClick={() => load(edit.trim() || undefined)}>
             <Icon name="reload" size={20} />
           </button>
         </div>
 
         <div className="dirpicker-list scrollable">
+          {resource.status && <div className="dirpicker-empty" role={resource.failed ? 'alert' : 'status'}>
+            {resource.status}
+          </div>}
+          {action.error && <div className="dirpicker-empty" role="alert">创建会话失败：{action.error}</div>}
           {parent && (
-            <button type="button" className="dirpicker-row up rp" onClick={() => load(parent)}>
+            <button type="button" className="dirpicker-row up rp" disabled={!resource.valid || action.busy} onClick={() => load(parent)}>
               <span className="dirpicker-ico"><Icon name="back" size={18} /></span>
               <span className="dirpicker-name">上级目录</span>
             </button>
           )}
-          {entries === null ? (
-            <div className="dirpicker-empty">加载中…</div>
-          ) : entries.length === 0 ? (
+          {resource.valid && entries?.length === 0 ? (
             <div className="dirpicker-empty">（没有子文件夹）</div>
           ) : (
-            entries.map((e) => (
-              <button key={e.name} type="button" className="dirpicker-row rp" onClick={() => load(`${path === '/' ? '' : path}/${e.name}`)}>
+            entries?.map((e) => (
+              <button key={e.name} type="button" className="dirpicker-row rp" disabled={!resource.valid || action.busy}
+                onClick={() => load(`${path === '/' ? '' : path}/${e.name}`)}>
                 <span className="dirpicker-ico folder"><Icon name="folder" size={18} /></span>
                 <span className="dirpicker-name">{e.name}</span>
                 <span className="dirpicker-enter"><Icon name="down" size={16} /></span>
@@ -83,12 +99,12 @@ export function DirPicker({ initialPath, onPick, onCancel }: {
         </div>
 
         <div className="dialog-actions">
-          <button type="button" className="dialog-btn rp" onClick={onCancel}>取消</button>
-          <button type="button" className="dialog-btn primary rp" onClick={() => onPick(path)}>
-            在此创建
+          <button type="button" className="dialog-btn rp" disabled={action.busy} onClick={cancel}>取消</button>
+          <button type="button" className="dialog-btn primary rp" disabled={!canPick} aria-busy={action.busy}
+            onClick={create}>
+            {action.busy ? '创建中…' : '在此创建'}
           </button>
         </div>
-      </div>
-    </div>
+    </DirectoryModal>
   );
 }

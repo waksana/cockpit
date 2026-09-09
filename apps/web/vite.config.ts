@@ -15,11 +15,17 @@ export default defineConfig({
       filename: 'sw.ts',
       injectRegister: null,
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png', 'icon.svg', 'apple-touch-icon.png'],
+      includeAssets: [
+        'favicon-refined-r4.ico', 'favicon-refined-r4.svg',
+        'favicon-refined-r4-16.png', 'favicon-refined-r4-32.png', 'icon-refined-r4.svg',
+        'icon-refined-r4-192.png', 'icon-refined-r4-512.png', 'apple-touch-icon-refined-r4.png',
+        'badge-refined-r4-96.png',
+      ],
       injectManifest: {
         globPatterns: ['**/*.{js,css,html}'],
       },
       manifest: {
+        id: '/',
         name: 'cockpit',
         short_name: 'cockpit',
         description: '控制运行在服务器上的 AI 会话',
@@ -29,9 +35,9 @@ export default defineConfig({
         background_color: '#fdf6e3',
         theme_color: '#fdf6e3',
         icons: [
-          { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
-          { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
-          { src: '/icon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
+          { src: '/icon-refined-r4-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+          { src: '/icon-refined-r4-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
+          { src: '/icon-refined-r4.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
         ],
       },
     }),

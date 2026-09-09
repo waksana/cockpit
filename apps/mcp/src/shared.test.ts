@@ -1,7 +1,69 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cappedJson, capped, shrinkList } from './shared.ts';
-import { CHARACTER_LIMIT } from './config.ts';
+import { mockHttp } from '../test-support/mock-http.ts';
+mockHttp(() => { throw new Error('Unexpected request in pure helper tests'); });
+const {
+  cappedJson, capped, shrinkList, ok, fail, McpServerStatus,
+  McpToggleOperation, McpServerSession, McpSessionResult, McpToggleResult,
+} = await import('./shared.ts');
+const { CHARACTER_LIMIT } = await import('./config.ts');
+
+test('MCP result helpers return one unchanged text representation', () => {
+  const text = '{"message":"line\\nnext","ok":false}';
+  assert.deepEqual(ok(text), { content: [{ type: 'text', text }] });
+  assert.deepEqual(fail(text), { content: [{ type: 'text', text: `Error: ${text}` }], isError: true });
+});
+
+for (const status of ['connected', 'failed', 'needs-auth', 'pending', 'disabled', 'not_configured', 'unloaded']) {
+  for (const state of ['running', 'cancelling', 'settling', 'succeeded', 'failed']) {
+    test(`canonical MCP adapters preserve nested unknown fields and failure: ${status}/${state}`, () => {
+      const operation = {
+        id: 'operation', desiredEnabled: true, state, startedAt: 1, completedAt: 2,
+        status, error: 'native operation detail', futureOperation: { nested: ['keep'] },
+      };
+      const server = {
+        name: 'server', detail: 'native detail', status, enabled: false, operation,
+        error: 'native server detail', futureServer: { nested: true },
+      };
+      const session = { loaded: false, servers: [server], futureEnvelope: [1, 2] };
+      const toggle = {
+        ok: false, applied: false, sessionId: 'session', name: 'server', enabled: false,
+        status, error: 'native failure', operation, futureToggle: { keep: null },
+      };
+      assert.equal(McpServerStatus.parse(status), status);
+      assert.deepEqual(McpToggleOperation.parse(operation), operation);
+      assert.deepEqual(McpServerSession.parse(server), server);
+      assert.deepEqual(McpSessionResult.parse(session), session);
+      assert.deepEqual(McpToggleResult.parse(toggle), toggle);
+    });
+  }
+}
+
+test('canonical MCP adapters still reject invalid fields at every validated boundary', () => {
+  const operation = { id: 'operation', desiredEnabled: true, state: 'settling', startedAt: 1, status: 'pending' };
+  const server = { name: 'server', detail: 'detail', status: 'pending', enabled: true, operation };
+  const toggle = { ok: true, applied: false, sessionId: 'session', name: 'server', enabled: true, status: 'pending', operation };
+  assert.equal(McpServerStatus.safeParse('future-status').success, false);
+  for (const patch of [{ id: null }, { desiredEnabled: 'true' }, { state: 'unknown' }, { startedAt: '1' }, { completedAt: '2' }, { status: 'unknown' }, { error: false }]) {
+    const invalid = { ...operation, ...patch };
+    assert.equal(McpToggleOperation.safeParse(invalid).success, false);
+    assert.equal(McpServerSession.safeParse({ ...server, operation: invalid }).success, false);
+    assert.equal(McpSessionResult.safeParse({ loaded: true, servers: [{ ...server, operation: invalid }] }).success, false);
+    assert.equal(McpToggleResult.safeParse({ ...toggle, operation: invalid }).success, false);
+  }
+  for (const patch of [{ name: null }, { detail: 1 }, { enabled: 'true' }, { status: 'unknown' }, { error: false }]) {
+    assert.equal(McpServerSession.safeParse({ ...server, ...patch }).success, false);
+  }
+  for (const patch of [{ loaded: 'false' }, { servers: {} }]) {
+    assert.equal(McpSessionResult.safeParse({ loaded: false, servers: [], ...patch }).success, false);
+  }
+  for (const patch of [{ ok: 'true' }, { applied: null }, { sessionId: 1 }, { operation: undefined }]) {
+    assert.equal(McpToggleResult.safeParse({ ...toggle, ...patch }).success, false);
+  }
+  const { operation: omitted, ...withoutOperation } = server;
+  assert.ok(omitted);
+  assert.deepEqual(McpServerSession.parse(withoutOperation), withoutOperation);
+});
 
 // Build a value whose JSON.stringify is comfortably over the character budget and,
 // critically, contains literal control characters (newlines/tabs) and embedded

@@ -1,5 +1,10 @@
 # Cockpit global review — master index
 
+> Historical, pre-modernization review. Its SDK, governance, memory-policy and
+> authentication descriptions are not the current deployment. See the
+> [2026-09-08 final foundation review](2026-09-08-foundation.md) for current
+> conclusions, implemented fixes, evidence and remaining limitations.
+
 A coordinated, whole-codebase review of cockpit (≈14.3k lines of TS/TSX). The
 architecture was divided into 7 modules; each was reviewed in its own dedicated
 session against the durable invariants (backend-owns-state / frontend pure

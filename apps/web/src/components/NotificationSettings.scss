@@ -1,0 +1,67 @@
+.notification-settings-scrim {
+  padding: max(1rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right))
+    max(1rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+}
+
+.notification-settings {
+  max-width: 28rem;
+  max-height: calc(100dvh - 2rem - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
+
+  .notification-settings-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.4rem;
+
+    .dialog-title { margin: 0; }
+    .dialog-btn { flex: none; }
+  }
+
+  .notification-settings-status {
+    margin: 0 0 0.8rem;
+    font-size: var(--font-size-14);
+    line-height: 1.5;
+
+    > div {
+      display: grid;
+      grid-template-columns: 7rem minmax(0, 1fr);
+      gap: 0.5rem;
+      padding-block: 0.15rem;
+    }
+
+    dt { color: var(--secondary-text-color); }
+    dd { margin: 0; color: var(--primary-text-color); }
+  }
+
+  .notification-settings-error { color: var(--danger-color); }
+  .notification-settings-details { margin-block: 0.75rem 0.4rem; }
+  .dialog-actions { flex-wrap: wrap; }
+
+  .notification-settings-test {
+    display: grid;
+    gap: 0.4rem;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid color-mix(in srgb, var(--primary-text-color) 12%, transparent);
+    font-size: var(--font-size-14);
+    color: var(--secondary-text-color);
+
+    label {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.4rem;
+      line-height: 1.5;
+    }
+
+    input { flex: none; accent-color: var(--primary-color); }
+    .dialog-btn { justify-self: end; }
+  }
+
+  // Keep unavailable controls focusable when an operation becomes busy.
+  [aria-disabled='true'] { opacity: 0.5; cursor: not-allowed; }
+  :is(button, input):focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+}

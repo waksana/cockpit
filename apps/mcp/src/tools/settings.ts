@@ -3,7 +3,7 @@
 // The two destructive ones require confirm=true.
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { CockpitError, intent } from '../cockpit.js';
+import { CockpitError, protocolIntent as intent } from '../cockpit.js';
 import { ok, fail, type ToolResult } from '../shared.js';
 
 export function registerSettingsTools(server: McpServer): void {
@@ -18,7 +18,7 @@ export function registerSettingsTools(server: McpServer): void {
         '(e.g. low/medium/high/xhigh, only where supported); context_tier is default or long_context.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id'),
-        model_id: z.string().min(1).describe('The model id (from cockpit_get_session → availableModels[].id)'),
+        model_id: z.string().min(1).describe('The model id (from cockpit_get_session → availableModels[].modelId)'),
         reasoning_effort: z.string().optional().describe('Optional reasoning effort, where the model supports it'),
         context_tier: z.enum(['default', 'long_context']).optional().describe('Optional context window tier'),
       },
@@ -26,13 +26,13 @@ export function registerSettingsTools(server: McpServer): void {
     },
     async ({ session_id, model_id, reasoning_effort, context_tier }): Promise<ToolResult> => {
       try {
-        const res = await intent<{ ok: boolean }>('setModel', {
+        await intent('setModel', {
           sessionId: session_id,
           modelId: model_id,
           ...(reasoning_effort ? { reasoningEffort: reasoning_effort } : {}),
           ...(context_tier ? { contextTier: context_tier } : {}),
         });
-        return ok(`Set ${session_id} model to ${model_id}.`, { ok: res.ok });
+        return ok(`Set ${session_id} model to ${model_id}.`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }
@@ -45,8 +45,9 @@ export function registerSettingsTools(server: McpServer): void {
     {
       title: 'Set a session agent mode',
       description:
-        "Change a session's agent mode: interactive (asks before acting), plan (plans first, no " +
-        'edits until approved), or autopilot (acts autonomously). Mirrors the mode picker in the UI.',
+        "Change a session's interaction mode: interactive, plan (plans first), or autopilot " +
+        '(acts autonomously). These are interaction modes, NOT permission controls: permissionPolicy ' +
+        'stays allow-all (always auto-approve). This tool cannot change permissions or add approval dialogs.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id'),
         mode: z.enum(['interactive', 'plan', 'autopilot']).describe('The agent mode to set'),
@@ -55,8 +56,8 @@ export function registerSettingsTools(server: McpServer): void {
     },
     async ({ session_id, mode }): Promise<ToolResult> => {
       try {
-        const res = await intent<{ ok: boolean }>('setMode', { sessionId: session_id, mode });
-        return ok(`Set ${session_id} mode to ${mode}.`, { ok: res.ok });
+        await intent('setMode', { sessionId: session_id, mode });
+        return ok(`Set ${session_id} interaction mode to ${mode}. permissionPolicy remains allow-all (always auto-approve).`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }
@@ -82,11 +83,11 @@ export function registerSettingsTools(server: McpServer): void {
     async ({ session_id, custom_instructions, confirm }): Promise<ToolResult> => {
       if (!confirm) return fail('Compaction is irreversible. Re-call with confirm=true to proceed.');
       try {
-        const res = await intent<{ ok: boolean }>('session/compact', {
+        await intent('session/compact', {
           sessionId: session_id,
           ...(custom_instructions ? { customInstructions: custom_instructions } : {}),
         });
-        return ok(`Compacted ${session_id}.`, { ok: res.ok });
+        return ok(`Compacted ${session_id}.`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }
@@ -99,14 +100,14 @@ export function registerSettingsTools(server: McpServer): void {
     {
       title: 'Rewind a session to a message',
       description:
-        'Roll a session back to an earlier message, discarding everything after it (the rewind ' +
-        'operation). Get the target message id from cockpit_read_session. Optionally also roll back ' +
-        'file edits made after that point with rollback_files=true. This DISCARDS later history and ' +
-        'cannot be undone, so it requires confirm=true.',
+        'Rewind to before a selected user message, discarding that turn and later history. ' +
+        'Get its message id from cockpit_read_session. Set rollback_files=true to request native file rollback; ' +
+        'the backend owns support and conflict handling, and failures are returned explicitly. ' +
+        'This changes history and cannot be undone, so it requires confirm=true.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id'),
         to_msg_id: z.string().min(1).describe('The message id to rewind to (from cockpit_read_session)'),
-        rollback_files: z.boolean().default(false).describe('Also revert file edits made after that message'),
+        rollback_files: z.boolean().default(false).describe('Request native file rollback along with the conversation rewind'),
         confirm: z.boolean().default(false).describe('Must be true — rewind discards later history irreversibly'),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
@@ -114,12 +115,12 @@ export function registerSettingsTools(server: McpServer): void {
     async ({ session_id, to_msg_id, rollback_files, confirm }): Promise<ToolResult> => {
       if (!confirm) return fail('Rewind discards later history irreversibly. Re-call with confirm=true to proceed.');
       try {
-        const res = await intent<{ ok: boolean }>('session/rewind', {
+        await intent('session/rewind', {
           sessionId: session_id,
           toMsgId: to_msg_id,
           ...(rollback_files ? { rollbackFiles: true } : {}),
         });
-        return ok(`Rewound ${session_id} to ${to_msg_id}${rollback_files ? ' (files rolled back)' : ''}.`, { ok: res.ok });
+        return ok(`Rewound ${session_id} to ${to_msg_id}. ${rollback_files ? 'Native file rollback was requested.' : 'Files were not rolled back.'}`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }

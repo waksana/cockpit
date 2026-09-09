@@ -8,6 +8,7 @@
   z-index: 100;
   min-width: 11.25rem;
   width: max-content;
+  max-width: calc(100vw - 16px);
   font-size: 1rem;
   -webkit-touch-callout: none;
   padding: 0.25rem 0;
@@ -17,6 +18,17 @@
   -webkit-backdrop-filter: var(--menu-backdrop-filter);
   box-shadow: var(--menu-box-shadow);
 }
+
+.btn-menu-caption {
+  max-width: 18rem;
+  padding: 0.5rem 1rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--secondary-text-color);
+  font-size: var(--font-size-13);
+}
+.btn-menu-separator { border-top: 1px solid var(--border-color); margin: 0.25rem 0; }
 
 .btn-menu-item {
   display: flex;

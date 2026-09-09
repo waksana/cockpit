@@ -5,16 +5,20 @@
 // The connection/status of MCP is per-session (each session owns its McpHost);
 // the server/skill *definitions* are global. See docs/cockpit-plan.md.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
+import type { ChatSession } from '../net/types';
 import { useCockpit } from '../net/store';
+import { useKeyedAction } from '../lib/useKeyedResource';
+import { useSessionResource } from '../lib/useSessionResource';
 import { Icon } from './Icon';
 import { McpStatusPill } from './McpStatus';
+import { PanelCloseButton, ResourceStatus, SessionResume } from './SessionPanelKit';
 
 // ── Switch ─────────────────────────────────────────────────────────────────────
-export function Toggle({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
+export function Toggle({ on, onChange, disabled, label }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string }) {
   return (
     <button
-      type="button" role="switch" aria-checked={on} disabled={disabled}
+      type="button" role="switch" aria-label={label} aria-checked={on} disabled={disabled}
       className={`switch${on ? ' is-on' : ''}`}
       onClick={() => onChange(!on)}
     >
@@ -30,7 +34,7 @@ function ManageRow({ name, sub, badge, toggle }: {
   name: string; sub?: string; badge?: React.ReactNode; toggle: React.ReactNode;
 }) {
   return (
-    <div className="manage-row">
+    <div className="manage-row manage-session-row">
       <div className="manage-row-main">
         <div className="manage-row-name">{name}{badge}</div>
         {sub && <div className="manage-row-sub">{sub}</div>}
@@ -41,82 +45,99 @@ function ManageRow({ name, sub, badge, toggle }: {
 }
 
 // ── Shell (header + scrollable body) ───────────────────────────────────────────
-function ManageShell({ title, onClose, action, loading, empty, children }: {
+function ManageShell({ title, onClose, action, status, failed, empty, children, error }: {
   title: string; onClose: () => void; action?: React.ReactNode;
-  loading?: boolean; empty?: string; children?: React.ReactNode;
+  status: string | null; failed?: boolean; empty?: string; children?: React.ReactNode;
+  error?: string | null;
 }) {
   return (
     <>
       <header className="manage-header">
-        <button className="btn-icon rp" type="button" aria-label="关闭" onClick={onClose}>
-          <Icon name="close" size={24} />
-        </button>
-        <span className="manage-title">{title}</span>
+        <PanelCloseButton onClose={onClose} />
+        <span className="manage-title info-panel-title" title={title}>{title}</span>
         {action}
       </header>
       <div className="manage-body scrollable">
-        {loading ? <div className="manage-empty">加载中…</div>
-          : !children || (Array.isArray(children) && children.length === 0)
-            ? <div className="manage-empty">{empty}</div>
-            : children}
+        <ResourceStatus status={status} failed={failed} />
+        {error && <div className="manage-empty" role="alert">操作失败：{error}</div>}
+        {children}
+        {empty && <div className="manage-empty">{empty}</div>}
       </div>
     </>
   );
 }
 
-function RefreshBtn({ onClick }: { onClick: () => void }) {
+function RefreshBtn({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
   return (
-    <button className="btn-icon rp manage-action" type="button" aria-label="刷新" onClick={onClick}>
+    <button className="btn-icon rp manage-action" type="button" aria-label="刷新" onClick={onClick} disabled={disabled}>
       <Icon name="reload" size={20} />
     </button>
   );
 }
 
 // ── Per-session MCP ────────────────────────────────────────────────────────────
-export function SessionMcp({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
+type SessionManageProps = { session: ChatSession; onClose: () => void };
+
+export function SessionMcp({ session, onClose }: SessionManageProps) {
+  const sessionId = session.sessionId;
   const mcpSession = useCockpit((s) => s.mcpSession);
   const mcpToggleSession = useCockpit((s) => s.mcpToggleSession);
-  const [rows, setRows] = useState<Awaited<ReturnType<typeof mcpSession>> | null>(null);
-  const load = useCallback(() => { mcpSession(sessionId).then(setRows).catch(() => setRows([])); }, [mcpSession, sessionId]);
-  useEffect(() => { load(); }, [load]);
-
+  const load = useCallback(() => mcpSession(sessionId), [mcpSession, sessionId]);
+  const resource = useSessionResource(sessionId, `mcp:${sessionId}`, load);
+  const action = useKeyedAction(`mcp:${sessionId}`);
+  const disabled = !resource.valid || action.busy;
   const toggle = (name: string, on: boolean) => {
-    setRows((r) => r?.map((x) => (x.name === name ? { ...x, enabled: on, status: on ? 'pending' : 'disabled' } : x)) ?? r);
-    mcpToggleSession(sessionId, name, on).then(load).catch(load);
+    void action.run(async () => {
+      try { await mcpToggleSession(sessionId, name, on); }
+      finally { await resource.refresh(); }
+    });
   };
 
   return (
-    <ManageShell title="MCP 服务器" onClose={onClose} action={<RefreshBtn onClick={load} />}
-      loading={rows === null} empty="没有配置 MCP 服务器">
-      {rows?.map((s) => (
+    <ManageShell title={`本会话 MCP · ${session.title}`} onClose={onClose}
+      action={<RefreshBtn disabled={resource.requiresResume || !resource.connected || resource.pending || action.busy} onClick={() => { void resource.refresh(); }} />}
+      status={resource.status} failed={resource.failed} error={action.error}
+      empty={resource.valid && resource.data?.length === 0 ? '本会话没有可用的 MCP 服务器' : undefined}>
+      <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
+      {resource.valid && !action.error && !!resource.data?.length &&
+        <p className="manage-scope">仅本会话有效；重载 MCP 或重新加载会话后采用全局默认。</p>}
+      {resource.data?.map((s) => (
         <ManageRow key={s.name} name={s.name} sub={s.error || s.detail}
           badge={<McpStatusPill status={s.status} />}
-          toggle={<Toggle on={s.enabled} onChange={(v) => toggle(s.name, v)} />} />
+          toggle={<Toggle label={`启用 ${s.name}`} disabled={disabled} on={s.enabled} onChange={(v) => toggle(s.name, v)} />} />
       ))}
     </ManageShell>
   );
 }
 
 // ── Per-session Skills ─────────────────────────────────────────────────────────
-export function SessionSkills({ sessionId, onClose }: { sessionId: string; onClose: () => void }) {
+export function SessionSkills({ session, onClose }: SessionManageProps) {
+  const sessionId = session.sessionId;
   const skillsSession = useCockpit((s) => s.skillsSession);
   const skillsToggleSession = useCockpit((s) => s.skillsToggleSession);
-  const [rows, setRows] = useState<Awaited<ReturnType<typeof skillsSession>> | null>(null);
-  const load = useCallback(() => { skillsSession(sessionId).then(setRows).catch(() => setRows([])); }, [skillsSession, sessionId]);
-  useEffect(() => { load(); }, [load]);
-
+  const load = useCallback(() => skillsSession(sessionId), [skillsSession, sessionId]);
+  const resource = useSessionResource(sessionId, `skills:${sessionId}`, load);
+  const action = useKeyedAction(`skills:${sessionId}`);
   const toggle = (name: string, enabled: boolean) => {
-    setRows((r) => r?.map((x) => (x.name === name ? { ...x, enabled } : x)) ?? r);
-    skillsToggleSession(sessionId, name, enabled).then(load).catch(load);
+    void action.run(async () => {
+      try { await skillsToggleSession(sessionId, name, enabled); }
+      finally { await resource.refresh(); }
+    });
   };
 
   return (
-    <ManageShell title="Skills" onClose={onClose} action={<RefreshBtn onClick={load} />}
-      loading={rows === null} empty="没有可用的 skill">
-      {rows?.map((s) => (
+    <ManageShell title={`本会话 Skills · ${session.title}`} onClose={onClose}
+      action={<RefreshBtn disabled={resource.requiresResume || !resource.connected || resource.pending || action.busy} onClick={() => { void resource.refresh(); }} />}
+      status={resource.status} failed={resource.failed} error={action.error}
+      empty={resource.valid && resource.data?.length === 0 ? '没有可用的 skill' : undefined}>
+      <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
+      {resource.valid && !action.error && !!resource.data?.length &&
+        <p className="manage-scope">仅本会话临时有效；卸载后重新加载会话时采用全局配置。</p>}
+      {resource.data?.map((s) => (
         <ManageRow key={s.name} name={s.name} sub={s.description}
           badge={s.source ? <span className="manage-tag">{s.source}</span> : undefined}
-          toggle={<Toggle on={s.enabled} onChange={(v) => toggle(s.name, v)} />} />
+          toggle={<Toggle label={`启用 ${s.name}`} disabled={!resource.valid || action.busy}
+            on={s.enabled} onChange={(v) => toggle(s.name, v)} />} />
       ))}
     </ManageShell>
   );

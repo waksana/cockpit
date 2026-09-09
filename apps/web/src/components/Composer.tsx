@@ -7,17 +7,16 @@
 //  - voice dictation (Web Speech API) appended into the text
 //
 // Draft safety:
-//  - the typed text is seeded from `initialDraft` on mount and persisted via
-//    `onPersistDraft` on every change + on unmount, so switching sessions (which
-//    remounts this component) never loses unsent text.
-//  - `onSend` returns a boolean: true only when the message was actually
-//    dispatched on an open socket. We clear the box ONLY then — if the bridge is
-//    disconnected the text is kept (and the store surfaces an error), so a send
-//    during a connection blip is never silently lost.
+//  - every edit is persisted synchronously; unmount never writes a stale draft.
+//  - only an acknowledged POST can clear unchanged per-session revisions.
+//  - pending submissions block another send, not typing or dictation.
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { createVoiceController, isVoiceSupported } from '../lib/voice';
 import type { VoiceController } from '../lib/voice';
+import { stagedAttachments, type SessionDraft, type UploadFile } from '../lib/attachmentSend';
+import { attachmentHref } from '../lib/upload';
+import { fileDownloadUrl, filePreview } from '../lib/managedFile';
 import { useCockpit } from '../net/store';
 import { Icon } from './Icon';
 
@@ -29,39 +28,39 @@ interface ComposerProps {
   disabled?: boolean;
   busy?: boolean;
   placeholder?: string;
-  initialDraft?: string;
-  onPersistDraft?: (text: string) => void;
-  onSend: (text: string) => boolean;
-  onAttach?: (file: File) => Promise<void>;
+  draft: SessionDraft;
+  onSend: () => Promise<boolean>;
+  uploadFile?: UploadFile;
+  attachmentBlocked?: boolean;
   onFocusPin?: () => void;
 }
 
 export function Composer({
-  disabled, busy, placeholder, initialDraft, onPersistDraft, onSend, onAttach, onFocusPin,
+  disabled, busy, placeholder, draft, onSend, uploadFile, attachmentBlocked, onFocusPin,
 }: ComposerProps) {
-  const [text, setText] = useState(initialDraft ?? '');
+  const snapshot = useSyncExternalStore(
+    draft.subscribe, draft.getSnapshot, draft.getSnapshot,
+  );
+  const { text, pending, error: sendError } = snapshot;
+  const attachments = stagedAttachments(snapshot);
   const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const ownerRef = useRef<object | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const voiceRef = useRef<VoiceController | null>(null);
   const voiceSupported = isVoiceSupported();
   const speechToken = useCockpit((s) => s.speechToken);
 
-  // Persist the latest text on unmount (session switch) so the draft survives a
-  // remount. Refs track the live value/callback for the unmount-time read; they
-  // are updated in effects (not during render) to satisfy the hooks rules.
-  const textRef = useRef(text);
-  const persistRef = useRef(onPersistDraft);
-  useEffect(() => { textRef.current = text; });
-  useEffect(() => { persistRef.current = onPersistDraft; });
-  useEffect(() => () => { persistRef.current?.(textRef.current); }, []);
+  useLayoutEffect(() => {
+    ownerRef.current = {};
+    return () => { ownerRef.current = null; };
+  }, [draft]);
 
-  function update(next: string) {
-    setText(next);
-    onPersistDraft?.(next);
-  }
+  const update = useCallback((next: string) => {
+    if (!ownerRef.current) return;
+    draft.edit(next);
+  }, [draft]);
 
   useEffect(() => {
     const ta = taRef.current;
@@ -71,17 +70,18 @@ export function Composer({
     return () => ta.removeEventListener('focus', onFocus);
   }, [onFocusPin]);
 
-  function submit() {
-    const t = text.trim();
-    if (!t || disabled) return;
-    // Send works even while a turn is running — the backend enqueues it
-    // (CLI-style queue). Only clear the box if actually dispatched on an open
-    // socket; otherwise keep the text (store surfaces a "not connected" error).
-    const dispatched = onSend(t);
-    if (!dispatched) return;
-    voiceRef.current?.stop();
-    setListening(false);
-    update('');
+  async function submit() {
+    const submitted = draft.getSnapshot();
+    if (disabled || submitted.pending || !ownerRef.current
+      || (attachmentBlocked && submitted.staged)) return;
+    const owner = ownerRef.current;
+    const sent = await onSend();
+    const current = draft.getSnapshot();
+    if (sent && ownerRef.current === owner && !current.text
+      && current.revision === submitted.revision + 1) {
+      voiceRef.current?.stop();
+      setListening(false);
+    }
   }
 
   // Create the voice controller at mount and warm the speech token AHEAD of any
@@ -92,11 +92,8 @@ export function Composer({
     if (!voiceSupported) return;
     const ctrl = createVoiceController({
       onFinal: (chunk) => {
-        setText((prev) => {
-          const next = prev ? `${prev}${prev.endsWith(' ') ? '' : ' '}${chunk}` : chunk;
-          persistRef.current?.(next);
-          return next;
-        });
+        const prev = draft.getSnapshot().text;
+        update(prev ? `${prev}${prev.endsWith(' ') ? '' : ' '}${chunk}` : chunk);
       },
       onStateChange: setListening,
       onError: (msg) => { setVoiceError(msg); setListening(false); },
@@ -104,7 +101,7 @@ export function Composer({
     ctrl.prepare();
     voiceRef.current = ctrl;
     return () => { ctrl.stop(); voiceRef.current = null; };
-  }, [voiceSupported, speechToken]);
+  }, [voiceSupported, speechToken, update, draft]);
 
   function toggleVoice() {
     const ctrl = voiceRef.current;
@@ -114,37 +111,70 @@ export function Composer({
     else ctrl.start();
   }
 
-  const canSend = text.trim().length > 0 && !disabled;
+  const canSend = (text.trim().length > 0 || attachments.length > 0)
+    && attachments.every(item => item.status === 'ready' && !attachmentBlocked) && !disabled && !pending;
 
-  async function pickFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
+  function pickFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
     e.target.value = ''; // allow re-picking the same file
-    if (!file || !onAttach || uploading) return;
-    setUploading(true);
-    try { await onAttach(file); } finally { setUploading(false); }
+    if (disabled || !ownerRef.current) return;
+    for (const file of files) void draft.addAttachment(file, uploadFile);
   }
 
   return (
     <>
+      {sendError && (
+        <button type="button" className="chat-input-notice" onClick={draft.dismissError}>
+          {sendError}
+        </button>
+      )}
       {voiceError && (
         <button type="button" className="chat-input-notice" onClick={() => setVoiceError(null)}>
           {voiceError}
         </button>
       )}
-      <div className="chat-input">
-      {onAttach && (
-        <>
-          <input ref={fileRef} type="file" hidden onChange={pickFile} />
-          <button
-            type="button" className="chat-input-btn attach rp"
-            disabled={disabled || uploading}
-            onClick={() => fileRef.current?.click()}
-            aria-label="上传文件或图片" title="上传文件或图片"
-          >
-            {uploading ? <span className="spinner" aria-hidden="true" /> : <Icon name="attach" size={22} />}
+      {attachments.length > 0 && <div className="chat-staged-list">{attachments.map(staged => {
+        const attachmentUrl = staged.attachment ? attachmentHref(staged.attachment.url) : undefined;
+        const preview = staged.attachment && filePreview(staged.attachment);
+        return <div key={staged.generation} className="chat-staged-attachment" role="group" aria-label="暂存附件">
+          {attachmentUrl && preview === 'image' ? (
+            <a href={attachmentUrl} target="_blank" rel="noopener noreferrer" className="chat-staged-image">
+              <img src={attachmentUrl} alt={staged.name} />
+            </a>
+          ) : attachmentUrl && preview === 'video' ? <video controls preload="metadata" src={attachmentUrl} aria-label={staged.name} />
+            : <span className="chat-staged-icon"><Icon name="file" size={24} /></span>}
+          <div className="chat-staged-meta">
+            {attachmentUrl ? (
+              <a href={fileDownloadUrl(staged.attachment!.url)} download={staged.name} className="chat-staged-name">{staged.name}</a>
+            ) : <span className="chat-staged-name">{staged.name}</span>}
+            <span className="chat-staged-status" aria-live="polite">
+              {staged.status === 'uploading' ? '上传中…（尚未发送）'
+                : staged.status === 'failed' ? staged.error
+                : `已暂存 · ${staged.size ?? 0} B · 随消息发送`}
+            </span>
+            {staged.attachment?.mime && <span className="chat-staged-status">{staged.attachment.mime}</span>}
+            {staged.status === 'failed' && <button type="button" onClick={() => void draft.retryAttachment(staged.generation, uploadFile)}
+              aria-label={`重试上传 ${staged.name}`}>重试上传</button>}
+            {attachmentBlocked && (
+              <span className="chat-staged-status">请先处理上方提问或计划，或移除附件后发送文字。</span>
+            )}
+          </div>
+          <button type="button" className="chat-input-btn attach rp" onClick={() => draft.removeAttachment(staged.generation)}
+            aria-label="移除暂存附件" title="移除暂存附件">
+            <Icon name="close" size={18} />
           </button>
-        </>
-      )}
+        </div>;
+      })}</div>}
+      <div className="chat-input">
+      <input ref={fileRef} type="file" multiple hidden onChange={pickFile} />
+      <button
+        type="button" className="chat-input-btn attach rp"
+        disabled={disabled}
+        onClick={() => fileRef.current?.click()}
+        aria-label={attachments.length ? '添加附件' : '上传文件或图片'} title="最多 20 个附件"
+      >
+        <Icon name="attach" size={22} />
+      </button>
       <textarea
         ref={taRef}
         className="chat-input-message"

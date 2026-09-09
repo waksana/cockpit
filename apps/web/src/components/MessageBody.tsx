@@ -1,42 +1,42 @@
 import { memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-
-// Image sanitizer allowlist:
-//   - same-origin paths only: starts with `/`, `./`, `../`
-// Everything else (external http(s), protocol-relative, javascript:, file:,
-// data: URIs, other schemes) is blocked and rendered as a click-through link so
-// content isn't silently lost. Note: react-markdown's defaultUrlTransform already
-// strips any non-(https?|ircs?|mailto|xmpp) `src` to '' before this renderer runs,
-// so e.g. `data:`/`javascript:` srcs arrive here empty and fail the `!src` guard.
-function isImgSrcAllowed(src: string | undefined): boolean {
-  if (!src) return false
-  if (src.startsWith('/') || src.startsWith('./') || src.startsWith('../')) return true
-  return false
-}
+import { isMessageImageSrcAllowed } from '../lib/messageImage'
+import { fileDownloadUrl, managedFileMentions, managedUploadPath } from '../lib/managedFile'
+import { ManagedFileMention } from './FileCard'
 
 // Chat-message markdown renderer. GFM enables tables, strikethrough, task lists,
 // and autolinks. Links open in a new tab; code/diff fences render as standard
 // <pre><code>. memo'd because body is stable per message — without it every
 // composer keystroke would re-run the remark pipeline for every message.
-export const MessageBody = memo(function MessageBody({ body }: { body: string }) {
+export const MessageBody = memo(function MessageBody({ body, sessionId, files }: { body: string; sessionId?: string; files?: string[] }) {
   return (
     <div className="message-body">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, [managedFileMentions, { files }]]}
         components={{
-          a: ({ node: _node, ...props }) => (
-            <a {...props} target="_blank" rel="noopener noreferrer" />
-          ),
+          a: ({ node, href, children, ...props }) => {
+            const url = managedUploadPath(href);
+            if (url && node?.properties['data-managed-preview'] === 'yes') {
+              return <ManagedFileMention url={url} name={typeof children === 'string' ? children : decodeURIComponent(url.split('/').pop()!)} sessionId={sessionId} />
+            }
+            if (node?.children.some(child => child.type === 'element' && child.tagName === 'img'
+              && typeof child.properties.src === 'string' && managedUploadPath(child.properties.src))) {
+              return <span>{children}<a {...props} href={url ? fileDownloadUrl(url) : href} target="_blank" rel="noopener noreferrer">打开链接</a></span>
+            }
+            return <a {...props} href={url ? fileDownloadUrl(url) : href} target="_blank" rel="noopener noreferrer">{children}</a>
+          },
           table: ({ node: _node, ...props }: { node?: unknown }) => (
             <table data-chat-table {...props} />
           ),
-          img: ({ node: _node, src, alt, ...rest }: {
-            node?: unknown
-            src?: string
-            alt?: string
-          }) => {
-            if (isImgSrcAllowed(src)) {
+          img: ({ node, src, alt, ...rest }) => {
+            const url = managedUploadPath(src);
+            if (url) {
+              return node?.properties['data-managed-preview'] === 'yes'
+                ? <ManagedFileMention url={url} name={alt || decodeURIComponent(url.split('/').pop()!)} sessionId={sessionId} />
+                : <a href={fileDownloadUrl(url)} download>{alt || '下载原文件'}</a>
+            }
+            if (isMessageImageSrcAllowed(src)) {
               return <img src={src} alt={alt ?? ''} {...rest} />
             }
             return (

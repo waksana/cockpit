@@ -4,7 +4,7 @@
 // Get the requestId from cockpit_get_session (ask / planRequest / elicitation).
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { CockpitError, intent } from '../cockpit.js';
+import { CockpitError, protocolIntent as intent } from '../cockpit.js';
 import { ok, fail, type ToolResult } from '../shared.js';
 
 export function registerRespondTools(server: McpServer): void {
@@ -28,13 +28,13 @@ export function registerRespondTools(server: McpServer): void {
     },
     async ({ session_id, request_id, answer, was_freeform }): Promise<ToolResult> => {
       try {
-        const res = await intent<{ ok: boolean }>('respondAsk', {
+        await intent('respondAsk', {
           sessionId: session_id,
           requestId: request_id,
           answer,
           wasFreeform: was_freeform,
         });
-        return ok(`Answered ask ${request_id} on ${session_id}.`, { ok: res.ok });
+        return ok(`Answered ask ${request_id} on ${session_id}.`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }
@@ -45,12 +45,13 @@ export function registerRespondTools(server: McpServer): void {
   server.registerTool(
     'cockpit_respond_plan',
     {
-      title: 'Approve/handle an exit-plan-mode request',
+      title: 'Handle an exit-plan-mode request',
       description:
         'Respond to a session paused on an exit_plan_mode request (the agent finished planning and ' +
         'asks how to proceed). Get the requestId and the offered actions from cockpit_get_session → ' +
         'planRequest. action is one of: exit_only (just leave plan mode), interactive (proceed ' +
-        'interactively), autopilot (proceed autonomously), autopilot_fleet.',
+        'interactively), autopilot (proceed autonomously), autopilot_fleet. This selects interaction ' +
+        'behavior, not tool permissions; permissionPolicy remains allow-all (always auto-approve).',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id'),
         request_id: z.string().min(1).describe('The plan requestId (from cockpit_get_session → planRequest.requestId)'),
@@ -62,12 +63,12 @@ export function registerRespondTools(server: McpServer): void {
     },
     async ({ session_id, request_id, action }): Promise<ToolResult> => {
       try {
-        const res = await intent<{ ok: boolean }>('respondPlan', {
+        await intent('respondPlan', {
           sessionId: session_id,
           requestId: request_id,
           action,
         });
-        return ok(`Responded to plan ${request_id} on ${session_id} with "${action}".`, { ok: res.ok });
+        return ok(`Responded to plan ${request_id} on ${session_id} with "${action}".`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }
@@ -97,12 +98,12 @@ export function registerRespondTools(server: McpServer): void {
     },
     async ({ session_id, request_id, message }): Promise<ToolResult> => {
       try {
-        const res = await intent<{ ok: boolean }>('planSupersede', {
+        await intent('planSupersede', {
           sessionId: session_id,
           requestId: request_id,
           message,
         });
-        return ok(`Superseded plan ${request_id} on ${session_id} with a new instruction (plan discarded, message run, session returns to plan mode).`, { ok: res.ok });
+        return ok(`Superseded plan ${request_id} on ${session_id} with a new instruction (plan discarded, message run, session returns to plan mode).`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }
@@ -127,12 +128,12 @@ export function registerRespondTools(server: McpServer): void {
     },
     async ({ session_id, request_id, action }): Promise<ToolResult> => {
       try {
-        const res = await intent<{ ok: boolean }>('respondElicitation', {
+        await intent('respondElicitation', {
           sessionId: session_id,
           requestId: request_id,
           action,
         });
-        return ok(`Responded to elicitation ${request_id} on ${session_id} with "${action}".`, { ok: res.ok });
+        return ok(`Responded to elicitation ${request_id} on ${session_id} with "${action}".`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }

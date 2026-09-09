@@ -1,539 +1,285 @@
-# cockpit — project plan & roadmap
+# Cockpit foundation
 
-cockpit is a personal, single-user web console (`https://cockpit.rbym47.com`) to
-drive GitHub Copilot CLI agent sessions from any device. It runs the in-process
-`@github/copilot/sdk`, with a stateful authoritative backend and a thin React
-projection frontend, presented in a Telegram-aligned UI.
+Cockpit is remote Copilot plus the file/image and browser interactions needed to
+use it from a computer or phone. Web and MCP access one authoritative backend API.
+It intentionally covers a subset of CLI capabilities, not a second agent platform.
 
-This is the single source of truth for **where the project is and where it's
-going**. Detailed change history lives in the session checkpoints; design
-deviations from Telegram live in [`cockpit-tweb-diff.md`](./cockpit-tweb-diff.md);
-the Telegram study notes in [`telegram-study.md`](./telegram-study.md).
+## Product boundary
 
----
+Reliability, usable mobile chat and simple ownership take priority over adding
+features. Keep chat, session controls, questions/plans, explicit cross-session
+interaction, history, and file exchange.
 
-## Product boundary (owner-approved 2026-09-07)
+Cockpit does not own fleet governance. Hooks, flows, executable gates, worker
+classification, automatic outfitting and governance timers are not part of the
+foundation. Old governance preferences are preserved as inert data, not re-armed.
+Upper-layer applications can use the same published APIs and MCP.
+Reliable wall-clock schedules and external webhooks belong in that upper layer:
+receive the event there, apply its rules, then call a Cockpit API. Native
+execution hooks remain native; exposing their capabilities is not a workflow
+engine. API acceptance, task completion and uncertain delivery are distinct
+outcomes, so callers must not blindly retry a timed-out prompt.
 
-Cockpit is a **remote Copilot session foundation with a web GUI, API, and MCP,
-not the owner of session-governance policy**. Its essential journey is: open the web app, select a session, chat or
-control execution, exchange files, leave, and return from another device.
-
-Owner clarification at 15:44 CST: Cockpit is the GUI projection of Copilot's
-capabilities, currently a subset, plus capabilities needed for remote graphical
-use such as upload/download, attachment presentation, and image preview. Broader
-native feature coverage is a direction, not a claim of current complete parity
-or a requirement to implement everything at once.
-
-**Priorities:** reliability and correct state, frontend experience (especially
-mobile), and dependable image/file exchange take precedence over feature breadth.
-
-- **Core:** session selection and lifecycle controls; chat and streamed output;
-  execution controls and approval responses; image/file upload, preview, and
-  download; reconnect/history consistency; secure remote access and file boundaries.
-- **Not core:** default Cockpit-owned fleet governance, onboarding/outfitting, skill
-  mining, multi-layer review, automatic dispatch/reminders, and self-modification. Existing
-  automation may remain as an independent extension, but core chat, control, and
-  file exchange must work without it. Exposing user-controlled skill/MCP settings
-  is distinct from automatically governing those settings across a fleet.
-- **Native semantics first:** reuse Copilot's model, skill discovery/on-demand
-  loading, configured MCP enablement, and user-invoked agent/automation semantics.
-  Configured enabled MCPs being initialized is not itself a Cockpit defect.
-  Do not introduce task-inferred outfitting or mandatory pre-birth filtering just
-  to differ from the CLI or satisfy a diagnostic fixture.
-- **Always available, not always generating:** submitted work should not depend
-  on an open browser or SSH connection; completed sessions may wait quietly.
-  Host/process failure recovery remains an explicit reliability concern, not a
-  promise of uninterrupted execution.
-- **Feature admission:** identify the concrete remote-use step a proposed feature
-  fixes. Autonomous sophistication alone is not a reason to expand the core.
-
-This boundary supersedes conflicting scope-expansion proposals below. Existing
-implementation descriptions are not mandates to retain every feature in the core.
-Contraction should be incremental and dependency-aware, not a rewrite or blanket
-shutdown. This decision records direction; it does not itself disable flows,
-delete sessions, or authorize destructive cleanup.
-
-### GUI, API, and MCP are views of the same capabilities
-
-```text
-Human -> Web GUI ---------+
-                         +-> Cockpit API/backend -> Copilot runtime
-Session -> cockpit MCP --+
-```
-
-All externally useful Cockpit operations, including session controls,
-cross-session interaction and file exchange, should be accessible through the
-backend API. The GUI is the human client; the cockpit MCP is the agent client
-and should expose the same domain capabilities. Neither client should maintain
-independent business logic or bypass authoritative state/permission/confirmation
-handling. Native Copilot execution stays in the runtime; GUI-specific services
-such as file storage/presentation belong to Cockpit.
-
-This is a target contract, not a statement that today's GUI/API/MCP coverage is
-complete. Record coverage gaps and intentional limitations rather than claiming
-parity. Prioritize reliable existing workflows and small missing mappings over
-new orchestration policy; local visual gestures need not become separate domain
-operations. Broader MCP capability does not bypass authorization for its use.
-
-### Foundation versus upper-layer governance
-
-Owner clarification at 15:49 CST: Cockpit is the foundation on which a user may
-build session governance or other applications. Governance is a separate layer,
-not forbidden functionality and not a default responsibility of the foundation.
-
-- **Foundation mechanisms:** reliable session lifecycle/execution/state, explicit
-  messaging/delegation, file exchange, access controls, and equivalent API/GUI/MCP
-  access. Generic scheduling, events, or flow execution may remain optional
-  mechanisms where their usefulness justifies maintaining them.
-- **Upper-layer policy:** which sessions to create, when to review or harvest,
-  what to outfit, who to notify, how to close work items, and when to archive.
-  Named governance flow definitions, prompts, schedules, repair manifests and
-  ledgers belong to this layer and use the foundation's published APIs/MCP.
-- **One-way dependency:** governance depends on Cockpit; Cockpit must remain fully
-  usable without governance installed or running. A base install/update/repair
-  must not silently reinstall or re-arm an upper-layer governance package.
-- **Shared safety boundary:** upper layers may orchestrate authorized operations,
-  but may not bypass backend permissions, confirmations, durable state ownership,
-  or runtime protection. Removing governance does not remove basic service health,
-  restart supervision, or safe session/file persistence.
-
-Separate ownership/configuration and dependencies first. This does not by itself
-require another service, repository, microservice architecture, or runtime rewrite.
-Retiring specific governance jobs is distinct from deleting generic flow support.
-
----
+The owner explicitly chose **always-approve tool permissions**. This is separate
+from interactive/plan/autopilot mode and differs from the default interactive CLI.
+Anyone authorized to control this single-operator application effectively controls
+the server account. There is no multi-tenant isolation claim.
 
 ## Architecture
 
-**Monorepo** (`~/cockpit`, pnpm workspaces):
-- `packages/protocol` — wire types + intents (zod). The one shared contract.
-- `packages/core` — Engine: drives the SDK, folds events, owns session state +
-  lifecycle (load/unload/reload/delete). `bootstrap.ts` resolves auth + model list.
-- `apps/server` — thin transport: `GET /events` (SSE: snapshot then live events),
-  `POST /intent/*` (validated intents). Binds `127.0.0.1:8771`; TLS + cookie auth
-  at the nginx layer.
-- `apps/web` — React + Zustand. **Pure projection**: renders server state, sends
-  intents, holds no domain logic. The store is the only consumer; components are
-  prop-driven leaves.
+```text
+Web GUI ---- HTTP commands/queries ----+
+                                      +-- Server -- Engine -- Official SDK
+Session ---- Cockpit MCP -- HTTP ------+                |          |
+                                                       |     JSON-RPC/stdio
+Web GUI <------------- SSE projection ------------------+          |
+                                                       |     Copilot runtime
+                                                 Preferences
+                                                 and unread state
+```
 
-**Principle:** the backend is the single owner of all state; its only source is
-the SDK. The frontend never holds domain truth — this kills refresh / multi-device
-/ "stuck running" / pagination-vs-load consistency bugs.
+- `packages/protocol`: shared schemas, typed intents, events and file/notification
+  contracts. `GET /capabilities` publishes schemas and current native limits.
+- `packages/core`: Copilot session ownership, canonical event folding, passive
+  history windows, preferences and durable unread state. `runtime.ts` owns the
+  official SDK client and its process.
+- `apps/server`: HTTP/SSE, protected file storage and Web Push. It validates
+  requests and results rather than maintaining another conversation model.
+- `apps/web`: React/Zustand projection. URL owns selection; local state owns
+  drafts, staged attachments, view position and browser notification plumbing.
+- `apps/mcp`: API client and agent-friendly presentation, not a local session
+  database reader or a separate fold implementation.
 
-**Design system:** inherited (not imitated) from Telegram Web K (tweb): real
-structural tokens (`styles/tokens.scss` ← tweb `variables.scss`/`base.scss`), the
-real `tgico` icon font, component CSS ported near-verbatim; only colors are
-overridden (Solarized). Components render tweb's DOM/class contract. See
-`cockpit-tweb-diff.md` for the explicit deviation registry. License: GPL-3.0
-(tweb is GPL-3.0-only); see `NOTICE.md`.
+The session list is the home screen. Its hamburger opens Copilot-global MCP,
+Skills, trash and device notification settings; management lists are child pages,
+not parallel workspaces with their own hamburger. A list's Back returns home;
+an item detail's Back returns to its list first. Desktop master/detail and narrow
+full-page layouts expose one relevant Back, using the existing parent fallback
+for cold deep links. Browser Back preserves the actual entry source. Session rows
+open only their chat; row context/long-press and the chat kebab share one
+session-ID-bound action catalog: seven pages (Settings, session MCP, session
+Skills, plans/tasks, context, schedules, runtime maintenance), then rename,
+automatic naming, pin and trash. Three separators and viewport-bounded scrolling
+keep this one-level menu reachable on short screens. Detail panels contain only
+the current page's owner-labelled title, Close/Back, page actions and content;
+there are no page-switching tabs or More menu. The chat title remains a shortcut
+to Settings. On narrow screens switching pages means Back to chat, then its menu.
+Settings reads snapshot identity/model state only; opening it does not
+load plan or MCP resources. Unloaded native MCP/Skills pages require an explicit
+resume before claiming current per-session state. Existing direct URLs remain
+valid, and mode controls and the allow-all permission policy are unchanged.
 
----
+MCP definitions/defaults and global skill selections belong to Copilot, not
+`cockpit-prefs.json`. Native discovery and configuration APIs are authoritative;
+Cockpit does not copy old overrides or replay per-session preferences.
+Native session toggles are temporary. Cold resume uses global defaults, and
+native MCP reload also reapplies those defaults while refreshing definitions.
+For SDK 1.0.13, the global disabled-skill list is read through native user settings
+and passed into session creation/resume because the runtime does not apply it
+automatically. This is one native-owned source, not another durable setting store.
+An unloaded view does not claim to know that session's effective tool choices.
 
-## SDK strategy — internal vs official (decision: migrate, stay Node)
+Automatic naming is a narrow GUI convenience over native APIs, not a separate
+model client or hidden conversation. The first effective completed reply can
+trigger one native no-tools query, then `name.setAuto` stores the short title.
+The explicit `session/auto-name` API is also available through Web and MCP.
+Manual names remain protected; history viewing and startup do not name old
+sessions. Naming failure preserves the current title and does not fail the chat.
+This still consumes an additional model request using the current context.
 
-There are **two distinct SDK families**, easily confused. cockpit currently uses
-the first; the second is the intended target.
+Stay in TypeScript. The main simplification is the runtime boundary, not a
+language rewrite, microservices or another generic orchestration framework.
 
-1. **`@github/copilot` `./sdk` subpath** (what cockpit uses today) — the CLI npm
-   package's *internal*, **undocumented** surface (`internal.LocalSessionManager`),
-   run **in-process / same heap** as cockpit. This is the source of the structural
-   OOM: the SDK holds every session's base64 image blocks in cockpit's own V8 heap.
-   It also forces the `bootstrap.ts` hand-rolling (passing `autoModeManager`,
-   symlinking `sdk/definitions`) and is exposed to `.d.ts`≠runtime drift
-   (`assertSdkContract()` guards it). Note: `CopilotClient`/`RuntimeConnection` are
-   declared in this package's `.d.ts` but are **`undefined` at runtime here** — an
-   earlier probe wrongly concluded the official client was "unavailable"; it was
-   looking in the wrong package (see #2).
+## Runtime and history
 
-2. **`@github/copilot-sdk`** (separate, official npm package — the target) — drives
-   the Copilot CLI runtime over **JSON-RPC (stdio/TCP) as a SEPARATE child
-   process**. Verified 2026-06-19: v1.0.2, deps `@github/copilot ^1.0.64-0` (the
-   *same* CLI cockpit already installs) + `vscode-jsonrpc` + `zod`; repo
-   `github/copilot-sdk` (public, MIT, ~9.4k★, protocol version 3); one repo
-   generates **six languages** — `nodejs/python/go/rust/dotnet/java`, all v1.0.x,
-   **feature-parity** (every CHANGELOG entry tagged `[All SDKs]`), CLI auto-bundled
-   for Node/Python/.NET. Public `CopilotClient.createSession()` / `sendAndWait()`.
+The implementation uses `@github/copilot-sdk` **1.0.13** with Copilot runtime
+**1.0.83**, explicitly out of process. Advanced typed RPCs are experimental, so
+these versions are pinned. The old internal SDK bootstrap, definition symlinks,
+manual journal/database repair and image-weight/forced-GC watchdog are retired.
 
-**Decision — migrate cockpit's core from the `./sdk` internal path to
-`@github/copilot-sdk`, remaining in Node/TypeScript.** Rationale:
-- **Process isolation = the OOM structural fix.** The runtime (and its base64 image
-  heap) moves to the child process; cockpit's heap stops growing with image
-  history. This is the real fix tuning only buys time for.
-- **Documented, versioned public API** replaces the undocumented `internal.*` —
-  kills the `.d.ts`≠runtime drift risk and removes the bootstrap hand-rolling.
-- **No language rewrite.** Python is **not** more mature — all six SDKs are parity,
-  generated together; switching to Python would buy zero maturity and cost a full
-  rewrite. Stay in Node to reuse the Engine/protocol/web layers unchanged.
+Copilot owns persisted conversations, execution, model requests and automatic
+context compaction. Cockpit does not construct a second model transcript or
+override the native compaction thresholds. Native infinite sessions and large
+tool-output handling retain their defaults. CAPI WebSocket Responses also keeps
+its native default: used when the selected model supports it, not forced by Web.
+Browser SSE and SDK stdio are separate transports, not model-request size bypasses.
 
-**Status: PoC pending** (do before committing to migration). Zero-risk: a throwaway
-dir outside `~/cockpit`, `npm i @github/copilot-sdk`, run the official
-`createSession → sendAndWait` sample, and `ps`-verify it spawns a child runtime +
-confirm image heap lands in the child, not the parent. Migration itself is a larger
-effort gated on that PoC (the Engine's `ensureLoaded`/fold/eviction assume an
-in-process `getEvents()` array — JSON-RPC changes that access shape).
+An oversized model request is not an upload-limit error. Native runtime updates
+include Responses size-limit and oversized tool-image improvements, but no
+unlimited-request guarantee. Surface native failures without blindly resending a
+prompt; explicit context compaction delegates to the same SDK.
 
----
+A persisted session, an executing runtime session and a visible browser window
+are different things. Opening history does not resume a Copilot session or connect
+its MCP tools. `session/history` and `session/peek` return bounded pages directly
+to their caller; a viewer's page query is not broadcast to other devices.
+Pages follow native assistant-turn boundaries as well as user messages. Only
+dependencies of displayed messages extend a page; invisible runtime payloads
+are not retained. Batch-size targets must not reject valid long conversations.
+The cache stores compressed display-event snapshots, not a duplicate full fold.
+Large nested cards can still require significant temporary memory and read time.
 
-## Operational notes
+Web requests `details: "summary"` and reads child transcripts through
+`session/subagent-history` only when a card is expanded. Full recursive history
+remains available to API/MCP callers. SSE carries summary cards rather than
+repeatedly cloning entire nested conversations. The browser retains the three most
+recently opened chat windows, including the active one. Only departure trims a
+window to its latest loaded page, regardless of the previous reading position.
+Reopening starts at the bottom and fetches a fresh latest page; neither a reading
+bookmark nor the prior entry's checkpoint survives departure. There is no byte
+limit, TTL, hidden chat tree or native keepalive. Drafts,
+attachments and unread metadata are independent; cached does not mean visible,
+seen or native-loaded. Eviction or a browser refresh loses only this memory cache.
 
-- **Build:** `node ./node_modules/vite/bin/vite.js build` (the `pnpm exec` wrapper
-  fails a deps-check on an ignored `@parcel/watcher` build script). Backend:
-  `pnpm -r --filter @cockpit/protocol --filter @cockpit/core --filter @cockpit/server build`.
-- **Deploy frontend:** nginx serves `apps/web/dist` statically — a rebuild is the
-  deploy. No server restart needed for frontend-only changes.
-- **Deploy backend:** `systemctl --user restart cockpit-server.service` (it's a
-  **user** unit running `tsx src/index.ts`; loads TS source directly so a restart =
-  deploy, no build step strictly needed). Verify: log `Server listening`, port
-  `8771`, `GET /health` → `{ok:true,login:waksana}`. A restart cannot preserve an
-  in-flight turn (only event history persists to disk), so deploy when idle — see
-  graceful self-restart below.
-- **Graceful self-restart (primary):** the server holds an in-memory `restartPending`
-  flag. Arm it with `curl -XPOST http://127.0.0.1:8771/admin/restart` (body
-  `{"pending":false}` disarms). When the **last** running session goes idle, the
-  running→idle hook `process.exit(0)`s (after a 500ms SSE flush) and systemd
-  (`Restart=always`, `RestartSec=1`) brings it back, replaying history. This lets an
-  agent running *inside* cockpit deploy its own backend change without interrupting
-  any turn (including its own): POST the intent, then just finish the turn. `GET
-  /status` reports `{running, restartPending, sessions[]}`.
-- **Bootstrap restart (only when server predates /admin/restart):**
-  `scripts/graceful-restart.sh` polls `/status` (falls back to one SSE snapshot
-  frame), waits for 0 running, then `systemctl --user restart`. Run it as a
-  transient unit so it survives the agent's own turn ending (a plain detached shell
-  gets torn down between turns):
-  `systemd-run --user --unit=cockpit-graceful-restart bash scripts/graceful-restart.sh`
-- **Visual verify (no auth):** preview `cd apps/web/dist && python3 /tmp/spa.py`
-  (SPA fallback) on `127.0.0.1:8099`; drive a research Chrome with an
-  `initScript` that stubs `window.EventSource` to emit a snapshot (+ optional
-  `session/history-page`) and stubs `fetch` for `/intent/*`. Test desktop (1280)
-  + mobile emulation. **Gotcha:** stub session objects must OMIT optional fields
-  (don't send `null` for `currentReasoningEffort` etc.) or zod rejects the
-  snapshot.
+Warm return displays the cached latest page while a fresh latest bootstrap replaces
+it. Upserts not yet present within an overlapping persisted range remain a live
+overlay, not a durable history cursor. An unverified connection gap discards that
+overlay provenance (not the readable cache), so missed rewinds cannot resurrect
+discarded live rows. Rows before a fresh page's boundary cannot bypass older
+pagination. Ordinary app focus does not create a new entry:
+the still-mounted chat retains its reading intent and loaded pages on reconnect.
+Optional `session/history` input `resume: {}` obtains a fresh latest page and a
+checkpoint; `resume: { token }` returns `ready`, `pending` or `unavailable`, and
+cannot be combined with before/after locators. The same typed contract is available
+through the generic MCP intent surface. Existing history/peek defaults are unchanged.
+Each token request scans at most four 200-event native batches plus at most six
+one-event boundary reads, independently of the response's message limit. Continuation
+uses a captured tail and existing backward cursors; pending parts are not displayed
+until the range is complete. Native cursors are observational fences, not an atomic
+snapshot or content generation. Web uses token continuation only within the same
+entry, not to restore an earlier visit. A same-scope passive cache replacement is
+not a history mutation. Genuine continuation failures keep readable content with
+an explicit error and latest-refresh action; they do not leave a sticky
+range-unavailable flag that prevents future entry reconciliation.
 
----
+Within the active chat, all loaded message text, DOM and component state remain
+available; there is no virtual list or message eviction. A memoized transcript
+boundary avoids rebuilding the list for unrelated metadata changes. Supporting
+browsers can skip offscreen layout/paint for completed message blocks after their
+real height is measured; width changes invalidate stale measurements. Live work
+and child cards retain normal layout. The existing scroll owner preserves the
+visible semantic anchor, including margins, selection/focus navigation and
+explicit End-to-bottom following. This reduces rendering work, not retained-data
+memory, native context size or cold-history read time.
 
-## Status
+Active-session initialization uses SDK `onEvent` before create/resume completes,
+then reads durable display events in native 200-event pages up to a captured
+tail event. It does not call `getEvents()` for a full-history array. Initialization
+and subsequent live folding both retain subagent summaries, not child transcripts.
+Events from every agent are still read where needed: filtering to the primary
+agent alone can remove the only parent link in older nested-task histories.
+Historical root messages and small routing records remain addressable for late
+tool updates; this is not a hard bound on all projection or native-runtime memory.
 
-### Done (live)
+SSE carries shared state changes, streamed messages and real history resets.
+Reconnect obtains an authoritative snapshot and reconciles the visible history
+window. Browser disconnection does not stop submitted work.
 
-- **Butler / Flow orchestration** (TRIGGER → FLOW → ACTION; design in
-  [`butler.md`](./butler.md)). Phases A–D shipped. The trigger layer is
-  cockpit-native, engine-global, additive to the SDK per-session ScheduleRegistry.
-  - **A — event hooks**: `HookRegistry` + the v1 event `session.first-turn-complete`
-    (emitted in the live `session.idle` handler, guarded by `firstTurnEligible`),
-    `hook/add|list|stop` intents + `cockpit_hook_*` MCP tools. Persisted in
-    `cockpit-prefs.json` (hooks/welcomedSessions/spawnedBySession), re-armed on
-    start. **R1 invariant**: a `spawnedBy` worker is a non-trigger-source — its
-    lifecycle fires no hook (no welcome fork-bomb). `hooks.ts` is pure + unit-tested.
-  - **B — Flow layer**: `FlowRegistry` (loads `~/.copilot/flows/*.json`, zod-valid),
-    `runGate` (subprocess cost-gate: event ctx via env+stdin, exit 0=go / non-zero
-    or timeout=skip fail-safe, stdout JSON → interpolation params), `runFlow` →
-    action. `spawnSession` builds a born-configured worker (MCP set at birth, tight
-    skill match, model/mode before the first turn, marked `spawnedBy` first).
-    `flow/list|run` intents + `cockpit_flow_*` tools. `flows.ts` unit-tested.
-    Live-verified end-to-end incl. gate skip/go, born-config, gate-param interpolation.
-  - **C — visibility**: info-panel **事件钩子** + **流程** sections; sidebar folds
-    `spawnedBy` workers into a collapsible **自动** group; a **Flows** management page
-    (hamburger → 流程, `/flows`·`/flows/:item`) via the shared `ManageWorkspace`.
-  - **D — server-level flow schedules**: `FlowScheduleRegistry` (engine-global,
-    armed at `start()`) fires a flow on a time cadence (interval | cron | at) even
-    with **zero sessions loaded**, additive to the SDK per-session schedule. Cron
-    is a hand-rolled, timezone-aware, DST-safe next-fire calculator (no third-party
-    dep). `flow-schedule/add|list|stop` intents + `cockpit_flow_schedule_*` tools;
-    persisted in prefs, re-armed across restart. Live-verified (0-session fire).
-  - **Flow authoring on MCP** — the maintainer MCP can now CREATE flows, not just
-    trigger them: `flow/add` (write `~/.copilot/flows/<id>.json`), `flow/remove`
-    (also stops schedules pointing at it), `flow/write-gate` (write an executable
-    gate script, returns its path) + `cockpit_flow_add` / `cockpit_flow_write_gate`
-    / `cockpit_flow_remove`. All writes are confined to the flows dir (path-traversal
-    rejected via `isSafeBasename`). **Decision (owner, 2026-06-20):** authoring gate
-    scripts via the maintainer-only MCP is ALLOWED (the owner accepted the risk —
-    this relaxes the design's F10 "gate scripts owner-authored only" red line for
-    the maintainer-MCP context); the path-traversal guard stays.
-  - **Triggers page — each flow shows its triggers**: the Flows detail joins
-    `hook/list` + `flow-schedule/list` filtered by flowId into a 触发器 section
-    (event chips vs time chips); list rows show a trigger-count tag.
-  - **Decision (owner, 2026-06-20):** flow-maintenance is owned by a forthcoming
-    **`cockpit-butler` skill** — any session that reads it (AND has the cockpit MCP
-    enabled — the flow tools are maintainer-only) can maintain flows. The skill is
-    knowledge; the cockpit MCP is the capability. **TODO:** author `cockpit-butler`
-    (dev session dfd7c71e, after the flow-authoring round-trip is live-verified),
-    grounded in this session's real method, with the cockpit-MCP prerequisite stated.
-  - Source: session dfd7c71e; spec in admin session 96c3db7a's `butler-dev-spec.md`.
-- **Core console** — session list (new/open/reload/unload/delete/pin), streaming
-  messages, tool-call display, thought display, ask_user choices, CLI-style
-  message queue, cancel, push notifications, voice input, history pagination, PWA.
-- **Telegram-inherited rewrite** — full frontend re-authored onto tweb's design
-  layer: tokens, tgico font, ripple / long-press / scrollable / menu primitives,
-  global `user-select:none` (long-press never selects text), left column
-  (`.chatlist`), chat (user bubbles `.is-out` + assistant document `.is-doc`, no
-  bubble), composer, context menus, FAB. Solarized colors, restrained tweb
-  micro-animation (reduced-motion honored). Removed legacy `index.css` + Tailwind.
-- **TODO progress bar** — pinned bar under the topbar; accent rail fills by
-  done/total + current-intent title; tap → info panel. SDK
-  `getTodoStatus()`+`getCurrentIntent()`, refreshed on `session.todos_changed`.
-- **Session info panel** — tweb right-column (`#column-right`); tap topbar title
-  or TodoBar. Sections: title+cwd, model controls, full todo checklist (grouped,
-  tgico icons, done struck), plan.md (collapsible). SDK `session.plan.read()` +
-  `readSqlTodos()`; intent `session/plan` → `engine.getPlan`.
-- **Model + reasoning-effort + context-tier switching** — `model.switchTo`;
-  controls in the info panel (header read-only compact). Per-model gating:
-  `supportedReasoningEfforts` (effort), `token_prices.long_context` →
-  `supportsLongContext` (tier).
-- **Info-panel state persists across session switch** — switching sessions keeps
-  the right column open and re-loads the new session's plan/todos (panel data
-  effect keyed on `sid`); removed the auto-close-on-`activeId`-change effect.
-- **Near-term UX fixes** — `fix-tool-permission` (yolo handler; sessions can run
-  bash/all tools), `fix-context-tier` (model long-context gating via
-  `billing.token_prices`), `title-no-hover`, `chat-selectable` (text selectable
-  except long-press targets), `remove-todobar`, `info-panel-responsive` (TG 3
-  tiers: wide docked / medium floating+scrim / narrow full-page — verified).
-- **Sub-agent support** — fixed the critical `getLastResolved` crash (hand-rolled
-  `bootstrap.ts` omitted `autoModeManager` when building `LocalSessionManager`; every
-  session incl. sub-agents copies it, so a sub-agent's first model resolve threw).
-  Fix: pass `autoModeManager: new sdk.AutoModeSessionManager()`. Sub-agent events
-  carry top-level `agentId` (= spawning task's toolCallId); fold routes them into a
-  recursive `SubagentCard` (`ChatMessage.subMessages`), depth-N nesting supported.
-- **Review fix-batch** (independent Opus-4.8 sub-agent review → per-item triage):
-  - **H1** turn_start/endTurn live==replay divergence — engine no longer intercepts
-    `assistant.turn_start` (folds it so `endTurn` runs live); `cancel()` calls
-    `resetTurn`. Cancelled streaming turn no longer absorbs the next turn.
-  - **M1** SSE reconnect reconcile — every (re)connect re-sends `engine.snapshot()`,
-    which triggers `maybeMaterialize(force=true)` to re-pull the active window.
-  - **M2** multi-segment reasoning preserved (append across segments, not overwrite).
-  - **M3** depth-2 nested sub-agent attribution (recursive `ownsTask`/`ownsAgent`).
-  - **M6** `newSession` now calls `evictIfNeeded`. **L3** intent guard →
-    `Object.hasOwn`. **L4** client logs `ServerEvent` parse failures.
-  - **L8** lint 15→0. **L9** `fold.test.ts` (11 fixture tests, live==replay invariant).
-  - **bootstrap-contract-check** — `assertSdkContract()` fail-fast on SDK-internals drift.
-  - **M4 debunked** — pending-ask sessions stay `running`, already spared from eviction.
-  - Verified: 11 fold tests pass; real-log regression (`pnpm --filter @cockpit/core
-    regress`) = 11 sessions / 11373 msgs / 0 errors / 0 invalid / 26 sub-agent cards.
-- **Dogfood hardening** (a batch shipped while self-driving cockpit from a phone):
-  - **pin (unified)** — one backend pin (`prefs.pinnedSessions` + `SessionMeta.pinned`,
-    intent `session/pin`) = pin-to-top (cross-device, pure projection) **and**
-    keep-loaded/anti-eviction; replaced the old per-device localStorage pin (no
-    migration). Eviction + heap-watchdog skip pinned (last-resort only past the hard
-    cap, loudly logged). `engine.start` auto-loads pinned on boot (rehydrates
-    schedules). MCP `cockpit_set_session_pin`.
-  - **schedule indicator** — `SessionMeta.scheduleCount` (SSE projection); list shows
-    a tgico clock badge, info panel has a 定时任务 section.
-  - **mode topbar + fleet** — persistent topbar mode chip (interactive/plan/autopilot,
-    color-tinted, switch mid-turn → next turn); `autopilot_fleet` is the 4th
-    `exit_plan_mode` action (sets mode=autopilot + `session.fleet.start`), not a mode.
-  - **authoritative attention (plan B, v2 clear-by-kind)** — `SessionMeta.attention`
-    (`'ready'|'choice'|null`) is the single backend truth for notifications; `attention.ts`
-    `nextAttention(prev,next)` raises it (ready = running→idle edge; choice = mid-turn
-    ask/plan/elicitation). v2: the two kinds CLEAR differently — `applySeen()` clears a
-    `'ready'` on sight (an agent always ends a turn ready, so a ready that only cleared on
-    the next prompt would never leave the badge), while a `'choice'` only demotes (stays
-    counted until answered). Cross-device "seen" is a per-user monotonic water-line
-    (`attnId` assigned on raise, `seenId` advanced by the `inbox/seen` intent →
-    `engine.markSeen`), replacing the old per-device sticky `unread` flag (which left stale
-    dots after an offline raise / remote handle). Badge + sidebar dot derive purely from
-    `attention`/`attnId`/`seenId`; client fires `inbox/seen` on open / tab-focus / a raise
-    on the active visible session. Deferred: cross-device dismiss-push (Chrome
-    `userVisibleOnly` makes a silent dismiss push unreliable), per-session mute, unified
-    inbox screen.
-  - **session-title marker leak fix** — `fold.ts cleanSessionTitle()` strips a leading
-    `<cockpit-attachment>` marker (uploads-first sessions); existing bad titles
-    re-derive after a backend restart.
-  - **trash bin** — soft-delete via `prefs.trashed`; `refreshList` filters trashed
-    (fixes the delete→revive bug); intents `session/trash-list`/`restore`; permanent
-    purge only via the cockpit MCP. See `apps/mcp/README.md`.
-  - **graceful self-restart** — `/admin/restart` arms a flag; exits at 0-busy (busy =
-    running OR awaiting a choice). Lets an in-cockpit agent deploy its own backend.
+Native idle cleanup uses `sessionIdleTimeoutSeconds: 1800`. Cockpit has no session
+count cap, automatic eviction policy, retained-wrapper recycling or idle heartbeat.
+It reconciles native cleanup through passive liveness reads and drops its projection
+handles. A prompt or explicit resume loads a session again; history reads do not.
+Native-only detail reads return `409 SESSION_UNLOADED` when a resume is needed.
+Copilot may discard an empty session before its first submitted work. On explicit
+use, only a confirmed-absent local draft may be recreated with its confirmed
+initial settings. Persisted conversations and uncertain submissions are never
+recreated or retried.
 
-### Backlog / open (a future context-free agent picks up here)
+Native close is awaited before release is reported. Explicit close/restart guards
+protect running work, questions, queues, subagents and mutations, but future
+schedules and UI pins do not prevent native idle cleanup. Schedules persist but
+pause while unloaded; relative delays restart on resume. A background shell may
+outlive cleanup without remaining accessible through session task RPCs. These are
+native semantics, not an always-on scheduler guarantee. Node's normal GC/heap sizing
+is the API default, with an optional operator heap override.
+Cockpit does not restore sessions at startup merely because an old preference
+listed schedules. Startup lists history; explicit execution/resume activates it.
+Legacy scheduling preferences remain inert rather than controlling residency.
 
-Genuinely-open work, mirrored in the session `todos` table. Most "dogfood backlog"
-items the absorption flagged are now **done** (above); these remain:
+Ordinary tool completion does not trigger a full native status read. Work
+boundaries reconcile activity, queue and task facts, while model/todo/MCP/schedule
+events refresh their own resource. Explicit teardown still confirms native safety.
+The passive eight-second inventory/attach fallback remains because headless
+cleanup notifications do not cover every native cleanup path.
 
-- **OOM structural fix** — tuning shipped (systemd heap 4096; aggressive watchdog
-  `MEMORY_WATCHDOG_MS=8s`/`GC_GRACE_MS=8s`/`MAX_EVICT_PER_TICK=5`,
-  `HEAP_HIGH/LOW=0.60/0.45`; reconnect resume via durable msg-id cursor `3ee3604`).
-  The real fix is **out-of-process** — see *SDK strategy* (migrate to
-  `@github/copilot-sdk`). `mem-analysis` (heap hot-spots) still in progress.
-- **PWA navigation redesign** — three point-fixes for app-like back/right-swipe were
-  **reverted** (`1269db0`, App.tsx back to baseline) because the problem is holistic.
-  Research done (`files/pwa-nav-research-report.md`: Navigation API is Chromium-only,
-  use History API; iOS standalone edge-swipe is a no-op at history root). Redo as one
-  History-API stack model following tweb `appNavigationController.ts`. Not point-fixed.
-- **iOS Web Push never fires (P0)** — full chain verified healthy (VAPID valid, APNs
-  returns 201) yet the iOS home-screen PWA shows no notification. Still diagnosing.
-- **Visual decisions awaiting the owner** (`telegram-study.md`) — 3 forks: chat-header
-  project avatar (yes/no); selected-row light tint vs tweb-faithful solid-fill+white
-  (`/tmp/sel-A.png`/`sel-B.png`); menu backdrop. tweb-faithful = solid.
-- **Info-panel MCP status** — the MCP section lists servers but not their live
-  connection status (`connected`/`failed`/`needs-auth`); the MCP tool already returns
-  it, only the web panel doesn't surface it. Small refinement.
-- **m5-fold-memory** — each loaded session keeps its full fold resident (≤16); only
-  hurts very long sessions. Low priority; subsumed by the out-of-process migration.
-- **composer-triggers** (`/ @ # !`) — blocked on a design decision (see item 18).
-- **compact-session-20mb** — compact this dev session (`dfd7c71e`) LAST to drop ~20MB
-  of accumulated image blocks once its working context is no longer needed.
+Process restart is not browser reconnect. Only a safe idle restart is supported;
+there is no promise that an interrupted turn or pending callback survives a crash.
+Confirmed native process death causes the API host to exit for supervisor recovery,
+without replaying potentially accepted requests.
 
-### Execution plan (decided forms — sequenced)
+## Files and images
 
-This is the agreed build order. Each item's TG-fit / data path is now decided
-(no more "待定"); the `todos` table mirrors this 1:1 with dependencies.
+Uploads receive a backend-minted `/uploads/<name>` URL. MIME/display metadata is
+persisted; native prompt attachments resolve that URL on the server. Clients
+cannot supply an arbitrary server file path as an attachment.
 
-**Quick wins**
-1. **status-show-task** ✅ DONE — topbar subtitle shows the current-intent title
-   (`session.todo.intent`, aligns with how the CLI sets the terminal title);
-   falls back to the status word when null/not running. List stays clean. Long
-   intent ellipsizes (`data-intent`), model label survives. Frontend-only;
-   verified desktop + mobile.
-2. **ask-reply-visible** ✅ DONE — surfaces the user's ask_user answer as a visible
-   "my reply" bubble. **Better source than originally planned:** not the ephemeral
-   `user_input.completed`, but the **persistent** `tool.execution_complete` for the
-   `ask_user` tool (`result.content` = "User responded: …"), which survives reload
-   via `getEvents()` and folds identically live + replay. Fold tracks ask_user
-   toolCallIds, strips the prefix, upserts `reply-<toolCallId>` (role=user,
-   `subtype:'ask-reply'`, idempotent). Frontend renders an `is-out` bubble with a
-   subtle "↩ 回复" tag. Verified (fold unit test + visual).
+The composer stages a file/image with its caption for one explicit send. Failure
+or an uncertain response preserves the draft and uploaded reference. Incoming
+images preview inline and files have download links.
 
-**P1 — information density (render inside the chat thread)** ✅ ALL DONE
-3. **errors-in-stream** ✅ DONE — `session.error`/`session.warning` carry
-   `{message}` and are persisted (replay-safe). Folded into `role:'system'`
-   messages with a `level` (error/warning/info); frontend renders distinct pills
-   (red + icon / orange / quiet note). Stable id, idempotent. Verified.
-4. **shell-display** ✅ DONE — bash runs (`arguments.command` + result `content`)
-   now carry `command`/`output` on the ToolCall; frontend shows a command line +
-   collapsible output panel (output capped 4KB). Non-shell tools unchanged. Verified.
-5. **stream-reasoning** ✅ DONE — `assistant.reasoning_delta` (ephemeral) streams
-   live into the message's `thought`; `assistant.reasoning` (final, persisted)
-   finalizes it. Reasoning precedes the message with no shared id, so the fold
-   pairs them by turn order via a reasoning-derived placeholder id adopted by the
-   message (consistent live + reload). Frontend `<Thought>` is expanded while live
-   ("正在思考…") and auto-collapses when done ("思考过程", re-openable). Verified
-   across 4 fold scenarios + visual.
+For agent-generated output, use `cockpit_upload_file` and copy its returned
+`markdown` into the assistant reply. Multiple uploaded images can each be included.
+Do not invent `/home/...`, `file:` or `sandbox:` links. No extra skill is required.
+Use the returned attachment JSON only when sending a file as input to a session.
 
-**P2 — session management (topbar kebab menu)** — 6–9 ✅ DONE
-6. **rename** ✅ DONE — `name.set({name})` + `name.get()` read-back; event
-   `session.title_changed` patches the title. Kebab → 重命名 → text Dialog.
-7. **compact** ✅ DONE — `history.compact({customInstructions?})`;
-   `session.compaction_start/complete` flip status + reload. Kebab → confirm Dialog.
-8. **rewind** ✅ DONE — `history.truncate({eventId})` ("this event + all after are
-   removed"). User-message ids ARE event ids, so 撤销上一轮 targets the last user
-   message; destructive confirm; history-only (no file rollback in v1) → reload.
-9. **mode-switch** ✅ DONE — `mode.get()`/`mode.set({mode})` (interactive/plan/
-   autopilot); `session.mode_changed` patches `currentMode`. Kebab shows current
-   mode → two-step picker (deferred past onClose). `mode.get()` read in loadSession.
-10. **diff-review** ✅ DONE — no clean SDK API for repo edits, so the fold tracks
-    the agent's `edit`/`create` tool-call `path` args into a per-session changed-
-    files map (first op wins); surfaced via the `getPlan` payload
-    (`changedFiles[]`). Info-panel "改动文件" collapsible section, paths relativized
-    to cwd, create=green `+` / edit=orange `~`. Verified on real logs (12 files) + visual.
+## Notifications and iOS PWA
 
-New shared infra: `Dialog` component (prompt + confirm, tweb popup style),
-`AgentMode` protocol type, `currentMode` on SessionMeta + patch. Backend +
-frontend verified (kebab items, rename/compact/rewind/mode intents fire correctly;
-rewind targets last user msg; live read path via loadSession `mode.get()`).
+Unread waterlines and their monotonic revision are persisted in the backend.
+Unread-session count, sidebar dots and notification badge payloads use that same
+state. Seen-but-unanswered choices remain actionable but are no longer unread.
 
-**P2 — info-panel sections (read-mostly + necessary toggles)** ✅ 11–14,16 DONE
-(one batched feature: `session/panels` intent → `engine.getPanels` aggregates each
-SDK list call, normalized to a uniform `PanelItem {label,sublabel,enabled}` row;
-`<PanelSection>` renders each, hidden when empty. Live-verified end-to-end.)
-11. **subagents** ✅ DONE — `session.tasks.list()` → `{tasks}` → 子代理 section.
-12. **mcp** ✅ DONE — `session.mcp.list()` → `{servers}` → MCP 服务器 section.
-13. **skills** ✅ DONE — `session.skills.list()` → `{skills:[{name,source,enabled}]}`
-    → Skills section (shows 已停用 for disabled).
-14. **instructions** ✅ DONE — `session.instructions.getSources()` → `{sources}` →
-    指令文件 section.
-15. **memory** ⛔ NOT FEASIBLE — no per-session `memory` namespace on the session
-    (the CLI `/memory` uses a global memory.db, not a session API). Would need a
-    separate global-memory entry point, out of scope for the info panel.
-16. **scheduling** ✅ DONE — `session.schedule.list()` → `{entries}` → 定时任务 section.
+A reply is acknowledged only after fresh history actually displays the latest
+content, not merely because its chat was selected. Late acknowledgments carry
+the observed attention ID and cannot clear a newer reply.
 
-**P2 — composer & misc**
-17. **pending-card** ✅ DONE — one card pinned above the composer (TG bot reply-
-    keyboard); unifies ask_user (done) + `exit_plan_mode.requested` (📋 summary +
-    collapsible plan + 开始执行/自动/仅退出 → `respondToExitPlanMode`) +
-    `elicitation.requested` (message + 同意/拒绝 → `respondToElicitation`). Dedicated
-    listeners enable the capability; `*.completed` events clear it. Verified.
-18. **composer-triggers** — TG-style autocomplete popovers: `/` commands, `@`
-    files, `#` issues/PRs, `!` shell. **Needs a design decision** (the only
-    un-built item): `session.commands.list()` exposes the slash commands
-    (`{commands:[{name,aliases,description,input}]}`), but cockpit is UI-first —
-    sending `/model` as a prompt does NOT invoke it (no command executor; most
-    commands are already surfaced via kebab/info-panel). So a palette that inserts
-    `/cmd` text would mislead. Open questions to resolve with the user: which
-    triggers to support, and how `/` commands should EXECUTE in cockpit (map to
-    existing actions vs add an SDK command-exec path); `@` needs a file-list
-    source, `#` needs GitHub API. Deferred pending that decision rather than
-    shipping a misleading text-insert.
-19. **copy-share** ✅ DONE — message right-click/long-press → 复制 (clipboard); session
-    share dropped (no `share` SDK namespace; low value for single-user). Verified.
+Web Push, not a background page/SSE connection, delivers lock-screen alerts.
+Replies and choices have different labels and concrete content summaries.
+Notification taps use an acknowledged in-app route or a safe same-origin URL
+fallback. Subscription readiness requires backend persistence, not permission
+alone; known expired endpoints require explicit renewal.
 
-**UX**
-20. **bk-ios-keyboard** — pure-CSS shell (`100dvh` +
-    `interactive-widget=resizes-content`, evo-chat model; the JS `--vvh`/`--app-*`
-    visualViewport-tracking shell hook was REMOVED at the owner's ruling "keyboard =
-    evo-chat 无可妥协", turn 37 of session 3ef01f4f). On iOS standalone the overlay
-    keyboard leaves a gap below the composer (iOS ignores `interactive-widget`); a
-    minimal composer-inset fix (`lib/iosKeyboard.ts`, `--kb-inset`) was trialed and
-    REVERTED at the owner's call — accepted iOS-only limitation. NOTE: an earlier
-    draft of this line claimed a `--vvh` shell var was the impl — that was the
-    *rejected* approach, never the real one.
+Keys/subscriptions live under `<COCKPIT_HOME>/push`, outside source control.
+`push/status` exposes redacted state, and `push/test` is an explicit diagnostic.
+Push-service acceptance is not proof of phone delivery. iOS requires HTTPS,
+Home Screen installation, a user gesture for permission, and compatible OS
+settings. Focus mode and OS scheduling remain outside Cockpit's control.
 
-### Deferred / dropped
+Already delivered notifications cannot be silently withdrawn from every sleeping
+device. Badge convergence occurs through valid pushes and foreground reconciliation,
+not a fabricated cross-device delivery guarantee.
 
-- **usage-context** (`/usage`,`/context`) — deferred (用户暂时不需要). SDK ready:
-  `usage.getMetrics`, `session.usage_info`, `contextWindow`.
-- **permission-approval** — dropped; user runs 100% yolo (`--allow-all`).
+## Deliberate capability limits
 
-### Not porting (TUI-only / out of scope)
+- Native schedules currently create simple after/every delays from one second
+  through 24 hours, or a one-shot absolute time in that range. Cron/timezone,
+  display labels and recurring absolute creation are not exposed. Existing
+  entries remain readable; no hidden model parser guesses structured API input.
+- Structured/URL elicitation acceptance is not implemented as a generic form
+  renderer. The request exposes only the actions the current adapter can honor.
+- MCP connection reload uses the native API on an idle loaded session; it also
+  restores native global defaults. Global configuration refresh does not restart
+  sessions. Skill definitions can reload without restarting Cockpit.
+- Backend and MCP disk-transfer path protection targets the deployed Linux
+  environment; no blanket cross-platform filesystem parity is claimed.
 
-`/theme` `/statusline` `/footer` `/terminal-setup` `/streamer-mode`; line-edit
-keybinds; `/ide` `/lsp`; `/login` `/logout` (server authenticated);
-`/update` `/version` `/restart`; `/app`; `/delegate` (optional).
+## Operations and review
 
----
+The [2026-09-08 final review](./review/2026-09-08-foundation.md) records the
+architecture, performance, reliability, security and usability conclusions,
+implemented changes and remaining evidence limits.
 
-## Key SDK access paths (runtime-verified)
+See [DEPLOY-PORTABLE.md](./DEPLOY-PORTABLE.md) for setup and
+[cockpit-testing.md](./cockpit-testing.md) for the existing checks.
 
-- **Models:** `sdk.getAvailableModels(authInfo)` → each model has
-  `supportedReasoningEfforts` / `defaultReasoningEffort` and
-  `billing.token_prices` (a `long_context` key ⇒ supports long context). **NOT**
-  `capabilities.limits.token_prices` (that path is empty — was the fix-context-tier bug).
-- **Model switch:** `session.model.switchTo({ modelId, reasoningEffort?,
-  contextTier? })`; `getCurrent()` reads back the clamped selection.
-- **TODO counts:** `session.sessionFs.sessionDatabase.getTodoStatus()` +
-  `getCurrentIntent()`. Refresh trigger: `session.todos_changed` event.
-- **Permissions (yolo):** pass `SessionOptions.permissionRequestHandler:
-  async () => ({ kind: 'approved' })` or all tool calls are auto-denied.
-- **Plan + full todos:** `session.plan.read()` (plan.md markdown),
-  `session.plan.readSqlTodos()` (full per-item `[{id,title,description,status}]`).
-- **Current intent:** `session.sessionFs.sessionDatabase.getCurrentIntent()` →
-  single title from the todos table (the CLI uses it to set the terminal window
-  title — its "what am I doing" label). `getTodoStatus()` is separate (counts only).
-- **My ask_user reply (persistent):** the `ask_user` tool's
-  `tool.execution_complete` carries `result.content` = "User responded: …" and is
-  **persisted** in the event log (replays via `getEvents()`). This is the
-  authoritative source for surfacing the user's answer — fold it identically live
-  + replay. (There's also an ephemeral `user_input.completed` `{requestId,answer}`
-  after `respondToUserInput`, but it does NOT survive reload — don't rely on it.)
-- **Sub-agents (`task` tool):** two hand-rolled-bootstrap gotchas, both because we
-  run the SDK from its `sdk/` entry instead of the full CLI's top-level `app.js`:
-  1. **autoModeManager** — the session ctor copies `coreServices.autoModeManager`
-     onto every session incl. sub-agents; omit it and a sub-agent's first model
-     resolve throws `getLastResolved` of undefined. Pass `new AutoModeSessionManager()`.
-  2. **agent definitions** — the bundle loads `<name>.agent.yaml` from
-     `dirname(import.meta.url)/definitions` = `sdk/definitions`, but the npm package
-     ships them at `@github/copilot/definitions` (sibling of `sdk/`). Without a fix
-     every `task` spawn ENOENTs. `bootstrap.ensureAgentDefinitions()` symlinks
-     `sdk/definitions -> ../definitions` (idempotent; re-created each boot so it
-     survives `pnpm install`). Sub-agent events carry top-level `agentId`; fold them
-     into recursive `SubagentCard`s (`ChatMessage.subMessages`).
+The current Linux deployment uses the system `cockpit.service`, behind an
+authenticated HTTPS gateway. Keep the raw backend on loopback. Compress static
+JS/CSS and ordinary HTTP JSON at the proxy, not SSE.
 
-The roadmap items above are mirrored 1:1 in the session `todos` table so the
-in-app TODO bar / info panel reflect real progress.
+Stage assets separately from the directory served by the running process.
+`POST /admin/restart` is the single restart authority: it waits for protected
+work, shuts down the owned runtime, drains pending pushes and exits for its
+supervisor. The helper script delegates to that API instead of racing systemctl.
 
----
-
-## History
-
-Per-change detail is in the session checkpoints (`checkpoints/index.md`). The
-project began as `acp-chat` (WebSocket + `copilot --acp`), then pivoted to
-`cockpit` (SSE + in-process `@github/copilot/sdk`) — the ACP-era design is
-obsolete and superseded by the architecture above.
+Imported reviews and `butler.md` are historical context, not instructions to
+reinstall retired governance. Future changes must name a concrete remote-use
+problem and prefer removing unnecessary work over adding more managers.

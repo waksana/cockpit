@@ -5,19 +5,17 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   HEAP_ENV_VAR,
-  DEFAULT_MAX_OLD_SPACE_MB,
   resolveMaxOldSpaceMb,
   buildServerNodeArgs,
 } from './heap-config.mjs';
 
-test('default: unset → 8192', () => {
-  assert.equal(resolveMaxOldSpaceMb({}), DEFAULT_MAX_OLD_SPACE_MB);
-  assert.equal(DEFAULT_MAX_OLD_SPACE_MB, 8192);
+test('default: unset uses Node memory sizing', () => {
+  assert.equal(resolveMaxOldSpaceMb({}), undefined);
 });
 
 test('default: empty / whitespace-only → default (treated as unset)', () => {
-  assert.equal(resolveMaxOldSpaceMb({ [HEAP_ENV_VAR]: '' }), DEFAULT_MAX_OLD_SPACE_MB);
-  assert.equal(resolveMaxOldSpaceMb({ [HEAP_ENV_VAR]: '   ' }), DEFAULT_MAX_OLD_SPACE_MB);
+  assert.equal(resolveMaxOldSpaceMb({ [HEAP_ENV_VAR]: '' }), undefined);
+  assert.equal(resolveMaxOldSpaceMb({ [HEAP_ENV_VAR]: '   ' }), undefined);
 });
 
 test('override: valid positive integer wins', () => {
@@ -48,14 +46,11 @@ test('invalid: unsafe-huge integer rejected as out of range', () => {
 
 test('buildServerNodeArgs: default and override flags', () => {
   assert.deepEqual(buildServerNodeArgs({}), [
-    '--expose-gc',
-    '--max-old-space-size=8192',
     '--import',
     'tsx',
     'src/index.ts',
   ]);
   assert.deepEqual(buildServerNodeArgs({ [HEAP_ENV_VAR]: '4096' }), [
-    '--expose-gc',
     '--max-old-space-size=4096',
     '--import',
     'tsx',

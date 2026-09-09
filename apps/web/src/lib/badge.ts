@@ -4,27 +4,24 @@
 // unavailable (most desktop browsers, non-installed contexts). On iOS the badge
 // only shows for an installed PWA.
 
-interface BadgeNavigator {
-  setAppBadge?: (count?: number) => Promise<void>;
-  clearAppBadge?: () => Promise<void>;
-}
+import { updateNotificationBadge, type BadgeNavigator, type SessionAttentionObservation, type NotificationProjectionOptions } from './notificationTransport';
 
 function nav(): BadgeNavigator | null {
   if (typeof navigator === 'undefined') return null;
   const n = navigator as unknown as BadgeNavigator;
-  return n.setAppBadge ? n : null;
+  return n.setAppBadge || (typeof indexedDB !== 'undefined' && typeof navigator.locks?.request === 'function') ? n : null;
 }
 
 export function badgeSupported(): boolean {
-  return nav() !== null;
+  return !!nav()?.setAppBadge;
 }
 
-// Set the badge to `count` (clears it at 0). Best-effort; failures are swallowed.
-export function setBadge(count: number): void {
-  const n = nav();
-  if (!n) return;
-  try {
-    if (count > 0) void n.setAppBadge?.(count);
-    else void n.clearAppBadge?.();
-  } catch { /* best-effort */ }
+// Invoke after every authoritative projection/reconnect, even at the same count.
+// A missing revision is legacy and cannot overwrite a known versioned count.
+export async function setBadge(
+  count: number, inboxRevision?: number, observedSessions: readonly SessionAttentionObservation[] = [],
+  projection: NotificationProjectionOptions = {},
+): Promise<void> {
+  const navigator = nav();
+  if (navigator) await updateNotificationBadge(count, inboxRevision, navigator, undefined, observedSessions, projection);
 }

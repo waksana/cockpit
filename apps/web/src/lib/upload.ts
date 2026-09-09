@@ -1,42 +1,82 @@
-// File upload helper. Uploads a File to the backend's fixed folder, then builds
-// the message to send to the session: a <cockpit-attachment> marker (carrying
-// display metadata the fold turns into a card) followed by a fixed guidance prompt
-// that points the agent at the absolute path. The marker is hidden from display;
-// the guidance is what the agent reads.
-
-import { uploadUrl } from './config';
-
-export interface UploadedFile {
-  kind: 'image' | 'file';
-  name: string;
-  url: string;
-  path: string;
-  size: number;
-  mime: string;
-}
+import { Attachment, UploadedFile } from '@cockpit/protocol';
+import { BASE_URL, uploadUrl } from './config';
 
 const MAX_BYTES = 25 * 1024 * 1024;
+const UNSAFE_TEXT = /[\p{Cc}\u2028\u2029\u202a-\u202e\u2066-\u2069]/u;
+const MIME_PATTERN = /^[a-z0-9!#$&^_.+-]+\/[a-z0-9!#$&^_.+-]+(?: *; *[a-z0-9!#$&^_.+-]+=(?:[a-z0-9!#$&^_.+-]+|"(?:[^"\\]|\\.)*"))*$/i;
 
-export async function uploadFile(file: File): Promise<UploadedFile> {
+function safeText(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0 && !UNSAFE_TEXT.test(value);
+}
+
+export function attachmentHref(url: string, baseUrl: string = BASE_URL): string | undefined {
+  if (!safeText(url) || url !== url.trim() || url.includes('\\')) return undefined;
+
+  // Validate the raw path before URL parsing can normalize away traversal.
+  const absolute = /^https?:\/\/[^/?#]+(\/[^?#]*)?$/i.exec(url);
+  const match = /^\/uploads\/([^/?#]+)$/.exec(absolute ? absolute[1] ?? '/' : url);
+  if (!match) return undefined;
+
+  try {
+    const asset = decodeURIComponent(match[1]);
+    if (!safeText(asset) || asset === '.' || asset === '..' || /[/\\?#]/.test(asset)
+      // Nested escapes are ambiguous across proxies and repeated decoding.
+      || /%[a-f0-9]{2}/i.test(asset)) return undefined;
+    const path = `/uploads/${encodeURIComponent(asset)}`;
+    const origin = baseUrl || (typeof location === 'undefined' ? undefined : location.origin);
+    if (!origin) return absolute ? undefined : path;
+    if (!safeText(origin) || origin !== origin.trim() || origin.includes('\\')
+      || !/^https?:\/\//i.test(origin)) return undefined;
+
+    const base = new URL(origin);
+    if (base.username || base.password || base.pathname !== '/' || base.search || base.hash) return undefined;
+    if (absolute) {
+      const target = new URL(url);
+      if (target.origin !== base.origin || target.username || target.password) return undefined;
+    }
+    return baseUrl ? `${base.origin}${path}` : path;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function uploadFile(file: File, sessionId?: string): Promise<UploadedFile> {
   if (file.size > MAX_BYTES) throw new Error(`文件过大（上限 ${Math.floor(MAX_BYTES / 1024 / 1024)}MB）`);
   const mime = file.type || 'application/octet-stream';
-  const res = await fetch(uploadUrl(file.name, mime), {
+  const res = await fetch(`${uploadUrl(file.name, mime)}&source=web${sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : ''}`, {
     method: 'POST',
     headers: { 'content-type': 'application/octet-stream' },
     credentials: 'include',
     body: file,
   });
   if (!res.ok) throw new Error(`上传失败 (${res.status})`);
-  return res.json() as Promise<UploadedFile>;
+  let data: unknown;
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error('上传响应无效');
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('上传响应无效');
+  const { kind, name, url, path, size, mime: uploadedMime } = data as Record<string, unknown>;
+  if ((kind !== 'image' && kind !== 'file') || !safeText(name) || !safeText(path)
+    || typeof url !== 'string' || !attachmentHref(url)
+    || typeof size !== 'number' || !Number.isSafeInteger(size) || size < 0 || size > MAX_BYTES
+    || !safeText(uploadedMime) || uploadedMime.length > 512 || !MIME_PATTERN.test(uploadedMime)) {
+    throw new Error('上传响应无效');
+  }
+  const parsed = UploadedFile.safeParse(data);
+  if (!parsed.success) throw new Error('上传响应无效');
+  return parsed.data;
 }
 
-// Build the message text: the marker (parsed + hidden by the fold) + a fixed
-// guidance prompt the agent reads to locate and inspect the file.
-export function buildAttachmentMessage(f: UploadedFile): string {
-  const enc = encodeURIComponent;
-  const marker = `<cockpit-attachment kind="${f.kind}" name="${enc(f.name)}" url="${enc(f.url)}" size="${f.size}" mime="${enc(f.mime)}"></cockpit-attachment>`;
-  const guidance = f.kind === 'image'
-    ? `我上传了一张图片「${f.name}」，已保存到服务器路径：\n${f.path}\n请读取该路径查看图片内容。`
-    : `我上传了一个文件「${f.name}」，已保存到服务器路径：\n${f.path}\n请读取该路径查看文件内容。`;
-  return `${marker}\n${guidance}`;
+export function uploadedAttachment(file: Attachment): Attachment {
+  const parsed = Attachment.safeParse(file);
+  if (!parsed.success) throw new Error('附件信息无效');
+  const { kind, name, url, size, mime } = parsed.data;
+  if (!safeText(name) || !attachmentHref(url)
+    || (size !== undefined && (!Number.isSafeInteger(size) || size < 0 || size > MAX_BYTES))
+    || (mime !== undefined && (!safeText(mime) || mime.length > 512 || !MIME_PATTERN.test(mime)))) {
+    throw new Error('附件信息无效');
+  }
+  return { kind, name, url, size, mime };
 }

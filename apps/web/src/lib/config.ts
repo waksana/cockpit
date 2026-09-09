@@ -2,7 +2,7 @@
 // by nginx): an SSE stream at `/events` for server→client domain events, and
 // `POST /intent/*` for client→server intents. TLS + auth terminate upstream.
 
-const DEV = import.meta.env.DEV;
+const DEV = import.meta.env?.DEV;
 
 function override(): string | null {
   try { return localStorage.getItem('cockpit:base-url'); } catch { return null; }

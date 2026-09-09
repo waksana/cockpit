@@ -6,16 +6,19 @@
 //
 // Isolated: the module is imported with COCKPIT_NO_BOOT=1 so the Engine (which
 // reads the real ~/.copilot prefs) is never constructed and no port is bound;
-// COCKPIT_UPLOAD_DIR points at a temp dir so the GET /uploads probe stays in /tmp.
+// COCKPIT_UPLOAD_DIR points at a unique nonexistent path within apps/server.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { rmSync } from 'node:fs';
+import { relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { sessionMetaBusy } from '@cockpit/core';
 import type { SessionMeta } from '@cockpit/protocol';
 
-const TEST_UPLOAD_DIR = mkdtempSync(join(tmpdir(), 'cockpit-server-sec-'));
+const TEST_UPLOAD_DIR = relative(process.cwd(), fileURLToPath(
+  new URL(`../.cockpit-server-sec-${process.pid}-${randomUUID()}`, import.meta.url),
+));
 process.env.COCKPIT_NO_BOOT = '1';
 process.env.LOG_LEVEL = 'silent';
 process.env.COCKPIT_UPLOAD_DIR = TEST_UPLOAD_DIR;
@@ -23,9 +26,11 @@ process.env.COCKPIT_ALLOWED_ORIGINS = 'https://configured.example';
 
 // Import AFTER the env is set (the module reads these at load time).
 const { app, isAllowedOrigin, sessionBusy, sseWrite, broadcastFrame } = await import('./index.ts');
+after(async () => {
+  try { await app.close(); }
+  finally { rmSync(TEST_UPLOAD_DIR, { recursive: true, force: true }); }
+});
 await app.ready();
-
-after(() => { rmSync(TEST_UPLOAD_DIR, { force: true, recursive: true }); });
 
 // ── Origin/CSRF gate via app.inject ────────────────────────────────────────
 // An unknown intent route returns 404 from the handler; the onRequest Origin hook
@@ -189,6 +194,76 @@ test('sseWrite: respects an explicit lower high-water-mark', () => {
   assert.equal(mid.calls.destroyed, true);
 });
 
+test('sseWrite: buffer plus frame exactly equal to the high-water-mark is permitted', () => {
+  const frame = 'data: 界😀\n\n';
+  for (const writableLength of [0, 16]) {
+    const client = fakeClient(writableLength);
+    const set = new Set([client.reply]);
+    const hwm = writableLength + Buffer.byteLength(frame, 'utf8');
+    assert.equal(sseWrite(set, client.reply, frame, hwm), true);
+    assert.deepEqual(client.calls.writes, [frame]);
+    assert.equal(client.calls.destroyed, false);
+    assert.equal(set.has(client.reply), true);
+  }
+});
+
+test('sseWrite: buffer plus next frame crossing the cap is rejected before writing', () => {
+  const frame = 'data: next\n\n';
+  const hwm = 32;
+  const client = fakeClient(hwm - Buffer.byteLength(frame) + 1);
+  assert.ok(client.reply.raw.writableLength < hwm);
+  assert.ok(Buffer.byteLength(frame) < hwm);
+  const set = new Set([client.reply]);
+  assert.equal(sseWrite(set, client.reply, frame, hwm), false);
+  assert.deepEqual(client.calls.writes, []);
+  assert.equal(client.calls.destroyed, true);
+  assert.equal(set.has(client.reply), false);
+});
+
+test('sseWrite: an oversized frame with an empty buffer causes zero writes', () => {
+  const frame = 'data: oversized\n\n';
+  const client = fakeClient(0);
+  const set = new Set([client.reply]);
+  assert.equal(sseWrite(set, client.reply, frame, Buffer.byteLength(frame) - 1), false);
+  assert.deepEqual(client.calls.writes, []);
+  assert.equal(client.calls.destroyed, true);
+  assert.equal(set.has(client.reply), false);
+});
+
+test('sseWrite: UTF-8 bytes, not string length, determine oversized frames before any write', () => {
+  const frame = 'data: 界😀\n\n';
+  const hwm = frame.length;
+  assert.ok(Buffer.byteLength(frame, 'utf8') > hwm);
+  const client = fakeClient(0);
+  const set = new Set([client.reply]);
+  assert.equal(sseWrite(set, client.reply, frame, hwm), false);
+  assert.deepEqual(client.calls.writes, []);
+  assert.equal(client.calls.destroyed, true);
+  assert.equal(set.has(client.reply), false);
+});
+
+test('broadcastFrame: buffer plus frame crossing the cap drops only offending clients', () => {
+  const frame = 'data: 界😀\n\n';
+  const bytes = Buffer.byteLength(frame, 'utf8');
+  const hwm = 64;
+  const atLimit = fakeClient(hwm - bytes);
+  const overByOne = fakeClient(hwm - bytes + 1);
+  const overByTwo = fakeClient(hwm - bytes + 2);
+  const healthy = fakeClient(0);
+  const set = new Set([atLimit.reply, overByOne.reply, overByTwo.reply, healthy.reply]);
+  broadcastFrame(set, frame, hwm);
+  assert.deepEqual([...set], [atLimit.reply, healthy.reply]);
+  for (const client of [overByOne, overByTwo]) {
+    assert.ok(client.reply.raw.writableLength < hwm);
+    assert.deepEqual(client.calls.writes, []);
+    assert.equal(client.calls.destroyed, true);
+  }
+  for (const client of [atLimit, healthy]) {
+    assert.deepEqual(client.calls.writes, [frame]);
+    assert.equal(client.calls.destroyed, false);
+  }
+});
+
 // ── Busy predicate delegation (graceful-restart gate) ──────────────────────
 
 function meta(over: Partial<SessionMeta>): SessionMeta {
@@ -206,6 +281,10 @@ test('sessionBusy delegates to engine sessionMetaBusy across states', () => {
     { status: 'idle', compacting: true },
     { status: 'idle', activeSubagents: 2 },
     { status: 'idle', activeMcpOperations: 1 },
+    { status: 'idle', loading: true },
+    { status: 'idle', closing: true },
+    { status: 'idle', cancelling: true },
+    { status: 'idle', loading: false, closing: false, cancelling: false },
     { status: 'idle', ask: { requestId: 'r', prompt: 'p' } as unknown as SessionMeta['ask'] },
     { status: 'idle', planRequest: { requestId: 'r' } as unknown as SessionMeta['planRequest'] },
     { status: 'idle', elicitation: { requestId: 'r' } as unknown as SessionMeta['elicitation'] },

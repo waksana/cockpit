@@ -3,192 +3,51 @@
 // that index.ts calls. This module holds what they all need so nothing is
 // duplicated across groups.
 import { z } from 'zod';
+import {
+  Intents,
+  type IntentResult,
+  McpServerSession as ProtocolMcpServerSession,
+  McpServerStatus as ProtocolMcpServerStatus,
+  McpToggleOperation as ProtocolMcpToggleOperation,
+  McpToggleResult as ProtocolMcpToggleResult,
+} from '@cockpit/protocol';
+
+export type {
+  Attachment, DirListing, HistoryPage, McpServerGlobal, PanelItem, ScheduleEntry, SessionBrief, SessionMeta,
+  SessionPanels, SessionPlan, SkillGlobal, SkillSession, Snapshot, TodoProgress, TrashEntry,
+  UploadedFile,
+} from '@cockpit/protocol';
+export type McpSessionResult = IntentResult<'mcp/session'>;
+export type McpServerSession = ProtocolMcpServerSession;
+export type McpServerStatus = ProtocolMcpServerStatus;
+export type McpToggleOperation = ProtocolMcpToggleOperation;
+export type McpToggleResult = ProtocolMcpToggleResult;
 
 export const ResponseFormat = z.enum(['markdown', 'json']).default('markdown');
 
-export interface TrashEntry {
-  sessionId: string;
-  title: string;
-  cwd: string;
-  at: string;
-  reason?: string;
-}
-
-export interface SessionBrief {
-  sessionId: string;
-  title: string;
-  cwd: string;
-  status: string;
-  launchState?: 'launching' | 'launch_failed' | null;
-  loaded: boolean;
-  lastActivity: number;
-  currentModelId?: string;
-}
-
-// The full SessionMeta the SSE snapshot projects (and session/get returns). Only
-// the fields the MCP surfaces are typed; the rest pass through structurally.
-export interface SessionMetaFull {
-  sessionId: string;
-  title: string;
-  cwd: string;
-  status: string;
-  loaded: boolean;
-  lastActivity: number;
-  createdAt?: number;
-  error?: string | null;
-  launchState?: 'launching' | 'launch_failed' | null;
-  currentModelId?: string;
-  currentReasoningEffort?: string;
-  currentContextTier?: string;
-  currentMode?: string;
-  availableModels?: { id: string; name?: string }[];
-  pinned?: boolean;
-  scheduleCount?: number;
-  queue?: { id: string; text: string }[];
-  ask?: { requestId: string; question: string; choices?: string[]; allowFreeform?: boolean } | null;
-  planRequest?: { requestId: string; summary: string } | null;
-  elicitation?: { requestId: string; message: string } | null;
-  todo?: { total: number; done: number; inProgress: number; currentTitle?: string } | null;
-  attention?: unknown;
-}
-
-export const McpServerStatus = z.enum([
-  'connected',
-  'failed',
-  'needs-auth',
-  'pending',
-  'disabled',
-  'not_configured',
-  'unloaded',
-]);
-export type McpServerStatus = z.infer<typeof McpServerStatus>;
-
-export const McpToggleOperation = z.object({
-  id: z.string(),
-  desiredEnabled: z.boolean(),
-  state: z.enum(['running', 'cancelling', 'settling', 'succeeded', 'failed']),
-  startedAt: z.number(),
-  completedAt: z.number().optional(),
-  status: McpServerStatus,
-  error: z.string().optional(),
-});
-export type McpToggleOperation = z.infer<typeof McpToggleOperation>;
-
-export const McpServerSession = z.object({
-  name: z.string(),
-  detail: z.string(),
-  status: McpServerStatus,
-  enabled: z.boolean(),
-  error: z.string().optional(),
+// Preserve forward-compatible fields at each existing MCP envelope boundary.
+export const McpServerStatus = ProtocolMcpServerStatus;
+export const McpToggleOperation = ProtocolMcpToggleOperation.passthrough();
+export const McpServerSession = ProtocolMcpServerSession.extend({
   operation: McpToggleOperation.optional(),
-});
-export type McpServerSession = z.infer<typeof McpServerSession>;
+}).passthrough();
 
-export const McpSessionResult = z.object({
-  loaded: z.boolean(),
+export const McpSessionResult = Intents['mcp/session'].result.extend({
   servers: z.array(McpServerSession),
-});
-export type McpSessionResult = z.infer<typeof McpSessionResult>;
+}).passthrough();
 
-export const McpToggleResult = z.object({
-  ok: z.boolean(),
-  applied: z.boolean(),
-  sessionId: z.string(),
-  name: z.string(),
-  enabled: z.boolean(),
-  status: McpServerStatus,
-  error: z.string().optional(),
+export const McpToggleResult = ProtocolMcpToggleResult.extend({
   operation: McpToggleOperation,
-});
-export type McpToggleResult = z.infer<typeof McpToggleResult>;
-
-export interface McpServerGlobal {
-  name: string;
-  detail?: string;
-  defaultOn?: boolean;
-}
-
-export interface SkillSession {
-  name: string;
-  description?: string;
-  source?: string;
-  enabled: boolean;
-}
-
-export interface SkillGlobal {
-  name: string;
-  description?: string;
-  source?: string;
-}
-
-export interface PanelItem {
-  label: string;
-  detail?: string;
-  status?: string;
-}
-
-export interface ScheduleEntry {
-  id: number;
-  prompt: string;
-  recurring: boolean;
-  nextRunAt: number;
-  intervalMs?: number;
-  cron?: string;
-  tz?: string;
-  at?: number;
-  displayPrompt?: string;
-}
-
-export interface HookEntry {
-  id: string;
-  ownerSession: string;
-  event: string;
-  filter?: { cwdPrefix?: string; sessionId?: string; excludeSelf?: boolean };
-  flowId?: string;
-  promptTemplate?: string;
-  once?: boolean;
-  createdAt: number;
-}
-
-export interface Flow {
-  id: string;
-  name?: string;
-  gate?: { script: string; timeoutMs?: number };
-  action:
-    | { kind: 'spawn-session'; template: { cwd: string; prompt: string; skills?: string[]; mcps?: string[]; model?: string; mode?: string } }
-    | { kind: 'prompt-existing'; sessionId: string; prompt: string };
-}
-
-export interface FlowScheduleEntry {
-  id: number;
-  flowId?: string;
-  target?: { kind: 'prompt-existing'; sessionId: string; prompt: string; displayPrompt?: string };
-  recurring: boolean;
-  nextRunAt: number;
-  intervalMs?: number;
-  cron?: string;
-  tz?: string;
-  at?: number;
-  label?: string;
-}
+}).passthrough();
 
 export type ToolResult = {
   content: { type: 'text'; text: string }[];
-  structuredContent?: Record<string, unknown>;
   isError?: boolean;
 };
 
-// A ToolResult historically carried BOTH a `content` text copy AND a
-// `structuredContent` copy. The CLI host materializes/serializes BOTH and emits
-// them back-to-back, so every machine (`response_format:"json"`) caller received
-// the SAME payload twice — a pretty block followed by a compact block — and had to
-// brace-balance / take-last-line to recover one clean JSON. None of these tools
-// declare an `outputSchema`, so `structuredContent` has no contractual consumer;
-// the `text` is always the complete, self-describing representation (JSON in json
-// mode, human markdown in markdown mode) and is therefore the single source of
-// truth. We no longer attach `structuredContent`. The second parameter is kept so
-// the ~40 call sites stay unchanged.
-export function ok(text: string, _structured?: Record<string, unknown>): ToolResult {
+// These tools return one text representation; structuredContent duplicated it
+// in the CLI host, and no tool declares an outputSchema requiring that copy.
+export function ok(text: string): ToolResult {
   return { content: [{ type: 'text', text }] };
 }
 
@@ -241,7 +100,7 @@ export function cappedJson(value: unknown, shrink?: (attempt: number) => unknown
 }
 
 // Build the `shrink(attempt)` callback cappedJson wants for a LIST payload of shape
-// `{ [listKey]: items, count }`. Most list tools (skills/mcp/hooks/flows) call
+// `{ [listKey]: items, count }`. Most list tools (skills/mcp) call
 // `cappedJson(structured)` bare, so an over-budget json read fell to the useless
 // overflow stub. Passing `shrinkList(...)` instead lets cappedJson retry with a
 // progressively compacted — but always VALID and in-budget — projection:

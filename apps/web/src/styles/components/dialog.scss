@@ -71,6 +71,11 @@
 }
 
 // ── Folder picker (new-session working directory chooser) ───────────────────
+.directory-modal {
+  bottom: var(--ux-error-height, 0px);
+  padding: 0.5rem;
+  .dialog-card.dirpicker { max-height: 100%; overflow-y: auto; }
+}
 .dialog-card.dirpicker {
   max-width: 26rem;
   display: flex;
@@ -119,4 +124,3 @@
   color: var(--tertiary-text-color);
   font-size: var(--font-size-13);
 }
-

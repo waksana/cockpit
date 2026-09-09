@@ -5,34 +5,36 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "typecheck": "tsc --noEmit",
+    "build": "pnpm typecheck && vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json",
+    "test": "tsx --tsconfig tsconfig.app.json --test \"src/**/*.test.ts\"",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
     "@cockpit/protocol": "workspace:*",
-    "microsoft-cognitiveservices-speech-sdk": "^1.50.0",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
+    "microsoft-cognitiveservices-speech-sdk": "^1.51.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
-    "react-router-dom": "^7.15.0",
+    "react-router-dom": "^7.18.3",
     "remark-gfm": "^4.0.1",
-    "zustand": "^5.0.2"
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
-    "eslint": "^10.2.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^6.1.1",
+    "eslint": "^10.10.0",
     "eslint-plugin-react-hooks": "^7.1.1",
-    "eslint-plugin-react-refresh": "^0.5.2",
-    "globals": "^17.5.0",
-    "sass": "^1.101.0",
-    "typescript": "^5.7.2",
-    "typescript-eslint": "^8.58.2",
-    "vite": "^8.0.10",
+    "eslint-plugin-react-refresh": "^0.5.6",
+    "globals": "^17.12.0",
+    "sass": "^1.104.0",
+    "tsx": "^4.23.13",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0",
+    "vite": "^8.2.2",
     "vite-plugin-pwa": "^1.3.0"
   }
 }

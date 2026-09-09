@@ -1,5 +1,10 @@
 # 管家系统 (Butler) 设计文档 — 讨论稿
 
+> 历史设计，已退出 Cockpit foundation。下文描述的进程内 Hook / Flow / Gate
+> 和治理部署流程不是当前底座接口或安装要求。治理应作为独立上层应用，
+> 通过 Cockpit API / MCP 使用 session、消息和文件能力；底座不自动安装或恢复它。
+> 本文仅保留设计背景，不代表已提供替代治理服务。
+
 状态：DECISIONS LOCKED（2026-06-20，5 项决策 + R1 防环已逐项确认，见末尾决策记录）。
 下一步 → 提升到 `~/cockpit/docs/butler.md` 并据此写开发者 spec（dev-spec todo）。
 日期：2026-06-20。作者：Cockpit 管理员 session (96c3db7a)。
