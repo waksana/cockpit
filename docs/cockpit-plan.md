@@ -4,6 +4,10 @@ Cockpit is remote Copilot plus the file/image and browser interactions needed to
 use it from a computer or phone. Web and MCP access one authoritative backend API.
 It intentionally covers a subset of CLI capabilities, not a second agent platform.
 
+Stable product decisions and review criteria are defined in
+[Cockpit 定位与验收准则 (R1–R8)](product-requirements.md). The implementation
+details and dated delivery notes below do not add or override those requirements.
+
 ## Source delivery and paused work (2026-09-11)
 
 The contracts below describe repository source. A local commit, a merged main

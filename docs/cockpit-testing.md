@@ -3,6 +3,9 @@
 How cockpit is tested, its measured performance baseline, and a review of its
 security posture. Commands run from the repo root unless noted.
 
+The current product acceptance criteria are [R1–R8](product-requirements.md).
+Historical measurements below are not current architecture or release evidence.
+
 For the deployed modernization's conclusions and remaining limits, see the
 [2026-09-08 final review](./review/2026-09-08-foundation.md).
 
@@ -24,10 +27,19 @@ Unit tests use `node:test` + `tsx` (no extra framework). Use isolated fixtures a
 mock transports for the foundation's governance-free boot, API/MCP coverage,
 cross-session interaction, file exchange and reconnect behavior. Do not use a
 personal session store or restart the running service for ordinary unit tests.
-Test files are
-`*.test.ts` next to the code; they're excluded from the `tsc` builds. E2E and perf
-are plain Node scripts in `scripts/` that hit `127.0.0.1:8771` (non-destructive:
-they create + delete one throwaway session and a throwaway upload).
+Test files are `*.test.ts` next to the code; they're excluded from the `tsc`
+builds. The optional scripts have different, potentially significant effects:
+
+- `regress` reads every private `~/.copilot/session-state/*/events.jsonl`.
+- `perf` also reads that whole history, repeatedly calls the running backend,
+  opens concurrent SSE connections and leaves uploaded files behind.
+- `e2e` targets the running backend and creates, changes and permanently deletes
+  its own fixture session; it also creates schedules and retained uploads.
+
+These are not read-only or automatically isolated checks. Their defaults are not
+appropriate for ordinary acceptance against a personal service. A documentation
+warning does not provide an execution guard or make the scripts conform to the
+isolated-fixture requirement.
 
 Do not run deployment-facing E2E/performance scripts against a personal service
 as ordinary unit checks. Native SDK probes use a separate configuration/state
@@ -41,8 +53,9 @@ always-approve permission policy is not default interactive CLI equivalence.
 
 Resource acceptance distinguishes the API process, Copilot runtime and MCP
 children. Repeated load/release cycles must release the actual SDK-owned session,
-not only Cockpit's reference. Passive history queries must start no runtime, emit
-no viewer-specific SSE pages and leave other devices' scrollback unchanged.
+not only Cockpit's reference. Passive history queries must not resume the target session or create a second
+runtime, emit no viewer-specific control SSE pages and leave other devices'
+scrollback unchanged. The backend's existing SDK runtime serves the passive RPC.
 
 ## Historical performance baseline
 
@@ -123,9 +136,10 @@ Confirmed native process death instead causes a nonzero exit for supervisor
 recovery. Neither case blindly replays an uncertain submitted prompt.
 
 The imported MCP reader previously depended on a lossy SDK `turns` table and its
-own local event-log fold. The foundation reader now calls `session/peek`: both
-clients use the backend's canonical transcript, with no local SQL fallback.
-See [`apps/mcp/README.md`](../apps/mcp/README.md) for message-cursor pagination.
+own local event-log fold. The current reader calls `session/chat` for native event
+pages, with no local SQL fallback. `session/peek` is retired. The browser folds
+its own reading window; there is no backend canonical-transcript cache.
+See [`apps/mcp/README.md`](../apps/mcp/README.md) for native event-cursor pagination.
 
 When changing restart or transcript handling, use an isolated backend fixture to
 compare API/MCP messages with the same history projected to the web client.

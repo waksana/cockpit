@@ -1,5 +1,11 @@
 # Phase 0 — SDK PoC 结论:GO ✅(2026-06-16, copilot 1.0.63)
 
+> 历史 PoC，仅保留当时的调查记录，不是当前实施方案。下文进程内
+> `internal.*`、旧认证 bootstrap 和旧能力结论已被官方进程外 SDK 接入替代，
+> 不应按此重新配置或开发。当前定位见
+> [Cockpit 定位与验收准则](docs/product-requirements.md)，实现见
+> [底座设计](docs/cockpit-plan.md)。
+
 进程内 `@github/copilot/sdk` 驱动 Copilot session **全部验证通过**。可以照 STACK-v2.md 推进。
 
 ## 关键意外:已发布 SDK 的公开面 ≠ .d.ts
