@@ -94,11 +94,12 @@ test('loading more history never hides an already materialized reading window', 
     messages: [{ id: 'visible', role: 'assistant', content: 'Keep this reading position', timestamp: 1 }],
   });
 
-  test('normal history has no load button while failures and incomplete boundaries keep explicit recovery', () => {
+  test('normal history has no load button while failures keep explicit recovery', () => {
     const ready = { materialized: true, historyStale: false, loadingHistory: false, hasMore: true };
     assert.doesNotMatch(render(ready), /加载更早的历史|重试加载历史|继续补齐消息边界/);
     assert.match(render({ ...ready, historyError: 'offline' }), /历史加载失败：offline.*重试加载历史/);
-    assert.match(render({ ...ready, incompleteBoundary: true }), /已暂停自动加载.*继续补齐消息边界/);
+    assert.doesNotMatch(render({ ...ready, incompleteBoundary: true }), /已暂停自动加载|继续补齐消息边界/);
+    assert.match(render({ ...ready, hasMore: false, incompleteBoundary: true }), /现有历史无法补齐/);
   });
   assert.match(html, /加载更早的消息/);
   assert.match(html, /Keep this reading position/);

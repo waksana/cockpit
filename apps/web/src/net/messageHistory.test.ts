@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { NativeChatEvent, NativeChatPage, NativeChatRead } from '@cockpit/protocol';
 import { NativeWindow } from './nativeWindow';
-import { HISTORY_BOUNDARY_PAGES, readMessageHistory } from './messageHistory';
+import { readMessageHistory } from './messageHistory';
 
 const query: NativeChatRead = {
   sessionId: 'fixture', source: 'live', direction: 'backward',
@@ -81,6 +81,20 @@ test('metadata-only pages continue to a display message rather than ending a his
   assert.equal(h.window.snapshot().messages[0].id, 'message');
 });
 
+test('persisted child tool records do not make the primary view scan backward for their owners', async () => {
+  const child = (index: number) => ({
+    ...event(`child-${index}`, 'tool.execution_complete', {
+      toolCallId: `child-tool-${index}`, parentToolCallId: 'spawn', success: true,
+    }),
+    agentId: 'child', parentToolCallId: 'spawn',
+  });
+  const h = setup([[...Array.from({ length: 31 }, (_, index) => child(index)), event('primary')]], undefined, true);
+  await h.run();
+  assert.equal(h.requests.length, 1);
+  assert.deepEqual(h.window.snapshot().messages.map(message => message.id), ['primary']);
+  assert.equal(h.window.snapshot().incompleteBoundary, false);
+});
+
 test('static child starts with their own agent IDs still need the parent message boundary', async () => {
   const h = setup([
     [event('started', 'subagent.started', { toolCallId: 'spawn', agentId: 'child', agentDisplayName: 'Child' })],
@@ -109,17 +123,15 @@ test('unavailable parent history ends explicitly, without guessing ownership or 
   assert.equal(h.window.snapshot().incompleteBoundary, true);
 });
 
-test('a distant or absent boundary is bounded per action and can continue from the last native cursor', async () => {
-  const h = setup([[result, event('newer')]]);
+test('a distant message boundary is completed in one action without an arbitrary page stop', async () => {
+  const pages = [[result, event('newer')], ...Array.from({ length: 12 }, (_, index) => [
+    event(`metadata-${index}`, 'session.info'),
+  ]), [owner]];
+  const h = setup(pages);
   await h.run();
-  assert.equal(h.requests.length, HISTORY_BOUNDARY_PAGES);
-  assert.equal(h.window.snapshot().incompleteBoundary, true);
-  const continuation = { ...query, ...h.window.older, bootstrap: false };
-  await readMessageHistory(h.window, continuation, async request => {
-    assert.equal(request.cursor, `older-${HISTORY_BOUNDARY_PAGES}`);
-    return { ...await h.read(request), events: [owner], read: { rpc: 1, events: 1 } };
-  }, h.controller.signal, () => true);
+  assert.equal(h.requests.length, pages.length);
   assert.equal(h.window.snapshot().incompleteBoundary, false);
+  assert.equal(h.window.snapshot().messages[0].toolCalls?.[0].output, 'done');
 });
 
 test('cancellation or loss of ownership between pages prevents another read and stale acceptance', async () => {

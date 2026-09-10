@@ -215,11 +215,8 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
             {resource.requiresResync() ? '重新读取子代理历史' : '重试'}
           </button>
         </div>}
-        {snapshot.data?.incompleteBoundary && !pending && <div className="subagent-empty">
-          {snapshot.data.hasMore ? '本次尚未读到完整消息边界，已暂停自动加载。'
-            : '部分工具记录缺少对应的发起消息，现有历史无法补齐。'}
-          {snapshot.data.hasMore && !snapshot.error && <button type="button" disabled={!connected || prependHeld}
-            onClick={() => { void resource.loadOlder(); }}>继续补齐消息边界</button>}
+        {snapshot.data?.incompleteBoundary && !snapshot.data.hasMore && !pending && <div className="subagent-empty">
+          部分工具记录缺少对应的发起消息，现有历史无法补齐。
         </div>}
         {sub.map((sm) => (
           <article key={sm.id} className="message is-doc subagent-msg" data-child-message-frame={sm.id}>
@@ -546,11 +543,8 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
               {session.partialHistory && <p className="chat-history-note" role="status">
                 断线期间的临时片段可能不完整；已保留现有文字，以原生保存后的完整消息为准。
               </p>}
-              {session.incompleteBoundary && !session.loadingHistory && <p className="chat-history-note">
-                {session.hasMore ? '本次尚未读到完整消息边界，已暂停自动加载。'
-                  : '部分工具记录缺少对应的发起消息，现有历史无法补齐。'}
-                {session.hasMore && !session.historyStale && !session.historyError && <button type="button"
-                  className="dialog-btn rp" disabled={prependHeld} onClick={onLoadMore}>继续补齐消息边界</button>}
+              {session.incompleteBoundary && !session.hasMore && !session.loadingHistory && <p className="chat-history-note">
+                部分工具记录缺少对应的发起消息，现有历史无法补齐。
               </p>}
             </div>
             <div className="chat-message-rows" data-preparing={preparingHistory || undefined}

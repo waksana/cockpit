@@ -399,16 +399,20 @@ function rememberTask(state: FoldState, request: ToolRequest, scope?: FoldHistor
 }
 
 export function foldEvent(state: FoldState, ev: SdkEvent, projection?: FoldProjection): FoldResult {
+  const route = routeEvent(state, ev);
   if (projection?.strictOwnership && typeof ev.data.toolCallId === 'string') {
     const id = ev.data.toolCallId;
     if (ev.type === 'subagent.started' && !findRoute(state, s => s.pendingTask.has(id) || s.subCard.has(id))) {
       return { changed: [], metaChanged: false, missingOwner: true };
     }
-    if (ev.type.startsWith('tool.') && !findRoute(state, s => s.toolMsg.has(id))) {
+    const explicitlyRouted = !!(ev.agentId || ev.parentToolCallId
+      || stringOf(ev.data.agentId) || stringOf(ev.data.parentToolCallId));
+    const visible = !!route && (!projection.scope || visibleRoute(route, projection.scope));
+    if (ev.type.startsWith('tool.') && !findRoute(state, s => s.toolMsg.has(id))
+      && (!explicitlyRouted || visible)) {
       return { changed: [], metaChanged: false, missingOwner: true };
     }
   }
-  const route = routeEvent(state, ev);
   // Bounded history can omit a spawning task. Unknown agent work is not main work.
   if (!route) return { changed: [], metaChanged: false };
   if (projection?.scope && !visibleRoute(route, projection.scope) && !ev.type.startsWith('subagent.')) {

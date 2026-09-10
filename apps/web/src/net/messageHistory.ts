@@ -1,8 +1,6 @@
 import type { NativeChatPage, NativeChatRead } from '@cockpit/protocol';
 import type { NativeWindow } from './nativeWindow';
 
-export const HISTORY_BOUNDARY_PAGES = 8;
-
 export async function readMessageHistory(
   window: NativeWindow, initial: NativeChatRead,
   read: (query: NativeChatRead, signal: AbortSignal) => Promise<NativeChatPage>,
@@ -11,7 +9,7 @@ export async function readMessageHistory(
   const adoptingLive = initial.bootstrap && window.materialized;
   let hasMessage = false;
   let query = initial;
-  for (let index = 0; index < HISTORY_BOUNDARY_PAGES; index++) {
+  while (true) {
     signal.throwIfAborted();
     if (!current()) throw new DOMException('Obsolete history read', 'AbortError');
     const page = await read(query, signal);

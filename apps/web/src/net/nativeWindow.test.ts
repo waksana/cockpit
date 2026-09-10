@@ -125,6 +125,18 @@ test('ordinary tools require their actual owning message, which older paging can
   assert.equal(window.unresolved, false);
 });
 
+test('explicitly owned child tool events do not create a missing boundary in the primary view', () => {
+  const window = new NativeWindow();
+  accept(window, [
+    { ...event('child-result', 'tool.execution_complete', {
+      toolCallId: 'child-tool', parentToolCallId: 'spawn', success: true, result: { content: 'hidden' },
+    }), agentId: 'child', parentToolCallId: 'spawn' },
+    event('primary-message'),
+  ], {}, { hasMore: true });
+  assert.deepEqual(window.snapshot().messages.map(message => message.id), ['primary-message']);
+  assert.equal(window.unresolved, false);
+});
+
 test('filtered child views normalize their own envelope without needing an ancestor replay', () => {
   const window = new NativeWindow(['child']);
   accept(window, [{ ...event('child-message'), agentId: 'child' }], { agentIds: ['child'], agentScope: undefined });
