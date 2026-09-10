@@ -101,8 +101,9 @@ The authoritative intent catalog exposes:
 | `files/associate` | Associate a retained file with a session, without sending it |
 | `prompt` | Text plus one file, multiple ordered files, or interleaved text/file parts |
 
-Use the existing MCP capability discovery and generic `cockpit_call_intent`
-with these exact bodies. File upload/download tools still fence local paths to
+Use generic `cockpit_call_intent` with the exact API bodies. Discover an unknown
+schema explicitly through `cockpit_capabilities`; invocation itself sends one
+POST without a repeated discovery preflight. File upload/download tools still fence local paths to
 their approved roots; server-returned paths do not authorize arbitrary local
 reads on another machine. Agent-generated artifacts enter the library through
 explicit upload, not through passive scanning of tool output or private folders.

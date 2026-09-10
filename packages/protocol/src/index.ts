@@ -280,7 +280,7 @@ export const ScheduleEntry = z.object({
   id: z.number(),                    // sequential within the session, stable across resume
   prompt: z.string(),                // the text enqueued on every tick
   recurring: z.boolean(),            // true = re-arms (/every); false = one-shot (/after)
-  selfPaced: z.boolean().optional(),  // true = the model arms each next run, with no fixed cadence
+  selfPaced: z.boolean().optional().describe('True means the model controls each next run, with no fixed cadence. Read/stop support does not expose self-paced creation or rearming.'),
   nextRunAt: z.number(),             // epoch ms of the next fire
   intervalMs: z.number().optional(), // set for relative-interval schedules
   cron: z.string().optional(),       // set for calendar (cron) schedules
@@ -732,7 +732,7 @@ export type PushStatus = z.infer<typeof PushStatus>;
 
 export const Intents = {
   'session/chat': {
-    description: 'Read one native event page without a server chat cache or projection. max counts events, not display messages. Keep source/direction with opaque cursors. Passive reads do not load sessions; live reads require an existing handle. Bootstrap captures a live cursor before a fresh backward page. An expired cursor is not a continuation. Binary tool media is represented by locators, never automatically retained.',
+    description: 'Read one native event page without a server chat cache or projection. max counts events, not display messages or bytes. Keep source/direction with opaque cursors. Passive reads do not load sessions; live reads require an existing handle. Bootstrap captures a live cursor before a fresh backward page. An expired cursor is not a continuation. Binary tool media is omitted, never automatically retained; no image locators are generated. Native image lookup is retired: upload an existing local original or reuse a managed /uploads file.',
     body: NativeChatRead,
     result: NativeChatPage,
   },
@@ -775,7 +775,7 @@ export const Intents = {
     result: UploadedFile,
   },
   prompt: {
-    description: 'Send text and retained files using attachment, attachments (in order before text), or ordered parts. These three forms are mutually exclusive. Only literal /uploads/<safe-basename> URLs are accepted; the server resolves authoritative metadata and native file paths. Transport support does not imply the selected model can interpret every format.',
+    description: 'Send text and retained files using attachment, attachments (in order before text), or ordered parts. These three forms are mutually exclusive. Only literal /uploads/<safe-basename> URLs are accepted; the server resolves authoritative metadata and native file paths. The receiving agent must explicitly read/view attachments; acceptance does not mean their contents were read. Transport support does not imply the selected model can interpret every format.',
     body: z.object({
       sessionId: z.string(), text: z.string(), mode: z.enum(['enqueue', 'immediate']).optional(),
       attachment: Attachment.extend({ url: UploadUrl }).optional(),
@@ -846,10 +846,8 @@ export const Intents = {
     body: z.object({ sessionId: z.string() }),
     result: z.object({ ok: z.boolean() }),
   },
-  // Pin a session (pinned=true) as a pure UI mark — sort it to the top of the list,
-  // synced across devices — or release it. NOTE: pin no longer keeps the session
-  // loaded; keep-loaded is driven by having an active per-session schedule.
   'session/pin': {
+    description: 'Set a synced UI pin for session-list ordering, not runtime residency. Neither pinning nor future schedules prevent native idle cleanup. Schedules pause while unloaded; relative delays restart on resume.',
     body: z.object({ sessionId: z.string(), pinned: z.boolean() }),
     result: z.object({ ok: z.boolean(), pinned: z.boolean() }),
   },
@@ -950,11 +948,8 @@ export const Intents = {
     body: z.object({ sessionId: z.string(), attnId: NotificationCounter.optional() }),
     result: z.object({ ok: z.boolean() }),
   },
-  // Mint a short-lived (10-min) Azure Speech authorization token so the browser
-  // can run continuous speech-to-text WITHOUT ever seeing the subscription key
-  // (the key stays server-side). `enabled:false` means no Azure resource is
-  // configured — the client then falls back to the Web Speech API where it works.
   'speech/token': {
+    description: 'Return an Azure Speech authorization token and region without exposing the subscription key, or enabled:false when not configured. The server may reuse a token for nine minutes from its mint request; this response has no expiry or remaining-validity field and does not imply a fresh token. Browser cancellation and credential recovery are not guaranteed by this endpoint.',
     body: z.object({}),
     result: z.object({ enabled: z.boolean(), token: z.string().optional(), region: z.string().optional() }),
   },
@@ -1040,7 +1035,7 @@ export const Intents = {
   },
   // Native after/every supports relative delays and one-shot absolute times.
   'schedule/add': {
-    description: 'Schedule a native after/every prompt. The current runtime supports exactly one of interval or at, from 1 second to 24 hours. Interval uses s, m, h, or d and defaults to recurring; at is one-shot. Prompt must be single-line plain text, without command flags or a leading slash. Legacy cron, timezone, displayPrompt and recurring-at options are not supported and are rejected.',
+    description: 'Schedule a native after/every prompt. The current runtime supports exactly one of interval or at, from 1 second to 24 hours. Interval uses s, m, h, or d and defaults to recurring; at is one-shot. Prompt must be single-line plain text, without command flags or a leading slash. Legacy cron, timezone, displayPrompt and recurring-at options are not supported and are rejected. No self-paced creation or rearming is exposed. Ticks require a loaded session; schedules pause on native idle unload and relative delays restart on resume. Pinning does not keep it loaded. This is not an always-on scheduler.',
     body: z.object({
       sessionId: z.string(),
       prompt: z.string().min(1).refine(
@@ -1062,10 +1057,12 @@ export const Intents = {
     result: z.object({ ok: z.boolean(), entry: ScheduleEntry.optional(), error: z.string().optional() }),
   },
   'schedule/stop': {
+    description: 'Stop one native schedule by its id, including self-paced entries. ok reflects whether the native stop result contained the stopped entry; false means none was returned. No list read is used to infer success and errors propagate. This does not rearm or replace the schedule.',
     body: z.object({ sessionId: z.string(), id: z.number() }),
     result: z.object({ ok: z.boolean() }),
   },
   'schedule/list': {
+    description: 'Read native recurring, one-shot and self-paced schedules on an already-loaded session. selfPaced:true means the model controls each next run, with no fixed cadence; optional timing fields describe returned native entries, not additional creation options. No self-paced creation or rearming is exposed. Unloaded reads require explicit resume. Schedules do not keep sessions loaded or provide an always-on scheduler.',
     body: z.object({ sessionId: z.string() }),
     result: z.object({ entries: z.array(ScheduleEntry) }),
   },

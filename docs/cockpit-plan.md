@@ -4,6 +4,34 @@ Cockpit is remote Copilot plus the file/image and browser interactions needed to
 use it from a computer or phone. Web and MCP access one authoritative backend API.
 It intentionally covers a subset of CLI capabilities, not a second agent platform.
 
+## Source delivery and paused work (2026-09-11)
+
+The contracts below describe repository source. A local commit, a merged main
+branch, a running backend and an already-connected MCP process are different
+delivery states. The SDK remediation source baseline is local main
+`035920b45567cacb6805ebf11ea571cd51adf5b0`; the following local changes have **not
+been pushed, deployed or restarted into service** as part of this batch.
+
+| State | Scope |
+| --- | --- |
+| Local main source | `6026294` all-agent chat/SSE (delivered before this batch); `14b5ceb` directory errors; `b96b4d3` native MCP status; `5d9348f` schedule stop/self-paced semantics; `39b4e47` narrow resource reads, invalidations, request-local Prefs/index reuse and on-demand pages; `11231ba` MCP history pages; `523b8e7` fork type filtering; `a04a53d` backward folding; `035920b` first-reply naming pages. |
+| Model repair paused outside main | `14d01b1e64f7922b0c5c19bfd9bb27530bbd4536`, depending on `7ab1983`, is only on `work/reasoning-capability-current`. Its private merge `eaf3591` includes the then-main `5d9348f`; it is not a main integration. Provider `supportedContextTiers` and `deferIfModelChangeQueued` fixes are not claimed for main or the running service. Do not merge or release this branch without renewed authorization. |
+| Voice repair not implemented; user-deferred TODO | The user chose to defer audio. Cancellation/unmount does not yet fence late starts or stale callbacks. Client token expiry and recovery after a transient preparation failure remain unresolved. Do not claim these repairs shipped or resume them automatically. |
+| Accepted native history cost | MCP defaults to 16 events. Oversized multi-event pages require an explicit smaller query; only `limit:1` fragments giant events through complete rereads. The SDK has no single-event body offset. The accepted tradeoff is detailed in [MCP pagination](../apps/mcp/README.md#native-event-pagination), not a requirement for a cache, saved native copy, LRU, artifact or new opt-in. |
+
+For voice, `speech/token` returns only `enabled`, `token` and `region`. The server
+may reuse credentials for nine minutes from the mint request and returns no
+remaining validity. A response is not a fresh client-side nine-minute lease.
+Gesture-safe prewarming remains the intended path, but pending warmup can still
+start after stop/unmount, and initial transient failure can fix that controller
+to fallback. The cold/expired-token iOS interaction decision and implementation
+remain paused; this documentation does not resolve that product gap.
+
+Earlier review reports retain their dated observations, not authority over the
+current contract or deployment status. Native limits, accepted behavior and
+user-paused work must not be reported as completed repairs. This status note is
+not deployment authorization.
+
 ## Product boundary
 
 Reliability, usable mobile chat and simple ownership take priority over adding
@@ -33,6 +61,7 @@ Web GUI ---- HTTP commands/queries ----+
 Session ---- Cockpit MCP -- HTTP ------+                |          |
                                                        |     JSON-RPC/stdio
 Web GUI <------------- SSE control state ---------------+          |
+Web GUI <------------- /chat/stream event pages --------+          |
                                                        |     Copilot runtime
                                                  Preferences
                                                  and unread state
@@ -211,16 +240,20 @@ Browser reload loses this memory, not native history or independently stored dra
 Only a visible consumer reads chat. A browser disconnect cancels its request and
 stops future reads without stopping native work. Reconnection resumes durable
 events from the browser's cursor. A missing ephemeral interval freezes the partial
-message until its complete durable message can replace it. Cursor expiry,
-rewind and compaction preserve readable content with an explicit resync action;
-there is no HMAC continuation token, whole-window replay, or silent latest jump.
+message until its complete durable message can replace it. Cursor expiry and
+rewind preserve readable content while requiring explicit resynchronization.
+Compaction is not a chat-history rewrite and does not invalidate the window.
+There is no HMAC continuation token, whole-window replay, or silent latest jump.
 
-Subagent cards are static detail links. Opening one uses native agent-ID filtering
-on a loaded handle; manual refresh reads its current history. Neither main cards
-nor details display changing task status, and the server does not scan a whole
-task list to simulate an exact status getter. Unloaded filtered queries report
-that an explicit resume is required. See [native chat transport](./native-chat.md)
-for the HTTP/MCP migration and precise native limitations.
+Main and child messages share one browser-local all-agent window and one
+`/chat/stream` connection. Child cards display the shared nested projection;
+expanding or collapsing one changes presentation without a separate history read
+or manual refresh. Child messages and lifecycle changes travel on the same stream,
+even while collapsed. Separate MCP consumers can still request native agent-ID
+filtering on a loaded handle; passive filtered queries require explicit resume.
+The server does not scan a whole task list to simulate an exact status getter.
+See [native chat transport](./native-chat.md) for migration and native limits;
+the local source delivery status above does not assert this stream is deployed.
 
 Within the active chat, all loaded message text, DOM and component state remain
 available; there is no virtual list or message eviction. A memoized transcript
@@ -234,7 +267,7 @@ memory, native context size or cold-history read time.
 
 Initialization attaches native control callbacks before create/resume completes,
 but does not build a chat fold or replay display history. Targeted native metadata,
-queue/task/control queries and one-message naming eligibility remain independent.
+queue/task/control queries and bounded naming eligibility remain independent.
 Global SSE carries metadata, decisions, notifications and history invalidation,
 not streamed chat bodies or viewer-specific pages. Native execution safety does
 not depend on whether a browser is displaying a child card.
@@ -287,6 +320,10 @@ For agent-generated output, use `cockpit_upload_file` and copy its returned
 `markdown` into the assistant reply. Multiple uploaded images can each be included.
 Do not invent `/home/...`, `file:` or `sandbox:` links. No extra skill is required.
 Use the returned attachment JSON only when sending a file as input to a session.
+Alternatively reuse a retained managed file. Internal native image lookup is
+retired: no locator, event scan or automatic collection supplies a missing local
+original. Native attachments supply server-resolved file paths; receiving agents
+must explicitly read/view the bytes. See [publishing image originals](native-tool-images.md).
 
 ## Notifications and iOS PWA
 

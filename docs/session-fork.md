@@ -35,16 +35,17 @@ MCP uses the same registry, with no separate history implementation:
 {"name":"session/fork","body":{"sessionId":"source-id","name":"Independent goal"}}
 ```
 
-Pass that to `cockpit_call_intent`, after reading
-`cockpit_capabilities({name:"session/fork"})`. Discover the child through the
+Pass that to `cockpit_call_intent`. If the schema or backend publication is
+unknown, first read `cockpit_capabilities({name:"session/fork"})`; this is
+explicit discovery, not a mandatory preflight for each call. Discover the child through the
 normal session list, read its history passively, and send its **new goal**
 explicitly when ready. A prompt or explicit reload resumes it.
 
 ### Already-connected discussion sessions
 
 The existing `cockpit_call_intent` tool accepts a generic `name` and JSON `body`.
-It reads `/capabilities?name=...` on **each invocation**, then sends the original
-body to the backend for authoritative validation. It neither caches a tool-name
+It sends **one POST**, without reading `/capabilities` first. The backend
+authoritatively validates the intent name, body and result. It neither caches a tool-name
 allowlist nor requires a dedicated `cockpit_fork_session` tool. Backend publication
 is enough for an already-connected client to discover and invoke `session/fork`;
 no MCP discovery refresh, forced reconnect, or discussion-session migration is
@@ -52,8 +53,9 @@ required to acquire this intent.
 
 For an existing discussion session, use:
 
-1. `cockpit_capabilities({name:"session/fork"})`. A 404 means the backend has not
-   published the change; refreshing MCP configuration cannot fix that.
+1. If publication or schema is unknown, read `cockpit_capabilities({name:"session/fork"})`.
+   A 404 means the backend has not published the change; refreshing MCP
+   configuration cannot fix that. Skip this discovery when the contract is known.
 2. Inspect the intended **old owner** with `cockpit_get_session`. It must be loaded
    and idle without timers. Do not use the currently running discussion session
    itself as the source, and do not cancel a busy source to make it forkable.
@@ -73,7 +75,7 @@ deadline. Do not force-reload a busy discussion or blindly retry a timed-out for
 backend or replace code in running MCP processes. `mcp/reload-session` reconnects
 an idle session's MCP servers and reapplies native global defaults, potentially
 changing temporary per-session choices. Neither is required for this dynamic
-intent. The already-authorized graceful **backend** restart is separate: its
+intent. Any separately authorized graceful **backend** restart is distinct: its
 runtime connections end, and a later ordinary session resume reconnects using
 native configuration; this must not be described as every existing connection
 automatically receiving a hot update.

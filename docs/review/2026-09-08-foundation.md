@@ -4,6 +4,13 @@ Date: 2026-09-08. Scope: the release deployed at 10:00:57 CST, using official
 Copilot SDK 1.0.13 and runtime 1.0.83. This report supersedes the pre-modernization
 findings in the other numbered review documents.
 
+> Historical release evidence, not the current capability catalog. Later native
+> image lookup retirement, direct generic intent invocation, chat/SSE and SDK
+> remediation contracts are described in [the foundation document](../cockpit-plan.md#source-delivery-and-paused-work-2026-09-11)
+> and [API/MCP reference](../../apps/mcp/README.md). Local source delivery does
+> not extend this report's dated deployment claims; model and voice work remain
+> paused as stated there.
+
 > Post-deployment correction, 10:08 CST: a real long-running conversation could
 > not open because the history reader exhausted its event/byte budget. The
 > short-message fixture did not cover long autonomous turns and cross-turn

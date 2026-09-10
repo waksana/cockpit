@@ -369,6 +369,7 @@ server.registerTool(
       '  - interval: a relative interval such as "10s", "5m", "2h", "1d" (recurring by default)\n' +
       '  - at: an absolute epoch-MILLISECONDS fire time (one-shot)\n' +
       'Delays must be 1 second to 24 hours. Cron, timezone, labels and recurring-at are not supported. ' +
+      'No self-paced creation or rearming is exposed. Pinning does not keep the target loaded. ' +
       'The prompt must be single-line plain text, without command flags or a leading slash. The ' +
       'target session must be loaded for ticks to fire. Native idle cleanup pauses schedules; ' +
       'relative delays restart on resume. This is not an always-on scheduler. ' +
@@ -414,6 +415,7 @@ server.registerTool(
       'id, cadence, next fire time, and prompt. Use this to find a schedule id before ' +
       'stopping it. Requires a loaded session; use cockpit_reload_session explicitly if unloaded. ' +
       'Self-paced entries have no fixed cadence: the model controls each next run. ' +
+      'Reading or stopping them does not expose self-paced creation or rearming. Schedules do not keep sessions loaded. ' +
       'Returns { entries: [{ id, prompt, recurring, nextRunAt, selfPaced?, intervalMs?, cron?, tz?, at? }] }.',
     inputSchema: {
       session_id: z.string().min(1).describe('The session id'),
@@ -446,8 +448,10 @@ server.registerTool(
   {
     title: 'Stop a scheduled prompt',
     description:
-      'Cancel one scheduled prompt by its id (from cockpit_list_schedules). Idempotent: ' +
-      'returns ok:false if no such schedule exists. Returns { ok }.',
+      'Cancel one scheduled prompt by its known id (use cockpit_list_schedules if the id is unknown). ' +
+      'The backend uses the native stop result, not a list read to infer success. ' +
+      'Idempotent: the API returns {ok:false} when native returns no stopped entry; this tool reports that as an error. ' +
+      'Native failures propagate. Does not rearm or replace the schedule.',
     inputSchema: {
       session_id: z.string().min(1).describe('The session id'),
       id: z.number().int().describe('The schedule id to stop (from cockpit_list_schedules)'),

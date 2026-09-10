@@ -23,6 +23,7 @@ const retired = [
   'flow/list', 'flow/add', 'flow/remove', 'flow/write-gate', 'flow/run',
   'flow-schedule/add', 'flow-schedule/stop', 'flow-schedule/list',
   'session/set-spawned-by',
+  'session/tool-image', 'files/from-tool-image',
 ];
 
 async function listing(query = ''): Promise<Listing> {
@@ -223,11 +224,32 @@ test('listing and detail descriptions convey refinements and runtime guarantees 
     ['session/chat', [
       /one native event page/i, /without a server chat cache or projection/i,
       /max counts events, not display messages/i, /passive reads do not load sessions/i,
-      /expired cursor is not a continuation/i, /never automatically retained/i,
+      /expired cursor is not a continuation/i, /binary tool media is omitted/i,
+      /never automatically retained/i, /no image locators are generated/i,
+      /native image lookup is retired/i, /existing local original.*managed \/uploads file/i,
     ]],
     ['schedule/add', [
       /exactly one of interval or at/i, /1 second to 24 hours/i,
-      /cron.*not supported/i,
+      /cron.*not supported/i, /no self-paced creation or rearming/i,
+      /pause on native idle unload/i, /relative delays restart on resume/i,
+      /pinning does not keep it loaded/i, /not an always-on scheduler/i,
+    ]],
+    ['schedule/list', [
+      /already-loaded session/i, /selfPaced:true.*no fixed cadence/i,
+      /not additional creation options/i, /no self-paced creation or rearming/i,
+      /schedules do not keep sessions loaded/i,
+    ]],
+    ['schedule/stop', [
+      /native stop result/i, /false means none was returned/i,
+      /no list read.*infer success/i, /errors propagate/i, /does not rearm/i,
+    ]],
+    ['session/pin', [
+      /UI pin.*not runtime residency/i, /neither pinning nor future schedules/i,
+      /schedules pause while unloaded/i,
+    ]],
+    ['speech/token', [
+      /may reuse a token for nine minutes/i, /no expiry or remaining-validity field/i,
+      /does not imply a fresh token/i, /cancellation and credential recovery are not guaranteed/i,
     ]],
     ['push/subscribe', [/https/i]],
     ['session/rewind', [
@@ -248,6 +270,7 @@ test('listing and detail descriptions convey refinements and runtime guarantees 
     ['prompt', [
       /attachment, attachments.*ordered parts/i, /literal \/uploads\/<safe-basename>/i,
       /server resolves authoritative metadata.*native file paths/i, /mutually exclusive/i,
+      /agent must explicitly read\/view attachments/i, /acceptance does not mean their contents were read/i,
     ]],
   ] as const;
   for (const [name, patterns] of descriptions) {
@@ -258,6 +281,23 @@ test('listing and detail descriptions convey refinements and runtime guarantees 
       assert.equal(summary?.description, result.description);
       for (const pattern of patterns) assert.match(result.description, pattern);
     });
+  }
+});
+
+test('schedule discovery distinguishes native self-paced entries from creation options', async () => {
+  const { resultSchema } = await detail('schedule/list');
+  const entry = schemaAt(resultSchema, 'properties', 'entries', 'items');
+  const selfPaced = schemaAt(resultSchema, 'properties', 'entries', 'items', 'properties', 'selfPaced');
+  assert.equal(selfPaced.type, 'boolean');
+  assert.match(String(selfPaced.description), /no fixed cadence/i);
+  assert.match(String(selfPaced.description), /does not expose self-paced creation or rearming/i);
+  assert.ok(Array.isArray(entry.required));
+  assert.equal(entry.required.includes('selfPaced'), false);
+  assert.equal(entry.required.includes('intervalMs'), false);
+  const { inputSchema } = await detail('schedule/add');
+  const properties = object(inputSchema.properties);
+  for (const name of ['selfPaced', 'cron', 'tz', 'displayPrompt']) {
+    assert.equal(Object.hasOwn(properties, name), false);
   }
 });
 
@@ -309,7 +349,7 @@ test('native chat source constraints are enforced beyond individually optional J
   }).success, false);
 });
 
-test('chat returns events with native expiry rather than messages or chat SSE', async () => {
+test('chat intent returns events with native expiry rather than server-folded messages', async () => {
   const { resultSchema } = await detail('session/chat');
   assert.equal(schemaAt(resultSchema, 'properties', 'events').type, 'array');
   assert.equal('messages' in object(resultSchema.properties), false);
@@ -449,8 +489,8 @@ test('session/purge requires an explicit literal confirm:true', async () => {
   }
 });
 
-test('retired capability families and set-spawned-by are absent from listings', async (t) => {
-  for (const prefix of ['hook/', 'flow/', 'flow-schedule/', 'session/set-spawned-by']) {
+test('retired capability families and native image lookups are absent from listings', async (t) => {
+  for (const prefix of ['hook/', 'flow/', 'flow-schedule/', 'session/set-spawned-by', 'session/tool-image', 'files/from-tool-image']) {
     await t.test(prefix, async () => {
       assert.deepEqual((await listing(`?prefix=${encodeURIComponent(prefix)}`)).intents, []);
       assert.deepEqual(names.filter((name) => name.startsWith(prefix)), []);
@@ -481,7 +521,7 @@ test('the actual no-boot server advertises all GET/POST transports without impli
   const { transports } = await listing();
   assert.deepEqual(transportKeys(transports), [
     'GET /capabilities', 'GET /events', 'GET /health', 'GET /status', 'GET /uploads/:name',
-    'POST /admin/restart', 'POST /intent/*', 'POST /upload',
+    'POST /admin/restart', 'POST /chat/stream', 'POST /intent/*', 'POST /upload',
   ].sort());
   for (const { method, path } of transports) {
     assert.ok(method === 'GET' || method === 'POST');

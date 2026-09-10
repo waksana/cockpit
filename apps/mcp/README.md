@@ -9,6 +9,10 @@ The MCP process needs **no backend filesystem access, SDK, session database or e
 logs**. Backend failures are errors, never successful local-state fallbacks.
 Local files are accessed only for explicit upload/download operations.
 
+This documents the checked-in source, not automatic deployment or hot replacement
+of an already-running MCP process. See the [source delivery and paused work
+status](../../docs/cockpit-plan.md#source-delivery-and-paused-work-2026-09-11).
+
 Binary: `cockpit-mcp-server` → `dist/index.js`. Requires Node ≥22.12; raw Node 24 is
 supported without a TypeScript loader. Canonical schemas and types come from
 the `@cockpit/protocol` workspace dependency.
@@ -139,8 +143,10 @@ For a project-only skill, pass the same `cwd` used for discovery; this validates
 the target in that project without changing the setting's global scope.
 Nullable model effort/context/mode, errors and requests remain null in JSON;
 optional `loading`, `closing`, `cancelling` and todo `intent` are surfaced.
-`cockpit_get_plan` renders canonical `planMarkdown`, `todos` and optional
-`changedFiles`; `cockpit_get_panels` renders `label`, `sublabel` and `enabled`.
+`cockpit_get_plan` renders canonical `planMarkdown` and `todos`; the old
+history-derived changed-files list is retired. `cockpit_get_panels` renders
+`label`, `sublabel` and `enabled`, for all five sections by default or only the
+requested `section`.
 `cockpit_list_global_skills` accepts optional backend `cwd`; omitting it uses the
 **server home**, never the MCP client's working directory.
 
@@ -150,6 +156,32 @@ File rollback is a native runtime operation: semantic `rollback_files:true` and
 generic `session/rewind {rollbackFiles:true,...}` delegate capability validation to
 the backend. Unsupported operations and native conflicts must fail explicitly
 rather than ignoring the requested file rollback.
+
+## Native schedules
+
+`schedule/add` (or `cockpit_schedule_add`) accepts exactly one deterministic
+`interval` or one-shot epoch-millisecond `at`, with a delay of 1 second to 24 hours.
+It uses native `every`/`after` commands and confirms the created entry; it is not a
+public SDK `schedule.add` RPC or a model-prompt fallback. Plain single-line prompts
+cannot contain command flags or a leading slash. Cron, timezone, display labels,
+recurring absolute times and self-paced creation/rearming are not exposed.
+
+`schedule/list` requires an already-loaded session and preserves native
+`selfPaced`. When true, the model controls the next run; this is not an ordinary
+fixed cadence or a missing interval to fill in. Optional `cron`, `tz`, `at` and
+`displayPrompt` fields describe existing native entries, not accepted creation
+options. Listing/stopping self-paced entries does not add a rearm API.
+
+`schedule/stop {sessionId,id}` uses the native stop result directly, with no list
+read to infer success. `{ok:false}` means native returned no stopped entry;
+the semantic MCP tool presents that as an error. Native errors propagate.
+Use a known ID directly, or list to find an unknown ID; do not add a redundant
+preflight to every stop.
+
+Neither future schedules nor UI pins prevent native idle cleanup. Timers pause
+while unloaded, relative delays restart on resume, and startup does not restore
+scheduled sessions automatically. These are user-controlled native timers, not
+an always-on cron service.
 
 ## Native automatic naming
 
@@ -210,8 +242,8 @@ With `limit:1`, a giant event instead returns a bounded
 envelope without clipping event fields. A one-event request is not a small-payload
 guarantee: the SDK has no event-body offset. Each fragment rereads the whole native
 event page, serializes it and slices in memory; it does not save a copy or use an
-LRU, artifact, or history cache. This intentionally retains the simple complete-read
-fallback for giant events.
+LRU, artifact, or history cache. This is the user-accepted giant-event tradeoff,
+not a pending requirement for a native-copy store or another automatic retry path.
 
 Repeat the identical native query, still with `limit:1`, with `page_offset:nextPageOffset` and
 `page_version:pageVersion` until the next offset is null. Concatenate the `json`
@@ -226,7 +258,8 @@ stop when `nextPageOffset` is null. Markdown uses the same overflow behavior.
 Fragment `read:{rpc,events}` reports **this request's** native calls/event count,
 not cumulative cost or local serialization work. For a stable page of S characters,
 complete delivery takes `ceil(S/8000)` native page reads, serializing S characters
-per fragment. Live bootstrap also repeats one native tail call per fragment.
+per fragment. Live bootstrap also repeats one native tail call per fragment;
+that tail can change even if the event body is unchanged and invalidate the version.
 For example, 51,378 characters take seven page reads and 359,646 page-serialization
 characters (plus seven tail calls if live bootstrap). These are not measured wire
 bytes, SDK-internal I/O, or model tokens. All reads still obey the existing MCP
@@ -316,7 +349,9 @@ guarantee that the selected model can interpret each format.
 
 ### Find and reuse retained files
 
-Use `cockpit_capabilities {prefix:"files/"}` and `cockpit_call_intent`:
+Use `cockpit_call_intent` with the known file contracts below. If needed,
+`cockpit_capabilities {prefix:"files/"}` discovers names; a detail query with
+`name` supplies a missing schema. Neither is a mandatory per-call preflight:
 
 - `files/list {query?,sessionId?,limit?,offset?}` returns metadata `files`,
   `hasMore` and optional `nextOffset`; `limit` is at most 100. Optional bounded
@@ -440,8 +475,9 @@ through your environment/secret configuration, not committed source files.
 
 ## Native session fork
 
-Use `cockpit_capabilities({name:"session/fork"})`, then
-`cockpit_call_intent({name:"session/fork",body:{sessionId:"source-id",name:"Independent goal"}})`.
+Use `cockpit_call_intent({name:"session/fork",body:{sessionId:"source-id",name:"Independent goal"}})`.
+If the schema or backend publication is unknown, discover it explicitly with
+`cockpit_capabilities({name:"session/fork"})`; invocation itself sends only one POST.
 The source must already be loaded and idle without timers; inherited schedule
 history is refused. Optional `toEventId` excludes that root user-message event
 and later history. The returned `sessionId` belongs to an unloaded, independent

@@ -2,8 +2,9 @@
 
 > Historical, pre-modernization review. Its SDK, governance, memory-policy and
 > authentication descriptions are not the current deployment. See the
-> [2026-09-08 final foundation review](2026-09-08-foundation.md) for current
-> conclusions, implemented fixes, evidence and remaining limitations.
+> [2026-09-08 final foundation review](2026-09-08-foundation.md) for that dated
+> release's conclusions and evidence. Current source contracts and paused work
+> are distinguished from deployment in the [foundation document](../cockpit-plan.md#source-delivery-and-paused-work-2026-09-11).
 
 A coordinated, whole-codebase review of cockpit (≈14.3k lines of TS/TSX). The
 architecture was divided into 7 modules; each was reviewed in its own dedicated

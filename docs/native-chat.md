@@ -1,5 +1,9 @@
 # Native event chat transport
 
+This describes checked-in source, not a deployment receipt. In particular, the
+all-agent SSE and subsequent SDK remediation changes remain local at the
+[2026-09-11 source status](cockpit-plan.md#source-delivery-and-paused-work-2026-09-11).
+
 Copilot owns durable history and model context. Cockpit does not keep chat
 windows, a live message fold, a message-ID index, resume checkpoints, or a
 second conversation store. The browser owns its loaded messages, tool/agent
@@ -267,6 +271,15 @@ Cold native disk indexing and filtering I/O remain native implementation
 properties. A bounded event response does not prove constant-time disk access.
 Cost experiments distinguish native RPC count, returned event/byte volume,
 client projection work and actual I/O.
+
+The semantic MCP reader has a separate default of 16 events and a 25,000-character
+page threshold. Oversized multi-event pages require explicit narrowing with the
+original input cursor; only `limit:1` offers 8,000-code-unit JSON fragments.
+Each fragment rereads the complete native page (and bootstrap tail when requested).
+Query/page hashes prevent mixing changing pages, but do not make a moving tail
+stable or provide a native body offset. This is the accepted giant-event cost,
+not a saved native copy or a new caching requirement. The existing 25 MiB MCP
+transport limit still applies. See [MCP pagination](../apps/mcp/README.md#native-event-pagination).
 
 An isolated 1.0.83 runtime with a local synthetic model produced the following
 single-run samples (not production latency guarantees or disk-index proofs):

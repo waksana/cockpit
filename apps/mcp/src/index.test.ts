@@ -386,6 +386,45 @@ test('registry exposes foundation, native schedules, manual settings and files, 
   assert.equal(requests.length, 0, 'registry construction must not read HTTP or local state');
 });
 
+test('published tool guidance matches direct intents, retained images and native timer limits', async () => {
+  const { tools } = await client.listTools();
+  const guidance = [
+    ['cockpit_call_intent', [
+      /one POST without a capability preflight/i, /backend.*validates.*body and result/i,
+      /use cockpit_capabilities when the API schema is unknown/i,
+      /native tool-image history lookup is retired/i, /existing local original.*managed file/i,
+    ]],
+    ['cockpit_read_session', [
+      /default limit is 16 events, not a byte bound/i, /original input cursor/i,
+      /only limit:1.*JSON fragments/i, /each fragment rereads.*whole event/i,
+      /no native body offset, cache, or saved copy/i, /query and complete page/i,
+    ]],
+    ['cockpit_send_prompt', [
+      /server resolves authoritative metadata.*native file paths/i,
+      /agent must explicitly read\/view/i, /native tool-image lookup is retired/i,
+    ]],
+    ['cockpit_schedule_add', [
+      /no self-paced creation or rearming/i, /pinning does not keep the target loaded/i,
+      /native idle cleanup pauses schedules/i, /not an always-on scheduler/i,
+    ]],
+    ['cockpit_list_schedules', [
+      /no fixed cadence/i, /does not expose self-paced creation or rearming/i,
+      /schedules do not keep sessions loaded/i,
+    ]],
+    ['cockpit_stop_schedule', [
+      /known id/i, /native stop result, not a list read/i,
+      /reports that as an error/i, /native failures propagate/i,
+    ]],
+    ['cockpit_set_session_pin', [/NOT keep the session loaded/i, /including sessions with future schedules/i]],
+  ] as const;
+  for (const [name, patterns] of guidance) {
+    const tool = tools.find(tool => tool.name === name);
+    assert.ok(tool, name);
+    for (const pattern of patterns) assert.match(tool.description ?? '', pattern, name);
+  }
+  assert.equal(requests.length, 0, 'reading guidance must not discover or invoke backend operations');
+});
+
 test('the published executable starts MCP when invoked through a bin symlink', async () => {
   const fixture = resolve(`.mcp-bin-fixture-${randomUUID()}`);
   await mkdir(fixture);
