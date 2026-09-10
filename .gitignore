@@ -3,6 +3,9 @@ node_modules/
 
 # ── Build output (rebuilt via pnpm build; the MCP/web run from dist) ─────────
 dist/
+dist-*/
+release-output/
+node-compile-cache/
 *.tsbuildinfo
 
 # ── Logs ─────────────────────────────────────────────────────────────────────

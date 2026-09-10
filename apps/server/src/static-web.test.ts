@@ -1,20 +1,31 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const directory = mkdtempSync(join(tmpdir(), 'cockpit-static-'));
 writeFileSync(join(directory, 'index.html'), '<!doctype html><title>Fixture app</title>');
+const assets = join(directory, 'retained');
+mkdirSync(assets);
+writeFileSync(join(assets, 'old-12345678.js'), 'export const old = true;');
 process.env.COCKPIT_NO_BOOT = '1';
 process.env.COCKPIT_SERVE_WEB = '1';
 process.env.COCKPIT_WEB_DIR = directory;
+process.env.COCKPIT_ASSET_DIR = assets;
 process.env.LOG_LEVEL = 'silent';
 const { app, registerStaticWeb } = await import('./index.ts');
 await registerStaticWeb();
 after(async () => {
   await app.close();
   rmSync(directory, { recursive: true, force: true });
+});
+
+test('old hashed assets remain reachable through the current release', async () => {
+  const response = await app.inject({ method: 'GET', url: '/assets/old-12345678.js' });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.body, 'export const old = true;');
+  assert.equal(response.headers['cache-control'], 'private, max-age=31536000, immutable');
 });
 
 test('SPA fallback serves only recognized application routes', async () => {

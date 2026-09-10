@@ -351,7 +351,12 @@ app.addHook('onRequest', async (req, reply) => {
   return reply;
 });
 
-app.get('/health', async () => ({ ok: true, login: engine.login }));
+app.get('/health', async () => ({
+  ok: true, login: engine.login,
+  ...(process.env.COCKPIT_RELEASE_ID ? {
+    release: { id: process.env.COCKPIT_RELEASE_ID, commit: process.env.COCKPIT_RELEASE_SHA },
+  } : {}),
+}));
 
 // File upload: raw binary body (octet-stream) + ?name=&mime= query. Saved to the
 // fixed upload folder (survives session deletion). Returns metadata for the client
@@ -722,6 +727,12 @@ export async function registerStaticWeb(): Promise<void> {
   if (!existsSync(WEB_DIR)) {
     app.log.warn(`COCKPIT_SERVE_WEB set but web dir not found: ${WEB_DIR} (run \`pnpm --filter @cockpit/web build\`)`);
     return;
+  }
+  if (process.env.COCKPIT_ASSET_DIR) {
+    await app.register(fastifyStatic, {
+      root: process.env.COCKPIT_ASSET_DIR, prefix: '/assets/', decorateReply: false,
+      setHeaders: reply => { reply.header('Cache-Control', 'private, max-age=31536000, immutable'); },
+    });
   }
   await app.register(fastifyStatic, { root: WEB_DIR, index: ['index.html'] });
   app.setNotFoundHandler((req, reply) => {

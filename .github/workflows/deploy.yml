@@ -1,0 +1,51 @@
+name: Submit production release
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+permissions:
+  actions: read
+  contents: read
+concurrency:
+  group: production-submit
+  queue: max
+  cancel-in-progress: false
+jobs:
+  submit:
+    if: >-
+      vars.DEPLOY_ENABLED == 'true' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Transfer the verified artifact and submit an idle-aware release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          COMMIT: ${{ github.event.workflow_run.head_sha }}
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          key="$RUNNER_TEMP/deploy-key"
+          known="$RUNNER_TEMP/deploy-known-hosts"
+          archive="$RUNNER_TEMP/release.zip"
+          trap 'rm -f "$key" "$known" "$archive"' EXIT
+          printf '%s\n' "$DEPLOY_KEY" > "$key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known"
+          metadata=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts")
+          artifact=$(printf '%s' "$metadata" | jq -er --arg name "release-$COMMIT" '[.artifacts[] | select(.name == $name and .expired == false)] | if length == 1 then .[0].id else error("Expected one artifact") end')
+          expected=$(printf '%s' "$metadata" | jq -er --argjson id "$artifact" '.artifacts[] | select(.id == $id) | .digest | sub("^sha256:";"")')
+          gh api "repos/$REPOSITORY/actions/artifacts/$artifact/zip" > "$archive"
+          printf '%s  %s\n' "$expected" "$archive" | sha256sum --check --status
+          ssh -i "$key" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$known" -o ConnectTimeout=15 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "receive $RUN_ID $artifact" < "$archive"
+          printf 'Submitted %s. This job does not assert active/healthy; the server owns activation.\n' "$COMMIT" >> "$GITHUB_STEP_SUMMARY"

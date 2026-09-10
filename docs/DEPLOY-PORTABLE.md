@@ -1,5 +1,10 @@
 # Deploying the Cockpit foundation
 
+For main-triggered CI and immutable production releases, see
+[`../deploy/RELEASES.md`](../deploy/RELEASES.md) and
+[`DEVELOPMENT.md`](./DEVELOPMENT.md). The source launcher below remains useful for
+local installs; it is not the immutable production cutover path.
+
 Cockpit runs Copilot on an always-online server. Its web app and MCP are clients
 of the same backend API. Installing Cockpit does **not** install a commander,
 Butler, flows, executable gates, fleet hooks, or governance schedules.
