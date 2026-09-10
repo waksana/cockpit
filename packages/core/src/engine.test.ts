@@ -11,6 +11,7 @@ import { Intents, NativeChatRead, unreadSessionCount } from '@cockpit/protocol';
 import { Engine, coreCapabilities, sessionMetaBusy, type EngineRuntime } from './engine.ts';
 import { CHAT_EVENT_TYPES } from './native-chat.ts';
 import { validateForkHistory } from './fork.ts';
+import { autoNameQuestion } from './auto-name.ts';
 import type { CockpitPrefs } from './prefs.ts';
 import { bundledSkillsDirectory } from './paths.ts';
 
@@ -4982,6 +4983,10 @@ test('auto naming begins after the first effective reply and unread commit, coal
   assert.equal((await h.engine.getMeta(s.id))?.status, 'idle');
   assert.equal((await h.engine.getMeta(s.id))?.autoNaming, true);
   assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
+  assert.deepEqual(s.rpc.ui.ephemeralQuery.mock.calls[0]!.arguments, [{ question: autoNameQuestion }],
+    'the native model receives a context question, not the eligibility page as its context');
+  assert.deepEqual(s.rpc.eventLog.read.mock.calls.map(({ arguments: [params] }) => [params.direction, params.max]),
+    [['forward', 32], ['backward', 1]]);
   const one = h.engine.autoName(s.id), two = h.engine.autoName(s.id);
   for (const listener of s.listeners) listener(end);
   await assert.rejects(h.engine.unload(s.id), protectedWork);
@@ -5038,16 +5043,20 @@ test('automatic naming rereads native eligibility instead of remembering prior c
   const s = await h.seed();
   s.state.userNamed = false;
   s.state.events = [
+    ...Array.from({ length: 40 }, (_, index) => user(`prior-${index}`)),
     event('assistant.turn_start', { turnId: 'old' }), assistant('old-message', 'old-reply'),
     event('assistant.turn_end', { turnId: 'old' }),
   ];
   await h.engine.reload(s.id);
   await finishReply(s, 'Not eligible for automatic naming yet');
   assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
+  assert.equal(s.rpc.eventLog.read.mock.callCount(), 2);
   s.state.name = null;
   s.state.events = [];
   await finishReply(s, 'First effective reply after native history and title changed');
   assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1, 'a prior native read is not a host naming attempt');
+  assert.equal(s.rpc.eventLog.read.mock.calls[2]!.arguments[0].cursor, undefined, 'a new eligibility query starts fresh');
+  assert.equal(s.rpc.eventLog.read.mock.callCount(), 4, 'two old pages, one fresh page and one presence read');
   assert.equal(s.state.name, 'Native session naming');
   assert.equal(s.sdk.send.mock.callCount(), 0);
 });
@@ -5072,7 +5081,7 @@ test('automatic first-reply checks read filtered native events in forward order 
     options.agentScope === 'primary' && options.includeEphemeral === false && options.direction === 'forward');
   assert.equal(reads.length, 1);
   assert.deepEqual(reads[0]!.arguments[0], {
-    direction: 'forward', max: 1000, agentScope: 'primary', includeEphemeral: false,
+    cursor: undefined, direction: 'forward', max: 32, agentScope: 'primary', includeEphemeral: false,
     types: ['assistant.turn_start', 'assistant.message', 'assistant.turn_end', 'tool.execution_start',
       'user.message', 'abort', 'session.error'],
   });
@@ -5086,6 +5095,54 @@ test('automatic first-reply checks read filtered native events in forward order 
   assert.equal(page.hasMore, false);
 });
 
+test('automatic naming stops at an early historical reply instead of reading the remaining conversation', async t => {
+  const h = harness(t);
+  const s = await h.seed();
+  s.state.userNamed = false;
+  s.state.events = [event('assistant.turn_start', { turnId: 'old' }), assistant('old-message', 'old-reply'),
+    event('assistant.turn_end', { turnId: 'old' }),
+    ...Array.from({ length: 1500 }, (_, index) => user(`later-${index}`))];
+  await h.engine.reload(s.id);
+  await finishReply(s, 'Later reply in an old conversation');
+  assert.equal(s.rpc.eventLog.read.mock.callCount(), 1);
+  const page = await s.rpc.eventLog.read.mock.calls[0]!.result;
+  assert.equal(page?.events.length, 32);
+  assert.equal(page?.hasMore, true);
+  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
+  assert.equal(s.rpc.name.setAuto.mock.callCount(), 0);
+  assert.equal(s.sdk.send.mock.callCount(), 0);
+});
+
+for (const prior of [30, 997]) {
+  test(`automatic naming accepts its first effective reply after ${prior} filtered events`, async t => {
+    const h = harness(t);
+    const s = await h.seed();
+    s.state.userNamed = false;
+    s.state.events = Array.from({ length: prior }, (_, index) => user(`prior-${index}`));
+    await h.engine.reload(s.id);
+    await finishReply(s, 'First effective reply spanning eligibility pages');
+    const reads = s.rpc.eventLog.read.mock.calls;
+    const eligibility = reads.filter(({ arguments: [params] }) => params.direction === 'forward');
+    assert.equal(eligibility.length, Math.ceil((prior + 3) / 32));
+    assert.equal(reads.length, eligibility.length + 1);
+    assert.equal(eligibility[0]!.arguments[0].cursor, undefined);
+    let count = 0;
+    for (const [index, call] of eligibility.entries()) {
+      const page = await call.result;
+      assert.ok(page);
+      count += page.events.length;
+      if (index + 1 < eligibility.length) assert.equal(eligibility[index + 1]!.arguments[0].cursor, page.cursor);
+    }
+    assert.equal(count, prior + 3);
+    assert.equal(reads.at(-1)!.arguments[0].max, 1, 'presence remains a separate one-event query');
+    assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
+    assert.deepEqual(s.rpc.ui.ephemeralQuery.mock.calls[0]!.arguments, [{ question: autoNameQuestion }]);
+    assert.equal(s.rpc.name.setAuto.mock.callCount(), 1);
+    assert.equal(s.sdk.send.mock.callCount(), 0);
+    assert.ok(h.events.some(value => value.type === 'session/patch' && value.title === 'Native session naming'));
+  });
+}
+
 test('automatic naming reports exhausted native eligibility budget without inference and still permits manual naming', async t => {
   const h = harness(t);
   const s = await h.seed();
@@ -5097,6 +5154,9 @@ test('automatic naming reports exhausted native eligibility budget without infer
   assert.ok(h.events.some(value => value.type === 'session/patch'
     && /exceeds the bounded native query/.test(value.autoNameError ?? '')));
   const reads = s.rpc.eventLog.read.mock.callCount();
+  assert.equal(reads, 32);
+  assert.deepEqual(s.rpc.eventLog.read.mock.calls.map(({ arguments: [params] }) => params.max),
+    [...Array.from({ length: 31 }, () => 32), 8]);
   await nextTurn();
   assert.equal(s.rpc.eventLog.read.mock.callCount(), reads, 'budget failure does not trigger a background retry');
   assert.equal((await h.engine.getMeta(s.id))?.autoNameError, undefined);
@@ -5105,6 +5165,66 @@ test('automatic naming reports exhausted native eligibility budget without infer
   assert.equal(s.rpc.eventLog.read.mock.callCount(), reads + 1, 'manual naming only checks bounded conversation presence');
   assert.equal(s.rpc.eventLog.read.mock.calls.at(-1)?.arguments[0].max, 1);
 });
+
+for (const failure of ['expired', 'rejected'] as const) {
+  test(`automatic naming does not restart or query the model after a later eligibility page is ${failure}`, async t => {
+    const h = harness(t);
+    const s = await h.seed();
+    s.state.userNamed = false;
+    s.state.events = Array.from({ length: 40 }, (_, index) => user(`prior-${index}`));
+    await h.engine.reload(s.id);
+    s.rpc.eventLog.read.mock.mockImplementationOnce(async () => {
+      if (failure === 'rejected') throw new Error('Eligibility read failed');
+      return { events: [], cursor: 'expired-cursor', cursorStatus: 'expired', hasMore: false };
+    }, 1);
+    await finishReply(s, 'Reply during a failed eligibility scan');
+    assert.equal(s.rpc.eventLog.read.mock.callCount(), 2);
+    assert.ok(s.rpc.eventLog.read.mock.calls[1]!.arguments[0].cursor);
+    assert.ok(h.events.some(value => value.type === 'session/patch'
+      && /eligibility is unavailable|Eligibility read failed/.test(value.autoNameError ?? '')));
+    await finishReply(s, 'Later reply must not automatically retry');
+    assert.equal(s.rpc.eventLog.read.mock.callCount(), 2);
+    assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
+    assert.equal(s.rpc.name.setAuto.mock.callCount(), 0);
+    assert.equal(s.sdk.send.mock.callCount(), 0);
+  });
+}
+
+for (const prior of [30, 64]) {
+  test(`closure during paginated naming suppresses a late ${prior === 30 ? 'effective reply' : 'continuation'} page`, async t => {
+    const h = harness(t);
+    const s = await h.seed();
+    s.state.userNamed = false;
+    s.state.events = Array.from({ length: prior }, (_, index) => user(`prior-${index}`));
+    await h.engine.reload(s.id);
+    const page = deferred<Awaited<ReturnType<Rpc['eventLog']['read']>>>();
+    s.rpc.eventLog.read.mock.mockImplementationOnce(() => page.promise, 1);
+    await finishReply(s, 'First reply while an eligibility page is pending');
+    assert.equal(s.rpc.eventLog.read.mock.callCount(), 2);
+    assert.equal((await h.engine.getMeta(s.id))?.autoNaming, true);
+    assert.ok(await h.engine.busyCount());
+    await assert.rejects(h.engine.unload(s.id), protectedWork);
+    await assert.rejects(h.engine.stop(), protectedWork);
+    const naming = h.engine.autoName(s.id);
+    const rejected = assert.rejects(naming, /Native session closed/);
+    h.runtime.expire(s.id, true);
+    await rejected;
+    const replacement = fakeSession(t, s.id);
+    replacement.state.name = 'Current manual title';
+    replacement.state.userNamed = true;
+    h.natives.set(s.id, replacement);
+    await h.engine.reload(s.id);
+    page.resolve({ events: s.state.events.slice(32, 64), cursor: 'late-page', cursorStatus: 'ok',
+      hasMore: s.state.events.length > 64 });
+    await nextTurn();
+    assert.equal(s.rpc.eventLog.read.mock.callCount(), 2, 'closed eligibility never dispatches another page or presence read');
+    assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
+    assert.equal(s.rpc.name.setAuto.mock.callCount(), 0);
+    assert.equal(s.sdk.abort.mock.callCount(), 0);
+    assert.equal(replacement.rpc.eventLog.read.mock.callCount(), 0);
+    assert.equal((await h.engine.getMeta(s.id))?.title, 'Current manual title');
+  });
+}
 
 test('auto naming preserves first live completion buffered before the native create result', async t => {
   const h = harness(t);
@@ -5153,11 +5273,65 @@ test('cold native workspaces rewound to empty may regenerate an automatic title 
   const h = harness(t);
   const s = await h.seed();
   s.state.userNamed = false;
+  await h.engine.reload(s.id);
+  await finishReply(s, 'First reply before cold rewind');
+  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
+  await h.engine.unload(s.id);
+  s.state.events = [];
   s.state.name = 'Existing automatic title';
   await h.engine.reload(s.id);
+  assert.equal(s.rpc.eventLog.read.mock.callCount(), 2, 'cold resume itself does not read eligibility');
   await finishReply(s, 'Reply after history was rewound away');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
+  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 2);
+  assert.equal(s.rpc.eventLog.read.mock.calls[2]!.arguments[0].cursor, undefined);
   assert.equal(s.state.name, 'Native session naming');
+});
+
+test('automatic naming preserves manual titles before eligibility and during a paginated read', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  await h.engine.rename(s.id, 'Manual before reply');
+  await finishReply(s, 'First reply with a manual title');
+  assert.equal(s.rpc.eventLog.read.mock.callCount(), 0);
+  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
+  assert.equal(s.state.name, 'Manual before reply');
+  s.state.userNamed = false;
+  s.state.events = Array.from({ length: 30 }, (_, index) => user(`prior-${index}`));
+  const page = deferred<Awaited<ReturnType<Rpc['eventLog']['read']>>>();
+  s.rpc.eventLog.read.mock.mockImplementationOnce(() => page.promise, 1);
+  await finishReply(s, 'First reply after native history changed');
+  const naming = h.engine.autoName(s.id);
+  await h.engine.rename(s.id, 'Manual during eligibility');
+  page.resolve({ events: s.state.events.slice(32), cursor: 'last-page', cursorStatus: 'ok', hasMore: false });
+  assert.deepEqual(await naming, { ok: true, applied: false, title: 'Manual during eligibility', reason: 'user-named' });
+  assert.equal(s.rpc.eventLog.read.mock.callCount(), 3);
+  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1, 'no extra model query was added for the manual-title race');
+  assert.equal(s.rpc.name.setAuto.mock.callCount(), 1);
+  assert.equal(s.state.name, 'Manual during eligibility');
+  assert.equal(s.sdk.send.mock.callCount(), 0);
+});
+
+test('the last metadata reader releases already-pending naming across eligibility pages', async t => {
+  const h = harness(t);
+  const s = await h.seed();
+  s.state.userNamed = false;
+  s.state.events = Array.from({ length: 40 }, (_, index) => user(`prior-${index}`));
+  await h.engine.reload(s.id);
+  const snapshot = await s.rpc.metadata.snapshot();
+  const hold = deferred<typeof snapshot>();
+  s.rpc.metadata.snapshot.mock.mockImplementationOnce(() => hold.promise);
+  const reading = h.engine.getMeta(s.id);
+  await nextTurn();
+  await finishReply(s, 'First reply waiting for the metadata reader');
+  assert.equal(s.rpc.eventLog.read.mock.callCount(), 0);
+  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
+  hold.resolve(snapshot);
+  await reading;
+  await nextTurn();
+  assert.equal(s.rpc.eventLog.read.mock.callCount(), 3, 'two eligibility pages and one presence read');
+  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
+  assert.equal(s.rpc.name.setAuto.mock.callCount(), 1);
+  assert.equal(s.sdk.send.mock.callCount(), 0);
 });
 
 test('a native first-prompt placeholder is not mistaken for a generated automatic title', async t => {

@@ -751,11 +751,11 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
         const read = sdk.rpc.eventLog.read.bind(sdk.rpc.eventLog);
         t.mock.method(sdk.rpc.eventLog, 'read', async (params: Parameters<typeof read>[0]) => {
               assert.ok(params.agentScope === 'all'
-                || (params.agentScope === 'primary' && [1, 1000].includes(params.max!)),
+                || (params.agentScope === 'primary' && params.max! >= 1 && params.max! <= 32),
               'Only bounded native naming admission and presence checks may read primary events');
           assert.equal(params.includeEphemeral, false);
           assert.notEqual(params.types, '*');
-          assert.ok(params.max! <= (params.agentScope === 'primary' ? 1000 : 64));
+          assert.ok(params.max! <= (params.agentScope === 'primary' ? 32 : 64));
           const page = await read(params);
           pages.push({ events: page.events.length, bytes: Buffer.byteLength(JSON.stringify(page)), direction: params.direction! });
           return page;
@@ -1192,11 +1192,11 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
         const read = session.rpc.eventLog.read.bind(session.rpc.eventLog);
         t.mock.method(session.rpc.eventLog, 'read', async (params: Parameters<typeof read>[0]) => {
           assert.ok(params.agentScope === 'all'
-            || (params.agentScope === 'primary' && [1, 1000].includes(params.max!)),
+            || (params.agentScope === 'primary' && params.max! >= 1 && params.max! <= 32),
           'Only bounded native naming admission and presence checks may read primary events');
           assert.equal(params.includeEphemeral, params.agentScope === 'all' && params.direction === 'forward');
           assert.notEqual(params.types, '*');
-          assert.ok(params.max! <= (params.agentScope === 'primary' ? 1000 : 256));
+          assert.ok(params.max! <= (params.agentScope === 'primary' ? 32 : 256));
           const page = await read(params);
           displayReads.push({ direction: params.direction!, events: page.events.length,
             bytes: Buffer.byteLength(JSON.stringify(page)) });

@@ -405,7 +405,7 @@ test('naming eligibility is read from native history, not remembered from loaded
   await emitReply(h, 'third');
   assert.equal(h.rpc.ui.ephemeralQuery.mock.callCount(), 1, 'fresh native eligibility prevents naming an old conversation');
   const reads = h.rpc.eventLog.read.mock.calls.map(call => call.arguments[0]);
-  assert.ok(reads.some(read => read.direction === 'forward' && read.max === 1000 && read.types !== '*'));
+  assert.ok(reads.some(read => read.direction === 'forward' && read.max === 32 && read.types !== '*'));
   await h.engine.unload('native-id');
   await h.engine.stop();
 });

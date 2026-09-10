@@ -23,7 +23,7 @@ import { nextAttention, notificationSummary } from './attention.ts';
 import { readNativeChat } from './native-chat.ts';
 import { Prefs } from './prefs.ts';
 import { describeMcpServer, redactMcpConfig } from './mcp-config.ts';
-import { autoNameQuestion, generatedTitle } from './auto-name.ts';
+import { autoNameQuestion, firstNamingReply, generatedTitle } from './auto-name.ts';
 import { validateForkHistory } from './fork.ts';
 import { createContextReset } from './context-reset.ts';
 import { bundledSkillsDirectory } from './paths.ts';
@@ -907,29 +907,6 @@ export class Engine {
     }
   }
 
-  private async firstNamingReply(sdk: CopilotSession): Promise<string | undefined> {
-    const page = await sdk.rpc.eventLog.read({
-      direction: 'forward', max: 1000, agentScope: 'primary', includeEphemeral: false,
-      types: ['assistant.turn_start', 'assistant.message', 'assistant.turn_end', 'tool.execution_start', 'user.message', 'abort', 'session.error'],
-    });
-    if (page.cursorStatus !== 'ok' || page.events.length > 1000) {
-      throw new Error('Native first-reply naming eligibility is unavailable');
-    }
-    let reply = false;
-    for (const native of page.events) {
-      const event = normalizeEvent(native);
-      if (native.ephemeral || event.agentId || event.parentToolCallId || event.data.agentId || event.data.parentToolCallId) continue;
-      if (event.type === 'assistant.message') {
-        reply = typeof event.data.content === 'string' && !!event.data.content.trim()
-          && !(Array.isArray(event.data.toolRequests) && event.data.toolRequests.length);
-      } else if (event.type === 'assistant.turn_end') {
-        if (reply) return native.id;
-      } else reply = false;
-    }
-    if (page.hasMore) throw new Error('First-reply naming eligibility exceeds the bounded native query; use explicit automatic naming');
-    return undefined;
-  }
-
   private maybeAutoName(st: State): void {
     if (!st.autoNamePending || st.namingAttempted || st.naming || !st.sdk
       || this.failure || this.lifecycle) return;
@@ -970,9 +947,14 @@ export class Engine {
           return { ok: true, applied: false, title: workspace.name ?? null, reason: 'user-named' };
         }
         // Native prompt-preview titles are also nonempty and not user-named.
-        if (automatic && await this.firstNamingReply(sdk) !== st.autoNamePending) {
-          st.autoNamePending = false;
-          return { ok: true, applied: false, title: workspace?.name ?? null, reason: 'not-applied' };
+        if (automatic) {
+          const first = await firstNamingReply(params =>
+            this.withSession(st, sdk, () => sdk.rpc.eventLog.read(params)));
+          if (st.sdk !== sdk || this.failure) throw new Error('Native session closed during naming');
+          if (first !== st.autoNamePending) {
+            st.autoNamePending = false;
+            return { ok: true, applied: false, title: workspace?.name ?? null, reason: 'not-applied' };
+          }
         }
         // Context attribution can be uninitialized on a resumed conversation;
         // it is not proof that native history is empty.

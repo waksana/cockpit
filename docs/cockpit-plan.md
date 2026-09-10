@@ -166,8 +166,12 @@ The explicit `session/auto-name` API is also available through HTTP and MCP.
 Manual names remain protected; history viewing and startup do not name old
 sessions. Naming failure preserves the current title and does not fail the chat.
 This still consumes an additional model request using the current context.
-First-reply eligibility is read on demand through a bounded public event query,
-not saved from a title lookup or history replay. If the first effective reply
+First-reply eligibility is read on demand through public forward event pages of
+at most 32 filtered events, sharing a 1,000-event total budget and stopping at the
+first effective completed reply. Only the current query retains its reducer and
+cursors; eligibility is not saved from a title lookup or history replay.
+These smaller eligibility payloads do not bound the separate ephemeral model
+query's native conversation context. If the first effective reply
 cannot be identified within 1,000 filtered events, automatic naming reports
 that limit and the explicit action remains available. The retained naming guard
 records only this host's one-shot attempt/failure, preventing automatic retries

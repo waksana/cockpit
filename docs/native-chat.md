@@ -236,8 +236,11 @@ which depended on replaying the complete transcript, has been removed.
 Queue, decisions, native tasks, stop protection, notifications and file APIs
 retain their independent responsibilities.
 
-First-reply naming uses a bounded native eligibility read, not a saved
-already-named/history flag. Copilot's first-input preview and generated automatic
+First-reply naming uses native eligibility pages of at most 32 filtered events,
+stopping at the first effective reply within a shared 1,000-event budget, not a
+saved already-named/history flag. Conversation presence is still a separate
+one-event read; neither read limits the ephemeral naming model's native context.
+Copilot's first-input preview and generated automatic
 titles are both non-user names; a nonempty name is not proof of prior naming.
 The first completed reply in the current native history may generate a title,
 including after a cold rewind to empty. Native manual names always remain
