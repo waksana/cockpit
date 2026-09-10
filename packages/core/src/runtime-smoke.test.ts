@@ -13,6 +13,10 @@ import { autoNameQuestion } from './auto-name.ts';
 import { CHAT_EVENT_TYPES } from './native-chat.ts';
 
 type PersistedPage = Awaited<ReturnType<CopilotClient['rpc']['sessions']['readPersistedEvents']>>;
+const draftModels = ['confirmed-model', 'unconfirmed-model', 'first-model', 'last-model'].map(id => ({
+  id, name: id, supportedReasoningEfforts: ['low', 'high'],
+  supportedContextTiers: ['default', 'long_context'] as const,
+}));
 
 async function draftFixture(t: TestContext) {
   t.mock.timers.enable({ apis: ['setInterval'] });
@@ -59,7 +63,7 @@ async function draftFixture(t: TestContext) {
       },
       model: {
         getCurrent: async () => ({ ...state.model }),
-        list: async () => ({ list: [] }),
+        list: async () => ({ list: draftModels.map(model => ({ ...model, supportedContextTiers: [...model.supportedContextTiers] })) }),
         switchTo: t.mock.fn(async (options: Parameters<Rpc['model']['switchTo']>[0]) => {
           state.model = { modelId: options.modelId, reasoningEffort: options.reasoningEffort, contextTier: options.contextTier };
           return { modelId: options.modelId };
@@ -1784,13 +1788,16 @@ for (const setting of ['rename', 'model', 'mode'] as const) {
     const confirmed = (await draftProjection(h.engine, id));
     const native = h.natives.get(id)!;
     const fail = async (): Promise<never> => { throw new Error('Setting readback unknown'); };
+    let modelReads = 0;
     const readback = setting === 'rename' ? t.mock.method(native.rpc.name, 'get', fail)
-      : setting === 'model' ? t.mock.method(native.rpc.model, 'getCurrent', fail)
+      : setting === 'model' ? t.mock.method(native.rpc.model, 'getCurrent', async () =>
+        modelReads++ === 0 ? { ...native.state.model } : fail())
       : t.mock.method(native.rpc.mode, 'get', fail);
     await assert.rejects(setting === 'rename' ? h.engine.rename(id, 'Unconfirmed name')
       : setting === 'model' ? h.engine.setModel(id, 'unconfirmed-model', 'low', 'default')
       : h.engine.setMode(id, 'autopilot'), /Setting readback unknown/);
-    await assert.rejects(h.engine.getMeta(id), /Setting readback unknown/);
+    await assert.rejects(setting === 'mode'
+      ? h.engine.getResources(id, ['mode']) : h.engine.getMeta(id), /Setting readback unknown/);
     readback.mock.restore();
     assert.notDeepEqual(await draftProjection(h.engine, id), confirmed, 'fresh native state may reflect an uncertain mutation');
     h.expire(id);
@@ -1817,7 +1824,7 @@ test('draft recovery: overlapping settings retain the last confirmed native mode
       reading = true;
       await held;
     }
-    return { list: [] };
+    return { list: draftModels.map(model => ({ ...model, supportedContextTiers: [...model.supportedContextTiers] })) };
   });
   const first = h.engine.setModel(id, 'first-model', 'low', 'default');
   try {

@@ -8,14 +8,15 @@ It intentionally covers a subset of CLI capabilities, not a second agent platfor
 
 The contracts below describe repository source. A local commit, a merged main
 branch, a running backend and an already-connected MCP process are different
-delivery states. The SDK remediation source baseline is local main
-`035920b45567cacb6805ebf11ea571cd51adf5b0`; the following local changes have **not
-been pushed, deployed or restarted into service** as part of this batch.
+delivery states. The completed SDK remediation source baseline is
+`3b773646209b4b6dacfb56295173b0ecb6b30caa`. That batch did not push or deploy.
+The subsequent authorized full-version integration includes the model changes
+below; its runtime delivery must still be confirmed independently of this document.
 
 | State | Scope |
 | --- | --- |
 | Local main source | `6026294` all-agent chat/SSE (delivered before this batch); `14b5ceb` directory errors; `b96b4d3` native MCP status; `5d9348f` schedule stop/self-paced semantics; `39b4e47` narrow resource reads, invalidations, request-local Prefs/index reuse and on-demand pages; `11231ba` MCP history pages; `523b8e7` fork type filtering; `a04a53d` backward folding; `035920b` first-reply naming pages. |
-| Model repair paused outside main | `14d01b1e64f7922b0c5c19bfd9bb27530bbd4536`, depending on `7ab1983`, is only on `work/reasoning-capability-current`. Its private merge `eaf3591` includes the then-main `5d9348f`; it is not a main integration. Provider `supportedContextTiers` and `deferIfModelChangeQueued` fixes are not claimed for main or the running service. Do not merge or release this branch without renewed authorization. |
+| Model repair included in authorized full-version integration | The precise deltas of `7ab1983` and `14d01b1` are integrated on the completed batch baseline, not by replacing it with private merge `eaf3591`. Model capability enrichment is requested only for model option reads; summary/control reads retain the batch's narrow projections. Provider `supportedContextTiers`, partial option preservation and `deferIfModelChangeQueued` ordering remain native-owned. Source integration is not proof of runtime activation. |
 | Voice repair not implemented; user-deferred TODO | The user chose to defer audio. Cancellation/unmount does not yet fence late starts or stale callbacks. Client token expiry and recovery after a transient preparation failure remain unresolved. Do not claim these repairs shipped or resume them automatically. |
 | Accepted native history cost | MCP defaults to 16 events. Oversized multi-event pages require an explicit smaller query; only `limit:1` fragments giant events through complete rereads. The SDK has no single-event body offset. The accepted tradeoff is detailed in [MCP pagination](../apps/mcp/README.md#native-event-pagination), not a requirement for a cache, saved native copy, LRU, artifact or new opt-in. |
 

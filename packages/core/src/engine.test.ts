@@ -1172,7 +1172,9 @@ test('setter readback failure rejects only its own command without rolling back 
   const h = harness(t);
   const s = await h.load();
   const held = deferred<Awaited<ReturnType<Rpc['model']['getCurrent']>>>();
-  s.rpc.model.getCurrent.mock.mockImplementationOnce(() => held.promise);
+  const reads = s.rpc.model.getCurrent.mock.callCount();
+  s.rpc.model.getCurrent.mock.mockImplementationOnce(async () => structuredClone(s.state.model), reads);
+  s.rpc.model.getCurrent.mock.mockImplementationOnce(() => held.promise, reads + 1);
   const rejected = assert.rejects(h.engine.setModel(s.id, 'command'), /own read failure/);
   await nextTurn();
   s.state.model.modelId = 'later-native';
@@ -2827,6 +2829,9 @@ test('explicit stop/start closes handles and rereads native indexed metadata wit
   const id = await h.engine.newSession(h.cwd);
   const native = h.natives.get(id)!;
   await h.engine.rename(id, 'confirmed local title');
+  native.rpc.model.list.mock.mockImplementation(async () => ({ list: [{
+    id: 'confirmed-model', name: 'Fixture', supportedReasoningEfforts: ['high'], supportedContextTiers: ['default', 'long_context'],
+  }] }));
   await h.engine.setModel(id, 'confirmed-model', 'high', 'long_context');
   await h.engine.pin(id, true);
   h.trace.length = 0;
@@ -5972,7 +5977,14 @@ test('thin native session models expose fresh rich capabilities and settings req
   const catalogReads = h.runtime.models.mock.callCount();
   const snapshot = await h.engine.snapshot();
   assert.equal(h.runtime.models.mock.callCount() - catalogReads, 1, 'One catalog belongs to this snapshot request, not a retained cache');
-  assert.deepEqual(snapshot.sessions.find(row => row.sessionId === s.id)?.availableModels, before.availableModels);
+  assert.equal(snapshot.sessions.find(row => row.sessionId === s.id)?.availableModels, undefined,
+    'Summary snapshots do not request model option lists');
+  const listReads = s.rpc.model.list.mock.callCount();
+  const catalogsBeforeNarrowRead = h.runtime.models.mock.callCount();
+  await h.engine.getResources(s.id, ['control']);
+  assert.equal(s.rpc.model.list.mock.callCount(), listReads);
+  assert.equal(h.runtime.models.mock.callCount(), catalogsBeforeNarrowRead);
+  assert.deepEqual((await h.engine.getResources(s.id, ['models']))?.availableModels, before.availableModels);
   await h.engine.setModel(s.id, 'native-model', 'high', 'long_context');
   const after = (await h.engine.getMeta(s.id))!;
   assert.equal(after.currentReasoningEffort, 'high');
