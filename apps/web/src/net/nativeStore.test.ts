@@ -345,12 +345,52 @@ for (const success of [false, true]) {
 test('an authoritative invalidation before the mutation ACK is not replaced by a fresh window', async t => {
   const h = setup(t);
   await h.start();
-  const pending = h.store.getState().compactSession('a');
-  h.source.emit({ type: 'chat/invalidated', sessionId: 'a', reason: 'compaction' });
+  const pending = h.store.getState().rewindSession('a', 'user-boundary');
+  h.source.emit({ type: 'chat/invalidated', sessionId: 'a', reason: 'rewind' });
   h.requests[3].resolve(Response.json({ ok: true }));
   await pending;
   assert.deepEqual(h.ids(), ['A']);
   assert.equal(h.state().historyStale, true);
   await h.tick();
   assert.equal(h.requests.length, 4);
+});
+
+for (const success of [true, false]) {
+  test(`manual compaction (${success}) and legacy invalidation leave older/live reads and their cursors intact`, async t => {
+    const h = setup(t);
+    await h.start();
+    h.store.getState().loadMore('a');
+    const pending = h.store.getState().compactSession('a');
+    void pending.catch(() => {});
+    assert.equal(h.requests[2].signal?.aborted, false);
+    assert.equal(h.requests[3].signal?.aborted, false);
+    h.source.emit({ type: 'chat/invalidated', sessionId: 'a', reason: 'compaction' });
+    assert.equal(h.state().historyStale, false);
+    assert.equal(h.state().loadingHistory, true);
+    h.requests[4].resolve(Response.json(success ? { ok: true } : { error: 'compaction failed' }, { status: success ? 200 : 400 }));
+    if (success) await pending; else await assert.rejects(pending, /compaction failed/);
+    await h.reply(3, [message('older')], { hasMore: true });
+    await h.reply(2, [message('B')]);
+    await h.tick();
+    assert.deepEqual(h.ids(), ['older', 'A', 'B']);
+    assert.equal(h.state().historyStale, false);
+    assert.equal(h.requests[5].body.direction, 'forward');
+    assert.equal(h.requests[5].body.cursor, 'cursor-2');
+    if (success) assert.equal(h.state().error, null);
+    else assert.ok(getUxErrors().some(error => error.message.includes('compaction failed')));
+    assert.doesNotMatch(h.state().error ?? '', /原生历史已变更|重新同步/);
+  });
+}
+
+test('automatic compaction signals do not cancel initial history or mark it stale', async t => {
+  const h = setup(t);
+  h.source.open(); h.snapshot(); h.store.getState().setActiveId('a');
+  h.source.emit({ type: 'chat/invalidated', sessionId: 'a', reason: 'compaction' });
+  assert.equal(h.requests[0].signal?.aborted, false);
+  assert.equal(h.state().loadingHistory, true);
+  await h.reply(0, [message('A')]);
+  assert.deepEqual(h.ids(), ['A']);
+  assert.equal(h.state().historyStale, false);
+  assert.equal(h.state().error, null);
+  assert.equal(h.requests[1].body.cursor, 'tail-before-page');
 });

@@ -689,9 +689,6 @@ export class Engine {
     if (event.type === 'session.compaction_start') this.patch(st, { compacting: true });
     if (event.type === 'session.compaction_complete') {
       this.patch(st, { compacting: false });
-      if (this.sessions.get(st.id) === st) {
-        this.emit({ type: 'chat/invalidated', sessionId: st.id, reason: 'compaction' });
-      }
     }
     switch (native.type) {
       case 'session.idle':

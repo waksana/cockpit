@@ -4088,22 +4088,22 @@ test('loaded initialization keeps only control state and does not prewarm a larg
   assert.equal('changedFiles' in await h.engine.getPlan(s.id), false);
 });
 
-test('compaction completion invalidates native chat without reading or emitting a replacement transcript', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  const reads = s.rpc.eventLog.read.mock.callCount();
-  s.emit(event('session.compaction_start', {}));
-  assert.ok(h.events.some(event => event.type === 'session/invalidated' && event.sessionId === s.id));
-  s.emit(event('session.compaction_complete', { success: true }));
-  await nextTurn();
-  assert.equal((await h.engine.getMeta(s.id))?.activeOperations, 0);
-  assert.deepEqual(h.events.filter(event => event.type === 'chat/invalidated'), [
-    { type: 'chat/invalidated', sessionId: s.id, reason: 'compaction' },
-  ]);
-  assert.equal(s.rpc.eventLog.read.mock.callCount(), reads);
-  assert.equal(h.runtime.rpc.sessions.readPersistedEvents.mock.callCount(), 0);
-  assert.equal(serverChatEvents(h).length, 0);
-});
+for (const success of [true, false]) {
+  test(`compaction completion (${success}) updates progress without invalidating or replaying native chat`, async t => {
+    const h = harness(t);
+    const s = await h.load();
+    const reads = s.rpc.eventLog.read.mock.callCount();
+    s.emit(event('session.compaction_start', {}));
+    assert.ok(h.events.some(event => event.type === 'session/invalidated' && event.sessionId === s.id));
+    s.emit(event('session.compaction_complete', { success }));
+    await nextTurn();
+    assert.equal((await h.engine.getMeta(s.id))?.activeOperations, 0);
+    assert.deepEqual(h.events.filter(event => event.type === 'chat/invalidated'), []);
+    assert.equal(s.rpc.eventLog.read.mock.callCount(), reads);
+    assert.equal(h.runtime.rpc.sessions.readPersistedEvents.mock.callCount(), 0);
+    assert.equal(serverChatEvents(h).length, 0);
+  });
+}
 
 for (const action of ['unload', 'stop'] as const) {
   test(`pending live chat long-poll creates no busy state and cannot block idle ${action}`, async t => {

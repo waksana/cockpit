@@ -117,8 +117,17 @@ that the unsaved draft can be recovered.
 `cursorStatus:"expired"` is not a successful continuation. The native boundary
 returned with it may overlap or differ from the previous range. Preserve the
 current view and require an explicit rebase rather than silently jumping to
-latest. Rewind/compaction also emit `chat/invalidated` metadata signals without
-embedding a history snapshot.
+latest. Rewind emits a `chat/invalidated` metadata signal without embedding a
+history snapshot, because even a still-valid cursor can coexist with deleted
+rows already displayed by the browser.
+
+Context compaction is not a chat-history rewrite. Successful manual and
+automatic compaction on runtime 1.0.83 preserved original event IDs/content and
+same-source backward/forward/tail cursors, including subsequent new replies.
+Compaction therefore updates operation status without invalidating chat or
+cancelling in-flight reads. The Web also ignores legacy compaction invalidation
+signals from older hosts. Actual native cursor expiry is still handled above;
+manual compaction failures remain visible as operation errors.
 
 ## Media
 

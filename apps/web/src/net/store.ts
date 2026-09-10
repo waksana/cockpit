@@ -564,6 +564,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         return;
       }
       case 'chat/invalidated': {
+        // Compaction does not rewrite chat; older hosts also emitted this on failure.
+        if (ev.reason === 'compaction') return;
         cancelHistory(ev.sessionId);
         cancelLive(ev.sessionId);
         windows.get(ev.sessionId)?.invalidate();
@@ -729,7 +731,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     unloadSession(sid) { return mutation(sid, '卸载会话', (net) => net.unloadSession(sid)); },
     reloadSession(sid) { return mutation(sid, '重载会话', (net) => net.reloadSession(sid)); },
     pinSession(sid, pinned) { return mutation(sid, '置顶会话', (net) => net.pinSession(sid, pinned)); },
-    compactSession(sid) { return mutation(sid, '压缩会话', (net) => net.compactSession(sid), true); },
+    compactSession(sid) { return mutation(sid, '压缩会话', (net) => net.compactSession(sid)); },
     rewindSession(sid, toMsgId, rollbackFiles) {
       return mutation(sid, '回退会话', (net) => net.rewindSession(sid, toMsgId, rollbackFiles), true);
     },
