@@ -190,7 +190,7 @@ function setup(t: TestContext, store: Store = (useCockpit = createCockpitStore()
       next.getState().setActiveId(id);
       const loaded = next.getState().sessions.find(session => session.sessionId === id)?.loaded;
       assertPost(index, 'session/chat', { sessionId: id, source: loaded ? 'live' : 'persisted', direction: 'backward',
-        max: 8, waitMs: 0, bootstrap: !!loaded, ...(loaded ? { agentScope: 'primary' as const } : {}) });
+        max: 32, waitMs: 0, bootstrap: !!loaded, ...(loaded ? { agentScope: 'primary' as const } : {}) });
       await history(index, { sessionId: id, messages, hasMore, latest: true });
     }
     function reconnect(ids = ['a']) {
@@ -1361,7 +1361,7 @@ test('newSession rejects original failures and disconnected attempts without cha
   assert.equal(h.requests.length, 0);
   h.source.open();
   h.assertPost(0, 'session/chat', { sessionId: 'a', source: 'live', direction: 'backward',
-    max: 8, waitMs: 0, bootstrap: true, agentScope: 'primary' });
+    max: 32, waitMs: 0, bootstrap: true, agentScope: 'primary' });
   await h.history(0, { sessionId: 'a', messages: [], latest: true, hasMore: false });
   const pending = useCockpit.getState().newSession('.');
   const failure = new Error('creation denied');

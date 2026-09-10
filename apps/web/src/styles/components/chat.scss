@@ -111,8 +111,28 @@
 .chat-transcript {
   position: relative;
   display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 0;
+}
+.chat-history-controls {
+  flex: none;
+  min-width: 0;
+  width: 100%;
+}
+.chat-history-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5rem;
+}
+.chat-history-note {
+  margin: 0;
+  padding: 0.25rem 0.75rem;
+  text-align: center;
+  font-size: var(--font-size-14);
+  color: var(--secondary-text-color);
 }
 .chat-messages {
   flex: 1 1 auto;
@@ -133,6 +153,7 @@
   flex-direction: column;
   flex: none;
   margin-top: auto;
+  &[data-preparing] { visibility: hidden; }
 }
 
 .msg-group { display: flex; flex-direction: column; }
@@ -491,14 +512,8 @@
   font-size: var(--font-size-14); color: var(--secondary-text-color);
 }
 .chat-loading-older {
-  position: absolute;
-  z-index: 1;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
+  margin: 0;
   max-width: 100%;
-  background: var(--surface-color);
-  border-radius: var(--border-radius);
 }
 // Read-only footer for a trashed-session preview (replaces the composer).
 .chat-readonly-note {

@@ -100,7 +100,7 @@ test('native chat starts only after selection, open and snapshot, with one bound
   assert.equal(h.requests.length, 0);
   h.snapshot();
   assert.deepEqual(h.requests[0].body, {
-    sessionId: 'a', source: 'live', direction: 'backward', max: 8, waitMs: 0, bootstrap: true, agentScope: 'primary',
+    sessionId: 'a', source: 'live', direction: 'backward', max: 32, waitMs: 0, bootstrap: true, agentScope: 'primary',
   });
   await h.reply(0, [message('A')], { hasMore: true });
   assert.deepEqual(h.ids(), ['A']);

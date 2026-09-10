@@ -1,7 +1,7 @@
 import type { NativeChatPage, NativeChatRead } from '@cockpit/protocol';
 import type { NativeWindow } from './nativeWindow';
 
-export const HISTORY_BOUNDARY_PAGES = 32;
+export const HISTORY_BOUNDARY_PAGES = 8;
 
 export async function readMessageHistory(
   window: NativeWindow, initial: NativeChatRead,

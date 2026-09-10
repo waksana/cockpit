@@ -326,7 +326,9 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const scrollOwnerRef = useRef<ThreadScroll | null>(null);
-  const initialFill = useRef({ sessionId: session.sessionId, pages: 0, done: false });
+  const initialFill = useRef({ sessionId: session.sessionId, pages: 0, done: session.materialized });
+  const [readySession, setReadySession] = useState(session.materialized ? session.sessionId : null);
+  const preparingHistory = readySession !== session.sessionId && !session.error && !session.historyStale;
   const [heldHead, setHeldHead] = useState<{ sessionId: string; id: string } | null>(null);
   // Keep the existing DOM prefix under an active gesture. Only newly received
   // older rows wait for settle; tail updates and already mounted history stay live.
@@ -356,11 +358,11 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
   const reportVisibleAttention = useCallback(() => {
     const el = scrollRef.current;
     const choiceVisible = session.attention === 'choice' && !!(session.ask || session.planRequest || session.elicitation);
-    const latestVisible = session.materialized && !session.historyStale && session.messages.length > 0
+    const latestVisible = !preparingHistory && session.materialized && !session.historyStale && session.messages.length > 0
       && !!el && el.scrollHeight - el.clientHeight - el.scrollTop <= 2;
     onAttentionVisible?.(session.attnId ?? 0, !readOnly && (choiceVisible || latestVisible));
   }, [onAttentionVisible, readOnly, session.attention, session.attnId, session.ask, session.planRequest,
-    session.elicitation, session.materialized, session.historyStale, session.messages.length]);
+    session.elicitation, session.materialized, session.historyStale, session.messages.length, preparingHistory]);
   useLayoutEffect(reportVisibleAttention, [reportVisibleAttention, session.messages]);
   useEffect(() => {
     const el = scrollRef.current;
@@ -395,13 +397,18 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
   }, [session.sessionId]);
 
   useLayoutEffect(() => {
-    if (initialFill.current.sessionId !== session.sessionId) initialFill.current = { sessionId: session.sessionId, pages: 0, done: false };
+    if (initialFill.current.sessionId !== session.sessionId) {
+      initialFill.current = { sessionId: session.sessionId, pages: 0, done: session.materialized };
+    }
     const fill = initialFill.current;
     const el = scrollRef.current;
-    if (fill.done || !el || !session.materialized || session.loadingHistory || session.historyStale || session.error || prependHeld) return;
-    // Stop near two screens without adding another full native page for a small shortfall.
-    if (!session.hasMore || session.incompleteBoundary || el.scrollHeight >= el.clientHeight * 1.5) { fill.done = true; return; }
-    if (el.clientHeight > 0 && fill.pages < 8) {
+    if (fill.done) { setReadySession(session.sessionId); return; }
+    if (!el || !session.materialized || session.loadingHistory || session.historyStale || session.error || prependHeld) return;
+    // Measure hidden initial rows, then reveal the accumulated viewport in one batch.
+    if (!session.hasMore || session.incompleteBoundary || el.scrollHeight >= el.clientHeight * 1.5 || fill.pages >= 8) {
+      fill.done = true;
+      setReadySession(session.sessionId);
+    } else if (el.clientHeight > 0) {
       fill.pages++;
       onLoadMore();
     }
@@ -413,13 +420,13 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
     const el = scrollRef.current;
     if (!el) return;
     const onScroll = () => {
-      if (el.scrollTop < 80 && session.hasMore && !session.loadingHistory && !prependHeld) {
+      if (!preparingHistory && el.scrollTop < 80 && session.hasMore && !session.loadingHistory && !prependHeld) {
         onLoadMore();
       }
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     return () => el.removeEventListener('scroll', onScroll);
-  }, [session.hasMore, session.loadingHistory, onLoadMore, prependHeld]);
+  }, [session.hasMore, session.loadingHistory, onLoadMore, prependHeld, preparingHistory]);
 
   // Reconnect/metadata renders with identical geometry do not schedule a write.
   // Count only messages after the previous tail, never an older-page prepend.
@@ -470,32 +477,35 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
   return (
     <main className="chat">
       <div className="chat-transcript">
-        {session.loadingHistory && (
-          <div className="chat-loading-older" role="status">
-            {session.historyStale || !session.materialized ? '正在同步对话历史…' : '加载更早的消息…'}
+        <div className="chat-history-controls">
+          <div className="chat-history-actions">
+            {session.loadingHistory || preparingHistory ? (
+              <div className="chat-loading-older" role="status">
+                {preparingHistory || session.historyStale || !session.materialized ? '正在同步对话历史…' : '加载更早的消息…'}
+              </div>
+            ) : session.historyStale || !session.materialized ? (
+              <div className="chat-loading-older" role="status">
+                对话历史尚未同步。
+                {onRetryHistory && <button type="button" className="dialog-btn rp" onClick={() => {
+                  scrollOwnerRef.current?.follow();
+                  onRetryHistory();
+                }}>
+                  重新读取最新历史
+                </button>}
+              </div>
+            ) : session.hasMore ? <button type="button" className="dialog-btn rp"
+              disabled={prependHeld} onClick={onLoadMore}>加载更早的历史</button> : null}
           </div>
-        )}
-        {!session.loadingHistory && (session.historyStale || !session.materialized) && (
-          <div className="chat-loading-older" role="status">
-            对话历史尚未同步。
-            {onRetryHistory && <button type="button" className="dialog-btn rp" onClick={() => {
-              scrollOwnerRef.current?.follow();
-              onRetryHistory();
-            }}>
-              重新读取最新历史
-            </button>}
-          </div>
-        )}
-        {session.partialHistory && <div className="chat-loading-older" role="status">
-          断线期间的临时片段可能不完整；已保留现有文字，以原生保存后的完整消息为准。
-        </div>}
-        {session.hasMore && !session.historyStale && <button type="button" className="dialog-btn rp"
-          disabled={session.loadingHistory || prependHeld} onClick={onLoadMore}>加载更早的历史</button>}
-        {session.incompleteBoundary && !session.loadingHistory && <p className="chat-empty-hint">{session.hasMore
-          ? '本次尚未读到完整消息边界，可点击加载更早的历史继续补齐。'
-          : '部分工具记录缺少对应的发起消息，现有历史无法补齐。'}</p>}
-        <div ref={scrollRef} className="chat-messages" tabIndex={0}>
-          <div ref={contentRef} className="chat-message-content">
+          {session.partialHistory && <p className="chat-history-note" role="status">
+            断线期间的临时片段可能不完整；已保留现有文字，以原生保存后的完整消息为准。
+          </p>}
+          {session.incompleteBoundary && !session.loadingHistory && <p className="chat-history-note">{session.hasMore
+            ? '本次尚未读到完整消息边界，可点击加载更早的历史继续补齐。'
+            : '部分工具记录缺少对应的发起消息，现有历史无法补齐。'}</p>}
+        </div>
+        <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-busy={preparingHistory}>
+          <div ref={contentRef} className="chat-message-content" data-preparing={preparingHistory || undefined}
+            aria-hidden={preparingHistory || undefined} inert={preparingHistory || undefined}>
             {session.messages.length === 0 && session.materialized && !session.historyStale && !session.loadingHistory && !session.hasMore && (
               <p className="chat-empty-hint">开始对话吧 — 工作目录 {session.cwd}</p>
             )}

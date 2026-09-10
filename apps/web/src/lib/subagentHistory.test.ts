@@ -28,7 +28,7 @@ test('closed child detail never reads; opening selects exact native agent IDs wi
   const pending = h.resource.refresh();
   assert.deepEqual(h.calls[0].query, {
     sessionId: 'session', source: 'live', direction: 'backward', agentIds: ['agent', 'spawn'],
-    max: 8, waitMs: 0, bootstrap: false,
+    max: 32, waitMs: 0, bootstrap: false,
   });
   h.reply(0, ['tail']);
   assert.equal(await pending, true);

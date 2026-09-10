@@ -294,9 +294,13 @@ test('loading on/off leaves the transcript unchanged and loader/badge outside sc
   assert.match(divContents(loading, 'chat-transcript'), /chat-loading-older/);
   assert.doesNotMatch(idle, /chat-loading-older/);
   const css = readFileSync(new URL('../styles/components/chat.scss', import.meta.url), 'utf8');
-  for (const className of ['chat-loading-older', 'new-msg-badge']) {
-    assert.match(css, new RegExp(`\\.${className}\\s*\\{[^}]*\\bposition:\\s*absolute\\b`));
-  }
+  assert.match(css, /\.chat-transcript\s*\{[^}]*flex-direction:\s*column/);
+  assert.match(css, /\.chat-history-controls\s*\{[^}]*flex:\s*none[^}]*width:\s*100%/);
+  assert.match(css, /\.chat-history-actions\s*\{[^}]*min-height:\s*2\.5rem/);
+  assert.doesNotMatch(css, /\.chat-loading-older\s*\{[^}]*position:\s*absolute/);
+  assert.match(css, /\.new-msg-badge\s*\{[^}]*position:\s*absolute/);
+  assert.match(divContents(loading, 'chat-history-controls'), /chat-loading-older/);
+  assert.match(divContents(idle, 'chat-history-controls'), /加载更早的历史/);
 
   const h = fixture();
   const anchor = readAt(h, 275);

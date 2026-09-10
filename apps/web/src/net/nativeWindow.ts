@@ -2,7 +2,7 @@ import { foldEvent, newFoldState, resetTurn, type FoldState } from '@cockpit/pro
 import { summarizeMessage, type ChatMessage, type NativeChatEvent, type NativeChatPage, type NativeChatRead } from '@cockpit/protocol';
 import { displayEvent, type DisplayEvent } from './displayEvent';
 
-export const NATIVE_PAGE = 8;
+export const NATIVE_PAGE = 32;
 export type ChatPosition = Pick<NativeChatRead, 'source' | 'cursor' | 'agentScope' | 'agentIds' | 'types'>;
 
 const finalizedId = (event: NativeChatEvent) => event.type === 'assistant.message'

@@ -6,7 +6,7 @@ import { HISTORY_BOUNDARY_PAGES, readMessageHistory } from './messageHistory';
 
 const query: NativeChatRead = {
   sessionId: 'fixture', source: 'live', direction: 'backward',
-  max: 8, waitMs: 0, bootstrap: true, agentScope: 'primary',
+  max: 32, waitMs: 0, bootstrap: true, agentScope: 'primary',
 };
 const event = (id: string, type = 'assistant.message', data: Record<string, unknown> = {}): NativeChatEvent =>
   ({ id, type, timestamp: 1, data: { messageId: id, content: id, ...data } });
@@ -35,7 +35,7 @@ test('history follows native pages through a tool result to its owning message, 
   assert.equal(h.requests.length, 3);
   assert.deepEqual(h.requests.map(request => request.cursor), [undefined, 'older-1', 'older-2']);
   assert.deepEqual(h.requests.map(request => request.bootstrap), [true, false, false]);
-  assert.ok(h.requests.every(request => request.max === 8 && request.agentScope === 'primary'));
+  assert.ok(h.requests.every(request => request.max === 32 && request.agentScope === 'primary'));
   assert.equal(h.window.live?.cursor, 'tail-before-first');
   assert.equal(h.window.snapshot().incompleteBoundary, false);
   assert.equal(h.window.snapshot().messages[0].toolCalls?.[0].output, 'done');
