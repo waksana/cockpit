@@ -1,4 +1,13 @@
-import type { CopilotSession } from '@github/copilot-sdk';
+import type { CopilotSession, SessionEvent } from '@github/copilot-sdk';
+
+// Keep this filter aligned with the safety reducer below, not the chat display
+// filter. Required user/tool events still carry their native bodies.
+const FORK_HISTORY_TYPES: [SessionEvent['type'], ...SessionEvent['type'][]] = [
+  'user.message', 'assistant.turn_start', 'assistant.turn_end', 'abort',
+  'tool.execution_start', 'tool.execution_complete',
+  'subagent.started', 'subagent.completed', 'subagent.failed',
+  'session.schedule_created',
+];
 
 // Native fork replays schedule creation on cold resume. Reject even stopped
 // schedules rather than rewriting the inherited journal or racing a timer.
@@ -15,7 +24,7 @@ export async function validateForkHistory(
     if (!messages) throw new Error('Fork requires existing conversation history before the boundary');
   };
   for (;;) {
-    const page = await read({ cursor, direction: 'forward', max: 1000, types: '*', agentScope: 'all', includeEphemeral: false });
+    const page = await read({ cursor, direction: 'forward', max: 1000, types: FORK_HISTORY_TYPES, agentScope: 'all', includeEphemeral: false });
     if (page.cursorStatus !== 'ok') throw new Error('Fork history cursor expired; no fork was dispatched');
     for (const event of page.events) {
       const root = !event.agentId && !('agentId' in event.data && event.data.agentId)

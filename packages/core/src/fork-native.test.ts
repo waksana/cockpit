@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { SessionConfig } from '@github/copilot-sdk';
+import { validateForkHistory } from './fork.ts';
 
 test('native fork: isolated history boundaries and independent continuation', {
   skip: process.env.COCKPIT_NATIVE_FORK !== '1', timeout: 90_000,
@@ -94,6 +95,33 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     const parent = await client.createSession(config);
     await parent.sendAndWait({ prompt: 'FORK_FIXTURE_FIRST' }, 15_000);
     await parent.sendAndWait({ prompt: 'FORK_FIXTURE_SECOND' }, 15_000);
+    for (const max of [1000, 4]) {
+      const counts: { calls: number; events: number; bytes: number }[] = [];
+      for (const wildcard of [true, false]) {
+        const count = { calls: 0, events: 0, bytes: 0 };
+        let cursor: string | undefined;
+        let filter: object | undefined;
+        await validateForkHistory(async options => {
+          assert.equal(options.cursor, cursor);
+          const { cursor: _cursor, ...currentFilter } = options;
+          if (filter) assert.deepEqual(currentFilter, filter);
+          filter = currentFilter;
+          assert.equal(options.agentScope, 'all');
+          assert.equal(options.includeEphemeral, false);
+          const page = await parent.rpc.eventLog.read({ ...options, max, ...(wildcard ? { types: '*' } : {}) });
+          cursor = page.cursor;
+          count.calls++;
+          count.events += page.events.length;
+          count.bytes += Buffer.byteLength(JSON.stringify(page.events));
+          return page;
+        });
+        counts.push(count);
+      }
+      assert.ok(counts[1]!.events < counts[0]!.events);
+      assert.ok(counts[1]!.bytes < counts[0]!.bytes);
+      if (max === 4) assert.ok(counts[1]!.calls < counts[0]!.calls);
+      t.diagnostic(`Native fork preflight max=${max} (wildcard, structural): ${JSON.stringify(counts)}`);
+    }
     await parent.rpc.mode.set({ mode: 'plan' });
     await parent.rpc.skills.disable({ name: 'fixture-skill' });
     await parent.rpc.mcp.disable({ serverName: 'fixture' });

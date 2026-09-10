@@ -98,6 +98,33 @@ inspect the authoritative session list before deciding what to do. A unique
 optional `name` helps identify the result. Errors preserve the native reason;
 an uncertain response is not proof that no child was created.
 
+### History preflight reads
+
+The preflight uses the loaded source's native `eventLog.read`, forward from the
+beginning, with all agents and durable events only. Its fixed type filter follows
+the safety reducer rather than the chat display:
+
+| Event types | Safety dependency |
+| --- | --- |
+| `user.message` | Existing root conversation and exclusive root-user boundary, including legacy ownership markers |
+| `assistant.turn_start`, `assistant.turn_end`, `abort` | Unfinished root turn; a child abort must not settle the root turn |
+| `tool.execution_start`, `tool.execution_complete` | Pending tool-call IDs across all agents |
+| `subagent.started`, `subagent.completed`, `subagent.failed` | Pending spawn tool-call IDs, including cancelled completions |
+| `session.schedule_created` | Any inherited timer creation, including self-paced timers; cancellation/rearming never makes an unsafe prefix safe |
+
+Each continuation retains this exact filter and passes the opaque native cursor
+back unchanged. There is no history cap, wildcard retry or persisted-read
+fallback. Invalid boundaries, expired/stalled cursors and read failures still
+fail closed; an ID of an excluded event type is not found, not accepted.
+Fresh activity/lifecycle checks around the scan and the final queue/timer checks
+remain independent of history filtering.
+
+Unrelated assistant bodies and other unused event types no longer cross the
+preflight read boundary. This is **not an ID-only API**: required user/tool
+events still include their full native payloads and can be large. Calls decrease
+when fewer returned events need pagination; native internal filtering/scanning
+cost is not measured or claimed to decrease.
+
 ## Local regression fixture
 
 From `packages/core`, run:
