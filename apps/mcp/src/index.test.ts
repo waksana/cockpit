@@ -29,7 +29,7 @@ const nativeEvents: NativeChatEvent[] = [
       toolRequests: [{ toolCallId: 'tool-1', name: 'read_file', arguments: {} }] },
   },
 ];
-const nativeRead = { source: 'persisted', direction: 'backward', max: 64, includeEphemeral: false, waitMs: 0, bootstrap: false };
+const nativeRead = { source: 'persisted', direction: 'backward', max: 16, includeEphemeral: false, waitMs: 0, bootstrap: false };
 let unavailable = false;
 let large = false;
 const initialLargeContent = 'large "quoted" tool transcript\n'.repeat(4000);
@@ -838,7 +838,7 @@ test('child native filtering requires live reads and never resumes a session', a
     session_id: 'B', agent_ids: ['native-child'], response_format: 'json',
   });
   assert.equal(invalid.isError, true);
-  assert.equal(requests.length, 1, 'the authoritative HTTP schema rejects unsupported passive filters');
+  assert.equal(requests.length, 0, 'the shared native query schema rejects unsupported passive filters before HTTP');
   const page = Intents['session/chat'].result.parse(await json('cockpit_read_session', {
     session_id: 'B', source: 'live', agent_ids: ['native-child'], limit: 10, response_format: 'json',
   }));

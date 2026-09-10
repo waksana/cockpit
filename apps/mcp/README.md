@@ -183,12 +183,13 @@ server-folded messages, a history cache, or message-ID scans. The default passiv
 source works for loaded and unloaded native sessions without loading them.
 
 ```json
-{"session_id":"TARGET_SESSION_ID","source":"persisted","direction":"backward","limit":64,"response_format":"json"}
+{"session_id":"TARGET_SESSION_ID","source":"persisted","direction":"backward","limit":16,"response_format":"json"}
 ```
 
 The result contains `sessionId`, `events`, `cursor`, `cursorStatus`,
 `hasMore`, `source`, `direction`, and `read:{rpc,events}`. `limit` is 1–256 native
-events, not display messages; generic HTTP uses `max`. Backward pages contain the
+events (MCP default 16), not display messages or a byte bound; generic HTTP uses
+`max` and retains its default of 64. Backward pages contain the
 latest events in append order. Pass the opaque cursor with the same source,
 direction and filters for the next page. Event IDs and assistant message IDs are
 identities, not sorting or seek keys. The runtime's expired cursor is returned
@@ -197,16 +198,39 @@ explicitly, not silently replaced by the latest page.
 Titles, working directories and runtime metadata belong to `session/get` or
 `session/list`, not every chat page or streaming poll.
 
-Oversized pages return a bounded `{format:"json-fragment",json,pageVersion,pageOffset,
-nextPageOffset,pageCharacters}` envelope instead of clipping message fields.
-Repeat the identical native query with `page_offset:nextPageOffset` and
+Pages exceeding 25,000 serialized JSON characters with `limit>1` fail explicitly
+with `NATIVE_PAGE_TOO_LARGE`. Retry with a smaller native `limit`, keeping the
+**original input cursor** (or its absence), source, direction, filters and bootstrap.
+The error does not deliver partial events or a next-page cursor that could skip
+unread content. There is no automatic bisection, retry, or hidden multi-page scan.
+An unanchored latest-page read can move when new events arrive.
+
+With `limit:1`, a giant event instead returns a bounded
+`{format:"json-fragment",json,pageVersion,pageOffset,nextPageOffset,pageCharacters,read}`
+envelope without clipping event fields. A one-event request is not a small-payload
+guarantee: the SDK has no event-body offset. Each fragment rereads the whole native
+event page, serializes it and slices in memory; it does not save a copy or use an
+LRU, artifact, or history cache. This intentionally retains the simple complete-read
+fallback for giant events.
+
+Repeat the identical native query, still with `limit:1`, with `page_offset:nextPageOffset` and
 `page_version:pageVersion` until the next offset is null. Concatenate the `json`
-strings and parse once to recover the complete page. The version hashes the
-complete page; each fragment rereads that bounded native page without caching.
-If it changes, continuation fails explicitly. Discard
-earlier fragments and restart from offset zero rather than mixing snapshots.
-Prefer a smaller `limit` when reading an actively changing transcript.
-Markdown mode presents the same canonical JSON and also uses fragments on overflow.
+strings and parse once to recover the complete page, including its cursors.
+Offsets and `pageCharacters` count JavaScript string code units, not UTF-8 bytes or
+tokens. The version hashes the normalized native query and complete page, including
+its boundaries and bootstrap cursor. Query/content changes and expired fragment
+reads fail explicitly; discard earlier fragments and restart or explicitly
+resynchronize rather than mixing snapshots. Offsets at or beyond the end are errors;
+stop when `nextPageOffset` is null. Markdown uses the same overflow behavior.
+
+Fragment `read:{rpc,events}` reports **this request's** native calls/event count,
+not cumulative cost or local serialization work. For a stable page of S characters,
+complete delivery takes `ceil(S/8000)` native page reads, serializing S characters
+per fragment. Live bootstrap also repeats one native tail call per fragment.
+For example, 51,378 characters take seven page reads and 359,646 page-serialization
+characters (plus seven tail calls if live bootstrap). These are not measured wire
+bytes, SDK-internal I/O, or model tokens. All reads still obey the existing MCP
+transport's 25 MiB response limit; no arbitrary-size delivery is promised.
 
 `source:"live"` requires an already loaded handle and supports native type/agent
 filters. `bootstrap:true` on a fresh backward query captures a separate
@@ -221,7 +245,7 @@ Use the native agent ID and, for older native envelope ownership, the spawning
 tool call ID obtained from events:
 
 ```json
-{"session_id":"TARGET_SESSION_ID","source":"live","agent_ids":["NATIVE_AGENT_ID","NATIVE_TOOL_CALL_ID"],"limit":64,"response_format":"json"}
+{"session_id":"TARGET_SESSION_ID","source":"live","agent_ids":["NATIVE_AGENT_ID","NATIVE_TOOL_CALL_ID"],"limit":16,"response_format":"json"}
 ```
 
 This is native event filtering, not a tasks-list or whole-history scan. The
