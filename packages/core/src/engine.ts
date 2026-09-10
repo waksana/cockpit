@@ -24,6 +24,8 @@ import { Prefs } from './prefs.ts';
 import { describeMcpServer, redactMcpConfig } from './mcp-config.ts';
 import { autoNameQuestion, generatedTitle } from './auto-name.ts';
 import { validateForkHistory } from './fork.ts';
+import { createContextReset } from './context-reset.ts';
+import { bundledSkillsDirectory } from './paths.ts';
 
 export { sessionMetaBusy, engineSessionBusy } from './lifecycle.ts';
 export type EngineRuntime = Pick<OfficialRuntime,
@@ -69,6 +71,7 @@ type Resource = keyof ResourceValues;
 interface State {
   id: string;
   sdk: CopilotSession | null;
+  contextReset?: ReturnType<typeof createContextReset>;
   load?: Promise<void>;
   closing: boolean;
   cancelling?: Promise<void>;
@@ -397,6 +400,7 @@ export class Engine {
 
   private assertAdmission(st: State): void {
     this.assertAvailable();
+    if (st.contextReset?.busy) throw new Error('Session context clear is in progress; retry this operation after it settles.');
     const current = this.sessions.get(st.id);
     if (this.stopped || this.lifecycle || st.closing || (current && current !== st)) {
       throw new Error('Session lifecycle transition is in progress or its handle changed');
@@ -545,8 +549,18 @@ export class Engine {
       this.assertAvailable();
       const owner: NonNullable<State['eventOwner']> = {};
       st.eventOwner = owner;
-      const config: SessionConfig = { ...await this.config(st, cwd), onEvent: event => {
+      const reset = createContextReset({
+        session: () => st.eventOwner === owner && !this.failure ? st.sdk : null,
+        assertReady: () => {
+          this.assertAdmission(st);
+          if (st.load || st.closing || st.cancelling || st.operations || st.sends || st.accepted.size
+            || st.decisions.size || st.mcpOperations) throw new Error('Session has pending host work; finish it before clearing context.');
+        },
+      });
+      st.contextReset = reset;
+      const config: SessionConfig = { ...await this.config(st, cwd), tools: [reset.tool], onEvent: event => {
         if (st.eventOwner !== owner || this.failure) return;
+        reset.observe(event);
         try { this.onLive(st, event); }
         catch (error) {
           this.patch(st, { error: `Native control event could not be applied: ${messageOf(error)}` });
@@ -1140,6 +1154,7 @@ export class Engine {
     const sdk = st.sdk;
     st.eventOwner = undefined;
     st.sdk = null;
+    st.contextReset = undefined;
     st.interruptTurn = undefined;
     st.interruptedEpoch = undefined;
     st.interactionId = undefined;
@@ -1473,7 +1488,9 @@ export class Engine {
   }
 
   private async discoverSkills(cwd?: string) {
-    const result = await this.untilFatal(() => this.runtime.rpc.skills.discover({ projectPaths: [resolve(cwd || homedir())] }));
+    const result = await this.untilFatal(() => this.runtime.rpc.skills.discover({
+      projectPaths: [resolve(cwd || homedir())], skillDirectories: [bundledSkillsDirectory],
+    }));
     if (result.errors?.length) throw new Error(`Native skill discovery failed: ${result.errors.join('; ')}`);
     return result;
   }

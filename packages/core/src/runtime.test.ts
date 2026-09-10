@@ -4,8 +4,9 @@ import { EventEmitter } from 'node:events';
 import { channel } from 'node:diagnostics_channel';
 import { RuntimeConnection, approveAll, type CopilotClientOptions, type CopilotSession, type GetAuthStatusResponse, type ModelInfo, type SessionConfig, type SessionEvent } from '@github/copilot-sdk';
 import { OfficialRuntime, modelOption, sessionModelOptions, type RuntimeClient } from './runtime.ts';
+import { bundledSkillsDirectory } from './paths.ts';
 
-function fixture(options: { clientOptions?: CopilotClientOptions; child?: boolean } = {}) {
+function fixture(options: { clientOptions?: CopilotClientOptions; sessionConfig?: Partial<SessionConfig>; child?: boolean } = {}) {
   const clients: RuntimeClient[] = [];
   const configs: SessionConfig[] = [];
   const connections: CopilotClientOptions[] = [];
@@ -18,6 +19,7 @@ function fixture(options: { clientOptions?: CopilotClientOptions; child?: boolea
   const child = Object.assign(new EventEmitter(), { spawnargs: ['copilot-runtime', '--headless', '--no-auto-update'] });
   const runtime = new OfficialRuntime({
     clientOptions: options.clientOptions,
+    sessionConfig: options.sessionConfig,
     clientFactory: config => {
       connections.push(config);
       const instance = clients.length;
@@ -108,6 +110,21 @@ test('native close failure retains ownership; retry does not detach prematurely'
   assert.ok(!f.trace.some(row => row.startsWith('detach:')));
   f.closeError();
   await f.runtime.closeSession(session);
+  await f.runtime.stop();
+});
+
+test('create and resume compose host tools and expose bundled skills without replacing configured directories', async () => {
+  const hostTool = { name: 'host_tool', handler: () => 'host' };
+  const sessionTool = { name: 'session_tool', handler: () => 'session', isTerminal: true };
+  const f = fixture({ sessionConfig: { tools: [hostTool], skillDirectories: ['/host-skills'] } });
+  const a = await f.runtime.createSession({ tools: [sessionTool], skillDirectories: ['/session-skills'] });
+  const b = await f.runtime.resumeSession('existing', { tools: [sessionTool], skillDirectories: ['/session-skills'] });
+  for (const config of f.configs) {
+    assert.deepEqual(config.tools, [hostTool, sessionTool]);
+    assert.deepEqual(config.skillDirectories, ['/host-skills', '/session-skills', bundledSkillsDirectory]);
+  }
+  await f.runtime.closeSession(a);
+  await f.runtime.closeSession(b);
   await f.runtime.stop();
 });
 

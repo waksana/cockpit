@@ -38,9 +38,14 @@ automatic unloading or memory-recycling policy. Reading history does not resume
 a session; sending a prompt or explicitly loading it does. Native schedules pause
 while unloaded and relative delays restart on resume. Use an external scheduler
 through the API if wall-clock execution while unloaded is required.
+
 Cockpit startup does not activate sessions based on saved schedule preferences.
 The scheduler or webhook receiver belongs outside Cockpit and can send a prompt
 through the same API; that explicit operation resumes the target when needed.
+
+For an explicitly requested fresh model window without replacing the session,
+use the bundled [self-context-reset skill and native tool](context-reset.md).
+The session owns persistence and recovery; Cockpit does not summarize its memory.
 
 ## Configuration
 

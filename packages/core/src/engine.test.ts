@@ -11,6 +11,7 @@ import { Intents, NativeChatRead, unreadSessionCount } from '@cockpit/protocol';
 import { Engine, coreCapabilities, sessionMetaBusy, type EngineRuntime } from './engine.ts';
 import { CHAT_EVENT_TYPES } from './native-chat.ts';
 import type { CockpitPrefs } from './prefs.ts';
+import { bundledSkillsDirectory } from './paths.ts';
 
 type Rpc = CopilotSession['rpc'];
 type Queue = Awaited<ReturnType<Rpc['queue']['pendingItems']>>;
@@ -185,6 +186,7 @@ function fakeSession(t: TestContext, sessionId: string) {
       ({ workspace: { id: sessionId, name: state.name ?? undefined, user_named: state.userNamed } })) },
     ui: { ephemeralQuery: t.mock.fn(async (_options: Parameters<Rpc['ui']['ephemeralQuery']>[0]) => ({ answer: 'Native session naming' })) },
     history: {
+      clearContext: t.mock.fn(async (_options: Parameters<Rpc['history']['clearContext']>[0]) => ({ messagesCleared: 2 })),
       compact: t.mock.fn(async (_options: Parameters<Rpc['history']['compact']>[0]) => ({
         success: true, tokensRemoved: 100, messagesRemoved: 2,
       })),
@@ -204,6 +206,7 @@ function fakeSession(t: TestContext, sessionId: string) {
         if (skill) skill.enabled = false;
       }),
     },
+    permissions: { pendingRequests: t.mock.fn(async () => ({ items: [] })) },
     mcp: {
       list: t.mock.fn(async () => structuredClone(state.mcp)),
       enable: t.mock.fn(async (_options: Parameters<Rpc['mcp']['enable']>[0]) => {}),
@@ -446,6 +449,48 @@ function harness(t: TestContext, options: {
   };
 }
 type Harness = ReturnType<typeof harness>;
+
+test('self clear gates host mutations until native tool completion and rejects stale bindings after reload', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const file = join(h.cwd, 'handoff.txt');
+  writeFileSync(file, 'Synthetic persisted continuation');
+  const config = h.configs.get(s.id)!;
+  const tool = config.tools!.find(tool => tool.name === 'self_clear_context')!;
+  const call = { sessionId: s.id, toolCallId: 'clear-call', toolName: tool.name, arguments: {} };
+  const args = { prompt: `Read ${file} and continue only this synthetic goal.`, handoffFiles: [file] };
+  s.emit(event('assistant.message', {
+    messageId: 'message', content: '', toolRequests: [{ name: tool.name, toolCallId: call.toolCallId }],
+  }));
+  s.emit(event('tool.execution_start', { toolName: tool.name, toolCallId: call.toolCallId }));
+  s.emit(event('external_tool.requested', { sessionId: s.id, toolName: tool.name, toolCallId: call.toolCallId, requestId: 'request' }));
+  const entered = deferred();
+  const release = deferred();
+  s.rpc.history.clearContext.mock.mockImplementationOnce(async () => {
+    entered.resolve();
+    await release.promise;
+    return { messagesCleared: 2 };
+  });
+  const running = Promise.resolve(tool.handler!(args, call));
+  await entered.promise;
+  for (const action of [
+    () => h.engine.prompt(s.id, 'must not enter'),
+    () => h.engine.compact(s.id),
+    () => h.engine.cancel(s.id),
+    () => h.engine.reload(s.id),
+    () => h.engine.setMode(s.id, 'plan'),
+  ]) await assert.rejects(action(), /context clear is in progress/);
+  assert.equal((await h.engine.getMeta(s.id))?.sessionId, s.id, 'Read-only status remains available');
+  release.resolve();
+  await running;
+  await assert.rejects(h.engine.prompt(s.id, 'not before completion'), /context clear is in progress/);
+  s.emit(event('tool.execution_complete', { toolCallId: call.toolCallId, success: true }));
+  s.emit(event('session.idle', {}));
+  await h.engine.reload(s.id);
+  assert.notEqual(h.configs.get(s.id)!.tools![0], tool);
+  await assert.rejects(Promise.resolve(tool.handler!(args, call)), /bound main session/);
+  assert.equal(s.rpc.history.clearContext.mock.callCount(), 1);
+});
 
 test('startup never polls native catalogs and models and login are fresh on every request', async t => {
   const h = harness(t);
@@ -3680,7 +3725,7 @@ for (const action of ['listGlobalSkills', 'readSkillBody'] as const) {
     if (action === 'listGlobalSkills') assert.deepEqual(await h.engine.listGlobalSkills(directory), []);
     else await assert.rejects(h.engine.readSkillBody('fixture', directory), /Unknown skill in this working directory/);
     assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls.map(call => call.arguments),
-      [[{ projectPaths: [resolve(directory)] }]]);
+      [[{ projectPaths: [resolve(directory)], skillDirectories: [bundledSkillsDirectory] }]]);
     assert.equal(h.runtime.createSession.mock.callCount(), 0);
     assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
     assert.equal(h.runtime.closeSession.mock.callCount(), 0);
@@ -3708,7 +3753,7 @@ test('global skill discovery uses server truth even when a loaded session has th
   assert.deepEqual(await h.engine.listGlobalSkills(h.cwd), [{
     name: 'fixture', description: 'discovered project skill', source: 'project', userInvocable: true, enabled: true,
   }]);
-  assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls[0]!.arguments, [{ projectPaths: [h.cwd] }]);
+  assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls[0]!.arguments, [{ projectPaths: [h.cwd], skillDirectories: [bundledSkillsDirectory] }]);
   assert.deepEqual(nativeCalls(s), before);
   assert.equal(h.runtime.createSession.mock.callCount(), 0);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
@@ -3723,7 +3768,7 @@ for (const cwd of [undefined, '']) {
   test(`global skill discovery defaults ${cwd === undefined ? 'omitted' : 'empty'} cwd to the home project path`, async t => {
     const h = harness(t);
     assert.deepEqual(await h.engine.listGlobalSkills(cwd), []);
-    assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls[0]!.arguments, [{ projectPaths: [resolve(homedir())] }]);
+    assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls[0]!.arguments, [{ projectPaths: [resolve(homedir())], skillDirectories: [bundledSkillsDirectory] }]);
     assert.equal(h.runtime.createSession.mock.callCount(), 0);
     assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
     assert.equal(h.runtime.closeSession.mock.callCount(), 0);
@@ -3747,7 +3792,7 @@ test('readSkillBody reads the discovered local path rather than a matching sessi
   assert.deepEqual(await h.engine.readSkillBody('fixture', h.cwd), {
     name: 'fixture', description: 'discovered body', source: 'project', userInvocable: true, enabled: true, body,
   });
-  assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls[0]!.arguments, [{ projectPaths: [h.cwd] }]);
+  assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls[0]!.arguments, [{ projectPaths: [h.cwd], skillDirectories: [bundledSkillsDirectory] }]);
   assert.deepEqual(nativeCalls(s), before);
   assert.equal(h.runtime.createSession.mock.callCount(), 0);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
@@ -3779,7 +3824,7 @@ test('refreshSkills with no loaded sessions uses native discovery without loadin
   const s = await h.seed();
   await h.engine.refreshSkills();
   assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls.map(call => call.arguments),
-    [[{ projectPaths: [resolve(homedir())] }]]);
+    [[{ projectPaths: [resolve(homedir())], skillDirectories: [bundledSkillsDirectory] }]]);
   assert.equal(h.runtime.createSession.mock.callCount(), 0);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
   assert.equal(h.runtime.closeSession.mock.callCount(), 0);

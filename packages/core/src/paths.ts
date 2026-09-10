@@ -14,6 +14,9 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+export const bundledSkillsDirectory = fileURLToPath(new URL('../../../skills', import.meta.url));
 
 // The cockpit state root (default ~/.copilot, overridable with COCKPIT_HOME).
 export function cockpitHome(): string {
