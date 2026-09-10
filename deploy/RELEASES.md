@@ -29,7 +29,8 @@ The controller reads `/etc/cockpit-release.json`:
   "repository": "owner/repository",
   "root": "/srv/cockpit",
   "url": "http://127.0.0.1:8771",
-  "service": "cockpit.service"
+  "service": "cockpit.service",
+  "activationEnabled": false
 }
 ```
 
@@ -37,6 +38,12 @@ Host-specific settings and SSH keys are not committed. The controller uses an
 authorized GitHub CLI identity to read this repository's run/artifact metadata
 and commit ancestry; for an unattended dedicated identity, grant only the
 repository contents/actions read access it needs.
+
+The host activation gate defaults closed: transfers verify and stage immutable
+packages but do not change desired or request restart until `activationEnabled`
+is explicitly true. Manual dispatch of the submission workflow accepts a
+successful main CI run ID and exercises that same path; it never bypasses the
+server's source/digest checks or activation gate.
 
 Required Actions settings:
 

@@ -145,6 +145,10 @@ async function receive() {
       await verifyRelease(destination, identity.commit);
     }
     await makeReadonly(destination);
+    if (config.activationEnabled !== true) {
+      console.log(JSON.stringify({ phase: 'staged', candidate: candidate.id, activationEnabled: false }));
+      return;
+    }
     const state = locked('submit', candidate);
     if (state.active?.id === candidate.id) {
       console.log(JSON.stringify({ phase: 'healthy', candidate: candidate.id }));

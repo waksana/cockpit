@@ -1,5 +1,11 @@
 name: Submit production release
 on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful main CI run to transfer (server activation gate still applies)
+        required: true
+        type: string
   workflow_run:
     workflows: [CI]
     types: [completed]
@@ -13,10 +19,11 @@ concurrency:
 jobs:
   submit:
     if: >-
-      vars.DEPLOY_ENABLED == 'true' &&
+      github.event_name == 'workflow_dispatch' ||
+      (vars.DEPLOY_ENABLED == 'true' &&
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'main'
+      github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -24,8 +31,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-          COMMIT: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ inputs.run_id || github.event.workflow_run.id }}
           DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
           DEPLOY_USER: ${{ vars.DEPLOY_USER }}
           DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
@@ -40,6 +46,9 @@ jobs:
           trap 'rm -f "$key" "$known" "$archive"' EXIT
           printf '%s\n' "$DEPLOY_KEY" > "$key"
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$known"
+          [[ "$RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          run=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID")
+          COMMIT=$(printf '%s' "$run" | jq -er 'select(.event == "push" and .head_branch == "main" and .path == ".github/workflows/ci.yml" and .conclusion == "success" and .status == "completed") | .head_sha')
           metadata=$(gh api "repos/$REPOSITORY/actions/runs/$RUN_ID/artifacts")
           artifact=$(printf '%s' "$metadata" | jq -er --arg name "release-$COMMIT" '[.artifacts[] | select(.name == $name and .expired == false)] | if length == 1 then .[0].id else error("Expected one artifact") end')
           expected=$(printf '%s' "$metadata" | jq -er --argjson id "$artifact" '.artifacts[] | select(.id == $id) | .digest | sub("^sha256:";"")')
