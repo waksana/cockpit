@@ -77,6 +77,7 @@ export function validateBuild(run, artifact, config) {
 }
 
 export async function selectCandidate(state, candidate, isAncestor) {
+  if (state.failed?.id === candidate.id) throw new Error('Candidate already failed; submit a forward fix');
   if (state.desired?.id === candidate.id || state.active?.id === candidate.id) return state;
   const watermark = state.highWatermark;
   if (watermark && (watermark === candidate.commit || !await isAncestor(watermark, candidate.commit))) {

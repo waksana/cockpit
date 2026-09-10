@@ -33,7 +33,8 @@ test('selection is distinct from health and rejects the wrong healthy identity',
   const b = candidate('b');
   const f = await fixture(t, { active: a, desired: b, highWatermark: b.commit });
   assert.equal(f.call('choose').candidate.id, b.id);
-  assert.equal((await f.state()).active.id, a.id);
+  assert.equal((await f.state()).active, undefined);
+  assert.equal((await f.state()).lastHealthy.id, a.id);
   assert.throws(() => f.call('healthy', a), /Unexpected active release identity/);
   f.call('healthy', b);
   assert.equal((await f.state()).active.id, b.id);

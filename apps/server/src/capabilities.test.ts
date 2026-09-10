@@ -221,8 +221,8 @@ test('every intent detail exposes exactly the actual draft-07 input and result s
 test('listing and detail descriptions convey refinements and runtime guarantees beyond JSON Schema', async (t) => {
   const descriptions = [
     ['session/history', [
-      /passively/i, /returned only to the requester without SSE events/i,
-      /beforeMsgId and afterMsgId are mutually exclusive/i,
+      /passively/i, /without SSE events or loading a session/i,
+      /beforeMsgId, afterMsgId and resume are mutually exclusive/i,
     ]],
     ['session/peek', [/without loading a session or emitting SSE events/i, /nonempty/i, /flat/i]],
     ['schedule/add', [
@@ -285,7 +285,8 @@ test('history and peek advertise nonempty cursors and integer limits from 1 thro
     await t.test(name, async () => {
       const { inputSchema } = await detail(name);
       const cursorKeys = name === 'session/history' ? ['beforeMsgId', 'afterMsgId'] : ['beforeMsgId'];
-      assert.deepEqual(Object.keys(object(inputSchema.properties)).sort(), ['sessionId', ...cursorKeys, 'limit', 'details'].sort());
+      assert.deepEqual(Object.keys(object(inputSchema.properties)).sort(),
+        ['sessionId', ...cursorKeys, 'limit', 'details', ...(name === 'session/history' ? ['resume'] : [])].sort());
       assert.deepEqual(inputSchema.required, ['sessionId']);
       assert.deepEqual(schemaAt(inputSchema, 'properties', 'limit'), {
         type: 'integer', exclusiveMinimum: 0, maximum: 200,
@@ -315,12 +316,15 @@ test('history cursor mutual exclusion is enforced beyond individually optional J
   assert.equal(Intents['session/history'].body.safeParse({
     sessionId: 's', beforeMsgId: 'older', afterMsgId: 'newer', limit: 1,
   }).success, false);
+  assert.equal(Intents['session/history'].body.safeParse({
+    sessionId: 's', beforeMsgId: 'older', resume: {},
+  }).success, false);
 });
 
 test('history returns a flat HistoryPage and has no session/history-page SSE event', async () => {
   const { resultSchema } = await detail('session/history');
   assert.deepEqual(Object.keys(object(resultSchema.properties)).sort(), [
-    'append', 'hasMore', 'latest', 'messages', 'sessionId',
+    'append', 'hasMore', 'latest', 'messages', 'resume', 'sessionId',
   ]);
   assert.deepEqual(resultSchema.required, ['sessionId', 'messages', 'hasMore']);
   assert.equal(schemaAt(resultSchema, 'properties', 'messages').type, 'array');

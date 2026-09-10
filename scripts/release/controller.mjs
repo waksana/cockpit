@@ -53,21 +53,25 @@ async function transaction(operation, value) {
   if (operation === 'submit') {
     next = await selectCandidate(state, value, isAncestor);
   } else if (operation === 'choose') {
-    const candidate = state.desired ?? state.active;
+    const candidate = state.desired ?? state.lastHealthy ?? state.active;
     if (!candidate) throw new Error('No accepted release is available');
     if (state.failed?.id === candidate.id) {
-      if (!candidate.rollbackSafe || !state.active) return { blocked: true, candidate };
-      return { candidate: state.active, rollback: true, failed: state.failed };
+      const previous = state.lastHealthy ?? state.active;
+      if (!candidate.rollbackSafe || !previous) return { blocked: true, candidate };
+      await writeState(statePath, { ...state, active: undefined, activating: previous, phase: 'rolling-back' });
+      return { candidate: previous, rollback: true, failed: state.failed };
     }
-    next = { ...state, activating: candidate, phase: 'activating' };
+    next = { ...state, lastHealthy: state.active ?? state.lastHealthy, active: undefined,
+      activating: candidate, phase: 'activating' };
   } else if (operation === 'healthy') {
     if (state.activating?.id !== value.id) throw new Error('Unexpected active release identity');
-    next = { ...state, active: state.activating, activating: undefined, failed: undefined,
+    next = { ...state, active: state.activating, lastHealthy: state.activating, activating: undefined, failed: undefined,
       phase: state.desired?.id === value.id ? 'healthy' : 'pending-idle' };
   } else if (operation === 'failed') {
     next = { ...state, failed: value, activating: undefined, phase: 'failed' };
   } else if (operation === 'rolled-back') {
-    next = { ...state, phase: 'rolled-back' };
+    if (state.activating?.id !== value.id) throw new Error('Unexpected rollback identity');
+    next = { ...state, active: value, lastHealthy: value, activating: undefined, phase: 'rolled-back' };
   } else if (operation === 'notify') {
     if ((state.notified ?? []).includes(value.key)) return { send: false };
     next = { ...state, notified: [...(state.notified ?? []), value.key] };

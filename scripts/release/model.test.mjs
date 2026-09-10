@@ -33,6 +33,11 @@ test('rollback retains the high-watermark', async () => {
   await assert.rejects(selectCandidate(state, candidate(b), ancestor), /Superseded/);
 });
 
+test('resending a failed candidate cannot trigger a rollback/restart loop', async () => {
+  const bRelease = candidate(b);
+  await assert.rejects(selectCandidate({ desired: bRelease, failed: bRelease }, bRelease, ancestor), /already failed/);
+});
+
 test('unrelated history cannot replace a production candidate', async () => {
   await assert.rejects(selectCandidate({ highWatermark: a }, candidate(b), async () => false), /Superseded/);
 });
