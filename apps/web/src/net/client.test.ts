@@ -4,6 +4,8 @@ import type { Attachment, NativeChatPage, IntentBody, IntentName, ServerEvent } 
 import { EVENTS_URL, intentUrl } from '../lib/config';
 import { dismissUxError, getUxErrors } from '../lib/errorReporter';
 import { IntentHttpError, isSessionUnloadedError, NetClient, SessionUnloadedError, type ConnState } from './client';
+import { readDirectory } from '../lib/directoryResource';
+import { createKeyedAsync } from '../lib/keyedAsync';
 
 beforeEach((t: TestContext) => {
   t.mock.method(console, 'error', () => {});
@@ -81,7 +83,7 @@ test('native usage client rejects another session or invalid counters without re
   assert.equal(fetch.mock.callCount(), 2);
 });
 
-for (const path of [undefined, '/P', './P']) {
+for (const path of [undefined, '/P', './P', '', '   ']) {
   test(`directory errors retain dispatch path ${path ?? '(default)'} and one original cause`, async t => {
     let reject!: (error: Error) => void;
     const original = new Error('directory denied');
@@ -89,9 +91,49 @@ for (const path of [undefined, '/P', './P']) {
     const pending = client.listDir(path);
     reject(original);
     await assert.rejects(pending, error => error === original);
-    assertOnlyPost(fetch, 'fs/listDir', path ? { path } : {});
+    assertOnlyPost(fetch, 'fs/listDir', path === undefined ? {} : { path });
     assert.equal(getUxErrors().length, 1);
     assert.equal(getUxErrors()[0].message, `目录 ${path ?? '服务器主目录（未指定路径）'}：接口 fs/listDir 调用失败：directory denied`);
+  });
+}
+
+for (const [path, status, code] of [
+  ['/missing', 404, 'ENOENT'], ['/file', 400, 'ENOTDIR'],
+  ['/denied', 403, 'EACCES'], ['', 400, 'INVALID_DIRECTORY_PATH'],
+] as const) {
+  test(`directory picker resource exposes ${code} without accepting a fallback and can recover`, async t => {
+    const message = `${code}: cannot list directory '${path}'`;
+    let failed = true;
+    const listing = { path: '/valid/project', parent: '/valid', entries: [] };
+    const { client, fetch } = setup(t, async () => failed
+      ? Response.json({ error: message, code }, { status })
+      : Response.json(listing));
+    const resource = createKeyedAsync(JSON.stringify(['directory', path]),
+      () => ({ connState: 'open', connectionGeneration: 1 }));
+    resource.activate();
+    let accepted = 0;
+    assert.equal(await resource.run(() => readDirectory(p => client.listDir(p), path), () => { accepted++; }), false);
+    assertOnlyPost(fetch, 'fs/listDir', { path });
+    assert.equal(accepted, 0);
+    assert.equal(resource.getSnapshot().data, undefined);
+    assert.equal(resource.getSnapshot().error, message);
+    const cause = resource.getSnapshot().errorCause;
+    assert.ok(cause instanceof IntentHttpError);
+    assert.equal(cause.status, status);
+    assert.equal(cause.code, code);
+    assert.equal(getUxErrors().length, 1);
+    assert.ok(getUxErrors()[0].message.includes(message));
+    failed = false;
+    resource.deactivate();
+    const next = createKeyedAsync(JSON.stringify(['directory', listing.path]),
+      () => ({ connState: 'open', connectionGeneration: 1 }));
+    next.activate();
+    assert.equal(await next.run(() => readDirectory(p => client.listDir(p), listing.path), () => { accepted++; }), true);
+    assert.equal(accepted, 1);
+    assert.equal(next.getSnapshot().error, null);
+    assert.deepEqual(next.getSnapshot().data, listing);
+    assert.equal(fetch.mock.callCount(), 2);
+    assert.deepEqual(JSON.parse(String(fetch.mock.calls[1].arguments[1]?.body)), { path: listing.path });
   });
 }
 

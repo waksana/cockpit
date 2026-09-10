@@ -103,7 +103,8 @@ export function registerFileTools(server: McpServer): void {
       description:
         'List a directory (dirs first, then files) the way the new-session folder picker does — ' +
         'useful for choosing a valid cwd to pass to cockpit_new_session. Omit path to list the home ' +
-        'directory; the result includes the parent so you can walk up.',
+        'directory; the result includes the parent so you can walk up. Explicit empty, missing, non-directory ' +
+        'or inaccessible paths return an error, never a home-directory fallback.',
       inputSchema: {
         path: z.string().optional().describe('Absolute directory to list (defaults to home)'),
         response_format: ResponseFormat.describe("'markdown' (human) or 'json' (machine)"),
@@ -112,7 +113,7 @@ export function registerFileTools(server: McpServer): void {
     },
     async ({ path, response_format }): Promise<ToolResult> => {
       try {
-        const listing = await intent('fs/listDir', path ? { path } : {});
+        const listing = await intent('fs/listDir', path === undefined ? {} : { path });
         if (response_format === 'json')
           return ok(cappedJson(listing, shrinkList(listing.entries, 'entries', { keep: ['name', 'isDir'], clip: [] })));
         const lines = listing.entries.map((e) => `${e.isDir ? '📁' : '📄'} ${e.name}`);

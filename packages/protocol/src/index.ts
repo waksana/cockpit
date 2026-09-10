@@ -1001,6 +1001,7 @@ export const Intents = {
     result: z.object({ ok: z.boolean(), willRestartWhenIdle: z.boolean() }),
   },
   'fs/listDir': {
+    description: 'List a backend directory, directories first, with its resolved path and parent. Omit path for home. Explicit empty, missing, non-directory or inaccessible paths fail without falling back to home; errors retain their code and message (400 for empty/non-directory, 404 for missing, 403 for denied access).',
     body: z.object({ path: z.string().optional() }),
     result: DirListing,
   },

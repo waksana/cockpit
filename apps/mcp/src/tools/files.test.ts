@@ -619,3 +619,32 @@ test('download tool failures are reported and directory browsing remains an auth
   assert.equal(requests[0]?.headers.authorization, 'Bearer file-test-token');
   assert.deepEqual(JSON.parse(requests[0]?.body.toString() ?? ''), { path: '/remote/home' });
 });
+
+test('directory tool omission requests home while explicit bad paths fail once in both formats', async () => {
+  respond = res => res.end(JSON.stringify({ path: '/remote/home', parent: '/remote', entries: [] }));
+  const homeListing = await call('cockpit_list_dir', { response_format: 'json' });
+  assert.ok(!homeListing.error, homeListing.text);
+  assert.equal(JSON.parse(homeListing.text).path, '/remote/home');
+  assert.deepEqual(JSON.parse(requests[0]!.body.toString()), {});
+  for (const response_format of ['markdown', 'json']) {
+    for (const [path, status, code] of [
+      ['/remote/missing', 404, 'ENOENT'],
+      ['/remote/file', 400, 'ENOTDIR'],
+      ['/remote/denied', 403, 'EACCES'],
+      ['', 400, 'INVALID_DIRECTORY_PATH'],
+    ] as const) {
+      const message = `${code}: cannot list directory '${path}'`;
+      respond = res => {
+        res.writeHead(status, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: message, code }));
+      };
+      const count = requests.length;
+      const result = await call('cockpit_list_dir', { path, response_format });
+      assert.equal(result.error, true);
+      assert.ok(result.text.includes(message), result.text);
+      assert.equal(requests.length, count + 1, 'no retry or home fallback');
+      assert.equal(requests.at(-1)!.url, '/intent/fs/listDir');
+      assert.deepEqual(JSON.parse(requests.at(-1)!.body.toString()), { path });
+    }
+  }
+});

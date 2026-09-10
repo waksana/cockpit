@@ -296,7 +296,7 @@ export class NetClient {
   }
   skillsSession(sessionId: string) { return this.intent('skills/session', { sessionId }); }
   skillsToggleSession(sessionId: string, name: string, enabled: boolean) { return this.intent('skills/session-toggle', { sessionId, name, enabled }); }
-  listDir(path?: string) { return this.intent('fs/listDir', path ? { path } : {}); }
+  listDir(path?: string) { return this.intent('fs/listDir', path === undefined ? {} : { path }); }
   subscribePush(subscription: PushSubscriptionJSON) {
     return this.intent('push/subscribe', { subscription: subscription as never });
   }

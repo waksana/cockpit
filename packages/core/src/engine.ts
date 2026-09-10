@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { accessSync, constants, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type {
@@ -1703,12 +1703,25 @@ export class Engine {
   }
 
   listDir(path?: string): DirListing {
-    let target = path?.trim() || homedir();
+    let target = path === undefined ? homedir() : path.trim();
+    if (!target) throw Object.assign(new Error('Directory path must not be empty; omit path to list the home directory.'), {
+      statusCode: 400, code: 'INVALID_DIRECTORY_PATH',
+    });
     if (target === '~' || target.startsWith('~/')) target = join(homedir(), target.slice(1));
     target = resolve(target);
     let names: string[];
-    try { names = readdirSync(target); }
-    catch { target = homedir(); names = readdirSync(target); }
+    try {
+      names = readdirSync(target);
+      // Readable names without search permission would otherwise look like an empty directory.
+      accessSync(target, constants.R_OK | constants.X_OK);
+    } catch (error) {
+      if (error instanceof Error && 'code' in error) {
+        const statusCode = error.code === 'ENOENT' ? 404 : error.code === 'ENOTDIR' ? 400
+          : error.code === 'EACCES' || error.code === 'EPERM' ? 403 : undefined;
+        if (statusCode !== undefined) Object.assign(error, { statusCode });
+      }
+      throw error;
+    }
     const entries = names.filter(name => !name.startsWith('.')).flatMap(name => {
       try { return [{ name, isDir: statSync(join(target, name)).isDirectory() }]; }
       catch { return []; }

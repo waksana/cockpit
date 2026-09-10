@@ -1,8 +1,8 @@
-import { after, afterEach, beforeEach, test } from 'node:test';
+import { after, afterEach, beforeEach, test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { createECDH, randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, join, relative } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join, parse, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import {
@@ -12,6 +12,7 @@ import {
 import type { ServerEngine, ServerPush } from './index.ts';
 import { isIntentName } from './capabilities.ts';
 import { readNativeChat } from '../../../packages/core/src/native-chat.ts';
+import { Engine } from '../../../packages/core/src/engine.ts';
 
 const uploadDir = relative(process.cwd(), fileURLToPath(
   new URL(`../.cockpit-intents-${process.pid}-${randomUUID()}`, import.meta.url),
@@ -278,6 +279,117 @@ for (const [name, fixture] of Object.entries(cases)) {
     if (name === 'speech/token') assert.deepEqual(response.json(), { enabled: false });
   });
 }
+
+function directoryFixture(t: TestContext) {
+  const root = join(process.cwd(), `.cockpit-directories-${randomUUID()}`);
+  const home = join(root, 'home');
+  mkdirSync(home, { recursive: true });
+  const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = process.env.USERPROFILE = home;
+  t.after(() => {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+  const list = t.mock.method(engine, 'listDir', Engine.prototype.listDir);
+  const request = (path?: string) => app.inject({
+    method: 'POST', url: '/intent/fs/listDir', payload: path === undefined ? {} : { path },
+  });
+  return { root, home, list, request };
+}
+
+test('directory listing keeps default home, tilde, relative paths, sorting and parent navigation', async t => {
+  const { home, list, request } = directoryFixture(t);
+  mkdirSync(join(home, 'project'));
+  mkdirSync(join(home, 'alpha'));
+  mkdirSync(join(home, '.hidden'));
+  writeFileSync(join(home, 'a.txt'), '');
+  for (const path of [undefined, home, '~', relative(process.cwd(), home), `  ${home}  `]) {
+    const response = await request(path);
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json(), {
+      path: home, parent: dirname(home),
+      entries: [{ name: 'alpha', isDir: true }, { name: 'project', isDir: true }, { name: 'a.txt', isDir: false }],
+    });
+  }
+  const project = await request('~/project');
+  assert.deepEqual(project.json(), { path: join(home, 'project'), parent: home, entries: [] });
+  const parent = await request(project.json().parent);
+  assert.equal(parent.json().path, home);
+  const root = await request(parse(home).root);
+  assert.equal(root.statusCode, 200, root.body);
+  assert.equal(root.json().parent, null);
+  assert.equal(list.mock.callCount(), 8);
+  assert.deepEqual(calls, [], 'browsing must not touch native sessions or other engine methods');
+});
+
+test('directory errors retain the requested path and filesystem code without falling back to home', async t => {
+  const { home, list, request } = directoryFixture(t);
+  const file = join(home, 'file.txt');
+  writeFileSync(file, '');
+  for (const [path, status, code] of [
+    [join(home, 'missing'), 404, 'ENOENT'],
+    ['~/missing', 404, 'ENOENT'],
+    [file, 400, 'ENOTDIR'],
+    [join(file, 'child'), 400, 'ENOTDIR'],
+    ['', 400, 'INVALID_DIRECTORY_PATH'],
+    ['   ', 400, 'INVALID_DIRECTORY_PATH'],
+  ] as const) {
+    const response = await request(path);
+    assert.equal(response.statusCode, status, response.body);
+    const body = response.json();
+    assert.equal(body.code, code);
+    assert.equal(typeof body.error, 'string');
+    if (path.trim()) assert.ok(body.error.includes(path.replace('~', home)), body.error);
+    else assert.match(body.error, /must not be empty/);
+    assert.equal('path' in body, false);
+    assert.equal('entries' in body, false);
+  }
+  assert.equal(list.mock.callCount(), 6, 'one listing attempt per request');
+  assert.deepEqual(calls, []);
+});
+
+for (const mode of [0o000, 0o400]) {
+  test(`directory listing rejects denied read/search access (${mode.toString(8)})`, {
+    skip: process.platform === 'win32' || process.getuid?.() === 0,
+  }, async t => {
+    const { home, request } = directoryFixture(t);
+    const denied = join(home, 'denied');
+    mkdirSync(denied);
+    writeFileSync(join(denied, 'child.txt'), '');
+    chmodSync(denied, mode);
+    try {
+      const response = await request(denied);
+      assert.equal(response.statusCode, 403, response.body);
+      assert.equal(response.json().code, 'EACCES');
+      assert.ok(response.json().error.includes(denied));
+      assert.equal('entries' in response.json(), false);
+    } finally { chmodSync(denied, 0o700); }
+    assert.equal((await request(denied)).statusCode, 200);
+  });
+}
+
+test('directory symlinks preserve valid navigation and surface broken or looping targets', {
+  skip: process.platform === 'win32',
+}, async t => {
+  const { home, request } = directoryFixture(t);
+  mkdirSync(join(home, 'project'));
+  symlinkSync('project', join(home, 'alias'));
+  symlinkSync('missing', join(home, 'broken'));
+  symlinkSync('loop', join(home, 'loop'));
+  const valid = await request(join(home, 'alias'));
+  assert.equal(valid.statusCode, 200, valid.body);
+  assert.deepEqual(valid.json(), { path: join(home, 'alias'), parent: home, entries: [] });
+  for (const [name, status, code] of [['broken', 404, 'ENOENT'], ['loop', 500, 'ELOOP']] as const) {
+    const response = await request(join(home, name));
+    assert.equal(response.statusCode, status, response.body);
+    assert.equal(response.json().code, code);
+    assert.ok(response.json().error.includes(join(home, name)));
+    assert.equal('entries' in response.json(), false);
+  }
+});
 
 test('all intent bodies reject explicit null, arrays, strings, numbers, and booleans before side effects', async () => {
   for (const name of Object.keys(Intents)) {
