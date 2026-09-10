@@ -1,176 +1,92 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { setImmediate } from 'node:timers/promises';
-import type { SubagentHistoryPage } from '@cockpit/protocol';
-import { createSubagentHistory, type ChildHistoryOptions } from './subagentHistory';
+import type { NativeChatPage, NativeChatRead, SubagentInfo } from '@cockpit/protocol';
+import { createSubagentHistory } from './subagentHistory';
 
-const message = (id: string, content = id) => ({ id, content, role: 'assistant' as const, timestamp: 1 });
-function page(ids: string[], changes: Partial<SubagentHistoryPage> = {}): SubagentHistoryPage {
-  return {
-    sessionId: 'session', toolCallId: 'native-spawn', messages: ids.map((id) => message(id)), hasMore: true, latest: true,
-    subagent: { toolCallId: 'native-spawn', name: 'explore', displayName: 'Explorer', status: 'running', prompt: 'Full task' },
-    ...changes,
-  };
-}
-function setup() {
+const summary: SubagentInfo = { toolCallId: 'spawn', agentId: 'agent', name: 'explore', displayName: 'Explorer', status: 'running' };
+function setup(info = summary) {
   const connection = { connState: 'open', connectionGeneration: 1 };
-  const calls: { sessionId: string; toolCallId: string; options: ChildHistoryOptions; signal: AbortSignal;
-    resolve: (value: SubagentHistoryPage) => void; reject: (reason: unknown) => void }[] = [];
-  const resource = createSubagentHistory('session', 'native-spawn', (sessionId, toolCallId, options, signal) =>
-    new Promise((resolve, reject) => { calls.push({ sessionId, toolCallId, options, signal, resolve, reject }); }), () => connection);
-  return { resource, calls, connection };
+  const calls: { query: NativeChatRead; signal?: AbortSignal; resolve: (page: NativeChatPage) => void; reject: (error: Error) => void }[] = [];
+  const resource = createSubagentHistory('session', info, (query, signal) => new Promise((resolve, reject) => {
+    calls.push({ query, signal, resolve, reject });
+  }), () => connection);
+  const reply = (index: number, ids: string[], hasMore = true) => calls[index].resolve({
+    sessionId: 'session', source: 'live', direction: 'backward',
+    events: ids.map(id => ({ id: `event-${id}`, type: 'assistant.message', agentId: 'agent',
+      data: { messageId: id, content: id }, timestamp: 1 })),
+    cursor: `older-${index}`, cursorStatus: 'ok', hasMore, read: { rpc: 1, events: ids.length },
+  });
+  const ids = () => resource.getSnapshot().data?.messages.map(message => message.id);
+  return { resource, calls, connection, reply, ids };
 }
 
-test('closed child resource never reads; opening reads only this exact native child, 30 at a time', async () => {
-  const { resource, calls } = setup();
-  assert.equal(await resource.refresh(), false);
-  assert.equal(calls.length, 0);
-  resource.activate();
-  const pending = resource.refresh();
-  assert.equal(resource.getSnapshot().pending, true);
-  assert.equal(calls[0].sessionId, 'session');
-  assert.equal(calls[0].toolCallId, 'native-spawn');
-  assert.deepEqual(calls[0].options, { limit: 30 });
-  const nested = { ...message('nested-card'), subtype: 'subagent' as const,
-    subagent: { name: 'explore', displayName: 'Nested', status: 'running' as const, toolCallId: 'nested-native' } };
-  calls[0].resolve(page(['tail'], { messages: [nested, message('tail')] }));
+test('closed child detail never reads; opening selects exact native agent IDs without a task-list query', async () => {
+  const h = setup();
+  assert.equal(await h.resource.refresh(), false);
+  assert.equal(h.calls.length, 0);
+  h.resource.activate();
+  const pending = h.resource.refresh();
+  assert.deepEqual(h.calls[0].query, {
+    sessionId: 'session', source: 'live', direction: 'backward', agentIds: ['agent', 'spawn'],
+    max: 8, waitMs: 0, bootstrap: false,
+  });
+  h.reply(0, ['tail']);
   assert.equal(await pending, true);
-  assert.equal(resource.getSnapshot().data?.subagent.prompt, 'Full task');
-  assert.equal(resource.getSnapshot().data?.messages[0], nested);
-  assert.equal(calls.length, 1, 'nested summaries must not start child requests');
+  assert.deepEqual(h.ids(), ['tail']);
+  assert.equal(h.calls.length, 1);
+  assert.equal('subagent' in h.resource.getSnapshot().data!, false, 'no invented current task status');
 });
 
-test('older pages prepend once; refresh replaces only the authoritative suffix without dropping loaded scrollback', async () => {
-  const { resource, calls } = setup();
-  resource.activate();
-  const first = resource.refresh();
-  calls[0].resolve(page(['c', 'd']));
-  await first;
-  const older = resource.loadOlder();
-  assert.deepEqual(calls[1].options, { beforeMsgId: 'c', limit: 30 });
-  calls[1].resolve(page(['a', 'b', 'c'], { latest: false, hasMore: false }));
-  await older;
-  assert.deepEqual(resource.getSnapshot().data?.messages.map((m) => m.id), ['a', 'b', 'c', 'd']);
-  const refresh = resource.refresh();
-  assert.deepEqual(calls[2].options, { afterMsgId: 'd', limit: 30 });
-  calls[2].resolve(page(['d', 'e'], { latest: false, append: true }));
-  await refresh;
-  assert.deepEqual(resource.getSnapshot().data?.messages.map((m) => m.id), ['a', 'b', 'c', 'd', 'e']);
-  assert.equal(resource.getSnapshot().data?.hasMore, false);
+test('older child pages prepend and only explicit refresh replaces the detail window', async () => {
+  const h = setup();
+  h.resource.activate();
+  const first = h.resource.refresh(); h.reply(0, ['c', 'd']); await first;
+  const older = h.resource.loadOlder();
+  assert.equal(h.calls[1].query.cursor, 'older-0');
+  h.reply(1, ['a', 'b'], false); await older;
+  assert.deepEqual(h.ids(), ['a', 'b', 'c', 'd']);
+  assert.equal(await h.resource.loadOlder(), false);
+  const refresh = h.resource.refresh();
+  assert.equal(h.calls[2].query.cursor, undefined);
+  h.reply(2, ['e'], false); await refresh;
+  assert.deepEqual(h.ids(), ['e']);
 });
 
-test('failed older page retains content and retry uses its original cursor, without automatic retry', async () => {
-  const { resource, calls } = setup();
-  resource.activate();
-  const first = resource.refresh();
-  calls[0].resolve(page(['anchor']));
-  await first;
-  const older = resource.loadOlder();
-  void resource.refresh();
-  calls[1].reject(new Error('disk unavailable'));
+test('failed older child read retains content and explicit retry uses the same cursor', async () => {
+  const h = setup();
+  h.resource.activate();
+  const first = h.resource.refresh(); h.reply(0, ['tail']); await first;
+  const older = h.resource.loadOlder();
+  assert.equal(await h.resource.refresh(), false, 'no trailing automatic refresh');
+  h.calls[1].reject(new Error('unavailable'));
   assert.equal(await older, false);
-  await setImmediate();
-  assert.equal(calls.length, 2);
-  assert.equal(resource.getSnapshot().error, 'disk unavailable');
-  assert.deepEqual(resource.getSnapshot().data?.messages.map((m) => m.id), ['anchor']);
-  const retry = resource.retry();
-  assert.deepEqual(calls[2].options, { beforeMsgId: 'anchor', limit: 30 });
-  calls[2].resolve(page(['older'], { latest: false }));
-  assert.equal(await retry, true);
+  assert.deepEqual(h.ids(), ['tail']);
+  assert.equal(h.calls.length, 2);
+  const retry = h.resource.retry();
+  assert.equal(h.calls[2].query.cursor, h.calls[1].query.cursor);
+  h.reply(2, ['older'], false); await retry;
+  assert.deepEqual(h.ids(), ['older', 'tail']);
 });
 
-test('refresh beyond one page replaces the child window rather than silently bridging a gap', async () => {
-  const { resource, calls } = setup();
-  resource.activate();
-  const first = resource.refresh();
-  calls[0].resolve(page(['previous-anchor']));
-  await first;
-  const refresh = resource.refresh();
-  assert.deepEqual(calls[1].options, { afterMsgId: 'previous-anchor', limit: 30 });
-  const latest = Array.from({ length: 30 }, (_, i) => `new-${i + 20}`);
-  calls[1].resolve(page(latest, { latest: true, hasMore: true }));
-  await refresh;
-  assert.deepEqual(resource.getSnapshot().data?.messages.map(message => message.id), latest);
-  assert.equal(resource.getSnapshot().data?.hasMore, true);
-  const older = resource.loadOlder();
-  assert.deepEqual(calls[2].options, { beforeMsgId: 'new-20', limit: 30 });
-  calls[2].resolve(page(['new-19'], { latest: false, hasMore: true }));
-  await older;
-  assert.equal(resource.getSnapshot().data?.messages[0].id, 'new-19');
-});
-
-test('meaningful changes coalesce during one open read and stop after a single trailing refresh', async () => {
-  const { resource, calls } = setup();
-  resource.activate();
-  const first = resource.refresh();
-  for (let i = 0; i < 20; i++) void resource.refresh();
-  assert.equal(calls.length, 1);
-  calls[0].resolve(page(['anchor']));
-  await first;
-  assert.equal(calls.length, 2);
-  calls[1].resolve(page(['anchor', 'new'], { latest: false, append: true }));
-  await setImmediate();
-  assert.equal(calls.length, 2, 'successful reads cannot trigger a perpetual fetch loop');
-});
-
-for (const outcome of ['success', 'error'] as const) {
-  test(`collapse aborts and releases all child payload; late ${outcome} cannot repopulate or refresh`, async () => {
-    const { resource, calls } = setup();
-    resource.activate();
-    const first = resource.refresh();
-    calls[0].resolve(page(['loaded']));
-    await first;
-    const older = resource.loadOlder();
-    void resource.refresh();
-    resource.deactivate(true);
-    assert.equal(calls[1].signal.aborted, true);
-    assert.equal(resource.getSnapshot().data, undefined);
-    if (outcome === 'success') calls[1].resolve(page(['late'], { latest: false }));
-    else calls[1].reject(new Error('late failure'));
-    assert.equal(await older, false);
-    assert.equal(resource.getSnapshot().data, undefined);
-    assert.equal(resource.getSnapshot().error, null);
-    assert.equal(calls.length, 2);
-    resource.activate();
-    const reopened = resource.refresh();
-    assert.deepEqual(calls[2].options, { limit: 30 });
-    calls[2].resolve(page(['fresh']));
-    assert.equal(await reopened, true);
+for (const reason of ['close', 'generation', 'offline'] as const) {
+  test(`${reason} discards an obsolete child response without starting another read`, async () => {
+    const h = setup();
+    h.resource.activate();
+    const pending = h.resource.refresh();
+    if (reason === 'close') h.resource.deactivate();
+    else if (reason === 'generation') h.connection.connectionGeneration++;
+    else h.connection.connState = 'connecting';
+    h.reply(0, ['obsolete']);
+    assert.equal(await pending, false);
+    assert.equal(h.resource.getSnapshot().data, undefined);
+    assert.equal(h.calls.length, 1);
   });
 }
 
-test('reconnect retains visible child history but ignores requests from the previous connection', async () => {
-  const { resource, calls, connection } = setup();
-  resource.activate();
-  const first = resource.refresh();
-  calls[0].resolve(page(['anchor']));
-  await first;
-  const old = resource.loadOlder();
-  connection.connState = 'connecting';
-  connection.connectionGeneration++;
-  resource.deactivate();
-  assert.equal(resource.getSnapshot().data?.messages[0].id, 'anchor');
-  connection.connState = 'open';
-  resource.activate();
-  const fresh = resource.refresh();
-  calls[2].resolve(page(['anchor', 'current'], { latest: false, append: true }));
-  await fresh;
-  calls[1].resolve(page(['obsolete'], { latest: false }));
-  assert.equal(await old, false);
-  assert.deepEqual(resource.getSnapshot().data?.messages.map((m) => m.id), ['anchor', 'current']);
+test('missing native child identifiers report an error instead of scanning a whole session', async () => {
+  const h = setup({ name: 'legacy', displayName: 'Legacy', status: 'completed' });
+  h.resource.activate();
+  assert.equal(await h.resource.refresh(), false);
+  assert.match(h.resource.getSnapshot().error ?? '', /原生子代理标识/);
+  assert.equal(h.calls.length, 0);
 });
-
-for (const wrong of [{ sessionId: 'other' }, { toolCallId: 'other' }, { append: true, latest: false }] as const) {
-  test(`invalid child identity or append cursor preserves prior data: ${JSON.stringify(wrong)}`, async () => {
-    const { resource, calls } = setup();
-    resource.activate();
-    const first = resource.refresh();
-    calls[0].resolve(page(['anchor']));
-    await first;
-    const refresh = resource.refresh();
-    calls[1].resolve(page(['wrong'], wrong));
-    assert.equal(await refresh, false);
-    assert.deepEqual(resource.getSnapshot().data?.messages.map((m) => m.id), ['anchor']);
-    assert.ok(resource.getSnapshot().error);
-  });
-}

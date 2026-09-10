@@ -13,7 +13,7 @@ import {
 } from '@cockpit/protocol';
 
 export type {
-  Attachment, DirListing, HistoryPage, McpServerGlobal, PanelItem, ScheduleEntry, SessionBrief, SessionMeta,
+  Attachment, DirListing, McpServerGlobal, PanelItem, ScheduleEntry, SessionBrief, SessionMeta,
   SessionPanels, SessionPlan, SkillGlobal, SkillSession, Snapshot, TodoProgress,
   UploadedFile,
 } from '@cockpit/protocol';

@@ -19,26 +19,14 @@ import {
   type IntentResult,
 } from './index.ts';
 
-test('history resume is explicit, excludes ambiguous legacy cursors and distinguishes staged/unavailable results', () => {
-  const schema = Intents['session/history'].body;
-  assert.deepEqual(schema.parse({ sessionId: 's', resume: {} }), { sessionId: 's', resume: {} });
-  for (const resume of [{ token: '' }, { token: 'x'.repeat(8193) }, { token: 'x', ignored: true }]) {
-    assert.equal(schema.safeParse({ sessionId: 's', resume }).success, false);
+test('native chat rejects retired message-ID and resume-token selectors instead of simulating a seek', () => {
+  const schema = Intents['session/chat'].body;
+  for (const selector of [{ resume: {} }, { beforeMsgId: 'a' }, { afterMsgId: 'b' }, { details: 'full' }]) {
+    assert.equal(schema.safeParse({ sessionId: 's', ...selector }).success, false);
   }
-  for (const cursor of [{ beforeMsgId: 'b' }, { afterMsgId: 'a' }]) {
-    assert.equal(schema.safeParse({ sessionId: 's', resume: { token: 'checkpoint' }, ...cursor }).success, false);
+  for (const retired of ['session/history', 'session/peek', 'session/subagent-history']) {
+    assert.equal(retired in Intents, false);
   }
-  for (const resume of [
-    { status: 'ready', token: 'checkpoint' },
-    { status: 'pending', token: 'continuation' },
-    { status: 'unavailable', reason: 'expired' },
-  ]) {
-    const result = { sessionId: 's', messages: [], hasMore: false, resume };
-    assert.deepEqual(Protocol.HistoryPage.parse(result), result);
-  }
-  assert.equal(Protocol.HistoryPage.safeParse({
-    sessionId: 's', messages: [], hasMore: false, resume: { status: 'pending' },
-  }).success, false);
 });
 
 test('attachment Markdown uses only published URLs and supports multiple independent images', () => {
@@ -264,8 +252,7 @@ test('E19: every ServerEvent variant parses a representative sample', () => {
     'session/invalidated': { type: 'session/invalidated', sessionId: 's1' },
     'session/patch': { type: 'session/patch', ...fullMeta, currentReasoningEffort: null },
     'session/removed': { type: 'session/removed', sessionId: 's1' },
-    'session/reset': { type: 'session/reset', page: historyPage },
-    'msg/upsert': { type: 'msg/upsert', sessionId: 's1', message: chat },
+    'chat/invalidated': { type: 'chat/invalidated', sessionId: 's1', reason: 'rewind' },
     'session/notify': { type: 'session/notify', sessionId: 's1', title: 't', attention: 'ready', body: 'b' },
   } satisfies { [K in Protocol.ServerEventType]: Extract<Protocol.ServerEvent, { type: K }> };
   assert.deepEqual(
@@ -324,8 +311,6 @@ test('E21: ChatMessage schema parses a deeply-nested (sub-agent) sample', () => 
     ],
   } satisfies ChatMessage;
   roundTrip(ChatMessage, nested);
-  roundTrip(ServerEvent, { type: 'msg/upsert', sessionId: 's1', message: nested });
-  roundTrip(Intents['session/peek'].result, { sessionId: 's1', title: 'T', cwd: minimalMeta.cwd, messages: [nested], hasMore: false });
   for (const invalid of [{ role: 'invalid' }, { timestamp: '4' }, { subagent: { name: 'task', displayName: 'Task', status: 'launching' } }]) {
     const broken = structuredClone(nested);
     Object.assign(broken.subMessages[0]!.subMessages[0]!.subMessages[0]!, invalid);
@@ -373,21 +358,13 @@ test('summary cards retain native identity without nested content or mutating fu
   roundTrip(ChatMessage, summary);
 });
 
-test('lazy transcript scopes preserve defaults and validate their native identifiers and cursors', () => {
-  for (const name of ['session/history', 'session/peek'] as const) {
-    assert.deepEqual(Intents[name].body.parse({ sessionId: 's' }), { sessionId: 's' });
-    for (const details of ['full', 'summary']) {
-      assert.equal(Intents[name].body.parse({ sessionId: 's', details }).details, details);
-    }
-    assert.equal(Intents[name].body.safeParse({ sessionId: 's', details: 'discard' }).success, false);
+test('native passive reads cannot pretend to filter agents, types or ephemeral content', () => {
+  const body = Intents['session/chat'].body;
+  for (const selector of [{ types: ['assistant.message'] }, { agentIds: ['child'] },
+    { agentScope: 'primary' }, { waitMs: 1 }, { includeEphemeral: true }]) {
+    assert.equal(body.safeParse({ sessionId: 's', source: 'persisted', ...selector }).success, false);
   }
-  const body = Intents['session/subagent-history'].body;
-  for (const invalid of [
-    { sessionId: 's' }, { sessionId: 's', toolCallId: '' },
-    { sessionId: 's', toolCallId: 'child', beforeMsgId: 'a', afterMsgId: 'b' },
-    { sessionId: 's', toolCallId: 'child', limit: 0 },
-  ]) assert.equal(body.safeParse(invalid).success, false);
-  assert.deepEqual(body.parse({ sessionId: 's', toolCallId: 'child' }), { sessionId: 's', toolCallId: 'child' });
+  assert.equal(body.safeParse({ sessionId: 's', source: 'live', agentIds: ['child'] }).success, true);
 });
 
 const sid = { sessionId: 's1' };
@@ -422,9 +399,6 @@ test('automatic naming keeps request scope narrow and preserves non-applied nati
 });
 
 const chat = { id: 'm1', role: 'user', content: 'hello', timestamp: 1 } satisfies ChatMessage;
-const historyPage = {
-  ...sid, messages: [chat], hasMore: true, latest: false, append: true,
-} satisfies Protocol.HistoryPage;
 const attachment = {
   kind: 'image', name: 'Résumé "a&b" <1>%\n.png', url: '/uploads/Ab_1-2.png',
   size: 0, mime: 'image/png; charset=utf-8',
@@ -448,7 +422,6 @@ const plan = {
   todos: (['pending', 'in_progress', 'done', 'blocked'] as const).map((status, i) => ({
     id: `todo-${i}`, title: `Step ${i}`, description: 'Details', status,
   })),
-  changedFiles: [{ path: 'new.ts', operation: 'create' }, { path: 'existing.ts', operation: 'edit' }],
 } satisfies Protocol.SessionPlan;
 const scheduleBase = { prompt: 'check progress', nextRunAt: 123, displayPrompt: 'Check' };
 const scheduleEntries = [
@@ -464,30 +437,23 @@ const toggleResult = {
   ...ok, ...sid, applied: true, name: 'tools', enabled: true, status: 'connected', operation,
 } satisfies McpToggleResult;
 const skill = { name: 'review', description: 'Review code', source: 'user' };
-const peek = { ...sid, title: 'T', cwd: minimalMeta.cwd, messages: [chat], hasMore: true };
+const nativePage: Protocol.NativeChatPage = {
+  ...sid, source: 'persisted', direction: 'backward',
+  events: [{ id: 'event', type: 'assistant.message', data: { messageId: 'm1', content: 'Answer' } }],
+  cursor: 'native-next', cursorStatus: 'ok', hasMore: true, read: { rpc: 1, events: 1 },
+};
 
 // Each retained intent must have a lossless body AND result fixture.
 const intentFixtures = {
   'runtime/snapshot': { body: {}, result: snapshot },
   'session/new': { body: { cwd: minimalMeta.cwd }, result: sid },
   'session/fork': { body: { sessionId: 'parent', toEventId: 'user-event', name: 'Child' }, result: sid },
-  'session/history': { body: { ...sid, beforeMsgId: 'm2', limit: 25 }, result: historyPage },
-  'session/peek': { body: { ...sid, beforeMsgId: 'm2', limit: 25 }, result: peek },
+  'session/chat': { body: { ...sid, source: 'persisted', direction: 'backward', max: 64, waitMs: 0, bootstrap: false }, result: nativePage },
   'files/list': { body: { query: 'file', limit: 1, offset: 0 }, result: { files: [], hasMore: false } },
   'files/get': { body: { url: '/uploads/file.txt' },
     result: { kind: 'file', name: 'file.txt', url: '/uploads/file.txt', path: '/fixture/file.txt', size: 1, mime: 'text/plain' } },
   'files/associate': { body: { ...sid, url: '/uploads/file.txt' },
     result: { kind: 'file', name: 'file.txt', url: '/uploads/file.txt', path: '/fixture/file.txt', size: 1, mime: 'text/plain' } },
-  'files/from-tool-image': { body: { ...sid, image: { eventId: 'event', toolCallId: 'tool', part: 0 } },
-    result: { kind: 'image', name: 'image.png', url: '/uploads/image.png', path: '/fixture/image.png', size: 1, mime: 'image/png', source: 'tool-image' } },
-  'session/tool-image': {
-    body: { ...sid, image: { eventId: 'event', toolCallId: 'tool', part: 0 } },
-    result: { ...sid, eventId: 'event', toolCallId: 'tool', part: 0, mime: 'image/png', byteLength: 1, data: 'AA==' },
-  },
-  'session/subagent-history': {
-    body: { ...sid, toolCallId: 'child', beforeMsgId: 'm2', limit: 25, details: 'summary' },
-    result: { ...historyPage, toolCallId: 'child', subagent: { name: 'task', displayName: 'Child', status: 'completed' } },
-  },
   prompt: { body: { ...sid, text: 'continue', mode: 'enqueue', attachment }, result: { ...ok, queued: true } },
   cancel: { body: sid, result: ok },
   'session/interrupt': { body: sid, result: { ok: true, interrupted: false } },
@@ -631,31 +597,8 @@ test('session/purge requires sessionId and literal confirm:true without coercion
   }
 });
 
-test('session reads retain flat peek, pagination and authoritative result wrappers', () => {
-  for (const body of [sid, { ...sid, beforeMsgId: 'm2' }, { ...sid, afterMsgId: 'm0' }, { ...sid, afterMsgId: 'm0', limit: 10 }]) {
-    roundTrip(Intents['session/history'].body, body);
-  }
-  for (const body of [sid, { ...sid, beforeMsgId: 'm2', limit: 10 }]) {
-    roundTrip(Intents['session/peek'].body, body);
-  }
-  assert.deepEqual(
-    Intents['session/peek'].body.parse({ ...sid, afterMsgId: 'not-a-peek-cursor' }), sid,
-  );
-  for (const name of ['session/history', 'session/peek'] as const) {
-    for (const body of [{}, { ...sid, beforeMsgId: 1 }, { ...sid, limit: '10' }]) {
-      assert.equal(Intents[name].body.safeParse(body).success, false);
-    }
-  }
-  assert.equal(Intents['session/history'].body.safeParse({ ...sid, afterMsgId: 1 }).success, false);
-  roundTrip(Intents['session/peek'].result, peek);
-  roundTrip(Intents['session/peek'].result, { ...peek, messages: [], hasMore: false });
-  assert.equal(Intents['session/peek'].result.safeParse({ meta: fullMeta, messages: [chat], hasMore: true }).success, false);
-  assert.deepEqual(Intents['session/peek'].result.parse({ ...peek, meta: fullMeta }), peek);
-  for (const key of Object.keys(peek)) {
-    const value: Record<string, unknown> = { ...peek };
-    delete value[key];
-    assert.equal(Intents['session/peek'].result.safeParse(value).success, false, `peek requires ${key}`);
-  }
+test('session reads retain native pages and authoritative metadata wrappers', () => {
+  roundTrip(Intents['session/chat'].result, nativePage);
   for (const [name, empty] of [
     ['session/list', { sessions: [] }],
     ['session/get', { meta: null }],
@@ -880,11 +823,7 @@ test('SSE discriminators, pagination flags and nested payload validation are pre
   for (const attention of ['ready', 'choice'] as const) {
     roundTrip(ServerEvent, { type: 'session/notify', ...sid, title: 'T', body: 'Notice', attention });
   }
-  for (const latest of [true, false]) {
-    for (const append of [true, false]) {
-      roundTrip(ServerEvent, { type: 'session/reset', page: { ...historyPage, latest, append } });
-    }
-  }
+  for (const reason of ['rewind', 'compaction']) roundTrip(ServerEvent, { type: 'chat/invalidated', ...sid, reason });
   for (const invalid of [
     { type: 'unknown' }, { type: 'session/patch', error: null },
     { type: 'agent/status', status: 'down' }, { type: 'session/added', session: brief },
@@ -964,84 +903,22 @@ test('session transition flags are optional booleans in metadata, reads, snapsho
   }
 });
 
-test('history and peek accept only nonempty cursors and integer limits from 1 through 200', () => {
-  for (const name of ['session/history', 'session/peek'] as const) {
-    const schema = Intents[name].body;
-    const cursors = name === 'session/history' ? ['beforeMsgId', 'afterMsgId'] : ['beforeMsgId'];
-    roundTrip(schema, sid);
-    for (const limit of [1, 25, 200]) {
-      roundTrip(schema, { ...sid, limit });
-    }
-    for (const limit of [0, -1, 0.5, 1.5, 199.5, 200.5, 201, NaN, Infinity, -Infinity, '1', '200', null, true, [], {}]) {
-      assert.equal(schema.safeParse({ ...sid, limit }).success, false, `${name} limit=${String(limit)}`);
-    }
-    for (const cursor of cursors) {
-      for (const id of ['m1', 'opaque:消息/123?x=1']) {
-        roundTrip(schema, { ...sid, [cursor]: id });
-        for (const limit of [1, 200]) {
-          roundTrip(schema, { ...sid, [cursor]: id, limit });
-        }
-      }
-      assert.deepEqual(schema.parse({ ...sid, [cursor]: undefined }), { ...sid, [cursor]: undefined });
-      for (const id of ['', null, 0, 1, false, [], {}]) {
-        assert.equal(schema.safeParse({ ...sid, [cursor]: id }).success, false, `${name} ${cursor}=${JSON.stringify(id)}`);
-      }
-    }
+test('native pages require bounded counts, directional cursors and explicit expiry status', () => {
+  const schema = Intents['session/chat'].body;
+  assert.deepEqual(schema.parse(sid), { ...sid, source: 'persisted', direction: 'backward', max: 64, waitMs: 0, bootstrap: false });
+  for (const max of [1, 64, 256]) assert.equal(schema.parse({ ...sid, max }).max, max);
+  for (const max of [0, -1, 0.5, 257, Infinity, '64', null]) assert.equal(schema.safeParse({ ...sid, max }).success, false);
+  for (const cursor of ['', null, 0, false, [], {}, 'a'.repeat(16385)]) {
+    assert.equal(schema.safeParse({ ...sid, cursor }).success, false);
   }
-});
-
-test('history cursors are mutually exclusive even when equal or paired with empty values', () => {
-  for (const beforeMsgId of ['m1', '']) {
-    for (const afterMsgId of ['m1', 'm2', '']) {
-      assert.equal(Intents['session/history'].body.safeParse({ ...sid, beforeMsgId, afterMsgId, limit: 1 }).success, false);
-    }
+  for (const invalid of [{ bootstrap: true, cursor: 'old' }, { bootstrap: true, direction: 'forward' },
+    { direction: 'backward', waitMs: 10 }, { source: 'live', direction: 'forward', waitMs: 1001 }]) {
+    assert.equal(schema.safeParse({ ...sid, ...invalid }).success, false);
   }
-  for (const cursors of [
-    { beforeMsgId: 'm1', afterMsgId: undefined },
-    { beforeMsgId: undefined, afterMsgId: 'm1' },
-  ]) {
-    const value = { ...sid, ...cursors };
-    assert.deepEqual(Intents['session/history'].body.parse(value), value);
-  }
-});
-
-test('history returns a passive flat HistoryPage, never an acknowledgement or history SSE event', () => {
-  assert.equal(Intents['session/history'].result, Protocol.HistoryPage);
-  assert.equal(ServerEvent.options.some((schema) => String(schema.shape.type.value) === 'session/history-page'), false);
-  const minimalPage = { ...sid, messages: [], hasMore: false } satisfies Protocol.HistoryPage;
-  for (const page of [historyPage, minimalPage]) {
-    roundTrip(Protocol.HistoryPage, page);
-    roundTrip(Intents['session/history'].result, page);
-    roundTrip(ServerEvent, { type: 'session/reset', page });
-    assert.equal(ServerEvent.safeParse({ type: 'session/history-page', page }).success, false);
-    assert.equal(ServerEvent.safeParse(page).success, false);
-  }
-  for (const hasMore of [true, false]) {
-    for (const latest of [true, false]) {
-      for (const append of [true, false]) {
-        roundTrip(Intents['session/history'].result, { ...historyPage, hasMore, latest, append });
-      }
-    }
-  }
-  for (const field of Object.keys(minimalPage)) {
-    const missing: Record<string, unknown> = { ...historyPage };
-    delete missing[field];
-    assert.equal(Intents['session/history'].result.safeParse(missing).success, false, `history requires ${field}`);
-  }
-  for (const invalid of [
-    ok, {}, null, [], { page: historyPage },
-    { ...historyPage, messages: [{ ...chat, role: 'invalid' }] },
-    { ...historyPage, messages: null },
-    { ...historyPage, hasMore: 'false' },
-    { ...historyPage, latest: null },
-    { ...historyPage, latest: 'true' },
-    { ...historyPage, append: null },
-    { ...historyPage, append: 1 },
-  ]) {
-    assert.equal(Protocol.HistoryPage.safeParse(invalid).success, false, JSON.stringify(invalid));
-    assert.equal(Intents['session/history'].result.safeParse(invalid).success, false, JSON.stringify(invalid));
-    assert.equal(ServerEvent.safeParse({ type: 'session/reset', page: invalid }).success, false);
-  }
+  for (const cursorStatus of ['ok', 'expired']) roundTrip(Intents['session/chat'].result, { ...nativePage, cursorStatus });
+  assert.equal(Intents['session/chat'].result.safeParse({ ...nativePage, cursorStatus: undefined }).success, false);
+  assert.equal(ServerEvent.safeParse({ type: 'msg/upsert', ...sid, message: chat }).success, false);
+  assert.equal(ServerEvent.safeParse({ type: 'session/reset', page: { ...sid, messages: [chat], hasMore: true } }).success, false);
 });
 
 test('skills/global accepts an optional nonempty cwd without a session selector', () => {
@@ -1177,21 +1054,16 @@ type SlimContractGuards = [
   Expect<Equal<Extract<keyof Extract<Protocol.ServerEvent, { type: 'session/patch' }>, RemovedMetaField>, never>>,
   Expect<Equal<IntentBody<'session/new'>, { cwd: string }>>,
   Expect<Equal<IntentBody<'session/purge'>, { sessionId: string; confirm: true }>>,
-  Expect<Equal<IntentBody<'session/peek'>, { sessionId: string; beforeMsgId?: string; limit?: number; details?: Protocol.HistoryDetails }>>,
-  Expect<Equal<IntentBody<'session/history'>, { sessionId: string; beforeMsgId?: string; afterMsgId?: string; limit?: number; details?: Protocol.HistoryDetails; resume?: Protocol.HistoryResume }>>,
-  Expect<Equal<IntentBody<'session/subagent-history'>, {
-    sessionId: string; toolCallId: string; beforeMsgId?: string; afterMsgId?: string; limit?: number; details?: Protocol.HistoryDetails;
-  }>>,
+  Expect<Equal<IntentBody<'session/chat'>, Protocol.NativeChatRead>>,
   Expect<Equal<IntentBody<'skills/global'>, { cwd?: string }>>,
   Expect<Equal<IntentBody<'prompt'>, { sessionId: string; text: string; mode?: 'enqueue' | 'immediate';
     attachment?: Protocol.Attachment; attachments?: Protocol.Attachment[]; parts?: Protocol.MessagePart[] }>>,
-  Expect<Equal<IntentResult<'session/history'>, Protocol.HistoryPage>>,
+  Expect<Equal<IntentResult<'session/chat'>, Protocol.NativeChatPage>>,
   Expect<Equal<IntentResult<'runtime/snapshot'>, Protocol.Snapshot>>,
   Expect<Equal<Extract<Protocol.ServerEvent, { type: 'snapshot' }>, Protocol.Snapshot>>,
   Expect<Equal<Extract<Protocol.ServerEventType, 'session/history-page'>, never>>,
   Expect<Equal<Protocol.Snapshot['permissionPolicy'], 'allow-all'>>,
   Expect<Equal<Pick<SessionMeta, 'loading' | 'closing' | 'cancelling'>, { loading?: boolean; closing?: boolean; cancelling?: boolean }>>,
-  Expect<Equal<IntentResult<'session/peek'>, { sessionId: string; title: string; cwd: string; messages: ChatMessage[]; hasMore: boolean }>>,
   Expect<Equal<IntentResult<'session/list'>, { sessions: SessionBrief[] }>>,
   Expect<Equal<IntentResult<'session/get'>, { meta: SessionMeta | null }>>,
   Expect<Equal<keyof SessionPanels, 'skills' | 'mcpServers' | 'tasks' | 'instructionSources' | 'schedules'>>,

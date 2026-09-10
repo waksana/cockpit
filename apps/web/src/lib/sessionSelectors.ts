@@ -2,7 +2,7 @@ import { shallow } from 'zustand/shallow';
 import type { ChatSession, SessionMeta } from '../net/types';
 
 const WINDOW_FIELDS = new Set([
-  'messages', 'materialized', 'historyStale', 'resumeAfter', 'hasMore', 'loadingHistory',
+  'messages', 'materialized', 'historyStale', 'hasMore', 'loadingHistory', 'partialHistory', 'incompleteBoundary',
 ]);
 
 // A message window is not sidebar data. Keep the existing store contract while

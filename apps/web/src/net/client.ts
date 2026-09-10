@@ -1,11 +1,5 @@
-// Cockpit transport client: SSE for server→client domain events, fetch POST for
-// client→server intents. Replaces the old hand-rolled WebSocket JSON-RPC client.
-//
-// Why SSE + POST (not WS): our shape is one long-lived server push stream plus
-// sparse client intents. EventSource gives free auto-reconnect + a fresh
-// snapshot on (re)connect, cookie auth "just works", and intents are plain POSTs
-// that return their typed result directly — no frame scanner, no request/
-// response correlation, no heartbeat plumbing.
+// SSE carries control metadata; typed POSTs carry actions and bounded native
+// event pages. Chat cursors and projections belong to the browser, not SSE.
 
 import { ServerEvent, Intents } from '@cockpit/protocol';
 import type { Attachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction } from '@cockpit/protocol';
@@ -20,8 +14,8 @@ export type ConnState = 'connecting' | 'open';
 // network dropped, the tab was backgrounded mid-request, or nginx returned a
 // brief 502 during a server restart) rejects with a `TypeError` in every browser
 // (WebKit surfaces it as "Load failed", Chrome as "Failed to fetch"). This is
-// CONNECTIVITY, not an application bug: the EventSource reconnect + snapshot
-// re-materialize path already recovers from it with no user action. We classify
+// CONNECTIVITY, not an application bug: reconnect retains the browser's cursor
+// and attempts native continuation without a whole-window refresh. We classify
 // it so the self-reporting error pipeline never mistakes a blip for a bug.
 export function isTransportError(e: unknown): boolean {
   return e instanceof TypeError;
@@ -169,11 +163,8 @@ export class NetClient {
     try {
       // Upload responses may contain server paths; only shared prompt metadata
       // belongs on the wire, even when callers pass extra runtime properties.
-      const payload = name === 'prompt' ? Intents.prompt.body.parse(body)
-        : name === 'session/history' || name === 'session/peek' || name === 'session/subagent-history'
-          ? { ...body, details: 'summary' as const } : body;
+      const payload = name === 'prompt' ? Intents.prompt.body.parse(body) : body;
       const expectedSessionId = 'sessionId' in payload ? payload.sessionId : undefined;
-      const expectedToolCallId = 'toolCallId' in payload ? payload.toolCallId : undefined;
       const res = await fetch(intentUrl(name), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -189,16 +180,9 @@ export class NetClient {
         throw new IntentHttpError(message, res.status, typeof details.code === 'string' ? details.code : undefined);
       }
       const result = Intents[name].result.parse(json);
-      if ((name === 'session/history' || name === 'session/peek' || name === 'session/subagent-history' || name === 'session/usage')
+      if ((name === 'session/chat' || name === 'session/usage')
         && 'sessionId' in result && result.sessionId !== expectedSessionId) {
         throw new Error(`intent ${name} returned sessionId ${JSON.stringify(result.sessionId)} instead of ${JSON.stringify(expectedSessionId)}`);
-      }
-      if (name === 'session/subagent-history') {
-        const child = result as IntentResult<'session/subagent-history'>;
-        if (child.toolCallId !== expectedToolCallId
-          || (child.subagent.toolCallId !== undefined && child.subagent.toolCallId !== expectedToolCallId)) {
-          throw new Error(`intent ${name} returned a different toolCallId`);
-        }
       }
       return result as IntentResult<K>;
     } catch (e) {
@@ -208,7 +192,7 @@ export class NetClient {
         throw new Error('通知服务请求失败或超时，请检查连接后重试。');
       }
       // Diagnostics stay local. Never execute a prompt or retry an uncertain POST.
-      if (!signal?.aborted && !isSessionUnloadedError(e) && name !== 'speech/token' && (name !== 'session/history' || !isTransportError(e))) {
+      if (!signal?.aborted && !isSessionUnloadedError(e) && name !== 'speech/token' && (name !== 'session/chat' || !isTransportError(e))) {
         reportUxError(`${source ? `${source}：` : ''}接口 ${name} 调用失败：${describeReason(e, false)}`, { deduplicate: false });
       }
       throw e;
@@ -220,16 +204,7 @@ export class NetClient {
   // --- typed intent helpers --------------------------------------------------
   newSession(cwd: string) { return this.intent('session/new', { cwd }); }
   forkSession(sessionId: string) { return this.intent('session/fork', { sessionId }); }
-  history(sessionId: string, opts?: { beforeMsgId?: string; afterMsgId?: string; limit?: number; resume?: { token?: string } }, signal?: AbortSignal) {
-    return this.intent('session/history', { ...opts, sessionId }, signal);
-  }
-  peek(sessionId: string, opts?: { beforeMsgId?: string; limit?: number }, signal?: AbortSignal) {
-    return this.intent('session/peek', { ...opts, sessionId }, signal);
-  }
-  subagentHistory(sessionId: string, toolCallId: string,
-    opts?: { beforeMsgId?: string; afterMsgId?: string; limit?: number }, signal?: AbortSignal) {
-    return this.intent('session/subagent-history', { ...opts, sessionId, toolCallId }, signal);
-  }
+  chat(body: IntentBody<'session/chat'>, signal?: AbortSignal) { return this.intent('session/chat', body, signal); }
   prompt(sessionId: string, text: string, attachment?: Attachment, mode?: 'enqueue' | 'immediate', attachments?: Attachment[]) {
     return this.intent('prompt', { sessionId, text, ...(attachment ? { attachment } : {}),
       ...(attachments?.length ? { attachments } : {}), ...(mode ? { mode } : {}) });

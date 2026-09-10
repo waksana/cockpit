@@ -104,6 +104,14 @@ test('connected MCP discovers newly published fork, creates a native child and d
     assert.ok(!result.isError, result.content[0].text);
     return JSON.parse(result.content[0].text);
   };
+  const history = async (sessionId: string) => {
+    const page = Intents['session/chat'].result.parse(await intent('session/chat', {
+      sessionId, source: 'persisted', direction: 'backward', max: 256,
+    }));
+    assert.equal(page.hasMore, false, 'This small isolated fixture fits one native page');
+    assert.equal(page.read.rpc, 1);
+    return page.events;
+  };
   const idle = async (id: string) => {
     let stable = 0;
     const deadline = Date.now() + 10_000;
@@ -136,8 +144,8 @@ test('connected MCP discovers newly published fork, creates a native child and d
     };
     await send(source.sessionId, 'MCP_FORK_FIXTURE_FIRST');
     await send(source.sessionId, 'MCP_FORK_FIXTURE_SECOND');
-    const before = Intents['session/history'].result.parse(await intent('session/history', { sessionId: source.sessionId }));
-    const boundary = before.messages.find(message => message.role === 'user' && message.content === 'MCP_FORK_FIXTURE_SECOND')!;
+    const before = await history(source.sessionId);
+    const boundary = before.find(event => event.type === 'user.message' && event.data.content === 'MCP_FORK_FIXTURE_SECOND')!;
     assert.ok(boundary);
 
     published = true;
@@ -152,18 +160,18 @@ test('connected MCP discovers newly published fork, creates a native child and d
     const listing = Intents['session/list'].result.parse(await intent('session/list', {}));
     assert.ok(listing.sessions.some(session => session.sessionId === child.sessionId));
     assert.equal((await engine.getMeta(child.sessionId))!.loaded, false);
-    const inherited = Intents['session/history'].result.parse(await intent('session/history', { sessionId: child.sessionId }));
-    assert.deepEqual(inherited.messages.filter(message => message.role === 'user').map(message => message.content), ['MCP_FORK_FIXTURE_FIRST']);
+    const inherited = await history(child.sessionId);
+    assert.deepEqual(inherited.filter(event => event.type === 'user.message').map(event => event.data.content), ['MCP_FORK_FIXTURE_FIRST']);
     assert.equal(prompts.length, 2, 'Discovery, fork, listing and history must not dispatch old work');
     await intent('session/rename', { sessionId: child.sessionId, name: 'MCP fixture child' });
     await send(child.sessionId, 'MCP_FORK_FIXTURE_CHILD');
     await send(source.sessionId, 'MCP_FORK_FIXTURE_PARENT');
-    const childHistory = Intents['session/history'].result.parse(await intent('session/history', { sessionId: child.sessionId }));
-    const parentHistory = Intents['session/history'].result.parse(await intent('session/history', { sessionId: source.sessionId }));
-    assert.ok(childHistory.messages.some(message => message.content === 'MCP_FORK_FIXTURE_CHILD'));
-    assert.ok(!childHistory.messages.some(message => message.content.includes('MCP_FORK_FIXTURE_PARENT')));
-    assert.ok(parentHistory.messages.some(message => message.content === 'MCP_FORK_FIXTURE_PARENT'));
-    assert.ok(!parentHistory.messages.some(message => message.content.includes('MCP_FORK_FIXTURE_CHILD')));
+    const childHistory = await history(child.sessionId);
+    const parentHistory = await history(source.sessionId);
+    assert.ok(childHistory.some(event => event.data.content === 'MCP_FORK_FIXTURE_CHILD'));
+    assert.ok(!childHistory.some(event => typeof event.data.content === 'string' && event.data.content.includes('MCP_FORK_FIXTURE_PARENT')));
+    assert.ok(parentHistory.some(event => event.data.content === 'MCP_FORK_FIXTURE_PARENT'));
+    assert.ok(!parentHistory.some(event => typeof event.data.content === 'string' && event.data.content.includes('MCP_FORK_FIXTURE_CHILD')));
     assert.equal(prompts.length, 4);
     assert.deepEqual(providerErrors, []);
   } finally {

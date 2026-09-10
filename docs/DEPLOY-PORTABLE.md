@@ -70,7 +70,9 @@ expose a raw loopback service through an unauthenticated tunnel.
 
 After this one-time setup, computers and phones use the web app for session
 selection, chat, execution controls, questions and file exchange. Reconnecting
-clients receive a fresh backend snapshot and reconcile their message windows.
+clients receive a fresh metadata snapshot. Their browser-owned chat windows
+continue through native event cursors; see [native chat transport](native-chat.md)
+for paging, incomplete streaming messages and explicit cursor invalidation.
 
 ## MCP client
 

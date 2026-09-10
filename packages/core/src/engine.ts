@@ -8,23 +8,22 @@ import type {
   ExitPlanModeResult, ElicitationResult,
 } from '@github/copilot-sdk';
 import type {
-  AgentStatus, Attention, ChatMessage, DirListing, ExitPlanModeAction, HistoryDetails, HistoryPage, HistoryResume,
+  AgentStatus, Attention, DirListing, ExitPlanModeAction,
   McpServerGlobal, McpServerSession, McpServerStatus, McpToggleOperation, McpToggleResult,
   ModelOption, ScheduleEntry, ServerEvent, SessionMeta, SessionPanels,
-  SessionBrief, SessionPlan, Snapshot, SubagentHistoryPage, TodoItem, IntentResult, ToolImageRead,
+  SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
 } from '@cockpit/protocol';
-import { SessionUsage, summarizeMessage, unreadSessionCount } from '@cockpit/protocol';
+import { NativeChatRead, SessionUsage, unreadSessionCount } from '@cockpit/protocol';
 import { OfficialRuntime, sessionModelOptions } from './runtime.ts';
-import { normalizeEvent, type SdkEvent, type RuntimeAttachment } from './sdk-types.ts';
-import { cleanSessionTitle, foldEvent, isFoldContentVisible, newFoldState, type FoldState } from './fold.ts';
+import { normalizeEvent, type RuntimeAttachment } from './sdk-types.ts';
+import { cleanSessionTitle, extractParts } from './fold.ts';
 import { engineSessionBusy } from './lifecycle.ts';
 import { nextAttention, notificationSummary } from './attention.ts';
-import { SessionHistoryReader, pageHistory } from './history-reader.ts';
+import { readNativeChat } from './native-chat.ts';
 import { Prefs } from './prefs.ts';
 import { describeMcpServer, redactMcpConfig } from './mcp-config.ts';
 import { autoNameQuestion, generatedTitle } from './auto-name.ts';
 import { validateForkHistory } from './fork.ts';
-import { readToolImage } from './tool-image.ts';
 
 export { sessionMetaBusy, engineSessionBusy } from './lifecycle.ts';
 export type EngineRuntime = Pick<OfficialRuntime,
@@ -70,7 +69,6 @@ type Resource = keyof ResourceValues;
 interface State {
   id: string;
   sdk: CopilotSession | null;
-  fold: FoldState;
   load?: Promise<void>;
   closing: boolean;
   cancelling?: Promise<void>;
@@ -85,14 +83,12 @@ interface State {
   accepted: Set<string>;
   decisions: Map<string, Decision>;
   eventOwner?: { closed?: WeakSet<CopilotSession> };
-  buffered?: SessionEvent[];
-  eventIds: Set<string>;
-  userMessageIds: Set<string>;
+  sendReceipts: Set<string>;
   revision: number;
   sync?: Promise<void>;
   syncAgain: boolean;
   scheduleGate: Promise<void>;
-  finalReply?: ChatMessage;
+  replyNotification?: string;
   pendingReply?: { eventId: string; body: string };
   namingReply?: boolean;
   namingAttempted?: boolean;
@@ -109,19 +105,11 @@ const namingBusyError = () => Object.assign(new Error('Session must be idle befo
   statusCode: 409, code: 'SESSION_BUSY',
 });
 
-const activeScope = { details: 'summary' } as const;
-// Keep typed display history from every agent: legacy nested task requests can
-// be the only parent link for later lifecycles. Summary folding discards child
-// content, while old root tools and requested-file provenance remain addressable.
-const activeEventTypes: [string, ...string[]] = [
-  'session.start', 'session.title_changed', 'session.model_change', 'session.error', 'session.warning',
-  'user.message', 'user_input.requested', 'skill.invoked',
-  'assistant.turn_start', 'assistant.turn_end', 'assistant.idle', 'session.idle', 'abort',
-  'assistant.reasoning', 'assistant.reasoning_delta', 'assistant.message_start',
-  'assistant.message_delta', 'assistant.message', 'tool.execution_start', 'tool.execution_complete',
-  'subagent.started', 'subagent.completed', 'subagent.failed', 'subagent.configured',
-  'session.schedule_created',
-];
+const controlEvents = new Set([
+  'user.message', 'assistant.turn_start', 'assistant.turn_end', 'assistant.message', 'abort',
+  'tool.execution_start', 'tool.execution_complete',
+  'subagent.started', 'subagent.completed', 'subagent.failed',
+]);
 
 class SessionUnloadedError extends Error {
   readonly statusCode = 409;
@@ -142,8 +130,8 @@ async function settled<T extends readonly unknown[]>(work: { [K in keyof T]: Pro
 
 function stateFor(id: string): State {
   return {
-    id, sdk: null, fold: newFoldState(), closing: false, operations: 0, mcpOperations: 0, sends: 0,
-    accepted: new Set(), decisions: new Map(), eventIds: new Set(), userMessageIds: new Set(),
+    id, sdk: null, closing: false, operations: 0, mcpOperations: 0, sends: 0,
+    accepted: new Set(), decisions: new Map(), sendReceipts: new Set(),
     revision: 0, turnEpoch: 0, syncAgain: false,
     scheduleGate: Promise.resolve(),
   };
@@ -152,7 +140,6 @@ function stateFor(id: string): State {
 export class Engine {
   private readonly runtime: EngineRuntime;
   private readonly prefs: Prefs;
-  private readonly historyReader: SessionHistoryReader;
   private readonly sessions = new Map<string, State>();
   private readonly creating = new Set<string>();
   private readonly removing = new Set<string>();
@@ -172,9 +159,6 @@ export class Engine {
     this.runtime = options.runtime ?? new OfficialRuntime();
     this.prefs = new Prefs(options.prefsFile);
     this.prefs.reconcileInboxChoices();
-    this.historyReader = new SessionHistoryReader({
-      readPersistedEvents: params => this.runtime.rpc.sessions.readPersistedEvents(params),
-    });
     this.runtime.onSessionClosed(sdk => {
       if (this.failure) { this.fail(this.failure); return; }
       const st = this.sessions.get(sdk.sessionId);
@@ -561,16 +545,12 @@ export class Engine {
       this.assertAvailable();
       const owner: NonNullable<State['eventOwner']> = {};
       st.eventOwner = owner;
-      st.buffered = [];
       const config: SessionConfig = { ...await this.config(st, cwd), onEvent: event => {
         if (st.eventOwner !== owner || this.failure) return;
-        if (st.buffered) st.buffered.push(event);
-        else {
-          try { this.onLive(st, event); }
-          catch (error) {
-            this.patch(st, { error: `Native event could not be applied: ${messageOf(error)}` });
-            this.log('native event failed', { sessionId: st.id, error: messageOf(error) });
-          }
+        try { this.onLive(st, event); }
+        catch (error) {
+          this.patch(st, { error: `Native control event could not be applied: ${messageOf(error)}` });
+          this.log('native control event failed', { sessionId: st.id, error: messageOf(error) });
         }
       } };
       const sdk = await this.untilFatal(() => create
@@ -585,7 +565,6 @@ export class Engine {
         throw new Error('Native session closed while loading; explicitly resume to continue');
       }
       delete owner.closed;
-      await this.withSession(st, sdk, () => this.replay(st));
       const name = await this.withSession(st, sdk, () => sdk.rpc.name.get());
       this.assertAvailable();
       if (st.sdk !== sdk) throw new Error('Native session closed while loading; explicitly resume to continue');
@@ -599,7 +578,6 @@ export class Engine {
     })).catch(error => {
       if (!st.sdk) {
         st.eventOwner = undefined;
-        st.buffered = undefined;
       }
       this.patch(st, { loaded: !!st.sdk, status: 'error', error: messageOf(error) });
       throw error;
@@ -632,120 +610,21 @@ export class Engine {
     });
   }
 
-  private async replay(st: State): Promise<void> {
-    const sdk = st.sdk!;
-    const previous = { fold: st.fold, eventIds: st.eventIds, userMessageIds: st.userMessageIds };
-    st.buffered ??= [];
-    try {
-      const read = (direction: 'forward' | 'backward', max: number, cursor?: string) =>
-        this.withSession(st, sdk, () => sdk.rpc.eventLog.read({
-          direction, max, cursor, types: activeEventTypes, agentScope: 'all', includeEphemeral: false,
-        }));
-      const validate = (page: Awaited<ReturnType<typeof read>>) => {
-        if (page.cursorStatus !== 'ok') throw new Error(`Native display history cursor ${page.cursorStatus}`);
-        if (typeof page.cursor !== 'string') throw new Error('Native display history returned a missing cursor');
-      };
-      // One durable tail fence prevents continuous new work from extending the
-      // replay. Its later events (including ephemerals) already have onEvent.
-      const tail = await read('backward', 1);
-      validate(tail);
-      if (tail.events.length > 1 || (!tail.events.length && tail.hasMore)) {
-        throw new Error('Native display history returned an invalid tail');
-      }
-      const lastId = tail.events[0]?.id;
-      if (tail.events.length && !lastId) throw new Error('Native display history returned a missing event ID');
-      st.fold = newFoldState();
-      st.eventIds = new Set();
-      st.userMessageIds = new Set();
-      if (!lastId) return;
-      const cursors = new Set<string>();
-      let cursor: string | undefined;
-      for (;;) {
-        const page = await read('forward', 200, cursor);
-        validate(page);
-        if (cursors.has(page.cursor)) throw new Error('Native display history cursor did not advance');
-        cursors.add(page.cursor);
-        if (!page.events.length || page.events.length > 200) throw new Error('Native display history returned an invalid page before its captured tail');
-        for (const event of page.events) {
-          if (!event.id || st.eventIds.has(event.id)) throw new Error('Native display history returned duplicate or missing event IDs');
-          this.fold(st, event, false);
-          if (event.id === lastId) return;
-        }
-        if (!page.hasMore) throw new Error('Native display history changed before its captured tail was reached');
-        cursor = page.cursor;
-      }
-    } catch (error) {
-      if (st.sdk === sdk) Object.assign(st, previous);
-      throw error;
-    } finally {
-      if (st.sdk === sdk) this.flushBuffered(st);
-    }
-  }
-
-  private flushBuffered(st: State): void {
-    const buffered = st.buffered ?? [];
-    st.buffered = undefined;
-    const applied = new Set<string>();
-    const finalized = new Set<string>();
-    const finalizedReasoning = new Set<string>();
-    // Ephemerals are absent from durable reads. Do not append their old deltas
-    // onto an authoritative final message already folded from that read.
-    for (let i = buffered.length - 1; i >= 0; i--) {
-      const event = buffered[i]!;
-      const owner = event.agentId ?? String((event.data as Record<string, unknown>).parentToolCallId ?? '');
-      const reasoning = event.type === 'assistant.reasoning' || event.type === 'assistant.reasoning_delta'
-        ? JSON.stringify([owner, event.data.reasoningId]) : undefined;
-      if (event.type === 'assistant.message' && st.eventIds.has(event.id)) finalized.add(owner);
-      if (event.type === 'assistant.reasoning' && st.eventIds.has(event.id)) finalizedReasoning.add(reasoning!);
-      if (event.ephemeral && (finalized.has(owner)
-        || (event.type === 'assistant.reasoning_delta' && finalizedReasoning.has(reasoning!)))
-        && ['assistant.message_start', 'assistant.message_delta', 'assistant.reasoning', 'assistant.reasoning_delta'].includes(event.type)) {
-        applied.add(event.id);
-        if (!owner) st.eventIds.add(event.id);
-      }
-    }
-    for (const event of buffered) {
-      if (applied.has(event.id)) continue;
-      applied.add(event.id);
-      // Fold overlap once, but keep its live lifecycle and attention effects.
-      this.onLive(st, event, true);
-    }
-  }
-
-  private fold(st: State, native: SessionEvent, live: boolean): SdkEvent | null {
-    if (st.eventIds.has(native.id)) return null;
+  private onLive(st: State, native: SessionEvent): void {
+    if ((!st.sdk && !st.eventOwner) || this.failure
+      || (!native.type.startsWith('session.') && native.type !== 'pending_messages.modified' && !controlEvents.has(native.type))) return;
     const event = normalizeEvent(native);
-    const visible = isFoldContentVisible(st.fold, event, activeScope);
-    if ((visible && activeEventTypes.includes(native.type)) || event.type.startsWith('subagent.')) {
-      st.eventIds.add(native.id);
-    }
-    if (event.type === 'user.message' && visible) {
-      if (live) st.userMessageIds.add(native.id);
-      st.accepted.delete(native.id);
-      if (typeof event.data.messageId === 'string') {
-        if (live) st.userMessageIds.add(event.data.messageId);
-        st.accepted.delete(event.data.messageId);
-      }
-    }
-    const result = foldEvent(st.fold, event, { scope: activeScope });
-    if (live) {
-      for (const id of result.changed) {
-        const index = st.fold.byId.get(id);
-        const message = index === undefined ? undefined : st.fold.messages[index];
-        if (message) this.emit({ type: 'msg/upsert', sessionId: st.id, message: structuredClone(summarizeMessage(message)) });
-      }
-      if (result.changed.length) this.patch(st, { lastActivity: Date.now(), lastActivitySource: 'host-event-receipt' });
-    }
-    return event;
-  }
-
-  private onLive(st: State, native: SessionEvent, buffered = false): void {
-    if (!st.sdk || this.failure) return;
-    const event = this.fold(st, native, true) ?? (buffered ? normalizeEvent(native) : null);
-    if (!event) return;
     st.revision++;
     const data = event.data;
-    const root = !event.agentId && !event.parentToolCallId;
+    const root = !event.agentId && !event.parentToolCallId && !data.parentToolCallId && !data.agentId;
+    if (root && event.type === 'user.message') {
+      for (const id of [native.id, data.messageId]) {
+        if (typeof id !== 'string') continue;
+        st.accepted.delete(id);
+        if (st.sends) st.sendReceipts.add(id);
+      }
+      this.patch(st, { lastActivity: Date.now(), lastActivitySource: 'host-event-receipt' });
+    }
     if (root && event.type !== 'user.message' && typeof data.interactionId === 'string'
       && st.interactionId && data.interactionId !== st.interactionId
       && (event.type.startsWith('assistant.') || event.type === 'session.error')) return;
@@ -773,30 +652,33 @@ export class Engine {
     if (native.type === 'tool.execution_complete') {
       this.scheduleSync(st);
     }
-    if (event.type === 'tool.execution_start' && data.toolName === 'report_intent') {
+    if (root && event.type === 'tool.execution_start' && data.toolName === 'report_intent') {
       const args = data.arguments as { intent?: string } | undefined;
       if (typeof args?.intent === 'string') this.patch(st, { intent: args.intent });
     }
-    if (!event.agentId && !event.parentToolCallId && event.type === 'assistant.turn_start') {
-      st.finalReply = undefined;
+    if (root && event.type === 'assistant.turn_start') {
+      st.replyNotification = undefined;
       st.pendingReply = undefined;
       this.patch(st, { status: 'running', nativeProcessing: true, error: null });
     }
-    if (!event.agentId && !event.parentToolCallId && event.type === 'assistant.message') {
-      const index = typeof data.messageId === 'string' ? st.fold.byId.get(data.messageId) : undefined;
-      const reply = index === undefined ? undefined : st.fold.messages[index];
-      if (reply && !reply.subtype && (reply.content.trim() || reply.attachment)) st.finalReply = structuredClone(reply);
-    }
-    if (!event.agentId && !event.parentToolCallId && event.type === 'assistant.turn_end') {
-      if (st.finalReply && !st.cancelling) {
-        const fallback = st.finalReply.attachment
-          ? notificationSummary(`附件：${st.finalReply.attachment.name}`, '收到新附件') : '回复已完成';
-        st.pendingReply = { eventId: native.id, body: notificationSummary(st.finalReply.content, fallback) };
+    if (root && event.type === 'assistant.message') {
+      if (!native.ephemeral && typeof data.content === 'string' && data.content.trim()) {
+        const visible = extractParts(data.content, false);
+        st.replyNotification = notificationSummary(
+          visible ? visible.content || `附件：${visible.attachments?.map(file => file.name).join('、')}` : data.content,
+          '回复已完成',
+        );
       }
+    }
+    if (root && event.type === 'assistant.turn_end') {
+      if (st.replyNotification && !st.cancelling) {
+        st.pendingReply = { eventId: native.id, body: st.replyNotification };
+      }
+      st.replyNotification = undefined;
       this.scheduleSync(st);
     }
     if (event.type === 'session.error') {
-      st.finalReply = undefined;
+      st.replyNotification = undefined;
       st.pendingReply = undefined;
       this.patch(st, { status: 'error', error: String(data.message ?? 'Native turn failed') });
     }
@@ -805,7 +687,12 @@ export class Engine {
       this.patch(st, { currentMode: data.newMode as SessionMeta['currentMode'] });
     }
     if (event.type === 'session.compaction_start') this.patch(st, { compacting: true });
-    if (event.type === 'session.compaction_complete') this.patch(st, { compacting: false });
+    if (event.type === 'session.compaction_complete') {
+      this.patch(st, { compacting: false });
+      if (this.sessions.get(st.id) === st) {
+        this.emit({ type: 'chat/invalidated', sessionId: st.id, reason: 'compaction' });
+      }
+    }
     switch (native.type) {
       case 'session.idle':
       case 'session.error':
@@ -859,8 +746,8 @@ export class Engine {
     }).finally(() => {
       if (st.sync !== sync) return;
       st.sync = undefined;
-      // A load can settle after the loop exits but before this promise releases
-      // ownership. Do not lose the final buffered reply's requested readback.
+      // A control event can arrive after the loop exits but before ownership
+      // releases. Do not lose its requested native state readback.
       if (st.syncAgain) this.scheduleSync(st);
       this.release(st);
     });
@@ -937,7 +824,7 @@ export class Engine {
   private observeNamingReply(st: State, native: SessionEvent): void {
     if (st.namingAttempted || native.ephemeral) return;
     const event = normalizeEvent(native);
-    if (event.agentId || event.parentToolCallId || !isFoldContentVisible(st.fold, event, activeScope)) return;
+    if (event.agentId || event.parentToolCallId || event.data.parentToolCallId || event.data.agentId) return;
     if (['assistant.turn_start', 'user.message', 'abort', 'session.error'].includes(event.type)) {
       st.namingReply = false;
       st.autoNamePending = false;
@@ -989,10 +876,11 @@ export class Engine {
     });
   }
 
-  async autoName(id: string): Promise<IntentResult<'session/auto-name'>> {
+  autoName(id: string): Promise<IntentResult<'session/auto-name'>> {
     const st = this.sessions.get(id);
     if (st && (st.closing || this.lifecycle || this.removing.has(id))) return Promise.reject(namingBusyError());
-    return this.nameSession(await this.state(id));
+    if (st?.naming) return st.naming;
+    return this.state(id).then(state => this.nameSession(state));
   }
 
   private nameSession(st: State, automatic = false): Promise<IntentResult<'session/auto-name'>> {
@@ -1014,12 +902,22 @@ export class Engine {
           if (workspace.name) this.patch(st, { title: workspace.name });
           return { ok: true, applied: false, title: workspace.name ?? null, reason: 'user-named' };
         }
-        if (automatic && (workspace?.name || await this.firstNamingReply(sdk) !== st.autoNamePending)) {
+        // Native prompt-preview titles are also nonempty and not user-named.
+        if (automatic && await this.firstNamingReply(sdk) !== st.autoNamePending) {
           st.autoNamePending = false;
           return { ok: true, applied: false, title: workspace?.name ?? null, reason: 'not-applied' };
         }
-        if (!st.fold.messages.some(message => !message.subtype && ['user', 'assistant'].includes(message.role)
-          && (message.content.trim() || message.attachment))) {
+        // Context attribution can be uninitialized on a resumed conversation;
+        // it is not proof that native history is empty.
+        const context = await sdk.rpc.eventLog.read({
+          direction: 'backward', max: 1, types: ['user.message', 'assistant.message'], agentScope: 'primary', includeEphemeral: false,
+        });
+        if (context.cursorStatus !== 'ok' || context.events.length > 1
+          || context.events.some(event => !['user.message', 'assistant.message'].includes(event.type))
+          || (!context.events.length && context.hasMore)) {
+          throw new Error('Native conversation presence could not be confirmed by the targeted naming query.');
+        }
+        if (!context.events.length) {
           if (automatic) st.autoNamePending = false;
           return { ok: true, applied: false, title: workspace?.name ?? null, reason: 'no-context' };
         }
@@ -1097,7 +995,7 @@ export class Engine {
     return this.operation(id, async (sdk, st) => {
       const queued = (await this.readControl(st, sdk)).busy && mode === 'enqueue';
       st.sends++;
-      st.finalReply = undefined;
+      st.replyNotification = undefined;
       st.pendingReply = undefined;
       st.namingReply = false;
       st.autoNamePending = false;
@@ -1108,13 +1006,14 @@ export class Engine {
           attachments: attachments?.map(file => ({ type: 'file' as const, path: file.path, displayName: file.displayName ?? basename(file.path) })),
         }));
         if (st.sdk !== sdk) throw new Error('Native session closed during send; delivery is uncertain');
-        if (!st.userMessageIds.has(accepted)) st.accepted.add(accepted);
+        if (!st.sendReceipts.has(accepted)) st.accepted.add(accepted);
         return { ok: true, ...(queued ? { queued: true } : {}) };
       } catch (error) {
         this.patch(st, { status: 'error', error: messageOf(error) });
         throw error;
       } finally {
         st.sends--;
+        if (!st.sends) st.sendReceipts.clear();
         this.scheduleSync(st);
       }
     });
@@ -1135,7 +1034,7 @@ export class Engine {
       }
       await this.withSession(st, sdk, () => sdk.rpc.queue.clear());
       await this.withSession(st, sdk, () => sdk.abort());
-      st.finalReply = undefined;
+      st.replyNotification = undefined;
       st.pendingReply = undefined;
       st.namingReply = false;
       st.autoNamePending = false;
@@ -1168,7 +1067,7 @@ export class Engine {
     this.projectDecisions(st);
     if (st.turnEpoch !== target.epoch) return;
     st.interruptedEpoch = target.epoch;
-    st.finalReply = undefined;
+    st.replyNotification = undefined;
     st.pendingReply = undefined;
     st.namingReply = false;
     st.autoNamePending = false;
@@ -1242,26 +1141,20 @@ export class Engine {
 
   private detach(st: State, error?: Error): void {
     const sdk = st.sdk;
-    if (!error && st.buffered) {
-      this.flushBuffered(st);
-    }
     st.eventOwner = undefined;
     st.sdk = null;
     st.interruptTurn = undefined;
     st.interruptedEpoch = undefined;
     st.interactionId = undefined;
-    st.buffered = undefined;
     st.sync = undefined;
     st.syncAgain = false;
     if (sdk) this.bus.emit('closed', sdk);
-    st.fold = newFoldState();
-    st.finalReply = undefined;
+    st.replyNotification = undefined;
     st.namingReply = false;
     st.autoNamePending = false;
+    st.sendReceipts.clear();
     st.namingAttempted = undefined;
     st.namingDeferred = false;
-    st.eventIds.clear();
-    st.userMessageIds.clear();
     st.accepted.clear();
     for (const decision of st.decisions.values()) decision.reject(error ?? new Error('Native session closed'));
     st.decisions.clear();
@@ -1398,9 +1291,7 @@ export class Engine {
       const mutated = (result.eventsRemoved ?? 0) > 0 || result.outcome === 'rollback-incomplete'
         || (result.outcome !== 'files-rolled-back' && result.restoredFiles.length > 0);
       if (mutated) {
-        this.historyReader.clear(id);
-        await this.replay(st);
-        this.emit({ type: 'session/reset', page: pageHistory(id, st.fold.messages.map(summarizeMessage)) });
+        this.emit({ type: 'chat/invalidated', sessionId: id, reason: 'rewind' });
       }
       if (result.outcome !== 'success') {
         throw new Error(`Rewind ${result.outcome}${mutated ? ' (partially applied)' : ''}: ${result.error ?? 'native operation unavailable'}`);
@@ -1440,8 +1331,7 @@ export class Engine {
         id: row.id!, title: row.title!, description: row.description ?? undefined,
         status: ['pending', 'in_progress', 'done', 'blocked'].includes(row.status ?? '') ? row.status as TodoItem['status'] : 'pending',
       }));
-      return { planMarkdown: plan.content ?? null, todos,
-        changedFiles: [...st.fold.changedFiles].map(([path, operation]) => ({ path, operation })) };
+      return { planMarkdown: plan.content ?? null, todos };
     }, 'read');
   }
 
@@ -1756,7 +1646,6 @@ export class Engine {
         // The API's confirm:true gate precedes this operation. Native deletion is
         // authoritative; never remove files or preferences to simulate success.
         await this.untilFatal(() => this.runtime.deleteSession(id));
-        this.historyReader.clear(id);
         try { this.prefs.forgetSession(id); }
         catch (error) { throw new Error(`Native history deleted; preferences cleanup failed: ${messageOf(error)}`); }
         this.sessions.delete(id);
@@ -1765,29 +1654,26 @@ export class Engine {
     } finally { this.removing.delete(id); this.release(st); }
   }
 
-  toolImage(request: ToolImageRead, signal?: AbortSignal) {
-    return this.untilFatal(() =>
-      readToolImage(params => this.runtime.rpc.sessions.readPersistedEvents(params), request, signal));
-  }
-
-  history(id: string, beforeMsgId?: string, limit = 30, afterMsgId?: string, details: HistoryDetails = 'full'): Promise<HistoryPage> {
-    return this.untilFatal(() => this.historyReader.read(id, beforeMsgId, limit, afterMsgId, details));
-  }
-  resumeHistory(id: string, resume: HistoryResume, limit = 30, details: HistoryDetails = 'full'): Promise<HistoryPage> {
-    return this.untilFatal(() => this.historyReader.readResume(id, resume, limit, details));
-  }
-  subagentHistory(
-    id: string, toolCallId: string, beforeMsgId?: string, limit = 30, afterMsgId?: string,
-    details: HistoryDetails = 'summary',
-  ): Promise<SubagentHistoryPage> {
-    return this.untilFatal(() => this.historyReader.readSubagent(id, toolCallId, beforeMsgId, limit, afterMsgId, details));
-  }
-  async peekSession(id: string, beforeMsgId?: string, limit = 30, details: HistoryDetails = 'full'): Promise<{
-    sessionId: string; title: string; cwd: string; messages: ChatMessage[]; hasMore: boolean;
-  }> {
-    const page = await this.untilFatal(() => this.historyReader.readWithMetadata(id, beforeMsgId, limit, undefined, details));
-    return { sessionId: id, title: page.title, cwd: page.cwd,
-      messages: page.messages, hasMore: page.hasMore };
+  chat(query: NativeChatRead, signal?: AbortSignal): Promise<NativeChatPage> {
+    return this.untilFatal(async () => {
+      query = NativeChatRead.parse(query);
+      signal?.throwIfAborted();
+      if (this.lifecycle || this.removing.has(query.sessionId)) throw new Error('Session lifecycle transition is in progress');
+      const st = this.sessions.get(query.sessionId);
+      this.assertReadable(st);
+      if (this.creating.has(query.sessionId) && !st?.sdk) throw Object.assign(
+        new Error('Native session creation is still awaiting acknowledgement'), { statusCode: 409, code: 'SESSION_TRANSITION' },
+      );
+      const sdk = st?.sdk;
+      if (!sdk && !query.cursor && !await this.runtime.getSessionMetadata(query.sessionId)) {
+        throw Object.assign(new Error('Session was not found.'), { statusCode: 404 });
+      }
+      const read = () => readNativeChat(query, {
+        persisted: params => this.runtime.rpc.sessions.readPersistedEvents(params),
+        live: sdk?.rpc.eventLog,
+      }, signal);
+      return query.source === 'live' && st && sdk ? this.withSession(st, sdk, read) : read();
+    });
   }
 
   listDir(path?: string): DirListing {

@@ -132,8 +132,6 @@ export function registerReadTools(server: McpServer): void {
             `- [${i.status}] ${i.title} (${i.id})${i.description ? `\n    ${i.description}` : ''}`,
           ).join('\n') || '_No todos._'),
         ];
-        if (plan.changedFiles?.length) sections.push('## Changed files\n' +
-          plan.changedFiles.map((file) => `- ${file.operation}: ${file.path}`).join('\n'));
         return ok(capped(sections.join('\n\n')));
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));

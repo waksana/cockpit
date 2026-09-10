@@ -10,14 +10,14 @@ logs**. Backend failures are errors, never successful local-state fallbacks.
 Local files are accessed only for explicit upload/download operations.
 
 Binary: `cockpit-mcp-server` → `dist/index.js`. Requires Node ≥22.12; raw Node 24 is
-supported without a TypeScript loader. Canonical wire types come from the
-`@cockpit/protocol` workspace dependency using **type-only imports**.
+supported without a TypeScript loader. Canonical schemas and types come from
+the `@cockpit/protocol` workspace dependency.
 
 ## Discover and invoke the API
 
 `GET /capabilities` lists the actual protocol `Intents`, with names, descriptions,
 and a transport inventory. `prefix`, `limit` (1–100), and `offset` bound the listing.
-`GET /capabilities?name=session/peek` returns one intent's `inputSchema` and
+`GET /capabilities?name=session/chat` returns one intent's `inputSchema` and
 `resultSchema`, generated from the backend's Zod protocol schemas as JSON Schema
 draft-07. Name detail cannot be combined with listing parameters.
 
@@ -32,13 +32,13 @@ draft-07. Name detail cannot be combined with listing parameters.
 Example:
 
 ```json
-{"name":"session/peek"}
+{"name":"session/chat"}
 ```
 
 Pass that to `cockpit_capabilities`, then call `cockpit_call_intent`:
 
 ```json
-{"name":"session/peek","body":{"sessionId":"TARGET_SESSION_ID","limit":20}}
+{"name":"session/chat","body":{"sessionId":"TARGET_SESSION_ID","source":"persisted","direction":"backward","max":64}}
 ```
 
 The generic caller sends one POST directly, without a capability preflight or a
@@ -79,7 +79,7 @@ store or capability policy.
 
 Generic invocation also covers surviving API operations without semantic wrappers,
 such as `inbox/seen`, `push/subscribe`, `speech/token`, `session/refresh`, and
-`skills/read`. Both `session/history` and `session/peek` return synchronous JSON.
+`skills/read`. `session/chat` returns one bounded native event page as JSON.
 
 Deletion is irreversible native Copilot `deleteSession`, not a trash marker.
 Both delete and purge require explicit `confirm:true`; the backend rejects old
@@ -168,74 +168,69 @@ The result reports `{ok:true,applied,title,reason?}`. `applied:false` preserves 
 current name, with `user-named`, `no-context` or `not-applied` explaining why.
 Do not describe a skipped operation as a successful rename or retry it in a loop.
 An explicit request may resume an unloaded session; busy work must settle first.
-The UI also offers the action beside manual renaming.
+Manual and automatic naming remain available through HTTP/MCP, not a separate
+Web menu action.
 
 The first effective completed reply can trigger one automatic attempt after the
 session settles. Historical replies are not retroactively named on startup or
 history viewing. Progress and naming errors are transient UI state; the title's
 only persistent owner is Copilot.
 
-## Canonical transcript pagination
+## Native event pagination
 
-`cockpit_read_session` calls **`session/peek`**, which reads a loaded session's live
-fold or the backend's read-only preview for an unloaded session. It does
-not resume or create an active session.
+`cockpit_read_session` calls **`session/chat`**. It reads one native page without
+server-folded messages, a history cache, or message-ID scans. The default passive
+source works for loaded and unloaded native sessions without loading them.
 
 ```json
-{"session_id":"TARGET_SESSION_ID","limit":40,"response_format":"json"}
+{"session_id":"TARGET_SESSION_ID","source":"persisted","direction":"backward","limit":64,"response_format":"json"}
 ```
 
-The JSON result contains `sessionId`, backend `title`/`cwd`, canonical `messages`,
-`hasMore`, `returned`, `source:"api"`, and `nextBeforeMsgId`.
-The first page is the newest messages, ordered oldest-first within that page.
-Pass `nextBeforeMsgId` as `before_message_id` to read older pages.
-Messages preserve their IDs, timestamps, roles, tools, attachments, thought fields
-and nested subagent messages; MCP does not fold or synthesize transcript content.
+The result contains `sessionId`, `events`, `cursor`, `cursorStatus`,
+`hasMore`, `source`, `direction`, and `read:{rpc,events}`. `limit` is 1–256 native
+events, not display messages; generic HTTP uses `max`. Backward pages contain the
+latest events in append order. Pass the opaque cursor with the same source,
+direction and filters for the next page. Event IDs and assistant message IDs are
+identities, not sorting or seek keys. The runtime's expired cursor is returned
+explicitly, not silently replaced by the latest page.
+
+Titles, working directories and runtime metadata belong to `session/get` or
+`session/list`, not every chat page or streaming poll.
 
 Oversized pages return a bounded `{format:"json-fragment",json,pageVersion,pageOffset,
 nextPageOffset,pageCharacters}` envelope instead of clipping message fields.
-Repeat the same session/cursor/limit with `page_offset:nextPageOffset` and
+Repeat the identical native query with `page_offset:nextPageOffset` and
 `page_version:pageVersion` until the next offset is null. Concatenate the `json`
 strings and parse once to recover the complete page. The version hashes the
-complete canonical page; if it changes, continuation fails explicitly. Discard
+complete page; each fragment rereads that bounded native page without caching.
+If it changes, continuation fails explicitly. Discard
 earlier fragments and restart from offset zero rather than mixing snapshots.
 Prefer a smaller `limit` when reading an actively changing transcript.
 Markdown mode presents the same canonical JSON and also uses fragments on overflow.
 
-For a live session, use `operation:"history"` to call `session/history` instead.
-Both reads are passive: no runtime loading or SSE query broadcasts. `HistoryPage` has `sessionId`,
-`messages`, `hasMore`, optional `latest` and `append`, **not** peek's `title`/`cwd`.
-The semantic result adds the same pagination helpers plus `nextAfterMsgId` for
-resuming a tail via `after_message_id`. Before/after cursors are mutually
-exclusive; `after_message_id` requires history. `limit` is an integer from 1–200.
-Generic calls use `beforeMsgId`/`afterMsgId` and return the unwrapped HistoryPage.
-There is no `session/history-page` event to wait for.
+`source:"live"` requires an already loaded handle and supports native type/agent
+filters. `bootstrap:true` on a fresh backward query captures a separate
+`liveCursor` before reading the page. Use it with `direction:"forward"` to catch
+up; duplicate event IDs may overlap the initial page. `include_ephemeral` defaults
+false in MCP; enable it only for live forward reads. `wait_ms` is at most 1000.
+There is no guaranteed replay of a missing ephemeral delta.
 
-### Summary cards and explicit subagent reads
+### Exact subagent reads
 
-Pass `details:"summary"` to avoid downloading nested transcripts and task prompts
-with the root conversation. A subagent summary carries `subagent.toolCallId`:
+Use the native agent ID and, for older native envelope ownership, the spawning
+tool call ID obtained from events:
 
 ```json
-{"session_id":"TARGET_SESSION_ID","details":"summary","response_format":"json"}
+{"session_id":"TARGET_SESSION_ID","source":"live","agent_ids":["NATIVE_AGENT_ID","NATIVE_TOOL_CALL_ID"],"limit":64,"response_format":"json"}
 ```
 
-Use that exact ID to read the child transcript on demand:
-
-```json
-{"session_id":"TARGET_SESSION_ID","operation":"subagent","tool_call_id":"NATIVE_TOOL_CALL_ID","limit":30,"response_format":"json"}
-```
-
-This wraps `session/subagent-history` with camelCase `sessionId` and `toolCallId`.
-The result includes the child's metadata and a page of direct messages; nested
-children are summaries by default. Cursor and JSON-fragment continuation work as
-for root history. Both modes are passive, including unloaded sessions.
-Omitting `details` on root reads preserves the previous full-transcript behavior;
-explicit `details:"full"` also includes descendants in a child read.
-Child reads reuse native cursor checkpoints when the parent was already read.
-A direct child-ID query without that cache may require a full passive scan; its
-default MCP deadline is 120 seconds, with no automatic retry. `COCKPIT_TIMEOUT_MS`
-still overrides all deadlines.
+This is native event filtering, not a tasks-list or whole-history scan. The
+passive API has no equivalent filter, so such an unloaded request explicitly
+requires loading rather than pretending to be an exact passive query. Child
+details do not fabricate current task status or read the whole task registry.
+The retired `operation`, `details`, `tool_call_id`, `before_message_id`, and
+`after_message_id` inputs return a migration error. Retired HTTP history routes
+return `410 CHAT_PROTOCOL_CHANGED`. See [the protocol lifecycle](../../docs/native-chat.md).
 
 ### Session A sends to and reads B
 
@@ -304,12 +299,13 @@ Use `cockpit_capabilities {prefix:"files/"}` and `cockpit_call_intent`:
   `errors:[{url,error}]` reports unreadable entries and is preserved by the generic tool.
 - `files/get {url}` returns the selected file's authoritative metadata.
 - `files/associate {url,sessionId}` adds an association without sending or copying.
-- `files/from-tool-image {sessionId,image,name?}` explicitly retains one native
-  tool image selected from history. `image` contains `eventId`, `toolCallId`,
-  `part`, and optional `cursor`/`count` from its reference, not image bytes or
-  presentation fields such as `mime`. Inspect the capability for the exact schema.
-  The returned `kind/name/url/size/mime` can be used as an attachment or downloaded.
-  This operation does not rewrite native history or retain unrelated tool images.
+
+To publish an image, upload an existing local original or reuse a managed URL.
+The producing tool should save a local original when publication is needed.
+Native-only tool-image lookup is retired: `session/tool-image` and
+`files/from-tool-image` return HTTP 410 instead of scanning history. Chat reads
+omit internal image bytes and never collect them. Existing retained images
+remain usable; displaying their links again does not publish another copy.
 
 Files have **no automatic expiry** and survive session deletion. They are not
 anonymous public links: public-host `/uploads` downloads are protected by passkey
@@ -357,7 +353,7 @@ Serving remains sandboxed, `nosniff`, and bounded to 25 MiB.
 | `COCKPIT_URL` | `http://127.0.0.1:8771`; use an authenticated gateway for remote access |
 | `COCKPIT_PORT` | `8771`, used only when `COCKPIT_URL` is unset |
 | `COCKPIT_API_TOKEN` | Optional gateway credential; `Authorization: Bearer …` on **every** HTTP request |
-| `COCKPIT_TIMEOUT_MS` | Positive integer override; otherwise 10s routine/transfer requests, 45s load-aware intents including `session/peek` |
+| `COCKPIT_TIMEOUT_MS` | Positive integer override; otherwise 10s routine/native-page/transfer requests and 45s load-aware intents |
 | `COCKPIT_UPLOAD_DIRS` | Additional absolute local upload roots, separated by the platform path delimiter; defaults are system temp, `/tmp`, `/var/tmp`, `~/.copilot/session-state` and `~/.copilot/cockpit-uploads` |
 | `COCKPIT_DOWNLOAD_DIRS` | Additional absolute local download roots, separated by the platform path delimiter; default root is MCP's working directory |
 
@@ -412,10 +408,11 @@ through your environment/secret configuration, not committed source files.
   `COCKPIT_SESSION_STATE_DIR`, and backend-state `COCKPIT_HOME` configuration.
 - `cockpit_read_session` no longer accepts turn `offset`, `assistant_view`, or
   `exclude_skill_context`, and no longer returns `turns`/local diagnostic fields.
-  Migrate to canonical `messages` and `before_message_id` pagination above.
-- Both API and generic MCP `session/purge` require `confirm:true`. The confirmed
-  semantic purge tool forwards it. Trash/restore and existing history/files remain
-  available; this refactor does not migrate or delete stored session data.
+  Migrate to native `events`, source/direction and opaque cursor pagination above.
+- Both API and generic MCP `session/delete` and its `session/purge` alias require
+  `confirm:true`. Semantic delete/purge tools use the already-destructive purge
+  wire name for staggered releases. Trash/restore are retired; removing old trash
+  marks unhides native sessions, without deleting their history or managed files.
 
 ## Native session fork
 

@@ -249,7 +249,7 @@ test('context shows independent resource status without a false empty result', (
     session, onClose: noop,
   }));
   assert.doesNotMatch(html, /<nav|info-panel-more|role="tab"/);
-  assert.match(html, /改动文件：等待连接/);
+  assert.doesNotMatch(html, /改动文件/);
   assert.match(html, /指令文件和子代理：等待连接/);
   assert.doesNotMatch(html, /本会话还没有上下文/);
 });

@@ -9,7 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { z } from 'zod';
-import { Intents, type Attachment, type ChatMessage, type SessionMeta, type SessionPanels, type SessionPlan, type Snapshot } from '../../../packages/protocol/src/index.ts';
+import { Intents, type Attachment, type NativeChatEvent, type SessionMeta, type SessionPanels, type SessionPlan, type Snapshot } from '../../../packages/protocol/src/index.ts';
 
 type Request = { path: string; method: string; body: unknown; authorization: string | undefined };
 const requests: Request[] = [];
@@ -22,16 +22,14 @@ const retainedFile = {
   ...attachment, size: 20, mime: 'image/png', path: '/remote/uploads/safe-image.png',
   source: 'tool-image', sessionId: 'B', sha256: 'a'.repeat(64), createdAt: 1,
 };
-const messages: ChatMessage[] = [
-  { id: 'm1', role: 'user', content: 'earlier question', timestamp: 1 },
+const nativeEvents: NativeChatEvent[] = [
+  { id: 'e1', type: 'user.message', data: { content: 'earlier question' } },
   {
-    id: 'm2', role: 'assistant', content: 'canonical answer', timestamp: 2,
-    thought: 'reasoning',
-    toolCalls: [{ toolCallId: 'tool-1', title: 'Read file', name: 'read_file', args: '{}', status: 'completed', output: 'from backend' }],
-    subMessages: [{ id: 'child', role: 'assistant', content: 'subagent result', timestamp: 2 }],
-    attachment,
+    id: 'e2', type: 'assistant.message', data: { messageId: 'm2', content: 'native answer',
+      toolRequests: [{ toolCallId: 'tool-1', name: 'read_file', arguments: {} }] },
   },
 ];
+const nativeRead = { source: 'persisted', direction: 'backward', max: 64, includeEphemeral: false, waitMs: 0, bootstrap: false };
 let unavailable = false;
 let large = false;
 const initialLargeContent = 'large "quoted" tool transcript\n'.repeat(4000);
@@ -62,7 +60,6 @@ const plan: SessionPlan = {
     { id: 'todo-2', title: 'Verify MCP', description: 'Use mocked transports', status: 'in_progress' },
     { id: 'todo-3', title: 'Wait for parent', status: 'blocked' },
   ],
-  changedFiles: [{ path: 'apps/mcp/src/shared.ts', operation: 'edit' }],
 };
 const panels: SessionPanels = {
   skills: [{ label: 'review', sublabel: 'Project review skill', enabled: true }],
@@ -123,25 +120,22 @@ mockHttp((res, req) => {
     });
     if (name === 'session/panels') return send(panels);
     if (name === 'skills/global') return send({ skills: [{ name: 'review', description: 'Review changes', source: 'project' }] });
-    if (name === 'session/peek' || name === 'session/history' || name === 'session/subagent-history') {
-      const input = z.object({
-        sessionId: z.string(), toolCallId: z.string().optional(), beforeMsgId: z.string().optional(),
-        afterMsgId: z.string().optional(), limit: z.number().default(40),
-      }).parse(body);
-      const source = name === 'session/subagent-history' ? messages[1]!.subMessages! : messages;
-      const end = input.beforeMsgId ? source.findIndex((message) => message.id === input.beforeMsgId) : source.length;
-      const start = input.afterMsgId ? source.findIndex((message) => message.id === input.afterMsgId) + 1 : Math.max(0, end - input.limit);
+    if (name === 'session/chat') {
+      const input = Intents['session/chat'].body.parse(body);
+      const source = input.agentIds ? [{ id: 'child-event', type: 'assistant.message',
+        agentId: input.agentIds[0], data: { messageId: 'child', content: 'subagent result' } }] : nativeEvents;
+      const boundary = input.cursor ? Number(input.cursor.slice('native-'.length))
+        : input.direction === 'backward' ? source.length : 0;
+      const start = input.direction === 'backward' ? Math.max(0, boundary - input.max) : boundary;
+      const end = input.direction === 'backward' ? boundary : Math.min(source.length, start + input.max);
+      const events = large ? [{ ...nativeEvents[1], data: { ...nativeEvents[1]!.data, content: largeContent } }]
+        : source.slice(start, end);
       return send(malformedPreview ? {} : {
-        sessionId: input.sessionId,
-        ...(name === 'session/peek' ? { title: meta.title, cwd: meta.cwd } : {
-          latest: input.beforeMsgId === undefined, ...(input.afterMsgId ? { append: true } : {}),
-        }),
-        ...(name === 'session/subagent-history' ? {
-          toolCallId: input.toolCallId,
-          subagent: { name: 'task', displayName: 'Child', status: 'completed', prompt: 'Full child prompt' },
-        } : {}),
-        messages: large ? [{ ...messages[1], content: largeContent }] : source.slice(start, end),
-        hasMore: !input.afterMsgId && start > 0,
+        sessionId: input.sessionId, source: input.source, direction: input.direction,
+        events, cursor: `native-${input.direction === 'backward' ? start : end}`, cursorStatus: 'ok',
+        hasMore: input.direction === 'backward' ? start > 0 : end < source.length,
+        ...(input.bootstrap ? { liveCursor: `native-${source.length}` } : {}),
+        read: { rpc: input.bootstrap ? 2 : 1, events: events.length },
       });
     }
     if (name === 'session/new') return send({ sessionId: 'new-id' });
@@ -155,7 +149,7 @@ mockHttp((res, req) => {
       files: [retainedFile], hasMore: false,
       errors: [{ url: '/uploads/unreadable.bin', error: 'Missing metadata' }],
     });
-    if (['files/get', 'files/from-tool-image', 'files/associate'].includes(name)) return send(retainedFile);
+    if (['files/get', 'files/associate'].includes(name)) return send(retainedFile);
     if (name === 'prompt') {
       const input = Intents.prompt.body.parse(body);
       if (input.attachment && !/^\/uploads\/[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/.test(input.attachment.url)) {
@@ -263,33 +257,32 @@ test('session lists, full state and transcript read exclusively through HTTP', a
   assert.ok(live.sessions.every((session) => !('launchState' in session) && !('spawnedBy' in session)));
   await json('cockpit_get_session', { session_id: 'B', response_format: 'json' });
   for (const sessionId of ['B', 'unloaded']) {
-    const page = z.object({ messages: z.array(z.unknown()), title: z.string(), cwd: z.string(), source: z.string() })
+    const page = z.object({ sessionId: z.string(), events: z.array(z.unknown()), source: z.string() })
       .parse(await json('cockpit_read_session', { session_id: sessionId, response_format: 'json' }));
-    assert.deepEqual(page.messages, messages, 'all canonical fields must survive, including images and subagents');
-    assert.equal(page.title, meta.title);
-    assert.equal(page.cwd, meta.cwd);
-    assert.equal(page.source, 'api');
+    assert.deepEqual(page.events, nativeEvents, 'the native envelope and payload survive without a server message fold');
+    assert.equal(page.sessionId, sessionId);
+    assert.equal(page.source, 'persisted');
   }
   assert.deepEqual(requests.map(({ path }) => path), [
     '/intent/session/list', '/intent/session/get',
-    '/intent/session/peek', '/intent/session/peek',
+    '/intent/session/chat', '/intent/session/chat',
   ]);
   assert.ok(requests.every((request) => request.authorization === 'Bearer session-test-token'));
 });
 
-test('transcript cursor requests older canonical messages without turn offsets', async () => {
-  const Page = z.object({ messages: z.array(z.unknown()), hasMore: z.boolean(), nextBeforeMsgId: z.string().nullable() });
+test('transcript cursor requests older native events without message or turn offsets', async () => {
+  const Page = z.object({ events: z.array(z.unknown()), hasMore: z.boolean(), cursor: z.string() });
   const newest = Page.parse(await json('cockpit_read_session', { session_id: 'B', limit: 1, response_format: 'json' }));
-  assert.deepEqual(newest.messages, [messages[1]]);
+  assert.deepEqual(newest.events, [nativeEvents[1]]);
   assert.equal(newest.hasMore, true);
-  assert.equal(newest.nextBeforeMsgId, 'm2');
+  assert.equal(newest.cursor, 'native-1');
   const older = Page.parse(await json('cockpit_read_session', {
-    session_id: 'B', limit: 1, before_message_id: newest.nextBeforeMsgId, response_format: 'json',
+    session_id: 'B', limit: 1, cursor: newest.cursor, response_format: 'json',
   }));
-  assert.deepEqual(older.messages, [messages[0]]);
+  assert.deepEqual(older.events, [nativeEvents[0]]);
   assert.equal(older.hasMore, false);
-  assert.equal(older.nextBeforeMsgId, null);
-  assert.deepEqual(requests[1]?.body, { sessionId: 'B', beforeMsgId: 'm2', limit: 1 });
+  assert.equal(older.cursor, 'native-0');
+  assert.deepEqual(requests[1]?.body, { sessionId: 'B', ...nativeRead, cursor: 'native-1', max: 1 });
 });
 
 test('oversized transcript pages are lossless bounded JSON fragments', async () => {
@@ -313,9 +306,9 @@ test('oversized transcript pages are lossless bounded JSON fragments', async () 
     serialized += fragment.json;
     offset = fragment.nextPageOffset;
   }
-  const page = z.object({ messages: z.array(z.object({ content: z.string(), attachment: z.unknown() })) }).parse(JSON.parse(serialized));
-  assert.equal(page.messages[0]?.content, 'large "quoted" tool transcript\n'.repeat(4000));
-  assert.deepEqual(page.messages[0]?.attachment, messages[1]?.attachment);
+  const page = Intents['session/chat'].result.parse(JSON.parse(serialized));
+  assert.equal(page.events[0]?.data.content, initialLargeContent);
+  assert.deepEqual(page.events[0]?.data.toolRequests, nativeEvents[1]?.data.toolRequests);
 });
 
 test('transcript continuation requires a page version before any backend request', async () => {
@@ -338,7 +331,7 @@ test('transcript continuation rejects same-length content changes instead of mix
     page_version: first.pageVersion, response_format: 'json',
   });
   assert.equal(next.isError, true);
-  assert.match(next.text, /canonical page changed/);
+  assert.match(next.text, /native page changed/);
   const restarted = Fragment.parse(await json('cockpit_read_session', {
     session_id: 'B', limit: 1, response_format: 'json',
   }));
@@ -362,7 +355,7 @@ test('explicit A to B send and read use the same backend without governance', as
   assert.equal(sent.isError, false, sent.text);
   assert.deepEqual(requests[0]?.body, { sessionId: 'B', text: 'From session A: review this image', mode: 'enqueue' });
   await json('cockpit_read_session', { session_id: 'B', response_format: 'json' });
-  assert.deepEqual(requests.map(({ path }) => path), ['/intent/prompt', '/intent/session/peek']);
+  assert.deepEqual(requests.map(({ path }) => path), ['/intent/prompt', '/intent/session/chat']);
 });
 
 test('discovery lists bounded names or one schema and supports future intents without wrappers', async () => {
@@ -498,10 +491,10 @@ test('permanent delete requires explicit confirmation and retired trash tools ar
   ]);
 });
 
-test('canonical plan narrative, todos, changed files and panel sublabels/enabled flags render nonempty', async () => {
+test('native plan narrative, todos and panel sublabels/enabled flags render nonempty', async () => {
   const renderedPlan = await call('cockpit_get_plan', { session_id: 'B' });
   assert.equal(renderedPlan.isError, false, renderedPlan.text);
-  for (const text of ['Canonical narrative', '[done] Implement contract', '[in_progress] Verify MCP', 'Use mocked transports', '[blocked] Wait for parent', 'edit: apps/mcp/src/shared.ts']) {
+  for (const text of ['Canonical narrative', '[done] Implement contract', '[in_progress] Verify MCP', 'Use mocked transports', '[blocked] Wait for parent']) {
     assert.ok(renderedPlan.text.includes(text), text);
   }
   assert.deepEqual(await json('cockpit_get_plan', { session_id: 'B', response_format: 'json' }), plan);
@@ -527,7 +520,7 @@ test('plan description absence and empty text survive semantic and generic MCP r
     assert.deepEqual(await json('cockpit_call_intent', { name: 'session/plan', body: { sessionId: 'B' } }), expected);
     const rendered = await call('cockpit_get_plan', { session_id: 'B' });
     assert.equal(rendered.isError, false, rendered.text);
-    for (const text of ['No description', 'Normalized null', 'Empty description', 'Actual description', 'Preserve description', 'Canonical narrative', 'apps/mcp/src/shared.ts']) {
+    for (const text of ['No description', 'Normalized null', 'Empty description', 'Actual description', 'Preserve description', 'Canonical narrative']) {
       assert.ok(rendered.text.includes(text), text);
     }
     assert.doesNotMatch(rendered.text, /undefined/);
@@ -640,46 +633,33 @@ test('snapshot exposes required allow-all policy and complete canonical state th
   assert.match(missing.text, /permissionPolicy/);
 });
 
-test('history returns synchronous canonical HistoryPage and supports before/after with no SSE wrapper', async () => {
+test('native chat generic and semantic tools return the same bounded event page', async () => {
   const generic = await json('cockpit_call_intent', {
-    name: 'session/history', body: { sessionId: 'B', limit: 1 },
+    name: 'session/chat', body: { sessionId: 'B', max: 1 },
   });
-  assert.deepEqual(generic, { sessionId: 'B', messages: [messages[1]], hasMore: true, latest: true });
   const recent = await json('cockpit_read_session', {
-    session_id: 'B', operation: 'history', limit: 1, response_format: 'json',
+    session_id: 'B', limit: 1, response_format: 'json',
   });
-  assert.deepEqual(recent, {
-    ...generic as object, source: 'api', returned: 1, nextBeforeMsgId: 'm2', nextAfterMsgId: 'm2',
-  });
-  const older = await json('cockpit_read_session', {
-    session_id: 'B', operation: 'history', before_message_id: 'm2', limit: 1, response_format: 'json',
-  });
-  assert.deepEqual(older, {
-    sessionId: 'B', messages: [messages[0]], hasMore: false, latest: false,
-    source: 'api', returned: 1, nextBeforeMsgId: null, nextAfterMsgId: 'm1',
-  });
-  const tail = await json('cockpit_read_session', {
-    session_id: 'B', operation: 'history', after_message_id: 'm1', response_format: 'json',
-  });
-  assert.deepEqual(tail, {
-    sessionId: 'B', messages: [messages[1]], hasMore: false, latest: true, append: true,
-    source: 'api', returned: 1, nextBeforeMsgId: null, nextAfterMsgId: 'm2',
-  });
-  assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', afterMsgId: 'm1', limit: 40 });
-  const emptyTail = z.object({ messages: z.array(z.unknown()), nextAfterMsgId: z.string() })
-    .parse(await json('cockpit_read_session', {
-      session_id: 'B', operation: 'history', after_message_id: 'm2', response_format: 'json',
-    }));
-  assert.deepEqual(emptyTail.messages, []);
-  assert.equal(emptyTail.nextAfterMsgId, 'm2', 'an empty tail must not discard the resume cursor');
+  assert.deepEqual(recent, generic);
+  const tail = Intents['session/chat'].result.parse(await json('cockpit_read_session', {
+    session_id: 'B', direction: 'forward', cursor: 'native-1', response_format: 'json',
+  }));
+  assert.deepEqual(tail.events, [nativeEvents[1]]);
+  assert.equal(tail.cursor, 'native-2');
+  assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', ...nativeRead, direction: 'forward', cursor: 'native-1' });
+  const emptyTail = Intents['session/chat'].result.parse(await json('cockpit_read_session', {
+    session_id: 'B', direction: 'forward', cursor: tail.cursor, response_format: 'json',
+  }));
+  assert.deepEqual(emptyTail.events, []);
+  assert.equal(emptyTail.cursor, 'native-2');
   assert.ok(requests.every((request) => request.path.startsWith('/intent/') || request.path.startsWith('/capabilities')));
 });
 
-test('history cursors are mutually exclusive and limits are positive integers at most 200', async () => {
+test('retired selectors and invalid native page bounds fail before dispatch', async () => {
   for (const args of [
     { operation: 'history', before_message_id: 'm2', after_message_id: 'm1' },
-    { after_message_id: 'm1' },
-    ...[0, -1, 1.5, 201].map((limit) => ({ operation: 'history', limit })),
+    { after_message_id: 'm1' }, { details: 'summary' }, { tool_call_id: 'old-child' },
+    ...[0, -1, 1.5, 257].map((limit) => ({ limit })),
   ]) {
     const result = await call('cockpit_read_session', { session_id: 'B', ...args });
     assert.equal(result.isError, true, JSON.stringify(args));
@@ -687,32 +667,28 @@ test('history cursors are mutually exclusive and limits are positive integers at
   assert.equal(requests.length, 0, 'semantic validation must fail before dispatch');
   for (const body of [
     { beforeMsgId: 'm2', afterMsgId: 'm1' },
-    ...[0, -1, 1.5, 201].map((limit) => ({ limit })),
-  ]) assert.equal((await call('cockpit_call_intent', { name: 'session/history', body: { sessionId: 'B', ...body } })).isError, true);
-  await json('cockpit_read_session', { session_id: 'B', operation: 'history', limit: 200, response_format: 'json' });
+    ...[0, -1, 1.5, 257].map((max) => ({ max })),
+  ]) assert.equal((await call('cockpit_call_intent', { name: 'session/chat', body: { sessionId: 'B', ...body } })).isError, true);
+  await json('cockpit_read_session', { session_id: 'B', limit: 256, response_format: 'json' });
   malformedPreview = true;
-  assert.equal((await call('cockpit_read_session', { session_id: 'B', operation: 'history' })).isError, true);
+  assert.equal((await call('cockpit_read_session', { session_id: 'B' })).isError, true);
 });
 
-test('summary and subagent transcript reads use the same API without loading a session', async () => {
-  await json('cockpit_read_session', { session_id: 'B', details: 'summary', response_format: 'json' });
-  assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', details: 'summary', limit: 40 });
-  const page = await json('cockpit_read_session', {
-    session_id: 'B', operation: 'subagent', tool_call_id: 'native-child', limit: 10, response_format: 'json',
+test('child native filtering requires live reads and never resumes a session', async () => {
+  const invalid = await call('cockpit_read_session', {
+    session_id: 'B', agent_ids: ['native-child'], response_format: 'json',
   });
-  assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', toolCallId: 'native-child', limit: 10 });
-  assert.equal(requests.at(-1)?.path, '/intent/session/subagent-history');
-  assert.deepEqual(page, {
-    sessionId: 'B', toolCallId: 'native-child', latest: true, hasMore: false,
-    subagent: { name: 'task', displayName: 'Child', status: 'completed', prompt: 'Full child prompt' },
-    messages: messages[1]!.subMessages, source: 'api', returned: 1,
-    nextBeforeMsgId: null, nextAfterMsgId: 'child',
+  assert.equal(invalid.isError, true);
+  assert.equal(requests.length, 1, 'the authoritative HTTP schema rejects unsupported passive filters');
+  const page = Intents['session/chat'].result.parse(await json('cockpit_read_session', {
+    session_id: 'B', source: 'live', agent_ids: ['native-child'], limit: 10, response_format: 'json',
+  }));
+  assert.equal(page.events[0]?.agentId, 'native-child');
+  assert.equal(page.events[0]?.data.content, 'subagent result');
+  assert.deepEqual(requests.at(-1)?.body, {
+    sessionId: 'B', ...nativeRead, source: 'live', agentIds: ['native-child'], max: 10,
   });
-  for (const args of [
-    { operation: 'subagent' }, { tool_call_id: 'native-child' },
-    { operation: 'subagent', tool_call_id: 'native-child', before_message_id: 'a', after_message_id: 'b' },
-  ]) assert.equal((await call('cockpit_read_session', { session_id: 'B', ...args })).isError, true);
-  assert.ok(requests.every(({ path }) => ['/intent/session/peek', '/intent/session/subagent-history'].includes(path)));
+  assert.ok(requests.every(({ path }) => path === '/intent/session/chat'));
 });
 test('semantic and generic prompt deliver attachment JSON unchanged with no marker or local/backend path', async () => {
   for (const text of ['Review this image', '']) {
@@ -750,15 +726,10 @@ test('global skills forwards optional backend cwd and omits it for server-home d
   assert.deepEqual(requests.at(-1)?.body, { cwd: '/backend/other' });
 });
 
-test('retained files are discoverable, selectable and explicitly retained through generic intents for attachment delivery', async () => {
+test('retained files remain discoverable and selectable for attachment delivery without native image lookup', async () => {
   const catalog = z.object({ intents: z.array(z.object({ name: z.string() })) })
     .parse(await json('cockpit_capabilities', { prefix: 'files/' }));
-  assert.deepEqual(catalog.intents.map(item => item.name), ['files/associate', 'files/from-tool-image', 'files/get', 'files/list']);
-  const image = { eventId: 'event-1', toolCallId: 'tool-1', part: 0, cursor: 'native-cursor' };
-  assert.deepEqual(await json('cockpit_call_intent', {
-    name: 'files/from-tool-image', body: { sessionId: 'B', image, name: 'retained.png' },
-  }), retainedFile);
-  assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', image, name: 'retained.png' });
+  assert.deepEqual(catalog.intents.map(item => item.name), ['files/associate', 'files/get', 'files/list']);
   const listing = await json('cockpit_call_intent', {
     name: 'files/list', body: { query: 'display', sessionId: 'B', limit: 10, offset: 0 },
   });

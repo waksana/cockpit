@@ -1,130 +1,77 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { HistoryPage, IntentResult, SubagentHistoryPage } from '@cockpit/protocol';
+import { NativeChatPage } from '@cockpit/protocol';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { CHARACTER_LIMIT } from '../config.js';
 import { protocolIntent as intent } from '../cockpit.js';
 import { ResponseFormat, fail, ok, type ToolResult } from '../shared.js';
 
-// Validate the envelope and pagination keys only. Preserve every canonical message
-// field (including attachments, tools and nested subMessages) without another fold.
-const Messages = z.array(z.object({
-  id: z.string(),
-  role: z.enum(['user', 'assistant', 'system']),
-  content: z.string(),
-  timestamp: z.number(),
-}).passthrough());
-const History = z.object({
-  sessionId: z.string(),
-  messages: Messages,
-  hasMore: z.boolean(),
-  latest: z.boolean().optional(),
-  append: z.boolean().optional(),
-}).passthrough() satisfies z.ZodType<HistoryPage>;
-const Preview = History.extend({
-  title: z.string(),
-  cwd: z.string(),
-}).passthrough() satisfies z.ZodType<IntentResult<'session/peek'>>;
-const SubagentHistory = History.extend({
-  toolCallId: z.string(),
-  subagent: z.object({
-    name: z.string(), displayName: z.string(), status: z.enum(['running', 'completed', 'failed']),
-  }).passthrough(),
-}).passthrough() satisfies z.ZodType<SubagentHistoryPage>;
-
 export function registerTranscriptTools(server: McpServer): void {
   server.registerTool('cockpit_read_session', {
-    title: 'Read a canonical session transcript',
-    description: 'Read session/peek over HTTP for live or unloaded sessions, without loading a runtime or local state. '
-      + 'Returns canonical folded messages, oldest-first within the newest page, including tools, images and subagents. '
-      + 'Use nextBeforeMsgId as before_message_id to read older pages. operation:"history" instead reads '
-      + 'session/history passively for a live session without loading it, returning HistoryPage including latest/append when present. '
-      + 'details:"summary" omits nested transcripts and spawn prompts; full is the default for root reads. '
-      + 'Use operation:"subagent" with tool_call_id from a summary card to read its paginated transcript without loading it; '
-      + 'nested cards are summaries by default in that operation. History and subagent accept after_message_id; '
-      + 'before/after are mutually exclusive. '
-      + 'No session/history-page SSE event or local DB/event-log fallback is needed. '
-      + 'Oversized pages return lossless JSON fragments; repeat identical page parameters with nextPageOffset '
-      + 'as page_offset and pageVersion as page_version, concatenate json fragments, then JSON.parse. '
-      + 'Continuation fails if the canonical page changed; discard fragments and restart from offset zero.',
+    title: 'Read a native session event page',
+    description: 'Read one native session/chat event page, not server-assembled messages. '
+      + 'source:"persisted" works passively for loaded and unloaded sessions; it has no native type/agent filters. '
+      + 'source:"live" requires an already loaded session and supports types, agent_scope and agent_ids. '
+      + 'Default backward reads fetch the newest events in append order; pass returned cursor unchanged with the same '
+      + 'source, direction and filters for the next page. UUIDs are identities, not ordering or seek keys. '
+      + 'bootstrap:true on a fresh live backward read also returns a separate liveCursor for forward continuation. '
+      + 'Expired cursors require explicit resynchronization. No whole-history scan, local database, or cache fallback. '
+      + 'Internal tool-image bytes are omitted and never collected. To show an image, upload an existing local artifact '
+      + 'or reuse a managed file, then include its /uploads markdown; native image lookup is retired. '
+      + 'For an oversized page, repeat the identical native query with nextPageOffset/pageVersion to obtain JSON fragments; '
+      + 'this rereads the bounded native page, does not cache it, and fails explicitly if it changed.',
     inputSchema: {
       session_id: z.string().min(1),
-      operation: z.enum(['peek', 'history', 'subagent']).default('peek'),
-      tool_call_id: z.string().min(1).optional(),
-      details: z.enum(['full', 'summary']).optional(),
-      before_message_id: z.string().min(1).optional(),
-      after_message_id: z.string().min(1).optional(),
-      limit: z.number().int().min(1).max(200).default(40),
-      page_offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0)
-        .describe('Character offset for oversized serialized pages, not a turn offset.'),
-      page_version: z.string().regex(/^[a-f0-9]{64}$/).optional()
-        .describe('pageVersion from the first fragment; required when page_offset is greater than zero.'),
+      source: z.enum(['persisted', 'live']).default('persisted'),
+      direction: z.enum(['forward', 'backward']).default('backward'),
+      cursor: z.string().min(1).max(16384).optional(),
+      limit: z.number().int().min(1).max(256).default(64),
+      agent_scope: z.enum(['primary', 'all']).optional(),
+      agent_ids: z.array(z.string().min(1)).min(1).max(20).optional(),
+      types: z.array(z.string().min(1)).min(1).max(64).optional(),
+      include_ephemeral: z.boolean().default(false),
+      wait_ms: z.number().int().min(0).max(1000).default(0),
+      bootstrap: z.boolean().default(false),
+      page_offset: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).default(0),
+      page_version: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+      operation: z.string().optional().describe('Retired: use source/direction/native cursor.'),
+      tool_call_id: z.string().optional().describe('Retired: use agent_ids with source:"live".'),
+      details: z.string().optional().describe('Retired: output contains native events.'),
+      before_message_id: z.string().optional().describe('Retired: message IDs are not native cursors.'),
+      after_message_id: z.string().optional().describe('Retired: message IDs are not native cursors.'),
       response_format: ResponseFormat,
     },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-  }, async ({ session_id, operation, tool_call_id, details, before_message_id, after_message_id, limit, page_offset, page_version, response_format }): Promise<ToolResult> => {
+  }, async (input): Promise<ToolResult> => {
     try {
-      if (before_message_id !== undefined && after_message_id !== undefined) {
-        return fail('before_message_id and after_message_id are mutually exclusive.');
+      if ([input.operation, input.tool_call_id, input.details, input.before_message_id, input.after_message_id].some(value => value !== undefined)) {
+        return fail('CHAT_PROTOCOL_CHANGED: use source, direction, cursor, and optional live agent_ids. Message-ID seek and server-folded transcripts have retired; no implicit scan is performed.');
       }
-      if (after_message_id !== undefined && operation === 'peek') {
-        return fail('after_message_id requires operation:"history" or "subagent"; peek only supports older pages.');
+      if (input.page_offset > 0 && !input.page_version) return fail('page_version is required for fragment continuation.');
+      const result = NativeChatPage.parse(await intent('session/chat', {
+        sessionId: input.session_id, source: input.source, direction: input.direction, cursor: input.cursor,
+        max: input.limit, agentScope: input.agent_scope, agentIds: input.agent_ids, types: input.types,
+        includeEphemeral: input.include_ephemeral, waitMs: input.wait_ms, bootstrap: input.bootstrap,
+      }));
+      if (result.sessionId !== input.session_id || result.source !== input.source || result.direction !== input.direction) {
+        return fail('Backend returned a different native event page.');
       }
-      if ((operation === 'subagent') !== (tool_call_id !== undefined)) {
-        return fail('tool_call_id is required only for operation:"subagent".');
-      }
-      if (page_offset > 0 && !page_version) {
-        return fail('page_version is required for continuation; restart at page_offset=0.');
-      }
-      const body = {
-        sessionId: session_id,
-        ...(before_message_id === undefined ? {} : { beforeMsgId: before_message_id }),
-        ...(details === undefined ? {} : { details }),
-        limit,
-      };
-      const preview: HistoryPage | IntentResult<'session/peek'> | SubagentHistoryPage = operation === 'subagent'
-        ? SubagentHistory.parse(await intent('session/subagent-history', {
-          ...body, toolCallId: tool_call_id!,
-          ...(after_message_id === undefined ? {} : { afterMsgId: after_message_id }),
-        }))
-        : operation === 'peek'
-        ? Preview.parse(await intent('session/peek', body))
-        : History.parse(await intent('session/history', {
-          ...body, ...(after_message_id === undefined ? {} : { afterMsgId: after_message_id }),
-        }));
-      if (preview.sessionId !== session_id) return fail('Backend returned a different session transcript.');
-      if (operation === 'subagent' && (!('toolCallId' in preview) || preview.toolCallId !== tool_call_id)) {
-        return fail('Backend returned a different subagent transcript.');
-      }
-      const result = {
-        ...preview,
-        source: 'api' as const,
-        returned: preview.messages.length,
-        nextBeforeMsgId: after_message_id === undefined && preview.hasMore ? preview.messages[0]?.id ?? null : null,
-        ...(operation !== 'peek' ? { nextAfterMsgId: preview.messages.at(-1)?.id ?? after_message_id ?? null } : {}),
-      };
       const json = JSON.stringify(result, null, 2);
       const pageVersion = createHash('sha256').update(json).digest('hex');
-      if (page_version !== undefined && page_version !== pageVersion) {
-        return fail('The canonical page changed; discard earlier fragments and restart at page_offset=0.');
+      if (input.page_version !== undefined && input.page_version !== pageVersion) {
+        return fail('The native page changed; discard earlier fragments and restart at page_offset=0.');
       }
-      if (page_offset > json.length) return fail('page_offset exceeds this page; restart at page_offset=0.');
-      if (json.length > CHARACTER_LIMIT || page_offset > 0) {
-        // A serialized JSON fragment escapes at most twice again. 8K leaves room
-        // for the envelope within the 25K response budget, even for large tool data.
-        const end = Math.min(json.length, page_offset + 8000);
+      if (input.page_offset > json.length) return fail('page_offset exceeds this page; restart at page_offset=0.');
+      if (json.length > CHARACTER_LIMIT || input.page_offset > 0) {
+        const end = Math.min(json.length, input.page_offset + 8000);
         return ok(JSON.stringify({
-          format: 'json-fragment',
-          pageVersion,
-          pageOffset: page_offset,
-          nextPageOffset: end < json.length ? end : null,
-          pageCharacters: json.length,
-          json: json.slice(page_offset, end),
+          format: 'json-fragment', pageVersion, pageOffset: input.page_offset,
+          nextPageOffset: end < json.length ? end : null, pageCharacters: json.length,
+          json: json.slice(input.page_offset, end),
         }));
       }
-      if (response_format === 'json') return ok(json);
-      const title = 'title' in preview ? preview.title : session_id;
-      return ok(`# ${title}\nCanonical session/${operation} page (JSON; preserves all message fields):\n\n${json}`);
+      return ok(input.response_format === 'json' ? json
+        : `# ${input.session_id}\nNative event page (${result.source}, ${result.direction}):\n\n${json}`);
     } catch (error) {
       return fail(error instanceof Error ? error.message : String(error));
     }

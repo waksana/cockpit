@@ -220,11 +220,11 @@ test('every intent detail exposes exactly the actual draft-07 input and result s
 
 test('listing and detail descriptions convey refinements and runtime guarantees beyond JSON Schema', async (t) => {
   const descriptions = [
-    ['session/history', [
-      /passively/i, /returned only to the requester without SSE events/i,
-      /beforeMsgId and afterMsgId are mutually exclusive/i,
+    ['session/chat', [
+      /one native event page/i, /without a server chat cache or projection/i,
+      /max counts events, not display messages/i, /passive reads do not load sessions/i,
+      /expired cursor is not a continuation/i, /never automatically retained/i,
     ]],
-    ['session/peek', [/without loading a session or emitting SSE events/i, /nonempty/i, /flat/i]],
     ['schedule/add', [
       /exactly one of interval or at/i, /1 second to 24 hours/i,
       /cron.*not supported/i,
@@ -280,59 +280,47 @@ test('runtime/snapshot exposes a required literal allow-all permission policy', 
   }
 });
 
-test('history and peek advertise nonempty cursors and integer limits from 1 through 200', async (t) => {
-  for (const name of ['session/history', 'session/peek'] as const) {
-    await t.test(name, async () => {
-      const { inputSchema } = await detail(name);
-      const cursorKeys = name === 'session/history' ? ['beforeMsgId', 'afterMsgId'] : ['beforeMsgId'];
-      assert.deepEqual(Object.keys(object(inputSchema.properties)).sort(), ['sessionId', ...cursorKeys, 'limit', 'details'].sort());
-      assert.deepEqual(inputSchema.required, ['sessionId']);
-      assert.deepEqual(schemaAt(inputSchema, 'properties', 'limit'), {
-        type: 'integer', exclusiveMinimum: 0, maximum: 200,
-      });
-      const body = Intents[name].body;
-      assert.deepEqual(schemaAt(inputSchema, 'properties', 'details'), { type: 'string', enum: ['full', 'summary'] });
-      assert.equal(body.safeParse({ sessionId: 's' }).success, true);
-      for (const cursor of cursorKeys) {
-        assert.deepEqual(schemaAt(inputSchema, 'properties', cursor), { type: 'string', minLength: 1 });
-        for (const limit of [1, 200]) {
-          assert.equal(body.safeParse({ sessionId: 's', [cursor]: 'message-id', limit }).success, true);
-        }
-        for (const value of ['', null, 1]) {
-          assert.equal(body.safeParse({ sessionId: 's', [cursor]: value }).success, false);
-        }
-      }
-      for (const limit of [0, -1, 1.5, 201, '1', null, NaN, Infinity]) {
-        assert.equal(body.safeParse({ sessionId: 's', limit }).success, false, `limit=${String(limit)}`);
-      }
-    });
+test('native chat advertises bounded event pages and opaque nonempty cursors', async () => {
+  const { inputSchema } = await detail('session/chat');
+  assert.deepEqual(inputSchema.required, ['sessionId']);
+  assert.deepEqual(schemaAt(inputSchema, 'properties', 'max'), {
+    type: 'integer', minimum: 1, maximum: 256, default: 64,
+  });
+  assert.deepEqual(schemaAt(inputSchema, 'properties', 'cursor'), {
+    type: 'string', minLength: 1, maxLength: 16384,
+  });
+  assert.deepEqual(schemaAt(inputSchema, 'properties', 'direction').enum, ['forward', 'backward']);
+  const body = Intents['session/chat'].body;
+  for (const max of [1, 256]) assert.equal(body.safeParse({ sessionId: 's', cursor: 'opaque', max }).success, true);
+  for (const max of [0, -1, 1.5, 257, '1', null, NaN, Infinity]) {
+    assert.equal(body.safeParse({ sessionId: 's', max }).success, false);
   }
+  for (const cursor of ['', null, 1]) assert.equal(body.safeParse({ sessionId: 's', cursor }).success, false);
 });
 
-test('history cursor mutual exclusion is enforced beyond individually optional JSON Schema fields', async () => {
-  const { inputSchema } = await detail('session/history');
+test('native chat source constraints are enforced beyond individually optional JSON Schema fields', async () => {
+  const { inputSchema } = await detail('session/chat');
   assert.deepEqual(inputSchema.required, ['sessionId']);
-  assert.equal(Intents['session/history'].body.safeParse({
-    sessionId: 's', beforeMsgId: 'older', afterMsgId: 'newer', limit: 1,
+  assert.equal(Intents['session/chat'].body.safeParse({
+    sessionId: 's', source: 'persisted', types: ['assistant.message'],
+  }).success, false);
+  assert.equal(Intents['session/chat'].body.safeParse({
+    sessionId: 's', beforeMsgId: 'older', afterMsgId: 'newer',
   }).success, false);
 });
 
-test('history returns a flat HistoryPage and has no session/history-page SSE event', async () => {
-  const { resultSchema } = await detail('session/history');
-  assert.deepEqual(Object.keys(object(resultSchema.properties)).sort(), [
-    'append', 'hasMore', 'latest', 'messages', 'sessionId',
-  ]);
-  assert.deepEqual(resultSchema.required, ['sessionId', 'messages', 'hasMore']);
-  assert.equal(schemaAt(resultSchema, 'properties', 'messages').type, 'array');
-  for (const flag of ['hasMore', 'latest', 'append']) {
-    assert.equal(schemaAt(resultSchema, 'properties', flag).type, 'boolean');
-  }
-  const page = { sessionId: 's', messages: [], hasMore: false };
-  assert.deepEqual(Intents['session/history'].result.parse(page), page);
-  assert.equal(Intents['session/history'].result.safeParse({ page }).success, false);
+test('chat returns events with native expiry rather than messages or chat SSE', async () => {
+  const { resultSchema } = await detail('session/chat');
+  assert.equal(schemaAt(resultSchema, 'properties', 'events').type, 'array');
+  assert.equal('messages' in object(resultSchema.properties), false);
+  assert.deepEqual(schemaAt(resultSchema, 'properties', 'cursorStatus').enum, ['ok', 'expired']);
+  const page = { sessionId: 's', source: 'persisted', direction: 'backward', events: [],
+    cursor: 'native', cursorStatus: 'ok', hasMore: false, read: { rpc: 1, events: 0 } };
+  assert.deepEqual(Intents['session/chat'].result.parse(page), page);
+  assert.equal(Intents['session/chat'].result.safeParse({ page }).success, false);
   assert.equal(ServerEvent.safeParse({ type: 'session/history-page', page }).success, false);
   assert.equal(ServerEvent.safeParse({ type: 'session/history-page', ...page }).success, false);
-  assert.equal(ServerEvent.safeParse({ type: 'session/reset', page }).success, true);
+  assert.equal(ServerEvent.safeParse({ type: 'session/reset', page }).success, false);
   assert.equal(ServerEvent.options.some((event) => String(event.shape.type.value) === 'session/history-page'), false);
 });
 
@@ -436,20 +424,15 @@ test('detail preserves nested enums, optional fields, and shared enum references
   assert.ok(Array.isArray(meta.required) && meta.required.includes('sessionId'));
 });
 
-test('recursive ChatMessage references resolve locally to the complete message schema', async () => {
-  const result = (await detail('session/peek')).resultSchema;
-  const message = schemaAt(result, 'properties', 'messages', 'items');
-  assert.equal(message.type, 'object');
-  assert.deepEqual(message.required, ['id', 'role', 'content', 'timestamp']);
-  const properties = object(message.properties);
-  assert.deepEqual(object(properties.role).enum, ['user', 'assistant', 'system']);
-  assert.deepEqual(object(properties.subtype).enum, ['ask-reply', 'subagent', 'skill']);
-  assert.deepEqual(schemaAt(result, 'properties', 'messages', 'items', 'properties', 'subagent', 'properties', 'status').enum, ['running', 'completed', 'failed']);
-  assert.deepEqual(schemaAt(result, 'properties', 'messages', 'items', 'properties', 'attachment', 'properties', 'kind').enum, ['image', 'file']);
-  const recursiveItems = object(object(properties.subMessages).items);
-  assert.equal(typeof recursiveItems.$ref, 'string', 'recursive messages must not become {}');
-  assert.strictEqual(resolveSchema(result, recursiveItems), message);
-  assert.strictEqual(schemaAt(result, 'properties', 'messages', 'items', 'properties', 'subMessages', 'items', 'properties', 'subMessages', 'items'), message);
+test('native event schema preserves identity and opaque payload without a recursive message graph', async () => {
+  const result = (await detail('session/chat')).resultSchema;
+  const event = schemaAt(result, 'properties', 'events', 'items');
+  assert.equal(event.type, 'object');
+  assert.deepEqual(event.required, ['id', 'type', 'data']);
+  const properties = object(event.properties);
+  for (const key of ['id', 'type', 'agentId', 'parentToolCallId']) assert.equal(object(properties[key]).type, 'string');
+  assert.equal(object(properties.data).type, 'object');
+  assert.equal('subMessages' in properties, false);
 });
 
 test('session/purge requires an explicit literal confirm:true', async () => {

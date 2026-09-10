@@ -23,7 +23,7 @@ test('metadata projection retains sidebar array and row identities across window
   const updated = {
     ...a,
     messages: [{ id: 'm', role: 'assistant' as const, content: 'stream', timestamp: 2 }],
-    loadingHistory: true, historyStale: true, hasMore: true, resumeAfter: 'm',
+    loadingHistory: true, historyStale: true, hasMore: true, partialHistory: true, incompleteBoundary: true,
   };
   assert.equal(select({ sessions: [updated, b] }), rows);
   assert.equal(select({ sessions: [{ ...updated, materialized: false }, b] }), rows);

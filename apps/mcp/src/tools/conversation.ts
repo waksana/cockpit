@@ -31,8 +31,8 @@ export function registerConversationTools(server: McpServer): void {
         'multiagent worker. Find the session id with cockpit_list_sessions. Optional attachment is JSON ' +
         'from cockpit_upload_file (kind/name/url/size/mime); no text marker is needed. Only safe backend ' +
         '/uploads/<basename> URLs are accepted. Use exactly one of attachment, attachments (1–20 files before text), ' +
-        'or parts (1–100 ordered text/file parts, at most 20 files; text must be ""). Retain a native tool image first ' +
-        'using files/from-tool-image via cockpit_call_intent. The server resolves authoritative metadata and supplies native file paths; ' +
+        'or parts (1–100 ordered text/file parts, at most 20 files; text must be ""). Upload an existing local original ' +
+        'or reuse a managed file; native tool-image lookup is retired. The server resolves authoritative metadata and supplies native file paths; ' +
         'the agent must explicitly read/view them, not assume attachment contents were automatically read. ' +
         'transport support does not imply the selected model can interpret every media format.',
       inputSchema: {

@@ -85,46 +85,26 @@ export function SessionPlan({ session, onClose }: SessionContextProps) {
 }
 
 function ContextDetails({ session, onClose }: SessionContextProps) {
-  const getPlan = useCockpit((s) => s.getPlan);
   const getPanels = useCockpit((s) => s.getPanels);
   const sid = session.sessionId;
-  const loadPlan = useCallback(() => getPlan(sid), [getPlan, sid]);
   const loadPanels = useCallback(() => getPanels(sid), [getPanels, sid]);
-  const planResource = useSessionResource(sid, `context-plan:${sid}`, loadPlan);
   const panelsResource = useSessionResource(sid, `context-panels:${sid}`, loadPanels);
-  const plan = planResource.data;
   const panels = panelsResource.data;
 
-  const changedFiles = plan?.changedFiles ?? [];
   const tasks = panels?.tasks ?? [];
   const instructionSources = panels?.instructionSources ?? [];
-  const relPath = (path: string) => {
-    const base = session.cwd.endsWith('/') ? session.cwd : `${session.cwd}/`;
-    return path.startsWith(base) ? path.slice(base.length) : path;
-  };
-  const empty = !changedFiles.length && !tasks.length && !instructionSources.length;
-  const requiresResume = planResource.requiresResume || panelsResource.requiresResume;
-  const refresh = () => { void planResource.refresh(); void panelsResource.refresh(); };
+  const empty = !tasks.length && !instructionSources.length;
+  const requiresResume = panelsResource.requiresResume;
+  const refresh = () => { void panelsResource.refresh(); };
   return (
     <PanelPageShell title={`上下文资料 · ${session.title}`} onClose={onClose}
       action={<button type="button" className="btn-icon rp manage-action" aria-label="刷新"
-        disabled={requiresResume || !planResource.connected || planResource.pending || panelsResource.pending}
+        disabled={requiresResume || !panelsResource.connected || panelsResource.pending}
         onClick={refresh}><Icon name="reload" size={20} /></button>}>
       <SessionUsage key={sid} sessionId={sid} />
       <SessionResume sessionId={sid} required={requiresResume} onResumed={refresh} />
-      <ResourceStatus status={planResource.status && `改动文件：${planResource.status}`} failed={planResource.failed} />
       <ResourceStatus status={panelsResource.status && `指令文件和子代理：${panelsResource.status}`} failed={panelsResource.failed} />
-      {planResource.valid && panelsResource.valid && empty && <div className="info-empty">本会话还没有上下文</div>}
-      {changedFiles.length > 0 && (
-        <CollapsibleSection title="改动文件" count={changedFiles.length} bodyClassName="info-files">
-          {changedFiles.map((file) => (
-            <div key={file.path} className="info-file" data-op={file.operation} title={file.path}>
-              <span className="info-file-op" aria-hidden="true">{file.operation === 'create' ? '+' : '~'}</span>
-              <span className="info-file-path">{relPath(file.path)}</span>
-            </div>
-          ))}
-        </CollapsibleSection>
-      )}
+      {panelsResource.valid && empty && <div className="info-empty">本会话还没有上下文</div>}
       {instructionSources.length > 0 && <PanelSection name="指令文件" items={instructionSources} />}
       {tasks.length > 0 && <PanelSection name="子代理" items={tasks} />}
     </PanelPageShell>

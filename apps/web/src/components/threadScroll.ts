@@ -1,5 +1,6 @@
 type Geometry = { top: number; height: number; viewport: number; width: number };
 type Anchor = { id: string; offset: number };
+export type ReadingPosition = { following: boolean; anchor: Anchor | null };
 
 export interface ThreadScrollView {
   measure(): Geometry;
@@ -167,6 +168,17 @@ export class ThreadScroll {
     this.towardBottom = false;
     this.onFollow();
     this.reportActivity();
+    this.changed();
+  }
+
+  position(): ReadingPosition {
+    return { following: this.following, anchor: this.view.firstVisible() };
+  }
+
+  restore(position: ReadingPosition) {
+    this.following = position.following;
+    this.anchor = position.anchor;
+    this.forced = true;
     this.changed();
   }
 

@@ -48,15 +48,15 @@ await t('capabilities publishes the foundation contract without governance', asy
   assert.equal(response.status, 200);
   const catalog = await j(response);
   const names = catalog.intents.map((entry) => entry.name);
-  for (const name of ['session/new', 'session/peek', 'prompt', 'cancel', 'schedule/list']) {
+  for (const name of ['session/new', 'session/chat', 'prompt', 'cancel', 'schedule/list']) {
     assert.ok(names.includes(name), `${name} is discoverable`);
   }
   assert.ok(!names.some((name) => /^(hook|flow|flow-schedule)\//.test(name)));
   assert.ok(!names.includes('session/set-spawned-by'));
   assert.ok(catalog.transports.some((entry) => entry.method === 'POST' && entry.path === '/upload'));
   assert.ok(catalog.transports.some((entry) => entry.method === 'GET' && entry.path === '/uploads/:name'));
-  const detail = await j(await fetch(`${BASE}/capabilities?name=session%2Fpeek`));
-  assert.equal(detail.name, 'session/peek');
+  const detail = await j(await fetch(`${BASE}/capabilities?name=session%2Fchat`));
+  assert.equal(detail.name, 'session/chat');
   assert.equal(detail.inputSchema.type, 'object');
   assert.equal(detail.resultSchema.type, 'object');
 });
@@ -232,9 +232,9 @@ await t('unloaded history stays passive; native details require explicit resume'
   const sessionId = globalThis.__e2eSession;
   assert.equal((await intent('session/unload', { sessionId })).status, 200);
   try {
-    const history = await intent('session/history', { sessionId, limit: 10 });
+    const history = await intent('session/chat', { sessionId, source: 'persisted', direction: 'backward', max: 10 });
     assert.equal(history.status, 200);
-    assert.ok(Array.isArray((await j(history)).messages));
+    assert.ok(Array.isArray((await j(history)).events));
     for (const name of ['session/plan', 'session/panels', 'skills/session', 'schedule/list']) {
       const response = await intent(name, { sessionId });
       assert.equal(response.status, 409, name);

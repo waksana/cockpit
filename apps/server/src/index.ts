@@ -1,5 +1,5 @@
 // cockpit server — thin transport over the authoritative Engine.
-//  - GET  /events           SSE stream: full snapshot on connect, then live events
+//  - GET  /events           SSE stream: control snapshot, then metadata updates
 //  - POST /intent/:name     validated intent dispatch (typed result)
 //  - GET  /capabilities     bounded intent listing or one generated schema pair
 //  - GET  /health
@@ -9,8 +9,8 @@
 //  - GET  /uploads/:name     serve a stored upload (path-traversal guarded)
 //
 // Binds 127.0.0.1 only; TLS + cookie auth are handled by the upstream reverse
-// proxy (nginx). The Engine owns all state; this file just fans events to SSE
-// clients and routes intents in. No domain logic here.
+// proxy (nginx). The Engine owns control state; chat remains native and is read
+// through request-local adapters. This file routes intents and metadata events.
 
 import Fastify from 'fastify';
 import type { FastifyReply } from 'fastify';
@@ -23,8 +23,8 @@ import { Engine, sessionMetaBusy } from '@cockpit/core';
 import { Intents, UploadedFile, partsPrompt, unreadSessionCount, type MessagePart, type IntentBody, type IntentName, type IntentResult, type ServerEvent, type SessionMeta, type Snapshot } from '@cockpit/protocol';
 import { PushManager } from './push.ts';
 import { getSpeechToken } from './speech.ts';
-import { saveUploadStream, retainedSource, associateUpload, listUploads, uploadDetails, resolveUpload,
-  openUpload, verifyUpload, MAX_UPLOAD_BYTES, UploadError, validateUploadContext, type UploadContext } from './uploads.ts';
+import { saveUploadStream, associateUpload, listUploads, uploadDetails, resolveUpload,
+  openUpload, MAX_UPLOAD_BYTES, UploadError, validateUploadContext, type UploadContext } from './uploads.ts';
 import { isIntentName, registerCapabilities } from './capabilities.ts';
 import { drainForRestart } from './shutdown.ts';
 
@@ -55,7 +55,7 @@ app.addContentTypeParser('application/octet-stream', (_req, body, done) => done(
 // real ~/.copilot prefs or binding the port. Definite-assignment: always set before
 // any request handler that derefs them can run (boot() runs at module entry).
 export type ServerEngine = Pick<Engine,
-  | 'login' | 'snapshot' | 'busyCount' | 'newSession' | 'forkSession' | 'history' | 'resumeHistory' | 'peekSession' | 'subagentHistory' | 'toolImage' | 'stop'
+  | 'login' | 'snapshot' | 'busyCount' | 'newSession' | 'forkSession' | 'chat' | 'stop'
   | 'prompt' | 'cancel' | 'interrupt' | 'setModel' | 'rename' | 'autoName' | 'compact' | 'rewind' | 'setMode'
   | 'deleteSession' | 'unload'
   | 'reload' | 'pin' | 'getPlan' | 'getUsage' | 'getPanels' | 'respondAsk' | 'respondPlan'
@@ -89,7 +89,7 @@ const openingClients = new Map<FastifyReply, { frames: string[]; bytes: number }
 // watchdog into evicting healthy sessions as collateral. We bound it: once a
 // connection's unflushed buffer exceeds SSE_HWM we drop the connection. Safe and
 // self-healing — the client auto-reconnects (`retry: 2000`) and re-pulls a full
-// snapshot on connect, so there is no resume cursor to lose.
+// control snapshot on connect. Chat cursors belong to separate browser reads.
 const SSE_HWM = Number(process.env.COCKPIT_SSE_HWM ?? 8 * 1024 * 1024); // 8 MB
 // Hard cap on concurrent SSE streams. Single-user, so generous; it just keeps the
 // `clients` set from growing unbounded under a direct-boundary breach (no auth).
@@ -132,8 +132,8 @@ function sseSend(reply: FastifyReply, ev: ServerEvent): boolean {
 // Graceful self-restart: an in-memory "restart pending" flag. A turn (the in-memory
 // model+tool loop) can't survive a process restart — only history persists — so we
 // never restart mid-turn. Instead, set the flag, and the moment the LAST running
-// session goes idle we exit(0); systemd (Restart=always) brings us back, replaying
-// each session's history from disk. Lets an agent deploy its own backend changes
+// session goes idle we exit(0); systemd (Restart=always) brings us back. Browsers
+// retain their cursors and read native history on demand. This lets an agent deploy
 // without interrupting any work, including its own turn.
 let restartPending = false;
 let restarting = false;
@@ -512,32 +512,10 @@ const handlers: IntentHandlers = {
   'runtime/snapshot': async () => notificationSnapshot(await engine.snapshot()),
   'session/new': async (b) => ({ sessionId: await engine.newSession(b.cwd) }),
   'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
-  'session/history': async (b) => b.resume
-    ? await engine.resumeHistory(b.sessionId, b.resume, b.limit, b.details)
-    : await engine.history(b.sessionId, b.beforeMsgId, b.limit, b.afterMsgId, b.details),
-  'session/peek': async (b) => await engine.peekSession(b.sessionId, b.beforeMsgId, b.limit, b.details),
-  'session/tool-image': (b, signal) => engine.toolImage(b, signal),
+  'session/chat': (b, signal) => engine.chat(b, signal),
   'files/list': b => listUploads(b),
   'files/get': b => uploadDetails(b.url),
   'files/associate': b => associateUpload(b.url, b.sessionId),
-  'files/from-tool-image': async (b, signal) => {
-    const source: UploadContext = { source: 'tool-image', sessionId: b.sessionId,
-      sourceId: JSON.stringify([b.image.eventId, b.image.toolCallId, b.image.part]) };
-    let existing;
-    try { existing = retainedSource(source); }
-    catch (error) {
-      if (!(error instanceof UploadError) || error.message !== 'Upload metadata is missing') throw error;
-    }
-    if (existing) return verifyUpload(existing);
-    const image = await engine.toolImage({ sessionId: b.sessionId, image: b.image }, signal);
-    const bytes = Buffer.from(image.data, 'base64');
-    if (bytes.length !== image.byteLength) throw new UploadError('Native image length changed', 500);
-    const ext = image.mime.split('/')[1];
-    return saveUploadStream(Readable.from([bytes]), b.name ?? `tool-image-${b.image.part + 1}.${ext}`, image.mime, source);
-  },
-  'session/subagent-history': async (b) => await engine.subagentHistory(
-    b.sessionId, b.toolCallId, b.beforeMsgId, b.limit, b.afterMsgId, b.details,
-  ),
   prompt: async (b) => {
     if (!b.attachment && !b.attachments && !b.parts) return await engine.prompt(b.sessionId, b.text, b.mode);
     const parts: MessagePart[] = b.parts ?? [
@@ -705,10 +683,22 @@ function errorStatus(error: unknown): number {
 
 app.post('/intent/*', async (req, reply) => {
   const name = (req.params as Record<string, string>)['*'];
+  if (name && ['session/history', 'session/peek', 'session/subagent-history'].includes(name)) {
+    return reply.code(410).send({
+      code: 'CHAT_PROTOCOL_CHANGED',
+      error: 'Use session/chat with native source, direction and cursor. Message-ID pagination and server resume checkpoints have been retired.',
+    });
+  }
+  if (name && ['session/tool-image', 'files/from-tool-image'].includes(name)) {
+    return reply.code(410).send({
+      code: 'NATIVE_IMAGE_LOOKUP_RETIRED',
+      error: 'Native tool-image lookup is retired. Upload an existing local original or reuse a managed /uploads file; chat reads do not collect images.',
+    });
+  }
   if (name === undefined || !isIntentName(name)) { reply.code(404); return { error: `unknown intent: ${name}` }; }
   const controller = new AbortController();
   const cancel = () => { if (!reply.raw.writableFinished) controller.abort(); };
-  if (name === 'session/tool-image' || name === 'files/from-tool-image') {
+  if (name === 'session/chat') {
     reply.header('Cache-Control', 'private, no-store');
     reply.header('X-Content-Type-Options', 'nosniff');
     reply.raw.on('close', cancel);
@@ -716,6 +706,11 @@ app.post('/intent/*', async (req, reply) => {
   try {
     return await dispatch(name, req.body, controller.signal);
   } catch (e) {
+    if (controller.signal.aborted && e === controller.signal.reason) {
+      req.log.debug({ intent: name }, 'client disconnected during native read');
+      reply.code(499);
+      return { code: 'REQUEST_ABORTED', error: 'Client disconnected during native read.' };
+    }
     req.log.error({ err: e }, `intent ${name} failed`);
     reply.code(errorStatus(e));
     return {

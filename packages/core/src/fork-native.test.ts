@@ -192,6 +192,14 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       sessionConfig: { ...config, enableConfigDiscovery: false },
     });
     const engine = new Engine({ runtime, prefsFile: join(root, 'prefs.json') });
+    const chat = async (id: string) => {
+      const page = await engine.chat({
+        sessionId: id, source: 'persisted', direction: 'backward', max: 256, waitMs: 0, bootstrap: false,
+      });
+      assert.equal(page.hasMore, false, 'The isolated fork fixture fits one native page');
+      assert.equal(page.read.rpc, 1);
+      return page.events;
+    };
     const idle = async (id: string) => {
       let stable = 0;
       const deadline = Date.now() + 10_000;
@@ -212,21 +220,21 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       };
       await send(sourceId, 'FORK_FIXTURE_ENGINE_FIRST');
       await send(sourceId, 'FORK_FIXTURE_ENGINE_SECOND');
-      const history = await engine.history(sourceId);
-      const second = history.messages.find(message => message.role === 'user' && message.content === 'FORK_FIXTURE_ENGINE_SECOND')!;
+      const history = await chat(sourceId);
+      const second = history.find(event => event.type === 'user.message' && event.data.content === 'FORK_FIXTURE_ENGINE_SECOND')!;
       assert.ok(second);
       const branchResult = await engine.forkSession(sourceId, second.id, 'Engine boundary');
       const fullResult = await engine.forkSession(sourceId);
       assert.equal((await engine.getMeta(fullResult.sessionId))!.loaded, false);
       assert.equal((await engine.getMeta(branchResult.sessionId))!.loaded, false);
-      assert.equal((await engine.history(branchResult.sessionId)).messages.filter(message => message.role === 'user').length, 1);
+      assert.equal((await chat(branchResult.sessionId)).filter(event => event.type === 'user.message').length, 1);
       await engine.reload(fullResult.sessionId);
       await engine.rename(fullResult.sessionId, 'Engine fixture child');
       assert.deepEqual(await engine.listSchedules(fullResult.sessionId), []);
       await send(fullResult.sessionId, 'FORK_FIXTURE_ENGINE_CHILD');
       await send(sourceId, 'FORK_FIXTURE_ENGINE_PARENT');
-      assert.ok(!(await engine.history(sourceId)).messages.some(message => message.content.includes('ENGINE_CHILD')));
-      assert.ok(!(await engine.history(fullResult.sessionId)).messages.some(message => message.content.includes('ENGINE_PARENT')));
+      assert.ok(!(await chat(sourceId)).some(event => typeof event.data.content === 'string' && event.data.content.includes('ENGINE_CHILD')));
+      assert.ok(!(await chat(fullResult.sessionId)).some(event => typeof event.data.content === 'string' && event.data.content.includes('ENGINE_PARENT')));
       const rows = await runtime.listSessions();
       assert.ok(rows.some(row => row.sessionId === fullResult.sessionId));
       await engine.addSchedule(sourceId, { interval: '1h', prompt: 'FORK_FIXTURE_ENGINE_TIMER' });

@@ -25,7 +25,7 @@ Content-Type: application/json
 Response: `{"sessionId":"new-child-id"}`. Only `sessionId` is required.
 Omitting `toEventId` includes the full persisted history. When supplied it must
 be a **root user-message event ID**, obtainable as that user message's `id` in
-`session/history` or `session/peek`. The event itself and everything after it are
+the `events` array of `session/chat`. The event itself and everything after it are
 **excluded**. Assistant IDs, nested-agent user messages, unknown IDs, empty
 prefixes and boundaries containing unfinished work are rejected.
 

@@ -5,7 +5,7 @@
 
 export type {
   ChatMessage, ToolCall, ChatRole, SessionMeta, SessionStatus, AgentStatus,
-  ModelOption, QueuedItem, AskRequest, ServerEvent, HistoryPage, TodoProgress,
+  ModelOption, QueuedItem, AskRequest, ServerEvent, TodoProgress,
   TodoItem, SessionPlan, SessionPanels, PanelItem, Attachment, DirEntry, DirListing,
   ExitPlanModeAction, UploadedFile,
 } from '@cockpit/protocol';
@@ -20,9 +20,8 @@ export interface ChatSession extends SessionMeta {
   messages: ChatMessage[];
   materialized: boolean;
   historyStale: boolean;
-  resumeAfter?: string;
   hasMore: boolean;
   loadingHistory: boolean;
-  resumeToken?: string;
-  liveMessageIds?: string[];
+  partialHistory?: boolean;
+  incompleteBoundary?: boolean;
 }

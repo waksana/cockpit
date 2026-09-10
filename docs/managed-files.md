@@ -92,7 +92,6 @@ The authoritative intent catalog exposes:
 | `files/list` | Bounded metadata page, optional name/MIME/source query and session filter |
 | `files/get` | Original metadata, recorded session associations and safe server path for one upload URL |
 | `files/associate` | Associate a retained file with a session, without sending it |
-| `files/from-tool-image` | Explicitly retain one selected native image and return an ordinary upload |
 | `prompt` | Text plus one file, multiple ordered files, or interleaved text/file parts |
 
 Use the existing MCP capability discovery and generic `cockpit_call_intent`
@@ -107,21 +106,19 @@ exclusive. With parts, `text` must be empty. File parts contain ordinary
 attachment metadata and a literal `/uploads/<safe-basename>` URL. The server
 ignores client filesystem paths and resolves real native
 `{type: "file", path, displayName}` attachments itself. New versioned markers
-preserve captions and file/text order through native persisted history; SSE
-and history carry references, not binary buffers. Legacy markers retain their
+preserve captions and file/text order through native persisted history; chat
+event pages carry references, not binary buffers. Legacy markers retain their
 old guidance-hiding behavior.
 Native attachments make paths available to the agent; attachment acceptance is
 not evidence that the model has read the bytes. The agent must explicitly use
 its supported native image/file reader before claiming to have inspected them.
 
-Existing [native tool previews](native-tool-images.md) remain on-demand Blob
-previews. **保留到文件** / `files/from-tool-image` is an explicit additional
-choice: it reads the selected session/event/tool/part using the existing native
-reader and returns a reusable managed attachment. Once retained, that identity
-resolves from the library even if the native preview later becomes unavailable.
-No automatic permanent collection of every internal screenshot occurs. Native
-history may independently retain the same image; Cockpit does not rewrite SDK
-history or promise there is physically only one copy.
+Agents [publish existing image originals](native-tool-images.md) through upload,
+or reuse a managed URL. Native-image history lookup and automatic tool previews
+are retired; they do not get replaced by a wider scan or image cache. Previously
+retained native images and their metadata remain available. Repeated display and
+download of a managed URL never create another copy. Cockpit does not rewrite
+SDK history or promise that deliberately repeated uploads are deduplicated.
 
 File retention does not change the separate lifetimes of browser Blob URLs,
 native history, in-flight transfer staging, or the bridge's capped 24-hour

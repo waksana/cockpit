@@ -7,7 +7,7 @@ import type { Attachment, ChatMessage } from '@cockpit/protocol';
 import { FileCard } from './FileCard';
 import { MessageBody } from './MessageBody';
 import { MessageContent } from './MessageContent';
-import { ToolImages } from './ToolImages';
+import { Thread } from './Thread';
 import { FileEntries, Files } from '../pages/Files';
 
 const video: Attachment = { kind: 'file', name: '原始 视频.mp4', url: '/uploads/clip.mp4', mime: 'video/mp4', size: 123 };
@@ -105,13 +105,17 @@ test('canonical message parts render in order instead of repeating flattened tex
   assert.equal((repeated.match(/managed-file-card/g) ?? []).length, 1);
 });
 
-test('tool images offer explicit retain before preview without collecting or loading automatically', t => {
+test('internal tool images are neither displayed nor collected before an agent publishes them', t => {
   const fetch = t.mock.method(globalThis, 'fetch', async () => assert.fail('no automatic tool image collection'));
-  const html = renderToStaticMarkup(createElement(ToolImages, { sessionId: 'A',
-    images: [{ eventId: 'event', toolCallId: 'tool', part: 0, mime: 'image/png', byteLength: 10 }] }));
-  assert.match(html, /查看图片/);
-  assert.match(html, /保留到文件/);
-  assert.doesNotMatch(html, /<img|blob:/);
+  const html = renderToStaticMarkup(createElement(Thread, { readOnly: true, onLoadMore: () => {}, session: {
+    sessionId: 'A', title: 'Images', cwd: '/fixture', lastActivity: 1,
+    status: 'idle', loaded: true, error: null, queue: [], ask: null,
+    materialized: true, historyStale: false, hasMore: false, loadingHistory: false,
+    messages: [{ id: 'm', role: 'assistant', content: '', timestamp: 1,
+      toolCalls: [{ toolCallId: 'tool', name: 'screenshot', title: 'Screenshot', status: 'completed',
+        output: 'Internal original: /tmp/not-published.png' }] }],
+  } }));
+  assert.doesNotMatch(html, /查看图片|保留到文件|<img|blob:/);
   assert.equal(fetch.mock.callCount(), 0);
 });
 

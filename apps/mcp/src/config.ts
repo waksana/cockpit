@@ -12,8 +12,8 @@ if (configuredTimeout !== undefined && (
   throw new Error(`COCKPIT_TIMEOUT_MS must be a positive integer, got ${JSON.stringify(configuredTimeout)}`);
 }
 
-// A single 10s deadline is too short for native session loading and large passive
-// history reads. Keep fast reads (including mcp/session)
+// A single 10s deadline is too short for native session loading.
+// Keep bounded reads (including chat pages and mcp/session)
 // bounded at 10s, but give known long operations a
 // deadline matching their server-side work. COCKPIT_TIMEOUT_MS remains an
 // explicit operator override for every request.
@@ -24,8 +24,6 @@ const LOAD_AWARE_INTENTS = new Set([
   'prompt',
   'session/new',
   'session/fork',
-  'session/history',
-  'session/peek',
   'session/plan',
   'session/panels',
   'session/reload',
@@ -47,8 +45,6 @@ const LOAD_AWARE_INTENTS = new Set([
 
 export function requestTimeoutMs(name: string): number {
   if (configuredTimeout !== undefined) return REQUEST_TIMEOUT_MS;
-  // A direct child read without a cached parent may scan a large native journal.
-  if (name === 'session/subagent-history') return 120_000;
   if (LOAD_AWARE_INTENTS.has(name)) return LOAD_AWARE_TIMEOUT_MS;
   return REQUEST_TIMEOUT_MS;
 }

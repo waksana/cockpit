@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test, type Mock, type TestContext } from 'node:test';
-import type { Attachment, HistoryPage, IntentBody, IntentName, ServerEvent } from '@cockpit/protocol';
+import type { Attachment, NativeChatPage, IntentBody, IntentName, ServerEvent } from '@cockpit/protocol';
 import { EVENTS_URL, intentUrl } from '../lib/config';
 import { dismissUxError, getUxErrors } from '../lib/errorReporter';
 import { IntentHttpError, isSessionUnloadedError, NetClient, SessionUnloadedError, type ConnState } from './client';
@@ -41,14 +41,16 @@ function assertOnlyPost<K extends IntentName>(
     credentials: 'include',
   });
   assert.ok(typeof json === 'string');
-  assert.deepEqual(JSON.parse(json), {
-    ...body, ...(name === 'session/history' || name === 'session/peek' || name === 'session/subagent-history' ? { details: 'summary' } : {}),
-  });
+  assert.deepEqual(JSON.parse(json), body);
 }
 
-const childPage = {
-  sessionId: 'session', toolCallId: 'native-spawn', messages: [], hasMore: false, latest: true,
-  subagent: { toolCallId: 'native-spawn', name: 'explore', displayName: 'Explorer', status: 'running', prompt: 'Full task' },
+const chatRead = {
+  source: 'persisted', direction: 'backward', max: 64, waitMs: 0, bootstrap: false,
+} as const;
+const chatPage: NativeChatPage = {
+  sessionId: 'session', source: 'persisted', direction: 'backward',
+  events: [], cursor: 'native-cursor', cursorStatus: 'ok', hasMore: false,
+  read: { rpc: 1, events: 0 },
 };
 
 test('native usage client validates the snapshot, forwards cancellation and never resumes on unloaded response', async t => {
@@ -121,40 +123,39 @@ test('interrupt transport uncertainty rejects and is never retried', async t => 
   assertOnlyPost(fetch, 'session/interrupt', { sessionId: 'original' });
 });
 
-test('child history sends exact native identity, passive summary details and explicit paging', async (t) => {
-  const { client, fetch } = setup(t, async () => Response.json(childPage));
-  const opts = { sessionId: 'wrong', toolCallId: 'wrong', details: 'full', beforeMsgId: 'oldest-child', limit: 30 };
-  assert.deepEqual(await client.subagentHistory('session', 'native-spawn', opts), childPage);
-  assertOnlyPost(fetch, 'session/subagent-history', {
-    sessionId: 'session', toolCallId: 'native-spawn', beforeMsgId: 'oldest-child', limit: 30,
-  });
+test('child event page sends native agent identities and opaque cursor without a history scan', async (t) => {
+  const page = { ...chatPage, source: 'live' };
+  const { client, fetch } = setup(t, async () => Response.json(page));
+  const opts = { ...chatRead, source: 'live' as const, agentIds: ['native-agent', 'native-spawn'], cursor: 'child-older' };
+  assert.deepEqual(await client.chat({ sessionId: 'session', ...opts }), page);
+  assertOnlyPost(fetch, 'session/chat', { sessionId: 'session', ...opts });
 });
 
 for (const invalid of [
-  { ...childPage, sessionId: 'wrong' },
-  { ...childPage, toolCallId: 'wrong' },
-  { ...childPage, subagent: { ...childPage.subagent, toolCallId: 'wrong' } },
-  { ...childPage, subagent: undefined },
+  { ...chatPage, sessionId: 'wrong' },
+  { ...chatPage, events: 'wrong' },
+  { ...chatPage, cursorStatus: 'guessed' },
+  { ...chatPage, read: undefined },
 ]) {
-  test(`child history rejects wrong identity or metadata without retries: ${JSON.stringify(invalid)}`, async (t) => {
+  test(`native page rejects wrong identity or shape without retries: ${JSON.stringify(invalid)}`, async (t) => {
     const { client, fetch } = setup(t, async () => Response.json(invalid));
-    await assert.rejects(client.subagentHistory('session', 'native-spawn', { limit: 30 }));
+    await assert.rejects(client.chat({ sessionId: 'session', ...chatRead }));
     assert.equal(fetch.mock.callCount(), 1);
   });
 }
 
-test('child response validation uses serialized identity even when direct intent caller mutates the body', async (t) => {
+test('chat response validation uses serialized identity even when caller mutates the body', async (t) => {
   let resolve!: (value: Response) => void;
   const { client } = setup(t, () => new Promise<Response>((yes) => { resolve = yes; }));
-  const body = { sessionId: 'session', toolCallId: 'native-spawn' };
-  const pending = client.intent('session/subagent-history', body);
-  body.toolCallId = 'wrong';
-  resolve(Response.json({ ...childPage, toolCallId: 'wrong' }));
-  await assert.rejects(pending, /different toolCallId/);
+  const body = { sessionId: 'session', ...chatRead };
+  const pending = client.intent('session/chat', body);
+  body.sessionId = 'wrong';
+  resolve(Response.json({ ...chatPage, sessionId: 'wrong' }));
+  await assert.rejects(pending, /returned sessionId/);
 });
 
-for (const name of ['session/history', 'session/peek', 'session/subagent-history'] as const) {
-  test(`${name} propagates the view abort signal and cancellation has no diagnostic or retry`, async (t) => {
+for (const source of ['persisted', 'live'] as const) {
+  test(`${source} chat propagates the view abort signal and cancellation has no diagnostic or retry`, async (t) => {
     const controller = new AbortController();
     const { client, fetch } = setup(t, (_input, init) => {
       assert.equal(init?.signal, controller.signal);
@@ -162,9 +163,7 @@ for (const name of ['session/history', 'session/peek', 'session/subagent-history
         init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
       });
     });
-    const pending = name === 'session/history' ? client.history('session', undefined, controller.signal)
-      : name === 'session/peek' ? client.peek('session', undefined, controller.signal)
-        : client.subagentHistory('session', 'native-spawn', undefined, controller.signal);
+    const pending = client.chat({ sessionId: 'session', ...chatRead, source }, controller.signal);
     controller.abort();
     await assert.rejects(pending, { name: 'AbortError' });
     assert.equal(fetch.mock.callCount(), 1);
@@ -316,7 +315,7 @@ test('legacy and multiple attachment forms cannot be combined or silently droppe
   assert.equal(fetch.mock.callCount(), 0);
 });
 
-test('managed file reads and explicit tool image retain use typed intents without hidden prompt dispatch', async t => {
+test('managed file reads and association use typed intents without hidden prompt dispatch', async t => {
   const uploaded = { ...attachment, path: '/uploads/image.png', storedName: 'image.png', size: 4, mime: 'image/png' };
   const errors = [{ url: '/uploads/unpublished', error: 'Missing metadata' }];
   const { client, fetch } = setup(t, async (url) => String(url).endsWith('/files/list')
@@ -328,9 +327,8 @@ test('managed file reads and explicit tool image retain use typed intents withou
   assert.deepEqual(page.errors, errors);
   assert.equal(fetch.mock.calls[0].arguments[1]?.signal, controller.signal);
   await client.intent('files/get', { url: attachment.url });
-  const image = { eventId: 'event', toolCallId: 'tool', part: 1, cursor: 'page-2', count: 3 };
-  await client.intent('files/from-tool-image', { sessionId: 'session', image });
-  assert.deepEqual(JSON.parse(String(fetch.mock.calls[2].arguments[1]?.body)), { sessionId: 'session', image });
+  await client.intent('files/associate', { sessionId: 'session', url: attachment.url });
+  assert.deepEqual(JSON.parse(String(fetch.mock.calls[2].arguments[1]?.body)), { sessionId: 'session', url: attachment.url });
   assert.equal(fetch.mock.callCount(), 3);
   assert.ok(fetch.mock.calls.every(call => !String(call.arguments[0]).endsWith('/prompt')));
 });
@@ -573,10 +571,10 @@ for (const [index, response] of [null, { error: { detail: 'unavailable' } }, 'un
   test(`history HTTP failure with non-error JSON ${index} preserves status and diagnostics`, async (t) => {
     const status = 500 + index;
     const { client, fetch } = setup(t, async () => Response.json(response, { status }));
-    await assert.rejects(client.history('session'), { message: `intent session/history failed (${status})` });
-    assertOnlyPost(fetch, 'session/history', { sessionId: 'session' });
+    await assert.rejects(client.chat({ sessionId: 'session', ...chatRead }), { message: `intent session/chat failed (${status})` });
+    assertOnlyPost(fetch, 'session/chat', { sessionId: 'session', ...chatRead });
     assert.equal(getUxErrors().length, 1);
-    assert.match(getUxErrors()[0].message, /^会话 session \(session\)：接口 session\/history 调用失败：intent session\/history failed/);
+    assert.match(getUxErrors()[0].message, /^会话 session \(session\)：接口 session\/chat 调用失败：intent session\/chat failed/);
   });
 }
 
@@ -584,11 +582,11 @@ test('history transport failures are rethrown without diagnostics, retries or pr
   const failure = new TypeError('History connection lost');
   const { client, fetch } = setup(t, async () => { throw failure; });
   await assert.rejects(
-    client.history('session', { afterMsgId: 'contiguous-cursor', limit: 80 }),
+    client.chat({ sessionId: 'session', ...chatRead, direction: 'forward', cursor: 'native-forward', max: 80 }),
     (error: unknown) => error === failure,
   );
-  assertOnlyPost(fetch, 'session/history', {
-    sessionId: 'session', afterMsgId: 'contiguous-cursor', limit: 80,
+  assertOnlyPost(fetch, 'session/chat', {
+    sessionId: 'session', ...chatRead, direction: 'forward', cursor: 'native-forward', max: 80,
   });
   assert.deepEqual(getUxErrors(), []);
 });
@@ -601,7 +599,7 @@ for (const failure of [
   },
   {
     name: 'schema',
-    respond: async () => Response.json({ sessionId: 'session', messages: 'invalid', hasMore: false }),
+    respond: async () => Response.json({ ...chatPage, events: 'invalid' }),
     diagnostic: /Expected array, received string/,
   },
   {
@@ -612,13 +610,13 @@ for (const failure of [
 ]) {
   test(`history ${failure.name} failures remain local diagnostics, without retries or prompts`, async (t) => {
     const { client, fetch } = setup(t, failure.respond);
-    await assert.rejects(client.history('session', { beforeMsgId: 'oldest', limit: 40 }));
-    assertOnlyPost(fetch, 'session/history', {
-      sessionId: 'session', beforeMsgId: 'oldest', limit: 40,
+    await assert.rejects(client.chat({ sessionId: 'session', ...chatRead, cursor: 'older-native', max: 40 }));
+    assertOnlyPost(fetch, 'session/chat', {
+      sessionId: 'session', ...chatRead, cursor: 'older-native', max: 40,
     });
     const diagnostics = getUxErrors();
     assert.equal(diagnostics.length, 1);
-    assert.match(diagnostics[0].message, /^会话 session \(session\)：接口 session\/history 调用失败：/);
+    assert.match(diagnostics[0].message, /^会话 session \(session\)：接口 session\/chat 调用失败：/);
     assert.match(diagnostics[0].message, failure.diagnostic);
   });
 }
@@ -652,16 +650,11 @@ test('EventSource opening and reopening only update connection state, never POST
   assert.equal(client.userClosed, true);
 });
 
-const historyPage: HistoryPage = {
-  sessionId: 'session', append: true, latest: true, hasMore: false,
-  messages: [{ id: 'cursor', role: 'assistant', content: 'caught up', timestamp: 1 }],
-};
-const liveMessage: ServerEvent = {
-  type: 'msg/upsert', sessionId: 'session',
-  message: { id: 'next', role: 'assistant', content: 'streaming', timestamp: 2 },
+const invalidated: ServerEvent = {
+  type: 'chat/invalidated', sessionId: 'session', reason: 'rewind',
 };
 
-test('history returns a direct HTTP page while live messages remain independent SSE events', async (t) => {
+test('chat returns one HTTP native page independently of control SSE', async (t) => {
   const { instances } = mockEventSource(t);
   let resolve!: (response: Response) => void;
   const post = new Promise<Response>((yes) => { resolve = yes; });
@@ -672,54 +665,54 @@ test('history returns a direct HTTP page while live messages remain independent 
   source.open();
 
   let settled = false;
-  const pending = client.history('session', { afterMsgId: 'cursor', limit: 80 }).then((page) => {
+  const opts = { ...chatRead, direction: 'forward' as const, cursor: 'native-forward', max: 80 };
+  const pending = client.chat({ sessionId: 'session', ...opts }).then((page) => {
     settled = true;
     return page;
   });
   await Promise.resolve();
   assert.equal(settled, false);
   assert.deepEqual(events, []);
-  source.emit(liveMessage);
+  source.emit(invalidated);
   assert.equal(settled, false);
-  resolve(Response.json({ ...historyPage, serverOnly: true }));
-  assert.deepEqual(await pending, historyPage);
-  assert.deepEqual(events, [liveMessage]);
-  assertOnlyPost(fetch, 'session/history', { sessionId: 'session', afterMsgId: 'cursor', limit: 80 });
+  resolve(Response.json({ ...chatPage, serverOnly: true }));
+  assert.deepEqual(await pending, chatPage);
+  assert.deepEqual(events, [invalidated]);
+  assertOnlyPost(fetch, 'session/chat', { sessionId: 'session', ...opts });
   assert.deepEqual(getUxErrors(), []);
 });
 
-for (const opts of [undefined, { beforeMsgId: 'oldest', limit: 40 }]) {
-  test(`history accepts a page without optional flags (${opts ? 'older' : 'initial'}) without SSE`, async (t) => {
-    const page: HistoryPage = { sessionId: 'session', messages: [], hasMore: false };
-    const { client, fetch, events } = setup(t, async () => Response.json(page));
-    assert.deepEqual(await client.history('session', opts), page);
-    assertOnlyPost(fetch, 'session/history', { sessionId: 'session', ...opts });
+for (const opts of [chatRead, { ...chatRead, cursor: 'older-native', max: 40 }]) {
+  test(`chat accepts bounded native pages without SSE (${JSON.stringify(opts)})`, async (t) => {
+    const { client, fetch, events } = setup(t, async () => Response.json(chatPage));
+    assert.deepEqual(await client.chat({ sessionId: 'session', ...opts }), chatPage);
+    assertOnlyPost(fetch, 'session/chat', { sessionId: 'session', ...opts });
     assert.deepEqual(events, []);
     assert.deepEqual(getUxErrors(), []);
   });
 }
 
-test('peek returns its parsed HTTP preview without SSE', async (t) => {
-  const page = {
-    sessionId: 'session', title: 'Trashed session', cwd: '/work/project',
-    messages: historyPage.messages, hasMore: true,
-  };
-  const { client, fetch, events } = setup(t, async () => Response.json({ ...page, serverOnly: true }));
-  assert.deepEqual(await client.peek('session', { beforeMsgId: 'oldest', limit: 20 }), page);
-  assertOnlyPost(fetch, 'session/peek', { sessionId: 'session', beforeMsgId: 'oldest', limit: 20 });
+test('passive reads return only native page fields without SSE or duplicate session metadata', async (t) => {
+  const page = { ...chatPage, hasMore: true };
+  const { client, fetch, events } = setup(t, async () => Response.json({
+    ...page, title: 'Separate metadata', cwd: '/work/project', serverOnly: true,
+  }));
+  const opts = { ...chatRead, cursor: 'older-native', max: 20 };
+  assert.deepEqual(await client.chat({ sessionId: 'session', ...opts }), page);
+  assertOnlyPost(fetch, 'session/chat', { sessionId: 'session', ...opts });
   assert.deepEqual(events, []);
   assert.deepEqual(getUxErrors(), []);
 });
 
-for (const method of ['history', 'peek'] as const) {
-  test(`${method} rejects a page for another session with a local diagnostic`, async (t) => {
+for (const source of ['persisted', 'live'] as const) {
+  test(`${source} rejects a page for another session with a local diagnostic`, async (t) => {
     const { client, fetch, events } = setup(t, async () => Response.json({
-      ...historyPage, sessionId: 'other-session', title: 'Other', cwd: '/work/other',
+      ...chatPage, sessionId: 'other-session', title: 'Other', cwd: '/work/other',
     }));
-    await assert.rejects(client[method]('session'), {
-      message: `intent session/${method} returned sessionId "other-session" instead of "session"`,
+    await assert.rejects(client.chat({ sessionId: 'session', ...chatRead, source }), {
+      message: 'intent session/chat returned sessionId "other-session" instead of "session"',
     });
-    assertOnlyPost(fetch, `session/${method}`, { sessionId: 'session' });
+    assertOnlyPost(fetch, 'session/chat', { sessionId: 'session', ...chatRead, source });
     assert.deepEqual(events, []);
     assert.equal(getUxErrors().length, 1);
     assert.match(getUxErrors()[0].message, /returned sessionId "other-session" instead of "session"$/);
@@ -753,11 +746,11 @@ test('SSE snapshots require allow-all and preserve optional lifecycle metadata',
   source.emit(patch);
   source.emit({ ...snapshot, permissionPolicy: undefined });
   source.emit({ ...snapshot, permissionPolicy: 'ask' });
-  source.emit({ type: 'session/history-page', page: historyPage });
-  const reset: ServerEvent = { type: 'session/reset', page: historyPage };
-  source.emit(reset);
-  assert.deepEqual(events, [snapshot, withLifecycle, patch, reset]);
-  assert.equal(warn.mock.callCount(), 3);
+  source.emit({ type: 'session/history-page', page: chatPage });
+  source.emit({ type: 'session/reset', page: chatPage });
+  source.emit(invalidated);
+  assert.deepEqual(events, [snapshot, withLifecycle, patch, invalidated]);
+  assert.equal(warn.mock.callCount(), 4);
   assert.equal(fetch.mock.callCount(), 0);
   assert.deepEqual(getUxErrors(), []);
 });
@@ -778,7 +771,7 @@ for (const action of ['replace', 'disconnect', 'disconnect-and-connect'] as cons
     t.mock.method(source, 'close', () => {
       onopen();
       onerror();
-      onmessage({ data: JSON.stringify(liveMessage) });
+      onmessage({ data: JSON.stringify(invalidated) });
       close();
     });
 
@@ -798,7 +791,7 @@ for (const action of ['replace', 'disconnect', 'disconnect-and-connect'] as cons
     source.readyState = FakeEventSource.CONNECTING;
     onerror();
     onmessage({ data: JSON.stringify(snapshot) });
-    onmessage({ data: JSON.stringify(liveMessage) });
+    onmessage({ data: JSON.stringify(invalidated) });
     onmessage({ data: '{"type":"invalid"}' });
     onmessage({ data: 'not JSON' });
     assert.deepEqual(states, expectedStates);
@@ -808,8 +801,8 @@ for (const action of ['replace', 'disconnect', 'disconnect-and-connect'] as cons
     assert.equal(instances.length, action === 'disconnect' ? 1 : 2);
     assert.equal(warn.mock.callCount(), 0);
     assert.equal(fetch.mock.callCount(), 0);
-    current?.emit(liveMessage);
-    assert.deepEqual(events, current ? [liveMessage] : []);
+    current?.emit(invalidated);
+    assert.deepEqual(events, current ? [invalidated] : []);
   });
 }
 
@@ -827,7 +820,7 @@ test('a closed source cannot publish or reset reconnect backoff while awaiting r
   source.onerror();
   source.onopen();
   source.onerror();
-  source.emit(liveMessage);
+  source.emit(invalidated);
   assert.deepEqual(states, ['connecting', 'open', 'connecting']);
   assert.deepEqual(events, []);
   assert.equal(client.isOpen, false);
@@ -845,9 +838,9 @@ test('a closed source cannot publish or reset reconnect backoff while awaiting r
   t.mock.timers.tick(1);
   assert.equal(instances.length, 3);
   instances[2].open();
-  instances[2].emit(liveMessage);
+  instances[2].emit(invalidated);
   assert.equal(client.isOpen, true);
-  assert.deepEqual(events, [liveMessage]);
+  assert.deepEqual(events, [invalidated]);
   assert.equal(fetch.mock.callCount(), 0);
   assert.deepEqual(getUxErrors(), []);
 });
@@ -872,26 +865,16 @@ test('disconnect cancels a scheduled reconnect', (t) => {
   assert.equal(fetch.mock.callCount(), 0);
 });
 
-for (const name of ['session/history', 'session/peek'] as const) {
-  test(`${name} options cannot override the explicitly requested session`, async (t) => {
-    const page = { sessionId: 'original', messages: [], hasMore: false, title: 'Title', cwd: '.' };
-    const { client, fetch } = setup(t, async () => Response.json(page));
-    const options = { sessionId: 'other', limit: 20 };
-    const result = name === 'session/history'
-      ? await client.history('original', options) : await client.peek('original', options);
-    assert.equal(result.sessionId, 'original');
-    assertOnlyPost(fetch, name, { sessionId: 'original', limit: 20 });
-  });
-
-  test(`${name} validates against the SID serialized at request time even if the caller mutates its body`, async (t) => {
+for (const source of ['persisted', 'live'] as const) {
+  test(`${source} chat validates against the SID serialized at request time even if the caller mutates its body`, async (t) => {
     let resolve!: (response: Response) => void;
     const response = new Promise<Response>((yes) => { resolve = yes; });
     const { client, fetch } = setup(t, () => response);
-    const body = { sessionId: 'original' };
-    const pending = client.intent(name, body);
-    assertOnlyPost(fetch, name, { sessionId: 'original' });
+    const body = { sessionId: 'original', ...chatRead, source };
+    const pending = client.chat(body);
+    assertOnlyPost(fetch, 'session/chat', { sessionId: 'original', ...chatRead, source });
     body.sessionId = 'other';
-    resolve(Response.json({ sessionId: 'other', messages: [], hasMore: false, title: 'Title', cwd: '.' }));
+    resolve(Response.json({ ...chatPage, sessionId: 'other' }));
     await assert.rejects(pending, /instead of "original"/);
   });
 }

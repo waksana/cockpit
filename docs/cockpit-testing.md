@@ -10,10 +10,10 @@ For the deployed modernization's conclusions and remaining limits, see the
 
 | Layer | What | Run |
 | --- | --- | --- |
-| **Unit (core)** | fold (event→message tree, live==replay), `prefs`, `mcp-config` | `pnpm --filter @cockpit/core test` |
+| **Unit (core)** | control lifecycle, bounded native reads, `prefs`, `mcp-config`, shared fold semantics | `pnpm --filter @cockpit/core test` |
 | **Unit (server)** | `uploads` (save/serve, path-traversal, mime, name safety) | `pnpm --filter @cockpit/server test` |
 | **Unit (MCP)** | API client, tool boundaries, file exchange | `pnpm --filter @cockpit/mcp test` |
-| **Unit (web)** | acknowledged sends/drafts, reconnect windows, local diagnostics and image URLs | `pnpm --filter @cockpit/web test` |
+| **Unit (web)** | native event windows/cursors, gap handling, bounded retained details, drafts, diagnostics and files | `pnpm --filter @cockpit/web test` |
 | **All workspaces** | every workspace's unit-test script, plus launcher/restart helpers | `pnpm test` |
 | **Build** | workspace compilation, including the web app's actual TypeScript sources | `pnpm build` |
 | **Real-log regression** | fold every persisted `events.jsonl`, validate each message vs the protocol schema | `pnpm regress` |
@@ -61,8 +61,9 @@ modernization acceptance threshold or evidence of bounded runtime ownership:
 
 These historical measurements do not establish current production capacity or
 bounded memory. The old materialized-session cap and heap watchdog no longer
-exist. Native SDK idle cleanup is set to 30 minutes; history caching has separate
-budgets, and uploaded files/persisted history remain operator-managed disk usage.
+exist. Native SDK idle cleanup is set to 30 minutes; Cockpit no longer caches
+chat history. Browser windows and native runtime memory are separate budgets,
+and uploads/persisted history remain independently retained disk data.
 
 ## Security posture
 

@@ -32,7 +32,7 @@ Web GUI ---- HTTP commands/queries ----+
                                       +-- Server -- Engine -- Official SDK
 Session ---- Cockpit MCP -- HTTP ------+                |          |
                                                        |     JSON-RPC/stdio
-Web GUI <------------- SSE projection ------------------+          |
+Web GUI <------------- SSE control state ---------------+          |
                                                        |     Copilot runtime
                                                  Preferences
                                                  and unread state
@@ -40,13 +40,13 @@ Web GUI <------------- SSE projection ------------------+          |
 
 - `packages/protocol`: shared schemas, typed intents, events and file/notification
   contracts. `GET /capabilities` publishes schemas and current native limits.
-- `packages/core`: Copilot session ownership, canonical event folding, passive
-  history windows, preferences and durable unread state. `runtime.ts` owns the
+- `packages/core`: Copilot session ownership, request-local native event reads,
+  preferences and durable unread state. `runtime.ts` owns the
   official SDK client and its process.
 - `apps/server`: HTTP/SSE, protected file storage and Web Push. It validates
   requests and results rather than maintaining another conversation model.
-- `apps/web`: React/Zustand projection. URL owns selection; local state owns
-  drafts, staged attachments, view position and browser notification plumbing.
+- `apps/web`: native event folding and React/Zustand projection. URL owns selection;
+  local state owns loaded pages/cursors, drafts, attachments and reading position.
 - `apps/mcp`: API client and agent-friendly presentation, not a local session
   database reader or a separate fold implementation.
 
@@ -108,7 +108,7 @@ session-ID-bound action catalog: seven pages (Settings, session MCP, session
 Skills, plans/tasks, context, schedules, runtime maintenance), then fork,
 pin and permanent deletion. Deletion requires an irreversible confirmation;
 there is no trash or restore operation. Managed files and workspaces are retained.
-Three separators and viewport-bounded scrolling
+Separators and viewport-bounded scrolling
 keep this one-level menu reachable on short screens. Detail panels contain only
 the current page's owner-labelled title, Close/Back, page actions and content;
 there are no page-switching tabs or More menu. The chat title remains a shortcut
@@ -131,7 +131,7 @@ An unloaded view does not claim to know that session's effective tool choices.
 Automatic naming is a narrow GUI convenience over native APIs, not a separate
 model client or hidden conversation. The first effective completed reply can
 trigger one native no-tools query, then `name.setAuto` stores the short title.
-The explicit `session/auto-name` API is also available through Web and MCP.
+The explicit `session/auto-name` API is also available through HTTP and MCP.
 Manual names remain protected; history viewing and startup do not name old
 sessions. Naming failure preserves the current title and does not fail the chat.
 This still consumes an additional model request using the current context.
@@ -166,46 +166,26 @@ prompt; explicit context compaction delegates to the same SDK.
 
 A persisted session, an executing runtime session and a visible browser window
 are different things. Opening history does not resume a Copilot session or connect
-its MCP tools. `session/history` and `session/peek` return bounded pages directly
-to their caller; a viewer's page query is not broadcast to other devices.
-Pages follow native assistant-turn boundaries as well as user messages. Only
-dependencies of displayed messages extend a page; invisible runtime payloads
-are not retained. Batch-size targets must not reject valid long conversations.
-The cache stores compressed display-event snapshots, not a duplicate full fold.
-Large nested cards can still require significant temporary memory and read time.
+its MCP tools. `session/chat` returns one bounded native event page directly to
+its requester, without a history cache, full-log fold, or message-ID lookup.
+The browser owns its loaded window and opaque forward/backward cursors. It loads
+small pages toward roughly two screen heights, then reads older pages on demand.
+Switching away preserves loaded pages and reading position in that browser.
+Browser reload loses this memory, not native history or independently stored drafts.
 
-Web requests `details: "summary"` and reads child transcripts through
-`session/subagent-history` only when a card is expanded. Full recursive history
-remains available to API/MCP callers. SSE carries summary cards rather than
-repeatedly cloning entire nested conversations. The browser retains the three most
-recently opened chat windows, including the active one. Only departure trims a
-window to its latest loaded page, regardless of the previous reading position.
-Reopening starts at the bottom and fetches a fresh latest page; neither a reading
-bookmark nor the prior entry's checkpoint survives departure. There is no byte
-limit, TTL, hidden chat tree or native keepalive. Drafts,
-attachments and unread metadata are independent; cached does not mean visible,
-seen or native-loaded. Eviction or a browser refresh loses only this memory cache.
+Only a visible consumer reads chat. A browser disconnect cancels its request and
+stops future reads without stopping native work. Reconnection resumes durable
+events from the browser's cursor. A missing ephemeral interval freezes the partial
+message until its complete durable message can replace it. Cursor expiry,
+rewind and compaction preserve readable content with an explicit resync action;
+there is no HMAC continuation token, whole-window replay, or silent latest jump.
 
-Warm return displays the cached latest page while a fresh latest bootstrap replaces
-it. Upserts not yet present within an overlapping persisted range remain a live
-overlay, not a durable history cursor. An unverified connection gap discards that
-overlay provenance (not the readable cache), so missed rewinds cannot resurrect
-discarded live rows. Rows before a fresh page's boundary cannot bypass older
-pagination. Ordinary app focus does not create a new entry:
-the still-mounted chat retains its reading intent and loaded pages on reconnect.
-Optional `session/history` input `resume: {}` obtains a fresh latest page and a
-checkpoint; `resume: { token }` returns `ready`, `pending` or `unavailable`, and
-cannot be combined with before/after locators. The same typed contract is available
-through the generic MCP intent surface. Existing history/peek defaults are unchanged.
-Each token request scans at most four 200-event native batches plus at most six
-one-event boundary reads, independently of the response's message limit. Continuation
-uses a captured tail and existing backward cursors; pending parts are not displayed
-until the range is complete. Native cursors are observational fences, not an atomic
-snapshot or content generation. Web uses token continuation only within the same
-entry, not to restore an earlier visit. A same-scope passive cache replacement is
-not a history mutation. Genuine continuation failures keep readable content with
-an explicit error and latest-refresh action; they do not leave a sticky
-range-unavailable flag that prevents future entry reconciliation.
+Subagent cards are static detail links. Opening one uses native agent-ID filtering
+on a loaded handle; manual refresh reads its current history. Neither main cards
+nor details display changing task status, and the server does not scan a whole
+task list to simulate an exact status getter. Unloaded filtered queries report
+that an explicit resume is required. See [native chat transport](./native-chat.md)
+for the HTTP/MCP migration and precise native limitations.
 
 Within the active chat, all loaded message text, DOM and component state remain
 available; there is no virtual list or message eviction. A memoized transcript
@@ -217,18 +197,12 @@ visible semantic anchor, including margins, selection/focus navigation and
 explicit End-to-bottom following. This reduces rendering work, not retained-data
 memory, native context size or cold-history read time.
 
-Active-session initialization uses SDK `onEvent` before create/resume completes,
-then reads durable display events in native 200-event pages up to a captured
-tail event. It does not call `getEvents()` for a full-history array. Initialization
-and subsequent live folding both retain subagent summaries, not child transcripts.
-Events from every agent are still read where needed: filtering to the primary
-agent alone can remove the only parent link in older nested-task histories.
-Historical root messages and small routing records remain addressable for late
-tool updates; this is not a hard bound on all projection or native-runtime memory.
-
-SSE carries shared state changes, streamed messages and real history resets.
-Reconnect obtains an authoritative snapshot and reconciles the visible history
-window. Browser disconnection does not stop submitted work.
+Initialization attaches native control callbacks before create/resume completes,
+but does not build a chat fold or replay display history. Targeted native metadata,
+queue/task/control queries and one-message naming eligibility remain independent.
+Global SSE carries metadata, decisions, notifications and history invalidation,
+not streamed chat bodies or viewer-specific pages. Native execution safety does
+not depend on whether a browser is displaying a child card.
 
 Native idle cleanup uses `sessionIdleTimeoutSeconds: 1800`. Cockpit has no session
 count cap, automatic eviction policy, retained-wrapper recycling or idle heartbeat.

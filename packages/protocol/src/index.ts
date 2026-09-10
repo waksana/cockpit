@@ -5,6 +5,9 @@
 
 import { z } from 'zod';
 
+export { NativeChatEvent, NativeChatRead, NativeChatPage } from './native-chat.ts';
+import { NativeChatRead, NativeChatPage } from './native-chat.ts';
+
 // ---------------------------------------------------------------------------
 // Shared schema helpers (boundary invariants encoded ONCE, in the contract)
 // ---------------------------------------------------------------------------
@@ -43,34 +46,6 @@ export const ModelOption = z.object({
 });
 export type ModelOption = z.infer<typeof ModelOption>;
 
-// Native's default persisted binary limit; previews never raise that limit.
-export const MAX_TOOL_IMAGE_BYTES = 10 * 1024 * 1024;
-export const ToolImageRef = z.object({
-  eventId: z.string().min(1).max(200),
-  toolCallId: z.string().min(1).max(200),
-  part: z.number().int().nonnegative(),
-  cursor: z.string().min(1).max(16384).optional(),
-  count: z.number().int().min(1).max(1000).optional(),
-}).strict();
-export const ToolImage = ToolImageRef.extend({
-  mime: z.string().max(512),
-  byteLength: z.number().int().nonnegative().optional(),
-  unavailable: z.string().optional(),
-});
-export type ToolImage = z.infer<typeof ToolImage>;
-export const ToolImageRead = z.object({
-  sessionId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/),
-  image: ToolImageRef,
-}).strict();
-export type ToolImageRead = z.infer<typeof ToolImageRead>;
-export const ToolImageResult = z.object({
-  sessionId: z.string(), eventId: z.string(), toolCallId: z.string(),
-  part: z.number().int().nonnegative(),
-  mime: z.enum(['image/png', 'image/jpeg', 'image/gif', 'image/webp']),
-  byteLength: z.number().int().min(1).max(MAX_TOOL_IMAGE_BYTES),
-  data: z.string().max(4 * Math.ceil(MAX_TOOL_IMAGE_BYTES / 3)),
-});
-
 export const ToolCall = z.object({
   toolCallId: z.string(),
   title: z.string(),
@@ -81,7 +56,6 @@ export const ToolCall = z.object({
   name: z.string().optional(),
   args: z.string().optional(),
   output: z.string().optional(),
-  images: z.array(ToolImage).optional(),
 });
 export type ToolCall = z.infer<typeof ToolCall>;
 
@@ -93,6 +67,7 @@ export type ChatRole = z.infer<typeof ChatRole>;
 // message's `subMessages`, folded by the SAME fold on a nested state.
 export const SubagentInfo = z.object({
   toolCallId: z.string().optional(),
+  agentId: z.string().optional(),
   name: z.string(),          // internal agent_type (general-purpose/explore/…)
   displayName: z.string(),   // human-readable
   description: z.string().optional(),
@@ -239,11 +214,10 @@ export const ChangedFile = z.object({
 export type ChangedFile = z.infer<typeof ChangedFile>;
 
 // Full session plan payload (on-demand, for the info panel): the plan.md
-// markdown narrative + the complete TODO checklist + changed files.
+// markdown narrative and the complete native TODO checklist.
 export const SessionPlan = z.object({
   planMarkdown: z.string().nullable(),
   todos: z.array(TodoItem),
-  changedFiles: z.array(ChangedFile).optional(),
 });
 export type SessionPlan = z.infer<typeof SessionPlan>;
 
@@ -592,40 +566,8 @@ export type SessionBrief = z.infer<typeof SessionBrief>;
 // Server → client events (delivered over a single SSE stream)
 // ---------------------------------------------------------------------------
 
-export const HistoryResume = z.object({ token: z.string().min(1).max(8192).optional() }).strict();
-export type HistoryResume = z.infer<typeof HistoryResume>;
-export const HistoryResumeResult = z.discriminatedUnion('status', [
-  z.object({ status: z.literal('ready'), token: z.string().optional() }),
-  z.object({ status: z.literal('pending'), token: z.string() }),
-  z.object({
-    status: z.literal('unavailable'),
-    reason: z.enum(['locator', 'expired', 'changed', 'boundary', 'capacity']),
-  }),
-]);
-export type HistoryResumeResult = z.infer<typeof HistoryResumeResult>;
-
-export const HistoryPage = z.object({
-  sessionId: z.string(),
-  messages: z.array(ChatMessage),
-  hasMore: z.boolean(),
-  latest: z.boolean().optional(),
-  // Reconnect resume: these messages are a TAIL to upsert-merge into the client's
-  // existing window (from the client's last-known message id onward), not a window
-  // to replace. Preserves the paginated scrollback + scroll position across a
-  // reconnect (the cursor is the durable message id, so it survives a server restart).
-  append: z.boolean().optional(),
-  // Pending parts are not independently continuous; commit only after ready.
-  resume: HistoryResumeResult.optional(),
-});
-export type HistoryPage = z.infer<typeof HistoryPage>;
-
 export const HistoryDetails = z.enum(['full', 'summary']);
 export type HistoryDetails = z.infer<typeof HistoryDetails>;
-export const SubagentHistoryPage = HistoryPage.extend({
-  toolCallId: z.string(),
-  subagent: SubagentInfo,
-});
-export type SubagentHistoryPage = z.infer<typeof SubagentHistoryPage>;
 
 export const Snapshot = z.object({
   type: z.literal('snapshot'),
@@ -660,8 +602,10 @@ export const ServerEvent = z.discriminatedUnion('type', [
     type: z.literal('session/removed'), sessionId: z.string(),
     inboxRevision: NotificationCounter.optional(), unreadCount: NotificationCounter.optional(),
   }),
-  z.object({ type: z.literal('session/reset'), page: HistoryPage }),
-  z.object({ type: z.literal('msg/upsert'), sessionId: z.string(), message: ChatMessage }),
+  z.object({
+    type: z.literal('chat/invalidated'), sessionId: z.string(),
+    reason: z.enum(['rewind', 'compaction']),
+  }),
   // Transient "fire a notification now" signal, emitted by the Engine (the single
   // authority) when a session's authoritative `attention` is newly raised. Both
   // notification channels — the client Notification and the server Web Push —
@@ -769,10 +713,12 @@ export const PushStatus = z.object({
 });
 export type PushStatus = z.infer<typeof PushStatus>;
 
-const HistoryCursor = z.string().min(1);
-const HistoryLimit = z.number().int().positive().max(200);
-
 export const Intents = {
+  'session/chat': {
+    description: 'Read one native event page without a server chat cache or projection. max counts events, not display messages. Keep source/direction with opaque cursors. Passive reads do not load sessions; live reads require an existing handle. Bootstrap captures a live cursor before a fresh backward page. An expired cursor is not a continuation. Binary tool media is represented by locators, never automatically retained.',
+    body: NativeChatRead,
+    result: NativeChatPage,
+  },
   'runtime/snapshot': {
     description: 'Read global models, readiness, permission policy (always auto-approve), and session metadata in one passive query. Interaction modes do not change permissions.',
     body: z.object({}),
@@ -790,49 +736,6 @@ export const Intents = {
       name: z.string().trim().min(1).max(120).optional(),
     }).strict(),
     result: z.object({ sessionId: z.string().min(1) }),
-  },
-  'session/history': {
-    description: 'Passively read a history page without SSE events or loading a session. beforeMsgId, afterMsgId and resume are mutually exclusive; limit is 1..200 messages. details:summary omits nested transcripts; omitted details preserves full. resume:{} obtains a checkpoint; resume:{token} performs bounded continuation. Stage pending message parts until ready; unavailable requires explicit refresh and does not prove deletion.',
-    body: z.object({
-      sessionId: z.string(), beforeMsgId: HistoryCursor.optional(),
-      afterMsgId: HistoryCursor.optional(), limit: HistoryLimit.optional(),
-      details: HistoryDetails.optional(),
-      resume: HistoryResume.optional(),
-    }).refine((b) => [b.beforeMsgId, b.afterMsgId, b.resume].filter(value => value !== undefined).length <= 1, {
-      message: 'beforeMsgId, afterMsgId and resume are mutually exclusive',
-    }),
-    result: HistoryPage,
-  },
-  // Preview is passive for both loaded and unloaded sessions.
-  'session/peek': {
-    description: 'Passively preview live or unloaded history without loading a session or emitting SSE events. Cursor must be nonempty; limit is a positive integer up to 200. Result is flat.',
-    body: z.object({
-      sessionId: z.string(), beforeMsgId: HistoryCursor.optional(),
-      limit: HistoryLimit.optional(), details: HistoryDetails.optional(),
-    }),
-    result: z.object({
-      sessionId: z.string(),
-      title: z.string(),
-      cwd: z.string(),
-      messages: z.array(ChatMessage),
-      hasMore: z.boolean(),
-    }),
-  },
-  'session/subagent-history': {
-    description: 'Passively read one subagent transcript by its spawning toolCallId, without loading the session. Children are summary cards by default; details:full includes nested transcripts. Supports live and unloaded sessions.',
-    body: z.object({
-      sessionId: z.string(), toolCallId: z.string().min(1),
-      beforeMsgId: HistoryCursor.optional(), afterMsgId: HistoryCursor.optional(),
-      limit: HistoryLimit.optional(), details: HistoryDetails.optional(),
-    }).refine((body) => body.beforeMsgId === undefined || body.afterMsgId === undefined, {
-      message: 'beforeMsgId and afterMsgId are mutually exclusive',
-    }),
-    result: SubagentHistoryPage,
-  },
-  'session/tool-image': {
-    description: 'Read one native tool image privately, on demand, from persisted events without loading or resuming the session. Returns bounded base64 only for this explicit request, never a public URL. Event/tool/part must belong to the requested session. Deleted, omitted, unsupported or stale resources fail explicitly; refresh history for an expired cursor.',
-    body: ToolImageRead,
-    result: ToolImageResult,
   },
   'files/list': {
     description: 'List retained Cockpit files only, including legacy files in the managed upload directory. Search names or filter session associations; never scans private directories. Paginated metadata only, no file buffers.',
@@ -852,11 +755,6 @@ export const Intents = {
   'files/associate': {
     description: 'Associate an existing retained file with a session without copying, sending, or modifying native history.',
     body: z.object({ url: UploadUrl, sessionId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/) }).strict(),
-    result: UploadedFile,
-  },
-  'files/from-tool-image': {
-    description: 'Explicitly retain one selected native tool image in Cockpit managed files for download or attachment delivery. Reads the existing persisted image on demand, never scans other images. Repeating the same source returns the same retained file; does not rewrite SDK history.',
-    body: ToolImageRead.extend({ name: z.string().min(1).max(200).optional() }),
     result: UploadedFile,
   },
   prompt: {

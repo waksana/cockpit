@@ -1,25 +1,17 @@
-// Pure-projection store (Zustand). The cockpit server is the SINGLE owner of
-// all session state; this store holds NO domain logic. It mirrors the server's
-// SSE event stream and sends intents back via POST. Always-YOLO: the server
-// auto-approves permissions, so there is no permission UI here.
-//
-// Migrated from a Context+useState store to Zustand: the projection logic is
-// unchanged; only the state container differs. The single client lifecycle is
-// driven by `init()` (called once from <App> in an effect).
-//
-// Client-local state (per-device, not server truth): browser notification
-// plumbing and per-session unsent drafts (localStorage). The "needs you" signal
-// (sidebar dot + app-icon badge) is NOT client-local — it derives purely from the
-// server's attention/attnId/seenId, so it can never drift between devices.
+// Browser-owned native chat windows plus the server's control projection.
+// SSE supplies metadata/decisions; bounded HTTP reads feed only the visible chat.
+// Loaded pages, cursors and drafts are local. Attention counters remain server
+// truth shared across devices. init() owns this tab's transport lifecycle.
 
 import { create } from 'zustand';
-import { isSessionUnloadedError, NetClient, SessionUnloadedError } from './client';
+import { isSessionUnloadedError, isTransportError, NetClient, SessionUnloadedError } from './client';
 import type { ConnState } from './client';
 import type {
-  AgentStatus, Attachment, ChatMessage, ChatSession, ModelOption, ServerEvent,
+  AgentStatus, Attachment, ChatSession, ModelOption, ServerEvent,
 } from './types';
-import type { IntentBody, IntentResult } from '@cockpit/protocol';
-import { applyHistoryPage, applyResumedHistory, HISTORY_PAGE, HistoryRangeError, invalidateWindow, metaToSession, releaseWindow, retainLatestWindow } from './sessionWindow';
+import type { IntentBody, IntentResult, NativeChatRead } from '@cockpit/protocol';
+import { invalidateWindow, metaToSession } from './sessionWindow';
+import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
 import { notify } from '../lib/notify';
 import { clearOsNotifications } from '../lib/push';
 import { setBadge } from '../lib/badge';
@@ -57,13 +49,10 @@ interface CockpitState {
   forkSession: (sessionId: string) => Promise<string>;
   loadMore: (sessionId: string) => void;
   retryHistory: (sessionId: string) => void;
-  subagentHistory: (sessionId: string, toolCallId: string,
-    opts?: { beforeMsgId?: string; afterMsgId?: string; limit?: number },
-    signal?: AbortSignal) => Promise<import('@cockpit/protocol').SubagentHistoryPage>;
+  chat: (body: NativeChatRead, signal?: AbortSignal) => Promise<import('@cockpit/protocol').NativeChatPage>;
   sendPrompt: (sessionId: string, text: string, attachment?: Attachment, attachments?: Attachment[]) => Promise<boolean>;
   filesList: (body: IntentBody<'files/list'>, signal?: AbortSignal) => Promise<IntentResult<'files/list'>>;
   filesGet: (url: string, signal?: AbortSignal) => Promise<IntentResult<'files/get'>>;
-  retainToolImage: (body: IntentBody<'files/from-tool-image'>) => Promise<IntentResult<'files/from-tool-image'>>;
   cancel: (sessionId: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<{ ok: true; interrupted: boolean }>;
   setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => Promise<void>;
@@ -89,15 +78,6 @@ interface CockpitState {
   skillsGlobal: (cwd?: string) => Promise<import('@cockpit/protocol').SkillGlobal[]>;
   skillsRead: (name: string, cwd?: string) => Promise<IntentResult<'skills/read'>>;
   skillsSetGlobal: (name: string, enabled: boolean, cwd?: string) => Promise<void>;
-  // Read-only, paginated preview of a TRASHED session (rendered as a non-interactive
-  // Thread). `preview` is a synthetic ChatSession kept OUT of `sessions` so it never
-  // appears in the sidebar; pagination reads from disk via the `session/peek` intent.
-  preview: ChatSession | null;
-  openPreview: (sessionId: string) => void;
-  refreshPreview: (sessionId: string) => void;
-  retryPreview: (expected: ChatSession) => void;
-  loadMorePreview: () => void;
-  closePreview: () => void;
   skillsSession: (sessionId: string) => Promise<import('@cockpit/protocol').SkillSession[]>;
   skillsToggleSession: (sessionId: string, name: string, enabled: boolean) => Promise<void>;
   listDir: (path?: string) => Promise<import('@cockpit/protocol').DirListing>;
@@ -145,6 +125,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         const { meta } = await net.getSession(sessionId, request.controller.signal);
         if (client !== net || get().connectionGeneration !== generation || metaRequests.get(sessionId) !== request) return;
         if (request.dirty) continue;
+        const wasLoaded = get().sessions.find(s => s.sessionId === sessionId)?.loaded;
         set(st => {
           const existing = st.sessions.find(s => s.sessionId === sessionId);
           const attention = meta && existing ? mergeAttentionPatch(existing, meta) : meta;
@@ -153,11 +134,17 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
               ? metaToSession({ ...meta,
                 ...(meta.error === undefined && s.error !== undefined ? { error: s.error } : {}),
                 ...(meta.autoNameError === undefined && s.autoNameError !== undefined ? { autoNameError: s.autoNameError } : {}),
+                ...(meta.loaded && meta.compacting === undefined && s.compacting !== undefined ? { compacting: s.compacting } : {}),
+                ...(meta.loaded && meta.intent === undefined && s.intent !== undefined ? { intent: s.intent } : {}),
                 attention: attention!.attention,
                 attnId: attention!.attnId, seenId: attention!.seenId }, s) : s) : [metaToSession(meta), ...st.sessions]
             : st.sessions.filter(s => s.sessionId !== sessionId);
           return { sessions, unreadCount: patchedUnreadCount(st.unreadCount, st.sessions, sessions) };
         });
+        if (sessionId === get().activeId && wasLoaded !== meta?.loaded) {
+          if (!meta?.loaded) cancelLive(sessionId);
+          maybeMaterialize();
+        }
         seenActiveIfVisible();
       } while (request.dirty);
     }).catch(error => {
@@ -176,30 +163,34 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     set((st) => ({ sessions: st.sessions.map((s) => (s.sessionId === sid ? fn(s) : s)) }));
   let snapshotReady = false;
   let observedAttention: { sessionId: string; attnId: number } | null = null;
-  let historyRequest: { sessionId: string; generation: number; streamed: Map<string, ChatMessage>; controller: AbortController } | null = null;
+  let historyRequest: { sessionId: string; generation: number; controller: AbortController } | null = null;
+  let liveRequest: { sessionId: string; controller: AbortController } | null = null;
+  let liveSessionId: string | null = null;
+  let liveTimer: ReturnType<typeof setTimeout> | undefined;
+  const windows = new Map<string, NativeWindow>();
   const mutationRequests = new Map<string, { released: boolean }>();
   const historyRecoveryErrors = new Map<string, string>();
-  let recentWindows: string[] = [];
-  const visitWindow = (sid: string) => {
-    recentWindows = [...recentWindows.filter(id => id !== sid), sid];
-    const evicted = recentWindows.splice(0, Math.max(0, recentWindows.length - 3));
-    if (evicted.length) set(st => ({
-      sessions: st.sessions.map(s => evicted.includes(s.sessionId) ? releaseWindow(s) : s),
-    }));
-  };
-  let previewRequest: AbortController | null = null;
   let nativeReadRefresh: { pending: boolean } | null = null;
   const cancelHistory = (sid?: string) => {
     if (!historyRequest || (sid !== undefined && historyRequest.sessionId !== sid)) return;
     const request = historyRequest;
     historyRequest = null;
-    request.streamed.clear();
     request.controller.abort();
+    patchLocal(request.sessionId, s => ({ ...s, loadingHistory: false }));
   };
-  const cancelPreview = () => {
-    const request = previewRequest;
-    previewRequest = null;
-    request?.abort();
+  const cancelLive = (sid?: string) => {
+    if (sid && liveSessionId !== sid) return;
+    clearTimeout(liveTimer);
+    liveTimer = undefined;
+    const request = liveRequest;
+    liveRequest = null;
+    request?.controller.abort();
+    if (liveSessionId) {
+      const window = windows.get(liveSessionId);
+      window?.disconnect();
+      if (window) patchLocal(liveSessionId, s => ({ ...s, ...window.snapshot(), loadingHistory: s.loadingHistory }));
+    }
+    liveSessionId = null;
   };
 
   const connectedClient = () => {
@@ -246,11 +237,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       cancelHistory(sid);
       historyRecoveryErrors.delete(sid);
       mutationRequests.set(sid, request);
-      patchLocal(sid, (s) => ({ ...invalidateWindow(s), liveMessageIds: undefined, loadingHistory: get().activeId === sid }));
-      if (get().preview?.sessionId === sid) {
-        cancelPreview();
-        set((st) => ({ preview: st.preview ? invalidateWindow(st.preview) : null }));
-      }
+      cancelLive(sid);
     }
     const current = () => generation === get().connectionGeneration
       && (!changesHistory || mutationRequests.get(sid!) === request);
@@ -262,8 +249,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       if (!result.ok || result.applied === false) throw new Error(result.error || '服务器未确认操作');
       if (changesHistory && sid && current()) {
         mutationRequests.delete(sid);
-        patchLocal(sid, (s) => ({ ...s, loadingHistory: false }));
-        maybeMaterialize();
+        windows.get(sid)?.invalidate();
+        patchLocal(sid, s => ({ ...invalidateWindow(s), error: '原生历史已变更；当前画面已保留，请重新同步。' }));
       }
     })();
     void promise.catch((error) => {
@@ -374,121 +361,111 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       onClick: () => window.dispatchEvent(new CustomEvent('cockpit:open-session', { detail: { sessionId } })),
     });
 
-  const requestHistory = (sid: string, opts: NonNullable<Parameters<NetClient['history']>[1]>) => {
+  const publish = (sid: string, window: NativeWindow) => {
+    patchLocal(sid, s => ({ ...s, ...window.snapshot(), loadingHistory: s.loadingHistory }));
+  };
+
+  const pollLive = (sid: string) => {
+    const window = windows.get(sid);
+    const session = get().sessions.find(s => s.sessionId === sid);
+    if (!window?.live || window.invalid || liveRequest || !session || !isVisible()
+      || get().activeId !== sid || !snapshotReady || get().connState !== 'open' || mutationRequests.has(sid)) return;
+    const source = session.loaded ? 'live' : 'persisted';
+    if (window.live.source !== source) window.disconnect();
+    const request = { sessionId: sid, controller: new AbortController() };
+    liveSessionId = sid;
+    liveRequest = request;
+    const query: NativeChatRead = {
+      source, cursor: window.live.cursor, sessionId: sid, direction: 'forward', max: 64,
+      ...(source === 'live' ? { agentScope: 'primary' as const } : {}),
+      bootstrap: false, waitMs: source === 'live' && !window.catchingUp ? 1000 : 0,
+      includeEphemeral: source === 'live' && !window.catchingUp,
+    };
+    const current = () => liveRequest === request && windows.get(sid) === window && get().activeId === sid;
+    void read(net => net.chat(query, request.controller.signal)).then(page => {
+      if (!current()) return;
+      window.accept(page, query);
+      publish(sid, window);
+      liveRequest = null;
+      if (source === 'live' || page.hasMore) liveTimer = setTimeout(() => { liveTimer = undefined; pollLive(sid); }, 0);
+    }).catch(error => {
+      if (!current()) return;
+      liveRequest = null;
+      window.disconnect();
+      publish(sid, window);
+      if (isTransportError(error)) {
+        liveTimer = setTimeout(() => { liveTimer = undefined; pollLive(sid); }, 1000);
+      } else {
+        patchLocal(sid, s => ({ ...s, error: `聊天同步暂停：${describeReason(error, false)}` }));
+      }
+    });
+  };
+
+  const requestHistory = (sid: string, older = false) => {
     if (get().activeId !== sid) return;
     cancelHistory();
-    const request = { sessionId: sid, generation: get().connectionGeneration,
-      streamed: new Map<string, ChatMessage>(), controller: new AbortController() };
+    const request = { sessionId: sid, generation: get().connectionGeneration, controller: new AbortController() };
     historyRequest = request;
     const initial = get().sessions.find((s) => s.sessionId === sid);
+    if (!initial) { cancelHistory(sid); return; }
+    const window = windows.get(sid) ?? new NativeWindow();
+    windows.set(sid, window);
     const errorAtStart = initial?.error;
+    let position: ChatPosition = older && window.older ? window.older
+      : initial.loaded ? { source: 'live', agentScope: 'primary' } : { source: 'persisted' };
+    if (!initial.loaded && position.source === 'live') position = { source: 'persisted', cursor: position.cursor };
+    const query: NativeChatRead = {
+      ...position, sessionId: sid, direction: 'backward', max: NATIVE_PAGE, waitMs: 0,
+      bootstrap: !older && position.source === 'live',
+    };
     patchLocal(sid, (s) => ({ ...s, loadingHistory: true }));
     const current = () => historyRequest === request && get().activeId === sid
-      && request.generation === get().connectionGeneration;
-    void read(async (net) => {
-      let page = await net.history(sid, opts, request.controller.signal);
-      const staged: ChatMessage[] = [];
-      let token = opts.resume?.token;
-      while (opts.resume && current()) {
-        if (page.sessionId !== sid) throw new Error('History sessionId mismatch');
-        if (!page.resume) throw new Error('History response is missing explicit resume status');
-        if (page.resume.status === 'unavailable') break;
-        staged.push(...page.messages);
-        if (page.resume.status === 'ready') { page = { ...page, messages: staged }; break; }
-        if (page.resume.token === token) throw new Error('History continuation did not advance');
-        token = page.resume.token;
-        page = await net.history(sid, { resume: { token }, limit: HISTORY_PAGE }, request.controller.signal);
-      }
-      return page;
-    }).then((page) => {
+      && request.generation === get().connectionGeneration && windows.get(sid) === window;
+    void read(net => net.chat(query, request.controller.signal)).then(page => {
       if (!current()) return;
-      if (page.sessionId !== sid) throw new Error('History sessionId mismatch');
-      if (page.resume?.status === 'unavailable') {
-        throw new HistoryRangeError('历史同步中断，请重新读取最新历史');
-      }
-      if (!opts.resume && page.append && (!opts.afterMsgId || !page.messages.some((m) => m.id === opts.afterMsgId))) {
-        throw new Error('History response is missing the requested cursor');
-      }
+      window.accept(page, query);
       patchLocal(sid, (s) => ({
-        ...(opts.resume?.token ? applyResumedHistory(s, page, request.streamed) : applyHistoryPage(s, {
-          ...page,
-          // An absent cursor returns a replacement, never a mutation SSE broadcast.
-          latest: page.latest || (!opts.beforeMsgId && !page.append),
-        }, request.streamed)),
-        // Recovering history does not make the rejected mutation successful.
-        ...(s.error === historyRecoveryErrors.get(sid) || (s.error && s.error !== errorAtStart) ? { error: s.error } : {}),
+        ...s, ...window.snapshot(),
+        error: s.error === historyRecoveryErrors.get(sid) || (s.error && s.error !== errorAtStart) ? s.error : null,
       }));
       historyRequest = null;
       historyRecoveryErrors.delete(sid);
+      pollLive(sid);
     }).catch((error) => {
       if (!current()) return;
       historyRequest = null;
-      const raw = describeReason(error, false);
-      const message = /corrupt/i.test(raw) ? '会话文件有损坏行(可能写入时被中断),稍后重试或联系维护' : `加载失败: ${raw}`;
       patchLocal(sid, (s) => ({
-        ...s, loadingHistory: false,
-        ...(error instanceof HistoryRangeError && { resumeToken: undefined, resumeAfter: undefined, liveMessageIds: undefined }),
-        // Retain a failed mutation's diagnostic through history retries, too.
-        ...(s.error !== historyRecoveryErrors.get(sid) ? { error: message } : {}),
+        ...s, loadingHistory: false, historyStale: window.invalid,
+        ...(s.error !== historyRecoveryErrors.get(sid) ? { error: `加载失败：${describeReason(error, false)}` } : {}),
       }));
     });
   };
 
-  // Only the still-mounted reading window uses continuation on reconnect.
-  // Departed windows discard that checkpoint and always fetch a fresh latest page.
   const maybeMaterialize = () => {
     const { activeId, connState, sessions } = get();
-    if (!snapshotReady || !activeId || connState !== 'open' || !client) return;
+    if (!snapshotReady || !activeId || connState !== 'open' || !client || !isVisible()) return;
     const s = sessions.find((x) => x.sessionId === activeId);
-    if (!s) return;
-    if (!recentWindows.includes(activeId)) visitWindow(activeId);
-    if ((!s.historyStale && s.materialized) || s.loadingHistory || mutationRequests.has(activeId)) return;
-    requestHistory(activeId, { resume: { token: s.resumeToken }, limit: HISTORY_PAGE });
+    const window = windows.get(activeId);
+    if (!s || window?.invalid || s.loadingHistory || mutationRequests.has(activeId)) return;
+    if (!window?.materialized || (s.loaded && !window.live)) requestHistory(activeId);
+    else pollLive(activeId);
   };
 
-  const requestPreview = (sid: string, beforeMsgId?: string) => {
-    cancelPreview();
-    const request = new AbortController();
-    const generation = get().connectionGeneration;
-    previewRequest = request;
-    set((st) => ({ preview: st.preview ? {
-      ...(beforeMsgId ? st.preview : { ...invalidateWindow(st.preview), error: null }),
-      loadingHistory: true,
-    } : null }));
-    const current = () => previewRequest === request && generation === get().connectionGeneration
-      && get().preview?.sessionId === sid;
-    void read((net) => net.peek(sid, { ...(beforeMsgId ? { beforeMsgId } : {}), limit: HISTORY_PAGE }, request.signal)).then((page) => {
-      if (!current()) return;
-      if (page.sessionId !== sid) throw new Error('Preview sessionId mismatch');
-      set((st) => ({ preview: st.preview ? {
-        ...applyHistoryPage(st.preview, { ...page, latest: !beforeMsgId }),
-        title: page.title || st.preview.title, cwd: page.cwd, error: null,
-      } : null }));
-      previewRequest = null;
-    }).catch((error) => {
-      if (!current()) return;
-      previewRequest = null;
-      set((st) => ({ preview: st.preview ? {
-        ...st.preview, loadingHistory: false, error: `预览加载失败：${describeReason(error, false)}`,
-      } : null }));
-    });
-  };
-
-  const invalidateRequests = (discardLive = false) => {
+  const invalidateRequests = () => {
     for (const request of metaRequests.values()) request.controller.abort();
     metaRequests.clear();
     snapshotReady = false;
     cancelHistory();
+    cancelLive();
+    for (const window of windows.values()) window.disconnect();
     mutationRequests.clear();
     historyRecoveryErrors.clear();
-    cancelPreview();
     nativeReadRefresh = null;
     seenRequests.clear();
     notifications.disconnect();
     set((st) => ({
       connectionGeneration: st.connectionGeneration + 1,
-      sessions: st.sessions.map(s => invalidateWindow(discardLive ? { ...s, liveMessageIds: undefined } : s)),
-      preview: st.preview ? { ...invalidateWindow(st.preview), error: null } : null,
+      sessions: st.sessions.map(s => ({ ...s, loadingHistory: false })),
       notifReady: false,
     }));
   };
@@ -501,14 +478,12 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         set({ agentStatus: ev.agentStatus, permissionPolicy: ev.permissionPolicy, globalModels: ev.models });
         set((st) => {
           const byId = new Map(st.sessions.map((s) => [s.sessionId, s]));
-          const sessions = ev.sessions.map((m) => invalidateWindow(metaToSession(m, byId.get(m.sessionId))));
+          const sessions = ev.sessions.map((m) => metaToSession(m, byId.get(m.sessionId)));
           return { sessions, unreadCount: ev.unreadCount ?? unreadSessionCount(sessions), inboxRevision: ev.inboxRevision };
         });
         if (typeof window !== 'undefined' && get().connState === 'open' && client) notifications.connect(client);
         syncInbox([], ev.inboxRevision, true);
         maybeMaterialize();
-        const preview = get().preview;
-        if (preview && get().connState === 'open') requestPreview(preview.sessionId);
         // If we (re)connected straight into a session that already has attention
         // raised and the tab is in front, that counts as seeing it — clears a
         // 'ready' on cold deep-link, demotes a seen 'choice'.
@@ -539,9 +514,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         // pane from (routeId set, no matching session). A LOCAL delete navigates
         // back to the list itself (App.doDelete), so it never hits NotFound.
         cancelHistory(ev.sessionId);
+        cancelLive(ev.sessionId);
+        windows.delete(ev.sessionId);
         mutationRequests.delete(ev.sessionId);
         historyRecoveryErrors.delete(ev.sessionId);
-        recentWindows = recentWindows.filter(id => id !== ev.sessionId);
         set((st) => {
           const sessions = st.sessions.filter((s) => s.sessionId !== ev.sessionId);
           const current = currentInboxRevision(st.inboxRevision, ev.inboxRevision);
@@ -580,46 +556,17 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         // clears on sight and a 'choice' demotes. When hidden we leave it raised so
         // the OS notification (session/notify) still fires.
         if ((ev.attention != null || ev.attnId !== undefined) && ev.sessionId === activeId) seenActiveIfVisible();
-        return;
-      }
-      case 'session/reset': {
-        const p = ev.page;
-        cancelHistory(p.sessionId);
-        mutationRequests.delete(p.sessionId);
-        historyRecoveryErrors.delete(p.sessionId);
-        set((st) => ({
-          sessions: st.sessions.map((s) => s.sessionId !== p.sessionId ? s
-            : st.activeId !== p.sessionId ? releaseWindow(s)
-              : applyHistoryPage({ ...s, liveMessageIds: undefined }, { ...p, latest: true, append: false })),
-        }));
-        if (get().preview?.sessionId === p.sessionId) {
-          cancelPreview();
-          set((st) => ({ preview: st.preview ? { ...applyHistoryPage(st.preview, { ...p, latest: true, append: false }), error: null } : null }));
+        if (ev.sessionId === activeId && 'loaded' in ev) {
+          if (!ev.loaded) cancelLive(ev.sessionId);
+          maybeMaterialize();
         }
         return;
       }
-      case 'msg/upsert': {
-        if (historyRequest?.sessionId === ev.sessionId) historyRequest.streamed.set(ev.message.id, ev.message);
-        set((st) => ({
-          sessions: st.sessions.map((s) => {
-            if (s.sessionId !== ev.sessionId) return s;
-            if (st.activeId !== ev.sessionId) return s.materialized ? invalidateWindow(s) : s;
-            if (!s.materialized && !s.loadingHistory && s.messages.length === 0) return s;
-            const idx = s.messages.findIndex((m) => m.id === ev.message.id);
-            let messages: ChatMessage[];
-            if (idx >= 0) { messages = s.messages.slice(); messages[idx] = ev.message; }
-            else messages = [...s.messages, ev.message];
-            // Pure projection: we do NOT synthesize `lastActivity` here. The engine
-            // owns that value and forwards it (throttled) as a bare `session/patch
-            // {lastActivity}`, which the patch reducer applies to every device —
-            // unlike this reducer, that path is materialization-agnostic, so all
-            // devices reorder/timestamp identically. Streaming replies during a
-            // turn never raise the "needs you" signal either — that's the
-            // authoritative `attention` field (session/patch), which appears once
-            // when the session actually needs the user, not per reply.
-            return { ...s, messages, liveMessageIds: [...new Set([...(s.liveMessageIds ?? []), ev.message.id])] };
-          }),
-        }));
+      case 'chat/invalidated': {
+        cancelHistory(ev.sessionId);
+        cancelLive(ev.sessionId);
+        windows.get(ev.sessionId)?.invalidate();
+        patchLocal(ev.sessionId, s => ({ ...invalidateWindow(s), error: '原生历史已变更；当前画面已保留，请重新同步。' }));
         return;
       }
       case 'session/notify': {
@@ -652,15 +599,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
   };
 
   const onStateChange = (state: ConnState) => {
-    // A missed reset cannot be distinguished from an undurable live-only tail.
-    // Keep the readable rows, but do not overlay their unverified provenance
-    // onto authoritative history after a connection gap.
-    if (state === 'connecting') invalidateRequests(true);
+    if (state === 'connecting') invalidateRequests();
     set({ connState: state });
     if (state === 'open' && snapshotReady) {
       maybeMaterialize();
-      const preview = get().preview;
-      if (preview?.historyStale && !preview.loadingHistory) requestPreview(preview.sessionId);
       if (typeof window !== 'undefined' && client) notifications.connect(client);
       syncInbox();
     }
@@ -674,7 +616,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     sessions: [],
     activeId: null,
     globalModels: [],
-    preview: null,
     notifPermission: notifications.state().permission,
     notifSupported: notifications.state().supported,
     notifReady: false,
@@ -690,7 +631,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       // Bringing the tab to the front counts as seeing the active session's raised
       // attention (clears a 'ready', demotes a 'choice') — covers "alert arrived
       // while I was on this session but had it backgrounded, then I came back".
-      const onVisible = () => { if (isVisible()) { seenActiveIfVisible(); syncInbox(); } };
+      const onVisible = () => {
+        if (isVisible()) { seenActiveIfVisible(); syncInbox(); maybeMaterialize(); }
+        else { cancelHistory(); cancelLive(); }
+      };
       if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible);
       if (typeof window !== 'undefined') window.addEventListener('online', onVisible);
       // One-time cleanup: pin is now backend-authoritative (session/pin), so the
@@ -702,7 +646,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         net.disconnect();
         if (client !== net) return;
         client = null;
-        invalidateRequests(true);
+        invalidateRequests();
         set({ connState: 'connecting' });
       };
     },
@@ -717,6 +661,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       if (id !== previous) {
         observedAttention = null;
         cancelHistory();
+        cancelLive();
         if (previous) {
           const mutation = mutationRequests.get(previous);
           if (mutation) mutation.released = true;
@@ -724,11 +669,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
           historyRecoveryErrors.delete(previous);
           seenRequests.delete(previous);
         }
-        set((st) => ({
-          activeId: id,
-          sessions: st.sessions.map((s) => s.sessionId === previous ? retainLatestWindow(s) : s),
-        }));
-        if (id && get().sessions.some(s => s.sessionId === id)) visitWindow(id);
+        set({ activeId: id });
       }
       if (id) seenActiveIfVisible();
       maybeMaterialize();
@@ -759,18 +700,18 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     loadMore(sid) {
       if (get().activeId !== sid || !snapshotReady || get().connState !== 'open' || !client) return;
       const s = get().sessions.find((x) => x.sessionId === sid);
-      if (!s || s.historyStale || !s.hasMore || s.loadingHistory || s.messages.length === 0) return;
-      const oldest = s.messages[0]!.id;
-      requestHistory(sid, { beforeMsgId: oldest, limit: HISTORY_PAGE });
+      if (!s || s.historyStale || !s.hasMore || s.loadingHistory) return;
+      requestHistory(sid, true);
     },
 
     retryHistory(sid) {
       if (get().activeId !== sid || !snapshotReady || get().connState !== 'open' || !client) return;
       const s = get().sessions.find((x) => x.sessionId === sid);
-      if (!s || s.loadingHistory || mutationRequests.has(sid) || (!s.historyStale && s.materialized)) return;
-      requestHistory(sid, {
-        resume: {}, limit: HISTORY_PAGE,
-      });
+      if (!s || s.loadingHistory || mutationRequests.has(sid)) return;
+      cancelLive(sid);
+      if (s.historyStale || !windows.get(sid)?.materialized) windows.set(sid, new NativeWindow());
+      if (windows.get(sid)?.live && !s.historyStale) pollLive(sid);
+      else requestHistory(sid);
     },
 
     sendPrompt(sid, text, attachment, attachments) {
@@ -778,17 +719,14 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     },
     filesList(body, signal) { return read(net => net.intent('files/list', body, signal)); },
     filesGet(url, signal) { return read(net => net.intent('files/get', { url }, signal)); },
-    retainToolImage(body) { return read(net => net.intent('files/from-tool-image', body)); },
-    subagentHistory(sid, toolCallId, opts, signal) {
-      return read((net) => net.subagentHistory(sid, toolCallId, opts, signal));
-    },
+    chat(body, signal) { return read(net => net.chat(body, signal)); },
 
     cancel(sid) { return mutation(sid, '取消', (net) => net.cancel(sid)); },
     interrupt(sid) { return nativeRead(sid, (net) => net.interrupt(sid)); },
     setModel(sid, modelId, opts) { return mutation(sid, '切换模型', (net) => net.setModel(sid, modelId, opts)); },
     deleteSession(sid, confirm) { return mutation(sid, '永久删除会话', (net) => net.deleteSession(sid, confirm)); },
     unloadSession(sid) { return mutation(sid, '卸载会话', (net) => net.unloadSession(sid)); },
-    reloadSession(sid) { return mutation(sid, '重载会话', (net) => net.reloadSession(sid), true); },
+    reloadSession(sid) { return mutation(sid, '重载会话', (net) => net.reloadSession(sid)); },
     pinSession(sid, pinned) { return mutation(sid, '置顶会话', (net) => net.pinSession(sid, pinned)); },
     compactSession(sid) { return mutation(sid, '压缩会话', (net) => net.compactSession(sid), true); },
     rewindSession(sid, toMsgId, rollbackFiles) {
@@ -821,37 +759,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     skillsGlobal(cwd) { return read((net) => net.skillsGlobal(cwd)).then((r) => r.skills); },
     skillsRead(name, cwd) { return read((net) => net.skillsRead(name, cwd)); },
     skillsSetGlobal(name, enabled, cwd) { return mutation(null, `设置 Copilot 全局 Skill ${name}`, (net) => net.skillsSetGlobal(name, enabled, cwd)); },
-    openPreview(sid) {
-      const previous = get().preview;
-      if (previous?.sessionId === sid) {
-        if (get().connState === 'open' && !previous.loadingHistory && (previous.historyStale || previous.error)) requestPreview(sid);
-        return;
-      }
-      const stub: ChatSession = {
-        sessionId: sid, title: sid.slice(0, 8), cwd: '', lastActivity: Date.now(),
-        status: 'idle', error: null, loaded: true, queue: [], ask: null,
-        messages: [], materialized: false, historyStale: true, hasMore: false, loadingHistory: false,
-      };
-      set({ preview: stub });
-      if (get().connState === 'open') requestPreview(sid);
-    },
-    refreshPreview(sid) {
-      if (get().connState === 'open' && get().preview?.sessionId === sid) requestPreview(sid);
-    },
-    retryPreview(expected) {
-      const p = get().preview;
-      // The accepted window itself is the retry ticket; refresh/reset/reconnect replace it.
-      if (p !== expected || !p?.error || p.loadingHistory || get().connState !== 'open') return;
-      requestPreview(p.sessionId, p.materialized && !p.historyStale ? p.messages[0]?.id : undefined);
-    },
-    loadMorePreview() {
-      const p = get().preview;
-      if (!p || !p.hasMore || p.loadingHistory || p.historyStale || p.error || get().connState !== 'open') return;
-      const before = p.messages[0]?.id;
-      if (!before) return;
-      requestPreview(p.sessionId, before);
-    },
-    closePreview() { cancelPreview(); set({ preview: null }); },
     skillsSession(sid) { return nativeRead(sid, (net) => net.skillsSession(sid)).then((r) => r.skills); },
     skillsToggleSession(sid, name, enabled) { return mutation(sid, `切换技能 ${name}`, (net) => net.skillsToggleSession(sid, name, enabled)); },
     listDir(path) { return read((net) => net.listDir(path)); },

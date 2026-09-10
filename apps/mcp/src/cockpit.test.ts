@@ -50,14 +50,13 @@ function isCockpitError(kind: 'timeout' | 'connection' | 'backend' | 'protocol',
   };
 }
 
-test('deadlines cover loading and passive history without retired governance exceptions', () => {
-  for (const name of ['session/get', 'mcp/session', 'flow/run', 'governance', 'governance/run', '/health']) {
+test('bounded native pages use the short deadline while real load operations keep theirs', () => {
+  for (const name of ['session/chat', 'session/get', 'mcp/session', 'session/history', 'session/peek', 'session/subagent-history', 'flow/run', 'governance', 'governance/run', '/health']) {
     assert.equal(requestTimeoutMs(name), 10_000, name);
   }
-  for (const name of ['session/history', 'session/peek', 'session/plan', 'session/panels', 'session/auto-name', 'prompt', 'mcp/session-toggle']) {
+  for (const name of ['session/plan', 'session/panels', 'session/auto-name', 'prompt', 'mcp/session-toggle']) {
     assert.equal(requestTimeoutMs(name), 45_000, name);
   }
-  assert.equal(requestTimeoutMs('session/subagent-history'), 120_000);
 });
 
 test('configured timeout overrides both generic and load-aware deadlines', async () => {

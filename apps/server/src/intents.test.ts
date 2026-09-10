@@ -11,7 +11,7 @@ import {
 } from '@cockpit/protocol';
 import type { ServerEngine, ServerPush } from './index.ts';
 import { isIntentName } from './capabilities.ts';
-import { SessionHistoryReader } from '../../../packages/core/src/history-reader.ts';
+import { readNativeChat } from '../../../packages/core/src/native-chat.ts';
 
 const uploadDir = relative(process.cwd(), fileURLToPath(
   new URL(`../.cockpit-intents-${process.pid}-${randomUUID()}`, import.meta.url),
@@ -38,8 +38,9 @@ const busySession = SessionMeta.parse({
 let sessions = [busySession];
 const historyPage = {
   sessionId: 's',
-  messages: [{ id: 'm', role: 'assistant' as const, content: 'history', timestamp: 1 }],
-  hasMore: true, latest: false, append: false,
+  source: 'persisted' as const, direction: 'backward' as const,
+  events: [{ id: 'event', type: 'assistant.message', data: { messageId: 'm', content: 'history' }, timestamp: 1 }],
+  cursor: 'native-next', cursorStatus: 'ok' as const, hasMore: true, read: { rpc: 1, events: 1 },
 };
 const snapshot = () => ({
   type: 'snapshot' as const, agentStatus: 'up' as const, models: [],
@@ -67,22 +68,9 @@ const engine: ServerEngine & { attentionCount(): number } = {
   attentionCount: () => record('attentionCount', [], 0),
   newSession: async (...args) => record('newSession', args, 'created'),
   forkSession: async (...args) => record('forkSession', args, { sessionId: 'forked' }),
-  history: async (...args) => record('history', args, historyPage),
-  resumeHistory: async (...args) => record('resumeHistory', args, {
-    ...historyPage, resume: { status: 'ready' as const, token: 'checkpoint' },
-  }),
-  peekSession: async (...args) => record('peekSession', args, {
-    sessionId: 's', title: 'test', cwd: '/fixture', messages: [], hasMore: false,
-  }),
-  subagentHistory: async (...args) => record('subagentHistory', args, {
-    ...historyPage, toolCallId: 'child', subagent: { name: 'task', displayName: 'Child', status: 'completed' as const },
-  }),
-  toolImage: async (request, signal) => {
+  chat: async (query, signal) => {
     assert.ok(signal instanceof AbortSignal);
-    return record('toolImage', [request], {
-      sessionId: request.sessionId, eventId: request.image.eventId, toolCallId: request.image.toolCallId,
-      part: request.image.part, mime: 'image/png' as const, byteLength: pngFixture.length, data: pngFixture.toString('base64'),
-    });
+    return record('chat', [query], { ...historyPage, source: query.source, direction: query.direction });
   },
   prompt: async (...args) => record('prompt', args, { ok: true, queued: true }),
   cancel: (...args) => record('cancel', args, undefined),
@@ -206,15 +194,9 @@ const cases = {
   'runtime/snapshot': { body: {}, method: 'snapshot', args: [] },
   'session/new': { body: { cwd: '/fixture' }, method: 'newSession', args: ['/fixture'] },
   'session/fork': { body: { sessionId: 's', toEventId: 'user-event', name: 'Child' }, method: 'forkSession', args: ['s', 'user-event', 'Child'] },
-  'session/history': { body: { sessionId: 's', beforeMsgId: 'b', limit: 12 }, method: 'history', args: ['s', 'b', 12, undefined, undefined] },
-  'session/peek': { body: { sessionId: 's', beforeMsgId: 'b', limit: 12 }, method: 'peekSession', args: ['s', 'b', 12, undefined] },
-  'session/tool-image': {
-    body: { sessionId: 's', image: { eventId: 'event', toolCallId: 'tool', part: 0 } },
-    method: 'toolImage', args: [{ sessionId: 's', image: { eventId: 'event', toolCallId: 'tool', part: 0 } }],
-  },
-  'session/subagent-history': {
-    body: { sessionId: 's', toolCallId: 'child', beforeMsgId: 'b', limit: 12, details: 'summary' },
-    method: 'subagentHistory', args: ['s', 'child', 'b', 12, undefined, 'summary'],
+  'session/chat': {
+    body: Intents['session/chat'].body.parse({ sessionId: 's', cursor: 'native-before', max: 12 }),
+    method: 'chat', args: [Intents['session/chat'].body.parse({ sessionId: 's', cursor: 'native-before', max: 12 })],
   },
   prompt: { body: { sessionId: 's', text: 'hello', mode: 'enqueue' }, method: 'prompt', args: ['s', 'hello', 'enqueue'] },
   cancel: { body: { sessionId: 's' }, method: 'cancel', args: ['s'] },
@@ -266,7 +248,7 @@ const cases = {
 } satisfies { [K in Exclude<IntentName, `files/${string}`>]: Case & { body: IntentBody<K> } };
 
 test('dispatch fixtures cover exactly the authoritative Intents, without retired handlers', () => {
-  assert.deepEqual([...Object.keys(cases), 'files/list', 'files/get', 'files/associate', 'files/from-tool-image'].sort(), Object.keys(Intents).sort());
+  assert.deepEqual([...Object.keys(cases), 'files/list', 'files/get', 'files/associate'].sort(), Object.keys(Intents).sort());
   assert.equal(app.server.listening, false);
 });
 
@@ -287,8 +269,8 @@ for (const [name, fixture] of Object.entries(cases)) {
     const effects = name === 'skills/refresh' ? calls.filter(({ method }) => method !== 'snapshot') : calls;
     assert.deepEqual(effects, fixture.method ? [{ method: fixture.method, args: fixture.args }] : []);
     if (name === 'runtime/snapshot') assert.deepEqual(response.json(), projectedSnapshot());
-    if (name === 'session/history') assert.deepEqual(response.json(), historyPage);
-    if (name === 'session/tool-image') {
+    if (name === 'session/chat') assert.deepEqual(response.json(), historyPage);
+    if (name === 'session/chat') {
       assert.equal(response.headers['cache-control'], 'private, no-store');
       assert.equal(response.headers['x-content-type-options'], 'nosniff');
     }
@@ -349,15 +331,15 @@ test('bad fields, enums, and protocol refinements are rejected before dispatch',
   }
 });
 
-test('history and peek reject empty cursors, conflicting history cursors, and invalid page sizes', async () => {
+test('native chat rejects unsupported selectors and invalid page sizes before engine dispatch', async () => {
   const invalid: [IntentName, unknown][] = [
-    ['session/history', { sessionId: 's', beforeMsgId: 'b', afterMsgId: 'a' }],
-    ['session/history', { sessionId: 's', afterMsgId: '' }],
+    ['session/chat', { sessionId: 's', beforeMsgId: 'b', afterMsgId: 'a' }],
+    ['session/chat', { sessionId: 's', agentIds: ['child'] }],
     ['skills/global', { cwd: '' }],
     ['skills/global', { cwd: null }],
-    ...(['session/history', 'session/peek'] as const).flatMap((name) => [
-      ...['', null, 1].map((beforeMsgId) => [name, { sessionId: 's', beforeMsgId }] as [IntentName, unknown]),
-      ...[0, -1, 201, 1.5, '1', null].map((limit) => [name, { sessionId: 's', limit }] as [IntentName, unknown]),
+    ...(['session/chat'] as const).flatMap((name) => [
+      ...['', null, 1].map((cursor) => [name, { sessionId: 's', cursor }] as [IntentName, unknown]),
+      ...[0, -1, 257, 1.5, '1', null].map((max) => [name, { sessionId: 's', max }] as [IntentName, unknown]),
     ]),
   ];
   for (const [name, payload] of invalid) {
@@ -368,30 +350,23 @@ test('history and peek reject empty cursors, conflicting history cursors, and in
   }
 });
 
-test('history and peek forward optional cursors and both inclusive limit boundaries exactly', async () => {
-  for (const limit of [undefined, 1, 200]) {
-    for (const cursor of [{}, { beforeMsgId: 'before' }, { afterMsgId: 'after' }]) {
+test('native chat forwards the exact cursor and native event count', async () => {
+  for (const max of [undefined, 1, 256]) {
+    for (const cursor of [undefined, 'native-position']) {
       calls.length = 0;
+      const body = { sessionId: 's', cursor, max };
       const response = await app.inject({
-        method: 'POST', url: '/intent/session/history', payload: { sessionId: 's', ...cursor, limit },
+        method: 'POST', url: '/intent/session/chat', payload: body,
       });
       assert.equal(response.statusCode, 200, response.body);
       assert.deepEqual(response.json(), historyPage);
-      assert.deepEqual(calls, [{ method: 'history', args: ['s', cursor.beforeMsgId, limit, cursor.afterMsgId, undefined] }]);
-    }
-    for (const beforeMsgId of [undefined, 'before']) {
-      calls.length = 0;
-      const response = await app.inject({
-        method: 'POST', url: '/intent/session/peek', payload: { sessionId: 's', beforeMsgId, limit },
-      });
-      assert.equal(response.statusCode, 200, response.body);
-      assert.deepEqual(calls, [{ method: 'peekSession', args: ['s', beforeMsgId, limit, undefined] }]);
+      assert.deepEqual(calls, [{ method: 'chat', args: [Intents['session/chat'].body.parse(JSON.parse(JSON.stringify(body)))] }]);
     }
   }
 });
 
-test('HTTP resume uses the actual passive history reader with bounded continuation and a frozen tail', async t => {
-  type Read = ConstructorParameters<typeof SessionHistoryReader>[0]['readPersistedEvents'];
+test('HTTP paging uses exactly one native event page and keeps older cursors stable across appends', async t => {
+  type Read = Parameters<typeof readNativeChat>[1]['persisted'];
   type Events = Awaited<ReturnType<Read>>['events'];
   const events: Events = Array.from({ length: 901 }, (_, i) => ({
     type: 'user.message', id: `u${i}`, timestamp: '2026-09-09T00:00:00Z', parentId: null, data: { content: `Message ${i}` },
@@ -412,43 +387,28 @@ test('HTTP resume uses the actual passive history reader with bounded continuati
     cursors.set(cursor, batch[0]?.id);
     return { events: batch, cursor, hasMore: start > 0, cursorStatus: expired ? 'expired' : 'ok' };
   };
-  const reader = new SessionHistoryReader({ readPersistedEvents, batchSize: 20 });
   setTestDependencies({ engine: {
-    ...engine, resumeHistory: (sid, resume, limit, details) => reader.readResume(sid, resume, limit, details),
+    ...engine, chat: (query, signal) => readNativeChat(query, { persisted: readPersistedEvents }, signal),
   }, push: fakePush });
   t.after(() => setTestDependencies({ engine, push: fakePush }));
-  const request = async (token?: string) => {
+  const request = async (cursor?: string) => {
     const start = nativeReads;
     const response = await app.inject({
-      method: 'POST', url: '/intent/session/history',
-      payload: { sessionId: 's', resume: token ? { token } : {}, limit: 30, details: 'summary' },
+      method: 'POST', url: '/intent/session/chat',
+      payload: { sessionId: 's', cursor, max: 64 },
     });
     assert.equal(response.statusCode, 200, response.body);
-    assert.ok(nativeReads - start <= 10);
-    return Intents['session/history'].result.parse(response.json());
+    assert.equal(nativeReads - start, 1);
+    return Intents['session/chat'].result.parse(response.json());
   };
   const base = await request();
-  assert.equal(base.resume?.status, 'ready');
-  assert.ok(base.resume && base.resume.status === 'ready' && base.resume.token);
+  assert.equal(base.events.length, 64);
   events.push(...Array.from({ length: 99 }, (_, i) => ({
     type: 'user.message' as const, id: `u${901 + i}`, timestamp: '2026-09-09T00:00:00Z', parentId: null,
     data: { content: `Gap ${i}` },
   })));
-  let token = base.resume.token;
-  const staged: string[] = [];
-  for (let part = 0; part < 10; part++) {
-    const page = await request(token);
-    assert.ok(page.resume && page.resume.status !== 'unavailable' && page.resume.token);
-    staged.push(...page.messages.map(message => message.id));
-    if (part === 0) events.push({
-      type: 'user.message', id: 'later', timestamp: '2026-09-09T00:00:01Z', parentId: null, data: { content: 'Outside fence' },
-    });
-    token = page.resume.token;
-    if (page.resume.status === 'ready') break;
-    assert.ok(part < 9, 'fixed-range reconciliation must terminate');
-  }
-  assert.deepEqual(staged, Array.from({ length: 129 }, (_, i) => `u${871 + i}`));
-  assert.ok(!staged.includes('later'));
+  const older = await request(base.cursor);
+  assert.deepEqual(older.events.map(event => event.id), Array.from({ length: 64 }, (_, i) => `u${773 + i}`));
   assert.deepEqual(calls, [], 'the passive contract never loads a runtime, sends a model prompt or marks seen');
 });
 
@@ -461,17 +421,13 @@ test('skills/global forwards explicit cwd without selecting a session or queryin
   assert.deepEqual(calls, [{ method: 'listGlobalSkills', args: ['/fixture/project'] }]);
 });
 
-test('summary history and scoped subagent reads forward the exact projection without activating sessions', async () => {
-  for (const [name, body, method, args] of [
-    ['session/history', { sessionId: 's', details: 'summary' }, 'history', ['s', undefined, undefined, undefined, 'summary']],
-    ['session/peek', { sessionId: 's', details: 'summary' }, 'peekSession', ['s', undefined, undefined, 'summary']],
-    ['session/subagent-history', { sessionId: 's', toolCallId: 'child', afterMsgId: 'answer' },
-      'subagentHistory', ['s', 'child', undefined, undefined, 'answer', undefined]],
-  ] as const) {
+test('retired message history routes return an explicit migration error without dispatch', async () => {
+  for (const name of ['session/history', 'session/peek', 'session/subagent-history']) {
     calls.length = 0;
-    const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: body });
-    assert.equal(response.statusCode, 200, response.body);
-    assert.deepEqual(calls, [{ method, args }]);
+    const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: { sessionId: 's' } });
+    assert.equal(response.statusCode, 410, response.body);
+    assert.equal(response.json().code, 'CHAT_PROTOCOL_CHANGED');
+    assert.deepEqual(calls, []);
   }
 });
 
@@ -730,8 +686,7 @@ test('inbox/seen performs one synchronous product-state action without a native 
 test('schema-invalid engine results are 500 INVALID_INTENT_RESULT, not request errors', async (t) => {
   const invalid = [
     ['prompt', 'prompt', { ok: 'yes' }],
-    ['session/history', 'history', undefined],
-    ['session/peek', 'peekSession', { page: historyPage }],
+    ['session/chat', 'chat', undefined],
     ['session/list', 'listLive', [{ ...busySession, status: 'not-a-status' }]],
     ['mcp/session-toggle', 'toggleSessionMcp', { ok: false, error: 'missing operation' }],
     ['runtime/snapshot', 'snapshot', { ...snapshot(), permissionPolicy: undefined }],
@@ -767,7 +722,7 @@ test('native usage HTTP preserves unavailable context, validates counters and ex
   assert.equal(invalid.json().code, 'INVALID_INTENT_RESULT');
 });
 
-test('session plan HTTP preserves absent, empty and actual descriptions without losing narrative or changed files', async t => {
+test('session plan HTTP preserves descriptions and narrative without deriving a changed-file list', async t => {
   const plan = {
     planMarkdown: '# Preserved plan',
     todos: [
@@ -776,13 +731,13 @@ test('session plan HTTP preserves absent, empty and actual descriptions without 
       { id: 'empty', title: 'Empty description', description: '', status: 'done' as const },
       { id: 'text', title: 'Actual description', description: 'Keep text', status: 'in_progress' as const },
     ],
-    changedFiles: [{ path: 'fixture.ts', operation: 'edit' as const }],
   };
   t.mock.method(engine, 'getPlan', async () => plan);
   const response = await app.inject({ method: 'POST', url: '/intent/session/plan', payload: { sessionId: 's' } });
   assert.equal(response.statusCode, 200, response.body);
   assert.deepEqual(response.json(), JSON.parse(JSON.stringify(plan)));
   assert.deepEqual(Intents['session/plan'].result.parse(response.json()), response.json());
+  assert.equal('changedFiles' in response.json(), false);
 });
 
 for (const description of [null, 0, false, {}, []]) {
@@ -1084,17 +1039,13 @@ test('managed files preserve originals, source identity, session associations an
   assert.equal(head.rawPayload.length, 0);
 });
 
-test('explicit native image retention reuses preview source and returns an attachable stable original', async () => {
-  const body = { sessionId: 's', image: { eventId: 'event', toolCallId: 'tool', part: 0 }, name: 'kept.png' };
-  const first = await app.inject({ method: 'POST', url: '/intent/files/from-tool-image', payload: body });
-  assert.equal(first.statusCode, 200, first.body);
-  const file = UploadedFile.parse(first.json());
-  assert.equal(file.source, 'tool-image');
+test('an uploaded original remains reusable for ordered cross-session attachment delivery', async () => {
+  const file = await upload('kept.png', 'image/png', pngFixture);
   assert.equal(file.mime, 'image/png');
   assert.deepEqual(readFileSync(file.path), pngFixture);
   calls.length = 0;
-  const again = await app.inject({ method: 'POST', url: '/intent/files/from-tool-image', payload: body });
-  assert.deepEqual(again.json(), file);
+  const again = await app.inject({ method: 'POST', url: '/intent/files/get', payload: { url: file.url } });
+  assert.deepEqual(again.json(), { ...file, sessions: [] });
   assert.deepEqual(calls, [], 'retained source remains usable without loading or re-reading native history');
   const parts = [{ type: 'text', text: 'Before\n' }, { type: 'file', attachment: file },
     { type: 'text', text: '\nBetween\n' }, { type: 'file', attachment: file }, { type: 'text', text: '\nAfter' }];
@@ -1109,6 +1060,32 @@ test('explicit native image retention reuses preview source and returns an attac
   assert.ok(prompt.endsWith('\nAfter'));
   assert.equal((await app.inject({ method: 'POST', url: '/intent/prompt',
     payload: { sessionId: 's', text: '', parts, attachment: file } })).statusCode, 400);
+});
+
+test('repeated display of one uploaded image does not store another copy or read native history', async () => {
+  const file = await upload('published-once.png', 'image/png', pngFixture);
+  const before = readdirSync(uploadDir).sort();
+  calls.length = 0;
+  for (let i = 0; i < 2; i++) {
+    const displayed = await app.inject({ method: 'GET', url: file.url });
+    assert.equal(displayed.statusCode, 200);
+    assert.deepEqual(displayed.rawPayload, pngFixture);
+  }
+  assert.deepEqual(readdirSync(uploadDir).sort(), before);
+  assert.deepEqual(calls, [], 'display does not query native history or publish another file');
+});
+
+test('retired native image lookups fail explicitly without reading history or collecting files', async () => {
+  const before = existsSync(uploadDir) ? readdirSync(uploadDir).sort() : [];
+  for (const name of ['session/tool-image', 'files/from-tool-image']) {
+    assert.equal(isIntentName(name), false);
+    const response = await app.inject({ method: 'POST', url: `/intent/${name}`,
+      payload: { sessionId: 's', image: { eventId: 'event', toolCallId: 'tool', part: 0 } } });
+    assert.equal(response.statusCode, 410);
+    assert.equal(response.json().code, 'NATIVE_IMAGE_LOOKUP_RETIRED');
+  }
+  assert.deepEqual(calls, []);
+  assert.deepEqual(existsSync(uploadDir) ? readdirSync(uploadDir).sort() : [], before);
 });
 
 test('declared image MIME cannot turn arbitrary bytes into a preview', async () => {
@@ -1482,7 +1459,7 @@ for (const mode of ['async rejection', 'synchronous throw'] as const) {
       attention: 'choice', body: 'private notification body', attnId: 0, inboxRevision: 0, unreadCount: 0,
     };
     const reset = ServerEvent.parse({
-      type: 'session/reset', page: { ...historyPage, messages: [], hasMore: false, latest: true },
+      type: 'chat/invalidated', sessionId: 's', reason: 'rewind',
     });
     calls.length = 0;
     const before = Date.now();
@@ -1578,7 +1555,7 @@ test('two simultaneous viewers see no query events and receive exactly one mocke
     opened.push(await openViewer());
     const initialFrames = ['retry: 2000', `data: ${JSON.stringify(projectedSnapshot())}`];
     for (const name of [
-      'runtime/snapshot', 'session/history', 'session/peek', 'session/subagent-history', 'session/list', 'session/get',
+      'runtime/snapshot', 'session/chat', 'session/list', 'session/get',
       'session/plan', 'session/panels', 'mcp/global', 'mcp/session',
       'skills/global', 'skills/read', 'skills/session', 'schedule/list', 'fs/listDir',
     ] as const) {
@@ -1592,7 +1569,7 @@ test('two simultaneous viewers see no query events and receive exactly one mocke
     }
 
     const reset = ServerEvent.parse({
-      type: 'session/reset', page: { ...historyPage, messages: [], hasMore: false, latest: true },
+      type: 'chat/invalidated', sessionId: 's', reason: 'rewind',
     });
     // Simulate the Engine's event callback, using actual injected response streams
     // and the production fan-out rather than constructing an SDK-backed Engine.
@@ -1613,7 +1590,7 @@ test('two simultaneous viewers see no query events and receive exactly one mocke
     for (const viewer of opened) {
       assert.deepEqual(viewer.frames, [...initialFrames, `data: ${JSON.stringify(reset)}`]);
       assert.deepEqual(viewer.frames.filter((frame) => frame.startsWith('data: '))
-        .map((frame) => ServerEvent.parse(JSON.parse(frame.slice(6))).type), ['snapshot', 'session/reset']);
+        .map((frame) => ServerEvent.parse(JSON.parse(frame.slice(6))).type), ['snapshot', 'chat/invalidated']);
     }
     assert.equal(app.server.listening, false);
   } finally {

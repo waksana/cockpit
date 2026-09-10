@@ -3,7 +3,6 @@
 
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { MessageBody } from './MessageBody';
-import { ToolImages } from './ToolImages';
 import { MessageContent } from './MessageContent';
 import { Composer } from './Composer';
 import { Icon } from './Icon';
@@ -11,7 +10,7 @@ import { ContextMenu, type MenuItem } from './ContextMenu';
 import type { ChatMessage, ChatSession, ToolCall, Attachment, ExitPlanModeAction } from '../net/types';
 import { acknowledgeInView, sendThreadDraft } from '../lib/draft';
 import { getSessionDraft, type UploadFile } from '../lib/attachmentSend';
-import { observeThreadScroll, type ThreadScroll } from './threadScroll';
+import { observeThreadScroll, type ThreadScroll, type ReadingPosition } from './threadScroll';
 import { canSkipMessageLayout, createMessageLayout } from './messageLayout';
 import { useCockpit } from '../net/store';
 import { createSubagentHistory } from '../lib/subagentHistory';
@@ -28,6 +27,7 @@ const PLAN_ACTION_LABEL: Record<ExitPlanModeAction, string> = {
   exit_only: '仅退出计划',
 };
 const PLAN_ACTION_ORDER: ExitPlanModeAction[] = ['interactive', 'autopilot', 'autopilot_fleet', 'exit_only'];
+const readingPositions = new Map<string, ReadingPosition>();
 
 // Tool-call status → icon + tone. Static glyphs (no spinner) per the zero-
 // animation doctrine; color carries the state.
@@ -40,16 +40,15 @@ function ToolStatusIcon({ status }: { status: ToolCall['status'] }) {
   }
 }
 
-function ToolCallRow({ tc, sessionId }: { tc: ToolCall; sessionId: string }) {
+function ToolCallRow({ tc }: { tc: ToolCall; sessionId: string }) {
   const [open, setOpen] = useState(false);
-  const hasDetail = !!(tc.args || tc.output || tc.images?.length);
+  const hasDetail = !!(tc.args || tc.output);
   return (
     <div className="msg-tool" data-status={tc.status ?? 'pending'}>
       <div className="tool-head">
         <ToolStatusIcon status={tc.status} />
         <span className="tool-title">{tc.title}</span>
         {tc.name && <span className="tool-name">{tc.name}</span>}
-        {!!tc.images?.length && <span className="tool-name">图片 {tc.images.length}</span>}
         {hasDetail && (
           <button type="button" className="tool-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label={open ? '收起细节' : '展开细节'}>
             <Icon name={open ? 'up' : 'down'} size={14} />
@@ -60,7 +59,6 @@ function ToolCallRow({ tc, sessionId }: { tc: ToolCall; sessionId: string }) {
         <div className="tool-detail">
           {tc.args && <pre className="tool-args">{tc.args}</pre>}
           {tc.output && <pre className="tool-output">{tc.output}</pre>}
-          {tc.images && <ToolImages images={tc.images} sessionId={sessionId} />}
         </div>
       )}
     </div>
@@ -128,17 +126,11 @@ function MessageInner({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
 function SubagentCard({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
   const [open, setOpen] = useState(false);
   const sa = m.subagent!;
-  const sub = m.subMessages ?? [];
-  const toolCount = sa.toolCount ?? (m.subMessages
-    ? sub.reduce((n, x) => n + (x.toolCalls?.length ?? 0), 0) : undefined);
-  const statusLabel = sa.status === 'running' ? '运行中…'
-    : sa.status === 'failed' ? '失败' : toolCount === undefined ? '完成' : `完成 · ${toolCount} 个工具`;
   return (
-    <div className="subagent-card" data-status={sa.status}>
+    <div className="subagent-card">
       <button type="button" className="subagent-head rp" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
         <span className="subagent-ico" aria-hidden="true">🤖</span>
         <span className="subagent-name">{sa.displayName}</span>
-        <span className="subagent-status">{statusLabel}</span>
         <span className="subagent-chevron"><Icon name={open ? 'up' : 'down'} size={14} /></span>
       </button>
       {sa.description && !open && <div className="subagent-desc">{sa.description}</div>}
@@ -149,24 +141,24 @@ function SubagentCard({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
 
 function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
   const summary = m.subagent!;
-  const read = useCockpit((s) => s.subagentHistory);
+  const read = useCockpit((s) => s.chat);
   const connected = useCockpit((s) => s.connState === 'open');
   const generation = useCockpit((s) => s.connectionGeneration);
   const toolCallId = summary.toolCallId;
+  const agentId = summary.agentId;
   const resource = useMemo(() => createSubagentHistory(
-    sessionId, toolCallId ?? '', read, useCockpit.getState,
-  ), [sessionId, toolCallId, read]);
+    sessionId, { agentId, toolCallId }, read, useCockpit.getState,
+  ), [sessionId, toolCallId, agentId, read]);
   const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot, resource.getSnapshot);
   useLayoutEffect(() => () => resource.deactivate(true), [resource]);
   useLayoutEffect(() => {
     if (connected && toolCallId) resource.activate();
     return () => resource.deactivate();
   }, [resource, connected, generation, toolCallId]);
-  const revision = JSON.stringify([summary.status, summary.toolCount, summary.error, m.content]);
   useEffect(() => {
     if (connected && toolCallId) void resource.refresh();
-  }, [resource, connected, generation, toolCallId, revision]);
-  const sa = snapshot.data?.subagent ?? summary;
+  }, [resource, connected, generation, toolCallId]);
+  const sa = summary;
   const sub = snapshot.data?.messages ?? m.subMessages ?? [];
   const pending = snapshot.pending || (connected && !!toolCallId && !snapshot.data && !snapshot.error);
   return (
@@ -193,7 +185,7 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
         </article>
       ))}
       {toolCallId && <button type="button" disabled={!connected || pending} onClick={() => { void resource.refresh(); }}>刷新子代理历史</button>}
-      {summary.status === 'running' && <div className="subagent-empty">仅显示 SDK 已保存的历史；运行中的内容可能在任务结束后才可读取。</div>}
+      <div className="subagent-empty">按需读取原生已保存的事件；生成中的消息可在保存后手动刷新。</div>
       {!pending && !snapshot.error && !sub.length && <div className="subagent-empty">
         {toolCallId ? '暂无已保存的子代理消息。' : '此历史记录未提供子代理读取标识。'}
       </div>}
@@ -331,6 +323,7 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const scrollOwnerRef = useRef<ThreadScroll | null>(null);
+  const initialFill = useRef({ sessionId: session.sessionId, pages: 0, done: false });
   const [heldHead, setHeldHead] = useState<{ sessionId: string; id: string } | null>(null);
   // Keep the existing DOM prefix under an active gesture. Only newly received
   // older rows wait for settle; tail updates and already mounted history stay live.
@@ -389,11 +382,27 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
       setHeldHead(active && id ? { sessionId: session.sessionId, id } : null);
     });
     scrollOwnerRef.current = owner.scroll;
+    const saved = readingPositions.get(session.sessionId);
+    if (saved) owner.scroll.restore(saved);
     return () => {
+      readingPositions.set(session.sessionId, owner.scroll.position());
       owner.dispose();
       scrollOwnerRef.current = null;
     };
   }, [session.sessionId]);
+
+  useLayoutEffect(() => {
+    if (initialFill.current.sessionId !== session.sessionId) initialFill.current = { sessionId: session.sessionId, pages: 0, done: false };
+    const fill = initialFill.current;
+    const el = scrollRef.current;
+    if (fill.done || !el || !session.materialized || session.loadingHistory || session.historyStale || session.error || prependHeld) return;
+    // Stop near two screens without adding another full native page for a small shortfall.
+    if (!session.hasMore || el.scrollHeight >= el.clientHeight * 1.5) { fill.done = true; return; }
+    if (el.clientHeight > 0 && fill.pages < 8) {
+      fill.pages++;
+      onLoadMore();
+    }
+  }, [session.sessionId, session.materialized, session.loadingHistory, session.historyStale, session.error, session.hasMore, messages, onLoadMore, prependHeld]);
 
   // The scroll owner continuously remembers the visible message, not a
   // request-time scrollHeight that can include unrelated loader/media growth.
@@ -474,9 +483,15 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
             </button>}
           </div>
         )}
+        {session.partialHistory && <div className="chat-loading-older" role="status">
+          断线期间的临时片段可能不完整；已保留现有文字，以原生保存后的完整消息为准。
+        </div>}
+        {session.hasMore && !session.historyStale && <button type="button" className="dialog-btn rp"
+          disabled={session.loadingHistory || prependHeld} onClick={onLoadMore}>加载更早的历史</button>}
+        {session.incompleteBoundary && <p className="chat-empty-hint">部分工具或子代理的归属在更早历史中，可继续向上加载。</p>}
         <div ref={scrollRef} className="chat-messages" tabIndex={0}>
           <div ref={contentRef} className="chat-message-content">
-            {session.messages.length === 0 && session.materialized && !session.historyStale && !session.loadingHistory && (
+            {session.messages.length === 0 && session.materialized && !session.historyStale && !session.loadingHistory && !session.hasMore && (
               <p className="chat-empty-hint">开始对话吧 — 工作目录 {session.cwd}</p>
             )}
             <TranscriptMessages messages={messages} sessionId={session.sessionId}
@@ -494,7 +509,10 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
                 </button>
               </div>
             )}
-            {session.error && <p className="chat-error">错误: {session.error}</p>}
+            {session.error && <p className="chat-error">错误: {session.error}
+              {onRetryHistory && session.materialized && !session.historyStale && <button type="button"
+                className="dialog-btn rp" onClick={onRetryHistory}>重试同步</button>}
+            </p>}
           </div>
         </div>
 
