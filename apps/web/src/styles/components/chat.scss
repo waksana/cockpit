@@ -153,6 +153,11 @@
   flex-direction: column;
   flex: none;
   margin-top: auto;
+}
+.chat-message-rows {
+  display: flex;
+  flex-direction: column;
+  flex: none;
   &[data-preparing] { visibility: hidden; }
 }
 

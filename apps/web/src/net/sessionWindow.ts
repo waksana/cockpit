@@ -8,6 +8,7 @@ export function metaToSession(meta: SessionMeta, previous?: ChatSession): ChatSe
     historyStale: previous?.historyStale ?? false,
     hasMore: previous?.hasMore ?? false,
     loadingHistory: previous?.loadingHistory ?? false,
+    ...(previous?.historyError ? { historyError: previous.historyError } : {}),
     partialHistory: previous?.partialHistory,
     incompleteBoundary: previous?.incompleteBoundary,
   };

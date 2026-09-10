@@ -35,7 +35,8 @@ export function createSubagentHistory(
     activate: task.activate,
     deactivate(release = false) { if (release) task.release(); else task.deactivate(); },
     refresh: () => run(false),
-    retry: () => run(failedOlder),
+    requiresResync: () => window.invalid,
+    retry: () => run(window.invalid ? false : failedOlder),
     loadOlder: () => window.hasMore ? run(true) : Promise.resolve(false),
   };
 }

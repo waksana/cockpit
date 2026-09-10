@@ -84,7 +84,7 @@ test('initial history has a measurement-only body while its complete initial bat
   });
   assert.match(html, /chat-history-controls/);
   assert.match(html, /正在同步对话历史/);
-  assert.match(html, /class="chat-message-content" data-preparing="true" aria-hidden="true" inert=""/);
+  assert.match(html, /class="chat-message-rows" data-preparing="true" aria-hidden="true" inert=""/);
   assert.match(html, /Not yet a complete initial viewport/);
 });
 
@@ -92,6 +92,13 @@ test('loading more history never hides an already materialized reading window', 
   const html = render({
     materialized: true, historyStale: false, loadingHistory: true, hasMore: true,
     messages: [{ id: 'visible', role: 'assistant', content: 'Keep this reading position', timestamp: 1 }],
+  });
+
+  test('normal history has no load button while failures and incomplete boundaries keep explicit recovery', () => {
+    const ready = { materialized: true, historyStale: false, loadingHistory: false, hasMore: true };
+    assert.doesNotMatch(render(ready), /加载更早的历史|重试加载历史|继续补齐消息边界/);
+    assert.match(render({ ...ready, historyError: 'offline' }), /历史加载失败：offline.*重试加载历史/);
+    assert.match(render({ ...ready, incompleteBoundary: true }), /已暂停自动加载.*继续补齐消息边界/);
   });
   assert.match(html, /加载更早的消息/);
   assert.match(html, /Keep this reading position/);

@@ -94,6 +94,23 @@ test('failed older child read retains content and explicit retry uses the same c
   assert.deepEqual(h.ids(), ['older', 'tail']);
 });
 
+test('expired child history retains the reading window until explicit retry rebases it', async () => {
+  const h = setup();
+  h.resource.activate();
+  const first = h.resource.refresh(); h.reply(0, ['tail']); await first;
+  const older = h.resource.loadOlder();
+  h.calls[1].resolve({
+    sessionId: 'session', source: 'live', direction: 'backward', events: [],
+    cursor: 'expired', cursorStatus: 'expired', hasMore: true, read: { rpc: 1, events: 0 },
+  });
+  assert.equal(await older, false);
+  assert.deepEqual(h.ids(), ['tail']);
+  const retry = h.resource.retry();
+  assert.equal(h.calls[2].query.cursor, undefined);
+  h.reply(2, ['fresh'], false); await retry;
+  assert.deepEqual(h.ids(), ['fresh']);
+});
+
 for (const reason of ['close', 'generation', 'offline'] as const) {
   test(`${reason} discards an obsolete child response without starting another read`, async () => {
     const h = setup();

@@ -8,6 +8,30 @@ import type { ChatSession } from '../net/types';
 import { Thread } from './Thread';
 import { firstVisibleMessage, observeThreadScroll, ThreadScroll, type ThreadScrollView } from './threadScroll';
 
+test('inline child history anchors the visible child message rather than its enclosing parent card', () => {
+  const child = (id: string, top: number, bottom: number) => ({
+    getBoundingClientRect: () => ({ top, bottom }),
+    querySelector: (selector: string) => selector === '[data-message-id]' ? {
+      getBoundingClientRect: () => ({ top, bottom }), getAttribute: () => id,
+    } : null,
+  });
+  const children = [child('older-child', -400, -50), child('reading-child', -50, 300)];
+  let nestedTop = -450;
+  const root = {
+    getBoundingClientRect: () => ({ top: -500, bottom: 800 }),
+    querySelector: (selector: string) => selector === '[data-child-history]' ? {
+      getBoundingClientRect: () => ({ top: nestedTop, bottom: 800 }),
+      getAttribute: () => null,
+      querySelectorAll: () => children,
+    } : {
+      getBoundingClientRect: () => ({ top: -500, bottom: 800 }), getAttribute: () => 'parent',
+    },
+  };
+  assert.deepEqual(firstVisibleMessage([root], 0, 600), { id: 'reading-child', offset: -50 });
+  nestedTop = 100;
+  assert.deepEqual(firstVisibleMessage([root], 0, 600), { id: 'parent', offset: -500 });
+});
+
 class Frames {
   callbacks: (() => void)[] = [];
   pending = new Map<number, () => void>();
@@ -272,7 +296,7 @@ test('repeated fractional geometry, scroll, and visible-anchor jitter below 1px 
   }
 });
 
-test('loading on/off leaves the transcript unchanged and loader/badge outside scroll flow', () => {
+test('loading on/off reserves its leading flow slot without changing message rows', () => {
   const session: ChatSession = {
     sessionId: 'scroll-loading', title: 'History', cwd: '/project', lastActivity: 0,
     status: 'idle', loaded: true, error: null, queue: [], ask: null,
@@ -285,13 +309,13 @@ test('loading on/off leaves the transcript unchanged and loader/badge outside sc
   }));
   const idle = render(false);
   const loading = render(true);
-  const messages = divContents(loading, 'chat-messages');
-  assert.equal(messages, divContents(idle, 'chat-messages'));
-  assert.equal(messages, divContents(render(false), 'chat-messages'));
-  assert.match(divContents(messages, 'chat-message-content'), /Stable transcript/);
+  const messages = divContents(loading, 'chat-message-rows');
+  assert.equal(messages, divContents(idle, 'chat-message-rows'));
+  assert.equal(messages, divContents(render(false), 'chat-message-rows'));
+  assert.match(messages, /Stable transcript/);
   assert.match(messages, /class="message is-out" data-message-id="visible"/);
   assert.doesNotMatch(messages, /chat-loading-older|new-msg-badge/);
-  assert.match(divContents(loading, 'chat-transcript'), /chat-loading-older/);
+  assert.match(divContents(divContents(loading, 'chat-message-content'), 'chat-history-controls'), /chat-loading-older/);
   assert.doesNotMatch(idle, /chat-loading-older/);
   const css = readFileSync(new URL('../styles/components/chat.scss', import.meta.url), 'utf8');
   assert.match(css, /\.chat-transcript\s*\{[^}]*flex-direction:\s*column/);
@@ -300,12 +324,12 @@ test('loading on/off leaves the transcript unchanged and loader/badge outside sc
   assert.doesNotMatch(css, /\.chat-loading-older\s*\{[^}]*position:\s*absolute/);
   assert.match(css, /\.new-msg-badge\s*\{[^}]*position:\s*absolute/);
   assert.match(divContents(loading, 'chat-history-controls'), /chat-loading-older/);
-  assert.match(divContents(idle, 'chat-history-controls'), /加载更早的历史/);
+  assert.doesNotMatch(divContents(idle, 'chat-history-controls'), /button|加载更早/);
 
   const h = fixture();
   const anchor = readAt(h, 275);
   for (const loadingHistory of [true, false, true, false]) {
-    assert.equal(divContents(render(loadingHistory), 'chat-messages'), messages);
+    assert.equal(divContents(render(loadingHistory), 'chat-message-rows'), messages);
     h.scroll.changed();
     assert.equal(h.frames.pending.size, 0);
     assert.deepEqual(h.view.firstVisible(), anchor);

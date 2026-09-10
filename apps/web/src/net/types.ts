@@ -22,6 +22,7 @@ export interface ChatSession extends SessionMeta {
   historyStale: boolean;
   hasMore: boolean;
   loadingHistory: boolean;
+  historyError?: string;
   partialHistory?: boolean;
   incompleteBoundary?: boolean;
 }

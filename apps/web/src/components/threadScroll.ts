@@ -1,5 +1,6 @@
 type Geometry = { top: number; height: number; viewport: number; width: number };
 type Anchor = { id: string; offset: number };
+export const READING_ACTIVITY_EVENT = 'cockpit:thread-reading-activity';
 export type ReadingPosition = { following: boolean; anchor: Anchor | null };
 
 export interface ThreadScrollView {
@@ -22,6 +23,7 @@ interface MessageFrame {
   querySelector(selector: string): {
     getBoundingClientRect(): { top: number; bottom: number };
     getAttribute(name: string): string | null;
+    querySelectorAll?(selector: string): ArrayLike<MessageFrame>;
   } | null;
 }
 
@@ -35,6 +37,12 @@ export function firstVisibleMessage(rows: ArrayLike<MessageFrame>, start: number
   }
   for (let i = lo; i < rows.length; i++) {
     if (rows[i].getBoundingClientRect().top >= start + viewport) break;
+    const nested = rows[i].querySelector('[data-child-history]');
+    if (nested && nested.getBoundingClientRect().top <= start + EPSILON) {
+      const children = nested.querySelectorAll?.(':scope > [data-child-message-frame]');
+      const child = children && firstVisibleMessage(children, start, viewport);
+      if (child) return child;
+    }
     const row = rows[i].querySelector('[data-message-id]');
     if (!row) continue;
     const rect = row.getBoundingClientRect();
@@ -229,7 +237,10 @@ export function observeThreadScroll(el: HTMLDivElement, content: HTMLDivElement,
   }, {
     request: (callback) => requestAnimationFrame(callback),
     cancel: (id) => cancelAnimationFrame(id),
-  }, onFollow, onActivity);
+  }, onFollow, active => {
+    onActivity?.(active);
+    el.dispatchEvent(new CustomEvent(READING_ACTIVITY_EVENT, { detail: active }));
+  });
 
   // scrollend where supported; a trailing event timer otherwise (never polling).
   let settleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -316,6 +327,15 @@ export function observeThreadScroll(el: HTMLDivElement, content: HTMLDivElement,
   scroll.follow();
   return {
     scroll,
+    position(): ReadingPosition {
+      const position = scroll.position();
+      if (!position.anchor) return position;
+      const row = content.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(position.anchor.id)}"]`);
+      const parent = row?.closest('[data-message-frame]')?.querySelector<HTMLElement>('[data-message-id]');
+      // Inline details close on unmount; restore their enclosing card rather than a missing child row.
+      return parent?.dataset.messageId && parent.dataset.messageId !== position.anchor.id
+        ? { ...position, anchor: { id: parent.dataset.messageId, offset: 0 } } : position;
+    },
     dispose() {
       scroll.dispose();
       ro?.disconnect();

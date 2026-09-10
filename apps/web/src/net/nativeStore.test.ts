@@ -102,6 +102,7 @@ test('native chat starts only after selection, open and snapshot, with one bound
   assert.deepEqual(h.requests[0].body, {
     sessionId: 'a', source: 'live', direction: 'backward', max: 32, waitMs: 0, bootstrap: true, agentScope: 'primary',
   });
+
   await h.reply(0, [message('A')], { hasMore: true });
   assert.deepEqual(h.ids(), ['A']);
   assert.equal(h.requests.length, 2);
@@ -115,6 +116,52 @@ test('native chat starts only after selection, open and snapshot, with one bound
   assert.equal(h.requests[2].body.waitMs, 1000);
   assert.equal('autoNameSession' in h.store.getState(), false);
   assert.equal('renameSession' in h.store.getState(), false);
+});
+
+test('older reads coalesce repeated triggers, and exhaustion suppresses all later triggers', async t => {
+  const h = setup(t);
+  await h.start();
+  for (let i = 0; i < 20; i++) h.store.getState().loadMore('a');
+  assert.equal(h.requests.length, 4);
+  await h.reply(3, [message('older')], { hasMore: false });
+  for (let i = 0; i < 20; i++) h.store.getState().loadMore('a');
+  assert.equal(h.requests.length, 4);
+  assert.deepEqual(h.ids(), ['older', 'A']);
+});
+
+test('hiding a reading window cancels its older read and rejects further preload signals', async t => {
+  const h = setup(t);
+  await h.start();
+  h.store.getState().loadMore('a');
+  h.document.visibilityState = 'hidden';
+  h.document.dispatchEvent(new Event('visibilitychange'));
+  assert.equal(h.requests[3].signal?.aborted, true);
+  for (let i = 0; i < 10; i++) h.store.getState().loadMore('a');
+  assert.equal(h.requests.length, 4);
+  await h.reply(3, [message('obsolete')]);
+  assert.deepEqual(h.ids(), ['A']);
+});
+
+test('older history failures survive metadata refresh and retry the existing older cursor, not the live cursor', async t => {
+  const h = setup(t);
+  await h.start();
+  h.store.getState().loadMore('a');
+  h.requests[3].reject(new Error('older read offline'));
+  await setImmediate();
+  assert.equal(h.state().historyError, 'older read offline');
+  h.snapshot();
+  await setImmediate();
+  assert.equal(h.requests.filter(request => request.body.direction === 'backward').length, 2);
+  assert.equal(h.state().historyError, 'older read offline');
+  const liveBeforeRetry = h.requests.findLast(request => request.body.direction === 'forward')!;
+  h.store.getState().retryHistory('a');
+  const retry = h.requests.length - 1;
+  assert.equal(h.requests[retry].body.direction, 'backward');
+  assert.equal(h.requests[retry].body.cursor, h.requests[3].body.cursor);
+  assert.equal(liveBeforeRetry.signal?.aborted, false);
+  await h.reply(retry, [message('older')]);
+  assert.equal(h.state().historyError, undefined);
+  assert.deepEqual(h.ids(), ['older', 'A']);
 });
 
 test('initial history keeps loading until its tool owner is present, then follows the original live tail', async t => {

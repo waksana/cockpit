@@ -69,7 +69,11 @@ not conversation order.
 
 Initial loading fills at least two viewport heights when sufficient history is
 available, not a fixed number of messages.
-Upward scrolling requests more native pages and preserves already loaded rows.
+Upward reading prefetches older messages when the remaining loaded history above
+the viewport falls to about one current viewport. After insertion, the reading
+anchor is restored before deciding whether another bounded batch is needed.
+There is at most one older read in flight per window; exhausted, failed, expired,
+or unresolved-boundary windows do not automatically continue.
 Browser backward reads use 32-event pages and stop initial filling once the
 accumulated content reaches two screen heights (a complete batch can exceed
 that minimum). One history action continues across native pages
@@ -90,9 +94,14 @@ for a complete display message.
 
 Initial viewport filling measures the incoming rows without exposing each
 intermediate page, then reveals the accumulated initial content together.
-Existing reading windows remain visible during older-page loads. History
-controls occupy a full-width top area with reserved action-row height; their
-loading/button transitions do not squeeze the transcript horizontally.
+Existing reading windows remain visible during older-page loads. The normal
+loading indicator sits in a reserved-height slot at the beginning of the
+scrolling transcript, not a fixed or sticky viewport toolbar. There is no normal
+load-more button; explicit failure retry, rebase and bounded-message continuation
+remain available. The reserved slot prevents loading visibility from shifting
+rows. Inline child histories use the same viewport headroom rule when being read;
+the parent scroll owner anchors the visible child row during a prepend. Closing
+details, switching sessions or hiding the page releases their reads.
 
 Only the selected visible view reads live chat. Disconnecting or changing views cancels
 its request and stops subsequent reads. The public native long-poll RPC has no

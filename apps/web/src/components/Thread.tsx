@@ -10,7 +10,8 @@ import { ContextMenu, type MenuItem } from './ContextMenu';
 import type { ChatMessage, ChatSession, ToolCall, Attachment, ExitPlanModeAction } from '../net/types';
 import { acknowledgeInView, sendThreadDraft } from '../lib/draft';
 import { getSessionDraft, type UploadFile } from '../lib/attachmentSend';
-import { observeThreadScroll, type ThreadScroll, type ReadingPosition } from './threadScroll';
+import { observeThreadScroll, READING_ACTIVITY_EVENT, type ThreadScroll, type ReadingPosition } from './threadScroll';
+import { observeHistoryPrefetch } from './historyPrefetch';
 import { canSkipMessageLayout, createMessageLayout } from './messageLayout';
 import { useCockpit } from '../net/store';
 import { createSubagentHistory } from '../lib/subagentHistory';
@@ -150,17 +151,50 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
     sessionId, { agentId, toolCallId }, read, useCockpit.getState,
   ), [sessionId, toolCallId, agentId, read]);
   const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot, resource.getSnapshot);
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [heldHead, setHeldHead] = useState<string | null>(null);
   useLayoutEffect(() => () => resource.deactivate(true), [resource]);
   useLayoutEffect(() => {
     if (connected && toolCallId) resource.activate();
     return () => resource.deactivate();
   }, [resource, connected, generation, toolCallId]);
   useEffect(() => {
-    if (connected && toolCallId) void resource.refresh();
+    if (connected && toolCallId && document.visibilityState === 'visible') void resource.refresh();
   }, [resource, connected, generation, toolCallId]);
   const sa = summary;
-  const sub = snapshot.data?.messages ?? m.subMessages ?? [];
+  const loaded = useMemo(() => snapshot.data?.messages ?? m.subMessages ?? [], [snapshot.data?.messages, m.subMessages]);
+  const heldIndex = heldHead ? loaded.findIndex(message => message.id === heldHead) : -1;
+  const sub = heldIndex > 0 ? loaded.slice(heldIndex) : loaded;
+  const prependHeld = heldIndex > 0;
   const pending = snapshot.pending || (connected && !!toolCallId && !snapshot.data && !snapshot.error);
+  useLayoutEffect(() => {
+    const viewport = contentRef.current?.closest<HTMLElement>('.chat-messages');
+    if (!viewport) return;
+    const activity = (event: Event) => setHeldHead((event as CustomEvent<boolean>).detail ? loaded[0]?.id ?? null : null);
+    viewport.addEventListener(READING_ACTIVITY_EVENT, activity);
+    return () => viewport.removeEventListener(READING_ACTIVITY_EVENT, activity);
+  }, [loaded]);
+  useLayoutEffect(() => {
+    const content = contentRef.current;
+    const viewport = content?.closest<HTMLElement>('.chat-messages');
+    if (!viewport || !content || !connected || pending || snapshot.error || !snapshot.data?.hasMore
+      || snapshot.data.incompleteBoundary || prependHeld) return;
+    return observeHistoryPrefetch(viewport, content,
+      () => content.getBoundingClientRect().top <= viewport.getBoundingClientRect().top,
+      () => { void resource.loadOlder(); },
+      () => viewport.getBoundingClientRect().top - content.getBoundingClientRect().top);
+  }, [connected, pending, snapshot.error, snapshot.data, resource, prependHeld]);
+  useEffect(() => {
+    const visible = () => {
+      if (document.visibilityState !== 'visible') resource.deactivate();
+      else if (connected) {
+        resource.activate();
+        if (!resource.getSnapshot().data && !resource.getSnapshot().error) void resource.refresh();
+      }
+    };
+    document.addEventListener('visibilitychange', visible);
+    return () => document.removeEventListener('visibilitychange', visible);
+  }, [resource, connected]);
   return (
     <div className="subagent-body" aria-busy={pending}>
       {sa.prompt && (
@@ -171,22 +205,28 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
       )}
       {sa.error && <div className="subagent-error">{sa.error}</div>}
       {!connected && toolCallId && <div role="status">等待连接…</div>}
-      {pending && <div role="status">正在读取子代理历史…</div>}
-      {snapshot.error && <div className="subagent-error" role="alert">
-        加载失败：{snapshot.error}
-        <button type="button" disabled={!connected || pending} onClick={() => { void resource.retry(); }}>重试</button>
-      </div>}
-      {snapshot.data?.hasMore && <button type="button" disabled={!connected || pending} onClick={() => { void resource.loadOlder(); }}>
-        加载更早的消息
-      </button>}
-      {snapshot.data?.incompleteBoundary && !pending && <div className="subagent-empty">{snapshot.data.hasMore
-        ? '本次尚未读到完整消息边界，可继续加载更早的消息。'
-        : '部分工具记录缺少对应的发起消息，现有历史无法补齐。'}</div>}
-      {sub.map((sm) => (
-        <article key={sm.id} className="message is-doc subagent-msg">
-          <MessageInner m={sm} sessionId={sessionId} />
-        </article>
-      ))}
+      <div ref={contentRef} data-child-history>
+        <div className="chat-history-actions">
+          {pending && <div role="status">正在读取子代理历史…</div>}
+        </div>
+        {snapshot.error && <div className="subagent-error" role="alert">
+          加载失败：{snapshot.error}
+          <button type="button" disabled={!connected || pending} onClick={() => { void resource.retry(); }}>
+            {resource.requiresResync() ? '重新读取子代理历史' : '重试'}
+          </button>
+        </div>}
+        {snapshot.data?.incompleteBoundary && !pending && <div className="subagent-empty">
+          {snapshot.data.hasMore ? '本次尚未读到完整消息边界，已暂停自动加载。'
+            : '部分工具记录缺少对应的发起消息，现有历史无法补齐。'}
+          {snapshot.data.hasMore && !snapshot.error && <button type="button" disabled={!connected || prependHeld}
+            onClick={() => { void resource.loadOlder(); }}>继续补齐消息边界</button>}
+        </div>}
+        {sub.map((sm) => (
+          <article key={sm.id} className="message is-doc subagent-msg" data-child-message-frame={sm.id}>
+            <div data-message-id={JSON.stringify([toolCallId, sm.id])}><MessageInner m={sm} sessionId={sessionId} /></div>
+          </article>
+        ))}
+      </div>
       {toolCallId && <button type="button" disabled={!connected || pending} onClick={() => { void resource.refresh(); }}>刷新子代理历史</button>}
       <div className="subagent-empty">按需读取原生已保存的事件；生成中的消息可在保存后手动刷新。</div>
       {!pending && !snapshot.error && !sub.length && <div className="subagent-empty">
@@ -316,6 +356,7 @@ interface ThreadProps {
 }
 
 export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPlan, onPlanSupersede, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, onAttentionVisible, readOnly = false }: ThreadProps) {
+  const connected = useCockpit((s) => s.connState === 'open');
   const interruptAction = useKeyedAction(`interrupt:${session.sessionId}`);
   const [interruptNotice, setInterruptNotice] = useState<{ sessionId: string; text: string } | null>(null);
   const canInterrupt = !!onInterrupt && session.loaded && session.status === 'running'
@@ -328,7 +369,13 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
   const scrollOwnerRef = useRef<ThreadScroll | null>(null);
   const initialFill = useRef({ sessionId: session.sessionId, done: session.materialized });
   const [readySession, setReadySession] = useState(session.materialized ? session.sessionId : null);
-  const preparingHistory = readySession !== session.sessionId && !session.error && !session.historyStale;
+  const [pageVisible, setPageVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
+  useEffect(() => {
+    const visible = () => setPageVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', visible);
+    return () => document.removeEventListener('visibilitychange', visible);
+  }, []);
+  const preparingHistory = readySession !== session.sessionId && !session.error && !session.historyError && !session.historyStale;
   const [heldHead, setHeldHead] = useState<{ sessionId: string; id: string } | null>(null);
   // Keep the existing DOM prefix under an active gesture. Only newly received
   // older rows wait for settle; tail updates and already mounted history stay live.
@@ -390,7 +437,7 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
     const saved = readingPositions.get(session.sessionId);
     if (saved) owner.scroll.restore(saved);
     return () => {
-      readingPositions.set(session.sessionId, owner.scroll.position());
+      readingPositions.set(session.sessionId, owner.position());
       owner.dispose();
       scrollOwnerRef.current = null;
     };
@@ -403,7 +450,7 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
     const fill = initialFill.current;
     const el = scrollRef.current;
     if (fill.done) { setReadySession(session.sessionId); return; }
-    if (!el || !session.materialized || session.loadingHistory || session.historyStale || session.error || prependHeld) return;
+    if (!connected || !pageVisible || !el || !session.materialized || session.loadingHistory || session.historyStale || session.historyError || session.error || prependHeld) return;
     // Measure hidden initial rows, then reveal the accumulated viewport in one batch.
     if (!session.hasMore || session.incompleteBoundary || el.scrollHeight >= el.clientHeight * 2) {
       fill.done = true;
@@ -411,21 +458,18 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
     } else if (el.clientHeight > 0) {
       onLoadMore();
     }
-  }, [session.sessionId, session.materialized, session.loadingHistory, session.historyStale, session.error, session.hasMore, session.incompleteBoundary, messages, onLoadMore, prependHeld]);
+  }, [session.sessionId, session.materialized, session.loadingHistory, session.historyStale, session.historyError, session.error, session.hasMore, session.incompleteBoundary, messages, onLoadMore, prependHeld, pageVisible, connected]);
 
   // The scroll owner continuously remembers the visible message, not a
   // request-time scrollHeight that can include unrelated loader/media growth.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = scrollRef.current;
-    if (!el) return;
-    const onScroll = () => {
-      if (!preparingHistory && el.scrollTop < 80 && session.hasMore && !session.loadingHistory && !prependHeld) {
-        onLoadMore();
-      }
-    };
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
-  }, [session.hasMore, session.loadingHistory, onLoadMore, prependHeld, preparingHistory]);
+    const content = contentRef.current;
+    if (!connected || !pageVisible || !el || !content || preparingHistory || !session.materialized || !session.hasMore
+      || session.loadingHistory || session.historyError || session.historyStale || session.incompleteBoundary || prependHeld) return;
+    return observeHistoryPrefetch(el, content, () => !scrollOwnerRef.current?.following, onLoadMore);
+  }, [session.sessionId, session.hasMore, session.materialized, session.loadingHistory, session.historyError,
+    session.historyStale, session.incompleteBoundary, onLoadMore, prependHeld, preparingHistory, pageVisible, connected]);
 
   // Reconnect/metadata renders with identical geometry do not schedule a write.
   // Count only messages after the previous tail, never an older-page prepend.
@@ -476,57 +520,64 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
   return (
     <main className="chat">
       <div className="chat-transcript">
-        <div className="chat-history-controls">
-          <div className="chat-history-actions">
-            {session.loadingHistory || preparingHistory ? (
-              <div className="chat-loading-older" role="status">
-                {preparingHistory || session.historyStale || !session.materialized ? '正在同步对话历史…' : '加载更早的消息…'}
-              </div>
-            ) : session.historyStale || !session.materialized ? (
-              <div className="chat-loading-older" role="status">
-                对话历史尚未同步。
-                {onRetryHistory && <button type="button" className="dialog-btn rp" onClick={() => {
-                  scrollOwnerRef.current?.follow();
-                  onRetryHistory();
-                }}>
-                  重新读取最新历史
-                </button>}
-              </div>
-            ) : session.hasMore ? <button type="button" className="dialog-btn rp"
-              disabled={prependHeld} onClick={onLoadMore}>加载更早的历史</button> : null}
-          </div>
-          {session.partialHistory && <p className="chat-history-note" role="status">
-            断线期间的临时片段可能不完整；已保留现有文字，以原生保存后的完整消息为准。
-          </p>}
-          {session.incompleteBoundary && !session.loadingHistory && <p className="chat-history-note">{session.hasMore
-            ? '本次尚未读到完整消息边界，可点击加载更早的历史继续补齐。'
-            : '部分工具记录缺少对应的发起消息，现有历史无法补齐。'}</p>}
-        </div>
         <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-busy={preparingHistory}>
-          <div ref={contentRef} className="chat-message-content" data-preparing={preparingHistory || undefined}
-            aria-hidden={preparingHistory || undefined} inert={preparingHistory || undefined}>
-            {session.messages.length === 0 && session.materialized && !session.historyStale && !session.loadingHistory && !session.hasMore && (
-              <p className="chat-empty-hint">开始对话吧 — 工作目录 {session.cwd}</p>
-            )}
-            <TranscriptMessages messages={messages} sessionId={session.sessionId}
-              liveId={session.status === 'running' ? session.messages.at(-1)?.id : undefined}
-              today={new Date().setHours(0, 0, 0, 0)} onMenu={openMsgMenu} />
-
-            {session.compacting && (
-              <div className="chat-typing" aria-live="polite">正在压缩上下文…</div>
-            )}
-            {session.status === 'running' && !session.compacting && !ask && (
-              <div className="chat-typing" aria-live="polite">
-                {session.intent || '回复中…'}
-                <button type="button" className="chat-typing-stop" onClick={() => onCancel?.()}>
-                  {(session.queue?.length ?? 0) > 0 ? '停止并清空队列' : '停止'}
-                </button>
+          <div ref={contentRef} className="chat-message-content">
+            <div className="chat-history-controls">
+              <div className="chat-history-actions">
+                {session.loadingHistory || preparingHistory ? (
+                  <div className="chat-loading-older" role="status">
+                    {preparingHistory || session.historyStale || !session.materialized ? '正在同步对话历史…' : '加载更早的消息…'}
+                  </div>
+                ) : session.historyStale || !session.materialized ? (
+                  <div className="chat-loading-older" role={session.historyError ? 'alert' : 'status'}>
+                    {session.historyError ? `历史加载失败：${session.historyError}` : '对话历史尚未同步。'}
+                    {onRetryHistory && <button type="button" className="dialog-btn rp" onClick={() => {
+                      scrollOwnerRef.current?.follow();
+                      onRetryHistory();
+                    }}>
+                      重新读取最新历史
+                    </button>}
+                  </div>
+                ) : session.historyError ? <div className="chat-loading-older" role="alert">
+                  历史加载失败：{session.historyError}
+                  <button type="button" className="dialog-btn rp" onClick={onRetryHistory}>重试加载历史</button>
+                </div> : null}
               </div>
-            )}
-            {session.error && <p className="chat-error">错误: {session.error}
-              {onRetryHistory && session.materialized && !session.historyStale && <button type="button"
-                className="dialog-btn rp" onClick={onRetryHistory}>重试同步</button>}
-            </p>}
+              {session.partialHistory && <p className="chat-history-note" role="status">
+                断线期间的临时片段可能不完整；已保留现有文字，以原生保存后的完整消息为准。
+              </p>}
+              {session.incompleteBoundary && !session.loadingHistory && <p className="chat-history-note">
+                {session.hasMore ? '本次尚未读到完整消息边界，已暂停自动加载。'
+                  : '部分工具记录缺少对应的发起消息，现有历史无法补齐。'}
+                {session.hasMore && !session.historyStale && !session.historyError && <button type="button"
+                  className="dialog-btn rp" disabled={prependHeld} onClick={onLoadMore}>继续补齐消息边界</button>}
+              </p>}
+            </div>
+            <div className="chat-message-rows" data-preparing={preparingHistory || undefined}
+              aria-hidden={preparingHistory || undefined} inert={preparingHistory || undefined}>
+              {session.messages.length === 0 && session.materialized && !session.historyStale && !session.loadingHistory && !session.hasMore && (
+                <p className="chat-empty-hint">开始对话吧 — 工作目录 {session.cwd}</p>
+              )}
+              <TranscriptMessages messages={messages} sessionId={session.sessionId}
+                liveId={session.status === 'running' ? session.messages.at(-1)?.id : undefined}
+                today={new Date().setHours(0, 0, 0, 0)} onMenu={openMsgMenu} />
+
+              {session.compacting && (
+                <div className="chat-typing" aria-live="polite">正在压缩上下文…</div>
+              )}
+              {session.status === 'running' && !session.compacting && !ask && (
+                <div className="chat-typing" aria-live="polite">
+                  {session.intent || '回复中…'}
+                  <button type="button" className="chat-typing-stop" onClick={() => onCancel?.()}>
+                    {(session.queue?.length ?? 0) > 0 ? '停止并清空队列' : '停止'}
+                  </button>
+                </div>
+              )}
+              {session.error && <p className="chat-error">错误: {session.error}
+                {onRetryHistory && session.materialized && !session.historyStale && <button type="button"
+                  className="dialog-btn rp" onClick={onRetryHistory}>重试同步</button>}
+              </p>}
+            </div>
           </div>
         </div>
 

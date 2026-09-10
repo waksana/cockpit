@@ -419,7 +419,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       ...position, sessionId: sid, direction: 'backward', max: NATIVE_PAGE, waitMs: 0,
       bootstrap: !older && position.source === 'live',
     };
-    patchLocal(sid, (s) => ({ ...s, loadingHistory: true }));
+    patchLocal(sid, (s) => ({ ...s, loadingHistory: true, historyError: undefined }));
     const current = () => historyRequest === request && get().activeId === sid
       && request.generation === get().connectionGeneration && windows.get(sid) === window;
     void readMessageHistory(window, query, (next, signal) => read(net => net.chat(next, signal)),
@@ -427,6 +427,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       if (!current()) return;
       patchLocal(sid, (s) => ({
         ...s, ...window.snapshot(),
+        historyError: undefined,
         error: s.error === historyRecoveryErrors.get(sid) || (s.error && s.error !== errorAtStart) ? s.error : null,
       }));
       historyRequest = null;
@@ -437,6 +438,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       historyRequest = null;
       patchLocal(sid, (s) => ({
         ...s, loadingHistory: false, historyStale: window.invalid,
+        historyError: describeReason(error, false),
         ...(s.error !== historyRecoveryErrors.get(sid) ? { error: `加载失败：${describeReason(error, false)}` } : {}),
       }));
     });
@@ -448,7 +450,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     const s = sessions.find((x) => x.sessionId === activeId);
     const window = windows.get(activeId);
     if (!s || window?.invalid || s.loadingHistory || mutationRequests.has(activeId)) return;
-    if (!window?.materialized || (s.loaded && !window.live)) requestHistory(activeId);
+    if (!window?.materialized || (s.loaded && !window.live)) {
+      if (!s.historyError) requestHistory(activeId);
+    }
     else pollLive(activeId);
   };
 
@@ -701,7 +705,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     },
 
     loadMore(sid) {
-      if (get().activeId !== sid || !snapshotReady || get().connState !== 'open' || !client) return;
+      if (get().activeId !== sid || !isVisible() || !snapshotReady || get().connState !== 'open' || !client) return;
       const s = get().sessions.find((x) => x.sessionId === sid);
       if (!s || s.historyStale || !s.hasMore || s.loadingHistory) return;
       requestHistory(sid, true);
@@ -711,6 +715,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       if (get().activeId !== sid || !snapshotReady || get().connState !== 'open' || !client) return;
       const s = get().sessions.find((x) => x.sessionId === sid);
       if (!s || s.loadingHistory || mutationRequests.has(sid)) return;
+      if (s.historyError && !s.historyStale) {
+        requestHistory(sid, !!windows.get(sid)?.older);
+        return;
+      }
       cancelLive(sid);
       if (s.historyStale || !windows.get(sid)?.materialized) windows.set(sid, new NativeWindow());
       if (windows.get(sid)?.live && !s.historyStale) pollLive(sid);
