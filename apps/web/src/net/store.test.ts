@@ -4,7 +4,7 @@ import { createECDH } from 'node:crypto';
 import { setImmediate } from 'node:timers/promises';
 import { test, type TestContext } from 'node:test';
 import type { IntentBody, IntentName, IntentResult } from '@cockpit/protocol';
-import { intentUrl } from '../lib/config';
+import { CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { dismissUxError, getUxErrors } from '../lib/errorReporter';
 import { IntentHttpError, isSessionUnloadedError, SessionUnloadedError } from './client';
 import { createCockpitStore } from './store';
@@ -59,8 +59,9 @@ function setup(t: TestContext, store: Store = (useCockpit = createCockpitStore()
     response: ReturnType<typeof deferred<Response>>;
   }[] = [];
   t.mock.method(globalThis, 'fetch', (input: string | URL | Request, init?: RequestInit) => {
-    if (String(input) === intentUrl('session/chat') && JSON.parse(String(init?.body)).direction === 'forward') {
-      // Control tests hold chat polls separately; nativeStore tests inspect their lifecycle.
+    if (String(input) === CHAT_STREAM_URL
+      || (String(input) === intentUrl('session/chat') && JSON.parse(String(init?.body)).direction === 'forward')) {
+      // Control tests hold chat reads separately; nativeStore tests inspect their lifecycle.
       return new Promise<Response>((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
       });
@@ -190,7 +191,7 @@ function setup(t: TestContext, store: Store = (useCockpit = createCockpitStore()
       next.getState().setActiveId(id);
       const loaded = next.getState().sessions.find(session => session.sessionId === id)?.loaded;
       assertPost(index, 'session/chat', { sessionId: id, source: loaded ? 'live' : 'persisted', direction: 'backward',
-        max: 32, waitMs: 0, bootstrap: !!loaded, ...(loaded ? { agentScope: 'primary' as const } : {}) });
+        max: 32, waitMs: 0, bootstrap: !!loaded, ...(loaded ? { agentScope: 'all' as const } : {}) });
       await history(index, { sessionId: id, messages, hasMore, latest: true });
     }
     function reconnect(ids = ['a']) {
@@ -1361,7 +1362,7 @@ test('newSession rejects original failures and disconnected attempts without cha
   assert.equal(h.requests.length, 0);
   h.source.open();
   h.assertPost(0, 'session/chat', { sessionId: 'a', source: 'live', direction: 'backward',
-    max: 32, waitMs: 0, bootstrap: true, agentScope: 'primary' });
+    max: 32, waitMs: 0, bootstrap: true, agentScope: 'all' });
   await h.history(0, { sessionId: 'a', messages: [], latest: true, hasMore: false });
   const pending = useCockpit.getState().newSession('.');
   const failure = new Error('creation denied');

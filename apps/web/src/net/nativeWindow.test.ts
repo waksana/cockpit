@@ -51,6 +51,18 @@ test('a disconnected catchup retains its bounded received pages alongside its ad
   assert.deepEqual(window.snapshot().messages.map(m => m.id), ['a', 'b', 'c']);
 });
 
+test('ordinary reconnect publishes each durable page instead of waiting for the entire gap', () => {
+  const window = new NativeWindow(undefined, true);
+  accept(window, [event('a')], { bootstrap: true }, { liveCursor: 'initial' });
+  accept(window, [], forward);
+  window.disconnect();
+  accept(window, [event('b')], forward, { hasMore: true, cursor: 'gap-one' });
+  assert.deepEqual(window.snapshot().messages.map(message => message.id), ['a', 'b']);
+  window.disconnect();
+  accept(window, [event('c')], forward);
+  assert.deepEqual(window.snapshot().messages.map(message => message.id), ['a', 'b', 'c']);
+});
+
 test('partial C is retained across a gap, suffix deltas are withheld, and complete C replaces it', () => {
   const window = new NativeWindow();
   accept(window, [event('a')]);
@@ -141,6 +153,131 @@ test('filtered child views normalize their own envelope without needing an ances
   const window = new NativeWindow(['child']);
   accept(window, [{ ...event('child-message'), agentId: 'child' }], { agentIds: ['child'], agentScope: undefined });
   assert.equal(window.snapshot().messages[0]?.id, 'child-message');
+});
+
+const all = { agentScope: 'all' as const };
+const liveAll = { ...forward, ...all };
+const owned = (agentId: string, value: NativeChatEvent): NativeChatEvent => ({ ...value, agentId });
+const spawn = (toolCallId: string, agentId: string) => event(`started-${toolCallId}`, 'subagent.started', {
+  toolCallId, agentId, agentDisplayName: agentId,
+});
+const taskMessage = (id: string, toolCallId: string) => event(id, 'assistant.message', {
+  toolRequests: [{ toolCallId, name: 'task', arguments: { prompt: 'Synthetic task' } }],
+});
+
+test('one all-agent window contains child history, live results and lifecycle without a second child read', () => {
+  const window = new NativeWindow(undefined, true);
+  accept(window, [
+    taskMessage('root-task', 'spawn'), spawn('spawn', 'child'),
+    owned('child', event('child-old')),
+  ], { ...all, bootstrap: true }, { liveCursor: 'initial-tail', hasMore: true });
+  accept(window, [owned('child', event('child-old')), owned('child', event('child-new'))], liveAll);
+  accept(window, [event('child-done', 'subagent.completed', { toolCallId: 'spawn' })], liveAll);
+  const card = window.snapshot().messages.find(message => message.subagent)!;
+  assert.deepEqual(card.subMessages?.map(message => message.id), ['child-old', 'child-new']);
+  assert.equal(card.subagent?.status, 'completed');
+  assert.equal(card.subagent?.prompt, undefined, 'task arguments are not retained as another copy of the child conversation');
+  assert.equal(window.unresolved, false);
+});
+
+test('child streaming scratch survives older prepend, and a missing suffix waits for the final message', () => {
+  const window = new NativeWindow(undefined, true);
+  accept(window, [taskMessage('root-task', 'spawn'), spawn('spawn', 'child'), owned('child', event('stable'))], all);
+  accept(window, [], liveAll);
+  accept(window, [
+    owned('child', ephemeral('start', 'assistant.message_start', { messageId: 'shared' })),
+    owned('child', ephemeral('delta', 'assistant.message_delta', { messageId: 'shared', deltaContent: 'prefix' })),
+    event('root-final', 'assistant.message', { messageId: 'shared', content: 'Root identity is independent' }),
+  ], liveAll);
+  const stable = window.snapshot().messages.find(message => message.subagent)?.subMessages?.[0];
+  accept(window, [owned('child', ephemeral('more', 'assistant.message_delta', { messageId: 'shared', deltaContent: ' middle' }))], liveAll);
+  assert.equal(window.snapshot().messages.find(message => message.subagent)?.subMessages?.[0], stable);
+  accept(window, [event('older-root')], { ...all, cursor: 'older' });
+  const childMessages = () => window.snapshot().messages.find(message => message.subagent)!.subMessages!;
+  assert.equal(childMessages().at(-1)?.content, 'prefix middle');
+  window.disconnect();
+  accept(window, [], liveAll);
+  accept(window, [owned('child', ephemeral('lost-prefix', 'assistant.message_delta', { messageId: 'shared', deltaContent: ' suffix' }))], liveAll);
+  assert.equal(childMessages().at(-1)?.content, 'prefix middle');
+  const final = owned('child', event('child-final', 'assistant.message', { messageId: 'shared', content: 'prefix middle missed suffix' }));
+  accept(window, [final, final], liveAll);
+  assert.equal(childMessages().at(-1)?.content, 'prefix middle missed suffix');
+  assert.equal(childMessages().filter(message => message.id === 'shared').length, 1);
+  assert.equal(window.snapshot().messages.find(message => message.id === 'shared')?.content, 'Root identity is independent');
+  assert.equal(window.partial, false);
+});
+
+test('nested child deltas update their ancestors without cloning an unrelated child message', () => {
+  const window = new NativeWindow(undefined, true);
+  accept(window, [
+    taskMessage('outer-task', 'outer'), spawn('outer', 'outer-agent'),
+    owned('outer-agent', event('unrelated')),
+    owned('outer-agent', taskMessage('inner-task', 'inner')), spawn('inner', 'inner-agent'),
+  ], all);
+  accept(window, [], liveAll);
+  const outerMessages = () => window.snapshot().messages.find(message => message.subagent?.toolCallId === 'outer')!.subMessages!;
+  const unrelated = outerMessages()[0];
+  accept(window, [
+    owned('inner-agent', ephemeral('nested-start', 'assistant.message_start', { messageId: 'nested' })),
+    owned('inner-agent', ephemeral('nested-text', 'assistant.message_delta', { messageId: 'nested', deltaContent: 'Nested text' })),
+  ], liveAll);
+  assert.equal(outerMessages()[0], unrelated);
+  assert.equal(outerMessages().find(message => message.subagent?.toolCallId === 'inner')?.subMessages?.[0].content, 'Nested text');
+  accept(window, [event('older-root')], { ...all, cursor: 'older' });
+  assert.equal(outerMessages().find(message => message.subagent?.toolCallId === 'inner')?.subMessages?.[0].content, 'Nested text');
+});
+
+test('legacy data.agentId remains child ownership when persisted history and live scopes agree', () => {
+  const window = new NativeWindow(undefined, true);
+  accept(window, [taskMessage('root-task', 'spawn'), spawn('spawn', 'child'),
+    event('legacy', 'assistant.message', { agentId: 'child', content: 'Child, not root' })], { source: 'persisted', agentScope: undefined });
+  assert.equal(window.snapshot().messages.some(message => message.id === 'legacy'), false);
+  assert.equal(window.snapshot().messages.find(message => message.subagent)?.subMessages?.[0].id, 'legacy');
+});
+
+test('empty and duplicate live pages advance cursor without replacing the message view', () => {
+  const window = new NativeWindow(undefined, true);
+  const value = event('one');
+  accept(window, [value], all);
+  const before = window.snapshot().messages;
+  accept(window, [], liveAll, { cursor: 'empty-cursor' });
+  accept(window, [value], liveAll, { cursor: 'duplicate-cursor' });
+  assert.equal(window.snapshot().messages, before);
+  assert.equal(window.live?.cursor, 'duplicate-cursor');
+});
+
+test('passive metadata and unused tool argument deltas advance position without retaining display copies', () => {
+  const window = new NativeWindow(undefined, true);
+  accept(window, [event('displayed'), event('configuration', 'session.start', { irrelevant: 'large native metadata' })], {
+    source: 'persisted', agentScope: undefined,
+  });
+  assert.equal(window.retainedEventCount, 1);
+  accept(window, [], liveAll);
+  accept(window, [ephemeral('arguments', 'assistant.tool_call_delta', { delta: 'not rendered' })], liveAll);
+  assert.equal(window.retainedEventCount, 1);
+});
+
+test('resolving an older child owner also resolves the interrupted message identity', () => {
+  const window = new NativeWindow(undefined, true);
+  accept(window, [event('root')], all, { hasMore: true });
+  accept(window, [], liveAll);
+  accept(window, [owned('child', ephemeral('start', 'assistant.message_start', { messageId: 'interrupted' }))], liveAll);
+  assert.equal(window.unresolved, true);
+  window.disconnect();
+  accept(window, [taskMessage('root-task', 'spawn'), spawn('spawn', 'child')], { ...all, cursor: 'older' });
+  accept(window, [owned('child', event('final', 'assistant.message', { messageId: 'interrupted', content: 'Recovered final' }))], liveAll);
+  assert.equal(window.partial, false);
+  assert.equal(window.unresolved, false);
+  assert.equal(window.snapshot().messages.find(message => message.subagent)?.subMessages?.[0].content, 'Recovered final');
+});
+
+test('a new native agent alias uses its known legacy owner without an unnecessary older scan', () => {
+  const window = new NativeWindow(undefined, true);
+  accept(window, [taskMessage('root-task', 'spawn'), spawn('spawn', 'legacy-child')], all);
+  accept(window, [], liveAll);
+  accept(window, [{ ...owned('new-native-alias', event('alias-message')), parentToolCallId: 'spawn' }], liveAll);
+  assert.equal(window.unresolved, false);
+  assert.equal(window.snapshot().messages.find(message => message.subagent)?.subMessages?.[0].id, 'alias-message');
 });
 
 test('a durable reasoning boundary survives the initial backward read until its message arrives', () => {

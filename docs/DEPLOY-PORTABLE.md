@@ -64,7 +64,7 @@ server directly rather than the launcher, SPA serving is opt-in.
 
 ## Remote access
 
-Put the web app, `/intent/*`, `/events`, `/capabilities`, `/upload` and
+Put the web app, `/intent/*`, `/events`, `/chat/stream`, `/capabilities`, `/upload` and
 `/uploads/*` behind the same authenticated HTTPS origin. Forward SSE without
 proxy buffering and allow long-lived streams. Protect file downloads just as
 carefully as chat and command endpoints.

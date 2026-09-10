@@ -1,19 +1,11 @@
 import type { CopilotClient, CopilotSession, SessionEvent } from '@github/copilot-sdk';
-import { NativeChatRead, type NativeChatEvent, type NativeChatPage } from '@cockpit/protocol';
+import { CHAT_EVENT_TYPES, NativeChatRead, type NativeChatEvent, type NativeChatPage } from '@cockpit/protocol';
 import { normalizeEvent } from './sdk-types.ts';
 
 type PassiveRead = CopilotClient['rpc']['sessions']['readPersistedEvents'];
 type LiveRead = CopilotSession['rpc']['eventLog']['read'];
 
-export const CHAT_EVENT_TYPES: [string, ...string[]] = [
-  'session.start', 'session.title_changed', 'session.model_change', 'session.error', 'session.warning',
-  'user.message', 'user_input.requested', 'skill.invoked',
-  'assistant.turn_start', 'assistant.turn_end', 'assistant.idle', 'session.idle', 'abort',
-  'assistant.reasoning', 'assistant.reasoning_delta', 'assistant.message_start',
-  'assistant.message_delta', 'assistant.message', 'assistant.tool_call_delta',
-  'tool.execution_start', 'tool.execution_complete',
-  'subagent.started', 'subagent.completed', 'subagent.failed', 'subagent.configured',
-];
+export { CHAT_EVENT_TYPES } from '@cockpit/protocol';
 
 export function liveChatParams(query: NativeChatRead): Parameters<LiveRead>[0] {
   const [first, ...rest] = query.agentIds ?? [];
@@ -67,7 +59,8 @@ export async function readNativeChat(
     });
   rpc++;
   signal?.throwIfAborted();
-  if (page.events.length > query.max || (page.cursorStatus === 'ok' && page.hasMore && page.cursor === query.cursor)) {
+  if (page.events.length > query.max
+    || (page.cursorStatus === 'ok' && page.hasMore && (page.cursor || undefined) === query.cursor)) {
     throw new Error('Native event page exceeded its bound or did not advance.');
   }
   return {

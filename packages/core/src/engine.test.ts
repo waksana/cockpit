@@ -4095,6 +4095,23 @@ for (const source of ['persisted', 'live'] as const) {
   });
 }
 
+test('a failed live chat read reconciles silent native unload once without resuming or aborting the model', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const probes = h.runtime.isSessionLive.mock.callCount();
+  const resumes = h.runtime.resumeSession.mock.callCount();
+  h.runtime.expire(s.id, false);
+  s.rpc.eventLog.read.mock.mockImplementationOnce(async () => { throw new Error('native session no longer exists'); });
+  await assert.rejects(chat(h, s.id, { source: 'live', cursor: 'native-boundary' }), {
+    code: 'SESSION_UNLOADED', statusCode: 409,
+  });
+  assert.equal(h.runtime.isSessionLive.mock.callCount(), probes + 1);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), resumes);
+  assert.equal(s.rpc.eventLog.read.mock.callCount(), 1);
+  assert.equal(h.runtime.rpc.sessions.readPersistedEvents.mock.callCount(), 0);
+  assert.equal(activeState(h, s.id), undefined);
+});
+
 test('native event reads return expired cursors explicitly without restarting or scanning history', async t => {
   const h = harness(t);
   const s = await h.seed();

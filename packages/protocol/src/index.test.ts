@@ -912,13 +912,23 @@ test('native pages require bounded counts, directional cursors and explicit expi
     assert.equal(schema.safeParse({ ...sid, cursor }).success, false);
   }
   for (const invalid of [{ bootstrap: true, cursor: 'old' }, { bootstrap: true, direction: 'forward' },
-    { direction: 'backward', waitMs: 10 }, { source: 'live', direction: 'forward', waitMs: 1001 }]) {
+    { direction: 'backward', waitMs: 10 }, { source: 'live', direction: 'forward', waitMs: 30001 }]) {
     assert.equal(schema.safeParse({ ...sid, ...invalid }).success, false);
   }
   for (const cursorStatus of ['ok', 'expired']) roundTrip(Intents['session/chat'].result, { ...nativePage, cursorStatus });
   assert.equal(Intents['session/chat'].result.safeParse({ ...nativePage, cursorStatus: undefined }).success, false);
   assert.equal(ServerEvent.safeParse({ type: 'msg/upsert', ...sid, message: chat }).success, false);
   assert.equal(ServerEvent.safeParse({ type: 'session/reset', page: { ...sid, messages: [chat], hasMore: true } }).success, false);
+});
+
+test('chat SSE requires an explicit cursor, preserves all-agent scope and bounds native waiting', () => {
+  const schema = Protocol.NativeChatStreamRequest;
+  assert.deepEqual(schema.parse({ ...sid, cursor: '', agentScope: 'all' }), { ...sid, cursor: '', agentScope: 'all', max: 64 });
+  for (const body of [sid, { ...sid, cursor: 'c', max: 65 }, { ...sid, cursor: 'c', source: 'persisted' }]) {
+    assert.equal(schema.safeParse(body).success, false);
+  }
+  assert.equal(Intents['session/chat'].body.parse({ ...sid, source: 'live', direction: 'forward', waitMs: 30000 }).waitMs, 30000);
+  assert.equal(Protocol.NativeChatStreamEvent.safeParse({ type: 'error', error: 'Unloaded', code: 'SESSION_UNLOADED' }).success, true);
 });
 
 test('skills/global accepts an optional nonempty cwd without a session selector', () => {

@@ -49,6 +49,7 @@ export function newFoldState(): FoldState {
 
 export interface FoldResult {
   changed: string[]; // message ids upserted
+  nestedChanged?: string[];
   metaChanged: boolean;
   missingOwner?: boolean;
 }
@@ -343,6 +344,7 @@ function routeEvent(state: FoldState, ev: SdkEvent): FoldRoute | undefined {
   const lifecycle = ev.type === 'subagent.started' || ev.type === 'subagent.completed'
     || ev.type === 'subagent.failed' || ev.type === 'subagent.configured';
   const tcId = stringOf(d.toolCallId);
+  const eventAgent = ev.agentId ?? stringOf(d.agentId);
   // parentAgentTaskId also appears on ordinary root user turns; it is not
   // subagent routing metadata. Only explicit event/tool ownership is reliable.
   const legacyOwner = stringOf(d.parentToolCallId) ?? ev.parentToolCallId;
@@ -354,22 +356,22 @@ function routeEvent(state: FoldState, ev: SdkEvent): FoldRoute | undefined {
     route = tcId ? findRoute(state, (s) => s.pendingTask.has(tcId) || s.subCard.has(tcId)) : undefined;
     if (!route && ev.type === 'subagent.started') {
       const parent = stringOf(d.parentId) ?? legacyOwner;
-      route = parent ? agentRoute(parent) : agentRoute(ev.agentId) ?? { fold: state, cards: [] };
+      route = parent ? agentRoute(parent) : agentRoute(eventAgent) ?? { fold: state, cards: [] };
     } else if (!route) {
       route = findRoute(state, (s) => [...s.subFolds.values()]
-        .some((sub) => !!ev.agentId && sub.agentIds.has(ev.agentId)));
+        .some((sub) => !!eventAgent && sub.agentIds.has(eventAgent)));
     }
   } else {
-    route = agentRoute(ev.agentId) ?? agentRoute(legacyOwner);
-    if (!route && !ev.agentId && !legacyOwner) {
+    route = agentRoute(eventAgent) ?? agentRoute(legacyOwner);
+    if (!route && !eventAgent && !legacyOwner) {
       route = tcId && ev.type.startsWith('tool.')
         ? findRoute(state, (s) => s.toolMsg.has(tcId)) : undefined;
       route ??= { fold: state, cards: [] };
     }
     // Legacy ownership can establish the native registry ID before it is seen
     // on a lifecycle event. Never infer ownership from the journal parentId.
-    if (route && ev.agentId && legacyOwner && !agentRoute(ev.agentId)) {
-      route.fold.agentIds.add(ev.agentId);
+    if (route && eventAgent && legacyOwner && !agentRoute(eventAgent)) {
+      route.fold.agentIds.add(eventAgent);
     }
   }
   return route;
@@ -426,7 +428,8 @@ export function foldEvent(state: FoldState, ev: SdkEvent, projection?: FoldProje
   }
   const result = foldLocalEvent(route.fold, ev, projection);
   if (result.changed.length && route.cards[0]) {
-    return { changed: [route.cards[0].id], metaChanged: result.metaChanged };
+    return { changed: [route.cards[0].id], metaChanged: result.metaChanged,
+      nestedChanged: [...route.cards.map(card => card.id), ...result.changed] };
   }
   return result;
 }

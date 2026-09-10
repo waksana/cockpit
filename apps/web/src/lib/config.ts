@@ -12,6 +12,7 @@ function override(): string | null {
 // against the deployed server.
 export const BASE_URL = override() ?? (DEV ? 'https://acp.rbym47.com' : '');
 export const EVENTS_URL = `${BASE_URL}/events`;
+export const CHAT_STREAM_URL = `${BASE_URL}/chat/stream`;
 export const intentUrl = (name: string): string => `${BASE_URL}/intent/${name}`;
 export const uploadUrl = (name: string, mime: string): string =>
   `${BASE_URL}/upload?name=${encodeURIComponent(name)}&mime=${encodeURIComponent(mime)}`;

@@ -30,8 +30,10 @@ The published capability schema is authoritative:
 - `source:"persisted"` uses `client.rpc.sessions.readPersistedEvents`. It works
   without loading the target. It cannot filter agents or wait for new events.
 - `source:"live"` uses an existing handle's `rpc.eventLog.read`. Native
-  `agentScope`, `agentIds` and `types` filters are available; main chat uses
-  primary scope and delivery consumers can request just their required types.
+  `agentScope`, `agentIds` and `types` filters are available; the browser uses
+  all-agent scope and delivery consumers can request just their required types.
+  Default live chat types include only events consumed by the message projection,
+  not unused tool-argument deltas or metadata already carried by `/events`.
   Passive reads reject unsupported filters instead of simulating them by a
   full read. A read never resumes a session to satisfy the request.
 - `max` counts native events, not display messages: default 64, maximum 256.
@@ -39,7 +41,7 @@ The published capability schema is authoritative:
 - `direction` is forward or backward. Preserve it with the opaque cursor;
   changing the direction argument does not reverse a native cursor.
   Keep the source/filter information with the reading position.
-- `waitMs` is at most 1000 and only available for live forward reads. It is a
+- `waitMs` is at most 30000 and only available for live forward reads. It is a
   bounded request, not a permanent server chat collector.
 - `includeEphemeral:false` makes a live forward read durable-only, suitable for
   delivery consumers. Otherwise live forward includes ephemeral events; passive
@@ -65,6 +67,40 @@ the saved cursor. Event IDs deduplicate overlap; assistant `messageId` identifie
 the message to replace on its authoritative full event. UUID lexical order is
 not conversation order.
 
+## `POST /chat/stream`
+
+The selected visible browser window opens one authenticated, CSRF-protected
+stream with `{sessionId,cursor,max:64,agentScope:"all"}`. The cursor field is
+required; an explicit empty native tail sentinel is distinct from an omitted
+reconnect position. Optional native `agentIds` and `types` filters remain
+available to other consumers.
+
+This endpoint sends actual `{type:"page",page:NativeChatPage}` SSE frames, not
+invalidations asking the browser to re-fetch its accumulated history.
+It first drains durable events after the saved cursor with zero wait, then
+continues from that same position with ephemeral events enabled and a native
+wait of up to 30 seconds. It never takes a fresh tail during that transition.
+Cursor-advancing empty pages are delivered; unchanged idle results only send a
+heartbeat. Empty or duplicate pages do not rebuild the browser's message tree
+or publish an unchanged display snapshot.
+
+The server owns only the connection, its current native read and bounded HTTP
+write buffers. It waits for socket backpressure before starting another page,
+chunks large messages without splitting Unicode pairs, and closes stalled
+consumers. There is no per-page acknowledgement or replay cache. Normal
+reconnection uses the last fully applied page cursor; a disconnect with bytes
+still in flight can re-read an undelivered tail. TCP backpressure is not proof
+that the browser has applied a frame, so this is not a strict one-page
+unacknowledged-read guarantee.
+
+Native errors are terminal error frames; expiry is a terminal expired page.
+Neither silently substitutes another cursor. Failed live reads can passively
+confirm native idle cleanup once and report `SESSION_UNLOADED`; ordinary pages
+do not pay for metadata or liveness checks. Closing a view does not call the
+model's abort method. Native's per-read wait has no cancellation parameter:
+one already-running request can finish after HTTP disconnect, but cannot
+deliver obsolete data or continue reading.
+
 ## Browser reading
 
 Initial loading fills at least two viewport heights when sufficient history is
@@ -79,15 +115,19 @@ accumulated content reaches two screen heights (a complete batch can exceed
 that minimum). One history action continues across native pages
 until it adds a display message and resolves the loaded tool/agent records to
 their owning messages. It does not wait for running tools to finish. Main chat
-and child details share this boundary rule; metadata-only pages are not treated
+and nested child messages share one window; metadata-only pages are not treated
 as a finished message load. The initial live tail is captured only once.
 Hidden tool rows, including skill and plan-mode calls, retain their ownership;
 suppressing duplicate presentation must not trigger extra history reads.
 
-Each action is limited to 8 native pages (at most 256 events). A missing
-or very distant boundary stops with an explicit continue hint rather than
-silently scanning the whole conversation; initial viewport filling does not
-automatically retry that limit. Reaching the beginning without an owner is
+There is no eight-page hard stop. Completing a message/ownership boundary and
+filling two screens can require more than one page, especially with low visible
+density or a distant parent task. The user explicitly chose to preserve these
+behaviors rather than use fixed pages with incomplete messages or a short
+initial screen. Consequently the whole history action has no universal event
+ceiling; a single bounded native request must not be advertised as one.
+Cancellation, errors, expiry, nonadvancing cursors and authoritative exhaustion
+still terminate automatic reading. Reaching the beginning without an owner is
 reported as missing source history, not a promise that another page exists.
 Forward streaming still drains up to 64 events per request and is not delayed
 for a complete display message.
@@ -97,11 +137,14 @@ intermediate page, then reveals the accumulated initial content together.
 Existing reading windows remain visible during older-page loads. The normal
 loading indicator sits in a reserved-height slot at the beginning of the
 scrolling transcript, not a fixed or sticky viewport toolbar. There is no normal
-load-more button; explicit failure retry, rebase and bounded-message continuation
-remain available. The reserved slot prevents loading visibility from shifting
-rows. Inline child histories use the same viewport headroom rule when being read;
-the parent scroll owner anchors the visible child row during a prepend. Closing
-details, switching sessions or hiding the page releases their reads.
+load-more button; explicit failure retry and rebase remain available. The
+reserved slot prevents loading visibility from shifting rows. Child cards
+render the shared nested projection. Expanding a card makes no request, needs
+no refresh button, and automatically shows new messages and lifecycle changes.
+Collapsed children also travel over the all-agent stream; this is the user's
+chosen completeness/bandwidth tradeoff. The parent scroll owner anchors the
+visible child row during a prepend. Switching sessions or hiding the page
+releases the shared read; closing a child card changes presentation only.
 
 Only the selected visible view reads live chat. Disconnecting or changing views cancels
 its request and stops subsequent reads. The public native long-poll RPC has no
@@ -110,11 +153,17 @@ its bounded wait; its obsolete response is discarded.
 
 On reconnect, the browser retains its old content and cursor. New durable events
 can be read forward without retransmitting the entire old display window.
+Ordinary reconnect publishes each durable page without waiting for the whole
+gap to drain. Only a fresh bootstrap needs temporary overlap reconciliation
+between its captured tail and backward page.
 Previously received tool ownership remains browser state.
 The browser retains the existing capped tool details rather than duplicating
 large raw outputs/arguments. Accepted user answers and message bodies remain
 complete. This is browser retention, not an additional server chat cache or a
 claim that native JSON-RPC can omit those fields.
+Passive history cannot filter at the source, but the browser discards unrelated
+event bodies rather than retaining another metadata log. Child updates copy
+only changed message/ancestor branches, preserving unrelated message objects.
 
 Ephemeral delta replay is not guaranteed. If message C has a missing interval,
 keep its existing text, indicate that the complete message is pending, and do
@@ -176,7 +225,16 @@ protected. An ordinary later reply does not retrigger the naming model query.
 
 An isolated runtime 1.0.83 fixture confirmed forward cursor reuse between live
 and passive readers, including passive continuation after runtime restart,
-without losing the fixture's user/assistant messages. Duplicate system-message
+without losing the fixture's root/child messages, tools or lifecycle events.
+The cursor advances with consumption; it is not a fixed session identifier.
+Starting with primary scope and later changing to all does not recover child
+events already skipped before that position. The browser starts with all scope.
+`includeSubAgentStreamingEvents:true` controls SDK push forwarding; it is not a
+substitute for `eventLog.read` scope or a replay contract. A real root `task`
+fixture exercised all-agent HTTP/SSE and recovered a completed child response
+after a consumer disconnect. The tested background-child path did not emit
+child text deltas, so it does not establish token-by-token child replay.
+Duplicate system-message
 events need not be present on disk; shutdown adds its own event. The connector
 uses this durable forward boundary when native unloads, and still treats native
 expiry as an error rather than inventing a replacement cursor. This is not a
@@ -203,11 +261,13 @@ message through native forward polling, and accepted backward cursors across
 the live/passive readers without repeating their latest rows. Smaller returned
 pages are not automatically faster in every individual sample.
 
-The built browser, using synthetic HTTP events at 390×844, initially read eight
-events (one page plus the bootstrap tail) and displayed 1.85 screen heights.
-Browser interaction checks preserved the reading anchor on prepend and session
-switch, kept a draft, froze partial C across a gap, replaced it exactly once on
-completion, and stopped on expired cursors without discarding loaded rows.
+The unified built browser's synthetic HTTP/SSE fixture initially read 32 events
+in one page and exceeded two viewport heights. At 390×844, opening a child made
+zero requests, its next message arrived over the existing connection, and
+reconnection delivered two new child events with no old history read. An upward
+prefetch read the remaining 15 events once. Reconnection preserved its reading
+anchor exactly; the older prepend differed by 0.27 CSS pixels after layout.
+These are browser/transport fixtures, not native disk-I/O measurements.
 
 Weixin delivery reads at most 64 native events per page. If that page contains
 events after the first deliverable reply, one bounded prefix read obtains the

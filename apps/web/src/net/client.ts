@@ -1,10 +1,11 @@
-// SSE carries control metadata; typed POSTs carry actions and bounded native
-// event pages. Chat cursors and projections belong to the browser, not SSE.
+// Control SSE and view-owned chat SSE are separate. Native cursors and message
+// projections remain in the browser; typed POSTs also serve older event pages.
 
-import { ServerEvent, Intents } from '@cockpit/protocol';
-import type { Attachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction } from '@cockpit/protocol';
-import { EVENTS_URL, intentUrl } from '../lib/config';
+import { ServerEvent, Intents, NativeChatStreamRequest } from '@cockpit/protocol';
+import type { Attachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction, NativeChatPage } from '@cockpit/protocol';
+import { EVENTS_URL, CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { reportUxError, describeReason } from '../lib/errorReporter';
+import { consumeChatStream } from './chatStream';
 
 // The client always actively (re)connects, so externally there are only two
 // states the UI cares about: actively connecting/reconnecting, or connected.
@@ -205,6 +206,43 @@ export class NetClient {
   newSession(cwd: string) { return this.intent('session/new', { cwd }); }
   forkSession(sessionId: string) { return this.intent('session/fork', { sessionId }); }
   chat(body: IntentBody<'session/chat'>, signal?: AbortSignal) { return this.intent('session/chat', body, signal); }
+  async chatStream(
+    body: NativeChatStreamRequest, receive: (page: NativeChatPage) => void, signal: AbortSignal,
+  ): Promise<void> {
+    const request = NativeChatStreamRequest.parse(body);
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+    try {
+      const response = await fetch(CHAT_STREAM_URL, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, credentials: 'include',
+        body: JSON.stringify(request), signal: controller.signal,
+      });
+      if ([502, 503, 504].includes(response.status)) throw new TypeError('聊天实时连接暂时不可用。');
+      if (!response.ok) {
+        const value: unknown = await response.json();
+        const detail = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+        throw new IntentHttpError(
+          typeof detail.error === 'string' ? detail.error : `聊天实时请求失败 (${response.status})`,
+          response.status, typeof detail.code === 'string' ? detail.code : undefined,
+        );
+      }
+      await consumeChatStream(response, event => {
+        if (event.type === 'error') throw new IntentHttpError(
+          event.error, event.code === 'SESSION_UNLOADED' ? 409 : 500, event.code,
+        );
+        const page = event.page;
+        if (page.sessionId !== request.sessionId || page.source !== 'live' || page.direction !== 'forward'
+          || page.events.length > request.max) throw new Error('聊天实时页面与请求范围不匹配。');
+        signal.throwIfAborted();
+        receive(page);
+      });
+    } finally {
+      signal.removeEventListener('abort', abort);
+      controller.abort();
+    }
+  }
   prompt(sessionId: string, text: string, attachment?: Attachment, mode?: 'enqueue' | 'immediate', attachments?: Attachment[]) {
     return this.intent('prompt', { sessionId, text, ...(attachment ? { attachment } : {}),
       ...(attachments?.length ? { attachments } : {}), ...(mode ? { mode } : {}) });

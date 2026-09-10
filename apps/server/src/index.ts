@@ -1,5 +1,6 @@
 // cockpit server — thin transport over the authoritative Engine.
 //  - GET  /events           SSE stream: control snapshot, then metadata updates
+//  - POST /chat/stream      SSE native chat pages from an explicit live cursor
 //  - POST /intent/:name     validated intent dispatch (typed result)
 //  - GET  /capabilities     bounded intent listing or one generated schema pair
 //  - GET  /health
@@ -10,7 +11,8 @@
 //
 // Binds 127.0.0.1 only; TLS + cookie auth are handled by the upstream reverse
 // proxy (nginx). The Engine owns control state; chat remains native and is read
-// through request-local adapters. This file routes intents and metadata events.
+// through request-local adapters. This file routes intents, metadata events and
+// connection-local native chat streams.
 
 import Fastify from 'fastify';
 import type { FastifyReply } from 'fastify';
@@ -27,6 +29,7 @@ import { saveUploadStream, associateUpload, listUploads, uploadDetails, resolveU
   openUpload, MAX_UPLOAD_BYTES, UploadError, validateUploadContext, type UploadContext } from './uploads.ts';
 import { isIntentName, registerCapabilities } from './capabilities.ts';
 import { drainForRestart } from './shutdown.ts';
+import { registerChatStream } from './chat-stream.ts';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.COCKPIT_PORT ?? 8771);
@@ -373,6 +376,8 @@ app.addHook('onRequest', async (req, reply) => {
   reply.code(403).send({ error: 'cross-origin request rejected' });
   return reply;
 });
+
+registerChatStream(app, () => (query, signal) => engine.chat(query, signal));
 
 app.get('/health', async () => ({ ok: true, login: await engine.login() }));
 

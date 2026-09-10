@@ -5,7 +5,7 @@
 
 import { z } from 'zod';
 
-export { NativeChatEvent, NativeChatRead, NativeChatPage } from './native-chat.ts';
+export { CHAT_EVENT_TYPES, NativeChatEvent, NativeChatRead, NativeChatPage, NativeChatStreamRequest, NativeChatStreamEvent } from './native-chat.ts';
 import { NativeChatRead, NativeChatPage } from './native-chat.ts';
 
 // ---------------------------------------------------------------------------

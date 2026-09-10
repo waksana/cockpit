@@ -14,7 +14,6 @@ import { observeThreadScroll, READING_ACTIVITY_EVENT, type ThreadScroll, type Re
 import { observeHistoryPrefetch } from './historyPrefetch';
 import { canSkipMessageLayout, createMessageLayout } from './messageLayout';
 import { useCockpit } from '../net/store';
-import { createSubagentHistory } from '../lib/subagentHistory';
 import { useKeyedAction } from '../lib/useKeyedResource';
 
 // Plan-exit action → button label. The SDK offers a subset of these (incl.
@@ -141,32 +140,14 @@ function SubagentCard({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
 }
 
 function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
-  const summary = m.subagent!;
-  const read = useCockpit((s) => s.chat);
+  const sa = m.subagent!;
   const connected = useCockpit((s) => s.connState === 'open');
-  const generation = useCockpit((s) => s.connectionGeneration);
-  const toolCallId = summary.toolCallId;
-  const agentId = summary.agentId;
-  const resource = useMemo(() => createSubagentHistory(
-    sessionId, { agentId, toolCallId }, read, useCockpit.getState,
-  ), [sessionId, toolCallId, agentId, read]);
-  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot, resource.getSnapshot);
+  const toolCallId = sa.toolCallId;
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [heldHead, setHeldHead] = useState<string | null>(null);
-  useLayoutEffect(() => () => resource.deactivate(true), [resource]);
-  useLayoutEffect(() => {
-    if (connected && toolCallId) resource.activate();
-    return () => resource.deactivate();
-  }, [resource, connected, generation, toolCallId]);
-  useEffect(() => {
-    if (connected && toolCallId && document.visibilityState === 'visible') void resource.refresh();
-  }, [resource, connected, generation, toolCallId]);
-  const sa = summary;
-  const loaded = useMemo(() => snapshot.data?.messages ?? m.subMessages ?? [], [snapshot.data?.messages, m.subMessages]);
+  const loaded = useMemo(() => m.subMessages ?? [], [m.subMessages]);
   const heldIndex = heldHead ? loaded.findIndex(message => message.id === heldHead) : -1;
   const sub = heldIndex > 0 ? loaded.slice(heldIndex) : loaded;
-  const prependHeld = heldIndex > 0;
-  const pending = snapshot.pending || (connected && !!toolCallId && !snapshot.data && !snapshot.error);
   useLayoutEffect(() => {
     const viewport = contentRef.current?.closest<HTMLElement>('.chat-messages');
     if (!viewport) return;
@@ -174,29 +155,8 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
     viewport.addEventListener(READING_ACTIVITY_EVENT, activity);
     return () => viewport.removeEventListener(READING_ACTIVITY_EVENT, activity);
   }, [loaded]);
-  useLayoutEffect(() => {
-    const content = contentRef.current;
-    const viewport = content?.closest<HTMLElement>('.chat-messages');
-    if (!viewport || !content || !connected || pending || snapshot.error || !snapshot.data?.hasMore
-      || snapshot.data.incompleteBoundary || prependHeld) return;
-    return observeHistoryPrefetch(viewport, content,
-      () => content.getBoundingClientRect().top <= viewport.getBoundingClientRect().top,
-      () => { void resource.loadOlder(); },
-      () => viewport.getBoundingClientRect().top - content.getBoundingClientRect().top);
-  }, [connected, pending, snapshot.error, snapshot.data, resource, prependHeld]);
-  useEffect(() => {
-    const visible = () => {
-      if (document.visibilityState !== 'visible') resource.deactivate();
-      else if (connected) {
-        resource.activate();
-        if (!resource.getSnapshot().data && !resource.getSnapshot().error) void resource.refresh();
-      }
-    };
-    document.addEventListener('visibilitychange', visible);
-    return () => document.removeEventListener('visibilitychange', visible);
-  }, [resource, connected]);
   return (
-    <div className="subagent-body" aria-busy={pending}>
+    <div className="subagent-body">
       {sa.prompt && (
         <div className="subagent-prompt">
           <div className="subagent-prompt-label">任务</div>
@@ -206,28 +166,14 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
       {sa.error && <div className="subagent-error">{sa.error}</div>}
       {!connected && toolCallId && <div role="status">等待连接…</div>}
       <div ref={contentRef} data-child-history>
-        <div className="chat-history-actions">
-          {pending && <div role="status">正在读取子代理历史…</div>}
-        </div>
-        {snapshot.error && <div className="subagent-error" role="alert">
-          加载失败：{snapshot.error}
-          <button type="button" disabled={!connected || pending} onClick={() => { void resource.retry(); }}>
-            {resource.requiresResync() ? '重新读取子代理历史' : '重试'}
-          </button>
-        </div>}
-        {snapshot.data?.incompleteBoundary && !snapshot.data.hasMore && !pending && <div className="subagent-empty">
-          部分工具记录缺少对应的发起消息，现有历史无法补齐。
-        </div>}
         {sub.map((sm) => (
           <article key={sm.id} className="message is-doc subagent-msg" data-child-message-frame={sm.id}>
             <div data-message-id={JSON.stringify([toolCallId, sm.id])}><MessageInner m={sm} sessionId={sessionId} /></div>
           </article>
         ))}
       </div>
-      {toolCallId && <button type="button" disabled={!connected || pending} onClick={() => { void resource.refresh(); }}>刷新子代理历史</button>}
-      <div className="subagent-empty">按需读取原生已保存的事件；生成中的消息可在保存后手动刷新。</div>
-      {!pending && !snapshot.error && !sub.length && <div className="subagent-empty">
-        {toolCallId ? '暂无已保存的子代理消息。' : '此历史记录未提供子代理读取标识。'}
+      {!sub.length && <div className="subagent-empty">
+        {sa.status === 'running' ? '子代理处理中，新消息会自动更新。' : '当前阅读窗口内暂无子代理消息。'}
       </div>}
     </div>
   );

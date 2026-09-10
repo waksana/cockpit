@@ -1,14 +1,37 @@
 import { foldEvent, newFoldState, resetTurn, type FoldState } from '@cockpit/protocol/chat';
-import { summarizeMessage, type ChatMessage, type NativeChatEvent, type NativeChatPage, type NativeChatRead } from '@cockpit/protocol';
+import { CHAT_EVENT_TYPES, summarizeMessage, type ChatMessage, type NativeChatEvent, type NativeChatPage, type NativeChatRead } from '@cockpit/protocol';
 import { displayEvent, type DisplayEvent } from './displayEvent';
 
 export const NATIVE_PAGE = 32;
+const displayTypes = new Set(CHAT_EVENT_TYPES);
 export type ChatPosition = Pick<NativeChatRead, 'source' | 'cursor' | 'agentScope' | 'agentIds' | 'types'>;
 
 const finalizedId = (event: NativeChatEvent) => event.type === 'assistant.message'
   ? typeof event.data.messageId === 'string' ? event.data.messageId : event.id : undefined;
 const streamId = (event: NativeChatEvent) =>
   typeof event.data.messageId === 'string' ? event.data.messageId : undefined;
+const ownersOf = (event: NativeChatEvent) => [
+  event.agentId, event.parentToolCallId, event.data.agentId, event.data.parentToolCallId,
+].filter((owner): owner is string => typeof owner === 'string');
+
+function states(root: FoldState): FoldState[] {
+  return [root, ...[...root.subFolds.values()].flatMap(states)];
+}
+
+function projectMessages(messages: ChatMessage[], previous: ChatMessage[], changed: Set<string>): ChatMessage[] {
+  const byId = new Map(previous.map(message => [message.id, message]));
+  const projected = messages.map(message => {
+    const old = byId.get(message.id);
+    if (old && !changed.has(message.id)) return old;
+    const { subMessages, ...body } = message;
+    return {
+      ...structuredClone(body),
+      ...(subMessages ? { subMessages: projectMessages(subMessages, old?.subMessages ?? [], changed) } : {}),
+    };
+  });
+  return projected.length === previous.length && projected.every((message, index) => message === previous[index])
+    ? previous : projected;
+}
 
 /** One browser view's history and incremental projection; never used by the server. */
 export class NativeWindow {
@@ -21,6 +44,7 @@ export class NativeWindow {
   private blocked = new Set<string>();
   private view: ChatMessage[] = [];
   private pendingForward: DisplayEvent[] = [];
+  private bootstrapOverlap = false;
   older?: ChatPosition;
   live?: ChatPosition;
   hasMore = false;
@@ -32,7 +56,37 @@ export class NativeWindow {
   boundaryPending = false;
 
   private readonly agentIds?: readonly string[];
-  constructor(agentIds?: readonly string[]) { this.agentIds = agentIds; }
+  private readonly includeChildren: boolean;
+  constructor(agentIds?: readonly string[], includeChildren = false) {
+    this.agentIds = agentIds;
+    this.includeChildren = includeChildren;
+  }
+
+  private key(state: FoldState, id: string): string {
+    return `${state.agentIds.values().next().value ?? ''}\0${id}`;
+  }
+
+  private eventKey(event: DisplayEvent, id: string): string {
+    const owners = ownersOf(event);
+    const state = owners.length ? states(this.state).find(state => owners.some(owner => state.agentIds.has(owner))) : this.state;
+    return state ? this.key(state, id) : `${owners[0]}\0${id}`;
+  }
+
+  private resolveStreamOwners() {
+    const known = states(this.state);
+    for (const keys of [this.streaming, this.blocked, this.complete]) {
+      for (const key of [...keys]) {
+        const separator = key.indexOf('\0');
+        const owner = key.slice(0, separator);
+        const state = known.find(state => state.agentIds.has(owner));
+        if (!state) continue;
+        keys.delete(key);
+        keys.add(this.key(state, key.slice(separator + 1)));
+      }
+    }
+    for (const key of this.complete) { this.blocked.delete(key); this.streaming.delete(key); }
+    if (!this.blocked.size) this.partial = false;
+  }
 
   disconnect() {
     for (const id of this.streaming) this.blocked.add(id);
@@ -40,7 +94,7 @@ export class NativeWindow {
     this.streaming.clear();
     this.recentEphemeral.clear();
     this.catchingUp = true;
-    resetTurn(this.state);
+    for (const state of states(this.state)) resetTurn(state);
   }
 
   invalidate() { this.disconnect(); this.invalid = true; }
@@ -52,10 +106,11 @@ export class NativeWindow {
       const { agentId: _agent, parentToolCallId: _parent, ...data } = event.data;
       event = { ...event, agentId: undefined, parentToolCallId: undefined, data };
     }
-    if (event.type.startsWith('subagent.') && event.type !== 'subagent.started') return [];
+    if (!this.includeChildren && event.type.startsWith('subagent.') && event.type !== 'subagent.started') return [];
     if (event.type.startsWith('tool.') && typeof event.data.toolCallId === 'string'
       && this.state.pendingTask.has(event.data.toolCallId)) return [];
-    const id = streamId(event);
+    const messageId = streamId(event);
+    const id = messageId ? this.eventKey(event, messageId) : undefined;
     if (event.ephemeral) {
       if (this.catchingUp || this.recentEphemeral.has(event.id)) return [];
       this.recentEphemeral.add(event.id);
@@ -69,21 +124,30 @@ export class NativeWindow {
         return [];
       }
     }
-    const final = finalizedId(event);
+    const finalId = finalizedId(event);
+    const final = finalId ? this.eventKey(event, finalId) : undefined;
     if (final && !event.ephemeral) {
       this.complete.add(final);
       this.streaming.delete(final);
       this.blocked.delete(final);
       if (!this.blocked.size) this.partial = false;
     }
+    if (this.includeChildren) {
+      const owners = ownersOf(event);
+      if (owners.length && !event.type.startsWith('subagent.')
+        && !states(this.state).some(state => owners.some(owner => state.agentIds.has(owner)))) {
+        this.unresolved = true;
+      }
+    }
     const result = foldEvent(this.state, event, {
       ...event.display, toolArgs: event.display?.toolArgs ? new Map(event.display.toolArgs) : undefined,
-      scope: { details: 'summary' }, strictOwnership: true,
+      scope: { details: this.includeChildren ? 'full' : 'summary' }, strictOwnership: true,
     });
     if (result.missingOwner) {
       this.unresolved = true;
     }
-    return result.changed;
+    if (event.type === 'subagent.started') this.resolveStreamOwners();
+    return [...result.changed, ...result.nestedChanged ?? []];
   }
 
   accept(page: NativeChatPage, request: NativeChatRead): ChatMessage[] {
@@ -100,7 +164,7 @@ export class NativeWindow {
       ...(request.agentIds ? { agentIds: request.agentIds } : {}),
       ...(request.types ? { types: request.types } : {}),
     };
-    const retained = page.events.map(displayEvent);
+    const retained = page.events.filter(event => displayTypes.has(event.type)).map(displayEvent);
     const incoming = retained.filter(event => !event.ephemeral && !this.ids.has(event.id));
     const changed = new Set<string>();
     if (request.direction === 'backward') {
@@ -113,11 +177,14 @@ export class NativeWindow {
         this.older = position;
         this.hasMore = page.hasMore;
       }
-      const partials = this.state.messages.filter(message => this.streaming.has(message.id) || this.blocked.has(message.id));
-      const scratch = {
-        streamingId: this.state.streamingId, pendingReasoning: this.state.pendingReasoning,
-        reasoningId: this.state.reasoningId, reasoningBase: this.state.reasoningBase,
-      };
+      const transient = states(this.state).map((state, index) => ({
+        root: index === 0, agentIds: [...state.agentIds],
+        partials: state.messages.filter(message => this.streaming.has(this.key(state, message.id)) || this.blocked.has(this.key(state, message.id))),
+        scratch: {
+          streamingId: state.streamingId, pendingReasoning: state.pendingReasoning,
+          reasoningId: state.reasoningId, reasoningBase: state.reasoningBase,
+        },
+      }));
       if (adoptingLive) {
         const lastOverlap = page.events.findLastIndex(event => this.ids.has(event.id));
         this.durable.push(...retained.slice(lastOverlap + 1).filter(event => !event.ephemeral && !this.ids.has(event.id)));
@@ -129,21 +196,32 @@ export class NativeWindow {
         this.ids.add(event.id);
         for (const id of this.project(event)) changed.add(id);
       }
-      for (const message of partials) {
-        if (this.complete.has(message.id)) continue;
-        const index = this.state.byId.get(message.id);
-        if (index === undefined) {
-          this.state.byId.set(message.id, this.state.messages.length);
-          this.state.messages.push(message);
-        } else this.state.messages[index] = message;
+      this.resolveStreamOwners();
+      const rebuilt = states(this.state);
+      for (const saved of transient) {
+        const target = saved.root ? this.state : rebuilt.find(state => saved.agentIds.some(id => state.agentIds.has(id)));
+        if (!target) continue;
+        for (const message of saved.partials) {
+          if (this.complete.has(this.key(target, message.id))) continue;
+          const index = target.byId.get(message.id);
+          if (index === undefined) {
+            target.byId.set(message.id, target.messages.length);
+            target.messages.push(message);
+          } else target.messages[index] = message;
+          changed.add(message.id);
+        }
+        const { scratch } = saved;
+        if (scratch.pendingReasoning || (scratch.streamingId && !this.complete.has(this.key(target, scratch.streamingId)))) {
+          Object.assign(target, scratch);
+        }
       }
-      if (scratch.pendingReasoning || (scratch.streamingId && !this.complete.has(scratch.streamingId))) {
-        Object.assign(this.state, scratch);
+      if (page.liveCursor !== undefined) {
+        this.live = { ...position, cursor: page.liveCursor || undefined };
+        this.bootstrapOverlap = true;
       }
-      if (page.liveCursor !== undefined) this.live = { ...position, cursor: page.liveCursor || undefined };
     } else {
       let events = retained;
-      if (this.catchingUp) {
+      if (this.catchingUp && this.bootstrapOverlap) {
         // The bootstrap's backward page may already include events after tail().
         // Discard the overlap in native append order, not UUID or timestamp order.
         for (const event of events) {
@@ -162,11 +240,19 @@ export class NativeWindow {
         for (const id of this.project(event)) changed.add(id);
       }
       this.live = position;
-      if (!page.hasMore) this.catchingUp = false;
+      if (!page.hasMore) {
+        this.catchingUp = false;
+        this.bootstrapOverlap = false;
+      }
     }
-    const previous = new Map(this.view.map(message => [message.id, message]));
-    this.view = this.state.messages.map(message => changed.has(message.id) || !previous.has(message.id)
-      ? structuredClone(summarizeMessage(message)) : previous.get(message.id)!);
+    if (changed.size || this.state.messages.length !== this.view.length) {
+      if (this.includeChildren) this.view = projectMessages(this.state.messages, this.view, changed);
+      else {
+        const previous = new Map(this.view.map(message => [message.id, message]));
+        this.view = this.state.messages.map(message => changed.has(message.id) || !previous.has(message.id)
+          ? structuredClone(summarizeMessage(message)) : previous.get(message.id)!);
+      }
+    }
     this.materialized = true;
     return this.view;
   }

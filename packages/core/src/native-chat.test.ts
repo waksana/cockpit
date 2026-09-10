@@ -128,5 +128,8 @@ test('native page bounds and nonadvancing continuation fail explicitly', async (
   await assert.rejects(readNativeChat(q({ cursor: 'same' }), {
     persisted: async () => result([event('a')], { cursor: 'same', hasMore: true }),
   }), /advance/);
+  await assert.rejects(readNativeChat(q({}), {
+    persisted: async () => result([], { cursor: '', hasMore: true }),
+  }), /advance/);
   assert.ok(CHAT_EVENT_TYPES.includes('assistant.message_start'));
 });

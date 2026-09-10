@@ -9,7 +9,7 @@ import type { ConnState } from './client';
 import type {
   AgentStatus, Attachment, ChatSession, ModelOption, ServerEvent,
 } from './types';
-import type { IntentBody, IntentResult, NativeChatRead } from '@cockpit/protocol';
+import type { IntentBody, IntentResult, NativeChatRead, NativeChatPage } from '@cockpit/protocol';
 import { invalidateWindow, metaToSession } from './sessionWindow';
 import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
 import { readMessageHistory } from './messageHistory';
@@ -50,7 +50,6 @@ interface CockpitState {
   forkSession: (sessionId: string) => Promise<string>;
   loadMore: (sessionId: string) => void;
   retryHistory: (sessionId: string) => void;
-  chat: (body: NativeChatRead, signal?: AbortSignal) => Promise<import('@cockpit/protocol').NativeChatPage>;
   sendPrompt: (sessionId: string, text: string, attachment?: Attachment, attachments?: Attachment[]) => Promise<boolean>;
   filesList: (body: IntentBody<'files/list'>, signal?: AbortSignal) => Promise<IntentResult<'files/list'>>;
   filesGet: (url: string, signal?: AbortSignal) => Promise<IntentResult<'files/get'>>;
@@ -363,10 +362,15 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     });
 
   const publish = (sid: string, window: NativeWindow) => {
-    patchLocal(sid, s => ({ ...s, ...window.snapshot(), loadingHistory: s.loadingHistory }));
+    const snapshot = window.snapshot();
+    const current = get().sessions.find(s => s.sessionId === sid);
+    if (!current || (current.messages === snapshot.messages && current.materialized === snapshot.materialized
+      && current.historyStale === snapshot.historyStale && current.hasMore === snapshot.hasMore
+      && current.partialHistory === snapshot.partialHistory && current.incompleteBoundary === snapshot.incompleteBoundary)) return;
+    patchLocal(sid, s => ({ ...s, ...snapshot, loadingHistory: s.loadingHistory }));
   };
 
-  const pollLive = (sid: string) => {
+  const streamLive = (sid: string) => {
     const window = windows.get(sid);
     const session = get().sessions.find(s => s.sessionId === sid);
     if (!window?.live || window.invalid || liveRequest || !session || !isVisible()
@@ -378,25 +382,39 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     liveRequest = request;
     const query: NativeChatRead = {
       source, cursor: window.live.cursor, sessionId: sid, direction: 'forward', max: 64,
-      ...(source === 'live' ? { agentScope: 'primary' as const } : {}),
-      bootstrap: false, waitMs: source === 'live' && !window.catchingUp ? 1000 : 0,
-      includeEphemeral: source === 'live' && !window.catchingUp,
+      ...(source === 'live' ? { agentScope: 'all' as const } : {}),
+      bootstrap: false, waitMs: 0, includeEphemeral: false,
     };
     const current = () => liveRequest === request && windows.get(sid) === window && get().activeId === sid;
-    void read(net => net.chat(query, request.controller.signal)).then(page => {
+    const receive = (page: NativeChatPage) => {
       if (!current()) return;
       window.accept(page, query);
       publish(sid, window);
-      liveRequest = null;
-      if (source === 'live' || page.hasMore) liveTimer = setTimeout(() => { liveTimer = undefined; pollLive(sid); }, 0);
-    }).catch(error => {
+      if (window.unresolved && window.hasMore && !historyRequest) {
+        cancelLive(sid);
+        requestHistory(sid, true);
+      }
+    };
+    const pending = source === 'live'
+      ? read(net => net.chatStream({
+        sessionId: sid, cursor: window.live!.cursor ?? '', max: 64, agentScope: 'all',
+      }, receive, request.controller.signal))
+      : read(net => net.chat(query, request.controller.signal)).then(page => {
+        if (!current()) return;
+        receive(page);
+        if (!current()) return;
+        liveRequest = null;
+        if (page.hasMore) liveTimer = setTimeout(() => { liveTimer = undefined; streamLive(sid); }, 0);
+      });
+    void pending.catch(error => {
       if (!current()) return;
       liveRequest = null;
       window.disconnect();
       publish(sid, window);
       if (isTransportError(error)) {
-        liveTimer = setTimeout(() => { liveTimer = undefined; pollLive(sid); }, 1000);
+        liveTimer = setTimeout(() => { liveTimer = undefined; streamLive(sid); }, 1000);
       } else {
+        if (isSessionUnloadedError(error)) refreshMeta(sid);
         patchLocal(sid, s => ({ ...s, error: `聊天同步暂停：${describeReason(error, false)}` }));
       }
     });
@@ -409,11 +427,11 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     historyRequest = request;
     const initial = get().sessions.find((s) => s.sessionId === sid);
     if (!initial) { cancelHistory(sid); return; }
-    const window = windows.get(sid) ?? new NativeWindow();
+    const window = windows.get(sid) ?? new NativeWindow(undefined, true);
     windows.set(sid, window);
     const errorAtStart = initial?.error;
     let position: ChatPosition = older && window.older ? window.older
-      : initial.loaded ? { source: 'live', agentScope: 'primary' } : { source: 'persisted' };
+      : initial.loaded ? { source: 'live', agentScope: 'all' } : { source: 'persisted' };
     if (!initial.loaded && position.source === 'live') position = { source: 'persisted', cursor: position.cursor };
     const query: NativeChatRead = {
       ...position, sessionId: sid, direction: 'backward', max: NATIVE_PAGE, waitMs: 0,
@@ -432,7 +450,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       }));
       historyRequest = null;
       historyRecoveryErrors.delete(sid);
-      pollLive(sid);
+      streamLive(sid);
     }).catch((error) => {
       if (!current()) return;
       historyRequest = null;
@@ -453,7 +471,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     if (!window?.materialized || (s.loaded && !window.live)) {
       if (!s.historyError) requestHistory(activeId);
     }
-    else pollLive(activeId);
+    else streamLive(activeId);
   };
 
   const invalidateRequests = () => {
@@ -720,8 +738,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         return;
       }
       cancelLive(sid);
-      if (s.historyStale || !windows.get(sid)?.materialized) windows.set(sid, new NativeWindow());
-      if (windows.get(sid)?.live && !s.historyStale) pollLive(sid);
+      if (s.historyStale || !windows.get(sid)?.materialized) windows.set(sid, new NativeWindow(undefined, true));
+      if (windows.get(sid)?.live && !s.historyStale) streamLive(sid);
       else requestHistory(sid);
     },
 
@@ -730,7 +748,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     },
     filesList(body, signal) { return read(net => net.intent('files/list', body, signal)); },
     filesGet(url, signal) { return read(net => net.intent('files/get', { url }, signal)); },
-    chat(body, signal) { return read(net => net.chat(body, signal)); },
 
     cancel(sid) { return mutation(sid, '取消', (net) => net.cancel(sid)); },
     interrupt(sid) { return nativeRead(sid, (net) => net.interrupt(sid)); },

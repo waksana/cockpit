@@ -1686,7 +1686,19 @@ export class Engine {
         persisted: params => this.runtime.rpc.sessions.readPersistedEvents(params),
         live: sdk?.rpc.eventLog,
       }, signal);
-      return query.source === 'live' && st && sdk ? this.withSession(st, sdk, read) : read();
+      if (query.source !== 'live' || !st || !sdk) return read();
+      try {
+        return await this.withSession(st, sdk, read);
+      } catch (error) {
+        // Native idle cleanup can omit shutdown. Reconcile only a failed read,
+        // never resume or make every streaming page pay for a liveness probe.
+        if (!signal?.aborted && !this.failure && st.sdk === sdk && !await this.liveSession(st)) {
+          throw Object.assign(new Error('Native session is unloaded; continue through persisted history or explicitly resume.'), {
+            statusCode: 409, code: 'SESSION_UNLOADED',
+          });
+        }
+        throw error;
+      }
     });
   }
 
