@@ -3471,7 +3471,7 @@ test('model, mode, and name success publish authoritative native read-back rathe
     id: 'alias', supportedReasoningEfforts: ['high'], billing: { token_prices: { long_context: {} } },
   }] }));
   await assert.rejects(h.engine.setModel(s.id, 'alias', 'high', 'long_context'), /not confirmed by authoritative readback/);
-  assert.deepEqual(s.rpc.model.switchTo.mock.calls[0]!.arguments, [{ modelId: 'alias', reasoningEffort: 'high', contextTier: 'long_context' }]);
+  assert.deepEqual(s.rpc.model.switchTo.mock.calls[0]!.arguments, [{ modelId: 'alias', deferIfModelChangeQueued: true, reasoningEffort: 'high', contextTier: 'long_context' }]);
   assert.equal((await h.engine.getMeta(s.id))?.currentModelId, 'normalized-model');
   assert.equal((await h.engine.getMeta(s.id))?.currentReasoningEffort, 'low');
   assert.equal((await h.engine.getMeta(s.id))?.currentContextTier, 'default');
@@ -5979,11 +5979,11 @@ test('thin native session models expose fresh rich capabilities and settings req
   assert.equal(after.currentContextTier, 'long_context');
   await h.engine.setModel(s.id, 'native-model', 'low');
   assert.deepEqual(s.rpc.model.switchTo.mock.calls[1]!.arguments, [{
-    modelId: 'native-model', reasoningEffort: 'low', contextTier: 'long_context',
+    modelId: 'native-model', deferIfModelChangeQueued: true, reasoningEffort: 'low', contextTier: 'long_context',
   }]);
   await h.engine.setModel(s.id, 'native-model', undefined, 'default');
   assert.deepEqual(s.rpc.model.switchTo.mock.calls[2]!.arguments, [{
-    modelId: 'native-model', reasoningEffort: 'low', contextTier: 'default',
+    modelId: 'native-model', deferIfModelChangeQueued: true, reasoningEffort: 'low', contextTier: 'default',
   }]);
   s.state.model.contextTier = 'long_context';
   await assert.rejects(h.engine.setModel(s.id, 'native-model', 'invented'), /does not list reasoning/);
@@ -6010,6 +6010,55 @@ test('a deferred model change leaves current options native-owned without a fals
   const current = (await h.engine.getMeta(s.id))!;
   assert.equal(current.currentReasoningEffort, 'medium');
   assert.equal(current.currentContextTier, 'default');
+});
+
+test('provider context tiers without pricing drive both metadata and model-setting validation', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  s.rpc.model.list.mock.mockImplementation(async () => ({ list: [{
+    id: 'provider/model', supportedContextTiers: ['default', 'long_context'],
+  }, { id: 'provider/basic', supportedContextTiers: ['default'] }] }));
+  const meta = (await h.engine.getMeta(s.id))!;
+  assert.equal(meta.availableModels?.find(row => row.modelId === 'provider/model')?.supportsLongContext, true);
+  assert.equal(meta.availableModels?.find(row => row.modelId === 'provider/basic')?.supportsLongContext, false);
+  await h.engine.setModel(s.id, 'provider/model', undefined, 'long_context');
+  assert.equal((await h.engine.getMeta(s.id))?.currentContextTier, 'long_context');
+  await assert.rejects(h.engine.setModel(s.id, 'provider/basic', undefined, 'long_context'), /does not list long-context/);
+  assert.equal(s.rpc.model.switchTo.mock.callCount(), 1);
+  assert.equal(s.sdk.send.mock.callCount(), 0);
+});
+
+test('user model choices join the native FIFO even when the turn ended before queued changes drain', async t => {
+  for (const status of ['queued', 'deferred'] as const) {
+    await t.test(status, async t => {
+      const h = harness(t);
+      const s = await h.load();
+      type Switch = Parameters<Rpc['model']['switchTo']>[0];
+      const queue: Switch[] = [{ modelId: 'older-A' }];
+      const apply = (options: Switch) => {
+        s.state.model = { modelId: options.modelId, reasoningEffort: options.reasoningEffort, contextTier: options.contextTier };
+      };
+      // Public switchTo contract: without the opt-in an idle switch applies
+      // immediately, allowing the already queued A to overwrite the newer B.
+      s.rpc.model.switchTo.mock.mockImplementation(async options => {
+        if (options.deferIfModelChangeQueued && queue.length) {
+          queue.push(options);
+          return { modelId: options.modelId, status, deferred: status === 'deferred' };
+        }
+        apply(options);
+        return { modelId: options.modelId, status: 'applied' };
+      });
+      await h.engine.setModel(s.id, 'newer-B');
+      assert.equal((await h.engine.getMeta(s.id))?.currentModelId, 'native-model', 'Accepted is not applied');
+      assert.deepEqual(queue.map(item => item.modelId), ['older-A', 'newer-B']);
+      apply(queue.shift()!);
+      assert.equal((await h.engine.getMeta(s.id))?.currentModelId, 'older-A');
+      apply(queue.shift()!);
+      assert.equal((await h.engine.getMeta(s.id))?.currentModelId, 'newer-B');
+      assert.equal(s.rpc.model.switchTo.mock.callCount(), 1, 'The host does not replay or drain native choices');
+      assert.equal(s.sdk.send.mock.callCount(), 0);
+    });
+  }
 });
 
 test('concurrent partial model changes serialize native read-modify-confirm without lost options', async t => {

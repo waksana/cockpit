@@ -85,11 +85,17 @@ Model capability projection uses the session's model list as the selectable
 membership. Missing capability fields may be enriched from the same model ID in
 a fresh public global catalog request; explicit empty effort lists, false context
 support and empty defaults are never overwritten. No catalog or selected-state
-copy is retained. Unknown current effort/tier remains unknown, not an inferred
+copy is retained. Explicit provider `supportedContextTiers` supplies context
+capability without pricing; absent tiers retain the billing compatibility path.
+An explicit empty/default-only tier list cannot be widened by pricing or catalog
+fallback. Unknown current effort/tier remains unknown, not an inferred
 default. Same-model option edits preserve the other option from a native
 request-local read, because native `switchTo` clears omitted options. Immediate
 changes require authoritative readback; deferred changes remain pending native
-work rather than an optimistic selected value. Long context does not disable
+work rather than an optimistic selected value. User selections pass
+`deferIfModelChangeQueued: true` so the native FIFO preserves their order even
+after a turn ends but before older queued model changes drain; Cockpit does not
+keep or replay a second model-selection queue. Long context does not disable
 native compaction.
 
 The backend does not retain native session metadata, model inventories, mode,

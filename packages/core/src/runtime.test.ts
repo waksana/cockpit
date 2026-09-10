@@ -372,6 +372,26 @@ test('completed runtime calls release fatal listeners rather than retaining an u
   assert.equal(listeners, 0);
 });
 
+test('provider model context tiers are explicit capabilities independent of pricing', () => {
+  const option = (fields: Record<string, unknown>) => sessionModelOptions(
+    [{ id: 'provider/model', ...fields }],
+    [{ modelId: 'provider/model', name: 'Global', supportsLongContext: true }],
+  )[0]!;
+  assert.equal(option({ supportedContextTiers: ['default', 'long_context'] }).supportsLongContext, true);
+  assert.equal(option({ supportedContextTiers: ['long_context'], billing: { tokenPrices: {} } }).supportsLongContext, true);
+  for (const tiers of [[], ['default'], ['future_tier']]) {
+    assert.equal(option({ supportedContextTiers: tiers, billing: { tokenPrices: { longContext: {} } } }).supportsLongContext, false);
+  }
+  assert.equal(option({ supportedContextTiers: ['long_context'], supportsLongContext: false }).supportsLongContext, false);
+  assert.equal(option({ billing: { tokenPrices: { longContext: {} } } }).supportsLongContext, true);
+  assert.equal(option({ billing: { token_prices: { long_context: {} } } }).supportsLongContext, true);
+  assert.equal(option({ billing: { tokenPrices: {} } }).supportsLongContext, false);
+  assert.equal(option({}).supportsLongContext, true, 'Only missing capability metadata can use the same-ID catalog');
+  for (const tiers of [null, false, 'long_context', [1]]) {
+    assert.throws(() => option({ supportedContextTiers: tiers }), /Invalid context tier metadata/);
+  }
+});
+
 test('model metadata uses documented billing and preserves provider-qualified selection IDs', () => {
   const info: ModelInfo = {
     id: 'model', name: 'Model', capabilities: { supports: { vision: true, reasoningEffort: true }, limits: { max_context_window_tokens: 100 } },
@@ -379,6 +399,8 @@ test('model metadata uses documented billing and preserves provider-qualified se
     billing: { tokenPrices: { longContext: {} } },
   };
   assert.equal(modelOption(info).supportsLongContext, true);
+  const provider = { ...info, billing: undefined, supportedContextTiers: ['default', 'long_context'] };
+  assert.equal(modelOption(provider).supportsLongContext, true, 'Global and session projections recognize the same provider tiers');
   assert.deepEqual(sessionModelOptions([{ ...info, id: 'provider/model' }]), [{ ...modelOption(info), modelId: 'provider/model' }]);
   assert.deepEqual(sessionModelOptions([{ id: 'hidden', model_picker_enabled: false }]), []);
   assert.throws(() => sessionModelOptions([null]), /invalid model ID/);

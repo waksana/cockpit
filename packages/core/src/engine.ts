@@ -1312,6 +1312,7 @@ export class Engine {
       // model. A single-control edit must preserve the other authoritative value.
       const options = {
         modelId,
+        deferIfModelChangeQueued: true,
         reasoningEffort: reasoningEffort ?? (before.modelId === modelId ? before.reasoningEffort : undefined),
         contextTier: contextTier ?? (before.modelId === modelId ? before.contextTier : undefined),
       };

@@ -44,14 +44,18 @@ export function sessionModelOptions(values: readonly unknown[], catalog: readonl
     const fallback = catalog.find(entry => entry.modelId === model.id);
     const long = model.supportsLongContext;
     if (long !== undefined && typeof long !== 'boolean') throw new Error(`Invalid context metadata for native model ${model.id}`);
+    const tiers = model.supportedContextTiers;
+    if (tiers !== undefined && (!Array.isArray(tiers) || !tiers.every(tier => typeof tier === 'string'))) {
+      throw new Error(`Invalid context tier metadata for native model ${model.id}`);
+    }
     const defaultEffort = model.defaultReasoningEffort;
     if (defaultEffort !== undefined && typeof defaultEffort !== 'string') throw new Error(`Invalid default reasoning metadata for native model ${model.id}`);
     return [{
       modelId: model.id, name: typeof model.name === 'string' ? model.name : model.id,
       supportedReasoningEfforts: efforts ?? fallback?.supportedReasoningEfforts,
       defaultReasoningEffort: defaultEffort ?? fallback?.defaultReasoningEffort,
-      supportsLongContext: long ?? (pricesValue !== undefined
-        ? prices.longContext != null || prices.long_context != null : fallback?.supportsLongContext),
+      supportsLongContext: long ?? (tiers !== undefined ? tiers.includes('long_context')
+        : pricesValue !== undefined ? prices.longContext != null || prices.long_context != null : fallback?.supportsLongContext),
     }];
   });
 }
