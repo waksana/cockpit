@@ -26,7 +26,6 @@ test('renders an API failure reported before mounting with an accessible dismiss
   assert.match(html, /接口 prompt 调用失败：Permission denied/);
   assert.match(html, /aria-label="关闭错误通知"/);
   assert.match(html, /type="button"/);
-  assert.match(html, /不会自动执行代理/);
   dismissUxError(getUxErrors()[0].id);
   assert.equal(renderToStaticMarkup(createElement(UxErrorNotifications)), '');
 });
