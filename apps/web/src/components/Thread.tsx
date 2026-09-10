@@ -326,7 +326,7 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const scrollOwnerRef = useRef<ThreadScroll | null>(null);
-  const initialFill = useRef({ sessionId: session.sessionId, pages: 0, done: session.materialized });
+  const initialFill = useRef({ sessionId: session.sessionId, done: session.materialized });
   const [readySession, setReadySession] = useState(session.materialized ? session.sessionId : null);
   const preparingHistory = readySession !== session.sessionId && !session.error && !session.historyStale;
   const [heldHead, setHeldHead] = useState<{ sessionId: string; id: string } | null>(null);
@@ -398,18 +398,17 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
 
   useLayoutEffect(() => {
     if (initialFill.current.sessionId !== session.sessionId) {
-      initialFill.current = { sessionId: session.sessionId, pages: 0, done: session.materialized };
+      initialFill.current = { sessionId: session.sessionId, done: session.materialized };
     }
     const fill = initialFill.current;
     const el = scrollRef.current;
     if (fill.done) { setReadySession(session.sessionId); return; }
     if (!el || !session.materialized || session.loadingHistory || session.historyStale || session.error || prependHeld) return;
     // Measure hidden initial rows, then reveal the accumulated viewport in one batch.
-    if (!session.hasMore || session.incompleteBoundary || el.scrollHeight >= el.clientHeight * 1.5 || fill.pages >= 8) {
+    if (!session.hasMore || session.incompleteBoundary || el.scrollHeight >= el.clientHeight * 2) {
       fill.done = true;
       setReadySession(session.sessionId);
     } else if (el.clientHeight > 0) {
-      fill.pages++;
       onLoadMore();
     }
   }, [session.sessionId, session.materialized, session.loadingHistory, session.historyStale, session.error, session.hasMore, session.incompleteBoundary, messages, onLoadMore, prependHeld]);

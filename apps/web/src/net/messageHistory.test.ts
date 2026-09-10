@@ -48,6 +48,32 @@ test('a message already at the page boundary needs no extra native read or tool 
   assert.equal(h.window.snapshot().incompleteBoundary, false);
 });
 
+for (const name of ['skill', 'exit_plan_mode']) {
+  test(`${name} ownership is retained without rendering a duplicate tool row or fetching older history`, async () => {
+    const h = setup([[
+      event('hidden-owner', 'assistant.message', { content: '', toolRequests: [{ toolCallId: 'hidden', name }] }),
+      event('hidden-start', 'tool.execution_start', { toolCallId: 'hidden', toolName: name }),
+      event('hidden-complete', 'tool.execution_complete', { toolCallId: 'hidden', success: true }),
+      event('visible-reply'),
+    ]]);
+    await h.run();
+    assert.equal(h.requests.length, 1);
+    assert.equal(h.window.projection.toolMsg.get('hidden'), 'hidden-owner');
+    assert.equal(h.window.snapshot().incompleteBoundary, false);
+    assert.deepEqual(h.window.snapshot().messages.map(message => message.id), ['visible-reply']);
+  });
+
+  test(`${name} split across pages resolves on its hidden owner without reading an extra page`, async () => {
+    const h = setup([
+      [event('hidden-complete', 'tool.execution_complete', { toolCallId: 'hidden', success: true }), event('visible-reply')],
+      [event('hidden-owner', 'assistant.message', { content: '', toolRequests: [{ toolCallId: 'hidden', name }] })],
+    ]);
+    await h.run();
+    assert.equal(h.requests.length, 2);
+    assert.equal(h.window.snapshot().incompleteBoundary, false);
+  });
+}
+
 test('metadata-only pages continue to a display message rather than ending a history action empty', async () => {
   const h = setup([[event('idle', 'session.idle')], [event('turn', 'assistant.turn_end')], [event('message')]]);
   await h.run();

@@ -615,11 +615,12 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
           if (args) tc.args = args;
           return tc;
         });
-      for (const tc of toolCalls) state.toolMsg.set(tc.toolCallId, id);
       // Remember which tool calls are ask_user prompts so their completion event
       // can surface the user's answer as a visible "my reply" message.
       for (const r of reqs) {
         if (typeof r.toolCallId !== 'string') continue;
+        // Ownership exists even when a dedicated UI replaces the ordinary tool row.
+        state.toolMsg.set(r.toolCallId, id);
         if (r.name === 'ask_user') state.askToolIds.add(r.toolCallId);
         // `task` → capture the sub-agent's prompt/agent_type now; the
         // subagent.started event (which builds the card) doesn't carry the prompt.

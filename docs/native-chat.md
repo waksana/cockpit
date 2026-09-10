@@ -67,15 +67,18 @@ not conversation order.
 
 ## Browser reading
 
-Initial loading targets roughly two viewport heights, not 30 messages.
+Initial loading fills at least two viewport heights when sufficient history is
+available, not a fixed number of messages.
 Upward scrolling requests more native pages and preserves already loaded rows.
-Browser backward reads use 32-event pages and stop initial filling after
-at least 1.5 screen heights, targeting roughly two screens without another full
-page for a small shortfall. One history action continues across native pages
+Browser backward reads use 32-event pages and stop initial filling once the
+accumulated content reaches two screen heights (a complete batch can exceed
+that minimum). One history action continues across native pages
 until it adds a display message and resolves the loaded tool/agent records to
 their owning messages. It does not wait for running tools to finish. Main chat
 and child details share this boundary rule; metadata-only pages are not treated
 as a finished message load. The initial live tail is captured only once.
+Hidden tool rows, including skill and plan-mode calls, retain their ownership;
+suppressing duplicate presentation must not trigger extra history reads.
 
 Each action is limited to 8 native pages (at most 256 events). A missing
 or very distant boundary stops with an explicit continue hint rather than

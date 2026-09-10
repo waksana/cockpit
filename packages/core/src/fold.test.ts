@@ -51,6 +51,24 @@ test('user + assistant message fold', () => {
   assert.equal(st.messages[1].content, 'hello');
 });
 
+test('strict ownership records hidden tool requests independently of visible message rows', () => {
+  for (const name of ['skill', 'exit_plan_mode', 'task']) {
+    const state = newFoldState();
+    const owner = asstMsg('hidden-owner', '', { toolRequests: [{ toolCallId: 'hidden', name }] });
+    foldEvent(state, normalizeEvent({ ...owner, data: owner.data ?? {} }), { strictOwnership: true });
+    assert.equal(state.toolMsg.get('hidden'), 'hidden-owner');
+    assert.equal(state.messages.length, 0);
+    for (const type of ['tool.execution_start', 'tool.execution_complete']) {
+      const result = foldEvent(state, normalizeEvent({
+        type, data: { toolCallId: 'hidden', toolName: name, success: true },
+      }), { strictOwnership: true });
+      assert.notEqual(result.missingOwner, true);
+      assert.deepEqual(result.changed, []);
+    }
+    assert.equal(state.messages.length, 0);
+  }
+});
+
 test('v2 retained files preserve multiple attachments and exact visible body order across replay', () => {
   const parts: MessagePart[] = [
     { type: 'text', text: 'before\n' },
