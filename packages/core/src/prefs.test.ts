@@ -21,6 +21,25 @@ function freshFile(): string {
   return join(dir, 'prefs.json');
 }
 
+test('single inbox reads copy one entry and count without cloning the whole inbox', t => {
+  const file = freshFile();
+  const sessions = Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [
+    `s${i}`, { attention: 'ready', attnId: i + 1, seenId: 0, eventId: `event${i}` },
+  ]));
+  writeFileSync(file, JSON.stringify({ inbox: { revision: 1000, counter: 1000, sessions } }));
+  const prefs = new Prefs(file);
+  const clone = t.mock.method(globalThis, 'structuredClone', () => assert.fail('narrow inbox reads must not clone the full inbox'));
+  const entry = prefs.inboxEntry('s12')!;
+  entry.attention = null;
+  entry.seenId = entry.attnId;
+  assert.equal(prefs.inboxEntry('s12')?.attention, 'ready');
+  assert.equal(prefs.inboxEntry('toString'), undefined);
+  assert.equal(prefs.inboxEntry('missing'), undefined);
+  assert.deepEqual(prefs.inboxCounts(), { inboxRevision: 1000, unreadCount: 1000 });
+  assert.equal(clone.mock.callCount(), 0);
+  prefs.markSeen('s12');
+  assert.deepEqual(prefs.inboxCounts(), { inboxRevision: 1001, unreadCount: 999 });
+});
 test('missing prefs file loads as empty without writing until a mutation', () => {
   const f = freshFile();
   // never written → load() hits ENOENT → empty

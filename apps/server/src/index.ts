@@ -58,10 +58,10 @@ app.addContentTypeParser('application/octet-stream', (_req, body, done) => done(
 // real ~/.copilot prefs or binding the port. Definite-assignment: always set before
 // any request handler that derefs them can run (boot() runs at module entry).
 export type ServerEngine = Pick<Engine,
-  | 'login' | 'snapshot' | 'busyCount' | 'newSession' | 'forkSession' | 'chat' | 'stop'
+  | 'login' | 'snapshot' | 'status' | 'busyCount' | 'newSession' | 'forkSession' | 'chat' | 'stop'
   | 'prompt' | 'cancel' | 'interrupt' | 'setModel' | 'rename' | 'autoName' | 'compact' | 'rewind' | 'setMode'
   | 'deleteSession' | 'unload'
-  | 'reload' | 'pin' | 'getPlan' | 'getUsage' | 'getPanels' | 'respondAsk' | 'respondPlan'
+  | 'reload' | 'pin' | 'getPlan' | 'getUsage' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
   | 'planSupersede' | 'respondElicitation' | 'removeQueued' | 'refreshList'
   | 'listLive' | 'getMeta' | 'markSeen' | 'listGlobalMcp' | 'setMcpDefault'
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
@@ -451,7 +451,7 @@ app.get('/uploads/:name', async (req, reply) => {
 // without opening an SSE stream. `running` counts turns in flight; `busy` also
 // counts sessions paused on a pending user choice (which likewise block a restart).
 app.get('/status', async () => {
-  const metas = (await engine.snapshot()).sessions;
+  const metas = await engine.status();
   const sessions = metas.map((s) => ({
     sessionId: s.sessionId, status: s.status, title: s.title,
     awaitingChoice: awaitingChoice(s) || undefined,
@@ -579,6 +579,7 @@ const handlers: IntentHandlers = {
   'session/usage': async (b) => await engine.getUsage(b.sessionId),
   'session/plan': async (b) => await engine.getPlan(b.sessionId),
   'session/panels': async (b) => await engine.getPanels(b.sessionId),
+  'session/panel': async (b) => ({ items: await engine.getPanel(b.sessionId, b.section) }),
   respondAsk: async (b) => {
     await engine.respondAsk(b.sessionId, b.requestId, b.answer, b.wasFreeform);
     return { ok: true };
@@ -605,6 +606,7 @@ const handlers: IntentHandlers = {
   },
   'session/list': async () => ({ sessions: await engine.listLive() }),
   'session/get': async (b) => ({ meta: await engine.getMeta(b.sessionId) }),
+  'session/resources': async (b) => ({ meta: await engine.getResources(b.sessionId, b.resources) }),
   'push/subscribe': (b) => {
     push.subscribe(b.subscription);
     return { ok: true };

@@ -85,14 +85,12 @@ export function SessionResume({ sessionId, required, onResumed }: {
 }) {
   const session = useCockpit((s) => s.sessions.find((item) => item.sessionId === sessionId));
   const reloadSession = useCockpit((s) => s.reloadSession);
-  const refreshList = useCockpit((s) => s.refreshList);
   const action = useKeyedAction(`resume:${sessionId}`);
   if (!required) return null;
   const resume = () => action.run(async () => {
     const current = useCockpit.getState().sessions.find((item) => item.sessionId === sessionId);
     if (!current || current.status === 'running' || current.compacting) return;
     await reloadSession(sessionId);
-    await refreshList();
   }, onResumed);
   return (
     <div className="info-section-content">

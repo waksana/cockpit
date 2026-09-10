@@ -12,8 +12,9 @@ import type {
   McpServerGlobal, McpServerSession, McpToggleOperation, McpToggleResult,
   ModelOption, ScheduleEntry, ServerEvent, SessionMeta, SessionPanels,
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
+  MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem,
 } from '@cockpit/protocol';
-import { NativeChatRead, SessionUsage, unreadSessionCount } from '@cockpit/protocol';
+import { NativeChatRead, SessionUsage, MetaResource as MetaResources } from '@cockpit/protocol';
 import { OfficialRuntime, sessionModelOptions } from './runtime.ts';
 import { normalizeEvent, type RuntimeAttachment } from './sdk-types.ts';
 import { cleanSessionTitle, extractParts } from './fold.ts';
@@ -68,6 +69,15 @@ type ResourceValues = {
   mcp: Awaited<ReturnType<CopilotSession['rpc']['mcp']['list']>>;
 };
 type Resource = keyof ResourceValues;
+const summaryResources: MetaResource[] = ['identity', 'control', 'model', 'mode', 'schedule'];
+
+function completeMeta(meta: SessionProjection): SessionMeta {
+  const { title, cwd, lastActivity, status, ask } = meta;
+  if (title === undefined || cwd === undefined || lastActivity === undefined || status === undefined || ask === undefined) {
+    throw new Error('Identity and control resources are required for a complete session summary');
+  }
+  return { ...meta, title, cwd, lastActivity, status, ask };
+}
 interface State {
   id: string;
   sdk: CopilotSession | null;
@@ -91,6 +101,8 @@ interface State {
   sync?: Promise<void>;
   syncAgain: boolean;
   scheduleGate: Promise<void>;
+  resourceWrites: Map<SessionResource, number>;
+  pendingInvalidations: Set<SessionResource>;
   replyNotification?: string;
   pendingReply?: { eventId: string; body: string };
   namingReply?: boolean;
@@ -137,6 +149,7 @@ function stateFor(id: string): State {
     accepted: new Set(), decisions: new Map(), sendReceipts: new Set(),
     revision: 0, turnEpoch: 0, syncAgain: false,
     scheduleGate: Promise.resolve(),
+    resourceWrites: new Map(), pendingInvalidations: new Set(),
   };
 }
 
@@ -279,24 +292,29 @@ export class Engine {
     };
   }
 
-  private async readSessions(): Promise<SessionMeta[]> {
+  private async readSessions(resources: MetaResource[] = summaryResources): Promise<SessionMeta[]> {
     this.assertReadable();
     const rows = await this.untilFatal(() => this.runtime.listSessions());
-    const ids = new Set(rows.filter(row => !this.creating.has(row.sessionId) || this.sessions.get(row.sessionId)?.sdk)
-      .map(row => row.sessionId));
+    const byId = new Map(rows.map(row => [row.sessionId, row]));
+    const ids = new Set(rows.filter(row => !this.creating.has(row.sessionId) || this.sessions.get(row.sessionId)?.sdk).map(row => row.sessionId));
     for (const id of this.sessions.keys()) ids.add(id);
     const result: SessionMeta[] = [];
     // Bound concurrent native reads independently of the size of the session index.
     for (const id of ids) {
       const st = this.sessions.get(id);
-      const row = rows.find(row => row.sessionId === id);
-      const meta = st ? await this.getMeta(id) : row ? this.listedMeta(row) : await this.getMeta(id);
-      if (meta) result.push(meta);
+      const row = byId.get(id);
+      const meta = st ? await this.getResources(id, resources, row) : row ? this.listedMeta(row) : await this.getResources(id, resources);
+      if (meta) result.push(completeMeta(meta));
     }
     return result;
   }
 
   async getMeta(id: string): Promise<SessionMeta | null> {
+    const meta = await this.getResources(id, MetaResources.options);
+    return meta ? completeMeta(meta) : null;
+  }
+
+  async getResources(id: string, resources: readonly MetaResource[], listedRow?: SessionMetadata): Promise<SessionProjection | null> {
     this.assertAvailable();
     const st = this.sessions.get(id);
     if (this.creating.has(id) && !st?.sdk) throw Object.assign(
@@ -306,7 +324,7 @@ export class Engine {
     const sdk = st && await this.liveSession(st);
     this.assertReadable(st);
     if (!st || !sdk) {
-      const row = await this.untilFatal(() => this.runtime.getSessionMetadata(id));
+      const row = listedRow ?? await this.untilFatal(() => this.runtime.getSessionMetadata(id));
       return row ? {
         ...this.listedMeta(row),
         ...(st ? { loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling,
@@ -315,44 +333,66 @@ export class Engine {
       } : null;
     }
     st.operations++;
+    this.patch(st, { activeOperations: st.operations });
     try {
-      const [metadata, name, model, models, mode, todos, schedules, control, row] = await this.withSession(st, sdk, () => settled([
-        sdk.rpc.metadata.snapshot(), sdk.rpc.name.get(), sdk.rpc.model.getCurrent(), sdk.rpc.model.list(),
-        sdk.rpc.mode.get(), sdk.rpc.plan.readSqlTodos(), sdk.rpc.schedule.list(), this.readControl(st, sdk),
-        this.runtime.getSessionMetadata(id),
+      const wants = new Set(resources);
+      const [metadata, name, model, models, mode, todos, schedules, control, queue, row] = await this.withSession(st, sdk, () => settled([
+        wants.has('identity') ? sdk.rpc.metadata.snapshot() : Promise.resolve(undefined),
+        wants.has('identity') ? sdk.rpc.name.get() : Promise.resolve(undefined),
+        wants.has('model') ? sdk.rpc.model.getCurrent() : Promise.resolve(undefined),
+        wants.has('models') ? sdk.rpc.model.list() : Promise.resolve(undefined),
+        wants.has('mode') && !wants.has('identity') ? sdk.rpc.mode.get() : Promise.resolve(undefined),
+        wants.has('todo') ? sdk.rpc.plan.readSqlTodos() : Promise.resolve(undefined),
+        wants.has('schedule') ? sdk.rpc.schedule.list() : Promise.resolve(undefined),
+        wants.has('control') ? this.readControl(st, sdk) : Promise.resolve(undefined),
+        wants.has('queue') && !wants.has('control') ? sdk.rpc.queue.pendingItems() : Promise.resolve(undefined),
+        wants.has('identity') ? listedRow ? Promise.resolve(listedRow) : this.runtime.getSessionMetadata(id) : Promise.resolve(undefined),
       ] as const));
       return {
-        sessionId: id, title: cleanSessionTitle(name.name ?? metadata.summary) || id.slice(0, 8), cwd: metadata.workingDirectory,
-        createdAt: Date.parse(metadata.startTime),
-        lastActivity: row?.modifiedTime.getTime() ?? Date.parse(metadata.modifiedTime),
-        lastActivitySource: row ? 'native-persisted' : 'native-construction',
-        loaded: true, status: control.busy || st.sends > 0 || st.accepted.size > 0 ? 'running' : 'idle',
-        nativeProcessing: control.busy, activeOperations: Math.max(0, st.operations - 1),
-        currentModelId: model.modelId, currentReasoningEffort: model.reasoningEffort ?? null,
-        currentContextTier: model.contextTier ?? null, currentMode: mode, availableModels: sessionModelOptions(models.list),
-        queue: control.queue.items.map(item => ({ id: item.id, text: item.displayText })),
-        activeSubagents: control.tasks.tasks.filter(task => activeTask(task.status)).length,
-        activeMcpOperations: st.mcpOperations + control.mcpHost.pendingConnections.length,
-        todo: this.todoSummary(todos), scheduleCount: schedules.entries.length,
+        sessionId: id, loaded: true,
+        ...(metadata ? {
+          title: cleanSessionTitle(name?.name ?? metadata.summary) || id.slice(0, 8), cwd: metadata.workingDirectory,
+          createdAt: Date.parse(metadata.startTime),
+          lastActivity: row?.modifiedTime.getTime() ?? Date.parse(metadata.modifiedTime),
+          lastActivitySource: row ? 'native-persisted' as const : 'native-construction' as const,
+        } : {}),
+        ...(control ? {
+          status: control.busy || st.sends > 0 || st.accepted.size > 0 ? 'running' as const : 'idle' as const,
+          nativeProcessing: control.busy,
+          ...(!control.busy && !st.sends && !st.accepted.size ? { intent: null } : {}),
+          activeSubagents: control.tasks.tasks.filter(task => activeTask(task.status)).length,
+          activeMcpOperations: st.mcpOperations + control.mcpHost.pendingConnections.length,
+        } : {}),
+        ...(model ? { currentModelId: model.modelId, currentReasoningEffort: model.reasoningEffort ?? null,
+          currentContextTier: model.contextTier ?? null } : {}),
+        ...(wants.has('mode') ? { currentMode: metadata?.currentMode ?? mode } : {}),
+        ...(models ? { availableModels: sessionModelOptions(models.list) } : {}),
+        ...(wants.has('queue') ? { queue: (control?.queue ?? queue)!.items.map(item => ({ id: item.id, text: item.displayText })) } : {}),
+        ...(todos ? { todo: this.todoSummary(todos) } : {}),
+        ...(schedules ? { scheduleCount: schedules.entries.length } : {}),
+        activeOperations: Math.max(0, st.operations - 1),
         loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling, autoNaming: !!st.naming,
         ...this.decisionFields(st), pinned: this.prefs.isPinned(id), ...this.inboxFields(id),
       };
     } finally {
       st.operations--;
+      this.patch(st, { activeOperations: st.operations });
       this.release(st);
     }
   }
 
   async listLive(): Promise<SessionBrief[]> {
-    return (await this.readSessions()).map(meta => ({
+    return (await this.readSessions(['identity', 'control', 'model'])).map(meta => ({
       sessionId: meta.sessionId, title: meta.title, cwd: meta.cwd, status: meta.status,
       loaded: meta.loaded, lastActivity: meta.lastActivity, currentModelId: meta.currentModelId,
       lastActivitySource: meta.lastActivitySource,
     }));
   }
+  async status(): Promise<SessionMeta[]> {
+    return this.readSessions(['identity', 'control']);
+  }
   private inboxCounts() {
-    const inbox = this.prefs.inbox;
-    return { inboxRevision: inbox.revision, unreadCount: unreadSessionCount(Object.values(inbox.sessions)) };
+    return this.prefs.inboxCounts();
   }
   attentionCount(): number { return this.inboxCounts().unreadCount; }
   markSeen(id: string, observedId?: number): void {
@@ -579,16 +619,9 @@ export class Engine {
         throw new Error('Native session closed while loading; explicitly resume to continue');
       }
       delete owner.closed;
-      const name = await this.withSession(st, sdk, () => sdk.rpc.name.get());
-      this.assertAvailable();
-      if (st.sdk !== sdk) throw new Error('Native session closed while loading; explicitly resume to continue');
-      this.patch(st, {
-        loaded: true, error: null, status: 'idle',
-        ...(name.name ? { title: name.name } : {}),
-      }, true);
-      const meta = await this.getMeta(st.id);
+      const meta = await this.getResources(st.id, summaryResources);
       if (!meta) throw new Error('Native session metadata is unavailable after loading');
-      this.emit({ type: 'session/added', session: meta });
+      this.emit({ type: 'session/added', session: completeMeta({ ...meta, error: null }) });
     })).catch(error => {
       if (!st.sdk) {
         st.eventOwner = undefined;
@@ -674,6 +707,7 @@ export class Engine {
       st.replyNotification = undefined;
       st.pendingReply = undefined;
       this.patch(st, { status: 'running', nativeProcessing: true, error: null });
+      this.invalidate(st, ['control', 'queue']);
     }
     if (root && event.type === 'assistant.message') {
       if (!native.ephemeral && typeof data.content === 'string' && data.content.trim()) {
@@ -689,7 +723,7 @@ export class Engine {
         st.pendingReply = { eventId: native.id, body: st.replyNotification };
       }
       st.replyNotification = undefined;
-      this.scheduleSync(st);
+      this.scheduleSync(st, ['identity', 'control', 'queue', 'usage']);
     }
     if (event.type === 'session.error') {
       st.replyNotification = undefined;
@@ -708,35 +742,57 @@ export class Engine {
       case 'session.idle':
       case 'session.error':
       case 'pending_messages.modified':
+        this.scheduleSync(st);
+        break;
       case 'session.background_tasks_changed':
-      case 'session.compaction_complete':
       case 'subagent.started':
       case 'subagent.completed':
       case 'subagent.failed':
-        this.scheduleSync(st);
+        this.scheduleSync(st, ['control', 'tasks']);
+        break;
+      case 'session.compaction_complete':
+        this.scheduleSync(st, ['control', 'usage']);
         break;
       case 'session.context_changed':
+        this.invalidate(st, ['identity', 'instructions', 'usage']);
+        break;
       case 'session.context_cleared':
+        this.invalidate(st, ['identity', 'control', 'queue', 'plan', 'todo', 'tasks', 'instructions', 'usage']);
+        break;
       case 'session.plan_changed':
+        this.invalidate(st, ['plan']);
+        break;
       case 'session.skills_loaded':
+        this.invalidate(st, ['skills', 'usage']);
+        break;
       case 'session.tools_updated':
+        this.invalidate(st, ['usage']);
+        break;
       case 'session.schedule_created':
       case 'session.schedule_cancelled':
       case 'session.schedule_rearmed':
+        this.invalidate(st, ['schedule']);
+        break;
       case 'session.todos_changed':
+        this.invalidate(st, ['todo', 'plan']);
+        break;
       case 'session.model_change':
-        this.invalidate(st);
+        this.invalidate(st, ['model', 'models', 'usage']);
+        break;
+      case 'session.usage_info':
+      case 'session.usage_checkpoint':
+        this.invalidate(st, ['usage']);
         break;
       case 'session.mcp_servers_loaded':
       case 'session.mcp_server_removed':
       case 'session.mcp_server_status_changed':
-        this.scheduleSync(st);
+        this.scheduleSync(st, ['control', 'mcp', 'usage']);
         break;
     }
   }
 
-  private scheduleSync(st: State): void {
-    this.invalidate(st);
+  private scheduleSync(st: State, resources: SessionResource[] = ['control', 'queue']): void {
+    this.invalidate(st, resources);
     if (!st.pendingReply && !st.autoNamePending) return;
     if (st.closing || this.lifecycle || !st.sdk || this.failure) return;
     st.syncAgain = true;
@@ -766,7 +822,7 @@ export class Engine {
   }
 
   private patchMcpPending(st: State): void {
-    this.invalidate(st);
+    this.invalidate(st, ['control', 'mcp']);
   }
 
   private async readResource<K extends Resource>(
@@ -975,13 +1031,19 @@ export class Engine {
   }
 
   private async operation<T>(
-    id: string, work: (sdk: CopilotSession, st: State) => Promise<T>, kind: 'work' | 'read' = 'work', owner?: State,
+    id: string, work: (sdk: CopilotSession, st: State) => Promise<T>,
+    kind: 'work' | 'read' | SessionResource[] = 'work', owner?: State,
+    changes: SessionResource[] = Array.isArray(kind) ? kind : [],
   ): Promise<T> {
     const st = owner ?? await this.state(id);
     this.assertAdmission(st);
     if (st.cancelling) throw new Error('Session cancellation is in progress');
     st.operations++;
     this.patch(st, { activeOperations: st.operations });
+    // Merge a mutation's native resource event with its readback notification.
+    // Control/queue hints still flow immediately while the operation is busy.
+    const held = changes.filter(resource => resource !== 'control' && resource !== 'queue');
+    for (const resource of held) st.resourceWrites.set(resource, (st.resourceWrites.get(resource) ?? 0) + 1);
     try {
       if (kind === 'read') {
         if (!await this.liveSession(st)) throw new SessionUnloadedError();
@@ -996,6 +1058,15 @@ export class Engine {
     } finally {
       st.operations--;
       this.patch(st, { activeOperations: st.operations });
+      if (changes.length) this.invalidate(st, changes);
+      for (const resource of held) {
+        const count = st.resourceWrites.get(resource)! - 1;
+        if (count) st.resourceWrites.set(resource, count);
+        else st.resourceWrites.delete(resource);
+      }
+      const ready = [...st.pendingInvalidations].filter(resource => !st.resourceWrites.has(resource));
+      for (const resource of ready) st.pendingInvalidations.delete(resource);
+      if (ready.length) this.invalidate(st, ready);
       this.maybeAutoName(st);
       this.release(st);
     }
@@ -1063,6 +1134,7 @@ export class Engine {
     }).finally(() => {
       st.cancelling = undefined;
       this.patch(st, { cancelling: false }, true);
+      this.invalidate(st, ['control', 'queue']);
       this.release(st);
     });
     return st.cancelling;
@@ -1097,7 +1169,7 @@ export class Engine {
       if (st.interruptTurn === target) st.interruptTurn = undefined;
       await this.syncNative(st);
       return { ok: true as const, interrupted: result.interrupted };
-    }, 'read', st).finally(() => {
+    }, 'read', st, ['control', 'queue']).finally(() => {
       if (st.interrupting === pending) st.interrupting = undefined;
     });
     st.interrupting = pending;
@@ -1112,7 +1184,7 @@ export class Engine {
       if (!result.removed) throw new Error('Queued item is no longer addressable');
       for (const messageId of removedIds) st.accepted.delete(messageId);
       await this.syncNative(st);
-    });
+    }, ['control', 'queue']);
   }
 
   private localBusy(st: State, ownTransition = false, ownOperations = 0): boolean {
@@ -1254,7 +1326,7 @@ export class Engine {
         throw new Error(`Native model change ${result.status ?? 'not applied'}: ${result.persistenceError ?? result.message ?? 'confirmation or additional host action required'}`);
       }
       if (result.deferred) this.scheduleSync(st);
-    });
+    }, ['model', 'models', 'usage', 'control', 'queue']);
   }
   async setMode(id: string, mode: 'interactive' | 'plan' | 'autopilot'): Promise<void> {
     await this.operation(id, async (sdk, st) => {
@@ -1269,7 +1341,7 @@ export class Engine {
         await this.readResource(st, sdk, 'model');
         await this.readResource(st, sdk, 'models');
       }
-    });
+    }, ['mode', 'model', 'models', 'usage']);
   }
   async rename(id: string, name: string): Promise<string> {
     if (!name.trim()) throw new Error('Session name must not be empty');
@@ -1279,7 +1351,7 @@ export class Engine {
       if (!title) throw new Error('Native rename was not confirmed');
       this.patch(st, { title });
       return title;
-    });
+    }, ['identity']);
   }
   async compact(id: string, customInstructions?: string): Promise<void> {
     await this.operation(id, async (sdk, st) => {
@@ -1289,7 +1361,7 @@ export class Engine {
         if (!result.success) throw new Error('Native compaction was unsuccessful');
       }
       finally { this.patch(st, { compacting: false }); }
-    });
+    }, ['usage']);
   }
   async rewind(id: string, toMsgId: string, rollbackFiles = false): Promise<void> {
     const st = await this.state(id);
@@ -1349,30 +1421,45 @@ export class Engine {
 
   async getPanels(id: string): Promise<SessionPanels> {
     return this.operation(id, async (sdk, st) => {
-      const [skills, mcp, tasks, instructions, schedules] = await this.withSession(st, sdk, () => settled([
-        sdk.rpc.skills.list(), sdk.rpc.mcp.list(), sdk.rpc.tasks.list(),
-        sdk.rpc.instructions.getSources(), sdk.rpc.schedule.list(),
-      ] as const));
-      return {
-        skills: skills.skills.map(s => ({ label: s.name, sublabel: s.source, enabled: s.enabled })),
-        mcpServers: mcp.servers.map(s => {
-          const { status, enabled } = this.mcpServerState(mcp, s.name);
-          return { label: s.name, sublabel: status, enabled };
-        }),
-        tasks: tasks.tasks.map(t => ({ label: t.description || t.id, sublabel: t.status })),
-        instructionSources: instructions.sources.map(s => ({ label: s.label, sublabel: s.sourcePath })),
-        schedules: schedules.entries.map(s => ({ label: s.displayPrompt || s.prompt,
-          sublabel: s.selfPaced ? `Self-paced (model-controlled) · next ${s.nextRunAt}` : s.nextRunAt })),
-      };
+      const [skills, mcpServers, tasks, instructionSources, schedules] = await settled([
+        this.readPanel(st, sdk, 'skills'), this.readPanel(st, sdk, 'mcpServers'),
+        this.readPanel(st, sdk, 'tasks'), this.readPanel(st, sdk, 'instructionSources'), this.readPanel(st, sdk, 'schedules'),
+      ] as const);
+      return { skills, mcpServers, tasks, instructionSources, schedules };
     }, 'read');
+  }
+
+  async getPanel(id: string, section: PanelSection): Promise<PanelItem[]> {
+    return this.operation(id, (sdk, st) => this.readPanel(st, sdk, section), 'read');
+  }
+
+  private readPanel(st: State, sdk: CopilotSession, section: PanelSection): Promise<PanelItem[]> {
+    return this.withSession(st, sdk, async () => {
+      switch (section) {
+        case 'skills': return (await sdk.rpc.skills.list()).skills.map(s => ({ label: s.name, sublabel: s.source, enabled: s.enabled }));
+        case 'mcpServers': {
+          const mcp = await sdk.rpc.mcp.list();
+          const disabled = new Set(mcp.host?.disabledServers);
+          return mcp.servers.map(s => {
+            const { status, enabled } = this.mcpServerState(mcp, s.name, s, disabled);
+            return { label: s.name, sublabel: status, enabled };
+          });
+        }
+        case 'tasks': return (await sdk.rpc.tasks.list()).tasks.map(t => ({ label: t.description || t.id, sublabel: t.status }));
+        case 'instructionSources': return (await sdk.rpc.instructions.getSources()).sources.map(s => ({ label: s.label, sublabel: s.sourcePath }));
+        case 'schedules': return (await sdk.rpc.schedule.list()).entries.map(s => ({ label: s.displayPrompt || s.prompt,
+          sublabel: s.selfPaced ? `Self-paced (model-controlled) · next ${s.nextRunAt}` : s.nextRunAt }));
+      }
+    });
   }
 
   async listGlobalMcp(): Promise<McpServerGlobal[]> {
     const [definitions, discovered] = await this.untilFatal(() => settled([
       this.runtime.rpc.mcp.config.list(), this.runtime.rpc.mcp.discover({ workingDirectory: homedir() }),
     ] as const));
+    const byName = new Map(discovered.servers.filter(server => server.source === 'user').map(server => [server.name, server]));
     return Object.entries(definitions.servers).map(([name, config]) => {
-      const server = discovered.servers.find(server => server.name === name && server.source === 'user');
+      const server = byName.get(name);
       if (!server || typeof server.enabled !== 'boolean') {
         throw new Error(`Native global MCP state is unconfirmed for ${name}`);
       }
@@ -1392,9 +1479,10 @@ export class Engine {
     try {
       return await this.operation(id, async (sdk, st) => {
         const result = await this.withSession(st, sdk, () => sdk.rpc.mcp.list());
+        const disabled = new Set(result.host?.disabledServers);
         return { loaded: true, servers: result.servers.map(server => ({
           name: server.name, detail: server.sourcePlugin ?? server.source ?? 'native',
-          ...this.mcpServerState(result, server.name), error: server.error,
+          ...this.mcpServerState(result, server.name, server, disabled), error: server.error,
         })) };
       }, 'read');
     } catch (error) {
@@ -1402,8 +1490,11 @@ export class Engine {
       throw error;
     }
   }
-  private mcpServerState(result: ResourceValues['mcp'], name: string): Pick<McpServerSession, 'status' | 'enabled'> {
-    const server = result.servers.find(server => server.name === name);
+  private mcpServerState(
+    result: ResourceValues['mcp'], name: string,
+    server: ResourceValues['mcp']['servers'][number] | undefined,
+    disabled?: ReadonlySet<string>,
+  ): Pick<McpServerSession, 'status' | 'enabled'> {
     if (!server || !result.host) throw new Error(`Native MCP state is unconfirmed for ${name}`);
     const status = server.status;
     switch (status) {
@@ -1417,7 +1508,7 @@ export class Engine {
         // Enablement is not connectivity: preserve native status even when the
         // host separately records an explicit disable or policy stops a server.
         return { status, enabled: status !== 'disabled' && status !== 'not_configured'
-          && !result.host.disabledServers.includes(name) };
+          && !(disabled ? disabled.has(name) : result.host.disabledServers.includes(name)) };
       default: {
         const unexpected: never = status;
         throw new Error(`Native MCP state is unconfirmed for ${name}: unknown status ${JSON.stringify(unexpected)}`);
@@ -1436,13 +1527,14 @@ export class Engine {
       try {
         const before = await this.withSession(st, sdk, () => sdk.rpc.mcp.list());
         if (before.host?.pendingConnections.length) throw new Error('MCP connections are still settling');
-        if (!before.servers.some(server => server.name === name)) throw new Error(`Unknown native MCP server: ${name}`);
-        this.mcpServerState(before, name);
+        const previous = before.servers.find(server => server.name === name);
+        if (!previous) throw new Error(`Unknown native MCP server: ${name}`);
+        this.mcpServerState(before, name, previous);
         submitted = true;
         await this.withSession(st, sdk, () => sdk.rpc.mcp[enabled ? 'enable' : 'disable']({ serverName: name }));
-        const result = await this.readResource(st, sdk, 'mcp', value => { this.mcpServerState(value, name); });
+        const result = await this.readResource(st, sdk, 'mcp');
         const server = result.servers.find(server => server.name === name);
-        const actual = this.mcpServerState(result, name);
+        const actual = this.mcpServerState(result, name, server);
         operation.status = actual.status;
         applied = actual.enabled === enabled && actual.status !== 'not_configured'
           && (!enabled || actual.status === 'connected');
@@ -1458,12 +1550,15 @@ export class Engine {
         // Enable may reject while a native connector is still alive. A failed
         // read-back is unknown, not evidence that the connector is disabled.
         let result: Awaited<ReturnType<CopilotSession['rpc']['mcp']['list']>>;
-        try { result = await this.readResource(st, sdk, 'mcp', value => { this.mcpServerState(value, name); }); }
+        let actual: Pick<McpServerSession, 'status' | 'enabled'>;
+        try {
+          result = await this.readResource(st, sdk, 'mcp');
+          actual = this.mcpServerState(result, name, result.servers.find(server => server.name === name));
+        }
         catch (readError) {
           this.assertAvailable();
           throw new Error(`${operation.error}; MCP state is unknown: ${messageOf(readError)}`);
         }
-        const actual = this.mcpServerState(result, name);
         operation.status = actual.status;
         if (result.host?.pendingConnections.length) operation.state = 'settling';
         return { ok: false, applied, sessionId: id, name,
@@ -1493,8 +1588,9 @@ export class Engine {
         // are intentionally not restored by Cockpit.
         await this.withSession(st, sdk, () => sdk.rpc.mcp.reload());
         const result = await this.readResource(st, sdk, 'mcp');
+        const disabled = new Set(result.host?.disabledServers);
         const failed = result.servers.filter(server => {
-          const { status, enabled } = this.mcpServerState(result, server.name);
+          const { status, enabled } = this.mcpServerState(result, server.name, server, disabled);
           return status === 'not_configured' || (enabled && status !== 'connected');
         });
         if (failed.length || result.host?.pendingConnections.length) throw new Error(`MCP connections not confirmed: ${failed.map(server => server.name).join(', ') || 'pending'}`);
@@ -1555,7 +1651,7 @@ export class Engine {
       await this.withSession(st, sdk, () => sdk.rpc.skills[enabled ? 'enable' : 'disable']({ name }));
       const skill = (await this.withSession(st, sdk, () => sdk.rpc.skills.list())).skills.find(skill => skill.name === name);
       if (!skill || skill.enabled !== enabled) throw new Error('Native skill state did not confirm the requested change');
-    });
+    }, ['skills', 'usage']);
   }
 
   async refreshSkills(): Promise<void> {
@@ -1570,7 +1666,7 @@ export class Engine {
         const result = await sdk.rpc.skills.reload();
         const diagnostics = [...result.errors, ...result.warnings];
         if (diagnostics.length) throw new Error(`Native skill reload diagnostics: ${diagnostics.join('; ')}`);
-      }, 'read');
+      }, 'read', undefined, ['skills', 'usage']);
     }
   }
 
@@ -1609,7 +1705,7 @@ export class Engine {
       const entry = this.scheduleEntry(created);
       if (result.kind !== 'text' && result.kind !== 'completed') return { entry, error: `Native schedule created with unexpected command outcome: ${result.kind}` };
       return { entry };
-    }));
+    }), ['schedule']);
   }
   private scheduleMutation<T>(st: State, work: () => Promise<T>): Promise<T> {
     const next = st.scheduleGate.then(work);
@@ -1632,7 +1728,7 @@ export class Engine {
     return this.operation(id, (sdk, st) => this.scheduleMutation(st, async () => {
       const result = await this.withSession(st, sdk, () => sdk.rpc.schedule.stop({ id: scheduleId }));
       return !!result.entry;
-    }));
+    }), ['schedule']);
   }
 
   async respondAsk(id: string, requestId: string, answer: string, wasFreeform: boolean): Promise<void> {
@@ -1667,7 +1763,7 @@ export class Engine {
     if (confirm !== true) throw new Error('Permanent deletion is irreversible; explicit confirm:true is required');
     this.assertAvailable();
     if (this.stopped || this.lifecycle || this.startPromise || this.removing.has(id)) throw new Error('Session lifecycle transition is in progress');
-    const productOwned = this.prefs.isPinned(id) || !!this.prefs.inbox.sessions[id];
+    const productOwned = this.prefs.isPinned(id) || !!this.prefs.inboxEntry(id);
     const st = this.sessions.get(id) ?? (productOwned ? stateFor(id) : await this.state(id));
     this.assertAdmission(st);
     if (this.removing.has(id)) throw new Error('Session removal is in progress');
@@ -1747,8 +1843,17 @@ export class Engine {
     return { path: target, parent: dirname(target) === target ? null : dirname(target), entries };
   }
 
-  private invalidate(st: State): void {
-    if (this.sessions.get(st.id) === st) this.emit({ type: 'session/invalidated', sessionId: st.id });
+  private invalidate(st: State, resources?: SessionResource[]): void {
+    if (this.sessions.get(st.id) !== st) return;
+    if (resources) {
+      resources = resources.filter(resource => {
+        if (!st.resourceWrites.has(resource)) return true;
+        st.pendingInvalidations.add(resource);
+        return false;
+      });
+      if (!resources.length) return;
+    }
+    this.emit({ type: 'session/invalidated', sessionId: st.id, resources });
   }
 
   private patch(st: State, fields: Partial<LiveMeta>, silent = false): void {
@@ -1761,7 +1866,9 @@ export class Engine {
     const attention = nextAttention(previous, { status: fields.status ?? '',
       choicePending: st.decisions.size > 0, silent });
     this.emit({ type: 'session/patch', ...structuredClone(fields), sessionId: st.id });
-    this.invalidate(st);
+    // Patches already carry their changed values. Read leases and attention do
+    // not invalidate native resources. A settled lifecycle needs a fresh source.
+    if (fields.loaded !== undefined || fields.closing === false) this.invalidate(st);
     if (attention === 'choice') {
       const decisions = this.decisionFields(st);
       const request = decisions.ask ?? decisions.planRequest ?? decisions.elicitation;
@@ -1773,7 +1880,7 @@ export class Engine {
   }
 
   private inboxFields(id: string) {
-    const entry = this.prefs.inbox.sessions[id];
+    const entry = this.prefs.inboxEntry(id);
     return { attention: entry?.attention ?? null, attnId: entry?.attnId ?? 0, seenId: entry?.seenId ?? 0 };
   }
 

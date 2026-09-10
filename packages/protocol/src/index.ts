@@ -548,6 +548,17 @@ export const SessionMeta = z.object({
 });
 export type SessionMeta = z.infer<typeof SessionMeta>;
 
+// Resource names describe read dependencies, not cached native state. Omission
+// in a projection means "not requested", never an empty/default value.
+export const MetaResource = z.enum(['identity', 'control', 'queue', 'model', 'models', 'mode', 'todo', 'schedule']);
+export type MetaResource = z.infer<typeof MetaResource>;
+export const SessionResource = z.enum([...MetaResource.options, 'plan', 'skills', 'mcp', 'tasks', 'instructions', 'usage']);
+export type SessionResource = z.infer<typeof SessionResource>;
+export const SessionProjection = SessionMeta.partial().required({ sessionId: true, loaded: true });
+export type SessionProjection = z.infer<typeof SessionProjection>;
+export const PanelSection = SessionPanels.keyof();
+export type PanelSection = z.infer<typeof PanelSection>;
+
 // A compact, request-owned view of an existing session, read asynchronously
 // by the `session/list` intent. Used by the cockpit MCP so an agent
 // can discover sessions (and pick one to rename / toggle MCP-skills on) without
@@ -576,7 +587,7 @@ export const Snapshot = z.object({
   agentStatus: AgentStatus,
   models: z.array(ModelOption),
   vapidPublicKey: z.string().nullable().optional(),
-  sessions: z.array(SessionMeta),
+  sessions: z.array(SessionMeta).describe('Sidebar/control summaries, not full session/get details. Queue bodies, model inventories and todos are read on demand.'),
   // Core-owned global inbox projection. Persist revision across restarts; do not
   // synthesize it from transport clocks. Legacy servers may omit these fields.
   unreadCount: NotificationCounter.optional(),
@@ -591,7 +602,11 @@ export const ServerEvent = z.discriminatedUnion('type', [
   Snapshot,
   z.object({ type: z.literal('agent/status'), status: AgentStatus }),
   z.object({ type: z.literal('session/added'), session: SessionMeta }),
-  z.object({ type: z.literal('session/invalidated'), sessionId: z.string() }),
+  z.object({
+    type: z.literal('session/invalidated'), sessionId: z.string(),
+    // Absent on older hosts: consumers must reconcile all their dependencies.
+    resources: z.array(SessionResource).min(1).optional(),
+  }),
   // A partial SessionMeta patch: every field optional (carry only what changed),
   // `sessionId` required as the key. Derived from SessionMeta so adding a field
   // there automatically makes it patchable — no parallel field list to maintain.
@@ -851,6 +866,11 @@ export const Intents = {
     body: z.object({ sessionId: z.string() }),
     result: SessionPanels,
   },
+  'session/panel': {
+    description: 'Read one native panel section on an already-loaded session. Other sections are not read. Full five-section compatibility is available through session/panels.',
+    body: z.object({ sessionId: z.string(), section: PanelSection }),
+    result: z.object({ items: z.array(PanelItem) }),
+  },
   respondAsk: {
     body: z.object({ sessionId: z.string(), requestId: z.string(), answer: z.string(), wasFreeform: z.boolean() }),
     result: z.object({ ok: z.boolean() }),
@@ -884,13 +904,18 @@ export const Intents = {
     body: z.object({}),
     result: z.object({ sessions: z.array(SessionBrief) }),
   },
-  // The full authoritative SessionMeta for ONE live session — the same object the
-  // SSE snapshot projects. Returns the operational ids a maintainer/agent needs to
+  // Full authoritative metadata for ONE session, unlike the narrowed SSE
+  // summary. Returns the operational ids a maintainer/agent needs to
   // act (queue itemId, ask/plan/elicitation requestId), the live model/mode/status,
   // todo + attention, etc. Returns meta:null if the id isn't a known live session.
   'session/get': {
     body: z.object({ sessionId: z.string() }),
     result: z.object({ meta: SessionMeta.nullable() }),
+  },
+  'session/resources': {
+    description: 'Read only requested metadata resources, without loading a session. Omitted fields were not requested, not cleared. loaded:false invalidates all previous native fields; meta:null means unknown session. Control display is not permission to delete, unload or restart; mutations independently confirm fresh safety.',
+    body: z.object({ sessionId: z.string(), resources: z.array(MetaResource).min(1).max(MetaResource.options.length) }),
+    result: z.object({ meta: SessionProjection.nullable() }),
   },
   'push/subscribe': {
     description: 'Subscribe to Web Push notifications with a public HTTPS endpoint and required p256dh/auth keys.',

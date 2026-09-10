@@ -26,6 +26,7 @@ const LOAD_AWARE_INTENTS = new Set([
   'session/fork',
   'session/plan',
   'session/panels',
+  'session/panel',
   'session/reload',
   'session/compact',
   'session/auto-name',

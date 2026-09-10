@@ -61,6 +61,36 @@ backend projection. There is no periodic session-list/resource refresh. The brow
 can keep its currently displayed data and requests fresh metadata after an
 invalidation; this is not a shared application-wide request manager.
 
+`session/list` reads identity, current model and control status, without model
+inventories, todos or schedules. Snapshot/SSE adds the mode and sidebar schedule
+count, but not queue bodies, model inventories or todos. `session/get` preserves
+the full detail contract. `session/resources` selects metadata dependencies
+(`identity`, `control`, `queue`, `model`, `models`, `mode`, `todo`, `schedule`);
+an omitted field was not requested, not cleared. `loaded:false` clears prior
+native fields, and `meta:null` means the session is unknown. Identity and mode
+in one response share `metadata.snapshot.currentMode`; `model.getCurrent` still
+supplies effort/tier. A list request reuses its indexed modification time rather
+than re-fetching every record. `metadataLimit:0` is not a sidebar substitute.
+
+Resource invalidations carry explicit dependencies. Read-lease patches publish
+balanced operation counts without invalidating native data. Mutation-scoped
+resource hints coalesce native events with the final readback; control/queue
+hints still flow while work is active. Web refreshes only sidebar and mounted
+consumers, fences source changes, and discards late invalidated fields even if
+their consumer has since unmounted. A dirty read repeats only affected resources.
+No event fills a backend native-state cache. `/status` uses its own projection,
+not the UI snapshot, and separately obtains a fresh busy confirmation.
+
+The public SDK has no queue-count getter: exact control status still requires
+`queue.pendingItems` (including its native text payload), tasks and MCP host
+state to detect queue-only, steering-only or connector-only work. Omitting queue
+bodies from the summary response is not a claim of eliminating this necessary
+native safety read. Display results never authorize destructive operations.
+`session/panel` reads one section; `session/panels` and the default MCP panel tool
+retain the full five-section contract. MCP's optional `section` selects the
+single-section endpoint. Context uses only tasks, instructions and usage; model
+inventories are read when Settings is mounted.
+
 Unloaded sessions have no retained metadata State; an unfinished host delivery
 or cleanup contact may outlive its SDK handle, without retaining resource values.
 Native index metadata is read
@@ -87,6 +117,7 @@ The remaining backend ownership has a specific lifetime, not a general
 | Ask/plan/elicitation request IDs, validation and resolve/reject closures | These are the actual waiting SDK handlers. Public permission-request APIs do not resolve these distinct callbacks. Release on answer, cancellation or detach; unanswered decisions block teardown. |
 | Pending reply-notification summary/event ID and naming one-shot guards | A durable transcript cannot recover whether this host has delivered an unread transition or already attempted an uncertain auxiliary query. Release the reply candidate on delivery/new turn/cancel or failed-runtime teardown. A normal close attempts delivery; a failed product write retains the undelivered contact for explicit recovery/cancel rather than silently losing it. Naming attempt guards end with the handle. The deferred-naming bit is an outstanding wakeup waiting for this host's reads to settle, cleared on release or detach. No full reply is needed. |
 | Notification/control read promise, dirty bit and event revision | Protect the single in-flight confirmation against newer events; no native read result is retained. Cleared when confirmation settles or the handle closes. |
+| Mutation-scoped resource notification holds and pending resource names | Coalesce duplicate invalidation hints, not native values. Names are released when the scoped operations settle; no read result is retained or reused. |
 | Engine/client lifecycle failure and connection status | Records host connection failure and uncertain cleanup, not native session display state. Lasts until successful stop or host replacement. |
 | HTTP/SSE connections, initial-response delivery frames and pending push deliveries | These are active deliveries, not reusable response caches. Frames are bounded by SSE backpressure limits and released after initial snapshot delivery or disconnect; promises end after delivery. |
 | Pin choices, unread waterlines, Composer drafts, retained files/associations, push registrations | Independent Cockpit/user data which the native session cannot reconstruct. Preserved by this change and changed only through their existing product operations. The separately authorized retirement of soft deletion removes its legacy marks, not native sessions or managed files. |
@@ -113,7 +144,7 @@ keep this one-level menu reachable on short screens. Detail panels contain only
 the current page's owner-labelled title, Close/Back, page actions and content;
 there are no page-switching tabs or More menu. The chat title remains a shortcut
 to Settings. On narrow screens switching pages means Back to chat, then its menu.
-Settings reads snapshot identity/model state only; opening it does not
+Settings reads summary identity and on-demand model state only; opening it does not
 load plan or MCP resources. Unloaded native MCP/Skills pages require an explicit
 resume before claiming current per-session state. Existing direct URLs remain
 valid, and mode controls and the allow-all permission policy are unchanged.

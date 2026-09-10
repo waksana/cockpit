@@ -4,6 +4,7 @@
 // is the foundation: other tools depend on the ids it returns.
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { PanelSection } from '@cockpit/protocol';
 import { CockpitError, protocolIntent as intent } from '../cockpit.js';
 import { ResponseFormat, ok, fail, capped, cappedJson, type ToolResult, type PanelItem } from '../shared.js';
 
@@ -72,18 +73,25 @@ export function registerReadTools(server: McpServer): void {
     {
       title: 'Get a session info panels',
       description:
-        "Read a session's info-panel contents — the same five panels the UI's info panel shows: " +
+        "Read a session's native resource panels (all five by default, or only the requested section): " +
         'skills, mcpServers, tasks (sub-agents/tools), instructionSources ' +
         '(AGENTS.md and friends in effect), and schedules, preserving each label, sublabel and enabled flag. ' +
         'Requires a loaded session; explicitly use cockpit_reload_session if unloaded.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id'),
+        section: PanelSection.optional().describe('Read only this section; omit for all five. Unrequested native resources are not read.'),
         response_format: ResponseFormat.describe("'markdown' (human) or 'json' (machine)"),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
-    async ({ session_id, response_format }): Promise<ToolResult> => {
+    async ({ session_id, section, response_format }): Promise<ToolResult> => {
       try {
+        if (section) {
+          const { items } = await intent('session/panel', { sessionId: session_id, section });
+          return ok(response_format === 'json' ? cappedJson({ section, items })
+            : capped(`# ${section} for ${session_id}\n\n${items.map(item =>
+              `- ${item.label}${item.enabled === undefined ? '' : ` · enabled=${item.enabled}`}${item.sublabel ? `\n    ${item.sublabel}` : ''}`).join('\n') || '_none_'}`));
+        }
         const panels = await intent('session/panels', { sessionId: session_id });
         if (response_format === 'json') return ok(cappedJson(panels));
         const sect = (name: string, items: PanelItem[], explicitEnabled = false) => {

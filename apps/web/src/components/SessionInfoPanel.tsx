@@ -1,10 +1,12 @@
 // Session settings panel — opened by the chat title or the shared session menu.
-// It intentionally reads only snapshot metadata and model state; native plan,
+// It reads identifying summary fields and on-demand model state; native plan,
 // MCP and Skills resources are owned by their dedicated pages.
 
+import { useCallback } from 'react';
 import { useCockpit } from '../net/store';
+import { useSessionResource } from '../lib/useSessionResource';
 import { useKeyedAction } from '../lib/useKeyedResource';
-import { PanelPageShell, PermissionPolicy, SessionResume } from './SessionPanelKit';
+import { PanelPageShell, PermissionPolicy, ResourceStatus, SessionResume } from './SessionPanelKit';
 import type { ChatSession, ModelOption } from '../net/types';
 
 type ContextTier = 'default' | 'long_context';
@@ -97,6 +99,8 @@ function InfoDetails({ session, models, onClose, onSetModel }: SessionInfoPanelP
   const authoritative = useCockpit((s) => s.sessions.find(row => row.sessionId === sid));
   const loaded = authoritative?.loaded ?? session.loaded;
   const action = useKeyedAction(`info:${sid}`);
+  const load = useCallback((signal: AbortSignal) => useCockpit.getState().getResources(sid, ['model', 'models'], signal), [sid]);
+  const resource = useSessionResource(sid, `models:${sid}`, load, 0, ['model', 'models']);
 
   return (
     <PanelPageShell title={`会话设置 · ${session.title}`} onClose={onClose}>
@@ -108,7 +112,8 @@ function InfoDetails({ session, models, onClose, onSetModel }: SessionInfoPanelP
 
       <SessionResume sessionId={sid} required={!loaded} />
       {!loaded && <div className="info-empty">未加载：模型、模式及资源状态不可用，不显示上次读值或全局默认值。</div>}
-      {loaded && <ModelControls session={session} models={models} disabled={!connected || action.busy}
+      <ResourceStatus status={resource.status} failed={resource.failed} />
+      {loaded && <ModelControls session={{ ...session, ...resource.data }} models={models} disabled={!connected || action.busy || resource.pending || resource.failed}
         onSetModel={(model, opts) => { void action.run(() => onSetModel(model, opts)); }} />}
       {action.error && <div className="info-empty" role="alert">设置失败：{action.error}</div>}
       <PermissionPolicy />

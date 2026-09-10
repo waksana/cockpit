@@ -20,6 +20,7 @@ export function resourceError(error: unknown): string {
 export function createKeyedAsync<T>(key: string, getConnection: () => ResourceConnection) {
   let active = false;
   let request: AbortController | undefined;
+  let refreshRequest: { dirty: boolean; load: (signal: AbortSignal) => T | Promise<T>; promise: Promise<boolean> } | undefined;
   let snapshot: AsyncSnapshot<T> = { error: null, pending: false, generation: -1 };
   const listeners = new Set<() => void>();
   const publish = (next: AsyncSnapshot<T>) => {
@@ -29,11 +30,12 @@ export function createKeyedAsync<T>(key: string, getConnection: () => ResourceCo
   const invalidate = (clearError = false) => {
     const previous = request;
     request = undefined;
+    refreshRequest = undefined;
     previous?.abort();
     publish({ ...snapshot, pending: false, error: null,
       errorCause: clearError ? undefined : snapshot.errorCause, generation: getConnection().connectionGeneration });
   };
-  return {
+  const task = {
     key,
     getSnapshot: () => snapshot,
     subscribe: (listener: () => void) => {
@@ -46,6 +48,30 @@ export function createKeyedAsync<T>(key: string, getConnection: () => ResourceCo
       active = false;
       invalidate(true);
       publish({ error: null, pending: false, generation: getConnection().connectionGeneration });
+    },
+    refresh(load: (signal: AbortSignal) => T | Promise<T>): Promise<boolean> {
+      if (!active || getConnection().connState !== 'open') return Promise.resolve(false);
+      if (refreshRequest) {
+        refreshRequest.dirty = true;
+        refreshRequest.load = load;
+        return refreshRequest.promise;
+      }
+      const refresh = { dirty: true, load, promise: Promise.resolve(false) };
+      refreshRequest = refresh;
+      refresh.promise = Promise.resolve().then(() => refreshRequest !== refresh ? false : task.run(async signal => {
+        let data: T;
+        do {
+          refresh.dirty = false;
+          data = await refresh.load(signal);
+        } while (refresh.dirty && refreshRequest === refresh && !signal.aborted);
+        return data;
+      })).finally(() => {
+        if (refreshRequest !== refresh) return;
+        refreshRequest = undefined;
+        // An invalidation may land between publication and promise settlement.
+        if (refresh.dirty && active) void task.refresh(refresh.load);
+      });
+      return refresh.promise;
     },
     async run(load: (signal: AbortSignal) => T | Promise<T>, onSuccess?: (data: T) => void, exclusive = false): Promise<boolean> {
       const connection = getConnection();
@@ -74,4 +100,5 @@ export function createKeyedAsync<T>(key: string, getConnection: () => ResourceCo
       }
     },
   };
+  return task;
 }

@@ -4,6 +4,7 @@
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Attention } from '@cockpit/protocol';
+import { unreadSessionCount } from '@cockpit/protocol';
 import { applySeen } from './attention.ts';
 import { copilotPath } from './paths.ts';
 
@@ -161,6 +162,16 @@ export class Prefs {
 
   // ── Durable inbox ──────────────────────────────────────────────────────────
   get inbox(): Inbox { return structuredClone(this.data.inbox); }
+
+  inboxEntry(sessionId: string): InboxEntry | undefined {
+    const sessions = this.data.inbox.sessions;
+    return Object.hasOwn(sessions, sessionId) ? { ...sessions[sessionId]! } : undefined;
+  }
+
+  inboxCounts(): { inboxRevision: number; unreadCount: number } {
+    return { inboxRevision: this.data.inbox.revision,
+      unreadCount: unreadSessionCount(Object.values(this.data.inbox.sessions)) };
+  }
 
   setAttention(sessionId: string, attention: Attention | null, eventId?: string): boolean {
     const inbox = this.data.inbox;

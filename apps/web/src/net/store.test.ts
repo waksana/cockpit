@@ -129,7 +129,7 @@ function setup(t: TestContext, store: Store = (useCockpit = createCockpitStore()
     const result = request(index);
     assert.equal(result.url, intentUrl(name));
     let init = result.init;
-    if (name.startsWith('push/') || name === 'session/chat' || name === 'session/get') {
+    if (name.startsWith('push/') || name === 'session/chat' || name === 'session/get' || name === 'session/resources') {
       assert.ok(init?.signal instanceof AbortSignal, 'push requests must have an abort deadline');
       const { signal, ...rest } = init;
       if (name.startsWith('push/')) assert.equal(signal.aborted, false);
@@ -215,6 +215,84 @@ function observe<T>(promise: Promise<T>): Promise<T> {
   return promise;
 }
 
+test('unselected sessions and read-lease patches do not fetch hidden resources or full metadata', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  for (const resource of ['plan', 'skills', 'mcp', 'tasks', 'instructions', 'usage', 'models', 'todo'] as const) {
+    h.source.emit({ type: 'session/invalidated', sessionId: 'b', resources: [resource] });
+  }
+  h.source.emit({ type: 'session/patch', sessionId: 'b', activeOperations: 1 });
+  h.source.emit({ type: 'session/patch', sessionId: 'b', activeOperations: 0 });
+  await setImmediate();
+  assert.equal(h.requests.length, 0);
+  assert.equal(store.getState().resourceRevisions.b?.tasks, 1);
+  h.source.emit({ type: 'session/invalidated', sessionId: 'b', resources: ['schedule'] });
+  await setImmediate();
+  h.assertPost(0, 'session/resources', { sessionId: 'b', resources: ['schedule'] });
+  await h.reply(0, { meta: { sessionId: 'b', loaded: true, scheduleCount: 2 } });
+  assert.equal(session('b', store).scheduleCount, 2);
+  assert.equal(session('b', store).title, 'b', 'narrow projection must not erase identity');
+});
+
+test('late resource changes rerun only their dependency and retain independent fresh fields and decision patches', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a']);
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['model', 'schedule'] });
+  await setImmediate();
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['schedule'] });
+  h.source.emit({ type: 'session/patch', sessionId: 'a', activeOperations: 1, ask: { requestId: 'fresh-ask', question: 'Continue?' } });
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, currentModelId: 'fresh-model', scheduleCount: 1,
+    activeOperations: 0, ask: null } });
+  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['schedule'] });
+  assert.equal(session('a', store).currentModelId, 'fresh-model');
+  assert.equal(session('a', store).scheduleCount, undefined, 'obsolete schedule count is never published');
+  assert.equal(session('a', store).ask?.requestId, 'fresh-ask');
+  assert.equal(session('a', store).activeOperations, 1);
+  await h.reply(1, { meta: { sessionId: 'a', loaded: true, scheduleCount: 2 } });
+  assert.equal(session('a', store).scheduleCount, 2);
+  assert.equal(h.requests.length, 2);
+});
+
+test('source changes fence narrow requests and clear stale native fields immediately', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), currentModelId: 'old', availableModels: [], scheduleCount: 2 }] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['model'] });
+  await setImmediate();
+  h.source.emit({ type: 'session/patch', sessionId: 'a', loaded: false, status: 'unloaded', ask: null });
+  assert.equal(h.request(0).init?.signal?.aborted, true);
+  assert.equal(session('a', store).availableModels, undefined);
+  assert.equal(session('a', store).scheduleCount, undefined);
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, currentModelId: 'obsolete' } });
+  assert.equal(session('a', store).currentModelId, undefined);
+  assert.equal(session('a', store).loaded, false);
+});
+
+test('queue invalidations discard old selected reads after navigation without reading the hidden queue', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  store.setState({ activeId: 'a' });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['queue'] });
+  await setImmediate();
+  store.setState({ activeId: 'b' });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['control', 'queue'] });
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, queue: [{ id: 'removed', text: 'obsolete' }] } });
+  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['control'] });
+  await h.reply(1, { meta: { sessionId: 'a', loaded: true, status: 'idle' } });
+  assert.equal(session('a', store).queue, undefined);
+  store.getState().setActiveId('a');
+  await setImmediate();
+  assert.ok(h.requests.slice(2).some(request => request.url === intentUrl('session/resources')
+    && JSON.parse(String(request.init?.body)).resources.join() === 'queue'));
+  assert.equal(session('a', store).queue, undefined);
+});
 test('native metadata invalidations read only the affected session and discard superseded responses', async t => {
   const store = createCockpitStore();
   const h = setup(t, store);
@@ -222,11 +300,11 @@ test('native metadata invalidations read only the affected session and discard s
   h.snapshot(['a', 'b']);
   h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
   await setImmediate();
-  h.assertPost(0, 'session/get', { sessionId: 'a' });
+  h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode', 'schedule'] });
   h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
   await h.reply(0, { meta: { ...meta('a'), currentModelId: 'obsolete' } });
   assert.notEqual(session('a', store).currentModelId, 'obsolete');
-  h.assertPost(1, 'session/get', { sessionId: 'a' });
+  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode', 'schedule'] });
   await h.reply(1, { meta: { ...meta('a'), currentModelId: 'current' } });
   assert.equal(session('a', store).currentModelId, 'current');
   assert.equal(session('b', store).currentModelId, undefined);
@@ -261,7 +339,7 @@ test('closing invalidations wait for the settling event rather than entering tea
   h.source.emit({ type: 'session/patch', sessionId: 'a', closing: false });
   h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
   await setImmediate();
-  h.assertPost(0, 'session/get', { sessionId: 'a' });
+  h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode', 'schedule'] });
   await h.reply(0, { meta: { ...meta('a'), loaded: false, status: 'unloaded' } });
   assert.equal(session('a', store).loaded, false);
 });
@@ -311,7 +389,7 @@ test('a failed old metadata request does not discard a newer settling invalidati
   h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
   h.request(0).response.resolve(Response.json({ error: 'Transition in progress', code: 'SESSION_TRANSITION' }, { status: 409 }));
   await setImmediate();
-  h.assertPost(1, 'session/get', { sessionId: 'a' });
+  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode', 'schedule'] });
   await h.reply(1, { meta: { ...meta('a'), title: 'after transition' } });
   assert.equal(session('a', store).title, 'after transition');
   assert.equal(h.requests.length, 2);

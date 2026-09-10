@@ -9,8 +9,10 @@ import type { ConnState } from './client';
 import type {
   AgentStatus, Attachment, ChatSession, ModelOption, ServerEvent,
 } from './types';
-import type { IntentBody, IntentResult, NativeChatRead, NativeChatPage } from '@cockpit/protocol';
+import { MetaResource, SessionResource, type SessionMeta } from '@cockpit/protocol';
+import type { IntentBody, IntentResult, NativeChatRead, NativeChatPage, PanelSection, PanelItem, SessionProjection } from '@cockpit/protocol';
 import { invalidateWindow, metaToSession } from './sessionWindow';
+import { applyProjection, cleanProjection } from './sessionResources';
 import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
 import { readMessageHistory } from './messageHistory';
 import { notify } from '../lib/notify';
@@ -32,6 +34,7 @@ interface CockpitState {
   sessions: ChatSession[];
   activeId: string | null;
   globalModels: ModelOption[];
+  resourceRevisions: Record<string, Partial<Record<SessionResource, number>>>;
   // Notification permission state (per-device, GLOBAL — one grant covers all
   // sessions; never per-session). `notifSupported` is false outside an installed
   // PWA on iOS, where Web Push is unavailable.
@@ -66,6 +69,8 @@ interface CockpitState {
   getPlan: (sessionId: string) => Promise<import('./types').SessionPlan>;
   getUsage: (sessionId: string, signal?: AbortSignal) => Promise<IntentResult<'session/usage'>>;
   getPanels: (sessionId: string) => Promise<import('./types').SessionPanels>;
+  getPanel: (sessionId: string, section: PanelSection, signal?: AbortSignal) => Promise<PanelItem[]>;
+  getResources: (sessionId: string, resources: MetaResource[], signal?: AbortSignal) => Promise<SessionProjection>;
   scheduleList: (sessionId: string) => Promise<import('@cockpit/protocol').ScheduleEntry[]>;
   scheduleAdd: (sessionId: string, input: Omit<IntentBody<'schedule/add'>, 'sessionId'>) => Promise<IntentResult<'schedule/add'>>;
   scheduleStop: (sessionId: string, id: number) => Promise<IntentResult<'schedule/stop'>>;
@@ -106,38 +111,62 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     notifPermission: state.permission, notifSupported: state.supported,
   }));
   const seenRequests = new Map<string, number>();
-  const metaRequests = new Map<string, { dirty: boolean; controller: AbortController }>();
-  const refreshMeta = (sessionId: string) => {
+  const summaryResources: MetaResource[] = ['identity', 'control', 'model', 'mode', 'schedule'];
+  const metaRequests = new Map<string, {
+    dirty: Set<MetaResource>; stale: Set<MetaResource>; controller: AbortController; patches: Partial<SessionMeta>;
+  }>();
+  const refreshMeta = (sessionId: string, resources: readonly SessionResource[] = SessionResource.options) => {
     const session = get().sessions.find(row => row.sessionId === sessionId);
+    // New rows arrive through added/snapshot with a complete identity, not an
+    // invalidation racing the native creation acknowledgement.
+    if (!session) return;
     // A closing transition refuses new native reads. Its settling event will
     // invalidate again; keep the current frontend view in the meantime.
     if (session?.closing) return;
     const pending = metaRequests.get(sessionId);
-    if (pending) { pending.dirty = true; return; }
-    const request = { dirty: true, controller: new AbortController() };
+    // Obsolete in-flight fields must be discarded even after their consumer
+    // unmounts. Demand decides rereads, not whether an old result is still valid.
+    if (pending) for (const resource of resources) {
+      const parsed = MetaResource.safeParse(resource);
+      if (parsed.success) pending.stale.add(parsed.data);
+    }
+    const consumed = new Set<SessionResource>(summaryResources);
+    if (sessionId === get().activeId) consumed.add('queue');
+    const needed = resources.filter((resource): resource is MetaResource =>
+      MetaResource.safeParse(resource).success && consumed.has(resource));
+    if (!needed.length) return;
+    if (pending) { for (const resource of needed) pending.dirty.add(resource); return; }
+    const request = { dirty: new Set(needed), stale: new Set<MetaResource>(), controller: new AbortController(), patches: {} as Partial<SessionMeta> };
     const net = client;
     const generation = get().connectionGeneration;
     if (!net?.isOpen) return;
     metaRequests.set(sessionId, request);
     void Promise.resolve().then(async () => {
       do {
-        request.dirty = false;
-        const { meta } = await net.getSession(sessionId, request.controller.signal);
+        const reading = [...request.dirty].filter(resource => resource !== 'queue' || get().activeId === sessionId);
+        request.dirty.clear();
+        if (!reading.length) return;
+        request.stale.clear();
+        request.patches = {};
+        const { meta: response } = await net.getResources(sessionId, reading, request.controller.signal);
         if (client !== net || get().connectionGeneration !== generation || metaRequests.get(sessionId) !== request) return;
-        if (request.dirty) continue;
+        // A late invalidation only dirties its own dependencies; keep other
+        // projected fields, but never publish an obsolete read of that resource.
+        const meta = response ? { ...cleanProjection(response, request.stale), ...request.patches } : null;
         const wasLoaded = get().sessions.find(s => s.sessionId === sessionId)?.loaded;
         set(st => {
           const existing = st.sessions.find(s => s.sessionId === sessionId);
-          const attention = meta && existing ? mergeAttentionPatch(existing, meta) : meta;
-          const sessions = meta
+          const full = meta ? applyProjection(meta, existing) : null;
+          const attention = full && existing ? mergeAttentionPatch(existing, full) : full;
+          const sessions = full
             ? existing ? st.sessions.map(s => s.sessionId === sessionId
-              ? metaToSession({ ...meta,
-                ...(meta.error === undefined && s.error !== undefined ? { error: s.error } : {}),
-                ...(meta.autoNameError === undefined && s.autoNameError !== undefined ? { autoNameError: s.autoNameError } : {}),
-                ...(meta.loaded && meta.compacting === undefined && s.compacting !== undefined ? { compacting: s.compacting } : {}),
-                ...(meta.loaded && meta.intent === undefined && s.intent !== undefined ? { intent: s.intent } : {}),
+              ? metaToSession({ ...full,
+                ...(full.error === undefined && s.error !== undefined ? { error: s.error } : {}),
+                ...(full.autoNameError === undefined && s.autoNameError !== undefined ? { autoNameError: s.autoNameError } : {}),
+                ...(full.loaded && full.compacting === undefined && s.compacting !== undefined ? { compacting: s.compacting } : {}),
+                ...(full.loaded && full.intent === undefined && s.intent !== undefined ? { intent: s.intent } : {}),
                 attention: attention!.attention,
-                attnId: attention!.attnId, seenId: attention!.seenId }, s) : s) : [metaToSession(meta), ...st.sessions]
+                attnId: attention!.attnId, seenId: attention!.seenId }, s) : s) : [metaToSession(full), ...st.sessions]
             : st.sessions.filter(s => s.sessionId !== sessionId);
           return { sessions, unreadCount: patchedUnreadCount(st.unreadCount, st.sessions, sessions) };
         });
@@ -146,7 +175,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
           maybeMaterialize();
         }
         seenActiveIfVisible();
-      } while (request.dirty);
+      } while (request.dirty.size);
     }).catch(error => {
       if (!request.controller.signal.aborted && client === net && get().connectionGeneration === generation) {
         reportUxError('读取会话状态失败', error);
@@ -154,8 +183,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     }).finally(() => {
       if (metaRequests.get(sessionId) !== request) return;
       metaRequests.delete(sessionId);
-      if (request.dirty && !request.controller.signal.aborted && client === net && get().connectionGeneration === generation) {
-        refreshMeta(sessionId);
+      if (request.dirty.size && !request.controller.signal.aborted && client === net && get().connectionGeneration === generation) {
+        refreshMeta(sessionId, [...request.dirty]);
       }
     });
   };
@@ -506,6 +535,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         });
         if (typeof window !== 'undefined' && get().connState === 'open' && client) notifications.connect(client);
         syncInbox([], ev.inboxRevision, true);
+        const active = get().sessions.find(s => s.sessionId === get().activeId);
+        if (active?.loaded && active.queue === undefined) refreshMeta(active.sessionId, ['queue']);
         maybeMaterialize();
         // If we (re)connected straight into a session that already has attention
         // raised and the tab is in front, that counts as seeing it — clears a
@@ -516,16 +547,34 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       case 'agent/status':
         set({ agentStatus: ev.status });
         return;
-      case 'session/invalidated':
-        refreshMeta(ev.sessionId);
+      case 'session/invalidated': {
+        const resources = ev.resources ?? SessionResource.options;
+        set(st => {
+          const revisions = { ...st.resourceRevisions[ev.sessionId] };
+          for (const resource of resources) revisions[resource] = (revisions[resource] ?? 0) + 1;
+          return {
+            resourceRevisions: { ...st.resourceRevisions, [ev.sessionId]: revisions },
+            ...(resources.includes('queue') && st.activeId !== ev.sessionId ? {
+              sessions: st.sessions.map(s => s.sessionId === ev.sessionId ? { ...s, queue: undefined } : s),
+            } : {}),
+          };
+        });
+        refreshMeta(ev.sessionId, resources);
         return;
+      }
       case 'session/added':
+        metaRequests.get(ev.session.sessionId)?.controller.abort();
+        metaRequests.delete(ev.session.sessionId);
         set((st) => {
-          if (st.sessions.some((s) => s.sessionId === ev.session.sessionId)) return st;
-          const sessions = [metaToSession(ev.session), ...st.sessions];
+          const exists = st.sessions.some(s => s.sessionId === ev.session.sessionId);
+          const sessions = exists ? st.sessions.map(s => s.sessionId === ev.session.sessionId ? metaToSession(ev.session, s) : s)
+            : [metaToSession(ev.session), ...st.sessions];
           return { sessions, unreadCount: patchedUnreadCount(st.unreadCount, st.sessions, sessions) };
         });
         syncInbox();
+        if (get().activeId === ev.session.sessionId && ev.session.loaded && ev.session.queue === undefined) {
+          refreshMeta(ev.session.sessionId, ['queue']);
+        }
         maybeMaterialize();
         return;
       case 'session/removed':
@@ -557,9 +606,24 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         const activeId = get().activeId;
         const { type, inboxRevision, unreadCount, ...patch } = ev;
         void type;
+        const pending = metaRequests.get(ev.sessionId);
+        if (pending) {
+          if ('loaded' in patch || patch.closing) {
+            pending.controller.abort();
+            metaRequests.delete(ev.sessionId);
+          } else Object.assign(pending.patches, patch);
+        }
         set((st) => {
           const sessions = st.sessions.map((s) => {
             if (s.sessionId !== ev.sessionId) return s;
+            if (patch.loaded === false) {
+              return metaToSession(mergeAttentionPatch({
+                sessionId: s.sessionId, title: s.title, cwd: s.cwd, createdAt: s.createdAt,
+                lastActivity: s.lastActivity, lastActivitySource: s.lastActivitySource,
+                pinned: s.pinned, attention: s.attention, attnId: s.attnId, seenId: s.seenId,
+                loaded: false, status: 'unloaded', ask: null,
+              }, patch), s);
+            }
             return mergeAttentionPatch(s, patch);
           });
           const current = currentInboxRevision(st.inboxRevision, inboxRevision);
@@ -641,6 +705,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     sessions: [],
     activeId: null,
     globalModels: [],
+    resourceRevisions: {},
     notifPermission: notifications.state().permission,
     notifSupported: notifications.state().supported,
     notifReady: false,
@@ -695,6 +760,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
           seenRequests.delete(previous);
         }
         set({ activeId: id });
+        const active = get().sessions.find(s => s.sessionId === id);
+        if (active?.loaded && active.queue === undefined && snapshotReady) refreshMeta(active.sessionId, ['queue']);
       }
       if (id) seenActiveIfVisible();
       maybeMaterialize();
@@ -770,6 +837,13 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     getPlan(sid) { return nativeRead(sid, (net) => net.getPlan(sid)); },
     getUsage(sid, signal) { return nativeRead(sid, (net) => net.getUsage(sid, signal)); },
     getPanels(sid) { return nativeRead(sid, (net) => net.getPanels(sid)); },
+    getPanel(sid, section, signal) { return nativeRead(sid, net => net.intent('session/panel', { sessionId: sid, section }, signal)).then(r => r.items); },
+    getResources(sid, resources, signal) {
+      return nativeRead(sid, net => net.getResources(sid, resources, signal)).then(({ meta }) => {
+        if (!meta?.loaded) throw new SessionUnloadedError();
+        return meta;
+      });
+    },
     scheduleList(sid) { return nativeRead(sid, (net) => net.scheduleList(sid)).then((r) => r.entries); },
     scheduleAdd(sid, input) { return scheduleMutation(sid, '未能添加定时任务，请核对后再试。', (net) => net.scheduleAdd(sid, input)); },
     scheduleStop(sid, id) { return scheduleMutation(sid, '未能停止定时任务，请刷新列表后核对。', (net) => net.scheduleStop(sid, id)); },

@@ -83,13 +83,12 @@ export function SessionMcp({ session, onClose }: SessionManageProps) {
   const mcpSession = useCockpit((s) => s.mcpSession);
   const mcpToggleSession = useCockpit((s) => s.mcpToggleSession);
   const load = useCallback(() => mcpSession(sessionId), [mcpSession, sessionId]);
-  const resource = useSessionResource(sessionId, `mcp:${sessionId}`, load);
+  const resource = useSessionResource(sessionId, `mcp:${sessionId}`, load, 0, ['mcp']);
   const action = useKeyedAction(`mcp:${sessionId}`);
   const disabled = !resource.valid || action.busy;
   const toggle = (name: string, on: boolean) => {
     void action.run(async () => {
-      try { await mcpToggleSession(sessionId, name, on); }
-      finally { await resource.refresh(); }
+      await mcpToggleSession(sessionId, name, on);
     });
   };
 
@@ -98,7 +97,7 @@ export function SessionMcp({ session, onClose }: SessionManageProps) {
       action={<RefreshBtn disabled={resource.requiresResume || !resource.connected || resource.pending || action.busy} onClick={() => { void resource.refresh(); }} />}
       status={resource.status} failed={resource.failed} error={action.error}
       empty={resource.valid && resource.data?.length === 0 ? '本会话没有可用的 MCP 服务器' : undefined}>
-      <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
+      <SessionResume sessionId={sessionId} required={resource.requiresResume} />
       {resource.valid && !action.error && !!resource.data?.length &&
         <p className="manage-scope">仅本会话有效；重载 MCP 或重新加载会话后采用全局默认。</p>}
       {resource.data?.map((s) => (
@@ -116,12 +115,11 @@ export function SessionSkills({ session, onClose }: SessionManageProps) {
   const skillsSession = useCockpit((s) => s.skillsSession);
   const skillsToggleSession = useCockpit((s) => s.skillsToggleSession);
   const load = useCallback(() => skillsSession(sessionId), [skillsSession, sessionId]);
-  const resource = useSessionResource(sessionId, `skills:${sessionId}`, load);
+  const resource = useSessionResource(sessionId, `skills:${sessionId}`, load, 0, ['skills']);
   const action = useKeyedAction(`skills:${sessionId}`);
   const toggle = (name: string, enabled: boolean) => {
     void action.run(async () => {
-      try { await skillsToggleSession(sessionId, name, enabled); }
-      finally { await resource.refresh(); }
+      await skillsToggleSession(sessionId, name, enabled);
     });
   };
 
@@ -130,7 +128,7 @@ export function SessionSkills({ session, onClose }: SessionManageProps) {
       action={<RefreshBtn disabled={resource.requiresResume || !resource.connected || resource.pending || action.busy} onClick={() => { void resource.refresh(); }} />}
       status={resource.status} failed={resource.failed} error={action.error}
       empty={resource.valid && resource.data?.length === 0 ? '没有可用的 skill' : undefined}>
-      <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
+      <SessionResume sessionId={sessionId} required={resource.requiresResume} />
       {resource.valid && !action.error && !!resource.data?.length &&
         <p className="manage-scope">仅本会话临时有效；卸载后重新加载会话时采用全局配置。</p>}
       {resource.data?.map((s) => (

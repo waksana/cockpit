@@ -92,10 +92,11 @@ export function Files() {
   const [notice, setNotice] = useState<string>();
   const [upload, setUpload] = useState<{ file: File; pending: boolean; error?: string }>();
   const uploadPending = useRef(false);
+  const filterSessionId = onlySession ? sessionId : undefined;
   const load = useCallback((signal: AbortSignal) => useCockpit.getState().filesList({
-    query, offset, limit: 30, ...(onlySession ? { sessionId } : {}),
-  }, signal), [query, offset, onlySession, sessionId]);
-  const resource = useKeyedResource(`files:${query}:${offset}:${onlySession ? sessionId : 'all'}`, load, revision);
+    query, offset, limit: 30, ...(filterSessionId ? { sessionId: filterSessionId } : {}),
+  }, signal), [query, offset, filterSessionId]);
+  const resource = useKeyedResource(`files:${query}:${offset}:${filterSessionId ?? 'all'}`, load, revision, !selectedUrl);
 
   function change(values: Record<string, string | undefined>, replace = true) {
     const next = new URLSearchParams(params);
@@ -164,7 +165,8 @@ export function Files() {
           <div className="files-select">
           <Icon name="newchat" size={20} />
           <select id="files-target-session" value={sessionId} onChange={event => change({
-            sessionId: event.target.value, scope: event.target.value ? params.get('scope') ?? undefined : undefined, offset: undefined,
+            sessionId: event.target.value, scope: event.target.value ? params.get('scope') ?? undefined : undefined,
+            offset: onlySession ? undefined : params.get('offset') ?? undefined,
           })}>
             <option value="">仅浏览，不加入会话</option>
             {sessionId && !validSession && <option value={sessionId} disabled>会话不可用</option>}

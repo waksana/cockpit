@@ -374,7 +374,7 @@ test('metadata-only native availability changes switch chat sources without repl
   await h.start();
   h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
   await setImmediate();
-  assert.ok(h.requests[2].path.endsWith('/session/get'));
+  assert.ok(h.requests[2].path.endsWith('/session/resources'));
   h.requests[2].resolve(Response.json({ meta: meta('a', false) }));
   await setImmediate();
   assert.equal(h.requests[1].signal?.aborted, true);

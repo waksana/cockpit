@@ -42,7 +42,7 @@ export function UsageValues({ value }: { value: Usage }) {
 export function SessionUsage({ sessionId }: { sessionId: string }) {
   const getUsage = useCockpit(s => s.getUsage);
   const load = useCallback((signal: AbortSignal) => getUsage(sessionId, signal), [getUsage, sessionId]);
-  const resource = useSessionResource(sessionId, `usage:${sessionId}`, load);
+  const resource = useSessionResource(sessionId, `usage:${sessionId}`, load, 0, ['usage']);
   return (
     <section className="info-section" aria-label="用量与上下文">
       <div className="info-section-name">用量与上下文

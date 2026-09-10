@@ -25,7 +25,7 @@ function ScheduleDetails({ session, onClose, onAdd, onStop }: SessionSchedulesPr
   const [recurring, setRecurring] = useState(true);
   const sid = session.sessionId;
   const load = useCallback(() => scheduleList(sid), [scheduleList, sid]);
-  const resource = useSessionResource(sid, `schedules:${sid}`, load, session.scheduleCount ?? 0);
+  const resource = useSessionResource(sid, `schedules:${sid}`, load, 0, ['schedule']);
   const action = useKeyedAction(`schedules:${sid}`);
   const busy = action.busy ? kind : null;
   const entries = resource.data;
@@ -37,7 +37,6 @@ function ScheduleDetails({ session, onClose, onAdd, onStop }: SessionSchedulesPr
     setNotice('');
     await action.run(mutation, () => {
       success();
-      void resource.refresh();
     });
   }
 
@@ -66,7 +65,7 @@ function ScheduleDetails({ session, onClose, onAdd, onStop }: SessionSchedulesPr
       <section className="info-section">
         <div className="info-section-name">本会话的定时消息</div>
         <div className="info-section-content">
-          <SessionResume sessionId={sid} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
+          <SessionResume sessionId={sid} required={resource.requiresResume} />
           <ResourceStatus status={resource.status} failed={resource.failed} />
           {resource.valid && entries?.length === 0 && <div className="info-empty">本会话还没有定时任务</div>}
           {entries?.map((entry) => (

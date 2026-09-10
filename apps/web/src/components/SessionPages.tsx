@@ -38,7 +38,7 @@ export function SessionPlan({ session, onClose }: SessionContextProps) {
   const getPlan = useCockpit((s) => s.getPlan);
   const sid = session.sessionId;
   const loadPlan = useCallback(() => getPlan(sid), [getPlan, sid]);
-  const resource = useSessionResource(sid, `plan:${sid}`, loadPlan);
+  const resource = useSessionResource(sid, `plan:${sid}`, loadPlan, 0, ['plan']);
   const plan = resource.data;
   const todos = plan?.todos ?? [];
   const grouped = STATUS_ORDER
@@ -49,7 +49,7 @@ export function SessionPlan({ session, onClose }: SessionContextProps) {
       action={<button type="button" className="btn-icon rp manage-action" aria-label="刷新"
         disabled={resource.requiresResume || !resource.connected || resource.pending}
         onClick={() => { void resource.refresh(); }}><Icon name="reload" size={20} /></button>}>
-      <SessionResume sessionId={sid} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
+      <SessionResume sessionId={sid} required={resource.requiresResume} />
       <ResourceStatus status={resource.status} failed={resource.failed} />
       {resource.valid && !plan?.planMarkdown && todos.length === 0 && <div className="info-empty">本会话还没有计划或任务</div>}
       {plan?.planMarkdown && (
@@ -85,26 +85,27 @@ export function SessionPlan({ session, onClose }: SessionContextProps) {
 }
 
 function ContextDetails({ session, onClose }: SessionContextProps) {
-  const getPanels = useCockpit((s) => s.getPanels);
+  const getPanel = useCockpit((s) => s.getPanel);
   const sid = session.sessionId;
-  const loadPanels = useCallback(() => getPanels(sid), [getPanels, sid]);
-  const panelsResource = useSessionResource(sid, `context-panels:${sid}`, loadPanels);
-  const panels = panelsResource.data;
-
-  const tasks = panels?.tasks ?? [];
-  const instructionSources = panels?.instructionSources ?? [];
+  const loadTasks = useCallback((signal: AbortSignal) => getPanel(sid, 'tasks', signal), [getPanel, sid]);
+  const loadInstructions = useCallback((signal: AbortSignal) => getPanel(sid, 'instructionSources', signal), [getPanel, sid]);
+  const tasksResource = useSessionResource(sid, `context-tasks:${sid}`, loadTasks, 0, ['tasks']);
+  const instructionsResource = useSessionResource(sid, `context-instructions:${sid}`, loadInstructions, 0, ['instructions']);
+  const tasks = tasksResource.data ?? [];
+  const instructionSources = instructionsResource.data ?? [];
   const empty = !tasks.length && !instructionSources.length;
-  const requiresResume = panelsResource.requiresResume;
-  const refresh = () => { void panelsResource.refresh(); };
+  const requiresResume = tasksResource.requiresResume || instructionsResource.requiresResume;
+  const refresh = () => { void tasksResource.refresh(); void instructionsResource.refresh(); };
   return (
     <PanelPageShell title={`上下文资料 · ${session.title}`} onClose={onClose}
       action={<button type="button" className="btn-icon rp manage-action" aria-label="刷新"
-        disabled={requiresResume || !panelsResource.connected || panelsResource.pending}
+        disabled={requiresResume || !tasksResource.connected || tasksResource.pending || instructionsResource.pending}
         onClick={refresh}><Icon name="reload" size={20} /></button>}>
       <SessionUsage key={sid} sessionId={sid} />
-      <SessionResume sessionId={sid} required={requiresResume} onResumed={refresh} />
-      <ResourceStatus status={panelsResource.status && `指令文件和子代理：${panelsResource.status}`} failed={panelsResource.failed} />
-      {panelsResource.valid && empty && <div className="info-empty">本会话还没有上下文</div>}
+      <SessionResume sessionId={sid} required={requiresResume} />
+      <ResourceStatus status={instructionsResource.status && `指令文件：${instructionsResource.status}`} failed={instructionsResource.failed} />
+      <ResourceStatus status={tasksResource.status && `子代理：${tasksResource.status}`} failed={tasksResource.failed} />
+      {tasksResource.valid && instructionsResource.valid && empty && <div className="info-empty">本会话还没有上下文</div>}
       {instructionSources.length > 0 && <PanelSection name="指令文件" items={instructionSources} />}
       {tasks.length > 0 && <PanelSection name="子代理" items={tasks} />}
     </PanelPageShell>

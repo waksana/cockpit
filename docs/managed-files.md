@@ -14,6 +14,13 @@ directory can appear in the list; metadata-less legacy files keep their existing
 read-only compatibility. A missing or corrupt new sidecar is an error, not an
 invitation to guess its identity from the filename.
 
+The Web detail route reads only `files/get`, never the hidden file list (including
+invalid-detail URLs). Sending-target changes do not reload an unchanged all-files
+filter or reset its page. Changing an effective session filter does reload that
+list. Returning to the list, changing search/page, or explicitly refreshing still
+performs the corresponding read; failures remain visible rather than becoming
+empty results.
+
 ## Protected transport and limits
 
 All Web file and intent routes use the same authenticated origin as chat. The

@@ -474,6 +474,8 @@ const intentFixtures = {
     usage: { sessionStartTime: '2026-09-09T00:00:00Z', totalUserRequests: 0,
       lastCallInputTokens: 0, lastCallOutputTokens: 0, modelMetrics: {} } } },
   'session/panels': { body: sid, result: panels },
+  'session/panel': { body: { ...sid, section: 'tasks' }, result: { items: panels.tasks } },
+  'session/resources': { body: { ...sid, resources: ['schedule'] }, result: { meta: { ...sid, loaded: true, scheduleCount: 2 } } },
   respondAsk: { body: { ...sid, requestId: 'r1', answer: 'yes', wasFreeform: false }, result: ok },
   respondPlan: { body: { ...sid, requestId: 'r1', action: 'autopilot_fleet' }, result: ok },
   planSupersede: { body: { ...sid, requestId: 'r1', message: 'Do this instead' }, result: ok },
@@ -529,6 +531,19 @@ for (const name of Object.keys(intentFixtures) as Array<keyof typeof intentFixtu
 
 test('the intent registry contains precisely the retained fixture names', () => {
   assert.deepEqual(Object.keys(Intents).sort(), Object.keys(intentFixtures).sort());
+});
+
+test('resource projections distinguish omitted fields, explicit clearing, unknown sessions and invalid selectors', () => {
+  for (const meta of [{ ...sid, loaded: false }, { ...sid, loaded: true, currentReasoningEffort: null }, null]) {
+    roundTrip(Intents['session/resources'].result, { meta });
+  }
+  for (const resources of [[], ['unknown'], ['plan']]) {
+    assert.equal(Intents['session/resources'].body.safeParse({ ...sid, resources }).success, false);
+  }
+  assert.equal(Intents['session/panel'].body.safeParse({ ...sid, section: 'unknown' }).success, false);
+  roundTrip(ServerEvent, { type: 'session/invalidated', ...sid, resources: ['tasks', 'instructions'] });
+  roundTrip(ServerEvent, { type: 'session/invalidated', ...sid });
+  assert.equal(ServerEvent.safeParse({ type: 'session/invalidated', ...sid, resources: ['unknown'] }).success, false);
 });
 
 const removedExports = [

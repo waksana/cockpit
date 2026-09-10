@@ -20,7 +20,7 @@ export function useKeyedResource<T>(
   canAutoRefresh?: (snapshot: AsyncSnapshot<T>) => boolean,
 ) {
   const { task, snapshot, connected, generation } = useOwnedAsync<T>(key, enabled);
-  const refresh = useCallback((read = load) => task.run(read), [task, load]);
+  const refresh = useCallback((read = load) => task.refresh(read), [task, load]);
   useLayoutEffect(() => {
     if (connected && enabled && (!canAutoRefresh || canAutoRefresh(task.getSnapshot()))) void refresh();
   }, [task, refresh, connected, generation, revision, enabled, canAutoRefresh]);

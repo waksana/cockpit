@@ -129,6 +129,10 @@ mockHttp((res, req) => {
         lastCallInputTokens: 321, lastCallOutputTokens: 45, modelMetrics: {} },
     });
     if (name === 'session/panels') return send(panels);
+    if (name === 'session/panel') {
+      const { section } = Intents['session/panel'].body.parse(body);
+      return send({ items: panels[section] });
+    }
     if (name === 'schedule/list') return send({ entries: scheduleEntries });
     if (name === 'schedule/stop') return send({ ok: scheduleStopped });
     if (name === 'skills/global') return send({ skills: [{ name: 'review', description: 'Review changes', source: 'project' }] });
@@ -264,6 +268,17 @@ test('schedule panels retain the model-controlled label and next-run time in bot
   assert.deepEqual(requests.map(({ path }) => path), ['/intent/session/panels', '/intent/session/panels']);
 });
 
+test('MCP single-section panel reads make exactly one narrow HTTP request in either format', async () => {
+  assert.deepEqual(await json('cockpit_get_panels', { session_id: 'B', section: 'tasks', response_format: 'json' }),
+    { section: 'tasks', items: panels.tasks });
+  const markdown = await call('cockpit_get_panels', { session_id: 'B', section: 'instructionSources' });
+  assert.equal(markdown.isError, false);
+  assert.match(markdown.text, /instructionSources/);
+  assert.deepEqual(requests.map(({ path }) => path), ['/intent/session/panel', '/intent/session/panel']);
+  assert.deepEqual(requests.map(({ body }) => body), [
+    { sessionId: 'B', section: 'tasks' }, { sessionId: 'B', section: 'instructionSources' },
+  ]);
+});
 for (const outcome of ['success', 'not-found', 'failure'] as const) {
   test(`schedule stop tool faithfully reports ${outcome} with one stop request and no list`, async () => {
     scheduleStopped = outcome === 'success';

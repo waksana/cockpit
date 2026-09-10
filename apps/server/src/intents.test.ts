@@ -95,6 +95,9 @@ const engine: ServerEngine & { attentionCount(): number } = {
   getPanels: async (...args) => record('getPanels', args, {
     skills: [], mcpServers: [], tasks: [], instructionSources: [], schedules: [],
   }),
+  getPanel: async (...args) => record('getPanel', args, []),
+  getResources: async (...args) => record('getResources', args, busySession),
+  status: async (...args) => record('sessionStatus', args, sessions),
   respondAsk: (...args) => record('respondAsk', args, undefined),
   respondPlan: (...args) => record('respondPlan', args, undefined),
   planSupersede: async (...args) => record('planSupersede', args, undefined),
@@ -216,6 +219,8 @@ const cases = {
   'session/plan': { body: { sessionId: 's' }, method: 'getPlan', args: ['s'] },
   'session/usage': { body: { sessionId: 's' }, method: 'getUsage', args: ['s'] },
   'session/panels': { body: { sessionId: 's' }, method: 'getPanels', args: ['s'] },
+  'session/panel': { body: { sessionId: 's', section: 'tasks' }, method: 'getPanel', args: ['s', 'tasks'] },
+  'session/resources': { body: { sessionId: 's', resources: ['control'] }, method: 'getResources', args: ['s', ['control']] },
   respondAsk: { body: { sessionId: 's', requestId: 'r', answer: 'yes', wasFreeform: true }, method: 'respondAsk', args: ['s', 'r', 'yes', true] },
   respondPlan: { body: { sessionId: 's', requestId: 'r', action: 'interactive' }, method: 'respondPlan', args: ['s', 'r', 'interactive'] },
   planSupersede: { body: { sessionId: 's', requestId: 'r', message: 'instead' }, method: 'planSupersede', args: ['s', 'r', 'instead'] },
@@ -1423,6 +1428,13 @@ test('health/status and restart use only injected state and retain every busy sa
   }
 });
 
+test('status reads its projection and fresh safety, not the UI snapshot or global models', async () => {
+  const status = await app.inject({ method: 'GET', url: '/status' });
+  assert.equal(status.statusCode, 200);
+  assert.ok(calls.some(call => call.method === 'sessionStatus'));
+  assert.ok(!calls.some(call => ['snapshot', 'getMeta'].includes(call.method)));
+  assert.equal(status.json().busy, 1);
+});
 async function openViewer(expected: Snapshot = projectedSnapshot()) {
   const connection = await app.inject({ method: 'GET', url: '/events', payloadAsStream: true });
   const frames: string[] = [];

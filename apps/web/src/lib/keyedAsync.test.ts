@@ -22,6 +22,41 @@ function setup<T>(key = 'session:a') {
   };
 }
 
+test('resource refresh coalesces same-turn triggers and loops once for a late dirty read', async () => {
+  const { task } = setup<string>();
+  let reads = 0;
+  const held = deferred<string>();
+  const load = () => { reads++; return reads === 1 ? held.promise : Promise.resolve('current'); };
+  const result = task.refresh(load);
+  assert.equal(task.refresh(load), result);
+  await Promise.resolve();
+  assert.equal(reads, 1);
+  task.refresh(load);
+  task.refresh(load);
+  held.resolve('obsolete');
+  assert.equal(await result, true);
+  assert.equal(reads, 2);
+  assert.equal(task.getSnapshot().data, 'current');
+});
+
+test('a deactivated pending resource cannot start after a source change or overwrite a new source', async () => {
+  const { task } = setup<string>();
+  const old = task.refresh(() => assert.fail('obsolete source must not start'));
+  task.deactivate(true);
+  task.activate();
+  const fresh = task.refresh(async () => 'new-source');
+  assert.equal(await old, false);
+  assert.equal(await fresh, true);
+  assert.equal(task.getSnapshot().data, 'new-source');
+});
+
+test('an explicit offline refresh neither starts a read nor schedules a dirty retry', async () => {
+  const h = setup<string>();
+  h.offline();
+  assert.equal(await h.task.refresh(() => assert.fail('offline read')), false);
+  h.task.deactivate();
+  assert.equal(await h.task.refresh(() => assert.fail('unmounted read')), false);
+});
 test('first read exposes pending and a real failure, not a false empty resource', async () => {
   const { task } = setup<string[]>();
   const request = deferred<string[]>();
