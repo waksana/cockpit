@@ -120,6 +120,26 @@ as a finished message load. The initial live tail is captured only once.
 Hidden tool rows, including skill and plan-mode calls, retain their ownership;
 suppressing duplicate presentation must not trigger extra history reads.
 
+Older pages are folded as a prefix, not by replaying the entire loaded window.
+Browser-local indexes point into the retained display events: message/tool
+dependents, agent aliases, and each agent's leading reasoning/turn boundary.
+A newly supplied owner repairs its waiting tool/child events; a leading thought
+replays only the dependent boundary and its tool updates. Those results merge
+into the existing fold in native append order, preserving untouched message
+objects, ownership indexes, live partials, and reading-anchor IDs. Bootstrap
+adoption appends only events beyond the last overlap; empty/duplicate pages
+advance positions without folding or replacing the view.
+Reasoning-only rows use their closing native event ID rather than the earliest
+reasoning segment as their stable identity, so prepending earlier thought
+segments extends one row without duplicating it or losing its reading anchor.
+
+Projection calls are proportional to new events plus the dependency frontier
+actually replayed, not the full loaded suffix on every page. A distant missing
+owner or an unbroken reasoning chain can still have a large frontier; immutable
+message-array assembly and existing agent routing also have their own costs.
+This is a local projection optimization, not a reduction in all native reads,
+a fixed action budget, a truncated reading window, or a server chat cache.
+
 There is no eight-page hard stop. Completing a message/ownership boundary and
 filling two screens can require more than one page, especially with low visible
 density or a distant parent task. The user explicitly chose to preserve these

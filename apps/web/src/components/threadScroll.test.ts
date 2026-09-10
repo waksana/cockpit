@@ -5,6 +5,8 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { acknowledgeInView } from '../lib/draft';
 import type { ChatSession } from '../net/types';
+import type { NativeChatEvent, NativeChatRead } from '@cockpit/protocol';
+import { NativeWindow } from '../net/nativeWindow';
 import { Thread } from './Thread';
 import { firstVisibleMessage, observeThreadScroll, ThreadScroll, type ThreadScrollView } from './threadScroll';
 
@@ -106,6 +108,50 @@ function fixture(top = 700) {
   const scroll = new ThreadScroll(view, frames, () => { notices.follows++; });
   return { view, frames, scroll, notices };
 }
+
+test('incremental backward owner repair and interleaved live rows retain the actual reading anchor', () => {
+  const window = new NativeWindow(undefined, true);
+  const message = (id: string): NativeChatEvent => ({
+    id, type: 'assistant.message', timestamp: 1, data: { messageId: id, content: id },
+  });
+  const accept = (events: NativeChatEvent[], direction: 'backward' | 'forward' = 'backward') => {
+    const request: NativeChatRead = {
+      sessionId: 'anchor-fixture', source: 'live', direction, max: 32, waitMs: 0, bootstrap: false, agentScope: 'all',
+    };
+    window.accept({
+      sessionId: request.sessionId, source: request.source, direction, events,
+      cursor: 'fixture-cursor', hasMore: true, cursorStatus: 'ok', read: { rpc: 1, events: events.length },
+    }, request);
+  };
+  accept([
+    { id: 'answer', type: 'tool.execution_complete', timestamp: 1, data: {
+      toolCallId: 'ask', result: { content: 'User responded: synthetic answer' },
+    } },
+    ...Array.from({ length: 10 }, (_, i) => message(`m${i}`)),
+  ]);
+  const { view, frames, scroll } = fixture(325);
+  scroll.interact();
+  const anchor = scroll.position();
+  const stable = window.snapshot().messages[3];
+  accept([message('live')], 'forward');
+  accept([{ ...message('owner'), data: {
+    messageId: 'owner', content: 'Question', toolRequests: [{ toolCallId: 'ask', name: 'ask_user' }],
+  } }]);
+  view.rows = window.snapshot().messages.map(message => ({ id: message.id, height: 100 }));
+  scroll.changed();
+  frames.flush();
+  assert.deepEqual(scroll.position(), anchor);
+  assert.equal(window.snapshot().messages.find(message => message.id === 'm3'), stable);
+  assert.equal(view.top, 525);
+  accept([message('older')]);
+  accept([message('more-live')], 'forward');
+  view.rows = window.snapshot().messages.map(message => ({ id: message.id, height: 100 }));
+  scroll.changed();
+  frames.flush();
+  assert.deepEqual(scroll.position(), anchor);
+  assert.equal(view.top, 625);
+  scroll.dispose();
+});
 
 test('each mounted scroll adapter starts at latest and real gestures cancel queued following', t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });

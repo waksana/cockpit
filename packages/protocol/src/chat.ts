@@ -136,9 +136,12 @@ function reasoningMsg(state: FoldState, rid: string, ts: number): ChatMessage {
   });
 }
 
-function flushReasoning(state: FoldState): string[] {
+function flushReasoning(state: FoldState, boundaryId?: string): string[] {
   const pending = state.pendingReasoning;
   if (!pending?.thought) return [];
+  // Older pages can extend the first reasoning segment; the closing event is
+  // the stable identity of a reasoning-only row and its reading anchor.
+  if (boundaryId) pending.id = `stream-${boundaryId}`;
   upsert(state, pending);
   state.pendingReasoning = undefined;
   return [pending.id];
@@ -429,7 +432,7 @@ export function foldEvent(state: FoldState, ev: SdkEvent, projection?: FoldProje
   const result = foldLocalEvent(route.fold, ev, projection);
   if (result.changed.length && route.cards[0]) {
     return { changed: [route.cards[0].id], metaChanged: result.metaChanged,
-      nestedChanged: [...route.cards.map(card => card.id), ...result.changed] };
+      nestedChanged: [...route.cards.map(card => card.id), ...result.changed, ...result.nestedChanged ?? []] };
   }
   return result;
 }
@@ -474,15 +477,16 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       ?? [...state.subFolds].find(([, sub]) => !!ev.agentId && sub.agentIds.has(ev.agentId))?.[0] ?? '';
     const card = subCardMsg(state, toolCallId);
     if (!card?.subagent) return empty;
+    let nestedChanged: string[] = [];
     if (ev.type !== 'subagent.configured') {
       card.subagent.status = ev.type === 'subagent.failed' || d.cancelled === true ? 'failed' : 'completed';
       const sub = state.subFolds.get(toolCallId);
-      if (sub) { flushReasoning(sub); endTurn(sub); }
+      if (sub) { nestedChanged = flushReasoning(sub, ev.id); endTurn(sub); }
     }
     if (typeof d.model === 'string') card.subagent.model = d.model;
     if (typeof d.totalToolCalls === 'number') card.subagent.toolCount = d.totalToolCalls;
     if (typeof d.error === 'string') card.subagent.error = d.error;
-    return { changed: [card.id], metaChanged: false };
+    return { changed: [card.id], nestedChanged, metaChanged: false };
   }
   // subagent.selected/deselected carry agent metadata but no per-event work to fold.
   if (ev.type === 'subagent.selected' || ev.type === 'subagent.deselected') return empty;
@@ -493,7 +497,7 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
     case 'session.idle':
     case 'abort':
     case 'assistant.turn_start': {
-      const changed = flushReasoning(state);
+      const changed = flushReasoning(state, ev.id);
       endTurn(state);
       return { changed, metaChanged: false };
     }
@@ -508,7 +512,7 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       // the `skill.invoked` event instead (CLI-style skill pill), so drop this.
       const source = typeof d.source === 'string' ? d.source : '';
       if (source.startsWith('skill-')) return empty;
-      const changed = flushReasoning(state);
+      const changed = flushReasoning(state, ev.id);
       endTurn(state);
       const id = ev.id ?? `u-${state.messages.length}`;
       // An uploaded file/image is sent as a `user.message` whose body leads with a
