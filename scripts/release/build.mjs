@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { inventory, SHA, UUID } from './model.mjs';
 
 const root = process.cwd();
@@ -27,7 +27,12 @@ try {
   for (const path of ['node_modules', 'apps/server/node_modules', 'apps/mcp/node_modules',
     'apps/web/node_modules', 'packages/core/node_modules', 'packages/protocol/node_modules',
     'apps/web/dist', 'apps/mcp/dist']) {
-    await cp(join(root, path), join(stage, path), { recursive: true, verbatimSymlinks: true });
+    await cp(join(root, path), join(stage, path), {
+      recursive: true, verbatimSymlinks: true,
+      // pnpm's generated command shims can embed checkout paths; runtime imports
+      // packages directly and does not need those shims or package-manager state.
+      filter: source => !['.bin', '.modules.yaml', '.pnpm-workspace-state-v1.json', '.cache'].includes(basename(source)),
+    });
   }
   const owners = [];
   for (const record of git('log', '--format=%H%x1f%B%x1e').split('\x1e')) {
