@@ -428,6 +428,8 @@ const scheduleEntries = [
   { ...scheduleBase, id: 1, recurring: true, intervalMs: 300_000 },
   { ...scheduleBase, id: 2, recurring: true, cron: '0 * * * *', tz: 'Asia/Shanghai' },
   { ...scheduleBase, id: 3, recurring: false, at: 123 },
+  { ...scheduleBase, id: 4, recurring: true, selfPaced: true },
+  { ...scheduleBase, id: 5, recurring: true, selfPaced: false, intervalMs: 60_000 },
 ] satisfies ScheduleEntry[];
 const operation = {
   id: 'op1', desiredEnabled: true, state: 'succeeded',
@@ -639,6 +641,7 @@ test('native schedule creation is narrow while existing entries retain their met
     roundTrip(Intents['schedule/add'].result, { ...ok, entry });
     roundTrip(Intents['schedule/stop'].body, { ...sid, id: entry.id });
     assert.equal(ScheduleEntry.safeParse({ ...entry, id: String(entry.id) }).success, false);
+    assert.equal(ScheduleEntry.safeParse({ ...entry, selfPaced: 'true' }).success, false);
   }
   roundTrip(Intents['schedule/list'].result, { entries: scheduleEntries });
   roundTrip(Intents['schedule/list'].result, { entries: [] });
@@ -649,6 +652,16 @@ test('native schedule creation is narrow while existing entries retain their met
   // ScheduleEntry is a wire object; only schedule/add enforces timing exclusivity.
   roundTrip(ScheduleEntry, { ...scheduleBase, id: 0, recurring: false });
   roundTrip(ScheduleEntry, { ...scheduleBase, id: 0, recurring: true, intervalMs: 1000, cron: '* * * * *', at: 123 });
+});
+
+test('self-paced schedule metadata does not authorize creation or rearming', () => {
+  assert.equal(Intents['schedule/add'].body.safeParse({
+    ...sid, prompt: 'check progress', selfPaced: true,
+  }).success, false);
+  assert.equal(Intents['schedule/add'].body.safeParse({
+    ...sid, prompt: 'check progress', interval: '5m', selfPaced: true,
+  }).success, false);
+  assert.ok(!Object.keys(Intents).some(name => /schedule.*(?:rearm|wakeup|self-paced)/.test(name)));
 });
 
 test('schedule/add rejects every missing or conflicting timing combination', () => {

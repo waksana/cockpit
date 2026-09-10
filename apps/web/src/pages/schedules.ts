@@ -47,6 +47,7 @@ export function scheduleInput(form: ScheduleForm, now = Date.now()): ScheduleInp
 }
 
 export function scheduleCadence(entry: ScheduleEntry): string {
+  if (entry.selfPaced) return '自主节奏（由模型安排下次执行）';
   if (entry.intervalMs != null) {
     const ms = entry.intervalMs;
     const duration = ms >= 86400000 && ms % 86400000 === 0 ? `${ms / 86400000} 天`

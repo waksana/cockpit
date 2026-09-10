@@ -4,6 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
+import { Intents } from '@cockpit/protocol';
 import { COCKPIT_URL } from './config.js';
 import { CockpitError, intent as rawIntent, protocolIntent as intent } from './cockpit.js';
 import {
@@ -409,10 +410,11 @@ server.registerTool(
   {
     title: "List a session's scheduled prompts",
     description:
-      'List the active scheduled prompts on a session (recurring and one-shot), with their ' +
+      'List the active scheduled prompts on a session (recurring, one-shot and self-paced), with their ' +
       'id, cadence, next fire time, and prompt. Use this to find a schedule id before ' +
       'stopping it. Requires a loaded session; use cockpit_reload_session explicitly if unloaded. ' +
-      'Returns { entries: [{ id, prompt, recurring, nextRunAt, intervalMs?, cron?, tz?, at? }] }.',
+      'Self-paced entries have no fixed cadence: the model controls each next run. ' +
+      'Returns { entries: [{ id, prompt, recurring, nextRunAt, selfPaced?, intervalMs?, cron?, tz?, at? }] }.',
     inputSchema: {
       session_id: z.string().min(1).describe('The session id'),
       response_format: ResponseFormat.describe("'markdown' (human) or 'json' (machine)"),
@@ -424,11 +426,12 @@ server.registerTool(
       const { entries } = await intent('schedule/list', { sessionId: session_id });
       const structured = { entries, count: entries.length };
       if (response_format === 'json')
-        return ok(cappedJson(structured, shrinkList(entries, 'entries', { keep: ['id', 'recurring', 'nextRunAt', 'intervalMs', 'cron', 'tz', 'at'], clip: ['prompt', 'displayPrompt'] })));
+        return ok(cappedJson(structured, shrinkList(entries, 'entries', { keep: ['id', 'recurring', 'selfPaced', 'nextRunAt', 'intervalMs', 'cron', 'tz', 'at'], clip: ['prompt', 'displayPrompt'] })));
       if (entries.length === 0) return ok(`_No schedules on ${session_id}._`);
       const lines = entries.map((e) => {
-        const cadence = e.cron ? `cron "${e.cron}"${e.tz ? ` (${e.tz})` : ''}` : e.intervalMs ? `every ${Math.round(e.intervalMs / 1000)}s` : e.at ? `once at ${new Date(e.at).toLocaleString()}` : '?';
-        return `- #${e.id} · ${cadence}${e.recurring ? '' : ' (one-shot)'} · next ${new Date(e.nextRunAt).toLocaleString()}\n    ${e.displayPrompt ?? e.prompt}`;
+        const cadence = e.selfPaced ? 'self-paced (model-controlled; no fixed cadence)'
+          : e.cron ? `cron "${e.cron}"${e.tz ? ` (${e.tz})` : ''}` : e.intervalMs ? `every ${Math.round(e.intervalMs / 1000)}s` : e.at ? `once at ${new Date(e.at).toLocaleString()}` : '?';
+        return `- #${e.id} · ${cadence}${e.recurring || e.selfPaced ? '' : ' (one-shot)'} · next ${new Date(e.nextRunAt).toLocaleString()}\n    ${e.displayPrompt ?? e.prompt}`;
       });
       return ok(capped(`# Schedules for ${session_id}\n${lines.join('\n')}`));
     } catch (e) {
@@ -453,7 +456,7 @@ server.registerTool(
   },
   async ({ session_id, id }): Promise<ToolResult> => {
     try {
-      const res = await intent('schedule/stop', { sessionId: session_id, id });
+      const res = Intents['schedule/stop'].result.parse(await rawIntent('schedule/stop', { sessionId: session_id, id }));
       return res.ok
         ? ok(`Stopped schedule #${id} on ${session_id}.`)
         : fail(`No schedule #${id} on ${session_id} (already stopped?). Check cockpit_list_schedules.`);

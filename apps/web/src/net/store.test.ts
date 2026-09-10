@@ -895,6 +895,21 @@ const unloadedResponse = () => Response.json({
   code: 'SESSION_UNLOADED', message: unloadedMessage,
 }, { status: 409 });
 
+test('scheduleList keeps self-paced and ordinary timing metadata through the Web client and store', async t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a']);
+  const entries = [
+    { id: 1, prompt: 'model controlled', recurring: true, selfPaced: true, nextRunAt: 123 },
+    { ...schedule, selfPaced: false },
+    { id: 3, prompt: 'once', recurring: false, at: 123, nextRunAt: 123 },
+  ];
+  const listing = useCockpit.getState().scheduleList('a');
+  h.assertPost(0, 'schedule/list', { sessionId: 'a' }).resolve(Response.json({ entries }));
+  assert.deepEqual(await listing, entries);
+  assert.equal(h.requests.length, 1);
+});
+
 for (const resource of nativeResources) {
   for (const state of ['unloaded', 'missing loaded', 'missing session'] as const) {
     test(`${resource.label} rejects ${state} locally without POST, diagnostics or invented state`, async (t) => {

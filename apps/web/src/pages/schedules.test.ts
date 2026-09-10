@@ -93,3 +93,12 @@ test('cron and absolute cadence remain discoverable without other services', () 
   assert.equal(scheduleCadence({ ...entry, cron: '0 9 * * *', recurring: false }), 'cron 0 9 * * * · 一次性');
   assert.equal(scheduleCadence({ ...entry, at: now + 60000, recurring: false }), '一次性');
 });
+
+test('self-paced cadence is model-controlled without an interval or absolute time', () => {
+  for (const recurring of [true, false]) {
+    assert.equal(scheduleCadence({ ...entry, recurring, selfPaced: true }), '自主节奏（由模型安排下次执行）');
+  }
+  assert.equal(scheduleCadence({ ...entry, selfPaced: true, intervalMs: 60000 }), '自主节奏（由模型安排下次执行）');
+  assert.equal(scheduleCadence({ ...entry, selfPaced: false, intervalMs: 60000 }), '每 1 分钟');
+  assert.equal(scheduleCadence({ ...entry, selfPaced: false, at: now, recurring: false }), '一次性');
+});

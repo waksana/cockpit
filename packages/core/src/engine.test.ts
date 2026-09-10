@@ -3409,13 +3409,144 @@ test('absolute schedules use a bounded native after delay and require a real ret
   assert.equal(s.sdk.send.mock.callCount(), 0);
 });
 
+test('schedule list and panel projections preserve self-paced meaning and ordinary timing metadata', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const nextRunAt = '2026-09-07T12:01:00.000Z';
+  s.state.schedules = [
+    { id: 1, prompt: 'choose the next run', displayPrompt: '/review', recurring: true, selfPaced: true, nextRunAt },
+    { ...schedule(2), selfPaced: false },
+    schedule(3, false),
+    { id: 4, prompt: 'calendar', recurring: true, cron: '0 9 * * *', tz: 'Asia/Shanghai', nextRunAt },
+    { id: 5, prompt: 'once', recurring: false, at: Date.parse(nextRunAt), nextRunAt },
+  ];
+  const before = s.rpc.schedule.list.mock.callCount();
+  const entries = await h.engine.listSchedules(s.id);
+  assert.deepEqual(Intents['schedule/list'].result.parse(JSON.parse(JSON.stringify({ entries }))), {
+    entries: s.state.schedules.map(entry => ({ ...entry, nextRunAt: Date.parse(entry.nextRunAt) })),
+  });
+  assert.equal(entries[0]!.intervalMs, undefined);
+  assert.equal(entries[0]!.at, undefined);
+  assert.equal(s.rpc.schedule.list.mock.callCount(), before + 1);
+  const panels = Intents['session/panels'].result.parse(await h.engine.getPanels(s.id));
+  assert.deepEqual(panels.schedules, s.state.schedules.map(entry => ({
+    label: entry.displayPrompt || entry.prompt,
+    sublabel: entry.selfPaced ? `Self-paced (model-controlled) · next ${nextRunAt}` : nextRunAt,
+  })));
+  assert.equal(s.rpc.schedule.list.mock.callCount(), before + 2);
+  assert.equal(s.rpc.schedule.stop.mock.callCount(), 0);
+  assert.equal(s.rpc.commands.invoke.mock.callCount(), 0);
+});
+
+for (const found of [true, false]) {
+  test(`native schedule stop ${found ? 'success' : 'not-found'} needs no list, even when listing is broken`, async t => {
+    const h = harness(t);
+    const s = await h.load();
+    s.state.schedules = found ? [schedule()] : [];
+    const before = s.rpc.schedule.list.mock.callCount();
+    const listFailure = new Error('schedule list unavailable');
+    s.rpc.schedule.list.mock.mockImplementation(async () => { throw listFailure; });
+    assert.equal(await h.engine.stopSchedule(s.id, 7), found);
+    assert.equal(s.rpc.schedule.stop.mock.callCount(), 1);
+    assert.deepEqual(s.rpc.schedule.stop.mock.calls[0]!.arguments, [{ id: 7 }]);
+    assert.equal(s.rpc.schedule.list.mock.callCount(), before);
+    assert.deepEqual(s.state.schedules, []);
+    await assert.rejects(h.engine.listSchedules(s.id), error => error === listFailure);
+    assert.equal(s.rpc.schedule.list.mock.callCount(), before + 1);
+    assert.equal(s.rpc.schedule.stop.mock.callCount(), 1, 'a subsequent list failure must not retry stop');
+  });
+}
+
+test('schedule stop stays serialized behind creation and protects lifecycle until the native mutation settles', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const command = deferred();
+  s.rpc.commands.invoke.mock.mockImplementation(async () => {
+    await command.promise;
+    s.state.schedules = [schedule()];
+    return { kind: 'completed' };
+  });
+  const before = s.rpc.schedule.list.mock.callCount();
+  const adding = h.engine.addSchedule(s.id, { prompt: 'check build', interval: '1m' });
+  await nextTurn();
+  const stopping = h.engine.stopSchedule(s.id, 7);
+  await nextTurn();
+  assert.equal(s.rpc.commands.invoke.mock.callCount(), 1);
+  assert.equal(s.rpc.schedule.stop.mock.callCount(), 0);
+  assert.equal(s.rpc.schedule.list.mock.callCount(), before + 1);
+  for (const operation of [() => h.engine.unload(s.id), () => h.engine.cancel(s.id), () => h.engine.stop()]) {
+    await assert.rejects(operation(), protectedWork);
+  }
+  command.resolve();
+  assert.equal((await adding).entry?.id, 7);
+  assert.equal(await stopping, true);
+  assert.equal(s.rpc.schedule.list.mock.callCount(), before + 2, 'only creation needs before/after identity reads');
+  assert.equal(s.rpc.schedule.stop.mock.callCount(), 1);
+  assert.deepEqual(s.state.schedules, []);
+  assert.equal((await h.engine.getMeta(s.id))?.activeOperations, 0);
+  await h.engine.unload(s.id);
+});
+
+for (const outcome of ['success', 'failure'] as const) {
+  test(`pending schedule stop ${outcome} protects lifecycle and releases the next serialized mutation`, async t => {
+    const h = harness(t);
+    const s = await h.load();
+    s.state.schedules = [schedule()];
+    const stopped = deferred<Awaited<ReturnType<typeof s.rpc.schedule.stop>>>();
+    s.rpc.schedule.stop.mock.mockImplementationOnce(() => stopped.promise);
+    const first = h.engine.stopSchedule(s.id, 7);
+    const firstResult = outcome === 'failure' ? assert.rejects(first, /stop refused/) : first;
+    await nextTurn();
+    const second = h.engine.stopSchedule(s.id, 7);
+    await nextTurn();
+    assert.equal(s.rpc.schedule.stop.mock.callCount(), 1);
+    for (const operation of [() => h.engine.unload(s.id), () => h.engine.cancel(s.id), () => h.engine.stop()]) {
+      await assert.rejects(operation(), protectedWork);
+    }
+    if (outcome === 'failure') stopped.reject(new Error('stop refused'));
+    else {
+      s.state.schedules = [];
+      stopped.resolve({ entry: schedule() });
+    }
+    assert.equal(await firstResult, outcome === 'success' ? true : undefined);
+    assert.equal(await second, outcome === 'failure');
+    assert.equal(s.rpc.schedule.stop.mock.callCount(), 2);
+    assert.equal((await h.engine.getMeta(s.id))?.activeOperations, 0);
+    await h.engine.unload(s.id);
+  });
+}
+
+test('fatal runtime failure rejects pending and queued schedule stops without retry or late list read', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  await h.engine.start();
+  const stopped = deferred<Awaited<ReturnType<typeof s.rpc.schedule.stop>>>();
+  s.rpc.schedule.stop.mock.mockImplementationOnce(() => stopped.promise);
+  const first = assert.rejects(h.engine.stopSchedule(s.id, 7), /fatal during schedule stop/);
+  await nextTurn();
+  const second = assert.rejects(h.engine.stopSchedule(s.id, 8), /fatal during schedule stop/);
+  await nextTurn();
+  assert.equal(s.rpc.schedule.stop.mock.callCount(), 1);
+  const before = nativeCalls(s);
+  h.runtime.emitFatal(new Error('fatal during schedule stop'));
+  await promptly(Promise.all([first, second]));
+  await promptly(h.engine.stop());
+  stopped.resolve({ entry: schedule() });
+  await nextTurn();
+  assert.deepEqual(nativeCalls(s), before);
+  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+});
+
 test('native schedule stop rejection preserves the schedule without persisting local policy and permits unload', async t => {
   const h = harness(t);
   const s = await h.load();
   s.state.schedules = [schedule()];
   await h.engine.listSchedules(s.id);
-  s.rpc.schedule.stop.mock.mockImplementation(async () => { throw new Error('schedule stop refused'); });
-  await assert.rejects(h.engine.stopSchedule(s.id, 7), /schedule stop refused/);
+  const before = s.rpc.schedule.list.mock.callCount();
+  const failure = new Error('schedule stop refused');
+  s.rpc.schedule.stop.mock.mockImplementation(async () => { throw failure; });
+  await assert.rejects(h.engine.stopSchedule(s.id, 7), error => error === failure);
+  assert.equal(s.rpc.schedule.list.mock.callCount(), before);
   assert.equal((await h.engine.getMeta(s.id))?.scheduleCount, 1);
   assert.equal(h.prefs().scheduledSessions, undefined);
   await h.engine.unload(s.id);

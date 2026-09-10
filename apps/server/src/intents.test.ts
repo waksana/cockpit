@@ -864,6 +864,36 @@ for (const description of [null, 0, false, {}, []]) {
   });
 }
 
+test('schedule list dispatch retains self-paced entries without ordinary cadence fields', async t => {
+  const entries = [
+    { id: 1, prompt: 'model controlled', recurring: true, selfPaced: true, nextRunAt: 123 },
+    { id: 2, prompt: 'fixed', recurring: true, selfPaced: false, intervalMs: 60000, nextRunAt: 123 },
+    { id: 3, prompt: 'once', recurring: false, at: 123, nextRunAt: 123 },
+  ];
+  const listing = t.mock.method(engine, 'listSchedules', async () => entries);
+  const response = await app.inject({ method: 'POST', url: '/intent/schedule/list', payload: { sessionId: 's' } });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.deepEqual(response.json(), { entries });
+  assert.equal(listing.mock.callCount(), 1);
+});
+
+for (const outcome of ['success', 'not-found', 'failure'] as const) {
+  test(`schedule stop dispatch preserves ${outcome} without requesting a list`, async t => {
+    const stopping = t.mock.method(engine, 'stopSchedule', async () => {
+      if (outcome === 'failure') throw new Error('native stop refused');
+      return outcome === 'success';
+    });
+    const listing = t.mock.method(engine, 'listSchedules', async () => { throw new Error('list unavailable'); });
+    const response = await app.inject({ method: 'POST', url: '/intent/schedule/stop', payload: { sessionId: 's', id: 7 } });
+    assert.equal(response.statusCode, outcome === 'failure' ? 500 : 200, response.body);
+    if (outcome === 'failure') assert.match(response.body, /native stop refused/);
+    else assert.deepEqual(response.json(), { ok: outcome === 'success' });
+    assert.equal(stopping.mock.callCount(), 1);
+    assert.deepEqual(stopping.mock.calls[0]!.arguments, ['s', 7]);
+    assert.equal(listing.mock.callCount(), 0);
+  });
+}
+
 test('valid structured operation failures remain typed 200 responses without losing details', async (t) => {
   const failure = {
     ok: false, applied: false, sessionId: 's', name: 'tools', enabled: false,

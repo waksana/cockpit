@@ -1361,7 +1361,8 @@ export class Engine {
         }),
         tasks: tasks.tasks.map(t => ({ label: t.description || t.id, sublabel: t.status })),
         instructionSources: instructions.sources.map(s => ({ label: s.label, sublabel: s.sourcePath })),
-        schedules: schedules.entries.map(s => ({ label: s.displayPrompt || s.prompt, sublabel: s.nextRunAt })),
+        schedules: schedules.entries.map(s => ({ label: s.displayPrompt || s.prompt,
+          sublabel: s.selfPaced ? `Self-paced (model-controlled) · next ${s.nextRunAt}` : s.nextRunAt })),
       };
     }, 'read');
   }
@@ -1619,7 +1620,7 @@ export class Engine {
     const nextRunAt = Date.parse(raw.nextRunAt);
     if (!Number.isFinite(nextRunAt)) throw new Error('Native schedule contains an invalid nextRunAt');
     return { id: raw.id, prompt: raw.prompt, recurring: raw.recurring, nextRunAt,
-      intervalMs: raw.intervalMs, cron: raw.cron, tz: raw.tz, at: raw.at, displayPrompt: raw.displayPrompt };
+      selfPaced: raw.selfPaced, intervalMs: raw.intervalMs, cron: raw.cron, tz: raw.tz, at: raw.at, displayPrompt: raw.displayPrompt };
   }
   async listSchedules(id: string): Promise<ScheduleEntry[]> {
     return this.operation(id, async (sdk, st) => {
@@ -1630,7 +1631,6 @@ export class Engine {
   async stopSchedule(id: string, scheduleId: number): Promise<boolean> {
     return this.operation(id, (sdk, st) => this.scheduleMutation(st, async () => {
       const result = await this.withSession(st, sdk, () => sdk.rpc.schedule.stop({ id: scheduleId }));
-      await this.readResource(st, sdk, 'schedule');
       return !!result.entry;
     }));
   }

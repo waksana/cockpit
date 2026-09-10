@@ -9,7 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { z } from 'zod';
-import { Intents, type Attachment, type NativeChatEvent, type SessionMeta, type SessionPanels, type SessionPlan, type Snapshot } from '../../../packages/protocol/src/index.ts';
+import { Intents, type Attachment, type NativeChatEvent, type ScheduleEntry, type SessionMeta, type SessionPanels, type SessionPlan, type Snapshot } from '../../../packages/protocol/src/index.ts';
 
 type Request = { path: string; method: string; body: unknown; authorization: string | undefined };
 const requests: Request[] = [];
@@ -42,6 +42,8 @@ let invalidPolicy = false;
 let mcpSessionResult: unknown;
 let mcpToggleResult: unknown;
 let unconfirmedMcp = false;
+let scheduleEntries: ScheduleEntry[] = [];
+let scheduleStopped = true;
 const meta: SessionMeta = {
   sessionId: 'B', title: 'Backend title', cwd: '/only-on-backend/project',
   status: 'unloaded', loaded: false, lastActivity: 1,
@@ -127,6 +129,8 @@ mockHttp((res, req) => {
         lastCallInputTokens: 321, lastCallOutputTokens: 45, modelMetrics: {} },
     });
     if (name === 'session/panels') return send(panels);
+    if (name === 'schedule/list') return send({ entries: scheduleEntries });
+    if (name === 'schedule/stop') return send({ ok: scheduleStopped });
     if (name === 'skills/global') return send({ skills: [{ name: 'review', description: 'Review changes', source: 'project' }] });
     if (name === 'session/chat') {
       const input = Intents['session/chat'].body.parse(body);
@@ -192,6 +196,8 @@ beforeEach(() => {
   mcpSessionResult = { loaded: true, servers: [] };
   mcpToggleResult = undefined;
   unconfirmedMcp = false;
+  scheduleEntries = [];
+  scheduleStopped = true;
   rejectedIntent = undefined;
   intentFailure = undefined;
   largeContent = initialLargeContent;
@@ -201,6 +207,77 @@ const ToolReply = z.object({
   content: z.array(z.object({ type: z.literal('text'), text: z.string() })),
   isError: z.boolean().optional(),
 });
+
+test('schedule tools preserve self-paced metadata in full and compacted JSON with no extra requests', async () => {
+  scheduleEntries = [
+    { id: 1, prompt: 'Choose the next run', displayPrompt: '/review', recurring: true, selfPaced: true, nextRunAt: 123 },
+    { id: 2, prompt: 'Fixed cadence', recurring: true, selfPaced: false, intervalMs: 60000, nextRunAt: 123 },
+    { id: 3, prompt: 'Once', recurring: false, at: 123, nextRunAt: 123 },
+  ];
+  assert.deepEqual(await json('cockpit_list_schedules', { session_id: 'B', response_format: 'json' }), {
+    entries: scheduleEntries, count: 3,
+  });
+  assert.deepEqual(requests.map(({ path }) => path), ['/intent/schedule/list']);
+
+  scheduleEntries = scheduleEntries.map(entry => ({ ...entry, prompt: 'long prompt '.repeat(CHARACTER_LIMIT) }));
+  requests.length = 0;
+  const compacted = z.object({
+    entries: z.array(Intents['schedule/list'].result.shape.entries.element),
+    _compacted: z.literal('field-previews'), count: z.number(),
+  }).parse(await json('cockpit_list_schedules', { session_id: 'B', response_format: 'json' }));
+  assert.equal(compacted.entries[0]!.selfPaced, true);
+  assert.equal(compacted.entries[0]!.intervalMs, undefined);
+  assert.equal(compacted.entries[1]!.selfPaced, false);
+  assert.equal(compacted.entries[1]!.intervalMs, 60000);
+  assert.equal(compacted.entries[2]!.at, 123);
+  assert.deepEqual(requests.map(({ path }) => path), ['/intent/schedule/list']);
+});
+
+test('schedule markdown distinguishes model-controlled timing from ordinary schedules', async () => {
+  scheduleEntries = [
+    { id: 1, prompt: 'Choose the next run', displayPrompt: '/review', recurring: true, selfPaced: true, nextRunAt: 123 },
+    { id: 2, prompt: 'Fixed cadence', recurring: true, selfPaced: false, intervalMs: 60000, nextRunAt: 123 },
+    { id: 3, prompt: 'Calendar', recurring: true, cron: '0 9 * * *', tz: 'Asia/Shanghai', nextRunAt: 123 },
+    { id: 4, prompt: 'Once', recurring: false, at: 123, nextRunAt: 123 },
+  ];
+  const result = await call('cockpit_list_schedules', { session_id: 'B', response_format: 'markdown' });
+  assert.equal(result.isError, false);
+  assert.match(result.text, /#1 · self-paced \(model-controlled; no fixed cadence\) · next/);
+  assert.match(result.text, /\/review/);
+  assert.match(result.text, /#2 · every 60s · next/);
+  assert.match(result.text, /#3 · cron "0 9 \* \* \*" \(Asia\/Shanghai\) · next/);
+  assert.match(result.text, /#4 · once at .* \(one-shot\) · next/);
+  assert.doesNotMatch(result.text, /#1[^\n]*(?:one-shot|\?)/);
+});
+
+test('schedule panels retain the model-controlled label and next-run time in both tool formats', async t => {
+  const previous = panels.schedules;
+  t.after(() => { panels.schedules = previous; });
+  panels.schedules = [{
+    label: '/review', sublabel: 'Self-paced (model-controlled) · next 2026-09-07T12:01:00.000Z',
+  }];
+  const structured = await json('cockpit_get_panels', { session_id: 'B', response_format: 'json' });
+  assert.deepEqual(structured, panels);
+  const markdown = await call('cockpit_get_panels', { session_id: 'B', response_format: 'markdown' });
+  assert.equal(markdown.isError, false);
+  assert.match(markdown.text, /Self-paced \(model-controlled\) · next 2026-09-07T12:01:00.000Z/);
+  assert.deepEqual(requests.map(({ path }) => path), ['/intent/session/panels', '/intent/session/panels']);
+});
+
+for (const outcome of ['success', 'not-found', 'failure'] as const) {
+  test(`schedule stop tool faithfully reports ${outcome} with one stop request and no list`, async () => {
+    scheduleStopped = outcome === 'success';
+    if (outcome === 'failure') intentFailure = 503;
+    const result = await call('cockpit_stop_schedule', { session_id: 'B', id: 7 });
+    assert.equal(result.isError, outcome !== 'success');
+    assert.match(result.text, outcome === 'success' ? /Stopped schedule #7/
+      : outcome === 'not-found' ? /No schedule #7/ : /authoritative service failure/);
+    assert.deepEqual(requests.map(({ path, body }) => ({ path, body })), [
+      { path: '/intent/schedule/stop', body: { sessionId: 'B', id: 7 } },
+    ]);
+  });
+}
+
 async function call(name: string, args: Record<string, unknown> = {}) {
   const result = ToolReply.parse(await client.callTool({ name, arguments: args }));
   assert.ok(result.content[0]);

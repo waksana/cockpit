@@ -274,12 +274,13 @@ export const SessionPanels = z.object({
 });
 export type SessionPanels = z.infer<typeof SessionPanels>;
 
-// ── Scheduled prompts (the SDK's `/every` recurring + `/after` one-shot) ──────
-// Exactly one of intervalMs / cron / at is set, mirroring the SDK's ScheduleEntry.
+// ── Scheduled prompts (native fixed-cadence, one-shot and self-paced entries) ──
+// Self-paced entries need no intervalMs / cron / at; the model controls nextRunAt.
 export const ScheduleEntry = z.object({
   id: z.number(),                    // sequential within the session, stable across resume
   prompt: z.string(),                // the text enqueued on every tick
   recurring: z.boolean(),            // true = re-arms (/every); false = one-shot (/after)
+  selfPaced: z.boolean().optional(),  // true = the model arms each next run, with no fixed cadence
   nextRunAt: z.number(),             // epoch ms of the next fire
   intervalMs: z.number().optional(), // set for relative-interval schedules
   cron: z.string().optional(),       // set for calendar (cron) schedules
