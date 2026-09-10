@@ -323,6 +323,7 @@ export const McpServerStatus = z.enum([
   'needs-auth',
   'pending',
   'disabled',
+  'stopped',
   'not_configured',
   'unloaded',
 ]);
@@ -352,7 +353,7 @@ export const McpServerSession = z.object({
   name: z.string(),
   detail: z.string(),
   status: McpServerStatus,
-  enabled: z.boolean(),
+  enabled: z.boolean().describe('Configured and not explicitly disabled; does not imply connected or permitted to restart.'),
   error: z.string().optional(),
   operation: McpToggleOperation.optional(),
 });

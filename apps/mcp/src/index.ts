@@ -147,8 +147,10 @@ server.registerTool(
     title: "List a session's MCP servers",
     description:
       'Read the native MCP servers visible to a loaded session: ' +
-      'whether it is enabled for that session and, if so, its live connection status ' +
-      '(connected | failed | needs-auth | pending | disabled | not_configured). An ' +
+      'its configured/not-disabled flag and native connection status ' +
+      '(connected | failed | needs-auth | pending | disabled | stopped | not_configured). ' +
+      'Enabled does not imply connected. Stopped includes policy quarantine and does not imply restart is allowed. ' +
+      'Unknown native state fails explicitly rather than claiming not_configured. An ' +
       'unloaded session returns loaded:false and no claimed per-session enablement; explicitly ' +
       'resume it for live details or use cockpit_list_global_mcp for global defaults. Call this before ' +
       'cockpit_set_session_mcp to get exact names and current on/off state.',
@@ -188,7 +190,7 @@ server.registerTool(
       if (servers.length === 0) return ok('_No MCP servers are present in this native session._');
       const lines = servers.map(
         (s) =>
-          `- ${s.enabled ? '🟢' : '⚪'} ${s.name} — ${s.enabled ? `enabled (${s.status})` : 'disabled'}${s.error ? ` · error: ${s.error}` : ''}`
+          `- ${s.enabled ? '🟢' : '⚪'} ${s.name} — enabled=${s.enabled} (${s.status})${s.error ? ` · error: ${s.error}` : ''}`
           + `${s.operation ? ` · toggle ${s.operation.id}=${s.operation.state}/${s.operation.status}${s.operation.error ? `: ${s.operation.error}` : ''}` : ''}\n    ${s.detail}`,
       );
       return ok(capped(`# MCP servers for ${session_id}${loadNote}\n${lines.join('\n')}`));

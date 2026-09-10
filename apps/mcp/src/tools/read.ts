@@ -86,14 +86,14 @@ export function registerReadTools(server: McpServer): void {
       try {
         const panels = await intent('session/panels', { sessionId: session_id });
         if (response_format === 'json') return ok(cappedJson(panels));
-        const sect = (name: string, items: PanelItem[]) => {
+        const sect = (name: string, items: PanelItem[], explicitEnabled = false) => {
           if (!items || !items.length) return `## ${name}\n_none_`;
-          return `## ${name}\n` + items.map((i) => `- ${i.label}${i.enabled === undefined ? '' : i.enabled ? ' · enabled' : ' · disabled'}${i.sublabel ? `\n    ${i.sublabel}` : ''}`).join('\n');
+          return `## ${name}\n` + items.map((i) => `- ${i.label}${i.enabled === undefined ? '' : explicitEnabled ? ` · enabled=${i.enabled}` : i.enabled ? ' · enabled' : ' · disabled'}${i.sublabel ? `\n    ${i.sublabel}` : ''}`).join('\n');
         };
         const md = [
           `# Panels for ${session_id}`,
           sect('Skills', panels.skills),
-          sect('MCP servers', panels.mcpServers),
+          sect('MCP servers', panels.mcpServers, true),
           sect('Tasks', panels.tasks),
           sect('Instruction sources', panels.instructionSources),
           sect('Schedules', panels.schedules),

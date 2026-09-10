@@ -415,6 +415,48 @@ test('unloaded MCP remains a passive transport result, not configured toggle row
   assertOnlyPost(fetch, 'mcp/session', { sessionId: 'session' });
 });
 
+for (const status of ['connected', 'failed', 'needs-auth', 'pending', 'disabled', 'stopped', 'not_configured']) {
+  test(`Web MCP reads and settings preserve native ${status} and separate enablement`, async t => {
+    const enabled = status !== 'disabled' && status !== 'not_configured';
+    const inventory = { loaded: true, servers: [{ name: 'fixture', detail: 'native', status, enabled }] };
+    const panels = { skills: [], mcpServers: [{ label: 'fixture', sublabel: status, enabled }],
+      tasks: [], instructionSources: [], schedules: [] };
+    const toggle = { ok: false, applied: false, sessionId: 'session', name: 'fixture', status, enabled,
+      error: 'Native target did not confirm the requested change',
+      operation: { id: 'operation', desiredEnabled: true, state: 'failed', startedAt: 1, status } };
+    const { client, fetch } = setup(t, async url => Response.json(
+      String(url).endsWith('/mcp/session') ? inventory : String(url).endsWith('/session/panels') ? panels : toggle,
+    ));
+    assert.deepEqual(await client.mcpSession('session'), inventory);
+    assert.deepEqual(await client.getPanels('session'), panels);
+    assert.deepEqual(await client.mcpToggleSession('session', 'fixture', true), toggle);
+    assert.equal(fetch.mock.callCount(), 3);
+  });
+}
+
+test('Web MCP unknown state is an explicit visible read/setting error, never an unconfigured fallback', async t => {
+  const message = 'Native MCP state is unconfirmed for fixture: unknown status "future-status"';
+  const { client, fetch } = setup(t, async () => Response.json({ error: message }, { status: 409 }));
+  for (const read of [
+    () => client.mcpSession('session'), () => client.getPanels('session'),
+    () => client.mcpToggleSession('session', 'fixture', true),
+  ]) await assert.rejects(read(), error => error instanceof Error && error.message === message);
+  assert.equal(fetch.mock.callCount(), 3);
+  assert.equal(getUxErrors().length, 3);
+  assert.ok(getUxErrors().every(error => error.message.includes(message)));
+});
+
+for (const status of ['needs_auth', 'future-status']) {
+  test(`Web MCP rejects invalid successful-response status ${status}`, async t => {
+    const { client, fetch } = setup(t, async () => Response.json({
+      loaded: true, servers: [{ name: 'fixture', detail: 'native', enabled: true, status }],
+    }));
+    await assert.rejects(client.mcpSession('session'), /Invalid enum value/);
+    assertOnlyPost(fetch, 'mcp/session', { sessionId: 'session' });
+    assert.equal(getUxErrors().length, 1);
+  });
+}
+
 for (const enabled of [true, false]) {
   test(`skillsSetGlobal sends only native name and enabled=${enabled} without session context`, async (t) => {
     const { client, fetch } = setup(t, async () => Response.json({ ok: true }));

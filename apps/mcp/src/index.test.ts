@@ -39,6 +39,9 @@ let mismatchedCapability = false;
 let rejectedIntent: string | undefined;
 let intentFailure: number | 'invalid-json' | 'connection' | undefined;
 let invalidPolicy = false;
+let mcpSessionResult: unknown;
+let mcpToggleResult: unknown;
+let unconfirmedMcp = false;
 const meta: SessionMeta = {
   sessionId: 'B', title: 'Backend title', cwd: '/only-on-backend/project',
   status: 'unloaded', loaded: false, lastActivity: 1,
@@ -109,6 +112,11 @@ mockHttp((res, req) => {
     if (intentFailure === 'invalid-json') return res.end('not JSON');
     if (intentFailure === 'connection') return res.destroy();
     if (name === rejectedIntent) return send({ ok: false, error: 'genuine target failure', operation: { id: 'failed-op', state: 'failed' } });
+    if (unconfirmedMcp && ['mcp/session', 'mcp/session-toggle', 'session/panels'].includes(name)) {
+      return send({ error: 'Native MCP state is unconfirmed for test-server: unknown status "future-status"' }, 409);
+    }
+    if (name === 'mcp/session') return send(mcpSessionResult);
+    if (name === 'mcp/session-toggle') return send(mcpToggleResult);
     if (name === 'runtime/snapshot') return send(invalidPolicy ? { ...snapshot, permissionPolicy: undefined } : snapshot);
     if (name === 'session/list') return send({ sessions: [meta] });
     if (name === 'session/get') return send({ meta });
@@ -181,6 +189,9 @@ beforeEach(() => {
   requests.length = 0;
   unavailable = large = malformedPreview = mismatchedCapability = false;
   invalidPolicy = false;
+  mcpSessionResult = { loaded: true, servers: [] };
+  mcpToggleResult = undefined;
+  unconfirmedMcp = false;
   rejectedIntent = undefined;
   intentFailure = undefined;
   largeContent = initialLargeContent;
@@ -199,6 +210,62 @@ async function json(name: string, args: Record<string, unknown> = {}): Promise<u
   const result = await call(name, args);
   assert.equal(result.isError, false, result.text);
   return JSON.parse(result.text);
+}
+
+for (const status of ['connected', 'failed', 'needs-auth', 'pending', 'disabled', 'stopped', 'not_configured']) {
+  test(`MCP tools preserve ${status} independently of enablement in list, panels and toggle output`, async t => {
+    const previous = panels.mcpServers;
+    t.after(() => { panels.mcpServers = previous; });
+    for (const enabled of [false, true]) {
+      const entry = { name: 'test-server', detail: 'native', enabled, status };
+      mcpSessionResult = { loaded: true, servers: [entry] };
+      panels.mcpServers = [{ label: entry.name, sublabel: status, enabled }];
+      const list = await call('cockpit_list_session_mcp', { session_id: 'B' });
+      assert.equal(list.isError, false, list.text);
+      assert.ok(list.text.includes(`enabled=${enabled} (${status})`));
+      assert.deepEqual(await json('cockpit_list_session_mcp', { session_id: 'B', response_format: 'json' }), {
+        loaded: true, servers: [entry], count: 1,
+      });
+      const info = await call('cockpit_get_panels', { session_id: 'B' });
+      assert.equal(info.isError, false, info.text);
+      assert.ok(info.text.includes(`test-server · enabled=${enabled}\n    ${status}`));
+      assert.deepEqual(await json('cockpit_get_panels', { session_id: 'B', response_format: 'json' }), panels);
+      mcpToggleResult = {
+        ok: false, applied: false, sessionId: 'B', name: entry.name, enabled, status,
+        error: 'native target did not confirm the requested change',
+        operation: { id: 'operation', desiredEnabled: true, state: 'failed', startedAt: 1, status },
+      };
+      const toggle = await call('cockpit_set_session_mcp', { session_id: 'B', name: entry.name, enabled: true });
+      assert.equal(toggle.isError, true);
+      assert.ok(toggle.text.includes(`target=${status}, native enabled=${enabled}`));
+    }
+    assert.ok(requests.every(({ path }) => /^\/intent\/(mcp\/session|mcp\/session-toggle|session\/panels)$/.test(path)));
+  });
+}
+
+test('MCP unknown states fail explicitly across read, panel and setting tools without retries', async () => {
+  unconfirmedMcp = true;
+  for (const [name, args] of [
+    ['cockpit_list_session_mcp', { session_id: 'B' }],
+    ['cockpit_get_panels', { session_id: 'B' }],
+    ['cockpit_set_session_mcp', { session_id: 'B', name: 'test-server', enabled: true }],
+  ] as const) {
+    const reply = await call(name, args);
+    assert.equal(reply.isError, true);
+    assert.match(reply.text, /unconfirmed.*future-status/);
+    assert.doesNotMatch(reply.text, /not_configured/);
+  }
+  assert.equal(requests.length, 3);
+});
+
+for (const status of ['needs_auth', 'future-status']) {
+  test(`MCP tools reject non-protocol status ${status} rather than synthesizing unconfigured`, async () => {
+    mcpSessionResult = { loaded: true, servers: [{ name: 'test-server', detail: 'native', enabled: true, status }] };
+    const reply = await call('cockpit_list_session_mcp', { session_id: 'B' });
+    assert.equal(reply.isError, true);
+    assert.match(reply.text, /invalid result/);
+    assert.equal(requests.length, 1);
+  });
 }
 
 test('registry exposes foundation, native schedules, manual settings and files, not governance', async () => {
@@ -500,7 +567,7 @@ test('native plan narrative, todos and panel sublabels/enabled flags render none
   assert.deepEqual(await json('cockpit_get_plan', { session_id: 'B', response_format: 'json' }), plan);
   const renderedPanels = await call('cockpit_get_panels', { session_id: 'B' });
   assert.equal(renderedPanels.isError, false, renderedPanels.text);
-  for (const text of ['review · enabled', 'Project review skill', 'test-server · disabled', 'unloaded', 'Finding canonical types', '/remote/project/AGENTS.md', 'Tomorrow']) {
+  for (const text of ['review · enabled', 'Project review skill', 'test-server · enabled=false', 'unloaded', 'Finding canonical types', '/remote/project/AGENTS.md', 'Tomorrow']) {
     assert.ok(renderedPanels.text.includes(text), text);
   }
   assert.deepEqual(await json('cockpit_get_panels', { session_id: 'B', response_format: 'json' }), panels);

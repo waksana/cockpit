@@ -3509,6 +3509,113 @@ test('unknown native MCP names reject before mutation without stranding later va
   assert.equal(h.prefs().mcpBySession, undefined);
 });
 
+const nativeMcpStatuses = {
+  connected: true, failed: true, 'needs-auth': true, pending: true,
+  disabled: false, stopped: true, not_configured: false,
+} satisfies Record<McpState['servers'][number]['status'], boolean>;
+
+for (const [status, configuredEnabled] of Object.entries(nativeMcpStatuses)) {
+  for (const explicitlyDisabled of [false, true]) {
+    test(`MCP ${status}, host disabled=${explicitlyDisabled}: list, panels and toggle share native state`, async t => {
+      const h = harness(t);
+      const s = await h.load();
+      const server: McpState['servers'][number] = { name: 'fixture', status: 'connected', source: 'workspace' };
+      Reflect.set(server, 'status', status);
+      s.state.mcp = mcpState([server], explicitlyDisabled ? ['fixture'] : []);
+      if (status === 'stopped') {
+        s.state.mcp.host!.mcp3pEnabled = false;
+        s.state.mcp.host!.filteredServers = ['fixture'];
+      }
+      const enabled = configuredEnabled && !explicitlyDisabled;
+      const inventory = await h.engine.listSessionMcp(s.id);
+      assert.deepEqual(inventory.servers, [{
+        name: 'fixture', detail: 'workspace', status, enabled, error: undefined,
+      }]);
+      assert.deepEqual((await h.engine.getPanels(s.id)).mcpServers, [{ label: 'fixture', sublabel: status, enabled }]);
+      assert.equal(s.rpc.mcp.enable.mock.callCount(), 0, 'reading must not initiate authentication or connection work');
+      assert.equal(s.rpc.mcp.disable.mock.callCount(), 0);
+      assert.equal(s.rpc.mcp.reload.mock.callCount(), 0);
+      for (const desiredEnabled of [true, false]) {
+        const result = await h.engine.toggleSessionMcp(s.id, 'fixture', desiredEnabled);
+        assert.equal(result.enabled, enabled);
+        assert.equal(result.status, status);
+        assert.equal(result.operation.status, status);
+        const applied = enabled === desiredEnabled && status !== 'not_configured'
+          && (!desiredEnabled || status === 'connected');
+        assert.equal(result.ok, applied);
+        assert.equal(result.applied, applied);
+        assert.deepEqual((await h.engine.listSessionMcp(s.id)).servers, inventory.servers);
+        assert.deepEqual((await h.engine.getPanels(s.id)).mcpServers, [{ label: 'fixture', sublabel: status, enabled }]);
+      }
+      assert.equal(s.rpc.mcp.reload.mock.callCount(), 0);
+      assert.equal(h.runtime.rpc.mcp.config.list.mock.callCount(), 0);
+      assert.equal(h.prefs().mcpBySession, undefined);
+    });
+  }
+}
+
+for (const status of ['future-status', 'needs_auth', 'unloaded', undefined, null]) {
+  test(`MCP unknown native status ${String(status)} fails read and mutation preflight explicitly`, async t => {
+    const h = harness(t);
+    const s = await h.load();
+    s.state.mcp = mcpState([{ name: 'fixture', status: 'disabled' }], ['fixture']);
+    Reflect.set(s.state.mcp.servers[0]!, 'status', status);
+    for (const read of [() => h.engine.listSessionMcp(s.id), () => h.engine.getPanels(s.id)]) {
+      await assert.rejects(read(), /Native MCP state is unconfirmed for fixture: unknown status/);
+    }
+    await assert.rejects(h.engine.toggleSessionMcp(s.id, 'fixture', true), /unconfirmed.*unknown status/);
+    assert.equal(s.rpc.mcp.enable.mock.callCount(), 0);
+    assert.equal(s.rpc.mcp.disable.mock.callCount(), 0);
+    assert.equal(s.rpc.mcp.reload.mock.callCount(), 0);
+    assert.equal((await h.engine.getMeta(s.id))?.activeMcpOperations, 0);
+  });
+}
+
+for (const rejected of [false, true]) {
+  for (const missing of ['status', 'server', 'host'] as const) {
+    test(`MCP ${rejected ? 'rejected' : 'acknowledged'} mutation with unconfirmed ${missing} readback cannot return success`, async t => {
+      const h = harness(t);
+      const s = await h.load();
+      s.state.mcp = mcpState([{ name: 'fixture', status: 'disabled' }], ['fixture']);
+      s.rpc.mcp.enable.mock.mockImplementation(async () => {
+        if (missing === 'status') Reflect.set(s.state.mcp.servers[0]!, 'status', 'future-status');
+        if (missing === 'server') s.state.mcp.servers = [];
+        if (missing === 'host') delete s.state.mcp.host;
+        if (s.state.mcp.host) s.state.mcp.host.pendingConnections = ['fixture'];
+        if (rejected) throw new Error('native enable rejected');
+      });
+      await assert.rejects(h.engine.toggleSessionMcp(s.id, 'fixture', true), /MCP state is unknown.*unconfirmed/);
+      assert.equal(s.rpc.mcp.enable.mock.callCount(), 1);
+      assert.equal(s.rpc.mcp.disable.mock.callCount(), 0);
+      await assert.rejects(h.engine.unload(s.id), /protected|MCP|unconfirmed/i);
+      assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+      s.state.mcp = mcpState([{ name: 'fixture', status: 'disabled' }], ['fixture']);
+      await h.engine.unload(s.id);
+      assert.equal(h.runtime.closeSession.mock.callCount(), 1);
+    });
+  }
+}
+
+for (const status of [...Object.keys(nativeMcpStatuses), 'future-status']) {
+  test(`MCP reload confirms ${status} with the same status adapter and keeps lifecycle protection`, async t => {
+    const h = harness(t);
+    const s = await h.load();
+    s.state.mcp = mcpState([{ name: 'fixture', status: 'connected' }]);
+    Reflect.set(s.state.mcp.servers[0]!, 'status', status);
+    if (status === 'not_configured') s.state.mcp.host!.disabledServers = ['fixture'];
+    const resumes = h.runtime.resumeSession.mock.callCount();
+    if (status === 'connected' || status === 'disabled') {
+      assert.deepEqual(await h.engine.reloadSessionMcp(s.id), { reconnected: status === 'connected' ? 1 : 0 });
+    } else {
+      await assert.rejects(h.engine.reloadSessionMcp(s.id), /MCP connections not confirmed|MCP state is unconfirmed/);
+    }
+    assert.equal(s.rpc.mcp.reload.mock.callCount(), 1);
+    assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+    assert.equal(h.runtime.resumeSession.mock.callCount(), resumes);
+    assert.equal((await h.engine.getMeta(s.id))?.activeMcpOperations, 0);
+  });
+}
+
 for (const failure of ['rpc', 'unconfirmed-state'] as const) {
   test(`MCP enable ${failure} failure does not persist a successful preference`, async t => {
     const h = harness(t, { mcpServers: { fixture: { command: 'never-executed', args: [] } } });
@@ -3522,7 +3629,7 @@ for (const failure of ['rpc', 'unconfirmed-state'] as const) {
     assert.equal(result.applied, false);
     assert.equal(result.operation?.state, 'failed');
     assert.equal(result.enabled, failure !== 'rpc', 'report authoritative enablement, not the requested value');
-    assert.equal(result.status, failure === 'rpc' ? 'disabled' : 'failed');
+    assert.equal(result.status, 'failed', 'host disablement must not replace the native connection status');
     assert.equal(result.operation?.status, result.status);
     assert.equal(result.operation?.desiredEnabled, true);
     assert.match(result.error!, /native/);

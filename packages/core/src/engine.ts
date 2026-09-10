@@ -9,7 +9,7 @@ import type {
 } from '@github/copilot-sdk';
 import type {
   AgentStatus, Attention, DirListing, ExitPlanModeAction,
-  McpServerGlobal, McpServerSession, McpServerStatus, McpToggleOperation, McpToggleResult,
+  McpServerGlobal, McpServerSession, McpToggleOperation, McpToggleResult,
   ModelOption, ScheduleEntry, ServerEvent, SessionMeta, SessionPanels,
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
 } from '@cockpit/protocol';
@@ -1355,7 +1355,10 @@ export class Engine {
       ] as const));
       return {
         skills: skills.skills.map(s => ({ label: s.name, sublabel: s.source, enabled: s.enabled })),
-        mcpServers: mcp.servers.map(s => ({ label: s.name, sublabel: s.status, enabled: this.mcpEnabled(mcp, s.name) })),
+        mcpServers: mcp.servers.map(s => {
+          const { status, enabled } = this.mcpServerState(mcp, s.name);
+          return { label: s.name, sublabel: status, enabled };
+        }),
         tasks: tasks.tasks.map(t => ({ label: t.description || t.id, sublabel: t.status })),
         instructionSources: instructions.sources.map(s => ({ label: s.label, sublabel: s.sourcePath })),
         schedules: schedules.entries.map(s => ({ label: s.displayPrompt || s.prompt, sublabel: s.nextRunAt })),
@@ -1390,8 +1393,7 @@ export class Engine {
         const result = await this.withSession(st, sdk, () => sdk.rpc.mcp.list());
         return { loaded: true, servers: result.servers.map(server => ({
           name: server.name, detail: server.sourcePlugin ?? server.source ?? 'native',
-          status: this.mcpStatus(server.status), error: server.error,
-          enabled: this.mcpEnabled(result, server.name),
+          ...this.mcpServerState(result, server.name), error: server.error,
         })) };
       }, 'read');
     } catch (error) {
@@ -1399,14 +1401,27 @@ export class Engine {
       throw error;
     }
   }
-  private mcpEnabled(result: Awaited<ReturnType<CopilotSession['rpc']['mcp']['list']>>, name: string): boolean {
+  private mcpServerState(result: ResourceValues['mcp'], name: string): Pick<McpServerSession, 'status' | 'enabled'> {
     const server = result.servers.find(server => server.name === name);
     if (!server || !result.host) throw new Error(`Native MCP state is unconfirmed for ${name}`);
-    return server.status !== 'disabled' && !result.host.disabledServers.includes(name);
-  }
-  private mcpStatus(status: string): McpServerStatus {
-    return ['connected', 'failed', 'pending', 'needs_auth', 'disabled', 'not_configured', 'unloaded'].includes(status)
-      ? status as McpServerStatus : 'not_configured';
+    const status = server.status;
+    switch (status) {
+      case 'connected':
+      case 'failed':
+      case 'needs-auth':
+      case 'pending':
+      case 'disabled':
+      case 'stopped':
+      case 'not_configured':
+        // Enablement is not connectivity: preserve native status even when the
+        // host separately records an explicit disable or policy stops a server.
+        return { status, enabled: status !== 'disabled' && status !== 'not_configured'
+          && !result.host.disabledServers.includes(name) };
+      default: {
+        const unexpected: never = status;
+        throw new Error(`Native MCP state is unconfirmed for ${name}: unknown status ${JSON.stringify(unexpected)}`);
+      }
+    }
   }
   async toggleSessionMcp(id: string, name: string, enabled: boolean): Promise<McpToggleResult> {
     return this.operation(id, async (sdk, st) => {
@@ -1421,14 +1436,15 @@ export class Engine {
         const before = await this.withSession(st, sdk, () => sdk.rpc.mcp.list());
         if (before.host?.pendingConnections.length) throw new Error('MCP connections are still settling');
         if (!before.servers.some(server => server.name === name)) throw new Error(`Unknown native MCP server: ${name}`);
-        this.mcpEnabled(before, name);
+        this.mcpServerState(before, name);
         submitted = true;
         await this.withSession(st, sdk, () => sdk.rpc.mcp[enabled ? 'enable' : 'disable']({ serverName: name }));
-        const result = await this.readResource(st, sdk, 'mcp', value => { this.mcpEnabled(value, name); });
+        const result = await this.readResource(st, sdk, 'mcp', value => { this.mcpServerState(value, name); });
         const server = result.servers.find(server => server.name === name);
-        const actualEnabled = this.mcpEnabled(result, name);
-        operation.status = !actualEnabled ? 'disabled' : this.mcpStatus(server?.status ?? 'not_configured');
-        applied = actualEnabled === enabled && (!enabled || operation.status === 'connected');
+        const actual = this.mcpServerState(result, name);
+        operation.status = actual.status;
+        applied = actual.enabled === enabled && actual.status !== 'not_configured'
+          && (!enabled || actual.status === 'connected');
         if (!applied) throw new Error(server?.error ?? 'Native MCP state did not confirm the requested change');
         operation.state = 'succeeded';
         return { ok: true, applied, sessionId: id, name, enabled, status: operation.status, operation };
@@ -1441,17 +1457,16 @@ export class Engine {
         // Enable may reject while a native connector is still alive. A failed
         // read-back is unknown, not evidence that the connector is disabled.
         let result: Awaited<ReturnType<CopilotSession['rpc']['mcp']['list']>>;
-        try { result = await this.readResource(st, sdk, 'mcp', value => { this.mcpEnabled(value, name); }); }
+        try { result = await this.readResource(st, sdk, 'mcp', value => { this.mcpServerState(value, name); }); }
         catch (readError) {
           this.assertAvailable();
           throw new Error(`${operation.error}; MCP state is unknown: ${messageOf(readError)}`);
         }
-        const server = result.servers.find(server => server.name === name);
-        const actualEnabled = this.mcpEnabled(result, name);
-        operation.status = !actualEnabled ? 'disabled' : this.mcpStatus(server?.status ?? 'not_configured');
+        const actual = this.mcpServerState(result, name);
+        operation.status = actual.status;
         if (result.host?.pendingConnections.length) operation.state = 'settling';
         return { ok: false, applied, sessionId: id, name,
-          enabled: actualEnabled, status: operation.status, error: operation.error, operation };
+          enabled: actual.enabled, status: operation.status, error: operation.error, operation };
       } finally {
         operation.completedAt = Date.now();
         st.mcpOperations--;
@@ -1477,7 +1492,10 @@ export class Engine {
         // are intentionally not restored by Cockpit.
         await this.withSession(st, sdk, () => sdk.rpc.mcp.reload());
         const result = await this.readResource(st, sdk, 'mcp');
-        const failed = result.servers.filter(server => this.mcpEnabled(result, server.name) && server.status !== 'connected');
+        const failed = result.servers.filter(server => {
+          const { status, enabled } = this.mcpServerState(result, server.name);
+          return status === 'not_configured' || (enabled && status !== 'connected');
+        });
         if (failed.length || result.host?.pendingConnections.length) throw new Error(`MCP connections not confirmed: ${failed.map(server => server.name).join(', ') || 'pending'}`);
         return { reconnected: result.servers.filter(server => server.status === 'connected').length };
       } finally {

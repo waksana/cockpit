@@ -688,7 +688,7 @@ test('MCP and skills controls preserve explicit on/off and authoritative results
       assert.equal(Intents[name].body.safeParse({ ...sid, name: 'tools', [field]: value }).success, false);
     }
   }
-  for (const status of ['connected', 'failed', 'needs-auth', 'pending', 'disabled', 'not_configured', 'unloaded'] as const) {
+  for (const status of ['connected', 'failed', 'needs-auth', 'pending', 'disabled', 'stopped', 'not_configured', 'unloaded'] as const) {
     roundTrip(Protocol.McpServerStatus, status);
     for (const loaded of [true, false]) {
       roundTrip(Intents['mcp/session'].result, {

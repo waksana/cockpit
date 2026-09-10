@@ -14,7 +14,7 @@ test('MCP result helpers return one unchanged text representation', () => {
   assert.deepEqual(fail(text), { content: [{ type: 'text', text: `Error: ${text}` }], isError: true });
 });
 
-for (const status of ['connected', 'failed', 'needs-auth', 'pending', 'disabled', 'not_configured', 'unloaded']) {
+for (const status of ['connected', 'failed', 'needs-auth', 'pending', 'disabled', 'stopped', 'not_configured', 'unloaded']) {
   for (const state of ['running', 'cancelling', 'settling', 'succeeded', 'failed']) {
     test(`canonical MCP adapters preserve nested unknown fields and failure: ${status}/${state}`, () => {
       const operation = {
