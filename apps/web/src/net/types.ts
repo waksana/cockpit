@@ -6,7 +6,7 @@
 export type {
   ChatMessage, ToolCall, ChatRole, SessionMeta, SessionStatus, AgentStatus,
   ModelOption, QueuedItem, AskRequest, ServerEvent, HistoryPage, TodoProgress,
-  TodoItem, SessionPlan, SessionPanels, PanelItem, Attachment, DirEntry, DirListing, TrashEntry,
+  TodoItem, SessionPlan, SessionPanels, PanelItem, Attachment, DirEntry, DirListing,
   ExitPlanModeAction, UploadedFile,
 } from '@cockpit/protocol';
 

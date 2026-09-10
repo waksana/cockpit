@@ -31,7 +31,7 @@ Bytes are re-read from the **requested session's native persisted events**.
 Session unload does not prevent passive reads and does not resume a session,
 run a prompt, reset an idle timer, or keep the session alive. Removing the
 original image file does not remove already persisted native bytes.
-Trashed sessions follow the existing passive-history policy. Purge, rewind,
+Permanent native session deletion, rewind,
 compaction, native omission, or invalid native cursors can make a resource
 unavailable. A preview is not a promise of permanent retention or an original
 unmodified file. Pixels already opened in a browser tab cannot be recalled.

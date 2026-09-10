@@ -50,16 +50,65 @@ Web GUI <------------- SSE projection ------------------+          |
 - `apps/mcp`: API client and agent-friendly presentation, not a local session
   database reader or a separate fold implementation.
 
+### Native metadata is request-owned
+
+The backend does not retain native session metadata, model inventories, mode,
+queue/task/todo/schedule projections or MCP connection-state snapshots, including
+short-lived caches and last-successful-value fallbacks. Snapshot, list, session
+detail and resource reads call public Copilot APIs and release their results when
+the request ends. A resource event invalidates consumers instead of filling a
+backend projection. There is no periodic session-list/resource refresh. The browser
+can keep its currently displayed data and requests fresh metadata after an
+invalidation; this is not a shared application-wide request manager.
+
+Unloaded sessions have no retained metadata State; an unfinished host delivery
+or cleanup contact may outlive its SDK handle, without retaining resource values.
+Native index metadata is read
+on demand; missing cwd is explicitly unknown, not the server's home directory.
+Model, mode, available models, queue and schedule/todo/task/MCP state require a
+loaded SDK handle and are omitted/unavailable otherwise. Reads never resume a
+session. The index may omit metadata for older entries; it is not repaired by
+unbounded journal replay or private databases. Snapshot/list `lastActivity` is native persisted
+modification time, not a claim of a live activity timestamp (a newly loaded
+session without an indexed row can only expose its native construction snapshot).
+Live display patches label their host receipt time separately as
+`host-event-receipt`; it is sent to the browser, not saved in the backend.
+Read failures are errors, not empty inventories, idle confirmations or prior values.
+SDK-internal caches are outside this boundary.
+
+The remaining backend ownership has a specific lifetime, not a general
+"runtime state" exemption:
+
+| Retained contact or product data | Why a native read cannot replace it; release |
+| --- | --- |
+| Session ID, SDK handle, event subscription/owner identity and native-close/disconnect contact | These identify this host's actual transport and callbacks, not a native metadata copy. Detach removes the session entry once its operations finish; failed disconnect retains ownership until it is resolved. |
+| Load, close, cancel, interrupt, naming and schedule-operation promises; operation/send counts; creation/removal/lifecycle gates | Public activity does not include this host's not-yet-settled calls. Creation IDs hide early index entries until this host receives a real SDK handle; the IDs are released when the create call settles. Other contacts clear on completion or teardown. Serialization gates resolve to `undefined`, never to the last RPC result. Unknown mutation outcomes are not retried. |
+| Pending send receipt IDs and interaction/turn identities | Correlate send acknowledgement with racing events, and prevent an old interrupted turn from clearing the new turn's contacts. Receipt windows end with their in-flight sends; accepted IDs end on consumption, explicit queue removal/cancel or detach. The interaction ID ends at native idle confirmation when no interrupt response still needs it; the interrupted epoch ends at the next turn or detach. |
+| Ask/plan/elicitation request IDs, validation and resolve/reject closures | These are the actual waiting SDK handlers. Public permission-request APIs do not resolve these distinct callbacks. Release on answer, cancellation or detach; unanswered decisions block teardown. |
+| Pending reply-notification summary/event ID and naming one-shot guards | A durable transcript cannot recover whether this host has delivered an unread transition or already attempted an uncertain auxiliary query. Release the reply candidate on delivery/new turn/cancel or failed-runtime teardown. A normal close attempts delivery; a failed product write retains the undelivered contact for explicit recovery/cancel rather than silently losing it. Naming attempt guards end with the handle. The deferred-naming bit is an outstanding wakeup waiting for this host's reads to settle, cleared on release or detach. No full reply is needed. |
+| Notification/control read promise, dirty bit and event revision | Protect the single in-flight confirmation against newer events; no native read result is retained. Cleared when confirmation settles or the handle closes. |
+| Engine/client lifecycle failure and connection status | Records host connection failure and uncertain cleanup, not native session display state. Lasts until successful stop or host replacement. |
+| HTTP/SSE connections, initial-response delivery frames and pending push deliveries | These are active deliveries, not reusable response caches. Frames are bounded by SSE backpressure limits and released after initial snapshot delivery or disconnect; promises end after delivery. |
+| Pin choices, unread waterlines, Composer drafts, retained files/associations, push registrations | Independent Cockpit/user data which the native session cannot reconstruct. Preserved by this change and changed only through their existing product operations. The separately authorized retirement of soft deletion removes its legacy marks, not native sessions or managed files. |
+
+Teardown and graceful restart always read current public processing/activity,
+queue, tasks and MCP pending connections in addition to the host's in-flight
+contacts. Failed safety reads prevent teardown. A title is not retained just for
+push: notification events identify the session directly, while views obtain its
+current native title on request.
+
 The session list is the home screen. Its hamburger opens Copilot-global MCP,
-Skills, trash and device notification settings; management lists are child pages,
+Skills, files and device notification settings; management lists are child pages,
 not parallel workspaces with their own hamburger. A list's Back returns home;
 an item detail's Back returns to its list first. Desktop master/detail and narrow
 full-page layouts expose one relevant Back, using the existing parent fallback
 for cold deep links. Browser Back preserves the actual entry source. Session rows
 open only their chat; row context/long-press and the chat kebab share one
 session-ID-bound action catalog: seven pages (Settings, session MCP, session
-Skills, plans/tasks, context, schedules, runtime maintenance), then rename,
-automatic naming, pin and trash. Three separators and viewport-bounded scrolling
+Skills, plans/tasks, context, schedules, runtime maintenance), then fork,
+pin and permanent deletion. Deletion requires an irreversible confirmation;
+there is no trash or restore operation. Managed files and workspaces are retained.
+Three separators and viewport-bounded scrolling
 keep this one-level menu reachable on short screens. Detail panels contain only
 the current page's owner-labelled title, Close/Back, page actions and content;
 there are no page-switching tabs or More menu. The chat title remains a shortcut
@@ -86,6 +135,12 @@ The explicit `session/auto-name` API is also available through Web and MCP.
 Manual names remain protected; history viewing and startup do not name old
 sessions. Naming failure preserves the current title and does not fail the chat.
 This still consumes an additional model request using the current context.
+First-reply eligibility is read on demand through a bounded public event query,
+not saved from a title lookup or history replay. If the first effective reply
+cannot be identified within 1,000 filtered events, automatic naming reports
+that limit and the explicit action remains available. The retained naming guard
+records only this host's one-shot attempt/failure, preventing automatic retries
+of an uncertain auxiliary query; it is not a native "already named" flag.
 
 Stay in TypeScript. The main simplification is the runtime boundary, not a
 language rewrite, microservices or another generic orchestration framework.
@@ -180,10 +235,12 @@ count cap, automatic eviction policy, retained-wrapper recycling or idle heartbe
 It reconciles native cleanup through passive liveness reads and drops its projection
 handles. A prompt or explicit resume loads a session again; history reads do not.
 Native-only detail reads return `409 SESSION_UNLOADED` when a resume is needed.
-Copilot may discard an empty session before its first submitted work. On explicit
-use, only a confirmed-absent local draft may be recreated with its confirmed
-initial settings. Persisted conversations and uncertain submissions are never
-recreated or retried.
+New sessions are published only after native creation succeeds. Copilot may
+discard an empty session before its first submitted work; Cockpit does not
+recreate it or replay its model, mode or name. Native resume and history errors
+are returned as errors. List refresh removes an inactive projection only after
+passive native metadata confirms its absence, without deleting history,
+preferences or composer draft files. Uncertain submissions are never retried.
 
 Native close is awaited before release is reported. Explicit close/restart guards
 protect running work, questions, queues, subagents and mutations, but future

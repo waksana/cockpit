@@ -236,10 +236,12 @@ test('prompt stays pending until its POST resolves and returns the parsed acknow
   assert.deepEqual(getUxErrors(), []);
 });
 
-test('manual auto-name sends exactly the existing session identity with no prompt, model or resume request', async (t) => {
+test('generic auto-name intent sends exactly the existing session identity with no prompt, model or resume request', async (t) => {
   const result = { ok: true, applied: true, title: 'Native name' };
   const { client, fetch, events } = setup(t, async () => Response.json(result));
-  assert.deepEqual(await client.autoNameSession('session'), result);
+  assert.equal('renameSession' in client, false);
+  assert.equal('autoNameSession' in client, false);
+  assert.deepEqual(await client.intent('session/auto-name', { sessionId: 'session' }), result);
   assertOnlyPost(fetch, 'session/auto-name', { sessionId: 'session' });
   assert.deepEqual(events, []);
   assert.deepEqual(getUxErrors(), []);
@@ -255,7 +257,7 @@ for (const invalid of [
 ]) {
   test(`auto-name rejects malformed protocol result without retry: ${JSON.stringify(invalid)}`, async (t) => {
     const { client, fetch } = setup(t, async () => Response.json(invalid));
-    await assert.rejects(client.autoNameSession('session'), { name: 'ZodError' });
+    await assert.rejects(client.intent('session/auto-name', { sessionId: 'session' }), { name: 'ZodError' });
     assertOnlyPost(fetch, 'session/auto-name', { sessionId: 'session' });
     assert.equal(getUxErrors().length, 1);
   });
@@ -265,7 +267,7 @@ test('auto-name preserves typed SESSION_BUSY instead of retrying, resuming or ca
   const { client, fetch } = setup(t, async () => Response.json({
     error: 'Wait until idle', code: 'SESSION_BUSY',
   }, { status: 409 }));
-  await assert.rejects(client.autoNameSession('session'), (error) => {
+  await assert.rejects(client.intent('session/auto-name', { sessionId: 'session' }), (error) => {
     assert.ok(error instanceof IntentHttpError);
     assert.equal(error.status, 409);
     assert.equal(error.code, 'SESSION_BUSY');

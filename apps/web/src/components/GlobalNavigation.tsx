@@ -8,7 +8,7 @@ import { Icon } from './Icon';
 const NotificationSettings = lazy(() => import('./NotificationSettings')
   .then((module) => ({ default: module.NotificationSettings })));
 
-type GlobalSection = 'mcp' | 'skills' | 'trash' | 'files';
+type GlobalSection = 'mcp' | 'skills' | 'files';
 
 export function GlobalNavigation() {
   const { pathname } = useLocation();
@@ -40,7 +40,6 @@ export function GlobalNavigation() {
           { label: '文件', icon: 'file', onClick: () => openSection('files') },
           { label: '全局 MCP', icon: 'mcp', onClick: () => openSection('mcp') },
           { label: '全局 Skills', icon: 'skills', onClick: () => openSection('skills') },
-          { label: '垃圾桶', icon: 'delete', onClick: () => openSection('trash') },
           {
             label: '通知设置', icon: notifications.ready ? 'check' : 'reload',
             onClick: () => {

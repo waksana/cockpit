@@ -6,7 +6,7 @@ export interface SessionActionHandlers {
   openPanel: (sessionId: string, panel: SessionPanel) => void;
   fork: (sessionId: string) => void;
   pin: (sessionId: string, pinned: boolean) => void;
-  trash: (sessionId: string) => void;
+  delete: (sessionId: string) => void;
 }
 
 export function sessionActionItems(
@@ -31,7 +31,7 @@ export function sessionActionItems(
       disabled: !connected || !session.loaded || !!(session.autoNaming || session.status === 'running'
         || session.nativeProcessing || session.loading || session.closing || session.cancelling
         || session.compacting || session.ask || session.planRequest || session.elicitation)
-        || !!session.queue.length || !!session.activeSubagents || !!session.scheduleCount,
+        || !!session.queue?.length || !!session.activeSubagents || !!session.scheduleCount,
       onClick: () => handlers.fork(sessionId),
     },
     {
@@ -42,13 +42,13 @@ export function sessionActionItems(
       onClick: () => handlers.pin(sessionId, !session.pinned),
     },
     {
-      id: 'trash',
-      label: '移入垃圾桶',
+      id: 'delete',
+      label: '永久删除会话',
       separatorBefore: true,
       icon: 'delete',
       destructive: true,
       disabled: !connected,
-      onClick: () => handlers.trash(sessionId),
+      onClick: () => handlers.delete(sessionId),
     },
   ];
 }

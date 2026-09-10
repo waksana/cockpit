@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Attachment, UploadedFile } from '@cockpit/protocol';
 import { createSessionDrafts, SessionDraft, type SendPrompt } from './attachmentSend';
+import { dismissUxError, getUxErrors } from './errorReporter';
 
 const uploaded: UploadedFile = {
   kind: 'file',
@@ -46,6 +47,7 @@ function memoryStorage(initial: Record<string, string> = {}) {
   return {
     getItem: (key: string) => values.get(key) ?? null,
     setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); },
   };
 }
 
@@ -783,6 +785,7 @@ for (const pending of [false, true]) {
       'cockpit:draft:hydrate': 'obsolete legacy caption',
     });
     const draft = new SessionDraft('hydrate', storage);
+    assert.equal(storage.getItem('cockpit:draft:hydrate'), null);
     const hydrated = draft.getSnapshot();
     assert.equal(hydrated.text, caption);
     assert.equal(hydrated.revision, 0);
@@ -812,21 +815,57 @@ for (const pending of [false, true]) {
   });
 }
 
-test('legacy text hydrates only without a version 1 entry and later persists in the composer key', () => {
-  const caption = '  legacy caption \n';
+test('legacy text is removed without reading or migrating it, leaving other storage untouched', (t) => {
   const storage = memoryStorage({
-    'cockpit:draft:legacy': caption,
+    'cockpit:draft:legacy': 'obsolete caption',
     'cockpit:draft:empty': 'must not revive this',
+    'cockpit:draft:other': 'another session',
+    'unrelated': 'unrelated value',
+    'cockpit:composer:other': 'untouched modern draft',
     'cockpit:composer:empty': JSON.stringify({ version: 1, text: '', pending: false }),
   });
+  const read = t.mock.method(storage, 'getItem');
+  const write = t.mock.method(storage, 'setItem');
+  const remove = t.mock.method(storage, 'removeItem');
   const draft = new SessionDraft('legacy', storage);
-  assert.deepEqual(draft.getSnapshot(), { text: caption, revision: 0, pending: false });
+  assert.deepEqual(draft.getSnapshot(), { text: '', revision: 0, pending: false });
+  assert.deepEqual(read.mock.calls.map(call => call.arguments), [['cockpit:composer:legacy']]);
+  assert.equal(write.mock.callCount(), 0, 'discarding old text must not write a modern draft');
+  assert.deepEqual(remove.mock.calls.map(call => call.arguments), [['cockpit:draft:legacy']]);
+  assert.equal(storage.getItem('cockpit:draft:legacy'), null);
+  assert.equal(storage.getItem('cockpit:composer:legacy'), null);
   draft.edit('  new caption \n');
   assert.deepEqual(persisted(storage, 'legacy'), {
     version: 1, text: '  new caption \n', pending: false,
   });
-  assert.equal(storage.getItem('cockpit:draft:legacy'), caption);
   assert.equal(new SessionDraft('empty', storage).getSnapshot().text, '');
+  assert.equal(storage.getItem('cockpit:draft:empty'), null);
+  assert.equal(storage.getItem('cockpit:composer:empty'), JSON.stringify({ version: 1, text: '', pending: false }));
+  assert.equal(storage.getItem('cockpit:draft:other'), 'another session');
+  assert.equal(storage.getItem('cockpit:composer:other'), 'untouched modern draft');
+  assert.equal(storage.getItem('unrelated'), 'unrelated value');
+});
+
+test('failed legacy removal is redacted and does not prevent restoring the modern caption and attachment', (t) => {
+  for (const error of getUxErrors()) dismissUxError(error.id);
+  t.after(() => { for (const error of getUxErrors()) dismissUxError(error.id); });
+  const logged = t.mock.method(console, 'error', () => {});
+  const storage = memoryStorage({
+    'cockpit:composer:cleanup-denied': JSON.stringify({ version: 1, text: 'modern caption', attachment, pending: true }),
+  });
+  const read = t.mock.method(storage, 'getItem');
+  t.mock.method(storage, 'removeItem', () => { throw new Error('private storage details'); });
+  const draft = new SessionDraft('cleanup-denied', storage);
+  assert.equal(draft.getSnapshot().text, 'modern caption');
+  assert.deepEqual(draft.getSnapshot().staged?.attachment, attachment);
+  assert.equal(draft.getSnapshot().pending, false);
+  assert.ok(draft.getSnapshot().error);
+  assert.deepEqual(read.mock.calls.map(call => call.arguments), [['cockpit:composer:cleanup-denied']]);
+  assert.equal(getUxErrors().length, 1);
+  assert.equal(logged.mock.callCount(), 1);
+  assert.equal(JSON.stringify(logged.mock.calls[0].arguments).includes('private storage details'), false);
+  draft.edit('new caption');
+  assert.equal(persisted(storage, 'cleanup-denied').text, 'new caption');
 });
 
 test('unparseable cached JSON does not prevent in-memory editing and persistence', () => {
@@ -853,6 +892,7 @@ for (const unavailable of ['missing', 'get-throws', 'set-throws', 'both-throw'] 
         if (unavailable === 'set-throws' || unavailable === 'both-throw') throw new Error('Storage quota exceeded');
         values.setItem(key, value);
       },
+      removeItem: values.removeItem,
     };
     const getSessionDraft = storage ? createSessionDrafts(storage) : undefined;
     const draft = getSessionDraft ? getSessionDraft('unavailable') : new SessionDraft('unavailable');

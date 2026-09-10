@@ -70,14 +70,20 @@ test('configured timeout overrides both generic and load-aware deadlines', async
     process.env.COCKPIT_TIMEOUT_MS = '123';
     const { requestTimeoutMs } = await import('./src/config.ts');
     const { backendJson, intent, CockpitError } = await import('./src/cockpit.ts');
+    const { invokePublishedIntent } = await import('./src/tools/foundation.ts');
     for (const path of ['/health', 'session/history', 'session/subagent-history', 'session/peek', 'flow/run']) {
       assert.equal(requestTimeoutMs(path), 123);
     }
-    for (const request of [() => backendJson('/health'), () => intent('session/peek')]) {
+    for (const request of [
+      () => backendJson('/health'),
+      () => intent('session/peek'),
+      () => invokePublishedIntent('session/purge', { sessionId: 's1', confirm: true }),
+    ]) {
       await assert.rejects(request, (error) =>
-        error instanceof CockpitError && error.kind === 'timeout' && /after 123ms/.test(error.message));
+        error instanceof CockpitError && error.kind === 'timeout'
+          && /after 123ms/.test(error.message) && /no retry was attempted/.test(error.message));
     }
-    assert.equal(calls, 2);
+    assert.equal(calls, 3, 'one request per call, without capability preflight or retry');
   `], { env: { ...process.env, COCKPIT_TIMEOUT_MS: '123' } });
   assert.equal(requests.length, 0);
 });

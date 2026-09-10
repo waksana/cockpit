@@ -126,24 +126,12 @@
   .switch.is-on & { transform: translateX(1rem); }
 }
 
-// ── Trash view ────────────────────────────────────────────────────────────────
-.trash-note {
+// Shared management feedback.
+.manage-note {
   margin: 0.1rem 0.2rem 0.6rem;
   font-size: var(--font-size-12);
   line-height: 1.5;
   color: var(--secondary-text-color);
-}
-.trash-restore {
-  flex: none;
-  padding: 0.35rem 0.85rem;
-  border: none;
-  border-radius: 999px;
-  cursor: pointer;
-  background: color-mix(in srgb, var(--primary-color) 14%, transparent);
-  color: var(--primary-color);
-  font-size: var(--font-size-13);
-  font-family: inherit;
-  position: relative; overflow: hidden;   // ripple host
 }
 
 // ── Master-detail sections (components/ManageWorkspace.tsx) ──────────────────────
@@ -163,7 +151,7 @@
   &.is-active { background: color-mix(in srgb, var(--primary-color) 16%, var(--surface-color)); }
 }
 
-// Detail pane for a single MCP server / skill (the trash detail renders a Thread).
+// Detail pane for a single MCP server / skill.
 .manage-detail {
   flex: 1 1 auto;
   min-height: 0;

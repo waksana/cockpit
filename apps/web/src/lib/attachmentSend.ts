@@ -1,5 +1,6 @@
 import type { Attachment, UploadedFile } from '@cockpit/protocol';
 import { acknowledge } from './draft';
+import { reportUxError } from './errorReporter';
 import { uploadedAttachment, uploadFile } from './upload';
 
 export interface StagedAttachment {
@@ -21,7 +22,7 @@ export interface SessionDraftSnapshot {
   error?: string;
 }
 
-type DraftStorage = Pick<Storage, 'getItem' | 'setItem'>;
+type DraftStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 export type UploadFile = (file: File) => Promise<UploadedFile>;
 export type SendPrompt = (text: string, attachment?: Attachment, attachments?: Attachment[]) => Promise<boolean>;
 
@@ -53,6 +54,11 @@ export class SessionDraft {
     this.storage = storage;
     this.snapshot = { text: '', revision: 0, pending: false };
     try {
+      storage?.removeItem(`cockpit:draft:${sessionId}`);
+    } catch {
+      reportUxError('无法清理旧版草稿存储；旧草稿不会恢复，当前草稿不受影响。');
+    }
+    try {
       const stored = storage?.getItem(this.key);
       if (stored) {
         const value = JSON.parse(stored);
@@ -70,8 +76,6 @@ export class SessionDraft {
             if (attachments.length > 1) this.snapshot.stagedAttachments = attachments;
           }
         }
-      } else {
-        this.snapshot.text = storage?.getItem(`cockpit:draft:${sessionId}`) ?? '';
       }
     } catch { /* Storage is optional; invalid cached attachments are not restored. */ }
   }

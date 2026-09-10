@@ -152,6 +152,7 @@ test('Composer staged attachment markup', async (t) => {
       const getDraft = createSessionDrafts({
         getItem: (key) => values.get(key) ?? null,
         setItem: (key, value) => { values.set(key, value) },
+        removeItem: (key) => { values.delete(key) },
       })
       const original = getDraft('original')
       original.edit(caption)

@@ -17,7 +17,7 @@ import { ConnectedThread } from './components/ConnectedThread';
 import { NewSessionFab } from './components/NewSessionFab';
 import { Icon, type IconName } from './components/Icon';
 import { AnchoredMenu } from './components/AnchoredMenu';
-import { ModeMenu, type SessionMode } from './components/ModeMenu';
+import { ModeMenu } from './components/ModeMenu';
 import { Dialog, DirectoryModal, type DialogProps } from './components/Dialog';
 import { GlobalNavigation } from './components/GlobalNavigation';
 import { sessionActionItems, type SessionActionHandlers } from './lib/sessionActions';
@@ -89,7 +89,7 @@ function Workspace() {
   //   /session/:id            — that chat
   //   /session/:id/info       — chat + info panel
   //   /session/:id/mcp|skills|schedules|context|runtime — chat + details
-  // The global sections (/mcp, /skills, /trash and their /:item detail) render a
+  // The global sections (/mcp, /skills and their /:item detail) render a
   // separate master-detail <ManageWorkspace/>, not this Workspace.
   // These session routes all render the SAME <Workspace/> (no remount).
   const navigate = useNavigate();
@@ -152,12 +152,12 @@ function Workspace() {
     const s = sessions.find((x) => x.sessionId === sessionId);
     const name = s?.title?.trim() || '该会话';
     setDialog({
-      title: '移入垃圾桶',
-      message: `将「${name}」移入垃圾桶。会话数据会保留，可随时从垃圾桶恢复。`,
-      confirmLabel: '移入垃圾桶',
+      title: '永久删除会话',
+      message: `永久删除「${name}」及其 Copilot 会话历史，此操作不可恢复。托管文件和工作目录不会被删除。`,
+      confirmLabel: '永久删除',
       destructive: true,
       actionKey: `delete:${sessionId}`,
-      onConfirm: () => deleteSession(sessionId),
+      onConfirm: () => deleteSession(sessionId, true),
       onSuccess: () => {
         // Local delete of the focused session returns to the list — the URL is
         // the source of truth. Replace so the now-deleted session isn't left in
@@ -183,7 +183,7 @@ function Workspace() {
       });
     },
     pin: (sessionId, pinned) => { void pinSession(sessionId, pinned); },
-    trash: doDelete,
+    delete: doDelete,
   };
   const getSessionMenuItems = (session: typeof sessions[number]) => (
     sessionActionItems(session, connState === 'open', menuHandlers)
@@ -206,11 +206,11 @@ function Workspace() {
       <button
         ref={modeChipRef}
         className="chat-topbar-mode btn-icon rp" type="button"
-        aria-label={`模式：${MODE_LABELS[active.currentMode ?? 'interactive']}，点击切换`}
-        data-mode={active.currentMode ?? 'interactive'}
+        aria-label={`模式：${active.currentMode ? MODE_LABELS[active.currentMode] : '未加载或未知'}，点击切换`}
+        data-mode={active.currentMode ?? 'unknown'}
         onClick={() => setModeMenuOpen((v) => !v)}
       >
-        <Icon name={MODE_ICONS[active.currentMode ?? 'interactive']} size={24} />
+        <Icon name={active.currentMode ? MODE_ICONS[active.currentMode] : 'more'} size={24} />
       </button>
       <button
         ref={kebabRef}
@@ -270,7 +270,7 @@ function Workspace() {
       {modeMenuOpen && active && (
         <ModeMenu
           triggerRef={modeChipRef}
-          current={(active.currentMode ?? 'interactive') as SessionMode}
+          current={active.currentMode ?? null}
           running={active.status === 'running'}
           onPick={(mode) => setMode(active.sessionId, mode)}
           onClose={() => setModeMenuOpen(false)}
@@ -328,7 +328,7 @@ export default function App() {
   // the Routes outlet, only the matched params/path change (Workspace reads them
   // via useParams/useLocation). This keeps the responsive CSS layout, scroll
   // positions, and drafts intact across every navigation. Sessions are namespaced
-  // under /session/ so the global pages (/mcp, /skills, /trash) can be top-level
+  // under /session/ so the global pages (/mcp, /skills) can be top-level
   // without colliding with a session id.
   return (
     <Suspense fallback={<div className="detail-empty" role="status">加载页面…</div>}>
@@ -339,8 +339,6 @@ export default function App() {
       <Route path="/mcp/:item" element={<ManageWorkspace />} />
       <Route path="/skills" element={<ManageWorkspace />} />
       <Route path="/skills/:item" element={<ManageWorkspace />} />
-      <Route path="/trash" element={<ManageWorkspace />} />
-      <Route path="/trash/:item" element={<ManageWorkspace />} />
       <Route path="/flows/*" element={<Navigate to="/" replace />} />
       <Route path="/workers/*" element={<Navigate to="/" replace />} />
       <Route path="/session/:sessionId/automation" element={<LegacyAutomationRedirect />} />

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { parentOf } from '../lib/nav';
 
 test('global lists and item deep links have strict hierarchical parents', () => {
-  for (const section of ['mcp', 'skills', 'trash']) {
+  for (const section of ['mcp', 'skills']) {
     assert.equal(parentOf(`/${section}`), '/');
     assert.equal(parentOf(`/${section}/name%2Fpart`), `/${section}`);
     assert.equal(parentOf(`/${section}/name%2Fpart/`), `/${section}`);
@@ -21,5 +21,6 @@ test('only the main workspace owns a global menu and section navigation pushes d
   assert.doesNotMatch(source, /showSessionListEntry|label: '会话列表'|replace:/);
   assert.match(source, /navigate\(`\/\$\{section\}`\)/);
   assert.match(source, /pathname === '\/'.*triggerRef.current\?\.focus/);
-  for (const label of ['文件', '全局 MCP', '全局 Skills', '垃圾桶', '通知设置']) assert.ok(source.includes(label));
+  for (const label of ['文件', '全局 MCP', '全局 Skills', '通知设置']) assert.ok(source.includes(label));
+  assert.doesNotMatch(source, /垃圾桶|trash/);
 });

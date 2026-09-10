@@ -9,7 +9,6 @@ import { dismissUxError, getUxErrors } from '../lib/errorReporter';
 import { IntentHttpError, isSessionUnloadedError, SessionUnloadedError } from './client';
 import { createCockpitStore, useCockpit } from './store';
 import { createSessionDrafts } from '../lib/attachmentSend';
-import { createKeyedAsync } from '../lib/keyedAsync';
 import type { Attachment, ChatMessage, HistoryPage, ServerEvent, SessionMeta, UploadedFile } from './types';
 
 type Store = ReturnType<typeof createCockpitStore>;
@@ -120,7 +119,7 @@ function setup(t: TestContext, store: Store = useCockpit) {
     const result = request(index);
     assert.equal(result.url, intentUrl(name));
     let init = result.init;
-    if (name.startsWith('push/') || name === 'session/history' || name === 'session/peek') {
+    if (name.startsWith('push/') || name === 'session/history' || name === 'session/peek' || name === 'session/get') {
       assert.ok(init?.signal instanceof AbortSignal, 'push requests must have an abort deadline');
       const { signal, ...rest } = init;
       if (name.startsWith('push/')) assert.equal(signal.aborted, false);
@@ -207,6 +206,125 @@ function observe<T>(promise: Promise<T>): Promise<T> {
   void promise.catch(() => {});
   return promise;
 }
+
+test('native metadata invalidations read only the affected session and discard superseded responses', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
+  await setImmediate();
+  h.assertPost(0, 'session/get', { sessionId: 'a' });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
+  await h.reply(0, { meta: { ...meta('a'), currentModelId: 'obsolete' } });
+  assert.notEqual(session('a', store).currentModelId, 'obsolete');
+  h.assertPost(1, 'session/get', { sessionId: 'a' });
+  await h.reply(1, { meta: { ...meta('a'), currentModelId: 'current' } });
+  assert.equal(session('a', store).currentModelId, 'current');
+  assert.equal(session('b', store).currentModelId, undefined);
+  assert.equal(h.requests.length, 2);
+});
+
+test('unloaded native responses clear runtime values without global defaults or implicit resume', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), currentModelId: 'old', currentMode: 'plan', scheduleCount: 2 }] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
+  await setImmediate();
+  const unloaded = { sessionId: 'a', title: 'a', cwd: '.', lastActivity: 1, status: 'unloaded', loaded: false, error: null, ask: null };
+  await h.reply(0, { meta: unloaded });
+  assert.equal(session('a', store).loaded, false);
+  for (const key of ['currentModelId', 'currentMode', 'scheduleCount', 'queue']) {
+    assert.equal(key in session('a', store), false, key);
+  }
+  assert.equal(h.requests.length, 1);
+});
+
+test('closing invalidations wait for the settling event rather than entering teardown', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a']);
+  h.source.emit({ type: 'session/patch', sessionId: 'a', closing: true });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
+  await setImmediate();
+  assert.equal(h.requests.length, 0);
+  h.source.emit({ type: 'session/patch', sessionId: 'a', closing: false });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
+  await setImmediate();
+  h.assertPost(0, 'session/get', { sessionId: 'a' });
+  await h.reply(0, { meta: { ...meta('a'), loaded: false, status: 'unloaded' } });
+  assert.equal(session('a', store).loaded, false);
+});
+
+test('removed sessions and reconnected snapshots invalidate in-flight native metadata reads', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
+  await setImmediate();
+  h.source.emit({ type: 'session/removed', sessionId: 'a' });
+  assert.equal(h.request(0).init?.signal?.aborted, true);
+  await h.reply(0, { meta: { ...meta('a'), title: 'must not return' } });
+  assert.equal(store.getState().sessions.some(row => row.sessionId === 'a'), false);
+  h.source.emit({ type: 'session/invalidated', sessionId: 'b' });
+  await setImmediate();
+  h.snapshot(['b'], { sessions: [{ ...meta('b'), title: 'new snapshot' }] });
+  assert.equal(h.request(1).init?.signal?.aborted, true);
+  await h.reply(1, { meta: { ...meta('b'), title: 'old request' } });
+  assert.equal(session('b', store).title, 'new snapshot');
+});
+
+test('failed native metadata reads surface an error and never silently retry', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a']);
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
+  await setImmediate();
+  h.request(0).response.resolve(Response.json({ error: 'Native state unavailable' }, { status: 503 }));
+  await setImmediate();
+  assert.equal(h.requests.length, 1);
+  assert.ok(getUxErrors().some(error => JSON.stringify(error).includes('读取会话状态失败')));
+});
+
+test('a failed old metadata request does not discard a newer settling invalidation', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a']);
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
+  await setImmediate();
+  h.source.emit({ type: 'session/patch', sessionId: 'a', closing: true });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
+  h.source.emit({ type: 'session/patch', sessionId: 'a', closing: false });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
+  h.request(0).response.resolve(Response.json({ error: 'Transition in progress', code: 'SESSION_TRANSITION' }, { status: 409 }));
+  await setImmediate();
+  h.assertPost(1, 'session/get', { sessionId: 'a' });
+  await h.reply(1, { meta: { ...meta('a'), title: 'after transition' } });
+  assert.equal(session('a', store).title, 'after transition');
+  assert.equal(h.requests.length, 2);
+});
+
+test('native getters without an error projection do not erase a live frontend error', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  h.snapshot(['a']);
+  h.source.emit({ type: 'session/patch', sessionId: 'a', error: 'Native turn failed', autoNameError: 'Naming failed' });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
+  await setImmediate();
+  const { error: _error, ...fresh } = meta('a');
+  await h.reply(0, { meta: fresh });
+  assert.equal(session('a', store).error, 'Native turn failed');
+  assert.equal(session('a', store).autoNameError, 'Naming failed');
+  h.source.emit({ type: 'session/patch', sessionId: 'a', error: null, autoNameError: null });
+  assert.equal(session('a', store).error, null);
+  assert.equal(session('a', store).autoNameError, null);
+});
 
 test('latest reentry and same-connection snapshots keep live-only text without using it as a durable boundary', async t => {
   const store = createCockpitStore();
@@ -338,7 +456,8 @@ test('reconnect within the same mounted chat preserves loaded scrollback until i
     store.getState().loadMore('a');
     await h.history(index + 1, { sessionId: 'a', messages: range(start), hasMore: start > 0 });
   }
-  store.getState().setDraft('a', 'independent draft');
+  const draft = createSessionDrafts()('a');
+  draft.edit('independent draft');
   h.reconnect(['a', 'b']);
   assert.equal(session('a', store).materialized, true);
   assert.deepEqual(session('a', store).messages, range(0, 150));
@@ -356,7 +475,7 @@ test('reconnect within the same mounted chat preserves loaded scrollback until i
   assert.deepEqual(session('a', store).messages, range(0, 161));
   assert.equal(session('a', store).historyStale, false);
   assert.equal(session('a', store).resumeToken, 'new-checkpoint');
-  assert.equal(store.getState().getDraft('a'), 'independent draft');
+  assert.equal(draft.getSnapshot().text, 'independent draft');
   store.getState().setActiveId(null);
   assert.deepEqual(session('a', store).messages, range(131, 30));
   assert.equal(session('a', store).resumeToken, undefined);
@@ -688,7 +807,8 @@ test('active scrollback is uncapped until departure retains the latest page inde
   });
   h.source.open();
   h.snapshot([], { sessions: [{ ...meta('a'), attention: 'ready', attnId: 5, seenId: 4 }] });
-  useCockpit.getState().setDraft('a', 'unsent caption');
+  const draft = createSessionDrafts()('a');
+  draft.edit('unsent caption');
   await h.load('a', Array.from({ length: 30 }, (_, i) => message(`new-${i}`)));
   for (let i = 0; i < 4; i++) {
     useCockpit.getState().loadMore('a');
@@ -704,7 +824,7 @@ test('active scrollback is uncapped until departure retains the latest page inde
     ...before, messages: before.messages.slice(-30),
     historyStale: true, hasMore: true, loadingHistory: false, resumeAfter: undefined, resumeToken: undefined,
   });
-  assert.equal(useCockpit.getState().getDraft('a'), 'unsent caption');
+  assert.equal(draft.getSnapshot().text, 'unsent caption');
   h.source.emit({ type: 'session/reset', page: { sessionId: 'a', messages: [message('remote reset')], hasMore: true } });
   h.upsert('a', message('remote stream'));
   assert.deepEqual(session().messages, []);
@@ -720,6 +840,7 @@ for (const accepted of [false, true]) {
     const storage = {
       getItem: (key: string) => values.get(key) ?? null,
       setItem: (key: string, value: string) => { values.set(key, value); },
+      removeItem: (key: string) => { values.delete(key); },
     };
     const drafts = createSessionDrafts(storage);
     const draft = drafts('a');
@@ -1455,6 +1576,8 @@ test('automatic naming is never triggered by snapshots, completed replies, brows
   const h = setup(t);
   h.source.open();
   h.snapshot(['a', 'b']);
+  assert.equal('renameSession' in useCockpit.getState(), false);
+  assert.equal('autoNameSession' in useCockpit.getState(), false);
   assert.equal(h.requests.length, 0);
   await h.load('a', [message('completed')], false);
   h.upsert('a', message('next-completed'));
@@ -1474,72 +1597,7 @@ test('automatic naming is never triggered by snapshots, completed replies, brows
   assert.ok(h.requests.every((request) => request.url === intentUrl('session/history')));
 });
 
-test('explicit unloaded auto-name awaits its exact POST and leaves native loading and titles to SSE', async (t) => {
-  const h = setup(t);
-  h.source.open();
-  h.snapshot(['a'], { sessions: [{ ...meta('a'), loaded: false, status: 'unloaded' }] });
-  const before = session();
-  const pending = useCockpit.getState().autoNameSession('a');
-  const response = h.assertPost(0, 'session/auto-name', { sessionId: 'a' });
-  let settled = false;
-  void pending.then(() => { settled = true; });
-  await setImmediate();
-  assert.equal(settled, false);
-  assert.strictEqual(session(), before);
-  const result = { ok: true, applied: true, title: 'Accepted native title' };
-  response.resolve(Response.json(result));
-  assert.deepEqual(await pending, result);
-  assert.strictEqual(session(), before);
-  assert.equal(h.requests.length, 1);
-  h.source.emit({ type: 'session/patch', sessionId: 'a', title: result.title, loaded: true, status: 'idle' });
-  assert.equal(session().title, result.title);
-  assert.equal(session().loaded, true);
-});
-
-for (const reason of ['user-named', 'no-context', 'not-applied', undefined] as const) {
-  test(`auto-name ${reason ?? 'unapplied'} returns an ordinary typed result without chat errors or title writes`, async (t) => {
-    const h = setup(t);
-    h.source.open();
-    h.snapshot();
-    const before = session();
-    const pending = useCockpit.getState().autoNameSession('a');
-    h.assertPost(0, 'session/auto-name', { sessionId: 'a' });
-    const result = { ok: true, applied: false, title: null, ...(reason ? { reason } : {}) };
-    await h.reply(0, result);
-    assert.deepEqual(await pending, result);
-    assert.strictEqual(session(), before);
-    assert.deepEqual(getUxErrors(), []);
-    assert.equal(h.requests.length, 1);
-  });
-}
-
-for (const failure of ['query', 'busy', 'transport', 'malformed'] as const) {
-  test(`auto-name ${failure} failure remains a local API error and never marks the chat failed`, async (t) => {
-    const h = setup(t);
-    h.source.open();
-    h.snapshot(['a', 'b']);
-    const before = session();
-    const other = session('b');
-    const pending = useCockpit.getState().autoNameSession('a');
-    const rejected = expectRejection(pending);
-    const response = h.assertPost(0, 'session/auto-name', { sessionId: 'a' });
-    if (failure === 'transport') response.reject(new TypeError('network unavailable'));
-    else if (failure === 'malformed') response.resolve(Response.json({ ok: true, title: 'missing applied' }));
-    else response.resolve(Response.json({
-      error: failure === 'busy' ? 'Wait until idle' : 'Naming query failed',
-      ...(failure === 'busy' ? { code: 'SESSION_BUSY' } : {}),
-    }, { status: failure === 'busy' ? 409 : 500 }));
-    await rejected;
-    assert.strictEqual(session(), before);
-    assert.strictEqual(session('b'), other);
-    assert.equal(session().status, 'idle');
-    assert.equal(session().error, null);
-    assert.equal(getUxErrors().length, 1);
-    assert.equal(h.requests.length, 1);
-  });
-}
-
-test('naming metadata and POST outcomes leave unread attention, drafts and materialized messages unchanged', async (t) => {
+test('native naming metadata leaves unread attention, drafts and materialized messages unchanged', async (t) => {
   const storage = new Map<string, string>();
   replaceGlobal(t, 'localStorage', {
     getItem: (key: string) => storage.get(key) ?? null,
@@ -1550,7 +1608,6 @@ test('naming metadata and POST outcomes leave unread attention, drafts and mater
   h.source.open();
   h.snapshot(['a'], { sessions: [{ ...meta('a'), attention: 'ready', attnId: 4, seenId: 2 }], unreadCount: 1 });
   await h.load('a', [message('completed')], false);
-  useCockpit.getState().setDraft('a', 'Unsent draft');
   const drafts = createSessionDrafts();
   const draft = drafts('a');
   draft.edit('Composer draft');
@@ -1562,10 +1619,8 @@ test('naming metadata and POST outcomes leave unread attention, drafts and mater
   assert.equal(session().status, 'idle');
   h.source.emit({ type: 'session/patch', sessionId: 'a', autoNaming: false, autoNameError: 'Native query unavailable' });
   assert.equal(session().error, null);
-  const pending = useCockpit.getState().autoNameSession('a');
-  h.assertPost(1, 'session/auto-name', { sessionId: 'a' });
-  await h.reply(1, { ok: true, applied: false, title: null, reason: 'no-context' });
-  await pending;
+  h.source.emit({ type: 'session/patch', sessionId: 'a', title: 'Native title', autoNameError: null });
+  assert.equal(session().title, 'Native title');
   assert.strictEqual(session().messages, before.messages);
   assert.equal(session().attention, before.attention);
   assert.equal(session().attnId, before.attnId);
@@ -1573,66 +1628,20 @@ test('naming metadata and POST outcomes leave unread attention, drafts and mater
   assert.equal(useCockpit.getState().unreadCount, unread);
   assert.strictEqual(draft.getSnapshot(), draftBefore);
   assert.deepEqual(storage, storedBefore);
-  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests.length, 1);
 });
 
-test('late auto-name acknowledgement never applies another route title or overwrites a newer manual rename', async (t) => {
+test('native title updates target their session without changing another route', async (t) => {
   const h = setup(t);
   h.source.open();
   h.snapshot(['a', 'b']);
-  const pending = useCockpit.getState().autoNameSession('a');
-  h.assertPost(0, 'session/auto-name', { sessionId: 'a' });
   await h.load('b', [message('b-message')], false);
   const other = session('b');
   h.source.emit({ type: 'session/patch', sessionId: 'a', title: 'Newer manual name' });
-  await h.reply(0, { ok: true, applied: true, title: 'Obsolete query name' });
-  await pending;
   assert.equal(useCockpit.getState().activeId, 'b');
   assert.equal(session().title, 'Newer manual name');
   assert.strictEqual(session('b'), other);
-  assert.equal(h.requests.length, 2);
-});
-
-test('ordinary rename retains its exact API and an unapplied auto-name preserves the authoritative manual name', async (t) => {
-  const h = setup(t);
-  h.source.open();
-  h.snapshot();
-  const renamed = useCockpit.getState().renameSession('a', 'My name');
-  h.assertPost(0, 'session/rename', { sessionId: 'a', name: 'My name' });
-  await h.reply(0, { ok: true, title: 'My name' });
-  await renamed;
-  h.source.emit({ type: 'session/patch', sessionId: 'a', title: 'My name' });
-  const generated = useCockpit.getState().autoNameSession('a');
-  h.assertPost(1, 'session/auto-name', { sessionId: 'a' });
-  await h.reply(1, { ok: true, applied: false, title: 'My name', reason: 'user-named' });
-  assert.equal((await generated).applied, false);
-  assert.equal(session().title, 'My name');
-  assert.equal(session().error, null);
-  assert.deepEqual(getUxErrors(), []);
-  assert.equal(h.requests.length, 2);
-});
-
-test('keyed naming confirmation suppresses duplicate clicks and discards results after leaving the route', async (t) => {
-  const h = setup(t);
-  h.source.open();
-  h.snapshot();
-  const action = createKeyedAsync<void>('auto-name:a', useCockpit.getState);
-  action.activate();
-  let applied = false;
-  let accepted = 0;
-  const confirm = () => action.run(async () => {
-    applied = (await useCockpit.getState().autoNameSession('a')).applied;
-  }, () => { if (applied) accepted++; }, true);
-  const first = confirm();
-  assert.equal(action.getSnapshot().pending, true);
-  assert.equal(await confirm(), false);
-  h.assertPost(0, 'session/auto-name', { sessionId: 'a' });
   assert.equal(h.requests.length, 1);
-  action.deactivate();
-  await h.reply(0, { ok: true, applied: true, title: 'Late result' });
-  assert.equal(await first, false);
-  assert.equal(accepted, 0);
-  assert.equal(session().title, 'a');
 });
 
 interface MutationCase {
@@ -1656,8 +1665,7 @@ const mutations: MutationCase[] = [
     send: (s) => s.setModel('a', 'model', { reasoningEffort: 'high', contextTier: 'long_context' }),
     success: { ok: true }, sessionId: 'a',
   },
-  { name: 'session/delete', body: { sessionId: 'a' }, send: (s) => s.deleteSession('a'), success: { ok: true }, sessionId: 'a' },
-  { name: 'session/restore', body: { sessionId: 'a' }, send: (s) => s.restoreSession('a'), success: { ok: true }, sessionId: 'a' },
+  { name: 'session/purge', body: { sessionId: 'a', confirm: true }, send: (s) => s.deleteSession('a', true), success: { ok: true }, sessionId: 'a' },
   { name: 'session/unload', body: { sessionId: 'a' }, send: (s) => s.unloadSession('a'), success: { ok: true }, sessionId: 'a' },
   {
     name: 'session/reload', body: { sessionId: 'a' }, send: (s) => s.reloadSession('a'),
@@ -1666,10 +1674,6 @@ const mutations: MutationCase[] = [
   {
     name: 'session/pin', body: { sessionId: 'a', pinned: true }, send: (s) => s.pinSession('a', true),
     success: { ok: true, pinned: true }, sessionId: 'a',
-  },
-  {
-    name: 'session/rename', body: { sessionId: 'a', name: 'renamed' }, send: (s) => s.renameSession('a', 'renamed'),
-    success: { ok: true, title: 'renamed' }, sessionId: 'a',
   },
   {
     name: 'session/compact', body: { sessionId: 'a' }, send: (s) => s.compactSession('a'),
@@ -2162,9 +2166,6 @@ const sessionMcp: IntentResult<'mcp/session'>['servers'] = [
 const globalSkills: IntentResult<'skills/global'>['skills'] = [{ name: 'fixture-skill', description: 'fixture', enabled: false }];
 const sessionSkills: IntentResult<'skills/session'>['skills'] = [{ name: 'fixture-skill', enabled: true }];
 const skill: IntentResult<'skills/read'> = { name: 'fixture-skill', body: 'fixture body', enabled: false };
-const trash: IntentResult<'session/trash-list'>['entries'] = [
-  { sessionId: 'trash', title: 'Fixture trash', cwd: '.', at: '2026-09-07T00:00:00Z' },
-];
 const directory: IntentResult<'fs/listDir'> = { path: '/fixture', parent: '/', entries: [] };
 const resources: ResourceCase[] = [
   { label: 'getPlan', name: 'session/plan', body: { sessionId: 'a' }, read: (s) => s.getPlan('a'), response: plan, expected: plan },
@@ -2183,7 +2184,6 @@ const resources: ResourceCase[] = [
   { label: 'skillsRead', name: 'skills/read', body: { name: 'fixture-skill' }, read: (s) => s.skillsRead('fixture-skill'), response: skill, expected: skill },
   { label: 'skillsRead(cwd)', name: 'skills/read', body: { name: 'fixture-skill', cwd: './fixture' }, read: (s) => s.skillsRead('fixture-skill', './fixture'), response: skill, expected: skill },
   { label: 'skillsSession', name: 'skills/session', body: { sessionId: 'a' }, read: (s) => s.skillsSession('a'), response: { skills: sessionSkills }, expected: sessionSkills },
-  { label: 'trashList', name: 'session/trash-list', body: {}, read: (s) => s.trashList(), response: { entries: trash }, expected: trash },
   { label: 'listDir()', name: 'fs/listDir', body: {}, read: (s) => s.listDir(), response: directory, expected: directory },
   { label: 'listDir(path)', name: 'fs/listDir', body: { path: '/fixture' }, read: (s) => s.listDir('/fixture'), response: directory, expected: directory },
 ];

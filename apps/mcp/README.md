@@ -4,7 +4,7 @@ A **stdio MCP server backed by the Cockpit API**: remote Copilot plus GUI-specif
 The backend owns one capability set, shared by the web UI and sessions using MCP.
 This is not a maintainer-only database salvage service or a policy engine.
 
-All session metadata, lists, trash, transcripts and mutations come from HTTP.
+All session metadata, lists, transcripts and mutations come from HTTP.
 The MCP process needs **no backend filesystem access, SDK, session database or event
 logs**. Backend failures are errors, never successful local-state fallbacks.
 Local files are accessed only for explicit upload/download operations.
@@ -41,12 +41,15 @@ Pass that to `cockpit_capabilities`, then call `cockpit_call_intent`:
 {"name":"session/peek","body":{"sessionId":"TARGET_SESSION_ID","limit":20}}
 ```
 
-The generic caller checks the named capability on the backend before each POST.
-There is no arbitrary URL, HTTP method or path proxy. Unknown/retired commands,
-path traversal, redirects and mismatched capability responses fail. New published
-intents need no new MCP wrapper. Bodies use the API's **camelCase** field names;
-the backend remains the validation authority, including `confirm:true` on
-`session/purge`. Generic results are complete JSON; use semantic pagination when
+The generic caller sends one POST directly, without a capability preflight or a
+local intent catalog. Use explicit discovery when the API schema is unknown;
+newly published intents need no new MCP wrapper or reconnect. There is no
+arbitrary URL, HTTP method or path proxy. Invalid names and path traversal are
+rejected locally; the authoritative backend rejects unknown/retired commands.
+Redirects and mismatched explicit discovery responses fail. Bodies use the API's
+**camelCase** field names; the backend validates both bodies and results, including
+`confirm:true` on `session/purge`. No automatic retries are performed, even on
+timeout or service errors. Generic results are complete JSON; use semantic pagination when
 reading large histories. HTTP errors and results with `ok:false` are MCP errors,
 not successful mutations; backend error/operation details remain visible.
 
@@ -64,8 +67,8 @@ store or capability policy.
 
 | Area | Tools |
 | --- | --- |
-| Session reads | `cockpit_get_snapshot`, `cockpit_list_sessions`, `cockpit_list_trash`, `cockpit_read_session`, `cockpit_get_session`, `cockpit_get_panels`, `cockpit_get_plan` |
-| Lifecycle | `cockpit_new_session`, `cockpit_delete_session` (trash), `cockpit_restore_session`, `cockpit_purge_session`, `cockpit_unload_session`, `cockpit_reload_session`, `cockpit_rename_session`, `cockpit_set_session_pin` |
+| Session reads | `cockpit_get_snapshot`, `cockpit_list_sessions`, `cockpit_read_session`, `cockpit_get_session`, `cockpit_get_panels`, `cockpit_get_plan` |
+| Lifecycle | `cockpit_new_session`, `cockpit_delete_session` (permanent), `cockpit_purge_session` (compatibility alias), `cockpit_unload_session`, `cockpit_reload_session`, `cockpit_rename_session`, `cockpit_set_session_pin` |
 | Conversation | `cockpit_send_prompt`, `cockpit_cancel_turn`, `cockpit_remove_queued` |
 | Interaction requests | `cockpit_respond_ask`, `cockpit_respond_plan`, `cockpit_plan_supersede`, `cockpit_respond_elicitation` |
 | Model/session settings | `cockpit_set_model`, `cockpit_set_mode`, `cockpit_compact_session`, `cockpit_rewind_session` |
@@ -77,6 +80,13 @@ store or capability policy.
 Generic invocation also covers surviving API operations without semantic wrappers,
 such as `inbox/seen`, `push/subscribe`, `speech/token`, `session/refresh`, and
 `skills/read`. Both `session/history` and `session/peek` return synchronous JSON.
+
+Deletion is irreversible native Copilot `deleteSession`, not a trash marker.
+Both delete and purge require explicit `confirm:true`; the backend rejects old
+soft-delete requests without confirmation even from stale loaded MCP tools.
+Trash listing and restoration are retired. Legacy hidden sessions reappear in
+the normal list without deleting native history. Managed files, associations and
+workspaces remain intact. Never automatically retry an uncertain deletion.
 
 `cockpit_get_session` returns current backend state and the queue/decision IDs used
 by action tools. `mcp/session` does not materialize an unloaded session.
@@ -168,8 +178,8 @@ only persistent owner is Copilot.
 ## Canonical transcript pagination
 
 `cockpit_read_session` calls **`session/peek`**, which reads a loaded session's live
-fold or the backend's read-only preview for an unloaded/trashed session. It does
-not restore a trashed session or create an active session.
+fold or the backend's read-only preview for an unloaded session. It does
+not resume or create an active session.
 
 ```json
 {"session_id":"TARGET_SESSION_ID","limit":40,"response_format":"json"}
@@ -219,7 +229,7 @@ Use that exact ID to read the child transcript on demand:
 This wraps `session/subagent-history` with camelCase `sessionId` and `toolCallId`.
 The result includes the child's metadata and a page of direct messages; nested
 children are summaries by default. Cursor and JSON-fragment continuation work as
-for root history. Both modes are passive, including unloaded and trashed sessions.
+for root history. Both modes are passive, including unloaded sessions.
 Omitting `details` on root reads preserves the previous full-transcript behavior;
 explicit `details:"full"` also includes descendants in a child read.
 Child reads reuse native cursor checkpoints when the parent was already read.

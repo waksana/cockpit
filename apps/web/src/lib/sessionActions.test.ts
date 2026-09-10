@@ -17,12 +17,12 @@ test('sidebar and chat catalogs have one stable order and bind every action to t
     openPanel: (...args) => calls.push(args),
     fork: (...args) => calls.push(args),
     pin: (...args) => calls.push(args),
-    trash: (...args) => calls.push(args),
+    delete: (...args) => calls.push(args),
   };
   const items = sessionActionItems(session('B'), true, handlers);
   assert.deepEqual(items.map((item) => item.label), [
     '会话设置', '本会话 MCP', '本会话 Skills', '计划与任务', '上下文资料', '定时任务', '运行维护',
-    '分叉为独立会话', '置顶', '移入垃圾桶',
+    '分叉为独立会话', '置顶', '永久删除会话',
   ]);
   for (const item of items) item.onClick();
   assert.deepEqual(calls, [
@@ -34,7 +34,7 @@ test('sidebar and chat catalogs have one stable order and bind every action to t
 
 test('offline catalogs keep navigation available and disable all mutations', () => {
   const items = sessionActionItems(session('B', { pinned: true }), false, {
-    openPanel() {}, fork() {}, pin() {}, trash() {},
+    openPanel() {}, fork() {}, pin() {}, delete() {},
   });
   assert.ok(items.slice(0, 7).every((item) => !item.disabled));
   assert.ok(items.slice(7).every((item) => item.disabled));
@@ -44,7 +44,7 @@ test('offline catalogs keep navigation available and disable all mutations', () 
 
 test('every session action has a mapped glyph and keeps its identity across live labels and disabled states', () => {
   const handlers: SessionActionHandlers = {
-    openPanel() {}, fork() {}, pin() {}, trash() {},
+    openPanel() {}, fork() {}, pin() {}, delete() {},
   };
   const initial = sessionActionItems(session('A'), true, handlers);
   const updated = sessionActionItems(session('A', { pinned: true, autoNaming: true }), false, handlers);
@@ -67,7 +67,7 @@ test('fork action requires a loaded idle source without queued work or timers', 
     { elicitation: { requestId: 'elicit', message: 'Choose' } },
   ] satisfies Partial<SessionMeta>[]) {
     const items = sessionActionItems(session('A', patch), true, {
-      openPanel() {}, fork() {}, pin() {}, trash() {},
+      openPanel() {}, fork() {}, pin() {}, delete() {},
     });
     assert.equal(items.find(item => item.id === 'fork')!.disabled, true);
   }
@@ -75,7 +75,7 @@ test('fork action requires a loaded idle source without queued work or timers', 
 
 test('naming actions are absent from every shared catalog, including while automatic naming runs', () => {
   const handlers: SessionActionHandlers = {
-    openPanel() {}, fork() {}, pin() {}, trash() {},
+    openPanel() {}, fork() {}, pin() {}, delete() {},
   };
   for (const connected of [true, false]) {
     for (const autoNaming of [true, false]) {

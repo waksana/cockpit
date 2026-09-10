@@ -30,17 +30,18 @@ export function registerReadTools(server: McpServer): void {
     async ({ session_id, response_format }): Promise<ToolResult> => {
       try {
         const { meta } = await intent('session/get', { sessionId: session_id });
-        if (!meta) return fail(`No live session ${session_id} (trashed or unknown). Try cockpit_list_sessions.`);
+        if (!meta) return fail(`Unknown session ${session_id}. Try cockpit_list_sessions.`);
         if (response_format === 'json') return ok(cappedJson(meta));
         const lines: string[] = [
           `# ${meta.title || '(untitled)'}`,
           `id: ${meta.sessionId}`,
           `status: ${meta.status}${meta.loaded ? '' : ' (unloaded)'}${meta.pinned ? ' · pinned' : ''}`,
-          `cwd: ${meta.cwd}`,
+          `cwd: ${meta.cwd || 'unknown (not provided by native metadata)'}`,
           `model: ${meta.currentModelId ?? '—'}${meta.currentReasoningEffort ? ` (${meta.currentReasoningEffort})` : ''}` +
             `${meta.currentContextTier ? ` · ${meta.currentContextTier}` : ''}`,
           `interaction mode: ${meta.currentMode ?? '—'} (not a permission policy)`,
         ];
+        if (!meta.loaded) lines.push('Native runtime fields (model, mode, queue, tasks, schedules, MCP) are unavailable while unloaded; no previous values or global defaults are substituted.');
         const operations = ['loading', 'closing', 'cancelling'] as const;
         for (const operation of operations) if (meta[operation]) lines.push(`${operation}: true`);
         if (meta.scheduleCount) lines.push(`schedules: ${meta.scheduleCount}`);

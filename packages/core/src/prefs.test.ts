@@ -34,62 +34,6 @@ test('missing prefs file loads as empty without writing until a mutation', () =>
   rmSync(f, { force: true });
 });
 
-// ── Trash (soft delete) ───────────────────────────────────────────────────────
-
-test('trashSession marks; trashedIds + isTrashed reflect it', () => {
-  const f = freshFile();
-  const p = new Prefs(f);
-  assert.equal(p.isTrashed('s1'), false);
-  p.trashSession('s1', 'cleanup');
-  assert.equal(p.isTrashed('s1'), true);
-  assert.deepEqual([...p.trashedIds()], ['s1']);
-  const e = p.trashedEntries();
-  assert.equal(e.length, 1);
-  assert.equal(e[0].sessionId, 's1');
-  assert.equal(e[0].reason, 'cleanup');
-  assert.match(e[0].at, /^\d{4}-\d\d-\d\dT/); // ISO timestamp
-  rmSync(f, { force: true });
-});
-
-test('restoreSession clears the mark', () => {
-  const f = freshFile();
-  const p = new Prefs(f);
-  p.trashSession('s1');
-  p.restoreSession('s1');
-  assert.equal(p.isTrashed('s1'), false);
-  assert.deepEqual([...p.trashedIds()], []);
-  rmSync(f, { force: true });
-});
-
-test('trash persists across reload', () => {
-  const f = freshFile();
-  new Prefs(f).trashSession('s1', 'r');
-  const b = new Prefs(f);
-  assert.equal(b.isTrashed('s1'), true);
-  assert.equal(b.trashedEntries()[0].reason, 'r');
-  rmSync(f, { force: true });
-});
-
-test('forgetSession (purge) also clears the trash mark', () => {
-  const f = freshFile();
-  const p = new Prefs(f);
-  p.trashSession('s1');
-  p.setPinned('s1', true);
-  p.forgetSession('s1');
-  assert.equal(p.isTrashed('s1'), false);
-  assert.equal(p.isPinned('s1'), false);
-  rmSync(f, { force: true });
-});
-
-test('trash is independent per session', () => {
-  const f = freshFile();
-  const p = new Prefs(f);
-  p.trashSession('s1');
-  assert.equal(p.isTrashed('s1'), true);
-  assert.equal(p.isTrashed('s2'), false);
-  rmSync(f, { force: true });
-});
-
 // ── Pinned ─────────────────────────────────────────────────────────────────────
 
 test('setPinned marks; isPinned + pinnedIds reflect it', () => {
@@ -132,9 +76,9 @@ test('pin is independent per session + idempotent', () => {
   rmSync(f, { force: true });
 });
 
-// ── Opaque legacy/unknown preferences ────────────────────────────────────────
+// ── Retired and unknown preferences ────────────────────────────────────────
 
-test('legacy native schedule counts are opaque and never rewritten by session housekeeping', () => {
+test('retired schedules are removed at load and never restored by session housekeeping', () => {
   const f = freshFile();
   const legacy = [{ id: 1, flowId: 'retired-flow', cron: '* * * * *' }];
   writeFileSync(f, JSON.stringify({ flowSchedules: legacy, scheduledSessions: { existing: 2 } }));
@@ -143,8 +87,8 @@ test('legacy native schedule counts are opaque and never rewritten by session ho
   assert.equal('setScheduleCount' in p, false);
   p.setPinned('pinned-only', true);
   p.forgetSession('existing');
-  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')).scheduledSessions, { existing: 2 });
-  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')).flowSchedules, legacy);
+  assert.equal(JSON.parse(readFileSync(f, 'utf8')).scheduledSessions, undefined);
+  assert.equal(JSON.parse(readFileSync(f, 'utf8')).flowSchedules, undefined);
   assert.equal(p.isPinned('pinned-only'), true);
 });
 
@@ -161,6 +105,11 @@ const legacyPrefs = {
   scheduledSessions: { s1: 2 },
   welcomedSessions: ['s1'],
   spawnedBySession: { s1: 'welcome-flow' },
+  trashed: { s1: { at: '2026-01-01T00:00:00.000Z', reason: 'old' } },
+  trashedMeta: { s1: { title: 'old metadata' } },
+};
+
+const unknownPrefs = {
   workerMetadata: { s1: { spawnedBy: 'welcome-flow', nested: [null, false, { future: 1 }] } },
   futurePreference: { schema: 'unknown', entries: [1, 'two', null] },
   futureNull: null,
@@ -171,8 +120,6 @@ const legacyPrefs = {
 };
 
 const foundationUpdates: Array<[string, (prefs: Prefs) => void]> = [
-  ['trash', (p) => p.trashSession('s1', 'cleanup')],
-  ['restore', (p) => p.restoreSession('s1')],
   ['pin', (p) => p.setPinned('s2', true)],
   ['unpin', (p) => p.setPinned('s1', false)],
   ['forget session', (p) => p.forgetSession('s1')],
@@ -183,25 +130,90 @@ function seededFile(): string {
   const f = freshFile();
   writeFileSync(f, JSON.stringify({
     ...legacyPrefs,
+    ...unknownPrefs,
     trashed: { s1: { at: '2026-01-01T00:00:00.000Z', reason: 'old' } },
     pinnedSessions: ['s1'],
   }));
   return f;
 }
 
-function assertLegacyPreserved(f: string): void {
+function assertRetirement(f: string): void {
   const saved = JSON.parse(readFileSync(f, 'utf-8'));
-  for (const [key, value] of Object.entries(legacyPrefs)) {
+  for (const key of Object.keys(legacyPrefs)) {
+    assert.equal(Object.hasOwn(saved, key), false, `${key} must be removed`);
+  }
+  for (const [key, value] of Object.entries(unknownPrefs)) {
     assert.deepEqual(saved[key], value, `${key} must survive unchanged`);
   }
 }
+
+test('startup removes exactly the retired keys before any mutation and is idempotent', () => {
+  const f = seededFile();
+  const original = JSON.parse(readFileSync(f, 'utf8'));
+  original.inbox = {
+    revision: 12, counter: 8,
+    sessions: { s1: { attention: 'choice', attnId: 8, seenId: 3, eventId: 'private-event' } },
+    extension: { hooks: 'nested user data is not a retired top-level key' },
+  };
+  writeFileSync(f, JSON.stringify(original));
+  const logs: string[] = [];
+  const p = new Prefs(f, (m) => logs.push(m));
+  const expected = { ...original };
+  for (const key of Object.keys(legacyPrefs)) delete expected[key];
+  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), expected);
+  assert.deepEqual(p.inbox, original.inbox);
+  assertRetirement(f);
+  assert.deepEqual(logs, [`cockpit-prefs.json removed retired fields: ${Object.keys(legacyPrefs).join(', ')}`]);
+  assert.equal(logs.join('').includes('private-event'), false);
+  assert.deepEqual(readdirSync(dirname(f)), ['prefs.json']);
+
+  // A clean file must not require write access or be reformatted at every boot.
+  const bytes = JSON.stringify(expected);
+  writeFileSync(f, bytes);
+  mkdirSync(`${f}.tmp`);
+  new Prefs(f, (m) => logs.push(m));
+  assert.equal(readFileSync(f, 'utf8'), bytes);
+  assert.equal(logs.length, 1);
+});
+
+test('each retired key independently triggers cleanup without synthesizing other persisted fields', () => {
+  for (const key of Object.keys(legacyPrefs)) {
+    const f = freshFile();
+    writeFileSync(f, JSON.stringify({ [key]: null, ...unknownPrefs }));
+    new Prefs(f, () => {});
+    assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), unknownPrefs);
+  }
+});
+
+test('failed startup cleanup leaves original bytes intact and refuses to expose a writable instance', () => {
+  const f = seededFile();
+  const bytes = readFileSync(f, 'utf8');
+  const logs: string[] = [];
+  mkdirSync(`${f}.tmp`);
+  assert.throws(() => new Prefs(f, (m) => logs.push(m)), { code: 'EISDIR' });
+  assert.equal(readFileSync(f, 'utf8'), bytes);
+  assert.equal(logs.length, 1);
+  assert.match(logs[0], /save FAILED/);
+  rmSync(`${f}.tmp`, { recursive: true });
+  new Prefs(f, () => {});
+  assertRetirement(f);
+});
+
+test('invalid inbox prevents retirement cleanup as well as normal loading', () => {
+  const f = seededFile();
+  const bytes = JSON.stringify({ ...JSON.parse(readFileSync(f, 'utf8')), inbox: { counter: -1 } });
+  writeFileSync(f, bytes);
+  assert.throws(() => new Prefs(f, () => {}), /Invalid inbox/);
+  assert.equal(readFileSync(f, 'utf8'), bytes);
+  assert.deepEqual(readdirSync(dirname(f)), ['prefs.json']);
+});
 
 test('fresh saves contain only foundation preferences and expose no governance APIs', () => {
   const f = freshFile();
   const p = new Prefs(f);
   p.setPinned('s1', true);
   assert.deepEqual(Object.keys(JSON.parse(readFileSync(f, 'utf-8'))).sort(), [
-    'inbox', 'pinnedSessions', 'trashed',
+    'inbox', 'pinnedSessions',
   ]);
   const legacy = new Prefs(seededFile());
   for (const key of [
@@ -211,23 +223,24 @@ test('fresh saves contain only foundation preferences and expose no governance A
     'mcpDefaultOn', 'setMcpDefault', 'enabledMcpFor', 'setSessionMcp', 'mcpBySession',
     'disabledSkillsFor', 'skillAllowlistFor', 'setSkillAllowlist', 'setSessionSkill',
     'skillsDisabledBySession', 'skillsAllowlistBySession',
+    'trashSession', 'restoreSession', 'isTrashed', 'trashedIds', 'trashedEntries',
   ]) {
     assert.equal(key in p, false, `${key} is not an active foundation API`);
-    assert.equal(key in legacy, false, `${key} stays opaque after loading legacy data`);
+    assert.equal(key in legacy, false, `${key} is retired after loading legacy data`);
   }
 });
 
-test('legacy hooks, schedules, worker metadata and unknown fields survive every foundation save and reload', () => {
+test('retired fields stay absent and unknown fields survive every foundation save and reload', () => {
   for (const [, update] of foundationUpdates) {
     const f = seededFile();
     update(new Prefs(f));
-    assertLegacyPreserved(f);
+    assertRetirement(f);
     new Prefs(f).setPinned('after-reload', true);
-    assertLegacyPreserved(f);
+    assertRetirement(f);
   }
 });
 
-test('governance fields are opaque even when they do not match their old schemas', () => {
+test('retired keys are removed regardless of their old value schemas', () => {
   const f = freshFile();
   const unknown = {
     hooks: { future: [null, { enabled: 'not-a-boolean' }] },
@@ -245,7 +258,7 @@ test('governance fields are opaque even when they do not match their old schemas
   assert.equal(p.isPinned('old'), true);
   p.forgetSession('old');
   assert.deepEqual(JSON.parse(readFileSync(f, 'utf-8')), {
-    ...unknown, pinnedSessions: [], trashed: {},
+    pinnedSessions: [],
     inbox: { revision: 0, counter: 0, sessions: {} },
   });
 });
@@ -254,18 +267,13 @@ test('foundation collections remain defensive copies', () => {
   const f = seededFile();
   const p = new Prefs(f);
   p.pinnedIds().clear();
-  p.trashedIds().clear();
-  p.trashedEntries()[0].reason = 'unexpected';
   assert.equal(p.isPinned('s1'), true);
-  assert.equal(p.isTrashed('s1'), true);
-  assert.equal(p.trashedEntries()[0].reason, 'old');
 });
 
 // ── Durability ───────────────────────────────────────────────────────────────
 
 function foundationSnapshot(p: Prefs): unknown {
   return {
-    trashed: p.trashedEntries(),
     pinned: [...p.pinnedIds()],
     inbox: p.inbox,
   };
@@ -352,7 +360,6 @@ test('failed inbox saves never commit attention, seen IDs, reconciliation or ses
     () => p.markSeen('s1'),
     () => p.markSeen('s2'),
     () => p.reconcileInboxChoices(),
-    () => p.trashSession('s2'),
     () => p.forgetSession('s1'),
   ];
   mkdirSync(`${f}.tmp`);
@@ -379,7 +386,7 @@ test('failed inbox saves never commit attention, seen IDs, reconciliation or ses
   assert.equal(p.reconcileInboxChoices(), true);
   assert.equal(unreadSessionCount(Object.values(p.inbox.sessions)), 0);
   assert.deepEqual(new Prefs(f).inbox, p.inbox);
-  assertLegacyPreserved(f);
+  assertRetirement(f);
 });
 
 test('inbox cleanup preserves monotonic IDs and opaque fields; invalid stored inboxes refuse reset', () => {
@@ -402,24 +409,20 @@ test('inbox cleanup preserves monotonic IDs and opaque fields; invalid stored in
   assert.deepEqual(stored.sessions.s1.future, opaque.future);
   assert.equal(p.inbox.revision, 13);
   p.setAttention('s2', 'ready', 'turn');
-  p.trashSession('s1');
-  assert.equal(p.isTrashed('s1'), true);
+  p.forgetSession('s1');
   assert.equal(p.inbox.sessions.s1, undefined);
   assert.equal(p.inbox.revision, 15);
-  p.restoreSession('s1');
-  assert.equal(p.inbox.sessions.s1, undefined);
   p.forgetSession('s2');
   assert.deepEqual(p.inbox.sessions, {});
   assert.equal(p.inbox.revision, 16);
   assert.equal(p.inbox.counter, 9);
   const reloaded = new Prefs(f);
-  reloaded.trashSession('missing');
   reloaded.forgetSession('missing');
   assert.equal(reloaded.inbox.revision, 16);
   reloaded.setAttention('s1', 'ready', 'new');
   assert.equal(reloaded.inbox.sessions.s1.attnId, 10);
   assert.equal(reloaded.inbox.revision, 17);
-  assertLegacyPreserved(f);
+  assertRetirement(f);
   stored = JSON.parse(readFileSync(f, 'utf8'));
   const valid = stored.inbox;
   for (const inbox of [
@@ -468,10 +471,10 @@ for (const [name, update] of foundationUpdates) {
     p.setPinned('after-failure', true);
     assert.deepEqual(foundationSnapshot(p), { ...before as object, pinned: ['s1', 'after-failure'] });
     assert.deepEqual(foundationSnapshot(new Prefs(f)), foundationSnapshot(p));
-    assertLegacyPreserved(f);
+    assertRetirement(f);
     update(p);
     assert.deepEqual(foundationSnapshot(new Prefs(f)), foundationSnapshot(p));
-    assertLegacyPreserved(f);
+    assertRetirement(f);
   });
 }
 
@@ -501,11 +504,11 @@ test('a rename failure does not commit staged changes to memory', () => {
   renameSync(previous, f);
   p.setPinned('s2', true);
   assert.deepEqual(foundationSnapshot(new Prefs(f)), foundationSnapshot(p));
-  assert.equal(p.isTrashed('s1'), true, 'failed forget must not leak into the next save');
-  assertLegacyPreserved(f);
+  assert.equal(p.isPinned('s1'), true, 'failed forget must not leak into the next save');
+  assertRetirement(f);
 });
 
-test('interrupted staging leaves the prior file intact and a later save preserves legacy data', () => {
+test('interrupted staging leaves the prior file intact and a later save preserves unknown data', () => {
   const f = seededFile();
   const p = new Prefs(f);
   p.setPinned('extra', true);
@@ -517,7 +520,7 @@ test('interrupted staging leaves the prior file intact and a later save preserve
   assert.deepEqual(foundationSnapshot(reloaded), foundationSnapshot(p));
   reloaded.setPinned('s2', true);
   assert.equal(existsSync(`${f}.tmp`), false);
-  assertLegacyPreserved(f);
+  assertRetirement(f);
 });
 
 test('corrupt prefs remain verbatim and cannot silently reset durable inbox IDs', () => {

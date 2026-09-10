@@ -45,7 +45,7 @@ const modelOptions: ModelOption[] = [
 ];
 const renderModelSettings = (patch: Partial<ChatSession>, models = modelOptions) =>
   renderToStaticMarkup(createElement(SessionInfoPanel, {
-    session: { ...session, ...patch }, models, open: true, onClose: noop,
+    session: { ...session, availableModels: models, ...patch }, models, open: true, onClose: noop,
     onSetModel: () => { assert.fail('Rendering confirmed values must never mutate them'); },
   }));
 function selectedOption(html: string, label: string) {
@@ -75,11 +75,15 @@ test('model inventory removal preserves the confirmed raw value and reintroducti
   }
 });
 
-test('session-specific model inventory takes precedence while absent or empty inventories still use global fallback', () => {
-  for (const availableModels of [undefined, [], [modelOptions[0]]]) {
-    const selected = selectedOption(renderModelSettings({ currentModelId: 'beta', availableModels }), '选择模型');
-    assert.equal(selected.text, availableModels?.length ? 'beta（当前值，列表未提供）' : 'Beta');
+test('absent or empty session inventories never claim global models are available', () => {
+  for (const availableModels of [undefined, []]) {
+    const html = renderModelSettings({ currentModelId: 'beta', availableModels });
+    assert.doesNotMatch(html, /<select/);
+    assert.match(html, /beta/);
+    assert.match(html, availableModels ? /列表为空/ : /列表不可用/);
   }
+  assert.equal(selectedOption(renderModelSettings({ currentModelId: 'beta', availableModels: [modelOptions[0]] }),
+    '选择模型').text, 'beta（当前值，列表未提供）');
   const local = [{ ...modelOptions[1], name: 'Session Beta' }];
   assert.equal(selectedOption(renderModelSettings({ currentModelId: 'beta', availableModels: local }, []), '选择模型').text, 'Session Beta');
   assert.doesNotMatch(renderModelSettings({ currentModelId: 'beta', availableModels: [] }, []), /<select/);
@@ -103,10 +107,10 @@ test('missing confirmed or default effort is explicit without adding a selectabl
   const fallback = selectedOption(renderModelSettings({ currentModelId: 'beta', currentReasoningEffort: null }, [{
     ...narrow[0], defaultReasoningEffort: 'max',
   }]), '思考力度');
-  assert.equal(fallback.text, 'max（当前值，列表未提供）');
+  assert.equal(fallback.text, '力度…');
 });
 
-test('thin session catalog inherits only matching global capabilities while retaining its membership and labels', () => {
+test('thin session catalog keeps native membership and never invents per-session capabilities from globals', () => {
   const rich: ModelOption[] = [{
     modelId: 'gpt-6-astra', name: 'Global Astra',
     supportedReasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max'],
@@ -121,14 +125,9 @@ test('thin session catalog inherits only matching global capabilities while reta
   const model = selectedOption(html, '选择模型');
   assert.equal(model.text, 'Session Astra');
   assert.equal(model.options.length, 1, 'global entries must not expand the session allow-list');
-  const effort = selectedOption(html, '思考力度');
-  assert.equal(effort.text, '极高');
-  assert.equal(effort.options.length, 5);
-  assert.ok(effort.options.every(option => !option[1].includes('disabled')));
-  assert.equal(selectedOption(html, '上下文长度').text, '长上下文');
+  assert.doesNotMatch(html, /aria-label="思考力度"|aria-label="上下文长度"/);
   for (const currentReasoningEffort of [undefined, null, '']) {
-    const value = selectedOption(renderModelSettings({ ...patch, currentReasoningEffort }, rich), '思考力度');
-    assert.equal(value.text, currentReasoningEffort === '' ? '力度…' : '高');
+    assert.doesNotMatch(renderModelSettings({ ...patch, currentReasoningEffort }, rich), /aria-label="思考力度"/);
   }
   const unknown = renderModelSettings({ ...patch, availableModels: [modelOptions[2]] }, rich);
   assert.equal(selectedOption(unknown, '选择模型').text, 'gpt-6-astra（当前值，列表未提供）');
@@ -155,8 +154,7 @@ test('explicit session capabilities override richer globals per field, including
       currentModelId: 'beta', currentReasoningEffort: null,
       availableModels: [{ modelId: 'beta', name: 'Local Beta', defaultReasoningEffort }],
     });
-    assert.equal(selectedOption(html, '思考力度').text, defaultReasoningEffort === '' ? '力度…' : '最大');
-    assert.equal(selectedOption(html, '上下文长度').text, '标准上下文');
+    assert.doesNotMatch(html, /aria-label="思考力度"|aria-label="上下文长度"/);
   }
   const differentId = renderModelSettings({
     currentModelId: 'local-only', availableModels: [{ modelId: 'local-only', name: 'Local only' }],
@@ -164,7 +162,7 @@ test('explicit session capabilities override richer globals per field, including
   assert.doesNotMatch(differentId, /aria-label="思考力度"|aria-label="上下文长度"/);
 });
 
-test('empty model and effort values retain placeholder and native default semantics', () => {
+test('empty model and effort values remain unknown instead of selecting defaults', () => {
   for (const currentModelId of [undefined, '']) {
     const selected = selectedOption(renderModelSettings({ currentModelId }), '选择模型');
     assert.equal(selected.text, '选择模型…');
@@ -172,7 +170,7 @@ test('empty model and effort values retain placeholder and native default semant
   }
   for (const currentReasoningEffort of [undefined, null, '']) {
     const selected = selectedOption(renderModelSettings({ currentModelId: 'beta', currentReasoningEffort }), '思考力度');
-    assert.equal(selected.text, currentReasoningEffort === '' ? '力度…' : '高');
+    assert.equal(selected.text, '力度…');
   }
   const withoutDefault = selectedOption(renderModelSettings({ currentModelId: 'beta' }, [{
     ...modelOptions[1], defaultReasoningEffort: undefined,
@@ -190,7 +188,8 @@ test('capability-free models keep controls hidden and all legal context tiers ha
     const html = renderModelSettings({ currentModelId: 'beta', currentReasoningEffort: 'max', currentContextTier });
     assert.equal(selectedOption(html, '选择模型').text, 'Beta');
     assert.equal(selectedOption(html, '思考力度').text, '最大');
-    assert.equal(selectedOption(html, '上下文长度').text, currentContextTier === 'long_context' ? '长上下文' : '标准上下文');
+    assert.equal(selectedOption(html, '上下文长度').text, currentContextTier === 'long_context' ? '长上下文'
+      : currentContextTier === 'default' ? '标准上下文' : '原生未提供当前值');
   }
 });
 
@@ -338,13 +337,15 @@ for (const Component of [SessionMcp, SessionSkills]) {
   });
 }
 
-test('info settings use snapshot metadata without native plan, MCP, task or pin controls', (t) => {
+test('unloaded info settings expose explicit resume rather than global model values', (t) => {
   withSession(t, false);
   const html = renderToStaticMarkup(createElement(SessionInfoPanel, {
     session, models: [{ modelId: 'model', name: 'Model' }], open: true, onClose: noop, onSetModel: noop,
   }));
-  assert.match(html, /<select class="info-select" aria-label="选择模型">/);
-  assert.doesNotMatch(html, /恢复会话|刷新会话信息|任务清单|MCP 服务器|置顶会话/);
+  assert.doesNotMatch(html, /<select/);
+  assert.match(html, /恢复会话|加载会话/);
+  assert.match(html, /不显示上次读值或全局默认值/);
+  assert.doesNotMatch(html, /任务清单|MCP 服务器|置顶会话/);
 });
 
 test('resume is disabled offline and after session removal without changing authoritative loaded state', (t) => {

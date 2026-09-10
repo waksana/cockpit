@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdirSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -14,7 +14,8 @@ import { Intents, type IntentBody, type IntentName } from '@cockpit/protocol';
 test('connected MCP discovers newly published fork, creates a native child and dispatches independent goals', {
   skip: process.env.COCKPIT_NATIVE_FORK !== '1', timeout: 60_000,
 }, async () => {
-  const root = mkdtempSync(join(tmpdir(), 'cockpit-mcp-native-fork-'));
+  const root = resolve(`.cockpit-mcp-native-fork-${randomUUID()}`);
+  mkdirSync(root);
   const previousEnv = { ...process.env };
   const previousCwd = process.cwd();
   const home = join(root, 'home');
@@ -107,7 +108,7 @@ test('connected MCP discovers newly published fork, creates a native child and d
     let stable = 0;
     const deadline = Date.now() + 10_000;
     while (stable < 2 && Date.now() < deadline) {
-      const meta = engine.getMeta(id)!;
+      const meta = (await engine.getMeta(id))!;
       stable = meta.status === 'idle' && !sessionMetaBusy(meta) && !meta.autoNaming ? stable + 1 : 0;
       await sleep(20);
     }
@@ -150,7 +151,7 @@ test('connected MCP discovers newly published fork, creates a native child and d
     assert.notEqual(child.sessionId, source.sessionId);
     const listing = Intents['session/list'].result.parse(await intent('session/list', {}));
     assert.ok(listing.sessions.some(session => session.sessionId === child.sessionId));
-    assert.equal(engine.getMeta(child.sessionId)!.loaded, false);
+    assert.equal((await engine.getMeta(child.sessionId))!.loaded, false);
     const inherited = Intents['session/history'].result.parse(await intent('session/history', { sessionId: child.sessionId }));
     assert.deepEqual(inherited.messages.filter(message => message.role === 'user').map(message => message.content), ['MCP_FORK_FIXTURE_FIRST']);
     assert.equal(prompts.length, 2, 'Discovery, fork, listing and history must not dispatch old work');
@@ -170,7 +171,7 @@ test('connected MCP discovers newly published fork, creates a native child and d
     await transport?.close();
     await app.close();
     try {
-      for (const row of engine.listLive()) {
+      for (const row of (await engine.listLive())) {
         if (row.loaded) { await engine.cancel(row.sessionId); await idle(row.sessionId); }
       }
       await engine.stop();

@@ -21,11 +21,10 @@ async function capability(name: string) {
   return detail;
 }
 
-// Discovery is checked for each call, not cached across backend upgrades. The body
-// is never transformed using a second schema implementation; the backend parses it.
+// The backend owns publication and body/result validation. Explicit discovery is
+// independent of invocation, so calls need no preflight or local intent catalog.
 export async function invokePublishedIntent(name: string, body: Record<string, unknown>): Promise<unknown> {
   IntentName.parse(name);
-  await capability(name);
   return assertIntentSuccess(await intent(name, body), name);
 }
 
@@ -61,7 +60,8 @@ export function registerFoundationTools(server: McpServer): void {
   server.registerTool('cockpit_call_intent', {
     title: 'Invoke a published Cockpit intent',
     description: 'Call any intent published by cockpit_capabilities using its exact API body (camelCase keys). '
-      + 'Unknown or retired names fail before dispatch. The backend validates the body, including confirm:true for session/purge. '
+      + 'Sends one POST without a capability preflight; the authoritative backend rejects unknown or retired names and validates '
+      + 'the body and result, including explicit confirm:true for irreversible session/delete and session/purge. '
       + 'Managed files: files/list {query?,sessionId?,limit?,offset?} lists retained files; files/get {url} reads metadata; '
       + 'files/associate {url,sessionId} associates without sending; files/from-tool-image {sessionId,image,name?} explicitly retains '
       + 'a native tool image selected from history (inspect its capability for the image reference schema). Use retained URLs with '
@@ -70,7 +70,7 @@ export function registerFoundationTools(server: McpServer): void {
       + 'no marker is needed. Only backend /uploads/<safe-basename> '
       + 'is accepted, with authoritative metadata/native file resolution on the server. session/rewind with rollbackFiles:true '
       + 'requests native file rollback; conflicts fail explicitly. permissionPolicy stays allow-all; modes are interaction settings. '
-      + 'May mutate or delete data; inspect the capability first. No automatic retries, including on timeout. '
+      + 'May mutate or delete data; use cockpit_capabilities when the API schema is unknown. No automatic retries, including on timeout. '
       + 'Returns the complete JSON result; prefer paginated semantic reads for large transcripts.',
     inputSchema: {
       name: IntentName,

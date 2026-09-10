@@ -67,14 +67,10 @@ interface CockpitState {
   cancel: (sessionId: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<{ ok: true; interrupted: boolean }>;
   setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => Promise<void>;
-  deleteSession: (sessionId: string) => Promise<void>;
-  restoreSession: (sessionId: string) => Promise<void>;
-  trashList: () => Promise<import('@cockpit/protocol').TrashEntry[]>;
+  deleteSession: (sessionId: string, confirm: true) => Promise<void>;
   unloadSession: (sessionId: string) => Promise<void>;
   reloadSession: (sessionId: string) => Promise<void>;
   pinSession: (sessionId: string, pinned: boolean) => Promise<void>;
-  renameSession: (sessionId: string, name: string) => Promise<void>;
-  autoNameSession: (sessionId: string) => Promise<IntentResult<'session/auto-name'>>;
   compactSession: (sessionId: string) => Promise<void>;
   rewindSession: (sessionId: string, toMsgId: string, rollbackFiles?: boolean) => Promise<void>;
   setMode: (sessionId: string, mode: 'interactive' | 'plan' | 'autopilot') => Promise<void>;
@@ -111,8 +107,6 @@ interface CockpitState {
   respondElicitation: (sessionId: string, requestId: string, action: 'accept' | 'decline' | 'cancel') => Promise<boolean>;
   removeQueued: (sessionId: string, itemId: string) => Promise<void>;
   refreshList: () => Promise<void>;
-  getDraft: (sessionId: string) => string;
-  setDraft: (sessionId: string, text: string) => void;
   // Mint a short-lived Azure Speech token (key stays server-side). enabled:false
   // means no Azure resource is configured → voice falls back to the Web Speech API.
   speechToken: () => Promise<{ enabled: boolean; token?: string; region?: string }>;
@@ -132,6 +126,52 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     notifPermission: state.permission, notifSupported: state.supported,
   }));
   const seenRequests = new Map<string, number>();
+  const metaRequests = new Map<string, { dirty: boolean; controller: AbortController }>();
+  const refreshMeta = (sessionId: string) => {
+    const session = get().sessions.find(row => row.sessionId === sessionId);
+    // A closing transition refuses new native reads. Its settling event will
+    // invalidate again; keep the current frontend view in the meantime.
+    if (session?.closing) return;
+    const pending = metaRequests.get(sessionId);
+    if (pending) { pending.dirty = true; return; }
+    const request = { dirty: true, controller: new AbortController() };
+    const net = client;
+    const generation = get().connectionGeneration;
+    if (!net?.isOpen) return;
+    metaRequests.set(sessionId, request);
+    void Promise.resolve().then(async () => {
+      do {
+        request.dirty = false;
+        const { meta } = await net.getSession(sessionId, request.controller.signal);
+        if (client !== net || get().connectionGeneration !== generation || metaRequests.get(sessionId) !== request) return;
+        if (request.dirty) continue;
+        set(st => {
+          const existing = st.sessions.find(s => s.sessionId === sessionId);
+          const attention = meta && existing ? mergeAttentionPatch(existing, meta) : meta;
+          const sessions = meta
+            ? existing ? st.sessions.map(s => s.sessionId === sessionId
+              ? metaToSession({ ...meta,
+                ...(meta.error === undefined && s.error !== undefined ? { error: s.error } : {}),
+                ...(meta.autoNameError === undefined && s.autoNameError !== undefined ? { autoNameError: s.autoNameError } : {}),
+                attention: attention!.attention,
+                attnId: attention!.attnId, seenId: attention!.seenId }, s) : s) : [metaToSession(meta), ...st.sessions]
+            : st.sessions.filter(s => s.sessionId !== sessionId);
+          return { sessions, unreadCount: patchedUnreadCount(st.unreadCount, st.sessions, sessions) };
+        });
+        seenActiveIfVisible();
+      } while (request.dirty);
+    }).catch(error => {
+      if (!request.controller.signal.aborted && client === net && get().connectionGeneration === generation) {
+        reportUxError('读取会话状态失败', error);
+      }
+    }).finally(() => {
+      if (metaRequests.get(sessionId) !== request) return;
+      metaRequests.delete(sessionId);
+      if (request.dirty && !request.controller.signal.aborted && client === net && get().connectionGeneration === generation) {
+        refreshMeta(sessionId);
+      }
+    });
+  };
   const patchLocal = (sid: string, fn: (s: ChatSession) => ChatSession) =>
     set((st) => ({ sessions: st.sessions.map((s) => (s.sessionId === sid ? fn(s) : s)) }));
   let snapshotReady = false;
@@ -435,6 +475,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
   };
 
   const invalidateRequests = (discardLive = false) => {
+    for (const request of metaRequests.values()) request.controller.abort();
+    metaRequests.clear();
     snapshotReady = false;
     cancelHistory();
     mutationRequests.clear();
@@ -476,6 +518,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       case 'agent/status':
         set({ agentStatus: ev.status });
         return;
+      case 'session/invalidated':
+        refreshMeta(ev.sessionId);
+        return;
       case 'session/added':
         set((st) => {
           if (st.sessions.some((s) => s.sessionId === ev.session.sessionId)) return st;
@@ -486,6 +531,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         maybeMaterialize();
         return;
       case 'session/removed':
+        metaRequests.get(ev.sessionId)?.controller.abort();
+        metaRequests.delete(ev.sessionId);
         // Drop the row. We deliberately DON'T clear activeId here: the URL is the
         // source of truth for what's focused, so a remote delete just makes the
         // active session vanish from `sessions`, and the page derives a NotFound
@@ -739,16 +786,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     cancel(sid) { return mutation(sid, '取消', (net) => net.cancel(sid)); },
     interrupt(sid) { return nativeRead(sid, (net) => net.interrupt(sid)); },
     setModel(sid, modelId, opts) { return mutation(sid, '切换模型', (net) => net.setModel(sid, modelId, opts)); },
-    deleteSession(sid) { return mutation(sid, '移入垃圾桶', (net) => net.deleteSession(sid)); },
-    restoreSession(sid) { return mutation(sid, '恢复会话', (net) => net.restoreSession(sid)); },
-    trashList() { return read((net) => net.trashList()).then((r) => r.entries); },
+    deleteSession(sid, confirm) { return mutation(sid, '永久删除会话', (net) => net.deleteSession(sid, confirm)); },
     unloadSession(sid) { return mutation(sid, '卸载会话', (net) => net.unloadSession(sid)); },
     reloadSession(sid) { return mutation(sid, '重载会话', (net) => net.reloadSession(sid), true); },
     pinSession(sid, pinned) { return mutation(sid, '置顶会话', (net) => net.pinSession(sid, pinned)); },
-    renameSession(sid, name) { return mutation(sid, '重命名会话', (net) => net.renameSession(sid, name)); },
-    // Naming is not a chat mutation. The transport reports failures locally;
-    // only authoritative server metadata changes titles or naming status.
-    autoNameSession(sid) { return read((net) => net.autoNameSession(sid)); },
     compactSession(sid) { return mutation(sid, '压缩会话', (net) => net.compactSession(sid), true); },
     rewindSession(sid, toMsgId, rollbackFiles) {
       return mutation(sid, '回退会话', (net) => net.rewindSession(sid, toMsgId, rollbackFiles), true);
@@ -815,15 +856,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     skillsToggleSession(sid, name, enabled) { return mutation(sid, `切换技能 ${name}`, (net) => net.skillsToggleSession(sid, name, enabled)); },
     listDir(path) { return read((net) => net.listDir(path)); },
 
-    getDraft(sid) {
-      try { return localStorage.getItem(`cockpit:draft:${sid}`) ?? ''; } catch { return ''; }
-    },
-    setDraft(sid, text) {
-      try {
-        if (text) localStorage.setItem(`cockpit:draft:${sid}`, text);
-        else localStorage.removeItem(`cockpit:draft:${sid}`);
-      } catch { /* ignore */ }
-    },
     speechToken() {
       return read((net) => net.speechToken());
     },

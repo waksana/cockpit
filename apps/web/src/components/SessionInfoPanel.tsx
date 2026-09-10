@@ -4,7 +4,7 @@
 
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
-import { PanelPageShell, PermissionPolicy } from './SessionPanelKit';
+import { PanelPageShell, PermissionPolicy, SessionResume } from './SessionPanelKit';
 import type { ChatSession, ModelOption } from '../net/types';
 
 type ContextTier = 'default' | 'long_context';
@@ -17,23 +17,25 @@ const EFFORT_LABEL: Record<string, string> = {
 // reasoning effort and context tier. Effort shows only for models that list
 // supportedReasoningEfforts; context tier only for models with a long_context
 // price tier (supportsLongContext).
-function ModelControls({ session, models, onSetModel, disabled }: {
+function ModelControls({ session, onSetModel, disabled }: {
   session: ChatSession;
   models: ModelOption[];
   onSetModel: (modelId: string, opts?: { reasoningEffort?: string; contextTier?: ContextTier }) => void;
   disabled: boolean;
 }) {
-  const list = (session.availableModels && session.availableModels.length > 0)
-    ? session.availableModels : models;
-  if (!list || list.length === 0) return null;
+  const list = session.availableModels;
+  if (!list || list.length === 0) return <section className="info-section">
+    <div className="info-section-name">模型</div>
+    <div className="info-section-content">{session.currentModelId ?? '当前模型不可用'}</div>
+    <div className="info-empty">{list ? '原生可选模型列表为空' : '原生可选模型列表不可用'}</div>
+  </section>;
 
   const current = session.currentModelId ?? '';
   const currentModel = list.find((m) => m.modelId === current);
-  const globalModel = currentModel && models.find((m) => m.modelId === current);
-  const efforts = currentModel?.supportedReasoningEfforts ?? globalModel?.supportedReasoningEfforts ?? [];
-  const supportsLong = currentModel?.supportsLongContext ?? globalModel?.supportsLongContext ?? false;
-  const curEffort = session.currentReasoningEffort ?? currentModel?.defaultReasoningEffort ?? globalModel?.defaultReasoningEffort ?? '';
-  const curTier: ContextTier = session.currentContextTier ?? 'default';
+  const efforts = currentModel?.supportedReasoningEfforts ?? [];
+  const supportsLong = currentModel?.supportsLongContext ?? false;
+  const curEffort = session.currentReasoningEffort ?? '';
+  const curTier = session.currentContextTier ?? '';
 
   return (
     <section className="info-section">
@@ -52,7 +54,7 @@ function ModelControls({ session, models, onSetModel, disabled }: {
           <label className="info-control">
             <span className="info-control-label">思考力度</span>
             <select className="info-select" disabled={disabled} value={curEffort}
-              onChange={(e) => onSetModel(current, { reasoningEffort: e.target.value, contextTier: curTier })} aria-label="思考力度">
+              onChange={(e) => onSetModel(current, { reasoningEffort: e.target.value, contextTier: curTier || undefined })} aria-label="思考力度">
               {curEffort === '' && <option value="" disabled>力度…</option>}
               {curEffort !== '' && !efforts.includes(curEffort) && <option value={curEffort} disabled>{curEffort}（当前值，列表未提供）</option>}
               {efforts.map((e) => <option key={e} value={e}>{EFFORT_LABEL[e] ?? e}</option>)}
@@ -65,6 +67,7 @@ function ModelControls({ session, models, onSetModel, disabled }: {
             <span className="info-control-label">上下文长度</span>
             <select className="info-select" disabled={disabled} value={curTier}
               onChange={(e) => onSetModel(current, { reasoningEffort: curEffort || undefined, contextTier: e.target.value as ContextTier })} aria-label="上下文长度">
+              {curTier === '' && <option value="" disabled>原生未提供当前值</option>}
               <option value="default">标准上下文</option>
               <option value="long_context">长上下文</option>
             </select>
@@ -91,18 +94,22 @@ export function SessionInfoPanel(props: SessionInfoPanelProps) {
 function InfoDetails({ session, models, onClose, onSetModel }: SessionInfoPanelProps) {
   const connected = useCockpit((s) => s.connState === 'open');
   const sid = session.sessionId;
+  const authoritative = useCockpit((s) => s.sessions.find(row => row.sessionId === sid));
+  const loaded = authoritative?.loaded ?? session.loaded;
   const action = useKeyedAction(`info:${sid}`);
 
   return (
     <PanelPageShell title={`会话设置 · ${session.title}`} onClose={onClose}>
       <section className="info-section">
         <div className="info-section-name">{session.title}</div>
-        <div className="info-section-content info-meta-cwd">{session.cwd}</div>
+        <div className="info-section-content info-meta-cwd">{session.cwd || '工作目录：原生未提供'}</div>
         <div className="info-section-content info-meta-id"><span className="info-meta-id-label">ID</span>{session.sessionId}</div>
       </section>
 
-      <ModelControls session={session} models={models} disabled={!connected || action.busy}
-        onSetModel={(model, opts) => { void action.run(() => onSetModel(model, opts)); }} />
+      <SessionResume sessionId={sid} required={!loaded} />
+      {!loaded && <div className="info-empty">未加载：模型、模式及资源状态不可用，不显示上次读值或全局默认值。</div>}
+      {loaded && <ModelControls session={session} models={models} disabled={!connected || action.busy}
+        onSetModel={(model, opts) => { void action.run(() => onSetModel(model, opts)); }} />}
       {action.error && <div className="info-empty" role="alert">设置失败：{action.error}</div>}
       <PermissionPolicy />
     </PanelPageShell>

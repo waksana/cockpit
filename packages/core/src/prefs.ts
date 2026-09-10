@@ -1,5 +1,5 @@
 // Cockpit owns only UI preferences and durable attention. Native MCP/skill
-// settings, including opaque legacy copies in this file, are never replayed.
+// settings are never replayed. Retired Cockpit copies are removed on startup.
 
 import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -9,8 +9,6 @@ import { copilotPath } from './paths.ts';
 
 // Reports durability problems in addition to throwing on failed reads/writes.
 export type PrefsLogger = (msg: string) => void;
-
-export interface TrashedMark { at: string; reason?: string }
 
 export interface InboxEntry {
   attention: Attention | null;
@@ -26,7 +24,6 @@ export interface Inbox {
 }
 
 export interface CockpitPrefs {
-  trashed: Record<string, TrashedMark>;
   // A UI mark, not a keep-loaded directive.
   pinnedSessions: string[];
   inbox: Inbox;
@@ -36,6 +33,14 @@ export interface CockpitPrefs {
 type StoredPrefs = CockpitPrefs & Record<string, unknown>;
 
 const PREFS_FILE = copilotPath('cockpit-prefs.json');
+
+// Former CockpitPrefs fields with removed writers. Do not infer retirement from
+// an unknown name or shape: unrelated extensions must survive.
+const RETIRED_KEYS = [
+  'mcpDefaultOn', 'mcpBySession', 'skillsDisabledBySession', 'skillsAllowlistBySession',
+  'hooks', 'flowSchedules', 'scheduledSessions', 'welcomedSessions', 'spawnedBySession',
+  'trashed', 'trashedMeta',
+] as const;
 
 function emptyInbox(): Inbox {
   return { revision: 0, counter: 0, sessions: {} };
@@ -72,7 +77,7 @@ function nextInboxId(id: number): number {
 
 function empty(): StoredPrefs {
   return {
-    trashed: {}, pinnedSessions: [], inbox: emptyInbox(),
+    pinnedSessions: [], inbox: emptyInbox(),
   };
 }
 
@@ -117,20 +122,32 @@ export class Prefs {
       this.log(`cockpit-prefs.json load FAILED — refusing to reset inbox: ${(e as Error).message}`);
       throw e;
     }
+    // Run in the owning process before exposing preferences to any writer.
+    // An out-of-band edit while an old process is alive could be written back.
+    const retired = RETIRED_KEYS.filter((key) => Object.hasOwn(parsed, key));
+    if (retired.length) {
+      for (const key of retired) delete parsed[key];
+      this.write(parsed);
+      this.log(`cockpit-prefs.json removed retired fields: ${retired.join(', ')}`);
+    }
     return {
       ...parsed,
-      trashed: parsed.trashed ?? {},
       pinnedSessions: Array.isArray(parsed.pinnedSessions) ? parsed.pinnedSessions : [],
       inbox,
     };
   }
 
   private save(update: Partial<CockpitPrefs>): void {
+    const next = { ...this.data, ...update };
+    this.write(next);
+    this.data = next;
+  }
+
+  private write(next: Record<string, unknown>): void {
     // Atomic write: serialize to a sibling .tmp, then rename it over the live
     // file. rename(2) is atomic on the same filesystem, so a crash / power loss /
     // ENOSPC mid-write can never truncate the live prefs — a reader either sees
     // the whole old file or the whole new one, never a partial document.
-    const next = { ...this.data, ...update };
     const tmp = `${this.file}.tmp`;
     try {
       mkdirSync(dirname(this.file), { recursive: true });
@@ -140,7 +157,6 @@ export class Prefs {
       this.log(`cockpit-prefs.json save FAILED — in-memory preferences are unchanged: ${(e as Error).message}`);
       throw e;
     }
-    this.data = next;
   }
 
   // ── Durable inbox ──────────────────────────────────────────────────────────
@@ -202,37 +218,6 @@ export class Prefs {
     return { ...inbox, revision: nextInboxId(inbox.revision), sessions };
   }
 
-  // ── Trash (soft delete) ──────────────────────────────────────────────────────
-  trashSession(sessionId: string, reason?: string): void {
-    this.save({
-      trashed: {
-        ...this.data.trashed,
-        [sessionId]: { at: new Date().toISOString(), ...(reason ? { reason } : {}) },
-      },
-      inbox: this.inboxWithoutSession(sessionId),
-    });
-  }
-
-  restoreSession(sessionId: string): void {
-    const trashed = { ...this.data.trashed };
-    delete trashed[sessionId];
-    this.save({ trashed });
-  }
-
-  isTrashed(sessionId: string): boolean {
-    return sessionId in this.data.trashed;
-  }
-
-  // The set of trashed session ids (for filtering the main list).
-  trashedIds(): Set<string> {
-    return new Set(Object.keys(this.data.trashed));
-  }
-
-  // Full trash entries: id + mark. Title/cwd are joined in by the engine.
-  trashedEntries(): Array<{ sessionId: string } & TrashedMark> {
-    return Object.entries(this.data.trashed).map(([sessionId, mark]) => ({ sessionId, ...mark }));
-  }
-
   // ── Pinned ──────────────────────────────────────────────────────────────────
   isPinned(sessionId: string): boolean {
     return this.data.pinnedSessions.includes(sessionId);
@@ -250,10 +235,7 @@ export class Prefs {
 
   // ── Housekeeping ───────────────────────────────────────────────────────────
   forgetSession(sessionId: string): void {
-    const trashed = { ...this.data.trashed };
-    delete trashed[sessionId];
     this.save({
-      trashed,
       pinnedSessions: this.data.pinnedSessions.filter((id) => id !== sessionId),
       inbox: this.inboxWithoutSession(sessionId),
     });

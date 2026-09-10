@@ -329,18 +329,6 @@ export const DirListing = z.object({
 });
 export type DirListing = z.infer<typeof DirListing>;
 
-// ── Trash (soft-deleted sessions) ────────────────────────────────────────────
-// A trashed session retains its data on disk + is hidden from the main list, but
-// can be restored. Permanent purge is a separate, non-UI step (cockpit MCP).
-export const TrashEntry = z.object({
-  sessionId: z.string(),
-  title: z.string(),
-  cwd: z.string(),
-  at: z.string(),               // ISO8601 — when it was trashed
-  reason: z.string().optional(),
-});
-export type TrashEntry = z.infer<typeof TrashEntry>;
-
 // ── MCP + Skills management (dedicated pages, not the info panel) ─────────────
 // Native Copilot MCP configuration and its default for future sessions.
 export const McpServerGlobal = z.object({
@@ -514,9 +502,10 @@ export const SessionMeta = z.object({
   title: z.string(),
   cwd: z.string(),
   createdAt: z.number().optional(),
-  lastActivity: z.number(),
+  lastActivity: z.number().describe('Native persisted-state modification time, not a live activity clock.'),
+  lastActivitySource: z.enum(['native-persisted', 'native-construction', 'host-event-receipt']).optional(),
   status: SessionStatus,
-  error: z.string().nullable(),
+  error: z.string().nullable().optional(),
   currentModelId: z.string().optional(),
   // Clearable: a non-reasoning model has no effort, so a patch must be able to
   // carry an explicit `null` to clear a stale value (engine emits null, not omit).
@@ -533,7 +522,7 @@ export const SessionMeta = z.object({
   cancelling: z.boolean().optional(),
   autoNaming: z.boolean().optional(),
   autoNameError: z.string().nullable().optional(),
-  queue: z.array(QueuedItem),
+  queue: z.array(QueuedItem).optional().describe('Native pending queue; unavailable while unloaded, not an empty-queue claim.'),
   ask: AskRequest.nullable(),
   planRequest: PlanRequest.nullable().optional(),
   elicitation: ElicitationRequest.nullable().optional(),
@@ -556,12 +545,10 @@ export const SessionMeta = z.object({
   // count as 0. Server truth reconciles on cold start / reconnect (no stale dot).
   seenId: NotificationCounter.optional(),
   // A pure UI mark: pin a session to sort it to the top of the list, synced across
-  // devices. NOTE: pin no longer means keep-loaded — keep-loaded is now driven by
-  // whether the session has an active per-session schedule (scheduleCount > 0).
+  // devices. Pinning does not keep a native session loaded.
   pinned: z.boolean().optional(),
   // Number of active scheduled prompts on this session (drives the list timer
-  // badge). Re-derived from the SDK ScheduleRegistry on load + on
-  // schedule_created/cancelled events; full details come from `schedule/list`.
+  // badge). Read on demand; omitted when native runtime data is unavailable.
   scheduleCount: z.number().optional(),
   // Count of in-flight `task` sub-agent invocations (foreground OR background).
   // A background sub-agent outlives the turn that spawned it (status returns to
@@ -585,8 +572,8 @@ export const SessionMeta = z.object({
 });
 export type SessionMeta = z.infer<typeof SessionMeta>;
 
-// A compact, authoritative projection of a live (non-trashed) session, returned
-// synchronously by the `session/list` intent. Used by the cockpit MCP so an agent
+// A compact, request-owned view of an existing session, read asynchronously
+// by the `session/list` intent. Used by the cockpit MCP so an agent
 // can discover sessions (and pick one to rename / toggle MCP-skills on) without
 // subscribing to the SSE snapshot stream.
 export const SessionBrief = z.object({
@@ -596,6 +583,7 @@ export const SessionBrief = z.object({
   status: SessionStatus,
   loaded: z.boolean(),
   lastActivity: z.number(),
+  lastActivitySource: z.enum(['native-persisted', 'native-construction', 'host-event-receipt']).optional(),
   currentModelId: z.string().optional(),
 });
 export type SessionBrief = z.infer<typeof SessionBrief>;
@@ -659,6 +647,7 @@ export const ServerEvent = z.discriminatedUnion('type', [
   Snapshot,
   z.object({ type: z.literal('agent/status'), status: AgentStatus }),
   z.object({ type: z.literal('session/added'), session: SessionMeta }),
+  z.object({ type: z.literal('session/invalidated'), sessionId: z.string() }),
   // A partial SessionMeta patch: every field optional (carry only what changed),
   // `sessionId` required as the key. Derived from SessionMeta so adding a field
   // there automatically makes it patchable — no parallel field list to maintain.
@@ -814,9 +803,9 @@ export const Intents = {
     }),
     result: HistoryPage,
   },
-  // Preview is passive for both live and trashed sessions.
+  // Preview is passive for both loaded and unloaded sessions.
   'session/peek': {
-    description: 'Passively preview live or trashed history without loading a session or emitting SSE events. Cursor must be nonempty; limit is a positive integer up to 200. Result is flat.',
+    description: 'Passively preview live or unloaded history without loading a session or emitting SSE events. Cursor must be nonempty; limit is a positive integer up to 200. Result is flat.',
     body: z.object({
       sessionId: z.string(), beforeMsgId: HistoryCursor.optional(),
       limit: HistoryLimit.optional(), details: HistoryDetails.optional(),
@@ -830,7 +819,7 @@ export const Intents = {
     }),
   },
   'session/subagent-history': {
-    description: 'Passively read one subagent transcript by its spawning toolCallId, without loading the session. Children are summary cards by default; details:full includes nested transcripts. Supports live, unloaded and trashed sessions.',
+    description: 'Passively read one subagent transcript by its spawning toolCallId, without loading the session. Children are summary cards by default; details:full includes nested transcripts. Supports live and unloaded sessions.',
     body: z.object({
       sessionId: z.string(), toolCallId: z.string().min(1),
       beforeMsgId: HistoryCursor.optional(), afterMsgId: HistoryCursor.optional(),
@@ -930,7 +919,8 @@ export const Intents = {
     result: z.object({ ok: z.boolean() }),
   },
   'session/delete': {
-    body: z.object({ sessionId: z.string(), reason: z.string().optional() }),
+    description: 'IRREVERSIBLE native session deletion. Explicit confirm:true is required; old soft-delete requests are rejected. Managed files and workspaces are retained. Never automatically retry an uncertain result.',
+    body: z.object({ sessionId: z.string().min(1), confirm: z.literal(true) }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   'session/unload': {
@@ -987,7 +977,7 @@ export const Intents = {
     body: z.object({}),
     result: z.object({ ok: z.boolean() }),
   },
-  // Synchronous authoritative list of live (non-trashed) sessions. Unlike
+  // Synchronous authoritative list of existing sessions. Unlike
   // session/refresh (which only nudges the SSE snapshot), this returns the data
   // in the result so the cockpit MCP can read it over plain HTTP.
   'session/list': {
@@ -1116,19 +1106,10 @@ export const Intents = {
     body: z.object({ path: z.string().optional() }),
     result: DirListing,
   },
-  // session/delete is a SOFT delete (move to trash). Keeps SDK data; hides from
-  // the main list; restorable. The body gains an optional reason.
-  'session/restore': {
-    body: z.object({ sessionId: z.string() }),
-    result: z.object({ ok: z.boolean() }),
-  },
-  'session/trash-list': {
-    body: z.object({}),
-    result: z.object({ entries: z.array(TrashEntry) }),
-  },
-  // Permanent purge: real SDK delete, requiring explicit confirmation.
+  // Compatibility for existing explicitly destructive clients; one implementation.
   'session/purge': {
-    body: z.object({ sessionId: z.string(), confirm: z.literal(true) }),
+    description: 'Compatibility alias for session/delete: irreversible native deletion, requiring explicit confirm:true. Managed files and workspaces are retained. Never automatically retry an uncertain result.',
+    body: z.object({ sessionId: z.string().min(1), confirm: z.literal(true) }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   // Native after/every supports relative delays and one-shot absolute times.

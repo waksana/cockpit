@@ -59,7 +59,7 @@ export class OfficialRuntime {
   private readonly closed = new Set<string>();
   private readonly subscriptions = new Map<RuntimeSession, () => void>();
   private readonly bus = new EventEmitter();
-  private gate: Promise<unknown> = Promise.resolve();
+  private gate: Promise<void> = Promise.resolve();
   private failedStop?: Error;
   private fatalError?: Error;
   private stopping = false;
@@ -95,7 +95,7 @@ export class OfficialRuntime {
 
   private exclusive<T>(work: () => Promise<T>): Promise<T> {
     const next = this.gate.then(() => this.untilFatal(work));
-    this.gate = next.catch(() => {});
+    this.gate = next.then(() => {}, () => {});
     return next;
   }
 

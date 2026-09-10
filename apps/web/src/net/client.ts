@@ -239,18 +239,16 @@ export class NetClient {
   setModel(sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) {
     return this.intent('setModel', { sessionId, modelId, ...opts });
   }
-  deleteSession(sessionId: string, reason?: string) { return this.intent('session/delete', { sessionId, ...(reason ? { reason } : {}) }); }
-  restoreSession(sessionId: string) { return this.intent('session/restore', { sessionId }); }
-  trashList() { return this.intent('session/trash-list', {}); }
+  // The purge name was already permanently destructive in older backends.
+  deleteSession(sessionId: string, confirm: true) { return this.intent('session/purge', { sessionId, confirm }); }
   unloadSession(sessionId: string) { return this.intent('session/unload', { sessionId }); }
   reloadSession(sessionId: string) { return this.intent('session/reload', { sessionId }); }
   pinSession(sessionId: string, pinned: boolean) { return this.intent('session/pin', { sessionId, pinned }); }
-  renameSession(sessionId: string, name: string) { return this.intent('session/rename', { sessionId, name }); }
-  autoNameSession(sessionId: string) { return this.intent('session/auto-name', { sessionId }); }
   compactSession(sessionId: string, customInstructions?: string) { return this.intent('session/compact', { sessionId, ...(customInstructions ? { customInstructions } : {}) }); }
   rewindSession(sessionId: string, toMsgId: string, rollbackFiles?: boolean) { return this.intent('session/rewind', { sessionId, toMsgId, ...(rollbackFiles ? { rollbackFiles } : {}) }); }
   setMode(sessionId: string, mode: 'interactive' | 'plan' | 'autopilot') { return this.intent('setMode', { sessionId, mode }); }
   getPlan(sessionId: string) { return this.intent('session/plan', { sessionId }); }
+  getSession(sessionId: string, signal?: AbortSignal) { return this.intent('session/get', { sessionId }, signal); }
   getUsage(sessionId: string, signal?: AbortSignal) { return this.intent('session/usage', { sessionId }, signal); }
   getPanels(sessionId: string) { return this.intent('session/panels', { sessionId }); }
   scheduleList(sessionId: string) { return this.intent('schedule/list', { sessionId }); }

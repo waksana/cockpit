@@ -1164,7 +1164,6 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
         return observe(await resumeNative(...args));
       });
       const list = t.mock.method(adapter, 'listSessions');
-      const metadata = t.mock.method(adapter, 'getSessionMetadata');
       const runtimeFatals: Error[] = [];
       const engineFatals: Error[] = [];
       adapter.onFatal(error => runtimeFatals.push(error));
@@ -1204,18 +1203,6 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
         'A configured live blank session still has no persisted native metadata');
       assert.deepEqual((await bounded(host.history(emptyId))).messages, []);
       assert.deepEqual((await bounded(host.peekSession(emptyId))).messages, []);
-      const assertDraftSettings = async () => {
-        const sdk = watched.get(emptyId)!;
-        assert.deepEqual(await bounded(sdk.rpc.name.get()), confirmed.name);
-        assert.deepEqual(await bounded(sdk.rpc.model.getCurrent()), confirmed.model);
-        assert.equal(await bounded(sdk.rpc.mode.get()), confirmed.mode);
-        const meta = host.getMeta(emptyId)!;
-        assert.equal(meta.title, confirmed.name.name);
-        assert.equal(meta.currentModelId, confirmed.model.modelId);
-        assert.equal(meta.currentReasoningEffort, confirmed.model.reasoningEffort ?? null);
-        assert.equal(meta.currentContextTier, confirmed.model.contextTier ?? null);
-        assert.equal(meta.currentMode, confirmed.mode);
-      };
       assert.equal(requests.length, emptyRequests, 'Initial settings must not trigger inference');
       assert.equal(host.getMeta(emptyId)?.loaded, true);
       assert.deepEqual(createIds, [id, emptyId]);
@@ -1229,8 +1216,8 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       assert.ok(list.mock.callCount() > listedBefore, 'The normal 8s Engine poll must actually run');
       assert.equal(host.getMeta(id)?.loaded, false, 'A normal poll must reconcile native idle expiry');
       assert.equal(host.getMeta(id)?.status, 'unloaded');
-      assert.equal(host.getMeta(emptyId)?.loaded, false, 'A configured never-submitted draft must also expire passively');
-      assert.equal(host.getMeta(emptyId)?.status, 'unloaded');
+      await bounded(host.refreshList());
+      assert.equal(host.getMeta(emptyId), null, 'Confirmed absent empty sessions leave the list');
       assert.equal((await bounded(adapter.rpc.sessions.open({ kind: 'attach', sessionId: emptyId }))).status, 'not_found');
       assert.equal(await bounded(adapter.getSessionMetadata(emptyId)), undefined,
         'Native idle cleanup must have actually discarded the empty session');
@@ -1250,12 +1237,10 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
         await assert.rejects(bounded<unknown>(read()), /unavailable while unloaded.*explicitly resume/);
       }
       assert.deepEqual(await bounded(host.listSessionMcp(id)), { loaded: false, servers: [] });
-      const emptyHistory = await bounded(host.history(emptyId));
-      assert.deepEqual(emptyHistory.messages, []);
-      assert.equal(emptyHistory.hasMore, false);
-      assert.deepEqual(await bounded(host.peekSession(emptyId)), {
-        sessionId: emptyId, title: confirmed.name.name, cwd: dirs.work, messages: [], hasMore: false,
-      });
+      // This native version returns an empty persisted page even after cleanup.
+      // Pass it through; do not synthesize a draft page or recover old settings.
+      assert.deepEqual((await bounded(host.history(emptyId))).messages, []);
+      assert.deepEqual((await bounded(host.peekSession(emptyId))).messages, []);
       assert.equal(adapter.liveCount, 0);
       assert.deepEqual(createIds, [id, emptyId], 'Passive empty pages must not allocate a session');
       assert.equal(calls.length, 1, 'Neither persisted history nor native-only read pages may resume');
@@ -1290,17 +1275,12 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       const prefsPath = join(dirs.state!, 'engine-idle-prefs.json');
       const beforeReloadPrefs = readFileSync(prefsPath);
       const beforeReloadPrefsMtime = statSync(prefsPath).mtimeMs;
-      await bounded(host.reload(emptyId));
-      assert.equal(createIds.filter(createdId => createdId === emptyId).length, 2,
-        'Explicit reload must create the same absent draft ID once');
-      assert.notEqual(watched.get(emptyId), emptyOriginal);
-      await assertDraftSettings();
-      await bounded(host.unload(emptyId));
-      assert.equal(host.getMeta(emptyId)?.loaded, false);
+      await assert.rejects(bounded(host.reload(emptyId)), /Unknown session/);
+      assert.equal(createIds.filter(createdId => createdId === emptyId).length, 1,
+        'Explicit reload must never recreate an absent session');
+      assert.equal(watched.get(emptyId), emptyOriginal);
       assert.equal(await bounded(adapter.getSessionMetadata(emptyId)), undefined,
-        'Manual close must discard the configured blank draft, not save it');
-      assert.deepEqual((await bounded(host.history(emptyId))).messages, []);
-      assert.deepEqual((await bounded(host.peekSession(emptyId))).messages, []);
+        'Reload must not save an absent empty session');
       assert.equal(requests.length, beforeReloadRequests);
       assert.deepEqual(readFileSync(journal), beforeReloadJournal);
       assert.equal(statSync(journal).mtimeMs, beforeReloadMtime);
@@ -1308,25 +1288,13 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       assert.equal(statSync(prefsPath).mtimeMs, beforeReloadPrefsMtime,
         'Draft settings must not gain a parallel preference journal');
       assert.deepEqual(calls.filter(call => call.id === emptyId), []);
-      const reloadedEmpty = watched.get(emptyId);
-      const metadataBefore = metadata.mock.calls.filter(call => call.arguments[0] === emptyId).length;
-      assert.equal((await bounded(host.prompt(emptyId, 'SMOKE_ENGINEFIRST'))).ok, true);
-      await eventually(() => host.getMeta(emptyId)?.status === 'idle', 'The first explicit prompt must finish in the recreated draft');
-      assert.equal(metadata.mock.calls.filter(call => call.arguments[0] === emptyId).length, metadataBefore + 1,
-        'Recreation must use the official passive metadata lookup, not a failed resume');
-      assert.equal(createIds.filter(createdId => createdId === emptyId).length, 3, 'Manual unload permits exactly one same-ID recreation');
-      assert.notEqual(watched.get(emptyId), reloadedEmpty);
-      await assertDraftSettings();
-      assert.deepEqual(calls.filter(call => call.id === emptyId), [
-        { kind: 'send', id: emptyId, prompt: 'SMOKE_ENGINEFIRST' },
-      ], 'The first prompt must send exactly once without any resume attempt or mutation retry');
-      assert.equal(requests.filter(request => request.marker === 'SMOKE_ENGINEFIRST').length, 1);
-      assert.equal(requests.length, beforeReloadRequests + 1, 'Recovery adds only the existing first-prompt inference');
+      await assert.rejects(bounded(host.prompt(emptyId, 'SMOKE_ENGINEFIRST')), /Unknown session/);
+      assert.equal(createIds.filter(createdId => createdId === emptyId).length, 1);
+      assert.deepEqual(calls.filter(call => call.id === emptyId), []);
+      assert.equal(requests.filter(request => request.marker === 'SMOKE_ENGINEFIRST').length, 0);
+      assert.equal(requests.length, beforeReloadRequests, 'Missing sessions must not trigger inference');
       assert.equal(save.mock.callCount(), 0);
-      const firstHistory = await bounded(host.history(emptyId));
-      assert.equal(firstHistory.messages.filter(message => message.role === 'user' && message.content === 'SMOKE_ENGINEFIRST').length, 1);
-      assert.ok(firstHistory.messages.some(message => message.content === 'deterministic SMOKE_ENGINEFIRST done'));
-      assert.deepEqual(runtimeChildren(), [pid], 'Recreating an expired draft must not recycle the runtime process');
+      assert.deepEqual(runtimeChildren(), [pid], 'An expired session must not recycle the runtime process');
       const scheduledId = await bounded(host.newSession(dirs.work!));
       const stopSchedule = await bounded(host.addSchedule(scheduledId, {
         interval: '1h', recurring: false, prompt: 'SMOKE_SCHEDULED',
@@ -1349,7 +1317,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
         waitedMs: Date.now() - completedAt, normalPolls: list.mock.callCount() - listedBefore,
         calls, passivePages: 10, manualCloseWithSchedule: true, stopWithSchedule: true,
         emptyDraft: { sessionId: emptyId, creates: createIds.filter(createdId => createdId === emptyId).length,
-          confirmed, explicitReload: true, manualUnload: true, saves: save.mock.callCount(),
+          confirmed, absentReloadRejected: true, saves: save.mock.callCount(),
           sends: calls.filter(call => call.id === emptyId && call.kind === 'send').length,
           resumes: calls.filter(call => call.id === emptyId && call.kind === 'resume').length, sameRuntimePid: pid },
       };
@@ -1528,29 +1496,23 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
 
 for (const setting of Object.keys(draftSettings) as (keyof typeof draftSettings)[]) {
   for (const closure of ['native idle', 'manual unload'] as const) {
-    test(`draft recovery: ${setting} ${setting === 'skill' || setting === 'MCP' ? 'uses native defaults after' : 'survives'} ${closure} before the first prompt`, async t => {
+    test(`empty session: ${setting} never triggers recreation after ${closure}`, async t => {
       const h = await draftFixture(t);
       const id = await h.engine.newSession(h.cwd);
       await draftSettings[setting](h.engine, id);
-      const before = draftProjection(h.engine, id);
       const original = h.natives.get(id)!;
       if (closure === 'native idle') h.expire(id);
       else await h.engine.unload(id);
-      await h.engine.prompt(id, 'first fixture prompt');
-      const recreated = h.natives.get(id)!;
-      assert.notEqual(recreated, original);
-      assert.deepEqual(h.runtime.createSession.mock.calls.map(call => call.arguments[0].sessionId), [id, id]);
-      assert.equal(h.runtime.getSessionMetadata.mock.callCount(), 1);
-      assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+      await assert.rejects(h.engine.prompt(id, 'first fixture prompt'), /Native session missing/);
+      assert.equal(h.natives.get(id), original);
+      assert.deepEqual(h.runtime.createSession.mock.calls.map(call => call.arguments[0].sessionId), [id]);
+      assert.equal(h.runtime.getSessionMetadata.mock.callCount(), 0);
+      assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
       assert.equal(original.send.mock.callCount(), 0);
-      assert.equal(recreated.send.mock.callCount(), 1);
-      assert.deepEqual(draftProjection(h.engine, id), before);
-      assert.equal(recreated.state.name, original.state.name);
-      assert.deepEqual(recreated.state.model, original.state.model);
-      assert.equal(recreated.state.mode, original.state.mode);
-      assert.equal(recreated.state.skill, true, 'native defaults, not Cockpit replay, own new allocations');
-      assert.equal(recreated.state.mcp, true);
-      const config = h.runtime.createSession.mock.calls.at(-1)!.arguments[0]!;
+      const config = h.runtime.resumeSession.mock.calls[0]!.arguments[1];
+      assert.equal(config.model, undefined);
+      assert.equal(config.reasoningEffort, undefined);
+      assert.equal(config.contextTier, undefined);
       assert.equal(config.enableConfigDiscovery, true);
       assert.deepEqual(config.disabledSkills, []);
       assert.equal(config.disabledMcpServers, undefined);
@@ -1559,37 +1521,35 @@ for (const setting of Object.keys(draftSettings) as (keyof typeof draftSettings)
   }
 }
 
-test('draft recovery: passive absent history/peek allocate nothing and preserve confirmed settings', async t => {
+test('empty session: absent history, resume history and peek surface native errors without allocation', async t => {
   const h = await draftFixture(t);
   const id = await h.engine.newSession(h.cwd);
   for (const setting of Object.values(draftSettings)) await setting(h.engine, id);
-  const confirmed = draftProjection(h.engine, id);
   h.expire(id);
   assert.equal(existsSync(h.prefsFile), false, 'native settings do not create Cockpit preferences');
-  assert.deepEqual(await h.engine.history(id), { sessionId: id, messages: [], hasMore: false, latest: true });
-  assert.deepEqual(await h.engine.peekSession(id), {
-    sessionId: id, title: confirmed.title, cwd: h.cwd, messages: [], hasMore: false,
-  });
-  assert.ok(h.runtime.getSessionMetadata.mock.callCount() > 0, 'Absence must be positively confirmed');
+  await assert.rejects(h.engine.history(id), /Native journal missing/);
+  await assert.rejects(h.engine.resumeHistory(id, {}), /Native journal missing/);
+  await assert.rejects(h.engine.peekSession(id), /Native journal missing/);
+  assert.equal(h.runtime.getSessionMetadata.mock.callCount(), 0);
   assert.equal(h.runtime.liveCount, 0);
   assert.equal(h.runtime.createSession.mock.callCount(), 1);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
   assert.equal(h.runtime.rpc.sessions.save.mock.callCount(), 0);
   assert.equal(existsSync(h.prefsFile), false);
-  await h.engine.reload(id);
-  assert.deepEqual(draftProjection(h.engine, id), confirmed);
+  await assert.rejects(h.engine.reload(id), /Native session missing/);
 });
 
 for (const action of ['history', 'peekSession', 'reload'] as const) {
-  test(`draft recovery: ${action} propagates metadata failure rather than guessing absence`, async t => {
+  test(`empty session: ${action} propagates its native transport failure without recovery`, async t => {
     const h = await draftFixture(t);
     const id = await h.engine.newSession(h.cwd);
     h.expire(id);
-    const failure = new Error('Metadata transport unavailable');
-    h.runtime.getSessionMetadata.mock.mockImplementation(async () => { throw failure; });
+    const failure = new Error('Native transport unavailable');
+    if (action === 'reload') h.runtime.resumeSession.mock.mockImplementation(async () => { throw failure; });
+    else h.runtime.rpc.sessions.readPersistedEvents.mock.mockImplementation(async () => { throw failure; });
     await assert.rejects(h.engine[action](id), error => error === failure);
     assert.equal(h.runtime.createSession.mock.callCount(), 1);
-    assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+    assert.equal(h.runtime.resumeSession.mock.callCount(), action === 'reload' ? 1 : 0);
     assert.equal(h.natives.get(id)!.send.mock.callCount(), 0);
     assert.equal(h.runtime.rpc.sessions.save.mock.callCount(), 0);
   });
@@ -1695,7 +1655,6 @@ for (const setting of ['rename', 'model', 'mode'] as const) {
     await draftSettings[setting](h.engine, id);
     const confirmed = draftProjection(h.engine, id);
     const native = h.natives.get(id)!;
-    const confirmedNative = structuredClone(native.state);
     const fail = async (): Promise<never> => { throw new Error('Setting readback unknown'); };
     if (setting === 'rename') t.mock.method(native.rpc.name, 'get', fail);
     else if (setting === 'model') t.mock.method(native.rpc.model, 'getCurrent', fail);
@@ -1705,14 +1664,11 @@ for (const setting of ['rename', 'model', 'mode'] as const) {
       : h.engine.setMode(id, 'autopilot'), /Setting readback unknown/);
     assert.deepEqual(draftProjection(h.engine, id), confirmed);
     h.expire(id);
-    await h.engine.reload(id);
+    await assert.rejects(h.engine.reload(id), /Native session missing/);
     assert.deepEqual(draftProjection(h.engine, id), confirmed);
-    const restored = h.natives.get(id)!;
-    assert.equal(restored.state.name, confirmedNative.name);
-    assert.deepEqual(restored.state.model, confirmedNative.model);
-    assert.equal(restored.state.mode, confirmedNative.mode);
-    assert.equal(h.runtime.createSession.mock.callCount(), 2);
-    assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+    assert.equal(h.natives.get(id), native);
+    assert.equal(h.runtime.createSession.mock.callCount(), 1);
+    assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
     const attempted = setting === 'rename' ? native.rpc.name.set
       : setting === 'model' ? native.rpc.model.switchTo : native.rpc.mode.set;
     assert.equal(attempted.mock.callCount(), 2, 'The uncertain mutation must not be retried on its old wrapper');
@@ -1743,10 +1699,11 @@ test('draft recovery: overlapping settings retain the last confirmed native mode
   } finally { release(); }
   assert.equal(native.state.model.modelId, 'last-model');
   const confirmed = draftProjection(h.engine, id);
+  assert.equal(confirmed.model, 'last-model');
   h.expire(id);
-  await h.engine.reload(id);
+  await assert.rejects(h.engine.reload(id), /Native session missing/);
   assert.deepEqual(draftProjection(h.engine, id), confirmed);
-  assert.equal(h.natives.get(id)!.state.model.modelId, 'last-model');
+  assert.equal(h.runtime.createSession.mock.callCount(), 1);
 });
 
 test('draft recovery: pending MCP configuration still rejects a concurrent toggle immediately', async t => {
@@ -1769,62 +1726,41 @@ test('draft recovery: pending MCP configuration still rejects a concurrent toggl
   }
 });
 
-for (const initial of [true, false]) {
-  test(`draft recovery: failed ${initial ? 'initial' : 'restored'} initialization blocks mutations without retry`, async t => {
+  test('empty session: failed initialization retains the real SDK handle without restoring settings', async t => {
     const h = await draftFixture(t);
     const create = h.runtime.createSession;
-    let failNext = initial;
     t.mock.method(h.runtime, 'createSession', async (config: SessionConfig) => {
       const sdk = await create(config);
-      if (failNext) {
-        failNext = false;
-        t.mock.method(sdk.rpc.name, 'get', async () => { throw new Error('Draft initialization readback failed'); });
-      }
+      t.mock.method(sdk.rpc.name, 'get', async () => { throw new Error('Native initialization readback failed'); });
       return sdk;
     });
-    let id: string;
-    if (initial) {
-      await assert.rejects(h.engine.newSession(h.cwd), /Draft initialization readback failed/);
-      id = h.engine.snapshot().sessions[0]!.sessionId;
-    } else {
-      id = await h.engine.newSession(h.cwd);
-      await h.engine.rename(id, 'Confirmed name');
-      h.expire(id);
-      failNext = true;
-      await assert.rejects(h.engine.reload(id), /Draft initialization readback failed/);
-    }
+    await assert.rejects(h.engine.newSession(h.cwd), /Native initialization readback failed/);
+    const id = h.engine.snapshot().sessions[0]!.sessionId;
     const native = h.natives.get(id)!;
-    const nameCalls = native.rpc.name.set.mock.callCount();
-    for (const mutation of [
-      () => h.engine.rename(id, 'Must not be accepted'),
-      () => h.engine.prompt(id, 'Must not be sent'),
-    ]) await assert.rejects(mutation(), /initialization is incomplete.*explicitly reload/);
-    assert.equal(native.rpc.name.set.mock.callCount(), nameCalls);
+    assert.equal(h.engine.getMeta(id)?.loaded, true);
+    assert.equal(h.runtime.liveCount, 1);
     assert.equal(native.send.mock.callCount(), 0);
-    await h.engine.reload(id);
-    if (!initial) assert.equal(h.natives.get(id)!.state.name, 'Confirmed name');
-    await h.engine.rename(id, 'Confirmed after explicit reload');
     h.expire(id);
-    await h.engine.reload(id);
-    assert.equal(h.natives.get(id)!.state.name, 'Confirmed after explicit reload');
+    await assert.rejects(h.engine.reload(id), /Native session missing/);
+    assert.equal(h.runtime.createSession.mock.callCount(), 1);
+    assert.equal(native.rpc.name.set.mock.callCount(), 0);
   });
-}
 
-test('draft recovery: a send during an absent-metadata lookup prevents empty history masking', async t => {
+test('empty session: a send during a passive history read never masks a native read error', async t => {
   const h = await draftFixture(t);
   const id = await h.engine.newSession(h.cwd);
   let release!: () => void;
   const held = new Promise<void>(resolve => { release = resolve; });
   let reading = false;
-  t.mock.method(h.runtime, 'getSessionMetadata', async () => {
+  t.mock.method(h.runtime.rpc.sessions, 'readPersistedEvents', async () => {
     reading = true;
     await held;
-    return undefined;
+    throw new Error('Native journal missing');
   });
   const history = h.engine.history(id);
   const rejection = assert.rejects(history, /Native journal missing/);
   try {
-    await eventually(() => reading, 'Passive metadata read must be in flight');
+    await eventually(() => reading, 'Passive history read must be in flight');
     await h.engine.prompt(id, 'fixture send with history delivery still unknown');
     release();
     await rejection;

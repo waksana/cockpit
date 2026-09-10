@@ -39,7 +39,7 @@ for (const section of ['mcp', 'skills']) {
 // loaded-detail control contract covered alongside transport and resource tests.
 const source = readFileSync(new URL('./ManageWorkspace.tsx', import.meta.url), 'utf8').replace(/\s+/g, ' ');
 
-for (const section of ['mcp', 'skills', 'trash']) {
+for (const section of ['mcp', 'skills']) {
   test(`${section} list has one parent back control and no global hamburger`, (t) => {
     const html = renderWorkspace(t, `/${section}`, true);
     assert.equal(html.match(/aria-label="返回会话列表"/g)?.length, 1);
@@ -103,16 +103,6 @@ test('global MCP refresh invalidates configuration cache without invoking sessio
   assert.doesNotMatch(source, /Cockpit 不保存偏好/);
 });
 
-test('trash body and title share the store preview without a second generation resource owner', () => {
-  const body = source.slice(source.indexOf('function SessionPreview'), source.indexOf('function MasterHeader'));
-  assert.doesNotMatch(body, /useKeyedResource|connectionGeneration|readSessionPreview/);
-  assert.match(body, /s.preview\?\.sessionId === sessionId \? s.preview : null/);
-  assert.match(body, /openPreview\(sessionId\)/);
-  assert.match(body, /closePreview\(\)/);
-  assert.match(source, /section === 'trash' && item !== null\) refreshPreview\(item\)/);
-  assert.match(body, /onClick=\{\(\) => retryPreview\(preview\)\}/);
-  assert.match(body, /disabled=\{!connected \|\| preview.loadingHistory\}/);
-  assert.match(body, /重试加载更早消息/);
-  assert.match(body, /重试加载预览/);
-  assert.match(body, /connected && !preview.error && !preview.historyStale/);
+test('management has no retired trash, restore or transcript consumers', () => {
+  assert.doesNotMatch(source, /trash|restoreSession|SessionPreview|openPreview|refreshPreview/);
 });

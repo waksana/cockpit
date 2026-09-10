@@ -55,9 +55,9 @@ app.addContentTypeParser('application/octet-stream', (_req, body, done) => done(
 // real ~/.copilot prefs or binding the port. Definite-assignment: always set before
 // any request handler that derefs them can run (boot() runs at module entry).
 export type ServerEngine = Pick<Engine,
-  | 'login' | 'snapshot' | 'newSession' | 'forkSession' | 'history' | 'resumeHistory' | 'peekSession' | 'subagentHistory' | 'toolImage' | 'stop'
+  | 'login' | 'snapshot' | 'busyCount' | 'newSession' | 'forkSession' | 'history' | 'resumeHistory' | 'peekSession' | 'subagentHistory' | 'toolImage' | 'stop'
   | 'prompt' | 'cancel' | 'interrupt' | 'setModel' | 'rename' | 'autoName' | 'compact' | 'rewind' | 'setMode'
-  | 'deleteSession' | 'restoreSession' | 'listTrash' | 'purgeSession' | 'unload'
+  | 'deleteSession' | 'unload'
   | 'reload' | 'pin' | 'getPlan' | 'getUsage' | 'getPanels' | 'respondAsk' | 'respondPlan'
   | 'planSupersede' | 'respondElicitation' | 'removeQueued' | 'refreshList'
   | 'listLive' | 'getMeta' | 'markSeen' | 'listGlobalMcp' | 'setMcpDefault'
@@ -78,6 +78,8 @@ export function setTestDependencies(deps: { engine: ServerEngine; push: ServerPu
 
 // --- SSE fan-out -----------------------------------------------------------
 const clients = new Set<FastifyReply>();
+// Only the in-flight initial snapshot owns these bounded delivery frames.
+const openingClients = new Map<FastifyReply, { frames: string[]; bytes: number }>();
 
 // Per-connection SSE backpressure ceiling. Node's ServerResponse keeps buffering in
 // HEAP when the peer's TCP receive window stalls (sleeping phone, backgrounded tab,
@@ -165,20 +167,34 @@ export function sessionBusy(s: SessionMeta): boolean {
   return sessionMetaBusy(s);
 }
 
-function busyCount(): number {
-  return engine.snapshot().sessions.filter(sessionBusy).length;
+function busyCount(): Promise<number> {
+  return engine.busyCount();
 }
 
 let gracefulExitTimer: ReturnType<typeof setTimeout> | null = null;
 
+let checkingExit: Promise<void> | undefined;
+let exitDirty = false;
 function maybeGracefulExit(): void {
+  if (checkingExit) { exitDirty = true; return; }
+  exitDirty = false;
+  checkingExit = checkGracefulExit().catch(error => {
+    app.log.error({ err: error }, 'restart safety state unavailable; not restarting');
+  }).finally(() => {
+    checkingExit = undefined;
+    if (exitDirty) maybeGracefulExit();
+  });
+}
+
+async function checkGracefulExit(): Promise<void> {
   if (restarting) return;
   if (!restartPending) {
     if (gracefulExitTimer) clearTimeout(gracefulExitTimer);
     gracefulExitTimer = null;
     return;
   }
-  const n = busyCount();
+  const n = await busyCount();
+  if (!restartPending || restarting) return;
   if (n > 0) {
     if (gracefulExitTimer) clearTimeout(gracefulExitTimer);
     gracefulExitTimer = null;
@@ -190,12 +206,13 @@ function maybeGracefulExit(): void {
   // Brief delay so the turn's final SSE frames flush to connected clients first.
   gracefulExitTimer = setTimeout(() => {
     gracefulExitTimer = null;
-    if (!restartPending || busyCount() > 0) {
-      maybeGracefulExit();
-      return;
-    }
-    restarting = true;
     void (async () => {
+      if (!restartPending || await busyCount() > 0) {
+        maybeGracefulExit();
+        return;
+      }
+      if (!restartPending) return;
+      restarting = true;
       await drainForRestart(engine, pendingNotifications);
       for (const client of clients) client.raw.destroy();
       clients.clear();
@@ -239,7 +256,15 @@ function notificationSnapshot(snapshot: Snapshot): Snapshot {
 
 export function onEngineEvent(ev: ServerEvent): void {
   if (ev.type === 'snapshot') ev = notificationSnapshot(ev);
-  broadcastFrame(clients, `data: ${JSON.stringify(ev)}\n\n`);
+  const frame = `data: ${JSON.stringify(ev)}\n\n`;
+  broadcastFrame(clients, frame);
+  for (const [reply, pending] of openingClients) {
+    pending.bytes += Buffer.byteLength(frame);
+    if (pending.bytes > SSE_HWM) {
+      openingClients.delete(reply);
+      reply.raw.destroy();
+    } else pending.frames.push(frame);
+  }
   // Notifications are driven by the Engine's authoritative `session/notify` signal
   // (one source of truth for both channels — see engine.patch).
   if (ev.type === 'session/notify') {
@@ -248,21 +273,19 @@ export function onEngineEvent(ev: ServerEvent): void {
       'push notification failed',
     );
     try {
-      const snapshot = engine.snapshot();
+      if (ev.unreadCount === undefined || ev.attnId === undefined || ev.inboxRevision === undefined) {
+        throw new Error('Notification is missing its committed inbox waterline');
+      }
       const delivery = push.sendAttention(
-        ev.title, ev.sessionId, ev.attention, ev.body,
-        ev.unreadCount ?? snapshot.unreadCount ?? unreadSessionCount(snapshot.sessions),
-        {
-          attnId: ev.attnId ?? engine.getMeta(ev.sessionId)?.attnId,
-          inboxRevision: ev.inboxRevision ?? snapshot.inboxRevision,
-        },
+        ev.title, ev.sessionId, ev.attention, ev.body, ev.unreadCount,
+        { attnId: ev.attnId, inboxRevision: ev.inboxRevision },
       );
       pendingNotifications.add(delivery);
       void delivery.catch(failed).finally(() => pendingNotifications.delete(delivery));
     } catch {
       failed();
     }
-  } else if (ev.type === 'session/patch' || ev.type === 'session/removed') {
+  } else if (ev.type === 'session/patch' || ev.type === 'session/removed' || ev.type === 'session/invalidated') {
     // Re-check the graceful-restart gate on ANY session change. The gate exits
     // only when every session is non-busy (idle, no pending choice, no in-flight
     // sub-agent/MCP operation, not compacting — see sessionBusy). Several of those busy
@@ -351,7 +374,7 @@ app.addHook('onRequest', async (req, reply) => {
   return reply;
 });
 
-app.get('/health', async () => ({ ok: true, login: engine.login }));
+app.get('/health', async () => ({ ok: true, login: await engine.login() }));
 
 // File upload: raw binary body (octet-stream) + ?name=&mime= query. Saved to the
 // fixed upload folder (survives session deletion). Returns metadata for the client
@@ -423,14 +446,14 @@ app.get('/uploads/:name', async (req, reply) => {
 // without opening an SSE stream. `running` counts turns in flight; `busy` also
 // counts sessions paused on a pending user choice (which likewise block a restart).
 app.get('/status', async () => {
-  const metas = engine.snapshot().sessions;
+  const metas = (await engine.snapshot()).sessions;
   const sessions = metas.map((s) => ({
     sessionId: s.sessionId, status: s.status, title: s.title,
     awaitingChoice: awaitingChoice(s) || undefined,
     activeSubagents: s.activeSubagents || undefined,
   }));
   const running = metas.filter((s) => s.status === 'running').length;
-  const busy = metas.filter(sessionBusy).length;
+  const busy = await busyCount();
   return { running, busy, restartPending, sessions };
 });
 
@@ -441,20 +464,27 @@ app.get('/status', async () => {
 app.post('/admin/restart', async (req) => {
   const pending = (req.body as { pending?: boolean } | null)?.pending ?? true;
   restartPending = pending;
-  const n = busyCount();
+  const n = await busyCount();
   maybeGracefulExit();
   return { restartPending: pending, busy: n, willRestartWhenIdle: pending && n > 0 };
 });
 
-app.get('/events', (req, reply) => {
+app.get('/events', async (req, reply) => {
   // Connection cap: refuse a new stream past MAX_SSE_CLIENTS. Single-user makes
   // this generous, but with no in-process auth it keeps `clients` from growing
   // unbounded under a direct-boundary breach. The client treats 503 + Retry-After
   // as a transient backoff (and the cap is well above any one operator's devices).
-  if (clients.size >= MAX_SSE_CLIENTS) {
+  if (clients.size + openingClients.size >= MAX_SSE_CLIENTS) {
     reply.code(503).header('Retry-After', '5').send({ error: 'too many SSE connections' });
     return;
   }
+  const pending = { frames: [] as string[], bytes: 0 };
+  openingClients.set(reply, pending);
+  req.raw.on('close', () => { openingClients.delete(reply); clients.delete(reply); });
+  let snapshot: Snapshot;
+  try { snapshot = notificationSnapshot(await engine.snapshot()); }
+  catch (error) { openingClients.delete(reply); throw error; }
+  if (!openingClients.delete(reply) || reply.raw.destroyed) return;
   reply.raw.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache, no-transform',
@@ -463,7 +493,9 @@ app.get('/events', (req, reply) => {
   });
   clients.add(reply);
   req.raw.on('close', () => { clients.delete(reply); });
-  if (!sseWrite(clients, reply, 'retry: 2000\n\n') || !sseSend(reply, notificationSnapshot(engine.snapshot()))) return;
+  if (!sseWrite(clients, reply, 'retry: 2000\n\n') || !sseSend(reply, snapshot)) return;
+  for (const frame of pending.frames) if (!sseWrite(clients, reply, frame)) return;
+  pending.frames.length = 0;
   // keep-alive comment ping so proxies don't time the stream out. Routed through
   // sseWrite so a stalled/zombie connection over the high-water-mark is dropped on
   // the next ping even between turns (its buffered ping bytes are the trigger).
@@ -477,7 +509,7 @@ type IntentHandlers = {
 };
 
 const handlers: IntentHandlers = {
-  'runtime/snapshot': () => notificationSnapshot(engine.snapshot()),
+  'runtime/snapshot': async () => notificationSnapshot(await engine.snapshot()),
   'session/new': async (b) => ({ sessionId: await engine.newSession(b.cwd) }),
   'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
   'session/history': async (b) => b.resume
@@ -545,13 +577,11 @@ const handlers: IntentHandlers = {
     return { ok: true };
   },
   'session/delete': async (b) => {
-    await engine.deleteSession(b.sessionId, b.reason);
+    await engine.deleteSession(b.sessionId, b.confirm);
     return { ok: true };
   },
-  'session/restore': async (b) => ({ ok: await engine.restoreSession(b.sessionId) }),
-  'session/trash-list': async () => ({ entries: await engine.listTrash() }),
   'session/purge': async (b) => {
-    await engine.purgeSession(b.sessionId);
+    await engine.deleteSession(b.sessionId, b.confirm);
     return { ok: true };
   },
   'session/unload': async (b) => {
@@ -603,8 +633,6 @@ const handlers: IntentHandlers = {
     return { ok: true };
   },
   'inbox/seen': (b) => {
-    const meta = engine.getMeta(b.sessionId);
-    if (b.attnId !== undefined && b.attnId !== (meta?.attnId ?? 0)) return { ok: true };
     // Keep the current-ID check and acknowledgement in the same synchronous turn.
     if (b.attnId === undefined) engine.markSeen(b.sessionId);
     else engine.markSeen(b.sessionId, b.attnId);
@@ -704,7 +732,7 @@ async function main(runtime: Engine, notifications: PushManager): Promise<void> 
   const pushStatus = notifications.status();
   if (!pushStatus.configured) app.log.warn({ error: pushStatus.error }, 'push is unconfigured');
   await runtime.start();
-  app.log.info(`engine up (login=${runtime.login}, push=${notifications.publicKey ? 'on' : 'off'})`);
+  app.log.info(`engine up (login=${await runtime.login()}, push=${notifications.publicKey ? 'on' : 'off'})`);
   await registerStaticWeb();
   await app.listen({ host: HOST, port: PORT });
 }
@@ -726,7 +754,7 @@ export async function registerStaticWeb(): Promise<void> {
   await app.register(fastifyStatic, { root: WEB_DIR, index: ['index.html'] });
   app.setNotFoundHandler((req, reply) => {
     const path = req.url.split('?')[0]!;
-    const webRoute = /^\/(?:session\/[^/]+(?:\/[^/]+)?|(?:mcp|skills|trash)(?:\/[^/]+)?|files|(?:flows|workers)(?:\/.*)?)?\/?$/.test(path);
+    const webRoute = /^\/(?:session\/[^/]+(?:\/[^/]+)?|(?:mcp|skills)(?:\/[^/]+)?|files|(?:flows|workers)(?:\/.*)?)?\/?$/.test(path);
     if (req.method === 'GET' && webRoute) return reply.sendFile('index.html');
     reply.code(404).send({ error: 'not found' });
   });
@@ -750,6 +778,7 @@ function boot(): void {
   engine = runtime;
   push = notifications;
   runtime.onEvent(onEngineEvent);
+  runtime.onActivitySettled(maybeGracefulExit);
   runtime.onFatal(error => { void exitAfterRuntimeFailure(runtime, error); });
   main(runtime, notifications).catch((e) => { app.log.error(e); process.exit(1); });
 }

@@ -23,7 +23,7 @@ process.env.COCKPIT_MAX_SSE_CLIENTS = '2';
 process.env.COCKPIT_UPLOAD_DIR = uploadDir;
 delete process.env.AZURE_SPEECH_KEY;
 delete process.env.AZURE_SPEECH_REGION;
-const { app, setTestDependencies, broadcastFrame, onEngineEvent } = await import('./index.ts');
+const { app, setTestDependencies, broadcastFrame, onEngineEvent, sessionBusy } = await import('./index.ts');
 
 const calls: { method: string; args: unknown[] }[] = [];
 const pngFixture = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC1sAAAAASUVORK5CYII=', 'base64');
@@ -61,8 +61,9 @@ function attentionSessions(): SessionMeta[] {
 }
 const engine: ServerEngine & { attentionCount(): number } = {
   stop: async () => { throw new Error('integration fixtures must never stop a real runtime'); },
-  login: 'test-only',
-  snapshot: () => record('snapshot', [], snapshot()),
+  login: async () => 'test-only',
+  snapshot: async () => record('snapshot', [], snapshot()),
+  busyCount: async () => sessions.filter(sessionBusy).length,
   attentionCount: () => record('attentionCount', [], 0),
   newSession: async (...args) => record('newSession', args, 'created'),
   forkSession: async (...args) => record('forkSession', args, { sessionId: 'forked' }),
@@ -93,9 +94,6 @@ const engine: ServerEngine & { attentionCount(): number } = {
   rewind: async (...args) => record('rewind', args, undefined),
   setMode: async (...args) => record('setMode', args, undefined),
   deleteSession: async (...args) => record('deleteSession', args, undefined),
-  restoreSession: async (...args) => record('restoreSession', args, true),
-  listTrash: async (...args) => record('listTrash', args, []),
-  purgeSession: async (...args) => record('purgeSession', args, undefined),
   unload: (...args) => record('unload', args, undefined),
   reload: async (...args) => record('reload', args, undefined),
   pin: async (...args) => record('pin', args, true),
@@ -227,10 +225,8 @@ const cases = {
   'session/compact': { body: { sessionId: 's', customInstructions: 'keep context' }, method: 'compact', args: ['s', 'keep context'] },
   'session/rewind': { body: { sessionId: 's', toMsgId: 'm', rollbackFiles: true }, method: 'rewind', args: ['s', 'm', true] },
   setMode: { body: { sessionId: 's', mode: 'plan' }, method: 'setMode', args: ['s', 'plan'] },
-  'session/delete': { body: { sessionId: 's', reason: 'done' }, method: 'deleteSession', args: ['s', 'done'] },
-  'session/restore': { body: { sessionId: 's' }, method: 'restoreSession', args: ['s'] },
-  'session/trash-list': { body: {}, method: 'listTrash', args: [] },
-  'session/purge': { body: { sessionId: 's', confirm: true }, method: 'purgeSession', args: ['s'] },
+  'session/delete': { body: { sessionId: 's', confirm: true }, method: 'deleteSession', args: ['s', true] },
+  'session/purge': { body: { sessionId: 's', confirm: true }, method: 'deleteSession', args: ['s', true] },
   'session/unload': { body: { sessionId: 's' }, method: 'unload', args: ['s'] },
   'session/reload': { body: { sessionId: 's' }, method: 'reload', args: ['s'] },
   'session/pin': { body: { sessionId: 's', pinned: true }, method: 'pin', args: ['s', true] },
@@ -289,9 +285,7 @@ for (const [name, fixture] of Object.entries(cases)) {
     const parsed = Intents[name].result.safeParse(response.json());
     assert.equal(parsed.success, true, JSON.stringify(parsed));
     const effects = name === 'skills/refresh' ? calls.filter(({ method }) => method !== 'snapshot') : calls;
-    assert.deepEqual(effects, name === 'inbox/seen'
-      ? [{ method: 'getMeta', args: ['s'] }, { method: 'markSeen', args: ['s'] }]
-      : fixture.method ? [{ method: fixture.method, args: fixture.args }] : []);
+    assert.deepEqual(effects, fixture.method ? [{ method: fixture.method, args: fixture.args }] : []);
     if (name === 'runtime/snapshot') assert.deepEqual(response.json(), projectedSnapshot());
     if (name === 'session/history') assert.deepEqual(response.json(), historyPage);
     if (name === 'session/tool-image') {
@@ -668,7 +662,7 @@ test('push status and delivery typed failures pass through without engine calls'
   }
 });
 
-test('inbox/seen guards stale and future IDs and explicitly acknowledges current or omitted IDs', async (t) => {
+test('inbox/seen delegates the observed waterline to the synchronous product-state owner', async (t) => {
   for (const [label, currentId, observedId, shouldMark] of [
     ['stale', 7, 6, false], ['future', 7, 8, false], ['current', 7, 7, true],
     ['zero is stale', 7, 0, false], ['zero is current', 0, 0, true],
@@ -679,8 +673,9 @@ test('inbox/seen guards stale and future IDs and explicitly acknowledges current
     ['null meta omitted', null, undefined, true],
   ] as const) {
     await t.test(label, async (t) => {
-      const meta = currentId === null ? null : { ...busySession, attnId: currentId };
-      t.mock.method(engine, 'getMeta', (...args: unknown[]) => record('getMeta', args, meta));
+      void currentId;
+      void shouldMark;
+      t.mock.method(engine, 'getMeta', () => { throw new Error('Seen must not depend on a native metadata read'); });
       calls.length = 0;
       const response = await app.inject({
         method: 'POST', url: '/intent/inbox/seen', payload: { sessionId: 's', attnId: observedId },
@@ -688,8 +683,7 @@ test('inbox/seen guards stale and future IDs and explicitly acknowledges current
       assert.equal(response.statusCode, 200, response.body);
       assert.deepEqual(response.json(), { ok: true });
       assert.deepEqual(calls, [
-        { method: 'getMeta', args: ['s'] },
-        ...(shouldMark ? [{ method: 'markSeen', args: observedId === undefined ? ['s'] : ['s', observedId] }] : []),
+        { method: 'markSeen', args: observedId === undefined ? ['s'] : ['s', observedId] },
       ]);
       assert.deepEqual(fakeDeliveries, []);
     });
@@ -707,20 +701,18 @@ test('inbox/seen rejects invalid observed counters before reading or mutating me
   }
 });
 
-test('inbox/seen does not await between getMeta and markSeen while new attention is queued', async (t) => {
+test('inbox/seen performs one synchronous product-state action without a native preflight', async (t) => {
   let meta = { ...busySession, attention: 'ready' as const, attnId: 7, seenId: 6 };
   const order: string[] = [];
-  t.mock.method(engine, 'getMeta', (...args: unknown[]) => {
-    order.push('getMeta');
+  t.mock.method(engine, 'getMeta', () => { throw new Error('Unexpected native metadata read'); });
+  t.mock.method(engine, 'markSeen', (...args: unknown[]) => {
+    order.push('markSeen');
+    assert.equal(args[1], meta.attnId);
+    meta = { ...meta, seenId: meta.attnId };
     queueMicrotask(() => {
       order.push('new attention');
       meta = { ...meta, attnId: 8 };
     });
-    return record('getMeta', args, meta);
-  });
-  t.mock.method(engine, 'markSeen', (...args: unknown[]) => {
-    order.push('markSeen');
-    meta = { ...meta, seenId: meta.attnId };
     return record('markSeen', args, undefined);
   });
   const response = await app.inject({
@@ -728,8 +720,8 @@ test('inbox/seen does not await between getMeta and markSeen while new attention
   });
   assert.equal(response.statusCode, 200, response.body);
   assert.deepEqual(response.json(), { ok: true });
-  assert.deepEqual(order, ['getMeta', 'markSeen', 'new attention']);
-  assert.deepEqual(calls, [{ method: 'getMeta', args: ['s'] }, { method: 'markSeen', args: ['s', 7] }]);
+  assert.deepEqual(order, ['markSeen', 'new attention']);
+  assert.deepEqual(calls, [{ method: 'markSeen', args: ['s', 7] }]);
   assert.equal(meta.seenId, 7);
   assert.equal(meta.attnId, 8);
   assert.equal(unreadSessionCount([meta]), 1, 'the newly queued attention remains unread');
@@ -816,11 +808,9 @@ test('valid structured operation failures remain typed 200 responses without los
   };
   t.mock.method(engine, 'toggleSessionMcp', async () => failure);
   t.mock.method(engine, 'addSchedule', async () => ({ error: 'invalid interval' }));
-  t.mock.method(engine, 'restoreSession', async () => false);
   for (const [name, expected] of [
     ['mcp/session-toggle', failure],
     ['schedule/add', { ok: false, error: 'invalid interval' }],
-    ['session/restore', { ok: false }],
   ] as const) {
     const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: cases[name].body });
     assert.equal(response.statusCode, 200, response.body);
@@ -971,13 +961,24 @@ test('session/interrupt awaits native outcome and propagates uncertain failure w
   assert.equal(interrupt.mock.callCount(), 1);
 });
 
-test('purge requires protocol confirm:true and never reaches the engine otherwise', async () => {
-  for (const confirm of [undefined, false, 'true', 1, null]) {
-    calls.length = 0;
-    const response = await app.inject({
-      method: 'POST', url: '/intent/session/purge', payload: { sessionId: 's', confirm },
-    });
-    assert.equal(response.statusCode, 400, response.body);
+for (const name of ['session/delete', 'session/purge']) {
+  test(`${name} requires protocol confirm:true and never reaches the engine otherwise`, async () => {
+    for (const confirm of [undefined, false, 'true', 1, null]) {
+      calls.length = 0;
+      const response = await app.inject({
+        method: 'POST', url: `/intent/${name}`, payload: { sessionId: 's', confirm },
+      });
+      assert.equal(response.statusCode, 400, response.body);
+      assert.deepEqual(calls, []);
+    }
+  });
+}
+
+test('old soft-delete requests cannot silently become permanent deletion', async () => {
+  for (const body of [{ sessionId: 's' }, { sessionId: 's', reason: 'declutter' }]) {
+    const response = await app.inject({ method: 'POST', url: '/intent/session/delete', payload: body });
+    assert.equal(response.statusCode, 400);
+    assert.match(response.body, /confirm/);
     assert.deepEqual(calls, []);
   }
 });
@@ -1000,7 +1001,7 @@ test('unknown, inherited, and retired intent paths are 404 without engine calls'
     'hook/add', 'hook/list', 'hook/stop', 'hook/unknown',
     'flow/add', 'flow/list', 'flow/remove', 'flow/write-gate', 'flow/run', 'flow/unknown',
     'flow-schedule/add', 'flow-schedule/list', 'flow-schedule/stop', 'flow-schedule/unknown',
-    'session/set-spawned-by',
+    'session/set-spawned-by', 'session/restore', 'session/trash-list',
   ]) {
     const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: {} });
     assert.equal(response.statusCode, 404, `${name}: ${response.body}`);
@@ -1057,6 +1058,14 @@ test('managed files preserve originals, source identity, session associations an
   assert.deepEqual(related.json().files, [file]);
   const details = await app.inject({ method: 'POST', url: '/intent/files/get', payload: { url: file.url } });
   assert.deepEqual(details.json().sessions, ['another', 's']);
+  const deletion = await app.inject({ method: 'POST', url: '/intent/session/delete',
+    payload: { sessionId: 's', confirm: true } });
+  assert.deepEqual(deletion.json(), { ok: true });
+  onEngineEvent({ type: 'session/removed', sessionId: 's' });
+  assert.deepEqual((await app.inject({ method: 'POST', url: '/intent/files/get',
+    payload: { url: file.url } })).json(), details.json(), 'session deletion retains file metadata and associations');
+  assert.deepEqual((await app.inject({ method: 'POST', url: '/intent/files/list',
+    payload: { sessionId: 's' } })).json().files, [file]);
   for (const [range, start, end] of [['bytes=10-29', 10, 29], ['bytes=-5', bytes.length - 5, bytes.length - 1],
     ['bytes=12-', 12, bytes.length - 1]] as const) {
     const response = await app.inject({ method: 'GET', url: file.url, headers: { range } });
@@ -1373,7 +1382,7 @@ test('snapshot intents, initial SSE, and engine events project unread counts wit
 });
 
 type NotifyEvent = Extract<ServerEvent, { type: 'session/notify' }>;
-test('session/notify broadcasts original ready/choice events before fake push with authoritative snapshot counters', async (t) => {
+test('session/notify uses committed event counters without a native snapshot or metadata read', async (t) => {
   const scenarios: {
     label: string;
     attention: NotifyEvent['attention'];
@@ -1390,7 +1399,7 @@ test('session/notify broadcasts original ready/choice events before fake push wi
     },
     {
       label: 'choice preserves explicit event zero IDs and explicit snapshot zero unread',
-      attention: 'choice', event: { attnId: 0, inboxRevision: 0 },
+      attention: 'choice', event: { attnId: 0, inboxRevision: 0, unreadCount: 0 },
       snapshot: { unreadCount: 0, inboxRevision: 11 }, metaId: 10,
       expected: { badge: 0, attnId: 0, inboxRevision: 0 },
     },
@@ -1438,15 +1447,13 @@ test('session/notify broadcasts original ready/choice events before fake push wi
       calls.length = 0;
       assert.equal(onEngineEvent(ev), undefined);
       await nextTurn();
-      assert.deepEqual(calls, [
-        { method: 'snapshot', args: [] },
-        ...(scenario.event.attnId === undefined ? [{ method: 'getMeta', args: ['s'] }] : []),
-        {
+      const complete = scenario.event.attnId !== undefined && scenario.event.inboxRevision !== undefined
+        && scenario.event.unreadCount !== undefined;
+      assert.deepEqual(calls, complete ? [{
           method: 'sendAttention', args: [ev.title, 's', ev.attention, ev.body, scenario.expected.badge, {
             attnId: scenario.expected.attnId, inboxRevision: scenario.expected.inboxRevision,
           }],
-        },
-      ]);
+      }] : [], 'incomplete legacy events cannot invent a committed waterline by later reads');
       assert.deepEqual(viewer.frames, [
         'retry: 2000', `data: ${JSON.stringify(projectedSnapshot(raw))}`, `data: ${JSON.stringify(ev)}`,
       ]);
@@ -1472,7 +1479,7 @@ for (const mode of ['async rejection', 'synchronous throw'] as const) {
     });
     const ev: NotifyEvent = {
       type: 'session/notify', sessionId: 's', title: 'private notification title',
-      attention: 'choice', body: 'private notification body', attnId: 0, inboxRevision: 0,
+      attention: 'choice', body: 'private notification body', attnId: 0, inboxRevision: 0, unreadCount: 0,
     };
     const reset = ServerEvent.parse({
       type: 'session/reset', page: { ...historyPage, messages: [], hasMore: false, latest: true },
@@ -1509,7 +1516,6 @@ for (const mode of ['async rejection', 'synchronous throw'] as const) {
       assert.equal(viewer.frames.length, 5, 'the SSE client remains attached after failure');
       assert.equal(viewer.connection.raw.res.destroyed, false);
       assert.deepEqual(calls, [
-        { method: 'snapshot', args: [] },
         { method: 'sendAttention', args: [ev.title, 's', 'choice', ev.body, 0, { attnId: 0, inboxRevision: 0 }] },
         { method: 'prompt', args: ['s', 'hello', 'enqueue'] },
       ]);
@@ -1573,7 +1579,7 @@ test('two simultaneous viewers see no query events and receive exactly one mocke
     const initialFrames = ['retry: 2000', `data: ${JSON.stringify(projectedSnapshot())}`];
     for (const name of [
       'runtime/snapshot', 'session/history', 'session/peek', 'session/subagent-history', 'session/list', 'session/get',
-      'session/plan', 'session/panels', 'session/trash-list', 'mcp/global', 'mcp/session',
+      'session/plan', 'session/panels', 'mcp/global', 'mcp/session',
       'skills/global', 'skills/read', 'skills/session', 'schedule/list', 'fs/listDir',
     ] as const) {
       calls.length = 0;

@@ -36,11 +36,10 @@ server.registerTool(
   {
     title: 'List cockpit sessions',
     description:
-      'List the live (non-trashed) Copilot sessions known to cockpit (newest activity ' +
+      'List Copilot sessions known to cockpit (newest activity ' +
       'first), each with its title, working directory, status, and current model. Use this ' +
       'to find a session id before renaming it, toggling its MCP servers / skills, or reading ' +
-      'its transcript. Authoritative: the same view the web sidebar shows. Trashed sessions ' +
-      'are listed separately by cockpit_list_trash.',
+      'its transcript. Authoritative: the same view the web sidebar shows.',
     inputSchema: {
       limit: z.number().int().min(1).max(200).default(50).describe('Max sessions to return'),
       offset: z.number().int().min(0).default(0).describe('Sessions to skip (pagination)'),
@@ -71,61 +70,8 @@ server.registerTool(
         return `- ${s.title}\n    id: ${s.sessionId}\n    status: ${s.status}${loaded}${model}\n    cwd: ${s.cwd}\n    active: ${active}`;
       });
       return ok(
-        capped(`# Live sessions (${sessions.length})\n${lines.join('\n')}\n\n_Trashed sessions: use cockpit_list_trash._`)
+        capped(`# Sessions (${sessions.length})\n${lines.join('\n')}`)
       );
-    } catch (e) {
-      return fail(e instanceof CockpitError ? e.message : String(e));
-    }
-  },
-);
-
-// ── cockpit_list_trash ─────────────────────────────────────────────────────────
-server.registerTool(
-  'cockpit_list_trash',
-  {
-    title: 'List trashed sessions',
-    description:
-      'Enumerate sessions currently in cockpit\'s trash bin. Each entry ' +
-      'has the title, working directory, when it was trashed, and the reason it was condemned. ' +
-      'Inspect transcripts with cockpit_read_session or restore them with cockpit_restore_session. ' +
-      'Authoritative: goes through cockpit (the same view the web Trash page shows).',
-    inputSchema: { response_format: ResponseFormat.describe("'markdown' (human) or 'json' (machine)") },
-    annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
-  },
-  async ({ response_format }): Promise<ToolResult> => {
-    try {
-      const { entries } = await intent('session/trash-list');
-      const structured = { entries, count: entries.length };
-      if (response_format === 'json')
-        return ok(cappedJson(structured, shrinkList(entries, 'entries', { keep: ['sessionId', 'title', 'cwd', 'at'], clip: ['reason'] })));
-      if (entries.length === 0) return ok('# Trash\n\n_Trash is empty._');
-      const lines = entries.map(
-        (e) =>
-          `- ${e.title || '(untitled)'}\n    id: ${e.sessionId}\n    cwd: ${e.cwd}\n    trashed: ${e.at}${e.reason ? `\n    reason: ${e.reason}` : ''}`,
-      );
-      return ok(capped(`# Trash (${entries.length})\n${lines.join('\n')}`));
-    } catch (e) {
-      return fail(e instanceof CockpitError ? e.message : String(e));
-    }
-  },
-);
-
-// ── cockpit_restore_session ────────────────────────────────────────────────────
-server.registerTool(
-  'cockpit_restore_session',
-  {
-    title: 'Restore a session from trash',
-    description:
-      'Take a session back out of the trash bin so it returns to the normal session list. ' +
-      'Non-destructive and idempotent. Goes through cockpit (the same path the web UI uses).',
-    inputSchema: { session_id: z.string().min(1).describe('The trashed session id to restore') },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  async ({ session_id }): Promise<ToolResult> => {
-    try {
-      const res = await intent('session/restore', { sessionId: session_id });
-      if (!res.ok) return fail(`session ${session_id} was not in the trash (nothing to restore).`);
-      return ok(`Restored ${session_id} — it is back in the normal session list.`);
     } catch (e) {
       return fail(e instanceof CockpitError ? e.message : String(e));
     }
@@ -138,9 +84,10 @@ server.registerTool(
   {
     title: 'Permanently delete a session',
     description:
-      'IRREVERSIBLE. Permanently destroy a session through the backend session/purge API. Only run ' +
+      'Compatibility alias for cockpit_delete_session. IRREVERSIBLE native deletion through session/purge. Only run ' +
       'this when permanent deletion is intended. Requires ' +
-      'confirm=true. Never hand-delete session-store.db rows; always purge through this tool.',
+      'confirm=true. Managed files and workspaces are retained. Never hand-delete session-store.db rows ' +
+      'or automatically retry an uncertain result.',
     inputSchema: {
       session_id: z.string().min(1).describe('The session id to permanently delete'),
       confirm: z
@@ -148,7 +95,7 @@ server.registerTool(
         .default(false)
         .describe('Must be true to proceed — guards against accidental irreversible deletion'),
     },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   },
   async ({ session_id, confirm }): Promise<ToolResult> => {
     if (!confirm) {

@@ -261,6 +261,7 @@ test('E19: every ServerEvent variant parses a representative sample', () => {
     snapshot,
     'agent/status': { type: 'agent/status', status: 'up' },
     'session/added': { type: 'session/added', session: fullMeta },
+    'session/invalidated': { type: 'session/invalidated', sessionId: 's1' },
     'session/patch': { type: 'session/patch', ...fullMeta, currentReasoningEffort: null },
     'session/removed': { type: 'session/removed', sessionId: 's1' },
     'session/reset': { type: 'session/reset', page: historyPage },
@@ -464,7 +465,6 @@ const toggleResult = {
 } satisfies McpToggleResult;
 const skill = { name: 'review', description: 'Review code', source: 'user' };
 const peek = { ...sid, title: 'T', cwd: minimalMeta.cwd, messages: [chat], hasMore: true };
-const trash = { ...sid, title: 'T', cwd: minimalMeta.cwd, at: '2026-09-07T00:00:00Z', reason: 'Finished' };
 
 // Each retained intent must have a lossless body AND result fixture.
 const intentFixtures = {
@@ -497,7 +497,7 @@ const intentFixtures = {
   'session/compact': { body: { ...sid, customInstructions: 'Keep decisions' }, result: ok },
   'session/rewind': { body: { ...sid, toMsgId: 'm1', rollbackFiles: true }, result: ok },
   setMode: { body: { ...sid, mode: 'plan' }, result: ok },
-  'session/delete': { body: { ...sid, reason: 'Finished' }, result: ok },
+  'session/delete': { body: { ...sid, confirm: true }, result: ok },
   'session/unload': { body: sid, result: ok },
   'session/reload': { body: sid, result: ok },
   'session/pin': { body: { ...sid, pinned: true }, result: { ...ok, pinned: true } },
@@ -545,8 +545,6 @@ const intentFixtures = {
   'skills/session-toggle': { body: { ...sid, name: skill.name, enabled: true }, result: ok },
   'skills/refresh': { body: {}, result: { ...ok, willRestartWhenIdle: true } },
   'fs/listDir': { body: { path: '/workspace' }, result: { path: '/workspace', parent: '/', entries: [{ name: 'project', isDir: true }, { name: 'file.txt', isDir: false }] } },
-  'session/restore': { body: sid, result: ok },
-  'session/trash-list': { body: {}, result: { entries: [trash] } },
   'session/purge': { body: { ...sid, confirm: true }, result: ok },
   'schedule/add': { body: { ...sid, prompt: scheduleBase.prompt, interval: '5m' }, result: { ...ok, entry: scheduleEntries[0]! } },
   'schedule/stop': { body: { ...sid, id: 1 }, result: ok },
@@ -661,7 +659,6 @@ test('session reads retain flat peek, pagination and authoritative result wrappe
   for (const [name, empty] of [
     ['session/list', { sessions: [] }],
     ['session/get', { meta: null }],
-    ['session/trash-list', { entries: [] }],
   ] as const) {
     roundTrip(Intents[name].result, empty);
     for (const invalid of [{}, [], null, { ok: true }]) {
@@ -670,7 +667,6 @@ test('session reads retain flat peek, pagination and authoritative result wrappe
   }
   assert.equal(Intents['session/list'].result.safeParse({ sessions: [minimalMeta.sessionId] }).success, false);
   assert.equal(Intents['session/get'].result.safeParse({ meta: brief }).success, false);
-  assert.equal(Intents['session/trash-list'].result.safeParse({ entries: [brief] }).success, false);
 });
 
 test('SessionPanels retains precisely the five native sections', () => {
@@ -862,11 +858,14 @@ test('all clearable metadata survives snapshots and actual SSE patches as null',
   for (const activeMcpOperations of [-1, 0.5, '1']) {
     assert.equal(SessionMeta.safeParse({ ...minimalMeta, activeMcpOperations }).success, false);
   }
-  for (const required of ['error', 'ask']) {
+  for (const required of ['ask']) {
     const missing: Record<string, unknown> = { ...minimalMeta };
     delete missing[required];
     assert.equal(SessionMeta.safeParse(missing).success, false, `${required} is nullable but required`);
   }
+  const { error: _error, ...withoutError } = minimalMeta;
+  roundTrip(SessionMeta, withoutError);
+  assert.equal('error' in SessionMeta.parse(withoutError), false, 'native has no authoritative current-error getter');
 });
 
 test('SSE discriminators, pagination flags and nested payload validation are preserved', () => {
@@ -1195,6 +1194,5 @@ type SlimContractGuards = [
   Expect<Equal<IntentResult<'session/peek'>, { sessionId: string; title: string; cwd: string; messages: ChatMessage[]; hasMore: boolean }>>,
   Expect<Equal<IntentResult<'session/list'>, { sessions: SessionBrief[] }>>,
   Expect<Equal<IntentResult<'session/get'>, { meta: SessionMeta | null }>>,
-  Expect<Equal<IntentResult<'session/trash-list'>, { entries: Protocol.TrashEntry[] }>>,
   Expect<Equal<keyof SessionPanels, 'skills' | 'mcpServers' | 'tasks' | 'instructionSources' | 'schedules'>>,
 ];

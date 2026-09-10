@@ -25,7 +25,7 @@ const TEST_DIR = join(TEST_ROOT, 'uploads');
 process.env.COCKPIT_UPLOAD_DIR = TEST_DIR;
 
 // Import AFTER setting the env (module reads UPLOAD_DIR at load time).
-const { saveUpload, resolveUpload, resolveStoredAttachment, openUpload, mimeForStored,
+const { saveUploadStream, resolveUpload, resolveStoredAttachment, openUpload, mimeForStored,
   validateUploadInput, UploadError, UPLOAD_DIR, MAX_UPLOAD_BYTES } = await import('./uploads.ts');
 const metadataPath = (name: string) => join(TEST_DIR, '.metadata', `${name}.json`);
 const inventory = () => readdirSync(TEST_DIR, { recursive: true }).sort();
@@ -36,6 +36,21 @@ const status = (statusCode: number) => (error: unknown) => {
 };
 const attachment = (url: string): Attachment => ({ kind: 'file', name: 'client lie', url });
 const ioError = () => Object.assign(new Error('Injected storage failure'), { code: 'EIO' });
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC1sAAAAASUVORK5CYII=', 'base64');
+const saveBytes = (bytes: Buffer, name: string, mime: string) =>
+  saveUploadStream(Readable.from([bytes]), name, mime);
+
+function legacySidecarFixture(bytes: Buffer, name: string, mime: string) {
+  mkdirSync(join(TEST_DIR, '.metadata'), { recursive: true, mode: 0o700 });
+  const storedName = `upload-v1-1700000000000-${randomUUID().replaceAll('-', '')}.bin`;
+  const path = resolve(TEST_DIR, storedName);
+  writeFileSync(path, bytes, { flag: 'wx', mode: 0o600 });
+  writeFileSync(metadataPath(storedName), JSON.stringify({
+    version: 1, storedName, name, mime, size: bytes.length,
+  }), { flag: 'wx', mode: 0o600 });
+  return { kind: mime.startsWith('image/') ? 'image' as const : 'file' as const,
+    storedName, path, url: `/uploads/${storedName}`, name, mime, size: bytes.length };
+}
 
 async function storageAt(dir: string) {
   process.env.COCKPIT_UPLOAD_DIR = dir;
@@ -149,9 +164,9 @@ test('cleanup failure after durable publication does not remove a retained origi
   storage.verifyUpload(files[0]!);
 });
 
-test('saveUpload writes bytes + returns metadata', () => {
+test('streamed upload writes original bytes and returns durable metadata', async () => {
   const data = Buffer.from('hello cockpit');
-  const r = saveUpload(data, 'note.txt', 'text/plain');
+  const r = await saveBytes(data, 'note.txt', 'text/plain');
   assert.equal(r.kind, 'file');
   assert.equal(r.name, 'note.txt');
   assert.equal(r.size, data.length);
@@ -159,16 +174,20 @@ test('saveUpload writes bytes + returns metadata', () => {
   assert.equal(r.path, resolve(TEST_DIR, r.storedName));
   assert.ok(existsSync(r.path));
   assert.equal(readFileSync(r.path, 'utf-8'), 'hello cockpit');
+  assert.equal(r.sha256, crypto.createHash('sha256').update(data).digest('hex'));
+  assert.ok(Number.isSafeInteger(r.createdAt));
+  assert.deepEqual(resolveUpload(r.storedName), r);
 });
 
-test('image mime → kind=image', () => {
-  const r = saveUpload(Buffer.from([1, 2, 3]), 'pic.png', 'image/png');
+test('image mime → kind=image', async () => {
+  const r = await saveBytes(PNG, 'pic.png', 'image/png');
   assert.equal(r.kind, 'image');
+  assert.deepEqual(readFileSync(r.path), PNG);
 });
 
-test('long Unicode filenames remain safe to encode as native attachment prompts', () => {
+test('long Unicode filenames remain safe to encode as native attachment prompts', async () => {
   for (const name of ['a'.repeat(199) + '😀.png', 'a'.repeat(198) + '😀.png', 'broken\uD800.png']) {
-    const stored = saveUpload(Buffer.from('image fixture'), name, 'image/png');
+    const stored = await saveBytes(PNG, name, 'image/png');
     const attachment = resolveStoredAttachment(stored);
     assert.ok(attachment.name.length <= 200);
     assert.doesNotThrow(() => attachmentPrompt(attachment, 'caption'));
@@ -176,8 +195,8 @@ test('long Unicode filenames remain safe to encode as native attachment prompts'
   }
 });
 
-test('stored name keeps only a safe extension; no user path chars', () => {
-  const r = saveUpload(Buffer.from('x'), '../../etc/pwn.png', 'image/png');
+test('stored name keeps only a safe extension; no user path chars', async () => {
+  const r = await saveBytes(PNG, '../../etc/pwn.png', 'image/png');
   assert.match(r.storedName, /^upload-v1-\d+-[0-9a-f]{32}\.png$/);
   assert.ok(!r.storedName.includes('/'));
   assert.ok(!r.storedName.includes('..'));
@@ -185,13 +204,13 @@ test('stored name keeps only a safe extension; no user path chars', () => {
   assert.equal(r.name, '../../etc/pwn.png');
 });
 
-test('newline/control chars stripped from display name', () => {
-  const r = saveUpload(Buffer.from('x'), 'a\nb\tc\rd', 'text/plain');
+test('newline/control chars stripped from display name', async () => {
+  const r = await saveBytes(Buffer.from('x'), 'a\nb\tc\rd', 'text/plain');
   assert.ok(!/[\r\n\t]/.test(r.name));
 });
 
-test('resolveUpload finds a saved file, returns its size', () => {
-  const r = saveUpload(Buffer.from('1234567890'), 'f.bin', 'application/octet-stream');
+test('resolveUpload finds a saved file, returns its size', async () => {
+  const r = await saveBytes(Buffer.from('1234567890'), 'f.bin', 'application/octet-stream');
   const found = resolveUpload(r.storedName);
   assert.ok(found);
   assert.equal(found!.size, 10);
@@ -231,7 +250,7 @@ test('resolveUpload returns null for a non-existent (but well-formed) name', () 
 });
 
 test('openUpload streams the stored bytes', async () => {
-  const r = saveUpload(Buffer.from('streamed!'), 's.txt', 'text/plain');
+  const r = await saveBytes(Buffer.from('streamed!'), 's.txt', 'text/plain');
   const stream = openUpload(r.path);
   const chunks: Buffer[] = [];
   for await (const c of stream) chunks.push(c as Buffer);
@@ -249,38 +268,40 @@ test('mimeForStored maps extensions', () => {
   assert.equal(mimeForStored('x.toString'), 'application/octet-stream');
 });
 
-test('new upload directories and files are private', () => {
-  const r = saveUpload(Buffer.from('private'), 'private.txt', 'text/plain');
+test('new upload directories and files are private', async () => {
+  const r = await saveBytes(Buffer.from('private'), 'private.txt', 'text/plain');
   assert.equal(statSync(TEST_DIR).mode & 0o777, 0o700);
   assert.equal(statSync(join(TEST_DIR, '.metadata')).mode & 0o777, 0o700);
   assert.equal(statSync(r.path).mode & 0o777, 0o600);
   assert.equal(statSync(metadataPath(r.storedName)).mode & 0o777, 0o600);
 });
 
-test('literal percent filename is not decoded or used for storage', () => {
+test('literal percent filename is not decoded or used for storage', async () => {
   for (const name of ['100% real%20name.png', '%252e%252e%252fsecret', 'bad%escape.txt']) {
-    const r = saveUpload(Buffer.from('image'), name, 'image/png');
+    const r = await saveBytes(PNG, name, 'image/png');
     assert.equal(r.name, name);
     assert.ok(!r.storedName.includes('%'));
     assert.deepEqual(resolveUpload(r.storedName), r);
   }
 });
 
-test('all control and bidi characters are removed from a bounded display name', () => {
-  const r = saveUpload(Buffer.alloc(0), '\0a\x01b\x7fc\x85d\u202ee\u2069f\n' + 'x'.repeat(300), '');
+test('all control and bidi characters are removed from a bounded display name', async () => {
+  const r = await saveBytes(Buffer.from('x'), '\0a\x01b\x7fc\x85d\u202ee\u2069f\n' + 'x'.repeat(300), '');
   assert.ok(!/[\x00-\x1f\x7f-\x9f\u202a-\u202e\u2066-\u2069]/.test(r.name));
   assert.ok(r.name.length <= 200);
   assert.deepEqual(resolveUpload(r.storedName), r);
   assert.deepEqual(validateUploadInput('\0\n\t', ''), { name: 'file', mime: 'application/octet-stream' });
 });
 
-test('declared image MIME and original display name survive a fresh process', () => {
+test('detected MIME and original display name survive a fresh process', async () => {
   const uploads = [
-    saveUpload(Buffer.from('png'), 'extensionless', 'image/png'),
-    saveUpload(Buffer.from('png'), 'actually-a-png.txt', 'image/png'),
-    saveUpload(Buffer.from('text'), 'not-an-image.jpg', 'text/plain; charset=utf-8'),
-    saveUpload(Buffer.from('webp'), '100%real.bin', 'image/webp'),
+    await saveBytes(PNG, 'extensionless', 'image/png'),
+    await saveBytes(PNG, 'actually-a-png.txt', 'text/plain'),
+    await saveBytes(Buffer.from('text'), 'not-an-image.jpg', 'text/plain; charset=utf-8'),
+    await saveBytes(Buffer.from('not webp'), '100%real.bin', 'image/webp'),
   ];
+  assert.deepEqual(uploads.map(file => file.mime),
+    ['image/png', 'image/png', 'text/plain', 'application/octet-stream']);
   const moduleUrl = new URL('./uploads.ts', import.meta.url).href;
   const output = execFileSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e',
     `import { resolveUpload } from ${JSON.stringify(moduleUrl)};
@@ -290,35 +311,36 @@ test('declared image MIME and original display name survive a fresh process', ()
   for (const upload of uploads) assert.deepEqual(resolveStoredAttachment(attachment(upload.url)), upload);
 });
 
-test('invalid upload metadata and non-buffer bodies fail explicitly before writing', () => {
+test('invalid metadata and non-binary streams fail without publishing files', async () => {
   const before = inventory();
   for (const mime of ['text', 'image/', '/png', 'image/*', '*/png', 'image/png\r\nX: y',
     'image/png\n', 'image/png\0', 'image/ png', ' text/plain', 'text/plain;', 'text/plain; charset',
     'text/plain; charset="unterminated', 'text/' + 'a'.repeat(513)]) {
-    assert.throws(() => saveUpload(Buffer.from('x'), 'name', mime), status(400));
+    await assert.rejects(saveBytes(Buffer.from('x'), 'name', mime), status(400));
   }
   for (const [name, mime] of [[null, 'text/plain'], ['name', null], [42, 'image/png'], ['name', {}]]) {
     assert.throws(() => validateUploadInput(name, mime), status(400));
   }
-  assert.throws(() => saveUpload('not a buffer' as unknown as Buffer, 'name', 'text/plain'), status(400));
+  await assert.rejects(saveUploadStream(Readable.from(['not binary']), 'name', 'text/plain'), status(400));
   assert.deepEqual(inventory(), before);
 });
 
-test('valid MIME parameters are preserved; image classification is case insensitive', () => {
+test('valid MIME parameters are accepted and detected media determines classification', async () => {
   for (const mime of ['image/svg+xml', 'IMAGE/PNG', 'application/vnd.example+json',
     'text/plain; charset=utf-8', 'text/plain; charset="utf-8"']) {
-    const r = saveUpload(Buffer.alloc(0), 'name', mime);
-    assert.equal(r.mime, mime);
-    assert.equal(r.kind, mime.toLowerCase().startsWith('image/') ? 'image' : 'file');
+    assert.equal(validateUploadInput('name', mime).mime, mime);
+    const r = await saveBytes(PNG, 'name', mime);
+    assert.equal(r.mime, 'image/png');
+    assert.equal(r.kind, 'image');
     assert.deepEqual(resolveUpload(r.storedName), r);
   }
 });
 
-test('25 MB limit includes the boundary and rejects oversized input without writes', () => {
-  const r = saveUpload(Buffer.alloc(MAX_UPLOAD_BYTES), 'limit', '');
+test('25 MB limit includes the boundary and rejects overflow without publishing files', async () => {
+  const r = await saveBytes(Buffer.alloc(MAX_UPLOAD_BYTES), 'limit', '');
   assert.equal(resolveUpload(r.storedName)?.size, MAX_UPLOAD_BYTES);
   const before = inventory();
-  assert.throws(() => saveUpload(Buffer.alloc(MAX_UPLOAD_BYTES + 1), 'too-big', ''), status(413));
+  await assert.rejects(saveBytes(Buffer.alloc(MAX_UPLOAD_BYTES + 1), 'too-big', ''), status(413));
   assert.deepEqual(inventory(), before);
 });
 
@@ -355,8 +377,8 @@ test('legacy files keep original links and display fallback, but require byte si
   assert.equal(existsSync(join(dir, '.metadata')), false);
 });
 
-test('attachment resolution ignores every client value other than the literal URL', () => {
-  const r = saveUpload(Buffer.from('real'), 'real-name', 'image/png');
+test('attachment resolution ignores every client value other than the literal URL', async () => {
+  const r = await saveBytes(PNG, 'real-name', 'image/png');
   const forged = { kind: 'file', name: 'forged', url: r.url, path: '/etc/passwd',
     mime: 'text/html', size: 9999, storedName: 'other-file' } as Attachment;
   assert.deepEqual(resolveStoredAttachment(forged), r);
@@ -386,8 +408,8 @@ test('openUpload rejects arbitrary, relative, and traversing paths', () => {
   assert.throws(() => openUpload(resolve(TEST_DIR, 'missing')), status(404));
 });
 
-test('missing new sidecars never fall back to the extension or rewrite the bytes', () => {
-  const r = saveUpload(Buffer.from('unchanged'), 'mismatch.jpg', 'image/png');
+test('missing new sidecars never fall back to the extension or rewrite the bytes', async () => {
+  const r = await saveBytes(Buffer.from('unchanged'), 'mismatch.jpg', 'image/png');
   rmSync(metadataPath(r.storedName));
   assert.throws(() => resolveUpload(r.storedName), status(500));
   assert.throws(() => resolveStoredAttachment(attachment(r.url)), status(500));
@@ -396,8 +418,8 @@ test('missing new sidecars never fall back to the extension or rewrite the bytes
   assert.equal(existsSync(metadataPath(r.storedName)), false);
 });
 
-test('corrupt or inconsistent sidecars are storage errors, never legacy fallbacks', () => {
-  const r = saveUpload(Buffer.from('data'), 'display.txt', 'image/png');
+test('corrupt or inconsistent sidecars are storage errors, never legacy fallbacks', async () => {
+  const r = await saveBytes(Buffer.from('data'), 'display.txt', 'image/png');
   const path = metadataPath(r.storedName);
   const metadata = JSON.parse(readFileSync(path, 'utf8'));
   for (const value of ['{broken', 'null', '[]', '{}', 'x'.repeat(4097),
@@ -416,8 +438,8 @@ test('corrupt or inconsistent sidecars are storage errors, never legacy fallback
   }
 });
 
-test('metadata never supplies an arbitrary path, URL, or kind', () => {
-  const r = saveUpload(Buffer.from('data'), 'real', 'image/png');
+test('metadata never supplies an arbitrary path, URL, or kind', async () => {
+  const r = await saveBytes(PNG, 'real', 'image/png');
   const path = metadataPath(r.storedName);
   const metadata = JSON.parse(readFileSync(path, 'utf8'));
   writeFileSync(path, JSON.stringify({ ...metadata, path: '/etc/passwd', url: 'https://example.com',
@@ -425,8 +447,8 @@ test('metadata never supplies an arbitrary path, URL, or kind', () => {
   assert.deepEqual(resolveUpload(r.storedName), r);
 });
 
-test('invalid UTF-8 sidecars are corrupt metadata, not repaired display names', () => {
-  const r = saveUpload(Buffer.from('data'), 'name', 'image/png');
+test('invalid UTF-8 sidecars are corrupt metadata, not repaired display names', async () => {
+  const r = await saveBytes(Buffer.from('data'), 'name', 'image/png');
   const bytes = readFileSync(metadataPath(r.storedName));
   const index = bytes.indexOf('"name":"name"') + '"name":"'.length;
   assert.ok(index >= '"name":"'.length);
@@ -436,8 +458,8 @@ test('invalid UTF-8 sidecars are corrupt metadata, not repaired display names', 
   assert.deepEqual(readFileSync(metadataPath(r.storedName)), bytes);
 });
 
-test('changed file sizes and oversized legacy files are explicit storage failures', () => {
-  const r = saveUpload(Buffer.from('data'), 'real', 'image/png');
+test('changed file sizes and oversized legacy files are explicit storage failures', async () => {
+  const r = await saveBytes(Buffer.from('data'), 'real', 'image/png');
   writeFileSync(r.path, 'longer data');
   assert.throws(() => resolveUpload(r.storedName), status(500));
   const legacyPath = join(TEST_DIR, 'oversize-legacy.bin');
@@ -446,7 +468,7 @@ test('changed file sizes and oversized legacy files are explicit storage failure
   assert.throws(() => resolveUpload('oversize-legacy.bin'), status(500));
 });
 
-test('file and metadata symlinks (including dangling links) are never followed', () => {
+test('file and metadata symlinks (including dangling links) are never followed', async () => {
   const outside = resolve(TEST_ROOT, 'symlink-target');
   writeFileSync(outside, 'outside');
   for (const [name, target] of [['linked', outside], ['dangling', `${outside}-missing`]]) {
@@ -455,17 +477,17 @@ test('file and metadata symlinks (including dangling links) are never followed',
     assert.throws(() => openUpload(resolve(TEST_DIR, name!)), status(500));
     assert.throws(() => resolveStoredAttachment(attachment(`/uploads/${name}`)), status(500));
   }
-  const r = saveUpload(Buffer.from('data'), 'name', 'image/png');
+  const r = await saveBytes(Buffer.from('data'), 'name', 'image/png');
   rmSync(metadataPath(r.storedName));
   symlinkSync(outside, metadataPath(r.storedName));
   assert.throws(() => resolveUpload(r.storedName), status(500));
   assert.equal(readFileSync(outside, 'utf8'), 'outside');
 });
 
-test('non-regular stored files and unsafe file permissions are rejected', () => {
+test('non-regular stored files and unsafe file permissions are rejected', async () => {
   mkdirSync(join(TEST_DIR, 'directory-not-file'));
   assert.throws(() => resolveUpload('directory-not-file'), status(500));
-  const r = saveUpload(Buffer.from('data'), 'name', 'text/plain');
+  const r = await saveBytes(Buffer.from('data'), 'name', 'text/plain');
   chmodSync(r.path, 0o666);
   assert.throws(() => resolveUpload(r.storedName), status(500));
   chmodSync(r.path, 0o600);
@@ -473,8 +495,8 @@ test('non-regular stored files and unsafe file permissions are rejected', () => 
   assert.throws(() => resolveUpload(r.storedName), status(500));
 });
 
-test('a file replaced with a symlink between resolution and opening is rejected', (t) => {
-  const r = saveUpload(Buffer.from('data'), 'name', '');
+test('a file replaced with a symlink between resolution and opening is rejected', async (t) => {
+  const r = await saveBytes(Buffer.from('data'), 'name', '');
   const outside = resolve(TEST_ROOT, 'open-race-outside');
   writeFileSync(outside, 'must not stream');
   const open = fs.openSync;
@@ -491,7 +513,7 @@ test('a file replaced with a symlink between resolution and opening is rejected'
 });
 
 test('an open stream uses its checked descriptor and does not read appended bytes', async () => {
-  const r = saveUpload(Buffer.from('original'), 'name', '');
+  const r = await saveBytes(Buffer.from('original'), 'name', '');
   const stream = openUpload(r.path);
   fs.appendFileSync(r.path, 'extra');
   renameSync(r.path, `${r.path}-moved`);
@@ -501,13 +523,37 @@ test('an open stream uses its checked descriptor and does not read appended byte
   assert.equal(Buffer.concat(chunks).toString(), 'original');
 });
 
-test('empty uploads stream no bytes', async () => {
-  const r = saveUpload(Buffer.alloc(0), 'empty', '');
+test('legacy empty uploads remain readable while new empty streams are rejected', async () => {
+  const r = legacySidecarFixture(Buffer.alloc(0), 'empty', 'application/octet-stream');
+  assert.deepEqual(resolveStoredAttachment(attachment(r.url)), r);
   const stream = openUpload(r.path);
   fs.appendFileSync(r.path, 'added later');
   const chunks: Buffer[] = [];
   for await (const chunk of stream) chunks.push(chunk as Buffer);
   assert.equal(Buffer.concat(chunks).length, 0);
+  const before = inventory();
+  await assert.rejects(saveBytes(Buffer.alloc(0), 'empty', ''), status(400));
+  assert.deepEqual(inventory(), before);
+});
+
+test('legacy sidecars preserve declared MIME and display names without digest or creation time', async () => {
+  for (const [name, mime] of [
+    ['extensionless', 'image/png'], ['actually-a-png.txt', 'image/png'],
+    ['not-an-image.jpg', 'text/plain; charset=utf-8'], ['100%real.bin', 'image/webp'],
+  ] as const) {
+    const bytes = Buffer.from('legacy bytes');
+    const r = legacySidecarFixture(bytes, name, mime);
+    const sidecar = readFileSync(metadataPath(r.storedName));
+    const before = statSync(r.path);
+    assert.deepEqual(resolveUpload(r.storedName), r);
+    assert.deepEqual(resolveStoredAttachment(attachment(r.url)), r);
+    const chunks: Buffer[] = [];
+    for await (const chunk of openUpload(r.path)) chunks.push(chunk as Buffer);
+    assert.deepEqual(Buffer.concat(chunks), bytes);
+    assert.deepEqual(readFileSync(metadataPath(r.storedName)), sidecar);
+    assert.equal(statSync(r.path).mtimeMs, before.mtimeMs);
+    assert.equal(statSync(r.path).ino, before.ino);
+  }
 });
 
 test('invalid, writable, and symlinked upload directories fail without following links', async () => {
@@ -522,7 +568,7 @@ test('invalid, writable, and symlinked upload directories fail without following
   chmodSync(writable, 0o777);
   for (const dir of [linked, join(linked, 'nested'), regularFile, writable]) {
     const storage = await storageAt(dir);
-    assert.throws(() => storage.saveUpload(Buffer.from('x'), 'name', 'text/plain'), status(500));
+    await assert.rejects(storage.saveUploadStream(Readable.from([Buffer.from('x')]), 'name', 'text/plain'), status(500));
     assert.throws(() => storage.resolveUpload('legacy'), status(500));
   }
   assert.deepEqual(readdirSync(target), []);
@@ -535,8 +581,8 @@ test('missing directories resolve without creating storage', async () => {
   assert.equal(storage.resolveUpload('missing'), null);
   assert.throws(() => storage.resolveStoredAttachment(attachment('/uploads/missing')), status(404));
   assert.equal(existsSync(join(TEST_ROOT, 'does-not-exist')), false);
-  const r = storage.saveUpload(Buffer.alloc(0), 'created', '');
-  assert.equal(storage.resolveUpload(r.storedName)?.size, 0);
+  const r = await storage.saveUploadStream(Readable.from([Buffer.from('x')]), 'created', '');
+  assert.equal(storage.resolveUpload(r.storedName)?.size, 1);
   assert.equal(statSync(dir).mode & 0o777, 0o700);
 });
 
@@ -546,84 +592,79 @@ test('metadata directory symlinks and files block saves and resolution', async (
   for (const type of ['symlink', 'file', 'writable']) {
     const dir = join(TEST_ROOT, `bad-metadata-${type}`);
     const storage = await storageAt(dir);
-    const r = storage.saveUpload(Buffer.from('kept'), 'name', 'image/png');
+    const r = await storage.saveUploadStream(Readable.from([Buffer.from('kept')]), 'name', 'image/png');
     const metadataDir = join(dir, '.metadata');
     renameSync(metadataDir, join(dir, '.metadata-original'));
     if (type === 'symlink') symlinkSync(target, metadataDir);
     else if (type === 'file') writeFileSync(metadataDir, 'keep');
     else { mkdirSync(metadataDir); chmodSync(metadataDir, 0o777); }
-    assert.throws(() => storage.saveUpload(Buffer.from('x'), 'name', 'image/png'), status(500));
+    await assert.rejects(storage.saveUploadStream(Readable.from([Buffer.from('x')]), 'name', 'image/png'), status(500));
     assert.throws(() => storage.resolveUpload(r.storedName), status(500));
     assert.equal(readFileSync(r.path, 'utf8'), 'kept');
   }
   assert.deepEqual(readdirSync(target), []);
 });
 
-test('exclusive creation never overwrites an existing upload or its metadata', (t) => {
+test('exclusive creation never overwrites an existing upload or its metadata', async (t) => {
   t.mock.method(Date, 'now', () => 123456789);
   t.mock.method(crypto, 'randomBytes', (size: number) => Buffer.alloc(size, 0xab));
-  const r = saveUpload(Buffer.from('first'), 'name.png', 'image/png');
+  const r = await saveBytes(Buffer.from('first'), 'name.png', 'text/plain');
   const sidecar = readFileSync(metadataPath(r.storedName));
   const before = inventory();
-  assert.throws(() => saveUpload(Buffer.from('second'), 'other.png', 'text/plain'), status(500));
+  await assert.rejects(saveBytes(Buffer.from('second'), 'other.png', 'text/plain'), status(409));
   assert.deepEqual(inventory(), before);
   assert.equal(readFileSync(r.path, 'utf8'), 'first');
   assert.deepEqual(readFileSync(metadataPath(r.storedName)), sidecar);
   assert.deepEqual(resolveUpload(r.storedName), r);
 });
 
-test('an existing orphaned sidecar is never replaced on a name collision', (t) => {
+test('an existing orphaned sidecar is never replaced on a name collision', async (t) => {
   t.mock.method(Date, 'now', () => 123456790);
   t.mock.method(crypto, 'randomBytes', (size: number) => Buffer.alloc(size, 0xcd));
-  const r = saveUpload(Buffer.from('first'), 'name.png', 'image/png');
+  const r = await saveBytes(Buffer.from('first'), 'name.png', 'text/plain');
   const sidecar = readFileSync(metadataPath(r.storedName));
   rmSync(r.path);
   const before = inventory();
-  const open = fs.openSync;
-  t.mock.method(fs, 'openSync', (...args: Parameters<typeof fs.openSync>) => {
-    assert.notEqual(args[0], r.path, 'must not create a file already described by an orphaned sidecar');
-    return open(...args);
-  });
-  assert.throws(() => saveUpload(Buffer.from('second'), 'name.png', 'text/plain'), status(500));
+  await assert.rejects(saveBytes(Buffer.from('second'), 'name.png', 'text/plain'), status(500));
   assert.deepEqual(inventory(), before);
   assert.deepEqual(readFileSync(metadataPath(r.storedName)), sidecar);
   assert.equal(existsSync(r.path), false);
 });
 
-test('exclusive creation leaves colliding untracked files and symlinks untouched', (t) => {
+test('exclusive creation leaves colliding untracked files and symlinks untouched', async (t) => {
   t.mock.method(Date, 'now', () => 123456792);
   t.mock.method(crypto, 'randomBytes', (size: number) => Buffer.alloc(size, 0x42));
-  const storedName = `upload-v1-123456792-${'42'.repeat(16)}`;
+  const storedName = `upload-v1-123456792-${'42'.repeat(16)}.bin`;
   const path = join(TEST_DIR, storedName);
   writeFileSync(path, 'preexisting');
   const inode = statSync(path).ino;
-  assert.throws(() => saveUpload(Buffer.from('replacement'), 'name', ''), status(500));
+  await assert.rejects(saveBytes(Buffer.from('replacement'), 'name', ''), status(500));
   assert.equal(statSync(path).ino, inode);
   assert.equal(readFileSync(path, 'utf8'), 'preexisting');
   rmSync(path);
   const target = resolve(TEST_ROOT, 'exclusive-target');
   writeFileSync(target, 'target');
   symlinkSync(target, path);
-  assert.throws(() => saveUpload(Buffer.from('replacement'), 'name', ''), status(500));
+  await assert.rejects(saveBytes(Buffer.from('replacement'), 'name', ''), status(500));
   assert.ok(fs.lstatSync(path).isSymbolicLink());
   assert.equal(readFileSync(target, 'utf8'), 'target');
   assert.equal(existsSync(metadataPath(storedName)), false);
 });
 
-test('a collision retries with a fresh generated name', (t) => {
+test('a fresh request can succeed after a conflicting generated name is refused', async (t) => {
   t.mock.method(Date, 'now', () => 123456791);
   const original = crypto.randomBytes;
   const collision = t.mock.method(crypto, 'randomBytes', (size: number) => Buffer.alloc(size, 0xef));
-  const first = saveUpload(Buffer.from('first'), 'name', '');
-  let calls = 0;
-  collision.mock.mockImplementation((size: number) => ++calls === 1 ? Buffer.alloc(size, 0xef) : original(size));
-  const second = saveUpload(Buffer.from('second'), 'name', '');
+  const first = await saveBytes(Buffer.from('first'), 'name', '');
+  await assert.rejects(saveBytes(Buffer.from('second'), 'name', ''), status(409));
+  collision.mock.mockImplementation(original);
+  const second = await saveBytes(Buffer.from('second'), 'name', '');
   assert.notEqual(first.storedName, second.storedName);
   assert.equal(readFileSync(first.path, 'utf8'), 'first');
   assert.equal(readFileSync(second.path, 'utf8'), 'second');
 });
 
-test('metadata publication is atomic, exclusive, and ordered after file fsync', (t) => {
+test('metadata publication is atomic, exclusive, and ordered after file fsync', async (t) => {
   const synced = new Set<number>();
   const fsync = fs.fsyncSync;
   t.mock.method(fs, 'fsyncSync', (fd: number) => {
@@ -633,6 +674,11 @@ test('metadata publication is atomic, exclusive, and ordered after file fsync', 
   const link = fs.linkSync;
   let observed = false;
   t.mock.method(fs, 'linkSync', (source: fs.PathLike, destination: fs.PathLike) => {
+    if (!String(destination).endsWith('.json')) {
+      assert.ok(synced.has(statSync(source).ino));
+      assert.equal(existsSync(destination), false);
+      return link(source, destination);
+    }
     const metadata = JSON.parse(readFileSync(source, 'utf8'));
     const dataPath = resolve(TEST_DIR, metadata.storedName);
     assert.ok(synced.has(statSync(dataPath).ino));
@@ -644,14 +690,14 @@ test('metadata publication is atomic, exclusive, and ordered after file fsync', 
     assert.equal(resolveUpload(metadata.storedName)?.mime, 'image/png');
     observed = true;
   });
-  const r = saveUpload(Buffer.from('atomic'), 'mismatch.txt', 'image/png');
+  const r = await saveBytes(PNG, 'mismatch.txt', 'image/png');
   assert.ok(observed);
   assert.ok(synced.has(statSync(join(TEST_DIR, '.metadata')).ino));
   assert.deepEqual(resolveUpload(r.storedName), r);
   assert.ok(!readdirSync(join(TEST_DIR, '.metadata')).some(name => name.startsWith('.pending-')));
 });
 
-test('partial data and sidecar write failures remove only newly-created files', (t) => {
+test('partial data and sidecar write failures remove only newly-created files', async (t) => {
   for (const failureAt of [1, 2]) {
     const before = inventory();
     const write = fs.writeFileSync;
@@ -664,7 +710,7 @@ test('partial data and sidecar write failures remove only newly-created files', 
       return write(...args);
     });
     try {
-      assert.throws(() => saveUpload(Buffer.from('data'), 'name', 'image/png'), status(500));
+      await assert.rejects(saveBytes(Buffer.from('data'), 'name', 'image/png'), status(500));
       assert.deepEqual(inventory(), before);
     } finally {
       mock.mock.restore();
@@ -672,27 +718,30 @@ test('partial data and sidecar write failures remove only newly-created files', 
   }
 });
 
-test('sidecar commit and durability failures are explicit and roll back the upload', (t) => {
-  for (const operation of ['link', 'data-fsync', 'sidecar-fsync', 'directory-fsync']) {
+test('publication and durability failures are explicit and roll back the upload', async (t) => {
+  for (const operation of ['data-link', 'sidecar-link', 'data-fsync', 'sidecar-fsync',
+    'data-directory-fsync', 'metadata-directory-fsync']) {
     const before = inventory();
     const link = fs.linkSync;
     const fsync = fs.fsyncSync;
     let fileSyncs = 0;
-    let committed = false;
+    let links = 0;
     t.mock.method(fs, 'linkSync', (...args: Parameters<typeof fs.linkSync>) => {
-      if (operation === 'link') throw ioError();
+      links++;
+      if ((operation === 'data-link' && links === 1)
+        || (operation === 'sidecar-link' && links === 2)) throw ioError();
       link(...args);
-      committed = true;
     });
     t.mock.method(fs, 'fsyncSync', (fd: number) => {
       if (fs.fstatSync(fd).isFile()) fileSyncs++;
       if ((operation === 'data-fsync' && fileSyncs === 1)
         || (operation === 'sidecar-fsync' && fileSyncs === 2)
-        || (operation === 'directory-fsync' && committed)) throw ioError();
+        || (operation === 'data-directory-fsync' && links === 1)
+        || (operation === 'metadata-directory-fsync' && links === 2)) throw ioError();
       fsync(fd);
     });
     try {
-      assert.throws(() => saveUpload(Buffer.from('data'), 'name', 'image/png'), status(500));
+      await assert.rejects(saveBytes(Buffer.from('data'), 'name', 'image/png'), status(500));
       assert.deepEqual(inventory(), before);
     } finally {
       t.mock.restoreAll();
@@ -700,8 +749,8 @@ test('sidecar commit and durability failures are explicit and roll back the uplo
   }
 });
 
-test('storage permission errors are 500, not missing uploads', (t) => {
-  const r = saveUpload(Buffer.from('data'), 'name', '');
+test('storage permission errors are 500, not missing uploads', async (t) => {
+  const r = await saveBytes(Buffer.from('data'), 'name', '');
   const open = fs.openSync;
   t.mock.method(fs, 'openSync', (...args: Parameters<typeof fs.openSync>) => {
     if (args[0] === r.path) throw Object.assign(new Error('Denied'), { code: 'EACCES' });

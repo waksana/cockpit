@@ -77,7 +77,11 @@ test('multi-send emits ordered safe metadata and clears only acknowledged genera
 
 test('failed multi-send preserves the entire draft across storage restore', async () => {
   const values = new Map<string, string>();
-  const storage = { getItem: (key: string) => values.get(key) ?? null, setItem: (key: string, value: string) => { values.set(key, value); } };
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); },
+  };
   const draft = new SessionDraft('A', storage);
   draft.edit('caption');
   draft.addManagedAttachment(file);

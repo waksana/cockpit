@@ -117,6 +117,40 @@ worktree identity for session organization.
 
 ## Restarting safely
 
+On startup, `Prefs` removes only the retired top-level Cockpit fields
+`mcpDefaultOn`, `mcpBySession`, `skillsDisabledBySession`,
+`skillsAllowlistBySession`, `hooks`, `flowSchedules`, `scheduledSessions`,
+`welcomedSessions`, `spawnedBySession`, `trashed`, and `trashedMeta` from `cockpit-prefs.json`.
+These fields had Cockpit writers in the original implementation; current
+MCP/skill selection and scheduling belong to Copilot, and Hook/Flow governance
+has been removed. `workerMetadata` has no established historical Cockpit writer
+and is treated as unknown, not retired.
+
+Cleanup preserves `pinnedSessions`, `inbox` (including its monotonic
+IDs), and unknown fields. It never touches uploads, push registration or native
+configuration, and never replays retired settings into Copilot. After validating
+the inbox, startup atomically replaces the file only if a retired key exists;
+failure aborts loading instead of exposing a partially migrated instance.
+Successful cleanup logs field names only. Subsequent startups do not rewrite a
+clean file. Do not edit the live prefs file out of band to deploy this change:
+the old process could save its in-memory copy again. Let the graceful restart
+finish so the new owning process performs cleanup before accepting mutations.
+A pending restart is not evidence that persisted fields have already been removed.
+
+There is no Cockpit trash or restore operation. Removing legacy trash marks only
+unhides existing native sessions in the normal list; it does not delete history.
+Future deletion uses native public `deleteSession` after an irreversible UI
+confirmation and server-enforced literal `confirm:true` on `session/delete`.
+`session/purge` remains a compatibility alias with the same confirmation gate
+and implementation. Old soft-delete requests without confirmation are rejected,
+including those from already-loaded MCP tools with stale descriptions. Do not
+automatically retry uncertain deletion results. Managed files, associations,
+downloads and workspaces survive session deletion. Reload MCP connections only
+when idle; a backend restart does not update already-loaded tool descriptions.
+New Web and semantic MCP delete consumers use the already-destructive
+`session/purge` wire name so a staggered client/backend deployment cannot report
+an old backend's soft deletion as permanent.
+
 An authorized `POST /admin/restart` with `{"pending":true}` requests restart when
 all sessions are idle. `{"pending":false}` cancels the request. The supervisor
 must bring the server back after its clean exit. Do not hard-kill it to apply an

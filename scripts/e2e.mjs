@@ -157,10 +157,7 @@ await t('GET /uploads/<traversal> → 404 (no escape)', async () => {
   }
 });
 
-// ── session trash lifecycle (create throwaway → trash → restore → purge) ──────
-// Feature-detected: backends without the trash intents fall back to a plain delete
-// so this file still passes against an older deployment.
-const trashSupported = (await intent('session/trash-list', {})).status !== 404;
+// Only the session created by this run may be permanently deleted.
 const listSupported = (await intent('session/list', {})).status !== 404;
 
 await t('session/new + per-session MCP intent', async () => {
@@ -285,47 +282,23 @@ if (scheduleSupported) {
   });
 }
 
-if (trashSupported) {
-  await t('session/delete → soft (trashed, hidden, restorable)', async () => {
-    const id = globalThis.__e2eSession;
-    const del = await j(await intent('session/delete', { sessionId: id, reason: 'e2e throwaway' }));
-    assert.equal(del.ok, true);
-    // gone from the live list
-    const status = await j(await fetch(`${BASE}/status`));
-    assert.ok(!status.sessions.some((s) => s.sessionId === id), 'trashed session hidden from status');
-    // present in the trash with our reason
-    const tl = await j(await intent('session/trash-list', {}));
-    const entry = tl.entries.find((e) => e.sessionId === id);
-    assert.ok(entry, 'session appears in trash-list');
-    assert.equal(entry.reason, 'e2e throwaway');
-    assert.ok(typeof entry.at === 'string' && entry.at.length > 0, 'trashed-at timestamp present');
-  });
-
-  await t('session/restore → back in list, out of trash', async () => {
-    const id = globalThis.__e2eSession;
-    const res = await j(await intent('session/restore', { sessionId: id }));
-    assert.equal(res.ok, true);
-    const tl = await j(await intent('session/trash-list', {}));
-    assert.ok(!tl.entries.some((e) => e.sessionId === id), 'restored session left the trash');
-  });
-
-  await t('session/purge → permanent, gone everywhere', async () => {
-    const id = globalThis.__e2eSession;
-    // re-trash then purge (purge is the irreversible cleanup)
-    await intent('session/delete', { sessionId: id, reason: 'e2e cleanup' });
-    const purge = await j(await intent('session/purge', { sessionId: id, confirm: true }));
-    assert.equal(purge.ok, true);
-    const tl = await j(await intent('session/trash-list', {}));
-    assert.ok(!tl.entries.some((e) => e.sessionId === id), 'purged session not in trash');
-    const status = await j(await fetch(`${BASE}/status`));
-    assert.ok(!status.sessions.some((s) => s.sessionId === id), 'purged session not in status');
-  });
-} else {
-  await t('session/delete cleanup (legacy backend, no trash intents)', async () => {
-    const del = await j(await intent('session/delete', { sessionId: globalThis.__e2eSession }));
-    assert.equal(del.ok, true);
-  });
-}
+await t('session/delete rejects legacy requests, then permanently deletes the owned fixture', async () => {
+  const id = globalThis.__e2eSession;
+  assert.ok(id, 'this run must have created the session');
+  for (const name of ['session/delete', 'session/purge']) {
+    const response = await intent(name, { sessionId: id });
+    assert.equal(response.status, 400, `${name} requires explicit confirmation`);
+  }
+  const before = await j(await intent('session/get', { sessionId: id }));
+  assert.equal(before.meta.sessionId, id);
+  const del = await j(await intent('session/delete', { sessionId: id, confirm: true }));
+  assert.equal(del.ok, true);
+  const status = await j(await fetch(`${BASE}/status`));
+  assert.ok(!status.sessions.some((s) => s.sessionId === id), 'deleted session not in status');
+  for (const name of ['session/trash-list', 'session/restore']) {
+    assert.equal((await intent(name, { sessionId: id })).status, 404);
+  }
+});
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

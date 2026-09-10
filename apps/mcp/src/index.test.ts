@@ -39,6 +39,7 @@ let largeContent = initialLargeContent;
 let malformedPreview = false;
 let mismatchedCapability = false;
 let rejectedIntent: string | undefined;
+let intentFailure: number | 'invalid-json' | 'connection' | undefined;
 let invalidPolicy = false;
 const meta: SessionMeta = {
   sessionId: 'B', title: 'Backend title', cwd: '/only-on-backend/project',
@@ -103,10 +104,13 @@ mockHttp((res, req) => {
     if (url.pathname === '/status') return send({ busy: 1, restartPending: false, permissionPolicy: 'allow-all' });
     if (url.pathname === '/admin/restart') return send({ busy: 1, restartPending: true, willRestartWhenIdle: true });
     const name = path.slice('/intent/'.length);
-    const schema = schemas[name];
+    const schema = Object.hasOwn(schemas, name) ? schemas[name] : undefined;
     if (!path.startsWith('/intent/') || !schema) return send({ error: 'unknown intent' }, 404);
     const parsed = schema.safeParse(body);
     if (!parsed.success) return send({ error: parsed.error.message }, 400);
+    if (typeof intentFailure === 'number') return send({ error: 'authoritative service failure' }, intentFailure);
+    if (intentFailure === 'invalid-json') return res.end('not JSON');
+    if (intentFailure === 'connection') return res.destroy();
     if (name === rejectedIntent) return send({ ok: false, error: 'genuine target failure', operation: { id: 'failed-op', state: 'failed' } });
     if (name === 'runtime/snapshot') return send(invalidPolicy ? { ...snapshot, permissionPolicy: undefined } : snapshot);
     if (name === 'session/list') return send({ sessions: [meta] });
@@ -119,7 +123,6 @@ mockHttp((res, req) => {
     });
     if (name === 'session/panels') return send(panels);
     if (name === 'skills/global') return send({ skills: [{ name: 'review', description: 'Review changes', source: 'project' }] });
-    if (name === 'session/trash-list') return send({ entries: [{ ...meta, sessionId: 'trashed', at: '2026-09-07' }] });
     if (name === 'session/peek' || name === 'session/history' || name === 'session/subagent-history') {
       const input = z.object({
         sessionId: z.string(), toolCallId: z.string().optional(), beforeMsgId: z.string().optional(),
@@ -185,6 +188,7 @@ beforeEach(() => {
   unavailable = large = malformedPreview = mismatchedCapability = false;
   invalidPolicy = false;
   rejectedIntent = undefined;
+  intentFailure = undefined;
   largeContent = initialLargeContent;
 });
 
@@ -211,9 +215,9 @@ test('registry exposes foundation, native schedules, manual settings and files, 
     'cockpit_read_session', 'cockpit_send_prompt', 'cockpit_upload_file', 'cockpit_download_file',
     'cockpit_schedule_add', 'cockpit_list_schedules', 'cockpit_stop_schedule',
     'cockpit_list_session_mcp', 'cockpit_set_session_mcp', 'cockpit_set_session_skill',
-    'cockpit_get_snapshot', 'cockpit_list_sessions', 'cockpit_list_trash', 'cockpit_get_session',
+    'cockpit_get_snapshot', 'cockpit_list_sessions', 'cockpit_get_session',
     'cockpit_get_panels', 'cockpit_get_plan', 'cockpit_new_session', 'cockpit_delete_session',
-    'cockpit_restore_session', 'cockpit_purge_session', 'cockpit_unload_session', 'cockpit_reload_session',
+    'cockpit_purge_session', 'cockpit_unload_session', 'cockpit_reload_session',
     'cockpit_rename_session', 'cockpit_set_session_pin', 'cockpit_cancel_turn', 'cockpit_remove_queued',
     'cockpit_respond_ask', 'cockpit_respond_plan', 'cockpit_plan_supersede', 'cockpit_respond_elicitation',
     'cockpit_set_model', 'cockpit_set_mode', 'cockpit_compact_session', 'cockpit_rewind_session',
@@ -252,16 +256,13 @@ test('the published executable starts MCP when invoked through a bin symlink', a
   }
 });
 
-test('session lists, trash, full state and transcript read exclusively through HTTP', async () => {
+test('session lists, full state and transcript read exclusively through HTTP', async () => {
   const live = z.object({ sessions: z.array(z.object({ sessionId: z.string(), title: z.string() }).passthrough()) })
     .parse(await json('cockpit_list_sessions', { response_format: 'json' }));
   assert.equal(live.sessions[0]?.title, meta.title);
   assert.ok(live.sessions.every((session) => !('launchState' in session) && !('spawnedBy' in session)));
-  const trash = z.object({ entries: z.array(z.object({ sessionId: z.string() })) })
-    .parse(await json('cockpit_list_trash', { response_format: 'json' }));
-  assert.equal(trash.entries[0]?.sessionId, 'trashed');
   await json('cockpit_get_session', { session_id: 'B', response_format: 'json' });
-  for (const sessionId of ['B', 'trashed']) {
+  for (const sessionId of ['B', 'unloaded']) {
     const page = z.object({ messages: z.array(z.unknown()), title: z.string(), cwd: z.string(), source: z.string() })
       .parse(await json('cockpit_read_session', { session_id: sessionId, response_format: 'json' }));
     assert.deepEqual(page.messages, messages, 'all canonical fields must survive, including images and subagents');
@@ -270,7 +271,7 @@ test('session lists, trash, full state and transcript read exclusively through H
     assert.equal(page.source, 'api');
   }
   assert.deepEqual(requests.map(({ path }) => path), [
-    '/intent/session/list', '/intent/session/trash-list', '/intent/session/get',
+    '/intent/session/list', '/intent/session/get',
     '/intent/session/peek', '/intent/session/peek',
   ]);
   assert.ok(requests.every((request) => request.authorization === 'Bearer session-test-token'));
@@ -346,7 +347,7 @@ test('transcript continuation rejects same-length content changes instead of mix
 
 test('backend failures and malformed transcript never become local fallback success', async () => {
   unavailable = true;
-  for (const name of ['cockpit_list_sessions', 'cockpit_list_trash', 'cockpit_get_session', 'cockpit_read_session']) {
+  for (const name of ['cockpit_list_sessions', 'cockpit_get_session', 'cockpit_read_session']) {
     const result = await call(name, { session_id: 'B' });
     assert.equal(result.isError, true);
     assert.match(result.text, /backend unavailable/);
@@ -371,42 +372,91 @@ test('discovery lists bounded names or one schema and supports future intents wi
   const detail = z.object({ name: z.string(), inputSchema: z.unknown(), resultSchema: z.unknown() })
     .parse(await json('cockpit_capabilities', { name: 'future/operation' }));
   assert.equal(detail.name, 'future/operation');
+  requests.length = 0;
   assert.deepEqual(await json('cockpit_call_intent', { name: 'future/operation', body: { value: 42 } }), { echoed: { value: 42 } });
-  assert.deepEqual(requests.slice(-2).map(({ path }) => path), [
-    '/capabilities?name=future%2Foperation', '/intent/future/operation',
-  ]);
+  assert.deepEqual(requests.map(({ method, path }) => [method, path]), [['POST', '/intent/future/operation']]);
   assert.ok(requests.every((request) => request.authorization === 'Bearer session-test-token'));
+});
+
+test('generic future invocation is independent of explicit discovery and its failures', async () => {
+  mismatchedCapability = true;
+  const discovery = await call('cockpit_capabilities', { name: 'future/operation' });
+  assert.equal(discovery.isError, true);
+  assert.match(discovery.text, /different intent capability/);
+  assert.deepEqual(requests.map(({ method }) => method), ['GET']);
+  requests.length = 0;
+  for (const value of [1, 2]) {
+    assert.deepEqual(await json('cockpit_call_intent', { name: 'future/operation', body: { value } }), { echoed: { value } });
+  }
+  assert.deepEqual(requests.map(({ method, path }) => [method, path]), [
+    ['POST', '/intent/future/operation'], ['POST', '/intent/future/operation'],
+  ]);
 });
 
 test('fork is discoverable and callable through the unified MCP intent entry with native fields', async () => {
   const body = { sessionId: 'source', toEventId: 'root-user-event', name: 'Independent' };
   assert.deepEqual(await json('cockpit_call_intent', { name: 'session/fork', body }), { sessionId: 'forked-id' });
-  assert.deepEqual(requests.map(request => request.path), ['/capabilities?name=session%2Ffork', '/intent/session/fork']);
-  assert.deepEqual(requests[1]?.body, body);
+  assert.deepEqual(requests.map(request => request.path), ['/intent/session/fork']);
+  assert.deepEqual(requests[0]?.body, body);
 });
 
-test('generic invocation rejects unknown, retired, injected and mismatched names before POST', async () => {
+test('generic invocation surfaces authoritative unknown and retired name errors with one POST each', async () => {
   for (const name of [
     'unknown', 'hook/add', 'flow/run', 'flow/write-gate', 'flow-schedule/add', 'session/set-spawned-by',
+    '__proto__', 'constructor',
+  ]) {
+    requests.length = 0;
+    const result = await call('cockpit_call_intent', { name, body: {} });
+    assert.equal(result.isError, true, name);
+    assert.match(result.text, /HTTP 404: unknown intent/);
+    assert.deepEqual(requests.map(({ method, path }) => [method, path]), [['POST', `/intent/${name}`]]);
+  }
+});
+
+test('generic invocation rejects malformed names and non-object bodies before HTTP', async () => {
+  for (const name of [
+    '', 'a'.repeat(201),
     '../admin/restart', '/admin/restart', 'session/../purge', 'session%2Fpurge', '//evil.invalid',
-    'http://evil.invalid', 'session\\purge', 'prompt?x=1', 'prompt#fragment', '__proto__', 'constructor',
+    'http://evil.invalid', 'session\\purge', 'prompt?x=1', 'prompt#fragment',
   ]) {
     const result = await call('cockpit_call_intent', { name, body: {} });
     assert.equal(result.isError, true, name);
   }
-  mismatchedCapability = true;
-  assert.equal((await call('cockpit_call_intent', { name: 'prompt', body: {} })).isError, true);
-  assert.ok(requests.every(({ method }) => method === 'GET'));
+  for (const body of [null, [], 'invalid', 42]) {
+    assert.equal((await call('cockpit_call_intent', { name: 'prompt', body })).isError, true);
+  }
+  assert.equal(requests.length, 0);
+});
+
+test('generic service, protocol and connection failures remain MCP errors without retries', async () => {
+  for (const [failure, message] of [
+    [401, /HTTP 401: authoritative service failure/],
+    [421, /HTTP 421: authoritative service failure/],
+    [500, /HTTP 500: authoritative service failure/],
+    [503, /HTTP 503: authoritative service failure/],
+    ['invalid-json', /returned invalid JSON/],
+    ['connection', /Cannot connect.*socket hang up/],
+  ] as const) {
+    requests.length = 0;
+    intentFailure = failure;
+    const result = await call('cockpit_call_intent', { name: 'session/purge', body: { sessionId: 'B', confirm: true } });
+    assert.equal(result.isError, true);
+    assert.match(result.text, message);
+    assert.deepEqual(requests.map(({ method, path }) => [method, path]), [['POST', '/intent/session/purge']]);
+  }
 });
 
 test('generic validation and purge confirmation are owned by backend, semantic purge forwards true', async () => {
   for (const body of [{}, { value: 'wrong type' }]) {
-    assert.equal((await call('cockpit_call_intent', { name: 'future/operation', body })).isError, true);
+    const result = await call('cockpit_call_intent', { name: 'future/operation', body });
+    assert.equal(result.isError, true);
+    assert.match(result.text, /HTTP 400/);
   }
   for (const body of [{ sessionId: 'B' }, { sessionId: 'B', confirm: false }]) {
     assert.equal((await call('cockpit_call_intent', { name: 'session/purge', body })).isError, true);
   }
   assert.equal(requests.filter(({ method }) => method === 'POST').length, 4);
+  assert.equal(requests.length, 4, 'invalid bodies are sent once to the backend without preflight');
   await json('cockpit_call_intent', { name: 'session/purge', body: { sessionId: 'B', confirm: true } });
   requests.length = 0;
   assert.equal((await call('cockpit_purge_session', { session_id: 'B' })).isError, true);
@@ -429,6 +479,23 @@ test('session creation forwards cwd only and fixed service tools preserve confir
   assert.deepEqual(requests[3]?.body, { pending: true });
   assert.deepEqual(requests[4]?.body, { pending: false });
   assert.ok(requests.every((request) => request.authorization === 'Bearer session-test-token'));
+});
+
+test('permanent delete requires explicit confirmation and retired trash tools are absent', async () => {
+  const { tools } = await client.listTools();
+  assert.equal(tools.some(t => ['cockpit_list_trash', 'cockpit_restore_session'].includes(t.name)), false);
+  const tool = tools.find(t => t.name === 'cockpit_delete_session')!;
+  assert.ok(tool.inputSchema.required?.includes('confirm'));
+  assert.match(tool.description!, /IRREVERSIBLE/);
+  for (const args of [{ session_id: 'B' }, { session_id: 'B', reason: 'declutter' },
+    { session_id: 'B', confirm: false }, { session_id: 'B', confirm: 'true' }]) {
+    assert.equal((await call('cockpit_delete_session', args)).isError, true);
+    assert.equal(requests.length, 0);
+  }
+  assert.equal((await call('cockpit_delete_session', { session_id: 'B', confirm: true })).isError, false);
+  assert.deepEqual(requests.map(r => ({ path: r.path, body: r.body })), [
+    { path: '/intent/session/purge', body: { sessionId: 'B', confirm: true } },
+  ]);
 });
 
 test('canonical plan narrative, todos, changed files and panel sublabels/enabled flags render nonempty', async () => {
@@ -504,7 +571,7 @@ test('native global skill configuration is available through the shared generic 
     name: 'skills/global-toggle', body: { name: 'review', enabled: false, cwd: '/backend/project' },
   }), { ok: true });
   assert.deepEqual(requests.map(({ path }) => path), [
-    '/capabilities?name=skills%2Fglobal-toggle', '/intent/skills/global-toggle',
+    '/intent/skills/global-toggle',
   ]);
   assert.deepEqual(requests.at(-1)?.body, { name: 'review', enabled: false, cwd: '/backend/project' });
 });
@@ -516,7 +583,7 @@ test('automatic naming uses the shared API without pretending a manual title was
 
   assert.deepEqual(result, { ok: true, applied: false, title: 'User title', reason: 'user-named' });
   assert.deepEqual(requests.map(({ path }) => path), [
-    '/capabilities?name=session%2Fauto-name', '/intent/session/auto-name',
+    '/intent/session/auto-name',
   ]);
   assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B' });
 });
@@ -528,7 +595,7 @@ for (const interrupted of [false, true]) {
       name: 'session/interrupt', body: { sessionId },
     }), { ok: true, interrupted });
     assert.deepEqual(requests.map(({ path }) => path), [
-      '/capabilities?name=session%2Finterrupt', '/intent/session/interrupt',
+      '/intent/session/interrupt',
     ]);
     assert.deepEqual(requests.at(-1)?.body, { sessionId });
   });
@@ -746,7 +813,7 @@ test('semantic and generic mutations surface HTTP-200 ok:false as genuine errors
     ['setMode', 'cockpit_set_mode', { session_id: 'B', mode: 'plan' }],
     ['session/rewind', 'cockpit_rewind_session', { session_id: 'B', to_msg_id: 'm1', confirm: true }],
     ['session/purge', 'cockpit_purge_session', { session_id: 'B', confirm: true }],
-    ['session/delete', 'cockpit_delete_session', { session_id: 'B' }],
+    ['session/purge', 'cockpit_delete_session', { session_id: 'B', confirm: true }],
     ['respondAsk', 'cockpit_respond_ask', { session_id: 'B', request_id: 'q1', answer: 'yes' }],
     ['mcp/global-default', 'cockpit_set_global_mcp_default', { name: 'test-server', on: true }],
     ['skills/session-toggle', 'cockpit_set_session_skill', { session_id: 'B', name: 'review', enabled: true }],
@@ -791,7 +858,7 @@ test('discovery and generic invocation cover the entire current canonical intent
     requests.length = 0;
     const result = await call('cockpit_call_intent', { name, body: {} });
     assert.deepEqual(requests.map((request) => request.path), [
-      `/capabilities?name=${encodeURIComponent(name)}`, `/intent/${name}`,
+      `/intent/${name}`,
     ], name);
     assert.equal(result.isError, !schemas[name]!.safeParse({}).success, name);
   }
@@ -806,6 +873,6 @@ test('native usage discovery and generic read use the same typed backend without
   assert.equal(result.context, null);
   assert.equal(result.usage.lastCallInputTokens, 321);
   assert.deepEqual(requests.map(r => r.path), [
-    '/capabilities?name=session%2Fusage', '/capabilities?name=session%2Fusage', '/intent/session/usage',
+    '/capabilities?name=session%2Fusage', '/intent/session/usage',
   ]);
 });

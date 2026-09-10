@@ -35,7 +35,7 @@ const SubagentHistory = History.extend({
 export function registerTranscriptTools(server: McpServer): void {
   server.registerTool('cockpit_read_session', {
     title: 'Read a canonical session transcript',
-    description: 'Read session/peek over HTTP for live, unloaded or trashed sessions, without loading a runtime or local state. '
+    description: 'Read session/peek over HTTP for live or unloaded sessions, without loading a runtime or local state. '
       + 'Returns canonical folded messages, oldest-first within the newest page, including tools, images and subagents. '
       + 'Use nextBeforeMsgId as before_message_id to read older pages. operation:"history" instead reads '
       + 'session/history passively for a live session without loading it, returning HistoryPage including latest/append when present. '

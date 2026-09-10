@@ -17,7 +17,7 @@ const LABELS: Record<SessionMode, string> = { interactive: '交互', plan: '计�
 
 export function ModeMenu({ triggerRef, current, running, onPick, onClose }: {
   triggerRef: RefObject<HTMLElement | null>;
-  current: SessionMode;
+  current: SessionMode | null;
   running: boolean;
   onPick: (mode: SessionMode) => void;
   onClose: () => void;

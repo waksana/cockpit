@@ -490,7 +490,7 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
               <div className="chat-typing" aria-live="polite">
                 {session.intent || '回复中…'}
                 <button type="button" className="chat-typing-stop" onClick={() => onCancel?.()}>
-                  {session.queue.length > 0 ? '停止并清空队列' : '停止'}
+                  {(session.queue?.length ?? 0) > 0 ? '停止并清空队列' : '停止'}
                 </button>
               </div>
             )}
@@ -570,7 +570,7 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
         </div>
       )}
 
-      {!readOnly && session.queue.length > 0 && (
+      {!readOnly && (session.queue?.length ?? 0) > 0 && (
         <div className="chat-queue" aria-label="排队中的消息">
           {canInterrupt && (
             <div className="chat-queue-action">
@@ -589,7 +589,7 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
               <span id={`interrupt-help-${session.sessionId}`}>只打断主回合，保留队列；后台任务继续，可能延后处理。</span>
             </div>
           )}
-          {session.queue.map((q) => (
+          {session.queue?.map((q) => (
             <div key={q.id} className="chat-queue-item">
               <span className="chat-queue-text">{q.text}</span>
               <button type="button" className="chat-queue-remove" aria-label="移除" onClick={() => onRemoveQueued?.(q.id)}>×</button>

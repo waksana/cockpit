@@ -1,5 +1,4 @@
-// Lifecycle tools: create, soft-delete (trash), unload, and reload sessions.
-// (Rename, pin, restore, and purge already live in index.ts.)
+// Lifecycle tools: create, permanently delete, unload, and reload sessions.
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { CockpitError, protocolIntent as intent } from '../cockpit.js';
@@ -39,25 +38,26 @@ export function registerLifecycleTools(server: McpServer): void {
   server.registerTool(
     'cockpit_delete_session',
     {
-      title: 'Move a session to trash',
+      title: 'Permanently delete a session',
       description:
-        'Soft-delete a session: move it to the trash bin (reversible). It is hidden from the live ' +
-        'list but kept on disk and restorable with cockpit_restore_session. This is NOT the ' +
-        'permanent delete — that is cockpit_purge_session and requires explicit confirmation. ' +
-        'Use this to declutter; purge is a separate, gated step.',
+        'IRREVERSIBLE. Delete a session through the public native Copilot deleteSession API. ' +
+        'Only run when permanent deletion is intended, with explicit confirm:true. ' +
+        'Managed files, associations and workspaces are retained. Busy sessions are protected. ' +
+        'Never automatically retry an uncertain result.',
       inputSchema: {
-        session_id: z.string().min(1).describe('The session id to trash'),
-        reason: z.string().optional().describe('Optional reason recorded on the trash entry'),
+        session_id: z.string().min(1).describe('The session id to permanently delete'),
+        confirm: z.literal(true).describe('Explicit confirmation of irreversible native deletion; required'),
       },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ session_id, reason }): Promise<ToolResult> => {
+    async ({ session_id, confirm }): Promise<ToolResult> => {
       try {
-        await intent('session/delete', {
+        // Retain the already-destructive wire name across staggered deployments.
+        await intent('session/purge', {
           sessionId: session_id,
-          ...(reason ? { reason } : {}),
+          confirm,
         });
-        return ok(`Moved ${session_id} to trash (restorable with cockpit_restore_session).`);
+        return ok(`Deleted ${session_id} permanently. Managed files and workspaces are retained.`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }

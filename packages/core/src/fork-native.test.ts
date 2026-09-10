@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { SessionConfig } from '@github/copilot-sdk';
@@ -10,7 +10,8 @@ import type { SessionConfig } from '@github/copilot-sdk';
 test('native fork: isolated history boundaries and independent continuation', {
   skip: process.env.COCKPIT_NATIVE_FORK !== '1', timeout: 90_000,
 }, async t => {
-  const root = mkdtempSync(join(tmpdir(), 'cockpit-native-fork-'));
+  const root = resolve(`.cockpit-native-fork-${randomUUID()}`);
+  mkdirSync(root);
   const previousEnv = { ...process.env };
   const previousCwd = process.cwd();
   const home = join(root, 'home');
@@ -145,8 +146,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     assert.equal((await parent.rpc.queue.pendingItems()).items.length, 1);
     assert.equal((await child.rpc.skills.list()).skills.find(skill => skill.name === 'fixture-skill')!.enabled, true);
     assert.equal((await parent.rpc.skills.list()).skills.find(skill => skill.name === 'fixture-skill')!.enabled, false);
-    assert.equal((await parent.rpc.mcp.list()).host.disabledServers.includes('fixture'), true);
-    assert.equal((await child.rpc.mcp.list()).host.disabledServers.includes('fixture'), false);
+    assert.equal((await parent.rpc.mcp.list()).host!.disabledServers.includes('fixture'), true);
+    assert.equal((await child.rpc.mcp.list()).host!.disabledServers.includes('fixture'), false);
     assert.equal((await child.rpc.plan.read()).content, 'FORK_FIXTURE_OLD_PLAN: historical, do not execute');
     assert.deepEqual((await child.rpc.tasks.list()).tasks, []);
     assert.deepEqual((await child.rpc.plan.readSqlTodos()).rows, []);
@@ -195,7 +196,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       let stable = 0;
       const deadline = Date.now() + 10_000;
       while (stable < 2 && Date.now() < deadline) {
-        const meta = engine.getMeta(id)!;
+        const meta = (await engine.getMeta(id))!;
         stable = meta.status === 'idle' && !sessionMetaBusy(meta) && !meta.autoNaming ? stable + 1 : 0;
         await sleep(20);
       }
@@ -216,8 +217,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       assert.ok(second);
       const branchResult = await engine.forkSession(sourceId, second.id, 'Engine boundary');
       const fullResult = await engine.forkSession(sourceId);
-      assert.equal(engine.getMeta(fullResult.sessionId)!.loaded, false);
-      assert.equal(engine.getMeta(branchResult.sessionId)!.loaded, false);
+      assert.equal((await engine.getMeta(fullResult.sessionId))!.loaded, false);
+      assert.equal((await engine.getMeta(branchResult.sessionId))!.loaded, false);
       assert.equal((await engine.history(branchResult.sessionId)).messages.filter(message => message.role === 'user').length, 1);
       await engine.reload(fullResult.sessionId);
       await engine.rename(fullResult.sessionId, 'Engine fixture child');
@@ -229,8 +230,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       const rows = await runtime.listSessions();
       assert.ok(rows.some(row => row.sessionId === fullResult.sessionId));
       await engine.addSchedule(sourceId, { interval: '1h', prompt: 'FORK_FIXTURE_ENGINE_TIMER' });
-      await assert.rejects(engine.forkSession(sourceId), /timers/);
+      await idle(sourceId);
+      await assert.rejects(engine.forkSession(sourceId), /timers|schedule/);
       for (const entry of await engine.listSchedules(sourceId)) await engine.stopSchedule(sourceId, entry.id);
+      await idle(sourceId);
       await assert.rejects(engine.forkSession(sourceId), /schedule/);
       await engine.unload(sourceId);
       await assert.rejects(engine.forkSession(sourceId), /unloaded/);
@@ -240,7 +243,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       throw error;
     } finally {
       try {
-        for (const row of engine.listLive()) {
+        for (const row of (await engine.listLive())) {
           if (row.loaded) { await engine.cancel(row.sessionId); await idle(row.sessionId); }
         }
         await engine.stop();

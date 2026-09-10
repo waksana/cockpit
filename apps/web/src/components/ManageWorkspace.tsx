@@ -8,22 +8,14 @@ import { useKeyedAction, useKeyedResource } from '../lib/useKeyedResource';
 import { Shell, MasterPane, DetailPane } from './Shell';
 import { Icon } from './Icon';
 import { MessageBody } from './MessageBody';
-import { Thread } from './Thread';
 import { ResourceStatus } from './SessionPanelKit';
 import { Toggle } from './Manage';
 
-export type ManageSection = 'mcp' | 'skills' | 'trash';
+export type ManageSection = 'mcp' | 'skills';
 
-const SECTION_TITLE: Record<ManageSection, string> = { mcp: '全局 MCP', skills: '全局 Skills', trash: '垃圾桶' };
+const SECTION_TITLE: Record<ManageSection, string> = { mcp: '全局 MCP', skills: '全局 Skills' };
 type ListProps = { selected: string | null; onSelect: (name: string) => void; revision: number };
 type McpCatalog = ReturnType<typeof useKeyedResource<McpServerGlobal[]>>;
-
-function whenLabel(iso: string): string {
-  const date = new Date(iso);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('zh-CN', {
-    month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
-}
 
 function NavRow({ name, sub, badge, active, onClick }: {
   name: string; sub?: string; badge?: ReactNode; active: boolean; onClick: () => void;
@@ -78,8 +70,8 @@ function McpDefault({ name, on, onChanged, disabled }: { name: string; on: boole
         }); }}>
         <span className="switch-knob" />
       </button>{' '}新会话默认开启
-      {!disabled && <p className="trash-note">不改变已加载会话的连接。</p>}
-      {error && <div className="trash-note" role="alert">设置失败：{error}</div>}
+      {!disabled && <p className="manage-note">不改变已加载会话的连接。</p>}
+      {error && <div className="manage-note" role="alert">设置失败：{error}</div>}
     </div>
   );
 }
@@ -127,8 +119,8 @@ function SkillGlobalToggle({ name, enabled, disabled, onChanged }: {
           try { await skillsSetGlobal(name, next); }
           finally { onChanged(); }
         }); }} />{' '}全局默认启用
-      {!disabled && <p className="trash-note">用于新建或卸载后重新加载的会话，不改变当前已加载会话。</p>}
-      {action.error && <div className="trash-note" role="alert">设置失败：{action.error}</div>}
+      {!disabled && <p className="manage-note">用于新建或卸载后重新加载的会话，不改变当前已加载会话。</p>}
+      {action.error && <div className="manage-note" role="alert">设置失败：{action.error}</div>}
     </div>
   );
 }
@@ -152,55 +144,6 @@ function SkillDetail({ name, revision, onChanged }: { name: string; revision: nu
       {data.body ? <div className="manage-detail-body"><MessageBody body={data.body} /></div>
         : <div className="manage-empty">没有 SKILL.md 内容</div>}
     </div>
-  );
-}
-
-function TrashList({ selected, onSelect, revision }: ListProps) {
-  const trashList = useCockpit((s) => s.trashList);
-  const { data: rows, status, failed } = useKeyedResource('global:trash', trashList, revision);
-  return (
-    <>
-      <ListBody status={status} failed={failed} empty="垃圾桶是空的">
-        {rows?.map((entry) => (
-          <NavRow key={entry.sessionId} name={entry.title}
-            sub={`${whenLabel(entry.at)}${entry.reason ? ` · ${entry.reason}` : ''}${entry.cwd ? ` · ${entry.cwd}` : ''}`}
-            active={selected === entry.sessionId} onClick={() => onSelect(entry.sessionId)} />
-        ))}
-      </ListBody>
-    </>
-  );
-}
-
-function SessionPreview({ sessionId }: { sessionId: string }) {
-  const openPreview = useCockpit((s) => s.openPreview);
-  const closePreview = useCockpit((s) => s.closePreview);
-  const retryPreview = useCockpit((s) => s.retryPreview);
-  const connected = useCockpit((s) => s.connState === 'open');
-  const preview = useCockpit((s) => s.preview?.sessionId === sessionId ? s.preview : null);
-  useLayoutEffect(() => {
-    openPreview(sessionId);
-    return () => {
-      if (useCockpit.getState().preview?.sessionId === sessionId) closePreview();
-    };
-  }, [sessionId, openPreview, closePreview]);
-  const loadMore = useCallback(() => {
-    const state = useCockpit.getState();
-    if (state.preview?.sessionId === sessionId) state.loadMorePreview();
-  }, [sessionId]);
-  return (
-    <>
-      {!connected && <ResourceStatus status="等待连接" failed={false} />}
-      {preview?.error && <div className="trash-note">
-        <div role="alert">{preview.error}</div>
-        <button type="button" className="dialog-btn" disabled={!connected || preview.loadingHistory}
-          onClick={() => retryPreview(preview)}>
-          {preview.materialized && !preview.historyStale ? '重试加载更早消息' : '重试加载预览'}
-        </button>
-      </div>}
-      {preview && <Thread key={preview.sessionId}
-        session={connected && !preview.error && !preview.historyStale ? preview : { ...preview, error: null, hasMore: false }}
-        readOnly onLoadMore={loadMore} />}
-    </>
   );
 }
 
@@ -231,22 +174,14 @@ function MasterHeader({ section, item, onRefresh }: {
           <Icon name="reload" size={20} />
         </button>
       </header>
-      {error && <div className="trash-note" role="alert">刷新失败：{error}</div>}
+      {error && <div className="manage-note" role="alert">刷新失败：{error}</div>}
     </>
   );
 }
 
-function DetailHeader({ section, item, onChanged }: {
-  section: ManageSection; item: string; onChanged: () => void;
-}) {
-  const navigate = useNavigate();
+function DetailHeader({ item }: { item: string }) {
   const up = useUp();
   const titleRef = useRef<HTMLSpanElement | null>(null);
-  const connState = useCockpit((s) => s.connState);
-  const previewTitle = useCockpit((s) => s.preview?.sessionId === item ? s.preview.title : undefined);
-  const restoreSession = useCockpit((s) => s.restoreSession);
-  const { run, busy, error } = useKeyedAction(`global:${section}:${item}`);
-  const title = section === 'trash' ? previewTitle ?? item : item;
   useLayoutEffect(() => { titleRef.current?.focus(); }, [item]);
   return (
     <>
@@ -254,29 +189,18 @@ function DetailHeader({ section, item, onChanged }: {
         <button className="chat-back btn-icon rp lg:hidden" type="button" aria-label="返回" onClick={() => up()}>
           <Icon name="back" size={24} />
         </button>
-        <span ref={titleRef} tabIndex={-1} className="manage-title manage-detail-headtitle">{title}</span>
-        {section === 'trash' && (
-          <button type="button" className="trash-restore rp" disabled={connState !== 'open' || busy}
-            aria-busy={busy} onClick={() => { void run(() => restoreSession(item), () => {
-              onChanged();
-              void navigate(`/session/${encodeURIComponent(item)}`, { replace: true });
-            }); }}>
-            恢复
-          </button>
-        )}
+        <span ref={titleRef} tabIndex={-1} className="manage-title manage-detail-headtitle">{item}</span>
       </header>
-      {busy && <div className="trash-note" role="status">恢复中…</div>}
-      {error && <div className="trash-note" role="alert">恢复失败：{error}</div>}
     </>
   );
 }
 
-// Routes: /mcp, /skills, /trash and each section's optional /:item detail.
+// Routes: /mcp, /skills and each section's optional /:item detail.
 export function ManageWorkspace({ section: selectedSection }: { section?: ManageSection }) {
   const { pathname } = useLocation();
   const { item = null } = useParams();
   const segment = pathname.split('/')[1];
-  const section: ManageSection = selectedSection ?? (segment === 'skills' || segment === 'trash' ? segment : 'mcp');
+  const section: ManageSection = selectedSection ?? (segment === 'skills' ? segment : 'mcp');
   return <ManagementContent key={section} section={section} item={item} />;
 }
 
@@ -287,31 +211,25 @@ function ManagementContent({ section, item }: {
   const [refreshNonce, setRefreshNonce] = useState(0);
   const mcpGlobal = useCockpit((s) => s.mcpGlobal);
   const mcpCatalog = useKeyedResource('global:mcp', mcpGlobal, refreshNonce, section === 'mcp');
-  const refreshPreview = useCockpit((s) => s.refreshPreview);
   const refresh = () => setRefreshNonce((n) => n + 1);
   const select = (name: string) => { void navigate(`/${section}/${encodeURIComponent(name)}`, { replace: item !== null }); };
   const masterHeader = (
-    <MasterHeader section={section} item={item} onRefresh={() => {
-      refresh();
-      if (section === 'trash' && item !== null) refreshPreview(item);
-    }} />
+    <MasterHeader section={section} item={item} onRefresh={refresh} />
   );
   const detailHeader = item !== null ? (
-    <DetailHeader section={section} item={item} onChanged={refresh} />
+    <DetailHeader item={item} />
   ) : undefined;
   return (
     <Shell ariaLabel="管理">
       <MasterPane ariaLabel={SECTION_TITLE[section]} mobileVisible={item === null} header={masterHeader}>
         {section === 'mcp' ? <McpList catalog={mcpCatalog} selected={item} onSelect={select} />
-          : section === 'skills' ? <SkillsList revision={refreshNonce} selected={item} onSelect={select} />
-            : <TrashList revision={refreshNonce} selected={item} onSelect={select} />}
+          : <SkillsList revision={refreshNonce} selected={item} onSelect={select} />}
       </MasterPane>
       <DetailPane ariaLabel="详情" mobileVisible={item !== null} header={detailHeader}>
         {item === null ? (
           <div className="detail-empty manage-selection-hint"><p>选择左侧的一项查看详情。</p></div>
         ) : section === 'mcp' ? <McpDetail catalog={mcpCatalog} name={item} onChanged={refresh} />
-          : section === 'skills' ? <SkillDetail revision={refreshNonce} name={item} onChanged={refresh} />
-            : <SessionPreview sessionId={item} />}
+          : <SkillDetail revision={refreshNonce} name={item} onChanged={refresh} />}
       </DetailPane>
     </Shell>
   );
