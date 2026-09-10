@@ -29,6 +29,7 @@ export class NativeWindow {
   catchingUp = true;
   partial = false;
   unresolved = false;
+  boundaryPending = false;
 
   private readonly agentIds?: readonly string[];
   constructor(agentIds?: readonly string[]) { this.agentIds = agentIds; }
@@ -75,16 +76,11 @@ export class NativeWindow {
       this.blocked.delete(final);
       if (!this.blocked.size) this.partial = false;
     }
-    const toolId = event.data.toolCallId;
-    const missingOwner = typeof toolId === 'string' && !event.agentId && !event.parentToolCallId
-      && !event.data.parentToolCallId && !event.data.agentId
-      && (event.type.startsWith('tool.') ? !this.state.toolMsg.has(toolId)
-        : event.type === 'subagent.started' && !this.state.pendingTask.has(toolId));
     const result = foldEvent(this.state, event, {
       ...event.display, toolArgs: event.display?.toolArgs ? new Map(event.display.toolArgs) : undefined,
       scope: { details: 'summary' }, strictOwnership: true,
     });
-    if (missingOwner) {
+    if (result.missingOwner) {
       this.unresolved = true;
     }
     return result.changed;
@@ -179,7 +175,7 @@ export class NativeWindow {
     return {
       messages: this.view, materialized: this.materialized, historyStale: this.invalid,
       hasMore: this.hasMore, loadingHistory: false, partialHistory: this.partial,
-      incompleteBoundary: this.unresolved,
+      incompleteBoundary: this.unresolved || this.boundaryPending,
     };
   }
 

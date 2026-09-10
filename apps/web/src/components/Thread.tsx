@@ -179,6 +179,9 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
       {snapshot.data?.hasMore && <button type="button" disabled={!connected || pending} onClick={() => { void resource.loadOlder(); }}>
         加载更早的消息
       </button>}
+      {snapshot.data?.incompleteBoundary && !pending && <div className="subagent-empty">{snapshot.data.hasMore
+        ? '本次尚未读到完整消息边界，可继续加载更早的消息。'
+        : '部分工具记录缺少对应的发起消息，现有历史无法补齐。'}</div>}
       {sub.map((sm) => (
         <article key={sm.id} className="message is-doc subagent-msg">
           <MessageInner m={sm} sessionId={sessionId} />
@@ -397,12 +400,12 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
     const el = scrollRef.current;
     if (fill.done || !el || !session.materialized || session.loadingHistory || session.historyStale || session.error || prependHeld) return;
     // Stop near two screens without adding another full native page for a small shortfall.
-    if (!session.hasMore || el.scrollHeight >= el.clientHeight * 1.5) { fill.done = true; return; }
+    if (!session.hasMore || session.incompleteBoundary || el.scrollHeight >= el.clientHeight * 1.5) { fill.done = true; return; }
     if (el.clientHeight > 0 && fill.pages < 8) {
       fill.pages++;
       onLoadMore();
     }
-  }, [session.sessionId, session.materialized, session.loadingHistory, session.historyStale, session.error, session.hasMore, messages, onLoadMore, prependHeld]);
+  }, [session.sessionId, session.materialized, session.loadingHistory, session.historyStale, session.error, session.hasMore, session.incompleteBoundary, messages, onLoadMore, prependHeld]);
 
   // The scroll owner continuously remembers the visible message, not a
   // request-time scrollHeight that can include unrelated loader/media growth.
@@ -488,7 +491,9 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
         </div>}
         {session.hasMore && !session.historyStale && <button type="button" className="dialog-btn rp"
           disabled={session.loadingHistory || prependHeld} onClick={onLoadMore}>加载更早的历史</button>}
-        {session.incompleteBoundary && <p className="chat-empty-hint">部分工具或子代理的归属在更早历史中，可继续向上加载。</p>}
+        {session.incompleteBoundary && !session.loadingHistory && <p className="chat-empty-hint">{session.hasMore
+          ? '本次尚未读到完整消息边界，可点击加载更早的历史继续补齐。'
+          : '部分工具记录缺少对应的发起消息，现有历史无法补齐。'}</p>}
         <div ref={scrollRef} className="chat-messages" tabIndex={0}>
           <div ref={contentRef} className="chat-message-content">
             {session.messages.length === 0 && session.materialized && !session.historyStale && !session.loadingHistory && !session.hasMore && (

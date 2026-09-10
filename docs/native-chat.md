@@ -71,10 +71,19 @@ Initial loading targets roughly two viewport heights, not 30 messages.
 Upward scrolling requests more native pages and preserves already loaded rows.
 Browser backward reads use small 8-event pages and stop initial filling after
 at least 1.5 screen heights, targeting roughly two screens without another full
-page for a small shortfall. Forward streaming drains up to 64 events per request.
-An event-dense page may contain few visible rows; bounded work and an explicit
-continue action take precedence over silently scanning the whole conversation.
-An incomplete parent/tool boundary is not permission to invent ownership.
+page for a small shortfall. One history action continues across native pages
+until it adds a display message and resolves the loaded tool/agent records to
+their owning messages. It does not wait for running tools to finish. Main chat
+and child details share this boundary rule; metadata-only pages are not treated
+as a finished message load. The initial live tail is captured only once.
+
+Each action is limited to 32 small native pages (at most 256 events). A missing
+or very distant boundary stops with an explicit continue hint rather than
+silently scanning the whole conversation; initial viewport filling does not
+automatically retry that limit. Reaching the beginning without an owner is
+reported as missing source history, not a promise that another page exists.
+Forward streaming still drains up to 64 events per request and is not delayed
+for a complete display message.
 
 Only the selected visible view reads live chat. Disconnecting or changing views cancels
 its request and stops subsequent reads. The public native long-poll RPC has no

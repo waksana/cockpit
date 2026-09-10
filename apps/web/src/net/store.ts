@@ -12,6 +12,7 @@ import type {
 import type { IntentBody, IntentResult, NativeChatRead } from '@cockpit/protocol';
 import { invalidateWindow, metaToSession } from './sessionWindow';
 import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
+import { readMessageHistory } from './messageHistory';
 import { notify } from '../lib/notify';
 import { clearOsNotifications } from '../lib/push';
 import { setBadge } from '../lib/badge';
@@ -421,9 +422,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     patchLocal(sid, (s) => ({ ...s, loadingHistory: true }));
     const current = () => historyRequest === request && get().activeId === sid
       && request.generation === get().connectionGeneration && windows.get(sid) === window;
-    void read(net => net.chat(query, request.controller.signal)).then(page => {
+    void readMessageHistory(window, query, (next, signal) => read(net => net.chat(next, signal)),
+      request.controller.signal, current).then(() => {
       if (!current()) return;
-      window.accept(page, query);
       patchLocal(sid, (s) => ({
         ...s, ...window.snapshot(),
         error: s.error === historyRecoveryErrors.get(sid) || (s.error && s.error !== errorAtStart) ? s.error : null,

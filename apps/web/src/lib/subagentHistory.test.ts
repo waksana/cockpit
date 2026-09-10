@@ -37,6 +37,32 @@ test('closed child detail never reads; opening selects exact native agent IDs wi
   assert.equal('subagent' in h.resource.getSnapshot().data!, false, 'no invented current task status');
 });
 
+test('child details keep the loader until a tool result and its owning message are assembled', async () => {
+  const h = setup();
+  h.resource.activate();
+  const pending = h.resource.refresh();
+  h.calls[0].resolve({
+    sessionId: 'session', source: 'live', direction: 'backward',
+    events: [{ id: 'tool-result', type: 'tool.execution_complete', agentId: 'agent', timestamp: 1,
+      data: { toolCallId: 'tool', success: true, result: { content: 'finished' } } }],
+    cursor: 'older-result', cursorStatus: 'ok', hasMore: true, read: { rpc: 1, events: 1 },
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.resource.getSnapshot().pending, true);
+  assert.equal(h.resource.getSnapshot().data, undefined);
+  assert.equal(h.calls[1].query.cursor, 'older-result');
+  assert.deepEqual(h.calls[1].query.agentIds, ['agent', 'spawn']);
+  h.calls[1].resolve({
+    sessionId: 'session', source: 'live', direction: 'backward',
+    events: [{ id: 'owner-event', type: 'assistant.message', agentId: 'agent', timestamp: 1,
+      data: { messageId: 'owner', content: 'Running', toolRequests: [{ toolCallId: 'tool', name: 'bash' }] } }],
+    cursor: 'older-owner', cursorStatus: 'ok', hasMore: true, read: { rpc: 1, events: 1 },
+  });
+  assert.equal(await pending, true);
+  assert.equal(h.resource.getSnapshot().data?.incompleteBoundary, false);
+  assert.equal(h.resource.getSnapshot().data?.messages[0].toolCalls?.[0].output, 'finished');
+});
+
 test('older child pages prepend and only explicit refresh replaces the detail window', async () => {
   const h = setup();
   h.resource.activate();

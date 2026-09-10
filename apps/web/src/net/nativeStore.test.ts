@@ -117,6 +117,43 @@ test('native chat starts only after selection, open and snapshot, with one bound
   assert.equal('renameSession' in h.store.getState(), false);
 });
 
+test('initial history keeps loading until its tool owner is present, then follows the original live tail', async t => {
+  const h = setup(t);
+  h.source.open(); h.snapshot(); h.store.getState().setActiveId('a');
+  const result: NativeChatEvent = {
+    id: 'tool-result', type: 'tool.execution_complete', timestamp: 1,
+    data: { toolCallId: 'tool', success: true, result: { content: 'result' } },
+  };
+  await h.reply(0, [result, message('B')], { hasMore: true });
+  assert.equal(h.state().loadingHistory, true);
+  assert.deepEqual(h.ids(), []);
+  assert.equal(h.requests[1].body.direction, 'backward');
+  assert.equal(h.requests[1].body.cursor, 'cursor-0');
+  assert.equal(h.requests[1].body.bootstrap, false);
+  await h.reply(1, [{ ...message('A'), data: {
+    messageId: 'A', content: 'Run tool', toolRequests: [{ toolCallId: 'tool', name: 'bash' }],
+  } }], { hasMore: true });
+  assert.equal(h.state().loadingHistory, false);
+  assert.equal(h.state().incompleteBoundary, false);
+  assert.deepEqual(h.ids(), ['A', 'B']);
+  assert.equal(h.state().messages[0].toolCalls?.[0].output, 'result');
+  assert.equal(h.requests[2].body.direction, 'forward');
+  assert.equal(h.requests[2].body.cursor, 'tail-before-page');
+});
+
+test('switching sessions during boundary completion aborts the remaining history work', async t => {
+  const h = setup(t);
+  h.source.open(); h.snapshot(); h.store.getState().setActiveId('a');
+  await h.reply(0, [{ id: 'result', type: 'tool.execution_complete', data: { toolCallId: 'tool' }, timestamp: 1 }],
+    { hasMore: true });
+  h.store.getState().setActiveId('b');
+  assert.equal(h.requests[1].signal?.aborted, true);
+  await h.reply(1, [message('obsolete')], { hasMore: true });
+  await h.reply(2, [message('current')]);
+  assert.deepEqual(h.ids('b'), ['current']);
+  assert.equal(h.requests.filter(request => request.body.sessionId === 'a').length, 2);
+});
+
 test('older history and the latest native update interleave without dropping rows or clearing the older loader', async t => {
   const h = setup(t);
   await h.start();

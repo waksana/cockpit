@@ -50,6 +50,7 @@ export function newFoldState(): FoldState {
 export interface FoldResult {
   changed: string[]; // message ids upserted
   metaChanged: boolean;
+  missingOwner?: boolean;
 }
 
 export interface FoldProjection {
@@ -401,10 +402,10 @@ export function foldEvent(state: FoldState, ev: SdkEvent, projection?: FoldProje
   if (projection?.strictOwnership && typeof ev.data.toolCallId === 'string') {
     const id = ev.data.toolCallId;
     if (ev.type === 'subagent.started' && !findRoute(state, s => s.pendingTask.has(id) || s.subCard.has(id))) {
-      return { changed: [], metaChanged: false };
+      return { changed: [], metaChanged: false, missingOwner: true };
     }
     if (ev.type.startsWith('tool.') && !findRoute(state, s => s.toolMsg.has(id))) {
-      return { changed: [], metaChanged: false };
+      return { changed: [], metaChanged: false, missingOwner: true };
     }
   }
   const route = routeEvent(state, ev);
