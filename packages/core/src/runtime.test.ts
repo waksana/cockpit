@@ -101,6 +101,39 @@ test('explicit stdio and official approveAll are enforced at both create and res
   assert.ok(f.trace.indexOf(`close:${a.sessionId}`) < f.trace.indexOf(`detach:${a.sessionId}`));
 });
 
+test('request-local catalog enrichment preserves membership and explicit capability restrictions', () => {
+  const rich = [{ modelId: 'reasoner', name: 'Global', supportedReasoningEfforts: ['low', 'high'],
+    defaultReasoningEffort: 'high', supportsLongContext: true }];
+  assert.deepEqual(sessionModelOptions([{ id: 'reasoner', name: 'Session' }], rich), [{ ...rich[0], name: 'Session' }]);
+  assert.deepEqual(sessionModelOptions([], rich), []);
+  assert.deepEqual(sessionModelOptions([{ id: 'reasoner', supportedReasoningEfforts: [],
+    defaultReasoningEffort: '', supportsLongContext: false }], rich), [{
+    modelId: 'reasoner', name: 'reasoner', supportedReasoningEfforts: [],
+    defaultReasoningEffort: '', supportsLongContext: false,
+  }]);
+  assert.deepEqual(sessionModelOptions([{ id: 'reasoner', capabilities: { supports: { reasoningEffort: false } },
+    billing: { token_prices: {} } }], rich)[0]?.supportedReasoningEfforts, []);
+  assert.equal(sessionModelOptions([{ id: 'reasoner', billing: { token_prices: {} } }], rich)[0]?.supportsLongContext, false);
+  const other = sessionModelOptions([{ id: 'local/reasoner' }], rich)[0]!;
+  assert.equal(other.supportedReasoningEfforts, undefined);
+  assert.equal(other.supportsLongContext, undefined);
+  for (const value of [null, [1], 'high']) {
+    assert.throws(() => sessionModelOptions([{ id: 'reasoner', supportedReasoningEfforts: value }], rich), /reasoning metadata/);
+  }
+});
+
+test('global model reads use the public uncached RPC on every request', async () => {
+  const f = fixture();
+  await f.runtime.start();
+  let calls = 0;
+  Object.assign(f.clients[0]!.rpc, { models: { list: async () => ({
+    models: [{ id: `model-${++calls}`, name: 'Fresh' }],
+  }) } });
+  assert.equal((await f.runtime.models())[0]?.modelId, 'model-1');
+  assert.equal((await f.runtime.models())[0]?.modelId, 'model-2');
+  await f.runtime.stop();
+});
+
 test('native close failure retains ownership; retry does not detach prematurely', async () => {
   const f = fixture();
   const session = await f.runtime.createSession({});

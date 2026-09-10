@@ -81,6 +81,17 @@ Web GUI <------------- /chat/stream event pages --------+          |
 
 ### Native metadata is request-owned
 
+Model capability projection uses the session's model list as the selectable
+membership. Missing capability fields may be enriched from the same model ID in
+a fresh public global catalog request; explicit empty effort lists, false context
+support and empty defaults are never overwritten. No catalog or selected-state
+copy is retained. Unknown current effort/tier remains unknown, not an inferred
+default. Same-model option edits preserve the other option from a native
+request-local read, because native `switchTo` clears omitted options. Immediate
+changes require authoritative readback; deferred changes remain pending native
+work rather than an optimistic selected value. Long context does not disable
+native compaction.
+
 The backend does not retain native session metadata, model inventories, mode,
 queue/task/todo/schedule projections or MCP connection-state snapshots, including
 short-lived caches and last-successful-value fallbacks. Snapshot, list, session

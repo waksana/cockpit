@@ -103,6 +103,7 @@ interface State {
   scheduleGate: Promise<void>;
   resourceWrites: Map<SessionResource, number>;
   pendingInvalidations: Set<SessionResource>;
+  modelGate: Promise<void>;
   replyNotification?: string;
   pendingReply?: { eventId: string; body: string };
   namingReply?: boolean;
@@ -150,6 +151,7 @@ function stateFor(id: string): State {
     revision: 0, turnEpoch: 0, syncAgain: false,
     scheduleGate: Promise.resolve(),
     resourceWrites: new Map(), pendingInvalidations: new Set(),
+    modelGate: Promise.resolve(),
   };
 }
 
@@ -348,6 +350,11 @@ export class Engine {
         wants.has('queue') && !wants.has('control') ? sdk.rpc.queue.pendingItems() : Promise.resolve(undefined),
         wants.has('identity') ? listedRow ? Promise.resolve(listedRow) : this.runtime.getSessionMetadata(id) : Promise.resolve(undefined),
       ] as const));
+      const nativeModels = models ? sessionModelOptions(models.list) : undefined;
+      const needsCatalog = nativeModels?.some(option => option.supportedReasoningEfforts === undefined
+        || option.defaultReasoningEffort === undefined || option.supportsLongContext === undefined);
+      const availableModels = models && needsCatalog
+        ? sessionModelOptions(models.list, await this.withSession(st, sdk, () => this.runtime.models())) : nativeModels;
       return {
         sessionId: id, loaded: true,
         ...(metadata ? {
@@ -366,7 +373,7 @@ export class Engine {
         ...(model ? { currentModelId: model.modelId, currentReasoningEffort: model.reasoningEffort ?? null,
           currentContextTier: model.contextTier ?? null } : {}),
         ...(wants.has('mode') ? { currentMode: metadata?.currentMode ?? mode } : {}),
-        ...(models ? { availableModels: sessionModelOptions(models.list) } : {}),
+        ...(models ? { availableModels } : {}),
         ...(wants.has('queue') ? { queue: (control?.queue ?? queue)!.items.map(item => ({ id: item.id, text: item.displayText })) } : {}),
         ...(todos ? { todo: this.todoSummary(todos) } : {}),
         ...(schedules ? { scheduleCount: schedules.entries.length } : {}),
@@ -1299,16 +1306,41 @@ export class Engine {
   }
 
   async setModel(id: string, modelId: string, reasoningEffort?: string, contextTier?: 'default' | 'long_context'): Promise<void> {
-    await this.operation(id, async (sdk, st) => {
-      const result = await this.withSession(st, sdk, () => sdk.rpc.model.switchTo({ modelId, reasoningEffort, contextTier }));
-      await this.readResource(st, sdk, 'model');
+    await this.operation(id, (sdk, st) => this.serializeMutation(st, 'modelGate', async () => {
+      const before = await this.readResource(st, sdk, 'model');
+      // Native switchTo clears omitted effort/tier options even for the same
+      // model. A single-control edit must preserve the other authoritative value.
+      const options = {
+        modelId,
+        reasoningEffort: reasoningEffort ?? (before.modelId === modelId ? before.reasoningEffort : undefined),
+        contextTier: contextTier ?? (before.modelId === modelId ? before.contextTier : undefined),
+      };
+      if (reasoningEffort !== undefined || contextTier === 'long_context') {
+        const [models, catalog] = await this.withSession(st, sdk, () => settled([
+          sdk.rpc.model.list(), this.runtime.models(),
+        ] as const));
+        const option = sessionModelOptions(models.list, catalog).find(model => model.modelId === modelId);
+        if (reasoningEffort !== undefined && !option?.supportedReasoningEfforts?.includes(reasoningEffort)) {
+          throw new Error(`Native model ${modelId} does not list reasoning effort ${reasoningEffort}`);
+        }
+        if (contextTier === 'long_context' && option?.supportsLongContext !== true) {
+          throw new Error(`Native model ${modelId} does not list long-context support`);
+        }
+      }
+      const result = await this.withSession(st, sdk, () => sdk.rpc.model.switchTo(options));
+      const current = await this.readResource(st, sdk, 'model');
       await this.readResource(st, sdk, 'models');
       if (result.persistenceError || result.confirmation
         || (result.status !== undefined && !['applied', 'unchanged', 'deferred', 'queued'].includes(result.status))) {
         throw new Error(`Native model change ${result.status ?? 'not applied'}: ${result.persistenceError ?? result.message ?? 'confirmation or additional host action required'}`);
       }
+      if (!result.deferred && !['deferred', 'queued'].includes(result.status ?? '')
+        && ((options.reasoningEffort !== undefined && current.reasoningEffort !== options.reasoningEffort)
+          || (options.contextTier !== undefined && current.contextTier !== options.contextTier))) {
+        throw new Error('Native model settings were not confirmed by authoritative readback');
+      }
       if (result.deferred) this.scheduleSync(st);
-    }, ['model', 'models', 'usage', 'control', 'queue']);
+    }), ['model', 'models', 'usage', 'control', 'queue']);
   }
   async setMode(id: string, mode: 'interactive' | 'plan' | 'autopilot'): Promise<void> {
     await this.operation(id, async (sdk, st) => {
@@ -1673,7 +1705,7 @@ export class Engine {
     }
     if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 86400) throw new Error('Schedule delay must be between 1 second and 24 hours');
     const recurring = options.at === undefined && (options.recurring ?? true);
-    return this.operation(id, (sdk, st) => this.scheduleMutation(st, async () => {
+    return this.operation(id, (sdk, st) => this.serializeMutation(st, 'scheduleGate', async () => {
       if (options.at !== undefined) {
         seconds = Math.ceil((options.at - Date.now()) / 1000);
         if (seconds < 1) throw new Error('Absolute schedule time passed while waiting for the runtime');
@@ -1689,9 +1721,9 @@ export class Engine {
       return { entry };
     }), ['schedule']);
   }
-  private scheduleMutation<T>(st: State, work: () => Promise<T>): Promise<T> {
-    const next = st.scheduleGate.then(work);
-    st.scheduleGate = next.then(() => {}, () => {});
+  private serializeMutation<T>(st: State, gate: 'scheduleGate' | 'modelGate', work: () => Promise<T>): Promise<T> {
+    const next = st[gate].then(work);
+    st[gate] = next.then(() => {}, () => {});
     return next;
   }
   private scheduleEntry(raw: Awaited<ReturnType<CopilotSession['rpc']['schedule']['list']>>['entries'][number]): ScheduleEntry {
@@ -1707,7 +1739,7 @@ export class Engine {
     }, 'read');
   }
   async stopSchedule(id: string, scheduleId: number): Promise<boolean> {
-    return this.operation(id, (sdk, st) => this.scheduleMutation(st, async () => {
+    return this.operation(id, (sdk, st) => this.serializeMutation(st, 'scheduleGate', async () => {
       const result = await this.withSession(st, sdk, () => sdk.rpc.schedule.stop({ id: scheduleId }));
       return !!result.entry;
     }), ['schedule']);

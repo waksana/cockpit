@@ -22,15 +22,10 @@ export interface RuntimeOptions {
 }
 
 export function modelOption(model: ModelInfo): ModelOption {
-  return {
-    modelId: model.id, name: model.name,
-    supportedReasoningEfforts: model.supportedReasoningEfforts,
-    defaultReasoningEffort: model.defaultReasoningEffort,
-    supportsLongContext: model.billing?.tokenPrices?.longContext !== undefined,
-  };
+  return sessionModelOptions([model])[0]!;
 }
 
-export function sessionModelOptions(values: readonly unknown[]): ModelOption[] {
+export function sessionModelOptions(values: readonly unknown[], catalog: readonly ModelOption[] = []): ModelOption[] {
   const record = (value: unknown): Record<string, unknown> =>
     value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
   return values.flatMap(value => {
@@ -38,16 +33,25 @@ export function sessionModelOptions(values: readonly unknown[]): ModelOption[] {
     if (typeof model.id !== 'string' || !model.id) throw new Error('Native session model inventory contains an invalid model ID');
     if (model.model_picker_enabled === false || record(model.policy).state === 'disabled') return [];
     const billing = record(model.billing);
-    const prices = record(billing.tokenPrices ?? billing.token_prices);
-    const efforts = model.supportedReasoningEfforts;
+    const pricesValue = billing.tokenPrices ?? billing.token_prices;
+    const prices = record(pricesValue);
+    const supports = record(record(model.capabilities).supports);
+    const efforts = model.supportedReasoningEfforts !== undefined
+      ? model.supportedReasoningEfforts : (supports.reasoningEffort === false ? [] : undefined);
     if (efforts !== undefined && (!Array.isArray(efforts) || !efforts.every(effort => typeof effort === 'string'))) {
       throw new Error(`Invalid reasoning metadata for native model ${model.id}`);
     }
+    const fallback = catalog.find(entry => entry.modelId === model.id);
+    const long = model.supportsLongContext;
+    if (long !== undefined && typeof long !== 'boolean') throw new Error(`Invalid context metadata for native model ${model.id}`);
+    const defaultEffort = model.defaultReasoningEffort;
+    if (defaultEffort !== undefined && typeof defaultEffort !== 'string') throw new Error(`Invalid default reasoning metadata for native model ${model.id}`);
     return [{
       modelId: model.id, name: typeof model.name === 'string' ? model.name : model.id,
-      supportedReasoningEfforts: efforts,
-      defaultReasoningEffort: typeof model.defaultReasoningEffort === 'string' ? model.defaultReasoningEffort : undefined,
-      supportsLongContext: prices.longContext != null || prices.long_context != null,
+      supportedReasoningEfforts: efforts ?? fallback?.supportedReasoningEfforts,
+      defaultReasoningEffort: defaultEffort ?? fallback?.defaultReasoningEffort,
+      supportsLongContext: long ?? (pricesValue !== undefined
+        ? prices.longContext != null || prices.long_context != null : fallback?.supportsLongContext),
     }];
   });
 }
@@ -162,8 +166,12 @@ export class OfficialRuntime {
 
   async models(): Promise<ModelOption[]> {
     await this.start();
-    return (await this.client!.listModels())
-      .filter(model => model.policy?.state !== 'disabled').map(modelOption);
+    // The SDK convenience listModels() caches its first result. Use the public
+    // request instead; catalog enrichment must not become a native-state copy.
+    const models = this.config.clientOptions?.onListModels
+      ? await this.config.clientOptions.onListModels()
+      : (await this.rpc.models.list({})).models;
+    return sessionModelOptions(models);
   }
 
   async listSessions() {

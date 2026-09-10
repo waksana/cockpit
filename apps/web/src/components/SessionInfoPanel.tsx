@@ -56,8 +56,8 @@ function ModelControls({ session, onSetModel, disabled }: {
           <label className="info-control">
             <span className="info-control-label">思考力度</span>
             <select className="info-select" disabled={disabled} value={curEffort}
-              onChange={(e) => onSetModel(current, { reasoningEffort: e.target.value, contextTier: curTier || undefined })} aria-label="思考力度">
-              {curEffort === '' && <option value="" disabled>力度…</option>}
+              onChange={(e) => onSetModel(current, { reasoningEffort: e.target.value })} aria-label="思考力度">
+              {curEffort === '' && <option value="" disabled>原生未提供当前值</option>}
               {curEffort !== '' && !efforts.includes(curEffort) && <option value={curEffort} disabled>{curEffort}（当前值，列表未提供）</option>}
               {efforts.map((e) => <option key={e} value={e}>{EFFORT_LABEL[e] ?? e}</option>)}
             </select>
@@ -68,13 +68,21 @@ function ModelControls({ session, onSetModel, disabled }: {
           <label className="info-control">
             <span className="info-control-label">上下文长度</span>
             <select className="info-select" disabled={disabled} value={curTier}
-              onChange={(e) => onSetModel(current, { reasoningEffort: curEffort || undefined, contextTier: e.target.value as ContextTier })} aria-label="上下文长度">
+              onChange={(e) => onSetModel(current, { contextTier: e.target.value as ContextTier })} aria-label="上下文长度">
               {curTier === '' && <option value="" disabled>原生未提供当前值</option>}
               <option value="default">标准上下文</option>
               <option value="long_context">长上下文</option>
             </select>
           </label>
         )}
+        {currentModel && currentModel.supportedReasoningEfforts === undefined
+          && <div className="info-empty">原生未提供思考力度选项{curEffort ? `；当前值：${EFFORT_LABEL[curEffort] ?? curEffort}` : ''}</div>}
+        {currentModel && currentModel.supportsLongContext === undefined
+          && <div className="info-empty">原生未提供上下文档位能力{curTier ? `；当前值：${curTier}` : ''}</div>}
+        {currentModel?.supportedReasoningEfforts?.length === 0 && curEffort
+          && <div className="info-empty">思考力度当前值：{EFFORT_LABEL[curEffort] ?? curEffort}（原生未列出可选档位）</div>}
+        {currentModel?.supportsLongContext === false && curTier
+          && <div className="info-empty">上下文长度当前值：{curTier === 'default' ? '标准上下文' : curTier}（原生未列出长上下文支持）</div>}
       </div>
     </section>
   );

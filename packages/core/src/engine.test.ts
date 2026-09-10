@@ -2326,7 +2326,8 @@ test('fatal runtime failure rejects a hung native model readback and permits sto
   const s = await h.load();
   await h.engine.start();
   const readback = deferred<typeof s.state.model>();
-  s.rpc.model.getCurrent.mock.mockImplementationOnce(() => readback.promise);
+  let reads = 0;
+  s.rpc.model.getCurrent.mock.mockImplementation(() => ++reads === 2 ? readback.promise : Promise.resolve(structuredClone(s.state.model)));
   const changing = assert.rejects(h.engine.setModel(s.id, 'pending-model'), /fatal during model readback/);
   await nextTurn();
   assert.equal(s.rpc.model.switchTo.mock.callCount(), 1);
@@ -2990,7 +2991,8 @@ test('in-flight model operations protect otherwise idle sessions until native re
   const h = harness(t);
   const s = await h.load();
   const readback = deferred<typeof s.state.model>();
-  s.rpc.model.getCurrent.mock.mockImplementationOnce(() => readback.promise);
+  let reads = 0;
+  s.rpc.model.getCurrent.mock.mockImplementation(() => ++reads === 2 ? readback.promise : Promise.resolve(structuredClone(s.state.model)));
   const changing = h.engine.setModel(s.id, 'next-model');
   await nextTurn();
   assert.ok((await h.engine.getMeta(s.id))!.activeOperations! > 0);
@@ -3415,10 +3417,16 @@ for (const stage of ['mutation', 'readback'] as const) {
   test(`model ${stage} failure never publishes the requested model or options`, async t => {
     const h = harness(t);
     const s = await h.load();
+    s.rpc.model.list.mock.mockImplementation(async () => ({ list: [{
+      id: 'unconfirmed-model', supportedReasoningEfforts: ['high'], billing: { token_prices: { long_context: {} } },
+    }] }));
     const before = (await h.engine.getMeta(s.id))!;
     const fail = async () => { throw new Error(`model ${stage} rejected`); };
     if (stage === 'mutation') s.rpc.model.switchTo.mock.mockImplementation(fail);
-    else s.rpc.model.getCurrent.mock.mockImplementation(fail);
+    else {
+      let reads = 0;
+      s.rpc.model.getCurrent.mock.mockImplementation(async () => ++reads === 1 ? structuredClone(s.state.model) : fail());
+    }
     h.events.length = 0;
     await assert.rejects(h.engine.setModel(s.id, 'unconfirmed-model', 'high', 'long_context'), /model .* rejected/);
     if (stage === 'readback') await assert.rejects(h.engine.getMeta(s.id), /model readback rejected/);
@@ -3459,7 +3467,10 @@ test('model, mode, and name success publish authoritative native read-back rathe
   const h = harness(t);
   const s = await h.load();
   s.rpc.model.getCurrent.mock.mockImplementation(async () => ({ modelId: 'normalized-model', reasoningEffort: 'low', contextTier: 'default' }));
-  await h.engine.setModel(s.id, 'alias', 'high', 'long_context');
+  s.rpc.model.list.mock.mockImplementation(async () => ({ list: [{
+    id: 'alias', supportedReasoningEfforts: ['high'], billing: { token_prices: { long_context: {} } },
+  }] }));
+  await assert.rejects(h.engine.setModel(s.id, 'alias', 'high', 'long_context'), /not confirmed by authoritative readback/);
   assert.deepEqual(s.rpc.model.switchTo.mock.calls[0]!.arguments, [{ modelId: 'alias', reasoningEffort: 'high', contextTier: 'long_context' }]);
   assert.equal((await h.engine.getMeta(s.id))?.currentModelId, 'normalized-model');
   assert.equal((await h.engine.getMeta(s.id))?.currentReasoningEffort, 'low');
@@ -5940,6 +5951,89 @@ test('loaded sessions publish their native provider-qualified model inventory', 
     modelId: 'local/native-model', name: 'Local model', supportedReasoningEfforts: ['low', 'high'],
     defaultReasoningEffort: 'high', supportsLongContext: true,
   }]);
+});
+
+test('thin native session models expose fresh rich capabilities and settings require confirmed readback', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  s.rpc.model.list.mock.mockImplementation(async () => ({ list: [{ id: 'native-model', name: 'Native' }] }));
+  h.runtime.models.mock.mockImplementation(async () => [{
+    modelId: 'native-model', name: 'Global', supportedReasoningEfforts: ['low', 'high'],
+    defaultReasoningEffort: 'low', supportsLongContext: true,
+  }, { modelId: 'not-allowed', name: 'Not allowed' }]);
+  s.state.model = { modelId: 'native-model' };
+  const before = (await h.engine.getMeta(s.id))!;
+  assert.equal(before.currentReasoningEffort, null);
+  assert.equal(before.currentContextTier, null);
+  assert.deepEqual(before.availableModels, [{
+    modelId: 'native-model', name: 'Native', supportedReasoningEfforts: ['low', 'high'],
+    defaultReasoningEffort: 'low', supportsLongContext: true,
+  }]);
+  const catalogReads = h.runtime.models.mock.callCount();
+  const snapshot = await h.engine.snapshot();
+  assert.equal(h.runtime.models.mock.callCount() - catalogReads, 1, 'One catalog belongs to this snapshot request, not a retained cache');
+  assert.deepEqual(snapshot.sessions.find(row => row.sessionId === s.id)?.availableModels, before.availableModels);
+  await h.engine.setModel(s.id, 'native-model', 'high', 'long_context');
+  const after = (await h.engine.getMeta(s.id))!;
+  assert.equal(after.currentReasoningEffort, 'high');
+  assert.equal(after.currentContextTier, 'long_context');
+  await h.engine.setModel(s.id, 'native-model', 'low');
+  assert.deepEqual(s.rpc.model.switchTo.mock.calls[1]!.arguments, [{
+    modelId: 'native-model', reasoningEffort: 'low', contextTier: 'long_context',
+  }]);
+  await h.engine.setModel(s.id, 'native-model', undefined, 'default');
+  assert.deepEqual(s.rpc.model.switchTo.mock.calls[2]!.arguments, [{
+    modelId: 'native-model', reasoningEffort: 'low', contextTier: 'default',
+  }]);
+  s.state.model.contextTier = 'long_context';
+  await assert.rejects(h.engine.setModel(s.id, 'native-model', 'invented'), /does not list reasoning/);
+  await assert.rejects(h.engine.setModel(s.id, 'not-allowed', undefined, 'long_context'), /does not list long-context/);
+  assert.equal(s.rpc.model.switchTo.mock.callCount(), 3);
+  h.runtime.models.mock.mockImplementation(async () => [{
+    modelId: 'native-model', name: 'Global', supportedReasoningEfforts: [], supportsLongContext: false,
+  }]);
+  const changed = (await h.engine.getMeta(s.id))!;
+  assert.deepEqual(changed.availableModels?.[0]?.supportedReasoningEfforts, []);
+  assert.equal(changed.availableModels?.[0]?.supportsLongContext, false);
+  assert.equal(changed.currentContextTier, 'long_context', 'readback is not rewritten from capability changes');
+  assert.equal(s.sdk.send.mock.callCount(), 0);
+});
+
+test('a deferred model change leaves current options native-owned without a false readback failure', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  s.rpc.model.list.mock.mockImplementation(async () => ({ list: [{
+    id: 'native-model', supportedReasoningEfforts: ['high'], supportsLongContext: true,
+  }] }));
+  s.rpc.model.switchTo.mock.mockImplementation(async () => ({ modelId: 'native-model', status: 'deferred', deferred: true }));
+  await h.engine.setModel(s.id, 'native-model', 'high', 'long_context');
+  const current = (await h.engine.getMeta(s.id))!;
+  assert.equal(current.currentReasoningEffort, 'medium');
+  assert.equal(current.currentContextTier, 'default');
+});
+
+test('concurrent partial model changes serialize native read-modify-confirm without lost options', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const held = deferred<void>();
+  const started = deferred<void>();
+  s.rpc.model.list.mock.mockImplementation(async () => {
+    started.resolve();
+    await held.promise;
+    return { list: [{
+      id: 'native-model', supportedReasoningEfforts: ['low', 'high'], supportsLongContext: true,
+    }] };
+  });
+  const effort = h.engine.setModel(s.id, 'native-model', 'low');
+  await started.promise;
+  const tier = h.engine.setModel(s.id, 'native-model', undefined, 'long_context');
+  await nextTurn();
+  assert.equal(s.rpc.model.switchTo.mock.callCount(), 0);
+  held.resolve();
+  await Promise.all([effort, tier]);
+  const current = (await h.engine.getMeta(s.id))!;
+  assert.equal(current.currentReasoningEffort, 'low');
+  assert.equal(current.currentContextTier, 'long_context');
 });
 
 test('concurrent identical schedule prompts retain distinct native timing and IDs', async t => {

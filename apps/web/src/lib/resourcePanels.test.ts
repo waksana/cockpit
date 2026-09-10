@@ -107,7 +107,7 @@ test('missing confirmed or default effort is explicit without adding a selectabl
   const fallback = selectedOption(renderModelSettings({ currentModelId: 'beta', currentReasoningEffort: null }, [{
     ...narrow[0], defaultReasoningEffort: 'max',
   }]), '思考力度');
-  assert.equal(fallback.text, '力度…');
+  assert.equal(fallback.text, '原生未提供当前值');
 });
 
 test('thin session catalog keeps native membership and never invents per-session capabilities from globals', () => {
@@ -126,6 +126,8 @@ test('thin session catalog keeps native membership and never invents per-session
   assert.equal(model.text, 'Session Astra');
   assert.equal(model.options.length, 1, 'global entries must not expand the session allow-list');
   assert.doesNotMatch(html, /aria-label="思考力度"|aria-label="上下文长度"/);
+  assert.match(html, /原生未提供思考力度选项；当前值：极高/);
+  assert.match(html, /原生未提供上下文档位能力；当前值：long_context/);
   for (const currentReasoningEffort of [undefined, null, '']) {
     assert.doesNotMatch(renderModelSettings({ ...patch, currentReasoningEffort }, rich), /aria-label="思考力度"/);
   }
@@ -170,12 +172,12 @@ test('empty model and effort values remain unknown instead of selecting defaults
   }
   for (const currentReasoningEffort of [undefined, null, '']) {
     const selected = selectedOption(renderModelSettings({ currentModelId: 'beta', currentReasoningEffort }), '思考力度');
-    assert.equal(selected.text, '力度…');
+    assert.equal(selected.text, '原生未提供当前值');
   }
   const withoutDefault = selectedOption(renderModelSettings({ currentModelId: 'beta' }, [{
     ...modelOptions[1], defaultReasoningEffort: undefined,
   }]), '思考力度');
-  assert.equal(withoutDefault.text, '力度…');
+  assert.equal(withoutDefault.text, '原生未提供当前值');
 });
 
 test('capability-free models keep controls hidden and all legal context tiers have corresponding options', () => {

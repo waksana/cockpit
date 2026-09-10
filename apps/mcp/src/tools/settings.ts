@@ -29,10 +29,10 @@ export function registerSettingsTools(server: McpServer): void {
         await intent('setModel', {
           sessionId: session_id,
           modelId: model_id,
-          ...(reasoning_effort ? { reasoningEffort: reasoning_effort } : {}),
-          ...(context_tier ? { contextTier: context_tier } : {}),
+          ...(reasoning_effort !== undefined ? { reasoningEffort: reasoning_effort } : {}),
+          ...(context_tier !== undefined ? { contextTier: context_tier } : {}),
         });
-        return ok(`Set ${session_id} model to ${model_id}.`);
+        return ok(`Model setting request accepted for ${session_id}. Read cockpit_get_session for authoritative model, effort and context tier; a deferred change is not applied until native queued work completes.`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }
