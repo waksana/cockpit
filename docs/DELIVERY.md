@@ -4,6 +4,14 @@ This document defines the opt-in `github-actions-v1` integration. Source files
 alone do not mean the host has migrated; installed runner configuration and the
 authenticated request result are the authority.
 
+The runtime closure includes root `skills/`: packaged core resolves bundled
+skills relative to its own release, never through a development checkout or a
+global fallback. Before accepting a new archive, run
+`COCKPIT_RELEASE_ARCHIVE=/absolute/runtime.tar.gz node --test scripts/delivery-package.test.mjs`.
+This checks the extracted package's core-relative skill path and local Markdown
+references. The normal source suite also guards the committed artifact list;
+it does not claim to have checked an archive when that variable is absent.
+
 ## Build and submission
 
 The private repository is `waksana/cockpit`, target `refs/heads/main`
