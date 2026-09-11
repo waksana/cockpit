@@ -1,4 +1,6 @@
 import { lazy, Suspense, useLayoutEffect, useRef, useState } from 'react';
+import { deliveryAttention, loadDeliveryStatus } from '../lib/deliveryStatus';
+import { useKeyedResource } from '../lib/useKeyedResource';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { useCockpit } from '../net/store';
@@ -7,6 +9,7 @@ import { Icon } from './Icon';
 
 const NotificationSettings = lazy(() => import('./NotificationSettings')
   .then((module) => ({ default: module.NotificationSettings })));
+const SystemVersions = lazy(() => import('./SystemVersions').then(module => ({ default: module.SystemVersions })));
 
 type GlobalSection = 'mcp' | 'skills' | 'files';
 
@@ -16,6 +19,9 @@ export function GlobalNavigation() {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const versions = useKeyedResource('system-versions', loadDeliveryStatus, 0, open || versionsOpen);
+  const versionStatus = versions.valid ? versions.data ?? null : null;
   const {
     notifications, enableNotifications, refreshNotifications, disableNotifications, testNotifications,
   } = useCockpit(useShallow((s) => ({
@@ -37,6 +43,8 @@ export function GlobalNavigation() {
       </button>
       {open && (
         <AnchoredMenu triggerRef={triggerRef} align="left" items={[
+          { label: `系统 / 版本与更新${deliveryAttention(versionStatus) ? ' · 有待更新或失败' : versions.error ? ' · 状态未知' : ''}`,
+            icon: 'reload', onClick: () => setVersionsOpen(true) },
           { label: '文件', icon: 'file', onClick: () => openSection('files') },
           { label: '全局 MCP', icon: 'mcp', onClick: () => openSection('mcp') },
           { label: '全局 Skills', icon: 'skills', onClick: () => openSection('skills') },
@@ -49,6 +57,10 @@ export function GlobalNavigation() {
           },
         ]} onClose={() => setOpen(false)} />
       )}
+      {versionsOpen && <Suspense fallback={null}>
+        <SystemVersions status={versionStatus} error={versions.error} loading={versions.pending}
+          onRefresh={() => { void versions.refresh(); }} onClose={() => setVersionsOpen(false)} />
+      </Suspense>}
       {notificationsOpen && (
         <Suspense fallback={null}>
           <NotificationSettings state={notifications} onRefresh={refreshNotifications}

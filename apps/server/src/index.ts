@@ -31,6 +31,7 @@ import { isIntentName, registerCapabilities } from './capabilities.ts';
 import { drainForRestart } from './shutdown.ts';
 import { registerChatStream } from './chat-stream.ts';
 import { deliveryIdentity } from './delivery-identity.ts';
+import { registerDeliveryStatus } from './delivery-status.ts';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.COCKPIT_PORT ?? 8771);
@@ -379,6 +380,7 @@ app.addHook('onRequest', async (req, reply) => {
 });
 
 registerChatStream(app, () => (query, signal) => engine.chat(query, signal));
+registerDeliveryStatus(app);
 
 app.get('/health', async (_req, reply) => {
   reply.header('Cache-Control', 'no-store');
@@ -459,6 +461,12 @@ app.get('/uploads/:name', async (req, reply) => {
 // Lightweight status for ops tooling (e.g. graceful-restart): per-session status
 // without opening an SSE stream. `running` counts turns in flight; `busy` also
 // counts sessions paused on a pending user choice (which likewise block a restart).
+app.get('/admin/lifecycle', async (_request, reply) => {
+  reply.header('Cache-Control', 'no-store');
+  const busy = await busyCount();
+  return { restartPending, busy, reason: busy > 0 ? 'native-busy' : null };
+});
+
 app.get('/status', async () => {
   const metas = await engine.status();
   const sessions = metas.map((s) => ({

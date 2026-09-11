@@ -21,48 +21,10 @@ permissions:
   contents: read
 jobs:
   build:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ inputs.source_sha || github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
-        with:
-          version: 10.34.5
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        with:
-          node-version: 24.20.0
-      - run: pnpm install --frozen-lockfile
-      - run: npm ci --ignore-scripts --prefix .delivery/toolkit
-      - name: Validate committed configuration, validate and build fixed SHA
-        env:
-          CONFIG: ${{ inputs.config_path || 'service-delivery.json' }}
-          CONFIG_HASH: ${{ inputs.config_sha256 }}
-          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
-        run: |
-          set -euo pipefail
-          [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
-          git merge-base --is-ancestor "$SOURCE_SHA" origin/main
-          git update-ref refs/heads/main refs/remotes/origin/main
-          node .delivery/toolkit/bin/run-build.mjs "$CONFIG" "$CONFIG_HASH"
-      - name: Isolated native contract
-        run: pnpm --filter @cockpit/core exec node --import tsx --test src/runtime-smoke.test.ts src/model-settings-native.test.ts src/native-state-smoke.test.ts
-        env:
-          COCKPIT_NATIVE_SMOKE: '1'
-          COCKPIT_NATIVE_MODEL_SMOKE: '1'
-          COCKPIT_NATIVE_STATE_SMOKE: '1'
-      - name: Package full runtime closure
-        env:
-          CONFIG: ${{ inputs.config_path || 'service-delivery.json' }}
-          REQUEST_ID: ${{ inputs.request_id || 'push-build' }}
-        run: node .delivery/toolkit/bin/package.mjs "$CONFIG" delivery-output "$REQUEST_ID"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: runtime-${{ inputs.request_id || github.sha }}
-          path: delivery-output/runtime.tar.gz
-          if-no-files-found: error
-          retention-days: 3
+    uses: waksana/cockpit/.github/workflows/shared-delivery-ci.yml@0f6e2e136df9a40d15376f23b0a5aec808d018ef
+    with:
+      source_sha: ${{ inputs.source_sha || github.sha }}
+      request_id: ${{ inputs.request_id || github.sha }}
+      config_path: ${{ inputs.config_path || 'service-delivery.json' }}
+      config_sha256: ${{ inputs.config_sha256 || '' }}
+      target_branch: main

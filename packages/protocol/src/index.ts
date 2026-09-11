@@ -4,6 +4,7 @@
 // validate against them, so the frontend and backend can never drift.
 
 import { z } from 'zod';
+export { DeliveryStatus } from './delivery-status.ts';
 
 export { CHAT_EVENT_TYPES, NativeChatEvent, NativeChatRead, NativeChatPage, NativeChatStreamRequest, NativeChatStreamEvent } from './native-chat.ts';
 import { NativeChatRead, NativeChatPage } from './native-chat.ts';

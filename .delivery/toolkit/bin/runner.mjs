@@ -11,6 +11,7 @@ import { hashFile, verifyArtifact } from '../lib/artifact.mjs';
 import { observeRuntime } from '../lib/runtime.mjs';
 import { readActors } from '../lib/actors.mjs';
 import { validatePolicy } from '../lib/policy.mjs';
+import { projectStatus, readRuntime } from '../lib/status.mjs';
 
 const exec = promisify(execFile);
 const config = validatePolicy(JSON.parse(await readFile(process.argv[2], 'utf8')));
@@ -82,7 +83,8 @@ async function notify(row) {
   row.notificationAttempted = true;
   store.save(row);
   try {
-    await backend(policy(row.request.repo.id), '/intent/prompt', {
+    const project = policy(row.request.repo.id);
+    await backend({ ...project, url: config.notificationUrl ?? project.url }, '/intent/prompt', {
       sessionId: actor.sessionId, mode: 'enqueue',
       text: `Service delivery event for requestId=${row.request.requestId}: state=${row.result.state}. `
         + `Read the authenticated service-delivery lookup for the original request; source=${row.request.repo.sha}. `
@@ -169,7 +171,12 @@ const server = createServer(async (req, res) => {
     if (!actor) throw fault('UNAUTHORIZED', 'Authentication required', 401);
     const body = req.method === 'POST' ? await payload(req) : {};
     let value;
-    if (req.method === 'GET' && req.url.startsWith('/requests/')) {
+    if (req.method === 'GET' && req.url === '/status') {
+      if (!['viewer', 'admin'].includes(actor.role)) throw fault('FORBIDDEN', 'Read-only status role required', 403);
+      const projects = [];
+      for (const [id, p] of Object.entries(config.projects)) projects.push(await projectStatus(store, id, p, readRuntime));
+      value = { projects };
+    } else if (req.method === 'GET' && req.url.startsWith('/requests/')) {
       const id = decodeURIComponent(req.url.slice('/requests/'.length)), row = store.get(id);
       if (!row) throw fault('NOT_FOUND', 'No authoritative request record; uncertain submit is not proved unapplied', 404);
       if (row.actor !== actor.id && actor.role !== 'admin') throw fault('FORBIDDEN', 'Request belongs to another actor', 403);
@@ -216,6 +223,7 @@ const server = createServer(async (req, res) => {
       }
       if (!value && row?.result.state === 'waiting-idle') {
         try {
+          if (p.activationEnabled === false) throw fault('ACTIVATION_DISABLED', 'Runtime activation is explicitly paused');
           await verifySource(row.request);
           await verifyArtifact(row.releaseRoot, { sourceSha: row.request.repo.sha, configSha256: row.request.projectConfig.sha256,
             requestId: row.request.requestId, buildRunId: row.result.artifact.buildRunId });
@@ -341,6 +349,7 @@ async function tick() {
         if (run?.status === 'completed' && run.conclusion !== 'success') store.fail(row, 'build', fault('CI_FAILED', `CI concluded ${run.conclusion}`));
       } else if (row.result.state === 'built' && row.request.intent === 'deploy'
         && store.head(row.request.repo.id, row.request.environment)?.request.requestId === row.request.requestId) {
+        if (p.activationEnabled === false) continue;
         try {
           await verifySource(row.request);
           row = store.claim(row.request.requestId, p.busyTimeoutMs);

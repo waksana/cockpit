@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 
 const instanceId = process.env.SERVICE_DELIVERY_INSTANCE ?? randomUUID();
 const sha = process.env.SERVICE_DELIVERY_SHA;
@@ -9,4 +10,5 @@ if ([sha, artifactSha256, requestId].some(value => value !== undefined)
     || !/^[\w.-]{8,120}$/.test(requestId ?? '') || !/^[a-f0-9-]{36}$/.test(instanceId))) {
   throw new Error('Incomplete delivery identity; refusing ambiguous packaged startup');
 }
-export const deliveryIdentity = Object.freeze({ instanceId, sha, artifactSha256, requestId });
+const version: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+export const deliveryIdentity = Object.freeze({ instanceId, version, sha, artifactSha256, requestId });

@@ -21,7 +21,7 @@ try {
   } }), createWriteStream(join(dir, 'artifact.zip'), { flags: 'wx', mode: 0o600 }));
   console.log(JSON.stringify(await call(config.credential, '/artifact', {
     requestId: match[1], runId: match[2], artifactId: match[3], uploadId,
-  })));
+  }, { timeoutMs: 300_000 })));
 } catch (error) {
   // Leave the bounded incoming file for explicit reconciliation on unknown response.
   console.error(error.message); process.exitCode = 1;
