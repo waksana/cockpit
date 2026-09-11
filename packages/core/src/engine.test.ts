@@ -2139,6 +2139,54 @@ test('native mode changes still read back a changed model without draft settings
   assert.equal(native.sdk.send.mock.callCount(), 0);
 });
 
+test('model changes retain current-state confirmation without reading an unused inventory afterward', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const lists = s.rpc.model.list.mock.callCount();
+  const currents = s.rpc.model.getCurrent.mock.callCount();
+  s.rpc.model.list.mock.mockImplementation(async () => { throw new Error('unrelated inventory unavailable'); });
+  await h.engine.setModel(s.id, 'new-model');
+  assert.equal(s.state.model.modelId, 'new-model');
+  assert.equal(s.rpc.model.switchTo.mock.callCount(), 1);
+  assert.equal(s.rpc.model.getCurrent.mock.callCount() - currents, 2, 'preserve option read and authoritative confirmation');
+  assert.equal(s.rpc.model.list.mock.callCount(), lists, 'successful mutation has no unused inventory dependency');
+});
+
+test('model option validation reads its inventory once before switching, never again after success', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  let lists = 0;
+  s.rpc.model.list.mock.mockImplementation(async () => {
+    if (++lists > 1) throw new Error('inventory must not be reread after mutation');
+    return { list: [{ id: 'validated-model', supportedReasoningEfforts: ['high'] }] };
+  });
+  await h.engine.setModel(s.id, 'validated-model', 'high');
+  assert.equal(lists, 1);
+  assert.equal(s.state.model.reasoningEffort, 'high');
+  assert.equal(s.rpc.model.switchTo.mock.callCount(), 1);
+});
+
+for (const failCurrent of [false, true]) {
+  test(`mode-selected model keeps required current readback, not unused inventory (failure=${failCurrent})`, async t => {
+    const h = harness(t);
+    const s = await h.load();
+    const lists = s.rpc.model.list.mock.callCount();
+    const currents = s.rpc.model.getCurrent.mock.callCount();
+    s.rpc.mode.set.mock.mockImplementationOnce(async ({ mode }) => {
+      s.state.mode = mode;
+      s.state.model.modelId = 'mode-selected';
+      return { status: 'applied', modelChanged: true };
+    });
+    s.rpc.model.list.mock.mockImplementation(async () => { throw new Error('unrelated inventory unavailable'); });
+    if (failCurrent) s.rpc.model.getCurrent.mock.mockImplementation(async () => { throw new Error('required current read failed'); });
+    if (failCurrent) await assert.rejects(h.engine.setMode(s.id, 'plan'), /required current read failed/);
+    else await h.engine.setMode(s.id, 'plan');
+    assert.equal(s.rpc.model.getCurrent.mock.callCount() - currents, 1);
+    assert.equal(s.rpc.model.list.mock.callCount(), lists);
+    assert.equal(s.rpc.mode.set.mock.callCount(), 1, 'never replay an applied change after read failure');
+  });
+}
+
 test('expired empty session rejects native absence without recreating or sending', async t => {
   const h = harness(t);
   const id = await h.engine.newSession(h.cwd);

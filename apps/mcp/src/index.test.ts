@@ -757,6 +757,31 @@ test('canonical nullable status and todo intent survive JSON and render without 
   }
 });
 
+test('default session output is an explicit compact summary and capability consumers request JSON initially', async () => {
+  const { tools } = await client.listTools();
+  const summaryTool = tools.find(tool => tool.name === 'cockpit_get_session')!;
+  assert.match(summaryTool.description!, /Default markdown is a compact summary/);
+  for (const name of ['cockpit_set_model', 'cockpit_respond_plan']) {
+    assert.match(tools.find(tool => tool.name === name)!.description!, /cockpit_get_session with response_format:"json"/);
+  }
+  const previousModels = meta.availableModels;
+  const previousPlan = meta.planRequest;
+  try {
+    meta.availableModels = Array.from({ length: 40 }, (_, i) => ({ modelId: `private-option-${i}`, name: `Native option ${i}` }));
+    meta.planRequest = { requestId: 'decision', summary: 'Choose next action', actions: ['interactive', 'exit_only'] };
+    const summary = await call('cockpit_get_session', { session_id: 'B' });
+    assert.match(summary.text, /Summary;.*response_format:"json"/);
+    assert.match(summary.text, /requestId decision/);
+    assert.doesNotMatch(summary.text, /private-option-|Native option/);
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].path, '/intent/session/get');
+    requests.length = 0;
+    const full = await json('cockpit_get_session', { session_id: 'B', response_format: 'json' });
+    assert.deepEqual(full, meta);
+    assert.equal(requests.length, 1, 'explicit full-field read does not fetch another panel or catalog');
+  } finally { meta.availableModels = previousModels; meta.planRequest = previousPlan; }
+});
+
 test('native global skill configuration is available through the shared generic API tool', async () => {
   assert.deepEqual(await json('cockpit_call_intent', {
     name: 'skills/global-toggle', body: { name: 'review', enabled: false, cwd: '/backend/project' },

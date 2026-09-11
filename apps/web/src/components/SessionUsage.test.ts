@@ -16,7 +16,9 @@ const data: Usage = {
 };
 test('usage labels distinguish context snapshot, last main call and native aggregate without fabricated reasoning/cost', () => {
   const html = renderToStaticMarkup(createElement(UsageValues, { value: data }));
-  for (const label of ['原生估算', '10.0%', '最近主代理调用', '原生按模型累计', '未提供', '不推算费用', 'LRU']) assert.ok(html.includes(label), label);
+  for (const label of ['原生估算', '10.0%', '最近主代理调用', '原生按模型累计', '未提供', '不推算费用',
+    'provider提示缓存', '相关原生变化、重连或手动刷新', '不后台轮询']) assert.ok(html.includes(label), label);
+  assert.doesNotMatch(html, /LRU|3会话|只在此页打开或手动刷新/);
   assert.match(html, /1,000/);
   assert.match(html, /1,800/);
 });

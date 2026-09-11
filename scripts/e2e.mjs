@@ -1,18 +1,22 @@
 #!/usr/bin/env node
-// End-to-end test against the RUNNING cockpit backend (127.0.0.1:8771). Exercises
+// Opt-in end-to-end test against an operator-owned ISOLATED test backend. Exercises
 // the real HTTP surface: health/status, intent validation, the upload roundtrip
 // (+ path-traversal rejection), session create/delete, and the MCP/skill intents.
 //
-// Run:  node scripts/e2e.mjs        (or: pnpm e2e from repo root)
-// Env:  COCKPIT_PORT (default 8771)
+// Run: node scripts/e2e.mjs --synthetic-fixture-root /absolute/synthetic-workspace
+//                         --test-base-url http://127.0.0.1:<test-port>
 //
-// Non-destructive by default: it creates + deletes ONE throwaway session and one
-// throwaway upload, and never sends a prompt (which would cost model tokens).
+// No default execution. This MUTATES sessions, skills/MCP, schedules and uploads.
+// The operator must provision separate synthetic backend state/config/workspace
+// and uploads with no personal credentials or real model endpoint. CLI flags do
+// not establish that isolation. Port 8771 and remote targets are prohibited.
+// Never sends a prompt; retained test uploads are not automatically deleted.
 
 import assert from 'node:assert/strict';
+import { diagnosticOptions, diagnosticFetch } from './diagnostic-safety.mjs';
 
-const PORT = process.env.COCKPIT_PORT ?? '8771';
-const BASE = `http://127.0.0.1:${PORT}`;
+const { root, base: BASE } = diagnosticOptions('e2e');
+const fetch = diagnosticFetch(BASE);
 
 let pass = 0; let fail = 0;
 async function t(name, fn) {
@@ -89,14 +93,14 @@ await t('mcp/global → servers[]', async () => {
   }
 });
 
-await t('skills/global → skills[] (includes installed skills)', async () => {
-  const b = await j(await intent('skills/global', {}));
+await t('skills/global → skills[] for the synthetic workspace', async () => {
+  const b = await j(await intent('skills/global', { cwd: root }));
   assert.ok(Array.isArray(b.skills));
 });
 
-await t('fs/listDir → dirs of home, with parent + sorted entries', async () => {
-  const b = await j(await intent('fs/listDir', {}));
-  assert.ok(typeof b.path === 'string' && b.path.startsWith('/'));
+await t('fs/listDir → explicit synthetic workspace, with parent + sorted entries', async () => {
+  const b = await j(await intent('fs/listDir', { path: root }));
+  assert.equal(b.path, root);
   assert.ok(b.parent === null || typeof b.parent === 'string');
   assert.ok(Array.isArray(b.entries));
   for (const e of b.entries) {
@@ -106,10 +110,9 @@ await t('fs/listDir → dirs of home, with parent + sorted entries', async () =>
   }
 });
 
-await t('fs/listDir at filesystem root → parent null', async () => {
-  const b = await j(await intent('fs/listDir', { path: '/' }));
-  assert.equal(b.path, '/');
-  assert.equal(b.parent, null);
+await t('fs/listDir rejects an empty path instead of falling back to home', async () => {
+  const response = await intent('fs/listDir', { path: '' });
+  assert.ok(response.status >= 400 && response.status < 500);
 });
 
 // ── upload roundtrip + traversal rejection ────────────────────────────────────
@@ -161,7 +164,7 @@ await t('GET /uploads/<traversal> → 404 (no escape)', async () => {
 const listSupported = (await intent('session/list', {})).status !== 404;
 
 await t('session/new + per-session MCP intent', async () => {
-  const created = await j(await intent('session/new', { cwd: process.env.HOME ?? '/tmp' }));
+  const created = await j(await intent('session/new', { cwd: root }));
   assert.ok(created.sessionId, 'got a sessionId');
   globalThis.__e2eSession = created.sessionId;
   const status = await j(await fetch(`${BASE}/status`));
@@ -242,7 +245,7 @@ await t('unloaded history stays passive; native details require explicit resume'
     }
     const current = await j(await intent('session/get', { sessionId }));
     assert.equal(current.meta.loaded, false);
-    assert.equal(current.meta.error, null);
+    assert.ok(current.meta.error == null, 'unloaded error may be absent or null');
   } finally {
     assert.equal((await intent('session/reload', { sessionId })).status, 200);
   }
@@ -250,8 +253,8 @@ await t('unloaded history stays passive; native details require explicit resume'
 });
 
 // ── scheduled prompts (add → list → stop) ─────────────────────────────────────
-// Feature-detected. Non-destructive: uses a far-future one-shot + a long interval so
-// nothing actually fires during the test, and stops both before the session is purged.
+// Feature-detected mutations in the isolated test backend. The long delays aim
+// to avoid firing during the test, but a failed/interrupted run may leave them.
 const scheduleSupported = (await intent('schedule/list', { sessionId: globalThis.__e2eSession })).status !== 404;
 if (scheduleSupported) {
   await t('schedule/add interval + at, list, then stop', async () => {

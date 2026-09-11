@@ -1,7 +1,5 @@
-// Read tools: surface the information a person sees in the UI but the MCP couldn't
-// yet — a session's full live state (model/mode/queue/ask/plan/todo/…, with the
-// ids the mutation tools need), its info panels, and its plan. cockpit_get_session
-// is the foundation: other tools depend on the ids it returns.
+// Read tools share the authoritative API; session Markdown is a compact summary,
+// while explicit JSON preserves the full fields needed by capability consumers.
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { PanelSection } from '@cockpit/protocol';
@@ -13,18 +11,17 @@ export function registerReadTools(server: McpServer): void {
   server.registerTool(
     'cockpit_get_session',
     {
-      title: 'Get a session full state',
+      title: 'Get session state',
       description:
-        'Read one live session\'s full authoritative state — the same object the web UI renders: ' +
-        'status, loaded, current model/reasoning/context tier/mode, availableModels, pin, schedule ' +
-        'count, the pending queue (each {id,text}), any open ask / plan / elicitation request (with ' +
-        'its requestId), and todo progress. This is the tool that gives you the IDS the action tools ' +
-        'need: queue item id (cockpit_remove_queued), ask/plan/elicitation requestId ' +
-        '(cockpit_respond_*). Unknown sessions return an error. Interaction mode is separate from the ' +
+        'Read one session\'s authoritative state. Default markdown is a compact summary of status, ' +
+        'loaded, current model/reasoning/context tier/mode, pin, schedules, queue item IDs with text previews, ' +
+        'pending request IDs and todo progress. Use response_format:"json" on the initial read when you need ' +
+        'full fields, including availableModels, complete queue text or offered plan actions; markdown omits these. ' +
+        'Unknown sessions return an error. Interaction mode is separate from the ' +
         'runtime permissionPolicy: allow-all (always auto-approve), shown by cockpit_get_snapshot.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id'),
-        response_format: ResponseFormat.describe("'markdown' (human) or 'json' (machine)"),
+        response_format: ResponseFormat.describe("'markdown' (compact summary, default) or 'json' (full authoritative fields)"),
       },
       annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
     },
@@ -35,6 +32,7 @@ export function registerReadTools(server: McpServer): void {
         if (response_format === 'json') return ok(cappedJson(meta));
         const lines: string[] = [
           `# ${meta.title || '(untitled)'}`,
+          'Summary; for model options, full queue text or plan actions, request response_format:"json".',
           `id: ${meta.sessionId}`,
           `status: ${meta.status}${meta.loaded ? '' : ' (unloaded)'}${meta.pinned ? ' · pinned' : ''}`,
           `cwd: ${meta.cwd || 'unknown (not provided by native metadata)'}`,

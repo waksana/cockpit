@@ -1330,7 +1330,6 @@ export class Engine {
       }
       const result = await this.withSession(st, sdk, () => sdk.rpc.model.switchTo(options));
       const current = await this.readResource(st, sdk, 'model');
-      await this.readResource(st, sdk, 'models');
       if (result.persistenceError || result.confirmation
         || (result.status !== undefined && !['applied', 'unchanged', 'deferred', 'queued'].includes(result.status))) {
         throw new Error(`Native model change ${result.status ?? 'not applied'}: ${result.persistenceError ?? result.message ?? 'confirmation or additional host action required'}`);
@@ -1354,7 +1353,6 @@ export class Engine {
       this.patch(st, { currentMode });
       if (result.modelChanged) {
         await this.readResource(st, sdk, 'model');
-        await this.readResource(st, sdk, 'models');
       }
     }, ['mode', 'model', 'models', 'usage']);
   }

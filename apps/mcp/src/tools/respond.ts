@@ -48,7 +48,7 @@ export function registerRespondTools(server: McpServer): void {
       title: 'Handle an exit-plan-mode request',
       description:
         'Respond to a session paused on an exit_plan_mode request (the agent finished planning and ' +
-        'asks how to proceed). Get the requestId and the offered actions from cockpit_get_session → ' +
+        'asks how to proceed). Get the requestId and the offered actions from cockpit_get_session with response_format:"json" → ' +
         'planRequest. action is one of: exit_only (just leave plan mode), interactive (proceed ' +
         'interactively), autopilot (proceed autonomously), autopilot_fleet. This selects interaction ' +
         'behavior, not tool permissions; permissionPolicy remains allow-all (always auto-approve).',

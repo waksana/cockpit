@@ -92,8 +92,16 @@ Trash listing and restoration are retired. Legacy hidden sessions reappear in
 the normal list without deleting native history. Managed files, associations and
 workspaces remain intact. Never automatically retry an uncertain deletion.
 
-`cockpit_get_session` returns current backend state and the queue/decision IDs used
-by action tools. `mcp/session` does not materialize an unloaded session.
+`cockpit_get_session` defaults to a compact Markdown summary, including
+queue/decision IDs but only queue text previews. For `availableModels`, complete
+queue text or offered plan actions, request `response_format:"json"` on the first
+read; the default summary intentionally omits those fields. JSON retains the
+existing output-size limit and reports overflow rather than returning partial
+JSON. `mcp/session` does not materialize an unloaded session.
+
+`cockpit_compact_session` summarizes the model-facing context, not the retained
+chat event history. There is no compaction undo; explicit `confirm:true` remains
+required. It is distinct from conversation rewind or permanent deletion.
 
 `cockpit_cancel_turn` / `POST /intent/cancel {sessionId}` follows native Stop
 semantics: cancel current work and discard pending queued messages. It does not

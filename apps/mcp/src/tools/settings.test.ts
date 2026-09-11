@@ -44,3 +44,24 @@ test('model MCP sends exact options once and labels queued-compatible acknowledg
   assert.match(JSON.stringify(result.content), /request accepted/);
   assert.match(JSON.stringify(result.content), /deferred change is not applied/);
 });
+
+test('compact describes model-context compaction without retiring its explicit confirmation', async () => {
+  reject = false;
+  const { tools } = await client.listTools();
+  const compact = tools.find(tool => tool.name === 'cockpit_compact_session')!;
+  assert.match(compact.description!, /model-facing context, not the retained chat event history/);
+  assert.doesNotMatch(compact.description!, /rewrites history/);
+  const before = requests.length;
+  const refused = await client.callTool({ name: compact.name, arguments: { session_id: 'owned-fixture' } });
+  assert.equal(refused.isError, true);
+  assert.match(JSON.stringify(refused.content), /confirm=true/);
+  assert.equal(requests.length, before, 'missing confirmation never invokes compaction');
+  const accepted = await client.callTool({ name: compact.name, arguments: {
+    session_id: 'owned-fixture', confirm: true, custom_instructions: 'Preserve the constraints',
+  } });
+  assert.equal(accepted.isError, undefined);
+  assert.equal(requests.length, before + 1);
+  assert.deepEqual(JSON.parse(requests.at(-1)!.body.toString()), {
+    sessionId: 'owned-fixture', customInstructions: 'Preserve the constraints',
+  });
+});
