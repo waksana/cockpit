@@ -327,6 +327,11 @@ export async function intent<T = unknown>(
 }
 
 export function assertIntentSuccess<T>(result: T, name: string): T {
+  if (name === 'system/consumer/restart' && result !== null && typeof result === 'object'
+    && 'operation' in result && result.operation && typeof result.operation === 'object'
+    && 'state' in result.operation && ['failed', 'unknown'].includes(String(result.operation.state))) {
+    throw new CockpitError(`Consumer restart is not confirmed; inspect the original operation: ${JSON.stringify(result)}`, 'backend', name);
+  }
   if (result !== null && typeof result === 'object' && 'ok' in result && result.ok === false) {
     throw new CockpitError(`cockpit intent "${name}" did not succeed: ${JSON.stringify(result)}`, 'backend', name);
   }

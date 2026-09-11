@@ -96,6 +96,7 @@ export async function packageConsumerRelease({ runtime, metadataFile, keyFile, o
     if (compatibility.schemaVersion !== 1 || compatibility.automaticDataMigrations !== false
       || !/^[a-zA-Z0-9_.-]{1,100}$/.test(compatibility.dataCompatibility)) throw new Error('Missing consumer data/config compatibility declaration');
     if (compatibility.moduleRunnerApi !== 1) throw new Error('Consumer publisher requires module runner API1 compatibility');
+    if (compatibility.moduleRunnerLifecycleApi !== 1) throw new Error('Consumer publisher requires module runner lifecycle API1 compatibility');
     const bytes = (await stat(archive)).size;
     if (bytes > maxBytes) throw new Error('Consumer archive exceeds signed transport limit');
     const { sha256 } = await digest(archive);

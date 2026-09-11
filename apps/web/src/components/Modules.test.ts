@@ -22,6 +22,7 @@ test('new-session picker shows unavailable binding reasons and never silently ch
   assert.match(source, /disabled=\{!role.available && !checked\}/);
   assert.match(source, /selected.every/);
   assert.match(source, /version: module.selectedVersion/);
-  assert.match(source, /creation.send\(path, selected, onStart\)/);
-  assert.match(source, /result\?\.state !== 'accepted'/);
+  assert.match(source, /await onCreate\(path, selected\)/);
+  assert.match(source, /onCreated\(sessionId\)/);
+  assert.doesNotMatch(source, /session\/start|creation\.draft|onStart|<Composer/);
 });

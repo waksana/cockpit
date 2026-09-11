@@ -180,6 +180,68 @@ export async function restartConsumer(operationId, env = process.env) {
   return receipt;
 }
 
+/** The callback only arms the existing native idle gate; it must not await shutdown. */
+export async function connectConsumerLifecycle(requestNativeDrain, env = process.env) {
+  consumerRootFromEnvironment(env);
+  const instanceId = env.COCKPIT_CONSUMER_INSTANCE, installationId = env.COCKPIT_CONSUMER_INSTALLATION;
+  if (typeof requestNativeDrain !== 'function' || !/^[a-f0-9-]{36}$/.test(instanceId ?? '')
+    || !process.send || !process.connected) throw new Error('Consumer main requires its owned launcher IPC lifecycle channel');
+  let operation, result;
+  const send = value => new Promise((resolve, reject) => {
+    if (!process.send || !process.connected) return reject(new Error('Consumer launcher IPC disconnected; native drain outcome is unconfirmed'));
+    process.send(value, error => error ? reject(error) : resolve());
+  });
+  const onMessage = message => {
+    if (message?.type !== 'consumer-native-drain') return;
+    void (async () => {
+      identifier(message.operationId);
+      if (message.installationId !== installationId || message.instanceId !== instanceId
+        || Object.keys(message).some(key => !['type', 'operationId', 'installationId', 'instanceId'].includes(key))) {
+        throw new Error('Consumer native drain identity/request mismatch');
+      }
+      const base = { type: 'consumer-native-drain-result', operationId: message.operationId, installationId, instanceId, pid: process.pid };
+      if (operation) {
+        if (operation === message.operationId && result) await send(result);
+        else await send({ ...base, state: 'unknown', error: 'Native drain already requested; inspect the original operation without replay' });
+        return;
+      }
+      operation = message.operationId;
+      try {
+        await requestNativeDrain(operation);
+        result = { ...base, state: 'accepted' };
+      } catch (error) { result = { ...base, state: 'unknown',
+        error: error instanceof Error ? error.message : 'Native drain callback effect is unconfirmed' }; }
+      await send(result);
+    })().catch(error => console.error(`Consumer native lifecycle remains unconfirmed: ${error.message}`));
+  };
+  process.on('message', onMessage);
+  try { await send({ type: 'consumer-main-ready', apiVersion: 1, installationId, instanceId, pid: process.pid }); }
+  catch (error) { process.off('message', onMessage); throw error; }
+  return () => process.off('message', onMessage);
+}
+
+/** Called by the backend's native shutdown gate, before closing its API or runtime. */
+export async function prepareConsumerExit(env = process.env) {
+  const root = consumerRootFromEnvironment(env), instanceId = env.COCKPIT_CONSUMER_INSTANCE;
+  if (typeof instanceId !== 'string' || !/^[a-f0-9-]{36}$/.test(instanceId)) {
+    throw new Error('Consumer exit requires the exact owned backend instance');
+  }
+  const operationId = `consumer-exit-${instanceId}-${randomUUID()}`;
+  let receipt;
+  try { receipt = await callLauncher(root, { action: 'prepare-exit', operationId, instanceId }); }
+  catch (error) { throw new Error(`Consumer exit ${operationId} is unconfirmed; inspect it without retry: ${error.message}`); }
+  for (;;) {
+    if (receipt?.kind !== 'prepare-exit' || receipt.operationId !== operationId
+      || receipt.oldIdentity?.instanceId !== instanceId) throw new Error('Unexpected consumer exit acknowledgement; main must remain available');
+    if (receipt.state === 'ready-to-exit') return receipt;
+    if (!['waiting-modules', 'draining-modules'].includes(receipt.state)) {
+      throw new Error(receipt.error ?? `Consumer module drain is ${receipt.state}; inspect ${operationId}, do not retry`);
+    }
+    await new Promise(resolve => setTimeout(resolve, 250));
+    receipt = await callLauncher(root, { action: 'exit-status', operationId, instanceId });
+  }
+}
+
 export function unlock(root) {
   loadAuthority(root);
   const lock = join(root, 'launcher.lock');

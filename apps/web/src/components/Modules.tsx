@@ -12,6 +12,7 @@ import { getModuleApply } from '../lib/moduleMutation';
 import { ModuleInstallControls, OutgoingModuleStatus, WechatUnbindControls } from './ModuleMutationControls';
 import { ModuleInitializationControls } from './ModuleInitializationControls';
 import { ConsumerLifecycleNotice, VersionProjects } from './SystemVersions';
+import { ConsumerRuntime } from './ConsumerRuntime';
 import { loadDeliveryStatus } from '../lib/deliveryStatus';
 import './Modules.scss';
 
@@ -124,10 +125,12 @@ export function ModuleManagementVersions() {
   return <section aria-label="主程序与会话应用版本">
     <h4>主程序 / 系统版本</h4>
     <ConsumerLifecycleNotice />
+    <ConsumerRuntime>
     {versions.status && <p role={versions.failed ? 'alert' : 'status'}>{versions.status}；旧结果不作当前版本。</p>}
     {versions.valid && versions.data && <VersionProjects status={versions.data} />}
     <button className="dialog-btn" disabled={!versions.connected || versions.pending}
       onClick={() => { void versions.refresh(); }}>刷新主程序实际版本</button>
+    </ConsumerRuntime>
     <h4>会话应用版本</h4>
     <label>按需核对一个已有会话
       <select aria-label="核对模块应用版本的会话" value={sessionId} onChange={event => setSessionId(event.target.value)}>

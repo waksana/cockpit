@@ -215,52 +215,35 @@ function observe<T>(promise: Promise<T>): Promise<T> {
   return promise;
 }
 
-test('deletion preview supports unloaded sessions and partial delete approval never retries or removes local state', async t => {
+test('native deletion supports unloaded sessions and failures never retry or remove displayed state', async t => {
   const store = createCockpitStore();
   const h = setup(t, store);
   h.source.open();
   h.snapshot(['a']);
   h.source.emit({ type: 'session/patch', sessionId: 'a', loaded: false });
-  const controller = new AbortController();
-  const read = store.getState().previewDeleteSession('a', controller.signal);
-  assert.equal(h.requests[0].url, intentUrl('session/delete/preview'));
-  assert.equal(h.requests[0].init?.signal, controller.signal);
-  assert.deepEqual(JSON.parse(String(h.requests[0].init?.body)), { sessionId: 'a' });
-  const plan = { sessionId: 'a', planId: 'a'.repeat(64), modules: [{ moduleId: 'wechat', name: '微信', version: '1.0.0' }] };
-  await h.reply(0, { plan });
-  assert.deepEqual(await read, plan);
-  const unbind = { planId: plan.planId, operationId: 'same-operation' };
-  const deletion = observe(store.getState().deleteSession('a', true, unbind));
-  h.assertPost(1, 'session/purge', { sessionId: 'a', confirm: true, unbind });
-  h.request(1).response.resolve(Response.json({ error: 'Unbind partially completed' }, { status: 409 }));
-  await assert.rejects(deletion, /Unbind partially completed/);
+  const deletion = observe(store.getState().deleteSession('a', true));
+  h.assertPost(0, 'session/purge', { sessionId: 'a', confirm: true });
+  h.request(0).response.resolve(Response.json({ error: 'Native protected work' }, { status: 409 }));
+  await assert.rejects(deletion, /Native protected work/);
   await setImmediate();
-  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests.length, 1);
   assert.equal(session('a', store).sessionId, 'a');
   assert.equal(session('a', store).loaded, false);
-  assert.match(session('a', store).error ?? '', /Unbind partially completed/);
+  assert.match(session('a', store).error ?? '', /Native protected work/);
 });
 
-test('interactive first-message creation and passive operation reads never invent local native session state or retry', async t => {
+test('native creation result never invents local session state or sends a hidden message', async t => {
   const store = createCockpitStore();
   const h = setup(t, store);
   h.source.open(); h.snapshot([]);
   assert.equal(h.requests.length, 0);
-  const body = { operationId: 'first-message-operation', cwd: '/workspace', text: 'real first message',
-    attachment: { kind: 'file' as const, name: 'notes.txt', url: '/uploads/notes.txt' } };
-  const sending = store.getState().startSession(body);
-  h.assertPost(0, 'session/start', body);
-  const operation = { operationId: body.operationId, sessionId: '71eb0109-5fce-4af8-97e1-00c7a6a73c37', state: 'unknown' as const,
-    error: 'module preparation incomplete' };
-  await h.reply(0, { operation });
-  assert.deepEqual(await sending, operation);
-  assert.equal(store.getState().sessions.length, 0);
-  const reading = store.getState().getSessionStart(body.operationId);
-  h.assertPost(1, 'session/start/get', { operationId: body.operationId });
-  await h.reply(1, { operation: { ...operation, state: 'accepted', error: undefined } });
-  assert.equal((await reading)?.state, 'accepted');
+  const modules = [{ moduleId: 'assistant' as const, roleId: 'assistant' }];
+  const creating = store.getState().newSession('/workspace', modules);
+  h.assertPost(0, 'session/new', { cwd: '/workspace', modules });
+  await h.reply(0, { sessionId: 'actual-native-id' });
+  assert.equal(await creating, 'actual-native-id');
   await setImmediate();
-  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests.length, 1);
   assert.equal(store.getState().sessions.length, 0, 'native sessions arrive through authoritative control events, not GUI attempts');
 });
 

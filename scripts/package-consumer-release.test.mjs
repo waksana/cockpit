@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createHash, generateKeyPairSync, randomUUID, verify } from 'node:crypto';
-import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash, generateKeyPairSync, verify } from 'node:crypto';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
@@ -11,8 +11,7 @@ import { verifyConsumerBootstrap } from './verify-consumer-bootstrap.mjs';
 
 const scripts = fileURLToPath(new URL('.', import.meta.url));
 async function fixture(t) {
-  const root = join(scripts, '..', `.publisher-${randomUUID().slice(0, 8)}`);
-  await mkdir(root, { mode: 0o700 });
+  const root = await mkdtemp(join(scripts, '..', '.publisher-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = join(root, 'source');
   const files = {
@@ -21,7 +20,7 @@ async function fixture(t) {
     'apps/web/dist/index.html': '<html>fixture</html>',
     'packages/core/src/index.ts': 'export {};\n',
     'packages/protocol/src/index.ts': 'export {};\n',
-    'consumer-runtime.json': '{"schemaVersion":1,"dataCompatibility":"cockpit-user-root-v1","automaticDataMigrations":false,"moduleRunnerApi":1}',
+    'consumer-runtime.json': '{"schemaVersion":1,"dataCompatibility":"cockpit-user-root-v1","automaticDataMigrations":false,"moduleRunnerApi":1,"moduleRunnerLifecycleApi":1}',
     'packages/core/src/modules/supervisor-entry.ts': '// Publisher archive fixture only.',
     'node_modules/dependency/data/a real path with spaces.txt': 'real CI archives include spaces\n',
   };
@@ -115,7 +114,7 @@ test('consumer publisher rejects stale metadata and non-HTTPS release destinatio
   await assert.rejects(packageConsumerRelease(f), /HTTPS/);
 });
 
-test('publisher refuses a main package incompatible with the independently retained runner API', async t => {
+test('publisher refuses a main package incompatible with the owned runner API', async t => {
   const f = await fixture(t);
   await writeFile(join(f.source, 'consumer-runtime.json'), JSON.stringify({ schemaVersion: 1,
     automaticDataMigrations: false, dataCompatibility: 'cockpit-user-root-v1', moduleRunnerApi: 2 }));
@@ -124,6 +123,17 @@ test('publisher refuses a main package incompatible with the independently retai
   await writeFile(path, JSON.stringify({ ...manifest, files: await inventory(f.source) }));
   execFileSync('tar', ['-czf', f.runtime, '-C', f.source, '.']);
   await assert.rejects(packageConsumerRelease(f), /API1/);
+});
+
+test('publisher refuses an old resident-runner archive without owned lifecycle compatibility', async t => {
+  const f = await fixture(t);
+  await writeFile(join(f.source, 'consumer-runtime.json'), JSON.stringify({ schemaVersion: 1,
+    automaticDataMigrations: false, dataCompatibility: 'cockpit-user-root-v1', moduleRunnerApi: 1 }));
+  const path = join(f.source, 'delivery-manifest.json'), manifest = JSON.parse(await readFile(path, 'utf8'));
+  await rm(path);
+  await writeFile(path, JSON.stringify({ ...manifest, files: await inventory(f.source) }));
+  execFileSync('tar', ['-czf', f.runtime, '-C', f.source, '.']);
+  await assert.rejects(packageConsumerRelease(f), /lifecycle|API1/);
 });
 
 test('private GitHub two-pass publication changes signed asset URL without changing the uploaded main ZIP', async t => {

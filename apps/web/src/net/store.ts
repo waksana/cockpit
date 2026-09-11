@@ -10,7 +10,7 @@ import type {
   AgentStatus, Attachment, ChatSession, ModelOption, ServerEvent,
 } from './types';
 import { MetaResource, SessionResource, type SessionMeta } from '@cockpit/protocol';
-import type { IntentBody, IntentResult, NativeChatRead, NativeChatPage, PanelSection, PanelItem, SessionProjection, ModuleSelection, IntentName, SessionDeletionPlan, SessionUnbindApproval, SessionStartOperation } from '@cockpit/protocol';
+import type { IntentBody, IntentResult, NativeChatRead, NativeChatPage, PanelSection, PanelItem, SessionProjection, ModuleSelection, IntentName } from '@cockpit/protocol';
 import { invalidateWindow, metaToSession } from './sessionWindow';
 import { applyProjection, cleanProjection } from './sessionResources';
 import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
@@ -50,7 +50,7 @@ interface CockpitState {
   setActiveId: (id: string | null) => void;
   observeAttention: (sessionId: string, attnId: number, visible: boolean) => void;
   newSession: (cwd: string, modules?: ModuleSelection[]) => Promise<string>;
-  moduleIntent: <K extends Extract<IntentName, `modules/${string}` | `session/modules/${string}`>>
+  moduleIntent: <K extends Extract<IntentName, `modules/${string}` | `session/modules/${string}` | `system/consumer/${string}`>>
     (name: K, body: IntentBody<K>, signal?: AbortSignal) => Promise<IntentResult<K>>;
   forkSession: (sessionId: string) => Promise<string>;
   loadMore: (sessionId: string) => void;
@@ -61,10 +61,7 @@ interface CockpitState {
   cancel: (sessionId: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<{ ok: true; interrupted: boolean }>;
   setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => Promise<void>;
-  deleteSession: (sessionId: string, confirm: true, unbind?: SessionUnbindApproval) => Promise<void>;
-  previewDeleteSession: (sessionId: string, signal?: AbortSignal) => Promise<SessionDeletionPlan>;
-  startSession: (body: IntentBody<'session/start'>) => Promise<SessionStartOperation>;
-  getSessionStart: (operationId: string, signal?: AbortSignal) => Promise<SessionStartOperation | null>;
+  deleteSession: (sessionId: string, confirm: true) => Promise<void>;
   unloadSession: (sessionId: string) => Promise<void>;
   reloadSession: (sessionId: string) => Promise<void>;
   pinSession: (sessionId: string, pinned: boolean) => Promise<void>;
@@ -850,10 +847,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     cancel(sid) { return mutation(sid, '取消', (net) => net.cancel(sid)); },
     interrupt(sid) { return nativeRead(sid, (net) => net.interrupt(sid)); },
     setModel(sid, modelId, opts) { return mutation(sid, '切换模型', (net) => net.setModel(sid, modelId, opts)); },
-    deleteSession(sid, confirm, unbind) { return mutation(sid, '永久删除会话', (net) => net.deleteSession(sid, confirm, unbind)); },
-    previewDeleteSession(sid, signal) { return read(net => net.previewDeleteSession(sid, signal)); },
-    startSession(body) { return read(net => net.startSession(body)); },
-    getSessionStart(operationId, signal) { return read(net => net.getSessionStart(operationId, signal)); },
+    deleteSession(sid, confirm) { return mutation(sid, '永久删除会话', (net) => net.deleteSession(sid, confirm)); },
     unloadSession(sid) { return mutation(sid, '卸载会话', (net) => net.unloadSession(sid)); },
     reloadSession(sid) { return mutation(sid, '重载会话', (net) => net.reloadSession(sid)); },
     pinSession(sid, pinned) { return mutation(sid, '置顶会话', (net) => net.pinSession(sid, pinned)); },

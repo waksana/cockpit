@@ -4,11 +4,11 @@
 // validate against them, so the frontend and backend can never drift.
 
 import { z } from 'zod';
-import { ModuleId, ModuleSelections, SessionModules, ModuleStatus, ModuleConfig, ModuleReleaseMetadata, ModuleUpdateOperation, SessionDeletionPlan, SessionUnbindApproval, SessionStartOperation, ModuleServiceCommand, ModuleServiceRequest, ModuleServiceJob, ModuleServiceId, ModuleServiceStatus, ModuleInitializationRequest, ModuleInitializationOperation, ModuleUnbindOperation } from './modules.ts';
+import { ConsumerOperationId, ConsumerOperation, ConsumerStatus } from './consumer.ts';
+export { ConsumerOperationId, ConsumerOperation, ConsumerStatus, ConsumerIdentity } from './consumer.ts';
+import { ModuleId, ModuleSelections, SessionModules, ModuleStatus, ModuleConfig, ModuleReleaseMetadata, ModuleUpdateOperation, ModuleServiceCommand, ModuleServiceRequest, ModuleServiceJob, ModuleServiceId, ModuleServiceStatus, ModuleInitializationRequest, ModuleInitializationOperation, ModuleUnbindOperation } from './modules.ts';
 export { ModuleId, ModuleSelection, ModuleSelections, AppliedModuleSelection, SessionModules, ModuleStatus, ModuleConfig } from './modules.ts';
 export { ModuleReleaseTarget, ModuleReleaseMetadata, SignedModuleRelease, ModuleUpdateOperation } from './modules.ts';
-export { SessionDeletionPlan, SessionUnbindApproval } from './modules.ts';
-export { SessionStartOperation } from './modules.ts';
 export { ModuleServiceCommand, ModuleServiceRequest, ModuleServiceJob, ModuleServiceId, ModuleServiceIdentity, ModuleServiceStatus } from './modules.ts';
 export { ModuleInitializationRequest, ModuleInitializationOperation } from './modules.ts';
 export { ModuleUnbindOperation } from './modules.ts';
@@ -139,10 +139,6 @@ const exclusivePromptFiles = (body: PromptContent) =>
   [body.attachment, body.attachments, body.parts].filter(value => value !== undefined).length <= 1;
 const orderedPromptParts = (body: PromptContent) =>
   !body.parts || (body.text === '' && body.parts.filter(part => part.type === 'file').length <= 20);
-const realPromptContent = (body: PromptContent) =>
-  Boolean(body.text.trim() || body.attachment || body.attachments?.length
-    || body.parts?.some(part => part.type === 'file' || part.text.trim()));
-
 export function attachmentMarkdown(attachment: Attachment): string {
   const url = UploadUrl.parse(attachment.url);
   const label = attachment.name.replace(/[\r\n\t]+/g, ' ').replace(/[\\`*_[\]<>]/g, '\\$&');
@@ -756,6 +752,16 @@ export const PushStatus = z.object({
 export type PushStatus = z.infer<typeof PushStatus>;
 
 export const Intents = {
+  'system/consumer/status': {
+    description: 'Read this consumer installation through its owned launcher and optionally the original durable operation. Runtime identity is returned only from current same-instance version/health readback. Source/private-CD mode is explicitly unavailable. No restart, session load or replay.',
+    body: z.object({ operationId: ConsumerOperationId.optional() }).strict(),
+    result: ConsumerStatus,
+  },
+  'system/consumer/restart': {
+    description: 'Explicitly restart this consumer-owned installation through its single stable launcher. Drain owned modules and native work safely, then restore only captured service releases. The original operation ID is retained; accepted is not completion. No force, data rollback or retry of unknown effects. Web, MCP and admin/restart share this operation.',
+    body: z.object({ operationId: ConsumerOperationId, confirm: z.literal(true) }).strict(),
+    result: z.object({ operation: ConsumerOperation }),
+  },
   'modules/updates/check': {
     description: 'Explicitly fetch and verify the configured official signed channel. No scheduler, downloads or installation are enabled by this check.',
     body: z.object({}).strict(), result: ModuleReleaseMetadata,
@@ -782,8 +788,8 @@ export const Intents = {
     result: ModuleUpdateOperation,
   },
   'modules/list': {
-    description: 'Read installed official modules and live service readiness on demand. Selected, installed and running versions are distinct.',
-    body: z.object({ cwd: z.string().optional() }).strict(),
+    description: 'Read installed official modules and live service readiness on demand. Selected, installed and running versions are distinct. Explicit checkAvailability invokes optional module admission checks: only an authoritatively missing old target may have its active reference cleared. No slot is reserved, no session is created, and unknown results never imply absence.',
+    body: z.object({ cwd: z.string().optional(), checkAvailability: z.boolean().optional() }).strict(),
     result: z.object({ modules: z.array(ModuleStatus) }),
   },
   'modules/install': {
@@ -846,7 +852,7 @@ export const Intents = {
   },
   'modules/wechat/unbind/get': {
     description: 'Read one retained explicit WeChat unbind operation without invoking a hook, inspecting native cwd or inferring success from a missing current binding.',
-    body: z.object({ operationId: SessionUnbindApproval.shape.operationId }).strict(),
+    body: z.object({ operationId: ModuleUnbindOperation.shape.operationId }).strict(),
     result: z.object({ operation: ModuleUnbindOperation.nullable() }),
   },
   'session/chat': {
@@ -860,26 +866,9 @@ export const Intents = {
     result: Snapshot,
   },
   'session/new': {
-    description: 'Create one native session, optionally with installed module roles. Module failures after creation retain the session ID; never recreate on an uncertain result. No global or project role files are written.',
-    body: z.object({ cwd: z.string(), modules: ModuleSelections.optional() }),
+    description: 'Create one native Copilot session, optionally configuring installed module roles. Returns only the real native ID and sends no message; Web, MCP and Task then use prompt with that ID. Module failures after confirmed creation retain its ID; never recreate on an uncertain result. Empty sessions may disappear after unload. No global or project role files are written.',
+    body: z.object({ cwd: z.string().min(1), modules: ModuleSelections.optional() }).strict(),
     result: z.object({ sessionId: z.string() }),
-  },
-  'session/start': {
-    description: 'Create a session only with real first-message content. Prepare selected roles, MCP, skills and bindings before submitting that message. A stable operation ID is readback-only on duplicate requests; unknown creation or send is never automatically retried. Accepted means native message acceptance, not completion or reading.',
-    body: z.object({
-      operationId: z.string().min(8).max(120).regex(/^[A-Za-z0-9_-]+$/),
-      cwd: z.string().min(1).refine(value => Boolean(value.trim()), 'Working directory is required'),
-      modules: ModuleSelections.optional(), ...promptContentFields,
-    }).strict()
-      .refine(exclusivePromptFiles, 'attachment, attachments and parts are mutually exclusive')
-      .refine(orderedPromptParts, 'parts requires empty text and at most 20 files')
-      .refine(realPromptContent, 'A real nonblank first message or a retained file is required'),
-    result: z.object({ operation: SessionStartOperation }),
-  },
-  'session/start/get': {
-    description: 'Passively read a durable first-message operation receipt. A planned session ID does not prove native existence; interrupted creation reads unknown and is never resumed or resent.',
-    body: z.object({ operationId: z.string().min(8).max(120).regex(/^[A-Za-z0-9_-]+$/) }).strict(),
-    result: z.object({ operation: SessionStartOperation.nullable() }),
   },
   'session/modules/get': {
     description: 'Read user-selected and successfully applied module versions, not a native MCP/skill state snapshot.',
@@ -977,17 +966,13 @@ export const Intents = {
     body: z.object({ sessionId: z.string(), mode: AgentMode }),
     result: z.object({ ok: z.boolean() }),
   },
-  'session/delete/preview': {
-    description: 'Read the associated modules that explicitly declare session unbind. No hooks, deletion or notification are executed. Use the returned planId and any retained operationId for explicit unbind-and-delete confirmation.',
-    body: z.object({ sessionId: z.string().min(1) }).strict(),
-    result: z.object({ plan: SessionDeletionPlan }),
-  },
   'session/delete': {
     description: 'IRREVERSIBLE native session deletion. Explicit confirm:true is required; old soft-delete requests are rejected. Managed files and workspaces are retained. Never automatically retry an uncertain result.',
-    body: z.object({ sessionId: z.string().min(1), confirm: z.literal(true), unbind: SessionUnbindApproval.optional() }).strict(),
+    body: z.object({ sessionId: z.string().min(1), confirm: z.literal(true) }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   'session/unload': {
+    description: 'Unload an idle native session without deleting persisted history. Empty never-messaged sessions may disappear; session/get reports actual presence. Never creates a replacement or cancels busy work.',
     body: z.object({ sessionId: z.string() }),
     result: z.object({ ok: z.boolean() }),
   },
@@ -997,6 +982,7 @@ export const Intents = {
     result: z.object({ ok: z.literal(true), sessionId: z.string().min(1) }).strict(),
   },
   'session/reload': {
+    description: 'Explicitly reload an existing idle native session with pinned module roles. Never creates another ID or sends an initialization message. Empty loaded sessions are refused before close because native empty-session persistence is not guaranteed.',
     body: z.object({ sessionId: z.string() }),
     result: z.object({ ok: z.boolean() }),
   },
@@ -1184,7 +1170,7 @@ export const Intents = {
   // Compatibility for existing explicitly destructive clients; one implementation.
   'session/purge': {
     description: 'Compatibility alias for session/delete: irreversible native deletion, requiring explicit confirm:true. Managed files and workspaces are retained. Never automatically retry an uncertain result.',
-    body: z.object({ sessionId: z.string().min(1), confirm: z.literal(true), unbind: SessionUnbindApproval.optional() }).strict(),
+    body: z.object({ sessionId: z.string().min(1), confirm: z.literal(true) }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   // Native after/every supports relative delays and one-shot absolute times.

@@ -23,12 +23,20 @@ The main closure must include `consumer-runtime.json`, `scripts/consumer/`,
 `packages/core/src/consumer/`, `.delivery/toolkit/lib/artifact.mjs` and the
 existing `.delivery/toolkit/bin/extract.py`. The publisher refuses an archive
 that lacks the no-automatic-migration compatibility declaration,
-`"moduleRunnerApi": 1`, `packages/core/src/modules/supervisor-entry.ts`, or
+`"moduleRunnerApi": 1`, `"moduleRunnerLifecycleApi": 1`,
+`packages/core/src/modules/supervisor-entry.ts`, or
 bootstrap files (including `scripts/consumer/module-runner.mjs`); an old
-private-CD package is not automatically a consumer release. Main updates must
-remain compatible with the resident API1 runner from an earlier main archive:
-they do not upgrade or replace it. The runner source release is retained until
-an explicit full shutdown; there is no automatic release garbage collection.
+private-CD package is not automatically a consumer release. Normal main
+shutdown/restart/update safely drains owned modules and stops that runner before
+main exits. A replacement starts a fresh compatible runner from the new
+verified archive; it does not reuse a resident runner from an older release.
+After main health, restoration uses exact owned service version/digest pins
+captured by the previous confirmed host drain, not catalog role defaults or
+activation permission flags. Main-only updates must not implicitly upgrade
+module services or start merely installed modules. Old runner-only API1 archives lacking the lifecycle declaration
+are not compatible with this lifecycle. All old source releases and runner
+operation histories remain retained; there is no automatic release garbage
+collection or business-data migration.
 
 Supply a new publisher specification file:
 

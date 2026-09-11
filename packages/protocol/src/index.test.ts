@@ -481,18 +481,16 @@ test('module initialization requires explicit fixed release identity and a canon
     { dataDirectory: '/existing/private/data' }, { command: 'sh' }, { force: true },
   ]) assert.equal(schema.safeParse({ ...initializeConfig, ...changed }).success, false);
 });
-const startOperation = { operationId: 'session-start-0001', sessionId: '00000000-0000-4000-8000-000000000001',
-  state: 'accepted' } satisfies Protocol.SessionStartOperation;
 
 // Each retained intent must have a lossless body AND result fixture.
 const intentFixtures = {
+  'system/consumer/status': { body: {}, result: { available: false, reason: 'Not a consumer installation' } },
+  'system/consumer/restart': { body: { operationId: 'consumer-restart-fixture', confirm: true },
+    result: { operation: { operationId: 'consumer-restart-fixture', kind: 'restart', state: 'draining-modules', updatedAt: '2026-09-12T00:00:00Z' } } },
   'runtime/snapshot': { body: {}, result: snapshot },
   'session/new': { body: { cwd: minimalMeta.cwd }, result: sid },
-  'session/start': { body: { operationId: startOperation.operationId, cwd: minimalMeta.cwd, text: 'First message' }, result: { operation: startOperation } },
-  'session/start/get': { body: { operationId: startOperation.operationId }, result: { operation: startOperation } },
   'session/modules/get': { body: sid, result: { modules: moduleBinding } },
   'session/modules/apply': { body: { ...sid, selections: [], operationId: moduleBinding.operationId }, result: { modules: moduleBinding } },
-  'session/delete/preview': { body: sid, result: { plan: { ...sid, planId: 'a'.repeat(64), modules: [] } } },
   'modules/updates/check': { body: {}, result: { schemaVersion: 1, channel: 'stable', sequence: 1,
     issuedAt: '2026-09-11T10:00:00Z', expiresAt: '2026-10-11T10:00:00Z', targets: [] } },
   'modules/updates/status': { body: {}, result: { operations: [] } },
@@ -658,21 +656,29 @@ test('session/fork uses strict native fields and never accepts cwd or blank boun
   }
 });
 
-test('session/new preserves explicit optional module roles and strips unrelated legacy extras', () => {
+test('session/new preserves explicit module roles and rejects virtual identity or hidden launch inputs', () => {
   const schema = Intents['session/new'].body;
   assert.deepEqual(Object.keys(schema.shape), ['cwd', 'modules']);
   roundTrip(schema, { cwd: '/workspace/project', modules: [{ moduleId: 'assistant', roleId: 'assistant', version: '1.0.0' }] });
-  for (const cwd of ['/workspace/project', 'relative/path', '']) {
+  for (const cwd of ['/workspace/project', 'relative/path']) {
     roundTrip(schema, { cwd });
-    assert.deepEqual(schema.parse({
+    assert.equal(schema.safeParse({
       cwd, spawnedBy: 'old-worker', title: 'Ignored', prompt: 'Do not launch',
       skills: ['review'], mcps: ['tools'], model: 'gpt-x', mode: 'autopilot',
       template: {}, launchState: 'launching', unknown: true,
-    }), { cwd });
-    assert.deepEqual(schema.parse({ cwd, spawnedBy: 42, mode: null }), { cwd });
+    }).success, false);
+    assert.equal(schema.safeParse({ cwd, sessionId: 'virtual-id' }).success, false);
   }
-  for (const value of [{}, null, [], { cwd: undefined }, { cwd: null }, { cwd: false }, { cwd: 1 }, { cwd: [] }, { cwd: {} }]) {
+  for (const value of [{}, null, [], { cwd: '' }, { cwd: undefined }, { cwd: null }, { cwd: false }, { cwd: 1 }, { cwd: [] }, { cwd: {} }]) {
     assert.equal(schema.safeParse(value).success, false, JSON.stringify(value));
+  }
+});
+
+test('module admission is explicit and retired creation/deletion coordinators are not APIs', () => {
+  roundTrip(Intents['modules/list'].body, { cwd: '/workspace', checkAvailability: true });
+  assert.equal(Intents['modules/list'].body.safeParse({ checkAvailability: 'true' }).success, false);
+  for (const name of ['session/start', 'session/start/get', 'session/delete/preview']) {
+    assert.equal(Object.hasOwn(Intents, name), false);
   }
 });
 
@@ -1181,7 +1187,7 @@ type SlimContractGuards = [
   Expect<Equal<Extract<keyof SessionBrief, RemovedMetaField>, never>>,
   Expect<Equal<Extract<keyof Extract<Protocol.ServerEvent, { type: 'session/patch' }>, RemovedMetaField>, never>>,
   Expect<Equal<IntentBody<'session/new'>, { cwd: string; modules?: Protocol.ModuleSelection[] }>>,
-  Expect<Equal<IntentBody<'session/purge'>, { sessionId: string; confirm: true; unbind?: Protocol.SessionUnbindApproval }>>,
+  Expect<Equal<IntentBody<'session/purge'>, { sessionId: string; confirm: true }>>,
   Expect<Equal<IntentBody<'session/chat'>, Protocol.NativeChatRead>>,
   Expect<Equal<IntentBody<'skills/global'>, { cwd?: string }>>,
   Expect<Equal<IntentBody<'prompt'>, { sessionId: string; text: string; mode?: 'enqueue' | 'immediate';

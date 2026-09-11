@@ -1,5 +1,5 @@
 import type { CopilotSession, SessionConfig } from '@github/copilot-sdk';
-import type { ModuleSelection, SessionModules, SessionDeletionPlan, SessionUnbindApproval } from '@cockpit/protocol';
+import type { ModuleSelection, SessionModules } from '@cockpit/protocol';
 
 export type RoleSessionConfig = Pick<SessionConfig, 'systemMessage' | 'skillDirectories' | 'mcpServers' | 'disabledSkills'>;
 
@@ -11,8 +11,6 @@ export interface SessionModuleHost {
   failed(sessionId: string, error: unknown): Promise<void>;
   assertReady(sessionId: string): Promise<void>;
   read(sessionId: string): Promise<SessionModules | null>;
-  deletionPlan?(sessionId: string): Promise<SessionDeletionPlan>;
-  unbindForDeletion?(sessionId: string, approval?: SessionUnbindApproval): Promise<void>;
   removed?(sessionId: string): Promise<void>;
   /** Includes still-running control children after their initiating request has rejected. */
   activeCount?(): number;

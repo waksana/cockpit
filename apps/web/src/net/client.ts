@@ -2,7 +2,7 @@
 // projections remain in the browser; typed POSTs also serve older event pages.
 
 import { ServerEvent, Intents, NativeChatStreamRequest } from '@cockpit/protocol';
-import type { Attachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction, NativeChatPage, ModuleSelection, SessionUnbindApproval } from '@cockpit/protocol';
+import type { Attachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction, NativeChatPage, ModuleSelection } from '@cockpit/protocol';
 import { EVENTS_URL, CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { reportUxError, describeReason } from '../lib/errorReporter';
 import { consumeChatStream } from './chatStream';
@@ -166,8 +166,7 @@ export class NetClient {
     try {
       // Upload responses may contain server paths; only shared prompt metadata
       // belongs on the wire, even when callers pass extra runtime properties.
-      const payload = name === 'prompt' ? Intents.prompt.body.parse(body)
-        : name === 'session/start' ? Intents['session/start'].body.parse(body) : body;
+      const payload = name === 'prompt' ? Intents.prompt.body.parse(body) : body;
       const expectedSessionId = 'sessionId' in payload ? payload.sessionId : undefined;
       const res = await fetch(intentUrl(name), {
         method: 'POST',
@@ -185,14 +184,6 @@ export class NetClient {
           typeof details.sessionId === 'string' ? details.sessionId : undefined);
       }
       const result = Intents[name].result.parse(json);
-      if ((name === 'session/start' || name === 'session/start/get') && 'operation' in result
-        && result.operation && 'operationId' in payload && result.operation.operationId !== payload.operationId) {
-        throw new Error('首条消息创建操作回执标识不匹配；不要重新创建或重发。');
-      }
-      if (name === 'session/delete/preview' && 'plan' in result
-        && result.plan.sessionId !== expectedSessionId) {
-        throw new Error('删除预览返回了其他会话，未授权删除。');
-      }
       if ((name === 'session/chat' || name === 'session/usage')
         && 'sessionId' in result && result.sessionId !== expectedSessionId) {
         throw new Error(`intent ${name} returned sessionId ${JSON.stringify(result.sessionId)} instead of ${JSON.stringify(expectedSessionId)}`);
@@ -219,10 +210,6 @@ export class NetClient {
 
   // --- typed intent helpers --------------------------------------------------
   newSession(cwd: string, modules?: ModuleSelection[]) { return this.intent('session/new', { cwd, ...(modules?.length ? { modules } : {}) }); }
-  async startSession(body: IntentBody<'session/start'>) { return (await this.intent('session/start', body)).operation; }
-  async getSessionStart(operationId: string, signal?: AbortSignal) {
-    return (await this.intent('session/start/get', { operationId }, signal)).operation;
-  }
   forkSession(sessionId: string) { return this.intent('session/fork', { sessionId }); }
   chat(body: IntentBody<'session/chat'>, signal?: AbortSignal) { return this.intent('session/chat', body, signal); }
   async chatStream(
@@ -272,11 +259,8 @@ export class NetClient {
     return this.intent('setModel', { sessionId, modelId, ...opts });
   }
   // The purge name was already permanently destructive in older backends.
-  deleteSession(sessionId: string, confirm: true, unbind?: SessionUnbindApproval) {
-    return this.intent('session/purge', { sessionId, confirm, ...(unbind ? { unbind } : {}) });
-  }
-  async previewDeleteSession(sessionId: string, signal?: AbortSignal) {
-    return (await this.intent('session/delete/preview', { sessionId }, signal)).plan;
+  deleteSession(sessionId: string, confirm: true) {
+    return this.intent('session/purge', { sessionId, confirm });
   }
   unloadSession(sessionId: string) { return this.intent('session/unload', { sessionId }); }
   reloadSession(sessionId: string) { return this.intent('session/reload', { sessionId }); }

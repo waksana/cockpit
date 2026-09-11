@@ -413,8 +413,8 @@ test('the explicit entry runs independently of its IPC consumer and exits only a
   assert.ok(stopJobs.some(job => job.command.action === 'stop' && job.phase === 'done'));
 });
 
-test('owned parent IPC refuses active-module shutdown and closes only an idle runner', async t => {
-  const { runner, client, userRoot, first } = await fixture(t);
+test('owned parent IPC fences controls, drains busy services and returns their exact release pins', async t => {
+  const { runner, client, userRoot, first, set } = await fixture(t);
   await runner.close();
   const child = spawn(process.execPath, ['--import', 'tsx', new URL('./supervisor-entry.ts', import.meta.url).pathname,
     '--user-root', userRoot, '--cockpit-url', 'http://127.0.0.1:1'],
@@ -425,24 +425,24 @@ test('owned parent IPC refuses active-module shutdown and closes only an idle ru
   child.stderr.on('data', chunk => { stderr += chunk.toString(); });
   try {
     const [ready] = await once(child, 'message', { signal: AbortSignal.timeout(5000) });
-    assert.deepEqual(ready, { type: 'module-runner-ready', apiVersion: 1, pid: child.pid,
+    assert.deepEqual(ready, { type: 'module-runner-ready', apiVersion: 1, lifecycleApi: 1, pid: child.pid,
       socket: join(userRoot, '.module-runner.sock') });
     await start(client, first, 'parent-ipc-start');
-    const refused = once(child, 'message', { signal: AbortSignal.timeout(5000) });
-    child.send({ type: 'shutdown-if-idle', operationId: 'parent-ipc-refusal' });
-    const [failure] = await refused;
-    assert.equal(failure.ok, false);
-    assert.match(failure.error, /active children\/jobs/);
-    assert.equal((await client.status('task')).status, 'running');
-    await client.submit({ id: 'task', action: 'stop', operationId: 'parent-ipc-explicit-stop' });
-    assert.equal((await finished(client, 'parent-ipc-explicit-stop')).phase, 'done');
+    set({ busy: true });
+    const accepted = once(child, 'message', { signal: AbortSignal.timeout(5000) });
+    child.send({ type: 'drain-and-stop', operationId: 'parent-ipc-drain' });
+    assert.deepEqual((await accepted)[0], { type: 'module-runner-drain', operationId: 'parent-ipc-drain', pid: child.pid, state: 'accepted' });
     const completed = once(child, 'message', { signal: AbortSignal.timeout(5000) });
-    child.send({ type: 'shutdown-if-idle', operationId: 'parent-ipc-idle-close' });
-    assert.deepEqual((await completed)[0], { type: 'module-runner-shutdown',
-      operationId: 'parent-ipc-idle-close', pid: child.pid, ok: true });
+    await assert.rejects(client.submit({ id: 'task', action: 'start', operationId: 'parent-ipc-racing-start' }), /closing/);
+    assert.equal((await client.status('task')).owned, true);
+    set({});
+    assert.deepEqual((await completed)[0], { type: 'module-runner-drain',
+      operationId: 'parent-ipc-drain', pid: child.pid, state: 'stopped',
+      services: [{ id: 'task', version: first.manifest.version, digest: first.digest }] });
     assert.deepEqual(await exited, [0, null], stderr);
     assert.equal(existsSync(join(userRoot, '.module-runner.sock')), false);
   } finally {
+    set({});
     if (child.exitCode === null && child.signalCode === null) {
       child.kill('SIGTERM');
       await exited;

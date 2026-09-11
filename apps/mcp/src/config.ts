@@ -28,6 +28,7 @@ const LOAD_AWARE_INTENTS = new Set([
   'session/panels',
   'session/panel',
   'session/reload',
+  'session/load',
   'session/compact',
   'session/auto-name',
   'session/rewind',

@@ -29,7 +29,7 @@ export interface ModuleManifest {
   roles?: ModuleRole[];
   service?: { entry: string; args?: string[]; healthPath: string; versionPath: string; drainPath: string; publicPath?: string };
   binding?: 'wechat';
-  sessionLifecycle?: { unbind?: { entry: string; args?: string[] } };
+  sessionLifecycle?: { unbind?: { entry: string; args?: string[] }; canBind?: { entry: string; args?: string[] } };
   configLifecycle?: { initialize?: { entry: string; args?: string[] } };
 }
 export interface InstalledModule {
@@ -224,13 +224,14 @@ export function validateModuleManifest(value: unknown): ModuleManifest {
   }
   if (raw.sessionLifecycle !== undefined) {
     const lifecycle = object(raw.sessionLifecycle, 'session lifecycle');
-    keys(lifecycle, ['unbind'], 'session lifecycle');
+    keys(lifecycle, ['unbind', 'canBind'], 'session lifecycle');
     manifest.sessionLifecycle = {};
-    if (lifecycle.unbind !== undefined) {
-      const unbind = object(lifecycle.unbind, 'session unbind');
-      keys(unbind, ['entry', 'args'], 'session unbind');
-      manifest.sessionLifecycle.unbind = { entry: entryPath(unbind.entry),
-        ...(unbind.args === undefined ? {} : { args: args(unbind.args) }) };
+    for (const name of ['unbind', 'canBind'] as const) {
+      if (lifecycle[name] === undefined) continue;
+      const hook = object(lifecycle[name], `session ${name}`);
+      keys(hook, ['entry', 'args'], `session ${name}`);
+      manifest.sessionLifecycle[name] = { entry: entryPath(hook.entry),
+        ...(hook.args === undefined ? {} : { args: args(hook.args) }) };
     }
   }
   if (raw.configLifecycle !== undefined) {
@@ -361,6 +362,7 @@ function validatePackageFiles(manifest: ModuleManifest, entries: InventoryEntry[
   }
   if (manifest.service) requireFile(manifest.service.entry);
   if (manifest.sessionLifecycle?.unbind) requireFile(manifest.sessionLifecycle.unbind.entry);
+  if (manifest.sessionLifecycle?.canBind) requireFile(manifest.sessionLifecycle.canBind.entry);
   if (manifest.configLifecycle?.initialize) requireFile(manifest.configLifecycle.initialize.entry);
 }
 function selection(value: unknown): ModuleSelection {

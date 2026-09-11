@@ -46,23 +46,20 @@ New-session selection is multi-select, with at most one role per module.
 Unavailable choices carry a reason and, when relevant, the already bound session.
 Only capabilities declared by an installed role are invoked.
 
-The interactive creation flow waits for the first real message before allocating
-a native session ID. Directory/role selection alone is form configuration, not
-a native session or a WeChat prebinding. Sending text, voice-transcribed text or
-retained files creates the native session, prepares the selected environment and
-required module connections, and only then submits that first message to the
-model. No hidden initialization message is sent. The first message originates
-from Cockpit in this initial workflow; WeChat cannot address a session that does
-not yet exist.
+Web, MCP and Task use the same creation sequence:
+`session/new {cwd, modules?}` configures the chosen environment and returns the
+actual native session ID, then `prompt {sessionId, text, ...}` sends content.
+Creating a session never sends a hidden initialization message. Directory/role
+selection is only a form, not a virtual session, reserved identity or chat route.
+The first-message `session/start` coordinator and its readback API are retired.
+Old operation receipts and retained uploads are not deleted or replayed.
 
-Creation uses a stable operation identity, distinct from the native session ID.
-An uncertain result is inspected through the original operation, never retried
-by silently creating another session or resending the first message. Acceptance
-means the native message was accepted, not that the model completed its answer
-or read every file. Existing low-level `session/new` remains available to legacy
-clients and Task's already-admitted dispatch sequence; a bare empty native session
-does not carry a persistence guarantee. In runtime 1.0.83, explicit save did not
-make a never-messaged empty session recoverable after unload.
+Module setup failure after confirmed native creation preserves that real ID.
+A preparation failure does not expose a planned ID as an existing native session.
+An uncertain creation or message result is an error, never an automatic
+replacement or resend. A bare empty native session does not carry a persistence
+guarantee. In runtime 1.0.83, explicit save did not make a never-messaged empty
+session recoverable after unload.
 Explicit module reapplication therefore refuses an empty native session before
 changing its role record or closing it. A Task owner created with its role already
 applied must be verified read-only, not closed and reapplied before its first
@@ -97,28 +94,50 @@ applied operation IDs return their retained result rather than repeating the
 lifecycle. A module-aware MCP reload also restores the bound role configuration,
 while unrelated temporary native switches still follow native cold-load rules.
 
-## Optional session unbind
+## Admission, deletion and optional manual unbind
 
-The 2026-09-11 17:22 decision makes session unbind an optional, explicit capability:
+The 2026-09-11 22:37 decision supersedes deletion-before-unbind coordination.
+Both Web and MCP perform native deletion with the same `confirm:true` and
+actual busy protections. Deletion has no module preview, approval, hook or
+broadcast. Module state cannot veto native deletion. After acknowledgement,
+Cockpit archives its own role/application reference; module business state,
+credentials, user files and unknown-outcome evidence remain untouched.
+
+A module checks a referenced native ID when it actually needs to use it. Only
+an authoritative missing result permits reporting an unavailable target and
+clearing that exact old active reference. Unloaded is still present; timeout,
+403, unavailable transport and invalid responses are not absence. Cleanup must
+compare the captured binding identity/revision so a delayed failure cannot
+remove a newer binding. Task's historical caller/owner identity is not an active
+route to rewrite. No background all-session scan, replacement session, task
+transfer or message resend is part of this mechanism.
+
+The creation form calls `modules/list {cwd, checkAvailability:true}` on demand,
+including an explicit refresh action. Modules without special admission
+conditions need no check hook. A conditional module checks only its existing
+binding: present (including unloaded) blocks selection, missing may clear the
+old active reference, and unknown displays a reason. This is not a reservation.
+After native creation, the module atomically checks the slot again when binding
+the actual ID. A concurrent losing submission retains its native session and
+partial-setup result rather than recreating it.
+
+The optional manifest capability is
+`sessionLifecycle.canBind: {entry: "src/module-control.js"}`. Its verified entry
+receives `{operation:"can-bind"}`, with no prospective session ID, prompt or
+reservation. It returns `{ok:true,status:{available,boundSessionId,...}}` using
+the module's own authoritative control state. Ordinary listing uses the pure
+status read. Invalid or unconfirmed responses never become an available choice.
+
+Independent manual unbind remains an optional capability:
 
 ```json
 {"sessionLifecycle":{"unbind":{"entry":"src/module-control.js"}}}
 ```
 
-An absent capability means no notification and no unbind call, even if the
-session used that module's instructions, skills or MCP. The host does not
-broadcast every native deletion to every module. Assistant and Task do not
-declare this hook by default. WeChat declares it to release its target binding
-without deleting account configuration, business history or unknown sends.
-
-`session/delete/preview` reads only the associated declared capabilities.
-The delete dialog identifies those modules and asks for explicit
-"unbind and delete" confirmation. Both native deletion intents accept the
-preview's `planId` and a stable operation ID in `unbind`. The host refuses a
-changed plan, runs required unbind hooks at the native safe boundary, and only
-then deletes the native session. Ordinary clients cannot bypass declared hooks
-by sending only `confirm:true`. Busy/unknown required unbind outcomes block deletion;
-partial success is retained and must not be misreported as a completed deletion.
+An absent capability means there is no manual unbind hook. Assistant and Task do
+not declare one. WeChat declares it to release a target without deleting account
+configuration, business history or unknown sends. `modules/wechat/unbind` and its
+operation readback are separate from both native deletion intents.
 
 The installed, integrity-checked hook receives bounded JSON stdin:
 `{operation:"session-unbind",operationId,sessionId}`. It returns a confirmed
@@ -126,14 +145,10 @@ matching operation/session acknowledgement. This explicit operation is
 idempotent: repeating it cannot detach another, newer session binding.
 No hook creates or loads a native session, prompts a model, starts a channel or
 replays a task/message. Completed steps and uncertain outcomes are retained;
-operator continuation uses the same operation identity. Removing a session does
-not erase the operation receipts, module data, user memory or managed uploads.
-After native deletion is confirmed, the old role/application record is archived
-before its live reference is removed. A failed or unknown role application with
-no remaining required unbind does not leave an undeletable module reference.
-The original completed module-deletion receipt remains readable through
-`session/delete/preview` after native removal; reading it never recreates the
-session or repeats an unbind.
+operator continuation uses the same operation identity. The retired deletion
+coordinator's historical receipts stay on disk but no longer gate a session's
+use or deletion. A failed/unknown application cannot leave an undeletable native
+session merely because a module's unbind would refuse.
 
 Unload/load preserves the native session ID and does not invoke unbind.
 Out-of-band deletion can leave an unavailable target; consumers still check
@@ -205,11 +220,32 @@ for safe exit without force-kill deadlines, verify the new immutable identity an
 same-instance health, and retain uncertain outcomes for inspection. The existing
 private CD remains authoritative for installations already under its control;
 two launchers must never compete for the same selection or data directory.
+In consumer mode the runner belongs to one main-process lifetime. Normal stop,
+restart and main update fence new module controls, wait for admitted work, drain
+owned module services while the main API is still available, and wait for the
+runner's clean exit before draining native Copilot. A new main lifetime uses a
+new runner. Only exact version/digest pins captured from running owned services
+at that drain fence are restored; installed/selected releases and
+`activationEnabled` alone do not start a service. Manual stops remain stopped,
+and installing a newer role default does not update a running shared service.
+Disabled, incompatible or unowned restoration targets fail explicitly; unknown
+results never authorize a replacement process or replay.
 For a new consumer-owned main installation, the separate
 [consumer installer and stable launcher](consumer-installation.md) consume the
 same CI archive without private-CD access. That explicit authority is distinct
 from this module runner; it neither adopts existing services nor starts a
 second Task/WeChat supervisor.
+
+`system/consumer/status {operationId?}` reads current same-instance runtime
+identity and the original launcher receipt. `system/consumer/restart
+{operationId,confirm:true}` submits one stable operation; Web and MCP use the
+same contract. The compatibility `/admin/restart` transport delegates to it in
+consumer mode and requires the same operation ID. Consumer drain cancellation
+cannot pretend to undo already-started module effects. Source/private-CD mode
+keeps its prior lifecycle, and explicitly reports consumer control unavailable.
+The main startup IPC and `moduleRunnerLifecycleApi:1` release declaration are
+required; a source directory or the old resident-runner archive cannot claim
+this lifecycle. Main download/install remains an explicit launcher CLI action.
 
 ### Managed service operations
 
@@ -308,12 +344,15 @@ start a paused channel merely to display its configuration.
 | Archive extraction | Python 3 with the toolkit's safe tar extraction support. Actual CI packages can contain ordinary dependency filenames with spaces; declared executable/role entry paths remain strict. |
 | Storage | Writable, canonical owner-only user root; immutable releases and separate configuration/data. No writes to an arbitrary user's project during installation. |
 | Services | Explicit loopback addresses and data/credential references; Task also requires its existing `flock` runtime dependency. External authority is read-only until a separately confirmed handoff. |
-| Process supervision | An independent launcher/runner must outlive the Cockpit/native session it may restart. Manual and service-manager launch need their own explicit installation arrangement. |
+| Process supervision | The stable updater launcher survives a main switch. Its owned module runner/services safely exit with main and are restored from captured release pins, not kept resident. Manual/service-manager installation needs an explicit arrangement. |
 | Network | Trusted HTTPS publisher and download origins. Offline/failed checks mean newest version is unknown; no silent source, proxy or TLS bypass. |
 | Existing clients | Cockpit-managed MCP connections can change at the safe application boundary. External MCP clients must reload through their own lifecycle. |
 
-Production acceptance must separately demonstrate package consumption, real
+Independent-installation acceptance must demonstrate package consumption, real
 native create/cold-load/reset/version application, Task caller/owner composition,
 binding/unbinding failures, page/API/SSE routing, safe service replacement,
 configuration recovery, and the actual running identity. A diagram, a mock,
 an accepted operation or a healthy old process is not that acceptance.
+Production migration/deployment remains separately deferred: this implementation
+does not move the live Task database, replace its existing domain, rewrite old
+task identities, or take ownership from the current private delivery controller.

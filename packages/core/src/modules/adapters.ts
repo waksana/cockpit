@@ -277,10 +277,14 @@ export async function provisionTaskCaller(config: AdapterConfig, sessionId: stri
 }
 
 export async function wechatControl(installed: InstalledModule, config: AdapterConfig,
-  body: { action: 'status' | 'bind' | 'unbind' | 'session-unbind'; sessionId?: string; cwd?: string; operationId?: string },
+  body: { action: 'status' | 'can-bind' | 'bind' | 'unbind' | 'session-unbind'; sessionId?: string; cwd?: string; operationId?: string },
   lifecycle?: { started(): void; settled(): void }): Promise<Record<string, unknown>> {
   if (installed.manifest.id !== 'wechat') throw new Error('WeChat control cannot invoke another module');
-  const hook = body.action === 'session-unbind' ? installed.manifest.sessionLifecycle?.unbind : undefined;
+  const hook = body.action === 'session-unbind' ? installed.manifest.sessionLifecycle?.unbind
+    : body.action === 'can-bind' ? installed.manifest.sessionLifecycle?.canBind : undefined;
+  if (body.action === 'can-bind' && (!hook || body.sessionId !== undefined || body.cwd !== undefined || body.operationId !== undefined)) {
+    throw new Error('Optional canBind requires its declared entry and accepts no prospective session identity');
+  }
   if (body.action === 'session-unbind') {
     if (!hook) throw new Error('Selected WeChat version does not declare sessionLifecycle.unbind; native-independent manual unbind is unsupported');
     if (!body.sessionId || !/^[A-Za-z0-9_-]{1,200}$/.test(body.sessionId)
@@ -312,10 +316,13 @@ export async function wechatControl(installed: InstalledModule, config: AdapterC
             { moduleOutcomeUnknown: body.action !== 'status' && /UNKNOWN|UNCONFIRMED/.test(failure) });
         }
         if (value.ok !== true || error) throw unconfirmed();
-        if (body.action === 'status') {
+        if (body.action === 'status' || body.action === 'can-bind') {
           if (!('status' in value) || !value.status || typeof value.status !== 'object' || Array.isArray(value.status)) {
             throw new Error('Invalid WeChat status response');
           }
+          if (body.action === 'can-bind' && (!('available' in value.status) || typeof value.status.available !== 'boolean'
+            || !('boundSessionId' in value.status) || (value.status.boundSessionId !== null && typeof value.status.boundSessionId !== 'string')
+            || (value.status.available && value.status.boundSessionId !== null))) throw unconfirmed();
           done(value.status as Record<string, unknown>);
         } else if (body.action === 'session-unbind') {
           if (!('operationId' in value) || value.operationId !== body.operationId

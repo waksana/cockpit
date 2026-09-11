@@ -33,6 +33,17 @@ draft-07. Name detail cannot be combined with listing parameters.
 | `cockpit_service_status` | Fixed `operation`: `health` or `status` |
 | `cockpit_service_restart` | Arm/cancel a graceful restart with `pending` and mandatory `confirm:true` |
 
+For consumer-owned installations, `system/consumer/status {operationId?}` is
+the current launcher/runtime read and `system/consumer/restart
+{operationId,confirm:true}` is the same safe restart used by Web. The semantic
+`cockpit_service_restart` alias accepts `operation_id` and forwards it as
+`operationId` through `/admin/restart`; consumer mode requires that stable ID.
+It drains the owned module services/runner before native main shutdown and
+restores captured module release pins after startup. An accepted receipt is not
+a completed restart. Inspect the original operation on uncertainty; a started
+or unknown module drain cannot be undone by `pending:false`. Source/private-CD
+installations retain their existing restart behavior.
+
 Example:
 
 ```json
@@ -69,6 +80,15 @@ elicitation tools answer agent interaction requests, not tool-permission prompts
 All tools below wrap the same backend API; they do not introduce another domain
 store or capability policy.
 
+Creation is identical to Web and Task: `cockpit_new_session` calls
+`session/new {cwd, modules?}` once and returns the actual Copilot ID, with selected
+roles configured and **no message sent**. `cockpit_send_prompt` then calls
+`prompt` for that ID. There is no virtual session, hidden launch message or
+first-message-only creation API. An empty native session may disappear on unload;
+neither transport silently recreates it. Use `modules/list` through the generic
+caller with `checkAvailability:true` for the same on-demand admission check as
+the creation form. A check does not reserve a binding; submission rechecks it.
+
 | Area | Tools |
 | --- | --- |
 | Session reads | `cockpit_get_snapshot`, `cockpit_list_sessions`, `cockpit_read_session`, `cockpit_get_session`, `cockpit_get_panels`, `cockpit_get_plan` |
@@ -91,6 +111,9 @@ soft-delete requests without confirmation even from stale loaded MCP tools.
 Trash listing and restoration are retired. Legacy hidden sessions reappear in
 the normal list without deleting native history. Managed files, associations and
 workspaces remain intact. Never automatically retry an uncertain deletion.
+Deletion never requires module unbind preview/approval or invokes module hooks.
+Manual module unbind is a separate configuration operation. Modules discover
+missing active targets on use, preserving business history and unknown effects.
 
 `cockpit_get_session` defaults to a compact Markdown summary, including
 queue/decision IDs but only queue text previews. For `availableModels`, complete
@@ -138,9 +161,10 @@ configuration, and `skills/global-toggle {name,enabled,cwd?}` changes the native
 skill setting through `cockpit_call_intent`. Cockpit does not persist or replay
 per-session tool overrides. Session-level controls report native effective state;
 their lifetime follows the SDK rather than a Cockpit persistence promise. Native
-MCP reload and cold session resume restore global defaults. Skill definition
-reload retains current session choices, but cold resume restores native global
-selection. Global changes do not automatically mutate loaded sessions.
+MCP reload and cold session resume restore the pinned configuration of explicitly
+selected module roles. Other temporary native MCP/skill switches follow native
+global defaults, not a Cockpit snapshot. Skill definition reload retains current
+session choices. Global changes do not automatically mutate loaded sessions.
 An unloaded MCP query returns no invented per-session choices; explicitly resume
 for effective session settings or read the global catalog separately.
 Failure/settling status and operation IDs remain visible.

@@ -223,22 +223,22 @@ test('permission policy is read-only and does not confuse interactive mode with 
 test('directory picker without an initial path has no hardcoded home and cannot create before a listing', t => {
   composerWindow(t);
   const html = renderToStaticMarkup(createElement(DirPicker, {
-    onStart: async () => { throw new Error('render must not start a session'); }, onReadStart: async () => null, onCreated: noop, onCancel: noop,
+    onCreate: async () => { throw new Error('render must not create a session'); }, onCreated: noop, onCancel: noop,
   }));
   assert.match(html, /aria-label="选择工作目录"/);
   assert.doesNotMatch(html, /\/home\/honglai|没有子文件夹/);
-  assert.match(html, /class="chat-input-btn send rp" disabled=""/);
+  assert.match(html, /class="dialog-btn primary rp" disabled=""[^>]*>创建会话/);
   assert.match(html, /等待连接/);
 });
 
 test('a supplied but unvalidated directory cannot enable session creation', t => {
   composerWindow(t);
   const html = renderToStaticMarkup(createElement(DirPicker, {
-    initialPath: '/unvalidated', onStart: async () => { throw new Error('render must not start a session'); },
-    onReadStart: async () => null, onCreated: noop, onCancel: noop,
+    initialPath: '/unvalidated', onCreate: async () => { throw new Error('render must not create a session'); },
+    onCreated: noop, onCancel: noop,
   }));
   assert.match(html, /value="\/unvalidated"/);
-  assert.match(html, /class="chat-input-btn send rp" disabled=""/);
+  assert.match(html, /class="dialog-btn primary rp" disabled=""[^>]*>创建会话/);
   assert.doesNotMatch(html, /没有子文件夹/);
 });
 

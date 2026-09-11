@@ -13,7 +13,7 @@ import type {
   ModelOption, ScheduleEntry, ServerEvent, SessionMeta, SessionPanels,
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
   MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem,
-  ModuleSelection, SessionModules, SessionDeletionPlan, SessionUnbindApproval,
+  ModuleSelection, SessionModules,
 } from '@cockpit/protocol';
 import { NativeChatRead, SessionUsage, MetaResource as MetaResources } from '@cockpit/protocol';
 import { OfficialRuntime, sessionModelOptions } from './runtime.ts';
@@ -54,15 +54,6 @@ export const coreCapabilities = {
 } as const;
 
 type LiveMeta = SessionMeta & { activeOperations?: number; nativeProcessing?: boolean };
-export interface InternalSessionStart {
-  sessionId: string;
-  operationId: string;
-  cwd: string;
-  modules?: ModuleSelection[];
-  text: string;
-  attachments?: RuntimeAttachment[];
-  beforeCreate?: (sessionId: string) => void | Promise<void>;
-}
 type UserInputResponse = Awaited<ReturnType<NonNullable<SessionConfig['onUserInputRequest']>>>;
 type DecisionKind = 'ask' | 'planRequest' | 'elicitation';
 interface Decision {
@@ -174,7 +165,6 @@ export class Engine {
   private readonly creating = new Set<string>();
   private readonly removing = new Set<string>();
   private readonly applyingModules = new Set<string>();
-  private readonly firstMessages = new Set<string>();
   private readonly modules?: SessionModuleHost;
   private readonly bus = new EventEmitter().setMaxListeners(0);
   private agentStatus: AgentStatus = 'starting';
@@ -435,7 +425,6 @@ export class Engine {
 
   private async state(id: string): Promise<State> {
     this.assertAvailable();
-    if (this.firstMessages.has(id)) throw new Error('Session first-message preparation or acceptance is in progress');
     if (this.stopped) throw new Error('Engine is stopped; start it before performing session operations');
     if (this.lifecycle) throw new Error('Engine lifecycle transition is in progress');
     if (this.removing.has(id)) throw new Error('Session removal is in progress');
@@ -463,9 +452,8 @@ export class Engine {
     this.bus.emit('activity-settled');
   }
 
-  private assertAdmission(st: State, applyingModules = false, firstMessage = false): void {
+  private assertAdmission(st: State, applyingModules = false): void {
     this.assertAvailable();
-    if (!firstMessage && this.firstMessages.has(st.id)) throw new Error('Session first-message preparation or acceptance is in progress');
     if (!applyingModules && this.applyingModules.has(st.id)) throw new Error('Session module application is in progress');
     if (st.contextReset?.busy) throw new Error('Session context clear is in progress; retry this operation after it settles.');
     const current = this.sessions.get(st.id);
@@ -560,56 +548,33 @@ export class Engine {
     return result.finally(() => { this.births--; this.bus.emit('activity-settled'); });
   }
 
-  async newSession(cwd: string, modules?: ModuleSelection[], identity?: { sessionId: string; operationId: string }): Promise<string> {
+  async newSession(cwd: string, modules?: ModuleSelection[]): Promise<string> {
     this.assertAvailable();
     if (this.stopped) throw new Error('Engine is stopped; start it before creating sessions');
     if (this.lifecycle) throw new Error('Engine lifecycle transition is in progress');
     const directory = resolve(cwd || homedir());
     if (!statSync(directory).isDirectory()) throw new Error('Working directory must be a directory');
-    const id = identity?.sessionId ?? randomUUID();
-    if (identity && (!/^[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(id)
-      || !/^[A-Za-z0-9_-]{8,120}$/.test(identity.operationId))) throw new Error('Invalid internal session creation identity');
+    const id = randomUUID();
     if (this.creating.has(id) || this.sessions.has(id)) throw new Error('Session identity already has an active handle or creation');
     const st = stateFor(id);
     this.creating.add(id);
     try {
       if (modules?.length) {
         if (!this.modules) throw new Error('Module management is not configured');
-        await this.modules.prepare(id, directory, modules, identity?.operationId ?? randomUUID());
+        await this.modules.prepare(id, directory, modules, randomUUID());
       }
-      await this.ensureLoaded(st, true, directory, !!modules?.length, !!identity && this.firstMessages.has(id));
+      await this.ensureLoaded(st, true, directory, !!modules?.length);
       return id;
     } catch (error) {
       if (modules?.length && this.modules) {
         await this.modules.failed(id, error);
-        throw Object.assign(new Error(`${messageOf(error)}; session ${id} may already exist. Inspect it; do not create a replacement.`, { cause: error }),
-          { sessionId: id, code: 'MODULE_SESSION_INCOMPLETE', statusCode: 409 });
+        const confirmedId = st.sdk?.sessionId;
+        throw Object.assign(new Error(`${messageOf(error)}; ${confirmedId ? `native session ${confirmedId} was created but module setup is incomplete` : 'native creation is not confirmed'}. Inspect the native session list; do not create a replacement automatically.`, { cause: error }),
+          { ...(confirmedId ? { sessionId: confirmedId } : {}), code: 'MODULE_SESSION_INCOMPLETE', statusCode: 409 });
       }
       throw error;
     } finally {
       this.creating.delete(id);
-      this.bus.emit('activity-settled');
-    }
-  }
-
-  /** Internal planned identity comes only from a durable first-message claim, never an HTTP session ID. */
-  async startSession(input: InternalSessionStart): Promise<{ ok: true }> {
-    if (!input.text.trim() && !input.attachments?.length) throw new Error('First message must not be empty');
-    this.assertAvailable();
-    if (this.stopped || this.lifecycle) throw new Error('Engine lifecycle transition is in progress');
-    if (this.firstMessages.has(input.sessionId) || this.creating.has(input.sessionId) || this.sessions.has(input.sessionId)) {
-      throw new Error('First-message session identity is already active');
-    }
-    this.firstMessages.add(input.sessionId);
-    try {
-      await input.beforeCreate?.(input.sessionId);
-      const id = await this.newSession(input.cwd, input.modules, { sessionId: input.sessionId, operationId: input.operationId });
-      const st = this.sessions.get(id);
-      if (id !== input.sessionId || !st?.sdk) throw new Error('Planned native session identity is not confirmed');
-      await this.sendPrompt(id, input.text, 'immediate', input.attachments, st, true);
-      return { ok: true };
-    } finally {
-      this.firstMessages.delete(input.sessionId);
       this.bus.emit('activity-settled');
     }
   }
@@ -645,8 +610,8 @@ export class Engine {
     });
   }
 
-  private async ensureLoaded(st: State, create = false, cwd?: string, applyingModules = false, firstMessage = false): Promise<void> {
-    this.assertAdmission(st, applyingModules, firstMessage);
+  private async ensureLoaded(st: State, create = false, cwd?: string, applyingModules = false): Promise<void> {
+    this.assertAdmission(st, applyingModules);
     if (!applyingModules) await this.modules?.assertReady(st.id);
     if (st.load) return st.load;
     if (!create) this.sessions.set(st.id, st);
@@ -654,7 +619,7 @@ export class Engine {
       if (st.moduleLoadFailed) throw new Error('Module readiness after loading is unconfirmed; explicitly reload before sending a message');
       return;
     }
-    this.assertAdmission(st, applyingModules, firstMessage);
+    this.assertAdmission(st, applyingModules);
     if (st.load) return st.load;
     this.patch(st, { loading: true });
     st.load = this.untilFatal(() => this.birth(async () => {
@@ -1096,10 +1061,9 @@ export class Engine {
     id: string, work: (sdk: CopilotSession, st: State) => Promise<T>,
     kind: 'work' | 'read' | SessionResource[] = 'work', owner?: State,
     changes: SessionResource[] = Array.isArray(kind) ? kind : [],
-    firstMessage = false,
   ): Promise<T> {
     const st = owner ?? await this.state(id);
-    this.assertAdmission(st, false, firstMessage);
+    this.assertAdmission(st);
     if (st.cancelling) throw new Error('Session cancellation is in progress');
     st.operations++;
     this.patch(st, { activeOperations: st.operations });
@@ -1110,7 +1074,7 @@ export class Engine {
     try {
       if (kind === 'read') {
         if (!await this.liveSession(st)) throw new SessionUnloadedError();
-      } else await this.ensureLoaded(st, false, undefined, false, firstMessage);
+      } else await this.ensureLoaded(st);
       this.assertAvailable();
       const sdk = st.sdk;
       if (!sdk) throw new Error('Native session is unavailable; explicitly resume to continue');
@@ -1136,10 +1100,6 @@ export class Engine {
   }
 
   async prompt(id: string, text: string, mode: 'enqueue' | 'immediate' = 'enqueue', attachments?: RuntimeAttachment[]): Promise<{ ok: boolean; queued?: boolean }> {
-    return this.sendPrompt(id, text, mode, attachments);
-  }
-
-  private async sendPrompt(id: string, text: string, mode: 'enqueue' | 'immediate', attachments?: RuntimeAttachment[], owner?: State, firstMessage = false): Promise<{ ok: boolean; queued?: boolean }> {
     if (!text.trim() && !attachments?.length) throw new Error('Prompt must not be empty');
     return this.operation(id, async (sdk, st) => {
       const queued = (await this.readControl(st, sdk)).busy && mode === 'enqueue';
@@ -1166,7 +1126,7 @@ export class Engine {
         if (!st.sends) st.sendReceipts.clear();
         this.scheduleSync(st);
       }
-    }, 'work', owner, [], firstMessage);
+    });
   }
 
   async cancel(id: string): Promise<void> {
@@ -1256,7 +1216,7 @@ export class Engine {
   }
 
   private localBusy(st: State, ownTransition = false, ownOperations = 0): boolean {
-    return this.firstMessages.has(st.id) || (!ownTransition && st.closing) || st.operations > ownOperations || !!st.load
+    return (!ownTransition && st.closing) || st.operations > ownOperations || !!st.load
       || !!st.cancelling || st.decisions.size > 0 || st.sends > 0 || st.accepted.size > 0 || !!st.pendingReply;
   }
 
@@ -1269,7 +1229,7 @@ export class Engine {
   }
 
   async busyCount(): Promise<number> {
-    if (this.lifecycle || this.births || this.creating.size || this.startPromise || this.removing.size || this.applyingModules.size || this.firstMessages.size) return 1;
+    if (this.lifecycle || this.births || this.creating.size || this.startPromise || this.removing.size || this.applyingModules.size) return 1;
     let count = 0;
     for (const st of this.sessions.values()) if (await this.busy(st)) count++;
     return count + (this.modules?.activeCount?.() ?? 0);
@@ -1438,7 +1398,7 @@ export class Engine {
       this.stopped = true;
       return;
     }
-    if (this.lifecycle || this.births || this.creating.size || this.startPromise || this.removing.size || this.applyingModules.size || this.firstMessages.size) throw new Error('Engine lifecycle operation is in progress');
+    if (this.lifecycle || this.births || this.creating.size || this.startPromise || this.removing.size || this.applyingModules.size) throw new Error('Engine lifecycle operation is in progress');
     const all = [...this.sessions.values()];
     if (all.some(st => st.closing || st.load || st.operations || st.cancelling)) throw new Error('Session operation is in progress');
     this.lifecycle = true;
@@ -1936,17 +1896,7 @@ export class Engine {
       return pinned;
     } finally { this.release(st); }
   }
-  async deletionPlan(id: string): Promise<SessionDeletionPlan> {
-    this.assertAvailable();
-    const plan = await this.modules?.deletionPlan?.(id);
-    if (plan?.state === 'deleted' && plan.operationId) return plan;
-    if (!this.sessions.has(id) && !await this.modules?.read(id) && !await this.runtime.getSessionMetadata(id)) {
-      throw new Error('Unknown session');
-    }
-    if (plan) return plan;
-    return { sessionId: id, planId: createHash('sha256').update(JSON.stringify([id, []])).digest('hex'), modules: [] };
-  }
-  async deleteSession(id: string, confirm?: true, unbind?: SessionUnbindApproval): Promise<void> {
+  async deleteSession(id: string, confirm?: true): Promise<void> {
     if (confirm !== true) throw new Error('Permanent deletion is irreversible; explicit confirm:true is required');
     this.assertAvailable();
     if (this.stopped || this.lifecycle || this.startPromise || this.removing.has(id)) throw new Error('Session lifecycle transition is in progress');
@@ -1957,16 +1907,10 @@ export class Engine {
     this.removing.add(id);
     try {
       await this.transition(st, async () => {
-        await this.modules?.unbindForDeletion?.(id, unbind);
         // The API's confirm:true gate precedes this operation. Native deletion is
         // authoritative; never remove files or preferences to simulate success.
-        try {
-          await this.close(st);
-          await this.untilFatal(() => this.runtime.deleteSession(id));
-        } catch (error) {
-          if (unbind) throw new Error(`Module unbind step completed; native deletion is not confirmed: ${messageOf(error)}`, { cause: error });
-          throw error;
-        }
+        await this.close(st);
+        await this.untilFatal(() => this.runtime.deleteSession(id));
         try { await this.modules?.removed?.(id); }
         catch (error) { throw new Error(`Native history deleted; module reference cleanup failed: ${messageOf(error)}`, { cause: error }); }
         try { this.prefs.forgetSession(id); }

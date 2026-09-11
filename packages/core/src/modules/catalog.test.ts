@@ -34,6 +34,8 @@ test('strict manifest validates optional capabilities without fake hooks', () =>
   assert.deepEqual(validateModuleManifest({ ...plain, sessionLifecycle: {} }).sessionLifecycle, {});
   const hook = { unbind: { entry: 'control.js', args: ['--offline'] } };
   assert.deepEqual(validateModuleManifest({ ...plain, sessionLifecycle: hook }).sessionLifecycle, hook);
+  const admission = { canBind: { entry: 'control.js' } };
+  assert.deepEqual(validateModuleManifest({ ...plain, sessionLifecycle: admission }).sessionLifecycle, admission);
   const initialize = { initialize: { entry: 'setup.js' } };
   assert.deepEqual(validateModuleManifest({ ...plain, configLifecycle: initialize }).configLifecycle, initialize);
   for (const invalid of [
@@ -48,6 +50,8 @@ test('strict manifest validates optional capabilities without fake hooks', () =>
     { ...plain, sessionLifecycle: { unbind: { entry: '../control.js' } } },
     { ...plain, sessionLifecycle: { unbind: { entry: 'control.js', args: ['--token=private'] } } },
     { ...plain, sessionLifecycle: { unbind: { entry: 'control.js', command: 'sh' } } },
+    { ...plain, sessionLifecycle: { canBind: { entry: '../escape.js' } } },
+    { ...plain, sessionLifecycle: { canBind: { entry: 'control.js', sessionId: 'virtual' } } },
     { ...plain, configLifecycle: { initialize: true } },
     { ...plain, configLifecycle: { initialize: { entry: '../setup.js' } } },
     { ...plain, configLifecycle: { initialize: { entry: 'setup.js', args: ['--token=secret'] } } },
@@ -56,6 +60,15 @@ test('strict manifest validates optional capabilities without fake hooks', () =>
   ]) assert.throws(() => validateModuleManifest(invalid));
 });
 
+test('an optional admission entry must exist in the verified module release', t => {
+  const { catalog, source } = fixture(t);
+  writeFileSync(join(source, 'module.json'), JSON.stringify({
+    ...manifest(), sessionLifecycle: { canBind: { entry: 'can-bind.js' } },
+  }));
+  assert.throws(() => catalog.installFromDirectory(source), /missing/);
+  writeFileSync(join(source, 'can-bind.js'), 'process.exitCode = 0;\n');
+  assert.equal(catalog.installFromDirectory(source).manifest.sessionLifecycle?.canBind?.entry, 'can-bind.js');
+});
 test('a declared session unbind entry must exist in the verified release', t => {
   const { catalog, source } = fixture(t);
   writeFileSync(join(source, 'module.json'), JSON.stringify({

@@ -23,7 +23,6 @@ import { GlobalNavigation } from './components/GlobalNavigation';
 import { sessionActionItems, type SessionActionHandlers } from './lib/sessionActions';
 import { SessionDetails } from './components/SessionDetails';
 import { SessionDeleteDialog } from './components/SessionDeleteDialog';
-import { getNewSessionStart } from './lib/sessionStart';
 
 const ManageWorkspace = lazy(() => import('./components/ManageWorkspace').then((m) => ({ default: m.ManageWorkspace })));
 const DirPicker = lazy(() => import('./components/DirPicker').then((m) => ({ default: m.DirPicker })));
@@ -49,10 +48,10 @@ function Workspace() {
   const selectMetadata = useMemo(() => createSessionMetadataSelector(), []);
   const sessions = useCockpit(selectMetadata);
   const {
-    connState, startSession, getSessionStart, forkSession,
+    connState, newSession, forkSession,
     setMode, pinSession, globalModels,
   } = useCockpit(useShallow((s) => ({
-    connState: s.connState, startSession: s.startSession, getSessionStart: s.getSessionStart, forkSession: s.forkSession,
+    connState: s.connState, newSession: s.newSession, forkSession: s.forkSession,
     setMode: s.setMode, pinSession: s.pinSession, globalModels: s.globalModels,
   })));
   const active = useMemo(
@@ -123,7 +122,6 @@ function Workspace() {
   const mobileView: 'list' | 'detail' = active || notFound ? 'detail' : 'list';
 
   const doNewSession = () => {
-    void getNewSessionStart().openNewForm();
     setDirPicker(true);
   };
   const masterHeader = (
@@ -283,7 +281,7 @@ function Workspace() {
               <button type="button" className="dialog-btn rp" onClick={() => setDirPicker(false)}>取消</button>
           </DirectoryModal>
         }>
-          <DirPicker key={location.key} onStart={startSession} onReadStart={getSessionStart}
+          <DirPicker key={location.key} onCreate={newSession}
             onCreated={selectSession} onCancel={() => setDirPicker(false)} />
         </Suspense>
       )}

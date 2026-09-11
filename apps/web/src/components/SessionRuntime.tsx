@@ -97,7 +97,7 @@ function RuntimeDetails({ session, onClose }: SessionRuntimeProps) {
   });
   const unload = () => openDialog('unload', {
     title: '卸载会话',
-    message: '释放运行时，保留对话历史。定时任务会暂停；后台 shell 可能继续运行，卸载后可能无法再通过任务接口访问。',
+    message: '释放运行时，保留已持久化的对话历史。从未发送消息的空原生会话可能消失，不会自动重建。定时任务会暂停；后台 shell 可能继续运行，卸载后可能无法再通过任务接口访问。',
     confirmLabel: '卸载',
     onConfirm: () => confirmRuntime(() => unloadSession(sid), true),
   });
@@ -143,7 +143,7 @@ function RuntimeDetails({ session, onClose }: SessionRuntimeProps) {
             </div>
           </div>
         </section>
-        <p className="info-option-hint">原生运行时空闲 30 分钟后会卸载，历史仍保留。置顶或查看历史不会使运行时常驻。</p>
+        <p className="info-option-hint">原生运行时空闲 30 分钟后会卸载，已持久化的历史仍保留；从未发送消息的空会话可能消失，不会自动重建。置顶或查看历史不会使运行时常驻。</p>
         <p className="info-option-hint">卸载期间定时任务暂停，恢复后重新计算执行时间。后台 shell 可能继续运行，卸载后可能无法再通过任务接口访问。</p>
       </PanelPageShell>
       {dialog && <Dialog {...dialog} />}

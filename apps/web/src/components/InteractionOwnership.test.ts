@@ -8,18 +8,17 @@ import { MenuItemButton } from './ContextMenu';
 
 const source = (name: string) => readFileSync(new URL(name, import.meta.url), 'utf8').replace(/\s+/g, ' ');
 
-test('first-message creation has one picker action owner while its durable draft outlives route changes', () => {
+test('creation has one native action owner and no first-message or virtual identity path', () => {
   const app = source('../App.tsx');
   const picker = source('./DirPicker.tsx');
-  assert.doesNotMatch(app, /creation\.run|handleNew|新建会话未获确认/);
-  assert.match(app, /<DirPicker key=\{location.key\} onStart=\{startSession\} onReadStart=\{getSessionStart\} onCreated=\{selectSession\}/);
+  assert.match(app, /<DirPicker key=\{location.key\} onCreate=\{newSession\} onCreated=\{selectSession\}/);
   assert.match(app, /<DirectoryModal onCancel=/);
-  assert.match(picker, /action.run\(async \(\) => \{ const accepted = await creation.send\(path, selected, onStart\);/);
-  assert.ok(picker.indexOf('onCreated(created)') > picker.indexOf("result?.state !== 'accepted'"));
-  assert.match(picker, /const \[creation\] = useState\(getNewSessionStart\)/);
-  assert.match(picker, /const locked = !!attempt \|\| action.busy/);
-  assert.match(picker, /<DirectoryModal onCancel=\{onCancel\}/);
-  assert.match(picker, /关闭（保留原操作和草稿）/);
+  assert.match(picker, /sessionId = await onCreate\(path, selected\)/);
+  assert.ok(picker.indexOf('onCreated(sessionId)') > picker.indexOf('await onCreate(path, selected)'));
+  assert.match(picker, /const locked = submitted \|\| action.busy/);
+  assert.match(picker, /<DirectoryModal busy=\{action.busy\} onCancel=\{onCancel\}/);
+  assert.match(picker, /checkAvailability: true/);
+  assert.doesNotMatch(app + picker, /sessionStart|<Composer|creation\.draft|onStart|session\/start/);
 });
 
 test('directory modal isolates background, allows notices and keeps a focusable busy and lazy fallback', () => {

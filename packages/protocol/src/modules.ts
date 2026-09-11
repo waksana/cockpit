@@ -33,35 +33,12 @@ export const SessionModules = z.object({
 });
 export type SessionModules = z.infer<typeof SessionModules>;
 
-export const SessionUnbindApproval = z.object({
-  planId: z.string().regex(/^[a-f0-9]{64}$/),
-  operationId: z.string().min(8).max(120).regex(/^[A-Za-z0-9_-]+$/),
-}).strict();
-export type SessionUnbindApproval = z.infer<typeof SessionUnbindApproval>;
 export const ModuleUnbindOperation = z.object({
-  operationId: SessionUnbindApproval.shape.operationId,
+  operationId: z.string().min(8).max(120).regex(/^[A-Za-z0-9_-]+$/),
   sessionId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/),
   state: z.enum(['working', 'succeeded', 'failed', 'unknown']), error: z.string().optional(),
 }).strict();
 export type ModuleUnbindOperation = z.infer<typeof ModuleUnbindOperation>;
-export const SessionDeletionPlan = z.object({
-  sessionId: z.string(),
-  planId: z.string().regex(/^[a-f0-9]{64}$/),
-  modules: z.array(z.object({ moduleId: ModuleId, name: z.string(), version: z.string() }).strict()).max(3),
-  operationId: z.string().optional(),
-  state: z.enum(['working', 'unbound', 'failed', 'unknown', 'deleted']).optional(),
-  completedModules: z.array(ModuleId).optional(),
-  error: z.string().optional(),
-}).strict();
-export type SessionDeletionPlan = z.infer<typeof SessionDeletionPlan>;
-
-export const SessionStartOperation = z.object({
-  operationId: z.string().min(8).max(120).regex(/^[A-Za-z0-9_-]+$/),
-  sessionId: z.string().uuid(),
-  state: z.enum(['creating', 'accepted', 'unknown']),
-  error: z.string().optional(),
-}).strict();
-export type SessionStartOperation = z.infer<typeof SessionStartOperation>;
 
 export const ModuleServiceId = z.enum(['task', 'wechat']);
 export const ModuleServiceCommand = z.object({

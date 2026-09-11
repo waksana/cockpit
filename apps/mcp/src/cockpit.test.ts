@@ -28,7 +28,7 @@ after(() => {
 // Config is initialized once at import time; never point these tests at a live backend.
 const { COCKPIT_URL, requestTimeoutMs } = await import('./config.ts');
 assert.equal(COCKPIT_URL, MOCK_ORIGIN);
-const { CockpitError, MAX_TRANSFER_BYTES, backendJson, backendRequest, intent, readBoundedBody } =
+const { CockpitError, MAX_TRANSFER_BYTES, backendJson, backendRequest, intent, readBoundedBody, assertIntentSuccess } =
   await import('./cockpit.ts');
 const { McpToggleResult } = await import('./shared.ts');
 const runNode = promisify(execFile);
@@ -54,9 +54,19 @@ test('bounded native pages use the short deadline while real load operations kee
   for (const name of ['session/chat', 'session/get', 'mcp/session', 'session/history', 'session/peek', 'session/subagent-history', 'flow/run', 'governance', 'governance/run', '/health']) {
     assert.equal(requestTimeoutMs(name), 10_000, name);
   }
-  for (const name of ['session/plan', 'session/panels', 'session/auto-name', 'prompt', 'mcp/session-toggle']) {
+  for (const name of ['session/plan', 'session/panels', 'session/auto-name', 'session/load', 'prompt', 'mcp/session-toggle']) {
     assert.equal(requestTimeoutMs(name), 45_000, name);
   }
+});
+
+test('consumer mutation uncertainty stays an error while passive original-operation inspection remains readable', () => {
+  for (const state of ['failed', 'unknown']) {
+    const value = { operation: { operationId: 'original-restart', state, error: 'Retained outcome' } };
+    assert.throws(() => assertIntentSuccess(value, 'system/consumer/restart'), /original-restart/);
+    assert.deepEqual(assertIntentSuccess(value, 'system/consumer/status'), value);
+  }
+  const accepted = { operation: { state: 'draining-modules' } };
+  assert.deepEqual(assertIntentSuccess(accepted, 'system/consumer/restart'), accepted);
 });
 
 test('configured timeout overrides both generic and load-aware deadlines', async () => {

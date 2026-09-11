@@ -24,7 +24,9 @@ export async function validateRelease(release, target, expectedManifestSha256) {
     || !/^[a-zA-Z0-9_.-]{1,100}$/.test(compatibility.dataCompatibility)) {
     throw new Error('Consumer release requires explicit no-automatic-migration compatibility declaration');
   }
-  if (compatibility.moduleRunnerApi !== 1) throw new Error('Consumer release must explicitly support module runner API1; automatic runner upgrades are unsupported');
+  if (compatibility.moduleRunnerApi !== 1 || compatibility.moduleRunnerLifecycleApi !== 1) {
+    throw new Error('Consumer release must explicitly support module runner API1 and owned lifecycle API1');
+  }
   for (const path of ['apps/server/src/index.ts', 'apps/server/package.json', 'apps/web/dist/index.html',
     'packages/core/src/index.ts', 'packages/core/src/modules/supervisor-entry.ts', 'packages/protocol/src/index.ts']) {
     if (!(await stat(join(release, path))).isFile()) throw new Error(`Release missing ${path}`);
@@ -35,7 +37,7 @@ export async function validateRelease(release, target, expectedManifestSha256) {
   execFileSync(process.execPath, ['--import', 'tsx', '--eval', ''], {
     cwd: join(release, 'apps/server'), stdio: 'pipe', timeout: 30_000,
   });
-  return { compatibility: compatibility.dataCompatibility, moduleRunnerApi: 1, manifest, manifestSha256 };
+  return { compatibility: compatibility.dataCompatibility, moduleRunnerApi: 1, moduleRunnerLifecycleApi: 1, manifest, manifestSha256 };
 }
 
 export async function retainAssets(root, release) {
@@ -69,7 +71,7 @@ export async function stageArchive(root, operation, extractor = bundledExtractor
   const extracted = join(stage, 'release');
   await mkdir(extracted, { mode: 0o700 });
   execFileSync('python3', [extractor, archive, extracted], { stdio: 'pipe', timeout: 120_000 });
-  const { compatibility, moduleRunnerApi, manifestSha256 } = await validateRelease(extracted, target);
+  const { compatibility, moduleRunnerApi, moduleRunnerLifecycleApi, manifestSha256 } = await validateRelease(extracted, target);
   await retainAssets(root, extracted);
   const release = join(root, 'releases', target.sha256);
   let existing = true;
@@ -80,7 +82,7 @@ export async function stageArchive(root, operation, extractor = bundledExtractor
     await rename(extracted, release);
     syncDirectory(join(root, 'releases'));
   }
-  const selection = { target, release, compatibility, moduleRunnerApi, manifestSha256 };
+  const selection = { target, release, compatibility, moduleRunnerApi, moduleRunnerLifecycleApi, manifestSha256 };
   writeJson(join(stage, 'verified.json'), selection, true);
   return selection;
 }

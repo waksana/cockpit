@@ -8,7 +8,7 @@ export function createModuleIntents(modules: ModuleManager): ModuleIntentHandler
     'modules/updates/get': async body => ({ operation: modules.updates.get(body.operationId) }),
     'modules/updates/install': async body => modules.updates.install(body),
     'modules/updates/reconcile': async body => modules.updates.reconcile(body),
-    'modules/list': async body => ({ modules: await modules.list(body.cwd) }),
+    'modules/list': async body => ({ modules: await modules.list(body.cwd, body.checkAvailability) }),
     'modules/install': async body => ({ module: await modules.install(body.moduleId) }),
     'modules/install/local': async body => modules.installLocal(body),
     'modules/uninstall': async body => { await modules.uninstall(body.moduleId); return { ok: true }; },

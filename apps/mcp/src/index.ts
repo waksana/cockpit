@@ -4,7 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
-import { Intents, SessionUnbindApproval } from '@cockpit/protocol';
+import { Intents } from '@cockpit/protocol';
 import { COCKPIT_URL } from './config.js';
 import { CockpitError, intent as rawIntent, protocolIntent as intent } from './cockpit.js';
 import {
@@ -88,19 +88,18 @@ server.registerTool(
       'Compatibility alias for cockpit_delete_session. IRREVERSIBLE native deletion through session/purge. Only run ' +
       'this when permanent deletion is intended. Requires ' +
       'confirm=true. Managed files and workspaces are retained. Never hand-delete session-store.db rows ' +
-      'or automatically retry an uncertain result. Optional module unbind requires session/delete/preview ' +
-      'and explicit unbind-and-delete approval using its planId and a stable operationId.',
+      'or automatically retry an uncertain result. Deletion does not invoke module unbind hooks or broadcast to modules; ' +
+      'modules detect missing targets when used.',
     inputSchema: {
       session_id: z.string().min(1).describe('The session id to permanently delete'),
       confirm: z
         .boolean()
         .default(false)
         .describe('Must be true to proceed — guards against accidental irreversible deletion'),
-      unbind: SessionUnbindApproval.optional().describe('Explicit approval of previewed optional module unbind steps'),
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   },
-  async ({ session_id, confirm, unbind }): Promise<ToolResult> => {
+  async ({ session_id, confirm }): Promise<ToolResult> => {
     if (!confirm) {
       return fail(
         `Refusing to purge ${session_id}: pass confirm=true to permanently delete. ` +
@@ -108,7 +107,7 @@ server.registerTool(
       );
     }
     try {
-      await intent('session/purge', { sessionId: session_id, confirm, ...(unbind ? { unbind } : {}) });
+      await intent('session/purge', { sessionId: session_id, confirm });
       return ok(`Purged ${session_id} permanently. The session is gone.`);
     } catch (e) {
       return fail(e instanceof CockpitError ? e.message : String(e));

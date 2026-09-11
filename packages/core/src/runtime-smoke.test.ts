@@ -1339,6 +1339,8 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       assert.deepEqual(runtimeChildren(), [pid], 'Native idle expiry must not recycle the runtime process');
       const schedule = await bounded(host.addSchedule(id, { interval: '1h', prompt: 'SMOKE_SCHEDULED' }));
       assert.ok(schedule.entry && !schedule.error);
+      await eventually(async () => await host.busyCount() === 0,
+        'Native idle and auxiliary host operations must both settle before manual unload');
       await bounded(host.unload(id));
       assert.equal((await host.getMeta(id))?.loaded, false, 'Manual close must not be blocked by a future schedule');
       assert.equal((await host.getMeta(id))?.scheduleCount, undefined, 'Unloaded metadata must not invent cached schedule state');

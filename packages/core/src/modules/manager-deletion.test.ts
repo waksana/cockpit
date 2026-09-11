@@ -19,7 +19,6 @@ for (const phase of ['failed', 'unknown'] as const) {
     const data = manager.catalog.dataDirectory('assistant');
     mkdirSync(data, { recursive: true });
     writeFileSync(join(data, 'keep.txt'), 'User-owned data');
-    await manager.unbindForDeletion(record.sessionId);
     // Engine calls removed only after the native deletion acknowledgement.
     await manager.removed(record.sessionId);
     assert.equal(manager.catalog.getBinding(record.sessionId), undefined);

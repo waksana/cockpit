@@ -673,6 +673,23 @@ test('session creation forwards cwd only and fixed service tools preserve confir
   assert.ok(requests.every((request) => request.authorization === 'Bearer session-test-token'));
 });
 
+test('MCP module creation and prompt match the Web API sequence without virtual state or hidden requests', async () => {
+  const modules = [{ moduleId: 'assistant', roleId: 'assistant', version: '1.0.0' }];
+  const created = await call('cockpit_new_session', { cwd: '/remote/cwd', modules });
+  assert.equal(created.isError, false);
+  assert.match(created.text, /Created session new-id/);
+  assert.deepEqual(requests.map(({ path, body }) => ({ path, body })), [
+    { path: '/intent/session/new', body: { cwd: '/remote/cwd', modules } },
+  ]);
+  const sent = await call('cockpit_send_prompt', { session_id: 'new-id', text: 'First real message' });
+  assert.equal(sent.isError, false, sent.text);
+  assert.deepEqual(requests[1]?.body, { sessionId: 'new-id', text: 'First real message', mode: 'enqueue' });
+  assert.equal(requests[1]?.path, '/intent/prompt');
+  assert.equal(requests.length, 2);
+  const { tools } = await client.listTools();
+  assert.doesNotMatch(tools.find(tool => tool.name === 'cockpit_new_session')!.description!, /session\/start|planned session/);
+});
+
 test('permanent delete requires explicit confirmation and retired trash tools are absent', async () => {
   const { tools } = await client.listTools();
   assert.equal(tools.some(t => ['cockpit_list_trash', 'cockpit_restore_session'].includes(t.name)), false);
@@ -690,19 +707,14 @@ test('permanent delete requires explicit confirmation and retired trash tools ar
   ]);
 });
 
-test('delete aliases forward explicit module unbind approval once without hidden preflight or retries', async () => {
-  const unbind = { planId: 'a'.repeat(64), operationId: 'approved-delete-1' };
+test('delete aliases issue one native deletion without module preflight or retries', async () => {
   for (const name of ['cockpit_delete_session', 'cockpit_purge_session']) {
-    assert.equal((await call(name, { session_id: 'B', confirm: true, unbind })).isError, false);
+    assert.equal((await call(name, { session_id: 'B', confirm: true })).isError, false);
   }
   assert.deepEqual(requests.map(r => ({ path: r.path, body: r.body })), [
-    { path: '/intent/session/purge', body: { sessionId: 'B', confirm: true, unbind } },
-    { path: '/intent/session/purge', body: { sessionId: 'B', confirm: true, unbind } },
+    { path: '/intent/session/purge', body: { sessionId: 'B', confirm: true } },
+    { path: '/intent/session/purge', body: { sessionId: 'B', confirm: true } },
   ]);
-  assert.equal((await call('cockpit_delete_session', {
-    session_id: 'B', confirm: true, unbind: { ...unbind, planId: 'not-a-plan' },
-  })).isError, true);
-  assert.equal(requests.length, 2);
 });
 
 test('native plan narrative, todos and panel sublabels/enabled flags render nonempty', async () => {

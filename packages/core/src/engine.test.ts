@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { homedir, tmpdir } from 'node:os';
 import { test, type TestContext } from 'node:test';
@@ -456,61 +456,41 @@ function harness(t: TestContext, options: {
 }
 type Harness = ReturnType<typeof harness>;
 
-test('rejected module deletion retains lifecycle busy until the real control child closes', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'cockpit-removal-busy-'));
+test('native deletion never invokes module hooks or replays legacy deletion receipts', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'cockpit-native-delete-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const source = join(root, 'source');
   mkdirSync(source, { mode: 0o700 });
   writeFileSync(join(source, 'module.json'), JSON.stringify({
-    schemaVersion: 1, id: 'wechat', version: '1.0.0', name: 'Offline WeChat', description: 'Synthetic deletion hook',
+    schemaVersion: 1, id: 'wechat', version: '1.0.0', name: 'Offline WeChat', description: 'Synthetic manual unbind',
     compatibility: { cockpitApi: 1, nodeMajor: 24, platform: 'linux', arch: 'x64' }, configVersion: 1,
     roles: [{ id: 'role', name: 'Role', description: 'Offline role' }],
     sessionLifecycle: { unbind: { entry: 'unbind.mjs' } },
   }));
-  writeFileSync(join(source, 'unbind.mjs'), readFileSync(new URL('./modules/session-removal-hook.fixture.mjs', import.meta.url)));
+  const calls = join(root, 'hook-called');
+  writeFileSync(join(source, 'unbind.mjs'), `import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(calls)}, 'called');`);
   const manager = new ModuleManager({ runtime: new OfficialRuntime(), userRoot: join(root, 'user'), sources: { wechat: source } });
   manager.catalog.installFromDirectory(source);
-  const configFile = join(root, 'config.json'), controlFile = join(root, 'control.json');
-  writeFileSync(configFile, JSON.stringify({ controlFile, callsFile: join(root, 'calls.jsonl') }), { mode: 0o600 });
-  writeFileSync(controlFile, JSON.stringify({ mode: 'overflow-held', holdAfterOutput: true }), { mode: 0o600 });
-  manager.catalog.updateConfig('wechat', { configFile }, 0);
+  manager.catalog.updateConfig('wechat', { configFile: join(root, 'missing-config.json') }, 0);
   const h = harness(t, { modules: manager });
   const session = await h.seed();
-  manager.catalog.writeSession({ sessionId: session.id, selections: [{ moduleId: 'wechat', roleId: 'role', version: '1.0.0' }],
-    phase: 'applied', operationId: 'binding-operation' });
-  const plan = await manager.deletionPlan(session.id);
-  const settled = deferred<void>();
-  let notifications = 0;
-  const off = h.engine.onActivitySettled(() => {
-    notifications++;
-    if (manager.activeCount() === 0) settled.resolve();
-  });
-  try {
-    await assert.rejects(h.engine.deleteSession(session.id, true, { planId: plan.planId, operationId: 'deletion-operation' }),
-      /MODULE_UNBIND_OUTPUT_UNCONFIRMED/);
-    assert.equal(manager.activeCount(), 1);
-    assert.equal(await h.engine.busyCount(), 1, 'rejected delete no longer owns an Engine operation, but its child is alive');
-    await assert.rejects(h.engine.stop(), /Module lifecycle work/);
-    assert.equal(h.runtime.stop.mock.callCount(), 0);
-    assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
-    const other = new ModuleManager({ runtime: new OfficialRuntime(), userRoot: join(root, 'other') });
-    assert.equal(other.activeCount(), 0, 'unrelated module roots must not inherit this child');
-    const beforeClose = notifications;
-    writeFileSync(controlFile, JSON.stringify({ mode: 'overflow-held', holdAfterOutput: false }), { mode: 0o600 });
-    await Promise.race([settled.promise, sleep(5000, undefined, { ref: false }).then(() => {
-      throw new Error('Control child close did not notify Engine restart listeners');
-    })]);
-    assert.ok(notifications > beforeClose);
-    assert.equal(await h.engine.busyCount(), 0);
-    assert.equal((await manager.deletionPlan(session.id)).state, 'unknown', 'child close must not turn an unconfirmed deletion into success');
-    await h.engine.stop();
-    assert.equal(h.runtime.stop.mock.callCount(), 1);
-  } finally {
-    off();
-    writeFileSync(controlFile, JSON.stringify({ mode: 'overflow-held', holdAfterOutput: false }), { mode: 0o600 });
-    for (let attempt = 0; attempt < 500 && manager.activeCount(); attempt++) await sleep(10);
-    assert.equal(manager.activeCount(), 0, 'fixture child must exit naturally before removing its files');
-  }
+  manager.catalog.writeSession({ sessionId: session.id, selections: [], pendingSelections: [{ moduleId: 'wechat', roleId: 'role', version: '1.0.0' }],
+    phase: 'unknown', operationId: 'binding-operation' });
+  const history = join(root, 'user', 'session-deletions');
+  mkdirSync(history, { mode: 0o700 });
+  const legacy = join(history, `${session.id}.json`);
+  writeFileSync(legacy, '{"state":"unknown","operationId":"old-unbind"}', { mode: 0o600 });
+  const data = join(manager.catalog.dataDirectory('wechat'), 'unknown-send.json');
+  mkdirSync(manager.catalog.dataDirectory('wechat'), { recursive: true, mode: 0o700 });
+  writeFileSync(data, '{"outcome":"unknown"}', { mode: 0o600 });
+  await h.engine.deleteSession(session.id, true);
+  assert.equal(h.runtime.deleteSession.mock.callCount(), 1);
+  assert.equal(await h.engine.getMeta(session.id), null);
+  assert.equal(manager.catalog.getSession(session.id), undefined);
+  assert.equal(manager.activeCount(), 0);
+  assert.equal(existsSync(calls), false);
+  assert.equal(readFileSync(legacy, 'utf8'), '{"state":"unknown","operationId":"old-unbind"}');
+  assert.equal(readFileSync(data, 'utf8'), '{"outcome":"unknown"}');
 });
 
 test('module activity subscriptions unsubscribe and remain independent of native session handles', async t => {
@@ -574,10 +554,10 @@ function moduleHostFixture() {
   return { modules, records };
 }
 
-test('first-message creation fences association, role preparation and native acceptance without a hidden prompt', async t => {
+test('native creation configures roles and returns the real ID without a hidden first message', async t => {
   const { modules, records } = moduleHostFixture();
-  const h = harness(t, { modules }), associate = deferred(), ready = deferred(), accepted = deferred<string>();
-  const id = randomUUID(), trace: string[] = [];
+  const h = harness(t, { modules }), ready = deferred(), created = deferred<string>();
+  const trace: string[] = [];
   const connected = modules.connected.bind(modules);
   t.mock.method(modules, 'connected', async (sessionId, sdk, applying) => {
     trace.push('native-created');
@@ -585,62 +565,66 @@ test('first-message creation fences association, role preparation and native acc
       trace.push('first-message');
       assert.equal(records.get(sessionId)?.phase, 'applied');
       assert.equal(args.prompt, 'The actual first user message');
-      return accepted.promise;
+      return 'native-accepted-first-message';
     });
+    created.resolve(sessionId);
     await ready.promise;
     await connected(sessionId, sdk, applying);
     trace.push('roles-connected');
   });
-  const starting = h.engine.startSession({ sessionId: id, operationId: 'real-first-message', cwd: h.cwd,
-    modules: [{ moduleId: 'assistant', roleId: 'assistant', version: '1.0.0' }], text: 'The actual first user message',
-    beforeCreate: async plannedId => { assert.equal(plannedId, id); trace.push('associate'); await associate.promise; } });
+  const starting = h.engine.newSession(h.cwd, [{ moduleId: 'assistant', roleId: 'assistant', version: '1.0.0' }]);
   assert.equal(await h.engine.busyCount(), 1);
-  assert.equal(h.runtime.createSession.mock.callCount(), 0);
-  await assert.rejects(h.engine.prompt(id, 'racing message'), /first-message/);
   await assert.rejects(h.engine.stop(), protectedWork);
-  associate.resolve();
-  await nextTurn();
+  const id = await created.promise;
   assert.equal(h.runtime.createSession.mock.callCount(), 1);
   assert.equal(h.configs.get(id)?.sessionId, id);
-  assert.equal(records.get(id)?.operationId, 'real-first-message');
+  assert.equal(records.get(id)?.phase, 'preparing');
   assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 0);
-  await assert.rejects(h.engine.prompt(id, 'another racing message'), /first-message/);
-  await assert.rejects(h.engine.unload(id), /first-message|progress/);
-  await assert.rejects(h.engine.load(id), /first-message|progress/);
+  await assert.rejects(h.engine.prompt(id, 'another racing message'), /incomplete/);
+  await assert.rejects(h.engine.unload(id), /progress/);
+  await assert.rejects(h.engine.load(id), /incomplete|progress/);
   ready.resolve();
-  await nextTurn();
+  assert.equal(await starting, id);
+  assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 0);
+  assert.equal((await h.engine.getMeta(id))?.sessionId, id);
+  await h.engine.prompt(id, 'The actual first user message');
   assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 1);
-  assert.equal(await h.engine.busyCount(), 1);
-  await assert.rejects(h.engine.stop(), protectedWork);
-  accepted.resolve('native-accepted-first-message');
-  assert.deepEqual(await starting, { ok: true });
-  assert.deepEqual(trace, ['associate', 'native-created', 'roles-connected', 'first-message']);
+  assert.deepEqual(trace, ['native-created', 'roles-connected', 'first-message']);
 });
 
-test('first-message readiness failure retains planned native identity and never sends user content', async t => {
+test('module readiness failure exposes only the actual created ID and never sends content', async t => {
   const { modules } = moduleHostFixture(), h = harness(t, { modules });
-  const id = randomUUID();
+  let id = '';
   t.mock.method(modules, 'connected', async () => { throw new Error('Module binding not ready'); });
-  await assert.rejects(h.engine.startSession({ sessionId: id, operationId: 'first-ready-failure', cwd: h.cwd,
-    modules: [{ moduleId: 'assistant', roleId: 'assistant' }], text: 'Do not send before readiness' }), /not ready/);
+  await assert.rejects(h.engine.newSession(h.cwd, [{ moduleId: 'assistant', roleId: 'assistant' }]), error => {
+    assert.ok(error instanceof Error && 'sessionId' in error && typeof error.sessionId === 'string');
+    id = error.sessionId;
+    return /not ready/.test(error.message);
+  });
   assert.equal(h.runtime.createSession.mock.callCount(), 1);
   assert.ok(h.natives.has(id));
   assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 0);
   await assert.rejects(h.engine.prompt(id, 'bypass incomplete role'), /incomplete/);
 });
 
-test('first-message empty input never creates and missing native send receipt is not accepted', async t => {
-  const h = harness(t), id = randomUUID();
-  await assert.rejects(h.engine.startSession({ sessionId: id, operationId: 'empty-first-message', cwd: h.cwd, text: ' ' }), /empty/);
-  assert.equal(h.runtime.createSession.mock.callCount(), 0);
-  const create = h.runtime.createSession;
-  t.mock.method(h.runtime, 'createSession', async config => {
-    const sdk = await create(config);
-    h.natives.get(config.sessionId!)!.sdk.send.mock.mockImplementation(async () => '');
-    return sdk;
+test('preparation failure never exposes a planned ID as a native session', async t => {
+  const { modules } = moduleHostFixture(), h = harness(t, { modules });
+  t.mock.method(modules, 'prepare', async () => { throw new Error('Module unavailable'); });
+  await assert.rejects(h.engine.newSession(h.cwd, [{ moduleId: 'assistant', roleId: 'assistant' }]), error => {
+    assert.ok(error instanceof Error);
+    assert.equal('sessionId' in error, false);
+    return /creation is not confirmed/.test(error.message);
   });
-  await assert.rejects(h.engine.startSession({ sessionId: id, operationId: 'missing-acceptance', cwd: h.cwd, text: 'Only once' }), /receipt is missing/);
-  assert.equal(create.mock.callCount(), 1);
+  assert.equal(h.runtime.createSession.mock.callCount(), 0);
+  assert.equal(h.events.filter(event => event.type === 'session/added').length, 0);
+});
+
+test('separate prompt rejects empty content and a missing native acceptance without recreating', async t => {
+  const h = harness(t), id = await h.engine.newSession(h.cwd);
+  await assert.rejects(h.engine.prompt(id, ' '), /empty/);
+  h.natives.get(id)!.sdk.send.mock.mockImplementation(async () => '');
+  await assert.rejects(h.engine.prompt(id, 'Only once'), /receipt is missing/);
+  assert.equal(h.runtime.createSession.mock.callCount(), 1);
   assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 1);
 });
 
@@ -6204,67 +6188,28 @@ for (const loaded of [false, true]) {
   });
 }
 
-test('optional module unbind precedes native deletion and refusal preserves the session without any broadcast', async t => {
+test('module references are archived only after confirmed native deletion and busy work stays protected', async t => {
   const { modules } = moduleHostFixture();
-  const approval = { planId: 'a'.repeat(64), operationId: 'explicit-delete-1' };
   const h = harness(t, { modules });
   const s = await h.load();
-  let refuse = true;
-  modules.deletionPlan = t.mock.fn(async id => ({
-    sessionId: id, planId: approval.planId,
-    modules: [{ moduleId: 'wechat' as const, version: '0.1.0', name: 'WeChat' }],
-  }));
-  const unbind = modules.unbindForDeletion = t.mock.fn(async (id, confirmed) => {
-    assert.equal(id, s.id);
-    assert.deepEqual(confirmed, approval);
-    if (refuse) throw new Error('WeChat has an unknown send; unbind refused');
-    h.trace.push(`unbind:${id}`);
-  });
-  modules.removed = t.mock.fn(async id => { h.trace.push(`modules-removed:${id}`); });
-  assert.equal((await h.engine.deletionPlan(s.id)).modules[0]?.moduleId, 'wechat');
-  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
-  assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
-  await assert.rejects(h.engine.deleteSession(s.id, true, approval), /unknown send/);
-  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
-  assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
-  assert.equal(h.events.filter(event => event.type === 'session/removed').length, 0);
-  refuse = false;
+  const removed = modules.removed = t.mock.fn(async id => { h.trace.push(`modules-removed:${id}`); });
   s.state.processing = true;
-  await assert.rejects(h.engine.deleteSession(s.id, true, approval), protectedWork);
-  assert.equal(unbind.mock.callCount(), 1, 'busy native work is protected before any module callback');
+  await assert.rejects(h.engine.deleteSession(s.id, true), protectedWork);
+  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+  assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
+  assert.equal(removed.mock.callCount(), 0);
   s.state.processing = false;
-  await h.engine.deleteSession(s.id, true, approval);
-  assert.ok(h.trace.indexOf(`unbind:${s.id}`) < h.trace.indexOf(`close:${s.id}`));
+  await h.engine.deleteSession(s.id, true);
   assert.ok(h.trace.indexOf(`delete:${s.id}`) < h.trace.indexOf(`modules-removed:${s.id}`));
 });
 
-test('completed module deletion receipts remain readable after native and live-role removal', async t => {
+test('a failed native deletion preserves module references and reports the native failure', async t => {
   const { modules } = moduleHostFixture();
   const h = harness(t, { modules });
   const s = await h.load();
-  await h.engine.deleteSession(s.id, true);
-  assert.equal(await h.engine.getMeta(s.id), null);
-  const receipt = { sessionId: s.id, planId: 'b'.repeat(64), modules: [],
-    operationId: 'retained-deletion-receipt', state: 'deleted' as const, completedModules: [] };
-  modules.deletionPlan = t.mock.fn(async id => id === s.id ? receipt
-    : { sessionId: id, planId: 'c'.repeat(64), modules: [] });
-  const resumes = h.runtime.resumeSession.mock.callCount();
-  assert.deepEqual(await h.engine.deletionPlan(s.id), receipt);
-  await assert.rejects(h.engine.deletionPlan('missing-session'), /Unknown session/);
-  assert.equal(h.runtime.resumeSession.mock.callCount(), resumes);
-  assert.equal(h.runtime.deleteSession.mock.callCount(), 1);
-});
-
-test('a failed native deletion reports completed module unbind separately', async t => {
-  const { modules } = moduleHostFixture();
-  const h = harness(t, { modules });
-  const s = await h.load();
-  modules.unbindForDeletion = t.mock.fn(async () => {});
   const removed = modules.removed = t.mock.fn(async () => {});
   h.runtime.deleteSession.mock.mockImplementationOnce(async () => { throw new Error('synthetic native deletion failure'); });
-  await assert.rejects(h.engine.deleteSession(s.id, true, {
-    planId: 'a'.repeat(64), operationId: 'explicit-delete-1',
-  }), /unbind step completed; native deletion is not confirmed/);
+  await assert.rejects(h.engine.deleteSession(s.id, true), /synthetic native deletion failure/);
   assert.equal(removed.mock.callCount(), 0);
   assert.equal(h.events.filter(event => event.type === 'session/removed').length, 0);
 });

@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { chmodSync, closeSync, constants, existsSync, fstatSync, fsyncSync, lstatSync, openSync,
   readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer, type Server, type Socket } from 'node:net';
@@ -25,6 +25,19 @@ export interface ModuleRuntimeIdentity {
   moduleVersion: string;
   moduleDigest: string;
   instanceId: string;
+}
+export interface ModuleServicePin { id: ServiceModuleId; version: string; digest: string }
+export function parseModuleServicePins(value: unknown): ModuleServicePin[] {
+  if (!Array.isArray(value) || value.length > 2) throw new Error('Restoration requires a bounded explicit service pin list');
+  const seen = new Set<ServiceModuleId>();
+  return value.map(item => {
+    const raw = record(item);
+    strict(raw, ['id', 'version', 'digest']);
+    const id = serviceId(raw.id);
+    if (seen.has(id)) throw new Error('Duplicate service restoration target');
+    seen.add(id);
+    return { id, version: version(raw.version), digest: digest(raw.digest) };
+  });
 }
 export interface ModuleRunnerJob {
   schemaVersion: 1;
@@ -274,6 +287,7 @@ export function buildModuleLaunch(
 
 /** Separate process authority. Never starts during import or adopts a previous runner's children. */
 export class ModuleSupervisor {
+  readonly instanceId = randomUUID();
   readonly userRoot: string;
   readonly socketPath: string;
   private readonly catalog: ModuleCatalog;
@@ -328,7 +342,7 @@ export class ModuleSupervisor {
       throw error;
     }
     try {
-      writeFileSync(this.lockFd, JSON.stringify({ pid: process.pid, instanceId: randomUUID() })); fsyncSync(this.lockFd);
+      writeFileSync(this.lockFd, JSON.stringify({ pid: process.pid, instanceId: this.instanceId })); fsyncSync(this.lockFd);
       if (existsSync(this.socketPath)) throw new Error('Existing runner socket requires explicit inspection; it is not automatically removed');
       privateModuleDirectory(this.directory);
       privateModuleDirectory(join(this.directory, 'jobs'));
@@ -658,8 +672,51 @@ export class ModuleSupervisor {
         status: state.state === 'starting' ? 'starting' : 'unknown', reason: this.fatal ?? detail(error) };
     }
   }
+  async restoreEnabled(operationId: string, raw: unknown, accepted: () => Promise<void>): Promise<ModuleServicePin[]> {
+    operation(operationId);
+    if (this.closed || this.closing || this.fatal || this.active.size) throw new Error(this.fatal ?? 'Runner has active lifecycle work');
+    const pins = parseModuleServicePins(raw);
+    this.closing = true;
+    try {
+      const recovered = new Set([...this.jobs.values()].filter(job => job.phase === 'done' && job.command.action === 'stop')
+        .map(job => job.command.recoveryOf));
+      const targets: ModuleRunnerCommand[] = [];
+      for (const pin of pins) {
+        const { id } = pin;
+        if ([...this.jobs.values()].some(job => job.command.id === id && job.phase === 'unknown' && !recovered.has(job.command.operationId))) {
+          throw new Error(`Module ${id} has an unresolved operation; startup never retries it`);
+        }
+        const request: ModuleRunnerCommand = { ...pin, action: 'start',
+          operationId: `host-start-${createHash('sha256').update(`${operationId}:${id}`).digest('hex').slice(0, 48)}` };
+        if (this.jobs.has(request.operationId)) throw new Error('Restoration job already exists; inspect it without replay');
+        this.resolve(request);
+        const state = await this.status(id);
+        if (state.recoveryRequired || !['stopped', 'running'].includes(state.status)) throw new Error(`Module ${id} is not safe to restore`);
+        if (state.owned && (state.identity?.moduleVersion !== pin.version || state.identity.moduleDigest !== pin.digest)) {
+          throw new Error('An already-owned service differs from its captured release; explicit apply is required');
+        }
+        targets.push(request);
+      }
+      await accepted();
+      for (const request of targets) {
+        this.accept(request);
+        await this.active.get(request.id);
+        const job = this.jobs.get(request.operationId);
+        if (job?.phase !== 'done' || job.result?.state !== 'running') {
+          throw new Error(`Module restoration is unconfirmed: ${job?.reason ?? request.id}`);
+        }
+      }
+      return pins;
+    } finally { this.closing = false; }
+  }
+  async drainAndStop(operationId: string, accepted: () => Promise<void>): Promise<ModuleServicePin[]> {
+    let services: ModuleServicePin[] = [];
+    await this.close({ drain: true, operationId, accepted, capture: pins => { services = pins; } });
+    return services;
+  }
   /** No signals. A draining child may keep this promise pending indefinitely. */
-  async close(options: { drain?: boolean } = {}): Promise<void> {
+  async close(options: { drain?: boolean; operationId?: string; accepted?: () => Promise<void>;
+    capture?: (pins: ModuleServicePin[]) => void } = {}): Promise<void> {
     if (this.closed) return;
     if (this.closing) throw new Error('Runner shutdown is already in progress');
     if (!options.drain && (this.active.size || [...this.children.values()].some(child => !child.exited))) {
@@ -668,13 +725,22 @@ export class ModuleSupervisor {
     this.closing = true;
     try {
       if (options.drain) {
+        const lifecycleId = operation(options.operationId ?? randomUUID());
+        await options.accepted?.();
         await Promise.all([...this.active.values()]);
+        options.capture?.(ids.flatMap(id => {
+          const owned = this.children.get(id);
+          return owned && !owned.exited ? [{ id, version: owned.identity.moduleVersion, digest: owned.identity.moduleDigest }] : [];
+        }));
         for (const id of ids) {
           const child = this.children.get(id);
           if (child && !child.exited) {
-            this.accept({ id, action: 'stop', operationId: randomUUID() });
+            const childOperation = `host-stop-${createHash('sha256').update(`${lifecycleId}:${id}`).digest('hex').slice(0, 48)}`;
+            if (this.jobs.has(childOperation)) throw new Error('Host drain job already exists; inspect it without replay');
+            this.accept({ id, action: 'stop', operationId: childOperation });
             await this.active.get(id);
             if (!child.exited) throw new Error('Child outcome remains unconfirmed; runner refuses to exit');
+            if (this.jobs.get(childOperation)?.phase !== 'done') throw new Error('Owned child drain completion is not confirmed');
           }
         }
       }

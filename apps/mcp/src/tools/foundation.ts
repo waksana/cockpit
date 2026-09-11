@@ -1,5 +1,6 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { ConsumerOperationId } from '@cockpit/protocol';
 import { assertIntentSuccess, backendJson, CockpitError, intent, protocolIntent } from '../cockpit.js';
 import { fail, ok, type ToolResult } from '../shared.js';
 
@@ -120,12 +121,17 @@ export function registerFoundationTools(server: McpServer): void {
   server.registerTool('cockpit_service_restart', {
     title: 'Arm or cancel a graceful Cockpit restart',
     description: 'With confirm:true, arm a graceful restart (pending:true), or cancel it (pending:false). '
-      + 'The backend waits for every busy turn, decision, subagent and MCP operation; this never forces a restart.',
-    inputSchema: { pending: z.boolean().default(true), confirm: z.literal(true) },
+      + 'The backend waits for every busy turn, decision, subagent and MCP operation; this never forces a restart. '
+      + 'Consumer installations require a stable operation_id and use the same owned launcher as Web and system/consumer/restart. '
+      + 'Read system/consumer/status with that operationId; acceptance is not completion. An irreversible/unknown module drain cannot be cancelled.',
+    inputSchema: { pending: z.boolean().default(true), confirm: z.literal(true), operation_id: ConsumerOperationId.optional() },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-  }, async ({ pending }): Promise<ToolResult> => {
+  }, async ({ pending, operation_id }): Promise<ToolResult> => {
     try {
-      return ok(JSON.stringify(await backendJson('/admin/restart', { method: 'POST', body: { pending } }), null, 2));
+      const result = await backendJson('/admin/restart', {
+        method: 'POST', body: { pending, ...(operation_id ? { operationId: operation_id } : {}) },
+      });
+      return ok(JSON.stringify(assertIntentSuccess(result, 'system/consumer/restart'), null, 2));
     } catch (error) {
       return fail(error instanceof Error ? error.message : String(error));
     }

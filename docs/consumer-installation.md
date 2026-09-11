@@ -188,6 +188,9 @@ INSTALL_ROOT/
   checks/ downloads/ operations/ staging/
   assets/                         # retained old hashed Web assets
   launcher.lock/ control.sock runtime.json known-good.json
+  module-runner.json              # current owned runner generation
+  module-runner-history/          # retained per-generation lifecycle evidence
+  module-resume.json              # confirmed host-drain service pins and provenance
 
 USER_ROOT/
   .consumer-installation.json     # binds exactly this installation
@@ -209,8 +212,13 @@ node "$INSTALL_ROOT/launcher/cli.mjs" serve --root "$INSTALL_ROOT"
 
 This starts only the launcher. It does **not** adopt an existing backend or
 runner. Initial installation starts the separate module runner from the
-verified main archive, then the first main child; no module business service is
-automatically started:
+verified main archive, then the first main child. After main health is confirmed,
+the runner restores only exact module version/digest pins captured from owned
+running services by a prior confirmed host drain. A fresh installation restores
+none, even if modules are installed, available for roles and permitted to run.
+Catalog `enabled`/`selectedVersion` and configuration `activationEnabled` are
+not evidence that the user started a service. Startup does not install or
+enable a module, change configuration, apply roles or send messages:
 
 ```sh
 # Three separate actions; IDs must remain unchanged when inspecting uncertainty.
@@ -261,21 +269,34 @@ counter before downloads/installations can proceed.
 2. Stages a new immutable release, checks full inventory/source/toolchain,
    consumer compatibility and server-local `tsx`, and retains Web assets
    without overwriting different content at an old asset name.
-3. For an owned running backend, checks its exact current identity, sends
-   **one** `POST /admin/restart {"pending":true}`, then waits for its actual
-   child exit. The backend's authoritative native lifecycle protects turns,
-   queues, decisions, subagents and MCP operations. There is no force deadline,
-   queue drop, context reset, database busy scan or retry of the mutation.
+3. For an owned running backend, checks its exact identity and asks its owned
+   runner once to fence new module controls and safely drain its existing
+   operations/services. Main remains available while modules finish work that
+   needs its API. Only after all owned modules and that runner confirm clean
+   exit does the launcher send **one** instance-bound native-drain command over
+   its owned Node parent IPC and wait for actual clean main exit.
+   The backend's native lifecycle protects turns, queues, decisions, subagents
+   and MCP operations. There is no force deadline, queue drop, context reset,
+   database busy scan or retry of an uncertain mutation.
 4. Rechecks signed authorization after drain, atomically replaces `current.json`,
-   and starts the new child through TS + tsx from the immutable server directory.
+   and starts a **new runner from that release**, followed by the new main child
+   through TS + tsx from the immutable server directory.
 5. Requires matching consumer authority, installation ID, archive digest, source
    SHA, version, operation/request ID and fresh instance ID from `/version`,
    followed by healthy `/health` for that same instance. Process creation, HTTP
-   acceptance and an old healthy process cannot complete the operation.
+   acceptance and an old healthy process cannot complete the operation. Once
+   main is healthy, the runner restores only the captured owned service pins.
+   Main-only updates do not apply newer catalog role-selection defaults.
+   Confirmed exact-pin restoration
+   and a final same-instance main health check are required for success. Main
+   startup also requires its owned lifecycle IPC readiness handshake; HTTP
+   health alone cannot substitute for that connection.
 
 `consumer-runtime.json` explicitly declares no automatic data migrations and a
-compatibility class and `"moduleRunnerApi": 1`. A changed class or unsupported
-runner API is rejected **before drain**. This is a
+compatibility class, `"moduleRunnerApi": 1` and
+`"moduleRunnerLifecycleApi": 1`. A changed class, unsupported API or an old
+resident-runner-only archive lacking the lifecycle declaration is rejected
+**before drain**. This is a
 publisher/operator compatibility promise, not a universal schema migration
 engine. The installation records that class before its first child starts and
 does not erase it on failure/abandonment; an unhealthy first boot cannot make
@@ -286,31 +307,57 @@ rollback.
 
 ### Module runner ownership
 
-The stable launcher starts exactly one separate runner using the first verified
-archive's `packages/core/src/modules/supervisor-entry.ts` and server-local `tsx`.
+The stable launcher starts exactly one separate runner for each main lifetime,
+using that selected verified archive's
+`packages/core/src/modules/supervisor-entry.ts` and server-local `tsx`.
 Its user root and main loopback URL are fixed. Readiness requires parent IPC
-API1, the actual child PID/Linux process identity, private lock instance UUID,
+socket API1 and owned lifecycle API1, the actual child PID/Linux process identity, private lock instance UUID,
 and the private socket's device/inode identity. Main/backend boot never spawns
 or adopts a runner. Existing sockets/locks and uncertain old process records
 are refused, not removed or adopted.
+The launcher passes `--host-owned true` explicitly; this mode requires parent
+IPC. An unrelated standalone/source runner is not made host-owned merely
+because another tool opened an IPC channel to it.
 
-The same runner and explicitly started Task/WeChat children survive main
-restart/update. The runner continues referencing its original immutable main
-release, which is retained. New main releases must promise compatibility with
-resident runner API1; this launcher does not upgrade/replace that runner or
-support automatic cross-API migration. After an explicitly successful full
-stop, a later launcher/main start can create a fresh runner from the selected
-compatible release. `status` reports `moduleRunner`, including process/instance,
-source selection, and live module statuses; `module-runner.json` retains its
-provenance and shutdown receipt.
+Neither the runner nor its owned Task/WeChat services survive a normal main
+shutdown, restart or update. The stable external launcher may survive to select
+the replacement; it is not a separate resident module-management agent.
+Every new main lifetime gets a fresh runner/process identity from its own
+verified release. Old releases and per-generation runner records remain
+retained. This does not authorize cross-API or business-data migration.
 
-The launcher only reads module status and requests **idle-only runner shutdown**
-over its owned parent IPC. It never sends module start/apply/stop commands,
-signals the runner, reloads MCP connections, or reapplies session roles.
-Use the existing module controls to explicitly start and stop business services.
-A runner crash or changed identity is `unknown`, never an automatic respawn;
-launcher close/unlock cannot silently abandon that state. Operator investigation
-is required; no adoption or force-recovery command is provided.
+The launcher uses owned parent IPC to request `drain-and-stop`, and
+`restore-enabled` with an explicit pin list after new-main health. Once admitted
+operations settle, the supervisor captures the exact releases of actual owned
+running children before its host-owned stop commands. A completed manual stop
+therefore excludes that service; a completed apply captures its actual result.
+The confirmed drain receipt and `module-resume.json` retain this plan and its
+operation/generation provenance. They are host lifecycle product data, not
+native session-state copies or a claim that stopped processes are still alive.
+
+Restore never enumerates installed/role-enabled modules to decide what to
+start. It resolves the supplied versions/digests, checks current ownership,
+activation permission and compatibility, and verifies real same-instance
+health. Permission is not desired startup. Missing/invalid pins or a denied
+captured release fail explicitly, without substituting the latest selection.
+Manually stopped modules remain stopped even when all role/config flags still
+allow activation. No credentials, bindings,
+business history, unknown sends or native Copilot data are rewritten.
+Normal existing module controls remain available outside lifecycle quiescing.
+These operations do not reload MCP connections or reapply session roles.
+An owned runner fences service controls until its initial restoration finishes,
+while status reads and an explicit parent drain remain available.
+
+`status` reports `moduleRunner`, including current lifecycle phase, owned
+process/instance, selected source and live module status. A matching accepted
+IPC reply ends the acknowledgement timeout, **not** the drain: busy work can
+wait indefinitely. Lost acknowledgements, unknown service effects, a changed
+identity or a runner crash block main exit/replacement. Matching late replies
+may resolve the same original receipt; they never trigger a resend.
+`module-runner.json` and `module-runner-history/` preserve that evidence.
+Launcher close/unlock cannot silently abandon a live or unknown runner.
+No adoption, force-stop, automatic crash respawn or force-recovery command is
+provided.
 
 ## Safe stop, restart and recovery
 
@@ -322,10 +369,12 @@ node "$INSTALL_ROOT/launcher/cli.mjs" restart \
 ```
 
 The launcher binds this stable ID to its currently owned child and exact
-installed selection, checks integrity/compatibility, asks `/admin/restart` for
-native safe drain once, confirms a clean actual exit, and starts that same
-selection with a fresh instance. Success requires exact version/archive/source
-and same-instance health readback. It does not check/download/install a release,
+installed selection, checks integrity/compatibility, safely drains modules and
+the runner while main remains available, then asks the owned main's native idle
+gate for safe drain once over parent IPC. After clean exit it starts a fresh runner and main from that
+same selection, restores the captured owned service versions and verifies health.
+Success requires exact version/archive/source and same-instance health readback.
+It does not check/download/install a release,
 change the selector, close the launcher, or automatically respawn a crashed or
 unknown process. The command returns its receipt promptly rather than waiting
 for the old backend's owner turn to finish.
@@ -336,27 +385,24 @@ unresolved operation. A crash/nonzero exit while draining is `unknown`, not
 permission to restart automatically. Explicit existing recovery remains a
 separate operator action and cannot replay an uncertain old-child drain.
 
-Graceful full stop first refuses if any module service, job, or recovery
-uncertainty remains. Explicitly stop modules through their normal controls first.
-It next asks the owned runner to close **only if still idle**, over parent IPC,
-and confirms both acknowledgement and actual exit 0. Only then does it request
-native main drain. The launcher closes after the backend also exits. This order
-keeps Web available when a concurrent module start makes the atomic idle-close
-refuse:
+Graceful full stop requests the same supervisor-owned quiesce and ordinary safe
+service drain. It does not require separately stopping every service or force
+cancel busy work. Main/Web remains available until owned modules and runner
+confirm exit 0; native main drain follows, and finally the launcher closes:
 
 ```sh
 node "$INSTALL_ROOT/launcher/cli.mjs" stop \
   --root "$INSTALL_ROOT" --id stop-20260911-01
 ```
 
-A module/job that appears between the status preflight and idle-close can still
-refuse runner shutdown. A known idle refusal completes that stop as failed,
-without draining the backend; launcher, runner, Web and module remain available.
-Unknown IPC/exit results likewise do not drain the backend, but keep
-the original operation unresolved and readback-only: changing IDs never resends
-an uncertain shutdown. Other close errors are not assumed to have had no effect.
-Once idle-close succeeds, module controls are unavailable while native main drain
-waits for existing work; no module can be started through the closed runner.
+The runner's atomic fence, not a racy status preflight, owns the service set.
+An acknowledged pre-effect refusal completes that attempt as failed without
+draining main, allowing a later explicit request after the cause is resolved.
+Any effect uncertainty instead retains the original unresolved operation and
+main availability: changing IDs never resends an uncertain drain. Partial
+shutdown is not reported as a no-effect refusal. After the runner closes,
+module controls are unavailable while native main drain finishes; no new
+service can start through the closed runner.
 
 SIGINT/SIGTERM to the launcher requests the same safe stop when no operation is
 active; additional signals do not force a busy operation. The child has its own
@@ -364,8 +410,8 @@ process group so a terminal interrupt is not forwarded around the native gate.
 Do not use a service-manager configuration that kills the whole cgroup after a
 short timeout. Automatic system-service installation is intentionally absent.
 
-After a machine reboot or clean standalone backend exit, start the launcher and
-explicitly start the selected release:
+After a confirmed clean standalone backend exit or orderly host shutdown, start
+the launcher if needed and explicitly start the selected release:
 
 ```sh
 node "$INSTALL_ROOT/launcher/cli.mjs" start \
@@ -373,21 +419,34 @@ node "$INSTALL_ROOT/launcher/cli.mjs" start \
 ```
 
 The launcher deliberately does not automatically respawn crashes or silently
-adopt orphaned processes. The raw `/admin/restart` endpoint remains **drain-only**;
-calling it directly outside a launcher operation still requires explicit
-`start` after exit. Consumer host UI/API must use the dedicated restart seam
-below, or disable the old consumer-mode restart button until wired. Do not
-redirect `/admin/restart` into that seam: the launcher itself calls this native
-drain endpoint, so doing so would recurse.
+adopt orphaned processes. In consumer mode, public `/admin/restart`, its MCP
+tool and Web control must delegate to the same launcher-backed restart seam
+below, retaining the operation ID and truthful accepted/unknown/completed
+status. They must not independently arm a consumer self-exit. The launcher
+does **not** call that HTTP endpoint: its private parent IPC arms native drain
+only after module/runner shutdown, so public delegation cannot recurse.
+Normal backend SIGINT/SIGTERM is a stop, not an implicit restart: the exit hook
+waits for owned modules and runner while main remains available; a later
+explicit `start` restores the selected release. An abrupt crash/power loss is not a clean shutdown;
+uncertain runner/child records require inspection, not automatic reboot recovery.
 
 An unhealthy new child that is **still alive** is retained, not killed and not
 replaced. Startup timeout reports `unknown`. Recover on the **original**
-installation operation:
+installation operation. Choose the action matching the retained phase; these
+are alternatives, not a batch of commands to run blindly:
 
 ```sh
-# Read-only identity/health recheck; can confirm a late healthy startup.
+# Read-only identity/health/lifecycle recheck; never resends module restoration.
 node "$INSTALL_ROOT/launcher/cli.mjs" recover \
   --root "$INSTALL_ROOT" --id install-20260911-01 --action verify
+# If health prevented restoration from ever being requested, explicitly finish it.
+# This refuses to resend a previously requested/unknown restoration.
+node "$INSTALL_ROOT/launcher/cli.mjs" recover \
+  --root "$INSTALL_ROOT" --id install-20260911-01 --action restore
+# Only if the original runner drain later confirms clean exit and native main
+# drain was NEVER sent: explicitly continue that original stop/restart/update.
+node "$INSTALL_ROOT/launcher/cli.mjs" recover \
+  --root "$INSTALL_ROOT" --id install-20260911-01 --action continue
 # Explicitly request that exact owned candidate's native safe drain, once.
 node "$INSTALL_ROOT/launcher/cli.mjs" recover \
   --root "$INSTALL_ROOT" --id install-20260911-01 --action drain
@@ -399,6 +458,18 @@ node "$INSTALL_ROOT/launcher/cli.mjs" recover \
 Fallback is allowed only when a previous release has real successful startup
 evidence and the same data/config compatibility class. No database or user file
 is restored. Failed fallback remains unknown; it is not successful recovery.
+If candidate health prevented restoration from ever being requested, its empty
+runner cannot erase the pending host-cycle pins; explicit compatible fallback
+retains them. Once restoration was attempted, a later confirmed recovery drain
+captures actual current owned children instead, preserving subsequent manual
+stops. An uncertain restoration is never automatically replayed; explicit safe
+drain remains subject to the supervisor's real unresolved-job protections.
+`continue` requires the exact original runner generation and shutdown operation
+to have a matching late completion and clean exit; it never resends runner IPC
+or an already-requested native drain. An install target's signature/inventory
+or restart selection is revalidated before continuation. For a direct main
+exit preparation, it makes that same preparation ready again; another explicit
+native stop can then finish the original main exit.
 `--action abandon` can close a failed operation **only after known child exit**,
 restore a compatible previous selector without starting it, or remove the
 selector when no known-good release exists. It retains receipts/releases/data.
@@ -450,6 +521,49 @@ const receipt = await restartConsumer(operationId);
 // Return this acknowledgement, never wait here for drain/startup completion.
 ```
 
+The consumer main process is spawned with an owned Node IPC channel. Connect
+it once during server startup:
+
+```js
+import { connectConsumerLifecycle } from '../../../scripts/consumer/cli.mjs';
+await connectConsumerLifecycle(() => {
+  restartPending = true;
+  maybeGracefulExit(); // Arm the existing native idle gate; do not await exit.
+});
+```
+
+The helper authenticates installation/instance provenance and announces
+`consumer-main-ready` API1 with the real PID. Only its actual parent can send
+`consumer-native-drain`; the helper invokes the native gate once per instance
+and returns an operation/instance/PID-bound `consumer-native-drain-result`.
+There is no public raw-drain override, HTTP fallback or independent switch
+authority.
+
+Before consumer-mode native shutdown closes the runtime or HTTP API, the same
+server gate also awaits:
+
+```js
+import { prepareConsumerExit } from '../../../scripts/consumer/cli.mjs';
+await prepareConsumerExit();
+// Recheck actual native busy state, then enter the existing shutdown gate.
+```
+
+This must happen **before** setting the server's `restarting`/503 fence or
+calling `engine.stop`/`app.close`. Main must still serve module work and the
+launcher's `/version` check. Ordinary SIGINT/SIGTERM must use this path too.
+Source/private-CD branches and external unowned services remain unchanged.
+
+This private preparation binds the real current main instance and joins any
+existing launcher-owned drain instead of issuing another request. Otherwise it
+requests only modules/runner drain and lets the native gate own main shutdown.
+It never calls `/admin/restart` recursively. Each requested shutdown uses a
+retained instance-bound operation ID; subsequent waits are read-only
+`exit-status`. Additional invocations join the same still-unresolved lifecycle
+rather than repeating it under another ID. A later explicit stop following an
+authoritative no-effect refusal gets its own receipt and preserves the old one.
+An error leaves main serving and its evidence inspectable, not a `finally`
+block that closes main anyway.
+
 `restartConsumer` takes no client-provided root. It resolves the launcher's
 environment root, rejects private-CD environment markers, and verifies the
 authority marker's installation ID and user root against the captured
@@ -467,9 +581,11 @@ retain their existing shape and behavior. Mixed authorities fail startup.
 `/system/versions` must remain unavailable for consumer private-CD status rather
 than fabricate a private delivery success. CLI status is the consumer authority;
 UI/protocol consumer-update integration is a separate parent integration.
-No server/UI route was changed by the restart implementation: the parent must
-wire the consumer-mode button/API to this seam (with a stable operation ID), or
-explicitly disable that button. The private-CD branch remains unchanged.
+The server-owned integration must route Web and MCP restart through that same
+consumer HTTP handler and expose the launcher's real phase, not only a local
+`restartPending` flag. A cancellation request must reach the launcher authority
+or explicitly refuse an already irreversible/unknown drain; clearing a local
+flag cannot truthfully cancel its operation. The private-CD branch remains unchanged.
 
 ```sh
 node --test scripts/consumer-lifecycle.test.mjs \
@@ -478,9 +594,13 @@ node --test scripts/consumer-lifecycle.test.mjs \
 ```
 
 Fixtures run real isolated child processes and HTTP endpoints, real ZIP/tar
-extraction, signatures, immutable directories, busy drain, startup identity and
-safe fallback. Their simulated native busy flag and minimal tsx package are
-**not** real SDK or production acceptance. The optional publisher actual-archive
+extraction, signatures, immutable directories, busy module/main drain, runner
+replacement, exact owned-pin restoration, manual-stop preservation, startup
+identity and safe fallback.
+A separate source-level test runs the actual core supervisor and its owned
+service fixture; signed archive tests deliberately use a synthetic supervisor
+protocol fixture and a minimal tsx stub. None is real SDK or production
+acceptance. The optional publisher actual-archive
 test is skipped without its documented inputs. Final fixed-SHA package/native
 acceptance, publisher provisioning and production deployment remain separate,
 explicitly authorized work.

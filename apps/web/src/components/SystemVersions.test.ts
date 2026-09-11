@@ -13,11 +13,11 @@ const styles = registerHooks({
 const { ConsumerLifecycleNotice } = await import('./SystemVersions');
 styles.deregister();
 
-test('consumer lifecycle notice does not mistake provenance or drain-and-exit for a restart bridge', () => {
+test('consumer lifecycle notice separates shared safe restart from CLI-only installation updates', () => {
   const html = renderToStaticMarkup(createElement(ConsumerLifecycleNotice));
-  assert.match(html, /Web 重启与自更新桥尚未接通/);
+  assert.match(html, /MCP \/ API 使用同一独立启动器和原操作 ID/);
   assert.match(html, /独立启动器 CLI/);
-  assert.match(html, /只会退出进程，不保证自动拉起/);
+  assert.match(html, /本体下载安装仍使用/);
   assert.match(html, /authority=consumer 与 installationId 仅说明安装归属/);
   assert.match(html, /模块服务的启动\/安全停止不是 Cockpit 主程序重启/);
   assert.doesNotMatch(html, /<button|<a /);

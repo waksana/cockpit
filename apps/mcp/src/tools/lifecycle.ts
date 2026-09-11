@@ -1,7 +1,7 @@
 // Lifecycle tools: create, permanently delete, unload, and reload sessions.
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { ModuleSelections, SessionUnbindApproval } from '@cockpit/protocol';
+import { ModuleSelections } from '@cockpit/protocol';
 import { CockpitError, protocolIntent as intent } from '../cockpit.js';
 import { ok, fail, type ToolResult } from '../shared.js';
 
@@ -14,11 +14,12 @@ export function registerLifecycleTools(server: McpServer): void {
       description:
         'Create a new Copilot session rooted at a working directory (its cwd, which sets the ' +
         'project identity and which AGENTS.md/skills apply). Returns the new session id. ' +
-        'This is the low-level native creation primitive: an empty session with no first message may not survive unload. ' +
-        'For first-message creation, use session/start via cockpit_call_intent with a stable operationId and real text/files; ' +
-        'it prepares selected roles before submitting that first message. Inspect session/start/get after an uncertain result. ' +
+        'Uses the same session/new API as Web and Task. It configures selected roles and returns the real native ID; ' +
+        'it never sends a message. Send subsequent content with cockpit_send_prompt to that ID. ' +
+        'An empty session with no first message may not survive unload. ' +
         'A persisted session can be resumed with its original ID; a missing one is never silently recreated. ' +
-        'Optional modules explicitly compose installed roles without global injection. Inspect modules/list before selecting. ' +
+        'Optional modules explicitly compose installed roles without global injection. Use modules/list with checkAvailability:true before selecting, ' +
+        'as in the Web creation form; this does not reserve a slot. ' +
         'Module failure retains a session/operation identity; inspect it rather than recreating blindly. ' +
         'Reading history does not load a runtime. Use cockpit_list_dir to pick a cwd.',
       inputSchema: {
@@ -50,24 +51,20 @@ export function registerLifecycleTools(server: McpServer): void {
         'IRREVERSIBLE. Delete a session through the public native Copilot deleteSession API. ' +
         'Only run when permanent deletion is intended, with explicit confirm:true. ' +
         'Managed files, file associations and workspaces are retained. Busy sessions are protected. ' +
-        'If associated modules declare unbind, first read session/delete/preview via cockpit_call_intent, ' +
-        'then supply unbind with that planId and a stable operationId after explicit unbind-and-delete confirmation. ' +
-        'Modules without this capability receive no hook or notification. ' +
+        'Deletion does not invoke module unbind hooks or broadcast to modules. Modules detect missing targets when used. ' +
         'Never automatically retry an uncertain result.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id to permanently delete'),
         confirm: z.literal(true).describe('Explicit confirmation of irreversible native deletion; required'),
-        unbind: SessionUnbindApproval.optional().describe('Explicit approval of the previewed optional module unbind steps'),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ session_id, confirm, unbind }): Promise<ToolResult> => {
+    async ({ session_id, confirm }): Promise<ToolResult> => {
       try {
         // Retain the already-destructive wire name across staggered deployments.
         await intent('session/purge', {
           sessionId: session_id,
           confirm,
-          ...(unbind ? { unbind } : {}),
         });
         return ok(`Deleted ${session_id} permanently. Managed files and workspaces are retained.`);
       } catch (e) {
@@ -82,16 +79,17 @@ export function registerLifecycleTools(server: McpServer): void {
     {
       title: 'Unload a session from memory',
       description:
-        'Unload an idle session from memory to free resources. Non-destructive: its history is on ' +
-        'disk. A prompt or explicit reload resumes it; reading history does not. UI pinning does ' +
-        'not keep it loaded. Native schedules pause while unloaded. Does not work mid-turn.',
+        'Unload an idle session from memory to free resources. Persisted history is retained. ' +
+        'An empty, never-messaged native session may disappear on unload; no replacement is created. ' +
+        'For an existing persisted ID, a prompt or explicit load/reload resumes it; reading history does not. ' +
+        'UI pinning does not keep it loaded. Native schedules pause while unloaded. Does not work mid-turn.',
       inputSchema: { session_id: z.string().min(1).describe('The session id to unload') },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async ({ session_id }): Promise<ToolResult> => {
       try {
         await intent('session/unload', { sessionId: session_id });
-        return ok(`Unloaded ${session_id}; history is preserved. A prompt or explicit reload resumes it.`);
+        return ok(`Unloaded ${session_id}; persisted history is retained. Empty never-messaged sessions may disappear; session/get reports actual presence.`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }

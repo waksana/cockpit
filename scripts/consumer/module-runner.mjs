@@ -1,11 +1,29 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { constants, closeSync, existsSync, lstatSync, openSync } from 'node:fs';
+import { constants, closeSync, existsSync, lstatSync, mkdirSync, openSync } from 'node:fs';
 import { createConnection } from 'node:net';
 import { join } from 'node:path';
-import { loadAuthority, processIdentity, processStillExists, readJson, writeJson } from './state.mjs';
+import { identifier, loadAuthority, privateDirectory, processIdentity, processStillExists, readJson, writeJson } from './state.mjs';
 
-const idleRefusal = 'Runner still owns active children/jobs; request ordinary graceful drain first';
+const lifecycle = {
+  shutdown: { request: 'drain-and-stop', response: 'module-runner-drain', complete: 'stopped', state: 'draining' },
+  restore: { request: 'restore-enabled', response: 'module-runner-restore', complete: 'restored', state: 'restoring' },
+};
+export function moduleServicePins(value) {
+  if (!Array.isArray(value) || value.length > 2) throw new Error('Owned service restoration requires an explicit bounded pin list');
+  const ids = new Set();
+  return value.map(pin => {
+    if (!pin || typeof pin !== 'object' || Array.isArray(pin) || !['task', 'wechat'].includes(pin.id)
+      || ids.has(pin.id) || Object.keys(pin).some(key => !['id', 'version', 'digest'].includes(key))
+      || typeof pin.version !== 'string' || pin.version.length > 80
+      || !/^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?(?:\+[A-Za-z0-9.-]+)?$/.test(pin.version)
+      || typeof pin.digest !== 'string' || !/^[a-f0-9]{64}$/.test(pin.digest)) {
+      throw new Error('Invalid or duplicate owned service release pin');
+    }
+    ids.add(pin.id);
+    return { id: pin.id, version: pin.version, digest: pin.digest };
+  }).sort((a, b) => a.id.localeCompare(b.id));
+}
 function absent(path) {
   try { lstatSync(path); } catch (error) { if (error.code === 'ENOENT') return true; throw error; }
   return false;
@@ -23,7 +41,7 @@ function lockIdentity(path, pid) {
   return lock;
 }
 
-/** Read-only API1 subset; no module control/start/apply/stop commands are issued here. */
+/** Read-only socket API. Lifecycle mutations use only the owned parent IPC. */
 export function readModuleRunnerStatus(socketPath, id) {
   if (!['task', 'wechat'].includes(id)) throw new Error('Unsupported official service module');
   privateSocket(socketPath);
@@ -68,6 +86,7 @@ export class ConsumerModuleRunner {
     this.lockPath = join(this.authority.userRoot, '.module-runner.lock');
     this.recordPath = join(root, 'module-runner.json');
     this.startupTimeout = options.startupTimeout ?? 30_000;
+    this.acknowledgementTimeout = options.acknowledgementTimeout ?? 10_000;
     this.child = null;
     this.pending = null;
     this.fatal = null;
@@ -78,46 +97,70 @@ export class ConsumerModuleRunner {
     if (previous && previous.state !== 'stopped') throw new Error('Previous module runner outcome is unknown; no automatic crash restart or adoption');
   }
   record() { return existsSync(this.recordPath) ? readJson(this.recordPath) : null; }
-  save(record) { writeJson(this.recordPath, { ...record, updatedAt: new Date().toISOString() }); }
-  assertIdentity() {
+  save(record) {
+    const value = { ...record, updatedAt: new Date().toISOString() };
+    if (value.generationId) {
+      const previous = this.record();
+      const uncertainties = previous?.generationId === value.generationId ? [...(previous.uncertainties ?? [])] : [];
+      const reason = value.state === 'unknown' ? value.error ?? value.shutdown?.error ?? value.restore?.error : undefined;
+      if (reason && uncertainties.at(-1)?.reason !== reason) uncertainties.push({ observedAt: value.updatedAt, reason });
+      if (uncertainties.length) value.uncertainties = uncertainties;
+      identifier(value.generationId);
+      const directory = join(this.root, 'module-runner-history');
+      if (!existsSync(directory)) mkdirSync(directory, { mode: 0o700 });
+      privateDirectory(directory);
+      writeJson(join(directory, `${value.generationId}.json`), value);
+    }
+    writeJson(this.recordPath, value);
+  }
+  assertIdentity({ allowLifecycle = false } = {}) {
     const record = this.record();
     if (this.fatal) throw new Error(this.fatal);
-    if (record?.shutdown && record.shutdown.state !== 'refused') {
-      throw new Error('Module runner shutdown is pending/unknown; no reuse or mutation retry');
+    if (!allowLifecycle && (record?.state !== 'ready'
+      || (record.shutdown && record.shutdown.state !== 'refused')
+      || (record.restore && !['restored', 'refused'].includes(record.restore.state)))) {
+      throw new Error('Module runner lifecycle is pending/unknown; no reuse or mutation retry');
     }
-    if (record?.state !== 'ready') throw new Error('Module runner readiness is unconfirmed');
+    if (!['ready', 'restoring', 'draining', 'stopping', 'unknown'].includes(record?.state)) throw new Error('Module runner readiness is unconfirmed');
     if (!this.child || !record?.process || record.process.pid !== this.child.handle.pid || !processStillExists(record.process)) {
       throw new Error('Owned module runner is absent or unconfirmed');
     }
     const socket = privateSocket(this.socketPath), lock = lockIdentity(this.lockPath, this.child.handle.pid);
-    if (record.apiVersion !== 1 || record.installationId !== this.authority.installationId
-      || JSON.stringify(record.selection) !== JSON.stringify(this.child.selection) || lock.instanceId !== record.instanceId
+    if (record.apiVersion !== 1 || record.lifecycleApi !== 1 || record.installationId !== this.authority.installationId
+      || JSON.stringify(record.selection) !== JSON.stringify(this.child.selection)
+      || JSON.stringify(record.resumeServices) !== JSON.stringify(this.child.resumeServices) || lock.instanceId !== record.instanceId
       || socket.dev !== record.socketIdentity.dev || socket.ino !== record.socketIdentity.ino) {
       throw new Error('Owned module runner identity/socket changed; no adoption or replacement');
     }
     return record;
   }
   async statuses() {
-    this.assertIdentity();
+    const before = this.assertIdentity({ allowLifecycle: true }), child = this.child;
     const values = await Promise.all(['task', 'wechat'].map(id => readModuleRunnerStatus(this.socketPath, id)));
-    this.assertIdentity();
+    const after = this.assertIdentity({ allowLifecycle: true });
+    if (this.child !== child || after.generationId !== before.generationId) throw new Error('Module runner changed during status read; no mixed-generation status');
     return values;
   }
-  async assertIdle() {
-    if (!this.child && (!this.record() || this.record().state === 'stopped')) return;
-    const statuses = await this.statuses();
-    if (statuses.some(value => value.status !== 'stopped' || value.owned || value.recoveryRequired
-      || (value.job && value.job.phase !== 'done'))) {
-      throw Object.assign(new Error('Module runner still has services/jobs or recovery uncertainty; explicitly stop modules first'), { runnerIdleRefused: true });
+  assertStopped() {
+    const record = this.record();
+    if (this.child || (record && record.state !== 'stopped')
+      || !absent(this.socketPath) || !absent(this.lockPath)) {
+      throw new Error('Owned module runner exit is not confirmed; no replacement or abandonment');
     }
   }
-  async ensure(selection, operationId) {
-    if (selection.moduleRunnerApi !== 1) throw new Error('Main release is incompatible with resident module runner API1');
-    if (this.child) { this.assertIdentity(); return; }
+  async ensure(selection, operationId, resumeServices = []) {
+    identifier(operationId);
+    const services = moduleServicePins(resumeServices);
+    if (selection.moduleRunnerApi !== 1 || selection.moduleRunnerLifecycleApi !== 1) {
+      throw new Error('Main release must support module runner API1 and owned lifecycle API1');
+    }
+    if (this.child) throw new Error('Previous module runner is still alive; never reuse it across main startup');
     const previous = this.record();
     if (previous && previous.state !== 'stopped') throw new Error('Module runner crash/unknown outcome blocks automatic replacement');
     if (!absent(this.socketPath) || !absent(this.lockPath)) throw new Error('Existing module runner/socket will not be adopted');
-    const record = { state: 'starting', apiVersion: 1, installationId: this.authority.installationId, selection, operationId, process: null,
+    const record = { state: 'starting', apiVersion: 1, lifecycleApi: 1, generationId: randomUUID(),
+      installationId: this.authority.installationId, selection, operationId, process: null,
+      resumeServices: services,
       userRoot: this.authority.userRoot, cockpitUrl: `http://127.0.0.1:${this.authority.port}`, socket: this.socketPath };
     this.save(record);
     const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('COCKPIT_CONSUMER_')));
@@ -126,13 +169,13 @@ export class ConsumerModuleRunner {
     let handle;
     try {
       handle = spawn(process.execPath, ['--import', 'tsx', join(selection.release, 'packages/core/src/modules/supervisor-entry.ts'),
-        '--user-root', this.authority.userRoot, '--cockpit-url', record.cockpitUrl], {
+        '--user-root', this.authority.userRoot, '--cockpit-url', record.cockpitUrl, '--host-owned', 'true'], {
         cwd: join(selection.release, 'apps/server'), detached: true, stdio: ['ignore', log, log, 'ipc'],
         env: { ...env, COCKPIT_HOME: this.authority.nativeHome, COCKPIT_USER_ROOT: this.authority.userRoot },
       });
     } finally { closeSync(log); }
     let resolveExit, resolveReady, rejectReady;
-    const owned = { handle, selection, exited: new Promise(resolve => { resolveExit = resolve; }) };
+    const owned = { handle, selection, resumeServices: services, exited: new Promise(resolve => { resolveExit = resolve; }) };
     this.child = owned;
     const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
     const timeout = setTimeout(() => rejectReady(new Error('Module runner readiness is unknown; child was not killed or replaced')), this.startupTimeout);
@@ -146,22 +189,41 @@ export class ConsumerModuleRunner {
     handle.on('message', message => {
       try {
         if (message?.type === 'module-runner-ready') {
-          if (this.fatal || owned.ready || message.apiVersion !== 1 || message.pid !== handle.pid || message.socket !== this.socketPath
+          if (this.fatal || owned.ready || message.apiVersion !== 1 || message.lifecycleApi !== 1
+            || message.pid !== handle.pid || message.socket !== this.socketPath
             || !record.process || !processStillExists(record.process)) throw new Error('Module runner readiness identity/API mismatch');
           const socketIdentity = privateSocket(this.socketPath), lock = lockIdentity(this.lockPath, handle.pid);
           owned.ready = true;
           this.save({ ...record, state: 'ready', instanceId: lock.instanceId, socketIdentity });
           resolveReady();
-        } else if (message?.type === 'module-runner-shutdown') {
+        } else if (Object.values(lifecycle).some(value => value.response === message?.type)) {
+          const [key, contract] = Object.entries(lifecycle).find(([, value]) => value.response === message.type);
           const current = this.record();
-          if (current?.shutdown?.state !== 'requested' || message.operationId !== current.shutdown.operationId || message.pid !== handle.pid
-            || typeof message.ok !== 'boolean') throw new Error('Module runner shutdown acknowledgement identity mismatch');
-          const refused = !message.ok && message.error === idleRefusal;
-          if (!message.ok && !refused) this.fatal = 'Runner shutdown failed with unconfirmed effects';
-          this.save({ ...current, state: message.ok ? 'stopping' : refused ? 'ready' : 'unknown',
-            shutdown: { ...current.shutdown, state: message.ok ? 'acknowledged' : refused ? 'refused' : 'unknown', error: message.error } });
-          this.pending?.resolve(message);
-          this.pending = null;
+          const request = current?.[key];
+          if (!request || !['requested', 'accepted', 'unknown'].includes(request.state)
+            || message.operationId !== request.operationId || message.pid !== handle.pid
+            || !['accepted', contract.complete, 'refused', 'unknown'].includes(message.state)
+            || (['refused', 'unknown'].includes(message.state) && (typeof message.error !== 'string' || !message.error))) {
+            throw new Error('Module runner lifecycle acknowledgement identity/state mismatch');
+          }
+          const pins = message.state === contract.complete ? moduleServicePins(message.services) : undefined;
+          if (key === 'restore' && pins && JSON.stringify(pins) !== JSON.stringify(current.resumeServices)) {
+            throw new Error('Restored services do not match the captured owned release pins');
+          }
+          let state = message.state === 'accepted' ? contract.state
+            : message.state === 'stopped' ? 'stopping' : message.state === 'unknown' ? 'unknown' : 'ready';
+          if (key === 'restore' && current.shutdown && current.shutdown.state !== 'refused') {
+            state = ['requested', 'accepted'].includes(current.shutdown.state) ? 'draining'
+              : current.shutdown.state === 'stopped' ? 'stopping' : 'unknown';
+          }
+          this.save({ ...current, state, [key]: { operationId: request.operationId, state: message.state,
+            ...(pins ? { services: pins } : {}), ...(message.error ? { error: message.error } : {}) } });
+          const pending = this.pending?.key === key ? this.pending : null;
+          if (message.state === 'accepted') pending?.acknowledge();
+          else {
+            pending?.resolve(message);
+            if (pending) this.pending = null;
+          }
         }
       } catch (error) { fail(error); }
     });
@@ -171,7 +233,7 @@ export class ConsumerModuleRunner {
       exited = true;
       this.child = null;
       const current = this.record();
-      const clean = current?.shutdown?.state === 'acknowledged' && code === 0 && signal === null && !error;
+      const clean = current?.shutdown?.state === 'stopped' && code === 0 && signal === null && !error;
       this.save({ ...current, state: clean ? 'stopped' : 'unknown', exit: { code, signal },
         ...(clean ? {} : { error: error?.message ?? 'Runner exited unexpectedly; module children are not adopted or restarted' }) });
       if (!clean) this.fatal = 'Module runner exited with an unknown outcome';
@@ -188,35 +250,61 @@ export class ConsumerModuleRunner {
     catch (error) { this.fatal = error.message; this.save({ ...this.record(), state: 'unknown', error: error.message }); throw error; }
     finally { clearTimeout(timeout); }
   }
-  async shutdownIfIdle(operationId) {
-    if (!this.child && (!this.record() || this.record().state === 'stopped')) return;
-    await this.assertIdle();
-    const record = this.assertIdentity(), child = this.child;
-    const id = `shutdown_${createHash('sha256').update(operationId).digest('hex').slice(0, 48)}`;
-    if (record.shutdown && record.shutdown.state !== 'refused') throw new Error('Runner shutdown outcome already pending/unknown; no mutation retry');
-    if (record.shutdown?.operationId === id) throw new Error('Runner shutdown request ID is readback-only');
-    this.save({ ...record, shutdown: { operationId: id, state: 'requested' } });
+  async requestLifecycle(key, operationId, { recovery = false } = {}) {
+    identifier(operationId);
+    const record = this.assertIdentity({ allowLifecycle: key === 'shutdown' && recovery }),
+      child = this.child, contract = lifecycle[key];
+    const id = `${key}_${createHash('sha256').update(`${operationId}:${record.generationId}`).digest('hex').slice(0, 48)}`;
+    if (record[key] && record[key].state !== 'refused') throw new Error('Runner lifecycle already requested; no mutation retry');
+    if (record[key]?.operationId === id) throw new Error('Runner lifecycle request ID is readback-only');
+    if (this.pending) throw new Error('Runner lifecycle request is still pending');
+    this.save({ ...record, state: contract.state, [key]: { operationId: id, state: 'requested' } });
     const response = await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      const fail = error => {
         this.pending = null;
-        reject(new Error('Runner idle-shutdown acknowledgement unknown; no retry or signal'));
-      }, 10_000);
-      this.pending = { resolve: value => { clearTimeout(timeout); resolve(value); },
-        reject: error => { clearTimeout(timeout); reject(error); } };
-      child.handle.send({ type: 'shutdown-if-idle', operationId: id }, error => {
-        if (error && this.pending) { this.pending.reject(error); this.pending = null; }
-      });
+        this.save({ ...this.record(), state: 'unknown', [key]: { operationId: id, state: 'unknown', error: error.message } });
+        reject(error);
+      };
+      const timeout = setTimeout(() => {
+        fail(new Error('Runner lifecycle acknowledgement unknown; no retry or signal'));
+      }, this.acknowledgementTimeout);
+      this.pending = { key, acknowledge: () => clearTimeout(timeout),
+        resolve: value => { clearTimeout(timeout); resolve(value); },
+        reject: error => { clearTimeout(timeout); fail(error); } };
+      try {
+        child.handle.send({ type: contract.request, operationId: id,
+          ...(key === 'restore' ? { services: moduleServicePins(record.resumeServices) } : {}) }, error => {
+          if (error && this.pending) { this.pending.reject(error); this.pending = null; }
+        });
+      } catch (error) { this.pending?.reject(error); this.pending = null; }
     });
-    if (!response.ok) throw Object.assign(new Error(response.error ?? 'Runner idle shutdown unconfirmed'),
-      { runnerIdleRefused: this.record().shutdown.state === 'refused' });
+    if (response.state !== contract.complete) {
+      throw Object.assign(new Error(response.error ?? 'Runner lifecycle is unconfirmed'),
+        { runnerLifecycleRefused: response.state === 'refused' });
+    }
+    return response;
+  }
+  async drainAndStop(operationId, options) {
+    if (!this.child && (!this.record() || this.record().state === 'stopped')) { this.assertStopped(); return; }
+    const child = this.child;
+    await this.requestLifecycle('shutdown', operationId, options);
     const exit = await child.exited;
-    if (!exit.clean) throw new Error('Runner idle-shutdown exit was not confirmed clean');
+    if (!exit.clean) throw new Error('Runner graceful-drain exit was not confirmed clean');
+    this.assertStopped();
+  }
+  async restoreEnabled(operationId) {
+    await this.requestLifecycle('restore', operationId);
+    this.assertIdentity();
   }
   async status() {
     const record = this.record();
     if (!record || record.state === 'stopped') return { state: record?.state ?? 'not-started', record };
     if (record.state === 'stopping' || record.state === 'starting') return { state: record.state, record };
-    try { return { state: 'ready', record: this.assertIdentity(), modules: await this.statuses() }; }
+    try {
+      const modules = await this.statuses(), current = this.assertIdentity({ allowLifecycle: true });
+      if (current.generationId !== record.generationId) throw new Error('Module runner changed during status read');
+      return { state: current.state, record: current, modules };
+    }
     catch (error) { return { state: 'unknown', record, error: error.message }; }
   }
 }

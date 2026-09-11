@@ -183,36 +183,20 @@ test('explicit module recovery forwards an independent stop ID linked to the ori
   assertOnlyPost(fetch, 'modules/service', body);
 });
 
-test('deletion preview forwards cancellation and returns only the matching validated plan', async t => {
-  const plan = { sessionId: 'session', planId: 'a'.repeat(64), modules: [] };
-  const { client, fetch } = setup(t, async () => Response.json({ plan }));
-  const controller = new AbortController();
-  assert.deepEqual(await client.previewDeleteSession('session', controller.signal), plan);
-  assert.equal(fetch.mock.calls[0].arguments[0], intentUrl('session/delete/preview'));
-  assert.deepEqual(JSON.parse(String(fetch.mock.calls[0].arguments[1]?.body)), { sessionId: 'session' });
-  assert.equal(fetch.mock.calls[0].arguments[1]?.signal, controller.signal);
-  assert.equal(fetch.mock.callCount(), 1);
-});
-
-test('delete approval is forwarded exactly once and ordinary delete keeps its existing body', async t => {
+test('native delete forwards one confirmation without any module preflight or approval', async t => {
   const { client, fetch } = setup(t, async () => Response.json({ ok: true }));
-  const unbind = { planId: 'b'.repeat(64), operationId: 'retained-operation' };
-  await client.deleteSession('session', true, unbind);
-  assertOnlyPost(fetch, 'session/purge', { sessionId: 'session', confirm: true, unbind });
-  await client.deleteSession('ordinary', true);
-  assert.deepEqual(JSON.parse(String(fetch.mock.calls[1].arguments[1]?.body)), { sessionId: 'ordinary', confirm: true });
+  await client.deleteSession('session', true);
+  assertOnlyPost(fetch, 'session/purge', { sessionId: 'session', confirm: true });
 });
 
-test('failed or wrong-session delete preview never becomes an empty allowed plan', async t => {
-  let response = Response.json({ error: 'Cannot read preview' }, { status: 503 });
+test('native deletion failure or missing acknowledgement is not retried or accepted', async t => {
+  let response = Response.json({ error: 'Native protected work' }, { status: 409 });
   const { client, fetch } = setup(t, async () => response);
-  await assert.rejects(client.previewDeleteSession('session'), /Cannot read preview/);
-  response = Response.json({ plan: { sessionId: 'other', planId: 'c'.repeat(64), modules: [] } });
-  await assert.rejects(client.previewDeleteSession('session'), /其他会话/);
+  await assert.rejects(client.deleteSession('session', true), /Native protected work/);
   response = Response.json({});
-  await assert.rejects(client.previewDeleteSession('session'));
-  assert.equal(fetch.mock.callCount(), 3);
-  assert.ok(fetch.mock.calls.every(call => call.arguments[0] === intentUrl('session/delete/preview')));
+  await assert.rejects(client.deleteSession('session', true));
+  assert.equal(fetch.mock.callCount(), 2);
+  assert.ok(fetch.mock.calls.every(call => call.arguments[0] === intentUrl('session/purge')));
 });
 
 test('module-aware creation forwards exact choices and retains an incomplete native session without automatic retry', async t => {
@@ -225,48 +209,19 @@ test('module-aware creation forwards exact choices and retains an incomplete nat
   assertOnlyPost(fetch, 'session/new', { cwd: '/workspace', modules });
 });
 
-test('interactive start sends actual first-message text and retained files with one operation identity', async t => {
-  const operation = { operationId: 'start-operation', sessionId: 'b4d57799-2ccf-4a9e-9f04-0a9bc6aebdb0', state: 'accepted' as const };
-  const { client, fetch } = setup(t, async () => Response.json({ operation }));
-  const attachment = { kind: 'file' as const, name: 'notes.txt', url: '/uploads/notes.txt', size: 4, mime: 'text/plain' };
-  const body = { operationId: operation.operationId, cwd: '/workspace', text: 'first message',
-    modules: [{ moduleId: 'task' as const, roleId: 'commander', version: '1.2.0' }], attachment };
-  assert.deepEqual(await client.startSession(body), operation);
-  assertOnlyPost(fetch, 'session/start', body);
-});
-
-test('first-message ordered parts and multiple retained attachments preserve their wire shape', async t => {
-  const operation = { operationId: 'parts-operation', sessionId: 'b4d57799-2ccf-4a9e-9f04-0a9bc6aebdb0', state: 'accepted' as const };
-  const { client, fetch } = setup(t, async () => Response.json({ operation }));
-  const attachment = { kind: 'image' as const, name: 'image.png', url: '/uploads/image.png' };
-  const body = { operationId: operation.operationId, cwd: '/workspace', text: '',
-    parts: [{ type: 'text' as const, text: 'read this' }, { type: 'file' as const, attachment }] };
-  await client.startSession(body);
-  assertOnlyPost(fetch, 'session/start', body);
-  await client.startSession({ operationId: operation.operationId, cwd: '/workspace', text: '', attachments: [attachment, attachment] });
-  assert.deepEqual(JSON.parse(String(fetch.mock.calls[1].arguments[1]?.body)), {
-    operationId: operation.operationId, cwd: '/workspace', text: '', attachments: [attachment, attachment],
-  });
-});
-
-test('start/get is passive and nullable, while unknown/missing/mismatched start results never auto-retry', async t => {
-  const operationId = 'unknown-start-operation';
-  const body = { operationId, cwd: '/workspace', text: 'first message' };
-  let response = Response.json({ operation: { operationId, sessionId: 'b4d57799-2ccf-4a9e-9f04-0a9bc6aebdb0', state: 'unknown', error: 'preparation incomplete' } });
+test('Web uses native new followed by ordinary prompt, not a combined first-message endpoint', async t => {
+  let response = Response.json({ sessionId: 'actual-native-id' });
   const { client, fetch } = setup(t, async () => response);
-  assert.equal((await client.startSession(body)).state, 'unknown');
-  assert.equal(fetch.mock.callCount(), 1);
-  response = Response.json({ operation: null });
-  const controller = new AbortController();
-  assert.equal(await client.getSessionStart(operationId, controller.signal), null);
-  assert.equal(fetch.mock.calls[1].arguments[0], intentUrl('session/start/get'));
-  assert.deepEqual(JSON.parse(String(fetch.mock.calls[1].arguments[1]?.body)), { operationId });
-  assert.equal(fetch.mock.calls[1].arguments[1]?.signal, controller.signal);
-  response = Response.json({});
-  await assert.rejects(client.startSession(body));
-  response = Response.json({ operation: { operationId: 'other-operation', sessionId: 'b4d57799-2ccf-4a9e-9f04-0a9bc6aebdb0', state: 'accepted' } });
-  await assert.rejects(client.startSession(body), /标识不匹配/);
-  assert.equal(fetch.mock.callCount(), 4);
+  const modules = [{ moduleId: 'assistant' as const, roleId: 'assistant', version: '1.0.0' }];
+  const created = await client.newSession('/workspace', modules);
+  assertOnlyPost(fetch, 'session/new', { cwd: '/workspace', modules });
+  assert.deepEqual(created, { sessionId: 'actual-native-id' });
+  response = Response.json({ ok: true });
+  await client.prompt(created.sessionId, 'The first real message');
+  assert.equal(fetch.mock.calls[1].arguments[0], intentUrl('prompt'));
+  assert.deepEqual(JSON.parse(String(fetch.mock.calls[1].arguments[1]?.body)),
+    { sessionId: created.sessionId, text: 'The first real message' });
+  assert.equal(fetch.mock.callCount(), 2);
 });
 
 for (const status of [403, 404]) {

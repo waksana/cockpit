@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { EventEmitter } from 'node:events';
 import { isDeepStrictEqual } from 'node:util';
 import type { CopilotSession } from '@github/copilot-sdk';
-import { ModuleSelections, SessionModules, ModuleServiceRequest, type IntentBody, type ModuleConfig as PublicConfig, type ModuleSelection, type ModuleStatus, type SessionUnbindApproval } from '@cockpit/protocol';
+import { ModuleSelections, SessionModules, ModuleServiceRequest, type IntentBody, type ModuleConfig as PublicConfig, type ModuleSelection, type ModuleStatus } from '@cockpit/protocol';
 import type { SessionModuleHost } from '../module-session.ts';
 import type { OfficialRuntime } from '../runtime.ts';
 import { ModuleCatalog, inspectModulePackage, type InstalledModule, type ModuleId, type SessionModuleBinding } from './catalog.ts';
@@ -13,7 +13,6 @@ import { assertTaskService, assertWechatReady, provisionTaskCaller, publicModule
   serviceStatus, taskAuthority, taskCredentialDigest, validateAdapterConfig, verifyTaskCaller, wechatAuthority, wechatControl, type AdapterConfig } from './adapters.ts';
 import { privateModuleDirectory, writeModuleRecord as writeReference } from './private-files.ts';
 import { ModuleUpdates } from './updates.ts';
-import { ModuleSessionRemoval } from './session-removal.ts';
 import { ModuleInitialization } from './initialization.ts';
 import type { ModuleInitializationOperation, ModuleInitializationRequest } from '@cockpit/protocol';
 import type { ModuleRunnerClient, ModuleRunnerJob, ModuleRunnerStatus, ServiceModuleId } from './supervisor.ts';
@@ -70,14 +69,14 @@ export class ModuleManager implements SessionModuleHost {
   readonly updates: ModuleUpdates;
   private readonly sources: Partial<Record<ModuleId, string>>;
   private readonly environment: NativeRoleEnvironment;
-  private readonly removal: ModuleSessionRemoval;
   private readonly configurationInitializer: ModuleInitialization;
+  private admissionChildren = 0;
+  private readonly admissionEvents = new EventEmitter();
   constructor(private readonly options: ModuleManagerOptions) {
     this.sources = { assistant: fileURLToPath(new URL('../../../../modules/assistant', import.meta.url)), ...options.sources };
     this.catalog = new ModuleCatalog({ userRoot: options.userRoot,
       trustedSources: Object.values(this.sources).map(path => resolve(path)) });
     this.updates = new ModuleUpdates(this.catalog);
-    this.removal = new ModuleSessionRemoval(this.catalog);
     this.configurationInitializer = new ModuleInitialization(this.catalog);
     this.environment = new NativeRoleEnvironment(options.runtime);
   }
@@ -94,6 +93,13 @@ export class ModuleManager implements SessionModuleHost {
   private config(installed: InstalledModule): AdapterConfig {
     return validateAdapterConfig(installed.manifest.id,
       this.catalog.readConfig(installed.manifest.id, installed.manifest.configVersion).values);
+  }
+  private admission(installed: InstalledModule, config: AdapterConfig): Promise<Record<string, unknown>> {
+    if (!installed.manifest.sessionLifecycle?.canBind) return wechatControl(installed, config, { action: 'status' });
+    return wechatControl(installed, config, { action: 'can-bind' }, {
+      started: () => { this.admissionChildren++; },
+      settled: () => { this.admissionChildren--; this.admissionEvents.emit('settled'); },
+    });
   }
   private initializationFile(id: InitializedModule, sessionId: string): string {
     if (!/^[A-Za-z0-9_-]{1,120}$/.test(sessionId)) throw new Error('Invalid module initialization session ID');
@@ -212,7 +218,6 @@ export class ModuleManager implements SessionModuleHost {
   }
   async prepare(sessionId: string, cwd: string, requested: ModuleSelection[], operationId: string): Promise<void> {
     this.requireHost();
-    this.removal.assertReady(sessionId);
     const current = this.catalog.getSession(sessionId);
     const chosen = ModuleSelections.parse(requested).map(selection => ({
       ...selection, version: this.installed(selection.moduleId, selection.version).manifest.version,
@@ -243,7 +248,7 @@ export class ModuleManager implements SessionModuleHost {
       if (receipt?.state === 'ready') await this.verifyInitialization(receipt, installed, config);
       else {
         if (selection.moduleId === 'task') await assertTaskService(config, selection.roleId === 'commander');
-        else assertWechatReady(await wechatControl(installed, config, { action: 'status' }));
+        else assertWechatReady(await this.admission(installed, config));
       }
       if (!receipt) {
         const next: Initialization = { schemaVersion: 1, moduleId: selection.moduleId, sessionId, operationId,
@@ -341,8 +346,9 @@ export class ModuleManager implements SessionModuleHost {
         // A new WeChat bind acknowledges control identity before its runner creates a Store.
         if (selection.moduleId === 'task') await this.verifyInitialization(ready, installed, config);
       } catch (cause) {
-        throw Object.assign(new Error(`Module initialization did not finish; inspect original operation ${receipt.operationId}; no automatic retry`, { cause }),
-          { moduleOutcomeUnknown: true });
+        const unknown = !(cause && typeof cause === 'object' && 'moduleOutcomeUnknown' in cause && cause.moduleOutcomeUnknown === false);
+        throw Object.assign(new Error(`Module initialization did not finish: ${detail(cause)}; inspect original operation ${receipt.operationId}; no automatic retry`, { cause }),
+          { moduleOutcomeUnknown: unknown });
       }
     }
     if (applying) this.catalog.writeSession({ ...record, phase: 'applied' });
@@ -354,23 +360,19 @@ export class ModuleManager implements SessionModuleHost {
     this.catalog.writeSession({ ...record, phase: unknown ? 'unknown' : 'failed', error: detail(error) });
   }
   async assertReady(sessionId: string): Promise<void> {
-    this.removal.assertReady(sessionId);
     const record = this.catalog.getSession(sessionId);
     if (record && record.phase !== 'applied') throw new Error(`Module configuration is ${record.phase}; inspect the retained operation ${record.operationId}`);
-  }
-  deletionPlan(sessionId: string) {
-    return this.removal.plan(sessionId);
   }
   activeCount(): number {
     const prefix = `${join(this.catalog.dataDirectory('wechat'), 'session-unbind')}/`;
     const unbinds = new Set([...activeUnbinds, ...unbindChildren].filter(file => file.startsWith(prefix)));
-    return this.removal.activeCount() + this.configurationInitializer.activeCount() + unbinds.size;
+    return this.admissionChildren + this.configurationInitializer.activeCount() + unbinds.size;
   }
   onSettled(listener: () => void): () => void {
-    const offRemoval = this.removal.onSettled(listener);
     const offInitialization = this.configurationInitializer.onSettled(listener);
+    this.admissionEvents.on('settled', listener);
     unbindEvents.on(this.catalog.userRoot, listener);
-    return () => { offRemoval(); offInitialization(); unbindEvents.off(this.catalog.userRoot, listener); };
+    return () => { offInitialization(); this.admissionEvents.off('settled', listener); unbindEvents.off(this.catalog.userRoot, listener); };
   }
   initializeConfig(input: ModuleInitializationRequest): Promise<ModuleInitializationOperation> {
     return this.configurationInitializer.start(input);
@@ -378,11 +380,7 @@ export class ModuleManager implements SessionModuleHost {
   configInitialization(operationId: string): ModuleInitializationOperation | null {
     return this.configurationInitializer.get(operationId);
   }
-  unbindForDeletion(sessionId: string, approval?: SessionUnbindApproval): Promise<void> {
-    return this.removal.unbind(sessionId, approval);
-  }
   async removed(sessionId: string): Promise<void> {
-    await this.removal.removed(sessionId);
     const record = this.catalog.getSession(sessionId);
     if (record) this.catalog.archiveDeletedBinding(sessionId, record.revision);
   }
@@ -399,7 +397,7 @@ export class ModuleManager implements SessionModuleHost {
         instanceId: runner.identity.instanceId } : {}),
       ...(runner.reason ? { reason: runner.reason } : {}) };
   }
-  async list(cwd?: string): Promise<ModuleStatus[]> {
+  async list(cwd?: string, checkAvailability = false): Promise<ModuleStatus[]> {
     const inventory = this.catalog.list();
     return Promise.all(officialIds.map(async id => {
       const state = inventory.find(module => module.id === id);
@@ -427,7 +425,7 @@ export class ModuleManager implements SessionModuleHost {
           service = await this.runtimeStatus(id, config);
           if (id === 'task') await assertTaskService(config, true);
           if (id === 'wechat') {
-            channel = await wechatControl(installed, config, { action: 'status' });
+            channel = checkAvailability ? await this.admission(installed, config) : await wechatControl(installed, config, { action: 'status' });
             if (channel.available !== true) unavailable = String(channel.reason ?? '微信未就绪或已绑定');
           }
         } catch (error) {

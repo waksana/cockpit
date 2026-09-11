@@ -12,7 +12,7 @@ if (process.env.COCKPIT_MODULE_FIXTURE !== '1' || !process.env.COCKPIT_HOME?.sta
   throw new Error('Module UI fixture requires explicitly isolated temporary native/user/home directories');
 }
 process.env.COCKPIT_NO_BOOT = '1';
-const { app, onEngineEvent, maybeGracefulExit, registerStaticWeb, setTestDependencies, createSessionStarts } = await import('./index.ts');
+const { app, onEngineEvent, maybeGracefulExit, registerStaticWeb, setTestDependencies } = await import('./index.ts');
 interface FixtureCompletion {
   model: string;
   messages: { role: string; content?: unknown; tool_calls?: { function: { name: string } }[] }[];
@@ -43,6 +43,12 @@ const provider = createServer(async (request, response) => {
       assert.ok(text.length <= 4 * 1024 * 1024, 'Fixture request limit exceeded');
     }
     const input = JSON.parse(text) as FixtureCompletion;
+    if (process.env.COCKPIT_PARITY_PROBE_LOG) {
+      assert.ok(process.env.COCKPIT_PARITY_PROBE_LOG.startsWith('/tmp/'), 'Parity evidence must stay in an isolated temporary root');
+      appendFileSync(process.env.COCKPIT_PARITY_PROBE_LOG, `${JSON.stringify({
+        nativeProviderRequest: true, assistantRolePresent: JSON.stringify(input.messages).includes('cockpit-assistant'),
+      })}\n`, { mode: 0o600 });
+    }
     let call: { name: string; arguments: string } | undefined;
     let content = 'Synthetic module UI response.';
     if (process.env.COCKPIT_TASK_PROBE === '1') {
@@ -178,12 +184,13 @@ const modules: ModuleManager = new ModuleManager({ runtime: native, services: ne
 const engine: Engine = new Engine({ runtime: native, modules, prefsFile: resolve(process.env.COCKPIT_HOME, 'fixture-prefs.json') });
 const push = new PushManager();
 registerModuleProxy(app, () => modules.taskGateway());
-setTestDependencies({ engine, push, modules: createModuleIntents(modules), starts: createSessionStarts(engine, modules.catalog.userRoot) });
+setTestDependencies({ engine, push, modules: createModuleIntents(modules) });
 engine.onEvent(onEngineEvent);
 engine.onActivitySettled(maybeGracefulExit);
 await engine.start();
 await registerStaticWeb();
-await app.listen({ host: '127.0.0.1', port: Number(process.env.COCKPIT_PORT ?? 18771) });
+const origin = await app.listen({ host: '127.0.0.1', port: Number(process.env.COCKPIT_PORT ?? 18771) });
+process.stdout.write(`${JSON.stringify({ type: 'module-fixture-ready', origin })}\n`);
 process.on('SIGTERM', () => {
   void engine.stop().then(() => app.close()).then(() => provider.close()).catch(error => {
     console.error(error); process.exitCode = 1;

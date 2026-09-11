@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
@@ -7,8 +7,9 @@ import { test } from 'node:test';
 import { RuntimeConnection } from '@github/copilot-sdk';
 import { OfficialRuntime } from './runtime.ts';
 import { Engine } from './engine.ts';
+import { ModuleManager } from './modules/manager.ts';
 
-test('confirmed Engine deletion uses native SDK and retains unrelated fixture files', {
+test('confirmed Engine deletion uses native SDK without module unbind and preserves module unknown evidence', {
   skip: process.env.COCKPIT_NATIVE_DELETE_TEST !== '1', timeout: 60_000,
 }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'cockpit-delete-native-'));
@@ -57,7 +58,24 @@ test('confirmed Engine deletion uses native SDK and retains unrelated fixture fi
       customAgents: [], availableTools: [], enableSessionTelemetry: false, remoteSession: 'off',
     },
   });
-  const engine = new Engine({ runtime, prefsFile: join(root, 'prefs.json') });
+  const source = join(root, 'module-source');
+  mkdirSync(source);
+  const hookCalled = join(root, 'hook-called');
+  writeFileSync(join(source, 'module.json'), JSON.stringify({
+    schemaVersion: 1, id: 'wechat', version: '1.0.0', name: 'Isolated WeChat', description: 'Native deletion fixture',
+    compatibility: { cockpitApi: 1, nodeMajor: 24, platform: 'linux', arch: 'x64' }, configVersion: 1,
+    roles: [{ id: 'wechat', name: 'WeChat', description: 'Binding-only fixture' }],
+    sessionLifecycle: { unbind: { entry: 'unbind.mjs' } },
+  }));
+  writeFileSync(join(source, 'unbind.mjs'),
+    `import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(hookCalled)}, 'unexpected'); throw new Error('UNKNOWN_SEND');`);
+  const modules = new ModuleManager({ runtime, userRoot: join(root, 'user'), sources: { wechat: source } });
+  modules.catalog.installFromDirectory(source);
+  const data = modules.catalog.dataDirectory('wechat');
+  mkdirSync(data, { recursive: true, mode: 0o700 });
+  const unknown = join(data, 'unknown-send.json');
+  writeFileSync(unknown, '{"outcome":"unknown","resend":false}', { mode: 0o600 });
+  const engine = new Engine({ runtime, modules, prefsFile: join(root, 'prefs.json') });
   let deleted = false;
   try {
     await engine.start();
@@ -73,6 +91,9 @@ test('confirmed Engine deletion uses native SDK and retains unrelated fixture fi
     assert.equal((await engine.getMeta(id))?.title, 'Owned permanent-delete fixture');
     assert.equal((await runtime.getSessionMetadata(id))?.sessionId, id);
     await engine.pin(id, true);
+    modules.catalog.writeSession({ sessionId: id, selections: [],
+      pendingSelections: [{ moduleId: 'wechat', roleId: 'wechat', version: '1.0.0' }],
+      phase: 'unknown', operationId: 'unknown-binding-operation' });
     await assert.rejects(engine.deleteSession(id), /confirm:true/);
     assert.equal((await engine.getMeta(id))?.loaded, true);
     assert.equal(runtime.liveCount, 1);
@@ -82,6 +103,9 @@ test('confirmed Engine deletion uses native SDK and retains unrelated fixture fi
     assert.equal(await engine.getMeta(id), null);
     assert.equal(await runtime.getSessionMetadata(id), undefined);
     assert.equal((await runtime.listSessions()).some(s => s.sessionId === id), false);
+    assert.equal(modules.catalog.getSession(id), undefined);
+    assert.equal(existsSync(hookCalled), false);
+    assert.equal(readFileSync(unknown, 'utf8'), '{"outcome":"unknown","resend":false}');
     const prefs = JSON.parse(readFileSync(join(root, 'prefs.json'), 'utf8'));
     assert.deepEqual(prefs.pinnedSessions, []);
     assert.equal(readFileSync(retained, 'utf8'), 'retained independently of session');

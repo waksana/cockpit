@@ -26,15 +26,15 @@ import { Intents, UploadedFile, partsPrompt, unreadSessionCount, type MessagePar
 import { PushManager } from './push.ts';
 import { getSpeechToken } from './speech.ts';
 import { saveUploadStream, associateUpload, listUploads, uploadDetails, resolveUpload,
-  openUpload, MAX_UPLOAD_BYTES, UploadError, validateUploadContext, resolveStoredAttachment, verifyUpload, type UploadContext } from './uploads.ts';
+  openUpload, MAX_UPLOAD_BYTES, UploadError, validateUploadContext, type UploadContext } from './uploads.ts';
 import { isIntentName, registerCapabilities } from './capabilities.ts';
 import { drainForRestart } from './shutdown.ts';
 import { registerChatStream } from './chat-stream.ts';
 import { registerModuleProxy } from './module-proxy.ts';
 import { createModuleIntents } from './module-intents.ts';
-import { SessionStartCoordinator, SessionStartFailure, type PreparedSessionStart } from '../../../packages/core/src/modules/session-start.ts';
 import { deliveryIdentity } from './delivery-identity.ts';
 import { registerDeliveryStatus } from './delivery-status.ts';
+import { createConsumerControl, type ConsumerControl } from './consumer-control.ts';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.COCKPIT_PORT ?? 8771);
@@ -72,7 +72,7 @@ export type ServerEngine = Pick<Engine,
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
   | 'listGlobalSkills' | 'setGlobalSkill' | 'readSkillBody' | 'listSessionSkills' | 'toggleSessionSkill' | 'refreshSkills'
   | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
-  | 'sessionModules' | 'applySessionModules' | 'deletionPlan'
+  | 'sessionModules' | 'applySessionModules'
 >;
 export type ServerPush = Pick<PushManager, 'subscribe' | 'status' | 'test' | 'unsubscribe' | 'sendAttention'>;
 let engine: ServerEngine;
@@ -82,30 +82,25 @@ export type ModuleIntentHandlers = { [K in ModuleIntentName]: (body: IntentBody<
 let moduleHandlers: ModuleIntentHandlers | undefined;
 let moduleManager: ModuleManager | undefined;
 let moduleOperations = 0;
-let firstMessageOperations = 0;
-let sessionStarts: Pick<SessionStartCoordinator, 'start' | 'get'> | undefined;
+let consumerControl: ConsumerControl | undefined;
+let consumerExitPreparation: Promise<void> | undefined;
 
-function preparePromptContent(body: Pick<IntentBody<'prompt'>, 'text' | 'attachment' | 'attachments' | 'parts'>, sessionId?: string): PreparedSessionStart {
+function preparePromptContent(body: Pick<IntentBody<'prompt'>, 'text' | 'attachment' | 'attachments' | 'parts'>, sessionId: string): {
+  text: string; attachments?: Parameters<ServerEngine['prompt']>[3];
+} {
   if (!body.attachment && !body.attachments && !body.parts) return { text: body.text };
   const parts: MessagePart[] = body.parts ?? [
     ...(body.attachments ?? (body.attachment ? [body.attachment] : [])).map(attachment => ({ type: 'file' as const, attachment })),
     ...(body.text ? [{ type: 'text' as const, text: `\n${body.text}` }] : []),
   ];
-  const files: string[] = [];
-  const attachments: NonNullable<PreparedSessionStart['attachments']> = [];
+  const attachments: NonNullable<Parameters<ServerEngine['prompt']>[3]> = [];
   const resolved = parts.map(part => {
     if (part.type === 'text') return part;
-    const file = sessionId ? associateUpload(part.attachment.url, sessionId) : verifyUpload(resolveStoredAttachment(part.attachment));
-    files.push(file.url);
+    const file = associateUpload(part.attachment.url, sessionId);
     attachments.push({ type: 'file', path: file.path, displayName: file.name });
     return { type: 'file' as const, attachment: file };
   });
-  return { text: partsPrompt(resolved), attachments,
-    ...(sessionId ? {} : { associate: (plannedId: string) => { for (const url of files) associateUpload(url, plannedId); } }) };
-}
-
-export function createSessionStarts(runtime: Pick<Engine, 'startSession'>, userRoot: string): SessionStartCoordinator {
-  return new SessionStartCoordinator({ userRoot, engine: runtime, prepare: body => preparePromptContent(body) });
+  return { text: partsPrompt(resolved), attachments };
 }
 
 async function moduleIntent<K extends ModuleIntentName>(name: K, body: IntentBody<K>): Promise<IntentResult<K>> {
@@ -117,13 +112,13 @@ async function moduleIntent<K extends ModuleIntentName>(name: K, body: IntentBod
 }
 
 // No SDK construction, preferences, listeners, or production dependency override.
-export function setTestDependencies(deps: { engine: ServerEngine; push: ServerPush; modules?: ModuleIntentHandlers;
-  starts?: Pick<SessionStartCoordinator, 'start' | 'get'> }): void {
+export function setTestDependencies(deps: { engine: ServerEngine; push: ServerPush; modules?: ModuleIntentHandlers; consumer?: ConsumerControl }): void {
   if (process.env.COCKPIT_NO_BOOT !== '1') throw new Error('test dependencies require COCKPIT_NO_BOOT=1');
   engine = deps.engine;
   push = deps.push;
   moduleHandlers = deps.modules;
-  sessionStarts = deps.starts;
+  consumerControl = deps.consumer;
+  consumerExitPreparation = undefined;
 }
 
 // --- SSE fan-out -----------------------------------------------------------
@@ -218,10 +213,11 @@ export function sessionBusy(s: SessionMeta): boolean {
 }
 
 async function busyCount(): Promise<number> {
-  return await engine.busyCount() + moduleOperations + firstMessageOperations;
+  return await engine.busyCount() + moduleOperations;
 }
 
 let gracefulExitTimer: ReturnType<typeof setTimeout> | null = null;
+let nativeExitAttempt: Promise<void> | undefined;
 
 let checkingExit: Promise<void> | undefined;
 let exitDirty = false;
@@ -237,7 +233,7 @@ export function maybeGracefulExit(): void {
 }
 
 async function checkGracefulExit(): Promise<void> {
-  if (restarting) return;
+  if (restarting || nativeExitAttempt) return;
   if (!restartPending) {
     if (gracefulExitTimer) clearTimeout(gracefulExitTimer);
     gracefulExitTimer = null;
@@ -256,12 +252,17 @@ async function checkGracefulExit(): Promise<void> {
   // Brief delay so the turn's final SSE frames flush to connected clients first.
   gracefulExitTimer = setTimeout(() => {
     gracefulExitTimer = null;
-    void (async () => {
+    nativeExitAttempt = (async () => {
       if (!restartPending || await busyCount() > 0) {
         maybeGracefulExit();
         return;
       }
       if (!restartPending) return;
+      if (consumerControl) {
+        consumerExitPreparation ??= consumerControl.prepareExit();
+        await consumerExitPreparation;
+        if (!restartPending || restarting || await busyCount() > 0) return;
+      }
       restarting = true;
       await drainForRestart(engine, pendingNotifications);
       for (const client of clients) client.raw.destroy();
@@ -272,15 +273,24 @@ async function checkGracefulExit(): Promise<void> {
       restarting = false;
       restartPending = false;
       app.log.error({ err: error }, 'graceful restart failed; service was not force-killed');
-    });
+    }).finally(() => { nativeExitAttempt = undefined; });
   }, 500);
 }
 
 async function exitAfterRuntimeFailure(runtime: Engine, error: Error): Promise<void> {
-  restarting = true;
   restartPending = false;
   if (gracefulExitTimer) clearTimeout(gracefulExitTimer);
   gracefulExitTimer = null;
+  if (consumerControl) {
+    try {
+      consumerExitPreparation ??= consumerControl.prepareExit();
+      await consumerExitPreparation;
+    } catch (cleanup) {
+      app.log.error({ err: cleanup }, 'native runtime failed; module shutdown is unconfirmed, keeping the management API available');
+      return;
+    }
+  }
+  restarting = true;
   app.log.fatal({ err: error }, 'Copilot runtime died; exiting for supervisor recovery without replaying requests');
   try {
     await drainForRestart(runtime, pendingNotifications);
@@ -509,7 +519,9 @@ app.get('/uploads/:name', async (req, reply) => {
 app.get('/admin/lifecycle', async (_request, reply) => {
   reply.header('Cache-Control', 'no-store');
   const busy = await busyCount();
-  return { restartPending, busy, reason: busy > 0 ? 'native-busy' : null };
+  const consumer = await consumerControl?.status();
+  return { restartPending: restartPending || Boolean(consumer?.available && consumer.activeOperationId), busy,
+    reason: busy > 0 ? 'native-busy' : null, ...(consumer ? { consumer } : {}) };
 });
 
 app.get('/status', async () => {
@@ -521,14 +533,35 @@ app.get('/status', async () => {
   }));
   const running = metas.filter((s) => s.status === 'running').length;
   const busy = await busyCount();
-  return { running, busy, restartPending, sessions };
+  const consumer = await consumerControl?.status();
+  return { running, busy, restartPending: restartPending || Boolean(consumer?.available && consumer.activeOperationId), sessions,
+    ...(consumer ? { consumer } : {}) };
 });
 
 // Graceful restart control. POST {pending:true} (default) arms the flag; if nothing
 // is busy it restarts immediately, otherwise it restarts when the last turn ends AND
 // no session is awaiting a user choice. POST {pending:false} disarms. Ops-only
 // (loopback + nginx auth), not a typed intent.
-app.post('/admin/restart', async (req) => {
+app.post('/admin/restart', async (req, reply) => {
+  if (consumerControl) {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    if ('pending' in body && body.pending === false) {
+      const current = await consumerControl.status();
+      if (restartPending || consumerExitPreparation || (current.available && current.activeOperationId)) {
+        return reply.code(409).send({ error: 'Consumer module drain cannot be cancelled or undone; inspect the original launcher operation' });
+      }
+      return { restartPending: false, authority: 'consumer', operation: null };
+    }
+    if (Object.keys(body).some(key => !['pending', 'operationId'].includes(key))
+      || ('pending' in body && body.pending !== true)) {
+      return reply.code(400).send({ error: 'Consumer restart accepts only pending:true and a stable operationId' });
+    }
+    const parsed = Intents['system/consumer/restart'].body.safeParse({
+      operationId: 'operationId' in body ? body.operationId : undefined, confirm: true,
+    });
+    if (!parsed.success) return reply.code(400).send({ error: 'Consumer restart requires a stable operationId; use system/consumer/restart with confirm:true' });
+    return { authority: 'consumer', operation: await consumerControl.restart(parsed.data.operationId) };
+  }
   const pending = (req.body as { pending?: boolean } | null)?.pending ?? true;
   restartPending = pending;
   const n = await busyCount();
@@ -576,6 +609,12 @@ type IntentHandlers = {
 };
 
 const handlers: IntentHandlers = {
+  'system/consumer/status': async b => consumerControl ? consumerControl.status(b.operationId)
+    : { available: false as const, reason: 'This runtime is not managed by a consumer launcher; existing source/private-CD authority is unchanged' },
+  'system/consumer/restart': async b => {
+    if (!consumerControl) throw Object.assign(new Error('Consumer launcher is not configured for this runtime'), { statusCode: 503 });
+    return { operation: await consumerControl.restart(b.operationId) };
+  },
   'modules/updates/check': b => moduleIntent('modules/updates/check', b),
   'modules/updates/status': b => moduleIntent('modules/updates/status', b),
   'modules/updates/get': b => moduleIntent('modules/updates/get', b),
@@ -596,17 +635,6 @@ const handlers: IntentHandlers = {
   'modules/wechat/unbind/get': b => moduleIntent('modules/wechat/unbind/get', b),
   'runtime/snapshot': async () => notificationSnapshot(await engine.snapshot()),
   'session/new': async (b) => ({ sessionId: await engine.newSession(b.cwd, b.modules) }),
-  'session/start': async b => {
-    if (!sessionStarts) throw Object.assign(new Error('First-message session creation is not configured'), { statusCode: 503 });
-    if (restarting) throw Object.assign(new Error('Cockpit is draining for restart'), { statusCode: 503 });
-    firstMessageOperations++;
-    try { return { operation: await sessionStarts.start(b) }; }
-    finally { firstMessageOperations--; maybeGracefulExit(); }
-  },
-  'session/start/get': b => {
-    if (!sessionStarts) throw Object.assign(new Error('First-message session creation is not configured'), { statusCode: 503 });
-    return { operation: sessionStarts.get(b.operationId) };
-  },
   'session/modules/get': async b => ({ modules: await engine.sessionModules(b.sessionId) }),
   'session/modules/apply': async b => ({ modules: await engine.applySessionModules(b.sessionId, b.selections, b.operationId) }),
   'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
@@ -643,13 +671,12 @@ const handlers: IntentHandlers = {
     await engine.setMode(b.sessionId, b.mode);
     return { ok: true };
   },
-  'session/delete/preview': async b => ({ plan: await engine.deletionPlan(b.sessionId) }),
   'session/delete': async (b) => {
-    await engine.deleteSession(b.sessionId, b.confirm, b.unbind);
+    await engine.deleteSession(b.sessionId, b.confirm);
     return { ok: true };
   },
   'session/purge': async (b) => {
-    await engine.deleteSession(b.sessionId, b.confirm, b.unbind);
+    await engine.deleteSession(b.sessionId, b.confirm);
     return { ok: true };
   },
   'session/unload': async (b) => {
@@ -813,7 +840,6 @@ app.post('/intent/*', async (req, reply) => {
       error: e instanceof Error ? e.message : String(e),
       ...(e && typeof e === 'object' && 'code' in e && typeof e.code === 'string' ? { code: e.code } : {}),
       ...(e && typeof e === 'object' && 'sessionId' in e && typeof e.sessionId === 'string' ? { sessionId: e.sessionId } : {}),
-      ...(e instanceof SessionStartFailure ? { operation: e.operation } : {}),
     };
   } finally {
     reply.raw.removeListener('close', cancel);
@@ -828,6 +854,16 @@ async function main(runtime: Engine, notifications: PushManager): Promise<void> 
   app.log.info(`engine up (login=${await runtime.login()}, push=${notifications.publicKey ? 'on' : 'off'})`);
   await registerStaticWeb();
   await app.listen({ host: HOST, port: PORT });
+  if (consumerControl) {
+    await consumerControl.connect(() => {
+      consumerExitPreparation = undefined;
+      restartPending = true;
+      maybeGracefulExit();
+    });
+    const stop = () => { restartPending = true; maybeGracefulExit(); };
+    process.on('SIGTERM', stop);
+    process.on('SIGINT', stop);
+  }
 }
 
 // Serve the built SPA (apps/web/dist) from this process when SERVE_WEB is on, so a
@@ -865,6 +901,8 @@ export async function registerStaticWeb(): Promise<void> {
 // Engine (which reads the real ~/.copilot prefs) or binding the port. Production
 // (`tsx src/index.ts`) runs with the env unset, so it boots normally.
 function boot(): void {
+  consumerControl = createConsumerControl();
+  if (consumerControl && (!process.send || !process.connected)) throw new Error('Consumer startup requires its owned launcher IPC channel');
   const native = new OfficialRuntime();
   const rawSources: unknown = process.env.COCKPIT_MODULE_SOURCES ? JSON.parse(process.env.COCKPIT_MODULE_SOURCES) : {};
   if (!rawSources || typeof rawSources !== 'object' || Array.isArray(rawSources)
@@ -878,7 +916,6 @@ function boot(): void {
   moduleHandlers = createModuleIntents(modules);
   registerModuleProxy(app, () => modules.taskGateway());
   const runtime = engineInstance = new Engine({ runtime: native, modules });
-  sessionStarts = createSessionStarts(runtime, modules.catalog.userRoot);
   runtime.log = (msg, data) => app.log.warn(data ?? {}, msg);
   const notifications = new PushManager({
     log: ({ status, at, error }) => {
