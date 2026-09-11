@@ -58,7 +58,7 @@ export function GlobalNavigation() {
         ]} onClose={() => setOpen(false)} />
       )}
       {versionsOpen && <Suspense fallback={null}>
-        <SystemVersions status={versionStatus} error={versions.error} loading={versions.pending}
+        <SystemVersions status={versionStatus} error={versions.connected ? versions.error : 'Cockpit 连接未就绪，运行版本未知'} loading={versions.pending}
           onRefresh={() => { void versions.refresh(); }} onClose={() => setVersionsOpen(false)} />
       </Suspense>}
       {notificationsOpen && (
