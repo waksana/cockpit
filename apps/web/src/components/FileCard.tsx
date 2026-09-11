@@ -62,10 +62,10 @@ export const ManagedFileMention = memo(function ManagedFileMention({ url, name, 
   </span>;
 });
 
-export function PreviewImage({ src, name }: { src: string; name: string }) {
+export function PreviewImage({ src, name, title }: { src: string; name: string; title?: string }) {
   const [state, setState] = useState<'loading' | 'ready' | 'failed'>('loading');
   return <span className="chat-preview-image-shell" data-state={state}>
-    {state !== 'failed' && <img className="chat-preview-image" src={src} alt={name} loading="lazy" decoding="async"
+    {state !== 'failed' && <img src={src} alt={name} title={title} className="chat-preview-image" loading="lazy" decoding="async"
       onLoad={() => setState('ready')} onError={() => setState('failed')} />}
     {state !== 'ready' && <span className="chat-preview-state" role={state === 'failed' ? 'status' : undefined}>
       {state === 'failed' ? '图片无法预览，请查看或下载原文件' : '加载图片…'}
@@ -101,7 +101,9 @@ export function ChatFileCard({ file, sessionId, preview = true, pending = false,
       </span>}
     </span>}
     <span className="chat-file-info">
-      <span className="chat-file-name" title={file.name}>{file.name}</span>
+      {!problem && href
+        ? <a className="chat-file-name" title={file.name} href={fileDownloadUrl(file.url)} download={file.name}>{file.name}</a>
+        : <span className="chat-file-name" title={file.name}>{file.name}</span>}
       <span className="chat-file-description" title={description} role={problem ? 'alert' : undefined}>{description}</span>
       <span className="chat-file-actions">
         {detail && <a href={detail} target="_blank" rel="noopener noreferrer" aria-label={`查看文件详情：${file.name}（新页面）`}>查看详情 ↗</a>}

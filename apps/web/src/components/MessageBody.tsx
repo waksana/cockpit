@@ -24,7 +24,7 @@ const MarkdownLink: Components['a'] = ({ node, href, children, ...props }) => {
   return <a {...props} href={url ? fileDownloadUrl(url) : href} target="_blank" rel="noopener noreferrer">{children}</a>
 }
 
-const MarkdownImage: Components['img'] = ({ node, src, alt }) => {
+const MarkdownImage: Components['img'] = ({ node, src, alt, title }) => {
   const sessionId = useContext(MessageSession)
   const url = managedUploadPath(src)
   if (url) {
@@ -34,7 +34,7 @@ const MarkdownImage: Components['img'] = ({ node, src, alt }) => {
   }
   if (typeof src === 'string' && isMessageImageSrcAllowed(src)) {
     return <a className="chat-inline-image" href={src} target="_blank" rel="noopener noreferrer" aria-label={`查看图片：${alt || '原图'}（新页面）`}>
-      <PreviewImage key={src} src={src} name={alt ?? ''} />
+      <PreviewImage key={src} src={src} name={alt ?? ''} title={title} />
       <span className="chat-inline-image-caption" title={alt}>{alt || '查看原图'} ↗</span>
     </a>
   }
