@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, readdir, realpath, rm, stat } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -11,6 +11,36 @@ test('the committed runtime closure includes bundled skills instead of relying o
   const config = JSON.parse(await readFile(join(repository, 'service-delivery.json'), 'utf8'));
   assert.ok(config.build.artifactPaths.includes('skills'), 'Root bundled skills must be packaged');
   assert.ok(config.build.artifactPaths.includes('packages/core/src'), 'Packaged core must resolve its own skill directory');
+});
+
+test('archive guard accepts complete fixtures and rejects omitted skills or broken references', {
+  skip: Boolean(process.env.COCKPIT_RELEASE_ARCHIVE),
+}, async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cockpit-skill-fixture-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const source = join(root, 'source'), archive = join(root, 'runtime.tar.gz');
+  await mkdir(join(source, 'skills/self-context-reset'), { recursive: true });
+  await mkdir(join(source, 'packages/core/src'), { recursive: true });
+  await writeFile(join(source, 'packages/core/src/paths.ts'),
+    await readFile(join(repository, 'packages/core/src/paths.ts')));
+  await writeFile(join(source, 'skills/self-context-reset/SKILL.md'),
+    await readFile(join(repository, 'skills/self-context-reset/SKILL.md')));
+  await writeFile(join(source, 'delivery-manifest.json'), JSON.stringify({
+    files: { 'skills/self-context-reset/SKILL.md': { sha256: 'a'.repeat(64) } },
+  }));
+  const check = () => {
+    execFileSync('tar', ['-czf', archive, '-C', source, '.']);
+    const { NODE_TEST_CONTEXT: _testContext, ...environment } = process.env;
+    return () => execFileSync(process.execPath, ['--test', fileURLToPath(import.meta.url)], {
+      env: { ...environment, COCKPIT_RELEASE_ARCHIVE: archive }, stdio: 'pipe',
+    });
+  };
+  assert.doesNotThrow(check());
+  await writeFile(join(source, 'skills/self-context-reset/SKILL.md'),
+    '---\nname: self-context-reset\n---\n[Required procedure](references/missing.md)\n');
+  assert.throws(check());
+  await rm(join(source, 'skills/self-context-reset/SKILL.md'));
+  assert.throws(check());
 });
 
 test('actual release archive resolves bundled skills and readable local references inside its package', {
