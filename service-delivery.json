@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "projectId": "cockpit",
+  "targetRef": "refs/heads/main",
+  "validation": [
+    ["pnpm", "--filter", "@cockpit/web", "lint"],
+    ["pnpm", "test"]
+  ],
+  "build": {
+    "argv": ["pnpm", "build"],
+    "artifactPaths": [
+      "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "node_modules",
+      "apps/server/package.json", "apps/server/src", "apps/server/node_modules",
+      "apps/mcp/package.json", "apps/mcp/dist", "apps/mcp/node_modules",
+      "apps/web/dist", "packages/core/package.json", "packages/core/src", "packages/core/node_modules",
+      "packages/protocol/package.json", "packages/protocol/src", "packages/protocol/node_modules"
+    ]
+  },
+  "delivery": {
+    "adapter": "github-actions-v1",
+    "environment": "production",
+    "busyPolicy": "wait-no-force",
+    "healthPath": "/health",
+    "versionPath": "/version"
+  }
+}

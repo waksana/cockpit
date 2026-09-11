@@ -155,7 +155,7 @@ test('standalone reasoning survives a turn boundary and cannot absorb the next a
   const events = [reasoning, end, native('assistant.message', { messageId: 'next', content: 'new turn' })];
   const { state, client } = fold(events);
   assert.deepEqual([...client.values()], state.messages);
-  assert.equal(state.messages[0]?.id, 'stream-standalone');
+  assert.equal(state.messages[0]?.id, `stream-${end.id}`);
   assert.equal(state.messages[0]?.thought, 'no answer needed');
   assert.equal(state.messages[1]?.id, 'next');
   assert.equal(state.messages[1]?.thought, undefined);

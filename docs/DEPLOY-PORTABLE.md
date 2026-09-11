@@ -4,6 +4,10 @@ Cockpit runs Copilot on an always-online server. Its web app and MCP are clients
 of the same backend API. Installing Cockpit does **not** install a commander,
 Butler, flows, executable gates, fleet hooks, or governance schedules.
 
+For the explicitly connected private GitHub Actions route, see
+[immutable delivery](DELIVERY.md) and [development](DEVELOPMENT.md).
+The source installation below remains valid but is not immutable runtime identity.
+
 ## Prerequisites
 
 - Node.js 24 LTS is recommended, plus pnpm and Git.

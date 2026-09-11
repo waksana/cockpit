@@ -1410,7 +1410,12 @@ test('missing, malformed, and mismatched upload sidecars fail serving and attach
 
 test('health/status and restart use only injected state and retain every busy safeguard', async () => {
   const health = await app.inject({ method: 'GET', url: '/health' });
-  assert.deepEqual(health.json(), { ok: true, login: 'test-only' });
+  assert.equal(health.json().ok, true);
+  assert.equal(health.json().login, 'test-only');
+  assert.match(health.json().instanceId, /^[a-f0-9-]{36}$/);
+  assert.equal(health.headers['cache-control'], 'no-store');
+  assert.equal((await app.inject({ method: 'GET', url: '/version' })).statusCode, 503,
+    'Source mode must not invent immutable runtime provenance');
   for (const state of [
     { status: 'running' }, { status: 'idle', activeSubagents: 1 },
     { status: 'idle', activeMcpOperations: 1 }, { status: 'idle', compacting: true },

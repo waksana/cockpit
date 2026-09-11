@@ -1,0 +1,12 @@
+{
+  "module": "service-delivery-toolkit",
+  "commit": "528f94b517fff5486945b62be65f7c786c956942",
+  "method": "git archive",
+  "paths": [
+    "bin",
+    "lib",
+    "schemas",
+    "package.json",
+    "package-lock.json"
+  ]
+}

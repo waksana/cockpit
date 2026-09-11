@@ -1,0 +1,28 @@
+{
+  "name": "service-delivery-toolkit",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Git service development contracts and authenticated GitHub Actions delivery",
+  "files": [
+    "bin/",
+    "lib/",
+    "schemas/",
+    "skills/",
+    "docs/",
+    "examples/",
+    "test/",
+    "service-delivery.json"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "check": "node bin/service-delivery.mjs check --repo . --sha HEAD --config service-delivery.json",
+    "install:skill": "node bin/install-skill.mjs"
+  },
+  "dependencies": {
+    "ajv": "8.17.1"
+  }
+}

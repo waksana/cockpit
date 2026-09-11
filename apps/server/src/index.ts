@@ -30,6 +30,7 @@ import { saveUploadStream, associateUpload, listUploads, uploadDetails, resolveU
 import { isIntentName, registerCapabilities } from './capabilities.ts';
 import { drainForRestart } from './shutdown.ts';
 import { registerChatStream } from './chat-stream.ts';
+import { deliveryIdentity } from './delivery-identity.ts';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.COCKPIT_PORT ?? 8771);
@@ -379,7 +380,15 @@ app.addHook('onRequest', async (req, reply) => {
 
 registerChatStream(app, () => (query, signal) => engine.chat(query, signal));
 
-app.get('/health', async () => ({ ok: true, login: await engine.login() }));
+app.get('/health', async (_req, reply) => {
+  reply.header('Cache-Control', 'no-store');
+  return { ok: true, login: await engine.login(), instanceId: deliveryIdentity.instanceId };
+});
+app.get('/version', async (_req, reply) => {
+  reply.header('Cache-Control', 'no-store');
+  if (!deliveryIdentity.sha) return reply.code(503).send({ error: 'Source-mode process has no immutable delivery identity' });
+  return deliveryIdentity;
+});
 
 // File upload: raw binary body (octet-stream) + ?name=&mime= query. Saved to the
 // fixed upload folder (survives session deletion). Returns metadata for the client
@@ -752,6 +761,12 @@ export async function registerStaticWeb(): Promise<void> {
   if (!existsSync(WEB_DIR)) {
     app.log.warn(`COCKPIT_SERVE_WEB set but web dir not found: ${WEB_DIR} (run \`pnpm --filter @cockpit/web build\`)`);
     return;
+  }
+  if (process.env.COCKPIT_ASSET_DIR) {
+    await app.register(fastifyStatic, {
+      root: [join(WEB_DIR, 'assets'), process.env.COCKPIT_ASSET_DIR],
+      prefix: '/assets/', decorateReply: false,
+    });
   }
   await app.register(fastifyStatic, { root: WEB_DIR, index: ['index.html'] });
   app.setNotFoundHandler((req, reply) => {
