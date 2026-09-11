@@ -78,6 +78,12 @@ test('Chat dark theme targets the mounted chat, not an impossible nested chat', 
   assert.doesNotMatch(css, /\.chat \.chat \{/);
 });
 
+test('the transcript does not make long decisions compete with its scroll-content intrinsic height', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.chat-transcript \{[^}]*flex: 1 1 0;[^}]*min-height: min\(6rem, 20%\)/);
+  assert.match(css, /\.chat-ask \{[^}]*flex: 0 1 auto;/);
+});
+
 test('a choice-only request keeps the draft editable but does not offer a freeform send', t => {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });

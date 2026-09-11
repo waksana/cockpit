@@ -133,6 +133,11 @@ Composer paste/drop 和 draft owner、单一 threadScroll、近顶预取、历�
 完整消息替换、流式增量、所有原生操作回调与错误前置条件。
 未改变 `ConnectedThread` 的请求映射、原生 store/window/fold、服务器或 MCP。
 
+另补查待回答、上传失败、错误通知和十二行草稿同时出现的组合态：
+初版在 390px 视口截断输入底部。修正 transcript 的 flex basis，允许决策区在控件叠加时
+收缩并滚动，同时保留最小阅读区；不增加 JS 滚动控制器。该组合态修正后输入完整可见，
+且键盘仍能到达卡片末尾选项。
+
 自动浏览器记录将流式前后、追加前后及 prepend 前后的消息 ID 与屏内 offset 一起保存。
 prepend 容许不超过 1 CSS px 的浏览器 scrollTop 舍入，不把亚像素变化伪称为逐像素恒等。
 检查正文、时间、工具、文件、决策与错误等实际色层叠加后的文本对比度，
