@@ -35,3 +35,12 @@ original exact-SHA request to pretend that SHA deployed.
 Clean only owned, fully integrated and no-longer-in-flight branches/worktrees
 and fixture resources. Never clear native sessions, queues, uploads or another
 owner's work as cleanup.
+
+## Isolated Chat component review
+
+`COCKPIT_CHAT_LAB=1 pnpm --filter @cockpit/web dev --host 127.0.0.1 --port 47831 --strictPort`
+opens the opt-in development-only `/chat-lab.html` entry. It mounts the production
+Chat components with synthetic inputs, same-origin sample media and local
+callbacks, without initializing a native client or creating sessions. Normal
+production builds do not include the entry. See the [component coverage and
+design review](chat-design-review.md) for scenarios, reference sources and limits.

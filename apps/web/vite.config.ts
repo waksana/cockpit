@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
-import { chatLabPlugin } from './chat-lab-plugin'
+import { chatLabPlugin } from './chat-lab-plugin.ts'
 
 export default defineConfig({
   plugins: [

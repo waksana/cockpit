@@ -7,6 +7,8 @@ export const labFiles: UploadedFile[] = [
   { kind: 'file', name: 'interaction-demo.webm', url: '/uploads/lab-video.webm', size: 20480, mime: 'video/webm', path: '/synthetic/interaction-demo.webm', source: 'mcp' },
   { kind: 'file', name: 'component-review-with-a-deliberately-long-name.txt', url: '/uploads/lab-notes.txt', size: 2048, mime: 'text/plain', path: '/synthetic/component-review.txt', source: 'web' },
   { kind: 'image', name: 'missing-preview.png', url: '/uploads/lab-missing.png', size: 35000, mime: 'image/png', path: '/synthetic/missing.png' },
+  { kind: 'image', name: 'slow-preview.svg', url: '/uploads/lab-slow.svg', size: 1360, mime: 'image/svg+xml', path: '/synthetic/slow.svg' },
+  { kind: 'file', name: 'unknown-format.bin', url: '/uploads/lab-unknown.bin', size: 1024, mime: 'application/octet-stream', path: '/synthetic/unknown.bin' },
 ];
 
 function message(id: string, role: ChatMessage['role'], content: string, extra: Partial<ChatMessage> = {}): ChatMessage {
@@ -44,6 +46,10 @@ export const readingMessages: ChatMessage[] = [
 | 工具 | 标题、原生名称、状态 | 展开参数与输出 |
 | 附件 | 名称、格式、体积 | 预览、下载、明确重试 |
 | 输入区 | 当前草稿 | 暂存与发送分开 |
+
+| 组件标识 | 已加载的记录 | 当前状态 | 阅读位置 | 可用操作 | 结果说明 |
+| --- | --- | --- | --- | --- | --- |
+| wide-table | bounded-page | unknown | retained-anchor | explicit-read | 不从空值推断完成 |
 
 ##### 检查清单
 
@@ -133,6 +139,8 @@ export const attachmentMessages: ChatMessage[] = [
 ### 故障与加载状态
 
 ![预览失败](/uploads/lab-missing.png)
+![延迟图片加载](/uploads/lab-slow.svg)
+[未知格式](/uploads/lab-unknown.bin)
 [元数据读取失败](/uploads/lab-error.txt)
 [元数据等待](/uploads/lab-pending.txt)
 
@@ -148,6 +156,7 @@ export const attachmentMessages: ChatMessage[] = [
     { type: 'file', attachment: labFiles[0] },
   ] }),
   message('legacy-file', 'user', '单附件兼容入口。', { attachment: labFiles[2] }),
+  message('invalid-file', 'assistant', '无效地址明确显示，不导致整条消息崩溃。', { attachment: { kind: 'file', name: 'invalid.txt', url: 'invalid-address', mime: 'text/plain' } }),
 ];
 
 export const scenarios = [
@@ -156,6 +165,7 @@ export const scenarios = [
   ['process', '思考 / 工具 / 子代理'],
   ['attachments', '图片 / 视频 / 文件'],
   ['streaming', '流式 / 队列 / 停止'],
+  ['cancelling', '停止请求中'],
   ['ask', '选择 / 自由回答'],
   ['choice-only', '仅选项回答'],
   ['freeform', '自由输入提问'],
@@ -168,6 +178,8 @@ export const scenarios = [
   ['stale', '历史过期 / 显式重读'],
   ['error', '会话错误'],
   ['compacting', '压缩 / 禁用输入'],
+  ['auto-compacting', '回合内自动压缩'],
+  ['unloaded', '未加载 / 保留历史'],
   ['readonly', '现存只读分支'],
 ] as const;
 export type Scenario = typeof scenarios[number][0];
@@ -182,11 +194,12 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   if (scenario === 'all') session.messages = [...readingMessages, ...processMessages, ...attachmentMessages];
   if (scenario === 'process') session.messages = [...processMessages];
   if (scenario === 'attachments') session.messages = [...attachmentMessages];
-  if (scenario === 'streaming') Object.assign(session, {
+  if (scenario === 'streaming' || scenario === 'cancelling') Object.assign(session, {
     status: 'running', nativeProcessing: true, intent: '正在整理组件观察…',
     messages: [...processMessages, message('stream', 'assistant', '## 正在形成答案\n\n先让内容', { thought: '流式思考默认展开；结束后回归折叠。' })],
     queue: [{ id: 'queue-1', text: '然后检查窄屏布局。' }, { id: 'queue-2', text: '保留这条长的排队消息，不要因为主回合打断而把它丢弃。'.repeat(5) }],
   });
+  if (scenario === 'cancelling') session.cancelling = true;
   if (['ask', 'choice-only', 'freeform'].includes(scenario)) session.ask = {
     requestId: 'lab-ask', question: '这次精修先聚焦哪一组组件？所有操作只影响当前隔离场景。',
     allowFreeform: scenario !== 'choice-only',
@@ -205,5 +218,7 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   if (scenario === 'stale') Object.assign(session, { historyStale: true, historyError: '游标已过期，请显式重新同步。' });
   if (scenario === 'error') Object.assign(session, { status: 'error', error: '发送结果尚未确认；请先核对会话，不要直接重发。' });
   if (scenario === 'compacting') session.compacting = true;
+  if (scenario === 'auto-compacting') Object.assign(session, { compacting: true, status: 'running' });
+  if (scenario === 'unloaded') Object.assign(session, { status: 'unloaded', loaded: false });
   return session;
 }

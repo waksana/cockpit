@@ -1,7 +1,7 @@
 import { memo, useCallback, useState } from 'react';
 import type { Attachment, UploadedFile } from '@cockpit/protocol';
 import { attachmentHref } from '../lib/upload';
-import { fileDownloadUrl, filePreview, filesBrowseUrl } from '../lib/managedFile';
+import { fileDownloadUrl, filePreview, filesBrowseUrl, formatFileSize } from '../lib/managedFile';
 import { useKeyedResource } from '../lib/useKeyedResource';
 import { useCockpit } from '../net/store';
 import { Icon } from './Icon';
@@ -40,7 +40,7 @@ export function FileCard({ file, sessionId, onSelect, preview = true, browse = t
     <span className="managed-file-meta">
       <Icon name="file" size={20} />
       <a href={fileDownloadUrl(file.url)} download={file.name}>{file.name}</a>
-      <span>{file.mime ?? '未知格式'}{file.size !== undefined ? ` · ${file.size} B` : ''}</span>
+      <span>{file.mime ?? '未知格式'}{file.size !== undefined ? ` · ${formatFileSize(file.size)}` : ''}</span>
     </span>
     {failed && <span role="status">浏览器无法预览此文件，请下载原文件。</span>}
     <span className="managed-file-actions">
@@ -86,7 +86,7 @@ export function ChatFileCard({ file, sessionId, preview = true, pending = false,
   const detail = href ? filesBrowseUrl(file.url, sessionId) : undefined;
   const description = problem ? `文件信息读取失败：${problem}`
     : pending && !file.mime ? '正在读取文件信息…'
-    : `${file.mime ?? '格式待确认'}${file.size !== undefined ? ` · ${file.size} B` : ''}`;
+    : `${file.mime ?? '格式待确认'}${file.size !== undefined ? ` · ${formatFileSize(file.size)}` : ''}`;
   return <span className="chat-file-card" data-layout={layout} data-file-url={file.url} aria-busy={pending}>
     {layout === 'media' && <span className="chat-file-preview">
       {(kind === 'image' || kind === 'video') && href && detail ? <a href={detail} target="_blank" rel="noopener noreferrer"

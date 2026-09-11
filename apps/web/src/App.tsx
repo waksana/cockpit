@@ -15,7 +15,8 @@ import { Shell, MasterPane, DetailPane } from './components/Shell';
 import { Sidebar } from './components/Sidebar';
 import { ConnectedThread } from './components/ConnectedThread';
 import { NewSessionFab } from './components/NewSessionFab';
-import { Icon, type IconName } from './components/Icon';
+import { Icon } from './components/Icon';
+import { ChatHeader } from './components/ChatHeader';
 import { AnchoredMenu } from './components/AnchoredMenu';
 import { ModeMenu } from './components/ModeMenu';
 import { Dialog, DirectoryModal, type DialogProps } from './components/Dialog';
@@ -28,11 +29,6 @@ import { getNewSessionStart } from './lib/sessionStart';
 const ManageWorkspace = lazy(() => import('./components/ManageWorkspace').then((m) => ({ default: m.ManageWorkspace })));
 const DirPicker = lazy(() => import('./components/DirPicker').then((m) => ({ default: m.DirPicker })));
 const Files = lazy(() => import('./pages/Files').then((m) => ({ default: m.Files })));
-
-const MODE_LABELS: Record<string, string> = { interactive: '交互', plan: '计划', autopilot: '自动' };
-const MODE_ICONS: Record<string, IconName> = {
-  interactive: 'mode_interactive', plan: 'mode_plan', autopilot: 'mode_autopilot',
-};
 
 const PHONE_QUERY = '(max-width: 599px)';
 const phoneSnapshot = () => typeof window.matchMedia === 'function' && window.matchMedia(PHONE_QUERY).matches;
@@ -188,31 +184,10 @@ function Workspace() {
     : '';
 
   const detailHeader = active ? (
-    <header className="chat-topbar">
-      <button className="chat-back btn-icon rp lg:hidden" type="button" aria-label="返回" onClick={() => up()}>
-        <Icon name="back" size={24} />
-      </button>
-      <button type="button" className="chat-topbar-content" aria-label="查看会话信息" onClick={() => openDetails(active.sessionId)}>
-        <span className="chat-topbar-title">{active.title}</span>
-        {modelLabel && <span className="chat-topbar-subtitle"><span className="chat-topbar-model">{modelLabel}</span></span>}
-      </button>
-      <button
-        ref={modeChipRef}
-        className="chat-topbar-mode btn-icon rp" type="button"
-        aria-label={`模式：${active.currentMode ? MODE_LABELS[active.currentMode] : '未加载或未知'}，点击切换`}
-        data-mode={active.currentMode ?? 'unknown'}
-        onClick={() => setModeMenuOpen((v) => !v)}
-      >
-        <Icon name={active.currentMode ? MODE_ICONS[active.currentMode] : 'more'} size={24} />
-      </button>
-      <button
-        ref={kebabRef}
-        className="chat-topbar-more btn-icon rp" type="button" aria-label="更多操作"
-        onClick={() => setDetailMenuOpen(true)}
-      >
-        <Icon name="more" size={24} />
-      </button>
-    </header>
+    <ChatHeader title={active.title} modelLabel={modelLabel} mode={active.currentMode}
+      modeRef={modeChipRef} moreRef={kebabRef} modeOpen={modeMenuOpen} moreOpen={detailMenuOpen}
+      onBack={() => up()} onInfo={() => openDetails(active.sessionId)}
+      onMode={() => setModeMenuOpen(v => !v)} onMore={() => setDetailMenuOpen(true)} />
   ) : undefined;
 
   return (

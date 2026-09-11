@@ -4,6 +4,10 @@ import { BrowserRouter } from 'react-router-dom';
 import type { Attachment, ChatMessage, UploadedFile } from '@cockpit/protocol';
 import { Thread } from '../components/Thread';
 import { FileCard } from '../components/FileCard';
+import { ChatHeader } from '../components/ChatHeader';
+import { ModeMenu } from '../components/ModeMenu';
+import { AnchoredMenu } from '../components/AnchoredMenu';
+import { sessionActionItems } from '../lib/sessionActions';
 import { UxErrorNotifications } from '../components/UxErrorNotifications';
 import { getSessionDraft } from '../lib/attachmentSend';
 import { useCockpit } from '../net/store';
@@ -12,7 +16,24 @@ import '../styles/index.scss';
 import '../components/UxErrorNotifications.scss';
 import './chat-lab.scss';
 
-if (!import.meta.env.DEV) throw new Error('The chat lab is a development-only entry.');
+if (!import.meta.env.DEV || import.meta.env.COCKPIT_CHAT_LAB !== true) {
+  throw new Error('Start the isolated chat lab with COCKPIT_CHAT_LAB=1.');
+}
+
+class FixtureSpeechRecognition {
+  onresult?: (event: { resultIndex: number; results: { isFinal: boolean; 0: { transcript: string } }[] }) => void;
+  onerror?: (event: { error: string }) => void;
+  onend?: () => void;
+  start() {
+    fixtureSpeech = {
+      transcribe: () => this.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: '合成语音转写，不采集麦克风。' } }] }),
+      fail: () => this.onerror?.({ error: 'Synthetic speech failure; no microphone used.' }),
+    };
+  }
+  stop() { fixtureSpeech = null; this.onend?.(); }
+}
+let fixtureSpeech: { transcribe: () => void; fail: () => void } | null = null;
+Object.defineProperty(window, 'SpeechRecognition', { configurable: true, value: FixtureSpeechRecognition });
 
 // No App/ConnectedThread/init: these are synthetic component inputs, never
 // registered sessions or a substitute native store. Unhandled HTTP is rejected
@@ -33,7 +54,7 @@ useCockpit.setState({
   },
 });
 
-function Lab() {
+export function Lab() {
   const query = new URLSearchParams(location.search);
   const initial = scenarios.find(([id]) => id === query.get('scene'))?.[0] ?? 'all';
   const [scenario, setScenario] = useState<Scenario>(initial);
@@ -45,6 +66,10 @@ function Lab() {
   const generation = useRef(0);
   const counter = useRef(0);
   const historyBusy = useRef(false);
+  const modeRef = useRef<HTMLButtonElement | null>(null);
+  const moreRef = useRef<HTMLButtonElement | null>(null);
+  const [modeOpen, setModeOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const draft = getSessionDraft(session.sessionId);
   const detail = labFiles.find(file => file.url === query.get('url'));
 
@@ -54,6 +79,8 @@ function Lab() {
     generation.current++;
     pending.current.splice(0).forEach(resolve => resolve());
     historyBusy.current = false;
+    setModeOpen(false);
+    setMoreOpen(false);
     setScenario(value);
     setSession(fixtureSession(value));
     history.replaceState(null, '', `/chat-lab.html?scene=${value}`);
@@ -90,7 +117,7 @@ function Lab() {
       setReceipt('一次有界合成历史插入；未读取真实历史。');
       historyBusy.current = false;
     }, 900);
-  }, []);
+  }, [setSession, setReceipt]);
   const upload = async (file: File): Promise<UploadedFile> => {
     const owner = generation.current;
     await new Promise<void>(resolve => { if (hold) pending.current.push(resolve); else window.setTimeout(resolve, 900); });
@@ -129,9 +156,16 @@ function Lab() {
       <button onClick={() => setSession(value => ({ ...value, status: 'idle', compacting: false, intent: null }))}>结束回合</button>
       <button onClick={loadMore}>插入历史 / 完成加载</button>
       <button onClick={() => choose(scenario)}>重置场景</button>
+      <button onClick={() => fixtureSpeech?.transcribe()}>模拟转写</button>
+      <button onClick={() => fixtureSpeech?.fail()}>语音错误</button>
     </header>
     <output className="lab-receipt" aria-live="polite">{receipt}</output>
     <div className="lab-stage">
+      <ChatHeader title={`${session.title} · 长标题与会话入口边界`} modelLabel="Synthetic model · no native connection" mode={session.currentMode}
+        modeRef={modeRef} moreRef={moreRef} modeOpen={modeOpen} moreOpen={moreOpen}
+        onBack={() => setReceipt('返回入口回调（导航不在此场景内执行）。')}
+        onInfo={() => setReceipt('会话信息入口回调（会话管理面板不在本次精修范围）。')}
+        onMode={() => setModeOpen(value => !value)} onMore={() => setMoreOpen(true)} />
       <Thread key={scenario} session={session} uploadFile={upload} readOnly={scenario === 'readonly'}
         onLoadMore={loadMore}
         onRetryHistory={() => {
@@ -154,6 +188,15 @@ function Lab() {
           return { ok: true, interrupted: true };
         }}
       />
+      {modeOpen && <ModeMenu triggerRef={modeRef} current={session.currentMode ?? null} running={session.status === 'running'}
+        onClose={() => setModeOpen(false)} onPick={mode => { setReceipt(`模式回调：${mode}`); setSession(value => ({ ...value, currentMode: mode })); }} />}
+      {moreOpen && <AnchoredMenu triggerRef={moreRef} label={session.title} onClose={() => setMoreOpen(false)}
+        items={sessionActionItems(session, true, {
+          openPanel: (_id, panel) => setReceipt(`面板入口：${panel ?? 'info'}（管理面板不在本次精修范围）。`),
+          fork: () => setReceipt('分叉入口回调；没有创建会话。'),
+          pin: () => setReceipt('置顶入口回调；没有修改产品数据。'),
+          delete: () => setReceipt('删除入口回调；没有调用原生删除。'),
+        })} />}
     </div>
     <UxErrorNotifications />
   </div>;

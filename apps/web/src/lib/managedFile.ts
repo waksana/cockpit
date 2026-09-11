@@ -4,6 +4,13 @@ import { attachmentHref } from './upload';
 const IMAGE_MIMES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'image/bmp', 'image/svg+xml', 'image/x-icon', 'image/vnd.microsoft.icon']);
 const VIDEO_MIMES = new Set(['video/mp4', 'video/webm', 'video/ogg', 'video/quicktime']);
 
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const unit = bytes < 1024 * 1024 ? 'KiB' : 'MiB';
+  const size = bytes / (unit === 'KiB' ? 1024 : 1024 * 1024);
+  return `${Number(size.toFixed(size < 10 ? 1 : 0))} ${unit}`;
+}
+
 export function filePreview(file: Pick<Attachment, 'mime'>): 'image' | 'video' | undefined {
   const mime = file.mime?.split(';', 1)[0].trim().toLowerCase();
   return mime && IMAGE_MIMES.has(mime) ? 'image' : mime && VIDEO_MIMES.has(mime) ? 'video' : undefined;

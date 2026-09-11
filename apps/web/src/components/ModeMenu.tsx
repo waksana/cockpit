@@ -3,9 +3,10 @@
 // Domain UI (tweb has no mode concept), built in the same visual language as the
 // other menus: pinned to the trigger's live rect, dismiss on outside-click/Esc.
 
-import { useLayoutEffect, useState, type RefObject } from 'react';
+import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { Icon, type IconName } from './Icon';
 import { useMenuDismiss } from '../lib/useMenuDismiss';
+import { menuFocusTarget } from '../lib/menuFocus';
 
 export type SessionMode = 'interactive' | 'plan' | 'autopilot';
 
@@ -25,24 +26,48 @@ export function ModeMenu({ triggerRef, current, running, onPick, onClose }: {
   // Pin the popover's right edge to the trigger (grows leftward — can't spill off
   // the right edge), just below it. Live rect read so it's always correctly placed.
   const [style, setStyle] = useState<{ right: number; top: number } | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const focused = useRef(false);
   useLayoutEffect(() => {
     const t = triggerRef.current;
     if (!t) return;
     const r = t.getBoundingClientRect();
     setStyle({ right: Math.max(8, window.innerWidth - r.right), top: r.bottom + 4 });
   }, [triggerRef]);
+  const visible = style !== null;
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!visible || !menu || focused.current) return;
+    const selected = menu.querySelector<HTMLButtonElement>('[aria-checked="true"]');
+    const buttons = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'));
+    menuFocusTarget(false, null, selected ? [selected] : buttons)?.focus();
+    focused.current = true;
+  }, [visible]);
 
-  useMenuDismiss(onClose);
+  const close = () => { onClose(); triggerRef.current?.focus(); };
+  useMenuDismiss(close);
 
   return (
     <div
+      ref={menuRef}
       className="btn-menu mode-menu active"
       role="menu"
+      aria-label="交互模式"
+      aria-orientation="horizontal"
       style={{
         right: style?.right ?? 8, top: style?.top ?? 0,
         visibility: style ? 'visible' : 'hidden',
       }}
       onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={event => {
+        if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'));
+        const index = buttons.findIndex(button => button === document.activeElement);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+          : (index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + buttons.length) % buttons.length;
+        buttons[next]?.focus();
+      }}
     >
       {running && <div className="mode-menu-note">切换将在下一轮生效</div>}
       <div className="mode-menu-row">
@@ -57,7 +82,7 @@ export function ModeMenu({ triggerRef, current, running, onPick, onClose }: {
             className="mode-menu-item rp"
             data-mode={m}
             data-active={m === current ? 'true' : 'false'}
-            onClick={() => { onPick(m); onClose(); }}
+            onClick={() => { onPick(m); close(); }}
           >
             <Icon name={ICONS[m]} size={24} />
           </button>

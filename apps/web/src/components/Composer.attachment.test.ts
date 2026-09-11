@@ -59,8 +59,8 @@ function assertEditableAttachment(html: string) {
 
 function assertReadyAttachment(html: string, metadata: UploadedFile) {
   const name = metadata.name.replaceAll('&', '&amp;')
-  assert.match(html, /class="chat-staged-attachment" role="group" aria-label="暂存附件"/)
-  assert.ok(html.includes(`href="${metadata.url}?download=1" download="${name}" class="chat-staged-name">${name}</a>`), html)
+  assert.match(html, /class="chat-staged-attachment" data-status="ready" role="group" aria-label="暂存附件：/)
+  assert.ok(html.includes(`href="${metadata.url}?download=1" download="${name}" class="chat-staged-name" title="${name}">${name}</a>`), html)
   assert.match(html, /class="chat-staged-status" aria-live="polite">已暂存 · 4 B · 随消息发送<\/span>/)
   assert.doesNotMatch(html, /blob:|data:image|\/server\/private/)
   if (metadata.kind === 'image') {
@@ -134,7 +134,7 @@ test('Composer staged attachment markup', async (t) => {
         assertReadyAttachment(html, metadata)
         assertCaption(html, captionMarkup)
         assertEditableAttachment(html)
-        assertButton(html, '发送', true)
+        assertButton(html, '正在提交', true)
 
         draft.edit('Caption edited while pending')
         assertCaption(render(draft, onSend), 'Caption edited while pending')
@@ -198,7 +198,7 @@ test('Composer staged attachment markup', async (t) => {
         assert.equal(draft.getSnapshot().staged?.status, status)
         const html = render(draft, onSend)
         assert.match(html, /class="chat-staged-attachment"/)
-        assert.match(html, /class="chat-staged-name">preview &amp; notes.png<\/span>/)
+        assert.match(html, /class="chat-staged-name" title="preview &amp; notes.png">preview &amp; notes.png<\/span>/)
         assert.match(html, status === 'uploading'
           ? /aria-live="polite">上传中…（尚未发送）<\/span>/
           : /aria-live="polite">Upload failed; please retry<\/span>/)
