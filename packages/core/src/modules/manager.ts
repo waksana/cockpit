@@ -209,7 +209,10 @@ export class ModuleManager implements SessionModuleHost {
         mcpServers: Object.fromEntries(Object.entries(role.mcp ?? {}).map(([name, server]) => [name, {
           type: 'local' as const, command: process.execPath, args: [join(installed.release, server.entry), ...server.args ?? []], tools: ['*'],
           ...(selection.moduleId === 'task' ? { env: { WORK_URL: config.serviceUrl!,
-            WORK_CREDENTIAL_DIR: config.credentialDirectory!, ...(accessFile ? { COCKPIT_TASK_ACCESS_FILE: accessFile } : {}) } } : {}),
+            WORK_CREDENTIAL_DIR: config.credentialDirectory!,
+            ...(config.retainedCredentialDirectory ? { WORK_RETAINED_CREDENTIAL_DIR: config.retainedCredentialDirectory,
+              WORK_COCKPIT_MODULE_VERSION: installed.manifest.version } : {}),
+            ...(accessFile ? { COCKPIT_TASK_ACCESS_FILE: accessFile } : {}) } } : {}),
         }])),
         ...(selection.moduleId === 'task' && selection.roleId === 'commander' && accessFile
           ? { configurationReferences: { taskAccessFile: accessFile } } : {}),

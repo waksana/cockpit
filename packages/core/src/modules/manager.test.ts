@@ -5,6 +5,27 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 import { OfficialRuntime } from '../runtime.ts';
 import { ModuleManager } from './manager.ts';
+import { taskCredentialDigest, validateAdapterConfig } from './adapters.ts';
+
+test('managed Task migration retains one explicit original credential root without changing identity or issuance', async t => {
+  const root = mkdtempSync(join(tmpdir(), 'cockpit-retained-task-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const credentialDirectory = join(root, 'new'), retainedCredentialDirectory = join(root, 'old');
+  mkdirSync(credentialDirectory, { mode: 0o700 });
+  mkdirSync(retainedCredentialDirectory, { mode: 0o700 });
+  const original = join(retainedCredentialDirectory, 'owner.json');
+  writeFileSync(original, JSON.stringify({ token: 'synthetic-preserved-task-identity' }), { mode: 0o600 });
+  const config = validateAdapterConfig('task', {
+    ownership: 'managed', serviceUrl: 'http://127.0.0.1:8790', credentialDirectory, retainedCredentialDirectory,
+  });
+  assert.match(taskCredentialDigest(config, original), /^[a-f0-9]{64}$/);
+  assert.equal(config.credentialDirectory, credentialDirectory);
+  assert.deepEqual(readdirSync(credentialDirectory), [], 'Reading a retained credential cannot reissue or copy it');
+  assert.throws(() => taskCredentialDigest({ ...config, retainedCredentialDirectory: undefined }, original), /outside/);
+  assert.throws(() => validateAdapterConfig('task', { ...config, ownership: 'external' }), /managed Task/);
+  assert.throws(() => validateAdapterConfig('wechat', { ...config }), /managed Task/);
+  assert.throws(() => validateAdapterConfig('task', { ...config, retainedCredentialDirectory: credentialDirectory }), /distinct/);
+});
 
 test('official Assistant install uses independent user root and role lifecycle writes no user workspace files', async t => {
   const root = mkdtempSync(join(tmpdir(), 'cockpit-module-manager-'));

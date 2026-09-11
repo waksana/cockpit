@@ -12,25 +12,30 @@ export interface AdapterConfig {
   managerCredentialFile?: string;
   viewerCredentialFile?: string;
   credentialDirectory?: string;
+  retainedCredentialDirectory?: string;
   gatewayUrl?: string;
   configFile?: string;
   dataDirectory?: string;
   activationEnabled: boolean;
 }
 const fields = ['ownership', 'serviceUrl', 'managerCredentialFile', 'viewerCredentialFile',
-  'credentialDirectory', 'gatewayUrl', 'configFile', 'dataDirectory', 'activationEnabled'];
+  'credentialDirectory', 'retainedCredentialDirectory', 'gatewayUrl', 'configFile', 'dataDirectory', 'activationEnabled'];
 export function validateAdapterConfig(moduleId: ModuleId, values: JsonObject): AdapterConfig {
   for (const key of Object.keys(values)) if (!fields.includes(key)) throw new Error(`Unsupported module configuration field: ${key}`);
   const ownership = values.ownership ?? (moduleId === 'assistant' ? 'none' : 'external');
   if (!['none', 'external', 'managed'].includes(String(ownership))) throw new Error('Invalid module service ownership');
   const config: AdapterConfig = { ownership: ownership as AdapterConfig['ownership'], activationEnabled: false };
-  for (const key of ['managerCredentialFile', 'viewerCredentialFile', 'credentialDirectory', 'configFile', 'dataDirectory'] as const) {
+  for (const key of ['managerCredentialFile', 'viewerCredentialFile', 'credentialDirectory', 'retainedCredentialDirectory', 'configFile', 'dataDirectory'] as const) {
     const value = values[key];
     if (value === undefined || value === null || value === '') continue;
     if (typeof value !== 'string' || !isAbsolute(value) || resolve(value) !== value || /[\x00-\x1f\x7f]/.test(value)) {
       throw new Error(`Module ${key} must be a canonical absolute path, not credential contents`);
     }
     config[key] = value;
+  }
+  if (config.retainedCredentialDirectory && (moduleId !== 'task' || config.ownership !== 'managed'
+    || !config.credentialDirectory || config.retainedCredentialDirectory === config.credentialDirectory)) {
+    throw new Error('Retained credentials require a managed Task module with one distinct original credential directory');
   }
   if (values.serviceUrl !== undefined && values.serviceUrl !== null && values.serviceUrl !== '') {
     if (typeof values.serviceUrl !== 'string') throw new Error('Invalid module serviceUrl');
@@ -96,7 +101,14 @@ export function taskAuthority(config: AdapterConfig): { serviceUrl: string; cred
 
 function taskCredential(config: AdapterConfig, file: string): string {
   const { credentialDirectory } = taskAuthority(config);
-  if (!file.startsWith(`${credentialDirectory}/`)) throw new Error('Task credential is outside its pinned credential directory');
+  const roots = [credentialDirectory];
+  if (config.retainedCredentialDirectory) {
+    const directory = config.retainedCredentialDirectory, stat = lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(directory) !== directory
+      || stat.uid !== process.getuid?.() || (stat.mode & 0o077)) throw new Error('Retained Task credential directory must be private and canonical');
+    roots.push(directory);
+  }
+  if (!roots.some(directory => file.startsWith(`${directory}/`))) throw new Error('Task credential is outside its pinned credential directories');
   return readProtectedToken(file);
 }
 
