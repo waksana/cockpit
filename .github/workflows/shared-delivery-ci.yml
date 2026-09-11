@@ -1,0 +1,38 @@
+name: Shared fixed-SHA delivery build
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        required: true
+        type: string
+      request_id:
+        required: true
+        type: string
+      config_path:
+        default: service-delivery.json
+        type: string
+      config_sha256:
+        default: ''
+        type: string
+      target_branch:
+        required: true
+        type: string
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: waksana/cockpit/.github/actions/delivery-build@8df2af611b1f04562d4a3afb50c8d99e8dae5a4d
+        with:
+          source_sha: ${{ inputs.source_sha }}
+          request_id: ${{ inputs.request_id }}
+          config_path: ${{ inputs.config_path }}
+          config_sha256: ${{ inputs.config_sha256 }}
+          target_branch: ${{ inputs.target_branch }}
