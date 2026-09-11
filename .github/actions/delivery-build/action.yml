@@ -1,0 +1,54 @@
+name: Fixed source delivery build
+description: Run the committed service-delivery contract and package its complete runtime
+inputs:
+  source_sha:
+    required: true
+  request_id:
+    required: true
+  config_path:
+    required: true
+  config_sha256:
+    required: false
+  target_branch:
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+      with:
+        version: 10.34.5
+    - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+      with:
+        node-version: 24.20.0
+    - shell: bash
+      env:
+        TOOLKIT: ${{ github.action_path }}/../../../.delivery/toolkit
+        SOURCE_SHA: ${{ inputs.source_sha }}
+        REQUEST_ID: ${{ inputs.request_id }}
+        CONFIG: ${{ inputs.config_path }}
+        CONFIG_HASH: ${{ inputs.config_sha256 }}
+        TARGET_BRANCH: ${{ inputs.target_branch }}
+      run: |
+        set -euo pipefail
+        [[ "$SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+        [[ "$REQUEST_ID" =~ ^[a-zA-Z0-9._-]{8,120}$ ]]
+        git check-ref-format "refs/heads/$TARGET_BRANCH"
+        test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+        git merge-base --is-ancestor "$SOURCE_SHA" "refs/remotes/origin/$TARGET_BRANCH"
+        git update-ref "refs/heads/$TARGET_BRANCH" "refs/remotes/origin/$TARGET_BRANCH"
+        if test -f pnpm-lock.yaml; then
+          pnpm install --frozen-lockfile
+        elif test -f package-lock.json; then
+          npm ci
+        else
+          node -e 'const p=require("./package.json");if(Object.keys(p.dependencies||{}).length||Object.keys(p.devDependencies||{}).length)throw Error("Dependencies require a committed lockfile")'
+        fi
+        npm ci --ignore-scripts --prefix "$TOOLKIT"
+        node "$TOOLKIT/bin/run-build.mjs" "$CONFIG" "$CONFIG_HASH"
+        node "$TOOLKIT/bin/package.mjs" "$CONFIG" delivery-output "$REQUEST_ID"
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: runtime-${{ inputs.request_id }}
+        path: delivery-output/runtime.tar.gz
+        if-no-files-found: error
+        retention-days: 3
