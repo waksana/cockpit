@@ -107,6 +107,14 @@ deliver obsolete data or continue reading.
 
 ## Browser reading
 
+An authoritative complete session snapshot releases browser reading windows for
+IDs no longer present, including sessions deleted while this browser was offline.
+An authoritative single-session `meta:null` or removal event releases the same
+window and pending read contacts. Unloaded sessions, partial resource responses,
+filtered lists and transient failures are not deletion signals. Surviving
+windows retain their cursors, nested agent ownership and current reading state;
+this is not an LRU policy and does not delete Composer drafts or retained files.
+
 Entering a chat view lands at its latest loaded content. Leaving and re-entering
 does not restore the previous cross-view reading position; retained history and
 native cursors still avoid a fresh history read. Within the same mounted view,

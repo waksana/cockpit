@@ -5,6 +5,7 @@ import type { NativeChatEvent, NativeChatPage, NativeChatRead, ServerEvent, Sess
 import { createCockpitStore } from './store';
 import { dismissUxError, getUxErrors } from '../lib/errorReporter';
 import { createSessionDrafts } from '../lib/attachmentSend';
+import { NativeWindow } from './nativeWindow';
 
 function replace(t: TestContext, key: string, value: unknown) {
   const original = Object.getOwnPropertyDescriptor(globalThis, key);
@@ -736,4 +737,123 @@ test('authoritative deletion cancels history and stream without allowing stale r
   t.mock.timers.tick(1000); await setImmediate();
   assert.equal(h.state(), undefined);
   assert.equal(h.requests.length, 3);
+});
+
+function observeWindowRelease(t: TestContext) {
+  const calls = new Map<NativeWindow, number>();
+  const disconnect = NativeWindow.prototype.disconnect;
+  t.mock.method(NativeWindow.prototype, 'disconnect', function (this: NativeWindow) {
+    calls.set(this, (calls.get(this) ?? 0) + 1);
+    return disconnect.call(this);
+  });
+  return calls;
+}
+
+test('complete reconnect snapshots release absent windows but preserve surviving nested history and drafts', async t => {
+  const calls = observeWindowRelease(t);
+  const h = setup(t);
+  await h.start();
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['plan'] });
+  h.store.getState().setActiveId('b');
+  const deletedWindow = [...calls.keys()][0];
+  assert.ok(deletedWindow);
+  await h.reply(2, [
+    { ...message('B'), data: { messageId: 'B', content: 'Delegate', toolRequests: [{ toolCallId: 'task', name: 'task' }] } },
+    { id: 'started', type: 'subagent.started', data: { toolCallId: 'task', agentId: 'child' } },
+    { ...message('child-history'), agentId: 'child' },
+  ]);
+  await h.reply(3, [], { cursor: 'b-latest' });
+  const messages = h.state('b').messages;
+  const nested = messages.find(value => value.subagent)!.subMessages;
+  const drafts = createSessionDrafts();
+  drafts('b').edit('Keep the surviving draft');
+  const draft = drafts('b').getSnapshot();
+  h.source.drop(); h.source.open();
+  h.snapshot([meta('b')]);
+  assert.equal(h.state('a'), undefined);
+  assert.equal(h.store.getState().resourceRevisions.a, undefined);
+  assert.equal(h.state('b').messages, messages);
+  assert.equal(h.state('b').messages.find(value => value.subagent)!.subMessages, nested);
+  assert.equal(drafts('b').getSnapshot(), draft);
+  assert.equal(h.requests[4].body.cursor, 'b-latest');
+  assert.equal(h.requests[4].body.agentScope, 'all');
+  const count = calls.get(deletedWindow);
+  h.snapshot([meta('b')]);
+  assert.equal(calls.get(deletedWindow), count, 'later snapshots cannot revisit an orphaned NativeWindow');
+  assert.equal(h.requests.filter(request => request.body.direction === 'backward').length, 2);
+});
+
+test('an empty authoritative snapshot releases an active window and rejects its late older response', async t => {
+  const calls = observeWindowRelease(t);
+  const h = setup(t);
+  await h.start();
+  h.store.getState().loadMore('a');
+  h.snapshot([]);
+  assert.equal(h.requests[1].signal?.aborted, true);
+  assert.equal(h.requests[2].signal?.aborted, true);
+  assert.equal(h.store.getState().activeId, 'a', 'the URL still owns selection and renders NotFound');
+  await h.reply(2, [message('late-private-window')]);
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['plan'] });
+  assert.equal(h.state('a'), undefined);
+  assert.equal(h.store.getState().resourceRevisions.a, undefined);
+  const before = [...calls.values()];
+  h.snapshot([]);
+  assert.deepEqual([...calls.values()], before, 'no retained window remains after complete absence');
+  t.mock.timers.tick(1000); await setImmediate();
+  assert.equal(h.requests.length, 3);
+});
+
+test('partial metadata, added rows, temporary failures and unload preserve existing reading windows', async t => {
+  const calls = observeWindowRelease(t);
+  const h = setup(t);
+  await h.start();
+  const messages = h.state().messages;
+  h.source.emit({ type: 'session/added', session: meta('c') });
+  assert.equal(h.state().messages, messages, 'a single added row is not a complete list');
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['model'] });
+  await setImmediate();
+  h.requests[2].resolve(Response.json({ meta: { sessionId: 'a', loaded: true, currentModelId: 'current' } }));
+  await setImmediate();
+  assert.equal(h.state().messages, messages);
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['model'] });
+  await setImmediate();
+  h.requests[3].resolve(Response.json({ error: 'temporary native read failure' }, { status: 503 }));
+  await setImmediate();
+  assert.equal(h.state().messages, messages);
+  h.store.getState().setActiveId(null);
+  const retained = [...calls.keys()][0];
+  h.source.emit({ type: 'session/patch', sessionId: 'a', loaded: false, status: 'unloaded' });
+  h.snapshot([meta('a', false), meta('b'), meta('c')]);
+  assert.equal(h.state().messages, messages);
+  const count = calls.get(retained)!;
+  h.snapshot([meta('a', false), meta('b'), meta('c')]);
+  assert.equal(calls.get(retained), count + 1, 'an unloaded but present session keeps its window');
+  h.store.getState().setActiveId('a');
+  assert.equal(h.requests[4].body.direction, 'forward');
+  assert.equal(h.requests[4].body.source, 'persisted');
+  assert.equal(h.requests[4].body.cursor, 'cursor-1');
+  assert.equal(h.requests.filter(request => request.body.direction === 'backward').length, 1);
+});
+
+test('authoritative meta:null releases the target window, pending readers and dirty metadata follow-ups', async t => {
+  const calls = observeWindowRelease(t);
+  const h = setup(t);
+  await h.start();
+  h.store.getState().loadMore('a');
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['identity'] });
+  await setImmediate();
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['model'] });
+  h.requests[3].resolve(Response.json({ meta: null }));
+  await setImmediate();
+  assert.equal(h.requests[1].signal?.aborted, true);
+  assert.equal(h.requests[2].signal?.aborted, true);
+  assert.equal(h.requests[3].signal?.aborted, true);
+  assert.equal(h.state(), undefined);
+  assert.equal(h.store.getState().resourceRevisions.a, undefined);
+  await h.reply(2, [message('late')]);
+  const before = [...calls.values()];
+  h.snapshot([meta('b')]);
+  assert.deepEqual([...calls.values()], before);
+  t.mock.timers.tick(1000); await setImmediate();
+  assert.equal(h.requests.length, 4, 'absence does not trigger another dirty metadata or history read');
 });

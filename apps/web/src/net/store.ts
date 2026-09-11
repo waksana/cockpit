@@ -154,6 +154,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         // projected fields, but never publish an obsolete read of that resource.
         const meta = response ? { ...cleanProjection(response, request.stale), ...request.patches } : null;
         const wasLoaded = get().sessions.find(s => s.sessionId === sessionId)?.loaded;
+        if (!meta) releaseSessions([sessionId]);
         set(st => {
           const existing = st.sessions.find(s => s.sessionId === sessionId);
           const full = meta ? applyProjection(meta, existing) : null;
@@ -175,6 +176,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
           maybeMaterialize();
         }
         seenActiveIfVisible();
+        if (!meta) return;
       } while (request.dirty.size);
     }).catch(error => {
       if (!request.controller.signal.aborted && client === net && get().connectionGeneration === generation) {
@@ -220,6 +222,28 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       if (window) patchLocal(liveSessionId, s => ({ ...s, ...window.snapshot(), loadingHistory: s.loadingHistory }));
     }
     liveSessionId = null;
+  };
+
+  // Only authoritative absence releases a view; unloading and partial resource
+  // responses must preserve its cursor, nested projection and unsent draft.
+  const releaseSessions = (ids: readonly string[]) => {
+    let revisions: CockpitState['resourceRevisions'] | undefined;
+    for (const id of ids) {
+      metaRequests.get(id)?.controller.abort();
+      metaRequests.delete(id);
+      cancelHistory(id);
+      cancelLive(id);
+      windows.delete(id);
+      mutationRequests.delete(id);
+      historyRecoveryErrors.delete(id);
+      seenRequests.delete(id);
+      if (observedAttention?.sessionId === id) observedAttention = null;
+      if (Object.hasOwn(get().resourceRevisions, id)) {
+        revisions ??= { ...get().resourceRevisions };
+        delete revisions[id];
+      }
+    }
+    if (revisions) set({ resourceRevisions: revisions });
   };
 
   const connectedClient = () => {
@@ -287,7 +311,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       // HTTP/transport/schema errors have one request-owned global notice.
       // Offline and negative acknowledgements originate here instead.
       if (!reportedByTransport) reportUxError(message, { deduplicate: false });
-      if (sid && generation === get().connectionGeneration && (current() || request.released)) {
+      if (sid && get().sessions.some(s => s.sessionId === sid)
+        && generation === get().connectionGeneration && (current() || request.released)) {
         const owns = current();
         if (changesHistory) {
           if (owns) mutationRequests.delete(sid);
@@ -526,6 +551,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     switch (ev.type) {
       case 'snapshot': {
         invalidateRequests();
+        const present = new Set(ev.sessions.map(session => session.sessionId));
+        const known = new Set([...windows.keys(), ...get().sessions.map(session => session.sessionId),
+          ...Object.keys(get().resourceRevisions)]);
+        releaseSessions([...known].filter(id => !present.has(id)));
         snapshotReady = true;
         set({ agentStatus: ev.agentStatus, permissionPolicy: ev.permissionPolicy, globalModels: ev.models });
         set((st) => {
@@ -548,6 +577,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         set({ agentStatus: ev.status });
         return;
       case 'session/invalidated': {
+        // Late invalidations cannot recreate resources for an absent session.
+        if (!get().sessions.some(session => session.sessionId === ev.sessionId)) return;
         const resources = ev.resources ?? SessionResource.options;
         set(st => {
           const revisions = { ...st.resourceRevisions[ev.sessionId] };
@@ -578,18 +609,12 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         maybeMaterialize();
         return;
       case 'session/removed':
-        metaRequests.get(ev.sessionId)?.controller.abort();
-        metaRequests.delete(ev.sessionId);
+        releaseSessions([ev.sessionId]);
         // Drop the row. We deliberately DON'T clear activeId here: the URL is the
         // source of truth for what's focused, so a remote delete just makes the
         // active session vanish from `sessions`, and the page derives a NotFound
         // pane from (routeId set, no matching session). A LOCAL delete navigates
         // back to the list itself (App.doDelete), so it never hits NotFound.
-        cancelHistory(ev.sessionId);
-        cancelLive(ev.sessionId);
-        windows.delete(ev.sessionId);
-        mutationRequests.delete(ev.sessionId);
-        historyRecoveryErrors.delete(ev.sessionId);
         set((st) => {
           const sessions = st.sessions.filter((s) => s.sessionId !== ev.sessionId);
           const current = currentInboxRevision(st.inboxRevision, ev.inboxRevision);
