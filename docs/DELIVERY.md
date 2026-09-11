@@ -93,3 +93,76 @@ the obsolete private remote pipeline ancestry without publishing that old
 product snapshot. Work Commander remains a separate unchanged service. Weixin's
 unknown outcome remains paused; voice and recursive Commander work are outside
 this delivery integration.
+
+## Installed instance and operator commands
+
+First accepted immutable deployment (2026-09-11):
+
+| Evidence | Value |
+| --- | --- |
+| Source | `6fc9b641c19d1ecc01ffa5cc7a1678b1d818460b` |
+| Production request | `cockpit-deploy-6fc9b64-20260911` |
+| Hosted build / transfer | Actions runs `34547123281` / `34547354291`, both successful |
+| Runtime archive SHA-256 | `d0449d70f936da588995994cb1a1aeeeefef2d95096aa1371f74e3a5cfea3eef` |
+| Observed process instance | `7c3b6dbc-85ad-4e41-b27a-e4e22f927cf0` |
+| Host toolkit commit | `d6de960e85f50471f719148a5baeb40d2eb90b25` (0.2.0, adapter/contracts v1) |
+| Build-side toolkit commit | `.delivery/provenance.json`, compatible 0.2.0/v1 build interface |
+
+These are historical acceptance identities, not a promise that later main or
+production never advances. Read the authority for every subsequent request.
+The installed host toolkit includes longer bounded archive-verification
+acknowledgements and explicit truncated-response uncertainty; build-side
+packaging semantics are unchanged.
+
+This instance's control plane is `cockpit-delivery.service`, root-owned code at
+`/opt/service-delivery-toolkit/current`, loopback `http://127.0.0.1:8791`.
+Its private configuration is under `~/.config/service-delivery/cockpit/`;
+its durable requests, immutable releases and retained assets are under
+`~/.local/state/service-delivery/cockpit/`. No token values belong in this guide.
+`cockpit.service` has a fixed next-start drop-in at
+`/etc/systemd/system/cockpit.service.d/40-service-delivery.conf`.
+Future Cockpit MCP starts use the same `current/apps/mcp/dist/index.js`.
+Do not use an application `systemctl restart` to bypass the native busy gate.
+
+Use the main toolkit checkout's documented CLI. The operator issues each owner
+a submit credential using `issue-credential.mjs`; `OWNER_CREDENTIAL` below is
+that explicit file path, never a shared caller/Commander credential.
+
+```sh
+TOOLKIT=/opt/service-delivery-toolkit/current
+REPO=/home/honglai/cockpit-foundation
+SHA=$(git -C "$REPO" rev-parse HEAD)
+# The private plan path must be new; preserve it and its stable ID on uncertainty.
+umask 077
+node "$TOOLKIT/bin/service-delivery.mjs" prepare \
+  --repo "$REPO" --sha "$SHA" --config service-delivery.json \
+  --request-id "$REQUEST_ID" --intent build-only > "$PRIVATE_PLAN"
+node "$TOOLKIT/bin/service-delivery.mjs" submit \
+  --request "$PRIVATE_PLAN" --credential "$OWNER_CREDENTIAL"
+node "$TOOLKIT/bin/service-delivery.mjs" lookup \
+  --request-id "$REQUEST_ID" --credential "$OWNER_CREDENTIAL"
+```
+
+For an authorized deployment, the operator registers the exact-SHA approval
+using the toolkit's `authorize` command, then the owner prepares with
+`--intent deploy --authorization "$PRIVATE_APPROVAL"` and submits once.
+Never convert a build-only request in place: that is a conflicting body.
+Approval-file content alone does not register an approval. A changed committed
+project config hash needs explicit review and a matching operator allowlist
+update before submission. Push current source to this private main first;
+the runner verifies requested/observed/main ancestry and never force-pushes.
+
+Unknown dispatch or acknowledgement: read the original ID. Do not automatically
+rerun a workflow or resubmit with a new ID. The first build-only transfer exposed
+exactly this case: its job timed out, but authenticated lookup established the
+verified `built` artifact. It was not replayed. The receiver now allows five
+minutes for archive verification; interactive calls remain bounded at 30 seconds.
+An operator can use `recover` for original-run/process reconciliation or explicit
+compatible binary rollback as documented by the toolkit.
+
+The initial bootstrap fallback has been removed after live acceptance; its
+archived former-runtime snapshot remains retained, not selected or reported as
+an immutable successful deployment. No automatic release/data cleanup is
+installed. Work Commander is independently deployed: acceptance observed
+v1.2.0/release `b3f0861fe5cb`, not the earlier v1.1.0 snapshot. This pipeline did
+not deploy, downgrade or alter that service.
