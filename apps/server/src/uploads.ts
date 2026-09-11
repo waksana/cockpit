@@ -181,21 +181,19 @@ export function resolveUpload(storedName: string): UploadResult | null {
     if (!ensureDirectory(ROOT, false)) return null;
     const file = openRegular(join(ROOT, storedName), MAX_UPLOAD_BYTES);
     if (!file) return null;
-    let prefix: Buffer;
     try {
+      const metadata = readMetadata(storedName, file.size);
+      if (metadata) {
+        return { ...result(storedName, metadata.name, metadata.mime, metadata.size),
+          ...validateUploadContext(metadata),
+          ...(metadata.createdAt === undefined ? {} : { createdAt: metadata.createdAt }),
+          ...(metadata.sha256 === undefined ? {} : { sha256: metadata.sha256 }) };
+      }
+      if (storedName.startsWith(STORED_PREFIX)) throw new UploadError('Upload metadata is missing', 500);
       const bytes = Buffer.alloc(Math.min(4096, file.size));
       const count = fs.readSync(file.fd, bytes, 0, bytes.length, 0);
-      prefix = bytes.subarray(0, count);
+      return result(storedName, storedName, detectedMime(bytes.subarray(0, count), mimeForStored(storedName)), file.size);
     } finally { fs.closeSync(file.fd); }
-    const metadata = readMetadata(storedName, file.size);
-    if (metadata) {
-      return { ...result(storedName, metadata.name, metadata.mime, metadata.size),
-        ...validateUploadContext(metadata),
-        ...(metadata.createdAt === undefined ? {} : { createdAt: metadata.createdAt }),
-        ...(metadata.sha256 === undefined ? {} : { sha256: metadata.sha256 }) };
-    }
-    if (storedName.startsWith(STORED_PREFIX)) throw new UploadError('Upload metadata is missing', 500);
-    return result(storedName, storedName, detectedMime(prefix, mimeForStored(storedName)), file.size);
   } catch (error) {
     throw storageError(error);
   }

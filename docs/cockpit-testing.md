@@ -19,27 +19,40 @@ For the deployed modernization's conclusions and remaining limits, see the
 | **Unit (web)** | native event windows/cursors, gap handling, bounded retained details, drafts, diagnostics and files | `pnpm --filter @cockpit/web test` |
 | **All workspaces** | every workspace's unit-test script, plus launcher/restart helpers | `pnpm test` |
 | **Build** | workspace compilation, including the web app's actual TypeScript sources | `pnpm build` |
-| **Real-log regression** | fold every persisted `events.jsonl`, validate each message vs the protocol schema | `pnpm regress` |
-| **E2E** | drives the running backend over HTTP (health/status, intent validation, upload roundtrip + traversal, session create/delete, MCP/skill intents, upload XSS headers) | `pnpm e2e` |
-| **Perf** | fold throughput, endpoint latency, upload/serve MB/s, concurrent SSE | `pnpm perf` |
+| **Synthetic fold regression** | shared browser fold/schema on an explicit flat JSONL fixture directory | `pnpm regress --synthetic-fixture-root /absolute/synthetic-jsonl` |
+| **Isolated E2E** | HTTP contract checks on a separately provisioned test backend; mutates only its test data | `pnpm e2e --synthetic-fixture-root /absolute/synthetic-workspace --test-base-url http://127.0.0.1:45678` |
+| **Isolated perf** | synthetic fold throughput, test-backend latency/upload/serve/concurrent SSE | `pnpm perf --synthetic-fixture-root /absolute/synthetic-jsonl --test-base-url http://127.0.0.1:45678` |
 
 Unit tests use `node:test` + `tsx` (no extra framework). Use isolated fixtures and
 mock transports for the foundation's governance-free boot, API/MCP coverage,
 cross-session interaction, file exchange and reconnect behavior. Do not use a
 personal session store or restart the running service for ordinary unit tests.
 Test files are `*.test.ts` next to the code; they're excluded from the `tsc`
-builds. The optional scripts have different, potentially significant effects:
+builds. The optional scripts now refuse missing arguments before inspecting
+fixtures or contacting a backend. They never default to personal native history
+or the production service. The old `regress-reallog.mts` filename remains only
+for command compatibility; it reads synthetic fixtures, not native session trees.
 
-- `regress` reads every private `~/.copilot/session-state/*/events.jsonl`.
-- `perf` also reads that whole history, repeatedly calls the running backend,
-  opens concurrent SSE connections and leaves uploaded files behind.
-- `e2e` targets the running backend and creates, changes and permanently deletes
-  its own fixture session; it also creates schedules and retained uploads.
+Fold fixtures are 1–32 flat, regular, non-linked `.jsonl` files, at most 4 MiB
+each and 16 MiB total. Personal/configuration roots, native-directory trees,
+symlink components, hard-linked logs and malformed JSON are rejected.
+Configured Cockpit data roots and their ancestors are also excluded.
+HTTP targets must be explicit IPv4 loopback on a test port, not production port
+8771 or a production port named by `COCKPIT_PORT`, `PORT` or `COCKPIT_URL`;
+remote URLs, URL paths/credentials and redirects are rejected.
 
-These are not read-only or automatically isolated checks. Their defaults are not
-appropriate for ordinary acceptance against a personal service. A documentation
-warning does not provide an execution guard or make the scripts conform to the
-isolated-fixture requirement.
+The examples' port is only illustrative. Provision a separate test runtime,
+configuration, workspace and upload directory first, without personal
+credentials or real model endpoints. A flag or alternate port does **not**
+isolate a running service or prove that arbitrary input is synthetic.
+
+With valid explicit arguments, `perf` still makes repeated HTTP requests,
+opens concurrent SSE connections and leaves test uploads behind. `e2e` still
+creates, changes and permanently deletes its own fixture session and creates
+schedules/uploads. Interrupted runs may leave test data or timers; these tools
+are not non-destructive. Only use operator-owned isolated fixtures.
+Guard tests exercise rejected defaults and allowed synthetic paths without
+reading personal logs or mutating production.
 
 Do not run deployment-facing E2E/performance scripts against a personal service
 as ordinary unit checks. Native SDK probes use a separate configuration/state

@@ -32,8 +32,8 @@ export function UsageValues({ value }: { value: Usage }) {
         <summary>口径与来源 · {new Date(value.sampledAt).toLocaleTimeString('zh-CN')}</summary>
         <p>上下文占用与输入上限来自同一原生快照，不是模型宣传窗口。包含系统/指令、用户/助手/工具消息和工具定义。</p>
         {context && <p>工具定义：{count(context.categories.systemTools + context.categories.mcpTools)}；消息：{count(context.categories.messages)} tokens。成功压缩：{count(context.compactions.count)}次。</p>}
-        <p>重复输入会累计；重启、子代理与辅助命名的覆盖以原生归集为准，未另行累加。调用前原生可能返回0。缓存指provider提示缓存，与浏览器3会话LRU无关；不推算费用。</p>
-        <p>只在此页打开或手动刷新时读取，不后台轮询。上下文与用量分别读取，活动中的数值可能继续变化。</p>
+        <p>重复输入会累计；重启、子代理与辅助命名的覆盖以原生归集为准，未另行累加。调用前原生可能返回0。缓存指provider提示缓存，不是浏览器阅读窗口；不推算费用。</p>
+        <p>此页打开时按需读取，并在相关原生变化、重连或手动刷新后更新，不后台轮询。上下文与用量分别读取，活动中的数值可能继续变化。</p>
       </details>
     </>
   );

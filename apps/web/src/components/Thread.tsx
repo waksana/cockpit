@@ -10,7 +10,7 @@ import { ContextMenu, type MenuItem } from './ContextMenu';
 import type { ChatMessage, ChatSession, ToolCall, Attachment, ExitPlanModeAction } from '../net/types';
 import { acknowledgeInView, sendThreadDraft } from '../lib/draft';
 import { getSessionDraft, type UploadFile } from '../lib/attachmentSend';
-import { observeThreadScroll, READING_ACTIVITY_EVENT, type ThreadScroll, type ReadingPosition } from './threadScroll';
+import { observeThreadScroll, READING_ACTIVITY_EVENT, type ThreadScroll } from './threadScroll';
 import { observeHistoryPrefetch } from './historyPrefetch';
 import { canSkipMessageLayout, createMessageLayout } from './messageLayout';
 import { useCockpit } from '../net/store';
@@ -27,7 +27,6 @@ const PLAN_ACTION_LABEL: Record<ExitPlanModeAction, string> = {
   exit_only: '仅退出计划',
 };
 const PLAN_ACTION_ORDER: ExitPlanModeAction[] = ['interactive', 'autopilot', 'autopilot_fleet', 'exit_only'];
-const readingPositions = new Map<string, ReadingPosition>();
 
 // Tool-call status → icon + tone. Static glyphs (no spinner) per the zero-
 // animation doctrine; color carries the state.
@@ -377,10 +376,8 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
       setHeldHead(active && id ? { sessionId: session.sessionId, id } : null);
     });
     scrollOwnerRef.current = owner.scroll;
-    const saved = readingPositions.get(session.sessionId);
-    if (saved) owner.scroll.restore(saved);
+    // A new view enters at latest; only this mounted owner retains reading anchors.
     return () => {
-      readingPositions.set(session.sessionId, owner.position());
       owner.dispose();
       scrollOwnerRef.current = null;
     };

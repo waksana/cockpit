@@ -256,7 +256,9 @@ its MCP tools. `session/chat` returns one bounded native event page directly to
 its requester, without a history cache, full-log fold, or message-ID lookup.
 The browser owns its loaded window and opaque forward/backward cursors. It loads
 small pages toward roughly two screen heights, then reads older pages on demand.
-Switching away preserves loaded pages and reading position in that browser.
+Switching away preserves loaded pages and native cursors in that browser;
+re-entering the chat lands at latest. The same mounted reading view still
+preserves its anchor during live updates and older-page insertion.
 Browser reload loses this memory, not native history or independently stored drafts.
 
 Only a visible consumer reads chat. A browser disconnect cancels its request and

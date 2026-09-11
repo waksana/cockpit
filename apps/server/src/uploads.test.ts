@@ -147,6 +147,52 @@ test('original-byte integrity catches same-size corruption before download or na
   assert.equal(readFileSync(file.path, 'utf8'), 'modified', 'detection never silently overwrites or deletes evidence');
 });
 
+test('metadata-backed listing reads no original prefixes, while legacy originals are still sniffed', async t => {
+  const dir = join(TEST_ROOT, `metadata-read-${randomUUID()}`);
+  const storage = await storageAt(dir);
+  const originals = await Promise.all(['one', 'two', 'three'].map(name =>
+    storage.saveUploadStream(Readable.from([PNG]), `${name}.png`, 'image/png')));
+  const paths = new Set(originals.map(file => resolve(file.path)));
+  const opens = t.mock.method(fs, 'openSync');
+  const reads = t.mock.method(fs, 'readSync');
+  const page = storage.listUploads({ limit: 1 });
+  assert.equal(page.files.length, 1);
+  const originalFds = new Set(opens.mock.calls.filter(call => paths.has(resolve(String(call.arguments[0])))).map(call => call.result));
+  assert.equal(originalFds.size > 0, true, 'descriptor and size checks remain');
+  assert.equal(reads.mock.calls.filter(call => originalFds.has(call.arguments[0])).length, 0,
+    'pagination/filtering must not read unused original prefixes');
+  opens.mock.restore();
+  reads.mock.restore();
+
+  const legacyPath = join(dir, 'legacy.bin');
+  writeFileSync(legacyPath, PNG);
+  const legacyReads = t.mock.method(fs, 'readSync');
+  assert.equal(storage.resolveUpload('legacy.bin')?.mime, 'image/png');
+  assert.equal(legacyReads.mock.callCount(), 1, 'no-sidecar legacy files still need one prefix read');
+});
+
+test('corrupt or missing new metadata never reads a prefix or leaks its open original descriptor', async t => {
+  const dir = join(TEST_ROOT, `metadata-failure-${randomUUID()}`);
+  const storage = await storageAt(dir);
+  const file = await storage.saveUploadStream(Readable.from([PNG]), 'new.png', 'image/png');
+  const metadata = join(dir, '.metadata', `${file.storedName}.json`);
+  const original = readFileSync(metadata);
+  for (const invalid of ['corrupt', 'missing', 'size'] as const) {
+    if (invalid === 'missing') rmSync(metadata);
+    else writeFileSync(metadata, invalid === 'corrupt' ? '{invalid' : JSON.stringify({ ...JSON.parse(original.toString()), size: file.size + 1 }));
+    const opens = t.mock.method(fs, 'openSync');
+    const reads = t.mock.method(fs, 'readSync');
+    const closes = t.mock.method(fs, 'closeSync');
+    assert.throws(() => storage.resolveUpload(file.storedName), /metadata/);
+    const fd = opens.mock.calls.find(call => resolve(String(call.arguments[0])) === resolve(file.path))?.result;
+    assert.equal(typeof fd, 'number');
+    assert.equal(reads.mock.calls.filter(call => call.arguments[0] === fd).length, 0);
+    assert.equal(closes.mock.calls.filter(call => call.arguments[0] === fd).length, 1);
+    opens.mock.restore(); reads.mock.restore(); closes.mock.restore();
+    writeFileSync(metadata, original);
+  }
+});
+
 test('cleanup failure after durable publication does not remove a retained original', async (t) => {
   const storage = await storageAt(join(TEST_ROOT, `published-${randomUUID()}`));
   const unlink = fs.unlinkSync;

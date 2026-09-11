@@ -107,6 +107,12 @@ deliver obsolete data or continue reading.
 
 ## Browser reading
 
+Entering a chat view lands at its latest loaded content. Leaving and re-entering
+does not restore the previous cross-view reading position; retained history and
+native cursors still avoid a fresh history read. Within the same mounted view,
+rerenders, live updates and older-page insertion preserve the active reading
+anchor and gestures rather than forcing the reader to the bottom.
+
 Initial loading fills at least two viewport heights when sufficient history is
 available, not a fixed number of messages.
 Upward reading prefetches older messages when the remaining loaded history above

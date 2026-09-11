@@ -74,6 +74,10 @@ corruption. A bounded cache of verified inode/size/nanosecond timestamps avoids
 rehashing an unchanged original on every video seek; it never caches video bytes.
 Library listing reads metadata rather than hashing every file. Files without
 an original recorded digest cannot provide that historical integrity guarantee.
+For a valid sidecar, resolution checks the original descriptor and size without
+reading its unused media prefix. Only metadata-less legacy originals need prefix
+sniffing; missing or corrupt new sidecars still fail rather than downgrading to
+legacy detection.
 
 ## Display is not model understanding
 

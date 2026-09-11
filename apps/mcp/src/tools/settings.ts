@@ -1,6 +1,6 @@
 // Session-settings tools: change how a session runs — its model/reasoning/context
-// tier, its agent mode, and the two history-altering operations (compact, rewind).
-// The two destructive ones require confirm=true.
+// tier, its agent mode, model-context compaction, and conversation rewind.
+// Compaction and rewind retain explicit confirmation.
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { CockpitError, protocolIntent as intent } from '../cockpit.js';
@@ -14,11 +14,11 @@ export function registerSettingsTools(server: McpServer): void {
       title: 'Set a session model',
       description:
         "Change a session's model (and optionally reasoning effort + context tier). Get the valid " +
-        'model ids from cockpit_get_session → availableModels. reasoning_effort is model-specific ' +
+        'model ids from cockpit_get_session with response_format:"json" → availableModels. reasoning_effort is model-specific ' +
         '(e.g. low/medium/high/xhigh, only where supported); context_tier is default or long_context.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id'),
-        model_id: z.string().min(1).describe('The model id (from cockpit_get_session → availableModels[].modelId)'),
+        model_id: z.string().min(1).describe('The model id (from cockpit_get_session with response_format:"json" → availableModels[].modelId)'),
         reasoning_effort: z.string().optional().describe('Optional reasoning effort, where the model supports it'),
         context_tier: z.enum(['default', 'long_context']).optional().describe('Optional context window tier'),
       },
@@ -71,17 +71,17 @@ export function registerSettingsTools(server: McpServer): void {
       title: 'Compact a session context',
       description:
         "Summarize and compact a session's context to free up the window (the /compact operation). " +
-        'This rewrites history into a summary and CANNOT be undone, so it requires confirm=true. ' +
+        'This summarizes model-facing context, not the retained chat event history. Undo is not supported, so it requires confirm=true. ' +
         'Optionally pass custom_instructions to steer what the summary preserves.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id'),
         custom_instructions: z.string().optional().describe('Optional guidance for what the summary should keep'),
-        confirm: z.boolean().default(false).describe('Must be true — compaction is irreversible'),
+        confirm: z.boolean().default(false).describe('Must be true — model-context compaction has no undo'),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async ({ session_id, custom_instructions, confirm }): Promise<ToolResult> => {
-      if (!confirm) return fail('Compaction is irreversible. Re-call with confirm=true to proceed.');
+      if (!confirm) return fail('Model-context compaction has no undo; retained chat history is not deleted. Re-call with confirm=true to proceed.');
       try {
         await intent('session/compact', {
           sessionId: session_id,

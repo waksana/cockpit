@@ -1,45 +1,42 @@
 #!/usr/bin/env node
-// Performance benchmark for cockpit. Measures the hot paths:
-//   1. Fold throughput — replaying real persisted sessions (the single most
-//      intricate + frequently-run code; runs on every session load).
+// Opt-in performance benchmark for synthetic data and an isolated test backend:
+//   1. Shared browser fold throughput — replaying bounded synthetic JSONL files.
 //   2. /status + /health latency (the ops/poll endpoints).
 //   3. Upload + serve throughput (MB/s) over the real HTTP stack.
 //   4. Concurrent SSE connect + snapshot fan-out.
 //
 // Run from packages/core (has tsx):  node --import tsx ../../scripts/perf.mjs
 // or via repo root:  pnpm perf
-// Env: COCKPIT_PORT (default 8771). The HTTP sections need the backend running.
+// Required: --synthetic-fixture-root /absolute/flat-jsonl-directory
+//           --test-base-url http://127.0.0.1:<test-port> (never 8771).
+// The operator must provision the backend with separate synthetic state/config,
+// workspace and uploads. These arguments do not isolate an existing service.
 
-import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { performance } from 'node:perf_hooks';
-import { newFoldState, foldEvent } from '../packages/core/src/fold.ts';
+import { diagnosticOptions, readSyntheticLogs, diagnosticFetch } from './diagnostic-safety.mjs';
 
-const PORT = process.env.COCKPIT_PORT ?? '8771';
-const BASE = `http://127.0.0.1:${PORT}`;
+const { root, base: BASE } = diagnosticOptions('perf');
+const logs = readSyntheticLogs(root);
+const { newFoldState, foldEvent } = await import('../packages/core/src/fold.ts');
+const fetch = diagnosticFetch(BASE);
 const ms = (n) => `${n.toFixed(1)}ms`;
 const pct = (arr, p) => { const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; };
 
 console.log('cockpit perf bench\n==================\n');
 
-// ── 1. Fold throughput on real persisted sessions ─────────────────────────────
+// ── 1. Shared browser fold throughput on synthetic fixtures ───────────────────
 {
-  const root = join(homedir(), '.copilot', 'session-state');
-  const dirs = existsSync(root) ? readdirSync(root).filter((d) => existsSync(join(root, d, 'events.jsonl'))) : [];
   let totalEvents = 0; let totalMsgs = 0; let totalMs = 0; let biggest = { id: '', events: 0, ms: 0 };
-  for (const id of dirs) {
-    const lines = readFileSync(join(root, id, 'events.jsonl'), 'utf8').split('\n').filter(Boolean);
-    const evs = lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  for (const { name: id, events: evs } of logs) {
     const t0 = performance.now();
     const st = newFoldState();
-    for (const ev of evs) { try { foldEvent(st, ev); } catch { /* count anyway */ } }
+    for (const ev of evs) foldEvent(st, ev);
     const dt = performance.now() - t0;
     totalEvents += evs.length; totalMsgs += st.messages.length; totalMs += dt;
     if (evs.length > biggest.events) biggest = { id: id.slice(0, 8), events: evs.length, ms: dt };
   }
-  console.log('1. FOLD THROUGHPUT (real session replay)');
-  console.log(`   sessions:        ${dirs.length}`);
+  console.log('1. FOLD THROUGHPUT (synthetic browser-fold fixtures)');
+  console.log(`   fixtures:        ${logs.length}`);
   console.log(`   total events:    ${totalEvents}`);
   console.log(`   total messages:  ${totalMsgs}`);
   console.log(`   total fold time: ${ms(totalMs)}`);
@@ -54,8 +51,7 @@ console.log('cockpit perf bench\n==================\n');
 async function reachable() { try { const r = await fetch(`${BASE}/health`); return r.ok; } catch { return false; } }
 
 if (!(await reachable())) {
-  console.log('(backend not reachable — skipping HTTP sections)');
-  process.exit(0);
+  throw new Error('Explicit test backend is not reachable; HTTP benchmark did not run');
 }
 
 // ── 2. Endpoint latency ───────────────────────────────────────────────────────
@@ -63,7 +59,9 @@ async function latency(path, n = 200) {
   const samples = [];
   for (let i = 0; i < n; i++) {
     const t0 = performance.now();
-    await fetch(`${BASE}${path}`);
+    const response = await fetch(`${BASE}${path}`);
+    if (!response.ok) throw new Error(`${path}: HTTP ${response.status}`);
+    await response.arrayBuffer();
     samples.push(performance.now() - t0);
   }
   return { p50: pct(samples, 0.5), p95: pct(samples, 0.95), p99: pct(samples, 0.99) };
@@ -94,7 +92,7 @@ async function latency(path, n = 200) {
     const dl = performance.now() - td;
     console.log(`   ${sizeMB}MB  upload ${ms(up)} (${(sizeMB / (up / 1000)).toFixed(0)} MB/s)  serve ${ms(dl)} (${(sizeMB / (dl / 1000)).toFixed(0)} MB/s)`);
   }
-  console.log('   (note: leaves perf-*.bin in the upload folder; safe to delete)');
+  console.log('   (retained files remain in the operator-owned test backend upload directory)');
   console.log('');
 }
 
