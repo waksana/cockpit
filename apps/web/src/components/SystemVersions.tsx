@@ -5,6 +5,15 @@ import { useModalFocus } from '../lib/useModalFocus';
 import { deliveryStateLabels, waitingLabel } from '../lib/deliveryStatus';
 import './SystemVersions.scss';
 
+export function ConsumerLifecycleNotice() {
+  return <aside aria-label="Consumer 安装生命周期边界">
+    <p>Consumer 安装：Web 重启与自更新桥尚未接通，请使用该安装的独立启动器 CLI。
+      旧排空退出接口只会退出进程，不保证自动拉起；这里不提供该操作，也不承诺页面会自动恢复。</p>
+    <p>运行身份中的 authority=consumer 与 installationId 仅说明安装归属，不代表重启或更新能力已可用。
+      模块服务的启动/安全停止不是 Cockpit 主程序重启；原有 private-CD 流程不变。</p>
+  </aside>;
+}
+
 export function VersionProjects({ status }: { status: DeliveryStatus }) {
   return <>{status.projects.map(project => {
     const current = project.runtime;
@@ -39,12 +48,13 @@ export function SystemVersions({ status, error, loading, onRefresh, onClose }: {
     <div className="dialog-card system-versions" role="dialog" aria-modal="true" aria-labelledby={id}
       tabIndex={-1} ref={card} onPointerDown={event => event.stopPropagation()}>
       <header><h3 id={id}>系统 / 版本与更新</h3><button className="dialog-btn" onClick={onClose}>关闭</button></header>
+      <ConsumerLifecycleNotice />
       <button className="dialog-btn" onClick={onRefresh} disabled={loading}>{loading ? '读取中…' : '刷新实际状态'}</button>
       {error && <p role="alert">{error}；旧结果不作当前状态。</p>}
       {!error && status && <VersionProjects status={status} />}
       <details><summary>MCP 与 Skill 更新边界</summary>
         <p>MCP 未来启动入口随发布包更新。现有连接实际载入版本若未提供身份则未知；不能声称所有外部 MCP 已更新。
-          Cockpit 的安全重启只影响其管理的连接，临时启用配置可能按原生全局默认重置。</p>
+          Cockpit 的安全重启只影响其管理的连接。已接入模块的会话恢复绑定版本；其余临时开关可能按原生全局默认重置。</p>
         <p>Skill 文件与引用刷新原生发现后供后续使用。已进入模型上下文的旧指令不会因文件刷新或服务重启被抹除；本页不推测每个 agent 的上下文版本。</p>
       </details>
       <p className="system-version-detail">进程 /version 与交付 runner 分别提供版本和更新状态；不把 main HEAD、restart 布尔值或旧结果当作运行版本。本页仅在打开和刷新时读取。</p>

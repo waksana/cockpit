@@ -4,7 +4,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { realpathSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
-import { Intents } from '@cockpit/protocol';
+import { Intents, SessionUnbindApproval } from '@cockpit/protocol';
 import { COCKPIT_URL } from './config.js';
 import { CockpitError, intent as rawIntent, protocolIntent as intent } from './cockpit.js';
 import {
@@ -88,17 +88,19 @@ server.registerTool(
       'Compatibility alias for cockpit_delete_session. IRREVERSIBLE native deletion through session/purge. Only run ' +
       'this when permanent deletion is intended. Requires ' +
       'confirm=true. Managed files and workspaces are retained. Never hand-delete session-store.db rows ' +
-      'or automatically retry an uncertain result.',
+      'or automatically retry an uncertain result. Optional module unbind requires session/delete/preview ' +
+      'and explicit unbind-and-delete approval using its planId and a stable operationId.',
     inputSchema: {
       session_id: z.string().min(1).describe('The session id to permanently delete'),
       confirm: z
         .boolean()
         .default(false)
         .describe('Must be true to proceed — guards against accidental irreversible deletion'),
+      unbind: SessionUnbindApproval.optional().describe('Explicit approval of previewed optional module unbind steps'),
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   },
-  async ({ session_id, confirm }): Promise<ToolResult> => {
+  async ({ session_id, confirm, unbind }): Promise<ToolResult> => {
     if (!confirm) {
       return fail(
         `Refusing to purge ${session_id}: pass confirm=true to permanently delete. ` +
@@ -106,7 +108,7 @@ server.registerTool(
       );
     }
     try {
-      await intent('session/purge', { sessionId: session_id, confirm });
+      await intent('session/purge', { sessionId: session_id, confirm, ...(unbind ? { unbind } : {}) });
       return ok(`Purged ${session_id} permanently. The session is gone.`);
     } catch (e) {
       return fail(e instanceof CockpitError ? e.message : String(e));
@@ -209,7 +211,8 @@ server.registerTool(
     description:
       'Turn one MCP server on or off for a single session. Enabling connects/spawns it ' +
       'live; disabling stops it. Copilot owns the setting and its cold-resume semantics; Cockpit ' +
-      'does not save or replay an override. Native MCP reload and session resume use global defaults again. ' +
+      'does not save or replay native switch overrides. Cold resume restores explicit pinned module roles, ' +
+      'while unrelated temporary choices use native global defaults. ' +
       'Target failures return their status/error, ' +
       'and a still-settling SDK operation remains visible by operation id. Call ' +
       'cockpit_list_session_mcp first to get the exact server name.',
@@ -290,7 +293,7 @@ server.registerTool(
     title: 'Enable/disable a skill for a session',
     description:
       'Turn one skill on or off through its native session API, without a Cockpit stored override. ' +
-      'The session choice is temporary; cold resume uses native global configuration again. ' +
+      'The session choice is temporary; cold resume restores explicit module roles and otherwise uses native global configuration. ' +
       'Use skills/global-toggle via cockpit_call_intent for persistent native global configuration. ' +
       'Call cockpit_list_session_skills ' +
       'first to get the exact skill name.',

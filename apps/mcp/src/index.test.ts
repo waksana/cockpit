@@ -382,7 +382,8 @@ test('registry exposes foundation, native schedules, manual settings and files, 
   assert.equal(new Set(names).size, names.length);
   assert.equal(names.some((name) => /hook|flow|gate|spawned/.test(name)), false);
   const newSession = tools.find(({ name }) => name === 'cockpit_new_session');
-  assert.deepEqual(Object.keys(newSession?.inputSchema.properties ?? {}), ['cwd']);
+  assert.deepEqual(Object.keys(newSession?.inputSchema.properties ?? {}), ['cwd', 'modules']);
+  assert.deepEqual(newSession?.inputSchema.required, ['cwd']);
   assert.equal(requests.length, 0, 'registry construction must not read HTTP or local state');
 });
 
@@ -687,6 +688,21 @@ test('permanent delete requires explicit confirmation and retired trash tools ar
   assert.deepEqual(requests.map(r => ({ path: r.path, body: r.body })), [
     { path: '/intent/session/purge', body: { sessionId: 'B', confirm: true } },
   ]);
+});
+
+test('delete aliases forward explicit module unbind approval once without hidden preflight or retries', async () => {
+  const unbind = { planId: 'a'.repeat(64), operationId: 'approved-delete-1' };
+  for (const name of ['cockpit_delete_session', 'cockpit_purge_session']) {
+    assert.equal((await call(name, { session_id: 'B', confirm: true, unbind })).isError, false);
+  }
+  assert.deepEqual(requests.map(r => ({ path: r.path, body: r.body })), [
+    { path: '/intent/session/purge', body: { sessionId: 'B', confirm: true, unbind } },
+    { path: '/intent/session/purge', body: { sessionId: 'B', confirm: true, unbind } },
+  ]);
+  assert.equal((await call('cockpit_delete_session', {
+    session_id: 'B', confirm: true, unbind: { ...unbind, planId: 'not-a-plan' },
+  })).isError, true);
+  assert.equal(requests.length, 2);
 });
 
 test('native plan narrative, todos and panel sublabels/enabled flags render nonempty', async () => {

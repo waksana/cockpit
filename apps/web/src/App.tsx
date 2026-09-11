@@ -22,6 +22,8 @@ import { Dialog, DirectoryModal, type DialogProps } from './components/Dialog';
 import { GlobalNavigation } from './components/GlobalNavigation';
 import { sessionActionItems, type SessionActionHandlers } from './lib/sessionActions';
 import { SessionDetails } from './components/SessionDetails';
+import { SessionDeleteDialog } from './components/SessionDeleteDialog';
+import { getNewSessionStart } from './lib/sessionStart';
 
 const ManageWorkspace = lazy(() => import('./components/ManageWorkspace').then((m) => ({ default: m.ManageWorkspace })));
 const DirPicker = lazy(() => import('./components/DirPicker').then((m) => ({ default: m.DirPicker })));
@@ -47,10 +49,10 @@ function Workspace() {
   const selectMetadata = useMemo(() => createSessionMetadataSelector(), []);
   const sessions = useCockpit(selectMetadata);
   const {
-    connState, newSession, forkSession, deleteSession,
+    connState, startSession, getSessionStart, forkSession,
     setMode, pinSession, globalModels,
   } = useCockpit(useShallow((s) => ({
-    connState: s.connState, newSession: s.newSession, forkSession: s.forkSession, deleteSession: s.deleteSession,
+    connState: s.connState, startSession: s.startSession, getSessionStart: s.getSessionStart, forkSession: s.forkSession,
     setMode: s.setMode, pinSession: s.pinSession, globalModels: s.globalModels,
   })));
   const active = useMemo(
@@ -73,11 +75,13 @@ function Workspace() {
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const modeChipRef = useRef<HTMLButtonElement | null>(null);
   const [dialog, setDialog] = useState<DialogProps | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ sessionId: string; name: string } | null>(null);
   const [dirPicker, setDirPicker] = useState(false);
   const [overlayRoute, setOverlayRoute] = useState(location.key);
   if (overlayRoute !== location.key) {
     setOverlayRoute(location.key);
     setDialog(null);
+    setDeleteTarget(null);
     setDirPicker(false);
     setDetailMenuOpen(false);
     setModeMenuOpen(false);
@@ -118,7 +122,10 @@ function Workspace() {
   const notFound = !active && routeId != null && connState === 'open';
   const mobileView: 'list' | 'detail' = active || notFound ? 'detail' : 'list';
 
-  const doNewSession = () => setDirPicker(true);
+  const doNewSession = () => {
+    void getNewSessionStart().openNewForm();
+    setDirPicker(true);
+  };
   const masterHeader = (
     <header className="sidebar-header">
       <GlobalNavigation key={location.key} />
@@ -151,22 +158,8 @@ function Workspace() {
   const doDelete = (sessionId: string) => {
     const s = sessions.find((x) => x.sessionId === sessionId);
     const name = s?.title?.trim() || '该会话';
-    setDialog({
-      title: '永久删除会话',
-      message: `永久删除「${name}」及其 Copilot 会话历史，此操作不可恢复。托管文件和工作目录不会被删除。`,
-      confirmLabel: '永久删除',
-      destructive: true,
-      actionKey: `delete:${sessionId}`,
-      onConfirm: () => deleteSession(sessionId, true),
-      onSuccess: () => {
-        // Local delete of the focused session returns to the list — the URL is
-        // the source of truth. Replace so the now-deleted session isn't left in
-        // history (a back press would otherwise land on its NotFound). A remote
-        // delete has no such navigation and falls through to the NotFound pane.
-        if (routeId === sessionId) navigate('/', { replace: true });
-      },
-      onCancel: () => setDialog(null),
-    });
+    setDialog(null);
+    setDeleteTarget({ sessionId, name });
   };
   const menuHandlers: SessionActionHandlers = {
     openPanel: openDetails,
@@ -277,6 +270,12 @@ function Workspace() {
         />
       )}
       {dialog && <Dialog key={location.key} {...dialog} />}
+      {deleteTarget && <SessionDeleteDialog key={`${location.key}:${deleteTarget.sessionId}`}
+        sessionId={deleteTarget.sessionId} name={deleteTarget.name}
+        onCancel={() => setDeleteTarget(null)}
+        onSuccess={() => {
+          if (routeId === deleteTarget.sessionId) navigate('/', { replace: true });
+        }} />}
       {dirPicker && (
         <Suspense fallback={
           <DirectoryModal onCancel={() => setDirPicker(false)}>
@@ -284,7 +283,8 @@ function Workspace() {
               <button type="button" className="dialog-btn rp" onClick={() => setDirPicker(false)}>取消</button>
           </DirectoryModal>
         }>
-          <DirPicker key={location.key} onPick={newSession} onCreated={selectSession} onCancel={() => setDirPicker(false)} />
+          <DirPicker key={location.key} onStart={startSession} onReadStart={getSessionStart}
+            onCreated={selectSession} onCancel={() => setDirPicker(false)} />
         </Suspense>
       )}
       {panel && active && (

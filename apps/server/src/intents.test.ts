@@ -9,10 +9,12 @@ import {
   Intents, SessionMeta, Snapshot, ServerEvent, UploadedFile, attachmentPrompt, unreadSessionCount,
   type IntentBody, type IntentName, type PushDelivery, type PushStatus, type PushSubscriptionJson,
 } from '@cockpit/protocol';
-import type { ServerEngine, ServerPush } from './index.ts';
+import type { ServerEngine, ServerPush, ModuleIntentHandlers } from './index.ts';
 import { isIntentName } from './capabilities.ts';
 import { readNativeChat } from '../../../packages/core/src/native-chat.ts';
 import { Engine } from '../../../packages/core/src/engine.ts';
+import type { InternalSessionStart } from '../../../packages/core/src/engine.ts';
+import { SessionStartCoordinator } from '../../../packages/core/src/modules/session-start.ts';
 
 const uploadDir = relative(process.cwd(), fileURLToPath(
   new URL(`../.cockpit-intents-${process.pid}-${randomUUID()}`, import.meta.url),
@@ -24,7 +26,7 @@ process.env.COCKPIT_MAX_SSE_CLIENTS = '2';
 process.env.COCKPIT_UPLOAD_DIR = uploadDir;
 delete process.env.AZURE_SPEECH_KEY;
 delete process.env.AZURE_SPEECH_REGION;
-const { app, setTestDependencies, broadcastFrame, onEngineEvent, sessionBusy } = await import('./index.ts');
+const { app, setTestDependencies, broadcastFrame, onEngineEvent, sessionBusy, createSessionStarts } = await import('./index.ts');
 
 const calls: { method: string; args: unknown[] }[] = [];
 const pngFixture = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC1sAAAAASUVORK5CYII=', 'base64');
@@ -83,7 +85,14 @@ const engine: ServerEngine & { attentionCount(): number } = {
   rewind: async (...args) => record('rewind', args, undefined),
   setMode: async (...args) => record('setMode', args, undefined),
   deleteSession: async (...args) => record('deleteSession', args, undefined),
+  deletionPlan: async (...args) => record('deletionPlan', args, { sessionId: args[0], planId: 'a'.repeat(64), modules: [] }),
+  sessionModules: async (...args) => record('sessionModules', args, null),
+  applySessionModules: async (...args) => record('applySessionModules', args, {
+    sessionId: args[0], selections: args[1].map(selection => ({ ...selection, version: selection.version ?? '1.0.0' })),
+    phase: 'applied' as const, operationId: args[2],
+  }),
   unload: (...args) => record('unload', args, undefined),
+  load: async (...args) => record('load', args, undefined),
   reload: async (...args) => record('reload', args, undefined),
   pin: async (...args) => record('pin', args, true),
   getPlan: async (...args) => record('getPlan', args, { planMarkdown: null, todos: [] }),
@@ -175,9 +184,67 @@ const fakePush: ServerPush = {
     throw new Error('tests must not send notifications');
   },
 };
-setTestDependencies({ engine, push: fakePush });
+const moduleFixture = {
+  id: 'assistant' as const, name: 'Assistant', description: 'Test-only module',
+  installed: [{ version: '1.0.0', digest: 'a'.repeat(64) }], selectedVersion: '1.0.0',
+  roles: [], service: { ownership: 'none' as const, status: 'stopped' as const },
+};
+const moduleConfigFixture = { moduleId: 'assistant' as const, revision: 0, configVersion: 1, values: {} };
+const initializeConfigFixture = { moduleId: 'task' as const, operationId: 'module-initialize-1', version: '1.2.3',
+  digest: 'a'.repeat(64), gatewayUrl: 'https://cockpit.test', confirm: true as const };
+const initializingConfigFixture = { moduleId: initializeConfigFixture.moduleId, operationId: initializeConfigFixture.operationId,
+  version: initializeConfigFixture.version, digest: initializeConfigFixture.digest, gatewayUrl: initializeConfigFixture.gatewayUrl,
+  phase: 'preparing' as const, updatedAt: 1 };
+const localInstallFixture = { moduleId: 'assistant' as const, version: '1.0.0', digest: 'c'.repeat(64), operationId: 'local-install-1' };
+const serviceCommandFixture = { moduleId: 'task' as const, action: 'start' as const,
+  operationId: 'service-start-0001', version: '1.2.0', digest: 'b'.repeat(64) };
+const serviceJobFixture = { schemaVersion: 1 as const,
+  command: { id: 'task' as const, action: 'start' as const, operationId: 'service-start-0001', version: '1.2.0', digest: 'b'.repeat(64) },
+  phase: 'accepted' as const, step: 'queued' as const, acceptedAt: '2026-09-11T10:00:00Z', updatedAt: '2026-09-11T10:00:00Z' };
+const fakeModules: ModuleIntentHandlers = {
+  'modules/list': async body => record('modules/list', [body], { modules: [moduleFixture] }),
+  'modules/install': async body => record('modules/install', [body], { module: moduleFixture }),
+  'modules/install/local': async body => record('modules/install/local', [body], {
+    moduleId: body.moduleId, version: body.version, operationId: body.operationId, sha256: body.digest,
+    source: 'local', state: 'succeeded', updatedAt: 1, installedDigest: body.digest,
+  }),
+  'modules/uninstall': async body => record('modules/uninstall', [body], { ok: true }),
+  'modules/config/get': async body => record('modules/config/get', [body], moduleConfigFixture),
+  'modules/config/set': async body => record('modules/config/set', [body], body),
+  'modules/config/initialize': async body => record('modules/config/initialize', [body], { operation: initializingConfigFixture }),
+  'modules/config/initialization': async body => record('modules/config/initialization', [body], { operation: initializingConfigFixture }),
+  'modules/service': async body => record('modules/service', [body], { job: serviceJobFixture }),
+  'modules/service/job': async body => record('modules/service/job', [body], { job: serviceJobFixture }),
+  'modules/service/status': async body => record('modules/service/status', [body],
+    { id: body.moduleId, status: 'stopped', owned: false, recoveryRequired: false }),
+  'modules/wechat/unbind': async body => record('modules/wechat/unbind', [body], { ok: true }),
+  'modules/wechat/unbind/get': async body => record('modules/wechat/unbind/get', [body], {
+    operation: { operationId: body.operationId, sessionId: 's', state: 'succeeded' },
+  }),
+  'modules/updates/check': async body => record('modules/updates/check', [body], {
+    schemaVersion: 1, channel: 'stable', sequence: 1,
+    issuedAt: '2026-09-11T00:00:00.000Z', expiresAt: '2026-09-12T00:00:00.000Z', targets: [],
+  }),
+  'modules/updates/status': async body => record('modules/updates/status', [body], { operations: [] }),
+  'modules/updates/get': async body => record('modules/updates/get', [body], { operation: null }),
+  'modules/updates/install': async body => record('modules/updates/install', [body], {
+    ...body, state: 'unknown', updatedAt: 1,
+  }),
+  'modules/updates/reconcile': async body => record('modules/updates/reconcile', [body], {
+    moduleId: body.moduleId, operationId: body.operationId, version: '1.0.0', sha256: 'a'.repeat(64),
+    state: 'failed', updatedAt: 1, error: 'Verified target is not installed',
+  }),
+};
+const fakeStarts: Pick<SessionStartCoordinator, 'start' | 'get'> = {
+  start: async body => record('sessionStart', [body], {
+    operationId: body.operationId, sessionId: '11111111-1111-4111-8111-111111111111', state: 'accepted' as const,
+  }),
+  get: operationId => record('sessionStartGet', [operationId], null),
+};
+setTestDependencies({ engine, push: fakePush, modules: fakeModules, starts: fakeStarts });
 
 beforeEach(() => {
+  setTestDependencies({ engine, push: fakePush, modules: fakeModules, starts: fakeStarts });
   sessions = [busySession];
   calls.length = 0;
   subscriptions.clear();
@@ -196,7 +263,41 @@ after(async () => {
 type Case = { body: unknown; method: string | null; args: unknown[] };
 const cases = {
   'runtime/snapshot': { body: {}, method: 'snapshot', args: [] },
-  'session/new': { body: { cwd: '/fixture' }, method: 'newSession', args: ['/fixture'] },
+  'session/new': { body: { cwd: '/fixture' }, method: 'newSession', args: ['/fixture', undefined] },
+  'session/start': { body: { operationId: 'first-real-message', cwd: '/fixture', text: 'First user message' }, method: 'sessionStart',
+    args: [{ operationId: 'first-real-message', cwd: '/fixture', text: 'First user message' }] },
+  'session/start/get': { body: { operationId: 'first-real-message' }, method: 'sessionStartGet', args: ['first-real-message'] },
+  'session/modules/get': { body: { sessionId: 's' }, method: 'sessionModules', args: ['s'] },
+  'session/modules/apply': {
+    body: { sessionId: 's', selections: [], operationId: 'apply-modules-1' },
+    method: 'applySessionModules', args: ['s', [], 'apply-modules-1'],
+  },
+  'modules/list': { body: {}, method: 'modules/list', args: [{}] },
+  'modules/install': { body: { moduleId: 'assistant' }, method: 'modules/install', args: [{ moduleId: 'assistant' }] },
+  'modules/uninstall': { body: { moduleId: 'assistant', confirm: true }, method: 'modules/uninstall',
+    args: [{ moduleId: 'assistant', confirm: true }] },
+  'modules/config/get': { body: { moduleId: 'assistant' }, method: 'modules/config/get', args: [{ moduleId: 'assistant' }] },
+  'modules/config/set': { body: moduleConfigFixture, method: 'modules/config/set', args: [moduleConfigFixture] },
+  'modules/install/local': { body: localInstallFixture, method: 'modules/install/local', args: [localInstallFixture] },
+  'modules/config/initialize': { body: initializeConfigFixture, method: 'modules/config/initialize', args: [initializeConfigFixture] },
+  'modules/config/initialization': { body: { operationId: 'module-initialize-1' }, method: 'modules/config/initialization',
+    args: [{ operationId: 'module-initialize-1' }] },
+  'modules/service': { body: serviceCommandFixture, method: 'modules/service', args: [serviceCommandFixture] },
+  'modules/service/job': { body: { operationId: 'service-start-0001' }, method: 'modules/service/job',
+    args: [{ operationId: 'service-start-0001' }] },
+  'modules/service/status': { body: { moduleId: 'task' }, method: 'modules/service/status', args: [{ moduleId: 'task' }] },
+  'modules/wechat/unbind': { body: { sessionId: 's', operationId: 'unbind-session-1', confirm: true },
+    method: 'modules/wechat/unbind', args: [{ sessionId: 's', operationId: 'unbind-session-1', confirm: true }] },
+  'modules/wechat/unbind/get': { body: { operationId: 'unbind-session-1' },
+    method: 'modules/wechat/unbind/get', args: [{ operationId: 'unbind-session-1' }] },
+  'modules/updates/check': { body: {}, method: 'modules/updates/check', args: [{}] },
+  'modules/updates/status': { body: {}, method: 'modules/updates/status', args: [{}] },
+  'modules/updates/get': { body: { operationId: 'install-module-1' }, method: 'modules/updates/get', args: [{ operationId: 'install-module-1' }] },
+  'modules/updates/reconcile': { body: { moduleId: 'assistant', operationId: 'install-module-1', confirm: true },
+    method: 'modules/updates/reconcile', args: [{ moduleId: 'assistant', operationId: 'install-module-1', confirm: true }] },
+  'modules/updates/install': { body: { moduleId: 'assistant', version: '1.0.0', sha256: 'a'.repeat(64), operationId: 'install-module-1' },
+    method: 'modules/updates/install',
+    args: [{ moduleId: 'assistant', version: '1.0.0', sha256: 'a'.repeat(64), operationId: 'install-module-1' }] },
   'session/fork': { body: { sessionId: 's', toEventId: 'user-event', name: 'Child' }, method: 'forkSession', args: ['s', 'user-event', 'Child'] },
   'session/chat': {
     body: Intents['session/chat'].body.parse({ sessionId: 's', cursor: 'native-before', max: 12 }),
@@ -211,9 +312,11 @@ const cases = {
   'session/compact': { body: { sessionId: 's', customInstructions: 'keep context' }, method: 'compact', args: ['s', 'keep context'] },
   'session/rewind': { body: { sessionId: 's', toMsgId: 'm', rollbackFiles: true }, method: 'rewind', args: ['s', 'm', true] },
   setMode: { body: { sessionId: 's', mode: 'plan' }, method: 'setMode', args: ['s', 'plan'] },
-  'session/delete': { body: { sessionId: 's', confirm: true }, method: 'deleteSession', args: ['s', true] },
-  'session/purge': { body: { sessionId: 's', confirm: true }, method: 'deleteSession', args: ['s', true] },
+  'session/delete/preview': { body: { sessionId: 's' }, method: 'deletionPlan', args: ['s'] },
+  'session/delete': { body: { sessionId: 's', confirm: true }, method: 'deleteSession', args: ['s', true, undefined] },
+  'session/purge': { body: { sessionId: 's', confirm: true }, method: 'deleteSession', args: ['s', true, undefined] },
   'session/unload': { body: { sessionId: 's' }, method: 'unload', args: ['s'] },
+  'session/load': { body: { sessionId: 's' }, method: 'load', args: ['s'] },
   'session/reload': { body: { sessionId: 's' }, method: 'reload', args: ['s'] },
   'session/pin': { body: { sessionId: 's', pinned: true }, method: 'pin', args: ['s', true] },
   'session/plan': { body: { sessionId: 's' }, method: 'getPlan', args: ['s'] },
@@ -276,6 +379,7 @@ for (const [name, fixture] of Object.entries(cases)) {
     assert.deepEqual(effects, fixture.method ? [{ method: fixture.method, args: fixture.args }] : []);
     if (name === 'runtime/snapshot') assert.deepEqual(response.json(), projectedSnapshot());
     if (name === 'session/chat') assert.deepEqual(response.json(), historyPage);
+    if (name === 'session/load') assert.deepEqual(response.json(), { ok: true, sessionId: 's' });
     if (name === 'session/chat') {
       assert.equal(response.headers['cache-control'], 'private, no-store');
       assert.equal(response.headers['x-content-type-options'], 'nosniff');
@@ -284,6 +388,18 @@ for (const [name, fixture] of Object.entries(cases)) {
     if (name === 'speech/token') assert.deepEqual(response.json(), { enabled: false });
   });
 }
+
+test('session/load surfaces readiness failure without reload, prompt or replacement fallback', async t => {
+  const load = t.mock.method(engine, 'load', async () => {
+    throw Object.assign(new Error('Readiness remains unconfirmed'), { statusCode: 409, code: 'LOAD_UNCONFIRMED' });
+  });
+  const response = await app.inject({ method: 'POST', url: '/intent/session/load', payload: { sessionId: 's' } });
+  assert.equal(response.statusCode, 409);
+  assert.notEqual(response.json().ok, true);
+  assert.equal(load.mock.callCount(), 1);
+  assert.deepEqual(load.mock.calls[0]?.arguments, ['s']);
+  assert.deepEqual(calls, []);
+});
 
 function directoryFixture(t: TestContext) {
   const root = join(process.cwd(), `.cockpit-directories-${randomUUID()}`);
@@ -1064,6 +1180,14 @@ test('session/interrupt awaits native outcome and propagates uncertain failure w
 });
 
 for (const name of ['session/delete', 'session/purge']) {
+  test(`${name} forwards explicit module unbind approval without an implicit retry`, async () => {
+    const unbind = { planId: 'a'.repeat(64), operationId: 'unbind-delete-1' };
+    const response = await app.inject({
+      method: 'POST', url: `/intent/${name}`, payload: { sessionId: 's', confirm: true, unbind },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(calls, [{ method: 'deleteSession', args: ['s', true, unbind] }]);
+  });
   test(`${name} requires protocol confirm:true and never reaches the engine otherwise`, async () => {
     for (const confirm of [undefined, false, 'true', 1, null]) {
       calls.length = 0;
@@ -1085,12 +1209,12 @@ test('old soft-delete requests cannot silently become permanent deletion', async
   }
 });
 
-test('session/new passes only cwd, even when an obsolete worker label is supplied', async () => {
+test('session/new does not pass an obsolete worker label as module selection', async () => {
   const body = { cwd: '/fixture', spawnedBy: 'obsolete' };
   const response = await app.inject({ method: 'POST', url: '/intent/session/new', payload: body });
   if (Intents['session/new'].body.safeParse(body).success) {
     assert.equal(response.statusCode, 200, response.body);
-    assert.deepEqual(calls, [{ method: 'newSession', args: ['/fixture'] }]);
+    assert.deepEqual(calls, [{ method: 'newSession', args: ['/fixture', undefined] }]);
   } else {
     assert.equal(response.statusCode, 400, response.body);
     assert.deepEqual(calls, []);
@@ -1134,6 +1258,148 @@ async function upload(name: string, mime: string, bytes = Buffer.from('fixture b
   assert.equal(relative(process.cwd(), file.path), join(uploadDir, basename(file.path)));
   return file;
 }
+
+function firstMessageServerFixture(t: TestContext) {
+  const root = join(process.cwd(), `.session-start-server-${randomUUID()}`);
+  mkdirSync(root, { mode: 0o700 });
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const userRoot = join(root, 'u'), received: InternalSessionStart[] = [];
+  const effects = { creates: 0, sends: 0 };
+  let paused: Promise<unknown> | undefined, failSend = false;
+  const started = deferred();
+  const native = { async startSession(input: InternalSessionStart): Promise<{ ok: true }> {
+    received.push(input);
+    await input.beforeCreate?.(input.sessionId);
+    effects.creates++;
+    writeFileSync(join(root, `${input.sessionId}.created`), 'one native creation');
+    started.resolve();
+    if (paused) await paused;
+    effects.sends++;
+    if (failSend) throw new Error('First message acceptance was lost');
+    return { ok: true };
+  } };
+  const starts = createSessionStarts(native, userRoot);
+  setTestDependencies({ engine, push: fakePush, modules: fakeModules, starts });
+  return { root, userRoot, native, starts, received, effects, started,
+    pause(value: Promise<unknown>) { paused = value; }, fail() { failSend = true; } };
+}
+
+test('session/start validates real content and retained files before any planned/native identity', async t => {
+  const f = firstMessageServerFixture(t);
+  for (const body of [
+    { text: '' }, { text: ' \n ' }, { text: '', parts: [{ type: 'text', text: '\t ' }] },
+    { text: 'real', sessionId: randomUUID() },
+    { text: '', attachment: { kind: 'file', name: 'secret', url: 'file:///etc/passwd' } },
+  ]) {
+    const response = await app.inject({ method: 'POST', url: '/intent/session/start',
+      payload: { operationId: 'invalid-first-message', cwd: f.root, ...body } });
+    assert.equal(response.statusCode, 400, response.body);
+  }
+  const missing = await app.inject({ method: 'POST', url: '/intent/session/start',
+    payload: { operationId: 'missing-first-file', cwd: f.root, text: '', attachment: { kind: 'file', name: 'missing', url: '/uploads/missing.txt' } } });
+  assert.equal(missing.statusCode, 404, missing.body);
+  assert.deepEqual(f.effects, { creates: 0, sends: 0 });
+  assert.equal(existsSync(f.userRoot), false);
+  const read = await app.inject({ method: 'POST', url: '/intent/session/start/get', payload: { operationId: 'missing-first-file' } });
+  assert.deepEqual(read.json(), { operation: null });
+  assert.equal(existsSync(f.userRoot), false);
+});
+
+test('session/start resolves authoritative attachment metadata, associates planned identity, and sends exactly once', async t => {
+  const f = firstMessageServerFixture(t);
+  const file = await upload('authoritative-first-image.png', 'image/png', pngFixture);
+  const body = { operationId: 'first-image-operation', cwd: f.root, modules: [{ moduleId: 'assistant', roleId: 'assistant' }], text: '',
+    parts: [{ type: 'text', text: 'Before\n' }, { type: 'file', attachment: { kind: 'file', name: 'forged.txt',
+      url: file.url, path: '/etc/passwd', mime: 'text/plain', size: 1 } }, { type: 'text', text: '\nAfter' }] };
+  const first = await app.inject({ method: 'POST', url: '/intent/session/start', payload: body });
+  assert.equal(first.statusCode, 200, first.body);
+  const operation = first.json().operation;
+  assert.equal(operation.state, 'accepted');
+  assert.equal(f.received[0]?.sessionId, operation.sessionId);
+  assert.deepEqual(f.received[0]?.attachments, [{ type: 'file', path: file.path, displayName: file.name }]);
+  assert.ok(f.received[0]?.text.startsWith('Before\n<cockpit-attachment'));
+  assert.ok(f.received[0]?.text.endsWith('\nAfter'));
+  assert.ok(f.received[0]?.text.includes('kind="image"'));
+  assert.equal(f.received[0]?.text.includes('forged.txt'), false);
+  const details = await app.inject({ method: 'POST', url: '/intent/files/get', payload: { url: file.url } });
+  assert.ok(details.json().sessions.includes(operation.sessionId));
+  assert.deepEqual((await app.inject({ method: 'POST', url: '/intent/session/start', payload: body })).json(), first.json());
+  assert.deepEqual((await app.inject({ method: 'POST', url: '/intent/session/start/get', payload: { operationId: body.operationId } })).json(), first.json());
+  assert.deepEqual(f.effects, { creates: 1, sends: 1 });
+  const changed = await app.inject({ method: 'POST', url: '/intent/session/start',
+    payload: { ...body, parts: [{ type: 'text', text: 'different request' }] } });
+  assert.equal(changed.statusCode, 409);
+  assert.equal(changed.json().code, 'SESSION_START_CONFLICT');
+  assert.deepEqual(f.effects, { creates: 1, sends: 1 });
+});
+
+test('session/start supports file-only and attachment-array forms without manufacturing first-message text', async t => {
+  const f = firstMessageServerFixture(t);
+  const file = await upload('file-only.txt', 'text/plain');
+  for (const [operationId, content] of [
+    ['single-first-file', { attachment: file }],
+    ['array-first-file', { attachments: [file] }],
+  ] as const) {
+    const response = await app.inject({ method: 'POST', url: '/intent/session/start', payload: {
+      operationId, cwd: f.root, text: '', ...content,
+    } });
+    assert.equal(response.statusCode, 200, response.body);
+  }
+  assert.deepEqual(f.effects, { creates: 2, sends: 2 });
+  assert.ok(f.received.every(input => input.text.startsWith('<cockpit-attachment')));
+  assert.ok(f.received.every(input => input.attachments?.length === 1));
+});
+
+test('session/start corrupted managed original fails before claim rather than creating an empty native session', async t => {
+  const f = firstMessageServerFixture(t);
+  const file = await upload('corrupt-first.txt', 'text/plain');
+  writeFileSync(file.path, 'tampered original');
+  const response = await app.inject({ method: 'POST', url: '/intent/session/start', payload: {
+    operationId: 'corrupt-first-file', cwd: f.root, text: '', attachment: file,
+  } });
+  assert.equal(response.statusCode, 500, response.body);
+  assert.equal(existsSync(f.userRoot), false);
+  assert.deepEqual(f.effects, { creates: 0, sends: 0 });
+});
+
+test('session/start failure returns inspectable unknown operation and retains artifacts without retry', async t => {
+  const f = firstMessageServerFixture(t);
+  const file = await upload('retained-first.txt', 'text/plain');
+  const body = { operationId: 'lost-first-acceptance', cwd: f.root, text: 'private first-message content', attachment: file };
+  f.fail();
+  const response = await app.inject({ method: 'POST', url: '/intent/session/start', payload: body });
+  assert.equal(response.statusCode, 409, response.body);
+  assert.equal(response.json().code, 'SESSION_START_UNKNOWN');
+  assert.equal(response.json().operation.state, 'unknown');
+  assert.equal(response.json().sessionId, response.json().operation.sessionId);
+  const result = await app.inject({ method: 'POST', url: '/intent/session/start/get', payload: { operationId: body.operationId } });
+  assert.deepEqual(result.json(), { operation: response.json().operation });
+  const duplicate = await app.inject({ method: 'POST', url: '/intent/session/start', payload: body });
+  assert.deepEqual(duplicate.json(), result.json());
+  assert.deepEqual(f.effects, { creates: 1, sends: 1 });
+  const stored = await app.inject({ method: 'POST', url: '/intent/files/get', payload: { url: file.url } });
+  assert.ok(stored.json().sessions.includes(response.json().sessionId));
+  assert.equal(readFileSync(join(f.userRoot, 'session-starts', `${body.operationId}.json`), 'utf8').includes(body.text), false);
+});
+
+test('session/start remains server lifecycle busy through preparation and duplicate readback is non-dispatching', async t => {
+  const f = firstMessageServerFixture(t), pending = deferred();
+  f.pause(pending.promise);
+  t.mock.method(engine, 'busyCount', async () => 0);
+  const body = { operationId: 'busy-first-message', cwd: f.root, text: 'Real first input' };
+  const first = app.inject({ method: 'POST', url: '/intent/session/start', payload: body });
+  await f.started.promise;
+  try {
+    assert.equal((await app.inject({ method: 'GET', url: '/admin/lifecycle' })).json().busy, 1);
+    const duplicate = await app.inject({ method: 'POST', url: '/intent/session/start', payload: body });
+    assert.equal(duplicate.statusCode, 200, duplicate.body);
+    assert.equal(duplicate.json().operation.state, 'creating');
+    assert.deepEqual(f.effects, { creates: 1, sends: 0 });
+  } finally { pending.resolve(); }
+  assert.equal((await first).json().operation.state, 'accepted');
+  assert.equal((await app.inject({ method: 'GET', url: '/admin/lifecycle' })).json().busy, 0);
+  assert.deepEqual(f.effects, { creates: 1, sends: 1 });
+});
 
 test('managed files preserve originals, source identity, session associations and safe seek downloads', async () => {
   const bytes = Buffer.concat([Buffer.from('000000186674797069736f6d0000000069736f6d6d703432', 'hex'), Buffer.alloc(160, 7)]);

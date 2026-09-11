@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "dataCompatibility": "cockpit-user-root-v1",
+  "automaticDataMigrations": false,
+  "moduleRunnerApi": 1
+}

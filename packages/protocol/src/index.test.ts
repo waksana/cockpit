@@ -19,6 +19,18 @@ import {
   type IntentResult,
 } from './index.ts';
 
+test('session/load accepts only an existing target selector and a positive identity receipt', () => {
+  const schema = Intents['session/load'];
+  assert.deepEqual(schema.body.parse({ sessionId: 'original' }), { sessionId: 'original' });
+  for (const body of [{ sessionId: '' }, { sessionId: 'original', cwd: '/replacement' },
+    { sessionId: 'original', text: 'Do not send' }, { sessionId: 'original', create: true }]) {
+    assert.equal(schema.body.safeParse(body).success, false);
+  }
+  assert.equal(schema.result.safeParse({ ok: true, sessionId: 'original' }).success, true);
+  assert.equal(schema.result.safeParse({ ok: true }).success, false);
+  assert.equal(schema.result.safeParse({ ok: false, sessionId: 'original' }).success, false);
+});
+
 test('native chat rejects retired message-ID and resume-token selectors instead of simulating a seek', () => {
   const schema = Intents['session/chat'].body;
   for (const selector of [{ resume: {} }, { beforeMsgId: 'a' }, { afterMsgId: 'b' }, { details: 'full' }]) {
@@ -444,11 +456,71 @@ const nativePage: Protocol.NativeChatPage = {
   events: [{ id: 'event', type: 'assistant.message', data: { messageId: 'm1', content: 'Answer' } }],
   cursor: 'native-next', cursorStatus: 'ok', hasMore: true, read: { rpc: 1, events: 1 },
 };
+const moduleConfig = { moduleId: 'assistant', revision: 0, configVersion: 1, values: {} } satisfies Protocol.ModuleConfig;
+const moduleStatus = { id: 'assistant', name: 'Assistant', description: 'Role only', installed: [], selectedVersion: null,
+  roles: [], service: { ownership: 'none', status: 'stopped' } } satisfies Protocol.ModuleStatus;
+const serviceCommand = { id: 'task', action: 'start', operationId: 'service-start-0001',
+  version: '1.2.0', digest: 'a'.repeat(64) } satisfies Protocol.ModuleServiceCommand;
+const serviceJob = { schemaVersion: 1, command: serviceCommand, phase: 'accepted', step: 'queued',
+  acceptedAt: '2026-09-11T10:00:00Z', updatedAt: '2026-09-11T10:00:00Z' } satisfies Protocol.ModuleServiceJob;
+const moduleBinding = { ...sid, selections: [], phase: 'applied', operationId: 'module-apply-0001' } satisfies Protocol.SessionModules;
+const initializeConfig = { moduleId: 'task', operationId: 'module-initialize-1', version: '1.2.3',
+  digest: 'a'.repeat(64), gatewayUrl: 'https://cockpit.test', confirm: true } satisfies Protocol.ModuleInitializationRequest;
+const initializingConfig = { moduleId: initializeConfig.moduleId, operationId: initializeConfig.operationId,
+  version: initializeConfig.version, digest: initializeConfig.digest, gatewayUrl: initializeConfig.gatewayUrl,
+  phase: 'preparing', updatedAt: 1 } satisfies Protocol.ModuleInitializationOperation;
+
+test('module initialization requires explicit fixed release identity and a canonical HTTPS origin', () => {
+  const schema = Protocol.Intents['modules/config/initialize'].body;
+  assert.equal(schema.safeParse(initializeConfig).success, true);
+  for (const changed of [
+    { confirm: false }, { moduleId: 'assistant' }, { moduleId: 'wechat' },
+    { version: undefined }, { digest: undefined }, { operationId: '' },
+    { gatewayUrl: 'invalid-url' }, { gatewayUrl: 'http://cockpit.test' }, { gatewayUrl: 'https://cockpit.test/modules/task' },
+    { gatewayUrl: 'https://user:secret@cockpit.test' },
+    { dataDirectory: '/existing/private/data' }, { command: 'sh' }, { force: true },
+  ]) assert.equal(schema.safeParse({ ...initializeConfig, ...changed }).success, false);
+});
+const startOperation = { operationId: 'session-start-0001', sessionId: '00000000-0000-4000-8000-000000000001',
+  state: 'accepted' } satisfies Protocol.SessionStartOperation;
 
 // Each retained intent must have a lossless body AND result fixture.
 const intentFixtures = {
   'runtime/snapshot': { body: {}, result: snapshot },
   'session/new': { body: { cwd: minimalMeta.cwd }, result: sid },
+  'session/start': { body: { operationId: startOperation.operationId, cwd: minimalMeta.cwd, text: 'First message' }, result: { operation: startOperation } },
+  'session/start/get': { body: { operationId: startOperation.operationId }, result: { operation: startOperation } },
+  'session/modules/get': { body: sid, result: { modules: moduleBinding } },
+  'session/modules/apply': { body: { ...sid, selections: [], operationId: moduleBinding.operationId }, result: { modules: moduleBinding } },
+  'session/delete/preview': { body: sid, result: { plan: { ...sid, planId: 'a'.repeat(64), modules: [] } } },
+  'modules/updates/check': { body: {}, result: { schemaVersion: 1, channel: 'stable', sequence: 1,
+    issuedAt: '2026-09-11T10:00:00Z', expiresAt: '2026-10-11T10:00:00Z', targets: [] } },
+  'modules/updates/status': { body: {}, result: { operations: [] } },
+  'modules/updates/get': { body: { operationId: 'module-install-0001' }, result: { operation: null } },
+  'modules/updates/reconcile': { body: { moduleId: 'assistant', operationId: 'module-install-0001', confirm: true },
+    result: { moduleId: 'assistant', version: '1.0.0', sha256: 'a'.repeat(64), operationId: 'module-install-0001',
+      state: 'failed', updatedAt: 1, error: 'Verified target is not installed' } },
+  'modules/updates/install': { body: { moduleId: 'assistant', version: '1.0.0', sha256: 'a'.repeat(64), operationId: 'module-install-0001' },
+    result: { moduleId: 'assistant', version: '1.0.0', sha256: 'a'.repeat(64), operationId: 'module-install-0001',
+      state: 'succeeded', updatedAt: 1, installedDigest: 'b'.repeat(64) } },
+  'modules/list': { body: {}, result: { modules: [moduleStatus] } },
+  'modules/install': { body: { moduleId: 'assistant' }, result: { module: moduleStatus } },
+  'modules/uninstall': { body: { moduleId: 'assistant', confirm: true }, result: { ok: true } },
+  'modules/config/get': { body: { moduleId: 'assistant' }, result: moduleConfig },
+  'modules/config/set': { body: moduleConfig, result: moduleConfig },
+  'modules/install/local': { body: { moduleId: 'assistant', version: '1.0.0', digest: 'c'.repeat(64), operationId: 'local-install-1' },
+    result: { moduleId: 'assistant', version: '1.0.0', sha256: 'c'.repeat(64), operationId: 'local-install-1',
+      source: 'local', state: 'succeeded', updatedAt: 1, installedDigest: 'c'.repeat(64) } },
+  'modules/config/initialize': { body: initializeConfig, result: { operation: initializingConfig } },
+  'modules/config/initialization': { body: { operationId: initializeConfig.operationId }, result: { operation: initializingConfig } },
+  'modules/service': { body: { moduleId: 'task', action: 'start', operationId: serviceCommand.operationId,
+    version: serviceCommand.version, digest: serviceCommand.digest }, result: { job: serviceJob } },
+  'modules/service/job': { body: { operationId: serviceCommand.operationId }, result: { job: serviceJob } },
+  'modules/service/status': { body: { moduleId: 'task' },
+    result: { id: 'task', status: 'stopped', owned: false, recoveryRequired: false, job: serviceJob } },
+  'modules/wechat/unbind': { body: { ...sid, operationId: 'wechat-unbind-0001', confirm: true }, result: { ok: true } },
+  'modules/wechat/unbind/get': { body: { operationId: 'wechat-unbind-0001' },
+    result: { operation: { ...sid, operationId: 'wechat-unbind-0001', state: 'succeeded' } } },
   'session/fork': { body: { sessionId: 'parent', toEventId: 'user-event', name: 'Child' }, result: sid },
   'session/chat': { body: { ...sid, source: 'persisted', direction: 'backward', max: 64, waitMs: 0, bootstrap: false }, result: nativePage },
   'files/list': { body: { query: 'file', limit: 1, offset: 0 }, result: { files: [], hasMore: false } },
@@ -467,6 +539,7 @@ const intentFixtures = {
   setMode: { body: { ...sid, mode: 'plan' }, result: ok },
   'session/delete': { body: { ...sid, confirm: true }, result: ok },
   'session/unload': { body: sid, result: ok },
+  'session/load': { body: sid, result: { ok: true, ...sid } },
   'session/reload': { body: sid, result: ok },
   'session/pin': { body: { ...sid, pinned: true }, result: { ...ok, pinned: true } },
   'session/plan': { body: sid, result: plan },
@@ -585,9 +658,10 @@ test('session/fork uses strict native fields and never accepts cwd or blank boun
   }
 });
 
-test('session/new requires only a string cwd and strips legacy or unknown extras', () => {
+test('session/new preserves explicit optional module roles and strips unrelated legacy extras', () => {
   const schema = Intents['session/new'].body;
-  assert.deepEqual(Object.keys(schema.shape), ['cwd']);
+  assert.deepEqual(Object.keys(schema.shape), ['cwd', 'modules']);
+  roundTrip(schema, { cwd: '/workspace/project', modules: [{ moduleId: 'assistant', roleId: 'assistant', version: '1.0.0' }] });
   for (const cwd of ['/workspace/project', 'relative/path', '']) {
     roundTrip(schema, { cwd });
     assert.deepEqual(schema.parse({
@@ -600,6 +674,22 @@ test('session/new requires only a string cwd and strips legacy or unknown extras
   for (const value of [{}, null, [], { cwd: undefined }, { cwd: null }, { cwd: false }, { cwd: 1 }, { cwd: [] }, { cwd: {} }]) {
     assert.equal(schema.safeParse(value).success, false, JSON.stringify(value));
   }
+});
+
+test('managed service mutations pin targets and never accept force or caller launch commands', () => {
+  const schema = Intents['modules/service'].body;
+  const base = { moduleId: 'task', operationId: 'service-start-0001', action: 'start' };
+  assert.equal(schema.safeParse(base).success, false);
+  assert.equal(schema.safeParse({ ...base, version: '1.2.0' }).success, false);
+  roundTrip(schema, { ...base, version: '1.2.0', digest: 'a'.repeat(64) });
+  roundTrip(schema, { ...base, action: 'stop' });
+  roundTrip(schema, { ...base, action: 'stop', recoveryOf: 'prior-service-operation', confirmRecovery: true });
+  for (const body of [
+    { ...base, action: 'stop', force: true }, { ...base, action: 'stop', version: '1.2.0' },
+    { ...base, action: 'stop', command: 'node arbitrary.js' }, { ...base, action: 'stop', moduleId: 'assistant' },
+    { ...base, action: 'stop', recoveryOf: 'prior-service-operation' },
+    { ...base, action: 'start', version: '1.2.0', digest: 'a'.repeat(64), recoveryOf: 'prior-service-operation', confirmRecovery: true },
+  ]) assert.equal(schema.safeParse(body).success, false);
 });
 
 test('session/purge requires sessionId and literal confirm:true without coercion', () => {
@@ -1090,8 +1180,8 @@ type SlimContractGuards = [
   Expect<Equal<Extract<keyof SessionMeta, RemovedMetaField>, never>>,
   Expect<Equal<Extract<keyof SessionBrief, RemovedMetaField>, never>>,
   Expect<Equal<Extract<keyof Extract<Protocol.ServerEvent, { type: 'session/patch' }>, RemovedMetaField>, never>>,
-  Expect<Equal<IntentBody<'session/new'>, { cwd: string }>>,
-  Expect<Equal<IntentBody<'session/purge'>, { sessionId: string; confirm: true }>>,
+  Expect<Equal<IntentBody<'session/new'>, { cwd: string; modules?: Protocol.ModuleSelection[] }>>,
+  Expect<Equal<IntentBody<'session/purge'>, { sessionId: string; confirm: true; unbind?: Protocol.SessionUnbindApproval }>>,
   Expect<Equal<IntentBody<'session/chat'>, Protocol.NativeChatRead>>,
   Expect<Equal<IntentBody<'skills/global'>, { cwd?: string }>>,
   Expect<Equal<IntentBody<'prompt'>, { sessionId: string; text: string; mode?: 'enqueue' | 'immediate';

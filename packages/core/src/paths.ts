@@ -1,6 +1,6 @@
 // paths.ts — the single source of truth for cockpit's state root.
 //
-// Everything cockpit persists lives under one directory: cockpit-prefs.json,
+// Native storage and legacy Cockpit metadata live under this directory: cockpit-prefs.json,
 // flows/, mcp-config.json, session-state/, cockpit-uploads/, session-store.db, and
 // the skills dir. That root defaults to ~/.copilot — resolved with homedir() so it
 // is correct on every OS (USERPROFILE on Windows, $HOME on POSIX), never a
@@ -11,6 +11,8 @@
 // COCKPIT_UPLOAD_DIR(S), COCKPIT_SESSION_STORE, COCKPIT_SESSION_STATE_DIR, …) which
 // take precedence where set; COCKPIT_HOME only moves the default base they fall back
 // to. Read at call time so a test or launcher can set COCKPIT_HOME before use.
+// Official module programs/config/data use the separate COCKPIT_USER_ROOT
+// (default ~/.cockpit). Installing modules does not migrate this native root.
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';

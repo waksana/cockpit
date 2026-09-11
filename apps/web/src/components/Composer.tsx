@@ -32,11 +32,12 @@ interface ComposerProps {
   onSend: () => Promise<boolean>;
   uploadFile?: UploadFile;
   attachmentBlocked?: boolean;
+  sendBlocked?: boolean;
   onFocusPin?: () => void;
 }
 
 export function Composer({
-  disabled, busy, placeholder, draft, onSend, uploadFile, attachmentBlocked, onFocusPin,
+  disabled, busy, placeholder, draft, onSend, uploadFile, attachmentBlocked, sendBlocked, onFocusPin,
 }: ComposerProps) {
   const snapshot = useSyncExternalStore(
     draft.subscribe, draft.getSnapshot, draft.getSnapshot,
@@ -72,7 +73,7 @@ export function Composer({
 
   async function submit() {
     const submitted = draft.getSnapshot();
-    if (disabled || submitted.pending || !ownerRef.current
+    if (disabled || sendBlocked || submitted.pending || !ownerRef.current
       || (attachmentBlocked && submitted.staged)) return;
     const owner = ownerRef.current;
     const sent = await onSend();
@@ -112,7 +113,7 @@ export function Composer({
   }
 
   const canSend = (text.trim().length > 0 || attachments.length > 0)
-    && attachments.every(item => item.status === 'ready' && !attachmentBlocked) && !disabled && !pending;
+    && attachments.every(item => item.status === 'ready' && !attachmentBlocked) && !disabled && !sendBlocked && !pending;
 
   function pickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);

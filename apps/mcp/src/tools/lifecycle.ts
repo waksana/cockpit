@@ -1,6 +1,7 @@
 // Lifecycle tools: create, permanently delete, unload, and reload sessions.
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { ModuleSelections, SessionUnbindApproval } from '@cockpit/protocol';
 import { CockpitError, protocolIntent as intent } from '../cockpit.js';
 import { ok, fail, type ToolResult } from '../shared.js';
 
@@ -13,17 +14,23 @@ export function registerLifecycleTools(server: McpServer): void {
       description:
         'Create a new Copilot session rooted at a working directory (its cwd, which sets the ' +
         'project identity and which AGENTS.md/skills apply). Returns the new session id. ' +
-        'Native idle cleanup may unload it later; a prompt or explicit reload resumes it. ' +
+        'This is the low-level native creation primitive: an empty session with no first message may not survive unload. ' +
+        'For first-message creation, use session/start via cockpit_call_intent with a stable operationId and real text/files; ' +
+        'it prepares selected roles before submitting that first message. Inspect session/start/get after an uncertain result. ' +
+        'A persisted session can be resumed with its original ID; a missing one is never silently recreated. ' +
+        'Optional modules explicitly compose installed roles without global injection. Inspect modules/list before selecting. ' +
+        'Module failure retains a session/operation identity; inspect it rather than recreating blindly. ' +
         'Reading history does not load a runtime. Use cockpit_list_dir to pick a cwd.',
       inputSchema: {
         cwd: z.string().min(1).describe('Absolute working directory for the new session'),
+        modules: ModuleSelections.optional().describe('Explicit installed module roles; omitted means no module role'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ cwd }): Promise<ToolResult> => {
+    async ({ cwd, modules }): Promise<ToolResult> => {
       try {
         const res = await intent('session/new', {
-          cwd,
+          cwd, ...(modules ? { modules } : {}),
         });
         return ok(
           `Created session ${res.sessionId} (cwd: ${cwd}).`,
@@ -42,20 +49,25 @@ export function registerLifecycleTools(server: McpServer): void {
       description:
         'IRREVERSIBLE. Delete a session through the public native Copilot deleteSession API. ' +
         'Only run when permanent deletion is intended, with explicit confirm:true. ' +
-        'Managed files, associations and workspaces are retained. Busy sessions are protected. ' +
+        'Managed files, file associations and workspaces are retained. Busy sessions are protected. ' +
+        'If associated modules declare unbind, first read session/delete/preview via cockpit_call_intent, ' +
+        'then supply unbind with that planId and a stable operationId after explicit unbind-and-delete confirmation. ' +
+        'Modules without this capability receive no hook or notification. ' +
         'Never automatically retry an uncertain result.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id to permanently delete'),
         confirm: z.literal(true).describe('Explicit confirmation of irreversible native deletion; required'),
+        unbind: SessionUnbindApproval.optional().describe('Explicit approval of the previewed optional module unbind steps'),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ session_id, confirm }): Promise<ToolResult> => {
+    async ({ session_id, confirm, unbind }): Promise<ToolResult> => {
       try {
         // Retain the already-destructive wire name across staggered deployments.
         await intent('session/purge', {
           sessionId: session_id,
           confirm,
+          ...(unbind ? { unbind } : {}),
         });
         return ok(`Deleted ${session_id} permanently. Managed files and workspaces are retained.`);
       } catch (e) {

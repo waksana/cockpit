@@ -22,6 +22,12 @@ export interface SessionDraftSnapshot {
   error?: string;
 }
 
+export interface DraftSubmission {
+  text: string;
+  revision: number;
+  attachments: { generation: number; url: string }[];
+}
+
 type DraftStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 export type UploadFile = (file: File) => Promise<UploadedFile>;
 export type SendPrompt = (text: string, attachment?: Attachment, attachments?: Attachment[]) => Promise<boolean>;
@@ -46,9 +52,12 @@ export class SessionDraft {
   private selectedFiles = new Map<number, File>();
   private readonly key: string;
   private readonly storage?: DraftStorage;
+  private readonly options: { persistRevisions?: boolean; associateUploads?: boolean };
   readonly sessionId: string;
 
-  constructor(sessionId: string, storage?: DraftStorage) {
+  constructor(sessionId: string, storage?: DraftStorage,
+    options: { persistRevisions?: boolean; associateUploads?: boolean } = {}) {
+    this.options = options;
     this.sessionId = sessionId;
     this.key = `cockpit:composer:${sessionId}`;
     this.storage = storage;
@@ -64,13 +73,23 @@ export class SessionDraft {
         const value = JSON.parse(stored);
         if (value?.version === 1 && typeof value.text === 'string') {
           this.snapshot.text = value.text;
+          if (options.persistRevisions && Number.isSafeInteger(value.revision) && value.revision >= 0) {
+            this.snapshot.revision = value.revision;
+          }
+          if (options.persistRevisions && Number.isSafeInteger(value.generation) && value.generation >= 0) {
+            this.generation = value.generation;
+          }
           if (value.pending) this.snapshot.error = UNCONFIRMED;
           // Cached metadata is GUI state, never a server filesystem authority.
           if (value.attachments || value.attachment) {
             const attachments = (value.attachments ?? [value.attachment]).slice(0, 20)
-              .map((file: Attachment) => {
+              .map((file: Attachment, index: number) => {
                 const attachment = uploadedAttachment(file);
-                return { ...attachment, attachment, generation: ++this.generation, status: 'ready' as const };
+                const storedGeneration = options.persistRevisions ? value.attachmentGenerations?.[index] : undefined;
+                const generation = Number.isSafeInteger(storedGeneration) && storedGeneration > 0
+                  ? storedGeneration : ++this.generation;
+                this.generation = Math.max(this.generation, generation);
+                return { ...attachment, attachment, generation, status: 'ready' as const };
               });
             this.snapshot.staged = attachments[0];
             if (attachments.length > 1) this.snapshot.stagedAttachments = attachments;
@@ -96,6 +115,10 @@ export class SessionDraft {
         attachment: this.snapshot.staged?.attachment,
         attachments: this.snapshot.stagedAttachments?.flatMap(item => item.attachment ? [item.attachment] : []),
         pending: this.snapshot.pending,
+        ...(this.options.persistRevisions ? {
+          revision: this.snapshot.revision, generation: this.generation,
+          attachmentGenerations: stagedAttachments(this.snapshot).filter(item => item.attachment).map(item => item.generation),
+        } : {}),
       }));
     } catch { /* Keep the in-memory session owner when browser storage is unavailable. */ }
     for (const listener of this.listeners) listener();
@@ -133,7 +156,7 @@ export class SessionDraft {
     return this.addAttachment(file, upload);
   };
 
-  addAttachment = async (file: File, upload: UploadFile = (file) => uploadFile(file, this.sessionId)): Promise<boolean> => {
+  addAttachment = async (file: File, upload: UploadFile = (file) => uploadFile(file, this.options.associateUploads === false ? undefined : this.sessionId)): Promise<boolean> => {
     if (stagedAttachments(this.snapshot).length >= 20) {
       this.update({ error: '最多暂存 20 个附件，请先移除部分附件。' });
       return false;
@@ -150,7 +173,7 @@ export class SessionDraft {
     return this.uploadStaged(file, staged, upload);
   };
 
-  retryAttachment = async (generation: number, upload: UploadFile = (file) => uploadFile(file, this.sessionId)): Promise<boolean> => {
+  retryAttachment = async (generation: number, upload: UploadFile = (file) => uploadFile(file, this.options.associateUploads === false ? undefined : this.sessionId)): Promise<boolean> => {
     const item = stagedAttachments(this.snapshot).find(item => item.generation === generation);
     const file = this.selectedFiles.get(generation);
     if (!file || item?.status !== 'failed') return false;
@@ -190,8 +213,30 @@ export class SessionDraft {
     }
   };
 
+  captureSubmission = (): DraftSubmission => ({
+    text: this.snapshot.text,
+    revision: this.snapshot.revision,
+    attachments: stagedAttachments(this.snapshot).flatMap(item => item.attachment
+      ? [{ generation: item.generation, url: item.attachment.url }] : []),
+  });
+
+  acknowledgeSubmission = (submitted: DraftSubmission) => {
+    const current = this.snapshot;
+    const unchangedText = current.revision === submitted.revision && current.text === submitted.text;
+    const remaining = stagedAttachments(current).filter(item => !submitted.attachments.some(
+      sent => sent.generation === item.generation && sent.url === item.attachment?.url,
+    ));
+    this.update({
+      text: unchangedText ? '' : current.text,
+      revision: current.revision + (unchangedText ? 1 : 0),
+      staged: remaining[0],
+      stagedAttachments: remaining.length > 1 ? remaining : undefined,
+    });
+  };
+
   send = (send: SendPrompt): Promise<boolean> => {
     const submitted = this.snapshot;
+    const submission = this.captureSubmission();
     const items = stagedAttachments(submitted);
     if (submitted.pending || items.some(item => item.status !== 'ready')
       || (!submitted.text.trim() && !items.length)) return Promise.resolve(false);
@@ -201,16 +246,7 @@ export class SessionDraft {
         ? send(submitted.text.trim(), undefined, attachments)
         : send(submitted.text.trim(), attachments[0]));
       if (sent) {
-        const current = this.snapshot;
-        const unchangedText = current.revision === submitted.revision;
-        const generations = new Set(items.map(item => item.generation));
-        const remaining = stagedAttachments(current).filter(item => !generations.has(item.generation));
-        this.update({
-          text: unchangedText ? '' : current.text,
-          revision: current.revision + (unchangedText ? 1 : 0),
-          staged: remaining[0],
-          stagedAttachments: remaining.length > 1 ? remaining : undefined,
-        });
+        this.acknowledgeSubmission(submission);
       }
       return sent;
     });

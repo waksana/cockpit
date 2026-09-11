@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "assistant",
+  "version": "1.0.0",
+  "name": "Assistant",
+  "description": "Conversation-first personal assistance with optional workspace memory. No bundled MCP, Task role or channel binding.",
+  "compatibility": { "cockpitApi": 1, "nodeMajor": 24, "platform": "linux", "arch": "x64" },
+  "configVersion": 1,
+  "roles": [{
+    "id": "assistant",
+    "name": "Assistant",
+    "description": "Assistant instructions and skill; initialize personal files only when the conversation needs them.",
+    "instructions": "roles/assistant.md",
+    "skills": ["skills"]
+  }]
+}

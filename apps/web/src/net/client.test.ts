@@ -55,6 +55,220 @@ const chatPage: NativeChatPage = {
   read: { rpc: 1, events: 0 },
 };
 
+test('fresh Task initialization sends the exact fixed identity and explicit confirmation once', async t => {
+  const body = { moduleId: 'task' as const, operationId: 'fresh-task-initialization', version: '1.2.3',
+    digest: 'a'.repeat(64), gatewayUrl: 'https://127.0.0.1:34907', confirm: true as const };
+  const { confirm: _confirm, ...identity } = body;
+  const operation = { ...identity, phase: 'preparing', updatedAt: 1 };
+  const { client, fetch } = setup(t, async () => Response.json({ operation }));
+  assert.deepEqual(await client.intent('modules/config/initialize', body), { operation });
+  assertOnlyPost(fetch, 'modules/config/initialize', body);
+});
+
+test('trusted local installation sends only host-source identity and reads the same inventory receipt', async t => {
+  const body = { moduleId: 'assistant' as const, operationId: 'local-assistant-install-operation',
+    version: '1.0.0', digest: 'c'.repeat(64) };
+  const operation = { moduleId: body.moduleId, operationId: body.operationId, version: body.version,
+    sha256: body.digest, source: 'local', state: 'unknown', updatedAt: 1 };
+  const { client, fetch } = setup(t, async () => Response.json(operation));
+  assert.deepEqual(await client.intent('modules/install/local', body), operation);
+  assertOnlyPost(fetch, 'modules/install/local', body);
+  fetch.mock.mockImplementation(async () => Response.json({ operation }));
+  assert.deepEqual(await client.intent('modules/updates/get', { operationId: body.operationId }), { operation });
+  assert.equal(fetch.mock.callCount(), 2);
+  assert.equal(fetch.mock.calls[1].arguments[0], intentUrl('modules/updates/get'));
+  assert.deepEqual(JSON.parse(String(fetch.mock.calls[1].arguments[1]?.body)), { operationId: body.operationId });
+});
+
+test('WeChat unbind history uses the pure read endpoint with only the retained operation ID', async t => {
+  const body = { operationId: 'original-wechat-unbind' };
+  const operation = { ...body, sessionId: 'deleted-native-session', state: 'unknown', error: 'Original hook outcome unknown' };
+  const { client, fetch } = setup(t, async () => Response.json({ operation }));
+  assert.deepEqual(await client.intent('modules/wechat/unbind/get', body), { operation });
+  assertOnlyPost(fetch, 'modules/wechat/unbind/get', body);
+  for (const state of ['working', 'succeeded', 'failed'] as const) {
+    const receipt = { ...operation, state };
+    fetch.mock.mockImplementation(async () => Response.json({ operation: receipt }));
+    assert.deepEqual(await client.intent('modules/wechat/unbind/get', body), { operation: receipt });
+  }
+  fetch.mock.mockImplementation(async () => Response.json({ operation: null }));
+  assert.deepEqual(await client.intent('modules/wechat/unbind/get', body), { operation: null });
+  assert.equal(fetch.mock.callCount(), 5);
+  assert.ok(fetch.mock.calls.every(call => call.arguments[0] === intentUrl('modules/wechat/unbind/get')));
+});
+
+test('initialization history reads only the original operation ID and preserves unknown/null results', async t => {
+  const body = { operationId: 'fresh-task-initialization' };
+  const operation = { moduleId: 'task', ...body, version: '1.2.3', digest: 'a'.repeat(64),
+    gatewayUrl: 'https://127.0.0.1:34907', phase: 'unknown', updatedAt: 1, reason: 'MODULE_INITIALIZATION_INTERRUPTED_NO_REPLAY' };
+  const { client, fetch } = setup(t, async () => Response.json({ operation }));
+  assert.deepEqual(await client.intent('modules/config/initialization', body), { operation });
+  assertOnlyPost(fetch, 'modules/config/initialization', body);
+  fetch.mock.mockImplementation(async () => Response.json({ operation: null }));
+  assert.deepEqual(await client.intent('modules/config/initialization', body), { operation: null });
+  assert.equal(fetch.mock.callCount(), 2);
+  assert.ok(fetch.mock.calls.every(call => call.arguments[0] === intentUrl('modules/config/initialization')));
+});
+
+test('installation reconciliation sends the original ID with confirm and returns its authoritative outcome', async t => {
+  const result = { moduleId: 'task', operationId: 'original-install-operation', version: '1.2.0',
+    sha256: 'a'.repeat(64), state: 'failed', updatedAt: 1, error: 'package retained; selection unchanged' };
+  const { client, fetch } = setup(t, async () => Response.json(result));
+  const body = { moduleId: 'task' as const, operationId: result.operationId, confirm: true as const };
+  assert.deepEqual(await client.intent('modules/updates/reconcile', body), result);
+  assertOnlyPost(fetch, 'modules/updates/reconcile', body);
+});
+
+test('historical installation get is passive, nullable and preserves the exact original ID', async t => {
+  const { client, fetch } = setup(t, async () => Response.json({ operation: null }));
+  const body = { operationId: 'old-retained-install-operation' };
+  assert.deepEqual(await client.intent('modules/updates/get', body), { operation: null });
+  assertOnlyPost(fetch, 'modules/updates/get', body);
+});
+
+test('session module application and manual unbind forward caller-owned stable IDs exactly once', async t => {
+  const selections = [{ moduleId: 'task' as const, roleId: 'commander', version: '1.2.1' }];
+  const apply = { sessionId: 'session-a', operationId: 'retained-apply-operation', selections };
+  let response = Response.json({ modules: { ...apply, phase: 'unknown', pendingSelections: selections } });
+  const { client, fetch } = setup(t, async () => response);
+  assert.equal((await client.intent('session/modules/apply', apply)).modules.phase, 'unknown');
+  assertOnlyPost(fetch, 'session/modules/apply', apply);
+  response = Response.json({ ok: true });
+  const unbind = { sessionId: 'session-a', operationId: 'retained-unbind-operation', confirm: true as const };
+  await client.intent('modules/wechat/unbind', unbind);
+  assert.equal(fetch.mock.calls[1].arguments[0], intentUrl('modules/wechat/unbind'));
+  assert.deepEqual(JSON.parse(String(fetch.mock.calls[1].arguments[1]?.body)), unbind);
+  assert.equal(fetch.mock.callCount(), 2);
+});
+
+for (const action of ['start', 'stop', 'apply'] as const) {
+  test(`module service ${action} uses the exact operation and release request without assuming readiness`, async t => {
+    const body: IntentBody<'modules/service'> = { moduleId: 'task', operationId: 'service-wire-operation', action,
+      ...(action === 'stop' ? {} : { version: '2.0.0', digest: 'a'.repeat(64) }) };
+    const { moduleId, ...command } = body;
+    const job = { schemaVersion: 1, command: { id: moduleId, ...command }, phase: 'accepted', step: 'queued',
+      acceptedAt: '2026-09-11T10:00:00.000Z', updatedAt: '2026-09-11T10:00:00.000Z' };
+    const { client, fetch } = setup(t, async () => Response.json({ job }));
+    assert.deepEqual(await client.intent('modules/service', body), { job });
+    assertOnlyPost(fetch, 'modules/service', body);
+  });
+}
+
+test('module service job/status reads stay passive and a lost submission never auto-retries', async t => {
+  let response = Response.json({ job: null });
+  const { client, fetch } = setup(t, async () => response);
+  const abort = new AbortController();
+  assert.deepEqual(await client.intent('modules/service/job', { operationId: 'original-service-operation' }, abort.signal), { job: null });
+  assert.equal(fetch.mock.calls[0].arguments[0], intentUrl('modules/service/job'));
+  assert.equal(fetch.mock.calls[0].arguments[1]?.signal, abort.signal);
+  assert.deepEqual(JSON.parse(String(fetch.mock.calls[0].arguments[1]?.body)), { operationId: 'original-service-operation' });
+  const status = { id: 'task', status: 'stopped', owned: false, recoveryRequired: false };
+  response = Response.json(status);
+  assert.deepEqual(await client.intent('modules/service/status', { moduleId: 'task' }), status);
+  assert.equal(fetch.mock.calls[1].arguments[0], intentUrl('modules/service/status'));
+  assert.deepEqual(JSON.parse(String(fetch.mock.calls[1].arguments[1]?.body)), { moduleId: 'task' });
+  response = Response.json({ error: 'runner response unknown' }, { status: 503 });
+  await assert.rejects(client.intent('modules/service', { moduleId: 'task', action: 'stop', operationId: 'uncertain-service-operation' }), /unknown/);
+  assert.equal(fetch.mock.callCount(), 3);
+});
+
+test('explicit module recovery forwards an independent stop ID linked to the original fault, without version or force', async t => {
+  const body = { moduleId: 'task' as const, action: 'stop' as const, operationId: 'new-recovery-operation',
+    recoveryOf: 'original-fault-operation', confirmRecovery: true as const };
+  const { moduleId, ...command } = body;
+  const job = { schemaVersion: 1, command: { id: moduleId, ...command }, phase: 'unknown', step: 'waiting-exit',
+    acceptedAt: '2026-09-11T10:00:00.000Z', updatedAt: '2026-09-11T10:00:01.000Z', reason: 'drain not confirmed' };
+  const { client, fetch } = setup(t, async () => Response.json({ job }));
+  assert.deepEqual(await client.intent('modules/service', body), { job });
+  assertOnlyPost(fetch, 'modules/service', body);
+});
+
+test('deletion preview forwards cancellation and returns only the matching validated plan', async t => {
+  const plan = { sessionId: 'session', planId: 'a'.repeat(64), modules: [] };
+  const { client, fetch } = setup(t, async () => Response.json({ plan }));
+  const controller = new AbortController();
+  assert.deepEqual(await client.previewDeleteSession('session', controller.signal), plan);
+  assert.equal(fetch.mock.calls[0].arguments[0], intentUrl('session/delete/preview'));
+  assert.deepEqual(JSON.parse(String(fetch.mock.calls[0].arguments[1]?.body)), { sessionId: 'session' });
+  assert.equal(fetch.mock.calls[0].arguments[1]?.signal, controller.signal);
+  assert.equal(fetch.mock.callCount(), 1);
+});
+
+test('delete approval is forwarded exactly once and ordinary delete keeps its existing body', async t => {
+  const { client, fetch } = setup(t, async () => Response.json({ ok: true }));
+  const unbind = { planId: 'b'.repeat(64), operationId: 'retained-operation' };
+  await client.deleteSession('session', true, unbind);
+  assertOnlyPost(fetch, 'session/purge', { sessionId: 'session', confirm: true, unbind });
+  await client.deleteSession('ordinary', true);
+  assert.deepEqual(JSON.parse(String(fetch.mock.calls[1].arguments[1]?.body)), { sessionId: 'ordinary', confirm: true });
+});
+
+test('failed or wrong-session delete preview never becomes an empty allowed plan', async t => {
+  let response = Response.json({ error: 'Cannot read preview' }, { status: 503 });
+  const { client, fetch } = setup(t, async () => response);
+  await assert.rejects(client.previewDeleteSession('session'), /Cannot read preview/);
+  response = Response.json({ plan: { sessionId: 'other', planId: 'c'.repeat(64), modules: [] } });
+  await assert.rejects(client.previewDeleteSession('session'), /其他会话/);
+  response = Response.json({});
+  await assert.rejects(client.previewDeleteSession('session'));
+  assert.equal(fetch.mock.callCount(), 3);
+  assert.ok(fetch.mock.calls.every(call => call.arguments[0] === intentUrl('session/delete/preview')));
+});
+
+test('module-aware creation forwards exact choices and retains an incomplete native session without automatic retry', async t => {
+  const { client, fetch } = setup(t, async () => Response.json({
+    error: 'Task module preparation incomplete', code: 'MODULE_SESSION_INCOMPLETE', sessionId: 'retained-session',
+  }, { status: 409 }));
+  const modules = [{ moduleId: 'assistant' as const, roleId: 'assistant', version: '1.0.0' }];
+  await assert.rejects(client.newSession('/workspace', modules), error => error instanceof IntentHttpError
+    && error.sessionId === 'retained-session' && error.code === 'MODULE_SESSION_INCOMPLETE');
+  assertOnlyPost(fetch, 'session/new', { cwd: '/workspace', modules });
+});
+
+test('interactive start sends actual first-message text and retained files with one operation identity', async t => {
+  const operation = { operationId: 'start-operation', sessionId: 'b4d57799-2ccf-4a9e-9f04-0a9bc6aebdb0', state: 'accepted' as const };
+  const { client, fetch } = setup(t, async () => Response.json({ operation }));
+  const attachment = { kind: 'file' as const, name: 'notes.txt', url: '/uploads/notes.txt', size: 4, mime: 'text/plain' };
+  const body = { operationId: operation.operationId, cwd: '/workspace', text: 'first message',
+    modules: [{ moduleId: 'task' as const, roleId: 'commander', version: '1.2.0' }], attachment };
+  assert.deepEqual(await client.startSession(body), operation);
+  assertOnlyPost(fetch, 'session/start', body);
+});
+
+test('first-message ordered parts and multiple retained attachments preserve their wire shape', async t => {
+  const operation = { operationId: 'parts-operation', sessionId: 'b4d57799-2ccf-4a9e-9f04-0a9bc6aebdb0', state: 'accepted' as const };
+  const { client, fetch } = setup(t, async () => Response.json({ operation }));
+  const attachment = { kind: 'image' as const, name: 'image.png', url: '/uploads/image.png' };
+  const body = { operationId: operation.operationId, cwd: '/workspace', text: '',
+    parts: [{ type: 'text' as const, text: 'read this' }, { type: 'file' as const, attachment }] };
+  await client.startSession(body);
+  assertOnlyPost(fetch, 'session/start', body);
+  await client.startSession({ operationId: operation.operationId, cwd: '/workspace', text: '', attachments: [attachment, attachment] });
+  assert.deepEqual(JSON.parse(String(fetch.mock.calls[1].arguments[1]?.body)), {
+    operationId: operation.operationId, cwd: '/workspace', text: '', attachments: [attachment, attachment],
+  });
+});
+
+test('start/get is passive and nullable, while unknown/missing/mismatched start results never auto-retry', async t => {
+  const operationId = 'unknown-start-operation';
+  const body = { operationId, cwd: '/workspace', text: 'first message' };
+  let response = Response.json({ operation: { operationId, sessionId: 'b4d57799-2ccf-4a9e-9f04-0a9bc6aebdb0', state: 'unknown', error: 'preparation incomplete' } });
+  const { client, fetch } = setup(t, async () => response);
+  assert.equal((await client.startSession(body)).state, 'unknown');
+  assert.equal(fetch.mock.callCount(), 1);
+  response = Response.json({ operation: null });
+  const controller = new AbortController();
+  assert.equal(await client.getSessionStart(operationId, controller.signal), null);
+  assert.equal(fetch.mock.calls[1].arguments[0], intentUrl('session/start/get'));
+  assert.deepEqual(JSON.parse(String(fetch.mock.calls[1].arguments[1]?.body)), { operationId });
+  assert.equal(fetch.mock.calls[1].arguments[1]?.signal, controller.signal);
+  response = Response.json({});
+  await assert.rejects(client.startSession(body));
+  response = Response.json({ operation: { operationId: 'other-operation', sessionId: 'b4d57799-2ccf-4a9e-9f04-0a9bc6aebdb0', state: 'accepted' } });
+  await assert.rejects(client.startSession(body), /标识不匹配/);
+  assert.equal(fetch.mock.callCount(), 4);
+});
+
 test('native usage client validates the snapshot, forwards cancellation and never resumes on unloaded response', async t => {
   const usage = { sessionId: 'session', sampledAt: 1, context: null,
     usage: { sessionStartTime: '2026-09-09T00:00:00Z', totalUserRequests: 0,

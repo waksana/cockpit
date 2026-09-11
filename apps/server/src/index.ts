@@ -21,15 +21,18 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
-import { Engine, sessionMetaBusy } from '@cockpit/core';
+import { Engine, OfficialRuntime, ModuleManager, ModuleRunnerClient, sessionMetaBusy } from '@cockpit/core';
 import { Intents, UploadedFile, partsPrompt, unreadSessionCount, type MessagePart, type IntentBody, type IntentName, type IntentResult, type ServerEvent, type SessionMeta, type Snapshot } from '@cockpit/protocol';
 import { PushManager } from './push.ts';
 import { getSpeechToken } from './speech.ts';
 import { saveUploadStream, associateUpload, listUploads, uploadDetails, resolveUpload,
-  openUpload, MAX_UPLOAD_BYTES, UploadError, validateUploadContext, type UploadContext } from './uploads.ts';
+  openUpload, MAX_UPLOAD_BYTES, UploadError, validateUploadContext, resolveStoredAttachment, verifyUpload, type UploadContext } from './uploads.ts';
 import { isIntentName, registerCapabilities } from './capabilities.ts';
 import { drainForRestart } from './shutdown.ts';
 import { registerChatStream } from './chat-stream.ts';
+import { registerModuleProxy } from './module-proxy.ts';
+import { createModuleIntents } from './module-intents.ts';
+import { SessionStartCoordinator, SessionStartFailure, type PreparedSessionStart } from '../../../packages/core/src/modules/session-start.ts';
 import { deliveryIdentity } from './delivery-identity.ts';
 import { registerDeliveryStatus } from './delivery-status.ts';
 
@@ -62,23 +65,65 @@ app.addContentTypeParser('application/octet-stream', (_req, body, done) => done(
 export type ServerEngine = Pick<Engine,
   | 'login' | 'snapshot' | 'status' | 'busyCount' | 'newSession' | 'forkSession' | 'chat' | 'stop'
   | 'prompt' | 'cancel' | 'interrupt' | 'setModel' | 'rename' | 'autoName' | 'compact' | 'rewind' | 'setMode'
-  | 'deleteSession' | 'unload'
+  | 'deleteSession' | 'unload' | 'load'
   | 'reload' | 'pin' | 'getPlan' | 'getUsage' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
   | 'planSupersede' | 'respondElicitation' | 'removeQueued' | 'refreshList'
   | 'listLive' | 'getMeta' | 'markSeen' | 'listGlobalMcp' | 'setMcpDefault'
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
   | 'listGlobalSkills' | 'setGlobalSkill' | 'readSkillBody' | 'listSessionSkills' | 'toggleSessionSkill' | 'refreshSkills'
   | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
+  | 'sessionModules' | 'applySessionModules' | 'deletionPlan'
 >;
 export type ServerPush = Pick<PushManager, 'subscribe' | 'status' | 'test' | 'unsubscribe' | 'sendAttention'>;
 let engine: ServerEngine;
 let push: ServerPush;
+export type ModuleIntentName = Extract<IntentName, `modules/${string}`>;
+export type ModuleIntentHandlers = { [K in ModuleIntentName]: (body: IntentBody<K>) => Promise<IntentResult<K>> };
+let moduleHandlers: ModuleIntentHandlers | undefined;
+let moduleManager: ModuleManager | undefined;
+let moduleOperations = 0;
+let firstMessageOperations = 0;
+let sessionStarts: Pick<SessionStartCoordinator, 'start' | 'get'> | undefined;
+
+function preparePromptContent(body: Pick<IntentBody<'prompt'>, 'text' | 'attachment' | 'attachments' | 'parts'>, sessionId?: string): PreparedSessionStart {
+  if (!body.attachment && !body.attachments && !body.parts) return { text: body.text };
+  const parts: MessagePart[] = body.parts ?? [
+    ...(body.attachments ?? (body.attachment ? [body.attachment] : [])).map(attachment => ({ type: 'file' as const, attachment })),
+    ...(body.text ? [{ type: 'text' as const, text: `\n${body.text}` }] : []),
+  ];
+  const files: string[] = [];
+  const attachments: NonNullable<PreparedSessionStart['attachments']> = [];
+  const resolved = parts.map(part => {
+    if (part.type === 'text') return part;
+    const file = sessionId ? associateUpload(part.attachment.url, sessionId) : verifyUpload(resolveStoredAttachment(part.attachment));
+    files.push(file.url);
+    attachments.push({ type: 'file', path: file.path, displayName: file.name });
+    return { type: 'file' as const, attachment: file };
+  });
+  return { text: partsPrompt(resolved), attachments,
+    ...(sessionId ? {} : { associate: (plannedId: string) => { for (const url of files) associateUpload(url, plannedId); } }) };
+}
+
+export function createSessionStarts(runtime: Pick<Engine, 'startSession'>, userRoot: string): SessionStartCoordinator {
+  return new SessionStartCoordinator({ userRoot, engine: runtime, prepare: body => preparePromptContent(body) });
+}
+
+async function moduleIntent<K extends ModuleIntentName>(name: K, body: IntentBody<K>): Promise<IntentResult<K>> {
+  if (!moduleHandlers) throw Object.assign(new Error('Module management is not configured'), { statusCode: 503 });
+  if (restarting) throw Object.assign(new Error('Cockpit is draining for restart'), { statusCode: 503 });
+  moduleOperations++;
+  try { return await moduleHandlers[name](body); }
+  finally { moduleOperations--; maybeGracefulExit(); }
+}
 
 // No SDK construction, preferences, listeners, or production dependency override.
-export function setTestDependencies(deps: { engine: ServerEngine; push: ServerPush }): void {
+export function setTestDependencies(deps: { engine: ServerEngine; push: ServerPush; modules?: ModuleIntentHandlers;
+  starts?: Pick<SessionStartCoordinator, 'start' | 'get'> }): void {
   if (process.env.COCKPIT_NO_BOOT !== '1') throw new Error('test dependencies require COCKPIT_NO_BOOT=1');
   engine = deps.engine;
   push = deps.push;
+  moduleHandlers = deps.modules;
+  sessionStarts = deps.starts;
 }
 
 // --- SSE fan-out -----------------------------------------------------------
@@ -172,15 +217,15 @@ export function sessionBusy(s: SessionMeta): boolean {
   return sessionMetaBusy(s);
 }
 
-function busyCount(): Promise<number> {
-  return engine.busyCount();
+async function busyCount(): Promise<number> {
+  return await engine.busyCount() + moduleOperations + firstMessageOperations;
 }
 
 let gracefulExitTimer: ReturnType<typeof setTimeout> | null = null;
 
 let checkingExit: Promise<void> | undefined;
 let exitDirty = false;
-function maybeGracefulExit(): void {
+export function maybeGracefulExit(): void {
   if (checkingExit) { exitDirty = true; return; }
   exitDirty = false;
   checkingExit = checkGracefulExit().catch(error => {
@@ -531,27 +576,49 @@ type IntentHandlers = {
 };
 
 const handlers: IntentHandlers = {
+  'modules/updates/check': b => moduleIntent('modules/updates/check', b),
+  'modules/updates/status': b => moduleIntent('modules/updates/status', b),
+  'modules/updates/get': b => moduleIntent('modules/updates/get', b),
+  'modules/updates/install': b => moduleIntent('modules/updates/install', b),
+  'modules/updates/reconcile': b => moduleIntent('modules/updates/reconcile', b),
+  'modules/list': b => moduleIntent('modules/list', b),
+  'modules/install': b => moduleIntent('modules/install', b),
+  'modules/install/local': b => moduleIntent('modules/install/local', b),
+  'modules/uninstall': b => moduleIntent('modules/uninstall', b),
+  'modules/config/get': b => moduleIntent('modules/config/get', b),
+  'modules/config/set': b => moduleIntent('modules/config/set', b),
+  'modules/config/initialize': b => moduleIntent('modules/config/initialize', b),
+  'modules/config/initialization': b => moduleIntent('modules/config/initialization', b),
+  'modules/service': b => moduleIntent('modules/service', b),
+  'modules/service/job': b => moduleIntent('modules/service/job', b),
+  'modules/service/status': b => moduleIntent('modules/service/status', b),
+  'modules/wechat/unbind': b => moduleIntent('modules/wechat/unbind', b),
+  'modules/wechat/unbind/get': b => moduleIntent('modules/wechat/unbind/get', b),
   'runtime/snapshot': async () => notificationSnapshot(await engine.snapshot()),
-  'session/new': async (b) => ({ sessionId: await engine.newSession(b.cwd) }),
+  'session/new': async (b) => ({ sessionId: await engine.newSession(b.cwd, b.modules) }),
+  'session/start': async b => {
+    if (!sessionStarts) throw Object.assign(new Error('First-message session creation is not configured'), { statusCode: 503 });
+    if (restarting) throw Object.assign(new Error('Cockpit is draining for restart'), { statusCode: 503 });
+    firstMessageOperations++;
+    try { return { operation: await sessionStarts.start(b) }; }
+    finally { firstMessageOperations--; maybeGracefulExit(); }
+  },
+  'session/start/get': b => {
+    if (!sessionStarts) throw Object.assign(new Error('First-message session creation is not configured'), { statusCode: 503 });
+    return { operation: sessionStarts.get(b.operationId) };
+  },
+  'session/modules/get': async b => ({ modules: await engine.sessionModules(b.sessionId) }),
+  'session/modules/apply': async b => ({ modules: await engine.applySessionModules(b.sessionId, b.selections, b.operationId) }),
   'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
   'session/chat': (b, signal) => engine.chat(b, signal),
   'files/list': b => listUploads(b),
   'files/get': b => uploadDetails(b.url),
   'files/associate': b => associateUpload(b.url, b.sessionId),
   prompt: async (b) => {
-    if (!b.attachment && !b.attachments && !b.parts) return await engine.prompt(b.sessionId, b.text, b.mode);
-    const parts: MessagePart[] = b.parts ?? [
-      ...(b.attachments ?? (b.attachment ? [b.attachment] : [])).map(attachment => ({ type: 'file' as const, attachment })),
-      ...(b.text ? [{ type: 'text' as const, text: `\n${b.text}` }] : []),
-    ];
-    const attachments: { type: 'file'; path: string; displayName: string }[] = [];
-    const resolved = parts.map(part => {
-      if (part.type === 'text') return part;
-      const file = associateUpload(part.attachment.url, b.sessionId);
-      attachments.push({ type: 'file', path: file.path, displayName: file.name });
-      return { type: 'file' as const, attachment: file };
-    });
-    return await engine.prompt(b.sessionId, partsPrompt(resolved), b.mode, attachments);
+    const prepared = preparePromptContent(b, b.sessionId);
+    return prepared.attachments
+      ? await engine.prompt(b.sessionId, prepared.text, b.mode, prepared.attachments)
+      : await engine.prompt(b.sessionId, prepared.text, b.mode);
   },
   cancel: async (b) => {
     await engine.cancel(b.sessionId);
@@ -576,17 +643,22 @@ const handlers: IntentHandlers = {
     await engine.setMode(b.sessionId, b.mode);
     return { ok: true };
   },
+  'session/delete/preview': async b => ({ plan: await engine.deletionPlan(b.sessionId) }),
   'session/delete': async (b) => {
-    await engine.deleteSession(b.sessionId, b.confirm);
+    await engine.deleteSession(b.sessionId, b.confirm, b.unbind);
     return { ok: true };
   },
   'session/purge': async (b) => {
-    await engine.deleteSession(b.sessionId, b.confirm);
+    await engine.deleteSession(b.sessionId, b.confirm, b.unbind);
     return { ok: true };
   },
   'session/unload': async (b) => {
     await engine.unload(b.sessionId);
     return { ok: true };
+  },
+  'session/load': async (b) => {
+    await engine.load(b.sessionId);
+    return { ok: true, sessionId: b.sessionId };
   },
   'session/reload': async (b) => {
     await engine.reload(b.sessionId);
@@ -740,6 +812,8 @@ app.post('/intent/*', async (req, reply) => {
     return {
       error: e instanceof Error ? e.message : String(e),
       ...(e && typeof e === 'object' && 'code' in e && typeof e.code === 'string' ? { code: e.code } : {}),
+      ...(e && typeof e === 'object' && 'sessionId' in e && typeof e.sessionId === 'string' ? { sessionId: e.sessionId } : {}),
+      ...(e instanceof SessionStartFailure ? { operation: e.operation } : {}),
     };
   } finally {
     reply.raw.removeListener('close', cancel);
@@ -791,7 +865,20 @@ export async function registerStaticWeb(): Promise<void> {
 // Engine (which reads the real ~/.copilot prefs) or binding the port. Production
 // (`tsx src/index.ts`) runs with the env unset, so it boots normally.
 function boot(): void {
-  const runtime = new Engine();
+  const native = new OfficialRuntime();
+  const rawSources: unknown = process.env.COCKPIT_MODULE_SOURCES ? JSON.parse(process.env.COCKPIT_MODULE_SOURCES) : {};
+  if (!rawSources || typeof rawSources !== 'object' || Array.isArray(rawSources)
+    || Object.entries(rawSources).some(([id, path]) => !['assistant', 'task', 'wechat'].includes(id) || typeof path !== 'string')) {
+    throw new Error('COCKPIT_MODULE_SOURCES must map official module IDs to trusted local package directories');
+  }
+  let engineInstance: Engine;
+  moduleManager = new ModuleManager({ runtime: native, sources: rawSources, services: new ModuleRunnerClient(),
+    sessionDirectory: async id => (await engineInstance.getResources(id, ['identity']))?.cwd });
+  const modules = moduleManager;
+  moduleHandlers = createModuleIntents(modules);
+  registerModuleProxy(app, () => modules.taskGateway());
+  const runtime = engineInstance = new Engine({ runtime: native, modules });
+  sessionStarts = createSessionStarts(runtime, modules.catalog.userRoot);
   runtime.log = (msg, data) => app.log.warn(data ?? {}, msg);
   const notifications = new PushManager({
     log: ({ status, at, error }) => {

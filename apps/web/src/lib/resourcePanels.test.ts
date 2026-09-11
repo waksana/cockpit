@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import { readFileSync } from 'node:fs';
+import { registerHooks } from 'node:module';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatSession, ModelOption } from '../net/types';
-import { DirPicker } from '../components/DirPicker';
-import { SessionInfoPanel } from '../components/SessionInfoPanel';
 import { SessionMcp, SessionSkills } from '../components/Manage';
 import { SessionContext, SessionPlan } from '../components/SessionPages';
 import { SessionSchedules } from '../pages/SessionSchedules';
@@ -14,7 +13,24 @@ import { SessionRuntime } from '../components/SessionRuntime';
 import { useCockpit } from '../net/store';
 import { useSessionResource } from './useSessionResource';
 
+const styles = registerHooks({
+  load(url, context, nextLoad) {
+    return url.endsWith('.scss') ? { format: 'module', source: '', shortCircuit: true } : nextLoad(url, context);
+  },
+});
+const { DirPicker } = await import('../components/DirPicker');
+const { SessionInfoPanel } = await import('../components/SessionInfoPanel');
+styles.deregister();
+
 const noop = () => {};
+function composerWindow(t: TestContext) {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, 'window', previous);
+    else Reflect.deleteProperty(globalThis, 'window');
+  });
+}
 const session = {
   sessionId: 'resource-test', title: 'Resource test', cwd: '/work/project', messages: [], queue: [],
   status: 'idle', error: null, loaded: true, ask: null, lastActivity: 0,
@@ -204,20 +220,25 @@ test('permission policy is read-only and does not confuse interactive mode with 
   assert.doesNotMatch(html, /<(select|input|button)\b/);
 });
 
-test('directory picker without an initial path has no hardcoded home and cannot create before a listing', () => {
-  const html = renderToStaticMarkup(createElement(DirPicker, { onPick: async () => 'created', onCreated: noop, onCancel: noop }));
+test('directory picker without an initial path has no hardcoded home and cannot create before a listing', t => {
+  composerWindow(t);
+  const html = renderToStaticMarkup(createElement(DirPicker, {
+    onStart: async () => { throw new Error('render must not start a session'); }, onReadStart: async () => null, onCreated: noop, onCancel: noop,
+  }));
   assert.match(html, /aria-label="选择工作目录"/);
   assert.doesNotMatch(html, /\/home\/honglai|没有子文件夹/);
-  assert.match(html, /class="dialog-btn primary rp" disabled=""/);
+  assert.match(html, /class="chat-input-btn send rp" disabled=""/);
   assert.match(html, /等待连接/);
 });
 
-test('a supplied but unvalidated directory cannot enable session creation', () => {
+test('a supplied but unvalidated directory cannot enable session creation', t => {
+  composerWindow(t);
   const html = renderToStaticMarkup(createElement(DirPicker, {
-    initialPath: '/unvalidated', onPick: async () => 'created', onCreated: noop, onCancel: noop,
+    initialPath: '/unvalidated', onStart: async () => { throw new Error('render must not start a session'); },
+    onReadStart: async () => null, onCreated: noop, onCancel: noop,
   }));
   assert.match(html, /value="\/unvalidated"/);
-  assert.match(html, /class="dialog-btn primary rp" disabled=""/);
+  assert.match(html, /class="chat-input-btn send rp" disabled=""/);
   assert.doesNotMatch(html, /没有子文件夹/);
 });
 
@@ -328,14 +349,14 @@ test('unloaded native resource hooks are invalid and explicit refresh cannot iss
 });
 
 for (const Component of [SessionMcp, SessionSkills]) {
-  test(`${Component.name} describes temporary native choices and restoration from Copilot global configuration`, (t) => {
+  test(`${Component.name} distinguishes pinned module resources from temporary native choices`, (t) => {
     withSession(t, true);
     const html = renderToStaticMarkup(createElement(Component, { session, onClose: noop }));
     assert.doesNotMatch(html, /manage-scope|Cockpit 不保存或重放选择/);
     const manage = readFileSync(new URL('../components/Manage.tsx', import.meta.url), 'utf8');
     assert.match(manage, /resource.valid && !action.error && !!resource.data\?\.length/);
-    assert.match(manage, /重载 MCP 或重新加载会话后采用全局默认/);
-    assert.match(manage, /仅本会话临时有效；卸载后重新加载会话时采用全局配置/);
+    assert.match(manage, /冷加载恢复已绑定模块版本，其余临时开关采用原生全局默认/);
+    assert.match(manage, /冷加载恢复已绑定模块的 skill 路径，其余临时开关采用原生全局默认/);
     assert.doesNotMatch(manage, /重载技能|刷新技能定义后/);
   });
 }
