@@ -4,7 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import type { Attachment, ChatMessage } from '@cockpit/protocol';
-import { FileCard } from './FileCard';
+import { ChatFileCard, FileCard } from './FileCard';
 import { MessageBody } from './MessageBody';
 import { MessageContent } from './MessageContent';
 import { Thread } from './Thread';
@@ -76,7 +76,7 @@ test('managed markdown images/links offer one browse card per original URL witho
     '[download](/uploads/clip.mp4?download=1)',
   ]) {
     const html = renderToStaticMarkup(createElement(MessageBody, { body, sessionId: 'A' }));
-    assert.equal((html.match(/class="managed-file-card"/g) ?? []).length, 1);
+    assert.equal((html.match(/class="chat-file-card"/g) ?? []).length, 1);
     assert.match(html, /\/files\?url=%2Fuploads%2Fclip.mp4&amp;sessionId=A/);
     assert.match(html, /\/uploads\/clip.mp4\?download=1/);
     let anchorDepth = 0;
@@ -102,7 +102,67 @@ test('canonical message parts render in order instead of repeating flattened tex
   const repeated = renderToStaticMarkup(createElement(MessageContent, { sessionId: 'A',
     message: { ...message, parts: [{ type: 'file', attachment: svg }, { type: 'text', text: '![again](/uploads/diagram.svg)' }] } }));
   assert.equal((repeated.match(/<img\b/g) ?? []).length, 1);
-  assert.equal((repeated.match(/managed-file-card/g) ?? []).length, 1);
+  assert.equal((repeated.match(/chat-file-card/g) ?? []).length, 1);
+});
+
+test('chat reserves media and unknown slots, compact known files, and never loads a video before viewing', () => {
+  for (const file of [video, svg, { kind: 'file' as const, name: 'unknown', url: '/uploads/unknown' }]) {
+    const html = renderToStaticMarkup(createElement(ChatFileCard, { file }));
+    assert.match(html, /data-layout="media"/);
+    assert.match(html, /class="chat-file-name"/);
+    assert.match(html, /class="chat-file-description"/);
+    assert.match(html, /class="chat-file-actions"/);
+    assert.match(html, /\/files\?url=/);
+    assert.doesNotMatch(html, /<video|autoplay|preload=|aria-expanded/);
+    if (file.mime === 'video/mp4') assert.match(html, /<a[^>]+aria-label="查看视频[^"]*"><span class="chat-preview-state">/);
+  }
+  const document = renderToStaticMarkup(createElement(ChatFileCard, { file: { ...video, mime: 'application/pdf' } }));
+  assert.match(document, /data-layout="file"/);
+  assert.doesNotMatch(document, /class="chat-file-preview"/);
+  const failed = renderToStaticMarkup(createElement(ChatFileCard, {
+    file: { kind: 'file', name: 'unavailable', url: '/uploads/missing' }, error: 'Metadata unavailable', onRetry: () => {},
+  }));
+  assert.match(failed, /data-layout="media"/);
+  assert.match(failed, /role="alert"/);
+  assert.match(failed, /Metadata unavailable/);
+  assert.match(failed, /重试/);
+  assert.doesNotMatch(failed, /download=|<img|<video/);
+});
+
+test('consecutive attachments form grids without moving interleaved text or duplicating Markdown cards', () => {
+  const html = renderToStaticMarkup(createElement(MessageContent, { sessionId: 'A', message: {
+    id: 'ordered', role: 'user', timestamp: 1, content: '', parts: [
+      { type: 'file', attachment: svg }, { type: 'file', attachment: video },
+      { type: 'text', text: 'between ![duplicate](/uploads/diagram.svg)' },
+      { type: 'file', attachment: { ...svg, url: '/uploads/last.svg' } },
+    ],
+  } }));
+  assert.equal((html.match(/class="chat-attachment-grid"/g) ?? []).length, 2);
+  assert.equal((html.match(/class="chat-file-card"/g) ?? []).length, 3);
+  assert.ok(html.indexOf('clip.mp4') < html.indexOf('between'));
+  assert.ok(html.indexOf('between') < html.indexOf('last.svg'));
+  const markdown = renderToStaticMarkup(createElement(MessageBody, { body: '[one](/uploads/one) ![two](/uploads/two)' }));
+  assert.match(markdown, /<p class="chat-attachment-grid">/);
+});
+
+test('allowed non-managed images reserve their preview slot and linked images never nest anchors', () => {
+  for (const image of ['/assets/local.png', 'https://example.com/external.png']) {
+    for (const format of ['', '**', '*', '~~']) {
+      const html = renderToStaticMarkup(createElement(MessageBody, { body: `[${format}![image](${image})${format}](https://example.com/destination)` }));
+      let depth = 0;
+      for (const tag of html.match(/<\/?a\b[^>]*>/g) ?? []) {
+        depth += tag.startsWith('</') ? -1 : 1;
+        assert.ok(depth >= 0 && depth <= 1, html);
+      }
+      assert.equal(depth, 0);
+      assert.match(html, /href="https:\/\/example.com\/destination"/);
+      if (image.startsWith('/')) assert.match(html, /class="chat-inline-image"/);
+      else {
+        assert.match(html, /data-img-blocked/);
+        assert.doesNotMatch(html, /<img/);
+      }
+    }
+  }
 });
 
 test('internal tool images are neither displayed nor collected before an agent publishes them', t => {

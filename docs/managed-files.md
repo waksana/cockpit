@@ -94,6 +94,31 @@ Receiving/sending a video, browser playback and the selected model's ability to
 understand video are separate capabilities. No new video-understanding model,
 paid transcoder or background conversion service is installed.
 
+Chat reserves a 160px media preview region (128px on narrow screens) and a
+fixed information/action footer before metadata or image bytes arrive. Known
+non-media attachments use a compact 72px card. A reference whose MIME is not
+known at mount keeps its media-sized slot even when it resolves to a document;
+asynchronous metadata does not change the grid or card footprint. Loading,
+unavailable metadata and failed images use the same reserved space. Names and
+late type/size information are single-line; full names and provenance remain
+on the file detail page. Metadata errors remain rejected and visibly owned by
+the card/detail resource, with explicit retry; they do not also add a global
+notification that would shrink the chat viewport.
+
+Images fit entirely inside their preview area without cropping or stretching.
+These are lazy original-image previews, not generated thumbnails or a claim of
+reduced transfer bytes. Chat videos show a static play indication, without
+mounting or preloading a video player. The visible detail/view actions open the
+existing protected file page in a new tab, leaving the chat and its reading
+position mounted; that page provides native playback, originals and integrity
+details. No automatic playback is requested.
+
+Markdown renderer types and file-resource owners stay mounted across text
+updates. Consecutive attachments share a responsive grid while canonical
+text/file order and URL de-duplication remain intact. These presentation rules
+do not reserve the height of a message body, wait for all media, cache native
+history, or change SSE, prefetch and scroll-follow behavior.
+
 ## API, MCP and native tools
 
 The authoritative intent catalog exposes:
