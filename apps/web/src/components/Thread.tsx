@@ -657,7 +657,7 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
         </div>
       )}
       {!readOnly && (interruptAction.error || interruptNotice?.sessionId === session.sessionId) && (
-        <p className="chat-interrupt-status" role={interruptAction.error ? 'alert' : 'status'}>
+        <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
           {interruptAction.error ? `打断未确认：${interruptAction.error}。请核对会话状态，不要直接重试。` : interruptNotice?.text}
         </p>
       )}

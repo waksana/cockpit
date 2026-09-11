@@ -766,7 +766,8 @@
 // Transient voice-input notice (e.g. mic unsupported / Azure not configured).
 // Sits above the input row; tap to dismiss. No border (surface + spacing only).
 .chat-input-notice {
-  flex: 0 0 auto; display: flex; align-items: flex-start; gap: 0.5rem; font: inherit; text-align: left;
+  flex: 0 1 auto; min-height: 3rem; max-height: min(6rem, 15vh); overflow-y: auto;
+  display: flex; align-items: flex-start; gap: 0.5rem; font: inherit; text-align: left;
   width: calc(100% - 2 * var(--chat-gutter)); max-width: var(--chat-reading-width);
   margin: 0.5rem auto 0; padding: 0.5rem 0.7rem;
   border: none; border-radius: var(--border-radius-medium);
@@ -830,7 +831,7 @@
 }
 .chat-queue {
   align-self: stretch; display: flex; flex-direction: column; gap: 0.25rem;
-  flex: none; max-height: 22vh; overflow-y: auto;
+  flex: 0 1 auto; min-height: 2.5rem; max-height: 22vh; overflow-y: auto;
   width: calc(100% - 2 * var(--chat-gutter)); max-width: var(--chat-reading-width);
   margin: 0.5rem auto 0; padding: 0; box-sizing: border-box;
 }
@@ -846,11 +847,15 @@
   button { font: inherit; color: var(--chat-accent-ink); background: transparent; border: 1px solid currentColor; border-radius: var(--border-radius); padding: 0.35rem 0.6rem; cursor: pointer; }
   button:disabled, button[aria-disabled="true"] { opacity: 0.5; cursor: default; }
 }
-.chat-interrupt-status { margin: 0.3rem 1rem; font-size: var(--font-size-13); color: var(--secondary-text-color); }
+.chat-interrupt-status {
+  flex: 0 1 auto; min-height: 1.5em; max-height: min(5rem, 12vh); overflow-y: auto;
+  width: calc(100% - 2 * var(--chat-gutter)); max-width: var(--chat-reading-width);
+  margin: 0.3rem auto; font-size: var(--font-size-13); line-height: 1.5; overflow-wrap: anywhere; color: var(--secondary-text-color);
+}
 .chat-queue-remove { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border: none; border-radius: 50%; background: transparent; cursor: pointer; color: var(--secondary-text-color); &:hover { background: var(--ripple-color); } }
 .chat .chat-staged-list {
   width: calc(100% - 2 * var(--chat-gutter)); max-width: var(--chat-reading-width); margin-inline: auto;
-  max-height: 20%;
+  flex: 0 1 auto; min-height: 2.5rem; max-height: 20%;
 }
 @media (max-width: 599px) {
   .chat { --chat-gutter: 0.75rem; }

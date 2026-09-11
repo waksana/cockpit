@@ -164,12 +164,12 @@ export function Composer({
   return (
     <>
       {sendError && (
-        <div className="chat-input-notice" role="alert"><span>{sendError}</span>
+        <div className="chat-input-notice" role="alert" tabIndex={0}><span>{sendError}</span>
           <button type="button" onClick={draft.dismissError} aria-label="关闭发送提示"><Icon name="close" size={18} /></button>
         </div>
       )}
       {voiceError && (
-        <div className="chat-input-notice" role="alert"><span>{voiceError}</span>
+        <div className="chat-input-notice" role="alert" tabIndex={0}><span>{voiceError}</span>
           <button type="button" onClick={() => setVoiceError(null)} aria-label="关闭语音提示"><Icon name="close" size={18} /></button>
         </div>
       )}
