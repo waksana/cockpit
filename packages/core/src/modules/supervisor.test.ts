@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import test from 'node:test';
 import { ModuleCatalog, type InstalledModule, type ModuleManifest } from './catalog.ts';
+import { OwnedModuleLifecycle } from './owned-lifecycle.ts';
 import { buildModuleLaunch, ModuleRunnerClient, ModuleSupervisor, type ModuleRunnerJob, type ServiceModuleId } from './supervisor.ts';
 import type { AdapterConfig } from './adapters.ts';
 
@@ -351,9 +352,16 @@ test('launch builder excludes inherited delivery credentials and passes explicit
   const old = process.env.SERVICE_DELIVERY_SHA;
   process.env.SERVICE_DELIVERY_SHA = 'must-not-inherit';
   try {
-    const task = buildModuleLaunch(first, config, { moduleId: 'task', moduleVersion: '1.0.0', moduleDigest: first.digest, instanceId: 'instance-12345678' }, userRoot, 'http://127.0.0.1:1');
+    const credentialDirectory = join(userRoot, 'credentials');
+    const retainedCredentialDirectory = join(userRoot, 'retained-credentials');
+    const task = buildModuleLaunch(first, { ...config, credentialDirectory, retainedCredentialDirectory },
+      { moduleId: 'task', moduleVersion: '1.0.0', moduleDigest: first.digest, instanceId: 'instance-12345678' },
+      userRoot, 'http://127.0.0.1:1');
     assert.equal(task.executable, process.execPath);
     assert.equal(task.env.SERVICE_DELIVERY_SHA, undefined);
+    assert.equal(task.env.WORK_CREDENTIAL_DIR, credentialDirectory);
+    assert.equal(task.env.WORK_RETAINED_CREDENTIAL_DIR, retainedCredentialDirectory);
+    assert.equal(task.env.WORK_COCKPIT_MODULE_VERSION, '1.0.0');
     const installed: InstalledModule = { ...first, manifest: { ...first.manifest, id: 'wechat',
       service: { ...first.manifest.service!, entry: 'src/cli.js', args: ['run'] } } };
     const launch = buildModuleLaunch(installed, { ...config, configFile: join(userRoot, 'wechat.json') },
@@ -417,7 +425,7 @@ test('owned parent IPC fences controls, drains busy services and returns their e
   const { runner, client, userRoot, first, set } = await fixture(t);
   await runner.close();
   const child = spawn(process.execPath, ['--import', 'tsx', new URL('./supervisor-entry.ts', import.meta.url).pathname,
-    '--user-root', userRoot, '--cockpit-url', 'http://127.0.0.1:1'],
+    '--user-root', userRoot, '--cockpit-url', 'http://127.0.0.1:1', '--host-owned', 'true'],
   { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: { PATH: process.env.PATH, HOME: process.env.HOME } });
   const exited = once(child, 'exit');
   child.stdout.resume();
@@ -427,6 +435,14 @@ test('owned parent IPC fences controls, drains busy services and returns their e
     const [ready] = await once(child, 'message', { signal: AbortSignal.timeout(5000) });
     assert.deepEqual(ready, { type: 'module-runner-ready', apiVersion: 1, lifecycleApi: 1, pid: child.pid,
       socket: join(userRoot, '.module-runner.sock') });
+    await assert.rejects(start(client, first, 'parent-ipc-before-restore'), /initial restoration/);
+    const restoreAccepted = once(child, 'message', { signal: AbortSignal.timeout(5000) });
+    child.send({ type: 'restore-enabled', operationId: 'parent-ipc-restore', services: [] });
+    assert.deepEqual((await restoreAccepted)[0], { type: 'module-runner-restore',
+      operationId: 'parent-ipc-restore', pid: child.pid, state: 'accepted' });
+    const restored = once(child, 'message', { signal: AbortSignal.timeout(5000) });
+    assert.deepEqual((await restored)[0], { type: 'module-runner-restore',
+      operationId: 'parent-ipc-restore', pid: child.pid, state: 'restored', services: [] });
     await start(client, first, 'parent-ipc-start');
     set({ busy: true });
     const accepted = once(child, 'message', { signal: AbortSignal.timeout(5000) });
@@ -443,6 +459,75 @@ test('owned parent IPC fences controls, drains busy services and returns their e
     assert.equal(existsSync(join(userRoot, '.module-runner.sock')), false);
   } finally {
     set({});
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGTERM');
+      await exited;
+    }
+  }
+});
+
+test('server-owned cold startup restores the exact service pins captured by its prior clean drain', async t => {
+  const { runner, client, userRoot, first } = await fixture(t);
+  await runner.close();
+  const firstHost = new OwnedModuleLifecycle({ userRoot, cockpitUrl: 'http://127.0.0.1:1', startupTimeoutMs: 5000 });
+  assert.equal((await firstHost.startAfterReady()).state, 'restored');
+  await start(client, first, 'host-lifecycle-running');
+  await firstHost.prepareExit();
+  assert.deepEqual(firstHost.status().services, [{
+    id: 'task', version: first.manifest.version, digest: first.digest,
+  }]);
+
+  const nextHost = new OwnedModuleLifecycle({ userRoot, cockpitUrl: 'http://127.0.0.1:1', startupTimeoutMs: 5000 });
+  const restored = await nextHost.startAfterReady();
+  assert.equal(restored.state, 'restored', restored.error);
+  assert.deepEqual(restored.services, [{
+    id: 'task', version: first.manifest.version, digest: first.digest,
+  }]);
+  const running = await client.status('task');
+  assert.equal(running.status, 'running', running.reason);
+  assert.equal(running.identity?.moduleVersion, first.manifest.version);
+  assert.equal(running.identity?.moduleDigest, first.digest);
+  await nextHost.prepareExit();
+});
+
+test('a failed initial host restoration stays fenced and cannot be retried under a new operation ID', async t => {
+  const { runner, client, userRoot } = await fixture(t);
+  await runner.close();
+  const child = spawn(process.execPath, ['--import', 'tsx', new URL('./supervisor-entry.ts', import.meta.url).pathname,
+    '--user-root', userRoot, '--cockpit-url', 'http://127.0.0.1:1', '--host-owned', 'true'],
+  { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], env: { PATH: process.env.PATH, HOME: process.env.HOME } });
+  const exited = once(child, 'exit');
+  let stderr = '';
+  child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+  try {
+    await once(child, 'message', { signal: AbortSignal.timeout(5000) });
+    const failed = once(child, 'message', { signal: AbortSignal.timeout(5000) });
+    child.send({ type: 'restore-enabled', operationId: 'failed-restore-original', services: [{
+      id: 'task', version: '9.0.0', digest: 'b'.repeat(64),
+    }] });
+    const failedReply = (await failed)[0] as { type: string; operationId: string; pid: number; state: string; error: string };
+    assert.deepEqual({ ...failedReply, error: undefined }, {
+      type: 'module-runner-restore', operationId: 'failed-restore-original', pid: child.pid,
+      state: 'refused', error: undefined,
+    });
+    assert.match(failedReply.error, /release is not installed/);
+    const retry = once(child, 'message', { signal: AbortSignal.timeout(5000) });
+    child.send({ type: 'restore-enabled', operationId: 'failed-restore-new-id', services: [] });
+    const retryReply = (await retry)[0] as { state: string; error: string };
+    assert.equal(retryReply.state, 'refused');
+    assert.match(retryReply.error, /already attempted/);
+    await assert.rejects(client.submit({
+      operationId: 'failed-restore-control', id: 'task', action: 'start',
+      version: '1.0.0', digest: 'a'.repeat(64),
+    }), /initial restoration/);
+
+    const accepted = once(child, 'message', { signal: AbortSignal.timeout(5000) });
+    child.send({ type: 'drain-and-stop', operationId: 'failed-restore-drain' });
+    assert.equal(((await accepted)[0] as { state: string }).state, 'accepted');
+    const stopped = once(child, 'message', { signal: AbortSignal.timeout(5000) });
+    assert.equal(((await stopped)[0] as { state: string }).state, 'stopped');
+    assert.deepEqual(await exited, [0, null], stderr);
+  } finally {
     if (child.exitCode === null && child.signalCode === null) {
       child.kill('SIGTERM');
       await exited;

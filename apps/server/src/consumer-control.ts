@@ -3,6 +3,7 @@ import { ConsumerIdentity, ConsumerOperation, ConsumerStatus } from '@cockpit/pr
 import { callLauncher, connectConsumerLifecycle, consumerRootFromEnvironment, prepareConsumerExit,
   restartConsumer } from '../../../scripts/consumer/cli.mjs';
 import { operationPath, readJson } from '../../../scripts/consumer/state.mjs';
+import { OwnedModuleLifecycle } from '@cockpit/core';
 
 const LauncherStatus = z.object({
   authority: z.literal('consumer'), installationId: z.string().uuid(), active: z.string().nullable(),
@@ -45,4 +46,16 @@ export function createConsumerControl(env = process.env): ConsumerControl | unde
     async prepareExit() { await prepareConsumerExit(env); },
     async connect(armNativeDrain) { await connectConsumerLifecycle(armNativeDrain, env); },
   };
+}
+
+export function createOwnedModuleLifecycle(
+  cockpitUrl: string,
+  env = process.env,
+): OwnedModuleLifecycle | undefined {
+  if (env.COCKPIT_MANAGED_MODULES === undefined || env.COCKPIT_MANAGED_MODULES === '') return undefined;
+  if (env.COCKPIT_MANAGED_MODULES !== '1') throw new Error('COCKPIT_MANAGED_MODULES must be exactly 1 when enabled');
+  if (env.COCKPIT_CONSUMER_INSTALLATION) {
+    throw new Error('Consumer launcher and server-owned module runner authorities cannot be enabled together');
+  }
+  return new OwnedModuleLifecycle({ userRoot: env.COCKPIT_USER_ROOT, cockpitUrl });
 }

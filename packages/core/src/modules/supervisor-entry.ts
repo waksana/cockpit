@@ -5,7 +5,7 @@ import { readPrivateModuleJson } from './adapters.ts';
 import { writeModuleRecord } from './private-files.ts';
 
 const args = process.argv.slice(2);
-const options: { userRoot?: string; cockpitUrl?: string } = {};
+const options: { userRoot?: string; cockpitUrl?: string; hostOwned?: boolean } = {};
 let hostOwned = false;
 for (let index = 0; index < args.length; index += 2) {
   const flag = args[index], value = args[index + 1];
@@ -14,6 +14,7 @@ for (let index = 0; index < args.length; index += 2) {
       throw new Error('Host-owned module supervision requires its actual parent IPC channel');
     }
     hostOwned = true;
+    options.hostOwned = true;
     continue;
   }
   if (!value || (flag !== '--user-root' && flag !== '--cockpit-url')) {
@@ -25,7 +26,7 @@ for (let index = 0; index < args.length; index += 2) {
 }
 const runner = await startModuleSupervisor(options);
 process.stdout.write(`${JSON.stringify({ ready: true, pid: process.pid, socket: runner.socketPath })}\n`);
-if (process.send) process.send({ type: 'module-runner-ready', apiVersion: 1, lifecycleApi: 1, pid: process.pid, socket: runner.socketPath });
+if (hostOwned && process.send) process.send({ type: 'module-runner-ready', apiVersion: 1, lifecycleApi: 1, pid: process.pid, socket: runner.socketPath });
 let stopping = false;
 async function parentReply(value: object): Promise<void> {
   if (!process.send || !process.connected) throw new Error('Module runner parent IPC is unavailable; inspect the original lifecycle');
@@ -33,7 +34,7 @@ async function parentReply(value: object): Promise<void> {
     process.send!(value, error => { if (error) reject(error); else resolve(); });
   });
 }
-process.on('message', value => {
+if (hostOwned) process.on('message', value => {
   void (async () => {
     if (!value || typeof value !== 'object' || Array.isArray(value) || !('operationId' in value)
       || typeof value.operationId !== 'string' || !/^[a-zA-Z0-9_-]{8,120}$/.test(value.operationId)
@@ -102,3 +103,4 @@ const stop = (): void => {
 };
 process.on('SIGTERM', stop);
 process.on('SIGINT', stop);
+if (hostOwned) process.on('disconnect', stop);

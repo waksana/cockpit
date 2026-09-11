@@ -76,6 +76,8 @@ export interface ModuleRunnerOptions {
   userRoot?: string;
   /** Trusted operator setting, never an IPC URL. Task must not silently connect to a guessed Cockpit port. */
   cockpitUrl?: string;
+  /** An owned host must explicitly restore its captured pins before public service controls are admitted. */
+  hostOwned?: boolean;
   /** Readiness deadline only: expiration records unknown and never kills the child. */
   startupTimeoutMs?: number;
   readinessIntervalMs?: number;
@@ -275,6 +277,7 @@ export function buildModuleLaunch(
     if (process.env.COCKPIT_API_TOKEN) env.COCKPIT_API_TOKEN = process.env.COCKPIT_API_TOKEN;
     if (validated.managerCredentialFile) env.WORK_MODULE_MANAGER_CREDENTIAL = validated.managerCredentialFile;
     if (validated.credentialDirectory) env.WORK_CREDENTIAL_DIR = validated.credentialDirectory;
+    if (validated.retainedCredentialDirectory) env.WORK_RETAINED_CREDENTIAL_DIR = validated.retainedCredentialDirectory;
     if (validated.gatewayUrl) Object.assign(env, { WORK_MODULE_GATEWAY_URL: validated.gatewayUrl,
       COCKPIT_WEB_URL: validated.gatewayUrl, WORK_PUBLIC_URL: `${validated.gatewayUrl}/modules/task/` });
     if (process.env.WORK_GATEWAY_URL) env.WORK_GATEWAY_URL = validateAdapterConfig('task', { gatewayUrl: process.env.WORK_GATEWAY_URL }).gatewayUrl;
@@ -302,11 +305,13 @@ export class ModuleSupervisor {
   private closing = false;
   private closed = false;
   private fatal?: string;
+  private restoreState: 'pending' | 'attempting' | 'complete' | 'unknown';
   private constructor(private readonly options: ModuleRunnerOptions) {
     this.userRoot = resolveCockpitUserRoot(options.userRoot);
     this.socketPath = socketPath(this.userRoot);
     this.directory = join(this.userRoot, '.module-runner');
     this.catalog = new ModuleCatalog({ userRoot: this.userRoot });
+    this.restoreState = options.hostOwned ? 'pending' : 'complete';
     if (options.cockpitUrl !== undefined) validateAdapterConfig('task', { serviceUrl: options.cockpitUrl });
     for (const [name, value] of Object.entries({ startupTimeoutMs: options.startupTimeoutMs, readinessIntervalMs: options.readinessIntervalMs })) {
       if (value !== undefined && (!Number.isSafeInteger(value) || value < 1 || value > 300_000)) throw new Error(`Invalid ${name}`);
@@ -425,6 +430,9 @@ export class ModuleSupervisor {
     if (previous) {
       if (JSON.stringify(previous.command) !== JSON.stringify(request)) throw new Error('Operation ID conflicts with a different runner command');
       return structuredClone(previous);
+    }
+    if (this.options.hostOwned && this.restoreState !== 'complete') {
+      throw new Error('Host-owned module controls remain fenced until initial restoration completes');
     }
     if (this.closed || this.closing || this.fatal) throw new Error(this.fatal ?? 'Module runner is closing');
     return this.accept(request);
@@ -675,7 +683,11 @@ export class ModuleSupervisor {
   async restoreEnabled(operationId: string, raw: unknown, accepted: () => Promise<void>): Promise<ModuleServicePin[]> {
     operation(operationId);
     if (this.closed || this.closing || this.fatal || this.active.size) throw new Error(this.fatal ?? 'Runner has active lifecycle work');
+    if (this.options.hostOwned && this.restoreState !== 'pending') {
+      throw new Error('Initial host restoration was already attempted; inspect its original lifecycle receipt without retry');
+    }
     const pins = parseModuleServicePins(raw);
+    if (this.options.hostOwned) this.restoreState = 'attempting';
     this.closing = true;
     try {
       const recovered = new Set([...this.jobs.values()].filter(job => job.phase === 'done' && job.command.action === 'stop')
@@ -706,7 +718,11 @@ export class ModuleSupervisor {
           throw new Error(`Module restoration is unconfirmed: ${job?.reason ?? request.id}`);
         }
       }
+      if (this.options.hostOwned) this.restoreState = 'complete';
       return pins;
+    } catch (error) {
+      if (this.options.hostOwned) this.restoreState = 'unknown';
+      throw error;
     } finally { this.closing = false; }
   }
   async drainAndStop(operationId: string, accepted: () => Promise<void>): Promise<ModuleServicePin[]> {

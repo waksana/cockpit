@@ -243,6 +243,24 @@ same CI archive without private-CD access. That explicit authority is distinct
 from this module runner; it neither adopts existing services nor starts a
 second Task/WeChat supervisor.
 
+Source/private-CD installations can explicitly enable the same module ownership
+with `COCKPIT_MANAGED_MODULES=1` and the intended `COCKPIT_USER_ROOT`. The server
+then owns exactly one child runner from its own immutable release; it does not
+claim consumer installation authority or replace the private-CD main launcher.
+After native/HTTP readiness it restores only the previously captured service
+pins. A fresh installation restores `[]`. Public service controls are fenced
+until that initial restoration succeeds; status and parent drain remain
+available. Failed/unknown startup remains fenced, with the original lifecycle
+receipt visible in `/status` and `/admin/lifecycle`, rather than starting
+unrelated catalog entries or retrying an unknown restoration.
+
+Normal private-CD restart and SIGTERM/SIGINT drain the owned runner while the
+main API is still available, confirm clean runner exit, then recheck native
+busy state before shutdown. The captured module plan is kept under the user
+root, never in a native session database. Consumer mode and server-owned mode
+are mutually exclusive. Omitting the opt-in preserves the prior nonconsumer
+behavior.
+
 `system/consumer/status {operationId?}` reads current same-instance runtime
 identity and the original launcher receipt. `system/consumer/restart
 {operationId,confirm:true}` submits one stable operation; Web and MCP use the
