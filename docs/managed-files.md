@@ -145,6 +145,63 @@ Search and session scope update the current list; opening a file shows a focused
 detail, and its back button restores the previous list when available. Selecting
 a target session enables adding a file to its draft, without sending it.
 
+### Chat input: select, paste and drop
+
+The composer already supports multiple attachments in one message. File selection,
+user-initiated paste into its textarea, and file drop onto its input row now share
+the same ordered staging list. Nothing is sent automatically. Wait for every
+attachment to become ready, then send once; a failed or unfinished upload blocks
+the entire message until retried or removed. Upload completion order does not
+change attachment order. Adding a file again intentionally creates another slot;
+the duplicate `items`/`files` views of one browser event do not.
+
+Each incoming batch is checked before any upload starts: the existing maximum
+is **20 staged attachments** (including unfinished slots), **25 MiB per file**,
+and no empty files. If a batch would exceed either limit, none of that batch is
+added. Directories are rejected, not recursively scanned. Upload retry retains
+the same source identity; a new selection or paste gets a new identity. The
+server still determines authoritative MIME from the bytes, not the extension.
+
+Paste support depends on what the OS and browser actually expose:
+
+| Clipboard data | Behavior |
+| --- | --- |
+| Screenshot/copied image exposed as a file | Stage the supplied original bytes. |
+| Video or ordinary file exposed through clipboard `items`/`files` | Stage it exactly like a selected file, within the same limits. |
+| Only a video URL, OS path or HTML media source | No binary upload, URL download or local-path read. Use drag/drop or the attachment button. |
+| Files plus plain text | Stage the files and leave native textarea paste/selection/undo intact. |
+| Files plus HTML but no plain text | Preserve readable HTML text at the selection; never insert active markup or fetch its image/iframe sources. |
+| Text/HTML without files | Leave normal browser textarea paste unchanged. |
+
+Chrome/Chromium, Firefox and Safari differ across OSes and clipboard sources;
+copying a video is **not** a cross-browser promise of receiving its binary data.
+Mobile browsers may not offer desktop drag/drop; the attachment picker remains
+the fallback. No persistent `clipboard-read` permission or background clipboard
+listener is used. File dragging is handled only over the composer input row;
+ordinary text dragging elsewhere is not intercepted. The drop highlight overlays
+that row without resizing it.
+
+Late upload results stay bound to the original session draft. Removing a slot
+prevents its late result from restoring it. A send acknowledgement clears only
+the text revision and attachment generations actually submitted, not later edits.
+Navigating between sessions preserves in-memory uploads; a full page reload cannot
+restore unsent file bytes, so incomplete slots remain explicit failures requiring
+removal and reselection rather than silently sending only the ready subset.
+Ask/plan responses remain text-only. Transporting a video is still separate from
+the selected model understanding it.
+
+For a synthetic browser regression, start the isolated worktree's existing Vite
+server on a dedicated loopback port and open `/fixtures/composer-input.html`.
+Run `await window.composerFixture.run()` in the browser console at desktop and
+narrow viewport widths. This mounts the real Composer and upload client but
+substitutes synthetic upload responses and a controlled send acknowledgement;
+it never initializes the backend store or sends to a real session. It covers
+clipboard/drop payloads, ordered mixed sends, limits, retries, late results,
+session switches and disabled/ask/plan states. It is not proof that every OS
+clipboard can supply video files. The existing `apps/server/src/uploads.test.ts`
+fixtures separately exercise original-byte storage, MIME detection, limits and
+source-idempotent retries.
+
 ## Weixin protocol boundary
 
 The bridge uses native media messages, not download links disguised as delivery.

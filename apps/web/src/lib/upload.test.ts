@@ -44,11 +44,20 @@ test('rejects oversized uploads before fetching and accepts the exact size limit
     ...uploaded, kind: 'file', size: MAX_BYTES, mime: 'application/octet-stream',
   }));
   Object.defineProperty(file, 'size', { configurable: true, value: MAX_BYTES + 1 });
-  await assert.rejects(uploadFile(file), /文件过大.*25MB/);
+  await assert.rejects(uploadFile(file), /文件过大.*25 MiB/);
   assert.equal(fetch.mock.callCount(), 0);
   Object.defineProperty(file, 'size', { value: MAX_BYTES });
   assert.equal((await uploadFile(file)).size, MAX_BYTES);
   assert.equal(fetch.mock.callCount(), 1);
+});
+
+test('rejects empty files and directory selections before fetching', async t => {
+  const fetch = t.mock.method(globalThis, 'fetch', async () => assert.fail('must reject locally'));
+  await assert.rejects(uploadFile(new File([], 'empty')), /空文件/);
+  const directoryFile = new File(['x'], 'nested.txt');
+  Object.defineProperty(directoryFile, 'webkitRelativePath', { value: 'folder/nested.txt' });
+  await assert.rejects(uploadFile(directoryFile), /目录/);
+  assert.equal(fetch.mock.callCount(), 0);
 });
 
 test('propagates network failures and rejects unsuccessful HTTP responses', async (t) => {

@@ -17,6 +17,7 @@ import type { VoiceController } from '../lib/voice';
 import { stagedAttachments, type SessionDraft, type UploadFile } from '../lib/attachmentSend';
 import { attachmentHref } from '../lib/upload';
 import { fileDownloadUrl, filePreview } from '../lib/managedFile';
+import { hasTransferFiles, readableClipboardHtml, transferFiles } from '../lib/attachmentInput';
 import { useCockpit } from '../net/store';
 import { Icon } from './Icon';
 
@@ -48,14 +49,22 @@ export function Composer({
   const ownerRef = useRef<object | null>(null);
   const taRef = useRef<HTMLTextAreaElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const dragDepth = useRef(0);
+  const [dragState, setDragState] = useState({ draft, disabled, active: false });
+  if (dragState.draft !== draft || dragState.disabled !== disabled) {
+    setDragState({ draft, disabled, active: false });
+  }
   const voiceRef = useRef<VoiceController | null>(null);
   const voiceSupported = isVoiceSupported();
   const speechToken = useCockpit((s) => s.speechToken);
 
   useLayoutEffect(() => {
     ownerRef.current = {};
+    dragDepth.current = 0;
     return () => { ownerRef.current = null; };
   }, [draft]);
+
+  useLayoutEffect(() => { dragDepth.current = 0; }, [disabled]);
 
   const update = useCallback((next: string) => {
     if (!ownerRef.current) return;
@@ -113,12 +122,42 @@ export function Composer({
 
   const canSend = (text.trim().length > 0 || attachments.length > 0)
     && attachments.every(item => item.status === 'ready' && !attachmentBlocked) && !disabled && !pending;
+  const draggingFiles = !disabled && dragState.draft === draft && dragState.active;
+  const setDragging = (active: boolean) => setDragState({ draft, disabled, active });
 
   function pickFile(e: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(e.target.files ?? []);
     e.target.value = ''; // allow re-picking the same file
     if (disabled || !ownerRef.current) return;
-    for (const file of files) void draft.addAttachment(file, uploadFile);
+    void draft.addAttachments(files, uploadFile);
+  }
+
+  function addTransfer(data: DataTransfer) {
+    if (disabled || !ownerRef.current) return;
+    try {
+      const files = transferFiles(data);
+      if (files.length) void draft.addAttachments(files, uploadFile);
+      else draft.reportAttachmentError('浏览器未提供可读取的文件，请拖入文件或使用附件按钮。');
+    } catch (error) {
+      draft.reportAttachmentError(error instanceof Error ? error.message : '无法读取文件，请使用附件按钮。');
+    }
+  }
+
+  function paste(e: React.ClipboardEvent<HTMLTextAreaElement>) {
+    if (disabled || !ownerRef.current || !hasTransferFiles(e.clipboardData)) return;
+    addTransfer(e.clipboardData);
+    // Let the textarea preserve native plain-text paste, selection and undo.
+    // HTML-only file payloads need a readable-text fallback, never HTML insertion.
+    if (!e.clipboardData.getData('text/plain')) {
+      const html = e.clipboardData.getData('text/html');
+      const readable = html && readableClipboardHtml(html);
+      if (readable) {
+        e.preventDefault();
+        const ta = e.currentTarget;
+        ta.setRangeText(readable, ta.selectionStart, ta.selectionEnd, 'end');
+        update(ta.value);
+      }
+    }
   }
 
   return (
@@ -153,7 +192,7 @@ export function Composer({
                 : `已暂存 · ${staged.size ?? 0} B · 随消息发送`}
             </span>
             {staged.attachment?.mime && <span className="chat-staged-status">{staged.attachment.mime}</span>}
-            {staged.status === 'failed' && <button type="button" onClick={() => void draft.retryAttachment(staged.generation, uploadFile)}
+            {staged.status === 'failed' && staged.retryable !== false && <button type="button" disabled={disabled} onClick={() => void draft.retryAttachment(staged.generation, uploadFile)}
               aria-label={`重试上传 ${staged.name}`}>重试上传</button>}
             {attachmentBlocked && (
               <span className="chat-staged-status">请先处理上方提问或计划，或移除附件后发送文字。</span>
@@ -165,13 +204,38 @@ export function Composer({
           </button>
         </div>;
       })}</div>}
-      <div className="chat-input">
-      <input ref={fileRef} type="file" multiple hidden onChange={pickFile} />
+      <div className="chat-input" data-file-drag={draggingFiles ? 'true' : undefined}
+        onDragEnter={e => {
+          if (!hasTransferFiles(e.dataTransfer)) return;
+          e.preventDefault();
+          dragDepth.current++;
+          if (!disabled) setDragging(true);
+        }}
+        onDragOver={e => {
+          if (!hasTransferFiles(e.dataTransfer)) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = disabled ? 'none' : 'copy';
+        }}
+        onDragLeave={() => {
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (!dragDepth.current) setDragging(false);
+        }}
+        onDragEnd={() => { dragDepth.current = 0; setDragging(false); }}
+        onDrop={e => {
+          dragDepth.current = 0;
+          setDragging(false);
+          if (!hasTransferFiles(e.dataTransfer)) return;
+          e.preventDefault();
+          addTransfer(e.dataTransfer);
+        }}
+      >
+      {draggingFiles && <span className="chat-input-drop-hint" role="status">松开以暂存附件（不会自动发送）</span>}
+      <input ref={fileRef} type="file" multiple hidden disabled={disabled} onChange={pickFile} />
       <button
         type="button" className="chat-input-btn attach rp"
         disabled={disabled}
         onClick={() => fileRef.current?.click()}
-        aria-label={attachments.length ? '添加附件' : '上传文件或图片'} title="最多 20 个附件"
+        aria-label={attachments.length ? '添加附件' : '上传文件或图片'} title="选择、粘贴或拖入文件 · 最多 20 个 · 每个 25 MiB"
       >
         <Icon name="attach" size={22} />
       </button>
@@ -181,6 +245,7 @@ export function Composer({
         value={text}
         disabled={disabled}
         onChange={(e) => update(e.target.value)}
+        onPaste={paste}
         placeholder={placeholder ?? '输入消息…'}
         rows={1}
         onKeyDown={(e) => {
