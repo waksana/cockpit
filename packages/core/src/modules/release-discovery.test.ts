@@ -6,6 +6,30 @@ import { test } from 'node:test';
 import { ModuleCatalog } from './catalog.ts';
 import { ModuleUpdates } from './updates.ts';
 import { type ReleaseChannel } from './release-channel.ts';
+import { officialReleaseChannel } from './official-channel.ts';
+
+test('ordinary official module discovery uses the pinned public channel without a user credential', async t => {
+  const root = fileURLToPath(new URL(`../../../../.module-public-${randomUUID().slice(0, 8)}`, import.meta.url));
+  mkdirSync(root, { mode: 0o700 });
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const catalog = new ModuleCatalog({ userRoot: root });
+  const channel = officialReleaseChannel();
+  assert.equal(channel.tokenFile, undefined);
+  let calls = 0;
+  const updates = new ModuleUpdates(catalog, async (input, init) => {
+    calls++;
+    assert.equal(String(input), channel.metadataUrl);
+    assert.equal(new Headers(init?.headers).get('authorization'), null);
+    return new Response(null, { status: 404 });
+  });
+  await assert.rejects(updates.check(), error => error instanceof Error
+    && 'code' in error && error.code === 'RELEASE_HTTP_404');
+  assert.equal(calls, 1);
+  assert.deepEqual(catalog.readHostConfig().values, {}, 'A missing official release is not a confirmed channel or an anonymous retry');
+  catalog.updateHostConfig({ releaseChannel: null }, 0);
+  await assert.rejects(updates.check(), /channel is not configured/);
+  assert.equal(calls, 1, 'An invalid explicit override never falls back to the official channel');
+});
 
 test('module strict config supports explicit stable GitHub discovery while signature and sequence/digest remain authoritative', async t => {
   const root = fileURLToPath(new URL(`../../../../.module-discovery-${randomUUID().slice(0, 8)}`, import.meta.url));

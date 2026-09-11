@@ -57,7 +57,7 @@ export function ModuleList({ onClose }: { onClose: () => void }) {
         onClick={() => { void resource.refresh(); }}>刷新安装与实际运行状态</button>
       <button type="button" className="dialog-btn" disabled={busy} onClick={() => {
         void action.run(async () => { setRelease(undefined); setRelease(await intent('modules/updates/check', {})); });
-      }}>检查已配置信任源的发行更新</button>
+      }}>检查官方或已配置信任源的发行更新</button>
       {resource.status && <p role={resource.failed ? 'alert' : 'status'}>{resource.status}</p>}
       {action.error && <p role="alert">{action.error}；结果不明时先刷新，不要重复提交。</p>}
       {release && <section className="module-card">

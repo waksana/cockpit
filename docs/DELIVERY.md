@@ -49,7 +49,7 @@ Business recovery and any message transmission remain the connector owner's scop
 
 ## Build and submission
 
-The private repository is `waksana/cockpit`, target `refs/heads/main`
+The repository is `waksana/cockpit`, target `refs/heads/main`
 (GitHub repository ID `1360000893`, formerly `waksana/cockpit-foundation`).
 The old Go repository is now `waksana/agent-orchestrator-go`; do not rely on
 the reused `waksana/cockpit` name redirecting to that repository.
@@ -58,6 +58,11 @@ are unchanged. The host policy's `repository` and Git `origin` must explicitly
 target `waksana/cockpit`. This repository rename does not change committed
 project-config bytes, trusted config hashes or existing immutable release
 identities, and does not request a deployment.
+On 2026-09-12 the user explicitly authorized making Cockpit, Task and the
+WeChat connector source repositories public. The private production control
+plane, credentials and runtime data remain private. Official module downloads
+use the public signed [Release channel](module-releases.md), not users'
+access to publisher CI artifacts or the private deployment controller.
 `.github/workflows/delivery-ci.yml` validates/builds a fixed SHA on push and on
 explicit workflow dispatch. A push builds only. Authenticated toolkit `submit`
 dispatches a named request; `.github/workflows/delivery-transfer.yml` transports

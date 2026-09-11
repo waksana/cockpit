@@ -6,6 +6,19 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { downloadVerifiedArchive, readReleaseEnvelope, validateReleaseChannel } from '../packages/core/src/consumer/release-transport.mjs';
 
+test('private release HTTP errors remain distinct and never retry anonymously or expose response bodies', async () => {
+  for (const status of [401, 403, 404]) {
+    let requests = 0;
+    await assert.rejects(readReleaseEnvelope({
+      metadataUrl: 'https://api.github.com/repos/fixture/project/releases/assets/10',
+      allowedDownloadOrigins: ['https://api.github.com'],
+    }, async () => { requests++; return new Response('PRIVATE_RESPONSE_BODY', { status }); }), error =>
+      error.statusCode === status && error.code === `RELEASE_HTTP_${status}`
+      && error.message.includes(String(status)) && !error.message.includes('PRIVATE_RESPONSE_BODY'));
+    assert.equal(requests, 1);
+  }
+});
+
 test('GitHub asset transport requests binary bytes and permits only configured metadata/archive redirects without forwarding bearer', async t => {
   const root = fileURLToPath(new URL(`../.consumer-transport-${randomUUID().slice(0, 8)}`, import.meta.url));
   await mkdir(root, { mode: 0o700 });

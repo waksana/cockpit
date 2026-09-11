@@ -7,9 +7,11 @@ import { Intents, ModuleUpdateOperation, type IntentBody } from '@cockpit/protoc
 import { ModuleCatalog, ModuleInstallError, inspectModulePackage, validateModuleManifest } from './catalog.ts';
 import { checkReleaseChannel, downloadRelease, verifyReleaseMetadata, validateReleaseChannel, type ReleaseChannel } from './release-channel.ts';
 import { privateModuleDirectory, writeModuleRecord } from './private-files.ts';
+import { officialReleaseChannel } from './official-channel.ts';
 
 function channel(catalog: ModuleCatalog): ReleaseChannel {
-  const value = catalog.readHostConfig().values.releaseChannel;
+  const configured = catalog.readHostConfig().values.releaseChannel;
+  const value = configured === undefined ? officialReleaseChannel() : configured;
   try { return validateReleaseChannel(value); }
   catch {
     throw new Error('Official signed release channel is not configured. The installer must pin its publisher key and permitted download origins');

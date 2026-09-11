@@ -45,7 +45,14 @@ async function requestResource(url, channel, allowed, fetchImpl, accept, validat
     }
     if (!response.ok) {
       await response.body?.cancel();
-      throw new Error(`Release transport failed (${response.status}); no automatic retry`);
+      const reason = response.status === 401 ? 'GitHub/publisher authentication is required'
+        : response.status === 403 ? 'GitHub/publisher denied access or rate-limited this identity'
+        : response.status === 404 ? 'Release resource was not found or is not visible to the configured identity'
+        : 'Release transport failed';
+      throw Object.assign(new Error(`${reason} (${response.status}); no automatic retry or anonymous fallback`), {
+        code: `RELEASE_HTTP_${response.status}`,
+        statusCode: [401, 403, 404].includes(response.status) ? response.status : 502,
+      });
     }
     return response;
   }

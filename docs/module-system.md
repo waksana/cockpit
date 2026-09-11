@@ -173,14 +173,20 @@ Two source paths are deliberately separate:
    those values and a durable operation ID. This keeps the bundled Assistant
    installable without configuring a remote publisher and without automatically
    installing or applying it.
-2. An opt-in signed Release channel. Host configuration pins an Ed25519 public
-   key, HTTPS metadata URL and permitted download origins. Metadata includes
+2. The official signed public Release channel. A fresh installation uses the
+   bundled Ed25519 public key and
+   `https://github.com/waksana/cockpit/releases/download/modules-stable/modules.signed.json`.
+   Ordinary users need no GitHub login, PAT, private-repository membership or
+   publisher CI credentials. An explicit host `releaseChannel` can override the
+   public channel for private/custom distributions; an invalid override fails
+   rather than silently changing its trust source. Metadata includes
    sequence, issue/expiry time and exact module/version/platform/source-SHA,
    archive size, digest and URL. Verification rejects stale sequence floors,
    expired metadata, ambiguous targets and untrusted origins. Changing trust
    roots remains an installer/operator action.
 
-Private download credentials are local file references. Authorization is sent
+Private/custom download credentials are optional local file references, never
+an official-module installation prerequisite. Authorization is sent
 only to the configured metadata origin, never blindly forwarded to asset
 redirects. A same-origin checksum without a trusted signature is not publisher
 authentication. This initial signed-channel format does not claim the complete
@@ -197,8 +203,9 @@ and size must describe the actual immutable ZIP, not a freshly repacked consumer
 copy. The private key stays in the publisher's protected CI environment; only the
 signed envelope and archive are uploaded to the existing private or public
 Release destination. The script does not publish, change repository visibility,
-generate trust roots, or enable a consumer updater. Consuming users need only
-their own read access, never the publisher's CI/CD credentials.
+generate trust roots, or enable a consumer updater. Publishing uses the
+publisher's repository/CI identity. Consumers of the official public channel
+download anonymously; a custom private channel needs its own explicit read access.
 
 Explicit check, download/install, service activation and session application are
 different actions. None enables a periodic schedule or automatic installation.
