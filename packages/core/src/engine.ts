@@ -1938,10 +1938,12 @@ export class Engine {
   }
   async deletionPlan(id: string): Promise<SessionDeletionPlan> {
     this.assertAvailable();
+    const plan = await this.modules?.deletionPlan?.(id);
+    if (plan?.state === 'deleted' && plan.operationId) return plan;
     if (!this.sessions.has(id) && !await this.modules?.read(id) && !await this.runtime.getSessionMetadata(id)) {
       throw new Error('Unknown session');
     }
-    if (this.modules?.deletionPlan) return this.modules.deletionPlan(id);
+    if (plan) return plan;
     return { sessionId: id, planId: createHash('sha256').update(JSON.stringify([id, []])).digest('hex'), modules: [] };
   }
   async deleteSession(id: string, confirm?: true, unbind?: SessionUnbindApproval): Promise<void> {

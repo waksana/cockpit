@@ -6238,6 +6238,23 @@ test('optional module unbind precedes native deletion and refusal preserves the 
   assert.ok(h.trace.indexOf(`delete:${s.id}`) < h.trace.indexOf(`modules-removed:${s.id}`));
 });
 
+test('completed module deletion receipts remain readable after native and live-role removal', async t => {
+  const { modules } = moduleHostFixture();
+  const h = harness(t, { modules });
+  const s = await h.load();
+  await h.engine.deleteSession(s.id, true);
+  assert.equal(await h.engine.getMeta(s.id), null);
+  const receipt = { sessionId: s.id, planId: 'b'.repeat(64), modules: [],
+    operationId: 'retained-deletion-receipt', state: 'deleted' as const, completedModules: [] };
+  modules.deletionPlan = t.mock.fn(async id => id === s.id ? receipt
+    : { sessionId: id, planId: 'c'.repeat(64), modules: [] });
+  const resumes = h.runtime.resumeSession.mock.callCount();
+  assert.deepEqual(await h.engine.deletionPlan(s.id), receipt);
+  await assert.rejects(h.engine.deletionPlan('missing-session'), /Unknown session/);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), resumes);
+  assert.equal(h.runtime.deleteSession.mock.callCount(), 1);
+});
+
 test('a failed native deletion reports completed module unbind separately', async t => {
   const { modules } = moduleHostFixture();
   const h = harness(t, { modules });

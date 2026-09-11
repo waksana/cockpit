@@ -131,6 +131,9 @@ not erase the operation receipts, module data, user memory or managed uploads.
 After native deletion is confirmed, the old role/application record is archived
 before its live reference is removed. A failed or unknown role application with
 no remaining required unbind does not leave an undeletable module reference.
+The original completed module-deletion receipt remains readable through
+`session/delete/preview` after native removal; reading it never recreates the
+session or repeats an unbind.
 
 Unload/load preserves the native session ID and does not invoke unbind.
 Out-of-band deletion can leave an unavailable target; consumers still check
