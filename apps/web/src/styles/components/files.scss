@@ -311,9 +311,9 @@
   :is(a, button):focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; }
 }
 .chat-file-card {
-  height: calc(var(--attachment-preview-height) + 72px);
+  height: calc(var(--attachment-preview-height) + 88px);
   grid-template-rows: var(--attachment-preview-height) minmax(0, 1fr);
-  &[data-layout='file'] { height: 72px; grid-template-rows: minmax(0, 1fr); }
+  &[data-layout='file'] { height: 88px; grid-template-rows: minmax(0, 1fr); }
 }
 .chat-file-preview, .chat-preview-image-shell {
   position: relative;
@@ -362,9 +362,9 @@
 }
 .chat-file-info {
   display: grid;
-  grid-template-rows: 18px 14px 24px;
+  grid-template-rows: 20px 18px 32px;
   min-width: 0;
-  padding: 7px;
+  padding: 8px 10px;
   overflow: hidden;
 }
 .chat-file-name, .chat-file-description, .chat-inline-image-caption {
@@ -374,12 +374,17 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.chat-file-name { font-size: 13px; line-height: 18px; font-weight: 600; }
+.chat-file-name {
+  font-size: 13px; line-height: 20px; font-weight: 600;
+  color: var(--primary-text-color);
+}
+.message-body .chat-file-name { color: var(--primary-text-color); text-decoration: none; }
+.chat-file-name:hover { text-decoration: underline; }
 .chat-file-description {
   color: var(--secondary-text-color);
-  font-size: 11px;
-  line-height: 14px;
-  &[role='alert'] { color: var(--danger-color); }
+  font-size: 12px;
+  line-height: 18px;
+  &[role='alert'] { color: var(--chat-danger-ink, var(--danger-color)); }
 }
 .chat-file-actions {
   display: flex;
@@ -390,14 +395,15 @@
   a, button {
     display: inline-flex;
     align-items: center;
-    min-height: 24px;
-    padding: 0 0.25rem;
+    min-height: 32px;
+    padding: 0 0.4rem;
+    border-radius: 6px;
     border: 0;
     background: transparent;
-    color: var(--primary-color);
+    color: var(--chat-link-ink, var(--link-color));
     font: inherit;
     font-size: 12px;
-    line-height: 24px;
+    line-height: 32px;
     text-decoration: none;
     cursor: pointer;
     &:hover { background: var(--light-primary-color); }
@@ -433,8 +439,18 @@
   margin-top: 0.5rem;
 }
 
-.managed-file-meta > span:last-child { color: var(--secondary-text-color); font-size: var(--font-size-13); }
-.managed-file-actions button { color: var(--primary-color); cursor: pointer; }
+.managed-file-meta > span:last-child { color: var(--primary-text-color); font-size: var(--font-size-13); }
+.managed-file-meta > a { color: var(--primary-text-color); font-weight: 600; overflow-wrap: anywhere; }
+.managed-file-actions {
+  a, button {
+    display: inline-flex; align-items: center; min-height: 32px; padding: 0.3rem 0.6rem;
+    border: 1px solid var(--border-color); border-radius: 8px; background: transparent;
+    color: var(--primary-text-color); font: inherit; font-size: var(--font-size-13); cursor: pointer;
+    text-decoration: none;
+    &:hover, &[aria-expanded='true'] { background: var(--ripple-color); }
+    &:focus-visible { outline: 2px solid var(--primary-text-color); outline-offset: 2px; }
+  }
+}
 .managed-file-details {
   display: grid;
   gap: 0.4rem;

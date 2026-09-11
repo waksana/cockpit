@@ -19,14 +19,14 @@ const render = (overrides: Partial<ChatSession>) => renderToStaticMarkup(createE
 test('cold history loading is not presented as an empty conversation', () => {
   const html = render({});
   assert.match(html, /正在同步对话历史/);
-  assert.doesNotMatch(html, /开始对话吧|重新读取最新历史/);
+  assert.doesNotMatch(html, /开始对话|重新读取最新历史/);
 });
 
 test('failed history remains visibly unsynchronized and offers an explicit read retry', () => {
   const html = render({ loadingHistory: false, error: '加载失败: offline' });
   assert.match(html, /对话历史尚未同步/);
   assert.match(html, /重新读取最新历史/);
-  assert.doesNotMatch(html, /开始对话吧/);
+  assert.doesNotMatch(html, /开始对话/);
 });
 
 test('failed reconciliation keeps cached text with an explicit latest retry, without the old range warning', () => {
@@ -37,12 +37,12 @@ test('failed reconciliation keeps cached text with an explicit latest retry, wit
   assert.match(html, /Retained reading window/);
   assert.doesNotMatch(html, /无法确认原阅读范围/);
   assert.match(html, /重新读取最新历史/);
-  assert.doesNotMatch(html, /开始对话吧|正在同步对话历史/);
+  assert.doesNotMatch(html, /开始对话|正在同步对话历史/);
 });
 
 test('only an authoritative empty history displays the new conversation hint', () => {
   const html = render({ materialized: true, historyStale: false, loadingHistory: false });
-  assert.match(html, /开始对话吧/);
+  assert.match(html, /开始对话/);
   assert.doesNotMatch(html, /尚未同步|重新读取最新历史/);
 });
 

@@ -16,7 +16,7 @@ import { createVoiceController, isVoiceSupported } from '../lib/voice';
 import type { VoiceController } from '../lib/voice';
 import { stagedAttachments, type SessionDraft, type UploadFile } from '../lib/attachmentSend';
 import { attachmentHref } from '../lib/upload';
-import { fileDownloadUrl, filePreview } from '../lib/managedFile';
+import { fileDownloadUrl, filePreview, formatFileSize } from '../lib/managedFile';
 import { hasTransferFiles, readableClipboardHtml, transferFiles } from '../lib/attachmentInput';
 import { useCockpit } from '../net/store';
 import { Icon } from './Icon';
@@ -164,19 +164,19 @@ export function Composer({
   return (
     <>
       {sendError && (
-        <button type="button" className="chat-input-notice" onClick={draft.dismissError}>
-          {sendError}
-        </button>
+        <div className="chat-input-notice" role="alert" tabIndex={0}><span>{sendError}</span>
+          <button type="button" onClick={draft.dismissError} aria-label="关闭发送提示"><Icon name="close" size={18} /></button>
+        </div>
       )}
       {voiceError && (
-        <button type="button" className="chat-input-notice" onClick={() => setVoiceError(null)}>
-          {voiceError}
-        </button>
+        <div className="chat-input-notice" role="alert" tabIndex={0}><span>{voiceError}</span>
+          <button type="button" onClick={() => setVoiceError(null)} aria-label="关闭语音提示"><Icon name="close" size={18} /></button>
+        </div>
       )}
       {attachments.length > 0 && <div className="chat-staged-list">{attachments.map(staged => {
         const attachmentUrl = staged.attachment ? attachmentHref(staged.attachment.url) : undefined;
         const preview = staged.attachment && filePreview(staged.attachment);
-        return <div key={staged.generation} className="chat-staged-attachment" role="group" aria-label="暂存附件">
+        return <div key={staged.generation} className="chat-staged-attachment" data-status={staged.status} role="group" aria-label={`暂存附件：${staged.name}`}>
           {attachmentUrl && preview === 'image' ? (
             <a href={attachmentUrl} target="_blank" rel="noopener noreferrer" className="chat-staged-image">
               <img src={attachmentUrl} alt={staged.name} />
@@ -185,12 +185,12 @@ export function Composer({
             : <span className="chat-staged-icon"><Icon name="file" size={24} /></span>}
           <div className="chat-staged-meta">
             {attachmentUrl ? (
-              <a href={fileDownloadUrl(staged.attachment!.url)} download={staged.name} className="chat-staged-name">{staged.name}</a>
-            ) : <span className="chat-staged-name">{staged.name}</span>}
+              <a href={fileDownloadUrl(staged.attachment!.url)} download={staged.name} className="chat-staged-name" title={staged.name}>{staged.name}</a>
+            ) : <span className="chat-staged-name" title={staged.name}>{staged.name}</span>}
             <span className="chat-staged-status" aria-live="polite">
               {staged.status === 'uploading' ? '上传中…（尚未发送）'
                 : staged.status === 'failed' ? staged.error
-                : `已暂存 · ${staged.size ?? 0} B · 随消息发送`}
+                : `已暂存${staged.size !== undefined ? ` · ${formatFileSize(staged.size)}` : ''} · 随消息发送`}
             </span>
             {staged.attachment?.mime && <span className="chat-staged-status">{staged.attachment.mime}</span>}
             {staged.status === 'failed' && staged.retryable !== false && <button type="button" disabled={disabled} onClick={() => void draft.retryAttachment(staged.generation, uploadFile)}
@@ -243,6 +243,7 @@ export function Composer({
       <textarea
         ref={taRef}
         className="chat-input-message"
+        aria-label="消息输入"
         value={text}
         disabled={disabled}
         onChange={(e) => update(e.target.value)}
@@ -259,6 +260,7 @@ export function Composer({
         <button
           type="button"
           className="chat-input-btn mic rp"
+          disabled={disabled}
           data-listening={listening ? 'true' : undefined}
           onClick={toggleVoice}
           aria-label={listening ? '停止语音输入' : '语音输入'}
@@ -269,10 +271,11 @@ export function Composer({
       )}
       <button
         type="button" className="chat-input-btn send rp" disabled={!canSend} onClick={submit}
-        aria-label={busy ? '排队发送' : '发送'}
-        title={busy ? '加入队列' : '发送'}
+        aria-label={pending ? '正在提交' : busy ? '排队发送' : '发送'}
+        aria-busy={pending}
+        title={pending ? '正在提交，草稿仍可编辑' : busy ? '加入队列' : '发送'}
       >
-        <Icon name="send" size={22} />
+        <Icon name={pending ? 'sending' : 'send'} size={22} />
       </button>
       </div>
     </>

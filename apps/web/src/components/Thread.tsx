@@ -15,6 +15,8 @@ import { observeHistoryPrefetch } from './historyPrefetch';
 import { canSkipMessageLayout, createMessageLayout } from './messageLayout';
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
+import { CopyButton } from './CopyButton';
+import { copyText, messageCopyText } from '../lib/copyText';
 
 // Plan-exit action → button label. The SDK offers a subset of these (incl.
 // autopilot_fleet); the card renders one button per offered action rather than a
@@ -28,8 +30,7 @@ const PLAN_ACTION_LABEL: Record<ExitPlanModeAction, string> = {
 };
 const PLAN_ACTION_ORDER: ExitPlanModeAction[] = ['interactive', 'autopilot', 'autopilot_fleet', 'exit_only'];
 
-// Tool-call status → icon + tone. Static glyphs (no spinner) per the zero-
-// animation doctrine; color carries the state.
+// Static glyphs accompany the explicit status text; no decorative motion.
 function ToolStatusIcon({ status }: { status: ToolCall['status'] }) {
   switch (status) {
     case 'completed': return <span className="tool-ico"><Icon name="check" size={15} /></span>;
@@ -42,22 +43,28 @@ function ToolStatusIcon({ status }: { status: ToolCall['status'] }) {
 function ToolCallRow({ tc }: { tc: ToolCall; sessionId: string }) {
   const [open, setOpen] = useState(false);
   const hasDetail = !!(tc.args || tc.output);
+  const status = tc.status ? {
+    completed: '已完成', failed: '失败', in_progress: '执行中', pending: '待执行',
+  }[tc.status] : '状态未知';
+  const heading = <>
+    <ToolStatusIcon status={tc.status} />
+    <span className="tool-title">{tc.title}</span>
+    <span className="tool-status">{status}</span>
+    {tc.name && <span className="tool-name" title={tc.name}>{tc.name}</span>}
+    {hasDetail && <span className="tool-chevron"><Icon name={open ? 'up' : 'down'} size={14} /></span>}
+  </>;
   return (
-    <div className="msg-tool" data-status={tc.status ?? 'pending'}>
-      <div className="tool-head">
-        <ToolStatusIcon status={tc.status} />
-        <span className="tool-title">{tc.title}</span>
-        {tc.name && <span className="tool-name">{tc.name}</span>}
-        {hasDetail && (
-          <button type="button" className="tool-toggle" onClick={() => setOpen((v) => !v)} aria-expanded={open} aria-label={open ? '收起细节' : '展开细节'}>
-            <Icon name={open ? 'up' : 'down'} size={14} />
-          </button>
-        )}
-      </div>
+    <div className="msg-tool" data-status={tc.status ?? 'unknown'}>
+      {hasDetail ? <button type="button" className="tool-head tool-toggle" onClick={() => setOpen(v => !v)}
+        aria-expanded={open} aria-label={`${open ? '收起' : '展开'}细节：${tc.title} · ${status}`}>{heading}</button>
+        : <div className="tool-head">{heading}</div>}
       {hasDetail && open && (
         <div className="tool-detail">
-          {tc.args && <pre className="tool-args">{tc.args}</pre>}
-          {tc.output && <pre className="tool-output">{tc.output}</pre>}
+          {tc.name && <div className="tool-detail-name">{tc.name}</div>}
+          {tc.args && <section><div className="tool-detail-label">参数 <CopyButton text={tc.args} label="复制工具参数" /></div>
+            <pre className="tool-args" tabIndex={0} aria-label="工具参数">{tc.args}</pre></section>}
+          {tc.output && <section><div className="tool-detail-label">输出 <CopyButton text={tc.output} label="复制工具输出" /></div>
+            <pre className="tool-output" tabIndex={0} aria-label="工具输出">{tc.output}</pre></section>}
         </div>
       )}
     </div>
@@ -133,7 +140,7 @@ function SubagentCard({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
   return (
     <div className="subagent-card" data-status={sa.status}>
       <button type="button" className="subagent-head rp" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span className="subagent-ico" aria-hidden="true">🤖</span>
+        <span className="subagent-ico"><Icon name="newchat" size={18} /></span>
         <span className="subagent-name">{sa.displayName}</span>
         <span className="subagent-status" title="根据已加载的子代理事件记录，不代表当前仍在运行或任务目标已完成。">
           记录：{status}{!connected && ' · 待同步'}
@@ -257,6 +264,7 @@ const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline
 }) {
   const frame = useRef<HTMLDivElement | null>(null);
   const skippable = canSkipMessageLayout(m, live);
+  const copyable = messageCopyText(m);
   useLayoutEffect(() => {
     if (skippable && frame.current) return layout.observe(frame.current);
   }, [layout, skippable, m, date, showByline]);
@@ -264,6 +272,9 @@ const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline
     <div ref={frame} className="msg-group" data-message-frame={m.id}>
       {date && <div className="date-separator" aria-hidden="true">{date}</div>}
       <MessageRow m={m} sessionId={sessionId} showByline={showByline} thinkingLive={live} onMenu={onMenu} />
+      {(m.role === 'user' || m.role === 'assistant') && copyable && <div className="message-actions" data-role={m.role}>
+        <CopyButton text={copyable} label="复制消息" />
+      </div>}
     </div>
   );
 });
@@ -343,12 +354,25 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
     return () => { scope.active = false; };
   }, [session.sessionId]);
   const [msgMenu, setMsgMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
+  const [copyNotice, setCopyNotice] = useState('');
+  useEffect(() => {
+    if (!copyNotice) return;
+    const timer = window.setTimeout(() => setCopyNotice(''), 3000);
+    return () => window.clearTimeout(timer);
+  }, [copyNotice]);
   const openMsgMenu = useCallback((e: React.MouseEvent, m: ChatMessage) => {
-    if (!m.content) return;
+    const text = messageCopyText(m);
+    if (!text) return;
     e.preventDefault();
     setMsgMenu({
       x: e.clientX, y: e.clientY,
-      items: [{ label: '复制', icon: 'compose', onClick: () => { void navigator.clipboard?.writeText(m.content).catch(() => {}); } }],
+      items: [{ label: '复制', icon: 'file', onClick: () => {
+        const scope = actionScopeRef.current;
+        void copyText(text).then(
+          () => { if (scope.active) setCopyNotice('已复制消息'); },
+          () => { if (scope.active) setCopyNotice('复制失败，请选择文字后复制。'); },
+        );
+      } }],
     });
   }, []);
   const prevLastIdRef = useRef<string | undefined>(undefined);
@@ -468,7 +492,7 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
   return (
     <main className="chat">
       <div className="chat-transcript">
-        <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-busy={preparingHistory}>
+        <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-label="对话消息" aria-busy={preparingHistory}>
           <div ref={contentRef} className="chat-message-content">
             <div className="chat-history-controls">
               <div className="chat-history-actions">
@@ -501,7 +525,8 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
             <div className="chat-message-rows" data-preparing={preparingHistory || undefined}
               aria-hidden={preparingHistory || undefined} inert={preparingHistory || undefined}>
               {session.messages.length === 0 && session.materialized && !session.historyStale && !session.loadingHistory && !session.hasMore && (
-                <p className="chat-empty-hint">开始对话吧 — 工作目录 {session.cwd}</p>
+                <div className="chat-empty-hint"><Icon name="newchat" size={28} />
+                  <strong>开始对话</strong><span>输入消息，或添加文件一起讨论。</span><code>{session.cwd}</code></div>
               )}
               <TranscriptMessages messages={messages} sessionId={session.sessionId}
                 liveId={session.status === 'running' ? session.messages.at(-1)?.id : undefined}
@@ -513,12 +538,12 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
               {session.status === 'running' && !session.compacting && !ask && (
                 <div className="chat-typing" aria-live="polite">
                   {session.intent || '回复中…'}
-                  <button type="button" className="chat-typing-stop" onClick={() => onCancel?.()}>
-                    {(session.queue?.length ?? 0) > 0 ? '停止并清空队列' : '停止'}
+                  <button type="button" className="chat-typing-stop" disabled={session.cancelling || !onCancel} onClick={() => onCancel?.()}>
+                    {session.cancelling ? '正在停止…' : (session.queue?.length ?? 0) > 0 ? '停止并清空队列' : '停止'}
                   </button>
                 </div>
               )}
-              {session.error && <p className="chat-error">错误: {session.error}
+              {session.error && <p className="chat-error" role="alert">错误: {session.error}
                 {onRetryHistory && session.materialized && !session.historyStale && <button type="button"
                   className="dialog-btn rp" onClick={onRetryHistory}>重试同步</button>}
               </p>}
@@ -534,7 +559,8 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
       </div>
 
       {!readOnly && ask && (
-        <div className="chat-ask" role="group" aria-label="需要你的选择">
+        <div className="chat-ask" role="group" aria-label="需要你的选择" aria-busy={actionPending}>
+          <div className="chat-pending-head"><Icon name="newchat" size={16} />需要你的回答</div>
           <div className="chat-ask-q">{ask.question}</div>
           {ask.choices && ask.choices.length > 0 && (
             <div className="chat-ask-choices">
@@ -543,21 +569,24 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
               ))}
             </div>
           )}
+          <div className="chat-pending-hint" role="status">{actionPending ? '正在提交回答…' : ask.allowFreeform === false ? '请选择一个选项。' : '也可以在下方输入自己的回答。'}</div>
         </div>
       )}
 
       {!readOnly && session.planRequest && (
-        <div className="chat-ask chat-pending" role="group" aria-label="计划待确认">
-          <div className="chat-pending-head">计划已就绪</div>
-          <div className="chat-pending-summary">
-            <MessageBody body={session.planRequest.summary} />
+        <div className="chat-ask chat-pending chat-plan" role="group" aria-label="计划待确认" aria-busy={actionPending}>
+          <div className="chat-pending-head"><Icon name="mode_plan" size={16} />计划已就绪</div>
+          <div className="chat-pending-content" role="region" tabIndex={0} aria-label="计划内容">
+            <div className="chat-pending-summary">
+              <MessageBody body={session.planRequest.summary} />
+            </div>
+            {session.planRequest.planContent && (
+              <details className="chat-pending-detail">
+                <summary>查看完整计划</summary>
+                <pre className="chat-pending-pre">{session.planRequest.planContent}</pre>
+              </details>
+            )}
           </div>
-          {session.planRequest.planContent && (
-            <details className="chat-pending-detail">
-              <summary>查看完整计划</summary>
-              <pre className="chat-pending-pre">{session.planRequest.planContent}</pre>
-            </details>
-          )}
           <div className="chat-ask-choices">
             {(() => {
               const pr = session.planRequest!;
@@ -580,12 +609,13 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
               ));
             })()}
           </div>
-          <div className="chat-pending-hint">或在下方直接输入新指令，我先照做再回到计划</div>
+          <div className="chat-pending-hint" role="status">{actionPending ? '正在提交选择…' : '或在下方直接输入新指令，我先照做再回到计划'}</div>
         </div>
       )}
 
       {!readOnly && session.elicitation && (
-        <div className="chat-ask chat-pending" role="group" aria-label="需要你的输入">
+        <div className="chat-ask chat-pending" role="group" aria-label="需要你的输入" aria-busy={actionPending}>
+          <div className="chat-pending-head"><Icon name="mcp" size={16} />工具请求确认</div>
           <div className="chat-ask-q">{session.elicitation.message}</div>
           <div className="chat-ask-choices">
             {(session.elicitation.actions ?? ['accept', 'decline', 'cancel']).map(action => (
@@ -595,6 +625,7 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
               </button>
             ))}
           </div>
+          {actionPending && <div className="chat-pending-hint" role="status">正在提交选择…</div>}
         </div>
       )}
 
@@ -619,14 +650,14 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
           )}
           {session.queue?.map((q) => (
             <div key={q.id} className="chat-queue-item">
-              <span className="chat-queue-text">{q.text}</span>
-              <button type="button" className="chat-queue-remove" aria-label="移除" onClick={() => onRemoveQueued?.(q.id)}>×</button>
+              <span className="chat-queue-text" title={q.text}>{q.text}</span>
+              <button type="button" className="chat-queue-remove" aria-label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)}><Icon name="close" size={16} /></button>
             </div>
           ))}
         </div>
       )}
       {!readOnly && (interruptAction.error || interruptNotice?.sessionId === session.sessionId) && (
-        <p className="chat-interrupt-status" role={interruptAction.error ? 'alert' : 'status'}>
+        <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
           {interruptAction.error ? `打断未确认：${interruptAction.error}。请核对会话状态，不要直接重试。` : interruptNotice?.text}
         </p>
       )}
@@ -643,8 +674,10 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
           onSend={handleSend}
           uploadFile={uploadFile}
           attachmentBlocked={!!ask || !!planRequest}
+          sendBlocked={ask?.allowFreeform === false}
         />
       )}
+      <div className="chat-copy-notice" role="status">{copyNotice}</div>
       {msgMenu && (
         <ContextMenu x={msgMenu.x} y={msgMenu.y} items={msgMenu.items} onClose={() => setMsgMenu(null)} />
       )}

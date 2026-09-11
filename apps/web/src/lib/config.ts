@@ -10,7 +10,8 @@ function override(): string | null {
 
 // Same origin in production; an explicit dev target so `vite dev` can run
 // against the deployed server.
-export const BASE_URL = override() ?? (DEV ? 'https://acp.rbym47.com' : '');
+export const BASE_URL = DEV && import.meta.env?.COCKPIT_CHAT_LAB === true
+  ? '' : override() ?? (DEV ? 'https://acp.rbym47.com' : '');
 export const EVENTS_URL = `${BASE_URL}/events`;
 export const CHAT_STREAM_URL = `${BASE_URL}/chat/stream`;
 export const intentUrl = (name: string): string => `${BASE_URL}/intent/${name}`;
