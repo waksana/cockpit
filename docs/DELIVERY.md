@@ -6,7 +6,15 @@ authenticated request result are the authority.
 
 ## Build and submission
 
-The private repository is `waksana/cockpit-foundation`, target `refs/heads/main`.
+The private repository is `waksana/cockpit`, target `refs/heads/main`
+(GitHub repository ID `1360000893`, formerly `waksana/cockpit-foundation`).
+The old Go repository is now `waksana/agent-orchestrator-go`; do not rely on
+the reused `waksana/cockpit` name redirecting to that repository.
+Local directories, session working directories and the `cockpit` project ID
+are unchanged. The host policy's `repository` and Git `origin` must explicitly
+target `waksana/cockpit`. This repository rename does not change committed
+project-config bytes, trusted config hashes or existing immutable release
+identities, and does not request a deployment.
 `.github/workflows/delivery-ci.yml` validates/builds a fixed SHA on push and on
 explicit workflow dispatch. A push builds only. Authenticated toolkit `submit`
 dispatches a named request; `.github/workflows/delivery-transfer.yml` transports
