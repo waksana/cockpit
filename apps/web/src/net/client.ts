@@ -205,7 +205,10 @@ export class NetClient {
         throw new Error('通知服务请求失败或超时，请检查连接后重试。');
       }
       // Diagnostics stay local. Never execute a prompt or retry an uncertain POST.
-      if (!signal?.aborted && !isSessionUnloadedError(e) && name !== 'speech/token' && (name !== 'session/chat' || !isTransportError(e))) {
+      // File metadata errors are rendered by the preview/detail resource owner;
+      // a duplicate global notification would resize the chat during loading.
+      if (!signal?.aborted && !isSessionUnloadedError(e) && name !== 'speech/token' && name !== 'files/get'
+        && (name !== 'session/chat' || !isTransportError(e))) {
         reportUxError(`${source ? `${source}：` : ''}接口 ${name} 调用失败：${describeReason(e, false)}`, { deduplicate: false });
       }
       throw e;

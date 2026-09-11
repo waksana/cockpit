@@ -40,10 +40,16 @@ export function attachmentHref(url: string, baseUrl: string = BASE_URL): string 
   }
 }
 
-export async function uploadFile(file: File, sessionId?: string): Promise<UploadedFile> {
-  if (file.size > MAX_BYTES) throw new Error(`文件过大（上限 ${Math.floor(MAX_BYTES / 1024 / 1024)}MB）`);
+export function validateUploadFile(file: File): void {
+  if (file.webkitRelativePath) throw new Error('不支持上传目录，请选择单个或多个文件。');
+  if (!file.size) throw new Error('不能上传空文件。');
+  if (file.size > MAX_BYTES) throw new Error('文件过大（上限 25 MiB）');
+}
+
+export async function uploadFile(file: File, sessionId?: string, sourceId?: string): Promise<UploadedFile> {
+  validateUploadFile(file);
   const mime = file.type || 'application/octet-stream';
-  const res = await fetch(`${uploadUrl(file.name, mime)}&source=web${sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : ''}`, {
+  const res = await fetch(`${uploadUrl(file.name, mime)}&source=web${sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : ''}${sourceId ? `&sourceId=${encodeURIComponent(sourceId)}` : ''}`, {
     method: 'POST',
     headers: { 'content-type': 'application/octet-stream' },
     credentials: 'include',

@@ -124,12 +124,20 @@ function MessageInner({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
 // thinking, messages) — the same rendering as the main thread, nested.
 function SubagentCard({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
   const [open, setOpen] = useState(false);
+  const connected = useCockpit((s) => s.connState === 'open');
   const sa = m.subagent!;
+  const status = {
+    running: '已启动', activity: '有后续活动', completed: '本次执行已结束',
+    failed: '失败', cancelled: '已取消', unknown: '未知',
+  }[sa.status] ?? '未知';
   return (
-    <div className="subagent-card">
+    <div className="subagent-card" data-status={sa.status}>
       <button type="button" className="subagent-head rp" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
         <span className="subagent-ico" aria-hidden="true">🤖</span>
         <span className="subagent-name">{sa.displayName}</span>
+        <span className="subagent-status" title="根据已加载的子代理事件记录，不代表当前仍在运行或任务目标已完成。">
+          记录：{status}{!connected && ' · 待同步'}
+        </span>
         <span className="subagent-chevron"><Icon name={open ? 'up' : 'down'} size={14} /></span>
       </button>
       {sa.description && !open && <div className="subagent-desc">{sa.description}</div>}
@@ -172,7 +180,7 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
         ))}
       </div>
       {!sub.length && <div className="subagent-empty">
-        {sa.status === 'running' ? '子代理处理中，新消息会自动更新。' : '当前阅读窗口内暂无子代理消息。'}
+        当前阅读窗口内暂无子代理消息。
       </div>}
     </div>
   );

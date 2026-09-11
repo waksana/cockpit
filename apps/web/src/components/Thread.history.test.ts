@@ -66,6 +66,28 @@ test('closed native child cards show summaries but neither render nor fetch inli
   assert.equal(fetch.mock.callCount(), 0);
 });
 
+test('child headers expose recorded execution evidence, not a guessed current task state', t => {
+  const fetch = t.mock.method(globalThis, 'fetch', async () => { throw new Error('Status display must not fetch'); });
+  for (const [status, label] of [
+    ['running', '已启动'], ['activity', '有后续活动'], ['completed', '本次执行已结束'],
+    ['failed', '失败'], ['cancelled', '已取消'], ['unknown', '未知'],
+  ] as const) {
+    const html = render({
+      materialized: true, historyStale: false, loadingHistory: false,
+      messages: [{
+        id: 'card', role: 'assistant', content: '', timestamp: 1, subtype: 'subagent',
+        subagent: { name: 'explore', displayName: 'Child', status },
+      }],
+    });
+    assert.ok(html.includes(`data-status="${status}"`));
+    assert.ok(html.includes(`记录：${label}`));
+    assert.match(html, /待同步/);
+    assert.match(html, /不代表当前仍在运行或任务目标已完成/);
+    assert.doesNotMatch(html, /子代理处理中|目标已完成<\/span>/);
+  }
+  assert.equal(fetch.mock.callCount(), 0);
+});
+
 test('all loaded message content remains mounted behind stable outer geometry markers', () => {
   const messages = Array.from({ length: 120 }, (_, i) => ({
     id: `message-${i}`, role: 'assistant' as const, content: `Retained text ${i}`, timestamp: i,

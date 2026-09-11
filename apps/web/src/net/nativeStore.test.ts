@@ -168,6 +168,47 @@ test('older reads coalesce repeated triggers, and exhaustion suppresses all late
   assert.deepEqual(h.ids(), ['older', 'A']);
 });
 
+test('child execution labels use only existing initial, older and reconnect pages without extra requests', async t => {
+  const h = setup(t);
+  h.source.open(); h.snapshot(); h.store.getState().setActiveId('a');
+  const owner: NativeChatEvent = { id: 'owner', type: 'assistant.message', data: {
+    messageId: 'owner', toolRequests: [{ name: 'task', toolCallId: 'spawn' }],
+  } };
+  const started: NativeChatEvent = { id: 'started', type: 'subagent.started', agentId: 'child', data: { toolCallId: 'spawn' } };
+  const completed: NativeChatEvent = { id: 'completed', type: 'subagent.completed', data: { toolCallId: 'spawn' } };
+  await h.reply(0, [owner, started, completed], { hasMore: true });
+  await h.reply(1, []);
+  const card = () => h.state().messages.find(message => message.subagent)!;
+  assert.equal(card().subagent?.status, 'completed');
+  assert.equal(h.requests.length, 2);
+  h.store.getState().loadMore('a');
+  await h.reply(2, [message('older')]);
+  assert.equal(h.requests.length, 3);
+  assert.equal(card().subagent?.status, 'completed');
+  await h.reply(1, [{ id: 'turn', type: 'assistant.turn_start', agentId: 'child', data: { turnId: '0' } }]);
+  assert.equal(card().subagent?.status, 'activity');
+  await h.reply(1, [
+    { ...ephemeral('assistant.message_start', 'child-partial'), agentId: 'child' },
+    { ...ephemeral('assistant.message_delta', 'child-partial', 'prefix'), agentId: 'child' },
+  ], { cursor: 'before-gap' });
+  await h.endStream(1);
+  assert.equal(h.state().partialHistory, true);
+  t.mock.timers.tick(1000); await setImmediate();
+  assert.equal(h.requests.length, 4);
+  assert.deepEqual(h.requests[3].body, { sessionId: 'a', cursor: 'before-gap', max: 64, agentScope: 'all' });
+  await h.reply(3, [
+    { ...message('child-partial', 'Full child reply'), agentId: 'child' },
+    { id: 'cancelled', type: 'subagent.completed', data: { toolCallId: 'spawn', cancelled: true } },
+  ]);
+  assert.equal(card().subagent?.status, 'cancelled');
+  assert.equal(h.state().partialHistory, false);
+  await h.reply(3, [started, completed]);
+  assert.equal(card().subagent?.status, 'cancelled', 'old duplicate lifecycle cannot regress cancellation');
+  assert.equal(h.requests.length, 4, 'exactly initial history, stream, requested older page, reconnect stream');
+  assert.equal(h.requests.filter(request => request.path.endsWith('/session/chat')).length, 2);
+  assert.ok(h.requests.every(request => /\/(?:session\/chat|chat\/stream)$/.test(request.path)));
+});
+
 test('hiding a reading window cancels its older read and rejects further preload signals', async t => {
   const h = setup(t);
   await h.start();

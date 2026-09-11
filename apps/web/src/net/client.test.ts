@@ -269,6 +269,16 @@ test('start/get is passive and nullable, while unknown/missing/mismatched start 
   assert.equal(fetch.mock.callCount(), 4);
 });
 
+for (const status of [403, 404]) {
+  test(`file metadata ${status} stays rejected for its local error owner without resizing the global shell`, async t => {
+    const { client, fetch } = setup(t, async () => Response.json({ error: 'File unavailable' }, { status }));
+    await assert.rejects(client.intent('files/get', { url: '/uploads/missing' }),
+      error => error instanceof IntentHttpError && error.status === status && error.message === 'File unavailable');
+    assertOnlyPost(fetch, 'files/get', { url: '/uploads/missing' });
+    assert.equal(getUxErrors().length, 0, 'the card/detail owner displays the rejected resource error');
+  });
+}
+
 test('native usage client validates the snapshot, forwards cancellation and never resumes on unloaded response', async t => {
   const usage = { sessionId: 'session', sampledAt: 1, context: null,
     usage: { sessionStartTime: '2026-09-09T00:00:00Z', totalUserRequests: 0,

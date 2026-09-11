@@ -184,6 +184,20 @@ chosen completeness/bandwidth tradeoff. The parent scroll owner anchors the
 visible child row during a prepend. Switching sessions or hiding the page
 releases the shared read; closing a child card changes presentation only.
 
+Child headers display **recorded execution evidence**, not the native task
+registry's current state: started, this execution ended, failed, cancelled,
+or subsequent activity. A cancellation remains distinct from failure. A later
+durable child message, model-turn boundary, reasoning or tool event supersedes
+an older terminal label; a failed tool alone does not fail the child, and a
+parent turn ending does not end its children. A completed invocation may belong
+to a reusable agent, so the label never means its overall goal is complete.
+Unknown evidence stays unknown. Duplicate events and older-page insertion do
+not overwrite newer execution evidence. These labels add no SDK query, history
+request or poll; they use the same all-agent window even while collapsed.
+They remain historical evidence during disconnect or a missing stream interval,
+not a claim that the child is still running. Ephemeral fragments alone do not
+establish a new execution boundary; normal durable catch-up supplies the record.
+
 Only the selected visible view reads live chat. Disconnecting or changing views cancels
 its request and stops subsequent reads. The public native long-poll RPC has no
 per-call cancellation parameter, so one already-running read can finish within

@@ -76,6 +76,31 @@ function settle(post: ReturnType<typeof deferred<boolean>>, outcome: Outcome) {
   else post.resolve(outcome === 'success');
 }
 
+test('first-message acknowledgement survives refresh while a later attachment batch is incomplete', async () => {
+  const storage = memoryStorage();
+  const options = { persistRevisions: true, associateUploads: false };
+  const draft = new SessionDraft('first-message-draft', storage, options);
+  draft.edit('first message');
+  await stage(draft);
+  const submitted = draft.captureSubmission();
+  draft.edit('later edit');
+  const upload = deferred<UploadedFile>();
+  const adding = draft.addAttachments([file(image)], () => upload.promise);
+  const laterGeneration = draft.getSnapshot().stagedAttachments![1].generation;
+
+  const restored = new SessionDraft('first-message-draft', storage, options);
+  assert.equal(restored.getSnapshot().staged?.generation, submitted.attachments[0].generation);
+  restored.acknowledgeSubmission(submitted);
+  assert.equal(restored.getSnapshot().text, 'later edit');
+  assert.equal(restored.getSnapshot().staged?.generation, laterGeneration);
+  assert.equal(restored.getSnapshot().staged?.status, 'failed');
+  assert.equal(restored.getSnapshot().staged?.retryable, false);
+  assert.equal(restored.getSnapshot().stagedAttachments, undefined);
+
+  upload.resolve(image);
+  await adding;
+});
+
 test('the registry owns one stable draft per session, independently of subscriptions', () => {
   const getSessionDraft = createSessionDrafts(memoryStorage());
   const original = getSessionDraft('original');

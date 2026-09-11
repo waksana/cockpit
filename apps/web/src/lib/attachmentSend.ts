@@ -1,7 +1,7 @@
 import type { Attachment, UploadedFile } from '@cockpit/protocol';
 import { acknowledge } from './draft';
 import { reportUxError } from './errorReporter';
-import { uploadedAttachment, uploadFile } from './upload';
+import { uploadedAttachment, uploadFile, validateUploadFile } from './upload';
 
 export interface StagedAttachment {
   generation: number;
@@ -11,6 +11,7 @@ export interface StagedAttachment {
   status: 'uploading' | 'ready' | 'failed';
   attachment?: Attachment;
   error?: string;
+  retryable?: boolean;
 }
 
 export interface SessionDraftSnapshot {
@@ -49,7 +50,7 @@ export class SessionDraft {
   private snapshot: SessionDraftSnapshot;
   private generation = 0;
   private listeners = new Set<() => void>();
-  private selectedFiles = new Map<number, File>();
+  private selectedFiles = new Map<number, { file: File; upload: UploadFile }>();
   private readonly key: string;
   private readonly storage?: DraftStorage;
   private readonly options: { persistRevisions?: boolean; associateUploads?: boolean };
@@ -81,7 +82,27 @@ export class SessionDraft {
           }
           if (value.pending) this.snapshot.error = UNCONFIRMED;
           // Cached metadata is GUI state, never a server filesystem authority.
-          if (value.attachments || value.attachment) {
+          if (Array.isArray(value.stages)) {
+            const attachments: StagedAttachment[] = value.stages.slice(0, 20).map((item: {
+              name?: string; attachment?: Attachment; generation?: number;
+            }) => {
+              const storedGeneration = options.persistRevisions ? item.generation : undefined;
+              const generation = typeof storedGeneration === 'number' && Number.isSafeInteger(storedGeneration) && storedGeneration > 0
+                ? storedGeneration : ++this.generation;
+              this.generation = Math.max(this.generation, generation);
+              if (item.attachment) {
+                const attachment = uploadedAttachment(item.attachment);
+                return { ...attachment, attachment, generation, status: 'ready' };
+              }
+              return {
+                generation, name: typeof item.name === 'string' ? item.name : '未完成附件',
+                kind: 'file', status: 'failed', retryable: false,
+                error: '页面已刷新，未完成的文件数据无法恢复；请移除后重新选择。',
+              };
+            });
+            this.snapshot.staged = attachments[0];
+            if (attachments.length > 1) this.snapshot.stagedAttachments = attachments;
+          } else if (value.attachments || value.attachment) {
             const attachments = (value.attachments ?? [value.attachment]).slice(0, 20)
               .map((file: Attachment, index: number) => {
                 const attachment = uploadedAttachment(file);
@@ -114,6 +135,10 @@ export class SessionDraft {
         text: this.snapshot.text,
         attachment: this.snapshot.staged?.attachment,
         attachments: this.snapshot.stagedAttachments?.flatMap(item => item.attachment ? [item.attachment] : []),
+        stages: stagedAttachments(this.snapshot).some(item => item.status !== 'ready')
+          ? stagedAttachments(this.snapshot).map(({ name, attachment, generation }) => ({
+            name, attachment, ...(this.options.persistRevisions ? { generation } : {}),
+          })) : undefined,
         pending: this.snapshot.pending,
         ...(this.options.persistRevisions ? {
           revision: this.snapshot.revision, generation: this.generation,
@@ -129,6 +154,7 @@ export class SessionDraft {
   };
 
   dismissError = () => { this.update({ error: undefined }); };
+  reportAttachmentError = (error: string) => { this.update({ error }); };
 
   private setAttachments(items: StagedAttachment[]) {
     this.update({ staged: items[0], stagedAttachments: items.length > 1 ? items : undefined });
@@ -151,35 +177,53 @@ export class SessionDraft {
     return true;
   };
 
-  selectAttachment = async (file: File, upload: UploadFile = uploadFile): Promise<boolean> => {
+  selectAttachment = async (file: File, upload?: UploadFile): Promise<boolean> => {
     this.removeAttachment();
     return this.addAttachment(file, upload);
   };
 
-  addAttachment = async (file: File, upload: UploadFile = (file) => uploadFile(file, this.options.associateUploads === false ? undefined : this.sessionId)): Promise<boolean> => {
-    if (stagedAttachments(this.snapshot).length >= 20) {
-      this.update({ error: '最多暂存 20 个附件，请先移除部分附件。' });
+  addAttachment = (file: File, upload?: UploadFile): Promise<boolean> => this.addAttachments([file], upload);
+
+  addAttachments = async (files: File[], upload?: UploadFile): Promise<boolean> => {
+    if (!files.length) return false;
+    if (stagedAttachments(this.snapshot).length + files.length > 20) {
+      this.update({ error: '最多暂存 20 个附件；本批未添加，请减少文件数量或先移除部分附件。' });
       return false;
     }
-    const generation = ++this.generation;
-    const staged: StagedAttachment = {
-      generation, name: file.name, size: file.size,
-      kind: file.type.startsWith('image/') ? 'image' : 'file',
-      status: 'uploading',
-    };
-    this.selectedFiles.set(generation, file);
-    this.setAttachments([...stagedAttachments(this.snapshot), staged]);
+    try {
+      for (const file of files) validateUploadFile(file);
+    } catch (error) {
+      this.update({ error: `${error instanceof Error ? error.message : '文件无效。'} 本批未添加。` });
+      return false;
+    }
+    const uploads = files.map(selected => {
+      const file = selected.name.trim() ? selected
+        : new File([selected], `attachment-${crypto.randomUUID()}`, { type: selected.type });
+      const generation = ++this.generation;
+      const sourceId = crypto.randomUUID();
+      const uploader = upload ?? ((file: File) => uploadFile(file, this.options.associateUploads === false ? undefined : this.sessionId, sourceId));
+      const staged: StagedAttachment = {
+        generation, name: file.name, size: file.size,
+        kind: file.type.startsWith('image/') ? 'image' : 'file',
+        status: 'uploading',
+      };
+      this.selectedFiles.set(generation, { file, upload: uploader });
+      return { file, staged, uploader };
+    });
+    // Reserve the complete ordered batch before any upload can finish or send.
+    this.setAttachments([...stagedAttachments(this.snapshot), ...uploads.map(item => item.staged)]);
     this.update({ error: undefined });
-    return this.uploadStaged(file, staged, upload);
+    const results = await Promise.all(uploads.map(({ file, staged, uploader }) => this.uploadStaged(file, staged, uploader)));
+    return results.every(Boolean);
   };
 
-  retryAttachment = async (generation: number, upload: UploadFile = (file) => uploadFile(file, this.options.associateUploads === false ? undefined : this.sessionId)): Promise<boolean> => {
+  retryAttachment = async (generation: number, upload?: UploadFile): Promise<boolean> => {
     const item = stagedAttachments(this.snapshot).find(item => item.generation === generation);
-    const file = this.selectedFiles.get(generation);
-    if (!file || item?.status !== 'failed') return false;
+    const selected = this.selectedFiles.get(generation);
+    if (!selected || item?.status !== 'failed') return false;
     const staged: StagedAttachment = { ...item, status: 'uploading', error: undefined };
     this.setAttachments(stagedAttachments(this.snapshot).map(item => item.generation === generation ? staged : item));
-    return this.uploadStaged(file, staged, upload);
+    return this.uploadStaged(selected.file, staged, upload ?? selected.upload);
   };
 
   private async uploadStaged(file: File, staged: StagedAttachment, upload: UploadFile): Promise<boolean> {
