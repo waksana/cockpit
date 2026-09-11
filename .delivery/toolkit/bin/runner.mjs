@@ -17,6 +17,10 @@ const exec = promisify(execFile);
 const config = validatePolicy(JSON.parse(await readFile(process.argv[2], 'utf8')));
 await mkdir(config.root, { recursive: true, mode: 0o700 });
 const store = new DeliveryStore(join(config.root, 'delivery.sqlite'));
+let closing = false, serverClosed = false;
+function finishClose() {
+  if (closing && serverClosed && !working) { store.close(); process.exit(0); }
+}
 const command = async (name, args, options = {}) => (await exec(name, args, { encoding: 'utf8',
   timeout: 60_000, maxBuffer: 4 * 1024 * 1024, ...options })).stdout.trim();
 const gh = async (project, path) => JSON.parse(await command('gh', ['api', `repos/${project.repository}/${path}`]));
@@ -166,6 +170,7 @@ async function importArtifact(input) {
 
 const server = createServer(async (req, res) => {
   try {
+    if (closing) throw fault('DRAINING', 'Delivery controller is draining; request was not admitted', 503);
     const token = req.headers.authorization?.replace(/^Bearer /, '');
     const actor = (await readActors(config)).find(actor => equal(actor.token, token));
     if (!actor) throw fault('UNAUTHORIZED', 'Authentication required', 401);
@@ -301,10 +306,11 @@ const server = createServer(async (req, res) => {
 
 let working = false;
 async function tick() {
-  if (working) return;
+  if (working || closing) return;
   working = true;
   try {
     for (let row of store.rows()) {
+      if (closing) break;
       try {
       const p = policy(row.request.repo.id);
       if (row.result.recovery?.state === 'pending') {
@@ -375,7 +381,7 @@ async function tick() {
       } catch (error) { console.error(`Delivery ${row.request.requestId} deferred: ${error.message}`); }
     }
   } catch (error) { console.error(`Delivery tick deferred: ${error.message}`); }
-  finally { working = false; }
+  finally { working = false; finishClose(); }
 }
 // Never replay an interrupted dispatch or activation after controller death.
 for (const row of store.rows()) {
@@ -384,4 +390,8 @@ for (const row of store.rows()) {
 server.listen(config.port, '127.0.0.1');
 const timer = setInterval(() => { void tick(); }, 5000);
 void tick();
-process.on('SIGTERM', () => { clearInterval(timer); server.close(() => { store.close(); process.exit(0); }); });
+process.on('SIGTERM', () => {
+  closing = true;
+  clearInterval(timer);
+  server.close(() => { serverClosed = true; finishClose(); });
+});

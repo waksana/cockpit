@@ -40,7 +40,7 @@ export async function readRuntime(policy) {
     read(policy.versionPath), read(policy.healthPath), policy.statusPath ? read(policy.statusPath) : null,
   ]);
   const identity = version.value;
-  const valid = identity && typeof identity.instanceId === 'string';
+  const valid = Boolean(identity && typeof identity.instanceId === 'string' && identity.instanceId.length > 0);
   return {
     available: Boolean(valid), error: version.error ?? (valid ? null : 'invalid-runtime-identity'),
     version: typeof identity?.version === 'string' ? identity.version : null,
