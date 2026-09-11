@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { readFile, readdir, lstat, mkdir, copyFile, rename, symlink, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { call } from '../lib/client.mjs';
@@ -8,7 +9,19 @@ import { hashFile, verifyArtifact } from '../lib/artifact.mjs';
 
 const config = JSON.parse(await readFile(process.argv[2], 'utf8'));
 try {
-  const release = await call(config.credential, '/boot', { projectId: config.projectId, instanceId: randomUUID() });
+  let release;
+  try {
+    release = await call(config.credential, '/boot', { projectId: config.projectId, instanceId: randomUUID() });
+  } catch (error) {
+    if (!config.bootstrapFallback || !config.environment) throw error;
+    const db = new DatabaseSync(join(config.root, 'delivery.sqlite'), { readOnly: true });
+    let active;
+    try { active = db.prepare('SELECT body FROM settings WHERE id=?').get(`active:${config.projectId}:${config.environment}`); }
+    finally { db.close(); }
+    if (active) throw error;
+    console.error(`Unaccepted first-migration bootstrap fallback: ${error.message}`);
+    release = { ...config.bootstrapFallback, instanceId: randomUUID() };
+  }
   await verifyArtifact(release.root, { sourceSha: release.sha });
   const assets = join(config.root, 'assets');
   await mkdir(assets, { recursive: true });

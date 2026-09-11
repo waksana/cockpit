@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { call } from '../lib/client.mjs';
 
 const config = JSON.parse(await readFile(process.argv[2], 'utf8'));
-const match = /^receive ([\w.-]{8,120}) ([1-9]\d*) ([1-9]\d*)$/.exec(process.env.SSH_ORIGINAL_COMMAND ?? '');
+if (process.argv.length > 4) throw Error('Unexpected receiver arguments');
+const match = /^receive ([\w.-]{8,120}) ([1-9]\d*) ([1-9]\d*)$/.exec(process.argv[3] ?? process.env.SSH_ORIGINAL_COMMAND ?? '');
 if (!match) throw Error('Only receive REQUEST_ID RUN_ID ARTIFACT_ID is allowed');
 const uploadId = randomBytes(16).toString('hex'), dir = join(config.root, 'incoming', uploadId);
 await mkdir(dir, { recursive: true, mode: 0o700 });
