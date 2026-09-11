@@ -4,6 +4,17 @@ This document defines the opt-in `github-actions-v1` integration. Source files
 alone do not mean the host has migrated; installed runner configuration and the
 authenticated request result are the authority.
 
+New development owners must request their own submit-role credential from the
+installation operator, never borrow another owner's file. Credential issuance is
+`bin/issue-credential.mjs` in the installed toolkit; it grants neither admin nor
+deployment approval. After integration the owner supplies a complete SHA, unique
+request ID, project/environment and actual user authorization. The operator
+registers a matching approval and returns the bound request JSON; the owner then
+submits once and reads the original request ID. The current submit role is not
+project-scoped, so it must not be described as a cross-project isolation boundary.
+The detailed installed CLI contract is in the toolkit's
+`skills/service-development/references/commands.md`.
+
 The runtime closure includes root `skills/`: packaged core resolves bundled
 skills relative to its own release, never through a development checkout or a
 global fallback. Before accepting a new archive, run
@@ -11,6 +22,30 @@ global fallback. Before accepting a new archive, run
 This checks the extracted package's core-relative skill path and local Markdown
 references. The normal source suite also guards the committed artifact list;
 it does not claim to have checked an archive when that variable is absent.
+
+## Accepted multi-project release (2026-09-11)
+
+Cockpit source `1a3c49c4e9d549216e036e1563853775206964fc` ran from archive
+`172b361e35efe8aa90a0d7b8f8849382a827f0db0d5eb01e98a982b8049da6fe`
+after native safe-idle replacement, request `cockpit-v3-deploy-1a3c49c-20260911`.
+The system menu now shows per-project runtime/version and delivery state through
+the viewer-only, on-demand authority described in [system versions](system-versions.md).
+This dated receipt is not a substitute for current `/version` and `/system/versions`.
+
+The external controller is toolkit 0.2.2, commit
+`d39b915010dccb5919385e1a7952f4078816ba50`. It invalidates expired rollback
+selection without blocking known-good boot, gives explicit original-run build
+reconciliation its own finite window without redispatch, and selects indexed
+actionable work instead of repeatedly reading retained history. Synthetic failure
+fixtures cover those paths; no production timeout/rollback was manufactured.
+The package includes the bundled reset skill and preserves hashed Web resources.
+
+Task and WeChat have independent versions, launchers and lifecycle contracts.
+Task's first migration used an explicitly authorized temporary ingress gate and
+completed-operation boundary; subsequent updates use native drain. A connector
+may have a historical successful delivery while its current process is unavailable.
+The view reports both facts rather than treating historical success as present health.
+Business recovery and any message transmission remain the connector owner's scope.
 
 ## Build and submission
 
