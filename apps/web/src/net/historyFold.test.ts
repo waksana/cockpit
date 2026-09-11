@@ -39,13 +39,39 @@ function compare(window: NativeWindow, history: NativeChatEvent[]) {
   assert.deepEqual(window.snapshot().messages, baseline.window.snapshot().messages);
   assert.equal(window.unresolved, baseline.window.unresolved);
   const state = (fold: FoldState): unknown => ({
-    ...fold, currentModelId: fold.currentModelId, streamingId: fold.streamingId,
+    ...fold, executionOrder: undefined, currentModelId: fold.currentModelId, streamingId: fold.streamingId,
     pendingReasoning: fold.pendingReasoning, reasoningId: fold.reasoningId, reasoningBase: fold.reasoningBase,
     subFolds: new Map([...fold.subFolds].map(([id, child]) => [id, state(child)])),
   });
   assert.deepEqual(state(window.projection), state(baseline.window.projection));
   return baseline.count();
 }
+
+test('execution status survives every page split, duplicate start, and later child turns without extra projection scans', () => {
+  const history = [
+    task('owner', 'spawn'), spawn('spawn', 'child'),
+    event('done', 'subagent.completed', { toolCallId: 'spawn' }),
+    event('repeated-start', 'subagent.started', { toolCallId: 'spawn' }, 'child'),
+    event('followup', 'user.message', { content: 'Next turn' }, 'child'),
+    event('turn', 'assistant.turn_start', { turnId: '0' }, 'child'),
+    event('tool-owner', 'assistant.message', { toolRequests: [{ name: 'view', toolCallId: 'view' }] }, 'child'),
+    event('failed-tool', 'tool.execution_complete', { toolCallId: 'view', success: false }, 'child'),
+    event('failed', 'subagent.failed', { toolCallId: 'spawn', error: 'Child failure' }),
+    event('later-message', 'assistant.message', { content: 'Continued execution' }, 'child'),
+    event('cancel', 'subagent.completed', { toolCallId: 'spawn', cancelled: true }),
+  ];
+  for (let length = 3; length <= history.length; length++) {
+    for (let split = 1; split < length; split++) {
+      const window = new NativeWindow(undefined, true);
+      accept(window, history.slice(split, length));
+      accept(window, history.slice(0, split));
+      compare(window, history.slice(0, length));
+      const before = window.snapshot().messages;
+      accept(window, [history[1]], 'forward', { hasMore: false });
+      assert.equal(window.snapshot().messages, before, 'duplicate old start cannot overwrite later evidence');
+    }
+  }
+});
 
 test('repeated independent prepends fold each event once, equivalent to cumulative full replay', t => {
   for (const [size, length] of [[1, 128], [7, 512], [32, 4096]]) {

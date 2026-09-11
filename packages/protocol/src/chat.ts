@@ -26,6 +26,8 @@ export interface FoldState {
   subCard: Map<string, string>;
   agentIds: Set<string>;
   pendingTask: Map<string, { prompt?: string; description?: string; agentType?: string }>;
+  // Browser-local order of child activity/terminal evidence; duplicate starts cannot supersede it.
+  executionOrder?: number;
   // Reasoning has no messageId. Buffer it until the canonical message ID arrives;
   // publishing a placeholder would leave stale client IDs and pagination anchors.
   streamingId?: string;
@@ -55,6 +57,7 @@ export interface FoldResult {
 }
 
 export interface FoldProjection {
+  eventOrder?: number;
   toolOutput?: string;
   toolArgs?: Map<string, string>;
   askAnswer?: string;
@@ -403,6 +406,14 @@ function rememberTask(state: FoldState, request: ToolRequest, scope?: FoldHistor
   });
 }
 
+function isExecutionActivity(ev: SdkEvent): boolean {
+  if (ev.ephemeral) return false;
+  if (ev.type === 'user.message') return !!ev.data.content
+    && !(typeof ev.data.source === 'string' && ev.data.source.startsWith('skill-'));
+  return ['assistant.turn_start', 'assistant.turn_end', 'assistant.message', 'assistant.reasoning',
+    'tool.execution_start', 'tool.execution_complete'].includes(ev.type);
+}
+
 export function foldEvent(state: FoldState, ev: SdkEvent, projection?: FoldProjection): FoldResult {
   const route = routeEvent(state, ev);
   if (projection?.strictOwnership && typeof ev.data.toolCallId === 'string') {
@@ -429,8 +440,18 @@ export function foldEvent(state: FoldState, ev: SdkEvent, projection?: FoldProje
     }
     return { changed: [], metaChanged: false };
   }
+  const child = route.cards.at(-1)?.subagent;
+  let executionChanged = false;
+  if (child && isExecutionActivity(ev)) {
+    route.fold.executionOrder = projection?.eventOrder;
+    if (child.status !== 'running' && child.status !== 'activity') {
+      child.status = 'activity';
+      delete child.error;
+      executionChanged = true;
+    }
+  }
   const result = foldLocalEvent(route.fold, ev, projection);
-  if (result.changed.length && route.cards[0]) {
+  if ((result.changed.length || executionChanged) && route.cards[0]) {
     return { changed: [route.cards[0].id], metaChanged: result.metaChanged,
       nestedChanged: [...route.cards.map(card => card.id), ...result.changed, ...result.nestedChanged ?? []] };
   }
@@ -479,9 +500,14 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
     if (!card?.subagent) return empty;
     let nestedChanged: string[] = [];
     if (ev.type !== 'subagent.configured') {
-      card.subagent.status = ev.type === 'subagent.failed' || d.cancelled === true ? 'failed' : 'completed';
+      card.subagent.status = ev.type === 'subagent.failed' ? 'failed'
+        : d.cancelled === true ? 'cancelled' : 'completed';
+      delete card.subagent.error;
       const sub = state.subFolds.get(toolCallId);
-      if (sub) { nestedChanged = flushReasoning(sub, ev.id); endTurn(sub); }
+      if (sub) {
+        sub.executionOrder = projection?.eventOrder;
+        nestedChanged = flushReasoning(sub, ev.id); endTurn(sub);
+      }
     }
     if (typeof d.model === 'string') card.subagent.model = d.model;
     if (typeof d.totalToolCalls === 'number') card.subagent.toolCount = d.totalToolCalls;

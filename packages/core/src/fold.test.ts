@@ -43,6 +43,52 @@ const userMsg = (content: string, id: string): Ev => ({ type: 'user.message', da
 const asstMsg = (messageId: string, content: string, extra: Record<string, unknown> = {}): Ev =>
   ({ type: 'assistant.message', data: { messageId, content, ...extra }, id: messageId });
 
+test('child execution evidence distinguishes cancellation and later activity without inferring a task outcome', () => {
+  const state = newFoldState();
+  const apply = (type: string, data: Record<string, unknown> = {}, agentId?: string) =>
+    foldEvent(state, { type, data, agentId });
+  apply('subagent.started', { toolCallId: 'spawn', agentId: 'child' });
+  const info = () => state.messages[0].subagent!;
+  assert.equal(info().status, 'running', 'only a real start establishes started evidence');
+  apply('subagent.completed', { toolCallId: 'spawn' });
+  assert.equal(info().status, 'completed');
+  for (const type of ['assistant.turn_end', 'session.idle', 'abort']) apply(type);
+  apply('assistant.message_delta', { messageId: 'late', deltaContent: 'late fragment' }, 'child');
+  assert.equal(info().status, 'completed', 'parent boundaries and unqualified fragments are not a new child execution');
+  const changed = apply('assistant.turn_start', { turnId: '0' }, 'child');
+  assert.equal(info().status, 'activity');
+  assert.deepEqual(changed.changed, ['subagent-spawn']);
+  apply('assistant.message', { messageId: 'tool-owner', content: '', toolRequests: [{ toolCallId: 'view', name: 'view' }] }, 'child');
+  apply('tool.execution_complete', { toolCallId: 'view', success: false, error: { message: 'Missing input' } }, 'child');
+  assert.equal(info().status, 'activity', 'a child tool failure does not fail the child');
+  apply('subagent.failed', { toolCallId: 'spawn', error: 'Execution failed' });
+  assert.equal(info().status, 'failed');
+  apply('user.message', { content: 'Continue', source: 'agent-parent' }, 'child');
+  assert.equal(info().status, 'activity');
+  assert.equal(info().error, undefined, 'old execution error does not describe the follow-up');
+  apply('subagent.completed', { toolCallId: 'spawn', cancelled: true });
+  assert.equal(info().status, 'cancelled');
+  assert.equal(info().error, undefined);
+});
+
+test('existing child message, reasoning and tool events supersede old terminal evidence', () => {
+  for (const [type, data] of [
+    ['assistant.message', { messageId: 'followup', content: 'New reply' }],
+    ['assistant.reasoning', { reasoningId: 'thought', content: 'New reasoning' }],
+    ['assistant.turn_end', { turnId: '0' }],
+    ['tool.execution_start', { toolCallId: 'tool', toolName: 'view' }],
+  ] as const) {
+    const events: Ev[] = [
+      { type: 'subagent.started', timestamp: '2026-09-11T12:00:00Z', data: { toolCallId: 'spawn', agentId: 'child' } },
+      { type: 'subagent.completed', timestamp: '2026-09-11T12:00:01Z', data: { toolCallId: 'spawn' } },
+      { type, timestamp: '2026-09-11T12:00:02Z', agentId: 'child', data },
+    ];
+    const state = replay(events);
+    assert.equal(state.messages[0].subagent?.status, 'activity', type);
+    assert.deepEqual([...live(events).client.values()], state.messages);
+  }
+});
+
 test('user + assistant message fold', () => {
   const evs = [tStart(), userMsg('hi', 'u1'), asstMsg('a1', 'hello')];
   const st = replay(evs);

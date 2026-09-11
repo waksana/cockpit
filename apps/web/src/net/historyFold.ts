@@ -149,10 +149,18 @@ export function mergeHistoryFold(
   const replacements = new Map(prefix.messages.map(message => [message.id, message]));
   for (const [tool, sub] of prefix.subFolds) {
     const existing = suffix.subFolds.get(tool);
-    const merged = existing ? mergeHistoryFold(sub, existing, orders, index, changed) : sub;
-    suffix.subFolds.set(tool, merged);
     const cardId = prefix.subCard.get(tool)!;
     const card = replacements.get(cardId);
+    const old = suffix.messages[suffix.byId.get(cardId) ?? -1]?.subagent;
+    if (card?.subagent && old && existing
+      && (existing.executionOrder ?? -Infinity) >= (sub.executionOrder ?? -Infinity)) {
+      const { error: _error, ...info } = card.subagent;
+      // An older page can reveal the terminal boundary preceding known later activity.
+      const status = old.status === 'running' && info.status !== 'running' ? 'activity' : old.status;
+      card.subagent = { ...info, status, ...(old.error ? { error: old.error } : {}) };
+    }
+    const merged = existing ? mergeHistoryFold(sub, existing, orders, index, changed) : sub;
+    suffix.subFolds.set(tool, merged);
     if (card?.subMessages) card.subMessages = merged.messages;
   }
   // A repaired child can change an existing ancestor even when that card wasn't replayed.
@@ -192,5 +200,9 @@ export function mergeHistoryFold(
     suffix.reasoningBase = prefix.reasoningBase;
   }
   suffix.currentModelId ??= prefix.currentModelId;
+  if (prefix.executionOrder !== undefined
+    && (suffix.executionOrder === undefined || prefix.executionOrder > suffix.executionOrder)) {
+    suffix.executionOrder = prefix.executionOrder;
+  }
   return suffix;
 }

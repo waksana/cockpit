@@ -160,6 +160,7 @@ export class NativeWindow {
       }
     }
     const result = foldEvent(this.state, event, {
+      eventOrder: order,
       ...event.display, toolArgs: event.display?.toolArgs ? new Map(event.display.toolArgs) : undefined,
       scope: { details: this.includeChildren ? 'full' : 'summary' }, strictOwnership: true,
     });

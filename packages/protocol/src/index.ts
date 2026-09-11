@@ -73,7 +73,8 @@ export const SubagentInfo = z.object({
   displayName: z.string(),   // human-readable
   description: z.string().optional(),
   model: z.string().optional(),
-  status: z.enum(['running', 'completed', 'failed']),
+  // Last observed execution evidence, not a task-registry current-state snapshot.
+  status: z.enum(['running', 'activity', 'completed', 'failed', 'cancelled', 'unknown']),
   toolCount: z.number().optional(),
   error: z.string().optional(),
   prompt: z.string().optional(), // what the sub-agent was asked to do
