@@ -12,6 +12,18 @@ export function fault(code, message, status = 409) {
   return Object.assign(new Error(message), { code, status });
 }
 
+const state = "json_extract(record,'$.result.state')";
+const intent = "json_extract(record,'$.request.intent')";
+const recovery = "json_extract(record,'$.result.recovery.state')";
+const project = "json_extract(record,'$.request.repo.id')";
+const environment = "json_extract(record,'$.request.environment')";
+const terminalSql = `(${state} IN ('succeeded','failed','cancelled','unknown') OR (${intent}='build-only' AND ${state}='built'))`;
+const headSql = `${intent}='deploy' AND (NOT ${terminalSql} OR ${state}='unknown' OR ${recovery} IN ('pending','unknown','failed'))`;
+const preparedSql = `${state} IN ('built','waiting-idle','activating','verifying') AND json_extract(record,'$.result.artifact') IS NOT NULL`;
+const actionableSql = `(NOT ${terminalSql} OR ${recovery}='pending' OR json_extract(record,'$.rollbackRequested')=1 OR
+  (${terminalSql} AND COALESCE(json_extract(record,'$.notificationAttempted'),0)=0
+    AND json_extract(record,'$.notificationDisposition') IS NULL))`;
+
 export class DeliveryStore {
   constructor(path) {
     this.db = new DatabaseSync(path);
@@ -20,7 +32,12 @@ export class DeliveryStore {
         id TEXT PRIMARY KEY, serial INTEGER UNIQUE NOT NULL, body TEXT NOT NULL,
         body_hash TEXT NOT NULL, actor TEXT NOT NULL, record TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS approvals (id TEXT PRIMARY KEY, body TEXT NOT NULL, revoked INTEGER NOT NULL DEFAULT 0);
-      CREATE TABLE IF NOT EXISTS settings (id TEXT PRIMARY KEY, body TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS settings (id TEXT PRIMARY KEY, body TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS requests_project ON requests (${project},${environment},serial);
+      CREATE INDEX IF NOT EXISTS requests_head ON requests (${project},${environment},serial) WHERE ${headSql};
+      CREATE INDEX IF NOT EXISTS requests_prepared ON requests (${project},${environment},serial) WHERE ${preparedSql};
+      CREATE INDEX IF NOT EXISTS requests_actionable ON requests (serial) WHERE ${actionableSql};
+      CREATE INDEX IF NOT EXISTS requests_interrupted ON requests (serial) WHERE ${state}='activating';`);
   }
   transaction(work) {
     this.db.exec('BEGIN IMMEDIATE');
@@ -32,6 +49,27 @@ export class DeliveryStore {
     return row ? JSON.parse(row.record) : null;
   }
   rows() { return this.db.prepare('SELECT record FROM requests ORDER BY serial').all().map(row => JSON.parse(row.record)); }
+  workPage(after = 0, limit = 100) {
+    return this.db.prepare(`SELECT record FROM requests WHERE ${actionableSql} AND serial>?
+      AND (${state}<>'built' OR ${intent}<>'deploy' OR serial IN
+        (SELECT MIN(serial) FROM requests WHERE ${headSql} GROUP BY ${project},${environment}))
+      ORDER BY serial LIMIT ?`)
+      .all(after, limit).map(row => JSON.parse(row.record));
+  }
+  interruptedPage(after = 0, limit = 100) {
+    return this.db.prepare(`SELECT record FROM requests WHERE ${state}='activating' AND serial>? ORDER BY serial LIMIT ?`)
+      .all(after, limit).map(row => JSON.parse(row.record));
+  }
+  latest(projectId, targetEnvironment) {
+    const row = this.db.prepare(`SELECT record FROM requests WHERE ${project}=? AND ${environment}=? ORDER BY serial DESC LIMIT 1`)
+      .get(projectId, targetEnvironment);
+    return row ? JSON.parse(row.record) : null;
+  }
+  prepared(projectId, targetEnvironment, after = 0) {
+    const row = this.db.prepare(`SELECT record FROM requests WHERE ${project}=? AND ${environment}=? AND serial>?
+      AND ${preparedSql} ORDER BY serial DESC LIMIT 1`).get(projectId, targetEnvironment, after);
+    return row ? JSON.parse(row.record) : null;
+  }
   setting(id) {
     const row = this.db.prepare('SELECT body FROM settings WHERE id=?').get(id);
     return row ? JSON.parse(row.body) : null;
@@ -100,6 +138,15 @@ export class DeliveryStore {
       ? { state: effects === 'not-applied' ? 'not-needed' : 'unknown', reference: `request:${row.request.requestId}`, runningSha: null } : null;
     return this.save(row);
   }
+  expireRollback(row, now = Date.now()) {
+    if ((row.rollbackRequested || row.result.recovery?.state === 'pending') && row.rollbackDeadline <= now) {
+      row.rollbackRequested = false;
+      delete row.recoveryInstance;
+      row.result.recovery = { state: 'failed', reference: 'rollback:ROLLBACK_EXPIRED', runningSha: null };
+      this.save(row);
+    }
+    return row;
+  }
   recordRuntime(row, evidence, { reconciled = false } = {}) {
     return this.transaction(() => {
       row.result.running = evidence.running;
@@ -118,10 +165,10 @@ export class DeliveryStore {
       return row;
     });
   }
-  head(projectId, environment) {
-    return this.rows().find(row => row.request.intent === 'deploy' && row.request.repo.id === projectId
-      && row.request.environment === environment && (!terminal(row) || row.result.state === 'unknown'
-        || ['pending', 'unknown', 'failed'].includes(row.result.recovery?.state)));
+  head(projectId, targetEnvironment) {
+    const row = this.db.prepare(`SELECT record FROM requests WHERE ${headSql} AND ${project}=? AND ${environment}=?
+      ORDER BY serial LIMIT 1`).get(projectId, targetEnvironment);
+    return row ? JSON.parse(row.record) : null;
   }
   claim(id, deadlineMs) {
     return this.transaction(() => {

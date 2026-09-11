@@ -1,6 +1,6 @@
 {
   "module": "service-delivery-toolkit",
-  "commit": "c34c87107b5c6bfefb7ff286fd710704de43d57c",
+  "commit": "d39b915010dccb5919385e1a7952f4078816ba50",
   "method": "git archive",
   "paths": [
     "bin",

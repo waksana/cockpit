@@ -80,10 +80,14 @@ async function observe(row, expected = { sha: row.request.repo.sha, artifactSha2
   requestId: row.request.requestId, instanceId: row.instanceId }) {
   return observeRuntime(policy(row.request.repo.id), expected);
 }
-async function notify(row) {
-  if (row.notificationAttempted) return;
-  const actor = (await readActors(config)).find(actor => actor.id === row.actor);
-  if (!actor?.sessionId) return;
+async function notify(row, actors) {
+  if (row.notificationAttempted || row.notificationDisposition) return;
+  const actor = actors.find(actor => actor.id === row.actor);
+  if (!actor?.sessionId) {
+    row.notificationDisposition = 'no-callback';
+    store.save(row);
+    return;
+  }
   row.notificationAttempted = true;
   store.save(row);
   try {
@@ -128,6 +132,9 @@ async function importArtifact(input) {
   if (!row || !['building', 'unknown'].includes(row.result.state)) throw fault('RECEIPT_STATE', 'Request does not accept a build receipt');
   if (row.result.state === 'unknown' && row.result.failure.stage !== 'dispatch') throw fault('RECOVERY_REQUIRED', 'Explicit reconciliation required');
   const p = policy(row.request.repo.id);
+  if (row.buildReconcileDeadline !== undefined && row.buildReconcileDeadline <= Date.now()) {
+    throw fault('RECOVERY_EXPIRED', 'Original-run reconciliation window expired');
+  }
   const run = await gh(p, `actions/runs/${input.runId}`);
   const artifact = await gh(p, `actions/artifacts/${input.artifactId}`);
   if (run.repository.full_name !== p.repository || !matchesRun(run, row, p)
@@ -158,6 +165,10 @@ async function importArtifact(input) {
   if (fresh.result.state !== 'building'
     && !(fresh.result.state === 'unknown' && fresh.result.failure.stage === 'dispatch')) {
     throw fault('RECEIPT_RACE', 'Request changed during artifact verification; reconcile original identity');
+  }
+  if ((fresh.runId && fresh.runId !== run.id)
+    || (fresh.buildReconcileDeadline !== undefined && fresh.buildReconcileDeadline <= Date.now())) {
+    throw fault('RECEIPT_RACE', 'Original-run binding or reconciliation window changed during verification');
   }
   fresh.result.artifact = { id: sha256, sha256, sourceSha: fresh.request.repo.sha,
     configSha256: fresh.request.projectConfig.sha256, buildRunId: String(run.id) };
@@ -204,6 +215,7 @@ const server = createServer(async (req, res) => {
     } else if (req.method === 'POST' && req.url === '/boot' && actor.role === 'launcher') {
       const p = policy(body.projectId), row = store.head(body.projectId, p.environment);
       if (!/^[a-f0-9-]{36}$/.test(body.instanceId ?? '')) throw fault('BAD_INSTANCE', 'Launcher instance identity required');
+      if (row) store.expireRollback(row);
       if (row?.result.state === 'verifying') {
         store.fail(row, 'activation', fault('PROCESS_EXITED', 'Candidate exited before verified health'), 'unknown');
         if (p.binaryRollbackSafe && row.previous) {
@@ -215,15 +227,21 @@ const server = createServer(async (req, res) => {
         try {
           if (!row.previous || row.rollbackDeadline <= Date.now()) throw fault('ROLLBACK_EXPIRED', 'Recovery selection expired');
           await verifyArtifact(row.previous.root, { sourceSha: row.previous.sha });
-          row.rollbackRequested = false;
-          row.recoveryInstance = body.instanceId; row.rollbackDeadline = Date.now() + p.healthTimeoutMs;
-          row.result.recovery = { state: 'pending', reference: 'binary-only-rollback', runningSha: null };
-          store.save(row);
-          value = { ...row.previous, instanceId: body.instanceId, ...p.launch };
+          store.expireRollback(row);
+          if (row.rollbackRequested) {
+            row.rollbackRequested = false;
+            row.recoveryInstance = body.instanceId; row.rollbackDeadline = Date.now() + p.healthTimeoutMs;
+            row.result.recovery = { state: 'pending', reference: 'binary-only-rollback', runningSha: null };
+            store.save(row);
+            value = { ...row.previous, instanceId: body.instanceId, ...p.launch };
+          }
         } catch (error) {
-          row.result.recovery = { state: 'failed', reference: `rollback:${error.code ?? error.message}`, runningSha: null };
-          store.save(row);
-          throw error;
+          if (row.rollbackDeadline <= Date.now()) store.expireRollback(row);
+          else {
+            row.result.recovery = { state: 'failed', reference: `rollback:${error.code ?? error.message}`, runningSha: null };
+            store.save(row);
+            throw error;
+          }
         }
       }
       if (!value && row?.result.state === 'waiting-idle') {
@@ -255,6 +273,7 @@ const server = createServer(async (req, res) => {
       if (!row || !['unknown', 'failed'].includes(row.result.state)) throw fault('RECOVERY_STATE', 'No uncertain or failed request to reconcile');
       if (body.action === 'rollback') {
         const p = policy(row.request.repo.id);
+        store.expireRollback(row);
         if (body.confirmBinaryOnly !== true || !p.binaryRollbackSafe || !row.previous) {
           throw fault('ROLLBACK_BLOCKED', 'Explicit binary-only confirmation, compatible data policy and previous release required');
         }
@@ -269,6 +288,7 @@ const server = createServer(async (req, res) => {
           throw fault('RECOVERY_STALE', 'Another deployment owns the environment; old recovery cannot supersede it');
         }
         row.rollbackRequested = true; row.rollbackDeadline = Date.now() + p.busyTimeoutMs;
+        delete row.recoveryInstance;
         row.result.recovery = { state: 'pending', reference: 'binary-only-rollback', runningSha: null };
         store.save(row);
         try { await backend(p, '/admin/restart', { pending: true }); }
@@ -280,7 +300,9 @@ const server = createServer(async (req, res) => {
         const p = policy(row.request.repo.id);
         const runs = await gh(p, 'actions/runs?event=workflow_dispatch&per_page=100');
         const matching = runs.workflow_runs.filter(run => matchesRun(run, row, p));
-        if (matching.length !== 1) throw fault('RECOVERY_UNKNOWN', 'Exactly one authoritative existing run has not been established; nothing replayed');
+        if (matching.length !== 1 || (row.runId && matching[0].id !== row.runId)) {
+          throw fault('RECOVERY_UNKNOWN', 'Exactly one original authoritative run has not been established; nothing replayed');
+        }
         const run = matching[0];
         if (run.status === 'completed' && run.conclusion !== 'success') {
           row.result.state = 'failed'; row.result.failure.effects = 'not-applied';
@@ -288,7 +310,9 @@ const server = createServer(async (req, res) => {
           store.save(row);
         } else if (row.result.state === 'unknown') {
           row.result.state = 'building'; row.result.failure = null; row.result.recovery = null;
-          row.runId = run.id; store.save(row);
+          row.runId = run.id;
+          row.buildReconcileDeadline = Date.now() + p.buildTimeoutMs;
+          store.save(row);
         }
         value = row.result;
       } else {
@@ -304,19 +328,30 @@ const server = createServer(async (req, res) => {
   }
 });
 
+function* pages(read) {
+  for (let after = 0; ;) {
+    const page = read(after);
+    if (!page.length) return;
+    for (const row of page) { after = row.serial; yield row; }
+  }
+}
 let working = false;
 async function tick() {
   if (working || closing) return;
   working = true;
   try {
-    for (let row of store.rows()) {
+    let notificationActors;
+    for (let row of pages(after => store.workPage(after))) {
       if (closing) break;
       try {
       const p = policy(row.request.repo.id);
+      store.expireRollback(row);
       if (row.result.recovery?.state === 'pending') {
         try {
           if (!row.recoveryInstance) throw fault('ROLLBACK_WAITING', 'Waiting for safe process exit');
           const evidence = await observe(row, { ...row.previous, instanceId: row.recoveryInstance });
+          store.expireRollback(row);
+          if (row.result.recovery.state !== 'pending') continue;
           store.transaction(() => {
             row.result.running = evidence.running; row.result.health = evidence.health;
             row.result.state = 'failed'; row.result.failure.effects = 'applied';
@@ -326,13 +361,15 @@ async function tick() {
           });
         } catch (error) {
           if (row.rollbackDeadline <= Date.now()) {
-            row.result.recovery = { state: 'failed', reference: `rollback:${error.code ?? error.message}`, runningSha: null };
-            store.save(row);
+            store.expireRollback(row);
           }
         }
         continue;
       }
-      if (terminal(row)) { await notify(row); continue; }
+      if (terminal(row)) {
+        await notify(row, await (notificationActors ??= readActors(config)));
+        continue;
+      }
       if (row.result.state === 'queued') {
         row.result.state = 'building'; row.dispatchAttempted = true; store.save(row);
         try {
@@ -341,7 +378,7 @@ async function tick() {
             '-f', `config_path=${row.request.projectConfig.path}`, '-f', `config_sha256=${row.request.projectConfig.sha256}`]);
         } catch { store.fail(store.get(row.request.requestId), 'dispatch', fault('DISPATCH_UNKNOWN', 'Dispatch response unknown; inspect original identity, no automatic dispatch replay'), 'unknown'); }
       } else if (row.result.state === 'building') {
-        if (Date.now() - row.createdAt > p.buildTimeoutMs) {
+        if (Date.now() >= (row.buildReconcileDeadline ?? row.createdAt + p.buildTimeoutMs)) {
           store.fail(row, 'build', fault('BUILD_DEADLINE', 'No verified artifact within bounded build deadline'), 'unknown');
           continue;
         }
@@ -384,8 +421,8 @@ async function tick() {
   finally { working = false; finishClose(); }
 }
 // Never replay an interrupted dispatch or activation after controller death.
-for (const row of store.rows()) {
-  if (row.result.state === 'activating') store.fail(row, 'activation', fault('CONTROLLER_RESTART', 'Interrupted activation requires process reconciliation'), 'unknown');
+for (const row of pages(after => store.interruptedPage(after))) {
+  store.fail(row, 'activation', fault('CONTROLLER_RESTART', 'Interrupted activation requires process reconciliation'), 'unknown');
 }
 server.listen(config.port, '127.0.0.1');
 const timer = setInterval(() => { void tick(); }, 5000);

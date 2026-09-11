@@ -9,13 +9,12 @@ export function publicRequest(row) {
 }
 
 export async function projectStatus(store, id, policy, readRuntime) {
-  const rows = store.rows().filter(row => row.request.repo.id === id && row.request.environment === policy.environment);
   const head = store.head(id, policy.environment);
-  const latest = rows.at(-1);
+  const latest = store.latest(id, policy.environment);
   const active = store.setting(`active:${id}:${policy.environment}`);
-  const activeSerial = rows.find(row => row.request.requestId === active?.requestId)?.serial ?? 0;
-  const prepared = [...rows].reverse().find(row => row.result.artifact && row.serial > activeSerial
-    && ['built', 'waiting-idle', 'activating', 'verifying'].includes(row.result.state));
+  const activeRow = active?.requestId ? store.get(active.requestId) : null;
+  const activeSerial = activeRow?.request.repo.id === id && activeRow.request.environment === policy.environment ? activeRow.serial : 0;
+  const prepared = store.prepared(id, policy.environment, activeSerial);
   const runtime = await readRuntime(policy);
   let waitingReason = null;
   if (policy.activationEnabled === false) waitingReason = policy.pauseReason ?? 'activation-disabled';
