@@ -17,6 +17,7 @@ import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { CopyButton } from './CopyButton';
 import { copyText, messageCopyText } from '../lib/copyText';
+import { ActivityHeader } from './ActivityHeader';
 
 // Plan-exit action → button label. The SDK offers a subset of these (incl.
 // autopilot_fleet); the card renders one button per offered action rather than a
@@ -33,34 +34,26 @@ const PLAN_ACTION_ORDER: ExitPlanModeAction[] = ['interactive', 'autopilot', 'au
 // Static glyphs accompany the explicit status text; no decorative motion.
 function ToolStatusIcon({ status }: { status: ToolCall['status'] }) {
   switch (status) {
-    case 'completed': return <span className="tool-ico"><Icon name="check" size={15} /></span>;
-    case 'failed': return <span className="tool-ico"><Icon name="error" size={16} /></span>;
-    case 'in_progress': return <span className="tool-ico"><Icon name="radiooff" size={14} /></span>;
-    default: return <span className="tool-ico"><Icon name="radiooff" size={14} /></span>;
+    case 'completed': return <Icon name="check" size={16} />;
+    case 'failed': return <Icon name="error" size={16} />;
+    default: return <Icon name="radiooff" size={16} />;
   }
 }
 
 function ToolCallRow({ tc }: { tc: ToolCall; sessionId: string }) {
   const [open, setOpen] = useState(false);
-  const hasDetail = !!(tc.args || tc.output);
   const status = tc.status ? {
     completed: '已完成', failed: '失败', in_progress: '执行中', pending: '待执行',
   }[tc.status] : '状态未知';
-  const heading = <>
-    <ToolStatusIcon status={tc.status} />
-    <span className="tool-title">{tc.title}</span>
-    <span className="tool-status">{status}</span>
-    {tc.name && <span className="tool-name" title={tc.name}>{tc.name}</span>}
-    {hasDetail && <span className="tool-chevron"><Icon name={open ? 'up' : 'down'} size={14} /></span>}
-  </>;
   return (
     <div className="msg-tool" data-status={tc.status ?? 'unknown'}>
-      {hasDetail ? <button type="button" className="tool-head tool-toggle" onClick={() => setOpen(v => !v)}
-        aria-expanded={open} aria-label={`${open ? '收起' : '展开'}细节：${tc.title} · ${status}`}>{heading}</button>
-        : <div className="tool-head">{heading}</div>}
-      {hasDetail && open && (
-        <div className="tool-detail">
+      <ActivityHeader className="tool-head tool-toggle" icon={<ToolStatusIcon status={tc.status} />}
+        title={tc.title} status={status} disclosure={{ open, onToggle: () => setOpen(v => !v) }} />
+      {open && (
+        <div className="activity-detail tool-detail">
+          <div className="tool-detail-title">{tc.title}</div>
           {tc.name && <div className="tool-detail-name">{tc.name}</div>}
+          {!tc.args && !tc.output && <div className="tool-detail-empty">暂无参数或输出记录。</div>}
           {tc.args && <section><div className="tool-detail-label">参数 <CopyButton text={tc.args} label="复制工具参数" /></div>
             <pre className="tool-args" tabIndex={0} aria-label="工具参数">{tc.args}</pre></section>}
           {tc.output && <section><div className="tool-detail-label">输出 <CopyButton text={tc.output} label="复制工具输出" /></div>
@@ -79,15 +72,16 @@ function Thought({ text, live }: { text: string; live: boolean }) {
   const open = openOverride ?? live;
   return (
     <div className="msg-thought-block" data-live={live ? 'true' : 'false'}>
-      <button type="button" className="thought-toggle" onClick={() => setOpenOverride(!open)} aria-expanded={open}>
-        <Icon name={open ? 'up' : 'down'} size={13} />
-        <span>{live ? '正在思考…' : '思考过程'}</span>
-      </button>
-      {open && <div className="msg-thought">{text}</div>}
+      <ActivityHeader className="thought-toggle" icon={<Icon name="skills" size={16} />}
+        title={live ? '正在思考…' : '思考过程'} disclosure={{ open, onToggle: () => setOpenOverride(!open) }} />
+      {open && <div className="activity-detail msg-thought">{text}</div>}
     </div>
   );
 }
 
+function SkillActivity({ message }: { message: ChatMessage }) {
+  return <ActivityHeader icon={<Icon name="skills" size={16} />} title={`skill · ${messageCopyText(message)}`} />;
+}
 
 function clock(ts: number): string {
   const d = new Date(ts);
@@ -112,6 +106,7 @@ function dateLabel(ts: number, today: number): string {
 // Shared by top-level assistant messages and the nested messages inside a
 // sub-agent card.
 function MessageInner({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
+  if (m.role === 'system' && m.subtype === 'skill') return <div className="message is-skill"><SkillActivity message={m} /></div>;
   return (
     <>
       {m.thought && <Thought text={m.thought} live={false} />}
@@ -226,9 +221,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
     if (m.subtype === 'skill') {
       return (
         <div className="message is-skill" data-message-id={m.id} onContextMenu={(e) => onMenu(e, m)}>
-          <span className="skill-ico" aria-hidden="true"><Icon name="skills" size={14} /></span>
-          <span className="skill-label">skill</span>
-          <span className="skill-name">{m.parts ? <MessageContent message={m} sessionId={sessionId} /> : m.content}</span>
+          <SkillActivity message={m} />
         </div>
       );
     }

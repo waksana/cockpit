@@ -96,6 +96,7 @@ printf '%s\\n' 'This_is_a_deliberately_long_terminal_argument_that_must_remain_o
 export const processMessages: ChatMessage[] = [
   message('process-brief', 'user', '请检查组件状态与展开交互。'),
   message('skill', 'system', 'service-development', { subtype: 'skill' }),
+  message('long-skill', 'system', `component-review-${'long-skill-name-'.repeat(12)}`, { subtype: 'skill' }),
   message('tools', 'assistant', '已检查现有实现。下面保留不同结果，而不是把所有状态都画成成功。', {
     thought: '先确定真实组件边界，再观察视觉与键盘操作。\n将阅读、过程和决策分别处理；不对原生生命周期作额外推断。',
     toolCalls: [

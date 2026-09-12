@@ -11,6 +11,7 @@ import { formatFileSize } from '../lib/managedFile';
 import { compile } from 'sass';
 import { getSessionDraft } from '../lib/attachmentSend';
 import { existsSync, readFileSync } from 'node:fs';
+import { ActivityHeader } from './ActivityHeader';
 
 test('all component scenes conform to the actual message and metadata contracts', () => {
   for (const [scene] of scenarios) {
@@ -59,8 +60,8 @@ test('tool records expose status text, a full-row disclosure and unknown rather 
   }));
   assert.match(html, /data-status="unknown"/);
   assert.match(html, /展开细节：缺少状态的工具记录 · 状态未知/);
-  assert.match(html, /class="tool-head tool-toggle"/);
-  assert.match(html, /class="tool-status">已完成/);
+  assert.match(html, /class="activity-head tool-head tool-toggle"/);
+  assert.match(html, /class="activity-status">已完成/);
   assert.match(html, /记录：本次执行已结束/);
   assert.doesNotMatch(html, /任务目标已完成<\/span>|🤖/);
 });
@@ -164,10 +165,27 @@ test('user copy and time share one footer outside the bubble without changing me
   assert.match(html, /class="doc-time"/);
 });
 
-test('tool columns and first-line alignment do not depend on each name or status length', () => {
+test('thought, tool and skill use one single-line activity header, with static skill records', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /grid-template-columns: 1rem minmax\(0, 1fr\) 4\.5rem 10rem 1rem/);
-  assert.match(css, /\.tool-chevron \{[^}]*grid-column: 5;[^}]*grid-row: 1/);
-  assert.match(css, /\.tool-status \{[^}]*grid-column: 3;[^}]*justify-self: end/);
-  assert.match(css, /\.msg-tools \{[^}]*gap: 2px/);
+  assert.match(css, /\.activity-head \{[^}]*height: 36px/);
+  assert.match(css, /\.activity-title \{[^}]*overflow: hidden;[^}]*white-space: nowrap;[^}]*text-overflow: ellipsis/);
+  assert.doesNotMatch(css, /\.tool-name|\.skill-label|\.tool-title/);
+  assert.match(css, /\.msg-tools \{[^}]*gap: 4px/);
+  const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession('process'), readOnly: true, onLoadMore() {} }));
+  assert.match(html, /class="activity-head thought-toggle"/);
+  assert.match(html, /class="activity-head tool-head tool-toggle"/);
+  assert.match(html, /class="message is-skill"[^>]*><div class="activity-head /);
+  assert.doesNotMatch(html, /class="tool-detail-name"|class="msg-thought"/);
+  const staticHeader = renderToStaticMarkup(createElement(ActivityHeader, { icon: 'icon', title: 'skill · long skill name' }));
+  assert.doesNotMatch(staticHeader, /<button|aria-expanded|activity-chevron/);
+});
+
+test('activity disclosure labels retain the full title, state and keyboard button semantics', () => {
+  const html = renderToStaticMarkup(createElement(ActivityHeader, {
+    icon: 'icon', title: 'Long tool intent', status: '失败', disclosure: { open: true, onToggle() {} },
+  }));
+  assert.match(html, /<button type="button"/);
+  assert.match(html, /aria-expanded="true"/);
+  assert.match(html, /aria-label="收起细节：Long tool intent · 失败"/);
+  assert.match(html, /title="Long tool intent"/);
 });
