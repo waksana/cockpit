@@ -192,3 +192,14 @@ test('activity disclosure labels retain the full title, state and keyboard butto
   assert.match(html, /aria-label="收起细节：Long tool intent · 失败"/);
   assert.match(html, /title="Long tool intent"/);
 });
+
+test('expanded tools share one surface and expose the full title only in their header', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.msg-tool\[data-open=true\] \{[^}]*box-shadow: inset/);
+  assert.match(css, /\.msg-tool\[data-open=true\] > \.activity-head \{[^}]*height: auto/);
+  assert.match(css, /\.msg-tool\[data-open=true\] > \.activity-head \.activity-title \{[^}]*white-space: normal/);
+  assert.match(css, /\.activity-detail\.tool-detail \{[^}]*margin: 0;[^}]*border-inline-start: 0/);
+  const source = readFileSync(new URL('./Thread.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /tool-detail-title/);
+  assert.match(source, /tc\.name && tc\.name !== tc\.title/);
+});

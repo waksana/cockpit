@@ -425,14 +425,28 @@ button.activity-head {
 // Raw tool metadata belongs in details, never a second collapsed line.
 .msg-tools { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 0.75rem; }
 .msg-tool {
+  border-radius: 8px;
+  &[data-open='true'] {
+    background: color-mix(in srgb, var(--primary-text-color) 3%, transparent);
+    box-shadow: inset 0 0 0 1px var(--border-color);
+    > .activity-head {
+      height: auto; min-height: 36px; align-items: start;
+      background: transparent;
+      .activity-icon, .activity-chevron { height: 20px; }
+      .activity-title { white-space: normal; overflow-wrap: anywhere; color: var(--primary-text-color); }
+      &:hover { background: var(--ripple-color); }
+    }
+  }
   &[data-status='completed'] .activity-icon { color: var(--green-color); }
   &[data-status='failed'] .activity-icon, &[data-status='failed'] .activity-status { color: var(--chat-danger-ink); }
   &[data-status='in_progress'] .activity-icon { color: var(--chat-accent-ink); }
 }
-.tool-detail {
+.activity-detail.tool-detail {
+  margin: 0;
+  padding: 2px 12px 12px 32px;
+  border-inline-start: 0;
   display: flex; flex-direction: column; gap: 8px;
 }
-.tool-detail-title { color: var(--primary-text-color); }
 .tool-detail-name { font: 12px/1.5 ui-monospace, monospace; overflow-wrap: anywhere; }
 .tool-detail-empty { font-size: var(--font-size-12); }
 .tool-detail-label { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }

@@ -46,13 +46,12 @@ function ToolCallRow({ tc }: { tc: ToolCall; sessionId: string }) {
     completed: '已完成', failed: '失败', in_progress: '执行中', pending: '待执行',
   }[tc.status] : '状态未知';
   return (
-    <div className="msg-tool" data-status={tc.status ?? 'unknown'}>
+    <div className="msg-tool" data-status={tc.status ?? 'unknown'} data-open={open || undefined}>
       <ActivityHeader className="tool-head tool-toggle" icon={<ToolStatusIcon status={tc.status} />}
         title={tc.title} status={status} disclosure={{ open, onToggle: () => setOpen(v => !v) }} />
       {open && (
         <div className="activity-detail tool-detail">
-          <div className="tool-detail-title">{tc.title}</div>
-          {tc.name && <div className="tool-detail-name">{tc.name}</div>}
+          {tc.name && tc.name !== tc.title && <div className="tool-detail-name">{tc.name}</div>}
           {!tc.args && !tc.output && <div className="tool-detail-empty">暂无参数或输出记录。</div>}
           {tc.args && <section><div className="tool-detail-label">参数 <CopyButton text={tc.args} label="复制工具参数" /></div>
             <pre className="tool-args" tabIndex={0} aria-label="工具参数">{tc.args}</pre></section>}
