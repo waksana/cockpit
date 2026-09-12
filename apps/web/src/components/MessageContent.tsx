@@ -2,13 +2,15 @@ import { useMemo } from 'react';
 import type { ChatMessage } from '@cockpit/protocol';
 import { MessageBody } from './MessageBody';
 import { ChatFileCard } from './FileCard';
+import { hasMessageContent } from '../lib/messageContent';
 
 export function MessageContent({ message, sessionId }: { message: ChatMessage; sessionId: string }) {
   const partFiles = useMemo(() => message.parts?.flatMap(part => part.type === 'file' ? [part.attachment.url] : []), [message.parts]);
   const files = useMemo(() => message.attachments ?? (message.attachment ? [message.attachment] : []), [message.attachments, message.attachment]);
   const fileUrls = useMemo(() => files.map(file => file.url), [files]);
+  if (!hasMessageContent(message)) return null;
   if (message.parts) return <>{message.parts.map((part, index, parts) => {
-    if (part.type === 'text') return <MessageBody key={index} body={part.text} sessionId={sessionId} files={partFiles} />;
+    if (part.type === 'text') return part.text.trim() ? <MessageBody key={index} body={part.text} sessionId={sessionId} files={partFiles} /> : null;
     if (parts[index - 1]?.type === 'file') return null;
     const end = parts.findIndex((next, at) => at > index && next.type === 'text');
     return <span key={index} className="chat-attachment-grid">
@@ -22,6 +24,6 @@ export function MessageContent({ message, sessionId }: { message: ChatMessage; s
     {files.length > 0 && <span className="chat-attachment-grid">
       {files.map((file, index) => <ChatFileCard key={`${file.url}:${index}`} file={file} sessionId={sessionId} preview={files.findIndex(item => item.url === file.url) === index} />)}
     </span>}
-    {message.content && <MessageBody body={message.content} sessionId={sessionId} files={fileUrls} />}
+    {message.content.trim() && <MessageBody body={message.content} sessionId={sessionId} files={fileUrls} />}
   </>;
 }

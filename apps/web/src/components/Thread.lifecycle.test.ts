@@ -5,7 +5,7 @@ import { createRoot } from 'react-dom/client';
 import { getSessionDraft } from '../lib/attachmentSend';
 import { useCockpit } from '../net/store';
 import type { ChatSession } from '../net/types';
-import { Thread } from './Thread';
+import { MessageProcess, Thread } from './Thread';
 import { MessageBody } from './MessageBody';
 import { ChatFileCard } from './FileCard';
 import type { UploadedFile } from '@cockpit/protocol';
@@ -243,6 +243,16 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   assert.equal(viewport().scrollTop, bottom(), 'phone detail → chat remount must enter at latest');
   assert.equal(a.messages, retainedMessages, 're-entry must retain the existing loaded window');
   assert.equal(getSessionDraft(a.sessionId).getSnapshot(), draftSnapshot);
+
+  const processMessage = { id: 'process', role: 'assistant' as const, content: '', timestamp: 1, thought: 'Actual reasoning' };
+  await act(() => root.render(createElement(MessageProcess, { message: processMessage, sessionId: 'A', live: true })));
+  assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'true');
+  await act(() => root.render(createElement(MessageProcess, { message: { ...processMessage, thought: 'Updated reasoning' }, sessionId: 'A', live: false })));
+  assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'true', 'turn end must not snap the expanded process closed');
+  await act(() => root.render(null));
+  await act(() => root.render(createElement(MessageProcess, { message: processMessage, sessionId: 'A', live: false })));
+  assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'false', 'history re-entry starts compact');
+  assert.equal(container.querySelector('.msg-thought'), null);
 
   const previousFilesGet = useCockpit.getState().filesGet;
   const reads: { url: string; resolve: (file: UploadedFile) => void; reject: (error: Error) => void }[] = [];

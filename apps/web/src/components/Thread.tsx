@@ -1,9 +1,10 @@
 // Chat window (detail pane). Reading position and explicit bottom-follow are
 // maintained by one scroll owner; message bodies reuse the markdown renderer.
 
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { MessageBody } from './MessageBody';
 import { MessageContent } from './MessageContent';
+import { hasMessageContent } from '../lib/messageContent';
 import { Composer } from './Composer';
 import { Icon } from './Icon';
 import { ContextMenu, type MenuItem } from './ContextMenu';
@@ -48,7 +49,8 @@ function ToolCallRow({ tc }: { tc: ToolCall; sessionId: string }) {
   return (
     <div className="msg-tool" data-status={tc.status ?? 'unknown'} data-open={open || undefined}>
       <ActivityHeader className="tool-head tool-toggle" icon={<ToolStatusIcon status={tc.status} />}
-        title={tc.title} status={status} disclosure={{ open, onToggle: () => setOpen(v => !v) }} />
+        title={tc.title} status={tc.status === 'completed' ? undefined : status} accessibleStatus={status}
+        disclosure={{ open, onToggle: () => setOpen(v => !v) }} />
       {open && (
         <div className="activity-detail tool-detail">
           {tc.name && tc.name !== tc.title && <div className="tool-detail-name">{tc.name}</div>}
@@ -82,6 +84,46 @@ function SkillActivity({ message }: { message: ChatMessage }) {
   return <ActivityHeader icon={<Icon name="skills" size={16} />} title={`skill · ${messageCopyText(message)}`} />;
 }
 
+function hasMessageProcess(message: ChatMessage): boolean {
+  return !!(message.thought?.trim() || message.toolCalls?.length);
+}
+
+export function MessageProcess({ message, sessionId, live = false }: { message: ChatMessage; sessionId: string; live?: boolean }) {
+  // Open live work on first mount. Finishing/streaming must not override a reader's choice.
+  const [view, setView] = useState({ open: live, mounted: live });
+  const contentId = useId();
+  const tools = message.toolCalls ?? [];
+  const thought = message.thought?.trim() ? message.thought : undefined;
+  const title = [tools.length ? `${tools.length} 次工具` : '', thought ? tools.length ? '含思考' : '思考过程' : ''].filter(Boolean).join(' · ');
+  const states = [
+    [tools.filter(tool => tool.status === 'failed').length, '项失败'],
+    [tools.filter(tool => tool.status === 'in_progress').length, '项执行中'],
+    [tools.filter(tool => tool.status === 'pending').length, '项待执行'],
+    [tools.filter(tool => !tool.status).length, '项状态未知'],
+  ] as const;
+  const notices = states.filter(([count]) => count > 0).map(([count, label]) => `${count} ${label}`);
+  const description = [title, ...notices].join(' · ');
+  const time = clock(message.timestamp);
+  return <section className="message-process" data-failed={states[0][0] > 0 || undefined}>
+    <button type="button" className="process-summary" aria-expanded={view.open} aria-controls={contentId}
+      aria-label={`${view.open ? '收起' : '展开'}过程：${description} · ${time}`} title={description}
+      onClick={() => setView(current => ({ open: !current.open, mounted: true }))}>
+      <span className="process-summary-chevron"><Icon name="down" size={14} /></span>
+      <span className="process-summary-title">{title}</span>
+      {notices.length > 0 && <span className="process-summary-status">{notices[0]}</span>}
+      <time dateTime={new Date(message.timestamp).toISOString()}>{time}</time>
+    </button>
+    <div id={contentId} className="message-process-content" hidden={!view.open}>
+      {view.mounted && <>
+        {thought && <Thought text={thought} live={live} />}
+        {tools.length > 0 && <div className="msg-tools">
+          {tools.map(tc => <ToolCallRow key={tc.toolCallId} tc={tc} sessionId={sessionId} />)}
+        </div>}
+      </>}
+    </div>
+  </section>;
+}
+
 function clock(ts: number): string {
   const d = new Date(ts);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -108,12 +150,7 @@ function MessageInner({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
   if (m.role === 'system' && m.subtype === 'skill') return <div className="message is-skill"><SkillActivity message={m} /></div>;
   return (
     <>
-      {m.thought && <Thought text={m.thought} live={false} />}
-      {m.toolCalls && m.toolCalls.length > 0 && (
-        <div className="msg-tools">
-          {m.toolCalls.map((tc) => <ToolCallRow key={JSON.stringify([sessionId, m.id, tc.toolCallId])} tc={tc} sessionId={sessionId} />)}
-        </div>
-      )}
+      {hasMessageProcess(m) && <MessageProcess key={JSON.stringify([sessionId, m.id])} message={m} sessionId={sessionId} />}
       <MessageContent message={m} sessionId={sessionId} />
       {m.subtype === 'subagent' && m.subagent && <SubagentCard key={m.subagent.toolCallId ?? m.id} m={m} sessionId={sessionId} />}
     </>
@@ -210,7 +247,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
           <MessageContent message={m} sessionId={sessionId} />
         </div>
         <div className="user-message-meta">
-          {copyable && <CopyButton text={copyable} label="复制消息" />}
+          {copyable.trim() && <CopyButton text={copyable} label="复制消息" textOnly />}
           <span className="message-time">{clock(m.timestamp)}</span>
         </div>
       </div>
@@ -234,7 +271,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
   }
   return (
     <article className={`message is-doc${hasAttachment ? ' is-attachment' : ''}`} onContextMenu={(e) => onMenu(e, m)}>
-      {showByline && (
+      {showByline && !hasMessageProcess(m) && hasMessageContent(m) && (
         <header className="doc-byline">
           <span className="doc-mark" aria-hidden="true"><Icon name="compose" size={15} /></span>
           <span className="doc-time">{clock(m.timestamp)}</span>
@@ -242,12 +279,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
       )}
       {/* Date/byline removal on prepend must not move the reading anchor. */}
       <div data-message-id={m.id}>
-        {m.thought && <Thought text={m.thought} live={thinkingLive} />}
-        {m.toolCalls && m.toolCalls.length > 0 && (
-          <div className="msg-tools">
-            {m.toolCalls.map((tc) => <ToolCallRow key={JSON.stringify([sessionId, m.id, tc.toolCallId])} tc={tc} sessionId={sessionId} />)}
-          </div>
-        )}
+        {hasMessageProcess(m) && <MessageProcess key={JSON.stringify([sessionId, m.id])} message={m} sessionId={sessionId} live={thinkingLive} />}
         <MessageContent message={m} sessionId={sessionId} />
       </div>
     </article>
@@ -263,15 +295,19 @@ const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline
   const frame = useRef<HTMLDivElement | null>(null);
   const skippable = canSkipMessageLayout(m, live);
   const copyable = messageCopyText(m);
+  const answer = hasMessageContent(m);
+  const plainAssistant = m.role === 'assistant' && m.subtype !== 'subagent';
+  const empty = plainAssistant && !answer && !hasMessageProcess(m);
   useLayoutEffect(() => {
     if (skippable && frame.current) return layout.observe(frame.current);
   }, [layout, skippable, m, date, showByline]);
   return (
-    <div ref={frame} className="msg-group" data-message-frame={m.id}>
-      {date && <div className="date-separator" aria-hidden="true">{date}</div>}
+    <div ref={frame} className="msg-group" data-message-frame={m.id}
+      data-assistant-message={plainAssistant && !empty || undefined} data-empty={empty || undefined}>
+      {date && !empty && <div className="date-separator" aria-hidden="true">{date}</div>}
       <MessageRow m={m} sessionId={sessionId} showByline={showByline} thinkingLive={live} onMenu={onMenu} />
-      {m.role === 'assistant' && copyable && <div className="message-actions" data-role={m.role}>
-        <CopyButton text={copyable} label="复制消息" />
+      {m.role === 'assistant' && answer && copyable.trim() && <div className="message-actions" data-role={m.role}>
+        <CopyButton text={copyable} label="复制消息" textOnly />
       </div>}
     </div>
   );

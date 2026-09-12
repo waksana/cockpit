@@ -54,14 +54,14 @@ test('clipboard failure is propagated, never reported as success', async t => {
   await assert.rejects(copyText('retained'), /浏览器不支持剪贴板/);
 });
 
-test('tool records expose status text, a full-row disclosure and unknown rather than inferred pending', () => {
+test('tool history has a per-message summary with explicit recorded failure and unknown states', () => {
   const html = renderToStaticMarkup(createElement(Thread, {
     session: fixtureSession('process'), readOnly: true, onLoadMore() {},
   }));
-  assert.match(html, /data-status="unknown"/);
-  assert.match(html, /展开细节：缺少状态的工具记录 · 状态未知/);
-  assert.match(html, /class="activity-head tool-head tool-toggle"/);
-  assert.match(html, /class="activity-status">已完成/);
+  assert.match(html, /1 项状态未知/);
+  assert.match(html, /1 项失败/);
+  assert.match(html, /class="process-summary"/);
+  assert.doesNotMatch(html, /class="activity-head tool-head tool-toggle"/);
   assert.match(html, /记录：本次执行已结束/);
   assert.doesNotMatch(html, /任务目标已完成<\/span>|🤖/);
 });
@@ -177,7 +177,7 @@ test('user copy and time share one footer outside the bubble without changing me
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
   assert.equal((html.match(/class="user-message"/g) ?? []).length, 3);
   assert.equal((html.match(/class="message-time"/g) ?? []).length, 3);
-  assert.equal((html.match(/class="user-message-meta"><span class="chat-copy">/g) ?? []).length, 3);
+  assert.equal((html.match(/class="user-message-meta"><span class="chat-copy is-text">/g) ?? []).length, 3);
   assert.equal((html.match(/<\/span><span class="message-time">\d{2}:\d{2}<\/span><\/div>/g) ?? []).length, 3);
   assert.doesNotMatch(html, /class="message-actions" data-role="user"/);
   for (const id of ['short', 'long', 'file']) assert.match(html, new RegExp(`class="message is-out[^"]*" data-message-id="${id}"`));
@@ -191,8 +191,9 @@ test('thought, tool and skill use one single-line activity header, with static s
   assert.doesNotMatch(css, /\.tool-name|\.skill-label|\.tool-title/);
   assert.match(css, /\.msg-tools \{[^}]*gap: 4px/);
   const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession('process'), readOnly: true, onLoadMore() {} }));
-  assert.match(html, /class="activity-head thought-toggle"/);
-  assert.match(html, /class="activity-head tool-head tool-toggle"/);
+  assert.match(html, /class="process-summary"/);
+  assert.doesNotMatch(html, /class="activity-head thought-toggle"/);
+  assert.doesNotMatch(html, /class="activity-head tool-head tool-toggle"/);
   assert.match(html, /class="message is-skill"[^>]*><div class="activity-head /);
   assert.doesNotMatch(html, /class="tool-detail-name"|class="msg-thought"/);
   const staticHeader = renderToStaticMarkup(createElement(ActivityHeader, { icon: 'icon', title: 'skill · long skill name' }));
@@ -218,4 +219,13 @@ test('expanded tools share one surface and expose the full title only in their h
   const source = readFileSync(new URL('./Thread.tsx', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /tool-detail-title/);
   assert.match(source, /tc\.name && tc\.name !== tc\.title/);
+});
+
+test('message process spacing and text copy do not retain old document or toolbar gaps', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.msg-group\[data-assistant-message\] > \.message\.is-doc \{\s*margin: 0/);
+  assert.match(css, /\.msg-group\[data-assistant-message\] \+ \.msg-group\[data-assistant-message\] \{[^}]*border-top: 1px/);
+  assert.match(css, /\.message-process-content \.msg-tools \{[^}]*margin: 0;[^}]*gap: 4px/);
+  assert.match(css, /\.message-actions \{[^}]*min-height: 0;[^}]*margin: 0/);
+  assert.match(css, /\.chat-copy\.is-text \.chat-copy-button \{[^}]*min-height: 24px/);
 });

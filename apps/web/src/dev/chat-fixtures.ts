@@ -161,11 +161,32 @@ export const attachmentMessages: ChatMessage[] = [
   message('invalid-file', 'assistant', '无效地址明确显示，不导致整条消息崩溃。', { attachment: { kind: 'file', name: 'invalid.txt', url: 'invalid-address', mime: 'text/plain' } }),
 ];
 
+export const processHistoryMessages: ChatMessage[] = [
+  message('process-request', 'user', '保留消息结构，把执行过程收好。'),
+  message('process-one', 'assistant', '', { thought: '这里是原消息的思考内容，不是额外生成的总结。',
+    toolCalls: [
+      { toolCallId: 'one-read', title: '读取组件结构', name: 'view', status: 'completed', args: '{ "path": "src/components/Example.tsx" }', output: '合成组件记录。' },
+      { toolCallId: 'one-style', title: '检查样式规则', name: 'view', status: 'completed', output: '合成样式记录。' },
+    ] }),
+  message('process-two', 'assistant', ' \n ', { toolCalls: [
+    { toolCallId: 'two-check', title: '检查资源', name: 'view', status: 'completed' },
+    { toolCallId: 'two-error', title: '读取不可用的资源', name: 'web_fetch', status: 'failed', output: 'HTTP 404 · 合成错误记录\n没有自动重试。' },
+  ] }),
+  message('process-three', 'assistant', '', { parts: [{ type: 'text', text: ' \n' }], thought: '只存在思考，不应该凭空计为一次工具。' }),
+  message('process-four', 'assistant', '', { toolCalls: [
+    { toolCallId: 'four-unknown', title: '没有明确状态的记录', name: 'view' },
+  ] }),
+  message('process-answer', 'assistant', '建议保留消息边界，把历史执行过程收成一行。需要时再展开查看详情。', {
+    toolCalls: [{ toolCallId: 'answer-review', title: '整理观察', name: 'view', status: 'completed' }],
+  }),
+];
+
 export const scenarios = [
   ['all', '完整组件对话'],
   ['reading', '正文 / Markdown / 代码'],
   ['user-time', '用户时间 / 短长文本 / 附件'],
   ['process', '思考 / 工具 / 子代理'],
+  ['process-history', '消息级过程 / 无正文 / 轻量复制'],
   ['attachments', '图片 / 视频 / 文件'],
   ['streaming', '流式 / 队列 / 停止'],
   ['cancelling', '停止请求中'],
@@ -196,6 +217,7 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   };
   if (scenario === 'all') session.messages = [...readingMessages, ...processMessages, ...attachmentMessages];
   if (scenario === 'process') session.messages = [...processMessages];
+  if (scenario === 'process-history') session.messages = [...processHistoryMessages];
   if (scenario === 'user-time') session.messages = [
     message('time-short', 'user', '收到。'),
     message('time-long', 'user', '这是一段合成的多行用户消息。\n请把时间放在气泡外，并紧贴对应气泡。\n保留文字、附件、复制操作和时间的自然归属。'),

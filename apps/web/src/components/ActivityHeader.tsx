@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
 import { Icon } from './Icon';
 
-export function ActivityHeader({ icon, title, status, className = '', disclosure }: {
+export function ActivityHeader({ icon, title, status, accessibleStatus = status, className = '', disclosure }: {
   icon: ReactNode;
   title: string;
   status?: string;
+  accessibleStatus?: string;
   className?: string;
   disclosure?: { open: boolean; onToggle: () => void };
 }) {
@@ -16,7 +17,7 @@ export function ActivityHeader({ icon, title, status, className = '', disclosure
   </>;
   return disclosure
     ? <button type="button" className={`activity-head ${className}`} aria-expanded={disclosure.open}
-        aria-label={`${disclosure.open ? '收起' : '展开'}细节：${title}${status ? ` · ${status}` : ''}`}
+        aria-label={`${disclosure.open ? '收起' : '展开'}细节：${title}${accessibleStatus ? ` · ${accessibleStatus}` : ''}`}
         onClick={disclosure.onToggle}>{content}</button>
     : <div className={`activity-head ${className}`}>{content}</div>;
 }
