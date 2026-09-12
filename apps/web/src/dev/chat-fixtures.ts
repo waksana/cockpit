@@ -162,6 +162,7 @@ export const attachmentMessages: ChatMessage[] = [
 export const scenarios = [
   ['all', '完整组件对话'],
   ['reading', '正文 / Markdown / 代码'],
+  ['user-time', '用户时间 / 短长文本 / 附件'],
   ['process', '思考 / 工具 / 子代理'],
   ['attachments', '图片 / 视频 / 文件'],
   ['streaming', '流式 / 队列 / 停止'],
@@ -193,6 +194,14 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   };
   if (scenario === 'all') session.messages = [...readingMessages, ...processMessages, ...attachmentMessages];
   if (scenario === 'process') session.messages = [...processMessages];
+  if (scenario === 'user-time') session.messages = [
+    message('time-short', 'user', '收到。'),
+    message('time-long', 'user', '这是一段合成的多行用户消息。\n请把时间放在气泡外，并紧贴对应气泡。\n保留文字、附件、复制操作和时间的自然归属。'),
+    message('time-file', 'user', '普通文件说明。', { attachments: [labFiles[2]] }),
+    message('time-image', 'user', '', { attachment: labFiles[0] }),
+    message('time-reply', 'user', '选择已确认。', { subtype: 'ask-reply' }),
+    message('time-assistant', 'assistant', '助手的时间来源与展示分组保持不变。'),
+  ];
   if (scenario === 'attachments') session.messages = [...attachmentMessages];
   if (scenario === 'streaming' || scenario === 'cancelling') Object.assign(session, {
     status: 'running', nativeProcessing: true, intent: '正在整理组件观察…',

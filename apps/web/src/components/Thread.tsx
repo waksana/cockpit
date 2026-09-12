@@ -194,7 +194,7 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
 }
 
 // One rendered message. Per @waksana's doctrine:
-//  - user messages are right-aligned bubbles (accent), time inside, no label;
+//  - user messages are right-aligned bubbles, time just outside, no label;
 //  - assistant replies are NOT bubbles — they read as a full-width document,
 //    with a light byline (icon + Copilot + time) shown once per assistant group;
 //  - system messages are a quiet centered note.
@@ -209,9 +209,11 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
     if (isAskReply) cls.push('is-ask-reply');
     if (hasAttachment) cls.push('is-attachment');
     return (
-      <div className={cls.join(' ')} data-message-id={m.id} onContextMenu={(e) => onMenu(e, m)}>
-        {isAskReply && <span className="ask-reply-tag" aria-label="对提问的回复">↩ 回复</span>}
-        <MessageContent message={m} sessionId={sessionId} />
+      <div className="user-message" onContextMenu={(e) => onMenu(e, m)}>
+        <div className={cls.join(' ')} data-message-id={m.id}>
+          {isAskReply && <span className="ask-reply-tag" aria-label="对提问的回复">↩ 回复</span>}
+          <MessageContent message={m} sessionId={sessionId} />
+        </div>
         <span className="message-time">{clock(m.timestamp)}</span>
       </div>
     );

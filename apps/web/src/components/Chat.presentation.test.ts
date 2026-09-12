@@ -88,8 +88,9 @@ test('the transcript does not make long decisions compete with its scroll-conten
 
 test('the composer stays compact with circular controls and only an outer typing focus indicator', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.chat-input \{[^}]*margin: 0\.25rem auto calc\(0\.25rem \+ env\(safe-area-inset-bottom, 0px\)\);[^}]*padding: 0\.1875rem;/);
+  assert.match(css, /\.chat-input \{[^}]*margin: 0\.25rem auto calc\(0\.25rem \+ var\(--chat-safe-bottom\)\);[^}]*padding: 0\.1875rem;/);
   assert.match(css, /\.chat-input-message \{[^}]*min-height: 2\.5rem;[^}]*padding: 0\.5rem 0\.4rem;/);
+  assert.match(css, /max-height: max\(2\.5rem, min\(9rem, var\(--chat-viewport-height, 100dvh\) \* 0\.2\)\)/);
   const controls = [...css.matchAll(/\.chat-input-btn \{([^}]+)\}/g)];
   assert.equal(controls.length, 1, 'narrow screens must not override the square button dimensions');
   assert.match(controls[0][1], /width: 2\.5rem;\s*height: 2\.5rem;/);
@@ -116,4 +117,21 @@ test('a native cancelling flag disables duplicate stop clicks without claiming c
   }));
   assert.match(html, /class="chat-typing-stop" disabled="">正在停止…/);
   assert.doesNotMatch(html, /class="chat-typing-stop"[^>]*>已取消/);
+});
+
+test('user timestamps sit outside the bubble without changing message identity or assistant bylines', () => {
+  const session = fixtureSession('reading');
+  session.messages = [
+    { id: 'short', role: 'user', content: 'Short', timestamp: 1000 },
+    { id: 'long', role: 'user', content: 'Long\n'.repeat(8), timestamp: 2000 },
+    { id: 'file', role: 'user', content: '', timestamp: 3000,
+      attachment: { kind: 'file', name: 'notes.txt', mime: 'text/plain', url: '/uploads/notes.txt' } },
+    { id: 'answer', role: 'assistant', content: 'Answer', timestamp: 4000 },
+  ];
+  const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
+  assert.equal((html.match(/class="user-message"/g) ?? []).length, 3);
+  assert.equal((html.match(/class="message-time"/g) ?? []).length, 3);
+  assert.equal((html.match(/<\/div><span class="message-time">\d{2}:\d{2}<\/span><\/div>/g) ?? []).length, 3);
+  for (const id of ['short', 'long', 'file']) assert.match(html, new RegExp(`class="message is-out[^"]*" data-message-id="${id}"`));
+  assert.match(html, /class="doc-time"/);
 });

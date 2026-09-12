@@ -105,8 +105,9 @@ test('panel keyboard scope includes the nonmodal error tray and dismissal does n
   assert.match(notifications, /dismiss\(error.id, event.currentTarget\)/);
   assert.match(notifications, /buttons\[index \+ 1\] \?\? buttons\[index - 1\]/);
   assert.match(notifications, /querySelector<HTMLElement>\('\.info-panel\[data-open="true"\]'\) \?\? document.querySelector<HTMLElement>\('\.cockpit-shell'\)/);
-  assert.match(css, /bottom: var\(--ux-error-height, 0px\)/);
-  assert.match(css, /height: calc\(100dvh - var\(--ux-error-height, 0px\)\)/);
+  assert.match(css, /top: var\(--chat-viewport-top, 0px\)/);
+  assert.match(css, /height: calc\(var\(--chat-viewport-height, 100dvh\) - var\(--ux-error-height, 0px\)\)/);
+  assert.match(css, /top: calc\(var\(--chat-viewport-top, 0px\) \+ var\(--chat-viewport-height, 100dvh\) - var\(--ux-error-height\)\)/);
   assert.match(css, /z-index: 45/);
   assert.doesNotMatch(notifications, /aria-modal|onClose|navigate/);
 });

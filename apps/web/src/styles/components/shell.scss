@@ -2,11 +2,17 @@
 // Below it: one pane at a time (drill-down). At/above: master docked left at
 // --column-width, detail fills the rest.
 
+:root {
+  --chat-device-safe-bottom: env(safe-area-inset-bottom, 0px);
+  --chat-safe-bottom: max(0px, calc(var(--chat-device-safe-bottom) - var(--chat-viewport-occluded-bottom, 0px)));
+}
+
 .cockpit-shell {
   position: fixed;
-  inset: 0;
+  inset-inline: 0;
+  top: var(--chat-viewport-top, 0px);
   display: flex;
-  height: 100dvh;
+  height: var(--chat-viewport-height, 100dvh);
   overflow: hidden;
   background-color: var(--background-color);
 }

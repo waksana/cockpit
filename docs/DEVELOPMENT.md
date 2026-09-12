@@ -44,3 +44,9 @@ Chat components with synthetic inputs, same-origin sample media and local
 callbacks, without initializing a native client or creating sessions. Normal
 production builds do not include the entry. See the [component coverage and
 design review](chat-design-review.md) for scenarios, reference sources and limits.
+
+For keyboard-equivalent geometry and external user timestamps, open
+`/chat-lab.html?scene=ask&viewport=1` or choose `user-time`.
+The [targeted composer rework](chat-composer-rework.md) separates synthetic
+VisualViewport inputs from actual iOS/PWA evidence; the lab never opens a native
+keyboard or publishes user screenshots.

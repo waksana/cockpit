@@ -142,6 +142,8 @@ Composer paste/drop 和 draft owner、单一 threadScroll、近顶预取、历�
 后续输入栏反馈修正：单行输入栏压至 48px，底部留白减至 4px（另加设备安全区），
 宽窄屏按钮均为 40×40px 正圆。文字输入区的 focus-visible 不再被通用 Chat
 聚焦规则覆盖，输入时只保留外层输入栏边界；按钮自身的键盘焦点仍保留。
+随后针对 PWA 可视视口与用户时间戳的返工见
+[定向返工说明](chat-composer-rework.md)，以该文的设备证据边界和最新安全区规则为准。
 
 自动浏览器记录将流式前后、追加前后及 prepend 前后的消息 ID 与屏内 offset 一起保存。
 prepend 容许不超过 1 CSS px 的浏览器 scrollTop 舍入，不把亚像素变化伪称为逐像素恒等。

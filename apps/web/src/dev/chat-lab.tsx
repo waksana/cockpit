@@ -12,6 +12,8 @@ import { UxErrorNotifications } from '../components/UxErrorNotifications';
 import { getSessionDraft } from '../lib/attachmentSend';
 import { useCockpit } from '../net/store';
 import { fixtureSession, labFiles, scenarios, type Scenario } from './chat-fixtures';
+import { useVisualViewport } from '../lib/useVisualViewport';
+import { createViewportFixture } from './viewport-fixture';
 import '../styles/index.scss';
 import '../components/UxErrorNotifications.scss';
 import './chat-lab.scss';
@@ -72,6 +74,10 @@ export function Lab() {
   const [moreOpen, setMoreOpen] = useState(false);
   const draft = getSessionDraft(session.sessionId);
   const detail = labFiles.find(file => file.url === query.get('url'));
+  const [viewportFixture] = useState(createViewportFixture);
+  const viewportMode = query.get('viewport') === '1';
+  const [viewportForm, setViewportForm] = useState({ height: 420, offsetTop: 0, safeBottom: 34, scale: 1 });
+  useVisualViewport(viewportFixture.source);
 
   useEffect(() => () => { generation.current++; pending.current.splice(0).forEach(resolve => resolve()); }, []);
 
@@ -83,7 +89,7 @@ export function Lab() {
     setMoreOpen(false);
     setScenario(value);
     setSession(fixtureSession(value));
-    history.replaceState(null, '', `/chat-lab.html?scene=${value}`);
+    history.replaceState(null, '', `/chat-lab.html?scene=${value}${viewportMode ? '&viewport=1' : ''}`);
     setReceipt(`场景：${value}。操作不会发送到后端。`);
   }
   async function action(label: string, apply: () => void): Promise<boolean> {
@@ -132,7 +138,9 @@ export function Lab() {
     <FileCard file={detail} browse={false} />
     <a href="/chat-lab.html?scene=attachments">回到组件场景</a>
   </div>;
-  return <div className="chat-lab">
+  return <div className="cockpit-shell chat-lab" data-viewport-lab={viewportMode || undefined}>
+    <details className="lab-controls" open={!viewportMode}>
+      <summary>场景与视口模拟（不是系统键盘）</summary>
     <header className="lab-toolbar">
       <strong>Chat / 组件场景</strong>
       <label>场景 <select value={scenario} onChange={e => choose(e.target.value as Scenario)}>
@@ -158,8 +166,34 @@ export function Lab() {
       <button onClick={() => choose(scenario)}>重置场景</button>
       <button onClick={() => fixtureSpeech?.transcribe()}>模拟转写</button>
       <button onClick={() => fixtureSpeech?.fail()}>语音错误</button>
+      {viewportMode && <fieldset className="lab-viewport-controls">
+        <legend>仅模拟浏览器几何事件，不模拟 iOS 工具栏</legend>
+        {([['height', '可视高度'], ['offsetTop', '顶部偏移'], ['safeBottom', '设备安全区'], ['scale', '缩放']] as const).map(([key, label]) =>
+          <label key={key}>{label}<input type="number" value={viewportForm[key]} min={key === 'height' || key === 'scale' ? 1 : 0}
+            onChange={event => setViewportForm(value => ({ ...value, [key]: event.target.valueAsNumber }))} /></label>)}
+        <button onClick={() => {
+          if (!Object.values(viewportForm).every(Number.isFinite) || viewportForm.height <= 0 || viewportForm.scale <= 0
+            || viewportForm.safeBottom < 0 || viewportForm.offsetTop < 0) {
+            setReceipt('视口参数无效：高度/缩放需为正数，其余字段不能为负。');
+            return;
+          }
+          document.documentElement.style.setProperty('--chat-device-safe-bottom', `${viewportForm.safeBottom}px`);
+          viewportFixture.set({ ...viewportForm, layoutHeight: document.documentElement.clientHeight });
+          setReceipt(`合成视口：height=${viewportForm.height}, top=${viewportForm.offsetTop}, safe=${viewportForm.safeBottom}, scale=${viewportForm.scale}`);
+        }}>应用几何事件</button>
+        <button onClick={() => {
+          viewportFixture.set(null);
+          setReceipt('恢复真实浏览器 viewport；合成设备安全区保留用于关键盘对照。');
+        }}>恢复浏览器视口</button>
+        <button onClick={() => {
+          viewportFixture.set(null);
+          document.documentElement.style.removeProperty('--chat-device-safe-bottom');
+          setReceipt('已退出所有视口与安全区模拟。');
+        }}>退出模拟</button>
+      </fieldset>}
     </header>
     <output className="lab-receipt" aria-live="polite">{receipt}</output>
+    </details>
     <div className="lab-stage">
       <ChatHeader title={`${session.title} · 长标题与会话入口边界`} modelLabel="Synthetic model · no native connection" mode={session.currentMode}
         modeRef={modeRef} moreRef={moreRef} modeOpen={modeOpen} moreOpen={moreOpen}
@@ -199,6 +233,7 @@ export function Lab() {
         })} />}
     </div>
     <UxErrorNotifications />
+    {viewportMode && <div className="lab-viewport-boundary" aria-hidden="true">浏览器可视底边 · 下方不是模拟的系统键盘</div>}
   </div>;
 }
 

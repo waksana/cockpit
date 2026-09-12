@@ -1,6 +1,6 @@
 // Compose box — ported from evo-chat's best-tuned chat composer:
 //  - CSS-only autoresize textarea (`field-sizing: content`, capped height)
-//  - keyboard-glued at the bottom of the visible viewport (data-compose)
+//  - kept in normal flow within the shell's visual viewport
 //  - desktop Enter-to-send / Shift+Enter newline; mobile Enter=newline, tap send
 //  - never submits during IME (CJK) composition
 //  - Cmd/Ctrl+Enter always submits

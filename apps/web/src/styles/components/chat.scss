@@ -206,21 +206,28 @@
   }
 }
 
-// User → right bubble (tweb is-out), time tucked inside.
-.message.is-out {
+// Bubble and external timestamp share a shrink-wrapped owner.
+.user-message {
+  display: flex;
+  flex-direction: column;
   align-self: flex-end;
+  min-width: 0;
   max-width: min(88%, 40rem);
   margin: 0.5rem 0 0;
-  padding: 0.65rem 0.85rem 0.5rem;
+  > .message-time {
+    align-self: flex-end;
+    margin-top: 2px;
+    font-size: var(--font-size-12);
+    line-height: 16px;
+    color: var(--secondary-text-color);
+  }
+}
+.message.is-out {
+  min-width: 0;
+  padding: 0.65rem 0.85rem;
   border-radius: var(--border-radius-medium);
   background-color: color-mix(in srgb, var(--primary-color) 10%, var(--surface-color));
   position: relative;
-  .message-time {
-    float: right;
-    margin: 0.2rem 0 0 0.6rem;
-    font-size: var(--font-size-12);
-    color: var(--secondary-text-color);
-  }
 }
 
 // ask_user reply — same out-bubble, but a subtle tag marks it as an answer to a
@@ -286,16 +293,9 @@
   }
 }
 
-// User upload — the attachment sits inside the outgoing bubble (TG photo /
-// document-on-bubble); the time renders below it.
+// User upload retains the stable file card inside the bubble.
 .message.is-out.is-attachment {
   padding: 0.25rem;
-  .message-time {
-    float: none;
-    display: block;
-    text-align: right;
-    margin: 0.2rem 0.2rem 0;
-  }
 }
 
 // Agent attachment — a figure within the assistant document. There's no bubble
@@ -629,7 +629,7 @@
 // Read-only footer for a trashed-session preview (replaces the composer).
 .chat-readonly-note {
   flex: none;
-  padding: 0.7rem 1rem calc(0.7rem + env(safe-area-inset-bottom, 0px));
+  padding: 0.7rem 1rem calc(0.7rem + var(--chat-safe-bottom));
   text-align: center;
   font-size: var(--font-size-12);
   color: var(--tertiary-text-color);
@@ -698,7 +698,7 @@
   gap: 0.35rem;
   width: calc(100% - 2 * var(--chat-gutter));
   max-width: var(--chat-reading-width);
-  margin: 0.25rem auto calc(0.25rem + env(safe-area-inset-bottom, 0px));
+  margin: 0.25rem auto calc(0.25rem + var(--chat-safe-bottom));
   padding: 0.1875rem;
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius-medium);
@@ -721,7 +721,7 @@
   flex: 1 1 auto;
   min-width: 0;
   min-height: 2.5rem;
-  max-height: 9rem;
+  max-height: max(2.5rem, min(9rem, calc(var(--chat-viewport-height, 100dvh) * 0.2)));
   padding: 0.5rem 0.4rem;
   border: none;
   border-radius: var(--border-radius-medium);
@@ -862,7 +862,7 @@
 }
 @media (max-width: 599px) {
   .chat { --chat-gutter: 0.75rem; }
-  .message.is-out { max-width: 92%; }
+  .user-message { max-width: 92%; }
   .msg-tool .tool-head { grid-template-columns: 1rem minmax(0, 1fr) auto 1rem; }
   .tool-title { grid-column: 2; }
   .tool-status { grid-column: 3; }
