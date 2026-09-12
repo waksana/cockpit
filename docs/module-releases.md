@@ -5,6 +5,11 @@ private-repository membership, publisher workstation, or CI/CD credential.
 The publisher's authenticated CI/Release access is separate from consumer HTTPS
 downloads and Ed25519 package verification.
 
+This page describes the current official channel. The
+[URL-driven module contract draft](module-contract-draft.md) proposes discovery
+outside a pre-registered module list; its v2 examples are not accepted by the
+current installer and do not change this release procedure.
+
 The official channel is:
 
 ```text

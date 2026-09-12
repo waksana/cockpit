@@ -4,6 +4,10 @@ This document specifies the module-system scope authorized on 2026-09-11.
 It is not permission to migrate an existing installation, enable a paused channel,
 publish a repository, or replace the current private delivery authority.
 
+For the current cross-module interface inventory and a **proposed, unimplemented**
+URL-driven successor, see [the module contract draft](module-contract-draft.md).
+That draft does not expand the official IDs or capabilities implemented here.
+
 ## Ownership and storage
 
 Cockpit owns installation and role composition, not Task's business state or the

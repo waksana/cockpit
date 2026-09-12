@@ -1,0 +1,203 @@
+{
+  "kind": "cockpit.module",
+  "schemaVersion": 2,
+  "moduleId": "org.example.clipbook",
+  "version": "0.3.0-draft.1",
+  "displayName": "Clipbook",
+  "requires": {
+    "hostProtocol": 2,
+    "capabilities": {
+      "roles": 1,
+      "mcpLocal": 1,
+      "service": 1,
+      "actions": 1,
+      "events": 1,
+      "modulePage": 1,
+      "configuration": 1
+    },
+    "runtime": {
+      "kind": "node",
+      "version": ">=24.20.0 <25"
+    }
+  },
+  "configuration": {
+    "schemaVersion": 1,
+    "schema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "maxNoteLength": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2000,
+          "default": 2000
+        }
+      },
+      "additionalProperties": false
+    },
+    "defaults": {
+      "maxNoteLength": 2000
+    },
+    "secretReferences": []
+  },
+  "storage": {
+    "data": {
+      "scope": "installation",
+      "readSchemas": [
+        1
+      ],
+      "writeSchema": 1
+    },
+    "logs": true
+  },
+  "hostAccess": [],
+  "roles": [
+    {
+      "roleId": "writer",
+      "selectableBy": [
+        "user",
+        "module"
+      ],
+      "instructions": "roles/writer.md",
+      "skillDirectories": [
+        "skills"
+      ],
+      "mcp": [
+        {
+          "name": "clipbook",
+          "entry": "dist/mcp.mjs",
+          "contract": "notes.v1"
+        }
+      ]
+    }
+  ],
+  "service": {
+    "entry": "dist/service.mjs",
+    "transport": "stdio-jsonl-v1",
+    "scope": "installation",
+    "apiContracts": [
+      "notes.v1"
+    ],
+    "implements": [
+      "identity",
+      "health",
+      "drain"
+    ]
+  },
+  "api": {
+    "notes.v1": {
+      "provider": "service",
+      "actions": {
+        "notes.list": {
+          "effect": "read",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 50
+              }
+            },
+            "additionalProperties": false
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "notes": {
+                "type": "array",
+                "maxItems": 50,
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "string",
+                      "maxLength": 2000
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "text"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "notes"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "notes.add": {
+          "effect": "local-write",
+          "operationId": "required",
+          "confirmation": "explicit-call",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 2000
+              }
+            },
+            "required": [
+              "text"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "noteId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "noteId"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "events": {
+        "notes.changed": {
+          "durability": "module-cursor",
+          "schema": {
+            "type": "object",
+            "properties": {
+              "revision": {
+                "type": "integer",
+                "minimum": 1
+              }
+            },
+            "required": [
+              "revision"
+            ],
+            "additionalProperties": false
+          }
+        }
+      }
+    }
+  },
+  "pages": [
+    {
+      "pageId": "home",
+      "slot": "module.home",
+      "kind": "schema-page",
+      "entry": "web/home.page.json",
+      "contract": "notes.v1",
+      "bridgeActions": [
+        "notes.list",
+        "notes.add"
+      ],
+      "bridgeEvents": [
+        "notes.changed"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "kind": "cockpit.module.page",
+  "schemaVersion": 1,
+  "title": "Task API example",
+  "contract": "work.v1",
+  "blocks": [
+    {
+      "type": "form",
+      "action": "work.read",
+      "inputSchemaRef": "action-input",
+      "resultView": "json"
+    }
+  ]
+}

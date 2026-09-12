@@ -1,0 +1,23 @@
+{
+  "kind": "cockpit.module.page",
+  "schemaVersion": 1,
+  "title": "Clipbook",
+  "contract": "notes.v1",
+  "blocks": [
+    {
+      "type": "list",
+      "action": "notes.list",
+      "input": {
+        "limit": 20
+      },
+      "itemsPointer": "/notes",
+      "primaryPointer": "/text"
+    },
+    {
+      "type": "form",
+      "action": "notes.add",
+      "inputSchemaRef": "action-input",
+      "resultView": "json"
+    }
+  ]
+}

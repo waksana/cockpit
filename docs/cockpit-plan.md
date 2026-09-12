@@ -8,6 +8,11 @@ Stable product decisions and review criteria are defined in
 [Cockpit 定位与验收准则 (R1–R8)](product-requirements.md). The implementation
 details and dated delivery notes below do not add or override those requirements.
 
+Module references: [current official modules and roles](module-system.md),
+[current module publishing](module-releases.md), and the
+[proposed URL-driven module contract and interface inventory](module-contract-draft.md).
+The last document is a design draft, not implemented capability or deployment status.
+
 ## Source delivery and paused work (2026-09-11)
 
 The contracts below describe repository source. A local commit, a merged main

@@ -1,0 +1,220 @@
+{
+  "kind": "cockpit.module",
+  "schemaVersion": 2,
+  "moduleId": "task",
+  "version": "2.0.0-draft.1",
+  "displayName": "Task (contract mapping example)",
+  "requires": {
+    "hostProtocol": 2,
+    "capabilities": {
+      "roles": 1,
+      "mcpLocal": 1,
+      "service": 1,
+      "sessionLifecycle": 1,
+      "actions": 1,
+      "configuration": 1,
+      "modulePage": 1
+    },
+    "runtime": {
+      "kind": "node",
+      "version": ">=24.20.0 <25"
+    },
+    "native": {
+      "runtimeVersions": [
+        "1.0.83"
+      ],
+      "sdkVersions": [
+        "1.0.13"
+      ]
+    }
+  },
+  "configuration": {
+    "schemaVersion": 1,
+    "schema": {
+      "type": "object",
+      "properties": {
+        "publicOrigin": {
+          "type": "string",
+          "format": "uri"
+        }
+      },
+      "required": [
+        "publicOrigin"
+      ],
+      "additionalProperties": false
+    },
+    "secretReferences": [],
+    "initialize": {
+      "method": "config.initialize",
+      "requiresEmptyData": true,
+      "effect": "local-write"
+    }
+  },
+  "storage": {
+    "data": {
+      "scope": "installation",
+      "readSchemas": [
+        3
+      ],
+      "writeSchema": 3
+    },
+    "logs": true
+  },
+  "hostAccess": [
+    {
+      "intents": [
+        "session/get",
+        "session/modules/get"
+      ],
+      "scope": "bound-or-created-sessions"
+    },
+    {
+      "intents": [
+        "session/new"
+      ],
+      "scope": "authorized-workspaces"
+    },
+    {
+      "intents": [
+        "setModel",
+        "prompt"
+      ],
+      "scope": "bound-or-created-sessions"
+    }
+  ],
+  "control": {
+    "transport": "stdio-jsonl-v1",
+    "entry": "dist/host-control.mjs"
+  },
+  "roles": [
+    {
+      "roleId": "commander",
+      "selectableBy": [
+        "user",
+        "module"
+      ],
+      "instructions": "roles/commander.md",
+      "skillDirectories": [
+        "skills/commander"
+      ],
+      "mcp": [
+        {
+          "name": "task",
+          "entry": "dist/mcp.mjs",
+          "contract": "work.v1"
+        }
+      ],
+      "sessionLifecycle": {
+        "attach": true,
+        "input": {
+          "mode": "caller"
+        },
+        "attachInputSchema": {
+          "type": "object",
+          "additionalProperties": false
+        }
+      }
+    },
+    {
+      "roleId": "owner",
+      "selectableBy": [
+        "module"
+      ],
+      "instructions": "roles/owner.md",
+      "skillDirectories": [
+        "skills/owner"
+      ],
+      "mcp": [
+        {
+          "name": "task",
+          "entry": "dist/mcp.mjs",
+          "contract": "work.v1"
+        }
+      ],
+      "sessionLifecycle": {
+        "attach": true,
+        "input": {
+          "mode": "bound-owner"
+        },
+        "attachInputSchema": {
+          "type": "object",
+          "properties": {
+            "dispatchRef": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "dispatchRef"
+          ],
+          "additionalProperties": false
+        }
+      }
+    }
+  ],
+  "service": {
+    "entry": "dist/service.mjs",
+    "transport": "stdio-jsonl-v1",
+    "scope": "installation",
+    "apiContracts": [
+      "work.v1"
+    ],
+    "implements": [
+      "identity",
+      "health",
+      "drain"
+    ]
+  },
+  "api": {
+    "work.v1": {
+      "provider": "service",
+      "actions": {
+        "work.read": {
+          "effect": "read",
+          "inputSchema": {
+            "type": "object",
+            "properties": {
+              "taskId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "taskId"
+            ],
+            "additionalProperties": false
+          },
+          "outputSchema": {
+            "type": "object",
+            "properties": {
+              "taskId": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "taskId",
+              "status"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "events": {}
+    }
+  },
+  "pages": [
+    {
+      "pageId": "dashboard",
+      "slot": "module.home",
+      "kind": "schema-page",
+      "entry": "web/dashboard.page.json",
+      "contract": "work.v1",
+      "bridgeActions": [
+        "work.read"
+      ],
+      "bridgeEvents": []
+    }
+  ]
+}

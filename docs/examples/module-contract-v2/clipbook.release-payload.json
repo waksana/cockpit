@@ -1,0 +1,35 @@
+{
+  "kind": "cockpit.module.release",
+  "schemaVersion": 2,
+  "moduleId": "org.example.clipbook",
+  "version": "0.3.0-draft.1",
+  "publisherLabel": "Example Publisher (synthetic)",
+  "channel": "stable",
+  "sequence": 1,
+  "issuedAt": "2026-09-12T09:30:00Z",
+  "expiresAt": "2026-10-12T09:30:00Z",
+  "manifest": {
+    "url": "https://modules.example.invalid/clipbook/0.3.0/module.json",
+    "bytes": 6000,
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "artifacts": [
+    {
+      "format": "cockpit-module-zip-v2",
+      "target": {
+        "os": "linux",
+        "arch": "x64",
+        "libc": "glibc",
+        "runtime": "node24"
+      },
+      "url": "https://cdn.example.invalid/clipbook/0.3.0/clipbook-linux-x64.zip",
+      "bytes": 1200000,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "downloadOrigins": [
+    "https://modules.example.invalid",
+    "https://cdn.example.invalid"
+  ],
+  "updateUrl": "https://modules.example.invalid/clipbook/stable.module-release.json"
+}
