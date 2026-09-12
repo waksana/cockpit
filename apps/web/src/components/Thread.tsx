@@ -671,7 +671,7 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
           key={session.sessionId}
           busy={session.status === 'running' && !ask}
           disabled={!!session.compacting && session.status !== 'running'}
-          placeholder={(session.compacting && session.status !== 'running') ? '正在压缩上下文，请稍候…' : (ask ? (ask.allowFreeform ? '选择上方选项，或输入你的回答…' : '选择上方一个选项…') : (planRequest ? '选择上方操作，或直接输入新指令让我照做…' : '输入消息…'))}
+          placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : '输入消息…'))}
           draft={draft}
           onSend={handleSend}
           uploadFile={uploadFile}

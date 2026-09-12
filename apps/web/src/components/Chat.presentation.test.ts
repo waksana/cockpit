@@ -10,6 +10,7 @@ import { messageCopyText, copyText } from '../lib/copyText';
 import { formatFileSize } from '../lib/managedFile';
 import { compile } from 'sass';
 import { getSessionDraft } from '../lib/attachmentSend';
+import { existsSync, readFileSync } from 'node:fs';
 
 test('all component scenes conform to the actual message and metadata contracts', () => {
   for (const [scene] of scenarios) {
@@ -86,17 +87,42 @@ test('the transcript does not make long decisions compete with its scroll-conten
   assert.match(css, /\.chat \.chat-staged-list \{[^}]*flex: 0 1 auto;[^}]*min-height: 2\.5rem/);
 });
 
-test('the composer stays compact with circular controls and only an outer typing focus indicator', () => {
+test('the composer is a full-width bottom bar without a floating outer frame', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.chat-input \{[^}]*margin: 0\.25rem auto calc\(0\.25rem \+ var\(--chat-safe-bottom\)\);[^}]*padding: 0\.1875rem;/);
-  assert.match(css, /\.chat-input-message \{[^}]*min-height: 2\.5rem;[^}]*padding: 0\.5rem 0\.4rem;/);
-  assert.match(css, /max-height: max\(2\.5rem, min\(9rem, var\(--chat-viewport-height, 100dvh\) \* 0\.2\)\)/);
+  const bar = css.match(/\.chat-input \{([^}]+)\}/)![1];
+  assert.match(bar, /width: 100%;\s*margin: 0;/);
+  assert.match(bar, /padding: 0\.25rem .*calc\(0\.25rem \+ env\(safe-area-inset-bottom, 0px\)\)/);
+  assert.doesNotMatch(bar, /border:|border-radius:|max-width:/);
+  assert.match(css, /\.chat-input-message \{[^}]*min-height: 2\.5rem;[^}]*padding: 0\.5rem 0\.75rem;/);
+  assert.match(css, /max-height: min\(9rem, \(100dvh - var\(--ux-error-height, 0px\)\) \/ 5\)/);
   const controls = [...css.matchAll(/\.chat-input-btn \{([^}]+)\}/g)];
   assert.equal(controls.length, 1, 'narrow screens must not override the square button dimensions');
   assert.match(controls[0][1], /width: 2\.5rem;\s*height: 2\.5rem;/);
   assert.match(controls[0][1], /border-radius: 50%/);
   assert.match(css, /\.chat \.chat-input-message:focus-visible \{\s*outline: none;/);
-  assert.match(css, /\.chat-input:focus-within \{\s*border-color:/);
+  assert.doesNotMatch(css, /\.chat-input:focus-within/);
+});
+
+test('CSS owns the shell again, with no replacement global JS viewport controller', () => {
+  const shell = readFileSync(new URL('./Shell.tsx', import.meta.url), 'utf8');
+  const styles = compile(new URL('../styles/components/shell.scss', import.meta.url).pathname).css;
+  assert.match(styles, /\.cockpit-shell \{[^}]*inset: 0;[^}]*height: 100dvh;/);
+  assert.doesNotMatch(shell + styles, /visualViewport|chat-viewport|useVisualViewport/);
+  for (const file of ['../lib/visualViewport.ts', '../lib/useVisualViewport.ts', '../dev/viewport-fixture.ts']) {
+    assert.equal(existsSync(new URL(file, import.meta.url)), false);
+  }
+});
+
+test('decision details stay in their cards rather than inflating an empty textarea placeholder', t => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
+  t.after(() => original ? Object.defineProperty(globalThis, 'window', original) : Reflect.deleteProperty(globalThis, 'window'));
+  for (const [scene, placeholder] of [['ask', '输入回答…'], ['plan', '输入新指令…'], ['compacting', '正在压缩…']] as const) {
+    const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession(scene), onLoadMore() {} }));
+    assert.ok(html.includes(`placeholder="${placeholder}"`), html);
+    if (scene === 'plan') assert.match(html, /或在下方直接输入新指令/);
+    if (scene === 'ask') assert.match(html, /也可以在下方输入自己的回答/);
+  }
 });
 
 test('a choice-only request keeps the draft editable but does not offer a freeform send', t => {

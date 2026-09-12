@@ -45,8 +45,9 @@ callbacks, without initializing a native client or creating sessions. Normal
 production builds do not include the entry. See the [component coverage and
 design review](chat-design-review.md) for scenarios, reference sources and limits.
 
-For keyboard-equivalent geometry and external user timestamps, open
-`/chat-lab.html?scene=ask&viewport=1` or choose `user-time`.
-The [targeted composer rework](chat-composer-rework.md) separates synthetic
-VisualViewport inputs from actual iOS/PWA evidence; the lab never opens a native
-keyboard or publishes user screenshots.
+For focused input-bar review, open `/chat-lab.html?scene=ask&compact=1`
+or choose `plan` / `user-time`. The [CSS-first composer rework](chat-composer-rework.md)
+documents the original/v3/current comparison and real-device limits.
+The former global VisualViewport controller and its simulated-geometry lab
+are removed. Stop temporary previews after review; do not leave resident
+background work, open native sessions or publish user screenshots.

@@ -1,30 +1,31 @@
 .cockpit-shell,
 .info-panel {
-  top: var(--chat-viewport-top, 0px);
-  bottom: auto;
-  height: calc(var(--chat-viewport-height, 100dvh) - var(--ux-error-height, 0px));
+  bottom: var(--ux-error-height, 0px);
+}
+
+.cockpit-shell {
+  height: calc(100dvh - var(--ux-error-height, 0px));
 }
 
 :root:has(.ux-error-notifications) {
-  --ux-error-height: min(calc(var(--chat-viewport-height, 100dvh) * 0.4), 12rem);
+  --ux-error-height: min(40dvh, 12rem);
 }
 
-:root:has(.ux-error-notifications) .chat {
-  --chat-safe-bottom: 0px; // The bottom-most error tray already owns the device inset.
+:root:has(.ux-error-notifications) .chat-input {
+  padding-bottom: 0.25rem; // The bottom-most error tray already owns the device inset.
 }
 
 .ux-error-notifications {
   position: fixed;
   z-index: 45;
-  top: calc(var(--chat-viewport-top, 0px) + var(--chat-viewport-height, 100dvh) - var(--ux-error-height));
-  bottom: auto;
+  bottom: 0;
   inset-inline: 0;
   height: var(--ux-error-height);
   overflow-y: auto;
   display: grid;
   align-content: start;
   gap: 0.5rem;
-  padding: 0.5rem max(0.5rem, env(safe-area-inset-right)) max(0.5rem, var(--chat-safe-bottom)) max(0.5rem, env(safe-area-inset-left));
+  padding: 0.5rem max(0.5rem, env(safe-area-inset-right)) max(0.5rem, env(safe-area-inset-bottom)) max(0.5rem, env(safe-area-inset-left));
   background: var(--background-color);
   border-top: 1px solid var(--border-color);
 }

@@ -629,7 +629,7 @@
 // Read-only footer for a trashed-session preview (replaces the composer).
 .chat-readonly-note {
   flex: none;
-  padding: 0.7rem 1rem calc(0.7rem + var(--chat-safe-bottom));
+  padding: 0.7rem 1rem calc(0.7rem + env(safe-area-inset-bottom, 0px));
   text-align: center;
   font-size: var(--font-size-12);
   color: var(--tertiary-text-color);
@@ -696,14 +696,10 @@
   display: flex;
   align-items: flex-end;
   gap: 0.35rem;
-  width: calc(100% - 2 * var(--chat-gutter));
-  max-width: var(--chat-reading-width);
-  margin: 0.25rem auto calc(0.25rem + var(--chat-safe-bottom));
-  padding: 0.1875rem;
-  border: 1px solid var(--border-color);
-  border-radius: var(--border-radius-medium);
+  width: 100%;
+  margin: 0;
+  padding: 0.25rem max(var(--chat-gutter), calc((100% - var(--chat-reading-width)) / 2)) calc(0.25rem + env(safe-area-inset-bottom, 0px));
   background-color: var(--surface-color);
-  &:focus-within { border-color: var(--chat-accent-ink); }
   &[data-file-drag='true'] { box-shadow: inset 0 0 0 2px var(--primary-color); }
 }
 .chat-input-drop-hint {
@@ -721,11 +717,11 @@
   flex: 1 1 auto;
   min-width: 0;
   min-height: 2.5rem;
-  max-height: max(2.5rem, min(9rem, calc(var(--chat-viewport-height, 100dvh) * 0.2)));
-  padding: 0.5rem 0.4rem;
+  max-height: min(9rem, calc((100dvh - var(--ux-error-height, 0px)) / 5));
+  padding: 0.5rem 0.75rem;
   border: none;
-  border-radius: var(--border-radius-medium);
-  background-color: transparent;
+  border-radius: var(--border-radius);
+  background-color: var(--input-search-background-color);
   color: var(--primary-text-color);
   font: inherit;
   font-size: var(--messages-text-size);
@@ -736,8 +732,9 @@
   overflow-y: auto;
   touch-action: pan-y;
   &::placeholder { color: var(--secondary-text-color); }
+  &:focus { background-color: color-mix(in srgb, var(--primary-text-color) 10%, var(--surface-color)); }
 }
-// The outer focus-within border represents the entire composer.
+// Typing focus is a subtle field fill, not an extra nested frame.
 .chat .chat-input-message:focus-visible {
   outline: none;
 }
