@@ -86,6 +86,18 @@ test('the transcript does not make long decisions compete with its scroll-conten
   assert.match(css, /\.chat \.chat-staged-list \{[^}]*flex: 0 1 auto;[^}]*min-height: 2\.5rem/);
 });
 
+test('the composer stays compact with circular controls and only an outer typing focus indicator', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.chat-input \{[^}]*margin: 0\.25rem auto calc\(0\.25rem \+ env\(safe-area-inset-bottom, 0px\)\);[^}]*padding: 0\.1875rem;/);
+  assert.match(css, /\.chat-input-message \{[^}]*min-height: 2\.5rem;[^}]*padding: 0\.5rem 0\.4rem;/);
+  const controls = [...css.matchAll(/\.chat-input-btn \{([^}]+)\}/g)];
+  assert.equal(controls.length, 1, 'narrow screens must not override the square button dimensions');
+  assert.match(controls[0][1], /width: 2\.5rem;\s*height: 2\.5rem;/);
+  assert.match(controls[0][1], /border-radius: 50%/);
+  assert.match(css, /\.chat \.chat-input-message:focus-visible \{\s*outline: none;/);
+  assert.match(css, /\.chat-input:focus-within \{\s*border-color:/);
+});
+
 test('a choice-only request keeps the draft editable but does not offer a freeform send', t => {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
