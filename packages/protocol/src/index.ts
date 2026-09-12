@@ -867,12 +867,12 @@ export const Intents = {
     result: z.object({ ok: z.boolean() }),
   },
   'session/load': {
-    description: 'Ensure an existing original session is loaded with its pinned module roles. Never creates a replacement, closes an already-loaded handle, or sends a prompt. Concurrent loads coalesce. Lifecycle and partial-load failure gates remain in force; this does not repair failed readiness or resynchronize history cursors.',
+    description: 'Ensure the original native session is loaded using native configuration discovery. Never creates a replacement, closes an already-loaded handle, or sends a prompt. Concurrent loads coalesce. Native errors and lifecycle conflicts remain explicit; this does not resynchronize history cursors.',
     body: z.object({ sessionId: z.string().min(1) }).strict(),
     result: z.object({ ok: z.literal(true), sessionId: z.string().min(1) }).strict(),
   },
   'session/reload': {
-    description: 'Explicitly reload an existing idle native session with pinned module roles. Never creates another ID or sends an initialization message. Empty loaded sessions are refused before close because native empty-session persistence is not guaranteed.',
+    description: 'Explicitly resume an unloaded session, or close and resume an existing idle loaded session using native configuration discovery. Never creates another ID or sends a message. An empty never-messaged session may disappear on close and then fail to resume; no automatic replacement. Native relative schedule delays restart on resume.',
     body: z.object({ sessionId: z.string() }),
     result: z.object({ ok: z.boolean() }),
   },

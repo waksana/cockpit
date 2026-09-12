@@ -627,6 +627,15 @@ test('module loading and retired creation/deletion coordinators are not APIs', (
   }
 });
 
+test('native load descriptions do not promise retired role restoration or empty-session protection', () => {
+  for (const name of ['session/load', 'session/reload'] as const) {
+    assert.match(Intents[name].description, /native configuration discovery/);
+    assert.doesNotMatch(Intents[name].description, /pinned module|refused before close|partial-load failure gates/);
+  }
+  assert.match(Intents['session/load'].description, /Never creates a replacement, closes an already-loaded handle, or sends a prompt/);
+  assert.match(Intents['session/reload'].description, /may disappear on close and then fail to resume; no automatic replacement/);
+});
+
 test('session/purge requires sessionId and literal confirm:true without coercion', () => {
   const schema = Intents['session/purge'].body;
   roundTrip(schema, { ...sid, confirm: true });

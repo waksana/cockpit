@@ -349,7 +349,7 @@ test('unloaded native resource hooks are invalid and explicit refresh cannot iss
 });
 
 for (const Component of [SessionMcp, SessionSkills]) {
-  test(`${Component.name} distinguishes pinned module resources from temporary native choices`, (t) => {
+  test(`${Component.name} distinguishes native cold defaults from temporary session choices`, (t) => {
     withSession(t, true);
     const html = renderToStaticMarkup(createElement(Component, { session, onClose: noop }));
     assert.doesNotMatch(html, /manage-scope|Cockpit 不保存或重放选择/);
