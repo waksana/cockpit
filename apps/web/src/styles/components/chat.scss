@@ -612,18 +612,6 @@ button.activity-head {
   color: var(--tertiary-text-color);
   border-top: 1px solid var(--border-color);
 }
-.chat-typing {
-  align-self: flex-start; margin: 0.65rem 0;
-  display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; max-width: 100%; overflow-wrap: anywhere;
-  font-size: var(--font-size-14); color: var(--secondary-text-color);
-}
-// Inline stop affordance after "回复中…" — subtle text link, not a chunky button.
-.chat-typing-stop {
-  min-height: 32px; padding: 0.25rem 0.5rem; border: 1px solid var(--border-color); border-radius: 6px; background: none; cursor: pointer;
-  font: inherit; font-size: var(--font-size-14);
-  color: var(--chat-danger-ink);
-  &:hover { text-decoration: underline; }
-}
 .chat-error {
   align-self: stretch; margin: 0.3rem 0; padding: 0.5rem 0.7rem;
   border-radius: var(--border-radius);
@@ -807,10 +795,8 @@ button.activity-head {
   flex: none; margin-top: 0.65rem; font-size: var(--font-size-12); line-height: 1.5; color: var(--secondary-text-color);
 }
 .chat-queue {
-  align-self: stretch; display: flex; flex-direction: column; gap: 0.25rem;
-  flex: 0 1 auto; min-height: 2.5rem; max-height: 22vh; overflow-y: auto;
-  width: calc(100% - 2 * var(--chat-gutter)); max-width: var(--chat-reading-width);
-  margin: 0.5rem auto 0; padding: 0; box-sizing: border-box;
+  display: flex; flex-direction: column; gap: 4px;
+  flex: none; min-width: 0; margin: 0;
 }
 .chat-queue-item {
   display: flex; align-items: center; gap: 0.4rem; min-width: 0;
@@ -818,16 +804,41 @@ button.activity-head {
   background: var(--ripple-color); font-size: var(--font-size-13);
 }
 .chat-queue-text { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--secondary-text-color); }
-.chat-queue-action {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.6rem;
-  font-size: var(--font-size-13); color: var(--secondary-text-color);
-  button { font: inherit; color: var(--chat-accent-ink); background: transparent; border: 1px solid currentColor; border-radius: var(--border-radius); padding: 0.35rem 0.6rem; cursor: pointer; }
-  button:disabled, button[aria-disabled="true"] { opacity: 0.5; cursor: default; }
-}
-.chat-interrupt-status {
-  flex: 0 1 auto; min-height: 1.5em; max-height: min(5rem, 12vh); overflow-y: auto;
+.chat-execution {
+  display: flex; flex-direction: column; gap: 6px;
+  flex: 0 1 auto; min-height: 40px; max-height: 35%; overflow-y: auto;
   width: calc(100% - 2 * var(--chat-gutter)); max-width: var(--chat-reading-width);
-  margin: 0.3rem auto; font-size: var(--font-size-13); line-height: 1.5; overflow-wrap: anywhere; color: var(--secondary-text-color);
+  margin: 0.5rem auto 0; padding: 6px 0;
+  border-top: 1px solid var(--border-color);
+  color: var(--secondary-text-color);
+}
+.chat-execution-head {
+  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+}
+.chat-execution-label {
+  flex: 1 1 10rem; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: var(--font-size-13); line-height: 20px;
+}
+.chat-execution-actions {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  button {
+    min-height: 36px; padding: 6px 10px; border: 1px solid var(--border-color);
+    border-radius: 8px; background: transparent; color: var(--primary-text-color);
+    font: inherit; font-size: var(--font-size-13); line-height: 20px;
+    white-space: nowrap; cursor: pointer;
+    &:hover:not(:disabled) { background: var(--ripple-color); }
+    &:disabled, &[aria-disabled='true'] { opacity: 0.5; cursor: default; }
+  }
+  .chat-typing-stop { color: var(--chat-danger-ink); }
+}
+.chat-execution-hint, .chat-queue-label {
+  flex: none; margin: 0; font-size: var(--font-size-12); line-height: 1.5;
+}
+.chat-queue-label { color: var(--primary-text-color); }
+.chat-interrupt-status {
+  flex: none; margin: 0; font-size: var(--font-size-13); line-height: 1.5; overflow-wrap: anywhere;
+  &[role='alert'] { color: var(--chat-danger-ink); }
 }
 .chat-queue-remove { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border: none; border-radius: 50%; background: transparent; cursor: pointer; color: var(--secondary-text-color); &:hover { background: var(--ripple-color); } }
 .chat .chat-staged-list {

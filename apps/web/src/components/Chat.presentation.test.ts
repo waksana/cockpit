@@ -84,7 +84,7 @@ test('the transcript does not make long decisions compete with its scroll-conten
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.chat-transcript \{[^}]*flex: 1 1 0;[^}]*min-height: min\(6rem, 20%\)/);
   assert.match(css, /\.chat-ask \{[^}]*flex: 0 1 auto;/);
-  assert.match(css, /\.chat-queue \{[^}]*flex: 0 1 auto;[^}]*min-height: 2\.5rem/);
+  assert.match(css, /\.chat-execution \{[^}]*flex: 0 1 auto;[^}]*min-height: 40px/);
   assert.match(css, /\.chat \.chat-staged-list \{[^}]*flex: 0 1 auto;[^}]*min-height: 2\.5rem/);
 });
 
@@ -138,9 +138,12 @@ test('a choice-only request keeps the draft editable but does not offer a freefo
   assert.doesNotMatch(html, /<textarea[^>]*disabled/);
 });
 
-test('a native cancelling flag disables duplicate stop clicks without claiming cancellation is complete', () => {
+test('a native cancelling flag disables duplicate stop clicks without claiming cancellation is complete', t => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
+  t.after(() => original ? Object.defineProperty(globalThis, 'window', original) : Reflect.deleteProperty(globalThis, 'window'));
   const html = renderToStaticMarkup(createElement(Thread, {
-    session: fixtureSession('cancelling'), readOnly: true, onLoadMore() {}, onCancel() {},
+    session: fixtureSession('cancelling'), onLoadMore() {}, onCancel() {},
   }));
   assert.match(html, /class="chat-typing-stop" disabled="">正在停止…/);
   assert.doesNotMatch(html, /class="chat-typing-stop"[^>]*>已取消/);

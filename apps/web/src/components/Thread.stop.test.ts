@@ -60,3 +60,27 @@ test('interrupt action is contextual to a loaded running queue and describes bac
   }
   assert.match(render({ queue, activeOperations: 1 }), /disabled="" aria-describedby="interrupt-help-stop-label"/);
 });
+
+test('stop and interrupt share one execution action group outside the scrolling transcript', () => {
+  const html = render({ intent: 'Working on the response', queue: [{ id: 'q', text: 'Next request' }] });
+  const section = html.match(/<section class="chat-execution"[\s\S]+?<\/section>/)?.[0];
+  assert.ok(section);
+  const actions = section.match(/class="chat-execution-actions"[^>]*>([\s\S]+?)<\/div>/)?.[1];
+  assert.ok(actions);
+  assert.match(actions, /打断并继续/);
+  assert.match(actions, /停止并清空队列/);
+  assert.match(section, /Working on the response/);
+  assert.match(section, /排队消息 · 1/);
+  assert.ok(section.indexOf('chat-execution-actions') < section.indexOf('chat-queue-item'));
+  assert.doesNotMatch(html.slice(0, html.indexOf('<section class="chat-execution"')), /chat-typing-stop|class="chat-interrupt"/);
+});
+
+test('idle queues show their messages without inventing a running operation, and read-only views have no controls', () => {
+  const html = render({ status: 'idle', queue: [{ id: 'q', text: 'Next request' }] });
+  assert.match(html, /chat-execution-label[^>]*>排队中的消息/);
+  assert.doesNotMatch(html, /chat-execution-actions/);
+  const readonly = renderToStaticMarkup(createElement(Thread, {
+    session, readOnly: true, onLoadMore() {}, onCancel() {}, async onInterrupt() { return { ok: true, interrupted: true }; },
+  }));
+  assert.doesNotMatch(readonly, /chat-typing-stop|chat-interrupt"|chat-execution-actions/);
+});

@@ -322,6 +322,16 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
   const canInterrupt = !!onInterrupt && session.loaded && session.status === 'running'
     && !session.loading && !session.closing && !session.cancelling && !session.compacting
     && session.nativeProcessing !== false;
+  const queueCount = session.queue?.length ?? 0;
+  const showStop = !readOnly && session.status === 'running' && !session.compacting && !session.ask;
+  const showInterrupt = !readOnly && queueCount > 0 && canInterrupt;
+  const interruptResult = readOnly ? null : interruptAction.error
+    ? `打断未确认：${interruptAction.error}。请核对会话状态，不要直接重试。`
+    : interruptNotice?.sessionId === session.sessionId ? interruptNotice.text : null;
+  const executionLabel = session.compacting ? '正在压缩上下文…'
+    : session.ask ? '等待你的回答' : session.planRequest ? '等待确认计划'
+      : session.elicitation ? '等待工具确认' : session.status === 'running'
+        ? session.intent || '回复中…' : queueCount > 0 ? '排队中的消息' : '执行结果';
   const draft = useMemo(() => getSessionDraft(session.sessionId), [session.sessionId]);
   const { pending: actionPending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -531,17 +541,6 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
                 liveId={session.status === 'running' ? session.messages.at(-1)?.id : undefined}
                 today={new Date().setHours(0, 0, 0, 0)} onMenu={openMsgMenu} />
 
-              {session.compacting && (
-                <div className="chat-typing" aria-live="polite">正在压缩上下文…</div>
-              )}
-              {session.status === 'running' && !session.compacting && !ask && (
-                <div className="chat-typing" aria-live="polite">
-                  {session.intent || '回复中…'}
-                  <button type="button" className="chat-typing-stop" disabled={session.cancelling || !onCancel} onClick={() => onCancel?.()}>
-                    {session.cancelling ? '正在停止…' : (session.queue?.length ?? 0) > 0 ? '停止并清空队列' : '停止'}
-                  </button>
-                </div>
-              )}
               {session.error && <p className="chat-error" role="alert">错误: {session.error}
                 {onRetryHistory && session.materialized && !session.historyStale && <button type="button"
                   className="dialog-btn rp" onClick={onRetryHistory}>重试同步</button>}
@@ -628,11 +627,13 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
         </div>
       )}
 
-      {!readOnly && (session.queue?.length ?? 0) > 0 && (
-        <div className="chat-queue" aria-label="排队中的消息">
-          {canInterrupt && (
-            <div className="chat-queue-action">
-              <button type="button" disabled={!interruptAction.connected || (!!session.activeOperations && !interruptAction.busy)}
+      {(session.compacting || session.status === 'running' || (!readOnly && (queueCount > 0 || interruptResult))) && (
+        <section className="chat-execution" aria-label="执行与排队">
+          <div className="chat-execution-head">
+            <span className="chat-execution-label" role="status" title={executionLabel}>{executionLabel}</span>
+            {(showStop || showInterrupt) && <div className="chat-execution-actions" role="group" aria-label="执行操作">
+              {showInterrupt && <button type="button" className="chat-interrupt"
+                disabled={!interruptAction.connected || (!!session.activeOperations && !interruptAction.busy)}
                 aria-disabled={interruptAction.busy || undefined}
                 aria-describedby={`interrupt-help-${session.sessionId}`}
                 onClick={() => {
@@ -643,22 +644,30 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
                   }, () => setInterruptNotice({ sessionId: session.sessionId, text: interrupted
                     ? '已请求打断；队列由 Copilot 接着处理。'
                     : '当前没有可打断的主回合；队列未改动。' }));
-                }}>{interruptAction.busy ? '正在请求…' : '打断并继续'}</button>
-              <span id={`interrupt-help-${session.sessionId}`}>只打断主回合，保留队列；后台任务继续，可能延后处理。</span>
+                }}>{interruptAction.busy ? '正在请求…' : '打断并继续'}</button>}
+              {showStop && <button type="button" className="chat-typing-stop" disabled={session.cancelling || !onCancel} onClick={() => onCancel?.()}>
+                {session.cancelling ? '正在停止…' : queueCount > 0 ? '停止并清空队列' : '停止'}
+              </button>}
+            </div>}
+          </div>
+          {showInterrupt && <p className="chat-execution-hint" id={`interrupt-help-${session.sessionId}`}>
+            打断：只打断主回合，保留队列；后台任务继续，可能延后处理。
+          </p>}
+          {interruptResult && <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
+            {interruptResult}
+          </p>}
+          {!readOnly && queueCount > 0 && <>
+            <div className="chat-queue-label">排队消息 · {queueCount}</div>
+            <div className="chat-queue" aria-label="排队中的消息">
+              {session.queue?.map((q) => (
+                <div key={q.id} className="chat-queue-item">
+                  <span className="chat-queue-text" title={q.text}>{q.text}</span>
+                  <button type="button" className="chat-queue-remove" aria-label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)}><Icon name="close" size={16} /></button>
+                </div>
+              ))}
             </div>
-          )}
-          {session.queue?.map((q) => (
-            <div key={q.id} className="chat-queue-item">
-              <span className="chat-queue-text" title={q.text}>{q.text}</span>
-              <button type="button" className="chat-queue-remove" aria-label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)}><Icon name="close" size={16} /></button>
-            </div>
-          ))}
-        </div>
-      )}
-      {!readOnly && (interruptAction.error || interruptNotice?.sessionId === session.sessionId) && (
-        <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
-          {interruptAction.error ? `打断未确认：${interruptAction.error}。请核对会话状态，不要直接重试。` : interruptNotice?.text}
-        </p>
+          </>}
+        </section>
       )}
 
       {readOnly ? (
