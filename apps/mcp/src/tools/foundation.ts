@@ -123,7 +123,7 @@ export function registerFoundationTools(server: McpServer): void {
     description: 'With confirm:true, arm a graceful restart (pending:true), or cancel it (pending:false). '
       + 'The backend waits for every busy turn, decision, subagent and MCP operation; this never forces a restart. '
       + 'Consumer installations require a stable operation_id and use the same owned launcher as Web and system/consumer/restart. '
-      + 'Read system/consumer/status with that operationId; acceptance is not completion. An irreversible/unknown module drain cannot be cancelled.',
+      + 'Read system/consumer/status with that operationId; acceptance is not completion. An accepted/unknown launcher operation cannot be cancelled here.',
     inputSchema: { pending: z.boolean().default(true), confirm: z.literal(true), operation_id: ConsumerOperationId.optional() },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, async ({ pending, operation_id }): Promise<ToolResult> => {

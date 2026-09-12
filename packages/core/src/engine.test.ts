@@ -14,9 +14,6 @@ import { validateForkHistory } from './fork.ts';
 import { autoNameQuestion } from './auto-name.ts';
 import type { CockpitPrefs } from './prefs.ts';
 import { bundledSkillsDirectory } from './paths.ts';
-import type { SessionModuleHost } from './module-session.ts';
-import { ModuleManager } from './modules/manager.ts';
-import { OfficialRuntime } from './runtime.ts';
 
 type Rpc = CopilotSession['rpc'];
 type Queue = Awaited<ReturnType<Rpc['queue']['pendingItems']>>;
@@ -252,7 +249,6 @@ function fakeSession(t: TestContext, sessionId: string) {
 function harness(t: TestContext, options: {
   mcpServers?: McpDefinitions;
   prefs?: Partial<CockpitPrefs> & Record<string, unknown>;
-  modules?: SessionModuleHost;
 } = {}) {
   t.mock.timers.enable({ apis: ['setInterval'] });
   const relativeRoot = `.engine-test-${randomUUID()}`;
@@ -422,7 +418,7 @@ function harness(t: TestContext, options: {
   };
   // The SDK class contains private transport fields. Only this boundary casts;
   // every exercised public method above is structural and independently observable.
-  const engine = new Engine({ runtime: runtime as unknown as EngineRuntime, prefsFile, modules: options.modules });
+  const engine = new Engine({ runtime: runtime as unknown as EngineRuntime, prefsFile });
   const off = engine.onEvent(value => events.push(structuredClone(value)));
   t.after(async () => {
     await nextTurn();
@@ -456,271 +452,44 @@ function harness(t: TestContext, options: {
 }
 type Harness = ReturnType<typeof harness>;
 
-test('native deletion never invokes module hooks or replays legacy deletion receipts', async t => {
-  const root = mkdtempSync(join(tmpdir(), 'cockpit-native-delete-'));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  const source = join(root, 'source');
-  mkdirSync(source, { mode: 0o700 });
-  writeFileSync(join(source, 'module.json'), JSON.stringify({
-    schemaVersion: 1, id: 'wechat', version: '1.0.0', name: 'Offline WeChat', description: 'Synthetic manual unbind',
-    compatibility: { cockpitApi: 1, nodeMajor: 24, platform: 'linux', arch: 'x64' }, configVersion: 1,
-    roles: [{ id: 'role', name: 'Role', description: 'Offline role' }],
-    sessionLifecycle: { unbind: { entry: 'unbind.mjs' } },
-  }));
-  const calls = join(root, 'hook-called');
-  writeFileSync(join(source, 'unbind.mjs'), `import {writeFileSync} from 'node:fs'; writeFileSync(${JSON.stringify(calls)}, 'called');`);
-  const manager = new ModuleManager({ runtime: new OfficialRuntime(), userRoot: join(root, 'user'), sources: { wechat: source } });
-  manager.catalog.installFromDirectory(source);
-  manager.catalog.updateConfig('wechat', { configFile: join(root, 'missing-config.json') }, 0);
-  const h = harness(t, { modules: manager });
-  const session = await h.seed();
-  manager.catalog.writeSession({ sessionId: session.id, selections: [], pendingSelections: [{ moduleId: 'wechat', roleId: 'role', version: '1.0.0' }],
-    phase: 'unknown', operationId: 'binding-operation' });
-  const history = join(root, 'user', 'session-deletions');
-  mkdirSync(history, { mode: 0o700 });
-  const legacy = join(history, `${session.id}.json`);
-  writeFileSync(legacy, '{"state":"unknown","operationId":"old-unbind"}', { mode: 0o600 });
-  const data = join(manager.catalog.dataDirectory('wechat'), 'unknown-send.json');
-  mkdirSync(manager.catalog.dataDirectory('wechat'), { recursive: true, mode: 0o700 });
-  writeFileSync(data, '{"outcome":"unknown"}', { mode: 0o600 });
-  await h.engine.deleteSession(session.id, true);
-  assert.equal(h.runtime.deleteSession.mock.callCount(), 1);
-  assert.equal(await h.engine.getMeta(session.id), null);
-  assert.equal(manager.catalog.getSession(session.id), undefined);
-  assert.equal(manager.activeCount(), 0);
-  assert.equal(existsSync(calls), false);
-  assert.equal(readFileSync(legacy, 'utf8'), '{"state":"unknown","operationId":"old-unbind"}');
-  assert.equal(readFileSync(data, 'utf8'), '{"outcome":"unknown"}');
-});
-
-test('module activity subscriptions unsubscribe and remain independent of native session handles', async t => {
-  const { modules } = moduleHostFixture();
-  const listeners = new Set<() => void>();
-  let active = 2;
-  modules.activeCount = () => active;
-  modules.onSettled = listener => { listeners.add(listener); return () => { listeners.delete(listener); }; };
-  const h = harness(t, { modules });
-  let notifications = 0;
-  const off = h.engine.onActivitySettled(() => { notifications++; });
-  assert.equal(await h.engine.busyCount(), 2);
-  h.runtime.emitFatal(new Error('Synthetic runtime failure'));
-  await assert.rejects(h.engine.stop(), /Module lifecycle work/);
-  assert.equal(h.runtime.stop.mock.callCount(), 0);
-  active = 0;
-  for (const listener of listeners) listener();
-  assert.equal(notifications, 1);
-  off();
-  assert.equal(listeners.size, 0);
-  assert.equal(await h.engine.busyCount(), 0);
-  await h.engine.stop();
-  assert.equal(h.runtime.stop.mock.callCount(), 1);
-});
-
-function moduleHostFixture() {
-  const records = new Map<string, import('@cockpit/protocol').SessionModules>();
-  const modules: SessionModuleHost = {
-    async prepare(sessionId, _cwd, selections, operationId) {
-      const prior = records.get(sessionId);
-      records.set(sessionId, { sessionId, selections: prior?.selections ?? [],
-        pendingSelections: selections.map(selection => ({ ...selection, version: selection.version ?? '1.0.0' })),
-        phase: 'preparing', operationId });
-    },
-    async configuration(id, _cwd, applying) {
-      const record = records.get(id);
-      const selected = applying ? record?.pendingSelections : record?.selections;
-      if (!selected?.length) return {};
-      return { systemMessage: { mode: 'append', content: `Module role ${selected[0]!.version}` },
-        skillDirectories: [`/synthetic/modules/${selected[0]!.version}/skills`],
-        mcpServers: { selected: { command: process.execPath, args: ['synthetic-mcp.js'] } } };
-    },
-    async connected(id, _sdk, applying) {
-      const record = records.get(id);
-      if (applying && record) {
-        record.selections = record.pendingSelections!;
-        delete record.pendingSelections;
-        record.phase = 'applied';
-      }
-    },
-    async failed(id, error) {
-      const record = records.get(id);
-      if (record) { record.phase = 'failed'; record.error = String(error); }
-    },
-    async assertReady(id) {
-      const record = records.get(id);
-      if (record && record.phase !== 'applied') throw new Error('Module configuration incomplete');
-    },
-    async read(id) { return records.get(id) ?? null; },
-  };
-  return { modules, records };
-}
-
-test('native creation configures roles and returns the real ID without a hidden first message', async t => {
-  const { modules, records } = moduleHostFixture();
-  const h = harness(t, { modules }), ready = deferred(), created = deferred<string>();
-  const trace: string[] = [];
-  const connected = modules.connected.bind(modules);
-  t.mock.method(modules, 'connected', async (sessionId, sdk, applying) => {
-    trace.push('native-created');
-    h.natives.get(sessionId)!.sdk.send.mock.mockImplementation(async args => {
-      trace.push('first-message');
-      assert.equal(records.get(sessionId)?.phase, 'applied');
-      assert.equal(args.prompt, 'The actual first user message');
-      return 'native-accepted-first-message';
-    });
-    created.resolve(sessionId);
-    await ready.promise;
-    await connected(sessionId, sdk, applying);
-    trace.push('roles-connected');
-  });
-  const starting = h.engine.newSession(h.cwd, [{ moduleId: 'assistant', roleId: 'assistant', version: '1.0.0' }]);
-  assert.equal(await h.engine.busyCount(), 1);
-  await assert.rejects(h.engine.stop(), protectedWork);
-  const id = await created.promise;
+test('native creation returns the actual ID without product roles or a hidden first message', async t => {
+  const h = harness(t);
+  const id = await h.engine.newSession(h.cwd);
+  const config = h.configs.get(id)!;
+  assert.equal(config.sessionId, id);
+  assert.equal(config.workingDirectory, h.cwd);
+  assert.equal(config.enableConfigDiscovery, true);
+  for (const key of ['systemMessage', 'skillDirectories', 'mcpServers']) assert.equal(Object.hasOwn(config, key), false);
   assert.equal(h.runtime.createSession.mock.callCount(), 1);
-  assert.equal(h.configs.get(id)?.sessionId, id);
-  assert.equal(records.get(id)?.phase, 'preparing');
   assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 0);
-  await assert.rejects(h.engine.prompt(id, 'another racing message'), /incomplete/);
-  await assert.rejects(h.engine.unload(id), /progress/);
-  await assert.rejects(h.engine.load(id), /incomplete|progress/);
-  ready.resolve();
-  assert.equal(await starting, id);
-  assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 0);
-  assert.equal((await h.engine.getMeta(id))?.sessionId, id);
   await h.engine.prompt(id, 'The actual first user message');
   assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 1);
-  assert.deepEqual(trace, ['native-created', 'roles-connected', 'first-message']);
 });
 
-test('module readiness failure exposes only the actual created ID and never sends content', async t => {
-  const { modules } = moduleHostFixture(), h = harness(t, { modules });
-  let id = '';
-  t.mock.method(modules, 'connected', async () => { throw new Error('Module binding not ready'); });
-  await assert.rejects(h.engine.newSession(h.cwd, [{ moduleId: 'assistant', roleId: 'assistant' }]), error => {
+test('creation readback failure retains only the actual acknowledged native ID and never sends', async t => {
+  const h = harness(t), create = h.runtime.createSession;
+  t.mock.method(h.runtime, 'createSession', async config => {
+    const sdk = await create(config);
+    h.natives.get(sdk.sessionId)!.rpc.metadata.snapshot.mock.mockImplementationOnce(async () => {
+      throw new Error('Synthetic native metadata failure');
+    });
+    return sdk;
+  });
+  let createdId = '';
+  await assert.rejects(h.engine.newSession(h.cwd), error => {
     assert.ok(error instanceof Error && 'sessionId' in error && typeof error.sessionId === 'string');
-    id = error.sessionId;
-    return /not ready/.test(error.message);
+    createdId = error.sessionId;
+    assert.match(error.message, /was created.*metadata failure/);
+    return true;
   });
+  assert.ok(h.natives.has(createdId));
   assert.equal(h.runtime.createSession.mock.callCount(), 1);
-  assert.ok(h.natives.has(id));
-  assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 0);
-  await assert.rejects(h.engine.prompt(id, 'bypass incomplete role'), /incomplete/);
+  assert.equal(h.natives.get(createdId)!.sdk.send.mock.callCount(), 0);
+  assert.equal((await h.engine.getMeta(createdId))?.sessionId, createdId);
 });
 
-test('preparation failure never exposes a planned ID as a native session', async t => {
-  const { modules } = moduleHostFixture(), h = harness(t, { modules });
-  t.mock.method(modules, 'prepare', async () => { throw new Error('Module unavailable'); });
-  await assert.rejects(h.engine.newSession(h.cwd, [{ moduleId: 'assistant', roleId: 'assistant' }]), error => {
-    assert.ok(error instanceof Error);
-    assert.equal('sessionId' in error, false);
-    return /creation is not confirmed/.test(error.message);
-  });
-  assert.equal(h.runtime.createSession.mock.callCount(), 0);
-  assert.equal(h.events.filter(event => event.type === 'session/added').length, 0);
-});
-
-test('separate prompt rejects empty content and a missing native acceptance without recreating', async t => {
+test('session/load preserves empty loaded sessions and busy native work without closing or sending', async t => {
   const h = harness(t), id = await h.engine.newSession(h.cwd);
-  await assert.rejects(h.engine.prompt(id, ' '), /empty/);
-  h.natives.get(id)!.sdk.send.mock.mockImplementation(async () => '');
-  await assert.rejects(h.engine.prompt(id, 'Only once'), /receipt is missing/);
-  assert.equal(h.runtime.createSession.mock.callCount(), 1);
-  assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 1);
-});
-
-test('module roles pin create/cold configuration and explicit application never sends a task or changes global settings', async t => {
-  const { modules } = moduleHostFixture();
-  const h = harness(t, { modules });
-  const id = await h.engine.newSession(h.cwd, [{ moduleId: 'assistant', roleId: 'assistant', version: '1.0.0' }]);
-  h.natives.get(id)!.state.events = [user('existing-first-message')];
-  assert.equal((await h.engine.sessionModules(id))?.phase, 'applied');
-  assert.deepEqual(h.configs.get(id)?.systemMessage, { mode: 'append', content: 'Module role 1.0.0' });
-  await h.engine.unload(id);
-  await h.engine.reload(id);
-  assert.deepEqual(h.configs.get(id)?.skillDirectories, ['/synthetic/modules/1.0.0/skills']);
-  const result = await h.engine.applySessionModules(id,
-    [{ moduleId: 'assistant', roleId: 'assistant', version: '2.0.0' }], 'apply-version-2');
-  assert.equal(result.phase, 'applied');
-  assert.equal(result.selections[0]?.version, '2.0.0');
-  assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 0);
-  assert.deepEqual(h.configs.get(id)?.systemMessage, { mode: 'append', content: 'Module role 2.0.0' });
-  assert.equal(h.runtime.rpc.user.settings.get.mock.callCount() > 0, true);
-  assert.equal(h.prefs().mcpBySession, undefined);
-  assert.equal(h.prefs().skillsDisabledBySession, undefined);
-});
-
-test('module application rejects busy sessions before persisting or closing and releases guards after failed readiness', async t => {
-  const { modules, records } = moduleHostFixture();
-  const h = harness(t, { modules });
-  const s = await h.load();
-  s.state.events = [user('existing-first-message')];
-  s.state.processing = true;
-  await assert.rejects(h.engine.applySessionModules(s.id,
-    [{ moduleId: 'assistant', roleId: 'assistant' }], 'busy-application'), /protected/);
-  assert.equal(records.has(s.id), false);
-  assert.equal(h.attached.has(s.id), true);
-  s.state.processing = false;
-  t.mock.method(modules, 'connected', async () => { throw new Error('MCP readiness failed'); });
-  await assert.rejects(h.engine.applySessionModules(s.id,
-    [{ moduleId: 'assistant', roleId: 'assistant' }], 'failed-application'), /MCP readiness/);
-  assert.equal(records.get(s.id)?.phase, 'failed');
-  assert.deepEqual(records.get(s.id)?.selections, []);
-  await assert.rejects(h.engine.prompt(s.id, 'must not run'), /incomplete/);
-  assert.equal(h.natives.get(s.id)!.sdk.send.mock.callCount(), 0);
-  assert.equal(await h.engine.busyCount(), 0);
-});
-
-test('explicit continuation retains a failed operation through unload and duplicate success does not reload again', async t => {
-  const { modules, records } = moduleHostFixture();
-  const h = harness(t, { modules });
-  const s = await h.load();
-  s.state.events = [user('existing-first-message')];
-  const original = modules.connected;
-  const failed = t.mock.method(modules, 'connected', async () => { throw new Error('Synthetic connection failure'); });
-  const selections = [{ moduleId: 'assistant' as const, roleId: 'assistant', version: '1.0.0' }];
-  await assert.rejects(h.engine.applySessionModules(s.id, selections, 'same-operation'), /connection failure/);
-  await h.engine.unload(s.id);
-  await assert.rejects(h.engine.reload(s.id), /incomplete/);
-  failed.mock.restore();
-  modules.connected = original;
-  const result = await h.engine.applySessionModules(s.id, selections, 'same-operation');
-  assert.equal(result.phase, 'applied');
-  assert.equal(records.get(s.id)?.operationId, 'same-operation');
-  const resumeCount = h.runtime.resumeSession.mock.callCount();
-  assert.deepEqual(await h.engine.applySessionModules(s.id, selections, 'same-operation'), result);
-  assert.equal(h.runtime.resumeSession.mock.callCount(), resumeCount);
-  await assert.rejects(h.engine.applySessionModules(s.id,
-    [{ ...selections[0]!, version: '2.0.0' }], 'same-operation'), /different applied selection/);
-});
-
-test('module application refuses to close an empty native session before changing its role record', async t => {
-  const { modules, records } = moduleHostFixture();
-  const h = harness(t, { modules });
-  const s = await h.load();
-  await assert.rejects(h.engine.applySessionModules(s.id,
-    [{ moduleId: 'assistant', roleId: 'assistant' }], 'empty-application'), /first message/);
-  assert.equal(h.attached.has(s.id), true);
-  assert.equal(records.has(s.id), false);
-  assert.equal(s.sdk.send.mock.callCount(), 0);
-  assert.equal(await h.engine.busyCount(), 0);
-});
-
-test('module reload and MCP reload preserve an empty native session', async t => {
-  const { modules, records } = moduleHostFixture();
-  const h = harness(t, { modules });
-  const id = await h.engine.newSession(h.cwd, [{ moduleId: 'assistant', roleId: 'assistant', version: '1.0.0' }]);
-  const before = structuredClone(records.get(id));
-  await assert.rejects(h.engine.reload(id), /first message/);
-  await assert.rejects(h.engine.reloadSessionMcp(id), /first message/);
-  assert.equal(h.attached.has(id), true);
-  assert.deepEqual(records.get(id), before);
-  assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 0);
-});
-
-test('session/load preserves a loaded empty module session and busy native work without closing or sending', async t => {
-  const { modules, records } = moduleHostFixture(), h = harness(t, { modules });
-  const id = await h.engine.newSession(h.cwd, [{ moduleId: 'assistant', roleId: 'assistant', version: '1.0.0' }]);
-  const before = structuredClone(records.get(id));
   await h.engine.load(id);
   const native = h.natives.get(id)!;
   native.state.processing = true;
@@ -732,34 +501,37 @@ test('session/load preserves a loaded empty module session and busy native work 
   assert.equal(native.sdk.send.mock.callCount(), 0);
   assert.equal(native.state.processing, true);
   assert.equal(native.state.queue.items[0]?.id, 'already-pending');
-  assert.deepEqual(records.get(id), before);
 });
 
-test('session/load coalesces cold restoration, pins roles and protects in-flight readiness', async t => {
-  const { modules, records } = moduleHostFixture(), h = harness(t, { modules });
-  const id = await h.engine.newSession(h.cwd, [{ moduleId: 'assistant', roleId: 'assistant', version: '1.0.0' }]);
-  h.natives.get(id)!.state.events = [user('persisted-first-message')];
-  const before = structuredClone(records.get(id));
-  await h.engine.unload(id);
-  const ready = deferred<void>(), entered = deferred<void>(), connected = modules.connected.bind(modules);
-  t.mock.method(modules, 'connected', async (...args) => {
+test('session/load coalesces native cold loading and protects its in-flight work', async t => {
+  const h = harness(t), session = await h.seed();
+  const ready = deferred<void>(), entered = deferred<void>();
+  const resume = h.runtime.resumeSession;
+  t.mock.method(h.runtime, 'resumeSession', async (...args: Parameters<typeof resume>) => {
     entered.resolve();
     await ready.promise;
-    return connected(...args);
+    return resume(...args);
   });
-  const first = h.engine.load(id), second = h.engine.load(id);
+  const first = h.engine.load(session.id), second = h.engine.load(session.id);
   await entered.promise;
   assert.ok(await h.engine.busyCount() > 0);
-  await assert.rejects(h.engine.unload(id), /progress/);
+  await assert.rejects(h.engine.unload(session.id), /progress/);
   await assert.rejects(h.engine.stop(), protectedWork);
-  assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
   ready.resolve();
   await Promise.all([first, second]);
-  assert.deepEqual(h.configs.get(id)?.systemMessage, { mode: 'append', content: 'Module role 1.0.0' });
-  assert.deepEqual(records.get(id), before);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
+  assert.equal(h.runtime.createSession.mock.callCount(), 0);
+  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+  assert.equal(session.sdk.send.mock.callCount(), 0);
+});
+
+test('separate prompt rejects empty content and a missing native acceptance without recreating', async t => {
+  const h = harness(t), id = await h.engine.newSession(h.cwd);
+  await assert.rejects(h.engine.prompt(id, ' '), /empty/);
+  h.natives.get(id)!.sdk.send.mock.mockImplementation(async () => '');
+  await assert.rejects(h.engine.prompt(id, 'Only once'), /receipt is missing/);
   assert.equal(h.runtime.createSession.mock.callCount(), 1);
-  assert.equal(h.runtime.closeSession.mock.callCount(), 1);
-  assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 0);
+  assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 1);
 });
 
 test('session/load rejects unknown targets and mismatched native resume identities without substituting another session', async t => {
@@ -777,45 +549,6 @@ test('session/load rejects unknown targets and mismatched native resume identiti
   assert.equal(h.attached.has(other.id), true);
   assert.equal(h.runtime.closeSession.mock.callCount(), 0);
   assert.equal(h.runtime.createSession.mock.callCount(), 0);
-});
-
-test('module cold discovery failures retain completed selections and allow an explicit later load', async t => {
-  const { modules, records } = moduleHostFixture();
-  const h = harness(t, { modules });
-  const id = await h.engine.newSession(h.cwd, [{ moduleId: 'assistant', roleId: 'assistant', version: '1.0.0' }]);
-  h.natives.get(id)!.state.events = [user('existing-first-message')];
-  const before = structuredClone(records.get(id));
-  await h.engine.unload(id);
-  const failed = t.mock.method(modules, 'configuration', async () => { throw new Error('Temporary discovery failure'); });
-  await assert.rejects(h.engine.reload(id), /Temporary discovery/);
-  assert.deepEqual(records.get(id), before);
-  failed.mock.restore();
-  await h.engine.reload(id);
-  assert.equal(h.attached.has(id), true);
-  assert.deepEqual(records.get(id), before);
-});
-
-test('module cold readiness failure cannot admit messages through a partially loaded handle', async t => {
-  const { modules, records } = moduleHostFixture();
-  const h = harness(t, { modules });
-  const id = await h.engine.newSession(h.cwd, [{ moduleId: 'assistant', roleId: 'assistant', version: '1.0.0' }]);
-  h.natives.get(id)!.state.events = [user('existing-first-message')];
-  const before = structuredClone(records.get(id));
-  await h.engine.unload(id);
-  const failed = t.mock.method(modules, 'connected', async () => { throw new Error('Temporary connection failure'); });
-  await assert.rejects(h.engine.reload(id), /Temporary connection/);
-  assert.deepEqual(records.get(id), before);
-  const resumes = h.runtime.resumeSession.mock.callCount();
-  const closes = h.runtime.closeSession.mock.callCount();
-  await assert.rejects(h.engine.load(id), /readiness.*unconfirmed/);
-  assert.equal(h.runtime.resumeSession.mock.callCount(), resumes);
-  assert.equal(h.runtime.closeSession.mock.callCount(), closes);
-  await assert.rejects(h.engine.prompt(id, 'must not run'), /readiness.*unconfirmed/);
-  assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 0);
-  failed.mock.restore();
-  await h.engine.reload(id);
-  assert.equal(h.attached.has(id), true);
-  assert.deepEqual(records.get(id), before);
 });
 
 test('self clear gates host mutations until native tool completion and rejects stale bindings after reload', async t => {
@@ -6187,32 +5920,6 @@ for (const loaded of [false, true]) {
     assert.equal(h.prefs().scheduledSessions, undefined);
   });
 }
-
-test('module references are archived only after confirmed native deletion and busy work stays protected', async t => {
-  const { modules } = moduleHostFixture();
-  const h = harness(t, { modules });
-  const s = await h.load();
-  const removed = modules.removed = t.mock.fn(async id => { h.trace.push(`modules-removed:${id}`); });
-  s.state.processing = true;
-  await assert.rejects(h.engine.deleteSession(s.id, true), protectedWork);
-  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
-  assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
-  assert.equal(removed.mock.callCount(), 0);
-  s.state.processing = false;
-  await h.engine.deleteSession(s.id, true);
-  assert.ok(h.trace.indexOf(`delete:${s.id}`) < h.trace.indexOf(`modules-removed:${s.id}`));
-});
-
-test('a failed native deletion preserves module references and reports the native failure', async t => {
-  const { modules } = moduleHostFixture();
-  const h = harness(t, { modules });
-  const s = await h.load();
-  const removed = modules.removed = t.mock.fn(async () => {});
-  h.runtime.deleteSession.mock.mockImplementationOnce(async () => { throw new Error('synthetic native deletion failure'); });
-  await assert.rejects(h.engine.deleteSession(s.id, true), /synthetic native deletion failure/);
-  assert.equal(removed.mock.callCount(), 0);
-  assert.equal(h.events.filter(event => event.type === 'session/removed').length, 0);
-});
 
 test('native deletion honors confirmation and idle guards, and cleans preferences only after native acknowledgement', async t => {
   const h = harness(t);

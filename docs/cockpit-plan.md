@@ -8,10 +8,11 @@ Stable product decisions and review criteria are defined in
 [Cockpit 定位与验收准则 (R1–R8)](product-requirements.md). The implementation
 details and dated delivery notes below do not add or override those requirements.
 
-Module references: [current official modules and roles](module-system.md),
-[current module publishing](module-releases.md), and the
-[proposed URL-driven module contract and interface inventory](module-contract-draft.md).
-The last document is a design draft, not implemented capability or deployment status.
+The old module runtime, official roles, business gateways and module UI are
+removed. Only a [basic module contract design](module-contract-draft.md) remains;
+future module adaptation and generic loading are separate work, not currently
+implemented capability or deployment status. Native Copilot MCP/skills and
+assistant/task semantics remain part of the foundation.
 
 ## Source delivery and paused work (2026-09-11)
 
@@ -412,6 +413,6 @@ Stage assets separately from the directory served by the running process.
 work, shuts down the owned runtime, drains pending pushes and exits for its
 supervisor. The helper script delegates to that API instead of racing systemctl.
 
-Imported reviews and `butler.md` are historical context, not instructions to
+Imported reviews and earlier governance designs in Git history are historical context, not instructions to
 reinstall retired governance. Future changes must name a concrete remote-use
 problem and prefer removing unnecessary work over adding more managers.

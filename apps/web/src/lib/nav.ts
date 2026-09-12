@@ -36,8 +36,8 @@ export function recordLocation(pathname: string): void {
 
 // The hierarchical parent of a path:
 //   /                         → /            (root, no parent)
-//   /mcp|skills|flows         → /
-//   /mcp|skills|flows/:item   → /section
+//   /mcp|skills               → /
+//   /mcp|skills/:item         → /section
 //   /session/:id              → /
 //   /session/:id/:panel       → /session/:id
 export function parentOf(pathname: string): string {
@@ -45,7 +45,7 @@ export function parentOf(pathname: string): string {
   if (clean === '/') return '/';
   const seg = clean.split('/').filter(Boolean);
   if (seg[0] === 'session') return seg.length >= 3 ? `/session/${seg[1]}` : '/';
-  if (seg[0] === 'mcp' || seg[0] === 'skills' || seg[0] === 'flows' || seg[0] === 'workers') {
+  if (seg[0] === 'mcp' || seg[0] === 'skills') {
     return seg.length >= 2 ? `/${seg[0]}` : '/';
   }
   return '/';

@@ -16,7 +16,7 @@ export const ConsumerStatus = z.discriminatedUnion('available', [
   z.object({
     available: z.literal(true), installationId: z.string().uuid(),
     health: z.enum(['healthy', 'unavailable', 'stopped']), runtime: ConsumerIdentity.nullable(),
-    mainLifecycleReady: z.boolean(), moduleRunnerState: z.string().min(1),
+    mainLifecycleReady: z.boolean(),
     activeOperationId: ConsumerOperationId.nullable(), operation: ConsumerOperation.nullable(), error: z.string().optional(),
   }),
 ]);

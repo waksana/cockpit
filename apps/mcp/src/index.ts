@@ -88,8 +88,7 @@ server.registerTool(
       'Compatibility alias for cockpit_delete_session. IRREVERSIBLE native deletion through session/purge. Only run ' +
       'this when permanent deletion is intended. Requires ' +
       'confirm=true. Managed files and workspaces are retained. Never hand-delete session-store.db rows ' +
-      'or automatically retry an uncertain result. Deletion does not invoke module unbind hooks or broadcast to modules; ' +
-      'modules detect missing targets when used.',
+      'or automatically retry an uncertain result.',
     inputSchema: {
       session_id: z.string().min(1).describe('The session id to permanently delete'),
       confirm: z
@@ -210,8 +209,7 @@ server.registerTool(
     description:
       'Turn one MCP server on or off for a single session. Enabling connects/spawns it ' +
       'live; disabling stops it. Copilot owns the setting and its cold-resume semantics; Cockpit ' +
-      'does not save or replay native switch overrides. Cold resume restores explicit pinned module roles, ' +
-      'while unrelated temporary choices use native global defaults. ' +
+      'does not save or replay native switch overrides. Cold resume uses native global defaults. ' +
       'Target failures return their status/error, ' +
       'and a still-settling SDK operation remains visible by operation id. Call ' +
       'cockpit_list_session_mcp first to get the exact server name.',
@@ -292,7 +290,7 @@ server.registerTool(
     title: 'Enable/disable a skill for a session',
     description:
       'Turn one skill on or off through its native session API, without a Cockpit stored override. ' +
-      'The session choice is temporary; cold resume restores explicit module roles and otherwise uses native global configuration. ' +
+      'The session choice is temporary; cold resume uses native global configuration. ' +
       'Use skills/global-toggle via cockpit_call_intent for persistent native global configuration. ' +
       'Call cockpit_list_session_skills ' +
       'first to get the exact skill name.',

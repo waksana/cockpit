@@ -10,7 +10,7 @@ import type {
   AgentStatus, Attachment, ChatSession, ModelOption, ServerEvent,
 } from './types';
 import { MetaResource, SessionResource, type SessionMeta } from '@cockpit/protocol';
-import type { IntentBody, IntentResult, NativeChatRead, NativeChatPage, PanelSection, PanelItem, SessionProjection, ModuleSelection, IntentName } from '@cockpit/protocol';
+import type { IntentBody, IntentResult, NativeChatRead, NativeChatPage, PanelSection, PanelItem, SessionProjection, IntentName } from '@cockpit/protocol';
 import { invalidateWindow, metaToSession } from './sessionWindow';
 import { applyProjection, cleanProjection } from './sessionResources';
 import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
@@ -49,8 +49,8 @@ interface CockpitState {
   // intents
   setActiveId: (id: string | null) => void;
   observeAttention: (sessionId: string, attnId: number, visible: boolean) => void;
-  newSession: (cwd: string, modules?: ModuleSelection[]) => Promise<string>;
-  moduleIntent: <K extends Extract<IntentName, `modules/${string}` | `session/modules/${string}` | `system/consumer/${string}`>>
+  newSession: (cwd: string) => Promise<string>;
+  consumerIntent: <K extends Extract<IntentName, `system/consumer/${string}`>>
     (name: K, body: IntentBody<K>, signal?: AbortSignal) => Promise<IntentResult<K>>;
   forkSession: (sessionId: string) => Promise<string>;
   loadMore: (sessionId: string) => void;
@@ -800,10 +800,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       if (visible) seenActiveIfVisible();
     },
 
-    moduleIntent(name, body, signal) { return read(net => net.intent(name, body, signal)); },
-    newSession(cwd, modules) {
+    consumerIntent(name, body, signal) { return read(net => net.intent(name, body, signal)); },
+    newSession(cwd) {
       let reportedByTransport = false;
-      const promise = read(net => net.newSession(cwd, modules).catch(error => {
+      const promise = read(net => net.newSession(cwd).catch(error => {
         reportedByTransport = !isSessionUnloadedError(error);
         throw error;
       })).then(result => result.sessionId);

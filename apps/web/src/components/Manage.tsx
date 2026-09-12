@@ -99,7 +99,7 @@ export function SessionMcp({ session, onClose }: SessionManageProps) {
       empty={resource.valid && resource.data?.length === 0 ? '本会话没有可用的 MCP 服务器' : undefined}>
       <SessionResume sessionId={sessionId} required={resource.requiresResume} />
       {resource.valid && !action.error && !!resource.data?.length &&
-        <p className="manage-scope">开关仅本会话有效；冷加载恢复已绑定模块版本，其余临时开关采用原生全局默认。</p>}
+        <p className="manage-scope">开关仅本会话有效；冷加载采用原生全局默认，不恢复临时开关。</p>}
       {resource.data?.map((s) => (
         <ManageRow key={s.name} name={s.name} sub={s.error || s.detail}
           badge={<McpStatusPill status={s.status} />}
@@ -130,7 +130,7 @@ export function SessionSkills({ session, onClose }: SessionManageProps) {
       empty={resource.valid && resource.data?.length === 0 ? '没有可用的 skill' : undefined}>
       <SessionResume sessionId={sessionId} required={resource.requiresResume} />
       {resource.valid && !action.error && !!resource.data?.length &&
-        <p className="manage-scope">开关仅本会话临时有效；冷加载恢复已绑定模块的 skill 路径，其余临时开关采用原生全局默认。</p>}
+        <p className="manage-scope">开关仅本会话临时有效；冷加载采用原生配置发现和全局禁用列表，不恢复临时开关。</p>}
       {resource.data?.map((s) => (
         <ManageRow key={s.name} name={s.name} sub={s.description}
           badge={s.source ? <span className="manage-tag">{s.source}</span> : undefined}

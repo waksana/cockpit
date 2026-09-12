@@ -80,14 +80,16 @@ elicitation tools answer agent interaction requests, not tool-permission prompts
 All tools below wrap the same backend API; they do not introduce another domain
 store or capability policy.
 
-Creation is identical to Web and Task: `cockpit_new_session` calls
-`session/new {cwd, modules?}` once and returns the actual Copilot ID, with selected
-roles configured and **no message sent**. `cockpit_send_prompt` then calls
+Creation is identical to Web: `cockpit_new_session` calls
+`session/new {cwd}` once and returns the actual Copilot ID, using native
+configuration discovery with **no message sent**. `cockpit_send_prompt` then calls
 `prompt` for that ID. There is no virtual session, hidden launch message or
 first-message-only creation API. An empty native session may disappear on unload;
-neither transport silently recreates it. Use `modules/list` through the generic
-caller with `checkAvailability:true` for the same on-demand admission check as
-the creation form. A check does not reserve a binding; submission rechecks it.
+neither transport silently recreates it. Both transports reject the retired
+`modules` creation parameter. Module installation, service and session-role APIs
+are removed, not success-shaped no-ops. Native MCP and skill controls remain.
+The [basic module contract](../../docs/module-contract-draft.md) is a future
+design, not discoverable running capability.
 
 | Area | Tools |
 | --- | --- |

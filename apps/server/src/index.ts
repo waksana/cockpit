@@ -21,8 +21,7 @@ import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
-import { Engine, OfficialRuntime, ModuleManager, ModuleRunnerClient, sessionMetaBusy,
-  type OwnedModuleLifecycle } from '@cockpit/core';
+import { Engine, OfficialRuntime, sessionMetaBusy } from '@cockpit/core';
 import { Intents, UploadedFile, partsPrompt, unreadSessionCount, type MessagePart, type IntentBody, type IntentName, type IntentResult, type ServerEvent, type SessionMeta, type Snapshot } from '@cockpit/protocol';
 import { PushManager } from './push.ts';
 import { getSpeechToken } from './speech.ts';
@@ -31,11 +30,9 @@ import { saveUploadStream, associateUpload, listUploads, uploadDetails, resolveU
 import { isIntentName, registerCapabilities } from './capabilities.ts';
 import { drainForRestart } from './shutdown.ts';
 import { registerChatStream } from './chat-stream.ts';
-import { registerModuleProxy } from './module-proxy.ts';
-import { createModuleIntents } from './module-intents.ts';
 import { deliveryIdentity } from './delivery-identity.ts';
 import { registerDeliveryStatus } from './delivery-status.ts';
-import { createConsumerControl, createOwnedModuleLifecycle, type ConsumerControl } from './consumer-control.ts';
+import { createConsumerControl, type ConsumerControl } from './consumer-control.ts';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.COCKPIT_PORT ?? 8771);
@@ -73,20 +70,11 @@ export type ServerEngine = Pick<Engine,
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
   | 'listGlobalSkills' | 'setGlobalSkill' | 'readSkillBody' | 'listSessionSkills' | 'toggleSessionSkill' | 'refreshSkills'
   | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
-  | 'sessionModules' | 'applySessionModules'
 >;
 export type ServerPush = Pick<PushManager, 'subscribe' | 'status' | 'test' | 'unsubscribe' | 'sendAttention'>;
 let engine: ServerEngine;
 let push: ServerPush;
-export type ModuleIntentName = Extract<IntentName, `modules/${string}`>;
-export type ModuleIntentHandlers = { [K in ModuleIntentName]: (body: IntentBody<K>) => Promise<IntentResult<K>> };
-let moduleHandlers: ModuleIntentHandlers | undefined;
-let moduleManager: ModuleManager | undefined;
-let moduleOperations = 0;
 let consumerControl: ConsumerControl | undefined;
-let consumerExitPreparation: Promise<void> | undefined;
-let ownedModuleLifecycle: OwnedModuleLifecycle | undefined;
-let ownedModuleExitPreparation: Promise<void> | undefined;
 
 function preparePromptContent(body: Pick<IntentBody<'prompt'>, 'text' | 'attachment' | 'attachments' | 'parts'>, sessionId: string): {
   text: string; attachments?: Parameters<ServerEngine['prompt']>[3];
@@ -106,27 +94,12 @@ function preparePromptContent(body: Pick<IntentBody<'prompt'>, 'text' | 'attachm
   return { text: partsPrompt(resolved), attachments };
 }
 
-async function moduleIntent<K extends ModuleIntentName>(name: K, body: IntentBody<K>): Promise<IntentResult<K>> {
-  if (!moduleHandlers) throw Object.assign(new Error('Module management is not configured'), { statusCode: 503 });
-  if (restarting) throw Object.assign(new Error('Cockpit is draining for restart'), { statusCode: 503 });
-  if (name.startsWith('modules/service') && ownedModuleLifecycle && !ownedModuleLifecycle.canReadRunner()) {
-    throw Object.assign(new Error('The server-owned module runner is not ready; no previous runner is adopted'), { statusCode: 503 });
-  }
-  moduleOperations++;
-  try { return await moduleHandlers[name](body); }
-  finally { moduleOperations--; maybeGracefulExit(); }
-}
-
 // No SDK construction, preferences, listeners, or production dependency override.
-export function setTestDependencies(deps: { engine: ServerEngine; push: ServerPush; modules?: ModuleIntentHandlers; consumer?: ConsumerControl }): void {
+export function setTestDependencies(deps: { engine: ServerEngine; push: ServerPush; consumer?: ConsumerControl }): void {
   if (process.env.COCKPIT_NO_BOOT !== '1') throw new Error('test dependencies require COCKPIT_NO_BOOT=1');
   engine = deps.engine;
   push = deps.push;
-  moduleHandlers = deps.modules;
   consumerControl = deps.consumer;
-  consumerExitPreparation = undefined;
-  ownedModuleLifecycle = undefined;
-  ownedModuleExitPreparation = undefined;
 }
 
 // --- SSE fan-out -----------------------------------------------------------
@@ -221,7 +194,7 @@ export function sessionBusy(s: SessionMeta): boolean {
 }
 
 async function busyCount(): Promise<number> {
-  return await engine.busyCount() + moduleOperations;
+  return engine.busyCount();
 }
 
 let gracefulExitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -266,16 +239,6 @@ async function checkGracefulExit(): Promise<void> {
         return;
       }
       if (!restartPending) return;
-      if (consumerControl) {
-        consumerExitPreparation ??= consumerControl.prepareExit();
-        await consumerExitPreparation;
-        if (!restartPending || restarting || await busyCount() > 0) return;
-      }
-      if (ownedModuleLifecycle) {
-        ownedModuleExitPreparation ??= ownedModuleLifecycle.prepareExit();
-        await ownedModuleExitPreparation;
-        if (!restartPending || restarting || await busyCount() > 0) return;
-      }
       restarting = true;
       await drainForRestart(engine, pendingNotifications);
       for (const client of clients) client.raw.destroy();
@@ -294,24 +257,6 @@ async function exitAfterRuntimeFailure(runtime: Engine, error: Error): Promise<v
   restartPending = false;
   if (gracefulExitTimer) clearTimeout(gracefulExitTimer);
   gracefulExitTimer = null;
-  if (consumerControl) {
-    try {
-      consumerExitPreparation ??= consumerControl.prepareExit();
-      await consumerExitPreparation;
-    } catch (cleanup) {
-      app.log.error({ err: cleanup }, 'native runtime failed; module shutdown is unconfirmed, keeping the management API available');
-      return;
-    }
-  }
-  if (ownedModuleLifecycle) {
-    try {
-      ownedModuleExitPreparation ??= ownedModuleLifecycle.prepareExit();
-      await ownedModuleExitPreparation;
-    } catch (cleanup) {
-      app.log.error({ err: cleanup }, 'native runtime failed; owned module shutdown is unconfirmed, keeping the management API available');
-      return;
-    }
-  }
   restarting = true;
   app.log.fatal({ err: error }, 'Copilot runtime died; exiting for supervisor recovery without replaying requests');
   try {
@@ -543,8 +488,7 @@ app.get('/admin/lifecycle', async (_request, reply) => {
   const busy = await busyCount();
   const consumer = await consumerControl?.status();
   return { restartPending: restartPending || Boolean(consumer?.available && consumer.activeOperationId), busy,
-    reason: busy > 0 ? 'native-busy' : null, ...(consumer ? { consumer } : {}),
-    ...(ownedModuleLifecycle ? { managedModules: ownedModuleLifecycle.status() } : {}) };
+    reason: busy > 0 ? 'native-busy' : null, ...(consumer ? { consumer } : {}) };
 });
 
 app.get('/status', async () => {
@@ -558,7 +502,7 @@ app.get('/status', async () => {
   const busy = await busyCount();
   const consumer = await consumerControl?.status();
   return { running, busy, restartPending: restartPending || Boolean(consumer?.available && consumer.activeOperationId), sessions,
-    ...(consumer ? { consumer } : {}), ...(ownedModuleLifecycle ? { managedModules: ownedModuleLifecycle.status() } : {}) };
+    ...(consumer ? { consumer } : {}) };
 });
 
 // Graceful restart control. POST {pending:true} (default) arms the flag; if nothing
@@ -570,8 +514,8 @@ app.post('/admin/restart', async (req, reply) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     if ('pending' in body && body.pending === false) {
       const current = await consumerControl.status();
-      if (restartPending || consumerExitPreparation || (current.available && current.activeOperationId)) {
-        return reply.code(409).send({ error: 'Consumer module drain cannot be cancelled or undone; inspect the original launcher operation' });
+      if (restartPending || (current.available && current.activeOperationId)) {
+        return reply.code(409).send({ error: 'Consumer restart cannot be cancelled here; inspect the original launcher operation' });
       }
       return { restartPending: false, authority: 'consumer', operation: null };
     }
@@ -586,9 +530,6 @@ app.post('/admin/restart', async (req, reply) => {
     return { authority: 'consumer', operation: await consumerControl.restart(parsed.data.operationId) };
   }
   const pending = (req.body as { pending?: boolean } | null)?.pending ?? true;
-  if (!pending && ownedModuleExitPreparation) {
-    return reply.code(409).send({ error: 'Owned module drain cannot be cancelled or undone; inspect the retained lifecycle receipt' });
-  }
   restartPending = pending;
   const n = await busyCount();
   maybeGracefulExit();
@@ -641,28 +582,8 @@ const handlers: IntentHandlers = {
     if (!consumerControl) throw Object.assign(new Error('Consumer launcher is not configured for this runtime'), { statusCode: 503 });
     return { operation: await consumerControl.restart(b.operationId) };
   },
-  'modules/updates/check': b => moduleIntent('modules/updates/check', b),
-  'modules/updates/status': b => moduleIntent('modules/updates/status', b),
-  'modules/updates/get': b => moduleIntent('modules/updates/get', b),
-  'modules/updates/install': b => moduleIntent('modules/updates/install', b),
-  'modules/updates/reconcile': b => moduleIntent('modules/updates/reconcile', b),
-  'modules/list': b => moduleIntent('modules/list', b),
-  'modules/install': b => moduleIntent('modules/install', b),
-  'modules/install/local': b => moduleIntent('modules/install/local', b),
-  'modules/uninstall': b => moduleIntent('modules/uninstall', b),
-  'modules/config/get': b => moduleIntent('modules/config/get', b),
-  'modules/config/set': b => moduleIntent('modules/config/set', b),
-  'modules/config/initialize': b => moduleIntent('modules/config/initialize', b),
-  'modules/config/initialization': b => moduleIntent('modules/config/initialization', b),
-  'modules/service': b => moduleIntent('modules/service', b),
-  'modules/service/job': b => moduleIntent('modules/service/job', b),
-  'modules/service/status': b => moduleIntent('modules/service/status', b),
-  'modules/wechat/unbind': b => moduleIntent('modules/wechat/unbind', b),
-  'modules/wechat/unbind/get': b => moduleIntent('modules/wechat/unbind/get', b),
   'runtime/snapshot': async () => notificationSnapshot(await engine.snapshot()),
-  'session/new': async (b) => ({ sessionId: await engine.newSession(b.cwd, b.modules) }),
-  'session/modules/get': async b => ({ modules: await engine.sessionModules(b.sessionId) }),
-  'session/modules/apply': async b => ({ modules: await engine.applySessionModules(b.sessionId, b.selections, b.operationId) }),
+  'session/new': async (b) => ({ sessionId: await engine.newSession(b.cwd) }),
   'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
   'session/chat': (b, signal) => engine.chat(b, signal),
   'files/list': b => listUploads(b),
@@ -881,19 +802,10 @@ async function main(runtime: Engine, notifications: PushManager): Promise<void> 
   await registerStaticWeb();
   await app.listen({ host: HOST, port: PORT });
   const stop = () => { restartPending = true; maybeGracefulExit(); };
-  if (consumerControl || ownedModuleLifecycle) {
-    process.on('SIGTERM', stop);
-    process.on('SIGINT', stop);
-  }
-  if (ownedModuleLifecycle) {
-    const status = await ownedModuleLifecycle.startAfterReady();
-    if (status.state !== 'restored') {
-      app.log.error({ managedModules: status }, 'owned module restoration is not confirmed; controls remain fenced');
-    }
-  }
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
   if (consumerControl) {
     await consumerControl.connect(() => {
-      consumerExitPreparation = undefined;
       restartPending = true;
       maybeGracefulExit();
     });
@@ -923,7 +835,7 @@ export async function registerStaticWeb(): Promise<void> {
   await app.register(fastifyStatic, { root: WEB_DIR, index: ['index.html'] });
   app.setNotFoundHandler((req, reply) => {
     const path = req.url.split('?')[0]!;
-    const webRoute = /^\/(?:session\/[^/]+(?:\/[^/]+)?|(?:mcp|skills)(?:\/[^/]+)?|files|(?:flows|workers)(?:\/.*)?)?\/?$/.test(path);
+    const webRoute = /^\/(?:session\/[^/]+(?:\/[^/]+)?|(?:mcp|skills)(?:\/[^/]+)?|files)?\/?$/.test(path);
     if (req.method === 'GET' && webRoute) return reply.sendFile('index.html');
     reply.code(404).send({ error: 'not found' });
   });
@@ -937,20 +849,8 @@ export async function registerStaticWeb(): Promise<void> {
 function boot(): void {
   consumerControl = createConsumerControl();
   if (consumerControl && (!process.send || !process.connected)) throw new Error('Consumer startup requires its owned launcher IPC channel');
-  ownedModuleLifecycle = createOwnedModuleLifecycle(`http://${HOST}:${PORT}`);
   const native = new OfficialRuntime();
-  const rawSources: unknown = process.env.COCKPIT_MODULE_SOURCES ? JSON.parse(process.env.COCKPIT_MODULE_SOURCES) : {};
-  if (!rawSources || typeof rawSources !== 'object' || Array.isArray(rawSources)
-    || Object.entries(rawSources).some(([id, path]) => !['assistant', 'task', 'wechat'].includes(id) || typeof path !== 'string')) {
-    throw new Error('COCKPIT_MODULE_SOURCES must map official module IDs to trusted local package directories');
-  }
-  let engineInstance: Engine;
-  moduleManager = new ModuleManager({ runtime: native, sources: rawSources, services: new ModuleRunnerClient(),
-    sessionDirectory: async id => (await engineInstance.getResources(id, ['identity']))?.cwd });
-  const modules = moduleManager;
-  moduleHandlers = createModuleIntents(modules);
-  registerModuleProxy(app, () => modules.taskGateway());
-  const runtime = engineInstance = new Engine({ runtime: native, modules });
+  const runtime = new Engine({ runtime: native });
   runtime.log = (msg, data) => app.log.warn(data ?? {}, msg);
   const notifications = new PushManager({
     log: ({ status, at, error }) => {

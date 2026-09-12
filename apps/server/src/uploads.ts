@@ -5,7 +5,7 @@ import { basename, join, extname, resolve, parse, sep, dirname } from 'node:path
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
 import { copilotPath } from '@cockpit/core';
-import type { Attachment, UploadedFile } from '@cockpit/protocol';
+import { UploadedFile, type Attachment } from '@cockpit/protocol';
 
 export const UPLOAD_DIR = process.env.COCKPIT_UPLOAD_DIR
   ? process.env.COCKPIT_UPLOAD_DIR
@@ -124,7 +124,7 @@ interface Metadata {
   size: number;
   createdAt?: number;
   sha256?: string;
-  source?: 'web' | 'mcp' | 'weixin' | 'tool-image';
+  source?: UploadedFile['source'];
   sessionId?: string;
   sourceId?: string;
 }
@@ -296,7 +296,7 @@ export interface UploadContext {
 }
 
 export function validateUploadContext(context: UploadContext): UploadContext {
-  if (context.source !== undefined && !['web', 'mcp', 'weixin', 'tool-image'].includes(context.source)) {
+  if (!UploadedFile.shape.source.safeParse(context.source).success) {
     throw new UploadError('Invalid file source', 400);
   }
   if (context.sessionId !== undefined && (typeof context.sessionId !== 'string'

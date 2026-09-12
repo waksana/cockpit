@@ -29,6 +29,6 @@ them. This is not source-side field projection or zero-copy streaming.
 
 Existing uploads, including previously retained native images with legacy
 `source:"tool-image"` metadata, remain available and independently long-lived.
-Their links, session associations, originals and Weixin delivery are preserved.
+Their links, session associations and originals are preserved.
 Files retain their original format and the existing authenticated `/uploads`
 boundary. Managed SVG preview does not insert executable document markup.

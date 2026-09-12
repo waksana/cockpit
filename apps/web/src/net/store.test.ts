@@ -237,9 +237,8 @@ test('native creation result never invents local session state or sends a hidden
   const h = setup(t, store);
   h.source.open(); h.snapshot([]);
   assert.equal(h.requests.length, 0);
-  const modules = [{ moduleId: 'assistant' as const, roleId: 'assistant' }];
-  const creating = store.getState().newSession('/workspace', modules);
-  h.assertPost(0, 'session/new', { cwd: '/workspace', modules });
+  const creating = store.getState().newSession('/workspace');
+  h.assertPost(0, 'session/new', { cwd: '/workspace' });
   await h.reply(0, { sessionId: 'actual-native-id' });
   assert.equal(await creating, 'actual-native-id');
   await setImmediate();

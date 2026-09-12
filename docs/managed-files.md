@@ -1,7 +1,7 @@
 # Managed files
 
 Cockpit's file library is the shared entry and exit for Web uploads, explicit AI
-deliverables and the uniquely bound Weixin conversation. Originals live in the
+deliverables and authenticated API consumers. Originals live in the
 existing `COCKPIT_UPLOAD_DIR` (by default `~/.copilot/cockpit-uploads`).
 Uploading or explicitly retaining an artifact keeps it independently of its
 session. There is no automatic expiration or deletion, no home-directory scan,
@@ -27,7 +27,7 @@ All Web file and intent routes use the same authenticated origin as chat. The
 installed nginx configuration gates `/upload`, `/uploads/*`, `/intent/*` and
 `/capabilities` with the existing passkey service. A `/uploads` link is not an
 anonymous-public publication promise. The backend binds loopback only; the
-local MCP and bridge use that existing internal trust boundary rather than
+local MCP and other local API clients use that existing internal trust boundary rather than
 browser passkey cookies. CSRF/origin validation is not a substitute for the
 gateway. No anonymous media exception is needed.
 
@@ -38,11 +38,15 @@ new upload explicitly and never delete older retained files. Transfers stream
 bounded chunks rather than making whole-video base64 messages.
 
 `POST /upload` accepts an `application/octet-stream` body and query fields
-`name`, `mime`, optional `source` (`web`, `mcp`, `weixin`, `tool-image`),
+`name`, `mime`, optional `source` (1-120 characters, letters/digits first, followed
+by letters/digits/dot/underscore/hyphen),
 `sessionId` and `sourceId`. `sourceId` requires a source and session. The stable
 source tuple is an idempotent storage identity: the same bytes return the same
 file; different bytes are a conflict, not an overwrite. Storage acceptance is
-separate from native prompt acceptance and Weixin delivery acceptance.
+separate from native prompt acceptance and any external delivery acceptance.
+`source` is display/provenance metadata, not a module registry or authentication
+claim. New external source names need no host enum change; old source metadata
+remains readable without reviving the application that wrote it.
 
 New uploads are fsynced, hashed with SHA-256 and published with authoritative
 sidecar metadata. Display names never become paths. Known media signatures,
@@ -60,10 +64,9 @@ Storage suffixes for recognized formats follow verified MIME, because native
 image tools use filename extensions to select their reader. This changes only
 the internal safe name; the original display/download filename is preserved.
 
-Weixin originals mean the media bytes actually delivered by its protocol, not
-an unreceived pre-compression version from the phone. The library preserves
-those delivered bytes and their digest. It cannot reconstruct a version Weixin
-did not provide.
+The library preserves the bytes the uploader supplies and their digest. Source
+downloads, channel decoding and transcoding belong to that API consumer, not to
+Cockpit; an unreceived pre-compression original cannot be reconstructed here.
 
 `GET /uploads/<safe-basename>` streams original bytes, including single-byte
 range requests (`206` / `416`) for browser video seeking. `HEAD` returns length.
@@ -227,31 +230,9 @@ clipboard can supply video files. The existing `apps/server/src/uploads.test.ts`
 fixtures separately exercise original-byte storage, MIME detection, limits and
 source-idempotent retries.
 
-## Weixin protocol boundary
+## External delivery boundary
 
-The bridge uses native media messages, not download links disguised as delivery.
-The verified Tencent 2.4.8 builders use upload `media_type` **1/2/3** for
-image/video/file, but outgoing item `type` **2/5/4**, respectively. AES-128-ECB
-uses PKCS#7 padding; the outgoing media key is base64 of its hexadecimal text.
-Outgoing image `mid_size` and video `video_size` are ciphertext lengths; file `len` is
-the plaintext length as decimal text. The published uploader uses
-`no_need_thumb: true`; its actual video builder does not require duration probing
-or a paid thumbnail/transcoding service.
-
-Phone-originated video messages can instead report plaintext `video_size`, as
-observed with a 6231-byte original in a 6240-byte encrypted response. Inbound
-validation requires an exact match to measured plaintext or ciphertext length,
-while retaining HTTP length, padding, and available MD5 checks. Phone JPEGs can
-contain data after their EOI marker; those bytes remain part of the retained
-original. "Original" means the bytes delivered by Weixin, not the phone's
-pre-compression source.
-
-These facts come from the pinned
-[Tencent upload implementation](https://github.com/Tencent/openclaw-weixin/blob/70ab695f6a1ca87da4102f857a452e2acb6b37cf/src/cdn/upload.ts)
-and [native send builders](https://github.com/Tencent/openclaw-weixin/blob/70ab695f6a1ca87da4102f857a452e2acb6b37cf/src/messaging/send.ts).
-The upstream client's 100 MiB media-store setting is **not** evidence of a
-Tencent server maximum. Cockpit keeps its explicit 25 MiB original-file cap;
-the bridge's supported image formats and additional image limit are documented
-in its own capability matrix. A server acceptance receipt is not proof that a
-phone displayed or played the media. Live acceptance must be distinguished from
-user-confirmed phone display.
+Channel-specific encryption, upload formats, delivery receipts and recovery
+belong to the external application. Cockpit accepts verified local uploads and
+native prompt attachment references, not channel send operations. A stored
+file or accepted prompt is not proof that an external recipient received it.

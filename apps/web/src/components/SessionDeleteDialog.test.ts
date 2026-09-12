@@ -15,8 +15,8 @@ test('native deletion uses the ordinary confirmation and retains module data wit
   }));
   assert.match(html, /永久删除.*Target A/);
   assert.match(html, /不可恢复/);
-  assert.match(html, /托管文件、工作目录和模块业务数据不会删除/);
-  assert.match(html, /不会执行模块解绑或广播/);
+  assert.match(html, /托管文件、工作目录和外部应用数据不会删除/);
+  assert.match(html, /只执行原生删除，不调用外部业务流程/);
   assert.doesNotMatch(html, /解除关联并删除|预览|planId|operationId/);
   const source = readFileSync(new URL('./SessionDeleteDialog.tsx', import.meta.url), 'utf8');
   assert.match(source, /await deleteSession\(sessionId, true\)/);

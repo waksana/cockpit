@@ -18,7 +18,6 @@ export function waitingLabel(reason: string | null): string | null {
   if (!reason) return null;
   return ({
     'activation-disabled': '运行启用已暂停；部署准备不等于启动',
-    'weixin-unknown-paused': '微信未知发送尚待独立恢复；不会启动或重发',
     'native-busy': '原生任务仍忙，等待安全排空',
     'safe-idle-not-yet-confirmed': '尚未确认旧进程已安全退出',
     'earlier-deployment-reserves-environment': '前一个发布仍占用本环境的交付顺序',

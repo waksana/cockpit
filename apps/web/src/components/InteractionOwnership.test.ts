@@ -13,11 +13,11 @@ test('creation has one native action owner and no first-message or virtual ident
   const picker = source('./DirPicker.tsx');
   assert.match(app, /<DirPicker key=\{location.key\} onCreate=\{newSession\} onCreated=\{selectSession\}/);
   assert.match(app, /<DirectoryModal onCancel=/);
-  assert.match(picker, /sessionId = await onCreate\(path, selected\)/);
-  assert.ok(picker.indexOf('onCreated(sessionId)') > picker.indexOf('await onCreate(path, selected)'));
+  assert.match(picker, /sessionId = await onCreate\(path\)/);
+  assert.ok(picker.indexOf('onCreated(sessionId)') > picker.indexOf('await onCreate(path)'));
   assert.match(picker, /const locked = submitted \|\| action.busy/);
   assert.match(picker, /<DirectoryModal busy=\{action.busy\} onCancel=\{onCancel\}/);
-  assert.match(picker, /checkAvailability: true/);
+  assert.doesNotMatch(picker, /checkAvailability|moduleIntent|ModuleSelection/);
   assert.doesNotMatch(app + picker, /sessionStart|<Composer|creation\.draft|onStart|session\/start/);
 });
 

@@ -1,9 +1,8 @@
 import { z } from 'zod';
 import { ConsumerIdentity, ConsumerOperation, ConsumerStatus } from '@cockpit/protocol';
-import { callLauncher, connectConsumerLifecycle, consumerRootFromEnvironment, prepareConsumerExit,
+import { callLauncher, connectConsumerLifecycle, consumerRootFromEnvironment,
   restartConsumer } from '../../../scripts/consumer/cli.mjs';
 import { operationPath, readJson } from '../../../scripts/consumer/state.mjs';
-import { OwnedModuleLifecycle } from '@cockpit/core';
 
 const LauncherStatus = z.object({
   authority: z.literal('consumer'), installationId: z.string().uuid(), active: z.string().nullable(),
@@ -12,13 +11,11 @@ const LauncherStatus = z.object({
     identity: ConsumerIdentity.optional(), error: z.string().optional(),
   }),
   mainLifecycle: z.object({ ready: z.boolean(), error: z.string().optional() }).nullable(),
-  moduleRunner: z.object({ state: z.string().min(1) }),
 });
 
 export interface ConsumerControl {
   status(operationId?: string): Promise<ConsumerStatus>;
   restart(operationId: string): Promise<ConsumerOperation>;
-  prepareExit(): Promise<void>;
   connect(armNativeDrain: () => void): Promise<void>;
 }
 
@@ -38,24 +35,11 @@ export function createConsumerControl(env = process.env): ConsumerControl | unde
       return ConsumerStatus.parse({
         available: true, installationId: value.installationId, health: value.health.state,
         runtime: value.health.state === 'healthy' ? value.health.identity : null,
-        mainLifecycleReady: value.mainLifecycle?.ready === true, moduleRunnerState: value.moduleRunner.state,
+        mainLifecycleReady: value.mainLifecycle?.ready === true,
         activeOperationId: value.active, operation, ...(value.health.error ? { error: value.health.error } : {}),
       });
     },
     async restart(operationId) { return ConsumerOperation.parse(await restartConsumer(operationId, env)); },
-    async prepareExit() { await prepareConsumerExit(env); },
     async connect(armNativeDrain) { await connectConsumerLifecycle(armNativeDrain, env); },
   };
-}
-
-export function createOwnedModuleLifecycle(
-  cockpitUrl: string,
-  env = process.env,
-): OwnedModuleLifecycle | undefined {
-  if (env.COCKPIT_MANAGED_MODULES === undefined || env.COCKPIT_MANAGED_MODULES === '') return undefined;
-  if (env.COCKPIT_MANAGED_MODULES !== '1') throw new Error('COCKPIT_MANAGED_MODULES must be exactly 1 when enabled');
-  if (env.COCKPIT_CONSUMER_INSTALLATION) {
-    throw new Error('Consumer launcher and server-owned module runner authorities cannot be enabled together');
-  }
-  return new OwnedModuleLifecycle({ userRoot: env.COCKPIT_USER_ROOT, cockpitUrl });
 }

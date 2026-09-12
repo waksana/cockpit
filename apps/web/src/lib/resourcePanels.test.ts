@@ -355,8 +355,8 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.doesNotMatch(html, /manage-scope|Cockpit 不保存或重放选择/);
     const manage = readFileSync(new URL('../components/Manage.tsx', import.meta.url), 'utf8');
     assert.match(manage, /resource.valid && !action.error && !!resource.data\?\.length/);
-    assert.match(manage, /冷加载恢复已绑定模块版本，其余临时开关采用原生全局默认/);
-    assert.match(manage, /冷加载恢复已绑定模块的 skill 路径，其余临时开关采用原生全局默认/);
+    assert.match(manage, /冷加载采用原生全局默认，不恢复临时开关/);
+    assert.match(manage, /冷加载采用原生配置发现和全局禁用列表，不恢复临时开关/);
     assert.doesNotMatch(manage, /重载技能|刷新技能定义后/);
   });
 }

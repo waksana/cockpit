@@ -115,8 +115,8 @@ prompts and from process supervision. Those runtime mechanisms remain available.
 Governance applications may run separately and consume the published session
 APIs, events and MCP. They own their policies, timers, ledgers and deployment;
 they must not depend on private Engine internals or require Cockpit to install
-them. The old [`butler.md`](./butler.md) is historical design material, not a
-foundation setup procedure. No replacement governance service is bundled.
+them. Historical governance designs are retained in Git history, not shipped
+as foundation setup procedures. No replacement governance service is bundled.
 
 ## Session list
 

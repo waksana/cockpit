@@ -13,7 +13,6 @@ import type {
   ModelOption, ScheduleEntry, ServerEvent, SessionMeta, SessionPanels,
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
   MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem,
-  ModuleSelection, SessionModules,
 } from '@cockpit/protocol';
 import { NativeChatRead, SessionUsage, MetaResource as MetaResources } from '@cockpit/protocol';
 import { OfficialRuntime, sessionModelOptions } from './runtime.ts';
@@ -28,7 +27,6 @@ import { autoNameQuestion, firstNamingReply, generatedTitle } from './auto-name.
 import { validateForkHistory } from './fork.ts';
 import { createContextReset } from './context-reset.ts';
 import { bundledSkillsDirectory } from './paths.ts';
-import type { SessionModuleHost } from './module-session.ts';
 
 export { sessionMetaBusy, engineSessionBusy } from './lifecycle.ts';
 export type EngineRuntime = Pick<OfficialRuntime,
@@ -85,7 +83,6 @@ interface State {
   sdk: CopilotSession | null;
   contextReset?: ReturnType<typeof createContextReset>;
   load?: Promise<void>;
-  moduleLoadFailed?: boolean;
   closing: boolean;
   cancelling?: Promise<void>;
   interrupting?: Promise<IntentResult<'session/interrupt'>>;
@@ -164,8 +161,6 @@ export class Engine {
   private readonly sessions = new Map<string, State>();
   private readonly creating = new Set<string>();
   private readonly removing = new Set<string>();
-  private readonly applyingModules = new Set<string>();
-  private readonly modules?: SessionModuleHost;
   private readonly bus = new EventEmitter().setMaxListeners(0);
   private agentStatus: AgentStatus = 'starting';
   private birthGate: Promise<void> = Promise.resolve();
@@ -178,9 +173,8 @@ export class Engine {
   vapidPublicKey: string | null = null;
   log: (message: string, data?: Record<string, unknown>) => void = () => {};
 
-  constructor(options: { runtime?: EngineRuntime; prefsFile?: string; modules?: SessionModuleHost } = {}) {
+  constructor(options: { runtime?: EngineRuntime; prefsFile?: string } = {}) {
     this.runtime = options.runtime ?? new OfficialRuntime();
-    this.modules = options.modules;
     this.prefs = new Prefs(options.prefsFile);
     this.prefs.reconcileInboxChoices();
     this.runtime.onSessionClosed(sdk => {
@@ -248,8 +242,7 @@ export class Engine {
 
   onActivitySettled(handler: () => void): () => void {
     this.bus.on('activity-settled', handler);
-    const offModules = this.modules?.onSettled?.(handler);
-    return () => { this.bus.off('activity-settled', handler); offModules?.(); };
+    return () => { this.bus.off('activity-settled', handler); };
   }
 
   private emit(event: ServerEvent): void { this.bus.emit('event', event); }
@@ -452,9 +445,8 @@ export class Engine {
     this.bus.emit('activity-settled');
   }
 
-  private assertAdmission(st: State, applyingModules = false): void {
+  private assertAdmission(st: State): void {
     this.assertAvailable();
-    if (!applyingModules && this.applyingModules.has(st.id)) throw new Error('Session module application is in progress');
     if (st.contextReset?.busy) throw new Error('Session context clear is in progress; retry this operation after it settles.');
     const current = this.sessions.get(st.id);
     if (this.stopped || this.lifecycle || st.closing || (current && current !== st)) {
@@ -470,18 +462,14 @@ export class Engine {
     );
   }
 
-  private async config(st: State, cwd?: string, applyingModules = false): Promise<SessionConfig> {
-    const role = await this.modules?.configuration(st.id, cwd, applyingModules);
+  private async config(st: State, cwd?: string): Promise<SessionConfig> {
     const disabled = await this.globalDisabledSkills();
     return {
       sessionId: st.id, ...(cwd ? { workingDirectory: cwd } : {}), streaming: true,
       enableConfigDiscovery: true,
       // Runtime 1.0.83 discovers skills but does not apply its global disabled
       // list on create/cold resume unless the SDK receives that native value.
-      disabledSkills: role?.disabledSkills ?? disabled,
-      ...(role?.systemMessage ? { systemMessage: role.systemMessage } : {}),
-      ...(role?.skillDirectories ? { skillDirectories: role.skillDirectories } : {}),
-      ...(role?.mcpServers ? { mcpServers: role.mcpServers } : {}),
+      disabledSkills: disabled,
       onUserInputRequest: request => this.decision<UserInputResponse>(st, 'ask', request, response => {
         if (response.wasFreeform && request.allowFreeform === false) throw new Error('Freeform answers are not allowed');
         if (!response.wasFreeform && !request.choices?.includes(response.answer)) throw new Error('Answer is not an offered choice');
@@ -548,7 +536,7 @@ export class Engine {
     return result.finally(() => { this.births--; this.bus.emit('activity-settled'); });
   }
 
-  async newSession(cwd: string, modules?: ModuleSelection[]): Promise<string> {
+  async newSession(cwd: string): Promise<string> {
     this.assertAvailable();
     if (this.stopped) throw new Error('Engine is stopped; start it before creating sessions');
     if (this.lifecycle) throw new Error('Engine lifecycle transition is in progress');
@@ -559,18 +547,12 @@ export class Engine {
     const st = stateFor(id);
     this.creating.add(id);
     try {
-      if (modules?.length) {
-        if (!this.modules) throw new Error('Module management is not configured');
-        await this.modules.prepare(id, directory, modules, randomUUID());
-      }
-      await this.ensureLoaded(st, true, directory, !!modules?.length);
+      await this.ensureLoaded(st, true, directory);
       return id;
     } catch (error) {
-      if (modules?.length && this.modules) {
-        await this.modules.failed(id, error);
-        const confirmedId = st.sdk?.sessionId;
-        throw Object.assign(new Error(`${messageOf(error)}; ${confirmedId ? `native session ${confirmedId} was created but module setup is incomplete` : 'native creation is not confirmed'}. Inspect the native session list; do not create a replacement automatically.`, { cause: error }),
-          { ...(confirmedId ? { sessionId: confirmedId } : {}), code: 'MODULE_SESSION_INCOMPLETE', statusCode: 409 });
+      if (st.sdk?.sessionId === id) {
+        throw Object.assign(new Error(`Native session ${id} was created, but readiness readback failed: ${messageOf(error)}. Inspect this session; do not create a replacement automatically.`, { cause: error }),
+          { sessionId: id, code: 'SESSION_CREATION_INCOMPLETE', statusCode: 409 });
       }
       throw error;
     } finally {
@@ -610,16 +592,12 @@ export class Engine {
     });
   }
 
-  private async ensureLoaded(st: State, create = false, cwd?: string, applyingModules = false): Promise<void> {
-    this.assertAdmission(st, applyingModules);
-    if (!applyingModules) await this.modules?.assertReady(st.id);
+  private async ensureLoaded(st: State, create = false, cwd?: string): Promise<void> {
+    this.assertAdmission(st);
     if (st.load) return st.load;
     if (!create) this.sessions.set(st.id, st);
-    if (st.sdk && await this.liveSession(st)) {
-      if (st.moduleLoadFailed) throw new Error('Module readiness after loading is unconfirmed; explicitly reload before sending a message');
-      return;
-    }
-    this.assertAdmission(st, applyingModules);
+    if (st.sdk && await this.liveSession(st)) return;
+    this.assertAdmission(st);
     if (st.load) return st.load;
     this.patch(st, { loading: true });
     st.load = this.untilFatal(() => this.birth(async () => {
@@ -635,7 +613,7 @@ export class Engine {
         },
       });
       st.contextReset = reset;
-      const config: SessionConfig = { ...await this.config(st, cwd, applyingModules), tools: [reset.tool], onEvent: event => {
+      const config: SessionConfig = { ...await this.config(st, cwd), tools: [reset.tool], onEvent: event => {
         if (st.eventOwner !== owner || this.failure) return;
         reset.observe(event);
         try { this.onLive(st, event); }
@@ -660,14 +638,10 @@ export class Engine {
         throw new Error('Native session closed while loading; explicitly resume to continue');
       }
       delete owner.closed;
-      await this.modules?.connected(st.id, sdk, applyingModules);
-      st.moduleLoadFailed = false;
       const meta = await this.getResources(st.id, summaryResources);
       if (!meta) throw new Error('Native session metadata is unavailable after loading');
       this.emit({ type: 'session/added', session: completeMeta({ ...meta, error: null }) });
-    })).catch(async error => {
-      if (create || applyingModules) await this.modules?.failed(st.id, error);
-      else if (st.sdk && await this.modules?.read(st.id)) st.moduleLoadFailed = true;
+    })).catch(error => {
       if (!st.sdk) {
         st.eventOwner = undefined;
       }
@@ -1229,10 +1203,10 @@ export class Engine {
   }
 
   async busyCount(): Promise<number> {
-    if (this.lifecycle || this.births || this.creating.size || this.startPromise || this.removing.size || this.applyingModules.size) return 1;
+    if (this.lifecycle || this.births || this.creating.size || this.startPromise || this.removing.size) return 1;
     let count = 0;
     for (const st of this.sessions.values()) if (await this.busy(st)) count++;
-    return count + (this.modules?.activeCount?.() ?? 0);
+    return count;
   }
 
   private async checkIdle(st: State): Promise<void> {
@@ -1254,7 +1228,6 @@ export class Engine {
     const sdk = st.sdk;
     st.eventOwner = undefined;
     st.sdk = null;
-    st.moduleLoadFailed = false;
     st.contextReset = undefined;
     st.interruptTurn = undefined;
     st.interruptedEpoch = undefined;
@@ -1319,86 +1292,18 @@ export class Engine {
 
   async reload(id: string): Promise<void> {
     const st = await this.state(id);
-    await this.transition(st, async () => {
-      if (st.sdk && (await this.modules?.read(id))?.selections.length) await this.assertModuleReloadHistory(st.sdk);
-      await this.close(st);
-    });
+    await this.transition(st, () => this.close(st));
     await this.ensureLoaded(st);
   }
 
-  private async assertModuleReloadHistory(sdk: CopilotSession): Promise<void> {
-    const history = await sdk.rpc.eventLog.read({
-      direction: 'backward', max: 1, types: ['user.message'], agentScope: 'primary', includeEphemeral: false,
-    });
-    if (history.cursorStatus !== 'ok' || !history.events.some(event => event.type === 'user.message')) {
-      throw new Error('Module application or reload requires an existing first message; closing an empty native session can destroy it');
-    }
-  }
-
-  async sessionModules(id: string): Promise<SessionModules | null> {
-    this.assertAvailable();
-    const st = this.sessions.get(id);
-    const nativePresent = Boolean(st && await this.liveSession(st) || await this.runtime.getSessionMetadata(id));
-    const record = await this.modules?.read(id) ?? null;
-    if (!nativePresent && !record) throw new Error('Unknown session');
-    return record ? { ...record, nativePresent } : null;
-  }
-
-  async applySessionModules(id: string, selections: ModuleSelection[], operationId: string): Promise<SessionModules> {
-    if (!this.modules) throw new Error('Module management is not configured');
-    const modules = this.modules;
-    const previous = await modules.read(id);
-    if (previous?.phase === 'applied' && previous.operationId === operationId) {
-      if (selections.length !== previous.selections.length || selections.some((selection, index) =>
-        selection.moduleId !== previous.selections[index]?.moduleId || selection.roleId !== previous.selections[index]?.roleId
-        || (selection.version !== undefined && selection.version !== previous.selections[index]?.version))) {
-        throw new Error('Module operation ID is bound to a different applied selection');
-      }
-      return previous;
-    }
-    const st = await this.state(id);
-    if (!st.sdk && !(previous?.operationId === operationId && previous.pendingSelections)) {
-      this.release(st);
-      throw new SessionUnloadedError();
-    }
-    let prepared = false;
-    try {
-      await this.transition(st, async () => {
-        const cwd = st.sdk ? (await st.sdk.rpc.metadata.snapshot()).workingDirectory
-          : (await this.runtime.getSessionMetadata(id))?.context?.workingDirectory;
-        if (!cwd) throw new Error('Native session working directory is unavailable');
-        if (st.sdk && (await st.sdk.rpc.schedule.list()).entries.length) {
-          throw new Error('Session has active schedules; explicitly stop them before applying a different module environment');
-        }
-        if (st.sdk) await this.assertModuleReloadHistory(st.sdk);
-        await modules.prepare(id, cwd, selections, operationId);
-        prepared = true;
-        await this.checkIdle(st);
-        this.applyingModules.add(id);
-        await this.close(st);
-      });
-      await this.ensureLoaded(st, false, undefined, true);
-      const result = await modules.read(id);
-      if (!result || result.phase !== 'applied') throw new Error('Module application was not confirmed');
-      return result;
-    } catch (error) {
-      if (prepared) await modules.failed(id, error);
-      throw error;
-    } finally {
-      this.applyingModules.delete(id);
-      this.bus.emit('activity-settled');
-    }
-  }
-
   async stop(): Promise<void> {
-    if (this.modules?.activeCount?.()) throw new Error('Module lifecycle work is still in progress');
     if (this.failure) {
       this.fail(this.failure);
       await this.runtime.stop();
       this.stopped = true;
       return;
     }
-    if (this.lifecycle || this.births || this.creating.size || this.startPromise || this.removing.size || this.applyingModules.size) throw new Error('Engine lifecycle operation is in progress');
+    if (this.lifecycle || this.births || this.creating.size || this.startPromise || this.removing.size) throw new Error('Engine lifecycle operation is in progress');
     const all = [...this.sessions.values()];
     if (all.some(st => st.closing || st.load || st.operations || st.cancelling)) throw new Error('Session operation is in progress');
     this.lifecycle = true;
@@ -1406,7 +1311,6 @@ export class Engine {
     try {
       for (const st of all) await this.checkIdle(st);
       for (const st of all) { await this.checkIdle(st); await this.close(st); }
-      if (this.modules?.activeCount?.()) throw new Error('Module lifecycle work is still in progress');
       await this.runtime.stop();
       this.started = false;
       this.stopped = true;
@@ -1705,15 +1609,6 @@ export class Engine {
   async reloadSessionMcp(id: string): Promise<{ reconnected: number }> {
     const st = await this.state(id);
     if (!st.sdk) { this.release(st); throw new SessionUnloadedError(); }
-    const binding = await this.modules?.read(id);
-    if (binding?.selections.length) {
-      await this.reload(id);
-      const result = await this.listSessionMcp(id);
-      if (!result.loaded || result.servers.some(server => server.enabled && server.status !== 'connected')) {
-        throw new Error('Pinned module MCP reload was not confirmed');
-      }
-      return { reconnected: result.servers.filter(server => server.status === 'connected').length };
-    }
     return this.transition(st, async () => {
       const sdk = st.sdk;
       if (!sdk) throw new SessionUnloadedError();
@@ -1900,7 +1795,7 @@ export class Engine {
     if (confirm !== true) throw new Error('Permanent deletion is irreversible; explicit confirm:true is required');
     this.assertAvailable();
     if (this.stopped || this.lifecycle || this.startPromise || this.removing.has(id)) throw new Error('Session lifecycle transition is in progress');
-    const productOwned = this.prefs.isPinned(id) || !!this.prefs.inboxEntry(id) || !!await this.modules?.read(id);
+    const productOwned = this.prefs.isPinned(id) || !!this.prefs.inboxEntry(id);
     const st = this.sessions.get(id) ?? (productOwned ? stateFor(id) : await this.state(id));
     this.assertAdmission(st);
     if (this.removing.has(id)) throw new Error('Session removal is in progress');
@@ -1911,8 +1806,6 @@ export class Engine {
         // authoritative; never remove files or preferences to simulate success.
         await this.close(st);
         await this.untilFatal(() => this.runtime.deleteSession(id));
-        try { await this.modules?.removed?.(id); }
-        catch (error) { throw new Error(`Native history deleted; module reference cleanup failed: ${messageOf(error)}`, { cause: error }); }
         try { this.prefs.forgetSession(id); }
         catch (error) { throw new Error(`Native history deleted; preferences cleanup failed: ${messageOf(error)}`); }
         this.sessions.delete(id);

@@ -98,8 +98,7 @@ export function registerGlobalTools(server: McpServer): void {
       description:
         'Use native MCP reload on a loaded idle session to reread definitions and reconnect servers. ' +
         'Native reload reapplies global defaults; temporary session choices may change. ' +
-        'For module-bound sessions, safe close/cold resume restores pinned module MCP and skills; ' +
-        'ordinary sessions use native MCP-only reload. Explicitly load an unloaded target first; ' +
+        'This is native MCP-only reload, not a close/resume. Explicitly load an unloaded target first; ' +
         "do not call it on the currently executing session's own MCP.",
       inputSchema: {
         session_id: z.string().min(1).describe('The session id whose MCP servers to reconnect'),
@@ -109,7 +108,7 @@ export function registerGlobalTools(server: McpServer): void {
     async ({ session_id }): Promise<ToolResult> => {
       try {
         const res = await intent('mcp/reload-session', { sessionId: session_id });
-        return ok(`MCP reload completed for ${session_id}: ${res.reconnected} connected server(s). Pinned module roles, if present, were restored; unrelated temporary choices follow native defaults.`);
+        return ok(`MCP reload completed for ${session_id}: ${res.reconnected} connected server(s). Temporary choices follow native defaults.`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }

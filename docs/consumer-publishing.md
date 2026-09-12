@@ -22,27 +22,20 @@ with built-in Web and locked platform dependencies, not a standalone binary.
 The main closure must include `consumer-runtime.json`, `scripts/consumer/`,
 `packages/core/src/consumer/`, `.delivery/toolkit/lib/artifact.mjs` and the
 existing `.delivery/toolkit/bin/extract.py`. The publisher refuses an archive
-that lacks the no-automatic-migration compatibility declaration,
-`"moduleRunnerApi": 1`, `"moduleRunnerLifecycleApi": 1`,
-`packages/core/src/modules/supervisor-entry.ts`, or
-bootstrap files (including `scripts/consumer/module-runner.mjs`); an old
-private-CD package is not automatically a consumer release. Normal main
-shutdown/restart/update safely drains owned modules and stops that runner before
-main exits. A replacement starts a fresh compatible runner from the new
-verified archive; it does not reuse a resident runner from an older release.
-After main health, restoration uses exact owned service version/digest pins
-captured by the previous confirmed host drain, not catalog role defaults or
-activation permission flags. Main-only updates must not implicitly upgrade
-module services or start merely installed modules. Old runner-only API1 archives lacking the lifecycle declaration
-are not compatible with this lifecycle. All old source releases and runner
-operation histories remain retained; there is no automatic release garbage
-collection or business-data migration.
+that lacks the no-automatic-migration compatibility declaration with
+`"schemaVersion": 2`, `"mainLifecycleApi": 1`, or required bootstrap files.
+An old private-CD package is not automatically a consumer release. The
+core-only launcher manages only the main process and its native safe drain;
+it neither ships a module runner nor restores business services or roles.
+Earlier consumer authority/runtime formats require a separately planned
+replacement, not an automatic migration. Old programs, configuration and
+business records are not deleted or rolled back.
 
 Supply a new publisher specification file:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "channel": "stable",
   "sequence": 1,
   "issuedAt": "2026-09-11T12:00:00.000Z",
@@ -79,12 +72,11 @@ Existing output is
 never overwritten. Failed attempts remain inspectable; the command neither
 retries publication nor claims those files were published.
 
-The signed envelope has the same Ed25519 payload/signature representation as
-module releases. Its sole target is `moduleId: "cockpit"`; this is a **main**
-target, not an additional installable module role. Remaining target fields are
-version, platform, arch, nodeMajor, sourceSha, sha256, bytes and url. Consumer
-verification must use the main-channel schema; the module-only role enum does
-not include `cockpit`.
+The signed envelope contains base64 `payload` bytes and an Ed25519 `signature`.
+Its sole target is `product: "cockpit"`; it describes the main program, not an
+installable role. Remaining target fields are version, platform, arch,
+nodeMajor, sourceSha, sha256, bytes and url. Publisher and consumer share the
+main-channel validator; no module schema or business enum is imported.
 
 An operator provisions the real protected Ed25519 key and consumer pinned public
 key out of band. This repository creates no production signing secret and
@@ -139,9 +131,8 @@ fails the check; clients do not silently fall back to a cached list or retry.
 The discovery JSON is unsigned location information, not trust: clients still
 require the pinned signature, valid timestamps, nondecreasing counter and exact
 same-counter envelope digest. Every new metadata payload, including a renewed
-expiry or changed target URL, needs a new counter. The main and module channels
-use separate appropriate envelope schemas; the optional discovery field works
-for both, without discovering third-party plugins or unrelated repositories.
+expiry or changed target URL, needs a new counter. This is only the main
+channel; it does not discover, install or run third-party plugins.
 
 Existing fixed numeric metadata asset URLs remain usable when
 `metadataAssetName` is omitted, but those fixed references do not discover new

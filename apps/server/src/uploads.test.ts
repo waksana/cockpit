@@ -90,7 +90,7 @@ test('streamed uploads reject overflow, interruption and disk-full without publi
 test('stable source streaming retries retain one original and fail on changed bytes', async () => {
   const dir = join(TEST_ROOT, `source-${randomUUID()}`);
   const storage = await storageAt(dir);
-  const context = { source: 'weixin' as const, sessionId: 'isolated', sourceId: 'message:item:0' };
+  const context = { source: 'org.example.external-feed', sessionId: 'isolated', sourceId: 'message:item:0' };
   const save = () => storage.saveUploadStream(Readable.from([Buffer.from('same bytes')]), 'original.txt', 'text/plain', context);
   const [first, second] = await Promise.all([save(), save()]);
   assert.equal(first.url, second.url);
@@ -98,7 +98,7 @@ test('stable source streaming retries retain one original and fail on changed by
   await assert.rejects(storage.saveUploadStream(Readable.from([Buffer.from('different')]), 'changed.txt', 'text/plain', context), status(409));
   assert.deepEqual(storage.listUploads({}).files.map(file => file.url), [first.url]);
   const resumed = await storageAt(dir);
-  assert.equal(resumed.retainedSource(context)?.url, first.url, 'lookup survives module restart');
+  assert.equal(resumed.retainedSource(context)?.url, first.url, 'lookup survives reloading storage');
   assert.equal(resumed.retainedSource({ ...context, sessionId: 'foreign' }), null);
   rmSync(join(dir, '.metadata', `${first.storedName}.json`));
   assert.equal(resumed.listUploads({}).errors?.[0]?.url, first.url);
@@ -109,9 +109,19 @@ test('stable source streaming retries retain one original and fail on changed by
   await assert.rejects(storage.saveUploadStream(Readable.from([Buffer.from('bad')]), 'bad', '', { ...context, sessionId: '../escape' }), status(400));
 });
 
+test('file sources are generic bounded labels rather than registered module identities', async () => {
+  const storage = await storageAt(join(TEST_ROOT, `source-label-${randomUUID()}`));
+  for (const source of ['web', 'mcp', 'org.example.external-feed', 'historical-source', 'constructor']) {
+    assert.equal(storage.validateUploadContext({ source }).source, source);
+  }
+  for (const source of ['', '../escape', 'bad source', 'source\n', 'x'.repeat(121)]) {
+    assert.throws(() => storage.validateUploadContext({ source }), status(400));
+  }
+});
+
 test('an overlapping same-source retry can recover after the earlier stream fails', async () => {
   const storage = await storageAt(join(TEST_ROOT, `retry-${randomUUID()}`));
-  const context = { source: 'weixin' as const, sessionId: 'fixture', sourceId: 'retry-0' };
+  const context = { source: 'org.example.external-feed', sessionId: 'fixture', sourceId: 'retry-0' };
   let release!: () => void;
   const interrupted = new Promise<void>(resolve => { release = resolve; });
   async function* firstBody() {

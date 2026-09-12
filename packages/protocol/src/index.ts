@@ -6,12 +6,6 @@
 import { z } from 'zod';
 import { ConsumerOperationId, ConsumerOperation, ConsumerStatus } from './consumer.ts';
 export { ConsumerOperationId, ConsumerOperation, ConsumerStatus, ConsumerIdentity } from './consumer.ts';
-import { ModuleId, ModuleSelections, SessionModules, ModuleStatus, ModuleConfig, ModuleReleaseMetadata, ModuleUpdateOperation, ModuleServiceCommand, ModuleServiceRequest, ModuleServiceJob, ModuleServiceId, ModuleServiceStatus, ModuleInitializationRequest, ModuleInitializationOperation, ModuleUnbindOperation } from './modules.ts';
-export { ModuleId, ModuleSelection, ModuleSelections, AppliedModuleSelection, SessionModules, ModuleStatus, ModuleConfig } from './modules.ts';
-export { ModuleReleaseTarget, ModuleReleaseMetadata, SignedModuleRelease, ModuleUpdateOperation } from './modules.ts';
-export { ModuleServiceCommand, ModuleServiceRequest, ModuleServiceJob, ModuleServiceId, ModuleServiceIdentity, ModuleServiceStatus } from './modules.ts';
-export { ModuleInitializationRequest, ModuleInitializationOperation } from './modules.ts';
-export { ModuleUnbindOperation } from './modules.ts';
 export { DeliveryStatus } from './delivery-status.ts';
 
 export { CHAT_EVENT_TYPES, NativeChatEvent, NativeChatRead, NativeChatPage, NativeChatStreamRequest, NativeChatStreamEvent } from './native-chat.ts';
@@ -115,7 +109,7 @@ export const UploadedFile = Attachment.extend({
   storedName: z.string().optional(),
   createdAt: z.number().int().nonnegative().optional(),
   sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  source: z.enum(['web', 'mcp', 'weixin', 'tool-image']).optional(),
+  source: z.string().min(1).max(120).regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$(?![\s\S])/).optional(),
   sessionId: z.string().optional(),
   sourceId: z.string().optional(),
   sessions: z.array(z.string()).optional(),
@@ -758,102 +752,9 @@ export const Intents = {
     result: ConsumerStatus,
   },
   'system/consumer/restart': {
-    description: 'Explicitly restart this consumer-owned installation through its single stable launcher. Drain owned modules and native work safely, then restore only captured service releases. The original operation ID is retained; accepted is not completion. No force, data rollback or retry of unknown effects. Web, MCP and admin/restart share this operation.',
+    description: 'Explicitly restart this consumer-owned installation through its single stable launcher after native work drains safely. The original operation ID is retained; accepted is not completion. No force, data rollback or retry of unknown effects. Web, MCP and admin/restart share this operation.',
     body: z.object({ operationId: ConsumerOperationId, confirm: z.literal(true) }).strict(),
     result: z.object({ operation: ConsumerOperation }),
-  },
-  'modules/updates/check': {
-    description: 'Explicitly fetch and verify the configured official signed channel. No scheduler, downloads or installation are enabled by this check.',
-    body: z.object({}).strict(), result: ModuleReleaseMetadata,
-  },
-  'modules/updates/status': {
-    description: 'Read retained module update operation results. Interrupted work is unknown, never an automatic retry or a claimed installed version.',
-    body: z.object({}).strict(), result: z.object({ operations: z.array(ModuleUpdateOperation) }),
-  },
-  'modules/updates/get': {
-    description: 'Read one retained installation operation by its original identity. No downloads, replay or changes to version selection.',
-    body: z.object({ operationId: z.string().min(8).max(120).regex(/^[a-zA-Z0-9_-]+$/) }).strict(),
-    result: z.object({ operation: ModuleUpdateOperation.nullable() }),
-  },
-  'modules/updates/install': {
-    description: 'Install exactly one checked publisher-signed archive into an immutable module release directory. No service activation or session role application; preserves prior versions and data.',
-    body: z.object({ moduleId: ModuleId, version: z.string(), sha256: z.string().regex(/^[a-f0-9]{64}$/),
-      operationId: z.string().min(8).max(120).regex(/^[a-zA-Z0-9_-]+$/) }).strict(),
-    result: ModuleUpdateOperation,
-  },
-  'modules/updates/reconcile': {
-    description: 'Explicitly inspect an unknown installation and record its verified outcome without downloading, installing, selecting a version or restarting anything. Refuses an existing operation lock. Retains partial packages and data; never replays the original operation.',
-    body: z.object({ moduleId: ModuleId, operationId: z.string().min(8).max(120).regex(/^[a-zA-Z0-9_-]+$/),
-      confirm: z.literal(true) }).strict(),
-    result: ModuleUpdateOperation,
-  },
-  'modules/list': {
-    description: 'Read installed official modules and live service readiness on demand. Selected, installed and running versions are distinct. Explicit checkAvailability invokes optional module admission checks: only an authoritatively missing old target may have its active reference cleared. No slot is reserved, no session is created, and unknown results never imply absence.',
-    body: z.object({ cwd: z.string().optional(), checkAvailability: z.boolean().optional() }).strict(),
-    result: z.object({ modules: z.array(ModuleStatus) }),
-  },
-  'modules/install': {
-    description: 'Install an official module from the trusted shipped catalog. No arbitrary source path or install script. Does not enable services, change global settings or apply it to existing sessions.',
-    body: z.object({ moduleId: ModuleId }).strict(),
-    result: z.object({ module: ModuleStatus }),
-  },
-  'modules/uninstall': {
-    description: 'Unregister an unused module while preserving configuration and data. Refuses active service or session references; no user file deletion.',
-    body: z.object({ moduleId: ModuleId, confirm: z.literal(true) }).strict(),
-    result: z.object({ ok: z.literal(true) }),
-  },
-  'modules/config/get': {
-    description: 'Read module configuration references, never credential contents.',
-    body: z.object({ moduleId: ModuleId }).strict(),
-    result: ModuleConfig,
-  },
-  'modules/install/local': {
-    description: 'Install an exact version and inventory digest from the host allowlisted local source, with a durable operation identity. No caller paths, implicit retries or global role injection. Read the same operation using modules/updates/get; local operation sha256 denotes inventory identity, not an archive or remote publisher signature.',
-    body: ModuleServiceCommand.pick({ operationId: true }).extend({
-      moduleId: ModuleId, version: ModuleServiceCommand.shape.version.unwrap(),
-      digest: ModuleServiceCommand.shape.digest.unwrap(),
-    }).strict(),
-    result: ModuleUpdateOperation,
-  },
-  'modules/config/set': {
-    description: 'Explicitly change validated module configuration with a revision precondition. Does not move data, start services or bind a channel implicitly.',
-    body: ModuleConfig.strict(),
-    result: ModuleConfig,
-  },
-  'modules/config/initialize': {
-    description: 'Explicitly initialize a fresh Task module data directory through its declared release hook. Never adopts existing data, starts a service or issues a session caller. A fixed operation is readback-only after submission; unknown initialization is not retried.',
-    body: ModuleInitializationRequest,
-    result: z.object({ operation: ModuleInitializationOperation }),
-  },
-  'modules/config/initialization': {
-    description: 'Read one original configuration initialization operation without invoking its hook or minting credentials again.',
-    body: z.object({ operationId: ModuleServiceCommand.shape.operationId }).strict(),
-    result: z.object({ operation: ModuleInitializationOperation.nullable() }),
-  },
-  'modules/service': {
-    description: 'Submit one stable operation to the independent managed-module runner. Start/apply require an exact installed version and digest. Acceptance is not readiness. Read the same operation after timeout; never automatically replay. Explicit recovery may only stop with recoveryOf and confirmRecovery:true when status.canRecoverStop permits; it preserves the original uncertain job and never starts a replacement. External services retain their authority; no force stop.',
-    body: ModuleServiceRequest,
-    result: z.object({ job: ModuleServiceJob }),
-  },
-  'modules/service/job': {
-    description: 'Read one managed-module operation without starting, retrying or recovering it. A missing receipt does not prove an in-flight request was never accepted.',
-    body: ModuleServiceCommand.pick({ operationId: true }),
-    result: z.object({ job: ModuleServiceJob.nullable() }),
-  },
-  'modules/service/status': {
-    description: 'Read the independent runner and actual same-instance module identity. Does not adopt an external or orphaned process.',
-    body: z.object({ moduleId: ModuleServiceId }).strict(),
-    result: ModuleServiceStatus,
-  },
-  'modules/wechat/unbind': {
-    description: 'Release the connector-owned unique session binding at its safe boundary. Does not delete sessions, credentials or data; never replays unknown sends.',
-    body: z.object({ sessionId: z.string().min(1), operationId: z.string().min(8).max(120), confirm: z.literal(true) }).strict(),
-    result: z.object({ ok: z.literal(true) }),
-  },
-  'modules/wechat/unbind/get': {
-    description: 'Read one retained explicit WeChat unbind operation without invoking a hook, inspecting native cwd or inferring success from a missing current binding.',
-    body: z.object({ operationId: ModuleUnbindOperation.shape.operationId }).strict(),
-    result: z.object({ operation: ModuleUnbindOperation.nullable() }),
   },
   'session/chat': {
     description: 'Read one native event page without a server chat cache or projection. max counts events, not display messages or bytes. Keep source/direction with opaque cursors. Passive reads do not load sessions; live reads require an existing handle. Bootstrap captures a live cursor before a fresh backward page. An expired cursor is not a continuation. Binary tool media is omitted, never automatically retained; no image locators are generated. Native image lookup is retired: upload an existing local original or reuse a managed /uploads file.',
@@ -866,20 +767,9 @@ export const Intents = {
     result: Snapshot,
   },
   'session/new': {
-    description: 'Create one native Copilot session, optionally configuring installed module roles. Returns only the real native ID and sends no message; Web, MCP and Task then use prompt with that ID. Module failures after confirmed creation retain its ID; never recreate on an uncertain result. Empty sessions may disappear after unload. No global or project role files are written.',
-    body: z.object({ cwd: z.string().min(1), modules: ModuleSelections.optional() }).strict(),
+    description: 'Create one native Copilot session using its working directory and native configuration discovery. Returns the real native ID without sending a message; Web and MCP then use prompt with that ID. Never recreate on an uncertain result. Empty sessions may disappear after unload. No module roles or global/project files are written.',
+    body: z.object({ cwd: z.string().min(1) }).strict(),
     result: z.object({ sessionId: z.string() }),
-  },
-  'session/modules/get': {
-    description: 'Read user-selected and successfully applied module versions, not a native MCP/skill state snapshot.',
-    body: z.object({ sessionId: z.string().min(1) }).strict(),
-    result: z.object({ modules: SessionModules.nullable() }),
-  },
-  'session/modules/apply': {
-    description: 'Explicitly apply installed module roles at a native safe-idle boundary. Reconnects pinned MCP/skills and updates role configuration without clearing context or replaying tasks. Partial failures retain the session and pending selection; do not retry an uncertain operation.',
-    body: z.object({ sessionId: z.string().min(1), selections: ModuleSelections,
-      operationId: z.string().min(8).max(120).regex(/^[a-zA-Z0-9_-]+$/) }).strict(),
-    result: z.object({ modules: SessionModules }),
   },
   'session/fork': {
     description: 'Native history fork from a loaded, idle session. Optional toEventId is a root user.message event ID from session history, excluded from the child; omit for full history. Rejects unfinished boundaries and any inherited schedule history. Returns a new unloaded session ID; no prompt is sent. Native fork appends an informational record to the parent. Model/mode follow native persisted history; skills/MCP use cold-resume defaults, not a complete configuration clone. cwd/files are shared, not a worktree. Non-idempotent: on an uncertain error inspect session/list and source history before any retry.',
@@ -1110,7 +1000,7 @@ export const Intents = {
   },
   // Native reload updates one loaded session and re-applies global defaults.
   'mcp/reload-session': {
-    description: 'Reload MCP connections on an idle loaded session. Module-bound sessions safely close/cold resume to restore pinned module roles; ordinary sessions use native MCP-only reload. Unrelated temporary choices may revert to native global defaults.',
+    description: 'Reload MCP connections on an idle loaded session through native MCP reload. Temporary session choices may revert to native global defaults. Does not load, close or replace the session.',
     body: z.object({ sessionId: z.string() }),
     result: z.object({ ok: z.boolean(), reconnected: z.number() }),
   },

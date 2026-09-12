@@ -1,7 +1,6 @@
 // Lifecycle tools: create, permanently delete, unload, and reload sessions.
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { ModuleSelections } from '@cockpit/protocol';
 import { CockpitError, protocolIntent as intent } from '../cockpit.js';
 import { ok, fail, type ToolResult } from '../shared.js';
 
@@ -14,24 +13,21 @@ export function registerLifecycleTools(server: McpServer): void {
       description:
         'Create a new Copilot session rooted at a working directory (its cwd, which sets the ' +
         'project identity and which AGENTS.md/skills apply). Returns the new session id. ' +
-        'Uses the same session/new API as Web and Task. It configures selected roles and returns the real native ID; ' +
+        'Uses the same session/new API as Web and returns the real native ID; ' +
         'it never sends a message. Send subsequent content with cockpit_send_prompt to that ID. ' +
         'An empty session with no first message may not survive unload. ' +
         'A persisted session can be resumed with its original ID; a missing one is never silently recreated. ' +
-        'Optional modules explicitly compose installed roles without global injection. Use modules/list with checkAvailability:true before selecting, ' +
-        'as in the Web creation form; this does not reserve a slot. ' +
-        'Module failure retains a session/operation identity; inspect it rather than recreating blindly. ' +
+        'Uses native configuration discovery without product role injection. Do not retry an uncertain creation. ' +
         'Reading history does not load a runtime. Use cockpit_list_dir to pick a cwd.',
-      inputSchema: {
+      inputSchema: z.object({
         cwd: z.string().min(1).describe('Absolute working directory for the new session'),
-        modules: ModuleSelections.optional().describe('Explicit installed module roles; omitted means no module role'),
-      },
+      }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ cwd, modules }): Promise<ToolResult> => {
+    async ({ cwd }): Promise<ToolResult> => {
       try {
         const res = await intent('session/new', {
-          cwd, ...(modules ? { modules } : {}),
+          cwd,
         });
         return ok(
           `Created session ${res.sessionId} (cwd: ${cwd}).`,
@@ -51,7 +47,6 @@ export function registerLifecycleTools(server: McpServer): void {
         'IRREVERSIBLE. Delete a session through the public native Copilot deleteSession API. ' +
         'Only run when permanent deletion is intended, with explicit confirm:true. ' +
         'Managed files, file associations and workspaces are retained. Busy sessions are protected. ' +
-        'Deletion does not invoke module unbind hooks or broadcast to modules. Modules detect missing targets when used. ' +
         'Never automatically retry an uncertain result.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id to permanently delete'),

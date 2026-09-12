@@ -25,7 +25,7 @@ export async function verifyConsumerBootstrap({ archive, envelopeFile, publicKey
   }
   await mkdir(destination, { mode: 0o700 });
   execFileSync('python3', ['-c',
-    'import os,sys,zipfile\nexpected={"cli.mjs","launcher.mjs","state.mjs","channel.mjs","archive.mjs","module-runner.mjs","release-transport.mjs","artifact.mjs","extract.py"}\nwith zipfile.ZipFile(sys.argv[1]) as z:\n entries=z.infolist()\n if len(entries)!=len(expected) or {x.filename for x in entries}!=expected or sum(x.file_size for x in entries)>2*1024*1024: raise ValueError("Invalid bootstrap contents")\n for entry in entries:\n  with open(os.path.join(sys.argv[2],entry.filename),"xb") as out: out.write(z.read(entry))',
+    'import os,sys,zipfile\nexpected={"cli.mjs","launcher.mjs","state.mjs","channel.mjs","archive.mjs","release-transport.mjs","artifact.mjs","extract.py"}\nwith zipfile.ZipFile(sys.argv[1]) as z:\n entries=z.infolist()\n if len(entries)!=len(expected) or {x.filename for x in entries}!=expected or sum(x.file_size for x in entries)>2*1024*1024: raise ValueError("Invalid bootstrap contents")\n for entry in entries:\n  with open(os.path.join(sys.argv[2],entry.filename),"xb") as out: out.write(z.read(entry))',
     archive, destination], { stdio: 'pipe' });
   return { verified: true, sourceSha, destination };
 }

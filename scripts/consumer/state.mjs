@@ -84,8 +84,10 @@ export function loadAuthority(root) {
     catch (error) { if (error.code !== 'ENOENT') throw error; }
   }
   const authority = readJson(join(root, 'authority.json'));
-  if (authority.schemaVersion !== 1 || authority.authority !== 'consumer' || authority.root !== root
-    || !/^[a-f0-9-]{36}$/.test(authority.installationId)) throw new Error('Missing/invalid explicit consumer authority marker');
+  if (authority.schemaVersion !== 2 || authority.authority !== 'consumer' || authority.root !== root
+    || !/^[a-f0-9-]{36}$/.test(authority.installationId)) {
+    throw new Error('Consumer authority v2 required; older installations are not adopted or migrated automatically');
+  }
   privateDirectory(authority.userRoot);
   privateDirectory(join(authority.userRoot, 'logs'));
   if (overlaps(root, authority.userRoot) || overlaps(root, authority.nativeHome)

@@ -20,8 +20,7 @@ async function fixture(t) {
     'apps/web/dist/index.html': '<html>fixture</html>',
     'packages/core/src/index.ts': 'export {};\n',
     'packages/protocol/src/index.ts': 'export {};\n',
-    'consumer-runtime.json': '{"schemaVersion":1,"dataCompatibility":"cockpit-user-root-v1","automaticDataMigrations":false,"moduleRunnerApi":1,"moduleRunnerLifecycleApi":1}',
-    'packages/core/src/modules/supervisor-entry.ts': '// Publisher archive fixture only.',
+    'consumer-runtime.json': '{"schemaVersion":2,"dataCompatibility":"cockpit-core-user-root-v2","automaticDataMigrations":false,"mainLifecycleApi":1}',
     'node_modules/dependency/data/a real path with spaces.txt': 'real CI archives include spaces\n',
   };
   for (const path of Object.values(bootstrapFiles)) files[path] = await readFile(join(scripts, '..', path), 'utf8');
@@ -38,7 +37,7 @@ async function fixture(t) {
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   const keyFile = join(root, 'fixture-only-signing-key.pem');
   await writeFile(keyFile, privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
-  const specification = { schemaVersion: 1, channel: 'stable', sequence: 7, version: '1.2.3', sourceSha,
+  const specification = { schemaVersion: 2, channel: 'stable', sequence: 7, version: '1.2.3', sourceSha,
     issuedAt: new Date().toISOString(), expiresAt: new Date(Date.now() + 60_000).toISOString(),
     url: 'https://publisher.example/releases/cockpit-linux-x64.zip' };
   const metadataFile = join(root, 'metadata.json');
@@ -62,7 +61,7 @@ test('consumer publisher signs actual ZIP digest and preserves CI tar bytes and 
   const payload = Buffer.from(envelope.payload, 'base64');
   assert.equal(verify(null, payload, f.publicKey, Buffer.from(envelope.signature, 'base64')), true);
   const signed = JSON.parse(payload.toString());
-  assert.equal(signed.targets[0].moduleId, 'cockpit');
+  assert.equal(signed.targets[0].product, 'cockpit');
   assert.deepEqual(signed.targets[0], result.target);
   assert.equal(signed.sequence, 7);
   const bootstrap = JSON.parse(await readFile(result.bootstrapEnvelope, 'utf8'));
@@ -109,15 +108,23 @@ test('consumer publisher rejects modified inventory, wrong source, version and e
 test('consumer publisher rejects stale metadata and non-HTTPS release destinations', async t => {
   const f = await fixture(t);
   await writeFile(f.metadataFile, JSON.stringify({ ...f.specification, expiresAt: '2000-01-01T00:00:00.000Z' }));
-  await assert.rejects(packageConsumerRelease(f), /validity interval/);
+  await assert.rejects(packageConsumerRelease(f), /expired/);
   await writeFile(f.metadataFile, JSON.stringify({ ...f.specification, url: 'http://publisher.example/release.zip' }));
   await assert.rejects(packageConsumerRelease(f), /HTTPS/);
 });
 
-test('publisher refuses a main package incompatible with the owned runner API', async t => {
+test('main publishing retains strict metadata types without depending on a module schema', async t => {
   const f = await fixture(t);
-  await writeFile(join(f.source, 'consumer-runtime.json'), JSON.stringify({ schemaVersion: 1,
-    automaticDataMigrations: false, dataCompatibility: 'cockpit-user-root-v1', moduleRunnerApi: 2 }));
+  for (const fields of [{ issuedAt: 1 }, { expiresAt: true }, { issuedAt: 'September 12, 2026' }, { unexpected: true }]) {
+    await writeFile(f.metadataFile, JSON.stringify({ ...f.specification, ...fields }));
+    await assert.rejects(packageConsumerRelease(f), /consumer release metadata/);
+  }
+});
+
+test('publisher refuses a main package incompatible with the owned lifecycle API', async t => {
+  const f = await fixture(t);
+  await writeFile(join(f.source, 'consumer-runtime.json'), JSON.stringify({ schemaVersion: 2,
+    automaticDataMigrations: false, dataCompatibility: 'cockpit-core-user-root-v2', mainLifecycleApi: 2 }));
   const path = join(f.source, 'delivery-manifest.json'), manifest = JSON.parse(await readFile(path, 'utf8'));
   await rm(path);
   await writeFile(path, JSON.stringify({ ...manifest, files: await inventory(f.source) }));
@@ -125,15 +132,15 @@ test('publisher refuses a main package incompatible with the owned runner API', 
   await assert.rejects(packageConsumerRelease(f), /API1/);
 });
 
-test('publisher refuses an old resident-runner archive without owned lifecycle compatibility', async t => {
+test('publisher refuses an old archive rather than implicitly migrating its runtime contract', async t => {
   const f = await fixture(t);
   await writeFile(join(f.source, 'consumer-runtime.json'), JSON.stringify({ schemaVersion: 1,
-    automaticDataMigrations: false, dataCompatibility: 'cockpit-user-root-v1', moduleRunnerApi: 1 }));
+    automaticDataMigrations: false, dataCompatibility: 'cockpit-user-root-v1' }));
   const path = join(f.source, 'delivery-manifest.json'), manifest = JSON.parse(await readFile(path, 'utf8'));
   await rm(path);
   await writeFile(path, JSON.stringify({ ...manifest, files: await inventory(f.source) }));
   execFileSync('tar', ['-czf', f.runtime, '-C', f.source, '.']);
-  await assert.rejects(packageConsumerRelease(f), /lifecycle|API1/);
+  await assert.rejects(packageConsumerRelease(f), /compatibility declaration/);
 });
 
 test('private GitHub two-pass publication changes signed asset URL without changing the uploaded main ZIP', async t => {
@@ -156,6 +163,6 @@ test('optional actual CI runtime archive is consumed without rebuilding or repac
   const f = await fixture(t);
   const result = await packageConsumerRelease({ ...f, runtime: process.env.COCKPIT_CONSUMER_RUNTIME_ARCHIVE,
     metadataFile: process.env.COCKPIT_CONSUMER_PUBLISH_SPEC });
-  assert.equal(result.target.moduleId, 'cockpit');
+  assert.equal(result.target.product, 'cockpit');
   assert.ok(result.target.bytes > 0);
 });

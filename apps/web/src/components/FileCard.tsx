@@ -9,13 +9,15 @@ import { InternalLink } from './InternalLink';
 import { sessionPath } from '../lib/routeOwnership';
 
 type ManagedCardFile = Attachment & Partial<Pick<UploadedFile, 'source' | 'sessionId' | 'sessions' | 'sourceId' | 'sha256' | 'path'>>;
-const SOURCE_LABELS = { web: 'Web 上传', mcp: 'AI / MCP 上传', weixin: '微信接收', 'tool-image': '明确保留的工具图片' };
+const sourceLabels = new Map([
+  ['web', 'Web 上传'], ['mcp', 'AI / MCP 上传'], ['tool-image', '明确保留的工具图片'],
+]);
 
 function FileProvenance({ file }: { file: ManagedCardFile }) {
   const sessions = useCockpit(state => state.sessions);
   const associated = file.sessions ?? (file.sessionId ? [file.sessionId] : []);
   return <span className="managed-file-details">
-    <span>来源：{file.source ? SOURCE_LABELS[file.source] : '未记录'}</span>
+    <span>来源：{file.source ? sourceLabels.get(file.source) ?? file.source : '未记录'}</span>
     {associated.map(id => <span key={id}>关联会话：
       <InternalLink href={sessionPath(id)}>{sessions.find(session => session.sessionId === id)?.title || id}</InternalLink>
     </span>)}

@@ -7,7 +7,7 @@ import { isAbsolute, join, resolve } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { verifyArtifact } from '../.delivery/toolkit/lib/artifact.mjs';
-import { ModuleReleaseMetadata, ModuleReleaseTarget } from '../packages/protocol/src/modules.ts';
+import { validateConsumerMetadata } from './consumer/channel.mjs';
 
 const extractor = fileURLToPath(new URL('../.delivery/toolkit/bin/extract.py', import.meta.url));
 const maxBytes = 400 * 1024 * 1024;
@@ -15,7 +15,6 @@ export const bootstrapFiles = Object.freeze({
   'cli.mjs': 'scripts/consumer/cli.mjs', 'launcher.mjs': 'scripts/consumer/launcher.mjs',
   'state.mjs': 'scripts/consumer/state.mjs', 'channel.mjs': 'scripts/consumer/channel.mjs',
   'archive.mjs': 'scripts/consumer/archive.mjs',
-  'module-runner.mjs': 'scripts/consumer/module-runner.mjs',
   'release-transport.mjs': 'packages/core/src/consumer/release-transport.mjs',
   'artifact.mjs': '.delivery/toolkit/lib/artifact.mjs', 'extract.py': '.delivery/toolkit/bin/extract.py',
 });
@@ -51,17 +50,12 @@ export async function packageConsumerRelease({ runtime, metadataFile, keyFile, o
   }
   const specification = JSON.parse(await readFile(metadataFile, 'utf8'));
   const { version, sourceSha, url, ...channel } = specification;
-  const metadata = ModuleReleaseMetadata.omit({ targets: true }).strict().parse(channel);
-  ModuleReleaseTarget.omit({ moduleId: true }).strict().parse({
-    version, sourceSha, url, platform: 'linux', arch: 'x64', nodeMajor: 24,
-    sha256: '0'.repeat(64), bytes: 1,
-  });
   https(url);
-  const now = Date.now();
-  if (Date.parse(metadata.issuedAt) > now + 300_000 || Date.parse(metadata.expiresAt) <= now
-    || Date.parse(metadata.expiresAt) <= Date.parse(metadata.issuedAt)) {
-    throw new Error('Publisher metadata validity interval is invalid');
-  }
+  if ('targets' in channel) throw new Error('Publisher metadata must not supply its own targets');
+  const metadata = validateConsumerMetadata({ ...channel, targets: [{
+    product: 'cockpit', version, sourceSha, url, platform: 'linux', arch: 'x64', nodeMajor: 24,
+    sha256: '0'.repeat(64), bytes: 1,
+  }] }, [new URL(url).origin]);
   const keyStat = await lstat(keyFile);
   if (!keyStat.isFile() || keyStat.isSymbolicLink() || keyStat.nlink !== 1 || keyStat.size > 16_384
     || keyStat.uid !== process.getuid() || (keyStat.mode & 0o077)) {
@@ -87,20 +81,19 @@ export async function packageConsumerRelease({ runtime, metadataFile, keyFile, o
     execFileSync('python3', [extractor, archive, extracted], { stdio: 'pipe' });
     const manifest = await verifyArtifact(extracted, { format: 1, sourceSha });
     for (const relative of ['apps/server/src/index.ts', 'apps/server/package.json', 'apps/web/dist/index.html',
-      'packages/core/src/index.ts', 'packages/core/src/modules/supervisor-entry.ts', 'packages/protocol/src/index.ts']) {
+      'packages/core/src/index.ts', 'packages/protocol/src/index.ts']) {
       if (!(await stat(join(extracted, relative))).isFile()) throw new Error(`Main release omits ${relative}`);
     }
     const mainPackage = JSON.parse(await readFile(join(extracted, 'apps/server/package.json'), 'utf8'));
     if (mainPackage.version !== version) throw new Error('Publisher version differs from packaged server version');
     const compatibility = JSON.parse(await readFile(join(extracted, 'consumer-runtime.json'), 'utf8'));
-    if (compatibility.schemaVersion !== 1 || compatibility.automaticDataMigrations !== false
+    if (compatibility.schemaVersion !== 2 || compatibility.automaticDataMigrations !== false
       || !/^[a-zA-Z0-9_.-]{1,100}$/.test(compatibility.dataCompatibility)) throw new Error('Missing consumer data/config compatibility declaration');
-    if (compatibility.moduleRunnerApi !== 1) throw new Error('Consumer publisher requires module runner API1 compatibility');
-    if (compatibility.moduleRunnerLifecycleApi !== 1) throw new Error('Consumer publisher requires module runner lifecycle API1 compatibility');
+    if (compatibility.mainLifecycleApi !== 1) throw new Error('Consumer publisher requires owned main lifecycle API1 compatibility');
     const bytes = (await stat(archive)).size;
     if (bytes > maxBytes) throw new Error('Consumer archive exceeds signed transport limit');
     const { sha256 } = await digest(archive);
-    const target = { moduleId: 'cockpit', version, platform: 'linux', arch: 'x64', nodeMajor: 24,
+    const target = { product: 'cockpit', version, platform: 'linux', arch: 'x64', nodeMajor: 24,
       sourceSha, sha256, bytes, url };
     const bootstrapDirectory = join(verifyRoot, 'bootstrap');
     await mkdir(bootstrapDirectory, { mode: 0o700 });

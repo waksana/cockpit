@@ -382,7 +382,7 @@ test('registry exposes foundation, native schedules, manual settings and files, 
   assert.equal(new Set(names).size, names.length);
   assert.equal(names.some((name) => /hook|flow|gate|spawned/.test(name)), false);
   const newSession = tools.find(({ name }) => name === 'cockpit_new_session');
-  assert.deepEqual(Object.keys(newSession?.inputSchema.properties ?? {}), ['cwd', 'modules']);
+  assert.deepEqual(Object.keys(newSession?.inputSchema.properties ?? {}), ['cwd']);
   assert.deepEqual(newSession?.inputSchema.required, ['cwd']);
   assert.equal(requests.length, 0, 'registry construction must not read HTTP or local state');
 });
@@ -673,13 +673,12 @@ test('session creation forwards cwd only and fixed service tools preserve confir
   assert.ok(requests.every((request) => request.authorization === 'Bearer session-test-token'));
 });
 
-test('MCP module creation and prompt match the Web API sequence without virtual state or hidden requests', async () => {
-  const modules = [{ moduleId: 'assistant', roleId: 'assistant', version: '1.0.0' }];
-  const created = await call('cockpit_new_session', { cwd: '/remote/cwd', modules });
+test('MCP native creation and prompt match the Web API sequence without virtual state or hidden requests', async () => {
+  const created = await call('cockpit_new_session', { cwd: '/remote/cwd' });
   assert.equal(created.isError, false);
   assert.match(created.text, /Created session new-id/);
   assert.deepEqual(requests.map(({ path, body }) => ({ path, body })), [
-    { path: '/intent/session/new', body: { cwd: '/remote/cwd', modules } },
+    { path: '/intent/session/new', body: { cwd: '/remote/cwd' } },
   ]);
   const sent = await call('cockpit_send_prompt', { session_id: 'new-id', text: 'First real message' });
   assert.equal(sent.isError, false, sent.text);
@@ -705,6 +704,12 @@ test('permanent delete requires explicit confirmation and retired trash tools ar
   assert.deepEqual(requests.map(r => ({ path: r.path, body: r.body })), [
     { path: '/intent/session/purge', body: { sessionId: 'B', confirm: true } },
   ]);
+});
+
+test('retired module choices are rejected rather than silently ignored by MCP creation', async () => {
+  const result = await call('cockpit_new_session', { cwd: '/remote/cwd', modules: [] });
+  assert.equal(result.isError, true);
+  assert.equal(requests.length, 0);
 });
 
 test('delete aliases issue one native deletion without module preflight or retries', async () => {

@@ -23,8 +23,8 @@ export function initialize({ root, userRoot = join(homedir(), '.cockpit'), chann
   validateChannel(channel);
   checkFreshDirectory(root);
   checkFreshDirectory(userRoot);
-  if (Buffer.byteLength(join(root, 'control.sock')) > 100 || Buffer.byteLength(join(userRoot, '.module-runner.sock')) > 103) {
-    throw new Error('Installation/user root is too long for the private Unix control sockets');
+  if (Buffer.byteLength(join(root, 'control.sock')) > 100) {
+    throw new Error('Installation root is too long for the private Unix control socket');
   }
   freshDirectory(root);
   freshDirectory(userRoot);
@@ -32,7 +32,7 @@ export function initialize({ root, userRoot = join(homedir(), '.cockpit'), chann
   for (const directory of ['launcher', 'releases', 'downloads', 'checks', 'operations', 'staging', 'assets']) {
     mkdirSync(join(root, directory), { mode: 0o700 });
   }
-  for (const directory of ['modules', 'module-config', 'data', 'logs']) mkdirSync(join(userRoot, directory), { mode: 0o700 });
+  mkdirSync(join(userRoot, 'logs'), { mode: 0o700 });
   for (const name of readdirSync(source).filter(name => name.endsWith('.mjs') && !name.endsWith('.test.mjs'))) {
     copyFileSync(join(source, name), join(root, 'launcher', name));
   }
@@ -43,7 +43,7 @@ export function initialize({ root, userRoot = join(homedir(), '.cockpit'), chann
     join(root, 'launcher/artifact.mjs'));
   copyFileSync(stable ? join(source, 'extract.py') : join(source, '../../.delivery/toolkit/bin/extract.py'),
     join(root, 'launcher/extract.py'));
-  const authority = { schemaVersion: 1, authority: 'consumer', installationId, root, userRoot,
+  const authority = { schemaVersion: 2, authority: 'consumer', installationId, root, userRoot,
     nativeHome: nativeHome(), port, createdAt: new Date().toISOString() };
   writeJson(configPath(authority), { channel }, true);
   writeJson(join(userRoot, '.consumer-installation.json'), { installationId, root }, true);
@@ -220,36 +220,11 @@ export async function connectConsumerLifecycle(requestNativeDrain, env = process
   return () => process.off('message', onMessage);
 }
 
-/** Called by the backend's native shutdown gate, before closing its API or runtime. */
-export async function prepareConsumerExit(env = process.env) {
-  const root = consumerRootFromEnvironment(env), instanceId = env.COCKPIT_CONSUMER_INSTANCE;
-  if (typeof instanceId !== 'string' || !/^[a-f0-9-]{36}$/.test(instanceId)) {
-    throw new Error('Consumer exit requires the exact owned backend instance');
-  }
-  const operationId = `consumer-exit-${instanceId}-${randomUUID()}`;
-  let receipt;
-  try { receipt = await callLauncher(root, { action: 'prepare-exit', operationId, instanceId }); }
-  catch (error) { throw new Error(`Consumer exit ${operationId} is unconfirmed; inspect it without retry: ${error.message}`); }
-  for (;;) {
-    if (receipt?.kind !== 'prepare-exit' || receipt.operationId !== operationId
-      || receipt.oldIdentity?.instanceId !== instanceId) throw new Error('Unexpected consumer exit acknowledgement; main must remain available');
-    if (receipt.state === 'ready-to-exit') return receipt;
-    if (!['waiting-modules', 'draining-modules'].includes(receipt.state)) {
-      throw new Error(receipt.error ?? `Consumer module drain is ${receipt.state}; inspect ${operationId}, do not retry`);
-    }
-    await new Promise(resolve => setTimeout(resolve, 250));
-    receipt = await callLauncher(root, { action: 'exit-status', operationId, instanceId });
-  }
-}
-
 export function unlock(root) {
   loadAuthority(root);
   const lock = join(root, 'launcher.lock');
   const owner = readJson(join(lock, 'owner.json'));
   if (processStillExists(owner)) throw new Error('Launcher is still alive; cannot replace its authority');
-  if (existsSync(join(root, 'module-runner.json')) && readJson(join(root, 'module-runner.json')).state !== 'stopped') {
-    throw new Error('Module runner ownership is live or unknown; cannot abandon it or its module children');
-  }
   const runtime = existsSync(join(root, 'runtime.json')) ? readJson(join(root, 'runtime.json')) : null;
   if (runtime && runtime.state !== 'exited') {
     if (!runtime.process) throw new Error('Child spawn outcome unknown; operator investigation required, not automatic unlock');

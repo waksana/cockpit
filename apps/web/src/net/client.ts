@@ -2,7 +2,7 @@
 // projections remain in the browser; typed POSTs also serve older event pages.
 
 import { ServerEvent, Intents, NativeChatStreamRequest } from '@cockpit/protocol';
-import type { Attachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction, NativeChatPage, ModuleSelection } from '@cockpit/protocol';
+import type { Attachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction, NativeChatPage } from '@cockpit/protocol';
 import { EVENTS_URL, CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { reportUxError, describeReason } from '../lib/errorReporter';
 import { consumeChatStream } from './chatStream';
@@ -209,7 +209,7 @@ export class NetClient {
   }
 
   // --- typed intent helpers --------------------------------------------------
-  newSession(cwd: string, modules?: ModuleSelection[]) { return this.intent('session/new', { cwd, ...(modules?.length ? { modules } : {}) }); }
+  newSession(cwd: string) { return this.intent('session/new', { cwd }); }
   forkSession(sessionId: string) { return this.intent('session/fork', { sessionId }); }
   chat(body: IntentBody<'session/chat'>, signal?: AbortSignal) { return this.intent('session/chat', body, signal); }
   async chatStream(

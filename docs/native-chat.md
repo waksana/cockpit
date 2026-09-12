@@ -261,7 +261,7 @@ projection. There is no separate native-image history lookup or tail scan.
 `session/history`, `session/peek` and `session/subagent-history` are retired.
 Their HTTP requests return `410 CHAT_PROTOCOL_CHANGED`; message IDs and old
 HMAC resume tokens are not translated by scanning history. Native event pages
-replace these contracts for Web, MCP and the Weixin consumer.
+replace these contracts for Web, MCP and other API consumers.
 
 The session plan keeps native plan text and todos. The old changed-files list,
 which depended on replaying the complete transcript, has been removed.
@@ -332,15 +332,6 @@ reconnection delivered two new child events with no old history read. An upward
 prefetch read the remaining 15 events once. Reconnection preserved its reading
 anchor exactly; the older prepend differed by 0.27 CSS pixels after layout.
 These are browser/transport fixtures, not native disk-I/O measurements.
-
-Weixin delivery reads at most 64 native events per page. If that page contains
-events after the first deliverable reply, one bounded prefix read obtains the
-native cursor immediately after that reply. Empty/non-message pages advance too.
-A not-yet-delivered reply keeps its pre-page position so final evidence can be
-reread precisely without scanning the conversation. Existing legacy
-checkpoints are drained through one bounded migration window before adopting a
-native tail; an absent anchor stops migration instead of skipping or resending
-unknown output.
 
 This chat transport does not make inherently history-wide operations into
 point queries. For example, existing fork safety preflight checks inherited

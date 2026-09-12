@@ -312,8 +312,6 @@ export default function App() {
       <Route path="/mcp/:item" element={<ManageWorkspace />} />
       <Route path="/skills" element={<ManageWorkspace />} />
       <Route path="/skills/:item" element={<ManageWorkspace />} />
-      <Route path="/flows/*" element={<Navigate to="/" replace />} />
-      <Route path="/workers/*" element={<Navigate to="/" replace />} />
       <Route path="/session/:sessionId/automation" element={<LegacyAutomationRedirect />} />
       <Route path="/session/:sessionId" element={<Workspace />} />
       <Route path="/session/:sessionId/:panel" element={<Workspace />} />

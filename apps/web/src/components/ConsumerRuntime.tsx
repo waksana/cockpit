@@ -15,7 +15,7 @@ function savedOperation(): { id?: string; error?: string } {
 }
 
 export function ConsumerRuntime({ children }: { children?: ReactNode }) {
-  const intent = useCockpit(state => state.moduleIntent);
+  const intent = useCockpit(state => state.consumerIntent);
   const [saved, setSaved] = useState(savedOperation);
   const read = useCallback((signal: AbortSignal) => intent('system/consumer/status',
     { ...(saved.id ? { operationId: saved.id } : {}) }, signal), [intent, saved.id]);
@@ -27,7 +27,7 @@ export function ConsumerRuntime({ children }: { children?: ReactNode }) {
   const blocked = Boolean(status?.activeOperationId || (saved.id && (!operation || !terminal)));
   const restart = () => {
     if (!status || blocked || action.busy || !status.mainLifecycleReady) return;
-    if (!window.confirm('通过当前安装的独立启动器安全重启本体及正在运行的模块？忙碌工作会继续等待，不强停、不升级模块版本、不重发消息。')) return;
+    if (!window.confirm('通过当前安装的独立启动器安全重启本体？忙碌工作会继续等待，不强停、不重发消息。')) return;
     void action.run(async () => {
       const operationId = crypto.randomUUID();
       localStorage.setItem(key, operationId);
@@ -41,7 +41,7 @@ export function ConsumerRuntime({ children }: { children?: ReactNode }) {
     {saved.error && <p role="alert">{saved.error}</p>}
     {resource.status && <p role={resource.failed ? 'alert' : 'status'}>{resource.status}</p>}
     {status && <>
-      <p>本体实际状态：{status.health} · 运行器：{status.moduleRunnerState}</p>
+      <p>本体实际状态：{status.health}</p>
       {status.runtime ? <p>当前版本：<code>{status.runtime.version} · {status.runtime.sha}</code>
         <br />实例：<code>{status.runtime.instanceId}</code></p>
         : <p>当前运行版本尚未确认，不使用安装目录或旧回执替代。</p>}
@@ -53,7 +53,7 @@ export function ConsumerRuntime({ children }: { children?: ReactNode }) {
     <button type="button" className="dialog-btn" disabled={!resource.connected || resource.pending || Boolean(saved.error)}
       onClick={() => { void resource.refresh(); }}>读取实际运行 / 原操作</button>
     <button type="button" className="dialog-btn" disabled={!status || blocked || action.busy || !status.mainLifecycleReady}
-      onClick={restart}>安全重启本体及运行中的模块</button>
+      onClick={restart}>安全重启本体</button>
     {(saved.id || saved.error) && <button type="button" className="dialog-btn" disabled={action.busy} onClick={() => {
       try { localStorage.removeItem(key); setSaved({}); }
       catch { setSaved({ ...saved, error: '本地操作引用无法清除，未发送任何请求。' }); }

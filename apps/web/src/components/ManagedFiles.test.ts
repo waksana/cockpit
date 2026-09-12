@@ -40,7 +40,7 @@ test('extensionless source-stable uploads use authoritative MIME rather than nam
 
 test('authoritative file cards expose provenance and integrity without leaking local paths', () => {
   const html = renderToStaticMarkup(createElement(FileCard, { file: {
-    ...video, path: '/private/original-path.mp4', source: 'weixin', sessionId: 'A', sha256: 'a'.repeat(64),
+    ...video, path: '/private/original-path.mp4', source: 'org.example.external-feed', sessionId: 'A', sha256: 'a'.repeat(64),
   } }));
   assert.match(html, /来源与完整性/);
   assert.match(html, /aria-expanded="false"/);

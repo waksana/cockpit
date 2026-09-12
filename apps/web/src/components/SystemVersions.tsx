@@ -11,7 +11,7 @@ export function ConsumerLifecycleNotice() {
     <p>Consumer 安装：下方安全重启与 MCP / API 使用同一独立启动器和原操作 ID。
       本体下载安装仍使用独立启动器 CLI；不使用 private-CD 接管消费者安装。</p>
     <p>运行身份中的 authority=consumer 与 installationId 仅说明安装归属，不代表重启或更新能力已可用。
-      模块服务的启动/安全停止不是 Cockpit 主程序重启；原有 private-CD 流程不变。</p>
+      原有 private-CD 流程不变，不接管消费者安装。</p>
   </aside>;
 }
 
@@ -57,7 +57,7 @@ export function SystemVersions({ status, error, loading, onRefresh, onClose }: {
       </ConsumerRuntime>
       <details><summary>MCP 与 Skill 更新边界</summary>
         <p>MCP 未来启动入口随发布包更新。现有连接实际载入版本若未提供身份则未知；不能声称所有外部 MCP 已更新。
-          Cockpit 的安全重启只影响其管理的连接。已接入模块的会话恢复绑定版本；其余临时开关可能按原生全局默认重置。</p>
+          Cockpit 的安全重启只影响其管理的连接。临时开关可能按原生全局默认重置。</p>
         <p>Skill 文件与引用刷新原生发现后供后续使用。已进入模型上下文的旧指令不会因文件刷新或服务重启被抹除；本页不推测每个 agent 的上下文版本。</p>
       </details>
       <p className="system-version-detail">进程 /version 与交付 runner 分别提供版本和更新状态；不把 main HEAD、restart 布尔值或旧结果当作运行版本。本页仅在打开和刷新时读取。</p>

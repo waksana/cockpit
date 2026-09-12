@@ -7,8 +7,14 @@ export function validateChannel(channel) {
 
 export function verifyConsumerMetadata(envelope, channel, floor = 0, now = Date.now()) {
   const metadata = verifyEnvelope(envelope, validateChannel(channel));
-  if (!metadata || metadata.schemaVersion !== 1 || metadata.channel !== 'stable'
+  return validateConsumerMetadata(metadata, channel.allowedDownloadOrigins, floor, now);
+}
+
+export function validateConsumerMetadata(metadata, allowedDownloadOrigins, floor = 0, now = Date.now()) {
+  if (!metadata || metadata.schemaVersion !== 2 || metadata.channel !== 'stable'
     || !Number.isSafeInteger(metadata.sequence) || metadata.sequence < 1
+    || !['issuedAt', 'expiresAt'].every(field => typeof metadata[field] === 'string'
+      && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$(?![\s\S])/.test(metadata[field]))
     || !Array.isArray(metadata.targets) || metadata.targets.length > 30
     || Object.keys(metadata).some(key => !['schemaVersion', 'channel', 'sequence', 'issuedAt', 'expiresAt', 'targets'].includes(key))) {
     throw new Error('Invalid consumer release metadata');
@@ -20,14 +26,14 @@ export function verifyConsumerMetadata(envelope, channel, floor = 0, now = Date.
   }
   const seen = new Set();
   for (const target of metadata.targets) {
-    if (target.moduleId !== 'cockpit' || !/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(target.version)
+    if (!target || target.product !== 'cockpit' || !/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(target.version)
       || target.platform !== 'linux' || target.arch !== 'x64' || target.nodeMajor !== 24
       || !/^[a-f0-9]{40}$/.test(target.sourceSha) || !/^[a-f0-9]{64}$/.test(target.sha256)
       || !Number.isSafeInteger(target.bytes) || target.bytes < 1 || target.bytes > 400 * 1024 * 1024
-      || Object.keys(target).some(key => !['moduleId', 'version', 'platform', 'arch', 'nodeMajor', 'sourceSha', 'sha256', 'bytes', 'url'].includes(key))) {
+      || Object.keys(target).some(key => !['product', 'version', 'platform', 'arch', 'nodeMajor', 'sourceSha', 'sha256', 'bytes', 'url'].includes(key))) {
       throw new Error('Invalid Linux x64 Node24 main release target');
     }
-    if (!channel.allowedDownloadOrigins.includes(secureReleaseUrl(target.url).origin)) throw new Error('Target origin outside local policy');
+    if (!allowedDownloadOrigins.includes(secureReleaseUrl(target.url).origin)) throw new Error('Target origin outside local policy');
     if (seen.has(target.version)) throw new Error('Ambiguous consumer release version');
     seen.add(target.version);
   }

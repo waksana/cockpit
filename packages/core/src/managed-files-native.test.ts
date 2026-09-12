@@ -43,7 +43,7 @@ test('managed original files reach the isolated native attachment parser and per
       }
       requests.push(text);
       const body = JSON.parse(text);
-      const answer = 'Synthetic parser receipt; no real model or Weixin delivery was exercised.';
+      const answer = 'Synthetic parser receipt; no remote model or external delivery was exercised.';
       const toolCount = body.messages.filter((message: { role: string }) => message.role === 'tool').length;
       const tool = body.tools?.find((item: { function: { name: string } }) => item.function.name === 'view' || item.function.name.endsWith('__view'));
       const toolCall = toolCount < mediaPaths.length ? {
@@ -84,10 +84,10 @@ test('managed original files reach the isolated native attachment parser and per
     const { normalizeEvent } = await import('./sdk-types.ts');
     const token = 'managed-file-native-parser-unique-fixture';
     const file = await saveUploadStream(Readable.from([Buffer.from(token)]), 'original.txt', 'text/plain',
-      { source: 'weixin', sessionId: 'fixture', sourceId: 'text-0' });
+      { source: 'org.example.external-feed', sessionId: 'fixture', sourceId: 'text-0' });
     const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC1sAAAAASUVORK5CYII=', 'base64');
     const image = await saveUploadStream(Readable.from([png]), 'misnamed-image.txt', 'image/png',
-      { source: 'weixin', sessionId: 'fixture', sourceId: 'image-1' });
+      { source: 'org.example.external-feed', sessionId: 'fixture', sourceId: 'image-1' });
     assert.equal(image.name, 'misnamed-image.txt');
     assert.ok(image.path.endsWith('.png'), 'byte-verified suffix lets native view recognize the image without renaming the original');
     mediaPaths.push(file.path, image.path);

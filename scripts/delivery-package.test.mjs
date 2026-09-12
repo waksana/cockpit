@@ -11,6 +11,7 @@ test('the committed runtime closure includes bundled skills instead of relying o
   const config = JSON.parse(await readFile(join(repository, 'service-delivery.json'), 'utf8'));
   assert.ok(config.build.artifactPaths.includes('skills'), 'Root bundled skills must be packaged');
   assert.ok(config.build.artifactPaths.includes('packages/core/src'), 'Packaged core must resolve its own skill directory');
+  assert.equal(config.build.artifactPaths.includes('modules'), false, 'Business module payloads are not main artifacts');
 });
 
 test('archive guard accepts complete fixtures and rejects omitted skills or broken references', {
@@ -50,6 +51,8 @@ test('actual release archive resolves bundled skills and readable local referenc
   const entries = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).trim().split('\n');
   assert.ok(entries.every(path => !path.startsWith('/') && !path.split('/').includes('..')));
   assert.ok(entries.includes('./skills/self-context-reset/SKILL.md'), 'Actual archive omits self-context-reset');
+  assert.equal(entries.some(path => /^\.\/(?:modules\/|packages\/core\/src\/modules\/.+|scripts\/consumer\/module-runner\.mjs$)/.test(path)),
+    false, 'Actual main archive must not ship business modules or their retired runtime');
   const root = await mkdtemp(join(tmpdir(), 'cockpit-skill-package-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   execFileSync('tar', ['-xzf', archive, '-C', root, './skills', './packages/core/src/paths.ts', './delivery-manifest.json']);

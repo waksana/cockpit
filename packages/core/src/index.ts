@@ -5,7 +5,3 @@ export { foldEvent, newFoldState, type FoldState } from './fold.ts';
 export { cockpitHome, copilotPath } from './paths.ts';
 export { normalizeEvent, type SdkEvent, type RuntimeAttachment } from './sdk-types.ts';
 export { createContextReset, CONTEXT_RESET_TOOL } from './context-reset.ts';
-export { ModuleManager, type ModuleManagerOptions } from './modules/manager.ts';
-export { ModuleCatalog, validateModuleManifest } from './modules/catalog.ts';
-export { ModuleRunnerClient } from './modules/supervisor.ts';
-export { OwnedModuleLifecycle, type OwnedModuleLifecycleStatus } from './modules/owned-lifecycle.ts';

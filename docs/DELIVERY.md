@@ -60,9 +60,11 @@ project-config bytes, trusted config hashes or existing immutable release
 identities, and does not request a deployment.
 On 2026-09-12 the user explicitly authorized making Cockpit, Task and the
 WeChat connector source repositories public. The private production control
-plane, credentials and runtime data remain private. Official module downloads
-use the public signed [Release channel](module-releases.md), not users'
-access to publisher CI artifacts or the private deployment controller.
+plane, credentials and runtime data remain private. The subsequent core-only
+cleanup removes module packaging and consumption from this repository; the
+[basic future module contract](module-contract-draft.md) does not reopen them.
+Main-program [consumer publishing](consumer-publishing.md) remains separate from
+private deployment authority and does not require consumers to access CI artifacts.
 `.github/workflows/delivery-ci.yml` validates/builds a fixed SHA on push and on
 explicit workflow dispatch. A push builds only. Authenticated toolkit `submit`
 dispatches a named request; `.github/workflows/delivery-transfer.yml` transports

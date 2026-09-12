@@ -19,14 +19,14 @@ test('consumer lifecycle notice separates shared safe restart from CLI-only inst
   assert.match(html, /独立启动器 CLI/);
   assert.match(html, /本体下载安装仍使用/);
   assert.match(html, /authority=consumer 与 installationId 仅说明安装归属/);
-  assert.match(html, /模块服务的启动\/安全停止不是 Cockpit 主程序重启/);
+  assert.doesNotMatch(html, /模块服务/);
   assert.doesNotMatch(html, /<button|<a /);
 });
 
-test('system and module version views both display the boundary and never post the old restart API', () => {
-  for (const path of ['./SystemVersions.tsx', './Modules.tsx']) {
-    const source = readFileSync(new URL(path, import.meta.url), 'utf8');
-    assert.match(source, /<ConsumerLifecycleNotice \/>/);
-    assert.doesNotMatch(source, /admin\/restart|service\/restart|willRestartWhenIdle/);
-  }
+test('system versions display the consumer boundary without exposing retired module management', () => {
+  const source = readFileSync(new URL('./SystemVersions.tsx', import.meta.url), 'utf8');
+  const navigation = readFileSync(new URL('./GlobalNavigation.tsx', import.meta.url), 'utf8');
+  assert.match(source, /<ConsumerLifecycleNotice \/>/);
+  assert.doesNotMatch(source, /admin\/restart|service\/restart|willRestartWhenIdle/);
+  assert.doesNotMatch(navigation, /ModuleList|modulesOpen|模块管理/);
 });

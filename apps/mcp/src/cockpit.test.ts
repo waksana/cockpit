@@ -65,7 +65,7 @@ test('consumer mutation uncertainty stays an error while passive original-operat
     assert.throws(() => assertIntentSuccess(value, 'system/consumer/restart'), /original-restart/);
     assert.deepEqual(assertIntentSuccess(value, 'system/consumer/status'), value);
   }
-  const accepted = { operation: { state: 'draining-modules' } };
+  const accepted = { operation: { state: 'waiting-idle' } };
   assert.deepEqual(assertIntentSuccess(accepted, 'system/consumer/restart'), accepted);
 });
 

@@ -11,8 +11,7 @@
 // COCKPIT_UPLOAD_DIR(S), COCKPIT_SESSION_STORE, COCKPIT_SESSION_STATE_DIR, …) which
 // take precedence where set; COCKPIT_HOME only moves the default base they fall back
 // to. Read at call time so a test or launcher can set COCKPIT_HOME before use.
-// Official module programs/config/data use the separate COCKPIT_USER_ROOT
-// (default ~/.cockpit). Installing modules does not migrate this native root.
+// The consumer launcher's COCKPIT_USER_ROOT is separate from this native root.
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';

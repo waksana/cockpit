@@ -12,7 +12,7 @@
   "build": {
     "argv": ["pnpm", "build"],
     "artifactPaths": [
-      "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "node_modules", "skills", "modules",
+      "package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "node_modules", "skills",
       "consumer-runtime.json", "scripts/consumer",
       ".delivery/toolkit/bin/extract.py", ".delivery/toolkit/lib/artifact.mjs",
       "apps/server/package.json", "apps/server/src", "apps/server/node_modules",

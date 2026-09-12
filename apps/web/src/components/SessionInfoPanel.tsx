@@ -88,7 +88,6 @@ function ModelControls({ session, onSetModel, disabled }: {
   );
 }
 
-import { SessionModuleVersions } from './Modules';
 
 export interface SessionInfoPanelProps {
   session: ChatSession;
@@ -127,7 +126,6 @@ function InfoDetails({ session, models, onClose, onSetModel }: SessionInfoPanelP
         onSetModel={(model, opts) => { void action.run(() => onSetModel(model, opts)); }} />}
       {action.error && <div className="info-empty" role="alert">设置失败：{action.error}</div>}
       <PermissionPolicy />
-      <SessionModuleVersions sessionId={sid} />
     </PanelPageShell>
   );
 }

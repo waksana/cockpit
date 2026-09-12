@@ -9,7 +9,7 @@ import {
   Intents, SessionMeta, Snapshot, ServerEvent, UploadedFile, attachmentPrompt, unreadSessionCount,
   type IntentBody, type IntentName, type PushDelivery, type PushStatus, type PushSubscriptionJson,
 } from '@cockpit/protocol';
-import type { ServerEngine, ServerPush, ModuleIntentHandlers } from './index.ts';
+import type { ServerEngine, ServerPush } from './index.ts';
 import { isIntentName } from './capabilities.ts';
 import { readNativeChat } from '../../../packages/core/src/native-chat.ts';
 import { Engine } from '../../../packages/core/src/engine.ts';
@@ -84,11 +84,6 @@ const engine: ServerEngine & { attentionCount(): number } = {
   rewind: async (...args) => record('rewind', args, undefined),
   setMode: async (...args) => record('setMode', args, undefined),
   deleteSession: async (...args) => record('deleteSession', args, undefined),
-  sessionModules: async (...args) => record('sessionModules', args, null),
-  applySessionModules: async (...args) => record('applySessionModules', args, {
-    sessionId: args[0], selections: args[1].map(selection => ({ ...selection, version: selection.version ?? '1.0.0' })),
-    phase: 'applied' as const, operationId: args[2],
-  }),
   unload: (...args) => record('unload', args, undefined),
   load: async (...args) => record('load', args, undefined),
   reload: async (...args) => record('reload', args, undefined),
@@ -182,61 +177,10 @@ const fakePush: ServerPush = {
     throw new Error('tests must not send notifications');
   },
 };
-const moduleFixture = {
-  id: 'assistant' as const, name: 'Assistant', description: 'Test-only module',
-  installed: [{ version: '1.0.0', digest: 'a'.repeat(64) }], selectedVersion: '1.0.0',
-  roles: [], service: { ownership: 'none' as const, status: 'stopped' as const },
-};
-const moduleConfigFixture = { moduleId: 'assistant' as const, revision: 0, configVersion: 1, values: {} };
-const initializeConfigFixture = { moduleId: 'task' as const, operationId: 'module-initialize-1', version: '1.2.3',
-  digest: 'a'.repeat(64), gatewayUrl: 'https://cockpit.test', confirm: true as const };
-const initializingConfigFixture = { moduleId: initializeConfigFixture.moduleId, operationId: initializeConfigFixture.operationId,
-  version: initializeConfigFixture.version, digest: initializeConfigFixture.digest, gatewayUrl: initializeConfigFixture.gatewayUrl,
-  phase: 'preparing' as const, updatedAt: 1 };
-const localInstallFixture = { moduleId: 'assistant' as const, version: '1.0.0', digest: 'c'.repeat(64), operationId: 'local-install-1' };
-const serviceCommandFixture = { moduleId: 'task' as const, action: 'start' as const,
-  operationId: 'service-start-0001', version: '1.2.0', digest: 'b'.repeat(64) };
-const serviceJobFixture = { schemaVersion: 1 as const,
-  command: { id: 'task' as const, action: 'start' as const, operationId: 'service-start-0001', version: '1.2.0', digest: 'b'.repeat(64) },
-  phase: 'accepted' as const, step: 'queued' as const, acceptedAt: '2026-09-11T10:00:00Z', updatedAt: '2026-09-11T10:00:00Z' };
-const fakeModules: ModuleIntentHandlers = {
-  'modules/list': async body => record('modules/list', [body], { modules: [moduleFixture] }),
-  'modules/install': async body => record('modules/install', [body], { module: moduleFixture }),
-  'modules/install/local': async body => record('modules/install/local', [body], {
-    moduleId: body.moduleId, version: body.version, operationId: body.operationId, sha256: body.digest,
-    source: 'local', state: 'succeeded', updatedAt: 1, installedDigest: body.digest,
-  }),
-  'modules/uninstall': async body => record('modules/uninstall', [body], { ok: true }),
-  'modules/config/get': async body => record('modules/config/get', [body], moduleConfigFixture),
-  'modules/config/set': async body => record('modules/config/set', [body], body),
-  'modules/config/initialize': async body => record('modules/config/initialize', [body], { operation: initializingConfigFixture }),
-  'modules/config/initialization': async body => record('modules/config/initialization', [body], { operation: initializingConfigFixture }),
-  'modules/service': async body => record('modules/service', [body], { job: serviceJobFixture }),
-  'modules/service/job': async body => record('modules/service/job', [body], { job: serviceJobFixture }),
-  'modules/service/status': async body => record('modules/service/status', [body],
-    { id: body.moduleId, status: 'stopped', owned: false, recoveryRequired: false }),
-  'modules/wechat/unbind': async body => record('modules/wechat/unbind', [body], { ok: true }),
-  'modules/wechat/unbind/get': async body => record('modules/wechat/unbind/get', [body], {
-    operation: { operationId: body.operationId, sessionId: 's', state: 'succeeded' },
-  }),
-  'modules/updates/check': async body => record('modules/updates/check', [body], {
-    schemaVersion: 1, channel: 'stable', sequence: 1,
-    issuedAt: '2026-09-11T00:00:00.000Z', expiresAt: '2026-09-12T00:00:00.000Z', targets: [],
-  }),
-  'modules/updates/status': async body => record('modules/updates/status', [body], { operations: [] }),
-  'modules/updates/get': async body => record('modules/updates/get', [body], { operation: null }),
-  'modules/updates/install': async body => record('modules/updates/install', [body], {
-    ...body, state: 'unknown', updatedAt: 1,
-  }),
-  'modules/updates/reconcile': async body => record('modules/updates/reconcile', [body], {
-    moduleId: body.moduleId, operationId: body.operationId, version: '1.0.0', sha256: 'a'.repeat(64),
-    state: 'failed', updatedAt: 1, error: 'Verified target is not installed',
-  }),
-};
-setTestDependencies({ engine, push: fakePush, modules: fakeModules });
+setTestDependencies({ engine, push: fakePush });
 
 beforeEach(() => {
-  setTestDependencies({ engine, push: fakePush, modules: fakeModules });
+  setTestDependencies({ engine, push: fakePush });
   sessions = [busySession];
   calls.length = 0;
   subscriptions.clear();
@@ -253,11 +197,10 @@ after(async () => {
 });
 
 type Case = { body: unknown; method: string | null; args: unknown[] };
-const consumerOperation = { operationId: 'consumer-restart-fixture', kind: 'restart', state: 'draining-modules', updatedAt: '2026-09-12T00:00:00Z' };
+const consumerOperation = { operationId: 'consumer-restart-fixture', kind: 'restart', state: 'waiting-idle', updatedAt: '2026-09-12T00:00:00Z' };
 const fakeConsumer: ConsumerControl = {
   status: async (...args) => record('consumerStatus', args, { available: false, reason: 'Isolated fixture' } as const),
   restart: async (...args) => record('consumerRestart', args, consumerOperation),
-  prepareExit: async () => { assert.fail('This read/restart fixture must not close native runtime'); },
   connect: async () => { assert.fail('This no-boot fixture must not connect a real launcher'); },
 };
 const cases = {
@@ -265,38 +208,7 @@ const cases = {
   'system/consumer/restart': { body: { operationId: consumerOperation.operationId, confirm: true },
     method: 'consumerRestart', args: [consumerOperation.operationId] },
   'runtime/snapshot': { body: {}, method: 'snapshot', args: [] },
-  'session/new': { body: { cwd: '/fixture' }, method: 'newSession', args: ['/fixture', undefined] },
-  'session/modules/get': { body: { sessionId: 's' }, method: 'sessionModules', args: ['s'] },
-  'session/modules/apply': {
-    body: { sessionId: 's', selections: [], operationId: 'apply-modules-1' },
-    method: 'applySessionModules', args: ['s', [], 'apply-modules-1'],
-  },
-  'modules/list': { body: {}, method: 'modules/list', args: [{}] },
-  'modules/install': { body: { moduleId: 'assistant' }, method: 'modules/install', args: [{ moduleId: 'assistant' }] },
-  'modules/uninstall': { body: { moduleId: 'assistant', confirm: true }, method: 'modules/uninstall',
-    args: [{ moduleId: 'assistant', confirm: true }] },
-  'modules/config/get': { body: { moduleId: 'assistant' }, method: 'modules/config/get', args: [{ moduleId: 'assistant' }] },
-  'modules/config/set': { body: moduleConfigFixture, method: 'modules/config/set', args: [moduleConfigFixture] },
-  'modules/install/local': { body: localInstallFixture, method: 'modules/install/local', args: [localInstallFixture] },
-  'modules/config/initialize': { body: initializeConfigFixture, method: 'modules/config/initialize', args: [initializeConfigFixture] },
-  'modules/config/initialization': { body: { operationId: 'module-initialize-1' }, method: 'modules/config/initialization',
-    args: [{ operationId: 'module-initialize-1' }] },
-  'modules/service': { body: serviceCommandFixture, method: 'modules/service', args: [serviceCommandFixture] },
-  'modules/service/job': { body: { operationId: 'service-start-0001' }, method: 'modules/service/job',
-    args: [{ operationId: 'service-start-0001' }] },
-  'modules/service/status': { body: { moduleId: 'task' }, method: 'modules/service/status', args: [{ moduleId: 'task' }] },
-  'modules/wechat/unbind': { body: { sessionId: 's', operationId: 'unbind-session-1', confirm: true },
-    method: 'modules/wechat/unbind', args: [{ sessionId: 's', operationId: 'unbind-session-1', confirm: true }] },
-  'modules/wechat/unbind/get': { body: { operationId: 'unbind-session-1' },
-    method: 'modules/wechat/unbind/get', args: [{ operationId: 'unbind-session-1' }] },
-  'modules/updates/check': { body: {}, method: 'modules/updates/check', args: [{}] },
-  'modules/updates/status': { body: {}, method: 'modules/updates/status', args: [{}] },
-  'modules/updates/get': { body: { operationId: 'install-module-1' }, method: 'modules/updates/get', args: [{ operationId: 'install-module-1' }] },
-  'modules/updates/reconcile': { body: { moduleId: 'assistant', operationId: 'install-module-1', confirm: true },
-    method: 'modules/updates/reconcile', args: [{ moduleId: 'assistant', operationId: 'install-module-1', confirm: true }] },
-  'modules/updates/install': { body: { moduleId: 'assistant', version: '1.0.0', sha256: 'a'.repeat(64), operationId: 'install-module-1' },
-    method: 'modules/updates/install',
-    args: [{ moduleId: 'assistant', version: '1.0.0', sha256: 'a'.repeat(64), operationId: 'install-module-1' }] },
+  'session/new': { body: { cwd: '/fixture' }, method: 'newSession', args: ['/fixture'] },
   'session/fork': { body: { sessionId: 's', toEventId: 'user-event', name: 'Child' }, method: 'forkSession', args: ['s', 'user-event', 'Child'] },
   'session/chat': {
     body: Intents['session/chat'].body.parse({ sessionId: 's', cursor: 'native-before', max: 12 }),
@@ -364,7 +276,7 @@ for (const [name, fixture] of Object.entries(cases)) {
     assert.ok(isIntentName(name));
     assert.equal(Intents[name].body.safeParse(fixture.body).success, true);
     if (name === 'push/test') subscriptions.set(subscription.endpoint, subscription);
-    if (name.startsWith('system/consumer/')) setTestDependencies({ engine, push: fakePush, modules: fakeModules, consumer: fakeConsumer });
+    if (name.startsWith('system/consumer/')) setTestDependencies({ engine, push: fakePush, consumer: fakeConsumer });
     const inputParse = t.mock.method(Intents[name].body, 'safeParse');
     const outputParse = t.mock.method(Intents[name].result, 'safeParse');
     const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: fixture.body });
@@ -404,7 +316,7 @@ test('session/load surfaces readiness failure without reload, prompt or replacem
   });
 
   test('typed consumer restart and public MCP admin transport share one retained launcher operation', async () => {
-    setTestDependencies({ engine, push: fakePush, modules: fakeModules, consumer: fakeConsumer });
+    setTestDependencies({ engine, push: fakePush, consumer: fakeConsumer });
     const body = { operationId: consumerOperation.operationId, confirm: true };
     const typed = await app.inject({ method: 'POST', url: '/intent/system/consumer/restart', payload: body });
     const admin = await app.inject({ method: 'POST', url: '/admin/restart', payload: { operationId: body.operationId, pending: true } });
@@ -423,9 +335,9 @@ test('session/load surfaces readiness failure without reload, prompt or replacem
 
   test('consumer cancellation never clears or pretends to undo the launcher drain', async () => {
     const status = { available: true as const, installationId: '11111111-1111-4111-8111-111111111111',
-      health: 'stopped' as const, runtime: null, mainLifecycleReady: true, moduleRunnerState: 'draining',
+      health: 'stopped' as const, runtime: null, mainLifecycleReady: true,
       activeOperationId: consumerOperation.operationId, operation: consumerOperation };
-    setTestDependencies({ engine, push: fakePush, modules: fakeModules,
+    setTestDependencies({ engine, push: fakePush,
       consumer: { ...fakeConsumer, status: async () => status } });
     const response = await app.inject({ method: 'POST', url: '/admin/restart', payload: { pending: false } });
     assert.equal(response.statusCode, 409);
@@ -1248,16 +1160,11 @@ test('old soft-delete requests cannot silently become permanent deletion', async
   }
 });
 
-test('session/new does not pass an obsolete worker label as module selection', async () => {
+test('session/new rejects an obsolete worker label before native creation', async () => {
   const body = { cwd: '/fixture', spawnedBy: 'obsolete' };
   const response = await app.inject({ method: 'POST', url: '/intent/session/new', payload: body });
-  if (Intents['session/new'].body.safeParse(body).success) {
-    assert.equal(response.statusCode, 200, response.body);
-    assert.deepEqual(calls, [{ method: 'newSession', args: ['/fixture', undefined] }]);
-  } else {
-    assert.equal(response.statusCode, 400, response.body);
-    assert.deepEqual(calls, []);
-  }
+  assert.equal(response.statusCode, 400, response.body);
+  assert.deepEqual(calls, []);
 });
 
 test('unknown, inherited, and retired intent paths are 404 without engine calls', async () => {
@@ -1267,6 +1174,8 @@ test('unknown, inherited, and retired intent paths are 404 without engine calls'
     'flow/add', 'flow/list', 'flow/remove', 'flow/write-gate', 'flow/run', 'flow/unknown',
     'flow-schedule/add', 'flow-schedule/list', 'flow-schedule/stop', 'flow-schedule/unknown',
     'session/set-spawned-by', 'session/restore', 'session/trash-list',
+    'modules/list', 'modules/install', 'modules/updates/check', 'modules/service', 'modules/config/set',
+    'modules/wechat/unbind', 'session/modules/get', 'session/modules/apply',
   ]) {
     const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: {} });
     assert.equal(response.statusCode, 404, `${name}: ${response.body}`);
@@ -1308,12 +1217,11 @@ test('retired virtual creation and module deletion previews have no transport or
 });
 
 test('native create and prompt are separate one-call operations with no hidden message or identity', async () => {
-  const modules = [{ moduleId: 'assistant', roleId: 'assistant' }];
   const created = await app.inject({ method: 'POST', url: '/intent/session/new',
-    payload: { cwd: '/fixture', modules } });
+    payload: { cwd: '/fixture' } });
   assert.equal(created.statusCode, 200, created.body);
   assert.deepEqual(created.json(), { sessionId: 'created' });
-  assert.deepEqual(calls, [{ method: 'newSession', args: ['/fixture', modules] }]);
+  assert.deepEqual(calls, [{ method: 'newSession', args: ['/fixture'] }]);
   const response = await app.inject({ method: 'POST', url: '/intent/prompt',
     payload: { sessionId: created.json().sessionId, text: 'The real first message' } });
   assert.equal(response.statusCode, 200, response.body);
@@ -1324,7 +1232,7 @@ test('native create and prompt are separate one-call operations with no hidden m
 test('managed files preserve originals, source identity, session associations and safe seek downloads', async () => {
   const bytes = Buffer.concat([Buffer.from('000000186674797069736f6d0000000069736f6d6d703432', 'hex'), Buffer.alloc(160, 7)]);
   const query = new URLSearchParams({ name: 'movie original.mp4', mime: 'video/mp4',
-    source: 'weixin', sessionId: 's', sourceId: 'fixture-message:item-0' });
+    source: 'org.example.external-feed', sessionId: 's', sourceId: 'fixture-message:item-0' });
   const send = (payload = bytes) => app.inject({ method: 'POST', url: `/upload?${query}`,
     headers: { 'content-type': 'application/octet-stream' }, payload });
   const first = await send();
@@ -1332,7 +1240,7 @@ test('managed files preserve originals, source identity, session associations an
   const file = UploadedFile.parse(first.json());
   assert.equal(file.mime, 'video/mp4');
   assert.equal(file.kind, 'file');
-  assert.equal(file.source, 'weixin');
+  assert.equal(file.source, 'org.example.external-feed');
   assert.equal(file.sha256?.length, 64);
   assert.deepEqual((await send()).json(), file, 'identical source retry returns original retained identity');
   assert.equal((await send(Buffer.from('different bytes'))).statusCode, 409);
