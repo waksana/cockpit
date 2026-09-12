@@ -56,4 +56,15 @@ function waitForDrain() {
   draining = false;
   server.close(() => process.exit(config().drainExitCode ?? 0));
 }
-setTimeout(() => server.listen(Number(process.env.COCKPIT_MODULE_PORT), '127.0.0.1'), config().startupDelayMs ?? 0);
+const startupTimer = setTimeout(() => server.listen(Number(process.env.COCKPIT_MODULE_PORT), '127.0.0.1'), config().startupDelayMs ?? 0);
+let fixtureClosing = false;
+function finishFixture() {
+  if (fixtureClosing || !config().fixtureShutdown) return;
+  fixtureClosing = true;
+  clearTimeout(startupTimer);
+  clearInterval(cleanupTimer);
+  if (server.listening) server.close(() => process.exit(0));
+  else process.exit(0);
+}
+const cleanupTimer = setInterval(finishFixture, 10);
+finishFixture();

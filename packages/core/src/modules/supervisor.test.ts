@@ -51,10 +51,15 @@ async function fixture(t: test.TestContext, startupTimeoutMs = 1500, id: Service
   const runner = await ModuleSupervisor.start({ userRoot, startupTimeoutMs, readinessIntervalMs: 10, cockpitUrl: 'http://127.0.0.1:1' });
   const client = new ModuleRunnerClient({ userRoot, timeoutMs: 5000 });
   t.after(async () => {
-    set({});
-    try { await fetch(`${config.serviceUrl}/fixture/exit`, { method: 'POST', signal: AbortSignal.timeout(1000) }); } catch { /* Fixture may already be stopped. */ }
-    for (let attempt = 0; attempt < 100; attempt++) {
-      try { await runner.close(); break; } catch { await sleep(10); }
+    // A readiness timeout can precede the fixture's first listen. Cleanup must
+    // reach that late child without sending a one-shot request to a closed port.
+    set({ fixtureShutdown: true });
+    for (let attempt = 0; attempt < 500; attempt++) {
+      try { await runner.close(); break; }
+      catch (error) {
+        if (!(error instanceof Error) || !error.message.includes('active children/jobs')) throw error;
+        await sleep(10);
+      }
     }
     await runner.close();
     rmSync(root, { recursive: true, force: true });
@@ -317,6 +322,16 @@ test('unhealthy startup becomes unknown without killing or restarting its child'
   process.kill(status.pid, 0);
   await assert.rejects(runner.close(), /active children/);
   await assert.rejects(client.submit({ operationId: 'unhealthy-retry', id: 'task', action: 'start' }), /recovery/);
+});
+
+test('fixture cleanup reaches a child whose listener starts after the readiness deadline', async t => {
+  const { client, set, config } = await fixture(t, 30);
+  set({ startupDelayMs: 5000, unhealthy: true });
+  await client.submit({ operationId: 'late-fixture-start', id: 'task', action: 'start' });
+  const job = await finished(client, 'late-fixture-start');
+  assert.equal(job.phase, 'unknown');
+  assert.equal((await client.status('task')).owned, true);
+  await assert.rejects(fetch(`${config.serviceUrl}/version`, { signal: AbortSignal.timeout(1000) }), /fetch failed/);
 });
 
 test('uncertain drain is never retried and does not start the target release', async t => {
