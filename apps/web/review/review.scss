@@ -1,0 +1,40 @@
+.chat-lab {
+  flex-direction: column;
+}
+.lab-controls { flex: none; }
+.review-heading {
+  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 10px 12px; border-bottom: 1px solid var(--border-color); font-size: 13px;
+  > span { color: var(--secondary-text-color); font-size: 12px; }
+  label { display: flex; align-items: center; gap: 6px; margin-left: auto; min-width: 0; }
+  select { max-width: 16rem; min-width: 0; }
+  button, select { min-height: 32px; font: inherit; color: inherit; background: var(--surface-color); border: 1px solid var(--border-color); border-radius: 6px; padding: 4px 8px; }
+}
+.lab-controls {
+  max-height: 42%; overflow-y: auto; font-size: 12px;
+  > summary { cursor: pointer; padding: 8px 12px; border-bottom: 1px solid var(--border-color); }
+}
+.review-guide {
+  padding: 0 12px; line-height: 1.6;
+  nav { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+  a { text-decoration: underline; }
+}
+.lab-toolbar {
+  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 12px 16px; border-bottom: 1px solid var(--border-color);
+  font-size: 12px;
+  label { display: inline-flex; align-items: center; gap: 6px; }
+  select { max-width: 220px; }
+  button, select { font: inherit; min-height: 30px; padding: 4px 8px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--surface-color); color: inherit; }
+  :focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+}
+.lab-receipt { flex: none; padding: 6px 16px; font-size: 12px; color: var(--secondary-text-color); overflow-wrap: anywhere; }
+.lab-stage { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.lab-file-detail { height: 100%; overflow: auto; max-width: 800px; margin: auto; padding: 24px; }
+@media (max-width: 599px) {
+  .lab-toolbar { max-height: 150px; overflow: auto; padding: 8px; }
+  .lab-receipt { padding: 4px 8px; }
+  .review-heading > span { flex: 1; }
+  .review-heading label { margin-left: 0; flex: 1 1 calc(100% - 72px); }
+  .review-heading select { flex: 1; width: 0; max-width: none; }
+}
