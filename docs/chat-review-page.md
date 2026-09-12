@@ -4,7 +4,12 @@ Entry: **`/review/chat-v4/`** on the existing Cockpit host. It is a static revie
 package, not a second Cockpit runtime or a production UI upgrade.
 All production components and their styles are imported from exactly
 `9eaf3481c3d5a9487ce3779adbb49dfc5a288232`, the explicitly chosen deployed UI.
-Later source changes are deliberately excluded.
+Later source changes are deliberately excluded, except the user's explicit
+request to remove the persistent interrupt explanation and its description ID.
+That same removal is applied to the actual current production component source.
+For the pinned review source, a two-line exact-match JSX removal is the sole
+build exception; a mismatch fails the build. The original and effective source
+hashes are recorded in `review-build.json`. Buttons and callbacks are unchanged.
 
 ## User entry and scenes
 
@@ -41,7 +46,8 @@ reimplemented as imaginary product flows.
 
 No App/ConnectedThread/native store initializer is mounted. Build-only aliases
 substitute only the required display store, draft registry and URL/transport
-helpers, never the production component implementations or their style sheets.
+helpers. It does not replace component implementations or their style sheets;
+the separately declared two-line hint removal above is the only presentation exception.
 
 - The store contains only connection/display inputs, an empty provenance-session
   list and fixture file/voice functions. It has no native client or session API.

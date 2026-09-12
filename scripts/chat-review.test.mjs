@@ -3,6 +3,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
 import { resolve } from 'node:path';
+import { stripInterruptHint } from '../apps/web/review/source-exception.mjs';
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 test('review pins the deployed source and substitutes only data/transport boundaries', () => {
@@ -10,7 +11,8 @@ test('review pins the deployed source and substitutes only data/transport bounda
   assert.match(read('apps/web/review/constants.ts'), /9eaf3481c3d5a9487ce3779adbb49dfc5a288232/);
   assert.match(config, /rev-parse.*HEAD/);
   assert.match(config, /diff.*--exit-code.*HEAD/);
-  assert.doesNotMatch(config, /VitePWA|injectManifest|transform\(/);
+  assert.doesNotMatch(config, /VitePWA|injectManifest/);
+  assert.match(config, /id === fromSource\('components\/Thread.tsx'\).*stripInterruptHint\(code\)/);
   for (const component of ['Thread', 'Composer', 'MessageBody', 'FileCard']) {
     assert.doesNotMatch(config, new RegExp(`find:.*${component}`));
   }
@@ -20,6 +22,15 @@ test('review pins the deployed source and substitutes only data/transport bounda
   assert.doesNotMatch(harness, /<BrowserRouter|<ConnectedThread|\.init\(|localStorage[.(]|navigator\.serviceWorker/);
   assert.match(harness, /review-only-/);
   assert.match(harness, /window\.SpeechRecognition|Object\.defineProperty\(window, 'SpeechRecognition'/);
+});
+test('the only presentation exception removes exactly the hint and description, leaving behavior intact', () => {
+  const source = 'before\n                aria-describedby={`interrupt-help-${session.sessionId}`}\n'
+    + 'onClick={preserved}\n'
+    + '              <span id={`interrupt-help-${session.sessionId}`}>只打断主回合，保留队列；后台任务继续，可能延后处理。</span>\n'
+    + 'after\n';
+  assert.equal(stripInterruptHint(source), 'before\nonClick={preserved}\nafter\n');
+  assert.throws(() => stripInterruptHint('unexpected source'), /no longer matches/);
+  assert.doesNotMatch(read('apps/web/src/components/Thread.tsx'), /interrupt-help|chat-execution-hint/);
 });
 test('review drafts are memory-only and files cannot resolve to production URLs', () => {
   const draft = read('apps/web/review/drafts.ts');

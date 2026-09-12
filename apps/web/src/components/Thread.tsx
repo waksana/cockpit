@@ -635,7 +635,6 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
               {showInterrupt && <button type="button" className="chat-interrupt"
                 disabled={!interruptAction.connected || (!!session.activeOperations && !interruptAction.busy)}
                 aria-disabled={interruptAction.busy || undefined}
-                aria-describedby={`interrupt-help-${session.sessionId}`}
                 onClick={() => {
                   let interrupted = false;
                   void interruptAction.run(async () => {
@@ -650,9 +649,6 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
               </button>}
             </div>}
           </div>
-          {showInterrupt && <p className="chat-execution-hint" id={`interrupt-help-${session.sessionId}`}>
-            打断：只打断主回合，保留队列；后台任务继续，可能延后处理。
-          </p>}
           {interruptResult && <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
             {interruptResult}
           </p>}

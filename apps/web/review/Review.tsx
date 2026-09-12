@@ -147,7 +147,7 @@ export function Lab() {
   </div>;
   return <div className="cockpit-shell chat-lab">
     <div className="review-heading">
-      <strong>Chat UI Review</strong><span>生产组件 · {SOURCE_SHA.slice(0, 7)}</span>
+      <strong>Chat UI Review</strong><span>基线 {SOURCE_SHA.slice(0, 7)} · 已移除打断提示</span>
       <label>场景<select value={scenario} onChange={e => choose(e.target.value as Scenario)}>
         {scenarios.map(([id, title]) => <option key={id} value={id}>{title}</option>)}
       </select></label>
@@ -156,7 +156,7 @@ export function Lab() {
     <details className="lab-controls">
       <summary>场景索引 / 状态控制 / 使用边界</summary>
       <div className="review-guide">
-        <p>这里是已上线 <code>9eaf348</code> 的真实组件，不包含之后尚未部署的精修。所有执行、问答、文件上传和语音都是合成演示，不访问真实会话、Task 或微信。</p>
+        <p>这里是已上线 <code>9eaf348</code> 的真实组件，仅加入你明确要求的“删除打断常驻说明”这一例外，不包含其他尚未部署的精修。所有执行、问答、文件上传和语音都是合成演示，不访问真实会话、Task 或微信。</p>
         <p>总览显示可共存组件；问答、计划、取消、失败等互斥状态用上方场景切换。输入、复制、展开、粘贴文件、拖放和视频播放可实际体验；暂存只显示样例媒体，不上传你的文件。刷新或重置清空演示草稿。</p>
         <p>“保持请求中”后操作可体验 pending，点“释放结果”结束等待；“模拟失败”驱动明确错误。语音按钮只启动本地模拟，请点“模拟转写/语音错误”，不采集麦克风。Chrome/桌面不能证明真实 iOS/PWA 软键盘效果。</p>
         <nav aria-label="场景直接链接">{scenarios.map(([id, title]) => <a key={id} href={`${REVIEW_BASE}?scene=${id}`}>{title}</a>)}</nav>

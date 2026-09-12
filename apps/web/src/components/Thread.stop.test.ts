@@ -46,19 +46,18 @@ test('queue contents do not change the existing running and compacting visibilit
   assert.doesNotMatch(render({ compacting: true, queue }), /class="chat-typing-stop"/);
 });
 
-test('interrupt action is contextual to a loaded running queue and describes background work', () => {
+test('interrupt action keeps its context without the removed persistent hint or stale description reference', () => {
   const queue = [{ id: 'q', text: 'next' }];
   const html = render({ queue });
   assert.match(html, /打断并继续/);
-  assert.match(html, /保留队列；后台任务继续，可能延后处理/);
-  assert.match(html, /aria-describedby="interrupt-help-stop-label"/);
+  assert.doesNotMatch(html, /只打断主回合|后台任务继续，可能延后处理|interrupt-help|chat-execution-hint/);
   assert.match(html, /停止并清空队列/);
   assert.doesNotMatch(render(), /打断并继续/);
   for (const patch of [{ loaded: false }, { status: 'idle' as const }, { nativeProcessing: false },
     { cancelling: true }, { closing: true }, { loading: true }, { compacting: true }]) {
     assert.doesNotMatch(render({ queue, ...patch }), /打断并继续/);
   }
-  assert.match(render({ queue, activeOperations: 1 }), /disabled="" aria-describedby="interrupt-help-stop-label"/);
+  assert.match(render({ queue, activeOperations: 1 }), /class="chat-interrupt" disabled=""/);
 });
 
 test('stop and interrupt share one execution action group outside the scrolling transcript', () => {

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from 'node:fs/promises';
+import { stripInterruptHint } from '../apps/web/review/source-exception.mjs';
 
 const repo = fileURLToPath(new URL('../', import.meta.url));
 const web = join(repo, 'apps/web');
@@ -68,6 +69,11 @@ for (const path of [
 }
 await writeFile(join(out, 'review-build.json'), JSON.stringify({
   sourceSha: sha, reviewSourceSha: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(),
-  entry: '/review/chat-v4/', sourceFiles, files,
+  entry: '/review/chat-v4/', sourceFiles,
+  sourceExceptions: [{
+    file: 'components/Thread.tsx', reason: 'User-authorized persistent interrupt hint and aria-describedby removal only',
+    effectiveSha256: createHash('sha256').update(stripInterruptHint(await readFile(join(source, 'apps/web/src/components/Thread.tsx'), 'utf8'))).digest('hex'),
+  }],
+  files,
 }, null, 2));
 console.log(`Static review built from ${sha}: ${out}`);

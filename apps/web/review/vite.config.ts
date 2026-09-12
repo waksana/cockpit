@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { REVIEW_BASE, SOURCE_SHA } from './constants.ts';
+import { stripInterruptHint } from './source-exception.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 const source = process.env.REVIEW_SOURCE_ROOT;
@@ -17,7 +18,13 @@ const local = (name: string) => resolve(root, name);
 
 export default defineConfig({
   root, base: REVIEW_BASE, publicDir: resolve(source, 'apps/web/public'),
-  plugins: [react()],
+  plugins: [{
+    name: 'review-authorized-hint-removal',
+    enforce: 'pre',
+    transform(code, id) {
+      return id === fromSource('components/Thread.tsx') ? { code: stripInterruptHint(code), map: null } : undefined;
+    },
+  }, react()],
   resolve: {
     dedupe: ['react', 'react-dom', 'zustand'],
     alias: [
