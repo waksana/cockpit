@@ -206,7 +206,7 @@
   }
 }
 
-// Bubble and external timestamp share a shrink-wrapped owner.
+// Bubble and its compact copy/time row share the same right edge.
 .user-message {
   display: flex;
   flex-direction: column;
@@ -214,16 +214,29 @@
   min-width: 0;
   max-width: min(88%, 40rem);
   margin: 0.5rem 0 0;
-  > .message-time {
-    align-self: flex-end;
-    margin-top: 2px;
-    font-size: var(--font-size-12);
-    line-height: 16px;
+  margin-bottom: 0.5rem;
+}
+.user-message-meta {
+  display: flex;
+  align-self: flex-end;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 0.4rem;
+  margin-top: 2px;
+  max-width: 100%;
+  .message-time {
+    flex: none;
+    font-size: var(--font-size-12); line-height: 28px;
     color: var(--secondary-text-color);
   }
+  .chat-copy { flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
+  .chat-copy-button { min-height: 28px; min-width: 4rem; }
+  .chat-copy-error { flex-basis: 100%; overflow-wrap: anywhere; text-align: end; }
 }
 .message.is-out {
+  align-self: flex-end;
   min-width: 0;
+  max-width: 100%;
   padding: 0.65rem 0.85rem;
   border-radius: var(--border-radius-medium);
   background-color: color-mix(in srgb, var(--primary-color) 10%, var(--surface-color));
@@ -417,32 +430,34 @@
 
 // Tool-call rows — CLI-style: intent line + tool-name badge + collapsible detail
 // (args + output). Detail toggle shows only when there's data to expand.
-.msg-tools { display: flex; flex-direction: column; gap: 0.25rem; margin: 0.25rem 0 0.75rem; }
+.msg-tools { display: flex; flex-direction: column; gap: 2px; margin: 0.25rem 0 0.75rem; }
 .msg-tool {
   font-size: var(--font-size-14);
   color: var(--secondary-text-color);
   .tool-head {
-    display: grid; grid-template-columns: 1rem minmax(0, 1fr) auto minmax(0, auto) 1rem;
-    align-items: center; gap: 0.3rem 0.5rem; min-width: 0; width: 100%;
-    min-height: 36px; padding: 0.4rem 0.5rem; text-align: start;
+    display: grid; grid-template-columns: 1rem minmax(0, 1fr) 4.5rem 10rem 1rem;
+    align-items: start; gap: 4px 8px; min-width: 0; width: 100%;
+    min-height: 36px; padding: 6px 8px; text-align: start;
     border: none; border-radius: 8px; background: transparent; color: inherit; font: inherit;
   }
-  .tool-ico { flex: none; display: inline-flex; width: 1rem; height: 1rem; align-items: center; justify-content: center; }
+  .tool-ico { grid-column: 1; grid-row: 1; display: inline-flex; width: 1rem; height: 21px; align-items: center; justify-content: center; }
   &[data-status='completed'] .tool-ico { color: var(--green-color); }
   &[data-status='failed'] .tool-ico { color: var(--danger-color); }
   &[data-status='in_progress'] .tool-ico { color: var(--primary-color); }
   &[data-status='pending'] .tool-ico { color: var(--tertiary-text-color); }
 }
-.tool-title { min-width: 0; overflow-wrap: anywhere; line-height: 1.5; }
-.tool-status { font-size: var(--font-size-12); white-space: nowrap; }
+.tool-title { grid-column: 2; grid-row: 1; min-width: 0; overflow-wrap: anywhere; line-height: 21px; }
+.tool-status { grid-column: 3; grid-row: 1; justify-self: end; font-size: var(--font-size-12); line-height: 21px; white-space: nowrap; }
 .msg-tool[data-status='failed'] .tool-status { color: var(--chat-danger-ink); }
 .tool-name {
-  max-width: 11rem;
+  grid-column: 4; grid-row: 1; justify-self: start;
+  max-width: 100%;
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--font-size-12);
+  line-height: 21px;
   color: var(--primary-text-color);
-  padding: 0.05rem 0.35rem;
+  padding: 0 0.35rem;
   border-radius: 4px;
   background: color-mix(in srgb, var(--primary-text-color) 7%, transparent);
 }
@@ -450,7 +465,7 @@
   cursor: pointer;
   &:hover, &[aria-expanded='true'] { background: var(--ripple-color); }
 }
-.tool-chevron { display: inline-flex; }
+.tool-chevron { grid-column: 5; grid-row: 1; display: inline-flex; align-items: center; height: 21px; }
 .tool-detail {
   margin: 0.25rem 0 0.5rem 1rem; padding-inline-start: 0.75rem;
   border-inline-start: 1px solid var(--border-color);
@@ -598,7 +613,6 @@
 .chat-copy-error { color: var(--chat-danger-ink); font-size: 12px; line-height: 1.5; }
 .message-actions {
   display: flex; min-height: 32px; margin: 0.1rem 0 0.5rem;
-  &[data-role='user'] { align-self: flex-end; }
 }
 @media (hover: hover) {
   .message-actions { opacity: 0; }
@@ -860,10 +874,8 @@
 @media (max-width: 599px) {
   .chat { --chat-gutter: 0.75rem; }
   .user-message { max-width: 92%; }
-  .msg-tool .tool-head { grid-template-columns: 1rem minmax(0, 1fr) auto 1rem; }
-  .tool-title { grid-column: 2; }
-  .tool-status { grid-column: 3; }
-  .tool-name { grid-column: 2 / 4; grid-row: 2; max-width: 100%; justify-self: start; }
+  .msg-tool .tool-head { grid-template-columns: 1rem minmax(0, 1fr) 4.5rem 1rem; }
+  .tool-name { grid-column: 2 / 4; grid-row: 2; line-height: 18px; }
   .tool-chevron { grid-column: 4; grid-row: 1; }
   .subagent-head { display: grid; grid-template-columns: 18px minmax(0, 1fr) 14px; gap: 0.3rem 0.5rem; }
   .subagent-name { grid-column: 2; }

@@ -104,6 +104,7 @@ export const processMessages: ChatMessage[] = [
       { toolCallId: 'failed', title: '读取已失效的资源', name: 'web_fetch', status: 'failed', output: 'HTTP 404: Resource not found.\nThis is a synthetic error. No retry was attempted.' },
       { toolCallId: 'pending', title: '等待执行', name: 'task', status: 'pending' },
       { toolCallId: 'unknown', title: '缺少状态的工具记录', name: 'unknown_tool', args: '{ "status": "not supplied" }' },
+      { toolCallId: 'no-name', title: '未提供工具名称的记录', status: 'completed', output: 'The disclosure stays in its assigned column.' },
     ],
   }),
   ...(['running', 'activity', 'completed', 'failed', 'cancelled', 'unknown'] as const).map((status, index) => message(`agent-${status}`, 'assistant', '', {

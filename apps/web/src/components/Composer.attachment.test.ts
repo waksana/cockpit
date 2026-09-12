@@ -115,6 +115,8 @@ test('Composer staged attachment markup', async (t) => {
       assertCaption(html, captionMarkup)
       assertEditableAttachment(html)
       assertButton(html, '发送', false)
+      assert.match(html, /data-icon="arrow_up"/)
+      assert.doesNotMatch(html, /data-icon="send"/)
       assert.equal(draft.getSnapshot().text, caption)
       assert.equal(uploadFile.mock.callCount(), 1)
       assert.equal(onSend.mock.callCount(), 0)

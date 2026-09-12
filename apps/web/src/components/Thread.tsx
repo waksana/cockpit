@@ -205,6 +205,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
   }
   if (m.role === 'user') {
     const isAskReply = m.subtype === 'ask-reply';
+    const copyable = messageCopyText(m);
     const cls = ['message', 'is-out'];
     if (isAskReply) cls.push('is-ask-reply');
     if (hasAttachment) cls.push('is-attachment');
@@ -214,7 +215,10 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
           {isAskReply && <span className="ask-reply-tag" aria-label="对提问的回复">↩ 回复</span>}
           <MessageContent message={m} sessionId={sessionId} />
         </div>
-        <span className="message-time">{clock(m.timestamp)}</span>
+        <div className="user-message-meta">
+          {copyable && <CopyButton text={copyable} label="复制消息" />}
+          <span className="message-time">{clock(m.timestamp)}</span>
+        </div>
       </div>
     );
   }
@@ -274,7 +278,7 @@ const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline
     <div ref={frame} className="msg-group" data-message-frame={m.id}>
       {date && <div className="date-separator" aria-hidden="true">{date}</div>}
       <MessageRow m={m} sessionId={sessionId} showByline={showByline} thinkingLive={live} onMenu={onMenu} />
-      {(m.role === 'user' || m.role === 'assistant') && copyable && <div className="message-actions" data-role={m.role}>
+      {m.role === 'assistant' && copyable && <div className="message-actions" data-role={m.role}>
         <CopyButton text={copyable} label="复制消息" />
       </div>}
     </div>

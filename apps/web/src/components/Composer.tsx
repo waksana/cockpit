@@ -275,7 +275,7 @@ export function Composer({
         aria-busy={pending}
         title={pending ? '正在提交，草稿仍可编辑' : busy ? '加入队列' : '发送'}
       >
-        <Icon name={pending ? 'sending' : 'send'} size={22} />
+        <Icon name={pending ? 'sending' : 'arrow_up'} size={22} />
       </button>
       </div>
     </>

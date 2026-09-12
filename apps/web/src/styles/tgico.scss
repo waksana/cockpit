@@ -45,6 +45,7 @@
 .tgico[data-icon='check']::before      { content: '\e900'; }
 .tgico[data-icon='checks']::before     { content: '\e901'; }
 .tgico[data-icon='arrow_down']::before { content: '\e914'; }
+.tgico[data-icon='arrow_up']::before   { content: '\e914'; transform: rotate(180deg); }
 .tgico[data-icon='more']::before       { content: '\e9f5'; } // kebab
 .tgico[data-icon='down']::before       { content: '\e97c'; }
 .tgico[data-icon='up']::before         { content: '\ea99'; }

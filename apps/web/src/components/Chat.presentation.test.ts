@@ -145,7 +145,7 @@ test('a native cancelling flag disables duplicate stop clicks without claiming c
   assert.doesNotMatch(html, /class="chat-typing-stop"[^>]*>已取消/);
 });
 
-test('user timestamps sit outside the bubble without changing message identity or assistant bylines', () => {
+test('user copy and time share one footer outside the bubble without changing message identity or assistant bylines', () => {
   const session = fixtureSession('reading');
   session.messages = [
     { id: 'short', role: 'user', content: 'Short', timestamp: 1000 },
@@ -157,7 +157,17 @@ test('user timestamps sit outside the bubble without changing message identity o
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
   assert.equal((html.match(/class="user-message"/g) ?? []).length, 3);
   assert.equal((html.match(/class="message-time"/g) ?? []).length, 3);
-  assert.equal((html.match(/<\/div><span class="message-time">\d{2}:\d{2}<\/span><\/div>/g) ?? []).length, 3);
+  assert.equal((html.match(/class="user-message-meta"><span class="chat-copy">/g) ?? []).length, 3);
+  assert.equal((html.match(/<\/span><span class="message-time">\d{2}:\d{2}<\/span><\/div>/g) ?? []).length, 3);
+  assert.doesNotMatch(html, /class="message-actions" data-role="user"/);
   for (const id of ['short', 'long', 'file']) assert.match(html, new RegExp(`class="message is-out[^"]*" data-message-id="${id}"`));
   assert.match(html, /class="doc-time"/);
+});
+
+test('tool columns and first-line alignment do not depend on each name or status length', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /grid-template-columns: 1rem minmax\(0, 1fr\) 4\.5rem 10rem 1rem/);
+  assert.match(css, /\.tool-chevron \{[^}]*grid-column: 5;[^}]*grid-row: 1/);
+  assert.match(css, /\.tool-status \{[^}]*grid-column: 3;[^}]*justify-self: end/);
+  assert.match(css, /\.msg-tools \{[^}]*gap: 2px/);
 });
