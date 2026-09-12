@@ -114,6 +114,22 @@ test('CSS owns the shell again, with no replacement global JS viewport controlle
   }
 });
 
+test('composer actions share unfilled surfaces and equal icon sizes instead of an oversized send disc', t => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  for (const action of ['attach', 'mic', 'send']) {
+    assert.match(css, new RegExp(`\\.chat-input-btn\\.${action} \\{[^}]*background-color: transparent;`));
+  }
+  assert.match(css, /\.chat-input-btn\.send \{[^}]*color: var\(--chat-accent-ink\)/);
+  assert.match(css, /\.chat-input-btn\.send:disabled \{[^}]*color: var\(--secondary-text-color\)/);
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { SpeechRecognition() {} } });
+  t.after(() => original ? Object.defineProperty(globalThis, 'window', original) : Reflect.deleteProperty(globalThis, 'window'));
+  const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession('empty'), onLoadMore() {} }));
+  for (const icon of ['attach', 'microphone', 'arrow_up']) {
+    assert.match(html, new RegExp(`data-icon="${icon}" aria-hidden="true" style="font-size:22px"`));
+  }
+});
+
 test('decision details stay in their cards rather than inflating an empty textarea placeholder', t => {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });

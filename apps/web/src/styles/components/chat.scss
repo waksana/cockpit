@@ -738,9 +738,9 @@ button.activity-head {
   &:disabled { opacity: var(--disabled-opacity); }
 }
 .chat-input-btn.send {
-  background-color: var(--chat-accent-ink);
-  color: var(--surface-color);
-  &:disabled { opacity: var(--disabled-opacity); }
+  background-color: transparent;
+  color: var(--chat-accent-ink);
+  &:disabled { color: var(--secondary-text-color); }
 }
 // Transient voice-input notice (e.g. mic unsupported / Azure not configured).
 // Sits above the input row; tap to dismiss. No border (surface + spacing only).
