@@ -60,28 +60,6 @@
     },
     "logs": true
   },
-  "hostAccess": [
-    {
-      "intents": [
-        "session/get",
-        "session/modules/get"
-      ],
-      "scope": "bound-or-created-sessions"
-    },
-    {
-      "intents": [
-        "session/new"
-      ],
-      "scope": "authorized-workspaces"
-    },
-    {
-      "intents": [
-        "setModel",
-        "prompt"
-      ],
-      "scope": "bound-or-created-sessions"
-    }
-  ],
   "control": {
     "transport": "stdio-jsonl-v1",
     "entry": "dist/host-control.mjs"

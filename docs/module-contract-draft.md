@@ -15,6 +15,21 @@
 `-draft.1`，不是已发布的新产品。所有样例均为合成数据，见
 [示例说明与文件](examples/module-contract-v2/README.md)。
 
+## 已确认的简化边界
+
+以下取舍替代本稿早期的细粒度API授权和旧版兼容设计；**只确定设计，不表示已经实现**。
+
+- 核心是好用的Copilot代理和通用模块宿主，不拥有Assistant、Task、Commander或微信
+  业务概念。Copilot原生的`assistant`消息角色/事件和`task`子代理工具保持正常代理、
+  展示与生命周期保护；`assistant`并不是一个同名工具，也不是这里的Assistant模块。
+- 受信任且启用的模块默认可访问**所有公开产品API**，与Web/MCP使用同一接口和认证边界。
+  不设计每模块的API白名单、目标scope或权限委派体系；仍保留接口自己的参数校验、
+  确认、busy和unknown规则，模块服务自己的业务鉴权仍由模块负责。
+- 模块自己获取/处理文件，直接调用通用上传接口，再向prompt提交附件引用。文件字节
+  不走模块JSONL控制消息；不要求所有模块HTTP调用绕`host.invoke`，不另造大文件协议。
+- 新协议不兼容旧模块协议、专用路由、旧配置格式或旧driver。第一节保留旧代码的
+  接口事实作为设计输入，不是兼容承诺。此决定不授权删除现有数据或改变运行实例。
+
 ## 0. 推荐结论
 
 把模块定义为**独立版本和责任边界的能力单元**，由静态manifest描述；
@@ -208,12 +223,13 @@ WeChat connector ──capabilities / native-session intents / managed files─�
 不是native session ID。不同发布者的同名模块默认是不同身份，不能覆盖原包、
 占用原data或冒充原Task。
 
-初次信任把该moduleId、发布者公钥指纹、来源策略和能力授权绑定起来。公钥改变
+初次信任把该moduleId、发布者公钥指纹、来源策略和“受信模块可访问全部公开API”的
+执行边界绑定起来，不逐项授予API能力。公钥改变
 不等于旧身份自动延续；首版要求单独确认/明确身份迁移，保留原安装。后续可加
 交叉签名轮换，但不以新增复杂PKI作为第一版前提。
 
 `trustAuthority`是host首次批准时分配并持久化的随机authorityId，含受信key集合、
-允许来源、授权清单和单调revision；发布者不能自报这个ID。默认新key得到新authority/
+允许来源、信任状态和单调revision；发布者不能自报这个ID。默认新key得到新authority/
 moduleRef，不继承旧data、pin或反回滚状态。若用户明确选择“更换原模块签名key”，
 操作必须指定原moduleRef、expected trust revision、旧/新指纹和新描述证据；保留
 moduleRef/data与历史验证回执，trust revision递增，原sequence floor不清零。
@@ -262,8 +278,9 @@ additionalProperties、常用边界及包内`$defs`。禁止网络`$ref`、动�
 [clipbook.module.json](examples/module-contract-v2/clipbook.module.json)定义 **`org.example.clipbook`**：
 配置一个note长度上限，独立data、Node service、`notes.list/add` API、
 `notes.changed`事件、可选writer角色/MCP和一个module.home页面。它不需要
-Assistant/Task/微信，不申请native session访问，不读剪贴板或用户目录；
+Assistant/Task/微信，本例业务不调用native session、不读剪贴板或用户目录；
 只处理明确提交的合成文本。
+这描述示例使用了什么，不是它的API权限白名单；受信任启用后默认公开API访问规则相同。
 
 它能表达一个未知名称的新能力，而不仅是给现有Task换名字。host只识别
 roles/service/actions/events/page这几种通用协议，没有Clipbook分支。
@@ -332,7 +349,7 @@ manifest/package内文件路径仍是受限相对路径。
 | 兼容 | host协议/必需cap/runtime/native平台要求有交集 | service已经运行；未来任意版本都兼容 |
 | 完整性 | 下载字节与签名描述、manifest、archive/inventory一致 | 发布者无恶意、业务数据兼容 |
 | 发布者信任 | 用户/策略已将这个module身份绑定到该key和来源范围 | OS沙箱或真实Task caller/owner授权 |
-| 使用者权限 | 当前host用户能安装/启动/给目标session应用；模块有被授予的host能力 | 模块自报角色就是Task授权、持有签名就可操作任意session |
+| 使用者权限 | 当前host用户确认信任并启用模块后，模块默认使用全部公开API | 尚未信任的签名包可自行执行、访问API不必认证/遵守确认和busy、模块名等于业务授权 |
 
 同 `(trustAuthority,moduleId,version)` 的manifest不可改写；
 同一manifest可列多个平台产物，但同 `(moduleRef,version,target)` 不得换不同字节。
@@ -349,10 +366,11 @@ manifest/package内文件路径仍是受限相对路径。
 | manifestDigest / archiveDigest | 各自文件的原字节SHA256 |
 | releaseDigest | 提取后受限inventory的SHA256：按规范化相对路径排序，目录记录path/kind，文件记录path/kind/bytes/sha256；用RFC8785 JCS编码，不包含host生成的回执自身 |
 | contractDigest | `JCS({contract:contractName,definition:manifest.api[contractName]})`的SHA256；不同业务schema不能只因名字相同就互换 |
-| capabilityDigest | 授权清单的JCS SHA256：能力种类、可见角色/接入方法、hostAccess、外部资源/secret类别、actions及其effect/schema、page slots/bridge权限；不包含displayName、软件版本号或普通说明正文 |
+| capabilityDigest | 声明的JCS SHA256：能力种类、可见角色/接入方法、配置/资源类别、actions及其effect/schema、page slots/调用关系；不包含displayName、软件版本号或普通说明正文；不是API权限集合 |
 
-capabilityDigest只是精确绑定此次确认；是否需要新确认还按旧授权的包含关系比较，
-不能用“版本号变了”要求每次重新授权，也不能用“hash没变”证明代码无害。
+capabilityDigest只绑定本次使用的声明，便于显示变化和发现不兼容，不承载逐API权限。
+同一受信publisher的显式更新不因增加一项公开API调用再次索要scope授权；不能用
+“版本号变了”要求逐步骤审批，也不能用“hash没变”证明代码无害。
 实施规格应把该投影固定成共享schema/函数，不能Web/MCP各算一遍不同含义。
 
 反回滚记录按 `(authorityId,moduleId,channel)` 持久化 `{sequence,payloadDigest}`。
@@ -364,13 +382,13 @@ manifest runtime/native要求及真实host能力，不能分别验证两个不�
 
 ### 最少信任确认
 
-新发布者/新来源范围/新key/增加能力或扩大权限，合并成一张“信任并使用”摘要：
-key指纹、原始与最终来源、module身份/版本、执行代码类型、host/data/network权限、
+新发布者/新来源范围/新key，合并成一张“信任并使用”摘要：
+key指纹、原始与最终来源、module身份/版本、执行代码类型、默认全部公开API访问边界、
 目标session与将执行的步骤。确认绑定 `planDigest + descriptorDigest + key +
 capabilityDigest + target/config revisions`，不能拿旧确认套新包。
 
 推荐信任粒度为**这个模块的这个发布者**，不是一键信任所有该作者未来模块。
-已信任同key、同来源政策、权限未扩大的兼容更新，不重复逐步骤询问；显式更新/
+已信任同key、同来源政策的显式更新显示声明变化，不重复逐步骤询问；显式更新/
 使用动作仍存在。不默认自动检查、下载或安装。
 
 Web显示确认卡；MCP经用户明确授权提交相同approval。`confirm:true`不是对恶意
@@ -379,8 +397,8 @@ Web显示确认卡；MCP经用户明确授权提交相同approval。`confirm:tru
 
 **执行边界必须直说：**第一版仍是同用户本机信任模型。签名和能力清单不提供
 恶意同UID代码隔离；受信Node服务/MCP可能具备该用户的文件/网络权限。角色文字也
-可能影响拥有工具的模型。需要强隔离时再选择独立UID/OS sandbox，不把API scope
-或iframe误称为后端sandbox。
+可能影响拥有工具的模型。模块默认全API访问是一项有意的信任取舍，不是沙箱；
+需要强隔离时再另行设计独立UID/OS sandbox，不把身份记录或iframe误称为后端隔离。
 
 ## 7. URL与解包的通用安全边界
 
@@ -429,24 +447,29 @@ Web显示确认卡；MCP经用户明确授权提交相同approval。`confirm:tru
 不再让supervisor按moduleId翻译。
 
 控制context是host生成的私有文件引用：moduleRef、固定release/hash、operation、
-运行generation、必要native目标/role和被批准的资源引用。模块不能靠body自报
+运行generation、必要native目标/role、资源引用以及通用API地址/认证方式。模块不能靠body自报
 moduleRef/sessionId取得身份；绑定的私有channel才是调用身份。
 其中actor由host认证层填写。外部MCP请求或Web自行传来的sessionId只是一项目标，
 不是native-session身份凭证；Task仍须验证自己的caller/owner业务凭据。
-host-user、module的hostAccess授权和Task业务授权是三层，不相互自动转换。
+受信任且启用的模块按当前用户的完整公开API能力调用，不再引入独立hostAccess授权层。
+Task等服务自己的业务凭据与该通用API访问资格仍不是同一件事。
 
 #### 最小wire/context表
 
 | 对象 | 必需字段及语义 |
 | --- | --- |
-| context私有文件 | schemaVersion、moduleRef/moduleId/version/target、manifestDigest/releaseDigest、instanceId、leaseGeneration、configRevision、资源根引用、host认证actor、hostGrantRef、bootNonce；session scope另含真实sessionId/cwd/roleId及已知applied revision。文件不进入Web/MCP回执 |
+| context私有文件 | schemaVersion、moduleRef/moduleId/version/target、manifestDigest/releaseDigest、instanceId、leaseGeneration、configRevision、资源根引用、host认证actor、hostApi地址/认证方式、bootNonce；session应用上下文另含真实sessionId/cwd/roleId及已知applied revision。文件不进入Web/MCP回执 |
 | 建连 | host以已验证相对entry用Node spawn，持有stdin/stdout和实际child；发送hello带bootNonce。模块返回同nonce及固定身份。随后health确认ready才是可用；握手不是安装前探测 |
 | request frame | `{protocol:"cockpit.module-control/1",type:"request",requestId,method,input,operationId?,context?}`；requestId在此channel内唯一，变更必须operationId；双方都要在等待response时继续处理peer请求，不能同步回调死锁 |
 | response frame | 同protocol、type=response、requestId及适用operationId，加统一phase/step/effect/completedSteps/result或error；一条请求可先accepted并以操作查询继续，不能多次伪造终态 |
 | progress frame | type=event、event=`operation.progress`、operationId和有限进度字段；不改变native状态或重新触发业务。业务事件首版走下述显式有界读取 |
 | frame限制 | 一行一个完整UTF-8 JSON，最大1MiB/深度32，默认最多16个在途请求；stdio stdout不混日志。未知必需字段/方法/协议拒绝；失去channel不能重发原变更 |
-| host.invoke结果 | 使用同一response envelope，result是既有host intent的真实返回，错误保留code/真实资源ID/effect。prompt成功只代表接受消息，不代表Task业务完成 |
-| host授权 | hostGrantRef在私有channel绑定moduleRef、可用intents、目标集合/资源根和leaseGeneration；body不授予身份。解除/撤销或generation过期后新host调用拒绝；不声称这限制同UID程序直接读文件/联网 |
+| 可选host.invoke结果 | 仅作为小型JSON intent的便捷适配，result是同一公开API真实返回，错误保留code/真实资源ID/effect。模块可直接HTTP调用，不强制经过该channel；prompt成功只代表接受消息 |
+| host API访问 | 受信任且启用的模块默认访问全部公开API，不限制module专属intent/目标集合。复用安装已有认证方式，必要认证材料只通过私有引用提供；接口确认/busy/校验不绕过，不声称约束同UID代码的文件/网络能力 |
+
+context中的leaseGeneration只标识进程代际及晚结果归属，不是权限lease或API scope。
+hostApi复用当前安装实际使用的认证方式；示例credentialFile只示意已有token认证时的
+私有引用，不要求无token的受信loopback安装额外创建一套模块凭据系统。
 
 任何包含变更action或hook的provider还必须提供`operation.read`，按原operationId
 返回自身保留回执或明确unknown；不能以“进程重启”把原副作用重新执行。未运行service
@@ -462,15 +485,16 @@ host-user、module的hostAccess授权和Task业务授权是三层，不相互自
 | `session.unbind`（可选） | 用户明确解除模块关联 | 原operationId/绑定；返回确认解绑或blocked/unknown | 模块负责唯一绑定/活动引用；不删除native session |
 | `identity/health/drain`（有service则必需） | 启动就绪、操作边界、受控退出 | moduleRef/version/digest/instance与drain operation；只有真实退出后host报stopped | 模块排空内部工作；host拥有child/IPC/实际退出证据 |
 | `api.invoke` / `api.events`（可选） | 有授权的命名空间调用/订阅 | contractDigest、action/schema、输入/操作ID；结果或模块cursor事件 | 业务结果/事件日志归模块，不镜像native状态 |
-| `host.invoke`（模块→宿主，可选） | 被授权模块需要原生/文件等host能力 | 既有intent和input；channel自带module授权/目标scope | 同一host dispatcher及原生权威，非第二套MCP业务后端 |
+| 直接HTTP或可选`host.invoke`（模块→宿主） | 受信任启用模块需要调用公开API | HTTP按现有接口认证/输入；便捷JSON调用可用既有intent和input，不加API白名单 | 同一公开API及原生权威，非第二套MCP业务后端 |
 
 通用请求/回执示例见 [requests-and-receipts.json](examples/module-contract-v2/requests-and-receipts.json)。
 单步安装、配置、启动、应用、排空和卸载另见 [atomic-lifecycle.json](examples/module-contract-v2/atomic-lifecycle.json)。
 回执匹配 requestId/operationId/instance/实际目标，未知不伪造done。
 `configurationReferences`只能是受限引用：例如
 `{kind:"module-file",root:"data",path:"session-access/…json"}`，
-host规范化到该模块批准的root；绝不把任意字符串当绝对文件路径。旧外部data/
-credential根须为此前显式授权的storageGrant，不能由新包自行扩大。
+host规范化到该模块声明的资源root；绝不把任意字符串当绝对文件路径。旧外部data/
+credential-root的自动接管和兼容不在新协议内；不新增storageGrant授权体系。
+这些引用校验保护host代读/注入的资源，不是受信模块进程的文件系统沙箱。
 只有host自己写的私有context可含 `host-resolved-file/directory` 的绝对本机路径；
 模块回执中的相对ResourceRef与这种已解析资源不是同一输入类型，不能混用绕过root校验。
 
@@ -481,9 +505,9 @@ credential根须为此前显式授权的storageGrant，不能由新包自行扩�
 
 每次selection可有`attachInput`，严格按该role的attachInputSchema验证；模块声明的
 静态`input`与本次动态输入分开传递，不准客户端覆盖静态mode。可另传受限attachRefs，
-由模块自己的授权记录解释，不能自报host scope。`selectableBy:["module"]`只允许
-**被认证且moduleRef相同**的模块选择自己的该角色，不是任意另一个模块或Web/MCP
-host-user伪造`actor:"module"`即可选择。
+由模块自己的业务记录解释。`selectableBy`只描述普通UI的角色展示/建议入口，
+不是host API授权。`["module"]`的角色不在普通新建选择器里展示，但API不再按调用模块
+身份额外拒绝；是否能建立对应业务身份由目标模块的attach及业务凭据检查决定。
 
 ### 首消息前初始化：避免新的循环或虚拟session
 
@@ -497,9 +521,9 @@ driver发caller并返回受保护引用。context文件更新后，已连接MCP�
 session，也不发初始化假消息。**
 
 Task owner的动态关联：Task先在自己的已授权dispatch操作中保留dispatchRef，再经
-host私有授权通道请求自己的owner role并带attachInput.dispatchRef。真实native创建
-确认后，host只授予attach期间对**这个真实ID**的短命metadata-read scope，解决
-“还没bound就不能验证目标”的循环。Task attach把同一reserved dispatch绑定到实际
+通用API请求owner role并带attachInput.dispatchRef。真实native创建确认后，Task可直接
+通过普通session/get核对该ID，不需要临时metadata-read grant或“先bound才可读”的门槛。
+Task attach把同一reserved dispatch绑定到实际
 ID并签发owner凭据；必须允许这一步作为原操作的关联续步回调，不能等待原new调用返回
 才发凭据又让attach等待该凭据。new返回后Task验证已完成绑定再发目标prompt，不再签发一次。
 
@@ -508,9 +532,9 @@ ID并签发owner凭据；必须允许这一步作为原操作的关联续步回�
 普通 `session/new → 真ID → prompt` 不改为首消息协调器；通用use流程只能记录这个
 已有原生操作的结果，不能另造session数据库或自动替代会话。
 v2含模块的`session/new`带operationId，记录的是一次创建/接入尝试而非虚拟session；
-旧无operationId的入口可保留兼容，但不能宣称具有相同持久回读能力。普通新session仍
-由native当场创建，绝不延迟到首条消息。attach失败后临时target grant撤销或只保留
-该原操作的有限核实能力，不扩大为后续prompt权限。
+不提供旧模块创建入口的兼容层。普通新session仍由native当场创建，绝不延迟到首条消息。
+attach失败仍按原操作核实，不再有临时target grant升级/撤销流程；模块应用未完成时，
+所有调用者都必须遵守相同prompt前置保护。
 成功创建保留原API的顶层`sessionId`，另附`operation`回执；只有真实ID已确认且角色
 配置/必要attach完成才成功。创建前没有回执中的sessionId就不向session列表添加对象。
 
@@ -545,9 +569,9 @@ MCP generic和Web发同一 `modules/invoke` body（包含providerRef）；模块
 MCP工具代码。工具名称按moduleRef命名空间避免同名碰撞；native skill同名仍按
 真实冲突规则拒绝，不默默选其中一个。
 MCP facade的变更参数必须显式携带operationId，不能把会重置的JSON-RPC id或每次新
-随机数当业务幂等身份。暴露的工具名/schema须匹配静态contract；host用所选SDK支持的
-tools allowlist约束，不能因runtime新报工具而自动扩大权限。不支持该约束的SDK须
-明确限制此能力，不假装动态检查已实现强沙箱。
+随机数当业务幂等身份。模块暴露的工具名/schema须对应其contract，以免拿错版本调用；
+这约束的是模块的能力声明，不是该模块访问host公开API的权限。是否能连接并正确使用
+所选MCP仍按真实SDK能力确认，不新增一套宿主API授权白名单。
 
 首版module.home推荐**schema-page**，不执行模块HTML/JS：验证包内页面JSON，只允许
 list/form/json/text等有限block，data binding是JSON Pointer而非表达式，输入/结果仍经
@@ -557,8 +581,10 @@ list/form/json/text等有限block，data binding是JSON Pointer而非表达式�
 
 `pages/open {moduleRef,pageId,target}`确认所需provider并返回固定release的page URL与
 pageLeaseRef；页面内调用使用该lease关联的providerRef，不能把旧页面JS/schema搭配
-新默认版本。pageLease绑定用户/目标/角色、page声明权限和generation，关闭/撤销/
+新默认版本。pageLease绑定用户/目标/角色、page声明和generation，关闭/撤销/
 provider变化后失效；它不授予任意native接口，也不返回secret。
+其中page列出的actions/events是renderer要使用的声明，不是模块API访问的权限清单；
+版本/页面实例隔离与“受信模块默认全部公开API”是两种不同约束。
 
 自定义HTML页面可以作为后续单独能力 `modulePageHtml:1`，不能用schema-page降级
 运行。若实施，必须选定并验证浏览器安全profile：sandbox只允许必要scripts，不给
@@ -567,9 +593,9 @@ connect/form/worker/frame/导航及外部资源策略，固定资产、校验Mes
 nonce/frame/generation失效都必须定义。对无法可靠限制的浏览器不得宣称支持该profile；
 也不能把页面规则当作Node同UID程序隔离。
 
-Task完整旧dashboard可暂经legacy adapter/兼容别名保留；迁到新契约时由Task发布
-schema-page或另经批准的HTML能力，而不是要求host新增Task组件。旧 `/modules/task`/
-原域名通过**安装迁移时的兼容别名配置**保留，不成为新增module逐个改route的模式。
+Task应由自己的新包发布schema-page或另经批准的HTML能力，而不是要求host新增Task组件。
+新协议不保留旧dashboard代理、`/modules/task`别名或原域名兼容映射；也不因此声称
+简化schema-page已经等价覆盖旧工作台全部交互。新模块需要的额外页面能力须单独定义。
 
 事件首版确定为有界读取：
 `modules/events/read {moduleRef,providerRef,contract,event,cursor?,limit:1..100,waitMs:0..1000}`，
@@ -583,6 +609,21 @@ provider切换先明确重新取得providerRef；仅streamId及schema仍匹配�
 需要历史回溯须另用模块显式action，不能省略cursor就隐式重读全历史。
 installed-version目标可静态预览schema；若contract要求尚未运行的service，就返回
 不可调用的预览而非可执行providerRef。不能把“已安装能力声明”变成“实际provider已就绪”。
+
+### 文件直接走通用上传/附件API
+
+文件获取、存储、格式处理和上传由模块自己的服务完成；交给Copilot时调用现有
+上传接口得到附件引用，再单独调用prompt。原字节下载也直接使用受保护的文件HTTP入口。
+
+```text
+模块取得本地文件 → 通用HTTP上传 → 附件引用 → prompt(attachments)
+```
+
+文件字节不进入1MiB JSONL控制frame，JSON控制消息只携带必要引用。当前上传接口的
+体积/流式/超时限制由上传API负责，不是模块协议的大文件门槛；超过限制按该API明确
+失败，不以分片或自动重试绕过。模块内部使用的文件不必上传给host。普通JSON API和
+大native事件也可走已有HTTP读取路径，不强制压进控制frame。
+见 [files-via-http.json](examples/module-contract-v2/files-via-http.json) 的合成接口顺序。
 
 ## 10. 安装与使用：固定线性流程，不做工作调度平台
 
@@ -623,7 +664,7 @@ install→apply已完整；API-only模块install→configure/start→invoke，�
 | `modules/disable` / `modules/uninstall` | 在引用/排空保护下停止接入；卸载默认保留data/config/secrets/历史，native删除独立 |
 
 未来Web和MCP必须共同使用这套API和schema，不在Web藏一个与MCP不同的安装流程。
-Web可以把inspect/verify/plan合为一个界面动作；未知publisher或扩大权限时只弹
+Web可以把inspect/verify/plan合为一个界面动作；需要确认新publisher/key/来源时只弹
 一次摘要确认，然后执行已经批准且无需补配置的后续步骤。缺配置、未授权执行、
 service不可用、目标busy时停在明确waiting项，不逐步骤审批，也不偷偷跳过。
 use计划的`desired.initialize`缺省为false；需要初始化才能使用时返回明确要求，
@@ -633,8 +674,9 @@ use计划的`desired.initialize`缺省为false；需要初始化才能使用时�
 descriptor/payload/manifest/archive digests、目标平台、候选key、证据来源和检查时间。
 `planDigest`为JCS SHA256，覆盖plan schema版本、verification记录内容摘要、现有
 moduleRef或候选identity、expected trust revision、确切步骤/版本、目标session/cwd/
-完整selections、配置值/secret refs、外部config/applied前置revision和授权投影。
-operator及其可操作目标来自认证上下文，不由plan正文自授。install-only也用同样
+完整selections、配置值/secret refs、外部config/applied前置revision和声明摘要。
+operator来自认证上下文，模块默认全部公开API访问；plan中的目标用于绑定本次动作，
+不是授予API访问scope。install-only也用同样
 规则生成只含install的最小plan；它不需要第二次步骤确认。
 
 同一operation自己成功写出的config/trust/applied新revision记为已确认postcondition，
@@ -703,10 +745,14 @@ launcher在自然idle后完成，不能同步等自己退出。
 native删除仍无模块解绑前置、审批或自动广播；host仅归档自己的引用，模块在
 实际使用目标时自行核对。模块事件接口不是恢复全量删除广播的理由。
 
-模块→host运行lease可以在卸载后撤销；模块的业务caller凭据/data默认保留，不
-自动重新签发或清除。程序垃圾回收与业务数据销毁为不同显式动作。
+模块停用/卸载按正常生命周期停止host拥有的模块资源，不再发起新的host-managed工作；
+不增加per-module API token/授权lease体系，也不承诺能阻止脱离宿主管理的同UID代码。
+业务凭据/data默认保留，不自动重新签发或清除。程序垃圾回收与业务数据销毁是不同动作。
 
-## 12. 更新、配置和业务数据兼容
+## 12. 新协议内的更新、配置和业务数据安全
+
+本节约束新协议下各版本的正常升级/回退，不表示兼容当前v1模块、旧配置或专用入口。
+不兼容旧协议也不等于允许覆盖数据、自动清除unknown或破坏原生session。
 
 显示四个独立版本：installed列表、default供新使用、shared actual service、
 每个session applied。cold/reset恢复原pin，不复制native数据库、全局开关或
@@ -729,7 +775,7 @@ SDK代际更新也应静态检查已应用/已运行pins，不能为了启动而
 | --- | --- | --- |
 | 置顶与个人偏好 | 可归为个人化偏好单元，而不是每个按钮一个模块；拥有自己的偏好规则/配置和查询能力 | native session身份及原生设置仍归SDK。侧栏排序/装饰需要明确UI消费接口；当前只定义module.home，不能声称可不改UI就迁走现有置顶 |
 | 命名 | 自动命名策略、触发/推理可与个人化能力归组 | native name get/set、手动命名权威和新建session基础不能依赖可选命名模块 |
-| 通知 | 可把Web Push等送达provider、订阅/secret和送达结果作为一个完整单元；不要按渠道按钮机械拆分 | 真实ask/plan安全、必要inbox/seen身份及普通回复可见性留host。provider故障不能让决策无法回答；新增host事件消费须明确授权/范围，不广播所有聊天或删除事件 |
+| 通知 | 可把Web Push等送达provider、订阅/secret和送达结果作为一个完整单元；不要按渠道按钮机械拆分 | 真实ask/plan安全、必要inbox/seen身份及普通回复可见性留host。provider默认可调用公开API，但事件订阅仍须定义需要的内容/游标和消费时机，不后台全扫或自动广播删除 |
 | 文件 | 文件库页面、分类/导出或可选存储provider可以模块化；共享同一个文件引用契约 | 认证、稳定附件URL/解析、安装器隔离staging不能依赖一个尚未装好的文件模块。业务文件不能因该模块卸载消失，存储切换另需迁移/恢复契约 |
 | 语音 | 识别provider、令牌/配置与浏览器输入适配应作为完整语音单元 | 普通text/attachment prompt和设备授权边界留host。麦克风/composer需要明确输入provider能力，属后续slot，不把任意脚本塞进schema-page |
 
@@ -750,9 +796,10 @@ SDK代际更新也应静态检查已应用/已运行pins，不能为了启动而
 | supervisor的WORK_* / --config分支 | 标准private context file + 模块entry翻译 | 进程/固定pin/drain归host，具体程序参数归模块 |
 | Web Task初始化/微信解绑 if | capability驱动的通用控件和schema/操作回执 | 模块发布能力声明；不往host加业务按钮逻辑 |
 
-旧v1三模块需要迁移适配，可暂保留有限legacy driver以读旧版本/旧凭据/旧域名；
-它是历史兼容，不能成为新增v2模块的必经注册。不能删掉旧enum就让旧pin/数据不可读。
-具体迁移另授权，不在本轮实施。
+新协议**不保留旧v1 driver、API别名、旧域名/basePath映射、旧配置/凭据根和旧pin格式的
+兼容层**。模块按新契约发布，宿主只实现通用契约；现状矩阵中的专用分支不再成为新设计
+需要维护的负担。如何处置/导出/保留现有数据属于另行明确的实施决定，本稿不执行
+切换、删除、重新签发身份或修改真实会话。
 
 ## 14. 用三个案例走通设计
 
@@ -764,13 +811,14 @@ session→append/skill pin。没有configure/start/health，也无问卷和works
 
 ### Task
 
-URL→验证新的通用契约包→安装→配置公开origin和host授权范围→若**新空数据**
-则Task自己的initialize创建管理资源；旧数据仅显式引用/迁移→start确认实际实例
+URL→验证新的通用契约包→安装→配置Task自己的业务项→对明确的新空数据
+由Task自己的initialize创建管理资源→start确认实际实例
 →选择commander的native创建/apply→Task attach发caller并返回引用。
 
-owner由Task业务dispatch经同一host `session/new` 请求其module-only role；
+owner由Task业务dispatch经同一host `session/new` 请求其声明的owner role；
 Task自己的goal/caller/owner认证不由manifest代替。host不再知道caller文件名。
-旧任务、原session ID与旧credential引用必须通过显式兼容方案保留，不能fresh-init。
+模块调用公开API不需要独立hostAccess/scope授权。旧安装迁移不是此新协议的承诺，
+不能据此对非空旧数据运行fresh initializer。
 
 ### 未预置的 `org.example.clipbook`
 
@@ -806,16 +854,18 @@ Task自己的goal/caller/owner认证不由manifest代替。host不再知道calle
 发布新模块主要改其repo/manifest/包/schema；符合已有能力协议的新module不能要求
 再改host enum、MCP工具实现或route table。新的基础能力原语才需要明确协议升级。
 
-## 16. 留给用户的少数取舍（推荐项，尚未批准）
+## 16. 其余少数取舍
 
 | 取舍 | 推荐 | 可选代价 |
 | --- | --- | --- |
 | 首版链接形态 | 签名descriptor；manifest仅明确locator；裸ZIP/HTML不猜 | 做repo/Release网页自动发现需平台适配及更多不确定性，不是按仓库加白名单 |
-| 新来源信任 | 一次确认绑定这个module的key/权限/计划；不信任作者所有未来模块 | 全publisher信任更省事但授权范围明显更大 |
+| 新来源信任 | 一次确认这个module的key/来源/计划，并明确其默认全部公开API访问；不信任作者所有未来模块 | 不引入每模块API白名单；全publisher信任仍扩大了代码来源信任范围 |
 | 执行隔离 | 首版坦诚同UID可信代码模型；页面sandbox独立 | 强隔离需要单独UID/容器/OS sandbox与文件/工具访问设计，成本更高；不是强制Docker |
 | 页面/工具范围 | 一个声明式module.home schema-page；MCP优先；native terminal核心保留host | 自定义HTML需单独浏览器安全profile；任意DOM/React扩展和terminal hook不在首版 |
 
-这些是供讨论的推荐，不是要求用户现在逐阶段给开工口令，也不是实施授权。
+文首“不兼容旧模块、业务概念归模块、受信启用模块默认全部公开API、文件直接HTTP”
+已经确定；其余具体能力范围和实现方案仍可讨论，不要求逐步骤开工确认。任何设计确认
+均不表示本稿能力已经实现，也不构成修改现有数据或部署的授权。
 
 ## 17. 规范参考与它们不负责的部分
 

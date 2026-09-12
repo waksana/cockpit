@@ -1,0 +1,55 @@
+{
+  "notice": "Documentation-only transport sequence, not an executed request. The module obtains its own file and uses the ordinary host HTTP APIs with existing authentication. No file bytes are encoded in a module-control JSONL frame.",
+  "moduleWork": {
+    "responsibility": "Obtain, store and prepare the file in the module's own service.",
+    "requiresUploadWhenOnlyUsedInternally": false
+  },
+  "upload": {
+    "request": {
+      "method": "POST",
+      "path": "/upload?name=example-note.txt&mime=text%2Fplain",
+      "headers": {
+        "Content-Type": "application/octet-stream",
+        "Content-Length": "1200"
+      },
+      "bodyDescription": "The 1200 raw file bytes, sent by the module's HTTP client, not a JSON object."
+    },
+    "responseProjection": {
+      "kind": "file",
+      "name": "example-note.txt",
+      "url": "/uploads/example-note.txt",
+      "size": 1200,
+      "mime": "text/plain"
+    }
+  },
+  "sendAfterUploadAcknowledgement": {
+    "intent": "prompt",
+    "body": {
+      "sessionId": "native_demo_confirmed",
+      "text": "Read the attached user-supplied note.",
+      "mode": "enqueue",
+      "attachment": {
+        "kind": "file",
+        "name": "example-note.txt",
+        "url": "/uploads/example-note.txt",
+        "size": 1200,
+        "mime": "text/plain"
+      }
+    },
+    "response": {
+      "ok": true
+    }
+  },
+  "downloadOriginal": {
+    "method": "GET",
+    "path": "/uploads/example-note.txt",
+    "bodyDescription": "Original bytes returned by the ordinary authenticated file endpoint."
+  },
+  "rules": [
+    "Use the authoritative upload response, never invent an attachment URL or assume a local path is a valid prompt attachment.",
+    "Prompt acknowledgement is not model completion.",
+    "Upload and response size limits belong to their existing HTTP APIs, not to the module JSONL frame limit.",
+    "Transport failure does not authorize silently repeating upload or prompt.",
+    "The synthetic URL and response projection above are not proof of a retained file."
+  ]
+}

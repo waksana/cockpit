@@ -1,5 +1,5 @@
 {
-  "notice": "Synthetic private-context and wire shapes. Real context files/nonces/grants are private and must never be returned to Web/MCP as document contents. No actual credentials, processes or native sessions are represented.",
+  "notice": "Synthetic private-context and optional wire-helper shapes. Trusted enabled modules use all public host APIs through the existing authentication boundary. Context/nonces/authentication references stay private; no real credentials or sessions are represented.",
   "privateContext": {
     "schemaVersion": 1,
     "moduleRef": "mod_demo_task",
@@ -39,15 +39,13 @@
         "path": "/synthetic/module-run"
       }
     },
-    "hostGrant": {
-      "grantRef": "grant_demo_attach_read",
-      "allowedIntents": [
-        "session/get"
-      ],
-      "sessionIds": [
-        "native_demo_confirmed"
-      ],
-      "temporary": "until-this-attach-settles"
+    "hostApi": {
+      "baseUrl": "http://127.0.0.1:8771",
+      "authentication": {
+        "kind": "existing-host-authentication",
+        "credentialFile": "/synthetic/host-api-credential"
+      },
+      "access": "all-public-apis"
     }
   },
   "hello": {
@@ -78,7 +76,7 @@
     }
   },
   "moduleIssuedOwnerCreation": {
-    "transportIdentity": "authenticated module channel of mod_demo_task, not a body-supplied actor",
+    "transportIdentity": "existing host authentication; direct HTTP and the optional module-channel helper use the same public API",
     "request": {
       "intent": "session/new",
       "body": {
@@ -118,7 +116,7 @@
       }
     }
   },
-  "hostInvokeResponse": {
+  "optionalHostInvokeResponse": {
     "protocol": "cockpit.module-control/1",
     "type": "response",
     "requestId": "hostcall_demo_01",
@@ -169,11 +167,11 @@
       "kind": "schema-page",
       "version": "0.3.0-draft.1",
       "releaseDigest": "3333333333333333333333333333333333333333333333333333333333333333",
-      "allowedActions": [
+      "declaredActions": [
         "notes.list",
         "notes.add"
       ],
-      "allowedEvents": [
+      "declaredEvents": [
         "notes.changed"
       ]
     }

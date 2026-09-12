@@ -50,7 +50,6 @@
     },
     "logs": true
   },
-  "hostAccess": [],
   "roles": [
     {
       "roleId": "writer",

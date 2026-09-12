@@ -392,7 +392,7 @@
       }
     }
   },
-  "moduleHostCallAuthentication": "The host-bound private channel supplies module authority. A request body cannot claim its own authenticated module/session identity.",
+  "moduleHostCallAuthentication": "The shown host.invoke call is an optional small-JSON helper. Trusted enabled modules may directly call every public host API through the existing authentication boundary. Body fields are not authentication; endpoint confirmations and module business authorization remain in force.",
   "errors": [
     {
       "http": 409,

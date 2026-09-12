@@ -10,8 +10,13 @@
 - [requests-and-receipts.json](requests-and-receipts.json)：inspect/verify/use-plan、同Web/MCP调用、控制消息与错误。
 - [atomic-lifecycle.json](atomic-lifecycle.json)：单独install/configure/start/apply/drain/uninstall及Assistant完成状态。
 - [context-and-wire.json](context-and-wire.json)：私有context、hello、动态owner接入和固定provider的page lease。
+- [files-via-http.json](files-via-http.json)：模块直接上传文件，再发送附件引用；不经过JSONL文件转发。
 - [clipbook.home.page.json](clipbook.home.page.json) / [task.dashboard.page.json](task.dashboard.page.json)：首版无脚本schema-page例子，
   发布者分别放到对应manifest声明的 `web/` entry位置；不是HTML/JS页面。
+
+受信任并启用的模块默认访问所有公开host API，不声明hostAccess/hostGrant或逐API
+权限列表。模块业务鉴权、API本身的认证/确认/busy/unknown规则保留；selectableBy
+仅表达普通UI建议入口，不给角色授予业务身份。这些新协议例子不兼容旧模块接口或路径。
 
 所有 `.invalid` URL、重复字符digest、公钥指纹、字节数和 `native_demo_*` ID
 都是**占位的合成例子**，不对应网络文件、有效签名、真正native session或已执行结果。

@@ -14,7 +14,6 @@
     "data": null,
     "logs": false
   },
-  "hostAccess": [],
   "roles": [
     {
       "roleId": "assistant",
