@@ -1,15 +1,7 @@
-import type { ChatMessage, UploadedFile } from '@cockpit/protocol';
+import type { ChatMessage } from '@cockpit/protocol';
 import type { ChatSession } from '../net/types';
 
 const timestamp = new Date('2026-09-11T09:40:00').getTime();
-export const labFiles: UploadedFile[] = [
-  { kind: 'image', name: 'reading-layout.svg', url: '/uploads/lab-layout.svg', size: 1360, mime: 'image/svg+xml', path: '/synthetic/reading-layout.svg', source: 'web' },
-  { kind: 'file', name: 'interaction-demo.webm', url: '/uploads/lab-video.webm', size: 20480, mime: 'video/webm', path: '/synthetic/interaction-demo.webm', source: 'mcp' },
-  { kind: 'file', name: 'component-review-with-a-deliberately-long-name.txt', url: '/uploads/lab-notes.txt', size: 2048, mime: 'text/plain', path: '/synthetic/component-review.txt', source: 'web' },
-  { kind: 'image', name: 'missing-preview.png', url: '/uploads/lab-missing.png', size: 35000, mime: 'image/png', path: '/synthetic/missing.png' },
-  { kind: 'image', name: 'slow-preview.svg', url: '/uploads/lab-slow.svg', size: 1360, mime: 'image/svg+xml', path: '/synthetic/slow.svg' },
-  { kind: 'file', name: 'unknown-format.bin', url: '/uploads/lab-unknown.bin', size: 1024, mime: 'application/octet-stream', path: '/synthetic/unknown.bin' },
-];
 
 function message(id: string, role: ChatMessage['role'], content: string, extra: Partial<ChatMessage> = {}): ChatMessage {
   return { id, role, content, timestamp, ...extra };
@@ -128,39 +120,6 @@ export const processMessages: ChatMessage[] = [
   message('error', 'system', '连接中断，未自动重发请求。', { level: 'error' }),
 ];
 
-export const attachmentMessages: ChatMessage[] = [
-  message('upload', 'user', '请看这些附件。图片、视频、文档必须具有稳定的占位与明确的打开方式。', { attachments: labFiles.slice(0, 3) }),
-  message('files', 'assistant', `## 附件与正文
-
-![布局预览](/uploads/lab-layout.svg)
-[再次引用同一图片（应为普通链接）](/uploads/lab-layout.svg)
-
-[视频演示](/uploads/lab-video.webm)
-[普通文档](/uploads/lab-notes.txt)
-
-### 故障与加载状态
-
-![预览失败](/uploads/lab-missing.png)
-![延迟图片加载](/uploads/lab-slow.svg)
-[未知格式](/uploads/lab-unknown.bin)
-[元数据读取失败](/uploads/lab-error.txt)
-[元数据等待](/uploads/lab-pending.txt)
-
-### 普通相对图片与外部图片
-
-![本地预览](/src/dev/lab-layout.svg)
-![外部图片不自动读取](https://example.com/blocked-image.png)`),
-  message('ordered', 'assistant', '', { parts: [
-    { type: 'text', text: '### 有序的文字与文件\n文件前的说明。' },
-    { type: 'file', attachment: labFiles[0] },
-    { type: 'file', attachment: labFiles[2] },
-    { type: 'text', text: '文件后的说明。重复附件不再加载预览。' },
-    { type: 'file', attachment: labFiles[0] },
-  ] }),
-  message('legacy-file', 'user', '单附件兼容入口。', { attachment: labFiles[2] }),
-  message('invalid-file', 'assistant', '无效地址明确显示，不导致整条消息崩溃。', { attachment: { kind: 'file', name: 'invalid.txt', url: 'invalid-address', mime: 'text/plain' } }),
-];
-
 export const processHistoryMessages: ChatMessage[] = [
   message('process-request', 'user', '保留消息结构，把执行过程收好。'),
   message('process-one', 'assistant', '', { thought: '这里是原消息的思考内容，不是额外生成的总结。',
@@ -172,7 +131,7 @@ export const processHistoryMessages: ChatMessage[] = [
     { toolCallId: 'two-check', title: '检查资源', name: 'view', status: 'completed' },
     { toolCallId: 'two-error', title: '读取不可用的资源', name: 'web_fetch', status: 'failed', output: 'HTTP 404 · 合成错误记录\n没有自动重试。' },
   ] }),
-  message('process-three', 'assistant', '', { parts: [{ type: 'text', text: ' \n' }], thought: '只存在思考，不应该凭空计为一次工具。' }),
+  message('process-three', 'assistant', '', { thought: '只存在思考，不应该凭空计为一次工具。' }),
   message('process-four', 'assistant', '', { toolCalls: [
     { toolCallId: 'four-unknown', title: '没有明确状态的记录', name: 'view' },
   ] }),
@@ -184,10 +143,9 @@ export const processHistoryMessages: ChatMessage[] = [
 export const scenarios = [
   ['all', '完整组件对话'],
   ['reading', '正文 / Markdown / 代码'],
-  ['user-time', '用户时间 / 短长文本 / 附件'],
+  ['user-time', '用户时间 / 短长文本'],
   ['process', '思考 / 工具 / 子代理'],
   ['process-history', '消息级过程 / 无正文 / 轻量复制'],
-  ['attachments', '图片 / 视频 / 文件'],
   ['streaming', '流式 / 队列 / 停止'],
   ['cancelling', '停止请求中'],
   ['ask', '选择 / 自由回答'],
@@ -215,18 +173,15 @@ export function fixtureSession(scenario: Scenario): ChatSession {
     queue: [], materialized: true, historyStale: false, hasMore: false, loadingHistory: false,
     messages: [...readingMessages],
   };
-  if (scenario === 'all') session.messages = [...readingMessages, ...processMessages, ...attachmentMessages];
+  if (scenario === 'all') session.messages = [...readingMessages, ...processMessages];
   if (scenario === 'process') session.messages = [...processMessages];
   if (scenario === 'process-history') session.messages = [...processHistoryMessages];
   if (scenario === 'user-time') session.messages = [
     message('time-short', 'user', '收到。'),
     message('time-long', 'user', '这是一段合成的多行用户消息。\n请把时间放在气泡外，并紧贴对应气泡。\n保留文字、附件、复制操作和时间的自然归属。'),
-    message('time-file', 'user', '普通文件说明。', { attachments: [labFiles[2]] }),
-    message('time-image', 'user', '', { attachment: labFiles[0] }),
     message('time-reply', 'user', '选择已确认。', { subtype: 'ask-reply' }),
     message('time-assistant', 'assistant', '助手的时间来源与展示分组保持不变。'),
   ];
-  if (scenario === 'attachments') session.messages = [...attachmentMessages];
   if (scenario === 'streaming' || scenario === 'cancelling') Object.assign(session, {
     status: 'running', nativeProcessing: true, intent: '正在整理组件观察…',
     messages: [...processMessages, message('stream', 'assistant', '## 正在形成答案\n\n先让内容', { thought: '流式思考默认展开；结束后回归折叠。' })],

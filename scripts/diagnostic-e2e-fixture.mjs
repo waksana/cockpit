@@ -6,7 +6,7 @@ import { Intents } from '../packages/protocol/src/index.ts';
 const root = process.argv[process.argv.indexOf('--synthetic-fixture-root') + 1];
 const json = (value, status = 200) => Response.json(value, { status });
 const sessionId = 'synthetic-e2e-session';
-let session = null, upload = null, skillEnabled = true, mcpEnabled = true;
+let session = null, skillEnabled = true, mcpEnabled = true;
 const schedules = new Map();
 const validated = new Set();
 let invalidBodies = 0, deleted = false;
@@ -24,22 +24,8 @@ globalThis.fetch = async (url, init = {}) => {
     });
     return json({
       intents: Object.keys(Intents).map(name => ({ name })),
-      transports: [{ method: 'POST', path: '/upload' }, { method: 'GET', path: '/uploads/:name' }],
+      transports: [{ method: 'POST', path: '/chat/stream' }],
     });
-  }
-  if (path === '/upload') {
-    assert.equal(init.method, 'POST');
-    if (!init.body.length) return json({ error: 'empty fixture upload' }, 400);
-    assert.equal(upload, null, 'only one in-memory upload');
-    upload = Buffer.from(init.body);
-    return json({ kind: 'file', name: target.searchParams.get('name'), size: upload.length, url: '/uploads/synthetic.txt' });
-  }
-  if (path.startsWith('/uploads/')) {
-    if (path !== '/uploads/synthetic.txt') return json({ error: 'not found' }, 404);
-    assert.ok(upload);
-    return new Response(upload, { headers: {
-      'x-content-type-options': 'nosniff', 'content-security-policy': "sandbox; default-src 'none'",
-    } });
   }
   assert.ok(path.startsWith('/intent/'), `unexpected fixture route ${path}`);
   assert.equal(init.method, 'POST');
@@ -85,9 +71,6 @@ globalThis.fetch = async (url, init = {}) => {
     case 'session/rename':
       session.title = body.name;
       return result({ ok: true, title: session.title });
-    case 'session/pin':
-      session.pinned = body.pinned;
-      return result({ ok: true, pinned: session.pinned });
     case 'session/unload':
     case 'session/reload':
       session.loaded = name === 'session/reload';
@@ -144,7 +127,6 @@ globalThis.fetch = async (url, init = {}) => {
 
 process.on('exit', () => {
   assert.ok(deleted, 'happy path reaches confirmed synthetic deletion');
-  assert.ok(upload, 'upload remains solely in memory');
   assert.equal(invalidBodies, 4, 'schema rejects malformed MCP, zero interval and both unconfirmed deletes');
   for (const name of ['mcp/session-toggle', 'session/chat', 'schedule/add', 'session/delete']) assert.ok(validated.has(name));
   console.log(`SYNTHETIC_E2E ${validated.size} intent contracts validated, no real backend`);

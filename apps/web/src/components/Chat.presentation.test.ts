@@ -6,10 +6,9 @@ import { ChatMessage, SessionMeta } from '@cockpit/protocol';
 import { MessageBody } from './MessageBody';
 import { Thread } from './Thread';
 import { fixtureSession, scenarios } from '../dev/chat-fixtures';
-import { messageCopyText, copyText } from '../lib/copyText';
-import { formatFileSize } from '../lib/managedFile';
+import { copyText } from '../lib/copyText';
 import { compile } from 'sass';
-import { getSessionDraft } from '../lib/attachmentSend';
+import { getSessionDraft } from '../lib/textDraft';
 import { existsSync, readFileSync } from 'node:fs';
 import { ActivityHeader } from './ActivityHeader';
 
@@ -31,16 +30,6 @@ test('Markdown keeps semantic headings and exact code text in a labeled copyable
   assert.match(html, /<pre tabindex="0" aria-label="ts代码块"><code class="language-ts">const x = &quot;&lt;tag&gt;&quot;;\n\nrun\(x\);\n<\/code><\/pre>/);
   assert.match(html, /role="region" aria-label="表格（可横向滚动）" tabindex="0"/);
   assert.equal((html.match(/class="chat-code-block"/g) ?? []).length, 1, 'inline code remains text, not an extra copy block');
-});
-
-test('message copy preserves ordered parts and handles invalid file addresses without crashing rendering', () => {
-  const base: ChatMessage = { id: 'copy', role: 'user', content: '', timestamp: 0 };
-  const attachment = { kind: 'file' as const, name: 'notes.txt', url: '/uploads/notes.txt' };
-  assert.equal(messageCopyText({ ...base, parts: [
-    { type: 'text', text: 'Before' }, { type: 'file', attachment }, { type: 'text', text: 'After' },
-  ] }), 'Before\n\n[notes.txt](/uploads/notes.txt)\n\nAfter');
-  assert.equal(messageCopyText({ ...base, attachment, content: 'Caption' }), '[notes.txt](/uploads/notes.txt)\n\nCaption');
-  assert.equal(messageCopyText({ ...base, attachment: { ...attachment, url: 'bad-address' } }), 'notes.txt（文件地址无效）');
 });
 
 test('clipboard failure is propagated, never reported as success', async t => {
@@ -66,14 +55,6 @@ test('tool history has a per-message summary with explicit recorded failure and 
   assert.doesNotMatch(html, /任务目标已完成<\/span>|🤖/);
 });
 
-test('human file sizes preserve small-byte precision without pretending an unknown size is zero', () => {
-  assert.equal(formatFileSize(0), '0 B');
-  assert.equal(formatFileSize(12), '12 B');
-  assert.equal(formatFileSize(1024), '1 KiB');
-  assert.equal(formatFileSize(1536), '1.5 KiB');
-  assert.equal(formatFileSize(25 * 1024 * 1024), '25 MiB');
-});
-
 test('Chat dark theme targets the mounted chat, not an impossible nested chat', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*\.chat \{\s*--primary-text-color:/);
@@ -85,7 +66,6 @@ test('the transcript does not make long decisions compete with its scroll-conten
   assert.match(css, /\.chat-transcript \{[^}]*flex: 1 1 0;[^}]*min-height: min\(6rem, 20%\)/);
   assert.match(css, /\.chat-ask \{[^}]*flex: 0 1 auto;/);
   assert.match(css, /\.chat-execution \{[^}]*flex: 0 1 auto;[^}]*min-height: 40px/);
-  assert.match(css, /\.chat \.chat-staged-list \{[^}]*flex: 0 1 auto;[^}]*min-height: 2\.5rem/);
 });
 
 test('the composer is a full-width bottom bar without a floating outer frame', () => {
@@ -114,20 +94,18 @@ test('CSS owns the shell again, with no replacement global JS viewport controlle
   }
 });
 
-test('composer actions share unfilled surfaces and equal icon sizes instead of an oversized send disc', t => {
+test('the native composer keeps a compact send action without parked file or voice controls', t => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  for (const action of ['attach', 'mic', 'send']) {
-    assert.match(css, new RegExp(`\\.chat-input-btn\\.${action} \\{[^}]*background-color: transparent;`));
-  }
+  assert.match(css, /\.chat-input-btn\.send \{[^}]*background-color: transparent;/);
+  assert.doesNotMatch(css, /\.chat-input-btn\.(?:attach|mic)/);
   assert.match(css, /\.chat-input-btn\.send \{[^}]*color: var\(--chat-accent-ink\)/);
   assert.match(css, /\.chat-input-btn\.send:disabled \{[^}]*color: var\(--secondary-text-color\)/);
   const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
-  Object.defineProperty(globalThis, 'window', { configurable: true, value: { SpeechRecognition() {} } });
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
   t.after(() => original ? Object.defineProperty(globalThis, 'window', original) : Reflect.deleteProperty(globalThis, 'window'));
   const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession('empty'), onLoadMore() {} }));
-  for (const icon of ['attach', 'microphone', 'arrow_up']) {
-    assert.match(html, new RegExp(`data-icon="${icon}" aria-hidden="true" style="font-size:22px"`));
-  }
+  assert.match(html, /data-icon="arrow_up" aria-hidden="true" style="font-size:22px"/);
+  assert.doesNotMatch(html, /data-icon="attach"|data-icon="microphone"|type="file"/);
 });
 
 test('decision details stay in their cards rather than inflating an empty textarea placeholder', t => {
@@ -170,8 +148,7 @@ test('user copy and time share one footer outside the bubble without changing me
   session.messages = [
     { id: 'short', role: 'user', content: 'Short', timestamp: 1000 },
     { id: 'long', role: 'user', content: 'Long\n'.repeat(8), timestamp: 2000 },
-    { id: 'file', role: 'user', content: '', timestamp: 3000,
-      attachment: { kind: 'file', name: 'notes.txt', mime: 'text/plain', url: '/uploads/notes.txt' } },
+    { id: 'third', role: 'user', content: 'Third native message', timestamp: 3000 },
     { id: 'answer', role: 'assistant', content: 'Answer', timestamp: 4000 },
   ];
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
@@ -180,7 +157,7 @@ test('user copy and time share one footer outside the bubble without changing me
   assert.equal((html.match(/class="user-message-meta"><span class="chat-copy is-text">/g) ?? []).length, 3);
   assert.equal((html.match(/<\/span><span class="message-time">\d{2}:\d{2}<\/span><\/div>/g) ?? []).length, 3);
   assert.doesNotMatch(html, /class="message-actions" data-role="user"/);
-  for (const id of ['short', 'long', 'file']) assert.match(html, new RegExp(`class="message is-out[^"]*" data-message-id="${id}"`));
+  for (const id of ['short', 'long', 'third']) assert.match(html, new RegExp(`class="message is-out[^"]*" data-message-id="${id}"`));
   assert.match(html, /class="doc-time"/);
 });
 

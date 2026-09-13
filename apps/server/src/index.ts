@@ -6,8 +6,6 @@
 //  - GET  /health
 //  - GET  /status           per-session status (ops; used by graceful-restart)
 //  - POST /admin/restart     arm graceful self-restart (exits when all idle)
-//  - POST /upload            save a file to the fixed upload folder
-//  - GET  /uploads/:name     serve a stored upload (path-traversal guarded)
 //
 // Binds 127.0.0.1 only; TLS + cookie auth are handled by the upstream reverse
 // proxy (nginx). The Engine owns control state; chat remains native and is read
@@ -20,23 +18,16 @@ import fastifyStatic from '@fastify/static';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Readable } from 'node:stream';
 import { Engine, OfficialRuntime, sessionMetaBusy } from '@cockpit/core';
-import { Intents, UploadedFile, partsPrompt, unreadSessionCount, type MessagePart, type IntentBody, type IntentName, type IntentResult, type ServerEvent, type SessionMeta, type Snapshot } from '@cockpit/protocol';
-import { PushManager } from './push.ts';
-import { getSpeechToken } from './speech.ts';
-import { saveUploadStream, associateUpload, listUploads, uploadDetails, resolveUpload,
-  openUpload, MAX_UPLOAD_BYTES, UploadError, validateUploadContext, type UploadContext } from './uploads.ts';
+import { Intents, ConsumerOperationId, type IntentBody, type IntentName, type IntentResult, type ServerEvent, type SessionMeta, type Snapshot } from '@cockpit/protocol';
 import { isIntentName, registerCapabilities } from './capabilities.ts';
 import { drainForRestart } from './shutdown.ts';
 import { registerChatStream } from './chat-stream.ts';
 import { deliveryIdentity } from './delivery-identity.ts';
-import { registerDeliveryStatus } from './delivery-status.ts';
 import { createConsumerControl, type ConsumerControl } from './consumer-control.ts';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.COCKPIT_PORT ?? 8771);
-const UPLOAD_BODY_LIMIT = MAX_UPLOAD_BYTES;
 
 // Optional single-process web serving (no reverse proxy). The canonical Linux
 // deploy fronts this with nginx serving apps/web/dist, so this stays OFF (env
@@ -54,51 +45,28 @@ export const app = Fastify({
   forceCloseConnections: true,
 });
 registerCapabilities(app);
-// Keep videos as bounded streams rather than buffering an entire upload in RAM.
-app.addContentTypeParser('application/octet-stream', (_req, body, done) => done(null, body));
-// engine/push are constructed in boot() (guarded) so importing this module for
+// The engine is constructed in boot() (guarded) so importing this module for
 // unit tests (COCKPIT_NO_BOOT=1) builds the Fastify app + hooks WITHOUT reading the
-// real ~/.copilot prefs or binding the port. Definite-assignment: always set before
+// native configuration or binding the port. Definite-assignment: always set before
 // any request handler that derefs them can run (boot() runs at module entry).
 export type ServerEngine = Pick<Engine,
   | 'login' | 'snapshot' | 'status' | 'busyCount' | 'newSession' | 'forkSession' | 'chat' | 'stop'
-  | 'prompt' | 'cancel' | 'interrupt' | 'setModel' | 'rename' | 'autoName' | 'compact' | 'rewind' | 'setMode'
+  | 'prompt' | 'cancel' | 'interrupt' | 'setModel' | 'rename' | 'compact' | 'rewind' | 'setMode'
   | 'deleteSession' | 'unload' | 'load'
-  | 'reload' | 'pin' | 'getPlan' | 'getUsage' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
+  | 'reload' | 'getPlan' | 'getUsage' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
   | 'planSupersede' | 'respondElicitation' | 'removeQueued' | 'refreshList'
-  | 'listLive' | 'getMeta' | 'markSeen' | 'listGlobalMcp' | 'setMcpDefault'
+  | 'listLive' | 'getMeta' | 'listGlobalMcp' | 'setMcpDefault'
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
   | 'listGlobalSkills' | 'setGlobalSkill' | 'readSkillBody' | 'listSessionSkills' | 'toggleSessionSkill' | 'refreshSkills'
   | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
 >;
-export type ServerPush = Pick<PushManager, 'subscribe' | 'status' | 'test' | 'unsubscribe' | 'sendAttention'>;
 let engine: ServerEngine;
-let push: ServerPush;
 let consumerControl: ConsumerControl | undefined;
 
-function preparePromptContent(body: Pick<IntentBody<'prompt'>, 'text' | 'attachment' | 'attachments' | 'parts'>, sessionId: string): {
-  text: string; attachments?: Parameters<ServerEngine['prompt']>[3];
-} {
-  if (!body.attachment && !body.attachments && !body.parts) return { text: body.text };
-  const parts: MessagePart[] = body.parts ?? [
-    ...(body.attachments ?? (body.attachment ? [body.attachment] : [])).map(attachment => ({ type: 'file' as const, attachment })),
-    ...(body.text ? [{ type: 'text' as const, text: `\n${body.text}` }] : []),
-  ];
-  const attachments: NonNullable<Parameters<ServerEngine['prompt']>[3]> = [];
-  const resolved = parts.map(part => {
-    if (part.type === 'text') return part;
-    const file = associateUpload(part.attachment.url, sessionId);
-    attachments.push({ type: 'file', path: file.path, displayName: file.name });
-    return { type: 'file' as const, attachment: file };
-  });
-  return { text: partsPrompt(resolved), attachments };
-}
-
 // No SDK construction, preferences, listeners, or production dependency override.
-export function setTestDependencies(deps: { engine: ServerEngine; push: ServerPush; consumer?: ConsumerControl }): void {
+export function setTestDependencies(deps: { engine: ServerEngine; consumer?: ConsumerControl }): void {
   if (process.env.COCKPIT_NO_BOOT !== '1') throw new Error('test dependencies require COCKPIT_NO_BOOT=1');
   engine = deps.engine;
-  push = deps.push;
   consumerControl = deps.consumer;
 }
 
@@ -163,7 +131,6 @@ function sseSend(reply: FastifyReply, ev: ServerEvent): boolean {
 // without interrupting any work, including its own turn.
 let restartPending = false;
 let restarting = false;
-const pendingNotifications = new Set<Promise<unknown>>();
 
 app.addHook('onRequest', async (_req, reply) => {
   if (restarting) return reply.code(503).header('Retry-After', '3').send({ error: 'Cockpit is restarting' });
@@ -240,7 +207,7 @@ async function checkGracefulExit(): Promise<void> {
       }
       if (!restartPending) return;
       restarting = true;
-      await drainForRestart(engine, pendingNotifications);
+      await drainForRestart(engine);
       for (const client of clients) client.raw.destroy();
       clients.clear();
       await app.close();
@@ -260,7 +227,7 @@ async function exitAfterRuntimeFailure(runtime: Engine, error: Error): Promise<v
   restarting = true;
   app.log.fatal({ err: error }, 'Copilot runtime died; exiting for supervisor recovery without replaying requests');
   try {
-    await drainForRestart(runtime, pendingNotifications);
+    await drainForRestart(runtime);
   } catch (cleanup) {
     app.log.error({ err: cleanup }, 'dead runtime cleanup failed');
   }
@@ -274,15 +241,7 @@ async function exitAfterRuntimeFailure(runtime: Engine, error: Error): Promise<v
   process.exit(1);
 }
 
-// SSE fan-out + notifications + restart-gate re-check on every engine event.
-// Registered on the engine in boot() (not here) so importing this module for unit
-// tests (COCKPIT_NO_BOOT=1) doesn't require a constructed engine.
-function notificationSnapshot(snapshot: Snapshot): Snapshot {
-  return { ...snapshot, unreadCount: snapshot.unreadCount ?? unreadSessionCount(snapshot.sessions) };
-}
-
 export function onEngineEvent(ev: ServerEvent): void {
-  if (ev.type === 'snapshot') ev = notificationSnapshot(ev);
   const frame = `data: ${JSON.stringify(ev)}\n\n`;
   broadcastFrame(clients, frame);
   for (const [reply, pending] of openingClients) {
@@ -292,27 +251,7 @@ export function onEngineEvent(ev: ServerEvent): void {
       reply.raw.destroy();
     } else pending.frames.push(frame);
   }
-  // Notifications are driven by the Engine's authoritative `session/notify` signal
-  // (one source of truth for both channels — see engine.patch).
-  if (ev.type === 'session/notify') {
-    const failed = () => app.log.warn(
-      { status: 'failed', at: Date.now(), error: 'Push notification failed' },
-      'push notification failed',
-    );
-    try {
-      if (ev.unreadCount === undefined || ev.attnId === undefined || ev.inboxRevision === undefined) {
-        throw new Error('Notification is missing its committed inbox waterline');
-      }
-      const delivery = push.sendAttention(
-        ev.title, ev.sessionId, ev.attention, ev.body, ev.unreadCount,
-        { attnId: ev.attnId, inboxRevision: ev.inboxRevision },
-      );
-      pendingNotifications.add(delivery);
-      void delivery.catch(failed).finally(() => pendingNotifications.delete(delivery));
-    } catch {
-      failed();
-    }
-  } else if (ev.type === 'session/patch' || ev.type === 'session/removed' || ev.type === 'session/invalidated') {
+  if (ev.type === 'session/patch' || ev.type === 'session/removed' || ev.type === 'session/invalidated') {
     // Re-check the graceful-restart gate on ANY session change. The gate exits
     // only when every session is non-busy (idle, no pending choice, no in-flight
     // sub-agent/MCP operation, not compacting — see sessionBusy). Several of those busy
@@ -343,7 +282,7 @@ export function onEngineEvent(ev: ServerEvent): void {
 //   - Origin/Referer present → must resolve to a trusted host: the request's own
 //     Host (standard same-origin check), a loopback host, or the configured/known
 //     public-origin allowlist. Anything else → REJECT (403).
-// Only mutating methods are gated; GET/HEAD/OPTIONS (SSE, /uploads, /health,
+// Only mutating methods are gated; GET/HEAD/OPTIONS (SSE, /health,
 // /status, preflight) stay open — a CSRF attacker can't read a cross-origin
 // response anyway, and a preflight the no-CORS server fails already blocks the
 // follow-up request.
@@ -402,7 +341,6 @@ app.addHook('onRequest', async (req, reply) => {
 });
 
 registerChatStream(app, () => (query, signal) => engine.chat(query, signal));
-registerDeliveryStatus(app);
 
 app.get('/health', async (_req, reply) => {
   reply.header('Cache-Control', 'no-store');
@@ -412,72 +350,6 @@ app.get('/version', async (_req, reply) => {
   reply.header('Cache-Control', 'no-store');
   if (!deliveryIdentity.sha) return reply.code(503).send({ error: 'Source-mode process has no immutable delivery identity' });
   return deliveryIdentity;
-});
-
-// File upload: raw binary body (octet-stream) + ?name=&mime= query. Saved to the
-// fixed upload folder (survives session deletion). Returns metadata for the client
-// to render a card or pass a structured attachment to the prompt intent.
-app.post<{ Querystring: Record<string, unknown> }>('/upload', { bodyLimit: UPLOAD_BODY_LIMIT }, async (req, reply) => {
-  const q = req.query;
-  const body = req.body;
-  if (!(body instanceof Readable)) { reply.code(400); return { error: 'binary body required' }; }
-  if (req.headers['content-length'] === '0') return reply.code(400).send({ error: 'Empty upload body' });
-  if (Number(req.headers['content-length']) > MAX_UPLOAD_BYTES) return reply.code(413).send({ error: 'Upload exceeds 25 MiB' });
-  if (Object.keys(q).some((key) => !['name', 'mime', 'source', 'sessionId', 'sourceId'].includes(key))
-    || (q.name !== undefined && typeof q.name !== 'string')
-    || (q.mime !== undefined && typeof q.mime !== 'string')
-    || ['source', 'sessionId', 'sourceId'].some(key => q[key] !== undefined && typeof q[key] !== 'string')) {
-    return reply.code(400).send({ error: 'upload accepts only single name, mime, source, sessionId and sourceId strings' });
-  }
-  // Fastify already decoded these values; literal percent signs are filenames.
-  const name = typeof q.name === 'string' ? q.name : 'file';
-  const mime = typeof q.mime === 'string' ? q.mime : 'application/octet-stream';
-  const context = validateUploadContext({
-    source: q.source as UploadContext['source'], sessionId: q.sessionId as string | undefined,
-    sourceId: q.sourceId as string | undefined,
-  });
-  const r = await saveUploadStream(body, name, mime, { source: 'web', ...context });
-  return UploadedFile.parse(r);
-});
-
-// Serve a stored upload (path-traversal guarded). Streams through the backend.
-// Security: user-uploaded content is served with `X-Content-Type-Options: nosniff`
-// (no MIME sniffing) and a `Content-Security-Policy: sandbox` so that a navigated
-// upload (e.g. an SVG/HTML file opened in a new tab) runs in a script-less sandbox
-// — neutralizing stored-XSS in the cockpit origin. Inline <img> rendering in the
-// chat is unaffected (CSP applies to documents, not image subresources).
-app.get('/uploads/:name', async (req, reply) => {
-  const { name } = req.params as { name: string };
-  const found = resolveUpload(name);
-  if (!found) { reply.code(404); return { error: 'not found' }; }
-  reply.header('Cache-Control', 'private, max-age=31536000, immutable');
-  reply.header('X-Content-Type-Options', 'nosniff');
-  reply.header('Content-Security-Policy', "sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'");
-  reply.header('Accept-Ranges', 'bytes');
-  const disposition = (req.query as { download?: string }).download === '1' ? 'attachment' : 'inline';
-  reply.header('Content-Disposition', `${disposition}; filename*=UTF-8''${encodeURIComponent(found.name).replace(/['()*]/g, c => `%${c.charCodeAt(0).toString(16)}`)}`);
-  if (found.sha256) reply.header('ETag', `"${found.sha256}"`);
-  reply.type(found.mime);
-  const rangeHeader = req.headers.range;
-  if (rangeHeader && (!req.headers['if-range'] || req.headers['if-range'] === `"${found.sha256}"`)) {
-    const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
-    const size = found.size;
-    let start = match?.[1] ? Number(match[1]) : 0;
-    let end = match?.[2] ? Number(match[2]) : size - 1;
-    if (match && !match[1] && match[2]) {
-      start = Math.max(0, size - Number(match[2]));
-      end = size - 1;
-    }
-    end = Math.min(end, size - 1);
-    if (!match || (!match[1] && !match[2]) || !Number.isSafeInteger(start) || !Number.isSafeInteger(end)
-      || start > end || start < 0 || start >= size) {
-      return reply.code(416).header('Content-Range', `bytes */${size}`).send();
-    }
-    reply.code(206).header('Content-Range', `bytes ${start}-${end}/${size}`).header('Content-Length', end - start + 1);
-    return reply.send(openUpload(found.path, { start, end }));
-  }
-  reply.header('Content-Length', found.size);
-  return reply.send(openUpload(found.path));
 });
 
 // Lightweight status for ops tooling (e.g. graceful-restart): per-session status
@@ -523,11 +395,9 @@ app.post('/admin/restart', async (req, reply) => {
       || ('pending' in body && body.pending !== true)) {
       return reply.code(400).send({ error: 'Consumer restart accepts only pending:true and a stable operationId' });
     }
-    const parsed = Intents['system/consumer/restart'].body.safeParse({
-      operationId: 'operationId' in body ? body.operationId : undefined, confirm: true,
-    });
-    if (!parsed.success) return reply.code(400).send({ error: 'Consumer restart requires a stable operationId; use system/consumer/restart with confirm:true' });
-    return { authority: 'consumer', operation: await consumerControl.restart(parsed.data.operationId) };
+    const parsed = ConsumerOperationId.safeParse('operationId' in body ? body.operationId : undefined);
+    if (!parsed.success) return reply.code(400).send({ error: 'Consumer lifecycle requires a stable operationId' });
+    return { authority: 'consumer', operation: await consumerControl.restart(parsed.data) };
   }
   const pending = (req.body as { pending?: boolean } | null)?.pending ?? true;
   restartPending = pending;
@@ -549,7 +419,7 @@ app.get('/events', async (req, reply) => {
   openingClients.set(reply, pending);
   req.raw.on('close', () => { openingClients.delete(reply); clients.delete(reply); });
   let snapshot: Snapshot;
-  try { snapshot = notificationSnapshot(await engine.snapshot()); }
+  try { snapshot = await engine.snapshot(); }
   catch (error) { openingClients.delete(reply); throw error; }
   if (!openingClients.delete(reply) || reply.raw.destroyed) return;
   reply.raw.writeHead(200, {
@@ -576,25 +446,13 @@ type IntentHandlers = {
 };
 
 const handlers: IntentHandlers = {
-  'system/consumer/status': async b => consumerControl ? consumerControl.status(b.operationId)
-    : { available: false as const, reason: 'This runtime is not managed by a consumer launcher; existing source/private-CD authority is unchanged' },
-  'system/consumer/restart': async b => {
-    if (!consumerControl) throw Object.assign(new Error('Consumer launcher is not configured for this runtime'), { statusCode: 503 });
-    return { operation: await consumerControl.restart(b.operationId) };
-  },
-  'runtime/snapshot': async () => notificationSnapshot(await engine.snapshot()),
+  'runtime/snapshot': async () => engine.snapshot(),
   'session/new': async (b) => ({ sessionId: await engine.newSession(b.cwd) }),
   'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
   'session/chat': (b, signal) => engine.chat(b, signal),
-  'files/list': b => listUploads(b),
-  'files/get': b => uploadDetails(b.url),
-  'files/associate': b => associateUpload(b.url, b.sessionId),
-  prompt: async (b) => {
-    const prepared = preparePromptContent(b, b.sessionId);
-    return prepared.attachments
-      ? await engine.prompt(b.sessionId, prepared.text, b.mode, prepared.attachments)
-      : await engine.prompt(b.sessionId, prepared.text, b.mode);
-  },
+  prompt: async (b) => b.attachments === undefined
+    ? engine.prompt(b.sessionId, b.text, b.mode)
+    : engine.prompt(b.sessionId, b.text, b.mode, b.attachments),
   cancel: async (b) => {
     await engine.cancel(b.sessionId);
     return { ok: true };
@@ -605,7 +463,6 @@ const handlers: IntentHandlers = {
     return { ok: true };
   },
   'session/rename': async (b) => ({ ok: true, title: await engine.rename(b.sessionId, b.name) }),
-  'session/auto-name': async (b) => await engine.autoName(b.sessionId),
   'session/compact': async (b) => {
     await engine.compact(b.sessionId, b.customInstructions);
     return { ok: true };
@@ -638,7 +495,6 @@ const handlers: IntentHandlers = {
     await engine.reload(b.sessionId);
     return { ok: true };
   },
-  'session/pin': async (b) => ({ ok: true, pinned: await engine.pin(b.sessionId, b.pinned) }),
   'session/usage': async (b) => await engine.getUsage(b.sessionId),
   'session/plan': async (b) => await engine.getPlan(b.sessionId),
   'session/panels': async (b) => await engine.getPanels(b.sessionId),
@@ -670,23 +526,6 @@ const handlers: IntentHandlers = {
   'session/list': async () => ({ sessions: await engine.listLive() }),
   'session/get': async (b) => ({ meta: await engine.getMeta(b.sessionId) }),
   'session/resources': async (b) => ({ meta: await engine.getResources(b.sessionId, b.resources) }),
-  'push/subscribe': (b) => {
-    push.subscribe(b.subscription);
-    return { ok: true };
-  },
-  'push/status': (b) => push.status(b.endpoint),
-  'push/test': (b) => push.test(b.endpoint, b.confirm),
-  'push/unsubscribe': (b) => {
-    push.unsubscribe(b.endpoint);
-    return { ok: true };
-  },
-  'inbox/seen': (b) => {
-    // Keep the current-ID check and acknowledgement in the same synchronous turn.
-    if (b.attnId === undefined) engine.markSeen(b.sessionId);
-    else engine.markSeen(b.sessionId, b.attnId);
-    return { ok: true };
-  },
-  'speech/token': async () => await getSpeechToken(),
   'mcp/global': async () => ({ servers: await engine.listGlobalMcp() }),
   'mcp/global-default': async (b) => {
     await engine.setMcpDefault(b.name, b.on);
@@ -759,12 +598,6 @@ app.post('/intent/*', async (req, reply) => {
       error: 'Use session/chat with native source, direction and cursor. Message-ID pagination and server resume checkpoints have been retired.',
     });
   }
-  if (name && ['session/tool-image', 'files/from-tool-image'].includes(name)) {
-    return reply.code(410).send({
-      code: 'NATIVE_IMAGE_LOOKUP_RETIRED',
-      error: 'Native tool-image lookup is retired. Upload an existing local original or reuse a managed /uploads file; chat reads do not collect images.',
-    });
-  }
   if (name === undefined || !isIntentName(name)) { reply.code(404); return { error: `unknown intent: ${name}` }; }
   const controller = new AbortController();
   const cancel = () => { if (!reply.raw.writableFinished) controller.abort(); };
@@ -793,12 +626,9 @@ app.post('/intent/*', async (req, reply) => {
   }
 });
 
-async function main(runtime: Engine, notifications: PushManager): Promise<void> {
-  runtime.vapidPublicKey = notifications.publicKey;
-  const pushStatus = notifications.status();
-  if (!pushStatus.configured) app.log.warn({ error: pushStatus.error }, 'push is unconfigured');
+async function main(runtime: Engine): Promise<void> {
   await runtime.start();
-  app.log.info(`engine up (login=${await runtime.login()}, push=${notifications.publicKey ? 'on' : 'off'})`);
+  app.log.info(`engine up (login=${await runtime.login()})`);
   await registerStaticWeb();
   await app.listen({ host: HOST, port: PORT });
   const stop = () => { restartPending = true; maybeGracefulExit(); };
@@ -816,7 +646,7 @@ async function main(runtime: Engine, notifications: PushManager): Promise<void> 
 // no-reverse-proxy deploy needs no nginx. @fastify/static serves real files (the
 // hashed assets); the notFound handler returns index.html for client-side routes
 // (e.g. /session/:id) so deep links and refreshes work. The specific API routes
-// (/events, /intent/*, /uploads/:name, /health, …) are more specific than the
+// (/events, /intent/*, /health, …) are more specific than the
 // static wildcard and still win; mutating routes keep their Origin/CSRF guard. When
 // SERVE_WEB is off (the Linux default) this is a no-op — no static route, no
 // notFound handler — so existing behavior is untouched.
@@ -835,7 +665,7 @@ export async function registerStaticWeb(): Promise<void> {
   await app.register(fastifyStatic, { root: WEB_DIR, index: ['index.html'] });
   app.setNotFoundHandler((req, reply) => {
     const path = req.url.split('?')[0]!;
-    const webRoute = /^\/(?:session\/[^/]+(?:\/[^/]+)?|(?:mcp|skills)(?:\/[^/]+)?|files)?\/?$/.test(path);
+    const webRoute = /^\/(?:session\/[^/]+(?:\/[^/]+)?|(?:mcp|skills)(?:\/[^/]+)?)?\/?$/.test(path);
     if (req.method === 'GET' && webRoute) return reply.sendFile('index.html');
     reply.code(404).send({ error: 'not found' });
   });
@@ -844,7 +674,7 @@ export async function registerStaticWeb(): Promise<void> {
 
 // Boot the Engine + transport. Guarded so importing this module for unit tests
 // (COCKPIT_NO_BOOT=1) builds the Fastify app + hooks WITHOUT constructing the
-// Engine (which reads the real ~/.copilot prefs) or binding the port. Production
+// Engine (which connects the native runtime) or binding the port. Production
 // (`tsx src/index.ts`) runs with the env unset, so it boots normally.
 function boot(): void {
   consumerControl = createConsumerControl();
@@ -852,19 +682,11 @@ function boot(): void {
   const native = new OfficialRuntime();
   const runtime = new Engine({ runtime: native });
   runtime.log = (msg, data) => app.log.warn(data ?? {}, msg);
-  const notifications = new PushManager({
-    log: ({ status, at, error }) => {
-      const fields = { status, at, ...(error === undefined ? {} : { error }) };
-      if (status === 'accepted') app.log.info(fields, 'push service accepted notification');
-      else app.log.warn(fields, 'push notification failed');
-    },
-  });
   engine = runtime;
-  push = notifications;
   runtime.onEvent(onEngineEvent);
   runtime.onActivitySettled(maybeGracefulExit);
   runtime.onFatal(error => { void exitAfterRuntimeFailure(runtime, error); });
-  main(runtime, notifications).catch((e) => { app.log.error(e); process.exit(1); });
+  main(runtime).catch((e) => { app.log.error(e); process.exit(1); });
 }
 
 if (process.env.COCKPIT_NO_BOOT !== '1') boot();

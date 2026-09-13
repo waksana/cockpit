@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@cockpit/protocol": "workspace:*",
-    "microsoft-cognitiveservices-speech-sdk": "^1.51.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",

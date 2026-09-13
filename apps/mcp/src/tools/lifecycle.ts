@@ -77,7 +77,7 @@ export function registerLifecycleTools(server: McpServer): void {
         'Unload an idle session from memory to free resources. Persisted history is retained. ' +
         'An empty, never-messaged native session may disappear on unload; no replacement is created. ' +
         'For an existing persisted ID, a prompt or explicit load/reload resumes it; reading history does not. ' +
-        'UI pinning does not keep it loaded. Native schedules pause while unloaded. Does not work mid-turn.',
+        'Native schedules pause while unloaded. Does not work mid-turn.',
       inputSchema: { session_id: z.string().min(1).describe('The session id to unload') },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },

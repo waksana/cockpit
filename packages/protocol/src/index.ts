@@ -4,9 +4,7 @@
 // validate against them, so the frontend and backend can never drift.
 
 import { z } from 'zod';
-import { ConsumerOperationId, ConsumerOperation, ConsumerStatus } from './consumer.ts';
 export { ConsumerOperationId, ConsumerOperation, ConsumerStatus, ConsumerIdentity } from './consumer.ts';
-export { DeliveryStatus } from './delivery-status.ts';
 
 export { CHAT_EVENT_TYPES, NativeChatEvent, NativeChatRead, NativeChatPage, NativeChatStreamRequest, NativeChatStreamEvent } from './native-chat.ts';
 import { NativeChatRead, NativeChatPage } from './native-chat.ts';
@@ -20,8 +18,6 @@ import { NativeChatRead, NativeChatPage } from './native-chat.ts';
 // so the shared gate — not hand-written engine dispatch — rejects none/several.
 const exactlyOne = (obj: Record<string, unknown>, keys: string[]): boolean =>
   keys.filter((k) => obj[k] !== undefined).length === 1;
-
-const NotificationCounter = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 
 // ---------------------------------------------------------------------------
 // Domain model
@@ -83,82 +79,22 @@ export const SubagentInfo = z.object({
 });
 export type SubagentInfo = z.infer<typeof SubagentInfo>;
 
-// A user-uploaded file/image attached to a message. The file lives in the fixed
-// upload folder; `url` serves it to the browser. Structured prompts resolve the
-// stored file server-side and pass it as a native attachment to the agent.
-export const Attachment = z.object({
-  kind: z.enum(['image', 'file']),
-  name: z.string(),
-  url: z.string(),
-  size: z.number().optional(),
-  mime: z.string().optional(),
-});
-export type Attachment = z.infer<typeof Attachment>;
-
-export const UploadUrl = z.string().regex(
-  /^\/uploads\/[a-zA-Z0-9][a-zA-Z0-9._-]{0,199}(?![\s\S])/,
-  'must be /uploads/<safe-basename>',
-).refine((url) => !url.includes('..'), 'upload basename must not contain ..')
-  .describe('Literal local upload URL; no traversal, percent escapes, query, hash, or external URL.');
-
-export const UploadedFile = Attachment.extend({
-  url: UploadUrl,
-  path: z.string().min(1).describe('Authoritative server path, returned for local file convenience; never accepted as a prompt path.'),
-  size: z.number().int().nonnegative().max(25 * 1024 * 1024),
-  mime: z.string().min(1).max(512),
-  storedName: z.string().optional(),
-  createdAt: z.number().int().nonnegative().optional(),
-  sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
-  source: z.string().min(1).max(120).regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]*$(?![\s\S])/).optional(),
-  sessionId: z.string().optional(),
-  sourceId: z.string().optional(),
-  sessions: z.array(z.string()).optional(),
-});
-export type UploadedFile = z.infer<typeof UploadedFile>;
-
-export const MessagePart = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('text'), text: z.string() }),
-  z.object({ type: z.literal('file'), attachment: Attachment.extend({ url: UploadUrl }) }),
+export const NativeAttachment = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('file'), path: z.string().min(1), displayName: z.string().optional() }).strict(),
+  z.object({ type: z.literal('directory'), path: z.string().min(1), displayName: z.string().optional() }).strict(),
+  z.object({
+    type: z.literal('selection'), filePath: z.string().min(1), displayName: z.string(),
+    selection: z.object({
+      start: z.object({ line: z.number().int().nonnegative(), character: z.number().int().nonnegative() }).strict(),
+      end: z.object({ line: z.number().int().nonnegative(), character: z.number().int().nonnegative() }).strict(),
+    }).strict().optional(),
+    text: z.string().optional(),
+  }).strict(),
+  z.object({
+    type: z.literal('blob'), data: z.string(), mimeType: z.string().min(1), displayName: z.string().optional(),
+  }).strict(),
 ]);
-export type MessagePart = z.infer<typeof MessagePart>;
-
-const promptContentFields = {
-  text: z.string(),
-  attachment: Attachment.extend({ url: UploadUrl }).optional(),
-  attachments: z.array(Attachment.extend({ url: UploadUrl })).min(1).max(20).optional(),
-  parts: z.array(MessagePart).min(1).max(100).optional(),
-};
-type PromptContent = z.infer<z.ZodObject<typeof promptContentFields>>;
-const exclusivePromptFiles = (body: PromptContent) =>
-  [body.attachment, body.attachments, body.parts].filter(value => value !== undefined).length <= 1;
-const orderedPromptParts = (body: PromptContent) =>
-  !body.parts || (body.text === '' && body.parts.filter(part => part.type === 'file').length <= 20);
-export function attachmentMarkdown(attachment: Attachment): string {
-  const url = UploadUrl.parse(attachment.url);
-  const label = attachment.name.replace(/[\r\n\t]+/g, ' ').replace(/[\\`*_[\]<>]/g, '\\$&');
-  return `${attachment.kind === 'image' ? '!' : ''}[${label}](${url})`;
-}
-
-// Keep the existing fold-compatible marker without adding read-path guidance.
-export function attachmentMarker(attachment: Attachment): string {
-  const attrs = [
-    'version="2"',
-    `kind="${attachment.kind}"`,
-    `name="${encodeURIComponent(attachment.name)}"`,
-    `url="${encodeURIComponent(attachment.url)}"`,
-    ...(attachment.size !== undefined ? [`size="${attachment.size}"`] : []),
-    ...(attachment.mime !== undefined ? [`mime="${encodeURIComponent(attachment.mime)}"`] : []),
-  ];
-  return `<cockpit-attachment ${attrs.join(' ')}/>`;
-}
-
-export function attachmentPrompt(attachment: Attachment, caption: string): string {
-  return `${attachmentMarker(attachment)}${caption ? `\n${caption}` : ''}`;
-}
-
-export function partsPrompt(parts: MessagePart[]): string {
-  return parts.map(part => part.type === 'text' ? part.text : attachmentMarker(part.attachment)).join('');
-}
+export type NativeAttachment = z.infer<typeof NativeAttachment>;
 
 // ChatMessage is recursive: a sub-agent card holds its inner conversation in
 // `subMessages` (each itself a ChatMessage, possibly with its own sub-agents).
@@ -176,9 +112,6 @@ export interface ChatMessage {
   level?: 'info' | 'warning' | 'error';
   subagent?: SubagentInfo;
   subMessages?: ChatMessage[];
-  attachment?: Attachment;
-  attachments?: Attachment[];
-  parts?: MessagePart[];
 }
 export const ChatMessage: z.ZodType<ChatMessage> = z.lazy(() => z.object({
   id: z.string(),
@@ -191,9 +124,6 @@ export const ChatMessage: z.ZodType<ChatMessage> = z.lazy(() => z.object({
   level: z.enum(['info', 'warning', 'error']).optional(),
   subagent: SubagentInfo.optional(),
   subMessages: z.array(ChatMessage).optional(),
-  attachment: Attachment.optional(),
-  attachments: z.array(Attachment).optional(),
-  parts: z.array(MessagePart).optional(),
 }));
 
 export function summarizeMessage(message: ChatMessage): ChatMessage {
@@ -453,41 +383,6 @@ export type TodoProgress = z.infer<typeof TodoProgress>;
 export const AgentMode = z.enum(['interactive', 'plan', 'autopilot']);
 export type AgentMode = z.infer<typeof AgentMode>;
 
-// List-level metadata for a session (no message bodies).
-// What user attention a session authoritatively needs RIGHT NOW — the single
-// source of truth both notification channels (client Notification + server Web
-// Push) and the sidebar badge consume. Derived by the Engine from session state,
-// never by the client. The two kinds clear by DIFFERENT actions (this asymmetry
-// is the heart of the design — an agent always has the last word, so "awaiting
-// your reply" can't be a persistent todo):
-//   'choice' — blocked mid-turn on a required decision (ask_user / plan confirm /
-//              elicitation). The agent cannot proceed. SEEING it only demotes the
-//              alert; it stays raised until the user ANSWERS, but is no longer unread.
-//   'ready'  — the agent finished its turn (idle) and the result is waiting. This
-//              is an unread RESULT, not a debt: SEEING it (opening the session)
-//              IS its completion, so it clears to null on sight.
-//   null     — nothing needed (running, freshly prompted, seen-ready, or handled).
-// 'choice' outranks 'ready' (a pending decision is the stronger signal). The
-// app-icon badge counts only unread attention, not all unanswered choices.
-export const Attention = z.enum(['ready', 'choice']);
-export type Attention = z.infer<typeof Attention>;
-
-type AttentionMeta = {
-  attention?: Attention | null;
-  attnId?: number;
-  seenId?: number;
-};
-
-// Legacy absent IDs count as 0: attention with no IDs is known seen, not unread.
-// A seen but unanswered choice remains actionable without contributing a badge.
-export function isUnreadAttention(meta: AttentionMeta): boolean {
-  return meta.attention != null && (meta.attnId ?? 0) > (meta.seenId ?? 0);
-}
-
-export function unreadSessionCount(sessions: readonly AttentionMeta[]): number {
-  return sessions.reduce((count, meta) => count + (isUnreadAttention(meta) ? 1 : 0), 0);
-}
-
 export const SessionMeta = z.object({
   sessionId: z.string(),
   title: z.string(),
@@ -511,8 +406,6 @@ export const SessionMeta = z.object({
   loading: z.boolean().optional(),
   closing: z.boolean().optional(),
   cancelling: z.boolean().optional(),
-  autoNaming: z.boolean().optional(),
-  autoNameError: z.string().nullable().optional(),
   queue: z.array(QueuedItem).optional().describe('Native pending queue; unavailable while unloaded, not an empty-queue claim.'),
   ask: AskRequest.nullable(),
   planRequest: PlanRequest.nullable().optional(),
@@ -524,20 +417,6 @@ export const SessionMeta = z.object({
   // Ephemeral: set on each report_intent during the turn, cleared when the turn
   // ends (session.idle / cancel). Null when none has been reported this turn.
   intent: z.string().nullable().optional(),
-  attention: Attention.nullable().optional(),
-  // Monotonic id of the CURRENTLY-raised attention (server-assigned, increments on
-  // each fresh raise; absent legacy IDs count as 0 / known seen). Pairs with
-  // `seenId` to drive cross-device "seen" state without per-device client truth.
-  attnId: NotificationCounter.optional(),
-  // Highest `attnId` the user has SEEN (monotonic, per-user — synced across every
-  // device via session/patch, never per-device). `seenId >= attnId` ⇒ the current
-  // attention has been looked at: a 'ready' is then cleared to null by the Engine,
-  // a 'choice' remains actionable but no longer counts as unread. Absent IDs
-  // count as 0. Server truth reconciles on cold start / reconnect (no stale dot).
-  seenId: NotificationCounter.optional(),
-  // A pure UI mark: pin a session to sort it to the top of the list, synced across
-  // devices. Pinning does not keep a native session loaded.
-  pinned: z.boolean().optional(),
   // Number of active scheduled prompts on this session (drives the list timer
   // badge). Read on demand; omitted when native runtime data is unavailable.
   scheduleCount: z.number().optional(),
@@ -601,12 +480,7 @@ export const Snapshot = z.object({
   type: z.literal('snapshot'),
   agentStatus: AgentStatus,
   models: z.array(ModelOption),
-  vapidPublicKey: z.string().nullable().optional(),
   sessions: z.array(SessionMeta).describe('Sidebar/control summaries, not full session/get details. Queue bodies, model inventories and todos are read on demand.'),
-  // Core-owned global inbox projection. Persist revision across restarts; do not
-  // synthesize it from transport clocks. Legacy servers may omit these fields.
-  unreadCount: NotificationCounter.optional(),
-  inboxRevision: NotificationCounter.optional(),
   permissionPolicy: z.literal('allow-all').describe(
     'Permissions are always auto-approved. Independent of interactive, plan, and autopilot interaction modes.',
   ),
@@ -627,137 +501,21 @@ export const ServerEvent = z.discriminatedUnion('type', [
   // there automatically makes it patchable — no parallel field list to maintain.
   SessionMeta.partial().required({ sessionId: true }).extend({
     type: z.literal('session/patch'),
-    inboxRevision: NotificationCounter.optional(),
-    unreadCount: NotificationCounter.optional(),
   }),
   z.object({
     type: z.literal('session/removed'), sessionId: z.string(),
-    inboxRevision: NotificationCounter.optional(), unreadCount: NotificationCounter.optional(),
   }),
   z.object({
     type: z.literal('chat/invalidated'), sessionId: z.string(),
     reason: z.enum(['rewind', 'compaction']),
   }),
-  // Transient "fire a notification now" signal, emitted by the Engine (the single
-  // authority) when a session's authoritative `attention` is newly raised. Both
-  // notification channels — the client Notification and the server Web Push —
-  // consume THIS one event; neither does its own edge detection. Not projection
-  // state (the persistent state is the `attention` field on SessionMeta); this is
-  // the one-shot trigger, carrying the prompt text to show.
-  z.object({
-    type: z.literal('session/notify'),
-    sessionId: z.string(),
-    title: z.string(),
-    attention: Attention,
-    body: z.string(),
-    // Emit these together from the same committed inbox state when available.
-    attnId: NotificationCounter.optional(),
-    inboxRevision: NotificationCounter.optional(),
-    unreadCount: NotificationCounter.optional(),
-  }),
 ]);
 export type ServerEvent = z.infer<typeof ServerEvent>;
 export type ServerEventType = ServerEvent['type'];
 
-// ---------------------------------------------------------------------------
-// Client → server intents (each is a POST; some return a typed result)
-// ---------------------------------------------------------------------------
-
-// Field bounds are shared; the server also bounds the serialized payload bytes.
-// SW handoff: titles already include the ready/choice label; body is core's
-// concrete text. Route clicks using url/sessionId. Test must not mutate unread
-// state. Use persisted inboxRevision to reject stale badge updates when supplied;
-// absence is legacy, not revision zero. OS banners cannot be remotely cleared
-// reliably by acknowledging this inbox on another device.
-export const NotificationPayload = z.object({
-  type: z.literal('notification'),
-  kind: z.enum(['ready', 'choice', 'test']),
-  title: z.string().min(1).max(256),
-  body: z.string().max(2048),
-  tag: z.string().min(1).max(256),
-  url: z.string().min(1).max(4096),
-  sessionId: z.string().min(1).max(256).optional(),
-  attnId: NotificationCounter.optional(),
-  inboxRevision: NotificationCounter.optional(),
-  unreadCount: NotificationCounter.optional(),
-  badge: NotificationCounter.optional().describe('Legacy alias for unreadCount; prefer unreadCount when both are present.'),
-}).refine((payload) => payload.kind === 'test' || payload.sessionId !== undefined, {
-  message: 'sessionId is required for ready and choice notifications',
-  path: ['sessionId'],
-});
-export type NotificationPayload = z.infer<typeof NotificationPayload>;
-
-export const PushEndpoint = z.string().max(4096).url().refine((value) => {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'https:' || url.username || url.password || value.includes('#')
-      || /[\s\\\u0000-\u001f\u007f]/.test(value)) return false;
-    const hostname = url.hostname.toLowerCase().replace(/\.$/, '');
-    if (hostname === 'localhost' || hostname.endsWith('.localhost')) return false;
-    if (hostname.startsWith('[')) {
-      const address = hostname.slice(1, -1);
-      return address !== '::' && address !== '::1' && !address.startsWith('::ffff:')
-        && !/^(?:f[cd]|fe[89ab]|ff)/.test(address);
-    }
-    // URL normalizes alternate IPv4 spellings (integer, octal, shortened, hex).
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) {
-      const [a = 0, b = 0] = hostname.split('.').map(Number);
-      return !(a === 0 || a === 10 || a === 127 || a >= 224
-        || (a === 100 && b >= 64 && b <= 127)
-        || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
-        || (a === 192 && b === 168));
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}, 'endpoint must be public HTTPS without credentials, fragments, or whitespace')
-  .describe('Public HTTPS push endpoint; no provider allowlist. Literal checks do not replace sender-side DNS/network safeguards.');
-export type PushEndpoint = z.infer<typeof PushEndpoint>;
-
-export const PushSubscriptionJson = z.object({
-  endpoint: PushEndpoint,
-  expirationTime: z.number().finite().nonnegative().nullable().optional(),
-  // Canonical unpadded base64url; the manager validates the uncompressed EC point.
-  keys: z.object({
-    p256dh: z.string().length(87).regex(/^[A-Za-z0-9_-]{86}[AEIMQUYcgkosw048]$/),
-    auth: z.string().length(22).regex(/^[A-Za-z0-9_-]{21}[AQgw]$/),
-  }),
-});
-export type PushSubscriptionJson = z.infer<typeof PushSubscriptionJson>;
-
-export const PushDelivery = z.object({
-  status: z.enum(['accepted', 'failed', 'expired']).describe(
-    'accepted means push service acceptance, NOT delivery to or display on a phone.',
-  ),
-  at: z.number().finite().nonnegative(),
-  error: z.string().optional(),
-});
-export type PushDelivery = z.infer<typeof PushDelivery>;
-
-export const PushStatus = z.object({
-  configured: z.boolean(),
-  registered: z.boolean().optional(),
-  subscriptionCount: NotificationCounter,
-  publicKey: z.string().nullable(),
-  lastDelivery: PushDelivery.optional().describe('Process-local diagnostic, optionally scoped to the queried endpoint; not a delivery receipt or durable inbox.'),
-  error: z.string().optional(),
-});
-export type PushStatus = z.infer<typeof PushStatus>;
-
 export const Intents = {
-  'system/consumer/status': {
-    description: 'Read this consumer installation through its owned launcher and optionally the original durable operation. Runtime identity is returned only from current same-instance version/health readback. Source/private-CD mode is explicitly unavailable. No restart, session load or replay.',
-    body: z.object({ operationId: ConsumerOperationId.optional() }).strict(),
-    result: ConsumerStatus,
-  },
-  'system/consumer/restart': {
-    description: 'Explicitly restart this consumer-owned installation through its single stable launcher after native work drains safely. The original operation ID is retained; accepted is not completion. No force, data rollback or retry of unknown effects. Web, MCP and admin/restart share this operation.',
-    body: z.object({ operationId: ConsumerOperationId, confirm: z.literal(true) }).strict(),
-    result: z.object({ operation: ConsumerOperation }),
-  },
   'session/chat': {
-    description: 'Read one native event page without a server chat cache or projection. max counts events, not display messages or bytes. Keep source/direction with opaque cursors. Passive reads do not load sessions; live reads require an existing handle. Bootstrap captures a live cursor before a fresh backward page. An expired cursor is not a continuation. Binary tool media is omitted, never automatically retained; no image locators are generated. Native image lookup is retired: upload an existing local original or reuse a managed /uploads file.',
+    description: 'Read one native event page without a server chat cache or projection. max counts events, not display messages or bytes. Keep source/direction with opaque cursors. Passive reads do not load sessions; live reads require an existing handle. Bootstrap captures a live cursor before a fresh backward page. An expired cursor is not a continuation. Binary tool media is omitted, never automatically retained; no file library or image lookup is provided.',
     body: NativeChatRead,
     result: NativeChatPage,
   },
@@ -780,34 +538,12 @@ export const Intents = {
     }).strict(),
     result: z.object({ sessionId: z.string().min(1) }),
   },
-  'files/list': {
-    description: 'List retained Cockpit files only, including legacy files in the managed upload directory. Search names or filter session associations; never scans private directories. Paginated metadata only, no file buffers.',
-    body: z.object({
-      query: z.string().max(200).optional(), sessionId: z.string().min(1).max(200).optional(),
-      limit: z.number().int().min(1).max(100).optional(),
-      offset: z.number().int().nonnegative().optional(),
-    }).strict(),
-    result: z.object({ files: z.array(UploadedFile), hasMore: z.boolean(), nextOffset: z.number().optional(),
-      errors: z.array(z.object({ url: UploadUrl, error: z.string() })).optional() }),
-  },
-  'files/get': {
-    description: 'Resolve a retained upload to authoritative metadata and a safe native server path. Use the URL for protected original-byte downloads. Missing or corrupt storage fails explicitly.',
-    body: z.object({ url: UploadUrl }).strict(),
-    result: UploadedFile,
-  },
-  'files/associate': {
-    description: 'Associate an existing retained file with a session without copying, sending, or modifying native history.',
-    body: z.object({ url: UploadUrl, sessionId: z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+$/) }).strict(),
-    result: UploadedFile,
-  },
   prompt: {
-    description: 'Send text and retained files using attachment, attachments (in order before text), or ordered parts. These three forms are mutually exclusive. Only literal /uploads/<safe-basename> URLs are accepted; the server resolves authoritative metadata and native file paths. The receiving agent must explicitly read/view attachments; acceptance does not mean their contents were read. Transport support does not imply the selected model can interpret every format.',
+    description: 'Send text and optional SDK-native file, directory, selection or blob attachments. Paths refer to the native runtime filesystem, not this client. No upload, module file-reference resolution or file association is performed. Retired attachment/parts and managed URL shapes are rejected. Acceptance does not mean attachment content was read, and model format support is separate.',
     body: z.object({
-      sessionId: z.string(), mode: z.enum(['enqueue', 'immediate']).optional(), ...promptContentFields,
-    }).refine(exclusivePromptFiles,
-      'attachment, attachments and parts are mutually exclusive')
-      .refine(orderedPromptParts,
-        'parts requires empty text and at most 20 files'),
+      sessionId: z.string(), text: z.string(), mode: z.enum(['enqueue', 'immediate']).optional(),
+      attachments: z.array(NativeAttachment).max(20).optional(),
+    }).strict(),
     result: z.object({ ok: z.boolean(), queued: z.boolean().optional() }),
   },
   cancel: {
@@ -831,16 +567,6 @@ export const Intents = {
   'session/rename': {
     body: z.object({ sessionId: z.string(), name: z.string() }),
     result: z.object({ ok: z.boolean(), title: z.string().optional() }),
-  },
-  'session/auto-name': {
-    description: 'Generate a short name through a native no-tools ephemeral query and save it with name.setAuto. Uses the existing session, never adds a chat turn or creates another session, and never overwrites a manual name. Requires an idle session; explicitly invoking it may resume an unloaded session. This is an additional model request.',
-    body: z.object({ sessionId: z.string().min(1) }),
-    result: z.object({
-      ok: z.literal(true),
-      applied: z.boolean(),
-      title: z.string().nullable(),
-      reason: z.enum(['user-named', 'no-context', 'not-applied']).optional(),
-    }),
   },
   'session/compact': {
     body: z.object({ sessionId: z.string(), customInstructions: z.string().optional() }),
@@ -875,11 +601,6 @@ export const Intents = {
     description: 'Explicitly resume an unloaded session, or close and resume an existing idle loaded session using native configuration discovery. Never creates another ID or sends a message. An empty never-messaged session may disappear on close and then fail to resume; no automatic replacement. Native relative schedule delays restart on resume.',
     body: z.object({ sessionId: z.string() }),
     result: z.object({ ok: z.boolean() }),
-  },
-  'session/pin': {
-    description: 'Set a synced UI pin for session-list ordering, not runtime residency. Neither pinning nor future schedules prevent native idle cleanup. Schedules pause while unloaded; relative delays restart on resume.',
-    body: z.object({ sessionId: z.string(), pinned: z.boolean() }),
-    result: z.object({ ok: z.boolean(), pinned: z.boolean() }),
   },
   'session/usage': {
     description: 'Read native context attribution and accumulated usage on an already-loaded session. Never resumes, infers, compacts or scans history. Context is native tokenization of current system/messages/tool definitions; promptTokenLimit is from that same native snapshot. Last-call input/output are the latest main-agent call, not current context. Model totals are the native available aggregate; persistence and auxiliary-call coverage are not guaranteed by this adapter. Null context means uninitialized, not zero.',
@@ -944,44 +665,6 @@ export const Intents = {
     description: 'Read only requested metadata resources, without loading a session. Omitted fields were not requested, not cleared. loaded:false invalidates all previous native fields; meta:null means unknown session. Control display is not permission to delete, unload or restart; mutations independently confirm fresh safety.',
     body: z.object({ sessionId: z.string(), resources: z.array(MetaResource).min(1).max(MetaResource.options.length) }),
     result: z.object({ meta: SessionProjection.nullable() }),
-  },
-  'push/subscribe': {
-    description: 'Subscribe to Web Push notifications with a public HTTPS endpoint and required p256dh/auth keys.',
-    body: z.object({ subscription: PushSubscriptionJson }),
-    result: z.object({ ok: z.boolean() }),
-  },
-  'push/status': {
-    description: 'Passively inspect push configuration and last service acceptance/failure; optionally check whether an endpoint is registered.',
-    body: z.object({ endpoint: PushEndpoint.optional() }),
-    result: PushStatus,
-  },
-  'push/test': {
-    description: 'Send a benign test only to the specified existing registered subscription with explicit confirmation. Never register an endpoint, create chat content, or change unread state. Acceptance is not phone delivery.',
-    body: z.object({ endpoint: PushEndpoint, confirm: z.literal(true) }),
-    result: PushDelivery,
-  },
-  'push/unsubscribe': {
-    description: 'Remove an existing push subscription by endpoint, including cleanup after failed registration.',
-    body: z.object({ endpoint: PushEndpoint }),
-    result: z.object({ ok: z.boolean() }),
-  },
-  // "I'm looking at this session now" — monotonically advances the per-user
-  // `seenId` to the observed `attnId`. The Engine clears a 'ready' on sight
-  // (seeing a finished result IS its completion) and demotes a 'choice' (which
-  // stays raised until answered). Fired by the client on open / on the tab
-  // regaining focus / when attention is raised on the already-active visible
-  // session. An observed stale attnId must not clear newer attention. Omitting
-  // attnId is the legacy explicit acknowledgement of the CURRENT attention.
-  // Idempotent: re-firing with nothing new to see is a no-op.
-  'inbox/seen': {
-    description: 'Acknowledge the observed attnId without clearing newer attention. Legacy callers omitting attnId explicitly acknowledge current attention. Seen unanswered choices remain actionable but are not unread.',
-    body: z.object({ sessionId: z.string(), attnId: NotificationCounter.optional() }),
-    result: z.object({ ok: z.boolean() }),
-  },
-  'speech/token': {
-    description: 'Return an Azure Speech authorization token and region without exposing the subscription key, or enabled:false when not configured. The server may reuse a token for nine minutes from its mint request; this response has no expiry or remaining-validity field and does not imply a fresh token. Browser cancellation and credential recovery are not guaranteed by this endpoint.',
-    body: z.object({}),
-    result: z.object({ enabled: z.boolean(), token: z.string().optional(), region: z.string().optional() }),
   },
   'mcp/global': {
     description: 'Read Copilot native user MCP configuration and defaults without activating a session.',
@@ -1065,7 +748,7 @@ export const Intents = {
   },
   // Native after/every supports relative delays and one-shot absolute times.
   'schedule/add': {
-    description: 'Schedule a native after/every prompt. The current runtime supports exactly one of interval or at, from 1 second to 24 hours. Interval uses s, m, h, or d and defaults to recurring; at is one-shot. Prompt must be single-line plain text, without command flags or a leading slash. Legacy cron, timezone, displayPrompt and recurring-at options are not supported and are rejected. No self-paced creation or rearming is exposed. Ticks require a loaded session; schedules pause on native idle unload and relative delays restart on resume. Pinning does not keep it loaded. This is not an always-on scheduler.',
+    description: 'Schedule a native after/every prompt. The current runtime supports exactly one of interval or at, from 1 second to 24 hours. Interval uses s, m, h, or d and defaults to recurring; at is one-shot. Prompt must be single-line plain text, without command flags or a leading slash. Legacy cron, timezone, displayPrompt and recurring-at options are not supported and are rejected. No self-paced creation or rearming is exposed. Ticks require a loaded session; schedules pause on native idle unload and relative delays restart on resume. Schedules do not keep it loaded. This is not an always-on scheduler.',
     body: z.object({
       sessionId: z.string(),
       prompt: z.string().min(1).refine(

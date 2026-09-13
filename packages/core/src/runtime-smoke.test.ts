@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url';
 import type { CopilotClient, CopilotSession, GetAuthStatusResponse, SessionConfig, SessionEvent, SessionMetadata } from '@github/copilot-sdk';
 import { NativeChatRead } from '@cockpit/protocol';
 import type { Engine, EngineRuntime } from './engine.ts';
-import { autoNameQuestion } from './auto-name.ts';
 import { CHAT_EVENT_TYPES } from './native-chat.ts';
 
 type PersistedPage = Awaited<ReturnType<CopilotClient['rpc']['sessions']['readPersistedEvents']>>;
@@ -157,7 +156,7 @@ async function draftFixture(t: TestContext) {
       }),
     } },
   };
-  const engine = new Engine({ runtime: runtime as unknown as EngineRuntime, prefsFile });
+  const engine = new Engine({ runtime: runtime as unknown as EngineRuntime });
   t.after(async () => {
     try {
       for (const id of live.keys()) expire(id);
@@ -237,8 +236,6 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
   const requests: { marker: string; attachmentContent: boolean; closed: boolean }[] = [];
   const mockErrors: string[] = [];
   const held = new Map<string, { response: ServerResponse; release: () => void }>();
-  let holdNaming = false;
-  let namingAnswer = '原生会话自动命名验证';
   let runtime: import('./runtime.ts').OfficialRuntime | undefined;
   let engine: import('./engine.ts').Engine | undefined;
   let nativeClient: CopilotClient | undefined;
@@ -288,19 +285,12 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       };
       assert.equal(body.model, 'gpt-4.1');
       const lastUser = body.messages.findLastIndex((message) => message.role === 'user');
-      const naming = JSON.stringify(body.messages).includes(autoNameQuestion);
-      if (naming) {
-        assert.equal(body.tools?.length ?? 0, 0, 'Public ephemeral title queries must not advertise tools');
-        assert.ok(JSON.stringify(body.messages).includes('deterministic SMOKE_'),
-          'Public title queries must carry the current conversation, including its assistant reply');
-      }
-      const marker = naming ? 'SMOKE_AUTONAME' : text.includes('SMOKE_FATALCOMPACT') ? 'SMOKE_FATALCOMPACT'
+      const marker = text.includes('SMOKE_FATALCOMPACT') ? 'SMOKE_FATALCOMPACT'
         : JSON.stringify(body.messages[lastUser]?.content).match(/SMOKE_[A-Z]+/)?.[0];
       assert.ok(marker && ['SMOKE_ACCEPTED', 'SMOKE_ATTACHMENT', 'SMOKE_EDIT', 'SMOKE_ABORT',
         'SMOKE_RECOVERY', 'SMOKE_RESUME', 'SMOKE_REPEAT', 'SMOKE_BUSY', 'SMOKE_QUESTION',
         'SMOKE_SCHEDULE', 'SMOKE_SCHEDULED', 'SMOKE_ENGINE', 'SMOKE_ENGINEAGAIN', 'SMOKE_ENGINEFIRST',
-        'SMOKE_FATALPREP', 'SMOKE_FATALBUSY', 'SMOKE_FATALQUEUED', 'SMOKE_FATALCOMPACT', 'SMOKE_BACKGROUND',
-        'SMOKE_AUTONAME', 'SMOKE_NAMING', 'SMOKE_NAMINGAGAIN'].includes(marker),
+        'SMOKE_FATALPREP', 'SMOKE_FATALBUSY', 'SMOKE_FATALQUEUED', 'SMOKE_FATALCOMPACT', 'SMOKE_BACKGROUND'].includes(marker),
       'Only synthetic prompts are allowed');
       const record = { marker, attachmentContent: text.includes(attachmentToken), closed: false };
       requests.push(record);
@@ -339,7 +329,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
           command: '/usr/bin/sleep 5', mode: 'async', description: 'Synthetic fixture sleep',
         } : { path: join(dirs.work!, 'attachment.txt') }) },
       } : undefined;
-      const answer = naming ? namingAnswer : `deterministic ${marker} done`;
+      const answer = `deterministic ${marker} done`;
       const id = `chatcmpl-smoke-${requests.length}`;
       const release = () => {
         res.writeHead(200, { 'content-type': body.stream ? 'text/event-stream' : 'application/json' });
@@ -358,8 +348,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
             usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } }));
         }
       };
-      if ((naming && holdNaming)
-        || ['SMOKE_ACCEPTED', 'SMOKE_ABORT', 'SMOKE_BUSY', 'SMOKE_FATALBUSY', 'SMOKE_FATALCOMPACT'].includes(marker)) {
+      if (['SMOKE_ACCEPTED', 'SMOKE_ABORT', 'SMOKE_BUSY', 'SMOKE_FATALBUSY', 'SMOKE_FATALCOMPACT'].includes(marker)) {
         held.set(marker, { response: res, release });
       }
       else release();
@@ -563,7 +552,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
     checks.push('cold cursor paging loads no native sessions, mutates no journals and performs no inference');
 
     const { Engine } = await import('./engine.ts');
-    engine = new Engine({ runtime, prefsFile: join(dirs.state!, 'cockpit-prefs.json') });
+    engine = new Engine({ runtime });
     await bounded(engine.start());
     const snapshot = (await engine.snapshot());
     assert.equal(snapshot.permissionPolicy, 'allow-all');
@@ -583,110 +572,22 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
     await bounded(engine.getPlan(a.sessionId));
     await eventually(async () => {
       const meta = await engine!.getMeta(a.sessionId);
-      return meta?.status === 'idle' && !meta.activeOperations && !meta.autoNaming;
-    }, 'Engine native turn and its naming preflight must settle');
-    await eventually(() => engine!.attentionCount() === 1, 'Engine must commit one unread final native reply');
-    const replyInbox = (await engine.snapshot());
-    assert.ok(replyInbox.inboxRevision! > 0);
-    assert.equal(replyInbox.unreadCount, 1);
+      return meta?.status === 'idle' && !meta.activeOperations;
+    }, 'Engine native turn must settle');
+    const attachmentRequests = requests.length;
+    await bounded(engine.prompt(a.sessionId, 'SMOKE_ATTACHMENT', 'enqueue', [
+      { type: 'file', path: join(dirs.work!, 'attachment.txt'), displayName: 'native fixture' },
+    ]));
+    await eventually(async () => {
+      const meta = await engine!.getMeta(a.sessionId);
+      return meta?.status === 'idle' && !meta.activeOperations;
+    }, 'Engine native attachment turn must settle');
+    assert.ok(requests.slice(attachmentRequests).some(request => request.attachmentContent),
+      'Engine must forward the native file reference; the native view tool reads the synthetic bytes');
+    integrationEvidence.nativeAttachment = { type: 'file', nativeViewRead: true, managedFileService: false };
     await bounded(engine.unload(a.sessionId));
-    assert.equal((await engine.snapshot()).unreadCount, 1, 'unloading preserves committed unread');
+    assert.equal('unreadCount' in await engine.snapshot(), false);
     checks.push('real Engine snapshot, passive history, native resume/prompt/state/close');
-
-    await t.test('native first-reply naming is ephemeral, one-shot, and protected by native manual names', async t => {
-      const adapter = runtime!;
-      const proof = new Engine({ runtime: adapter, prefsFile: join(dirs.state!, 'auto-name-prefs.json') });
-      const emitted: SessionEvent[] = [];
-      let current!: CopilotSession;
-      let sends = 0;
-      const createNative = adapter.createSession.bind(adapter), resumeNative = adapter.resumeSession.bind(adapter);
-      const observe = (sdk: CopilotSession) => {
-        current = sdk;
-        const send = sdk.send.bind(sdk);
-        t.mock.method(sdk, 'send', async (options: Parameters<CopilotSession['send']>[0]) => { sends++; return send(options); });
-        return sdk;
-      };
-      const creating = t.mock.method(adapter, 'createSession', async (config: Parameters<typeof createNative>[0]) => observe(await createNative({
-        ...config, onEvent: event => { emitted.push(event); config?.onEvent?.(event); },
-      })));
-      const resuming = t.mock.method(adapter, 'resumeSession', async (id: string, config: Parameters<typeof resumeNative>[1]) =>
-        observe(await resumeNative(id, config)));
-      const initialLive = adapter.liveCount;
-      const namingCount = () => requests.filter(request => request.marker === 'SMOKE_AUTONAME').length;
-      const beforeNames = namingCount();
-      let id: string | undefined;
-      try {
-        id = await bounded(proof.newSession(dirs.work!));
-        holdNaming = true;
-        await bounded(proof.prompt(id, 'SMOKE_NAMING'));
-        await eventually(() => held.has('SMOKE_AUTONAME'), 'The first completed native reply must trigger a title query');
-        assert.equal((await proof.getMeta(id))?.autoNaming, true);
-        assert.equal((await proof.getMeta(id))?.status, 'idle');
-        assert.equal(proof.attentionCount(), 1, 'Unread completion precedes title-query settlement');
-        const before = await bounded(current.getEvents());
-        const chatIds = (events: SessionEvent[]) => events.filter(event =>
-          ['user.message', 'assistant.message', 'assistant.turn_start', 'assistant.turn_end', 'tool.execution_start', 'tool.execution_complete']
-            .includes(event.type)).map(event => event.id);
-        const beforeIds = chatIds(before);
-        const beforeWorkspace = (await bounded(current.rpc.workspaces.getWorkspace())).workspace;
-        const listed = (await bounded(adapter.listSessions())).map(row => row.sessionId).sort();
-        assert.equal(adapter.liveCount, initialLive + 1);
-        assert.equal(sends, 1);
-        const first = proof.autoName(id), second = proof.autoName(id);
-        assert.equal(first, second, 'Two browser actions share the in-flight native query');
-        held.get('SMOKE_AUTONAME')!.release();
-        held.delete('SMOKE_AUTONAME');
-        holdNaming = false;
-        assert.deepEqual(await bounded(first), { ok: true, applied: true, title: '原生会话自动命名验证' });
-        const after = await bounded(current.getEvents());
-        assert.deepEqual(chatIds(after), beforeIds, 'Naming cannot append ordinary conversation or tool events');
-        assert.deepEqual((await bounded(adapter.listSessions())).map(row => row.sessionId).sort(), listed);
-        assert.equal(adapter.liveCount, initialLive + 1, 'No hidden naming session may be created');
-        assert.equal(creating.mock.callCount(), 1);
-        assert.equal(resuming.mock.callCount(), 0);
-        assert.equal(sends, 1, 'Naming must not use ordinary session.send');
-        assert.equal(namingCount(), beforeNames + 1);
-        const ephemeral = emitted.filter(event => event.type.startsWith('ui.ephemeral_query'));
-        assert.ok(ephemeral.length > 0 && ephemeral.every(event => event.ephemeral));
-        const named = (await bounded(current.rpc.workspaces.getWorkspace())).workspace;
-        assert.equal(named?.name, '原生会话自动命名验证');
-        assert.ok(!named?.user_named);
-        await bounded(proof.reload(id));
-        await bounded(proof.prompt(id, 'SMOKE_NAMINGAGAIN'));
-        await eventually(async () => (await proof.getMeta(id!))?.status === 'idle', 'The subsequent native turn must settle');
-        assert.equal(namingCount(), beforeNames + 1, 'Cold replay and later turns cannot automatically rename again');
-        const regeneratedIds = chatIds(await bounded(current.getEvents()));
-        namingAnswer = '原生会话标题再次生成';
-        assert.deepEqual(await bounded(proof.autoName(id)), { ok: true, applied: true, title: namingAnswer });
-        holdNaming = true;
-        const race = proof.autoName(id);
-        await eventually(() => held.has('SMOKE_AUTONAME'), 'Explicit regeneration uses the same public ephemeral query');
-        await bounded(proof.rename(id, '用户保留会话名称'));
-        held.get('SMOKE_AUTONAME')!.release();
-        held.delete('SMOKE_AUTONAME');
-        holdNaming = false;
-        assert.deepEqual(await bounded(race), { ok: true, applied: false, title: '用户保留会话名称', reason: 'user-named' });
-        assert.deepEqual(await bounded(proof.autoName(id)),
-          { ok: true, applied: false, title: '用户保留会话名称', reason: 'user-named' });
-        assert.equal(namingCount(), beforeNames + 3, 'Manual names short-circuit without another query');
-        assert.deepEqual(chatIds(await bounded(current.getEvents())), regeneratedIds);
-        integrationEvidence.autoNaming = { sessionId: id, beforeWorkspace, named,
-          chatEventIds: beforeIds, unchangedChatIds: true, unchangedSessionCount: true, currentConversationIncluded: true,
-          ordinarySends: sends, namingQueries: namingCount() - beforeNames,
-          ephemeralEvents: ephemeral.map(event => ({ type: event.type, ephemeral: event.ephemeral })),
-          firstReplyUnreadBeforeNaming: true, coldResumeOneShot: true, nativeRepeatAutoApplied: true, nativeManualNameRaceProtected: true,
-          mockPort: address.port };
-      } finally {
-        holdNaming = false;
-        namingAnswer = '原生会话自动命名验证';
-        held.get('SMOKE_AUTONAME')?.release();
-        held.delete('SMOKE_AUTONAME');
-        creating.mock.restore();
-        resuming.mock.restore();
-        if (id) await bounded(proof.unload(id));
-      }
-    });
-    assert.ok(integrationEvidence.autoNaming, 'Real native naming proof must pass before reporting success');
 
     await t.test('native request-scoped chat preserves all mixed legacy events through bounded typed pages without server folding', async t => {
       const adapter = runtime!;
@@ -735,7 +636,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       append('subagent.completed', life(outer), outerAgent);
       const log = join(dirs.state!, 'session-state', synthetic.sessionId, 'events.jsonl');
       writeFileSync(log, source.map(event => JSON.stringify(event)).join('\n') + '\n');
-      const proof = new Engine({ runtime: adapter, prefsFile: join(dirs.state!, 'native-chat-prefs.json') });
+      const proof = new Engine({ runtime: adapter });
       await bounded(proof.refreshList());
       let nativeSnapshot!: () => Promise<SessionEvent[]>;
       const pages: { events: number; bytes: number; direction: string }[] = [];
@@ -754,12 +655,10 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
         t.mock.method(sdk, 'abort', async () => assert.fail('Display initialization must not abort'));
         const read = sdk.rpc.eventLog.read.bind(sdk.rpc.eventLog);
         t.mock.method(sdk.rpc.eventLog, 'read', async (params: Parameters<typeof read>[0]) => {
-              assert.ok(params.agentScope === 'all'
-                || (params.agentScope === 'primary' && params.max! >= 1 && params.max! <= 32),
-              'Only bounded native naming admission and presence checks may read primary events');
+          assert.equal(params.agentScope, 'all', 'Only the requested shared native chat window is read');
           assert.equal(params.includeEphemeral, false);
           assert.notEqual(params.types, '*');
-          assert.ok(params.max! <= (params.agentScope === 'primary' ? 32 : 64));
+          assert.ok(params.max! <= 64);
           const page = await read(params);
           pages.push({ events: page.events.length, bytes: Buffer.byteLength(JSON.stringify(page)), direction: params.direction! });
           return page;
@@ -771,7 +670,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
         const state = (proof as unknown as { sessions: Map<string, Record<string, unknown>> })
           .sessions.get(synthetic.sessionId)!;
         for (const key of ['fold', 'eventIds', 'userMessageIds']) assert.equal(key in state, false);
-        assert.equal(pages.length, 0, 'Initialization never prewarms chat or caches naming eligibility');
+        assert.equal(pages.length, 0, 'Initialization never prewarms chat');
         const initializationReads = pages.length;
         const raw = await bounded(nativeSnapshot());
         const expected = raw.filter(event => !event.ephemeral && CHAT_EVENT_TYPES.includes(event.type));
@@ -1184,7 +1083,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
     await t.test('OfficialRuntime + Engine: native idle, passive pages, explicit resume and scheduled stop', async (t) => {
       runtime = new OfficialRuntime({ clientOptions: { ...clientOptions, sessionIdleTimeoutSeconds: 1 }, sessionConfig });
       const adapter = runtime;
-      engine = new Engine({ runtime: adapter, prefsFile: join(dirs.state!, 'engine-idle-prefs.json') });
+      engine = new Engine({ runtime: adapter });
       const host = engine;
       const calls: { kind: string; id: string; prompt?: string }[] = [];
       const displayReads: { direction: string; events: number; bytes: number }[] = [];
@@ -1195,12 +1094,10 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
         t.mock.method(session, 'getEvents', async () => assert.fail('Engine must not transfer full native history'));
         const read = session.rpc.eventLog.read.bind(session.rpc.eventLog);
         t.mock.method(session.rpc.eventLog, 'read', async (params: Parameters<typeof read>[0]) => {
-          assert.ok(params.agentScope === 'all'
-            || (params.agentScope === 'primary' && params.max! >= 1 && params.max! <= 32),
-          'Only bounded native naming admission and presence checks may read primary events');
-          assert.equal(params.includeEphemeral, params.agentScope === 'all' && params.direction === 'forward');
+          assert.equal(params.agentScope, 'all');
+          assert.equal(params.includeEphemeral, params.direction === 'forward');
           assert.notEqual(params.types, '*');
-          assert.ok(params.max! <= (params.agentScope === 'primary' ? 32 : 256));
+          assert.ok(params.max! <= 256);
           const page = await read(params);
           displayReads.push({ direction: params.direction!, events: page.events.length,
             bytes: Buffer.byteLength(JSON.stringify(page)) });
@@ -1245,9 +1142,8 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       const activity = t.mock.method(original.rpc.metadata, 'activity');
       const processing = t.mock.method(original.rpc.metadata, 'isProcessing');
       assert.equal((await bounded(host.prompt(id, 'SMOKE_ENGINE'))).ok, true);
-      await eventually(async () => (await host.getMeta(id))?.status === 'idle' && host.attentionCount() === 1,
-        'Engine synthetic turn must complete and commit its native reply');
-      await eventually(async () => !(await host.getMeta(id))?.autoNaming, 'Initial auxiliary naming must settle before measuring idle RPCs');
+      await eventually(async () => (await host.getMeta(id))?.status === 'idle',
+        'Engine synthetic native turn must complete');
       assert.equal((await host.getMeta(id))?.loaded, true);
       const emptyId = await bounded(host.newSession(dirs.work!));
       const emptyOriginal = watched.get(emptyId)!;
@@ -1351,8 +1247,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       const beforeReloadJournal = readFileSync(journal);
       const beforeReloadMtime = statSync(journal).mtimeMs;
       const prefsPath = join(dirs.state!, 'engine-idle-prefs.json');
-      const beforeReloadPrefs = readFileSync(prefsPath);
-      const beforeReloadPrefsMtime = statSync(prefsPath).mtimeMs;
+      assert.equal(existsSync(prefsPath), false);
       await assert.rejects(bounded(host.reload(emptyId)), /Unknown session/);
       assert.equal(createIds.filter(createdId => createdId === emptyId).length, 1,
         'Explicit reload must never recreate an absent session');
@@ -1362,8 +1257,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       assert.equal(requests.length, beforeReloadRequests);
       assert.deepEqual(readFileSync(journal), beforeReloadJournal);
       assert.equal(statSync(journal).mtimeMs, beforeReloadMtime);
-      assert.deepEqual(readFileSync(prefsPath), beforeReloadPrefs);
-      assert.equal(statSync(prefsPath).mtimeMs, beforeReloadPrefsMtime,
+      assert.equal(existsSync(prefsPath), false,
         'Draft settings must not gain a parallel preference journal');
       assert.deepEqual(calls.filter(call => call.id === emptyId), []);
       await assert.rejects(bounded(host.prompt(emptyId, 'SMOKE_ENGINEFIRST')), /Unknown session/);
@@ -1405,7 +1299,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
     await t.test('OfficialRuntime + Engine: confirmed child exit aborts uncertain mutation without replay', async () => {
       runtime = new OfficialRuntime({ clientOptions: { ...clientOptions, sessionIdleTimeoutSeconds: 1 }, sessionConfig });
       const adapter = runtime;
-      engine = new Engine({ runtime: adapter, prefsFile: join(dirs.state!, 'engine-fatal-prefs.json') });
+      engine = new Engine({ runtime: adapter });
       const host = engine;
       const runtimeFatals: Error[] = [];
       const engineFatals: Error[] = [];
@@ -1423,8 +1317,8 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       assert.equal((await bounded(host.prompt(compactId, 'SMOKE_FATALPREP'))).ok, true);
       await eventually(async () => {
         const meta = await host.getMeta(compactId);
-        return meta?.status === 'idle' && !meta.activeOperations && !meta.autoNaming;
-      }, 'Compaction fixture must have completed native history and settled naming');
+        return meta?.status === 'idle' && !meta.activeOperations;
+      }, 'Compaction fixture must have completed native history');
       const busyId = await bounded(host.newSession(dirs.work!));
       assert.equal((await bounded(host.prompt(busyId, 'SMOKE_FATALBUSY'))).ok, true);
       await eventually(() => held.has('SMOKE_FATALBUSY'), 'Accepted Engine turn must be held by the real loopback provider');

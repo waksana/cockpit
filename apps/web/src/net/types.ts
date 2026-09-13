@@ -6,16 +6,14 @@
 export type {
   ChatMessage, ToolCall, ChatRole, SessionMeta, SessionStatus, AgentStatus,
   ModelOption, QueuedItem, AskRequest, ServerEvent, TodoProgress,
-  TodoItem, SessionPlan, SessionPanels, PanelItem, Attachment, DirEntry, DirListing,
-  ExitPlanModeAction, UploadedFile,
+  TodoItem, SessionPlan, SessionPanels, PanelItem, NativeAttachment, DirEntry, DirListing,
+  ExitPlanModeAction,
 } from '@cockpit/protocol';
 
 import type { ChatMessage, SessionMeta } from '@cockpit/protocol';
 
 // A session as the UI holds it: the server's authoritative meta plus this tab's
-// materialized message window and view flags. The "needs you" signal (the sidebar
-// dot + app-icon badge) is NOT here — it derives purely from the server's
-// `attention`/`attnId`/`seenId` on SessionMeta, so it can't drift per-device.
+// materialized message window and view flags.
 export interface ChatSession extends SessionMeta {
   messages: ChatMessage[];
   materialized: boolean;

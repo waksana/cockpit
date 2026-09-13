@@ -2,15 +2,14 @@
 // Opt-in performance benchmark for synthetic data and an isolated test backend:
 //   1. Shared browser fold throughput — replaying bounded synthetic JSONL files.
 //   2. /status + /health latency (the ops/poll endpoints).
-//   3. Upload + serve throughput (MB/s) over the real HTTP stack.
-//   4. Concurrent SSE connect + snapshot fan-out.
+//   3. Concurrent SSE connect + snapshot fan-out.
 //
 // Run from packages/core (has tsx):  node --import tsx ../../scripts/perf.mjs
 // or via repo root:  pnpm perf
 // Required: --synthetic-fixture-root /absolute/flat-jsonl-directory
 //           --test-base-url http://127.0.0.1:<test-port> (never 8771).
 // The operator must provision the backend with separate synthetic state/config,
-// workspace and uploads. These arguments do not isolate an existing service.
+// and workspace. These arguments do not isolate an existing service.
 
 import { performance } from 'node:perf_hooks';
 import { diagnosticOptions, readSyntheticLogs, diagnosticFetch } from './diagnostic-safety.mjs';
@@ -75,30 +74,9 @@ async function latency(path, n = 200) {
   console.log('');
 }
 
-// ── 3. Upload + serve throughput ──────────────────────────────────────────────
+// ── 3. Concurrent SSE connect + snapshot ──────────────────────────────────────
 {
-  console.log('3. UPLOAD + SERVE THROUGHPUT');
-  for (const sizeMB of [1, 5]) {
-    const buf = Buffer.alloc(sizeMB * 1024 * 1024, 0x61);
-    const tu = performance.now();
-    const res = await fetch(`${BASE}/upload?name=perf-${sizeMB}mb.bin&mime=application/octet-stream`, {
-      method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: buf,
-    });
-    const up = performance.now() - tu;
-    const meta = await res.json();
-    const td = performance.now();
-    const got = await fetch(`${BASE}${meta.url}`);
-    await got.arrayBuffer();
-    const dl = performance.now() - td;
-    console.log(`   ${sizeMB}MB  upload ${ms(up)} (${(sizeMB / (up / 1000)).toFixed(0)} MB/s)  serve ${ms(dl)} (${(sizeMB / (dl / 1000)).toFixed(0)} MB/s)`);
-  }
-  console.log('   (retained files remain in the operator-owned test backend upload directory)');
-  console.log('');
-}
-
-// ── 4. Concurrent SSE connect + snapshot ──────────────────────────────────────
-{
-  console.log('4. CONCURRENT SSE (connect + first snapshot)');
+  console.log('3. CONCURRENT SSE (connect + first snapshot)');
   for (const conc of [10, 50]) {
     const t0 = performance.now();
     const ctrls = [];

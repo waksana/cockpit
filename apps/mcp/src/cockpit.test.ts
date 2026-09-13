@@ -54,19 +54,9 @@ test('bounded native pages use the short deadline while real load operations kee
   for (const name of ['session/chat', 'session/get', 'mcp/session', 'session/history', 'session/peek', 'session/subagent-history', 'flow/run', 'governance', 'governance/run', '/health']) {
     assert.equal(requestTimeoutMs(name), 10_000, name);
   }
-  for (const name of ['session/plan', 'session/panels', 'session/auto-name', 'session/load', 'prompt', 'mcp/session-toggle']) {
+  for (const name of ['session/plan', 'session/panels', 'session/load', 'prompt', 'mcp/session-toggle']) {
     assert.equal(requestTimeoutMs(name), 45_000, name);
   }
-});
-
-test('consumer mutation uncertainty stays an error while passive original-operation inspection remains readable', () => {
-  for (const state of ['failed', 'unknown']) {
-    const value = { operation: { operationId: 'original-restart', state, error: 'Retained outcome' } };
-    assert.throws(() => assertIntentSuccess(value, 'system/consumer/restart'), /original-restart/);
-    assert.deepEqual(assertIntentSuccess(value, 'system/consumer/status'), value);
-  }
-  const accepted = { operation: { state: 'waiting-idle' } };
-  assert.deepEqual(assertIntentSuccess(accepted, 'system/consumer/restart'), accepted);
 });
 
 test('configured timeout overrides both generic and load-aware deadlines', async () => {
@@ -176,27 +166,6 @@ test('intent names reject traversal, URLs and escaping before any network reques
     await assert.rejects(() => intent(name), isCockpitError('protocol', /Invalid cockpit intent name/));
   }
   assert.equal(requests.length, 0);
-});
-
-test('Readable request bodies stream bounded bytes and propagate source failures without retry', async () => {
-  respond = (res, request) => res.end(request.body);
-  const body = Readable.from([Buffer.from('first'), Buffer.from('second')]);
-  const result = await backendRequest('/upload', { method: 'POST', body }, response => readBoundedBody(response));
-  assert.equal(Buffer.from(result).toString(), 'firstsecond');
-  assert.equal(requests.length, 1);
-  requests.length = 0;
-  const oversized = Readable.from((async function* () {
-    for (let n = 0; n <= MAX_TRANSFER_BYTES / 65536; n++) yield Buffer.alloc(65536);
-  })());
-  await assert.rejects(() => backendRequest('/upload', { method: 'POST', body: oversized }, response => readBoundedBody(response)), /exceeds.*byte limit/);
-  assert.ok(oversized.destroyed);
-  const failed = Readable.from((async function* () {
-    yield Buffer.from('prefix');
-    throw new Error('source failed');
-  })());
-  await assert.rejects(() => backendRequest('/upload', { method: 'POST', body: failed }, response => readBoundedBody(response)), /source failed/);
-  assert.ok(failed.destroyed);
-  assert.equal(requests.length, 0, 'failed streams do not finish or replay requests');
 });
 
 test('all backend entry points reject unsafe paths before networking', async () => {

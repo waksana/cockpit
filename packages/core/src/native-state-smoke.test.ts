@@ -73,7 +73,7 @@ test('native state: isolated public reads, no cached metadata and explicit unloa
         enableSessionTelemetry: false, remoteSession: 'off', enableExperimentalMode: true, availableTools: [],
       },
     });
-    engine = new Engine({ runtime, prefsFile: join(dirs.state!, 'cockpit-prefs.json') });
+    engine = new Engine({ runtime });
     await engine.start();
     assert.deepEqual((await engine.snapshot()).sessions, []);
     const id = await engine.newSession(dirs.work!);
@@ -85,8 +85,8 @@ test('native state: isolated public reads, no cached metadata and explicit unloa
     assert.equal((await engine.getMeta(id))?.title, 'Native request title B');
     await engine.prompt(id, 'Synthetic native state fixture');
     const deadline = Date.now() + 15_000;
-    while (await engine.busyCount() || engine.attentionCount() !== 1) {
-      assert.ok(Date.now() < deadline, 'Native reply and notification must settle');
+    while (await engine.busyCount()) {
+      assert.ok(Date.now() < deadline, 'Native reply must settle');
       await sleep(20);
     }
     await engine.setMode(id, 'plan');
@@ -94,7 +94,6 @@ test('native state: isolated public reads, no cached metadata and explicit unloa
     const scheduled = await engine.addSchedule(id, { interval: '1h', prompt: 'synthetic fixture', recurring: false });
     assert.ok(scheduled.entry);
     assert.equal((await engine.getMeta(id))?.scheduleCount, 1);
-    await engine.pin(id, true);
     for (const forbidden of ['meta', 'tasks', 'nativeMcpPending', 'resourceReads', 'resourceSync', 'dirtyResources']) {
       assert.equal(forbidden in retained().get(id)!, false);
     }
@@ -103,7 +102,7 @@ test('native state: isolated public reads, no cached metadata and explicit unloa
     const unloaded = await engine.getMeta(id);
     assert.equal(unloaded?.loaded, false);
     assert.equal(unloaded?.title, 'Native request title B');
-    assert.equal(unloaded?.pinned, true);
+    assert.equal('pinned' in unloaded!, false);
     for (const key of ['currentModelId', 'currentMode', 'availableModels', 'queue', 'scheduleCount', 'todo']) {
       assert.equal(key in unloaded!, false, key);
     }

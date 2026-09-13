@@ -1,23 +1,19 @@
 // paths.ts — the single source of truth for cockpit's state root.
 //
-// Native storage and legacy Cockpit metadata live under this directory: cockpit-prefs.json,
-// flows/, mcp-config.json, session-state/, cockpit-uploads/, session-store.db, and
-// the skills dir. That root defaults to ~/.copilot — resolved with homedir() so it
+// Native storage includes mcp-config.json, session-state/, session-store.db and
+// native skills. That root defaults to ~/.copilot — resolved with homedir() so it
 // is correct on every OS (USERPROFILE on Windows, $HOME on POSIX), never a
 // hardcoded literal — and the WHOLE tree can be relocated with one knob,
 // COCKPIT_HOME, for a portable or side-by-side install.
 //
-// Individual paths keep their own finer-grained env overrides (COCKPIT_FLOWS_DIR,
-// COCKPIT_UPLOAD_DIR(S), COCKPIT_SESSION_STORE, COCKPIT_SESSION_STATE_DIR, …) which
+// Individual paths keep their own finer-grained env overrides (COCKPIT_SESSION_STORE,
+// COCKPIT_SESSION_STATE_DIR, …) which
 // take precedence where set; COCKPIT_HOME only moves the default base they fall back
 // to. Read at call time so a test or launcher can set COCKPIT_HOME before use.
 // The consumer launcher's COCKPIT_USER_ROOT is separate from this native root.
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-export const bundledSkillsDirectory = fileURLToPath(new URL('../../../skills', import.meta.url));
 
 // The cockpit state root (default ~/.copilot, overridable with COCKPIT_HOME).
 export function cockpitHome(): string {

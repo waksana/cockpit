@@ -1,29 +1,22 @@
 // Browser-owned native chat windows plus the server's control projection.
 // SSE supplies metadata/decisions; bounded HTTP reads feed only the visible chat.
-// Loaded pages, cursors and drafts are local. Attention counters remain server
-// truth shared across devices. init() owns this tab's transport lifecycle.
+// Loaded pages, cursors and drafts are local. init() owns this tab's transport lifecycle.
 
 import { create } from 'zustand';
 import { isSessionUnloadedError, isTransportError, NetClient, SessionUnloadedError } from './client';
 import type { ConnState } from './client';
 import type {
-  AgentStatus, Attachment, ChatSession, ModelOption, ServerEvent,
+  AgentStatus, NativeAttachment, ChatSession, ModelOption, ServerEvent,
 } from './types';
 import { MetaResource, SessionResource, type SessionMeta } from '@cockpit/protocol';
-import type { IntentBody, IntentResult, NativeChatRead, NativeChatPage, PanelSection, PanelItem, SessionProjection, IntentName } from '@cockpit/protocol';
+import type { IntentBody, IntentResult, NativeChatRead, NativeChatPage, PanelSection, PanelItem, SessionProjection } from '@cockpit/protocol';
 import { invalidateWindow, metaToSession } from './sessionWindow';
 import { applyProjection, cleanProjection } from './sessionResources';
 import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
 import { readMessageHistory } from './messageHistory';
-import { notify } from '../lib/notify';
-import { clearOsNotifications } from '../lib/push';
-import { setBadge } from '../lib/badge';
-import { createNotificationSettings, type NotificationSettingsState } from '../lib/notificationSettings';
-import { currentInboxRevision, isUnreadAttention, mergeAttentionPatch, patchedUnreadCount, unreadSessionCount } from '../lib/inboxProjection';
 import { describeReason, reportUxError } from '../lib/errorReporter';
 
-// Is the tab in the foreground? Used to decide whether opening/holding a session
-// counts as "seeing" its raised attention (it does only when visible).
+// Background tabs release their native chat read.
 const isVisible = () => typeof document !== 'undefined' && document.visibilityState === 'visible';
 
 interface CockpitState {
@@ -35,36 +28,21 @@ interface CockpitState {
   activeId: string | null;
   globalModels: ModelOption[];
   resourceRevisions: Record<string, Partial<Record<SessionResource, number>>>;
-  // Notification permission state (per-device, GLOBAL — one grant covers all
-  // sessions; never per-session). `notifSupported` is false outside an installed
-  // PWA on iOS, where Web Push is unavailable.
-  notifPermission: NotificationPermission;
-  notifSupported: boolean;
-  notifReady: boolean;
-  notifications: NotificationSettingsState;
-  unreadCount: number;
-  inboxRevision?: number;
   // lifecycle
   init: () => () => void;
   // intents
   setActiveId: (id: string | null) => void;
-  observeAttention: (sessionId: string, attnId: number, visible: boolean) => void;
   newSession: (cwd: string) => Promise<string>;
-  consumerIntent: <K extends Extract<IntentName, `system/consumer/${string}`>>
-    (name: K, body: IntentBody<K>, signal?: AbortSignal) => Promise<IntentResult<K>>;
   forkSession: (sessionId: string) => Promise<string>;
   loadMore: (sessionId: string) => void;
   retryHistory: (sessionId: string) => void;
-  sendPrompt: (sessionId: string, text: string, attachment?: Attachment, attachments?: Attachment[]) => Promise<boolean>;
-  filesList: (body: IntentBody<'files/list'>, signal?: AbortSignal) => Promise<IntentResult<'files/list'>>;
-  filesGet: (url: string, signal?: AbortSignal) => Promise<IntentResult<'files/get'>>;
+  sendPrompt: (sessionId: string, text: string, attachments?: NativeAttachment[]) => Promise<boolean>;
   cancel: (sessionId: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<{ ok: true; interrupted: boolean }>;
   setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => Promise<void>;
   deleteSession: (sessionId: string, confirm: true) => Promise<void>;
   unloadSession: (sessionId: string) => Promise<void>;
   reloadSession: (sessionId: string) => Promise<void>;
-  pinSession: (sessionId: string, pinned: boolean) => Promise<void>;
   compactSession: (sessionId: string) => Promise<void>;
   rewindSession: (sessionId: string, toMsgId: string, rollbackFiles?: boolean) => Promise<void>;
   setMode: (sessionId: string, mode: 'interactive' | 'plan' | 'autopilot') => Promise<void>;
@@ -94,25 +72,10 @@ interface CockpitState {
   respondElicitation: (sessionId: string, requestId: string, action: 'accept' | 'decline' | 'cancel') => Promise<boolean>;
   removeQueued: (sessionId: string, itemId: string) => Promise<void>;
   refreshList: () => Promise<void>;
-  // Mint a short-lived Azure Speech token (key stays server-side). enabled:false
-  // means no Azure resource is configured → voice falls back to the Web Speech API.
-  speechToken: () => Promise<{ enabled: boolean; token?: string; region?: string }>;
-  // Request notification permission + subscribe to push. MUST be called from a
-  // user gesture (iOS only honors a gesture-initiated permission request — calling
-  // it on load/snapshot silently fails, which is why notifications never armed).
-  enableNotifications: () => Promise<void>;
-  refreshNotifications: () => Promise<void>;
-  disableNotifications: () => Promise<void>;
-  testNotifications: (confirm: true) => Promise<void>;
 }
 
 export const createCockpitStore = () => create<CockpitState>((set, get) => {
   let client: NetClient | null = null;
-  const notifications = createNotificationSettings((state) => set({
-    notifications: state, notifReady: state.ready,
-    notifPermission: state.permission, notifSupported: state.supported,
-  }));
-  const seenRequests = new Map<string, number>();
   const summaryResources: MetaResource[] = ['identity', 'control', 'model', 'mode', 'schedule'];
   const metaRequests = new Map<string, {
     dirty: Set<MetaResource>; stale: Set<MetaResource>; controller: AbortController; patches: Partial<SessionMeta>;
@@ -160,24 +123,20 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         set(st => {
           const existing = st.sessions.find(s => s.sessionId === sessionId);
           const full = meta ? applyProjection(meta, existing) : null;
-          const attention = full && existing ? mergeAttentionPatch(existing, full) : full;
           const sessions = full
             ? existing ? st.sessions.map(s => s.sessionId === sessionId
               ? metaToSession({ ...full,
                 ...(full.error === undefined && s.error !== undefined ? { error: s.error } : {}),
-                ...(full.autoNameError === undefined && s.autoNameError !== undefined ? { autoNameError: s.autoNameError } : {}),
                 ...(full.loaded && full.compacting === undefined && s.compacting !== undefined ? { compacting: s.compacting } : {}),
                 ...(full.loaded && full.intent === undefined && s.intent !== undefined ? { intent: s.intent } : {}),
-                attention: attention!.attention,
-                attnId: attention!.attnId, seenId: attention!.seenId }, s) : s) : [metaToSession(full), ...st.sessions]
+              }, s) : s) : [metaToSession(full), ...st.sessions]
             : st.sessions.filter(s => s.sessionId !== sessionId);
-          return { sessions, unreadCount: patchedUnreadCount(st.unreadCount, st.sessions, sessions) };
+          return { sessions, };
         });
         if (sessionId === get().activeId && wasLoaded !== meta?.loaded) {
           if (!meta?.loaded) cancelLive(sessionId);
           maybeMaterialize();
         }
-        seenActiveIfVisible();
         if (!meta) return;
       } while (request.dirty.size);
     }).catch(error => {
@@ -195,7 +154,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
   const patchLocal = (sid: string, fn: (s: ChatSession) => ChatSession) =>
     set((st) => ({ sessions: st.sessions.map((s) => (s.sessionId === sid ? fn(s) : s)) }));
   let snapshotReady = false;
-  let observedAttention: { sessionId: string; attnId: number } | null = null;
   let historyRequest: { sessionId: string; generation: number; controller: AbortController } | null = null;
   let liveRequest: { sessionId: string; controller: AbortController } | null = null;
   let liveSessionId: string | null = null;
@@ -238,8 +196,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       windows.delete(id);
       mutationRequests.delete(id);
       historyRecoveryErrors.delete(id);
-      seenRequests.delete(id);
-      if (observedAttention?.sessionId === id) observedAttention = null;
       if (Object.hasOwn(get().resourceRevisions, id)) {
         revisions ??= { ...get().resourceRevisions };
         delete revisions[id];
@@ -364,59 +320,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     }
   };
 
-  // Tell the server "I'm looking at the active session now" when the tab is in the
-  // foreground and that session actually has attention raised. The server then
-  // clears a 'ready' on sight and demotes a 'choice'. Guarded so we never POST when
-  // there's nothing to see; markSeen is idempotent server-side anyway.
-  const seenActiveIfVisible = () => {
-    if (!isVisible() || !client?.isOpen || !snapshotReady) return;
-    const { activeId, sessions } = get();
-    if (!activeId) return;
-    const s = sessions.find((x) => x.sessionId === activeId);
-    if (!s || !isUnreadAttention(s)) return;
-    const observed = s.attnId ?? 0;
-    if (observedAttention?.sessionId !== activeId || observedAttention.attnId !== observed) return;
-    if (s.attention === 'ready' && (!s.materialized || s.historyStale || !s.messages.length)) return;
-    if (seenRequests.get(activeId) === observed) return;
-    const generation = get().connectionGeneration;
-    seenRequests.set(activeId, observed);
-    void client.inboxSeen(activeId, observed).finally(() => {
-      if (generation === get().connectionGeneration && seenRequests.get(activeId) === observed) {
-        seenRequests.delete(activeId);
-      }
-    }).catch(() => {});
-  };
-
-  const syncInbox = (removed: readonly string[] = [], removalRevision?: number, completeSnapshot = false) => {
-    if (!snapshotReady) return;
-    const state = get();
-    void setBadge(state.unreadCount, state.inboxRevision, state.sessions, {
-      removedSessions: removed, removalRevision, completeSnapshot,
-    });
-    void clearOsNotifications(state.sessions, removed);
-  };
-
-  // Fire the OS/browser notification for a session whose attention the Engine just
-  // raised. The kind/body come from the authoritative `session/notify` event — the
-  // client never decides *whether* a session needs attention, only renders the
-  // alert (and only while hidden, handled inside notify()). Clicking focuses the
-  // app and opens that session. Tag is keyed by session so an escalation
-  // (ready → choice) replaces the session's banner instead of stacking.
-  const fireAttention = (
-    sessionId: string, title: string, kind: 'ready' | 'choice', body: string,
-    attnId?: number, inboxRevision?: number,
-  ) =>
-    notify({
-      title,
-      body,
-      kind,
-      tag: sessionId,
-      sessionId,
-      attnId,
-      inboxRevision,
-      onClick: () => window.dispatchEvent(new CustomEvent('cockpit:open-session', { detail: { sessionId } })),
-    });
-
   const publish = (sid: string, window: NativeWindow) => {
     const snapshot = window.snapshot();
     const current = get().sessions.find(s => s.sessionId === sid);
@@ -540,12 +443,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     mutationRequests.clear();
     historyRecoveryErrors.clear();
     nativeReadRefresh = null;
-    seenRequests.clear();
-    notifications.disconnect();
     set((st) => ({
       connectionGeneration: st.connectionGeneration + 1,
       sessions: st.sessions.map(s => ({ ...s, loadingHistory: false })),
-      notifReady: false,
     }));
   };
 
@@ -562,17 +462,11 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         set((st) => {
           const byId = new Map(st.sessions.map((s) => [s.sessionId, s]));
           const sessions = ev.sessions.map((m) => metaToSession(m, byId.get(m.sessionId)));
-          return { sessions, unreadCount: ev.unreadCount ?? unreadSessionCount(sessions), inboxRevision: ev.inboxRevision };
+          return { sessions, };
         });
-        if (typeof window !== 'undefined' && get().connState === 'open' && client) notifications.connect(client);
-        syncInbox([], ev.inboxRevision, true);
         const active = get().sessions.find(s => s.sessionId === get().activeId);
         if (active?.loaded && active.queue === undefined) refreshMeta(active.sessionId, ['queue']);
         maybeMaterialize();
-        // If we (re)connected straight into a session that already has attention
-        // raised and the tab is in front, that counts as seeing it — clears a
-        // 'ready' on cold deep-link, demotes a seen 'choice'.
-        seenActiveIfVisible();
         return;
       }
       case 'agent/status':
@@ -602,9 +496,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
           const exists = st.sessions.some(s => s.sessionId === ev.session.sessionId);
           const sessions = exists ? st.sessions.map(s => s.sessionId === ev.session.sessionId ? metaToSession(ev.session, s) : s)
             : [metaToSession(ev.session), ...st.sessions];
-          return { sessions, unreadCount: patchedUnreadCount(st.unreadCount, st.sessions, sessions) };
+          return { sessions, };
         });
-        syncInbox();
         if (get().activeId === ev.session.sessionId && ev.session.loaded && ev.session.queue === undefined) {
           refreshMeta(ev.session.sessionId, ['queue']);
         }
@@ -619,19 +512,14 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         // back to the list itself (App.doDelete), so it never hits NotFound.
         set((st) => {
           const sessions = st.sessions.filter((s) => s.sessionId !== ev.sessionId);
-          const current = currentInboxRevision(st.inboxRevision, ev.inboxRevision);
           return {
             sessions,
-            inboxRevision: current ? ev.inboxRevision ?? st.inboxRevision : st.inboxRevision,
-            unreadCount: current && ev.unreadCount !== undefined ? ev.unreadCount
-              : patchedUnreadCount(st.unreadCount, st.sessions, sessions),
           };
         });
-        syncInbox([ev.sessionId], ev.inboxRevision);
         return;
       case 'session/patch': {
         const activeId = get().activeId;
-        const { type, inboxRevision, unreadCount, ...patch } = ev;
+        const { type, ...patch } = ev;
         void type;
         const pending = metaRequests.get(ev.sessionId);
         if (pending) {
@@ -644,32 +532,19 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
           const sessions = st.sessions.map((s) => {
             if (s.sessionId !== ev.sessionId) return s;
             if (patch.loaded === false) {
-              return metaToSession(mergeAttentionPatch({
-                sessionId: s.sessionId, title: s.title, cwd: s.cwd, createdAt: s.createdAt,
+              return metaToSession({
+                title: s.title, cwd: s.cwd, createdAt: s.createdAt,
                 lastActivity: s.lastActivity, lastActivitySource: s.lastActivitySource,
-                pinned: s.pinned, attention: s.attention, attnId: s.attnId, seenId: s.seenId,
                 loaded: false, status: 'unloaded', ask: null,
-              }, patch), s);
+                ...patch,
+              }, s);
             }
-            return mergeAttentionPatch(s, patch);
+            return { ...s, ...patch };
           });
-          const current = currentInboxRevision(st.inboxRevision, inboxRevision);
           return {
             sessions,
-            inboxRevision: current ? inboxRevision ?? st.inboxRevision : st.inboxRevision,
-            unreadCount: current && unreadCount !== undefined ? unreadCount
-              : patchedUnreadCount(st.unreadCount, st.sessions, sessions),
           };
         });
-        if ('attention' in ev || 'attnId' in ev || 'seenId' in ev) syncInbox();
-        // The sidebar dot + app-icon badge derive purely from the server's
-        // attention/attnId/seenId we just merged — there is no per-device flag to
-        // set, so a missed-while-offline raise or a remote handle can't leave a
-        // stale dot. But if attention was just raised on the session you're already
-        // looking at (tab visible), that IS seeing it: tell the server so a 'ready'
-        // clears on sight and a 'choice' demotes. When hidden we leave it raised so
-        // the OS notification (session/notify) still fires.
-        if ((ev.attention != null || ev.attnId !== undefined) && ev.sessionId === activeId) seenActiveIfVisible();
         if (ev.sessionId === activeId && 'loaded' in ev) {
           if (!ev.loaded) cancelLive(ev.sessionId);
           maybeMaterialize();
@@ -685,30 +560,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         patchLocal(ev.sessionId, s => ({ ...invalidateWindow(s), error: '原生历史已变更；当前画面已保留，请重新同步。' }));
         return;
       }
-      case 'session/notify': {
-        const state = get();
-        const row = state.sessions.find((s) => s.sessionId === ev.sessionId);
-        if (!currentInboxRevision(state.inboxRevision, ev.inboxRevision)
-          || (ev.attnId !== undefined && row
-            && (ev.attnId < (row.attnId ?? 0) || ev.attnId <= (row.seenId ?? 0)))) return;
-        set((st) => {
-          // A versioned notify can precede its metadata patch. Project the
-          // observed waterline now so that patch cannot double-count it later.
-          const sessions = st.sessions.map((s) =>
-            s.sessionId === ev.sessionId && ev.attnId !== undefined && ev.attnId > (s.attnId ?? 0)
-              ? mergeAttentionPatch(s, { attention: ev.attention, attnId: ev.attnId }) : s);
-          return {
-            sessions, inboxRevision: ev.inboxRevision ?? st.inboxRevision,
-            unreadCount: ev.unreadCount ?? patchedUnreadCount(st.unreadCount, st.sessions, sessions),
-          };
-        });
-        syncInbox();
-        if (!get().notifications.disabled && !get().notifications.deliveryOwned) {
-          fireAttention(ev.sessionId, ev.title, ev.attention, ev.body, ev.attnId, ev.inboxRevision);
-        }
-        seenActiveIfVisible();
-        return;
-      }
       default:
         return;
     }
@@ -719,8 +570,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     set({ connState: state });
     if (state === 'open' && snapshotReady) {
       maybeMaterialize();
-      if (typeof window !== 'undefined' && client) notifications.connect(client);
-      syncInbox();
     }
   };
 
@@ -733,30 +582,18 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     activeId: null,
     globalModels: [],
     resourceRevisions: {},
-    notifPermission: notifications.state().permission,
-    notifSupported: notifications.state().supported,
-    notifReady: false,
-    notifications: notifications.state(),
-    unreadCount: 0,
-    inboxRevision: undefined,
 
     init() {
       client?.disconnect();
       const net = new NetClient({ onEvent, onStateChange, sessionTitle: sid => get().sessions.find(s => s.sessionId === sid)?.title });
       client = net;
       net.connect();
-      // Bringing the tab to the front counts as seeing the active session's raised
-      // attention (clears a 'ready', demotes a 'choice') — covers "alert arrived
-      // while I was on this session but had it backgrounded, then I came back".
       const onVisible = () => {
-        if (isVisible()) { seenActiveIfVisible(); syncInbox(); maybeMaterialize(); }
+        if (isVisible()) maybeMaterialize();
         else { cancelHistory(); cancelLive(); }
       };
       if (typeof document !== 'undefined') document.addEventListener('visibilitychange', onVisible);
       if (typeof window !== 'undefined') window.addEventListener('online', onVisible);
-      // One-time cleanup: pin is now backend-authoritative (session/pin), so the
-      // legacy per-device localStorage pin list is obsolete — drop it if present.
-      try { localStorage.removeItem('cockpit:pinned'); } catch { /* ignore */ }
       return () => {
         if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisible);
         if (typeof window !== 'undefined') window.removeEventListener('online', onVisible);
@@ -768,15 +605,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       };
     },
 
-    enableNotifications: notifications.enable,
-    refreshNotifications: notifications.refresh,
-    disableNotifications: notifications.disable,
-    testNotifications: notifications.sendTest,
-
     setActiveId(id) {
       const previous = get().activeId;
       if (id !== previous) {
-        observedAttention = null;
         cancelHistory();
         cancelLive();
         if (previous) {
@@ -784,23 +615,13 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
           if (mutation) mutation.released = true;
           mutationRequests.delete(previous);
           historyRecoveryErrors.delete(previous);
-          seenRequests.delete(previous);
         }
         set({ activeId: id });
         const active = get().sessions.find(s => s.sessionId === id);
         if (active?.loaded && active.queue === undefined && snapshotReady) refreshMeta(active.sessionId, ['queue']);
       }
-      if (id) seenActiveIfVisible();
       maybeMaterialize();
     },
-    observeAttention(sessionId, attnId, visible) {
-      if (sessionId !== get().activeId) return;
-      if (visible) observedAttention = { sessionId, attnId };
-      else if (observedAttention?.sessionId === sessionId && observedAttention.attnId === attnId) observedAttention = null;
-      if (visible) seenActiveIfVisible();
-    },
-
-    consumerIntent(name, body, signal) { return read(net => net.intent(name, body, signal)); },
     newSession(cwd) {
       let reportedByTransport = false;
       const promise = read(net => net.newSession(cwd).catch(error => {
@@ -838,11 +659,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       else requestHistory(sid);
     },
 
-    sendPrompt(sid, text, attachment, attachments) {
-      return acknowledged(sid, (net) => net.prompt(sid, text, attachment, undefined, attachments));
+    sendPrompt(sid, text, attachments) {
+      return acknowledged(sid, (net) => net.prompt(sid, text, attachments));
     },
-    filesList(body, signal) { return read(net => net.intent('files/list', body, signal)); },
-    filesGet(url, signal) { return read(net => net.intent('files/get', { url }, signal)); },
 
     cancel(sid) { return mutation(sid, '取消', (net) => net.cancel(sid)); },
     interrupt(sid) { return nativeRead(sid, (net) => net.interrupt(sid)); },
@@ -850,7 +669,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     deleteSession(sid, confirm) { return mutation(sid, '永久删除会话', (net) => net.deleteSession(sid, confirm)); },
     unloadSession(sid) { return mutation(sid, '卸载会话', (net) => net.unloadSession(sid)); },
     reloadSession(sid) { return mutation(sid, '重载会话', (net) => net.reloadSession(sid)); },
-    pinSession(sid, pinned) { return mutation(sid, '置顶会话', (net) => net.pinSession(sid, pinned)); },
     compactSession(sid) { return mutation(sid, '压缩会话', (net) => net.compactSession(sid)); },
     rewindSession(sid, toMsgId, rollbackFiles) {
       return mutation(sid, '回退会话', (net) => net.rewindSession(sid, toMsgId, rollbackFiles), true);
@@ -892,10 +710,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     skillsSession(sid) { return nativeRead(sid, (net) => net.skillsSession(sid)).then((r) => r.skills); },
     skillsToggleSession(sid, name, enabled) { return mutation(sid, `切换技能 ${name}`, (net) => net.skillsToggleSession(sid, name, enabled)); },
     listDir(path) { return read((net) => net.listDir(path)); },
-
-    speechToken() {
-      return read((net) => net.speechToken());
-    },
   };
 });
 

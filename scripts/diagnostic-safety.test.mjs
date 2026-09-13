@@ -69,7 +69,6 @@ process.on('exit', () => console.error('DIAGNOSTIC_AUDIT ' + JSON.stringify({pri
 
 const performanceTransport = `data:text/javascript,${encodeURIComponent(`
 import assert from 'node:assert/strict';
-const uploads = new Map();
 let requests = 0;
 globalThis.fetch = async (url, init) => {
   requests++;
@@ -77,20 +76,12 @@ globalThis.fetch = async (url, init) => {
   const target = new URL(url);
   assert.equal(target.origin, 'http://127.0.0.1:45678');
   if (target.pathname === '/health' || target.pathname === '/status') return new Response('{}');
-  if (target.pathname === '/upload') {
-    assert.equal(init.method, 'POST');
-    const path = '/uploads/synthetic-' + uploads.size + '.bin';
-    uploads.set(path, init.body);
-    return Response.json({url: path});
-  }
-  if (uploads.has(target.pathname)) return new Response(uploads.get(target.pathname));
   if (target.pathname === '/events') return new Response('data: {"type":"snapshot"}\\n\\n');
   throw new Error('unexpected diagnostic request');
 };
 process.on('exit', () => {
-  assert.equal(requests, 465);
-  assert.equal(uploads.size, 2);
-  console.log('SYNTHETIC_HTTP 465 requests, 2 in-memory uploads');
+  assert.equal(requests, 461);
+  console.log('SYNTHETIC_HTTP 461 requests, no file transfer');
 });
 `)}`;
 
@@ -209,7 +200,7 @@ test('performance paths remain executable with synthetic fold and in-memory HTTP
   const result = await run('scripts/perf.mjs', [...rootArgs, ...targetArgs], performanceTransport);
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /synthetic browser-fold fixtures/);
-  assert.match(result.stdout, /SYNTHETIC_HTTP 465 requests, 2 in-memory uploads/);
+  assert.match(result.stdout, /SYNTHETIC_HTTP 461 requests, no file transfer/);
 });
 
 test('allowed E2E completes against in-memory state with actual intent body/result schemas', async () => {

@@ -34,7 +34,7 @@ export function registerReadTools(server: McpServer): void {
           `# ${meta.title || '(untitled)'}`,
           'Summary; for model options, full queue text or plan actions, request response_format:"json".',
           `id: ${meta.sessionId}`,
-          `status: ${meta.status}${meta.loaded ? '' : ' (unloaded)'}${meta.pinned ? ' · pinned' : ''}`,
+          `status: ${meta.status}${meta.loaded ? '' : ' (unloaded)'}`,
           `cwd: ${meta.cwd || 'unknown (not provided by native metadata)'}`,
           `model: ${meta.currentModelId ?? '—'}${meta.currentReasoningEffort ? ` (${meta.currentReasoningEffort})` : ''}` +
             `${meta.currentContextTier ? ` · ${meta.currentContextTier}` : ''}`,
@@ -55,8 +55,6 @@ export function registerReadTools(server: McpServer): void {
         if (meta.todo) lines.push(`todo: ${meta.todo.done}/${meta.todo.total} done` +
           (meta.todo.intent ? ` · now: ${meta.todo.intent}` : ''));
         if (meta.intent) lines.push(`intent: ${meta.intent}`);
-        if (meta.autoNaming) lines.push('automatic naming: in progress (not a chat turn)');
-        if (meta.autoNameError) lines.push(`naming error: ${meta.autoNameError}`);
         if (meta.error) lines.push(`error: ${meta.error}`);
         return ok(capped(lines.join('\n')));
       } catch (e) {

@@ -27,6 +27,10 @@ that lacks the no-automatic-migration compatibility declaration with
 An old private-CD package is not automatically a consumer release. The
 core-only launcher manages only the main process and its native safe drain;
 it neither ships a module runner nor restores business services or roles.
+The artifact also excludes `module-staging/`, root `skills/` and all parked
+enhancement entry points. The source inventory preserves those originals for
+later adaptation; it is not part of the runtime closure. Use the existing
+`COCKPIT_RELEASE_ARCHIVE` package guard documented in [delivery](DELIVERY.md).
 Earlier consumer authority/runtime formats require a separately planned
 replacement, not an automatic migration. Old programs, configuration and
 business records are not deleted or rolled back.

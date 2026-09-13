@@ -698,6 +698,33 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/cockpit.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/cockpit.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "f3882c60d1b068798dbe91f9db21b6aa09c42134536f8f3f1728d523bb2d5280"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/cockpit.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/cockpit.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "b59aa9cc5116db401ea421a445788e3b8a17a1adbd58a3ad20c6109a6e91ee69"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/config.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/config.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "922883941e65768222486a8e5359e08ef0b1f9c9aaa77662f85ffe5f91112a98"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "apps/mcp/src/fork-native.test.ts",
       "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/fork-native.test.ts",
       "module": "_shared-originals",
@@ -761,6 +788,15 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/tools/lifecycle.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/tools/lifecycle.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "c4c9ddb8703d45c61922f4df7278b9888a59ea544bb169009e2196c184e8d8ea"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "apps/mcp/src/tools/read.ts",
       "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/tools/read.ts",
       "module": "_shared-originals",
@@ -770,12 +806,30 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/tools/transcript.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/tools/transcript.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "5970772de403764b25f180a49ff71519ccf00dadeb87a8cc13d409c214916958"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "apps/server/package.json",
       "destination": "module-staging/_shared-originals/21fdcc2/apps/server/package.json",
       "module": "_shared-originals",
       "kind": "mixed-original",
       "mode": "100644",
       "sha256": "b4a409cb45a17c97473ab8280debdb4f4aa7593075d65fa99c24a18036a203cd"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/server/src/capabilities.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/server/src/capabilities.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "4fe17f62a205f7d198b5c858fedd3f0a91a9d4a9b95bf8b89ed2c0e36cb59ab7"
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
@@ -806,6 +860,24 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/server/src/shutdown.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/server/src/shutdown.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "4cd830543d665d5312395b69f2553d0bfa0d48885de4a7e1b6e884a0dcdd23b0"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/server/src/static-web.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/server/src/static-web.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "52c93b10b23d39c07e888648c48937268d0b6fc61b14ffff8f2ef3607e63451d"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "apps/web/index.html",
       "destination": "module-staging/_shared-originals/21fdcc2/apps/web/index.html",
       "module": "_shared-originals",
@@ -821,6 +893,87 @@
       "kind": "mixed-original",
       "mode": "100644",
       "sha256": "989789b7265010cdcc5e4d3d0562a85d9e35cef737e913b6f2d574c9fcc1012a"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/review/config.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/config.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "fb130414dcfe123dd7dd11686a5daf86a940bb559238eb4a001f18b4fa8a4fd8"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/review/constants.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/constants.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "cc82b1a21bcdf281b11b7b3155c591b9132877dd72d4ab8c8b0928f17ba11599"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/review/drafts.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/drafts.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "ad6afdaf85fe1a1c893272f81ed3e49e6687c0165bcd78ec50c7888022ca612a"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/review/index.html",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/index.html",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "6e32a5cd7d8efc2afe2a81dbe386fe4b646e8cd5de2afaafdfddf58875b26eeb"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/review/managedFile.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/managedFile.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "b3812ff25dea191d9aec87010d2417e29b2ae502ee013aae98b9472aedb6cf8b"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/review/nginx-headers.inc",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/nginx-headers.inc",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "8d61b8a98c6560d61e3cb92e8e40c05dbed64e5d0efe710dc6f2b01596c2f76f"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/review/nginx-location.conf",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/nginx-location.conf",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "6cc5c06517bde76e9e38694f29f518ee2a34d484af556dc0afc5512a924d9333"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/review/nginx-loopback.conf",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/nginx-loopback.conf",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "e2c7a7241a55ed15529d3587e2b0d1b6bbcf55cb3d05995d41e50a8956821e2f"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/review/review.scss",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/review.scss",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "d4f4fd5ba1b3168a6d588b6a20414c4a36176759ad6564a33988fe363143a482"
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
@@ -851,6 +1004,15 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/review/upload.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/upload.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "a6f77331b3c6ee9cd070b7df32467e194be080d1ad73292cb17809f528d4c6ac"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "apps/web/review/vite.config.ts",
       "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/vite.config.ts",
       "module": "_shared-originals",
@@ -878,6 +1040,15 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/Chat.presentation.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/Chat.presentation.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "15f3a628cee1dd96b028b5f2a9eee721c208d02e04c67ee3e9dac538f2fd3c9e"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "apps/web/src/components/Composer.tsx",
       "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/Composer.tsx",
       "module": "_shared-originals",
@@ -893,6 +1064,15 @@
       "kind": "mixed-original",
       "mode": "100644",
       "sha256": "7d7c404387a8aee4d7bda892eaadfe1b691c1deb29d01a0410d0175a0c364f4e"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/GlobalNavigation.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/GlobalNavigation.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "cbe732aeb000d4e8b343366c00e2d596d71f7f3511042e7f5a21c10c8e48739a"
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
@@ -950,6 +1130,15 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/Thread.process.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/Thread.process.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "33a3f39ebd0aa9827db84942a81a8dbdc63ccfdf9a8f5100639a9345a11ebdf3"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "apps/web/src/components/Thread.tsx",
       "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/Thread.tsx",
       "module": "_shared-originals",
@@ -995,12 +1184,30 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/config.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/lib/config.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "f432b1e1997c69c060b1f8aa72500bdace96f70f1afcabc7988a00b8707e441b"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "apps/web/src/lib/copyText.ts",
       "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/lib/copyText.ts",
       "module": "_shared-originals",
       "kind": "mixed-original",
       "mode": "100644",
       "sha256": "2892888c101c319118f7f2a715d7ad237943dbc2d0e93a52a19156231f92d06b"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/draft.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/lib/draft.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "910c9e02dc4ac69017e5b8ae7b7dc853a32708b357f67023a84865e4ac310b50"
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
@@ -1028,6 +1235,15 @@
       "kind": "mixed-original",
       "mode": "100644",
       "sha256": "0a8dad7c618c9c6c1bfcd7c7edb1e454b1a6b975354057f26f273c2bff1a80ce"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/messageContent.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/lib/messageContent.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "e1e96fb12978c061e7a601d19b313760820c2d658fd20e0d4dde1ad9bb7f9e98"
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
@@ -1148,12 +1364,30 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/styles/components/chat.scss",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/styles/components/chat.scss",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "b9a39a3289c9bea5c9d83daadcefdc1248eac657b2316fd46717099f8c00d089"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "apps/web/src/styles/components/sidebar.scss",
       "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/styles/components/sidebar.scss",
       "module": "_shared-originals",
       "kind": "mixed-original",
       "mode": "100644",
       "sha256": "7959b8eb92237c85c5187cfa7f4a1320b04d49bd717f511b4d55e5ba2a27e0b4"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/styles/index.scss",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/styles/index.scss",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "2be4ebd67f9819b7ef273180d604a1f52206ea3016a4b193e381df94ba1a3222"
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
@@ -1166,12 +1400,39 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/tsconfig.app.json",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/tsconfig.app.json",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "7b41b615f47ddcaacef3021153180dd8be22932c3b90f9a38d86f98ba11d8533"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "apps/web/vite.config.ts",
       "destination": "module-staging/_shared-originals/21fdcc2/apps/web/vite.config.ts",
       "module": "_shared-originals",
       "kind": "mixed-original",
       "mode": "100644",
       "sha256": "5934e2dc04cf9335f679adc2e819158b074b78b916843533a30cc0ebe62a8337"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/chat-composer-rework.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/chat-composer-rework.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "2ebd9e1c6d585ffb587b00f3456e2b026c7da75099327fabc9b8f149c6275c6b"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/chat-design-review.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/chat-design-review.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "b84a266be57641400d53b5f17f45589a67a577f866948a4d0e70cd894260d082"
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
@@ -1256,12 +1517,48 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/DEVELOPMENT.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/DEVELOPMENT.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "618bd21be6d6901b28a6b8b510dcbcee19b049d1a32132b504f9033193a84874"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/module-contract-draft.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/module-contract-draft.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "b955e27198cd68f10ff9068409f6c946668fa76b69e4a4e81b1eaadad6310ea2"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "docs/native-chat.md",
       "destination": "module-staging/_shared-originals/21fdcc2/docs/native-chat.md",
       "module": "_shared-originals",
       "kind": "mixed-original",
       "mode": "100644",
       "sha256": "3275412a10b8867e5cdcc6d636abd6a95b7429aa292c2751d22abdc2a9ccbaae"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/product-requirements.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/product-requirements.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "36f2c905fb07afca3e81532b9a2fa6ca39891ff6d912ddc980fbcea1077a8f36"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/review/00-index.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/review/00-index.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "be353c8dcf91e8b7e1b477ca94858d7cc4b2719319a3d320f14572586a91b297"
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
@@ -1373,6 +1670,15 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/delete-native.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/delete-native.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "77c2c2d878667c380b97ce5053d18c7419bdf177e448909cac5837dab71d23d3"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "packages/core/src/engine.test.ts",
       "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/engine.test.ts",
       "module": "_shared-originals",
@@ -1388,6 +1694,15 @@
       "kind": "mixed-original",
       "mode": "100644",
       "sha256": "9ebfcf1e2fe61c002c9dd00bf49098e4ca750f6c717768dfaba5ed4c470f6f42"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/event-normalization.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/event-normalization.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "a42cf504b768a9e37abfe88f68b0705d1f49a9deb2d72a58c4cde87eec525a09"
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
@@ -1424,6 +1739,15 @@
       "kind": "mixed-original",
       "mode": "100644",
       "sha256": "de08a36ecf2240a8256914ff13661b6a3ecc73324aceb92c236a1806bc526820"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/model-settings-native.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/model-settings-native.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "49b9c0e366b6dabbb651844e82d75a146031be3731a3f05f3b2ed11f2369d6ac"
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
@@ -1499,6 +1823,15 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/sdk-types.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/sdk-types.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "81c7264031be142ede746bdd9c99d11e7702438175e1be931fe18ca9a7673992"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "packages/protocol/package.json",
       "destination": "module-staging/_shared-originals/21fdcc2/packages/protocol/package.json",
       "module": "_shared-originals",
@@ -1553,6 +1886,24 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "scripts/build-chat-review.mjs",
+      "destination": "module-staging/_shared-originals/21fdcc2/scripts/build-chat-review.mjs",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "0b1019698bd0b14972097409da2f11d8b8a4891d2709666c6b39903e91e01cdb"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "scripts/chat-review.test.mjs",
+      "destination": "module-staging/_shared-originals/21fdcc2/scripts/chat-review.test.mjs",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "b6d3b4cfff226a1a88fe541a4619409ab05c802985e65d53a670d1764469d7bc"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "scripts/delivery-package.test.mjs",
       "destination": "module-staging/_shared-originals/21fdcc2/scripts/delivery-package.test.mjs",
       "module": "_shared-originals",
@@ -1571,12 +1922,39 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "scripts/diagnostic-safety.test.mjs",
+      "destination": "module-staging/_shared-originals/21fdcc2/scripts/diagnostic-safety.test.mjs",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "94556b625e245881afa2b499e7c68458e0a6f5b1e8fa09ca21f755bdd18af174"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "scripts/e2e.mjs",
       "destination": "module-staging/_shared-originals/21fdcc2/scripts/e2e.mjs",
       "module": "_shared-originals",
       "kind": "mixed-original",
       "mode": "100644",
       "sha256": "a9ba25a42cd9909afa0823051ae34d911751f301238b2999420405a08931a1ea"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "scripts/perf.mjs",
+      "destination": "module-staging/_shared-originals/21fdcc2/scripts/perf.mjs",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "0af034c30f2c7b903536ea6c08369a80844b0e868cdc6ae59fa0923dd001643b"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "scripts/start.mjs",
+      "destination": "module-staging/_shared-originals/21fdcc2/scripts/start.mjs",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "ccb1542e6e51d4f2cadf6395e1592876e549605961e4f4956d33d8520633d34b"
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
@@ -1706,6 +2084,15 @@
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/chat-lab-plugin.ts",
+      "destination": "module-staging/files/21fdcc2/apps/web/chat-lab-plugin.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "1dd2def9b0a60418f2f8abfc65496d94e3cbaf996ad2b6c25749c81482105752"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
       "sourcePath": "apps/web/src/components/Composer.attachment.test.ts",
       "destination": "module-staging/files/21fdcc2/apps/web/src/components/Composer.attachment.test.ts",
       "module": "files",
@@ -1739,6 +2126,33 @@
       "kind": "capability-source",
       "mode": "100644",
       "sha256": "81d45c425dd4ee9fb3ffefa40f95e8e87cba5239d87c4d7934a73ced00d840e7"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/MessageBody.image.test.ts",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/components/MessageBody.image.test.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "86ccc98be8fd3c45b907f9037a48d3a71acf69638e61a5ab48379a7a090d65c4"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/dev/lab-layout.svg",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/dev/lab-layout.svg",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "d7fb8c05fbb509274d69e674ec12199872bfd0c3228de2ce032954d6adb92621"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/dev/lab-video.webm",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/dev/lab-video.webm",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "21e9db8af49e32b1ad1a2861eb2a3b63a3e83478025eb991eb3f1ed7a94f6a94"
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
@@ -1928,6 +2342,15 @@
       "kind": "capability-source",
       "mode": "100644",
       "sha256": "307bc9e3da345f7ad4ead5dee45fe8ec626a89b218b0272089978301ad96f294"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/public/badge-refined-r4-96.png",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/public/badge-refined-r4-96.png",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "0a0203f16a6c24a302ef1f2ee8a4218909e1f6938d33964e44723e73479fe96e"
     },
     {
       "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",

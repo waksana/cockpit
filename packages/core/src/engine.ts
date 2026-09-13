@@ -1,14 +1,14 @@
 import { EventEmitter } from 'node:events';
 import { createHash, randomUUID } from 'node:crypto';
 import { accessSync, constants, readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type {
   CopilotSession, SessionConfig, SessionMetadata, SessionEvent,
   ExitPlanModeResult, ElicitationResult,
 } from '@github/copilot-sdk';
 import type {
-  AgentStatus, Attention, DirListing, ExitPlanModeAction,
+  AgentStatus, DirListing, ExitPlanModeAction,
   McpServerGlobal, McpServerSession, McpToggleOperation, McpToggleResult,
   ModelOption, ScheduleEntry, ServerEvent, SessionMeta, SessionPanels,
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
@@ -17,16 +17,11 @@ import type {
 import { NativeChatRead, SessionUsage, MetaResource as MetaResources } from '@cockpit/protocol';
 import { OfficialRuntime, sessionModelOptions } from './runtime.ts';
 import { normalizeEvent, type RuntimeAttachment } from './sdk-types.ts';
-import { cleanSessionTitle, extractParts } from './fold.ts';
+import { cleanSessionTitle } from './fold.ts';
 import { engineSessionBusy } from './lifecycle.ts';
-import { nextAttention, notificationSummary } from './attention.ts';
 import { readNativeChat } from './native-chat.ts';
-import { Prefs } from './prefs.ts';
 import { describeMcpServer, redactMcpConfig } from './mcp-config.ts';
-import { autoNameQuestion, firstNamingReply, generatedTitle } from './auto-name.ts';
 import { validateForkHistory } from './fork.ts';
-import { createContextReset } from './context-reset.ts';
-import { bundledSkillsDirectory } from './paths.ts';
 
 export { sessionMetaBusy, engineSessionBusy } from './lifecycle.ts';
 export type EngineRuntime = Pick<OfficialRuntime,
@@ -81,7 +76,6 @@ function completeMeta(meta: SessionProjection): SessionMeta {
 interface State {
   id: string;
   sdk: CopilotSession | null;
-  contextReset?: ReturnType<typeof createContextReset>;
   load?: Promise<void>;
   closing: boolean;
   cancelling?: Promise<void>;
@@ -98,28 +92,16 @@ interface State {
   eventOwner?: { closed?: WeakSet<CopilotSession> };
   sendReceipts: Set<string>;
   revision: number;
-  sync?: Promise<void>;
-  syncAgain: boolean;
   scheduleGate: Promise<void>;
   resourceWrites: Map<SessionResource, number>;
   pendingInvalidations: Set<SessionResource>;
   modelGate: Promise<void>;
-  replyNotification?: string;
-  pendingReply?: { eventId: string; body: string };
-  namingReply?: boolean;
-  namingAttempted?: boolean;
-  namingDeferred?: boolean;
-  autoNamePending?: string | false;
-  naming?: Promise<IntentResult<'session/auto-name'>>;
 }
 
 const activeTask = (status: string) => !['idle', 'completed', 'failed', 'cancelled'].includes(status);
 const planActions = new Set<string>(['exit_only', 'interactive', 'autopilot', 'autopilot_fleet']);
 const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
 const unsupported = (what: string): never => { throw new Error(`${what} is unsupported by this public SDK adapter; nothing was changed`); };
-const namingBusyError = () => Object.assign(new Error('Session must be idle before automatic naming'), {
-  statusCode: 409, code: 'SESSION_BUSY',
-});
 
 const controlEvents = new Set([
   'user.message', 'assistant.turn_start', 'assistant.turn_end', 'assistant.message', 'abort',
@@ -148,7 +130,7 @@ function stateFor(id: string): State {
   return {
     id, sdk: null, closing: false, operations: 0, mcpOperations: 0, sends: 0,
     accepted: new Set(), decisions: new Map(), sendReceipts: new Set(),
-    revision: 0, turnEpoch: 0, syncAgain: false,
+    revision: 0, turnEpoch: 0,
     scheduleGate: Promise.resolve(),
     resourceWrites: new Map(), pendingInvalidations: new Set(),
     modelGate: Promise.resolve(),
@@ -157,7 +139,6 @@ function stateFor(id: string): State {
 
 export class Engine {
   private readonly runtime: EngineRuntime;
-  private readonly prefs: Prefs;
   private readonly sessions = new Map<string, State>();
   private readonly creating = new Set<string>();
   private readonly removing = new Set<string>();
@@ -170,13 +151,10 @@ export class Engine {
   private stopped = false;
   private startPromise?: Promise<void>;
   private fatalError?: Error;
-  vapidPublicKey: string | null = null;
   log: (message: string, data?: Record<string, unknown>) => void = () => {};
 
-  constructor(options: { runtime?: EngineRuntime; prefsFile?: string } = {}) {
+  constructor(options: { runtime?: EngineRuntime } = {}) {
     this.runtime = options.runtime ?? new OfficialRuntime();
-    this.prefs = new Prefs(options.prefsFile);
-    this.prefs.reconcileInboxChoices();
     this.runtime.onSessionClosed(sdk => {
       if (this.failure) { this.fail(this.failure); return; }
       const st = this.sessions.get(sdk.sessionId);
@@ -278,8 +256,7 @@ export class Engine {
     const [models, sessions] = await settled([this.runtime.models(), this.readSessions()] as const);
     return {
       type: 'snapshot', permissionPolicy: 'allow-all', agentStatus: this.agentStatus,
-      models, vapidPublicKey: this.vapidPublicKey, sessions,
-      ...this.inboxCounts(),
+      models, sessions,
     };
   }
 
@@ -290,7 +267,6 @@ export class Engine {
       createdAt: row.startTime.getTime(), lastActivity: row.modifiedTime.getTime(), lastActivitySource: 'native-persisted',
       loaded: false, status: 'unloaded', ask: null,
       planRequest: null, elicitation: null,
-      pinned: this.prefs.isPinned(row.sessionId), ...this.inboxFields(row.sessionId),
     };
   }
 
@@ -331,7 +307,7 @@ export class Engine {
         ...this.listedMeta(row),
         ...(st ? { loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling,
           activeOperations: st.operations, activeMcpOperations: st.mcpOperations,
-          autoNaming: !!st.naming, ...this.decisionFields(st) } : {}),
+          ...this.decisionFields(st) } : {}),
       } : null;
     }
     st.operations++;
@@ -378,8 +354,8 @@ export class Engine {
         ...(todos ? { todo: this.todoSummary(todos) } : {}),
         ...(schedules ? { scheduleCount: schedules.entries.length } : {}),
         activeOperations: Math.max(0, st.operations - 1),
-        loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling, autoNaming: !!st.naming,
-        ...this.decisionFields(st), pinned: this.prefs.isPinned(id), ...this.inboxFields(id),
+        loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling,
+        ...this.decisionFields(st),
       };
     } finally {
       st.operations--;
@@ -397,19 +373,6 @@ export class Engine {
   }
   async status(): Promise<SessionMeta[]> {
     return this.readSessions(['identity', 'control']);
-  }
-  private inboxCounts() {
-    return this.prefs.inboxCounts();
-  }
-  attentionCount(): number { return this.inboxCounts().unreadCount; }
-  markSeen(id: string, observedId?: number): void {
-    if (observedId !== undefined && observedId !== this.inboxFields(id).attnId) return;
-    try {
-      if (this.prefs.markSeen(id, observedId)) this.publishInbox(id);
-    } catch (error) {
-      this.inboxError(id, error);
-      throw error;
-    }
   }
 
   async refreshList(): Promise<void> {
@@ -436,18 +399,13 @@ export class Engine {
   }
 
   private release(st: State): void {
-    if (st.namingDeferred && !st.operations) {
-      st.namingDeferred = false;
-      this.maybeAutoName(st);
-    }
-    if (!st.sdk && !st.load && !st.closing && !st.operations && !st.cancelling && !st.sync
-      && !st.pendingReply && !st.decisions.size && this.sessions.get(st.id) === st) this.sessions.delete(st.id);
+    if (!st.sdk && !st.load && !st.closing && !st.operations && !st.cancelling
+      && !st.decisions.size && this.sessions.get(st.id) === st) this.sessions.delete(st.id);
     this.bus.emit('activity-settled');
   }
 
   private assertAdmission(st: State): void {
     this.assertAvailable();
-    if (st.contextReset?.busy) throw new Error('Session context clear is in progress; retry this operation after it settles.');
     const current = this.sessions.get(st.id);
     if (this.stopped || this.lifecycle || st.closing || (current && current !== st)) {
       throw new Error('Session lifecycle transition is in progress or its handle changed');
@@ -604,18 +562,8 @@ export class Engine {
       this.assertAvailable();
       const owner: NonNullable<State['eventOwner']> = {};
       st.eventOwner = owner;
-      const reset = createContextReset({
-        session: () => st.eventOwner === owner && !this.failure ? st.sdk : null,
-        assertReady: () => {
-          this.assertAdmission(st);
-          if (st.load || st.closing || st.cancelling || st.operations || st.sends || st.accepted.size
-            || st.decisions.size || st.mcpOperations) throw new Error('Session has pending host work; finish it before clearing context.');
-        },
-      });
-      st.contextReset = reset;
-      const config: SessionConfig = { ...await this.config(st, cwd), tools: [reset.tool], onEvent: event => {
+      const config: SessionConfig = { ...await this.config(st, cwd), onEvent: event => {
         if (st.eventOwner !== owner || this.failure) return;
-        reset.observe(event);
         try { this.onLive(st, event); }
         catch (error) {
           this.patch(st, { error: `Native control event could not be applied: ${messageOf(error)}` });
@@ -650,7 +598,6 @@ export class Engine {
     }).finally(() => {
       st.load = undefined;
       this.patch(st, { loading: false });
-      if (st.pendingReply) this.scheduleSync(st);
       this.release(st);
     });
     return st.load;
@@ -703,7 +650,6 @@ export class Engine {
     // Late lifecycle effects from an interrupted interaction must not erase the
     // queued turn's reply/decision state; its transcript remains native history.
     if (root && event.type.startsWith('assistant.') && st.interruptedEpoch === st.turnEpoch) return;
-    this.observeNamingReply(st, native);
     if (root && st.interruptTurn && (event.type === 'abort'
       || (event.type === 'assistant.turn_start' && typeof data.interactionId === 'string'
         && st.interruptTurn.interactionId && data.interactionId !== st.interruptTurn.interactionId))) {
@@ -723,30 +669,13 @@ export class Engine {
       if (typeof args?.intent === 'string') this.patch(st, { intent: args.intent });
     }
     if (root && event.type === 'assistant.turn_start') {
-      st.replyNotification = undefined;
-      st.pendingReply = undefined;
       this.patch(st, { status: 'running', nativeProcessing: true, error: null });
       this.invalidate(st, ['control', 'queue']);
     }
-    if (root && event.type === 'assistant.message') {
-      if (!native.ephemeral && typeof data.content === 'string' && data.content.trim()) {
-        const visible = extractParts(data.content, false);
-        st.replyNotification = notificationSummary(
-          visible ? visible.content || `附件：${visible.attachments?.map(file => file.name).join('、')}` : data.content,
-          '回复已完成',
-        );
-      }
-    }
     if (root && event.type === 'assistant.turn_end') {
-      if (st.replyNotification && !st.cancelling) {
-        st.pendingReply = { eventId: native.id, body: st.replyNotification };
-      }
-      st.replyNotification = undefined;
       this.scheduleSync(st, ['identity', 'control', 'queue', 'usage']);
     }
     if (event.type === 'session.error') {
-      st.replyNotification = undefined;
-      st.pendingReply = undefined;
       this.patch(st, { status: 'error', error: String(data.message ?? 'Native turn failed') });
     }
     if (event.type === 'session.title_changed' && typeof data.title === 'string') this.patch(st, { title: cleanSessionTitle(data.title) });
@@ -812,32 +741,6 @@ export class Engine {
 
   private scheduleSync(st: State, resources: SessionResource[] = ['control', 'queue']): void {
     this.invalidate(st, resources);
-    if (!st.pendingReply && !st.autoNamePending) return;
-    if (st.closing || this.lifecycle || !st.sdk || this.failure) return;
-    st.syncAgain = true;
-    if (st.sync) return;
-    const sdk = st.sdk;
-    let sync!: Promise<void>;
-    // Coalesce events delivered in the same turn without a timer or heartbeat.
-    sync = Promise.resolve().then(async () => {
-      if (st.sync !== sync || st.sdk !== sdk) return;
-      do {
-        st.syncAgain = false;
-        await this.syncNative(st);
-      } while (st.sync === sync && st.syncAgain && st.sdk === sdk && !st.closing && !this.lifecycle && !this.failure);
-    }).catch(error => {
-      if (st.sync === sync && st.sdk === sdk && !this.failure) {
-        this.patch(st, { error: `Native state could not be confirmed: ${messageOf(error)}` });
-      }
-    }).finally(() => {
-      if (st.sync !== sync) return;
-      st.sync = undefined;
-      // A control event can arrive after the loop exits but before ownership
-      // releases. Do not lose its requested native state readback.
-      if (st.syncAgain) this.scheduleSync(st);
-      this.release(st);
-    });
-    st.sync = sync;
   }
 
   private patchMcpPending(st: State): void {
@@ -888,147 +791,9 @@ export class Engine {
     if (!sdk) return;
     const revision = st.revision;
     const control = await this.readControl(st, sdk);
-    if (st.sdk !== sdk) return;
-    if (revision !== st.revision) {
-      st.syncAgain = true;
-      return;
-    }
+    if (st.sdk !== sdk || revision !== st.revision) return;
     const busy = control.busy || st.sends > 0 || st.accepted.size > 0;
-    if (!busy && !st.cancelling && !st.load && st.pendingReply) {
-      const attention = nextAttention({ status: 'idle', choicePending: st.decisions.size > 0, attention: this.inboxFields(st.id).attention },
-        { status: 'idle', choicePending: st.decisions.size > 0, replyReady: true });
-      if (attention === 'ready' && this.commitAttention(st, attention, st.pendingReply.eventId, st.pendingReply.body)) {
-        st.pendingReply = undefined;
-      }
-    }
-    if (!busy) {
-      if (!st.interruptTurn) st.interactionId = undefined;
-      this.maybeAutoName(st);
-    }
-  }
-
-  private observeNamingReply(st: State, native: SessionEvent): void {
-    if (st.namingAttempted || native.ephemeral) return;
-    const event = normalizeEvent(native);
-    if (event.agentId || event.parentToolCallId || event.data.parentToolCallId || event.data.agentId) return;
-    if (['assistant.turn_start', 'user.message', 'abort', 'session.error'].includes(event.type)) {
-      st.namingReply = false;
-      st.autoNamePending = false;
-    } else if (event.type === 'assistant.message') {
-      st.namingReply = typeof event.data.content === 'string' && !!event.data.content.trim()
-        && !(Array.isArray(event.data.toolRequests) && event.data.toolRequests.length);
-    } else if (event.type === 'tool.execution_start') {
-      st.namingReply = false;
-      st.autoNamePending = false;
-    } else if (event.type === 'assistant.turn_end' && st.namingReply && !st.cancelling) {
-      st.autoNamePending = native.id;
-      st.namingReply = false;
-    }
-  }
-
-  private maybeAutoName(st: State): void {
-    if (!st.autoNamePending || st.namingAttempted || st.naming || !st.sdk
-      || this.failure || this.lifecycle) return;
-    if (this.localBusy(st)) {
-      if (st.operations) st.namingDeferred = true;
-      return;
-    }
-    st.namingDeferred = false;
-    void this.nameSession(st, true).catch(error => {
-      this.log('automatic session naming failed', { sessionId: st.id, error: messageOf(error) });
-    });
-  }
-
-  autoName(id: string): Promise<IntentResult<'session/auto-name'>> {
-    const st = this.sessions.get(id);
-    if (st && (st.closing || this.lifecycle || this.removing.has(id))) return Promise.reject(namingBusyError());
-    if (st?.naming) return st.naming;
-    return this.state(id).then(state => this.nameSession(state));
-  }
-
-  private nameSession(st: State, automatic = false): Promise<IntentResult<'session/auto-name'>> {
-    if (st.naming) return st.naming;
-    if (this.stopped || this.lifecycle || this.localBusy(st)) return Promise.reject(namingBusyError());
-    st.operations++;
-    this.patch(st, { activeOperations: st.operations, autoNaming: true, autoNameError: null });
-    let naming!: NonNullable<State['naming']>;
-    naming = Promise.resolve().then(async (): Promise<IntentResult<'session/auto-name'>> => {
-      await this.ensureLoaded(st);
-      const sdk = st.sdk!;
-      return this.withSession(st, sdk, async () => {
-        const idle = async () => st.sdk === sdk && !this.failure && !await this.busy(st, false, 1);
-        if (!await idle()) throw namingBusyError();
-        const workspace = (await sdk.rpc.workspaces.getWorkspace()).workspace;
-        if (st.sdk !== sdk || this.failure) throw new Error('Native session closed during naming');
-        if (workspace?.user_named) {
-          if (automatic) st.autoNamePending = false;
-          if (workspace.name) this.patch(st, { title: workspace.name });
-          return { ok: true, applied: false, title: workspace.name ?? null, reason: 'user-named' };
-        }
-        // Native prompt-preview titles are also nonempty and not user-named.
-        if (automatic) {
-          const first = await firstNamingReply(params =>
-            this.withSession(st, sdk, () => sdk.rpc.eventLog.read(params)));
-          if (st.sdk !== sdk || this.failure) throw new Error('Native session closed during naming');
-          if (first !== st.autoNamePending) {
-            st.autoNamePending = false;
-            return { ok: true, applied: false, title: workspace?.name ?? null, reason: 'not-applied' };
-          }
-        }
-        // Context attribution can be uninitialized on a resumed conversation;
-        // it is not proof that native history is empty.
-        const context = await sdk.rpc.eventLog.read({
-          direction: 'backward', max: 1, types: ['user.message', 'assistant.message'], agentScope: 'primary', includeEphemeral: false,
-        });
-        if (context.cursorStatus !== 'ok' || context.events.length > 1
-          || context.events.some(event => !['user.message', 'assistant.message'].includes(event.type))
-          || (!context.events.length && context.hasMore)) {
-          throw new Error('Native conversation presence could not be confirmed by the targeted naming query.');
-        }
-        if (!context.events.length) {
-          if (automatic) st.autoNamePending = false;
-          return { ok: true, applied: false, title: workspace?.name ?? null, reason: 'no-context' };
-        }
-        if (!await idle()) throw namingBusyError();
-        // This guard records a host attempt, not native title/history state.
-        // Never retry a model query, including a rejected or uncertain one.
-        st.namingAttempted = true;
-        st.autoNamePending = false;
-        const title = generatedTitle((await sdk.rpc.ui.ephemeralQuery({ question: autoNameQuestion })).answer);
-        // Closing the native handle rejects withSession, but does not cancel its
-        // underlying RPC. Never let a late answer mutate that closed handle.
-        if (st.sdk !== sdk || this.failure) throw new Error('Native session closed during naming');
-        const result = await sdk.rpc.name.setAuto({ summary: title });
-        const current = (await sdk.rpc.workspaces.getWorkspace()).workspace;
-        if (st.sdk !== sdk || this.failure) throw new Error('Native session closed during naming');
-        if (current?.name) this.patch(st, { title: current.name });
-        if (current?.user_named) return { ok: true, applied: false, title: current.name ?? null, reason: 'user-named' };
-        if (!result.applied) return { ok: true, applied: false, title: current?.name ?? null, reason: 'not-applied' };
-        if (current?.name !== title) throw Object.assign(new Error('Native automatic name was not confirmed'), {
-          statusCode: 502, code: 'AUTO_NAME_NOT_CONFIRMED',
-        });
-        return { ok: true, applied: true, title: current.name };
-      });
-    }).catch(error => {
-      if (automatic && !st.namingAttempted && error?.code === 'SESSION_BUSY') {
-        // Work discovered by the authoritative preflight is not an attempt.
-        // Its next natural idle event may release this same pending reply.
-        return { ok: true, applied: false, title: null, reason: 'not-applied' } as const;
-      }
-      if (automatic) {
-        st.namingAttempted = true;
-        st.autoNamePending = false;
-      }
-      this.patch(st, { autoNameError: messageOf(error) });
-      throw error;
-    }).finally(() => {
-      st.operations--;
-      if (st.naming === naming) st.naming = undefined;
-      this.patch(st, { activeOperations: st.operations, autoNaming: false });
-      this.release(st);
-    });
-    st.naming = naming;
-    return naming;
+    if (!busy && !st.interruptTurn) st.interactionId = undefined;
   }
 
   private async operation<T>(
@@ -1068,7 +833,6 @@ export class Engine {
       const ready = [...st.pendingInvalidations].filter(resource => !st.resourceWrites.has(resource));
       for (const resource of ready) st.pendingInvalidations.delete(resource);
       if (ready.length) this.invalidate(st, ready);
-      this.maybeAutoName(st);
       this.release(st);
     }
   }
@@ -1078,15 +842,11 @@ export class Engine {
     return this.operation(id, async (sdk, st) => {
       const queued = (await this.readControl(st, sdk)).busy && mode === 'enqueue';
       st.sends++;
-      st.replyNotification = undefined;
-      st.pendingReply = undefined;
-      st.namingReply = false;
-      st.autoNamePending = false;
       this.patch(st, { status: 'running', error: null });
       try {
         const accepted = await this.withSession(st, sdk, () => sdk.send({
           prompt: text, mode,
-          attachments: attachments?.map(file => ({ type: 'file' as const, path: file.path, displayName: file.displayName ?? basename(file.path) })),
+          attachments,
         }));
         if (typeof accepted !== 'string' || !accepted) throw new Error('Native message acceptance receipt is missing; delivery is unconfirmed');
         if (st.sdk !== sdk) throw new Error('Native session closed during send; delivery is uncertain');
@@ -1111,17 +871,9 @@ export class Engine {
     this.patch(st, { cancelling: true, error: null });
     st.cancelling = this.untilFatal(async () => {
       const sdk = await this.liveSession(st);
-      if (!sdk) {
-        st.pendingReply = undefined;
-        st.autoNamePending = false;
-        return;
-      }
+      if (!sdk) return;
       await this.withSession(st, sdk, () => sdk.rpc.queue.clear());
       await this.withSession(st, sdk, () => sdk.abort());
-      st.replyNotification = undefined;
-      st.pendingReply = undefined;
-      st.namingReply = false;
-      st.autoNamePending = false;
       for (const decision of st.decisions.values()) decision.reject(new Error('Native request cancelled'));
       st.decisions.clear();
       st.accepted.clear();
@@ -1135,7 +887,7 @@ export class Engine {
       throw error;
     }).finally(() => {
       st.cancelling = undefined;
-      this.patch(st, { cancelling: false }, true);
+      this.patch(st, { cancelling: false });
       this.invalidate(st, ['control', 'queue']);
       this.release(st);
     });
@@ -1152,10 +904,6 @@ export class Engine {
     this.projectDecisions(st);
     if (st.turnEpoch !== target.epoch) return;
     st.interruptedEpoch = target.epoch;
-    st.replyNotification = undefined;
-    st.pendingReply = undefined;
-    st.namingReply = false;
-    st.autoNamePending = false;
   }
 
   async interrupt(id: string): Promise<IntentResult<'session/interrupt'>> {
@@ -1191,7 +939,7 @@ export class Engine {
 
   private localBusy(st: State, ownTransition = false, ownOperations = 0): boolean {
     return (!ownTransition && st.closing) || st.operations > ownOperations || !!st.load
-      || !!st.cancelling || st.decisions.size > 0 || st.sends > 0 || st.accepted.size > 0 || !!st.pendingReply;
+      || !!st.cancelling || st.decisions.size > 0 || st.sends > 0 || st.accepted.size > 0;
   }
 
   private async busy(st: State, ownTransition = false, ownOperations = 0): Promise<boolean> {
@@ -1212,8 +960,6 @@ export class Engine {
   private async checkIdle(st: State): Promise<void> {
     await this.liveSession(st);
     if (st.load || st.operations || st.cancelling || st.decisions.size || st.sends || st.accepted.size) throw new Error('Session has protected work');
-    if (st.sync) await st.sync;
-    if (!st.sdk) this.commitClosedReply(st);
     if (await this.busy(st, true)) throw new Error('Session has protected work (turn, task, queue, decision, or operation)');
   }
 
@@ -1228,37 +974,21 @@ export class Engine {
     const sdk = st.sdk;
     st.eventOwner = undefined;
     st.sdk = null;
-    st.contextReset = undefined;
     st.interruptTurn = undefined;
     st.interruptedEpoch = undefined;
     st.interactionId = undefined;
-    st.sync = undefined;
-    st.syncAgain = false;
     if (sdk) this.bus.emit('closed', sdk);
-    st.replyNotification = undefined;
-    st.namingReply = false;
-    st.autoNamePending = false;
     st.sendReceipts.clear();
-    st.namingAttempted = undefined;
-    st.namingDeferred = false;
     st.accepted.clear();
     for (const decision of st.decisions.values()) decision.reject(error ?? new Error('Native session closed'));
     st.decisions.clear();
-    // A routine native close can precede the final event-driven readback.
-    if (!error) this.commitClosedReply(st);
-    if (error) st.pendingReply = undefined;
     this.patch(st, {
       loaded: false, status: error ? 'error' : 'unloaded', nativeProcessing: false,
       activeSubagents: 0, activeMcpOperations: 0, compacting: false,
       queue: [], ask: null, planRequest: null, elicitation: null, intent: null,
       ...(error ? { error: error.message } : {}),
-    }, true);
+    });
     this.release(st);
-  }
-
-  private commitClosedReply(st: State): void {
-    if (!st.cancelling && st.pendingReply
-      && this.commitAttention(st, 'ready', st.pendingReply.eventId, st.pendingReply.body)) st.pendingReply = undefined;
   }
 
   private async transition<T>(st: State, work: () => Promise<T>): Promise<T> {
@@ -1275,7 +1005,6 @@ export class Engine {
     } finally {
       st.closing = false;
       if (this.sessions.get(st.id) === st) this.patch(st, { closing: false });
-      if (st.syncAgain) this.scheduleSync(st);
       this.release(st);
     }
   }
@@ -1319,7 +1048,6 @@ export class Engine {
     } finally {
       for (const st of all) { st.closing = false; this.patch(st, { closing: false }); this.release(st); }
       this.lifecycle = false;
-      for (const st of all) if (st.syncAgain) this.scheduleSync(st);
       this.bus.emit('activity-settled');
     }
   }
@@ -1636,7 +1364,7 @@ export class Engine {
 
   private async discoverSkills(cwd?: string) {
     const result = await this.untilFatal(() => this.runtime.rpc.skills.discover({
-      projectPaths: [resolve(cwd || homedir())], skillDirectories: [bundledSkillsDirectory],
+      projectPaths: [resolve(cwd || homedir())],
     }));
     if (result.errors?.length) throw new Error(`Native skill discovery failed: ${result.errors.join('; ')}`);
     return result;
@@ -1782,34 +1510,22 @@ export class Engine {
     if (!st || st.closing || st.cancelling || this.lifecycle) throw new Error('Request is no longer pending or session is transitioning');
     this.answer(st, requestId, kind, value);
   }
-
-  async pin(id: string, pinned: boolean): Promise<boolean> {
-    const st = await this.state(id);
-    try {
-      this.prefs.setPinned(id, pinned);
-      this.patch(st, { pinned });
-      return pinned;
-    } finally { this.release(st); }
-  }
   async deleteSession(id: string, confirm?: true): Promise<void> {
     if (confirm !== true) throw new Error('Permanent deletion is irreversible; explicit confirm:true is required');
     this.assertAvailable();
     if (this.stopped || this.lifecycle || this.startPromise || this.removing.has(id)) throw new Error('Session lifecycle transition is in progress');
-    const productOwned = this.prefs.isPinned(id) || !!this.prefs.inboxEntry(id);
-    const st = this.sessions.get(id) ?? (productOwned ? stateFor(id) : await this.state(id));
+    const st = await this.state(id);
     this.assertAdmission(st);
     if (this.removing.has(id)) throw new Error('Session removal is in progress');
     this.removing.add(id);
     try {
       await this.transition(st, async () => {
         // The API's confirm:true gate precedes this operation. Native deletion is
-        // authoritative; never remove files or preferences to simulate success.
+        // authoritative; never remove files to simulate success.
         await this.close(st);
         await this.untilFatal(() => this.runtime.deleteSession(id));
-        try { this.prefs.forgetSession(id); }
-        catch (error) { throw new Error(`Native history deleted; preferences cleanup failed: ${messageOf(error)}`); }
         this.sessions.delete(id);
-        this.emit({ type: 'session/removed', sessionId: id, ...this.inboxCounts() });
+        this.emit({ type: 'session/removed', sessionId: id });
       });
     } finally { this.removing.delete(id); this.release(st); }
   }
@@ -1888,57 +1604,14 @@ export class Engine {
     this.emit({ type: 'session/invalidated', sessionId: st.id, resources });
   }
 
-  private patch(st: State, fields: Partial<LiveMeta>, silent = false): void {
-    const previous = { status: '', choicePending: st.decisions.size > 0,
-      attention: this.inboxFields(st.id).attention };
+  private patch(st: State, fields: Partial<LiveMeta>): void {
     for (const key of ['currentReasoningEffort', 'currentContextTier', 'currentMode'] as const) {
       if (key in fields && fields[key] === undefined) fields[key] = null;
     }
     if (this.sessions.get(st.id) !== st) return;
-    const attention = nextAttention(previous, { status: fields.status ?? '',
-      choicePending: st.decisions.size > 0, silent });
     this.emit({ type: 'session/patch', ...structuredClone(fields), sessionId: st.id });
-    // Patches already carry their changed values. Read leases and attention do
+    // Patches already carry their changed values. Read leases do
     // not invalidate native resources. A settled lifecycle needs a fresh source.
     if (fields.loaded !== undefined || fields.closing === false) this.invalidate(st);
-    if (attention === 'choice') {
-      const decisions = this.decisionFields(st);
-      const request = decisions.ask ?? decisions.planRequest ?? decisions.elicitation;
-      if (request) this.commitAttention(st, attention, request.requestId,
-        notificationSummary(decisions.ask?.question || decisions.planRequest?.summary || decisions.elicitation?.message || '', '请确认下一步'));
-    } else if (attention !== previous.attention) {
-      this.commitAttention(st, attention);
-    }
-  }
-
-  private inboxFields(id: string) {
-    const entry = this.prefs.inboxEntry(id);
-    return { attention: entry?.attention ?? null, attnId: entry?.attnId ?? 0, seenId: entry?.seenId ?? 0 };
-  }
-
-  private publishInbox(id: string) {
-    const fields = this.inboxFields(id);
-    const projection = { ...fields, ...this.inboxCounts() };
-    this.emit({ type: 'session/patch', sessionId: id, ...projection });
-    return projection;
-  }
-
-  private inboxError(id: string, error: unknown): void {
-    this.emit({ type: 'session/patch', sessionId: id, error: `Inbox save failed; unread state was not committed: ${messageOf(error)}` });
-    this.log('inbox save failed', { sessionId: id, error: messageOf(error) });
-  }
-
-  private commitAttention(st: State, attention: Attention | null, eventId?: string, body?: string): boolean {
-    try {
-      if (this.prefs.setAttention(st.id, attention, eventId)) {
-        const { attnId, inboxRevision, unreadCount } = this.publishInbox(st.id);
-        if (attention) this.emit({ type: 'session/notify', sessionId: st.id,
-          title: st.id.slice(0, 8), attention, body: body ?? '请查看新消息', attnId, inboxRevision, unreadCount });
-      }
-      return true;
-    } catch (error) {
-      this.inboxError(st.id, error);
-      return false;
-    }
   }
 }

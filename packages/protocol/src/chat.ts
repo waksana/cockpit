@@ -2,7 +2,7 @@
 // One browser-local fold serves persisted pages and live events. No backend
 // history or control state depends on this projection.
 
-import { UploadUrl, type ChatMessage, type MessagePart, type ToolCall, type Attachment, type HistoryDetails } from './index.ts';
+import type { ChatMessage, ToolCall, HistoryDetails } from './index.ts';
 
 export interface SdkEvent {
   type: string;
@@ -220,91 +220,8 @@ export function toolOutputOf(result: unknown, error?: unknown): string {
   return raw ? cap(raw) : failure ? cap(failure) : '';
 }
 
-// Parse the attributes of a <cockpit-attachment .../> marker into an Attachment.
-// Attribute values are percent-encoded so they survive arbitrary filenames. The
-// url MUST be a cockpit /uploads/ path (same-origin, path-traversal-guarded when
-// served) — we reject anything else so a marker (user- or agent-authored) can't
-// point the browser at an arbitrary/cross-origin URL.
-function attachmentFromAttrs(attrs: string): Attachment | null {
-  const get = (k: string): string | undefined => {
-    const mm = new RegExp(`${k}="([^"]*)"`).exec(attrs);
-    if (!mm || mm[1] === undefined) return undefined;
-    try { return decodeURIComponent(mm[1]); } catch { return mm[1]; }
-  };
-  const url = get('url');
-  if (!url || !UploadUrl.safeParse(url).success) return null;
-  const kind = get('kind') === 'image' ? 'image' : 'file';
-  const name = get('name') ?? 'file';
-  const sizeNum = Number(get('size'));
-  const mime = get('mime');
-  return {
-    kind, name, url,
-    ...(Number.isFinite(sizeNum) && sizeNum > 0 ? { size: sizeNum } : {}),
-    ...(mime ? { mime } : {}),
-  };
-}
-
-// User uploads: the body LEADS with a <cockpit-attachment .../> marker (emitted by
-// the composer), followed by agent guidance. Returns the structured attachment +
-// the remaining text (guidance, hidden from display) with the marker stripped, or
-// null if the message doesn't start with a valid marker.
-const ATTACHMENT_RE = /^\s*<cockpit-attachment\b([^>]*?)\/?>(?:<\/cockpit-attachment>)?\s*/;
-function parseAttachment(content: string): { attachment: Attachment; caption: string } | null {
-  const m = ATTACHMENT_RE.exec(content);
-  if (!m) return null;
-  const attachment = attachmentFromAttrs(m[1] ?? '');
-  if (!attachment) return null;
-  // The guidance after the marker is machinery for the agent — don't show it.
-  return { attachment, caption: '' };
-}
-
-const ANY_ATTACHMENT_RE = /<cockpit-attachment\b([^>]*?)\/?>(?:<\/cockpit-attachment>)?/;
-
-// v2 markers carry user-visible file parts, not the old hidden read-path guidance.
-// Keep exact interleaving in parts and plain visible prose in content for clients
-// that don't render parts yet. No file bytes enter history or SSE here.
-export function extractParts(content: string, user: boolean): Pick<ChatMessage, 'content' | 'attachment' | 'attachments' | 'parts'> | null {
-  const parts: MessagePart[] = [];
-  const attachments: Attachment[] = [];
-  const re = new RegExp(ANY_ATTACHMENT_RE.source, 'g');
-  let end = 0;
-  for (const match of content.matchAll(re)) {
-    if (user && !/\bversion="2"/.test(match[1] ?? '')) continue;
-    const attachment = attachmentFromAttrs(match[1] ?? '');
-    if (!attachment) continue;
-    if (match.index! > end) parts.push({ type: 'text', text: content.slice(end, match.index) });
-    parts.push({ type: 'file', attachment });
-    attachments.push(attachment);
-    end = match.index! + match[0].length;
-  }
-  if (!attachments.length) return null;
-  if (end < content.length) parts.push({ type: 'text', text: content.slice(end) });
-  return { content: parts.filter(p => p.type === 'text').map(p => p.text).join('').trim(),
-    attachment: attachments[0], attachments, parts };
-}
-
-// A session's auto-derived name/summary (when the user hasn't named it) is its
-// first user message. When that message is an upload, it LEADS with a raw
-// <cockpit-attachment .../> marker (machinery, percent-encoded attrs) — which must
-// never surface as the visible session title (the bug: a title literally reading
-// `<cockpit-attachment kind="image" …`). Strip a leading marker and substitute a
-// human label: the attachment's filename, else a kind label. Non-marker titles
-// pass through unchanged (first line only — titles are single-line). Returns ''
-// for empty input so callers can fall back (cwd basename, etc.).
 export function cleanSessionTitle(raw: string | undefined): string {
   const trimmed = (raw ?? '').trim();
-  if (!trimmed) return '';
-  const m = ATTACHMENT_RE.exec(trimmed);
-  if (m) {
-    const att = attachmentFromAttrs(m[1] ?? '');
-    if (att) {
-      if (att.name && att.name !== 'file') return att.name;
-      return att.kind === 'image' ? '图片消息' : '文件消息';
-    }
-    // Marker present but unparseable → drop it and use whatever text follows.
-    const rest = trimmed.replace(ATTACHMENT_RE, '').trim();
-    return rest.split('\n')[0]?.trim() ?? '';
-  }
   return trimmed.split('\n')[0]?.trim() ?? '';
 }
 
@@ -541,20 +458,6 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       const changed = flushReasoning(state, ev.id);
       endTurn(state);
       const id = ev.id ?? `u-${state.messages.length}`;
-      // An uploaded file/image is sent as a `user.message` whose body leads with a
-      // <cockpit-attachment .../> marker (carrying display metadata) followed by the
-      // agent guidance (with the absolute path). Render the attachment as a card;
-      // the guidance is machinery, hidden from display (the agent still has it).
-      const parts = extractParts(content, true);
-      if (parts) {
-        upsert(state, { id, role: 'user', ...parts, timestamp: tsOf(ev) });
-        return { changed: [...changed, id], metaChanged: false };
-      }
-      const att = parseAttachment(content);
-      if (att) {
-        upsert(state, { id, role: 'user', content: att.caption, timestamp: tsOf(ev), attachment: att.attachment });
-        return { changed: [...changed, id], metaChanged: false };
-      }
       upsert(state, { id, role: 'user', content, timestamp: tsOf(ev) });
       return { changed: [...changed, id], metaChanged: false };
     }
@@ -617,13 +520,7 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
     case 'assistant.message': {
       const mid = (typeof d.messageId === 'string' && d.messageId) || ev.id || `a-${state.messages.length}`;
       const id = mid;
-      const rawContent = typeof d.content === 'string' ? d.content : '';
-      // An agent can attach an image/file by emitting a <cockpit-attachment .../>
-      // marker anywhere in its reply (after publishing the file via /upload). Pull
-      // it out into message.attachment; the surrounding prose stays as the caption.
-      const extracted = extractParts(rawContent, false);
-      const content = extracted ? extracted.content : rawContent;
-      const attachment = extracted?.attachment;
+      const content = typeof d.content === 'string' ? d.content : '';
       const reqs = Array.isArray(d.toolRequests) ? (d.toolRequests as ToolRequest[]) : [];
       const toolCalls: ToolCall[] = reqs
         .filter((r) => typeof r.toolCallId === 'string')
@@ -672,8 +569,8 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
         ? d.reasoningText : undefined;
       const thought = persistedThought ?? prevThought;
       // A message whose only tool was `task` (now a sub-agent card) and that has no
-      // text/thought/attachment would render as an empty byline — skip it. Still end the turn.
-      if (!content && toolCalls.length === 0 && !thought && prevIdx === undefined && !attachment) {
+      // text/thought would render as an empty byline — skip it. Still end the turn.
+      if (!content && toolCalls.length === 0 && !thought && prevIdx === undefined) {
         endTurn(state);
         return empty;
       }
@@ -681,7 +578,6 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
         id, role: 'assistant', content, timestamp: tsOf(ev),
         ...(thought ? { thought } : {}),
         ...(toolCalls.length ? { toolCalls } : {}),
-        ...(extracted ?? {}),
       };
       upsert(state, msg);
       endTurn(state); // the turn's assistant message is finalized

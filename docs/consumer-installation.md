@@ -151,8 +151,9 @@ USER_ROOT/
 ```
 
 The launcher does not create module program/config/data directories or read old
-role and service records. Ordinary Cockpit preferences, uploads and native
-storage keep their existing paths and overrides; they are not release payload.
+role and service records. Legacy preferences/uploads remain untouched, and
+native storage keeps its configured path; none is release payload. The thin
+backend does not read old enhancement data or serve its old file URLs.
 
 ## Explicit check, download, install and restart
 
@@ -177,11 +178,10 @@ atomically changes selection, starts the new child, and checks matching
 `/version`, health and lifecycle readiness. It preserves prior code and assets.
 
 `restart --root "$INSTALL_ROOT" --id restart-example-001` uses the same safe
-drain but retains the selected release. Web and MCP use
-`system/consumer/restart {operationId, confirm:true}` and
-`system/consumer/status {operationId?}` through that same launcher.
-Source/private-CD installations report consumer control unavailable; they do
-not fabricate an installation. Main download/install remains CLI-only.
+drain but retains the selected release. Optional Web/MCP restart and system
+status controls have been parked; there is no `system/consumer/*` public intent.
+The independent launcher CLI remains available for installation and recovery
+without depending on a module. Main download/install remains CLI-only.
 `stop` drains and stops the owned main and closes the launcher.
 
 Acceptance is not completion. Inspect the original operation ID after timeout.

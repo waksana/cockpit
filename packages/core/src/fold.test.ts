@@ -9,7 +9,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { newFoldState, foldEvent, resetTurn, cleanSessionTitle } from './fold.ts';
 import { normalizeEvent, type SdkEvent } from './sdk-types.ts';
-import { partsPrompt, type MessagePart } from '@cockpit/protocol';
 
 type Ev = Omit<SdkEvent, 'data'> & { data?: SdkEvent['data'] };
 
@@ -113,27 +112,6 @@ test('strict ownership records hidden tool requests independently of visible mes
     }
     assert.equal(state.messages.length, 0);
   }
-});
-
-test('v2 retained files preserve multiple attachments and exact visible body order across replay', () => {
-  const parts: MessagePart[] = [
-    { type: 'text', text: 'before\n' },
-    { type: 'file', attachment: { kind: 'image', name: 'original.svg', mime: 'image/svg+xml', url: '/uploads/a.svg' } },
-    { type: 'text', text: '\nbetween\n' },
-    { type: 'file', attachment: { kind: 'file', name: 'video.mp4', mime: 'video/mp4', url: '/uploads/b.mp4' } },
-    { type: 'text', text: '\nafter' },
-  ];
-  const content = partsPrompt(parts);
-  const events = [userMsg(content, 'ordered-user'), asstMsg('ordered-assistant', content)]
-    .map(event => ({ ...event, timestamp: '2026-09-09T00:00:00.000Z' }));
-  const state = replay(events);
-  for (const message of state.messages) {
-    assert.deepEqual(message.parts, parts);
-    assert.deepEqual(message.attachments, parts.filter(p => p.type === 'file').map(p => p.attachment));
-    assert.equal(message.content, 'before\n\nbetween\n\nafter');
-    assert.equal(message.attachment?.name, 'original.svg');
-  }
-  assert.deepEqual([...live(events).client.values()], state.messages);
 });
 
 test('history summary folding keeps canonical lifecycle metadata without hydrating child messages', () => {
@@ -532,101 +510,26 @@ test('a real user message (no source) is NOT suppressed', () => {
   assert.equal(st.messages.filter((m) => m.role === 'user').length, 1);
 });
 
-// ── File attachments ──────────────────────────────────────────────────────────
-
-test('attachment marker folds into message.attachment; guidance hidden', () => {
-  const marker = '<cockpit-attachment kind="image" name="a%20b.png" url="/uploads/x.png" size="1234" mime="image%2Fpng"></cockpit-attachment>';
-  const evs: Ev[] = [
-    tStart(),
-    { type: 'user.message', data: { content: `${marker}\n请读取该路径查看图片内容。` }, id: 'u1' },
-  ];
-  const st = replay(evs);
-  const m = st.messages.find((x) => x.role === 'user');
-  assert.ok(m, 'user message exists');
-  assert.ok(m!.attachment, 'attachment parsed');
-  assert.equal(m!.attachment!.kind, 'image');
-  assert.equal(m!.attachment!.name, 'a b.png');         // percent-decoded
-  assert.equal(m!.attachment!.url, '/uploads/x.png');
-  assert.equal(m!.attachment!.size, 1234);
-  assert.equal(m!.attachment!.mime, 'image/png');        // percent-decoded
-  assert.equal(m!.content, '');                          // guidance NOT shown
-});
-
-test('file attachment kind + self-closing marker variant', () => {
-  const marker = '<cockpit-attachment kind="file" name="r.pdf" url="/uploads/y.pdf" size="9" mime="application%2Fpdf"/>';
-  const st = replay([tStart(), { type: 'user.message', data: { content: `${marker}\nguidance` }, id: 'u1' }]);
-  const m = st.messages.find((x) => x.role === 'user');
-  assert.equal(m!.attachment!.kind, 'file');
-  assert.equal(m!.attachment!.name, 'r.pdf');
-});
-
 test('a plain user message with no marker keeps its content + no attachment', () => {
   const st = replay([tStart(), userMsg('just text', 'u1')]);
   const m = st.messages.find((x) => x.role === 'user');
   assert.equal(m!.content, 'just text');
-  assert.equal(m!.attachment, undefined);
+  assert.equal('attachment' in m!, false);
 });
 
-// ── Agent-authored attachments (assistant message) ─────────────────────────────
-
-test('agent attachment: marker anywhere in an assistant reply → attachment + caption kept', () => {
-  const marker = '<cockpit-attachment kind="image" name="chart.png" url="/uploads/g.png" size="2048" mime="image%2Fpng"/>';
-  const st = replay([tStart(), asstMsg('a1', `这是你要的图表：\n${marker}`)]);
-  const m = st.messages.find((x) => x.role === 'assistant');
-  assert.ok(m!.attachment, 'attachment extracted from assistant reply');
-  assert.equal(m!.attachment!.kind, 'image');
-  assert.equal(m!.attachment!.url, '/uploads/g.png');
-  assert.equal(m!.attachment!.mime, 'image/png');
-  assert.equal(m!.content, '这是你要的图表：');   // caption kept, marker stripped
-});
-
-test('agent attachment: file kind + an empty-caption message still renders the card', () => {
-  const marker = '<cockpit-attachment kind="file" name="report.pdf" url="/uploads/r.pdf" size="99" mime="application%2Fpdf"></cockpit-attachment>';
-  const st = replay([tStart(), asstMsg('a1', marker)]);
-  const m = st.messages.find((x) => x.role === 'assistant');
-  assert.ok(m, 'attachment-only assistant message is NOT skipped as empty');
-  assert.equal(m!.attachment!.kind, 'file');
-  assert.equal(m!.attachment!.name, 'report.pdf');
-  assert.equal(m!.content, '');
-});
-
-test('attachment marker with a non-/uploads/ url is rejected (no cross-origin/arbitrary URL)', () => {
-  const bad = '<cockpit-attachment kind="image" name="x" url="https%3A%2F%2Fevil.com%2Fx.png" mime="image%2Fpng"/>';
-  const st = replay([tStart(), asstMsg('a1', `look ${bad}`)]);
-  const m = st.messages.find((x) => x.role === 'assistant');
-  assert.equal(m!.attachment, undefined, 'unsafe url → no attachment');
-  assert.equal(m!.content, `look ${bad}`, 'marker left as-is when rejected');
-});
-
-test('agent attachment: first valid marker wins; a stray second marker is stripped (not raw XML)', () => {
-  const a = '<cockpit-attachment kind="image" name="one.png" url="/uploads/1.png" mime="image%2Fpng"/>';
-  const b = '<cockpit-attachment kind="file" name="two.pdf" url="/uploads/2.pdf" mime="application%2Fpdf"/>';
-  const st = replay([tStart(), asstMsg('a1', `图一 ${a} 还有 ${b}`)]);
-  const m = st.messages.find((x) => x.role === 'assistant');
-  assert.equal(m!.attachment!.name, 'one.png', 'first marker becomes the attachment');
-  assert.equal(m!.content, '图一  还有', 'both markers stripped from the caption');
-  assert.ok(!m!.content.includes('cockpit-attachment'), 'no raw marker leaks into the caption');
-});
-
-// ── cleanSessionTitle: never let a raw upload marker become the visible title ──
-
-test('cleanSessionTitle: image-upload first message → filename, not the raw marker', () => {
-  const raw = '<cockpit-attachment kind="image" name="IMG_2647.jpeg" url="%2Fuploads%2F178-fe28.jpeg" size="2436194" mime="image%2Fjpeg"></cockpit-attachment>\n我上传了一张图片「IMG_2647.jpeg」，已保存到服务器路径：\n/home/x.jpeg';
-  assert.equal(cleanSessionTitle(raw), 'IMG_2647.jpeg');
-});
-
-test('cleanSessionTitle: file upload with generic name → kind label', () => {
-  const raw = '<cockpit-attachment kind="file" url="/uploads/9.bin" mime="application%2Foctet-stream"/>\nguidance';
-  assert.equal(cleanSessionTitle(raw), '文件消息');
+test('module-owned markers stay original text until a renderer is installed', () => {
+  const content = '<cockpit-attachment kind="file" url="/uploads/retained" name="old"/>\nOriginal caption';
+  const state = replay([
+    { type: 'user.message', id: 'native-user', data: { content } },
+    asstMsg('native-assistant', content),
+  ]);
+  assert.equal(state.messages[0]?.content, content);
+  assert.equal(state.messages[1]?.content, content);
+  assert.ok(state.messages.every(message => !('attachment' in message) && !('parts' in message)));
 });
 
 test('cleanSessionTitle: a normal first message passes through (first line only)', () => {
   assert.equal(cleanSessionTitle('帮我重建账本\n第二行细节'), '帮我重建账本');
-});
-
-test('cleanSessionTitle: marker present but url unsafe → falls back to following text', () => {
-  const raw = '<cockpit-attachment kind="image" name="x" url="https%3A%2F%2Fevil.com%2Fx.png"/>\n真正的标题';
-  assert.equal(cleanSessionTitle(raw), '真正的标题');
 });
 
 test('cleanSessionTitle: empty/whitespace → empty (so caller can fall back)', () => {

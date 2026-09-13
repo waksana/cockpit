@@ -11,7 +11,6 @@ import {
   ScheduleEntry,
   ServerEvent,
   Intents,
-  PushSubscriptionJson,
   ChatMessage,
   McpToggleResult,
   type IntentName,
@@ -38,19 +37,6 @@ test('native chat rejects retired message-ID and resume-token selectors instead 
   }
   for (const retired of ['session/history', 'session/peek', 'session/subagent-history']) {
     assert.equal(retired in Intents, false);
-  }
-});
-
-test('attachment Markdown uses only published URLs and supports multiple independent images', () => {
-  const first = Protocol.attachmentMarkdown({ kind: 'image', name: 'chart one.png', url: '/uploads/one.png' });
-  const second = Protocol.attachmentMarkdown({ kind: 'image', name: 'chart two.png', url: '/uploads/two.png' });
-  assert.equal(`${first}\n\n${second}`, '![chart one.png](/uploads/one.png)\n\n![chart two.png](/uploads/two.png)');
-  assert.equal(
-    Protocol.attachmentMarkdown({ kind: 'file', name: 'report [final].pdf', url: '/uploads/report.pdf' }),
-    '[report \\[final\\].pdf](/uploads/report.pdf)',
-  );
-  for (const url of ['/home/user/chart.png', 'sandbox:/chart.png', 'file:///chart.png', '//external.example/chart.png']) {
-    assert.throws(() => Protocol.attachmentMarkdown({ kind: 'image', name: 'chart', url }));
   }
 });
 
@@ -124,10 +110,6 @@ const fullMeta = {
   elicitation: { requestId: 'e1', message: 'm' },
   todo: { done: 1, total: 2, intent: 'doing' },
   intent: 'Investigating',
-  attention: 'ready',
-  attnId: 3,
-  seenId: 2,
-  pinned: true,
   scheduleCount: 1,
   activeSubagents: 0,
   compacting: false,
@@ -139,7 +121,6 @@ const snapshot = {
   agentStatus: 'up',
   models: fullMeta.availableModels,
   sessions: [fullMeta],
-  vapidPublicKey: null,
   permissionPolicy: 'allow-all',
 } satisfies Protocol.Snapshot;
 
@@ -167,7 +148,6 @@ test('A3: null for every already-nullable field parses', () => {
     elicitation: null,
     todo: null,
     intent: null,
-    attention: null,
   };
   assert.ok(SessionMeta.safeParse(cleared).success);
 });
@@ -237,22 +217,6 @@ test('C11–C13: schedule/add enforces exactly one of interval/at', () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
-// D. URL constraints
-// ───────────────────────────────────────────────────────────────────────────
-
-test('D18: push/subscribe endpoint must be a valid https url', () => {
-  const keys = { p256dh: 'B' + 'A'.repeat(86), auth: 'A'.repeat(22) };
-  for (const endpoint of ['not-a-url', 'file:///etc/passwd', 'http://push.example/x']) {
-    assert.equal(PushSubscriptionJson.safeParse({ endpoint, keys }).success, false, `${endpoint} must be rejected`);
-  }
-  assert.ok(PushSubscriptionJson.safeParse({ endpoint: 'https://push.example/x', keys }).success);
-  // The body schema (as the live server parses it) tightens too.
-  const body = Intents['push/subscribe'].body;
-  assert.equal(body.safeParse({ subscription: { endpoint: 'file:///etc/passwd' } }).success, false);
-  assert.ok(body.safeParse({ subscription: { endpoint: 'https://push.example/x', keys } }).success);
-});
-
-// ───────────────────────────────────────────────────────────────────────────
 // E. Union & parity (cheap regression guards)
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -265,7 +229,6 @@ test('E19: every ServerEvent variant parses a representative sample', () => {
     'session/patch': { type: 'session/patch', ...fullMeta, currentReasoningEffort: null },
     'session/removed': { type: 'session/removed', sessionId: 's1' },
     'chat/invalidated': { type: 'chat/invalidated', sessionId: 's1', reason: 'rewind' },
-    'session/notify': { type: 'session/notify', sessionId: 's1', title: 't', attention: 'ready', body: 'b' },
   } satisfies { [K in Protocol.ServerEventType]: Extract<Protocol.ServerEvent, { type: K }> };
   assert.deepEqual(
     ServerEvent.options.map((schema) => schema.shape.type.value).sort(),
@@ -394,30 +357,7 @@ test('native global skill selection validates the target and preserves authorita
   assert.equal(Intents['skills/read'].result.parse({ name: 'review', enabled: false }).enabled, false);
 });
 
-test('automatic naming keeps request scope narrow and preserves non-applied native outcomes', () => {
-  const intent = Intents['session/auto-name'];
-  assert.deepEqual(intent.body.parse({ sessionId: 's', question: 'not a public arbitrary query' }), { sessionId: 's' });
-  assert.equal(intent.body.safeParse({ sessionId: '' }).success, false);
-  for (const reason of ['user-named', 'no-context', 'not-applied'] as const) {
-    const result = { ok: true, applied: false, title: null, reason };
-    assert.deepEqual(intent.result.parse(result), result);
-  }
-  roundTrip(ServerEvent, {
-    type: 'session/patch', sessionId: 's', autoNaming: true, autoNameError: null,
-  });
-  roundTrip(ServerEvent, {
-    type: 'session/patch', sessionId: 's', autoNaming: false, autoNameError: 'Automatic naming failed',
-  });
-});
-
 const chat = { id: 'm1', role: 'user', content: 'hello', timestamp: 1 } satisfies ChatMessage;
-const attachment = {
-  kind: 'image', name: 'Résumé "a&b" <1>%\n.png', url: '/uploads/Ab_1-2.png',
-  size: 0, mime: 'image/png; charset=utf-8',
-} satisfies Protocol.Attachment;
-const uploadedFile = {
-  ...attachment, path: '/workspace/uploads/Ab_1-2.png', storedName: 'Ab_1-2.png',
-} satisfies Protocol.UploadedFile;
 const brief = {
   ...sid, title: 'T', cwd: minimalMeta.cwd, status: 'idle',
   loaded: true, lastActivity: 1, currentModelId: 'gpt-x',
@@ -459,24 +399,16 @@ const nativePage: Protocol.NativeChatPage = {
 
 // Each retained intent must have a lossless body AND result fixture.
 const intentFixtures = {
-  'system/consumer/status': { body: {}, result: { available: false, reason: 'Not a consumer installation' } },
-  'system/consumer/restart': { body: { operationId: 'consumer-restart-fixture', confirm: true },
-    result: { operation: { operationId: 'consumer-restart-fixture', kind: 'restart', state: 'waiting-idle', updatedAt: '2026-09-12T00:00:00Z' } } },
   'runtime/snapshot': { body: {}, result: snapshot },
   'session/new': { body: { cwd: minimalMeta.cwd }, result: sid },
   'session/fork': { body: { sessionId: 'parent', toEventId: 'user-event', name: 'Child' }, result: sid },
   'session/chat': { body: { ...sid, source: 'persisted', direction: 'backward', max: 64, waitMs: 0, bootstrap: false }, result: nativePage },
-  'files/list': { body: { query: 'file', limit: 1, offset: 0 }, result: { files: [], hasMore: false } },
-  'files/get': { body: { url: '/uploads/file.txt' },
-    result: { kind: 'file', name: 'file.txt', url: '/uploads/file.txt', path: '/fixture/file.txt', size: 1, mime: 'text/plain' } },
-  'files/associate': { body: { ...sid, url: '/uploads/file.txt' },
-    result: { kind: 'file', name: 'file.txt', url: '/uploads/file.txt', path: '/fixture/file.txt', size: 1, mime: 'text/plain' } },
-  prompt: { body: { ...sid, text: 'continue', mode: 'enqueue', attachment }, result: { ...ok, queued: true } },
+  prompt: { body: { ...sid, text: 'continue', mode: 'enqueue',
+    attachments: [{ type: 'file', path: '/fixture/native.txt' }] }, result: { ...ok, queued: true } },
   cancel: { body: sid, result: ok },
   'session/interrupt': { body: sid, result: { ok: true, interrupted: false } },
   setModel: { body: { ...sid, modelId: 'gpt-x', reasoningEffort: 'high', contextTier: 'long_context' }, result: ok },
   'session/rename': { body: { ...sid, name: 'Renamed' }, result: { ...ok, title: 'Renamed' } },
-  'session/auto-name': { body: sid, result: { ok: true, applied: true, title: 'Short topic' } },
   'session/compact': { body: { ...sid, customInstructions: 'Keep decisions' }, result: ok },
   'session/rewind': { body: { ...sid, toMsgId: 'm1', rollbackFiles: true }, result: ok },
   setMode: { body: { ...sid, mode: 'plan' }, result: ok },
@@ -484,7 +416,6 @@ const intentFixtures = {
   'session/unload': { body: sid, result: ok },
   'session/load': { body: sid, result: { ok: true, ...sid } },
   'session/reload': { body: sid, result: ok },
-  'session/pin': { body: { ...sid, pinned: true }, result: { ...ok, pinned: true } },
   'session/plan': { body: sid, result: plan },
   'session/usage': { body: sid, result: { ...sid, sampledAt: 1, context: null,
     usage: { sessionStartTime: '2026-09-09T00:00:00Z', totalUserRequests: 0,
@@ -500,21 +431,6 @@ const intentFixtures = {
   'session/refresh': { body: {}, result: ok },
   'session/list': { body: {}, result: { sessions: [brief] } },
   'session/get': { body: sid, result: { meta: fullMeta } },
-  'push/subscribe': {
-    body: { subscription: { endpoint: 'https://push.example/x', expirationTime: null, keys: { p256dh: 'B' + 'A'.repeat(86), auth: 'A'.repeat(22) } } },
-    result: ok,
-  },
-  'push/status': {
-    body: { endpoint: 'https://push.example/x' },
-    result: { configured: false, registered: false, subscriptionCount: 0, publicKey: null },
-  },
-  'push/test': {
-    body: { endpoint: 'https://push.example/x', confirm: true },
-    result: { status: 'accepted', at: 1 },
-  },
-  'push/unsubscribe': { body: { endpoint: 'https://push.example/x' }, result: ok },
-  'inbox/seen': { body: sid, result: ok },
-  'speech/token': { body: {}, result: { enabled: true, token: 'fixture-token', region: 'eastus' } },
   'mcp/global': {
     body: {},
     result: { servers: [{ name: 'tools', detail: 'node tools.js', defaultOn: true, config: { command: 'node', args: ['tools.js'], env: { TOKEN: '[redacted]' } } }] },
@@ -847,7 +763,7 @@ test('queues and decisions retain every plan action and native mode', () => {
 test('all clearable metadata survives snapshots and actual SSE patches as null', () => {
   const cleared = {
     error: null, ask: null, planRequest: null, elicitation: null, todo: null,
-    intent: null, attention: null, currentReasoningEffort: null, currentContextTier: null, currentMode: null,
+    intent: null, currentReasoningEffort: null, currentContextTier: null, currentMode: null,
   };
   roundTrip(SessionMeta, { ...fullMeta, ...cleared });
   roundTrip(ServerEvent, { type: 'session/patch', ...sid, ...cleared });
@@ -875,15 +791,12 @@ test('all clearable metadata survives snapshots and actual SSE patches as null',
 
 test('SSE discriminators, pagination flags and nested payload validation are preserved', () => {
   for (const agentStatus of ['starting', 'up', 'restarting'] as const) {
-    roundTrip(ServerEvent, { ...snapshot, agentStatus, vapidPublicKey: 'public-key' });
+    roundTrip(ServerEvent, { ...snapshot, agentStatus });
     roundTrip(ServerEvent, { type: 'agent/status', status: agentStatus });
   }
   for (const status of ['unloaded', 'idle', 'running', 'error'] as const) {
     roundTrip(SessionBrief, { ...brief, status });
     roundTrip(ServerEvent, { type: 'session/added', session: { ...fullMeta, status } });
-  }
-  for (const attention of ['ready', 'choice'] as const) {
-    roundTrip(ServerEvent, { type: 'session/notify', ...sid, title: 'T', body: 'Notice', attention });
   }
   for (const reason of ['rewind', 'compaction']) roundTrip(ServerEvent, { type: 'chat/invalidated', ...sid, reason });
   for (const invalid of [
@@ -907,9 +820,6 @@ test('Snapshot is the shared SSE and passive runtime result with required allow-
   for (const schema of [Protocol.Snapshot, Intents['runtime/snapshot'].result, ServerEvent]) {
     roundTrip(schema, snapshot);
     roundTrip(schema, minimalSnapshot);
-    for (const vapidPublicKey of [null, 'public-key']) {
-      roundTrip(schema, { ...minimalSnapshot, vapidPublicKey });
-    }
     for (const field of Object.keys(minimalSnapshot)) {
       const missing: Record<string, unknown> = { ...minimalSnapshot };
       delete missing[field];
@@ -920,7 +830,6 @@ test('Snapshot is the shared SSE and passive runtime result with required allow-
       { models: [{ ...snapshot.models[0], supportedReasoningEfforts: [1] }] },
       { sessions: [brief] },
       { sessions: [{ ...fullMeta, ask: { requestId: 'r1' } }] },
-      { vapidPublicKey: 1 },
     ]) {
       assert.equal(schema.safeParse({ ...snapshot, ...invalid }).success, false, JSON.stringify(invalid));
     }
@@ -1006,111 +915,6 @@ test('skills/global accepts an optional nonempty cwd without a session selector'
   }
 });
 
-test('prompt attachment is optional, singular and strips client-side path metadata', () => {
-  for (const text of ['', '  Caption\nKeep this spacing.  ']) {
-    roundTrip(Intents.prompt.body, { ...sid, text });
-    for (const kind of ['image', 'file'] as const) {
-      const minimalAttachment = { kind, name: 'file', url: attachment.url };
-      roundTrip(Intents.prompt.body, { ...sid, text, attachment: minimalAttachment });
-      roundTrip(Intents.prompt.body, { ...sid, text, attachment: { ...attachment, kind } });
-      roundTrip(ChatMessage, { ...chat, attachment: { ...attachment, kind } });
-      assert.deepEqual(Intents.prompt.body.parse({
-        ...sid, text, path: '/client/ignored', attachment: { ...uploadedFile, kind, path: '/client/not-authoritative' },
-      }), { ...sid, text, attachment: { ...attachment, kind } });
-    }
-  }
-  for (const value of [null, [], [attachment], 'file', {}, { ...attachment, kind: 'video' }, { ...attachment, name: null }]) {
-    assert.equal(Intents.prompt.body.safeParse({ ...sid, text: 'caption', attachment: value }).success, false);
-  }
-  for (const field of ['kind', 'name', 'url']) {
-    const missing: Record<string, unknown> = { ...attachment };
-    delete missing[field];
-    assert.equal(Intents.prompt.body.safeParse({ ...sid, text: '', attachment: missing }).success, false, `attachment requires ${field}`);
-  }
-});
-
-test('UploadUrl accepts only literal local safe basenames up to 200 characters', () => {
-  for (const url of ['/uploads/a', '/uploads/0', '/uploads/Az09._-report.png', `/uploads/${'a'.repeat(200)}`]) {
-    roundTrip(Protocol.UploadUrl, url);
-    roundTrip(Protocol.UploadedFile, { ...uploadedFile, url });
-    roundTrip(Intents.prompt.body, { ...sid, text: '', attachment: { ...attachment, url } });
-  }
-});
-
-test('upload and prompt boundaries reject external, escaped, traversing and newline URLs', () => {
-  const unsafeUrls = [
-    '', '/uploads/', 'uploads/a', '/Uploads/a', '/uploads/.hidden', '/uploads/_file', '/uploads/-file',
-    '/uploads/.', '/uploads/..', '/uploads/../secret', '/uploads/a..png', '/uploads/a/../b',
-    '/uploads/a/b', '/uploads//a', '/uploads/a\\b', '/uploads/..\\secret',
-    'https://example.com/uploads/a', 'http://example.com/uploads/a', '//example.com/uploads/a',
-    'file:///uploads/a', 'data:text/plain,hello', 'javascript:alert(1)',
-    '/uploads/a?download=1', '/uploads/a#fragment', '/uploads/a;b', '/uploads/a b',
-    '/uploads/%2e%2e', '/uploads/a%2F..%2Fb', '/uploads/a%5Cb', '/uploads/a%252e%252e',
-    '/uploads/a%20b', '/uploads/a%00', '/uploads/a%0A', '/uploads/a%0D%0A', '/uploads/%61',
-    '/uploads/a%', '/uploads/é.png', '/uploads/a"b', '/uploads/a<b',
-    '/uploads/a\n', '/uploads/a\r', '/uploads/a\r\n', '/uploads/a\n/b',
-    '/uploads/a\t', '/uploads/a\0', '/uploads/a\u2028', '/uploads/a\u2029', ' /uploads/a',
-    `/uploads/${'a'.repeat(201)}`,
-  ];
-  for (const url of [...unsafeUrls, null, 1, false, [], {}]) {
-    const label = JSON.stringify(url);
-    assert.equal(Protocol.UploadUrl.safeParse(url).success, false, `UploadUrl ${label}`);
-    assert.equal(Protocol.UploadedFile.safeParse({ ...uploadedFile, url }).success, false, `UploadedFile ${label}`);
-    assert.equal(Intents.prompt.body.safeParse({ ...sid, text: 'caption', attachment: { ...attachment, url } }).success, false, `prompt ${label}`);
-  }
-});
-
-test('UploadedFile requires authoritative metadata and validates size, mime and path', () => {
-  roundTrip(Protocol.UploadedFile, uploadedFile);
-  const { storedName: _storedName, ...withoutStoredName } = uploadedFile;
-  roundTrip(Protocol.UploadedFile, withoutStoredName);
-  for (const kind of ['image', 'file'] as const) {
-    for (const size of [0, 1, 25 * 1024 * 1024]) {
-      roundTrip(Protocol.UploadedFile, { ...uploadedFile, kind, size });
-    }
-  }
-  roundTrip(Protocol.UploadedFile, { ...uploadedFile, mime: 'x'.repeat(512) });
-  for (const field of ['kind', 'name', 'url', 'path', 'size', 'mime']) {
-    const missing: Record<string, unknown> = { ...uploadedFile };
-    delete missing[field];
-    assert.equal(Protocol.UploadedFile.safeParse(missing).success, false, `UploadedFile requires ${field}`);
-  }
-  for (const size of [-1, 0.5, 25 * 1024 * 1024 + 1, NaN, Infinity, -Infinity, '0', null, true]) {
-    assert.equal(Protocol.UploadedFile.safeParse({ ...uploadedFile, size }).success, false, `size=${String(size)}`);
-  }
-  for (const mime of ['', 'x'.repeat(513), null, 1, false]) {
-    assert.equal(Protocol.UploadedFile.safeParse({ ...uploadedFile, mime }).success, false, `mime=${JSON.stringify(mime)}`);
-  }
-  for (const path of ['', null, 1, false, []]) {
-    assert.equal(Protocol.UploadedFile.safeParse({ ...uploadedFile, path }).success, false, `path=${JSON.stringify(path)}`);
-  }
-  for (const invalid of [{ storedName: null }, { storedName: 1 }, { name: null }, { kind: 'video' }]) {
-    assert.equal(Protocol.UploadedFile.safeParse({ ...uploadedFile, ...invalid }).success, false);
-  }
-});
-
-test('attachmentMarker uses the exact shared encoded format including zero-size metadata', () => {
-  const expected = '<cockpit-attachment version="2" kind="image" name="R%C3%A9sum%C3%A9%20%22a%26b%22%20%3C1%3E%25%0A.png" url="%2Fuploads%2FAb_1-2.png" size="0" mime="image%2Fpng%3B%20charset%3Dutf-8"/>';
-  assert.equal(Protocol.attachmentMarker(attachment), expected);
-  assert.equal(Protocol.attachmentMarker(uploadedFile), expected, 'server paths and stored names are not marker attributes');
-  const minimalAttachment = { kind: 'file', name: 'notes.txt', url: '/uploads/notes.txt' } satisfies Protocol.Attachment;
-  assert.equal(Protocol.attachmentMarker(minimalAttachment), '<cockpit-attachment version="2" kind="file" name="notes.txt" url="%2Fuploads%2Fnotes.txt"/>');
-  assert.equal(Protocol.attachmentMarker({ ...minimalAttachment, size: 42 }), '<cockpit-attachment version="2" kind="file" name="notes.txt" url="%2Fuploads%2Fnotes.txt" size="42"/>');
-  assert.equal(Protocol.attachmentMarker({ ...minimalAttachment, mime: 'text/plain' }), '<cockpit-attachment version="2" kind="file" name="notes.txt" url="%2Fuploads%2Fnotes.txt" mime="text%2Fplain"/>');
-});
-
-test('attachmentPrompt preserves captions verbatim and adds no generic read-path guidance', () => {
-  for (const kind of ['image', 'file'] as const) {
-    const value = { ...attachment, kind };
-    const marker = Protocol.attachmentMarker(value);
-    assert.equal(Protocol.attachmentPrompt(value, ''), marker, 'no fallback guidance or trailing newline');
-    for (const caption of ['Describe this.', '  ', '\n', '\r\nCaption\r\n', '  原文 "quoted" & <tag>\nSecond line.  ']) {
-      assert.equal(Protocol.attachmentPrompt(value, caption), `${marker}\n${caption}`);
-    }
-  }
-  assert.equal(Protocol.attachmentPrompt(uploadedFile, 'Use this file'), `${Protocol.attachmentMarker(attachment)}\nUse this file`);
-});
-
 // Compile-time parity lock (enforced by `tsc` build; tsx strips it at runtime):
 // the hand-written `interface ChatMessage` must equal the schema's inferred type.
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
@@ -1129,7 +933,7 @@ type SlimContractGuards = [
   Expect<Equal<IntentBody<'session/chat'>, Protocol.NativeChatRead>>,
   Expect<Equal<IntentBody<'skills/global'>, { cwd?: string }>>,
   Expect<Equal<IntentBody<'prompt'>, { sessionId: string; text: string; mode?: 'enqueue' | 'immediate';
-    attachment?: Protocol.Attachment; attachments?: Protocol.Attachment[]; parts?: Protocol.MessagePart[] }>>,
+    attachments?: Protocol.NativeAttachment[] }>>,
   Expect<Equal<IntentResult<'session/chat'>, Protocol.NativeChatPage>>,
   Expect<Equal<IntentResult<'runtime/snapshot'>, Protocol.Snapshot>>,
   Expect<Equal<Extract<Protocol.ServerEvent, { type: 'snapshot' }>, Protocol.Snapshot>>,

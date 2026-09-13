@@ -2,13 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
-import { getSessionDraft } from '../lib/attachmentSend';
+import { getSessionDraft } from '../lib/textDraft';
 import { useCockpit } from '../net/store';
 import type { ChatSession } from '../net/types';
 import { MessageProcess, Thread } from './Thread';
 import { MessageBody } from './MessageBody';
-import { ChatFileCard } from './FileCard';
-import type { UploadedFile } from '@cockpit/protocol';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
 // scroll owner. Each rendered message occupies 100px in a 300px viewport.
@@ -254,61 +252,18 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'false', 'history re-entry starts compact');
   assert.equal(container.querySelector('.msg-thought'), null);
 
-  const previousFilesGet = useCockpit.getState().filesGet;
-  const reads: { url: string; resolve: (file: UploadedFile) => void; reject: (error: Error) => void }[] = [];
-  useCockpit.setState({ filesGet: url => new Promise((resolve, reject) => reads.push({ url, resolve, reject })) });
-  t.after(() => useCockpit.setState({ filesGet: previousFilesGet }));
-  const body = '![stable](/uploads/stable.svg)\n\n| A | B |\n|---|---|\n| one | two |\n\nStable text.';
+  const body = '| A | B |\n|---|---|\n| one | two |\n\nStable native text.';
   const renderBody = (content = body) => act(async () => root.render(createElement(MessageBody, {
-    body: content, sessionId: 'A', files: [],
+    body: content,
   })));
   await renderBody();
-  const card = container.querySelector('[data-file-url="/uploads/stable.svg"]');
-  assert.ok(card);
-  assert.equal(card.getAttribute('data-layout'), 'media');
-  assert.equal(reads.length, 1);
-  const file: UploadedFile = { kind: 'image', url: reads[0].url, name: 'long-original-name.svg', mime: 'image/svg+xml', size: 12, path: '/private/stable.svg' };
-  await act(async () => { reads[0].resolve(file); });
-  assert.equal(container.querySelector('[data-file-url="/uploads/stable.svg"]'), card);
-  const image = container.querySelector('.chat-preview-image');
   const table = container.querySelector('[data-chat-table]');
-  assert.ok(image && table);
+  assert.ok(table);
   for (const content of [body, `${body}\n\nNext streamed paragraph.`, `${body}\n\nAnother streamed paragraph.`]) {
     await renderBody(content);
-    assert.equal(container.querySelector('.chat-preview-image'), image, 'body updates retain the preview image node');
     assert.equal(container.querySelector('[data-chat-table]'), table, 'body updates retain the table renderer');
-    assert.equal(reads.length, 1, 'new body/files props do not restart files/get');
   }
-
-  // Reconnect refreshes the existing owner, not a blank placeholder.
-  const generation = useCockpit.getState().connectionGeneration;
-  await act(async () => { useCockpit.setState({ connectionGeneration: generation + 1 }); });
-  assert.equal(reads.length, 2);
-  assert.equal(container.querySelector('.chat-preview-image'), image);
-  await act(async () => { reads[1].resolve(file); });
-  assert.equal(container.querySelector('.chat-preview-image'), image);
-  assert.equal(container.querySelector('[data-file-url="/uploads/stable.svg"]'), card);
-
   await act(async () => root.render(null));
   await renderBody();
-  assert.equal(reads.length, 3, 'genuine re-entry gets a fresh component-owned metadata read');
-  const reenteredCard = container.querySelector('[data-file-url="/uploads/stable.svg"]');
-  assert.ok(reenteredCard);
-  assert.notEqual(reenteredCard, card);
-  assert.equal(reenteredCard.getAttribute('data-layout'), 'media');
-  await act(async () => { reads[2].reject(new Error('Metadata unavailable')); });
-  assert.equal(container.querySelector('[data-file-url="/uploads/stable.svg"]'), reenteredCard);
-  assert.equal(reenteredCard.getAttribute('data-layout'), 'media');
-  assert.match(reenteredCard.textContent, /Metadata unavailable/);
-  assert.equal(container.querySelector('[download]'), null);
-
-  // Unknown -> known document and late long metadata must not change the slot.
-  await act(async () => root.render(createElement(ChatFileCard, { file: { kind: 'file', name: 'pending', url: '/uploads/document' } })));
-  const unknown = container.querySelector('[data-file-url="/uploads/document"]');
-  await act(async () => root.render(createElement(ChatFileCard, { file: {
-    kind: 'file', name: 'very-long-'.repeat(30), url: '/uploads/document', mime: 'application/pdf', size: 25000000,
-  } })));
-  assert.equal(container.querySelector('[data-file-url="/uploads/document"]'), unknown);
-  assert.equal(unknown?.getAttribute('data-layout'), 'media');
-  await act(() => useCockpit.setState({ connectionGeneration: generation }));
+  assert.notEqual(container.querySelector('[data-chat-table]'), table, 'a real unmount releases native render nodes');
 });

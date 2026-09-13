@@ -37,33 +37,6 @@ test('an inactive view never dispatches a late event', async () => {
   assert.equal(calls, 0);
 });
 
-test('the prompt wrapper submits caption and single attachment without composing a marker', async () => {
-  const attachment = { kind: 'image' as const, name: 'photo.png', url: '/uploads/photo.png' };
-  const post = deferred<boolean>();
-  const calls: unknown[][] = [];
-  const result = sendThreadDraft('my caption', {
-    onSend: (...args) => { calls.push(args); return post.promise; },
-  }, attachment);
-  assert.deepEqual(calls, [['my caption', attachment]]);
-  post.resolve(true);
-  assert.equal(await result, true);
-});
-
-for (const kind of ['ask', 'plan'] as const) {
-  test(`the ${kind} wrapper never silently drops a staged attachment or dispatches a prompt`, async () => {
-    let calls = 0;
-    const dispatch = async () => { calls++; return true; };
-    const handlers: DraftSendHandlers = {
-      onSend: dispatch, onRespondAsk: dispatch, onPlanSupersede: dispatch,
-      ...(kind === 'ask' ? { askRequestId: 'ask-id' } : { planRequestId: 'plan-id' }),
-    };
-    assert.equal(await sendThreadDraft('caption', handlers, {
-      kind: 'file', name: 'file.txt', url: '/uploads/file.txt',
-    }), false);
-    assert.equal(calls, 0);
-  });
-}
-
 test('acknowledgement is strict: undefined is not successful', async () => {
   assert.equal(await acknowledge(() => undefined), false);
 });

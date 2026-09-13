@@ -40,10 +40,13 @@ owner's work as cleanup.
 
 `COCKPIT_CHAT_LAB=1 pnpm --filter @cockpit/web dev --host 127.0.0.1 --port 47831 --strictPort`
 opens the opt-in development-only `/chat-lab.html` entry. It mounts the production
-Chat components with synthetic inputs, same-origin sample media and local
+Chat components with synthetic native inputs and local
 callbacks, without initializing a native client or creating sessions. Normal
 production builds do not include the entry. See the [component coverage and
-design review](chat-design-review.md) for scenarios, reference sources and limits.
+design review](chat-design-review.md) for historical reference sources and limits.
+File/voice scenes and the old fixed-version static review builder are parked;
+they are not active lab capabilities. The normal lab exercises the remaining
+native text, tools, decisions, queue and reading behavior.
 
 For focused input-bar review, open `/chat-lab.html?scene=ask&compact=1`
 or choose `plan` / `user-time`. The [CSS-first composer rework](chat-composer-rework.md)

@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict';
-import { Buffer } from 'node:buffer';
-import { createECDH } from 'node:crypto';
 import { setImmediate } from 'node:timers/promises';
 import { test, type TestContext } from 'node:test';
 import type { IntentBody, IntentName, IntentResult } from '@cockpit/protocol';
@@ -8,8 +6,7 @@ import { CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { dismissUxError, getUxErrors } from '../lib/errorReporter';
 import { IntentHttpError, isSessionUnloadedError, SessionUnloadedError } from './client';
 import { createCockpitStore } from './store';
-import { createSessionDrafts } from '../lib/attachmentSend';
-import type { Attachment, ChatMessage, ServerEvent, SessionMeta, UploadedFile } from './types';
+import type { NativeAttachment, ChatMessage, ServerEvent, SessionMeta } from './types';
 type HistoryFixture = { sessionId: string; messages: ChatMessage[]; hasMore: boolean; latest?: boolean };
 
 type Store = ReturnType<typeof createCockpitStore>;
@@ -129,10 +126,9 @@ function setup(t: TestContext, store: Store = (useCockpit = createCockpitStore()
     const result = request(index);
     assert.equal(result.url, intentUrl(name));
     let init = result.init;
-    if (name.startsWith('push/') || name === 'session/chat' || name === 'session/get' || name === 'session/resources') {
-      assert.ok(init?.signal instanceof AbortSignal, 'push requests must have an abort deadline');
-      const { signal, ...rest } = init;
-      if (name.startsWith('push/')) assert.equal(signal.aborted, false);
+    if (name === 'session/chat' || name === 'session/get' || name === 'session/resources') {
+      assert.ok(init?.signal instanceof AbortSignal, 'native reads must have an abort signal');
+      const { signal: _signal, ...rest } = init;
       init = rest;
     }
     const { body: json, ...options } = init ?? {};
@@ -454,16 +450,14 @@ test('native getters without an error projection do not erase a live frontend er
   const h = setup(t, store);
   h.source.open();
   h.snapshot(['a']);
-  h.source.emit({ type: 'session/patch', sessionId: 'a', error: 'Native turn failed', autoNameError: 'Naming failed' });
+  h.source.emit({ type: 'session/patch', sessionId: 'a', error: 'Native turn failed' });
   h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
   await setImmediate();
   const { error: _error, ...fresh } = meta('a');
   await h.reply(0, { meta: fresh });
   assert.equal(session('a', store).error, 'Native turn failed');
-  assert.equal(session('a', store).autoNameError, 'Naming failed');
-  h.source.emit({ type: 'session/patch', sessionId: 'a', error: null, autoNameError: null });
+  h.source.emit({ type: 'session/patch', sessionId: 'a', error: null });
   assert.equal(session('a', store).error, null);
-  assert.equal(session('a', store).autoNameError, null);
 });
 
 test('one late mutation failure retains its dispatch source and one global report after navigation', async t => {
@@ -656,40 +650,6 @@ test('each connecting callback and every snapshot increments generation, includi
   assert.equal(useCockpit.getState().connectionGeneration, generation + 1);
 });
 
-test('native naming metadata leaves unread attention, drafts and materialized messages unchanged', async (t) => {
-  const storage = new Map<string, string>();
-  replaceGlobal(t, 'localStorage', {
-    getItem: (key: string) => storage.get(key) ?? null,
-    setItem: (key: string, value: string) => { storage.set(key, value); },
-    removeItem: (key: string) => { storage.delete(key); },
-  });
-  const h = setup(t);
-  h.source.open();
-  h.snapshot(['a'], { sessions: [{ ...meta('a'), attention: 'ready', attnId: 4, seenId: 2 }], unreadCount: 1 });
-  await h.load('a', [message('completed')], false);
-  const drafts = createSessionDrafts();
-  const draft = drafts('a');
-  draft.edit('Composer draft');
-  const draftBefore = draft.getSnapshot();
-  const storedBefore = new Map(storage);
-  const before = session();
-  const unread = useCockpit.getState().unreadCount;
-  h.source.emit({ type: 'session/patch', sessionId: 'a', autoNaming: true });
-  assert.equal(session().status, 'idle');
-  h.source.emit({ type: 'session/patch', sessionId: 'a', autoNaming: false, autoNameError: 'Native query unavailable' });
-  assert.equal(session().error, null);
-  h.source.emit({ type: 'session/patch', sessionId: 'a', title: 'Native title', autoNameError: null });
-  assert.equal(session().title, 'Native title');
-  assert.strictEqual(session().messages, before.messages);
-  assert.equal(session().attention, before.attention);
-  assert.equal(session().attnId, before.attnId);
-  assert.equal(session().seenId, before.seenId);
-  assert.equal(useCockpit.getState().unreadCount, unread);
-  assert.strictEqual(draft.getSnapshot(), draftBefore);
-  assert.deepEqual(storage, storedBefore);
-  assert.equal(h.requests.length, 1);
-});
-
 test('native title updates target their session without changing another route', async (t) => {
   const h = setup(t);
   h.source.open();
@@ -729,10 +689,6 @@ const mutations: MutationCase[] = [
   {
     name: 'session/reload', body: { sessionId: 'a' }, send: (s) => s.reloadSession('a'),
     success: { ok: true }, sessionId: 'a', changesHistory: true,
-  },
-  {
-    name: 'session/pin', body: { sessionId: 'a', pinned: true }, send: (s) => s.pinSession('a', true),
-    success: { ok: true, pinned: true }, sessionId: 'a',
   },
   {
     name: 'session/compact', body: { sessionId: 'a' }, send: (s) => s.compactSession('a'),
@@ -870,7 +826,6 @@ for (const mutation of mutations) {
     assert.equal(session().title, before.title);
     assert.equal(session().status, before.status);
     assert.equal(session().loaded, before.loaded);
-    assert.equal(session().pinned, before.pinned);
     assert.equal(session().currentModelId, before.currentModelId);
     assert.equal(session().currentMode, before.currentMode);
     assert.deepEqual(session().queue, before.queue);
@@ -1375,44 +1330,15 @@ for (const failure of ['500', 'null-error'] as const) {
   });
 }
 
-for (const kind of ['image', 'file'] as const) {
-  test(`sendPrompt forwards optional ${kind} attachment metadata, not UploadedFile server paths`, async (t) => {
-    const h = setup(t);
-    h.source.open();
-    h.snapshot();
-    const before = session();
-    const attachment: Attachment = {
-      kind, name: kind === 'image' ? 'fixture.png' : 'fixture.txt',
-      url: '/uploads/fixture', size: 12, mime: kind === 'image' ? 'image/png' : 'text/plain',
-    };
-    const uploaded: UploadedFile = {
-      ...attachment, size: 12, mime: attachment.mime!, path: '/fixture/uploads/fixture', storedName: 'fixture',
-    };
-    const pending: Promise<boolean> = useCockpit.getState().sendPrompt('a', 'inspect attachment', uploaded);
-    const response = h.assertPost(0, 'prompt', { sessionId: 'a', text: 'inspect attachment', attachment });
-    let settled = false;
-    void pending.then(() => { settled = true; });
-    await setImmediate();
-    assert.equal(settled, false);
-    assert.strictEqual(session(), before);
-    response.resolve(Response.json({ ok: true }));
-    assert.equal(await pending, true);
-    assert.strictEqual(session(), before);
-    assert.equal(uploaded.path, '/fixture/uploads/fixture');
-    assert.equal(h.requests.length, 1);
-    assert.deepEqual(getUxErrors(), []);
-  });
-}
-
 test('attached prompt failures keep the original false acknowledgement and local diagnostic contract', async (t) => {
   const h = setup(t);
   h.source.open();
   h.snapshot(['a', 'b']);
-  const attachment: Attachment = { kind: 'file', name: 'fixture.txt', url: '/uploads/fixture.txt' };
+  const attachments: NativeAttachment[] = [{ type: 'file', path: '/native/fixture.txt' }];
   const before = session();
   const other = session('b');
-  const pending = useCockpit.getState().sendPrompt('a', 'keep draft', attachment);
-  h.assertPost(0, 'prompt', { sessionId: 'a', text: 'keep draft', attachment }).reject(new Error('attachment denied'));
+  const pending = useCockpit.getState().sendPrompt('a', 'keep draft', attachments);
+  h.assertPost(0, 'prompt', { sessionId: 'a', text: 'keep draft', attachments }).reject(new Error('attachment denied'));
   assert.equal(await pending, false);
   assert.match(session().error ?? '', /未确认发送/);
   assert.match(session().error ?? '', /草稿已保留/);
@@ -1531,538 +1457,3 @@ test('void newSession failures are observed without hiding rejection or retrying
   assert.equal(getUxErrors().length, 2);
   assert.equal(h.requests.length, 1);
 });
-
-const applicationServerKey = new Uint8Array(createECDH('prime256v1').generateKeys());
-const vapidPublicKey = Buffer.from(applicationServerKey).toString('base64url');
-const subscription: IntentBody<'push/subscribe'>['subscription'] = {
-  endpoint: 'https://push.invalid/fixture', expirationTime: null,
-  keys: { p256dh: vapidPublicKey, auth: Buffer.alloc(16, 7).toString('base64url') },
-};
-
-function pushStatus(registered: boolean): IntentResult<'push/status'> {
-  return { configured: true, registered, publicKey: vapidPublicKey, subscriptionCount: registered ? 1 : 0 };
-}
-
-function browser(t: TestContext, permission: NotificationPermission = 'granted', push = false) {
-  let harness: ReturnType<typeof setup> | undefined;
-  t.after(() => harness?.cleanup());
-  const notifications: FakeNotification[] = [];
-  class FakeNotification {
-    static permission = permission;
-    static requestPermission = t.mock.fn(async () => {
-      FakeNotification.permission = 'granted';
-      return 'granted' as const;
-    });
-    onclick: (() => void) | null = null;
-    close = t.mock.fn();
-    readonly title: string;
-    readonly options?: NotificationOptions;
-    constructor(title: string, options?: NotificationOptions) {
-      this.title = title;
-      this.options = options;
-      notifications.push(this);
-    }
-  }
-  const localSubscription = {
-    endpoint: subscription.endpoint,
-    expirationTime: null,
-    options: { applicationServerKey: applicationServerKey.slice().buffer, userVisibleOnly: true },
-    getKey: (name: PushEncryptionKeyName) => Uint8Array.from(Buffer.from(subscription.keys[name], 'base64url')).buffer,
-    toJSON: () => subscription,
-    unsubscribe: t.mock.fn(async () => { local.subscription = null; return true; }),
-  } satisfies PushSubscription;
-  const local = { subscription: push ? localSubscription as PushSubscription : null, registered: push };
-  const osNotifications: { tag: string; data: unknown; close: () => void }[] = [];
-  const registration = {
-    active: { state: 'activated' as const }, installing: null, waiting: null,
-    pushManager: {
-      getSubscription: t.mock.fn(async () => local.subscription),
-      subscribe: t.mock.fn(async (_options: PushSubscriptionOptionsInit) => {
-        local.subscription = localSubscription;
-        return localSubscription;
-      }),
-    },
-    getNotifications: t.mock.fn(async () => osNotifications),
-    showNotification: t.mock.fn(async (_title: string, _options?: NotificationOptions) => {}),
-  };
-  const serviceWorker = {
-    register: t.mock.fn(async (_url: string, _options?: RegistrationOptions) => {
-      local.registered = true;
-      return registration;
-    }),
-    getRegistration: t.mock.fn(async (_scope?: string) => local.registered ? registration : undefined),
-    get ready(): Promise<ServiceWorkerRegistration> { return assert.fail('passive lookups must not wait on serviceWorker.ready'); },
-  };
-  const navigatorMock = { standalone: true, userActivation: { isActive: true }, serviceWorker };
-  const location = {
-    protocol: 'https:',
-    get href() { return 'https://cockpit.invalid/session/a'; },
-    set href(_value: string) { assert.fail('notifications must not navigate'); },
-    assign: t.mock.fn(() => assert.fail('notifications must not navigate')),
-    replace: t.mock.fn(() => assert.fail('notifications must not navigate')),
-  };
-  const windowMock = Object.assign(new EventTarget(), {
-    Notification: FakeNotification, navigator: navigatorMock, isSecureContext: true, PushManager: class {},
-    matchMedia: () => ({ matches: true }), focus: t.mock.fn(), location,
-    history: {
-      pushState: t.mock.fn(() => assert.fail('notifications must not navigate')),
-      replaceState: t.mock.fn(() => assert.fail('notifications must not navigate')),
-    },
-  });
-  const documentMock = Object.assign(new EventTarget(), { visibilityState: 'hidden' });
-  replaceGlobal(t, 'window', windowMock);
-  replaceGlobal(t, 'document', documentMock);
-  replaceGlobal(t, 'navigator', navigatorMock);
-  replaceGlobal(t, 'Notification', FakeNotification);
-  return {
-    window: windowMock, document: documentMock, notifications, Notification: FakeNotification,
-    local, localSubscription, registration, serviceWorker, osNotifications,
-    setup: (store: Store = createCockpitStore()) => {
-      harness = setup(t, store);
-      return harness;
-    },
-  };
-}
-
-test('browser notification click dispatches cockpit:open-session with SID and never selects or navigates', async (t) => {
-  const b = browser(t);
-  const h = b.setup();
-  h.source.open();
-  h.snapshot(['a', 'b']);
-  b.document.visibilityState = 'visible';
-  await h.load('a', [message('active')], false);
-  b.document.visibilityState = 'hidden';
-  h.assertPost(1, 'push/status', {});
-  await h.reply(1, pushStatus(false));
-  const events: Event[] = [];
-  b.window.addEventListener('cockpit:open-session', (event) => events.push(event));
-  h.source.emit({
-    type: 'session/notify', sessionId: 'b', title: 'Fixture session', attention: 'choice', body: 'Needs input',
-  });
-  await setImmediate();
-  assert.equal(b.notifications.length, 1);
-  const notification = b.notifications[0];
-  assert.equal(notification.title, 'Fixture session');
-  assert.equal(notification.options?.body, 'Needs input');
-  assert.equal(notification.options?.tag, 'b');
-  assert.ok(notification.onclick);
-  notification.onclick();
-  assert.equal(events.length, 1);
-  assert.ok(events[0] instanceof CustomEvent);
-  assert.deepEqual(events[0].detail, { sessionId: 'b' });
-  assert.equal(b.window.focus.mock.callCount(), 1);
-  assert.equal(notification.close.mock.callCount(), 1);
-  assert.equal(h.store.getState().activeId, 'a');
-  assert.equal(h.requests.length, 2);
-  h.source.emit({ type: 'session/notify', sessionId: 'a', title: 'Active', attention: 'ready', body: 'Done' });
-  await setImmediate();
-  assert.equal(b.notifications.length, 2, 'a hidden active session still produces a page notification');
-  assert.equal(b.notifications[1].options?.tag, 'a');
-  b.document.visibilityState = 'visible';
-  h.source.emit({ type: 'session/notify', sessionId: 'b', title: 'Visible', attention: 'ready', body: 'Done' });
-  await setImmediate();
-  assert.equal(b.notifications.length, 2, 'a visible tab suppresses page notifications');
-  assert.equal(b.Notification.requestPermission.mock.callCount(), 0);
-  assert.equal(b.serviceWorker.register.mock.callCount(), 0);
-  assert.equal(b.registration.pushManager.subscribe.mock.callCount(), 0);
-  assert.deepEqual(getUxErrors(), []);
-});
-
-test('notification permission alone is not notification readiness and snapshots never ask permission', async (t) => {
-  const b = browser(t, 'granted', true);
-  const h = b.setup();
-  assert.equal(h.store.getState().notifPermission, 'granted');
-  assert.equal(h.store.getState().notifReady, false);
-  h.source.open();
-  h.snapshot();
-  assert.equal(h.store.getState().notifReady, false);
-  assert.equal(b.Notification.requestPermission.mock.callCount(), 0);
-  await setImmediate();
-  h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
-  await h.reply(0, { configured: false, registered: false, publicKey: null, subscriptionCount: 0 });
-  assert.equal(h.store.getState().notifReady, false);
-  assert.equal(h.store.getState().notifications.configured, false);
-  assert.equal(h.store.getState().notifications.busy, false);
-  assert.equal(b.Notification.requestPermission.mock.callCount(), 0);
-  assert.equal(b.registration.pushManager.subscribe.mock.callCount(), 0);
-  assert.equal(b.serviceWorker.register.mock.callCount(), 0);
-  assert.equal(h.requests.length, 1);
-});
-
-for (const permission of ['default', 'denied'] as const) {
-  test(`passive notification status never prompts or arms push with ${permission} permission`, async (t) => {
-    const b = browser(t, permission, true);
-    const h = b.setup();
-    h.source.open();
-    h.snapshot(['a'], { vapidPublicKey });
-    await setImmediate();
-    h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
-    await h.reply(0, pushStatus(true));
-    assert.equal(h.store.getState().notifReady, false);
-    assert.equal(h.store.getState().notifPermission, permission);
-    assert.equal(h.store.getState().notifications.registered, true);
-    assert.equal(b.Notification.requestPermission.mock.callCount(), 0);
-    assert.equal(b.registration.pushManager.subscribe.mock.callCount(), 0);
-    assert.equal(b.serviceWorker.register.mock.callCount(), 0);
-    assert.equal(h.requests.length, 1);
-  });
-}
-
-test('passive connect reuses a matching registered key and ready push suppresses page fallback', async (t) => {
-  const b = browser(t, 'granted', true);
-  const h = b.setup();
-  h.source.open();
-  h.snapshot(['a', 'b']);
-  await setImmediate();
-  h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
-  assert.equal(h.store.getState().notifReady, false);
-  await h.reply(0, pushStatus(true));
-  assert.equal(h.store.getState().notifReady, true);
-  assert.equal(h.store.getState().notifications.ready, true);
-  assert.equal(h.store.getState().notifications.registered, true);
-  assert.equal(h.store.getState().notifications.error, null);
-  b.document.visibilityState = 'visible';
-  await h.load('a', [], false);
-  b.document.visibilityState = 'hidden';
-  for (const sessionId of ['a', 'b']) {
-    h.source.emit({ type: 'session/notify', sessionId, title: sessionId, attention: 'ready', body: 'Done' });
-  }
-  await setImmediate();
-  assert.equal(b.document.visibilityState, 'hidden');
-  assert.equal(b.notifications.length, 0);
-  assert.equal(b.registration.showNotification.mock.callCount(), 0);
-  assert.equal(b.serviceWorker.register.mock.callCount(), 0);
-  assert.equal(b.registration.pushManager.subscribe.mock.callCount(), 0);
-  assert.equal(b.Notification.requestPermission.mock.callCount(), 0);
-  assert.equal(h.requests.length, 2);
-  assert.deepEqual(getUxErrors(), []);
-});
-
-for (const failure of ['ok:false', 'invalid acknowledgement', 'HTTP', 'transport'] as const) {
-  test(`push subscription ${failure} cannot set notifReady even with granted permission`, async (t) => {
-    const b = browser(t, 'default', true);
-    const h = b.setup();
-    h.source.open();
-    h.snapshot(['a'], { vapidPublicKey });
-    await setImmediate();
-    h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
-    await h.reply(0, pushStatus(false));
-    assert.equal(b.Notification.requestPermission.mock.callCount(), 0);
-    assert.equal(h.requests.length, 1);
-    const pending = h.store.getState().enableNotifications();
-    assert.equal(b.Notification.requestPermission.mock.callCount(), 1, 'permission is requested in the click stack');
-    await setImmediate();
-    assert.equal(b.Notification.requestPermission.mock.callCount(), 1);
-    assert.equal(h.store.getState().notifPermission, 'granted');
-    assert.equal(h.store.getState().notifReady, false);
-    h.assertPost(1, 'push/status', { endpoint: subscription.endpoint });
-    await h.reply(1, pushStatus(false));
-    const response = h.assertPost(2, 'push/subscribe', { subscription });
-    const rawError = `${subscription.endpoint}?auth=private-push-token`;
-    if (failure === 'transport') response.reject(new TypeError(rawError));
-    else if (failure === 'HTTP') response.resolve(Response.json({ error: rawError }, { status: 403 }));
-    else response.resolve(Response.json({ ok: failure === 'ok:false' ? false : 'true' }));
-    assert.equal(await pending, undefined, 'controller errors resolve into settings state');
-    assert.equal(h.store.getState().notifReady, false);
-    assert.equal(h.store.getState().notifications.ready, false);
-    assert.equal(h.store.getState().notifications.busy, false);
-    assert.match(h.store.getState().notifications.error!, /服务端未确认订阅注册/);
-    assert.doesNotMatch(JSON.stringify(h.store.getState().notifications), /push\.invalid|private-push-token/);
-    assert.deepEqual(getUxErrors(), [], 'push failures must not create raw global UI errors');
-    assert.equal(b.serviceWorker.register.mock.callCount(), 0);
-    assert.equal(b.registration.pushManager.subscribe.mock.callCount(), 0);
-    assert.equal(h.requests.length, 3);
-  });
-}
-
-test('notifReady waits for subscribe ACK and registered status, then resets immediately on connecting', async (t) => {
-  const b = browser(t, 'granted', true);
-  const h = b.setup();
-  h.source.open();
-  h.snapshot(['a'], { vapidPublicKey });
-  await setImmediate();
-  h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
-  await h.reply(0, pushStatus(false));
-  const response = h.assertPost(1, 'push/subscribe', { subscription });
-  assert.equal(h.store.getState().notifReady, false);
-  const json = deferred<{ ok: boolean }>();
-  const http = Response.json({});
-  t.mock.method(http, 'json', () => json.promise);
-  response.resolve(http);
-  await setImmediate();
-  assert.equal(h.store.getState().notifReady, false);
-  json.resolve({ ok: true });
-  await setImmediate();
-  assert.equal(h.store.getState().notifReady, false, 'ACK is not proof the endpoint is registered');
-  h.assertPost(2, 'push/status', { endpoint: subscription.endpoint });
-  await h.reply(2, pushStatus(true));
-  assert.equal(h.store.getState().notifReady, true);
-  h.source.drop();
-  assert.equal(h.store.getState().notifReady, false);
-  h.source.open();
-  h.snapshot(['a'], { vapidPublicKey });
-  await setImmediate();
-  h.assertPost(3, 'push/status', { endpoint: subscription.endpoint });
-  assert.equal(h.store.getState().notifReady, false);
-  await h.reply(3, pushStatus(true));
-  assert.equal(h.store.getState().notifReady, true);
-  assert.equal(h.store.getState().notifications.ready, true);
-  assert.equal(b.Notification.requestPermission.mock.callCount(), 0);
-  assert.equal(b.registration.pushManager.subscribe.mock.callCount(), 0);
-  assert.equal(b.serviceWorker.register.mock.callCount(), 0);
-  assert.equal(h.requests.length, 4);
-});
-
-for (const registered of [false, undefined]) {
-  test(`successful push ACK without registered:true (${registered}) remains unready`, async (t) => {
-    const b = browser(t, 'granted', true);
-    const h = b.setup();
-    h.source.open();
-    h.snapshot();
-    await setImmediate();
-    h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
-    await h.reply(0, pushStatus(false));
-    h.assertPost(1, 'push/subscribe', { subscription });
-    await h.reply(1, { ok: true });
-    h.assertPost(2, 'push/status', { endpoint: subscription.endpoint });
-    await h.reply(2, { ...pushStatus(false), registered });
-    assert.equal(h.store.getState().notifReady, false);
-    assert.equal(h.store.getState().notifications.busy, false);
-    assert.match(h.store.getState().notifications.error!, /服务端未确认订阅注册/);
-    assert.deepEqual(getUxErrors(), []);
-    assert.equal(h.requests.length, 3);
-  });
-}
-
-for (const outcome of ['success', 'failure'] as const) {
-  test(`a superseded push ${outcome} cannot set readiness or override the current registration`, async (t) => {
-    const b = browser(t, 'granted', true);
-    const h = b.setup();
-    h.source.open();
-    h.snapshot(['a'], { vapidPublicKey });
-    await setImmediate();
-    h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
-    await h.reply(0, pushStatus(false));
-    h.assertPost(1, 'push/subscribe', { subscription });
-    h.source.drop();
-    assert.equal(h.store.getState().notifReady, false);
-    h.source.open();
-    h.snapshot(['a'], { vapidPublicKey });
-    await setImmediate();
-    assert.equal(h.store.getState().notifReady, false);
-    if (outcome === 'success') {
-      await h.reply(1, { ok: true });
-    } else {
-      h.request(1).response.reject(new Error('obsolete push failure'));
-      await setImmediate();
-    }
-    assert.equal(h.store.getState().notifReady, false, 'an obsolete completion cannot confirm the new connection');
-    assert.equal(h.store.getState().notifications.error, null);
-    h.assertPost(2, 'push/status', { endpoint: subscription.endpoint });
-    await h.reply(2, pushStatus(true));
-    assert.equal(h.store.getState().notifReady, true);
-    assert.equal(h.store.getState().notifications.registered, true);
-    assert.equal(h.store.getState().notifications.error, null);
-    assert.deepEqual(getUxErrors(), []);
-    assert.equal(h.requests.length, 3, 'the obsolete operation must not verify or register again');
-    h.cleanup();
-    assert.equal(h.store.getState().notifReady, false);
-  });
-}
-
-test('foreground acknowledges only the observed attnId and delayed ACKs cannot clear newer or unrelated notifications', async (t) => {
-  const b = browser(t, 'granted', true);
-  const h = b.setup();
-  const note = (sessionId: string, attnId: number) => ({
-    tag: sessionId,
-    data: { type: 'notification', kind: 'ready', sessionId, attnId },
-    close: t.mock.fn(),
-  });
-  const old = note('a', 4);
-  const newer = note('a', 5);
-  const other = note('b', 8);
-  const unknown = note('not-in-snapshot', 1);
-  b.osNotifications.push(old, newer, other, unknown);
-  h.source.open();
-  h.snapshot([], {
-    sessions: [
-      { ...meta('a'), attention: 'ready', attnId: 4, seenId: 3 },
-      { ...meta('b'), attention: 'choice', attnId: 8, seenId: 7 },
-    ],
-    unreadCount: 7, inboxRevision: 20,
-  });
-  await setImmediate();
-  h.assertPost(0, 'push/status', { endpoint: subscription.endpoint });
-  await h.reply(0, pushStatus(true));
-  b.document.visibilityState = 'visible';
-  await h.load('a', [message('active')], false);
-  b.document.visibilityState = 'hidden';
-  h.store.getState().observeAttention('a', 4, true);
-  assert.equal(h.requests.length, 2, 'selecting a hidden session does not acknowledge it');
-
-  b.document.visibilityState = 'visible';
-  b.document.dispatchEvent(new Event('visibilitychange'));
-  b.document.dispatchEvent(new Event('visibilitychange'));
-  b.window.dispatchEvent(new Event('online'));
-  await setImmediate();
-  h.assertPost(2, 'inbox/seen', { sessionId: 'a', attnId: 4 });
-  h.assertPost(3, 'push/status', { endpoint: subscription.endpoint });
-  assert.equal(h.requests.length, 4, 'repeated foreground events coalesce the same observed attention');
-  for (const notification of [old, newer, other, unknown]) {
-    assert.equal(notification.close.mock.callCount(), 0, 'foreground alone never clears OS notifications');
-  }
-  await h.reply(3, pushStatus(true));
-
-  h.source.emit({ type: 'session/patch', sessionId: 'a', attention: 'ready', attnId: 5 });
-  assert.equal(h.requests.length, 4, 'new attention is not read until the view actually renders it');
-  h.store.getState().observeAttention('a', 5, true);
-  h.assertPost(4, 'inbox/seen', { sessionId: 'a', attnId: 5 });
-  await h.reply(2, { ok: true });
-  assert.equal(session('a', h.store).attnId, 5);
-  assert.equal(session('a', h.store).attention, 'ready');
-  assert.equal(session('a', h.store).seenId, 3, 'HTTP ACK is not an authoritative seen patch');
-  assert.equal(h.store.getState().unreadCount, 7);
-  b.window.dispatchEvent(new Event('online'));
-  assert.equal(h.requests.length, 5, 'the old completion must not remove the newer in-flight seen guard');
-
-  h.source.emit({ type: 'session/patch', sessionId: 'a', attention: null, seenId: 4 });
-  await setImmediate();
-  assert.equal(session('a', h.store).attention, 'ready');
-  assert.equal(session('a', h.store).attnId, 5);
-  assert.equal(session('a', h.store).seenId, 4);
-  assert.equal(h.store.getState().unreadCount, 7);
-  assert.ok(old.close.mock.callCount() > 0);
-  assert.equal(newer.close.mock.callCount(), 0);
-  assert.equal(other.close.mock.callCount(), 0);
-  assert.equal(unknown.close.mock.callCount(), 0);
-
-  await h.reply(4, { ok: true });
-  assert.equal(session('a', h.store).attention, 'ready');
-  assert.equal(session('a', h.store).seenId, 4);
-  h.source.emit({ type: 'session/patch', sessionId: 'a', attention: null, attnId: 5, seenId: 5 });
-  await setImmediate();
-  assert.equal(h.store.getState().unreadCount, 6);
-  assert.equal(session('a', h.store).attention, null);
-  assert.equal(session('b', h.store).attention, 'choice');
-  assert.equal(session('b', h.store).seenId, 7);
-  assert.ok(newer.close.mock.callCount() > 0);
-  assert.equal(other.close.mock.callCount(), 0);
-  assert.equal(unknown.close.mock.callCount(), 0);
-  assert.deepEqual(getUxErrors(), []);
-  assert.equal(h.requests.length, 5);
-});
-
-test('active foreground chat does not acknowledge unread replies before visible fresh history', async (t) => {
-  const b = browser(t, 'denied', false);
-  const h = b.setup();
-  b.document.visibilityState = 'visible';
-  h.source.open();
-  h.snapshot([], { sessions: [{ ...meta('a'), attention: 'ready', attnId: 4, seenId: 3 }] });
-  h.store.getState().setActiveId('a');
-  assert.ok(h.requests.every((request) => request.url !== intentUrl('inbox/seen')));
-  h.store.getState().observeAttention('a', 4, true);
-  assert.ok(h.requests.every((request) => request.url !== intentUrl('inbox/seen')), 'unloaded history cannot be read');
-  const historyIndex = h.requests.findIndex((request) => request.url === intentUrl('session/chat'));
-  await h.history(historyIndex, { sessionId: 'a', messages: [message('latest')], hasMore: false, latest: true });
-  h.store.getState().observeAttention('a', 4, false);
-  b.document.dispatchEvent(new Event('visibilitychange'));
-  assert.ok(h.requests.every((request) => request.url !== intentUrl('inbox/seen')), 'reading older content is not reading the latest reply');
-  h.store.getState().observeAttention('a', 4, true);
-  assert.equal(h.requests.at(-1)?.url, intentUrl('inbox/seen'));
-});
-
-test('snapshot-derived unread counts exclude seen choices without clearing their required decisions', (t) => {
-  const h = setup(t, createCockpitStore());
-  h.source.open();
-  h.snapshot([], {
-    sessions: [
-      { ...meta('seen-choice'), attention: 'choice', attnId: 4, seenId: 4 },
-      { ...meta('unread-choice'), attention: 'choice', attnId: 5, seenId: 4 },
-      { ...meta('seen-ready'), attention: 'ready', attnId: 3, seenId: 3 },
-      { ...meta('legacy-choice'), attention: 'choice' },
-    ],
-  });
-  assert.equal(h.store.getState().unreadCount, 1);
-  assert.equal(session('seen-choice', h.store).attention, 'choice');
-  h.source.emit({ type: 'session/patch', sessionId: 'unread-choice', seenId: 5 });
-  assert.equal(h.store.getState().unreadCount, 0);
-  assert.equal(session('unread-choice', h.store).attention, 'choice');
-  h.source.emit({ type: 'session/patch', sessionId: 'unread-choice', seenId: 4, title: 'Still needs a decision' });
-  assert.equal(session('unread-choice', h.store).seenId, 5);
-  assert.equal(session('unread-choice', h.store).title, 'Still needs a decision');
-  assert.equal(h.store.getState().unreadCount, 0);
-  assert.equal(h.requests.length, 0);
-});
-
-test('authoritative snapshot totals survive partial patches and adjust only by changed unread rows', (t) => {
-  const h = setup(t, createCockpitStore());
-  h.source.open();
-  const sessions: SessionMeta[] = [
-    { ...meta('a'), attention: null, attnId: 1, seenId: 1 },
-    { ...meta('b'), attention: 'choice', attnId: 3, seenId: 3 },
-  ];
-  h.snapshot([], { sessions, unreadCount: 8, inboxRevision: 40 });
-  assert.equal(h.store.getState().unreadCount, 8);
-  h.source.emit({ type: 'session/patch', sessionId: 'a', title: 'Renamed', lastActivity: 5 });
-  h.source.emit({ type: 'session/patch', sessionId: 'b', seenId: 1 });
-  assert.equal(h.store.getState().unreadCount, 8);
-  assert.equal(session('b', h.store).seenId, 3);
-  assert.equal(session('b', h.store).attention, 'choice');
-
-  for (let repeat = 0; repeat < 2; repeat++) {
-    h.source.emit({ type: 'session/patch', sessionId: 'a', attention: 'ready', attnId: 2 });
-    assert.equal(h.store.getState().unreadCount, 9);
-  }
-  h.source.emit({ type: 'session/patch', sessionId: 'a', nativeProcessing: true });
-  assert.equal(h.store.getState().unreadCount, 9, 'native activity is not an unread source');
-  h.source.emit({ type: 'session/patch', sessionId: 'a', attention: null, seenId: 2 });
-  assert.equal(h.store.getState().unreadCount, 8);
-  for (let repeat = 0; repeat < 2; repeat++) {
-    h.source.emit({ type: 'session/added', session: { ...meta('c'), attention: 'ready', attnId: 1, seenId: 0 } });
-    assert.equal(h.store.getState().unreadCount, 9);
-  }
-  h.source.emit({ type: 'session/removed', sessionId: 'c' });
-  assert.equal(h.store.getState().unreadCount, 8);
-  h.snapshot([], { sessions, unreadCount: 40, inboxRevision: 41 });
-  assert.equal(h.store.getState().unreadCount, 40, 'a fresh server total replaces the previous projection');
-  assert.equal(h.store.getState().inboxRevision, 41);
-  assert.equal(h.requests.length, 0);
-});
-
-for (const includeCount of [true, false]) {
-  test(`notify before its metadata patch is counted once (${includeCount ? 'authoritative' : 'derived'} total)`, (t) => {
-    const h = setup(t, createCockpitStore());
-    h.source.open();
-    h.snapshot([], {
-      sessions: [{ ...meta('a'), attention: null, attnId: 1, seenId: 1 }],
-      unreadCount: 5, inboxRevision: 10,
-    });
-    const notification: Extract<ServerEvent, { type: 'session/notify' }> = {
-      type: 'session/notify', sessionId: 'a', title: 'Ready', attention: 'ready', body: 'Done',
-      attnId: 2, inboxRevision: 11, ...(includeCount ? { unreadCount: 6 } : {}),
-    };
-    h.source.emit(notification);
-    assert.equal(h.store.getState().unreadCount, 6);
-    assert.equal(h.store.getState().inboxRevision, 11);
-    assert.equal(session('a', h.store).attention, 'ready');
-    assert.equal(session('a', h.store).attnId, 2);
-    h.source.emit({ type: 'session/patch', sessionId: 'a', attention: 'ready', attnId: 2 });
-    h.source.emit({ type: 'session/patch', sessionId: 'a', title: 'Renamed' });
-    h.source.emit(notification);
-    assert.equal(h.store.getState().unreadCount, 6);
-
-    h.source.emit({ ...notification, attnId: 3, inboxRevision: 9, unreadCount: 99 });
-    h.source.emit({ ...notification, attnId: 3, inboxRevision: undefined, unreadCount: 99 });
-    h.source.emit({ ...notification, attnId: 1, inboxRevision: 12, unreadCount: 99 });
-    assert.equal(h.store.getState().unreadCount, 6);
-    assert.equal(h.store.getState().inboxRevision, 11);
-    assert.equal(session('a', h.store).attnId, 2);
-
-    h.source.emit({ type: 'session/patch', sessionId: 'a', attention: null, seenId: 2 });
-    assert.equal(h.store.getState().unreadCount, 5);
-    h.source.emit({ ...notification, inboxRevision: 12, unreadCount: 99 });
-    assert.equal(h.store.getState().unreadCount, 5, 'a notification already seen cannot restore a stale total');
-    assert.equal(session('a', h.store).attention, null);
-    assert.equal(h.requests.length, 0);
-  });
-}

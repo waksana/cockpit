@@ -2,14 +2,14 @@
 // Desktop: sidebar + chat side-by-side. Mobile: list ↔ detail two-level nav.
 
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Routes, Route, Navigate, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { useCockpit } from './net/store';
 import { useUp, recordLocation } from './lib/nav';
 import { createSessionMetadataSelector } from './lib/sessionSelectors';
 import {
   detailsNavigation, focusedSessionId, sessionNavigation,
-  sessionPath, sessionRoute, subscribeSessionNotifications, type SessionPanel,
+  sessionRoute, type SessionPanel,
 } from './lib/routeOwnership';
 import { Shell, MasterPane, DetailPane } from './components/Shell';
 import { Sidebar } from './components/Sidebar';
@@ -27,7 +27,6 @@ import { SessionDeleteDialog } from './components/SessionDeleteDialog';
 
 const ManageWorkspace = lazy(() => import('./components/ManageWorkspace').then((m) => ({ default: m.ManageWorkspace })));
 const DirPicker = lazy(() => import('./components/DirPicker').then((m) => ({ default: m.DirPicker })));
-const Files = lazy(() => import('./pages/Files').then((m) => ({ default: m.Files })));
 
 const PHONE_QUERY = '(max-width: 599px)';
 const phoneSnapshot = () => typeof window.matchMedia === 'function' && window.matchMedia(PHONE_QUERY).matches;
@@ -45,10 +44,10 @@ function Workspace() {
   const sessions = useCockpit(selectMetadata);
   const {
     connState, newSession, forkSession,
-    setMode, pinSession, globalModels,
+    setMode, globalModels,
   } = useCockpit(useShallow((s) => ({
     connState: s.connState, newSession: s.newSession, forkSession: s.forkSession,
-    setMode: s.setMode, pinSession: s.pinSession, globalModels: s.globalModels,
+    setMode: s.setMode, globalModels: s.globalModels,
   })));
   const active = useMemo(
     () => sessions.find((s) => s.sessionId === routeId) ?? null,
@@ -169,7 +168,6 @@ function Workspace() {
         onCancel: () => setDialog(null),
       });
     },
-    pin: (sessionId, pinned) => { void pinSession(sessionId, pinned); },
     delete: doDelete,
   };
   const getSessionMenuItems = (session: typeof sessions[number]) => (
@@ -267,28 +265,17 @@ function Workspace() {
   );
 }
 
-function LegacyAutomationRedirect() {
-  const { pathname } = useLocation();
-  const { sessionId } = sessionRoute(pathname);
-  return <Navigate to={sessionId === null ? '/' : sessionPath(sessionId, 'schedules')} replace />;
-}
-
 export default function App() {
   const location = useLocation();
-  const navigate = useNavigate();
   const phone = useSyncExternalStore(subscribePhone, phoneSnapshot, serverPhoneSnapshot);
   const activeId = useCockpit((s) => s.activeId);
   const setActiveId = useCockpit((s) => s.setActiveId);
   const focusedId = focusedSessionId(location.pathname, phone);
   // Data-layer focus follows visible chat ownership, never the other way around.
-  // This also clears attention ownership on global routes and full-page details.
+  // Global routes and full-page details release the visible chat read.
   useLayoutEffect(() => {
     if (activeId !== focusedId) setActiveId(focusedId);
   }, [activeId, focusedId, setActiveId]);
-  useEffect(() => subscribeSessionNotifications(window, navigator.serviceWorker, (sessionId) => {
-    const destination = sessionNavigation(location.pathname, sessionId);
-    return navigate(destination.to, { replace: destination.replace });
-  }), [location.pathname, navigate]);
   useEffect(() => { document.title = 'cockpit'; }, []);
   // Single client lifecycle: connect the SSE stream once on mount.
   useEffect(() => useCockpit.getState().init(), []);
@@ -307,12 +294,10 @@ export default function App() {
     <Suspense fallback={<div className="detail-empty" role="status">加载页面…</div>}>
       <Routes>
       <Route path="/" element={<Workspace />} />
-      <Route path="/files" element={<Files />} />
       <Route path="/mcp" element={<ManageWorkspace />} />
       <Route path="/mcp/:item" element={<ManageWorkspace />} />
       <Route path="/skills" element={<ManageWorkspace />} />
       <Route path="/skills/:item" element={<ManageWorkspace />} />
-      <Route path="/session/:sessionId/automation" element={<LegacyAutomationRedirect />} />
       <Route path="/session/:sessionId" element={<Workspace />} />
       <Route path="/session/:sessionId/:panel" element={<Workspace />} />
       </Routes>

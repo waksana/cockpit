@@ -24,6 +24,9 @@ const retired = [
   'flow-schedule/add', 'flow-schedule/stop', 'flow-schedule/list',
   'session/set-spawned-by',
   'session/tool-image', 'files/from-tool-image',
+  'files/list', 'files/get', 'files/associate', 'session/pin', 'session/auto-name',
+  'inbox/seen', 'push/subscribe', 'push/status', 'push/test', 'push/unsubscribe',
+  'speech/token', 'system/consumer/status', 'system/consumer/restart',
 ];
 
 async function listing(query = ''): Promise<Listing> {
@@ -225,14 +228,13 @@ test('listing and detail descriptions convey refinements and runtime guarantees 
       /one native event page/i, /without a server chat cache or projection/i,
       /max counts events, not display messages/i, /passive reads do not load sessions/i,
       /expired cursor is not a continuation/i, /binary tool media is omitted/i,
-      /never automatically retained/i, /no image locators are generated/i,
-      /native image lookup is retired/i, /existing local original.*managed \/uploads file/i,
+      /never automatically retained/i, /no file library or image lookup is provided/i,
     ]],
     ['schedule/add', [
       /exactly one of interval or at/i, /1 second to 24 hours/i,
       /cron.*not supported/i, /no self-paced creation or rearming/i,
       /pause on native idle unload/i, /relative delays restart on resume/i,
-      /pinning does not keep it loaded/i, /not an always-on scheduler/i,
+      /schedules do not keep it loaded/i, /not an always-on scheduler/i,
     ]],
     ['schedule/list', [
       /already-loaded session/i, /selfPaced:true.*no fixed cadence/i,
@@ -243,15 +245,6 @@ test('listing and detail descriptions convey refinements and runtime guarantees 
       /native stop result/i, /false means none was returned/i,
       /no list read.*infer success/i, /errors propagate/i, /does not rearm/i,
     ]],
-    ['session/pin', [
-      /UI pin.*not runtime residency/i, /neither pinning nor future schedules/i,
-      /schedules pause while unloaded/i,
-    ]],
-    ['speech/token', [
-      /may reuse a token for nine minutes/i, /no expiry or remaining-validity field/i,
-      /does not imply a fresh token/i, /cancellation and credential recovery are not guaranteed/i,
-    ]],
-    ['push/subscribe', [/https/i]],
     ['session/rewind', [
       /native file rollback/i, /backend validates runtime support/i,
       /conflicts or partial failures/i,
@@ -268,9 +261,9 @@ test('listing and detail descriptions convey refinements and runtime guarantees 
       /optional cwd/i, /omitted cwd uses the server home directory/i, /never an arbitrary session/i,
     ]],
     ['prompt', [
-      /attachment, attachments.*ordered parts/i, /literal \/uploads\/<safe-basename>/i,
-      /server resolves authoritative metadata.*native file paths/i, /mutually exclusive/i,
-      /agent must explicitly read\/view attachments/i, /acceptance does not mean their contents were read/i,
+      /SDK-native file, directory, selection or blob/i, /native runtime filesystem, not this client/i,
+      /no upload.*file association/i, /retired attachment\/parts.*rejected/i,
+      /acceptance does not mean attachment content was read/i, /model format support is separate/i,
     ]],
   ] as const;
   for (const [name, patterns] of descriptions) {
@@ -379,20 +372,6 @@ test('schedule requires exactly one timing selector although each selector is in
   }
 });
 
-test('push endpoints require HTTPS beyond the advertised URI format', async () => {
-  const keys = { p256dh: 'B' + 'A'.repeat(86), auth: 'A'.repeat(22) };
-  const { inputSchema } = await detail('push/subscribe');
-  const endpoint = schemaAt(inputSchema, 'properties', 'subscription', 'properties', 'endpoint');
-  assert.equal(endpoint.type, 'string');
-  assert.equal(endpoint.format, 'uri');
-  assert.equal(Intents['push/subscribe'].body.safeParse({
-    subscription: { endpoint: 'https://push.example/subscription', keys },
-  }).success, true);
-  for (const endpoint of ['http://push.example/subscription', 'ftp://push.example/subscription', '/subscription', '']) {
-    assert.equal(Intents['push/subscribe'].body.safeParse({ subscription: { endpoint, keys } }).success, false);
-  }
-});
-
 test('rewind exposes optional rollbackFiles while interaction modes remain distinct from permissions', async () => {
   const rewind = (await detail('session/rewind')).inputSchema;
   assert.deepEqual(rewind.required, ['sessionId', 'toMsgId']);
@@ -416,32 +395,24 @@ test('skills/global advertises optional nonempty cwd without requiring a session
   }
 });
 
-test('prompt advertises one optional uploaded attachment with a literal stored URL, not a client path', async () => {
+test('prompt advertises SDK-native attachment shapes without a managed file contract', async () => {
   const { inputSchema } = await detail('prompt');
   assert.deepEqual(inputSchema.required, ['sessionId', 'text']);
-  const attachment = schemaAt(inputSchema, 'properties', 'attachment');
-  assert.equal(attachment.type, 'object');
-  assert.deepEqual(attachment.required, ['kind', 'name', 'url']);
-  assert.deepEqual(Object.keys(object(attachment.properties)).sort(), ['kind', 'mime', 'name', 'size', 'url']);
-  assert.deepEqual(schemaAt(inputSchema, 'properties', 'attachment', 'properties', 'kind').enum, ['image', 'file']);
-  const url = schemaAt(inputSchema, 'properties', 'attachment', 'properties', 'url');
-  assert.equal(url.type, 'string');
-  assert.equal(typeof url.pattern, 'string');
-  assert.match(String(url.description), /literal local upload URL/i);
+  const attachments = schemaAt(inputSchema, 'properties', 'attachments');
+  assert.equal(attachments.type, 'array');
+  assert.equal(attachments.maxItems, 20);
+  assert.equal('attachment' in object(inputSchema.properties), false);
+  assert.equal('parts' in object(inputSchema.properties), false);
   assert.equal(Intents.prompt.body.safeParse({ sessionId: 's', text: 'hello' }).success, true);
-  for (const kind of ['image', 'file']) {
-    assert.equal(Intents.prompt.body.safeParse({
-      sessionId: 's', text: '', attachment: { kind, name: 'picture.png', url: '/uploads/stored-picture.png' },
-    }).success, true);
-  }
-  for (const url of [
-    '/uploads/../picture.png', '/uploads/picture..png', '/uploads/%70icture.png',
-    '/uploads/picture.png?download=1', '/uploads/picture.png#preview',
-    'https://files.example/picture.png', '/workspace/picture.png', '/uploads/picture.png\n',
+  for (const attachment of [
+    { type: 'file', path: '/fixture/a.txt' },
+    { type: 'directory', path: '/fixture' },
+    { type: 'selection', filePath: '/fixture/a.txt', displayName: 'Selection', text: 'native selection' },
+    { type: 'blob', data: 'Zml4dHVyZQ==', mimeType: 'text/plain' },
   ]) {
     assert.equal(Intents.prompt.body.safeParse({
-      sessionId: 's', text: '', attachment: { kind: 'image', name: 'picture.png', url },
-    }).success, false, url);
+      sessionId: 's', text: '', attachments: [attachment],
+    }).success, true);
   }
 });
 
@@ -521,8 +492,7 @@ test('the actual no-boot server advertises all GET/POST transports without impli
   const { transports } = await listing();
   assert.deepEqual(transportKeys(transports), [
     'GET /admin/lifecycle', 'GET /capabilities', 'GET /events', 'GET /health', 'GET /status',
-    'GET /system/versions', 'GET /uploads/:name', 'GET /version',
-    'POST /admin/restart', 'POST /chat/stream', 'POST /intent/*', 'POST /upload',
+    'GET /version', 'POST /admin/restart', 'POST /chat/stream', 'POST /intent/*',
   ].sort());
   for (const { method, path } of transports) {
     assert.ok(method === 'GET' || method === 'POST');

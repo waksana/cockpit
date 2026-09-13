@@ -8,9 +8,9 @@ import { hasMessageContent } from '../lib/messageContent';
 import { Composer } from './Composer';
 import { Icon } from './Icon';
 import { ContextMenu, type MenuItem } from './ContextMenu';
-import type { ChatMessage, ChatSession, ToolCall, Attachment, ExitPlanModeAction } from '../net/types';
+import type { ChatMessage, ChatSession, ToolCall, ExitPlanModeAction } from '../net/types';
 import { acknowledgeInView, sendThreadDraft } from '../lib/draft';
-import { getSessionDraft, type UploadFile } from '../lib/attachmentSend';
+import { getSessionDraft } from '../lib/textDraft';
 import { observeThreadScroll, READING_ACTIVITY_EVENT, type ThreadScroll } from './threadScroll';
 import { observeHistoryPrefetch } from './historyPrefetch';
 import { canSkipMessageLayout, createMessageLayout } from './messageLayout';
@@ -230,7 +230,6 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
 //    with a light byline (icon + Copilot + time) shown once per assistant group;
 //  - system messages are a quiet centered note.
 const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinkingLive, onMenu }: { m: ChatMessage; sessionId: string; showByline: boolean; thinkingLive: boolean; onMenu: (e: React.MouseEvent, m: ChatMessage) => void }) {
-  const hasAttachment = m.parts ? m.parts.some(part => part.type === 'file') : !!(m.attachments?.length || m.attachment);
   if (m.subtype === 'subagent' && m.subagent) {
     return <div className="message is-doc" data-message-id={m.id} onContextMenu={(e) => onMenu(e, m)}><SubagentCard key={m.subagent.toolCallId ?? m.id} m={m} sessionId={sessionId} /></div>;
   }
@@ -239,7 +238,6 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
     const copyable = messageCopyText(m);
     const cls = ['message', 'is-out'];
     if (isAskReply) cls.push('is-ask-reply');
-    if (hasAttachment) cls.push('is-attachment');
     return (
       <div className="user-message" onContextMenu={(e) => onMenu(e, m)}>
         <div className={cls.join(' ')} data-message-id={m.id}>
@@ -265,12 +263,12 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
     return (
       <div className="message is-system" data-message-id={m.id} data-level={level} onContextMenu={(e) => onMenu(e, m)}>
         {level === 'error' && <span className="sys-ico" aria-hidden="true"><Icon name="error" size={14} /></span>}
-        {m.parts || hasAttachment ? <MessageContent message={m} sessionId={sessionId} /> : m.content}
+        {m.content}
       </div>
     );
   }
   return (
-    <article className={`message is-doc${hasAttachment ? ' is-attachment' : ''}`} onContextMenu={(e) => onMenu(e, m)}>
+    <article className="message is-doc" onContextMenu={(e) => onMenu(e, m)}>
       {showByline && !hasMessageProcess(m) && hasMessageContent(m) && (
         <header className="doc-byline">
           <span className="doc-mark" aria-hidden="true"><Icon name="compose" size={15} /></span>
@@ -332,8 +330,7 @@ const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionI
 
 interface ThreadProps {
   session: ChatSession;
-  onSend?: (text: string, attachment?: Attachment, attachments?: Attachment[]) => Promise<boolean>;
-  uploadFile?: UploadFile;
+  onSend?: (text: string) => Promise<boolean>;
   onRespondAsk?: (requestId: string, answer: string, wasFreeform: boolean) => Promise<boolean>;
   onRespondPlan?: (requestId: string, action: ExitPlanModeAction) => Promise<boolean>;
   onPlanSupersede?: (requestId: string, message: string) => Promise<boolean>;
@@ -343,14 +340,13 @@ interface ThreadProps {
   onInterrupt?: () => Promise<{ ok: true; interrupted: boolean }>;
   onLoadMore: () => void;
   onRetryHistory?: () => void;
-  onAttentionVisible?: (attnId: number, visible: boolean) => void;
   // Read-only transcript (e.g. a trashed-session preview): renders the paginated
   // message list but hides the composer and every interactive banner, so the
   // conversation can be browsed but not driven.
   readOnly?: boolean;
 }
 
-export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPlan, onPlanSupersede, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, onAttentionVisible, readOnly = false }: ThreadProps) {
+export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSupersede, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, readOnly = false }: ThreadProps) {
   const connected = useCockpit((s) => s.connState === 'open');
   const interruptAction = useKeyedAction(`interrupt:${session.sessionId}`);
   const [interruptNotice, setInterruptNotice] = useState<{ sessionId: string; text: string } | null>(null);
@@ -420,28 +416,6 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
     });
   }, []);
   const prevLastIdRef = useRef<string | undefined>(undefined);
-  const reportVisibleAttention = useCallback(() => {
-    const el = scrollRef.current;
-    const choiceVisible = session.attention === 'choice' && !!(session.ask || session.planRequest || session.elicitation);
-    const latestVisible = !preparingHistory && session.materialized && !session.historyStale && session.messages.length > 0
-      && !!el && el.scrollHeight - el.clientHeight - el.scrollTop <= 2;
-    onAttentionVisible?.(session.attnId ?? 0, !readOnly && (choiceVisible || latestVisible));
-  }, [onAttentionVisible, readOnly, session.attention, session.attnId, session.ask, session.planRequest,
-    session.elicitation, session.materialized, session.historyStale, session.messages.length, preparingHistory]);
-  useLayoutEffect(reportVisibleAttention, [reportVisibleAttention, session.messages]);
-  useEffect(() => {
-    const el = scrollRef.current;
-    el?.addEventListener('scroll', reportVisibleAttention, { passive: true });
-    document.addEventListener('visibilitychange', reportVisibleAttention);
-    window.addEventListener('focus', reportVisibleAttention);
-    reportVisibleAttention();
-    return () => {
-      el?.removeEventListener('scroll', reportVisibleAttention);
-      document.removeEventListener('visibilitychange', reportVisibleAttention);
-      window.removeEventListener('focus', reportVisibleAttention);
-      onAttentionVisible?.(session.attnId ?? 0, false);
-    };
-  }, [reportVisibleAttention, onAttentionVisible, session.attnId]);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     const content = contentRef.current;
@@ -521,13 +495,13 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
     runInView(() => draft.runAction(send))
   ), [draft, runInView]);
 
-  const handleSend = useCallback((): Promise<boolean> => runInView(() => draft.send((text, attachment, attachments) => sendThreadDraft(text, {
+  const handleSend = useCallback((): Promise<boolean> => runInView(() => draft.send((text) => sendThreadDraft(text, {
     askRequestId: ask?.requestId,
     planRequestId: planRequest?.requestId,
     onSend,
     onRespondAsk,
     onPlanSupersede,
-  }, attachment, attachments))), [draft, ask, planRequest, onSend, onRespondAsk, onPlanSupersede, runInView]);
+  }))), [draft, ask, planRequest, onSend, onRespondAsk, onPlanSupersede, runInView]);
 
   const handleChoice = useCallback((choice: string): Promise<boolean> => runAction(
     () => ask ? onRespondAsk?.(ask.requestId, choice, false) : undefined,
@@ -711,8 +685,6 @@ export function Thread({ session, onSend, uploadFile, onRespondAsk, onRespondPla
           placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : '输入消息…'))}
           draft={draft}
           onSend={handleSend}
-          uploadFile={uploadFile}
-          attachmentBlocked={!!ask || !!planRequest}
           sendBlocked={ask?.allowFreeform === false}
         />
       )}

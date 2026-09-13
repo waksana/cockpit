@@ -219,7 +219,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       },
       sessionConfig: { ...config, enableConfigDiscovery: false },
     });
-    const engine = new Engine({ runtime, prefsFile: join(root, 'prefs.json') });
+    const engine = new Engine({ runtime });
     const chat = async (id: string) => {
       const page = await engine.chat({
         sessionId: id, source: 'persisted', direction: 'backward', max: 256, waitMs: 0, bootstrap: false,
@@ -233,10 +233,10 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       const deadline = Date.now() + 10_000;
       while (stable < 2 && Date.now() < deadline) {
         const meta = (await engine.getMeta(id))!;
-        stable = meta.status === 'idle' && !sessionMetaBusy(meta) && !meta.autoNaming ? stable + 1 : 0;
+        stable = meta.status === 'idle' && !sessionMetaBusy(meta) ? stable + 1 : 0;
         await sleep(20);
       }
-      assert.equal(stable, 2, 'Fixture must wait for native work and automatic-name preflight, not only idle paint');
+      assert.equal(stable, 2, 'Fixture must wait for native work, not only idle paint');
     };
     try {
       await engine.start();

@@ -30,7 +30,6 @@ const LOAD_AWARE_INTENTS = new Set([
   'session/reload',
   'session/load',
   'session/compact',
-  'session/auto-name',
   'session/rewind',
   'setModel',
   'setMode',

@@ -15,5 +15,3 @@ export const BASE_URL = DEV && import.meta.env?.COCKPIT_CHAT_LAB === true
 export const EVENTS_URL = `${BASE_URL}/events`;
 export const CHAT_STREAM_URL = `${BASE_URL}/chat/stream`;
 export const intentUrl = (name: string): string => `${BASE_URL}/intent/${name}`;
-export const uploadUrl = (name: string, mime: string): string =>
-  `${BASE_URL}/upload?name=${encodeURIComponent(name)}&mime=${encodeURIComponent(mime)}`;

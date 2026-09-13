@@ -87,7 +87,7 @@ test('structural old journals retain numeric timestamps and legacy top-level own
   assert.equal(state.messages[0]?.subMessages?.[0]?.id, 'old-message');
 });
 
-test('native user anchors use journal IDs, not accepted message IDs; cockpit attachments survive', () => {
+test('native user anchors and original text survive without interpreting module attachment markers', () => {
   const marker = '<cockpit-attachment kind="image" name="a%20b.png" url="/uploads/synthetic.png" size="123"/>';
   const { state } = fold([native('user.message', {
     messageId: 'accepted-send-id', content: `${marker}\nagent guidance`,
@@ -95,8 +95,8 @@ test('native user anchors use journal IDs, not accepted message IDs; cockpit att
   }, { id: 'user-journal-id' })]);
   assert.equal(state.messages[0]?.id, 'user-journal-id');
   assert.equal(state.messages[0]?.timestamp, Date.parse(timestamp));
-  assert.equal(state.messages[0]?.content, '');
-  assert.equal(state.messages[0]?.attachment?.name, 'a b.png');
+  assert.equal(state.messages[0]?.content, `${marker}\nagent guidance`);
+  assert.equal('attachment' in state.messages[0]!, false);
 });
 
 for (const withStart of [true, false]) {

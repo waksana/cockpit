@@ -4,4 +4,3 @@ export { OfficialRuntime, modelOption, type RuntimeOptions, type RuntimeSession 
 export { foldEvent, newFoldState, type FoldState } from './fold.ts';
 export { cockpitHome, copilotPath } from './paths.ts';
 export { normalizeEvent, type SdkEvent, type RuntimeAttachment } from './sdk-types.ts';
-export { createContextReset, CONTEXT_RESET_TOOL } from './context-reset.ts';

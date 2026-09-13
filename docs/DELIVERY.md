@@ -15,22 +15,23 @@ project-scoped, so it must not be described as a cross-project isolation boundar
 The detailed installed CLI contract is in the toolkit's
 `skills/service-development/references/commands.md`.
 
-The runtime closure includes root `skills/`: packaged core resolves bundled
-skills relative to its own release, never through a development checkout or a
-global fallback. Before accepting a new archive, run
+The runtime closure excludes `module-staging/`, old `modules/` and root `skills/`.
+The foundation does not register a bundled reset skill. Before accepting a new archive, run
 `COCKPIT_RELEASE_ARCHIVE=/absolute/runtime.tar.gz node --test scripts/delivery-package.test.mjs`.
-This checks the extracted package's core-relative skill path and local Markdown
-references. The normal source suite also guards the committed artifact list;
+This checks the actual tar's native entries and absence of parked capabilities.
+The normal source suite also guards the committed artifact list and archived
+source digests/modes;
 it does not claim to have checked an archive when that variable is absent.
 
-## Accepted multi-project release (2026-09-11)
+## Historical multi-project release (2026-09-11)
 
 Cockpit source `1a3c49c4e9d549216e036e1563853775206964fc` ran from archive
 `172b361e35efe8aa90a0d7b8f8849382a827f0db0d5eb01e98a982b8049da6fe`
 after native safe-idle replacement, request `cockpit-v3-deploy-1a3c49c-20260911`.
-The system menu now shows per-project runtime/version and delivery state through
-the viewer-only, on-demand authority described in [system versions](system-versions.md).
-This dated receipt is not a substitute for current `/version` and `/system/versions`.
+That release's system menu showed per-project runtime/version and delivery state.
+The viewer has since been [parked](../module-staging/README.md), not kept as a
+current `/system/versions` capability. This dated receipt is not a substitute
+for current `/version` evidence.
 
 The external controller is toolkit 0.2.2, commit
 `d39b915010dccb5919385e1a7952f4078816ba50`. It invalidates expired rollback
@@ -38,13 +39,14 @@ selection without blocking known-good boot, gives explicit original-run build
 reconciliation its own finite window without redispatch, and selects indexed
 actionable work instead of repeatedly reading retained history. Synthetic failure
 fixtures cover those paths; no production timeout/rollback was manufactured.
-The package includes the bundled reset skill and preserves hashed Web resources.
+That historical package included the reset skill. The thin runtime excludes it;
+hashed Web resource retention remains a separate launcher responsibility.
 
-Task and WeChat have independent versions, launchers and lifecycle contracts.
+At that release, Task and WeChat had independent versions, launchers and lifecycle contracts.
 Task's first migration used an explicitly authorized temporary ingress gate and
 completed-operation boundary; subsequent updates use native drain. A connector
 may have a historical successful delivery while its current process is unavailable.
-The view reports both facts rather than treating historical success as present health.
+The parked viewer distinguished both facts rather than treating historical success as present health.
 Business recovery and any message transmission remain the connector owner's scope.
 
 ## Build and submission
@@ -207,7 +209,7 @@ using the toolkit's `authorize` command, then the owner prepares with
 Never convert a build-only request in place: that is a conflicting body.
 Approval-file content alone does not register an approval. A changed committed
 project config hash needs explicit review and a matching operator allowlist
-update before submission. Push current source to this private main first;
+update before submission. Push current source to main first;
 the runner verifies requested/observed/main ancestry and never force-pushes.
 
 Unknown dispatch or acknowledgement: read the original ID. Do not automatically

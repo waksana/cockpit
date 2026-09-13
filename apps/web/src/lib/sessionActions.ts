@@ -5,7 +5,6 @@ import type { SessionPanel } from './routeOwnership';
 export interface SessionActionHandlers {
   openPanel: (sessionId: string, panel: SessionPanel) => void;
   fork: (sessionId: string) => void;
-  pin: (sessionId: string, pinned: boolean) => void;
   delete: (sessionId: string) => void;
 }
 
@@ -28,18 +27,11 @@ export function sessionActionItems(
       label: '分叉为独立会话',
       separatorBefore: true,
       icon: 'newchat',
-      disabled: !connected || !session.loaded || !!(session.autoNaming || session.status === 'running'
+      disabled: !connected || !session.loaded || !!(session.status === 'running'
         || session.nativeProcessing || session.loading || session.closing || session.cancelling
         || session.compacting || session.ask || session.planRequest || session.elicitation)
         || !!session.queue?.length || !!session.activeSubagents || !!session.scheduleCount,
       onClick: () => handlers.fork(sessionId),
-    },
-    {
-      id: 'pin',
-      label: session.pinned ? '取消置顶' : '置顶',
-      icon: session.pinned ? 'unpin' : 'pin',
-      disabled: !connected,
-      onClick: () => handlers.pin(sessionId, !session.pinned),
     },
     {
       id: 'delete',

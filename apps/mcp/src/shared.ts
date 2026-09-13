@@ -13,9 +13,8 @@ import {
 } from '@cockpit/protocol';
 
 export type {
-  Attachment, DirListing, McpServerGlobal, PanelItem, ScheduleEntry, SessionBrief, SessionMeta,
+  NativeAttachment, DirListing, McpServerGlobal, PanelItem, ScheduleEntry, SessionBrief, SessionMeta,
   SessionPanels, SessionPlan, SkillGlobal, SkillSession, Snapshot, TodoProgress,
-  UploadedFile,
 } from '@cockpit/protocol';
 export type McpSessionResult = IntentResult<'mcp/session'>;
 export type McpServerSession = ProtocolMcpServerSession;

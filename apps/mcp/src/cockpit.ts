@@ -1,7 +1,6 @@
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
-import { Readable, Transform } from 'node:stream';
-import { pipeline } from 'node:stream/promises';
+import { Readable } from 'node:stream';
 import type { IntentBody, IntentName, IntentResult } from '@cockpit/protocol';
 import { COCKPIT_API_TOKEN, COCKPIT_URL, requestTimeoutMs } from './config.js';
 
@@ -58,7 +57,7 @@ function requestOnce(
   options: {
     method: 'GET' | 'POST';
     headers: Headers;
-    body?: Uint8Array | Readable;
+    body?: Uint8Array;
     signal: AbortSignal;
     redirect: 'error';
   },
@@ -103,20 +102,7 @@ function requestOnce(
       }
     });
     request.once('error', reject);
-    if (options.body instanceof Readable) {
-      let total = 0;
-      const bound = new Transform({
-        transform(chunk: Buffer, _encoding, callback) {
-          total += chunk.length;
-          callback(total > MAX_TRANSFER_BYTES
-            ? new CockpitError(`cockpit request exceeds the ${MAX_TRANSFER_BYTES} byte limit`, 'protocol')
-            : null, chunk);
-        },
-      });
-      void pipeline(options.body, bound, request).catch(reject);
-    } else {
-      request.end(options.body);
-    }
+    request.end(options.body);
   });
 }
 
@@ -193,7 +179,7 @@ export async function backendRequest<T>(
   path: string,
   options: {
     method?: 'GET' | 'POST';
-    body?: Uint8Array | Readable;
+    body?: Uint8Array;
     headers?: Record<string, string>;
     timeoutMs?: number;
   },
@@ -267,8 +253,7 @@ export async function backendRequest<T>(
       }
       throw new CockpitError(`${label} failed: ${message}`, 'backend', name);
     }
-    // Only network/body-read errors are translated. Consumer errors (for example
-    // an unwritable download destination) retain their original identity.
+    // Only network/body-read errors are translated; decoding errors retain identity.
     return consume(response);
   };
 
@@ -283,7 +268,6 @@ export async function backendRequest<T>(
   } finally {
     clearTimeout(timer);
     controller.abort();
-    if (options.body instanceof Readable) options.body.destroy();
   }
 }
 
@@ -327,11 +311,6 @@ export async function intent<T = unknown>(
 }
 
 export function assertIntentSuccess<T>(result: T, name: string): T {
-  if (name === 'system/consumer/restart' && result !== null && typeof result === 'object'
-    && 'operation' in result && result.operation && typeof result.operation === 'object'
-    && 'state' in result.operation && ['failed', 'unknown'].includes(String(result.operation.state))) {
-    throw new CockpitError(`Consumer restart is not confirmed; inspect the original operation: ${JSON.stringify(result)}`, 'backend', name);
-  }
   if (result !== null && typeof result === 'object' && 'ok' in result && result.ok === false) {
     throw new CockpitError(`cockpit intent "${name}" did not succeed: ${JSON.stringify(result)}`, 'backend', name);
   }

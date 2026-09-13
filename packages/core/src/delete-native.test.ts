@@ -59,7 +59,10 @@ test('confirmed Engine deletion uses native SDK and preserves unrelated files', 
   });
   const unknown = join(root, 'unrelated-operation.json');
   writeFileSync(unknown, '{"outcome":"unknown","resend":false}', { mode: 0o600 });
-  const engine = new Engine({ runtime, prefsFile: join(root, 'prefs.json') });
+  const prefsFile = join(root, 'prefs.json');
+  const legacyPrefs = '{"pinnedSessions":["retained-legacy-id"],"inbox":{"unread":1}}';
+  writeFileSync(prefsFile, legacyPrefs);
+  const engine = new Engine({ runtime });
   let deleted = false;
   try {
     await engine.start();
@@ -74,7 +77,6 @@ test('confirmed Engine deletion uses native SDK and preserves unrelated files', 
     assert.equal((await engine.getMeta(id))?.cwd, work);
     assert.equal((await engine.getMeta(id))?.title, 'Owned permanent-delete fixture');
     assert.equal((await runtime.getSessionMetadata(id))?.sessionId, id);
-    await engine.pin(id, true);
     await assert.rejects(engine.deleteSession(id), /confirm:true/);
     assert.equal((await engine.getMeta(id))?.loaded, true);
     assert.equal(runtime.liveCount, 1);
@@ -85,8 +87,7 @@ test('confirmed Engine deletion uses native SDK and preserves unrelated files', 
     assert.equal(await runtime.getSessionMetadata(id), undefined);
     assert.equal((await runtime.listSessions()).some(s => s.sessionId === id), false);
     assert.equal(readFileSync(unknown, 'utf8'), '{"outcome":"unknown","resend":false}');
-    const prefs = JSON.parse(readFileSync(join(root, 'prefs.json'), 'utf8'));
-    assert.deepEqual(prefs.pinnedSessions, []);
+    assert.equal(readFileSync(prefsFile, 'utf8'), legacyPrefs, 'Native deletion must not interpret or rewrite old enhancement data');
     assert.equal(readFileSync(retained, 'utf8'), 'retained independently of session');
     assert.equal(readFileSync(code, 'utf8'), 'workspace survives deletion');
   } finally {

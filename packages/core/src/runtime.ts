@@ -8,7 +8,7 @@ import type { ChildProcess } from 'node:child_process';
 import { channel } from 'node:diagnostics_channel';
 import { EventEmitter } from 'node:events';
 import type { ModelOption } from '@cockpit/protocol';
-import { cockpitHome, bundledSkillsDirectory } from './paths.ts';
+import { cockpitHome } from './paths.ts';
 
 export type RuntimeSession = CopilotSession;
 export type RuntimeClient = Pick<CopilotClient,
@@ -225,7 +225,6 @@ export class OfficialRuntime {
       skillDirectories: [
         ...this.config.sessionConfig?.skillDirectories ?? [],
         ...config.skillDirectories ?? [],
-        bundledSkillsDirectory,
       ],
       // The product deliberately has no interactive permission policy.
       onPermissionRequest: approveAll,

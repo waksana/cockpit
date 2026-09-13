@@ -1,34 +1,26 @@
 import { after, afterEach, beforeEach, test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { createECDH, randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, parse, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
+import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join, parse, relative } from 'node:path';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import {
-  Intents, SessionMeta, Snapshot, ServerEvent, UploadedFile, attachmentPrompt, unreadSessionCount,
-  type IntentBody, type IntentName, type PushDelivery, type PushStatus, type PushSubscriptionJson,
+  Intents, SessionMeta, Snapshot, ServerEvent,
+  type IntentBody, type IntentName,
 } from '@cockpit/protocol';
-import type { ServerEngine, ServerPush } from './index.ts';
+import type { ServerEngine } from './index.ts';
 import { isIntentName } from './capabilities.ts';
 import { readNativeChat } from '../../../packages/core/src/native-chat.ts';
 import { Engine } from '../../../packages/core/src/engine.ts';
 import type { ConsumerControl } from './consumer-control.ts';
 
-const uploadDir = relative(process.cwd(), fileURLToPath(
-  new URL(`../.cockpit-intents-${process.pid}-${randomUUID()}`, import.meta.url),
-));
 process.env.COCKPIT_NO_BOOT = '1';
 process.env.LOG_LEVEL = 'silent';
 process.env.COCKPIT_SERVE_WEB = '0';
 process.env.COCKPIT_MAX_SSE_CLIENTS = '2';
-process.env.COCKPIT_UPLOAD_DIR = uploadDir;
-delete process.env.AZURE_SPEECH_KEY;
-delete process.env.AZURE_SPEECH_REGION;
 const { app, setTestDependencies, broadcastFrame, onEngineEvent, sessionBusy } = await import('./index.ts');
 
 const calls: { method: string; args: unknown[] }[] = [];
-const pngFixture = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC1sAAAAASUVORK5CYII=', 'base64');
 function record<T>(method: string, args: unknown[], result: T): T {
   calls.push({ method, args });
   return result;
@@ -46,28 +38,14 @@ const historyPage = {
 };
 const snapshot = () => ({
   type: 'snapshot' as const, agentStatus: 'up' as const, models: [],
-  vapidPublicKey: null, sessions, permissionPolicy: 'allow-all' as const,
+  sessions, permissionPolicy: 'allow-all' as const,
 });
-const projectedSnapshot = (raw: Snapshot = snapshot()): Snapshot => ({
-  ...raw, unreadCount: raw.unreadCount ?? unreadSessionCount(raw.sessions),
-});
-function attentionSessions(): SessionMeta[] {
-  return [
-    { sessionId: 'ready-unread', attention: 'ready', attnId: 4, seenId: 3 },
-    { sessionId: 'choice-unread', attention: 'choice', attnId: 6, seenId: 5 },
-    { sessionId: 'choice-seen', attention: 'choice', attnId: 7, seenId: 7 },
-    { sessionId: 'ready-seen', attention: 'ready', attnId: 8, seenId: 8 },
-    { sessionId: 'legacy-choice', attention: 'choice' },
-    { sessionId: 'legacy-ready', attention: 'ready' },
-    { sessionId: 'no-attention', attention: null, attnId: 9, seenId: 1 },
-  ].map((meta) => SessionMeta.parse({ ...busySession, ...meta }));
-}
-const engine: ServerEngine & { attentionCount(): number } = {
+const projectedSnapshot = (raw: Snapshot = snapshot()): Snapshot => raw;
+const engine: ServerEngine = {
   stop: async () => { throw new Error('integration fixtures must never stop a real runtime'); },
   login: async () => 'test-only',
   snapshot: async () => record('snapshot', [], snapshot()),
   busyCount: async () => sessions.filter(sessionBusy).length,
-  attentionCount: () => record('attentionCount', [], 0),
   newSession: async (...args) => record('newSession', args, 'created'),
   forkSession: async (...args) => record('forkSession', args, { sessionId: 'forked' }),
   chat: async (query, signal) => {
@@ -79,7 +57,6 @@ const engine: ServerEngine & { attentionCount(): number } = {
   interrupt: async (...args) => record('interrupt', args, { ok: true as const, interrupted: true }),
   setModel: async (...args) => record('setModel', args, undefined),
   rename: async (...args) => record('rename', args, 'renamed'),
-  autoName: async (...args) => record('autoName', args, { ok: true as const, applied: true, title: 'Short topic' }),
   compact: async (...args) => record('compact', args, undefined),
   rewind: async (...args) => record('rewind', args, undefined),
   setMode: async (...args) => record('setMode', args, undefined),
@@ -87,7 +64,6 @@ const engine: ServerEngine & { attentionCount(): number } = {
   unload: (...args) => record('unload', args, undefined),
   load: async (...args) => record('load', args, undefined),
   reload: async (...args) => record('reload', args, undefined),
-  pin: async (...args) => record('pin', args, true),
   getPlan: async (...args) => record('getPlan', args, { planMarkdown: null, todos: [] }),
   getUsage: async (...args) => record('getUsage', args, {
     sessionId: 's', sampledAt: 1, context: null,
@@ -108,7 +84,6 @@ const engine: ServerEngine & { attentionCount(): number } = {
   refreshList: async (...args) => record('refreshList', args, undefined),
   listLive: (...args) => record('listLive', args, []),
   getMeta: (...args) => record('getMeta', args, busySession),
-  markSeen: (...args) => record('markSeen', args, undefined),
   listGlobalMcp: (...args) => record('listGlobalMcp', args, []),
   setMcpDefault: async (...args) => record('setMcpDefault', args, undefined),
   refreshMcp: async (...args) => record('refreshMcp', args, undefined),
@@ -132,69 +107,18 @@ const engine: ServerEngine & { attentionCount(): number } = {
   listSchedules: async (...args) => record('listSchedules', args, []),
   listDir: (...args) => record('listDir', args, { path: '/fixture', parent: '/', entries: [] }),
 };
-const ecdh = createECDH('prime256v1');
-ecdh.setPrivateKey(Buffer.alloc(32, 1));
-const subscription: PushSubscriptionJson = {
-  endpoint: 'https://push.example/sub',
-  keys: {
-    p256dh: ecdh.getPublicKey(undefined, 'uncompressed').toString('base64url'),
-    auth: Buffer.alloc(16, 2).toString('base64url'),
-  },
-};
-const subscriptions = new Map<string, PushSubscriptionJson>();
-const fakeDeliveries: { endpoint: string; delivery: PushDelivery }[] = [];
-const fakePush: ServerPush = {
-  subscribe: (...args: [PushSubscriptionJson]) => {
-    subscriptions.set(args[0].endpoint, args[0]);
-    return record('subscribe', args, undefined);
-  },
-  status: (...args: [endpoint?: string]): PushStatus => {
-    const [endpoint] = args;
-    const lastDelivery = (endpoint === undefined
-      ? fakeDeliveries.at(-1)
-      : fakeDeliveries.findLast((item) => item.endpoint === endpoint))?.delivery;
-    return record('status', args, {
-      configured: true, subscriptionCount: subscriptions.size, publicKey: subscription.keys.p256dh,
-      ...(endpoint === undefined ? {} : { registered: subscriptions.has(endpoint) }),
-      ...(lastDelivery === undefined ? {} : { lastDelivery }),
-    });
-  },
-  test: async (...args: [endpoint: string, confirm: boolean]): Promise<PushDelivery> => {
-    const [endpoint, confirm] = args;
-    if (confirm !== true || !subscriptions.has(endpoint)) {
-      return record('test', args, { status: 'failed', at: 10, error: 'Subscription is not registered' });
-    }
-    const delivery: PushDelivery = { status: 'accepted', at: 11 };
-    fakeDeliveries.push({ endpoint, delivery });
-    return record('test', args, delivery);
-  },
-  unsubscribe: (...args: [endpoint: string]) => {
-    subscriptions.delete(args[0]);
-    return record('unsubscribe', args, undefined);
-  },
-  sendAttention: async (...args: unknown[]) => {
-    record('sendAttention', args, undefined);
-    throw new Error('tests must not send notifications');
-  },
-};
-setTestDependencies({ engine, push: fakePush });
+setTestDependencies({ engine });
 
 beforeEach(() => {
-  setTestDependencies({ engine, push: fakePush });
+  setTestDependencies({ engine });
   sessions = [busySession];
   calls.length = 0;
-  subscriptions.clear();
-  fakeDeliveries.length = 0;
 });
 afterEach(async () => {
   // Even skills/refresh only ever sees a busy fake session, so it cannot exit.
-  try { await app.inject({ method: 'POST', url: '/admin/restart', payload: { pending: false } }); }
-  finally { rmSync(uploadDir, { recursive: true, force: true }); }
+  await app.inject({ method: 'POST', url: '/admin/restart', payload: { pending: false } });
 });
-after(async () => {
-  try { await app.close(); }
-  finally { rmSync(uploadDir, { recursive: true, force: true }); }
-});
+after(() => app.close());
 
 type Case = { body: unknown; method: string | null; args: unknown[] };
 const consumerOperation = { operationId: 'consumer-restart-fixture', kind: 'restart', state: 'waiting-idle', updatedAt: '2026-09-12T00:00:00Z' };
@@ -204,9 +128,6 @@ const fakeConsumer: ConsumerControl = {
   connect: async () => { assert.fail('This no-boot fixture must not connect a real launcher'); },
 };
 const cases = {
-  'system/consumer/status': { body: {}, method: 'consumerStatus', args: [undefined] },
-  'system/consumer/restart': { body: { operationId: consumerOperation.operationId, confirm: true },
-    method: 'consumerRestart', args: [consumerOperation.operationId] },
   'runtime/snapshot': { body: {}, method: 'snapshot', args: [] },
   'session/new': { body: { cwd: '/fixture' }, method: 'newSession', args: ['/fixture'] },
   'session/fork': { body: { sessionId: 's', toEventId: 'user-event', name: 'Child' }, method: 'forkSession', args: ['s', 'user-event', 'Child'] },
@@ -219,7 +140,6 @@ const cases = {
   'session/interrupt': { body: { sessionId: 's' }, method: 'interrupt', args: ['s'] },
   setModel: { body: { sessionId: 's', modelId: 'model', reasoningEffort: 'high', contextTier: 'long_context' }, method: 'setModel', args: ['s', 'model', 'high', 'long_context'] },
   'session/rename': { body: { sessionId: 's', name: 'renamed' }, method: 'rename', args: ['s', 'renamed'] },
-  'session/auto-name': { body: { sessionId: 's' }, method: 'autoName', args: ['s'] },
   'session/compact': { body: { sessionId: 's', customInstructions: 'keep context' }, method: 'compact', args: ['s', 'keep context'] },
   'session/rewind': { body: { sessionId: 's', toMsgId: 'm', rollbackFiles: true }, method: 'rewind', args: ['s', 'm', true] },
   setMode: { body: { sessionId: 's', mode: 'plan' }, method: 'setMode', args: ['s', 'plan'] },
@@ -228,7 +148,6 @@ const cases = {
   'session/unload': { body: { sessionId: 's' }, method: 'unload', args: ['s'] },
   'session/load': { body: { sessionId: 's' }, method: 'load', args: ['s'] },
   'session/reload': { body: { sessionId: 's' }, method: 'reload', args: ['s'] },
-  'session/pin': { body: { sessionId: 's', pinned: true }, method: 'pin', args: ['s', true] },
   'session/plan': { body: { sessionId: 's' }, method: 'getPlan', args: ['s'] },
   'session/usage': { body: { sessionId: 's' }, method: 'getUsage', args: ['s'] },
   'session/panels': { body: { sessionId: 's' }, method: 'getPanels', args: ['s'] },
@@ -242,12 +161,6 @@ const cases = {
   'session/refresh': { body: {}, method: 'refreshList', args: [] },
   'session/list': { body: {}, method: 'listLive', args: [] },
   'session/get': { body: { sessionId: 's' }, method: 'getMeta', args: ['s'] },
-  'push/subscribe': { body: { subscription }, method: 'subscribe', args: [subscription] },
-  'push/status': { body: {}, method: 'status', args: [undefined] },
-  'push/test': { body: { endpoint: subscription.endpoint, confirm: true }, method: 'test', args: [subscription.endpoint, true] },
-  'push/unsubscribe': { body: { endpoint: subscription.endpoint }, method: 'unsubscribe', args: [subscription.endpoint] },
-  'inbox/seen': { body: { sessionId: 's' }, method: 'markSeen', args: ['s'] },
-  'speech/token': { body: {}, method: null, args: [] },
   'mcp/global': { body: {}, method: 'listGlobalMcp', args: [] },
   'mcp/global-default': { body: { name: 'tools', on: true }, method: 'setMcpDefault', args: ['tools', true] },
   'mcp/refresh': { body: {}, method: 'refreshMcp', args: [] },
@@ -264,10 +177,10 @@ const cases = {
   'schedule/stop': { body: { sessionId: 's', id: 1 }, method: 'stopSchedule', args: ['s', 1] },
   'schedule/list': { body: { sessionId: 's' }, method: 'listSchedules', args: ['s'] },
   'fs/listDir': { body: { path: '/fixture' }, method: 'listDir', args: ['/fixture'] },
-} satisfies { [K in Exclude<IntentName, `files/${string}`>]: Case & { body: IntentBody<K> } };
+} satisfies { [K in IntentName]: Case & { body: IntentBody<K> } };
 
 test('dispatch fixtures cover exactly the authoritative Intents, without retired handlers', () => {
-  assert.deepEqual([...Object.keys(cases), 'files/list', 'files/get', 'files/associate'].sort(), Object.keys(Intents).sort());
+  assert.deepEqual(Object.keys(cases).sort(), Object.keys(Intents).sort());
   assert.equal(app.server.listening, false);
 });
 
@@ -275,8 +188,6 @@ for (const [name, fixture] of Object.entries(cases)) {
   test(`dispatch ${name}: parses once, routes exact arguments, and validates the protocol result`, async (t) => {
     assert.ok(isIntentName(name));
     assert.equal(Intents[name].body.safeParse(fixture.body).success, true);
-    if (name === 'push/test') subscriptions.set(subscription.endpoint, subscription);
-    if (name.startsWith('system/consumer/')) setTestDependencies({ engine, push: fakePush, consumer: fakeConsumer });
     const inputParse = t.mock.method(Intents[name].body, 'safeParse');
     const outputParse = t.mock.method(Intents[name].result, 'safeParse');
     const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: fixture.body });
@@ -296,7 +207,6 @@ for (const [name, fixture] of Object.entries(cases)) {
       assert.equal(response.headers['x-content-type-options'], 'nosniff');
     }
     if (name === 'skills/refresh') assert.deepEqual(response.json(), { ok: true, willRestartWhenIdle: false });
-    if (name === 'speech/token') assert.deepEqual(response.json(), { enabled: false });
   });
 }
 
@@ -305,26 +215,24 @@ test('session/load surfaces readiness failure without reload, prompt or replacem
     throw Object.assign(new Error('Readiness remains unconfirmed'), { statusCode: 409, code: 'LOAD_UNCONFIRMED' });
   });
 
-  test('consumer lifecycle is explicitly unavailable in source mode without inventing an installation', async () => {
+  test('parked consumer controls are absent from the public intent registry', async () => {
     const status = await app.inject({ method: 'POST', url: '/intent/system/consumer/status', payload: {} });
-    assert.equal(status.statusCode, 200);
-    assert.equal(status.json().available, false);
+    assert.equal(status.statusCode, 404);
     const restart = await app.inject({ method: 'POST', url: '/intent/system/consumer/restart',
       payload: { operationId: consumerOperation.operationId, confirm: true } });
-    assert.equal(restart.statusCode, 503);
+    assert.equal(restart.statusCode, 404);
     assert.deepEqual(calls, []);
   });
 
-  test('typed consumer restart and public MCP admin transport share one retained launcher operation', async () => {
-    setTestDependencies({ engine, push: fakePush, consumer: fakeConsumer });
+  test('internal lifecycle still reaches the owned launcher while optional public controls are absent', async () => {
+    setTestDependencies({ engine, consumer: fakeConsumer });
     const body = { operationId: consumerOperation.operationId, confirm: true };
     const typed = await app.inject({ method: 'POST', url: '/intent/system/consumer/restart', payload: body });
     const admin = await app.inject({ method: 'POST', url: '/admin/restart', payload: { operationId: body.operationId, pending: true } });
-    assert.equal(typed.statusCode, 200);
+    assert.equal(typed.statusCode, 404);
     assert.equal(admin.statusCode, 200);
-    assert.deepEqual(typed.json().operation, admin.json().operation);
+    assert.deepEqual(admin.json().operation, consumerOperation);
     assert.deepEqual(calls, [
-      { method: 'consumerRestart', args: [body.operationId] },
       { method: 'consumerRestart', args: [body.operationId] },
     ]);
     calls.length = 0;
@@ -337,7 +245,7 @@ test('session/load surfaces readiness failure without reload, prompt or replacem
     const status = { available: true as const, installationId: '11111111-1111-4111-8111-111111111111',
       health: 'stopped' as const, runtime: null, mainLifecycleReady: true,
       activeOperationId: consumerOperation.operationId, operation: consumerOperation };
-    setTestDependencies({ engine, push: fakePush,
+    setTestDependencies({ engine,
       consumer: { ...fakeConsumer, status: async () => status } });
     const response = await app.inject({ method: 'POST', url: '/admin/restart', payload: { pending: false } });
     assert.equal(response.statusCode, 409);
@@ -502,7 +410,6 @@ test('bad fields, enums, and protocol refinements are rejected before dispatch',
     ['schedule/add', { sessionId: 's', prompt: 'hello', interval: '30s', cron: '* * * * *' }],
     ['schedule/add', { sessionId: 's', prompt: '', at: 12 }],
     ['schedule/stop', { sessionId: 's', id: '1' }],
-    ['push/subscribe', { subscription: { endpoint: 'http://push.example/sub' } }],
   ];
   for (const [name, body] of invalid) {
     const response = await app.inject({
@@ -573,8 +480,8 @@ test('HTTP paging uses exactly one native event page and keeps older cursors sta
   };
   setTestDependencies({ engine: {
     ...engine, chat: (query, signal) => readNativeChat(query, { persisted: readPersistedEvents }, signal),
-  }, push: fakePush });
-  t.after(() => setTestDependencies({ engine, push: fakePush }));
+  } });
+  t.after(() => setTestDependencies({ engine }));
   const request = async (cursor?: string) => {
     const start = nativeReads;
     const response = await app.inject({
@@ -638,233 +545,12 @@ test('native global configuration changes await the SDK result and propagate fai
   }
 });
 
-test('automatic naming waits for native completion and preserves a protected manual title', async (t) => {
-  const pending = deferred<Awaited<ReturnType<ServerEngine['autoName']>>>();
-  const entered = deferred<void>();
-  let complete = false;
-  t.mock.method(engine, 'autoName', () => { entered.resolve(); return pending.promise; });
-  const response = app.inject({
-    method: 'POST', url: '/intent/session/auto-name', payload: { sessionId: 's' },
-  }).then(result => { complete = true; return result; });
-  await entered.promise;
-  assert.equal(complete, false);
-  pending.resolve({ ok: true, applied: false, title: 'Manual title', reason: 'user-named' });
-  const result = await response;
-  assert.equal(result.statusCode, 200);
-  assert.deepEqual(result.json(), { ok: true, applied: false, title: 'Manual title', reason: 'user-named' });
-  assert.deepEqual(calls, [], 'transport must never add a prompt or create a naming session');
-});
-
 test('runtime/snapshot makes one query and exposes the required permission policy', async () => {
   const response = await app.inject({ method: 'POST', url: '/intent/runtime/snapshot' });
   assert.equal(response.statusCode, 200, response.body);
   assert.deepEqual(Snapshot.parse(response.json()), projectedSnapshot());
   assert.equal(response.json().permissionPolicy, 'allow-all');
   assert.deepEqual(calls, [{ method: 'snapshot', args: [] }]);
-});
-
-test('push lifecycle is passive except confirmed fake delivery to an existing subscription', async (t) => {
-  sessions = attentionSessions();
-  const originalSnapshot = structuredClone(snapshot());
-  const viewer = await openViewer();
-  t.after(viewer.close);
-  const initialFrames = [...viewer.frames];
-  const endpoint = subscription.endpoint;
-  const unknown = 'https://push.example/unknown';
-  const globalStatus = {
-    configured: true, subscriptionCount: 0, publicKey: subscription.keys.p256dh,
-  };
-  async function request(name: 'push/subscribe' | 'push/status' | 'push/test' | 'push/unsubscribe',
-    payload: object, expected: unknown, method: string, args: unknown[]) {
-    calls.length = 0;
-    const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload });
-    assert.equal(response.statusCode, 200, response.body);
-    assert.deepEqual(response.json(), expected);
-    assert.deepEqual(calls, [{ method, args }], 'push lifecycle must never call the engine');
-    await nextTurn();
-    assert.deepEqual(viewer.frames, initialFrames, 'push lifecycle must not publish chat or inbox events');
-    assert.deepEqual(snapshot(), originalSnapshot);
-  }
-  await request('push/status', {}, globalStatus, 'status', [undefined]);
-  await request('push/status', { endpoint }, { ...globalStatus, registered: false }, 'status', [endpoint]);
-  assert.equal(subscriptions.size, 0);
-  assert.deepEqual(fakeDeliveries, []);
-  await request('push/test', { endpoint, confirm: true },
-    { status: 'failed', at: 10, error: 'Subscription is not registered' }, 'test', [endpoint, true]);
-  assert.equal(subscriptions.size, 0, 'test cannot register a missing endpoint');
-  assert.deepEqual(fakeDeliveries, []);
-  await request('push/subscribe', { subscription }, { ok: true }, 'subscribe', [subscription]);
-  await request('push/subscribe', { subscription }, { ok: true }, 'subscribe', [subscription]);
-  assert.deepEqual([...subscriptions.values()], [subscription], 'registration is keyed by endpoint');
-  const registeredStatus = { ...globalStatus, subscriptionCount: 1 };
-  await request('push/status', {}, registeredStatus, 'status', [undefined]);
-  await request('push/status', { endpoint }, { ...registeredStatus, registered: true }, 'status', [endpoint]);
-  assert.deepEqual(fakeDeliveries, [], 'registration and status do not test delivery');
-  await request('push/test', { endpoint: unknown, confirm: true },
-    { status: 'failed', at: 10, error: 'Subscription is not registered' }, 'test', [unknown, true]);
-  assert.deepEqual(fakeDeliveries, [], 'another registered endpoint must not be used as a fallback');
-  const delivery: PushDelivery = { status: 'accepted', at: 11 };
-  await request('push/test', { endpoint, confirm: true }, delivery, 'test', [endpoint, true]);
-  assert.deepEqual(fakeDeliveries, [{ endpoint, delivery }], 'only a fake service acceptance is recorded');
-  await request('push/status', {}, { ...registeredStatus, lastDelivery: delivery }, 'status', [undefined]);
-  await request('push/status', { endpoint },
-    { ...registeredStatus, registered: true, lastDelivery: delivery }, 'status', [endpoint]);
-  await request('push/status', { endpoint: unknown },
-    { ...registeredStatus, registered: false }, 'status', [unknown]);
-  await request('push/unsubscribe', { endpoint: unknown }, { ok: true }, 'unsubscribe', [unknown]);
-  assert.equal(subscriptions.size, 1, 'removing an unknown endpoint keeps existing registrations');
-  await request('push/unsubscribe', { endpoint }, { ok: true }, 'unsubscribe', [endpoint]);
-  await request('push/unsubscribe', { endpoint }, { ok: true }, 'unsubscribe', [endpoint]);
-  assert.equal(subscriptions.size, 0);
-  await request('push/status', { endpoint },
-    { ...globalStatus, registered: false, lastDelivery: delivery }, 'status', [endpoint]);
-  await request('push/test', { endpoint, confirm: true },
-    { status: 'failed', at: 10, error: 'Subscription is not registered' }, 'test', [endpoint, true]);
-  assert.deepEqual(fakeDeliveries, [{ endpoint, delivery }], 'status/unsubscribe never send or replay a delivery');
-  assert.equal(app.server.listening, false);
-});
-
-test('push/test requires exactly confirm:true before invoking the fake manager', async () => {
-  subscriptions.set(subscription.endpoint, subscription);
-  for (const confirm of [undefined, false, 'true', 'false', 1, 0, null, [], {}]) {
-    const response = await app.inject({
-      method: 'POST', url: '/intent/push/test', payload: { endpoint: subscription.endpoint, confirm },
-    });
-    assert.equal(response.statusCode, 400, response.body);
-    assert.equal(response.json().code, 'INVALID_INTENT_BODY');
-    assert.deepEqual(calls, []);
-    assert.deepEqual(fakeDeliveries, []);
-    assert.deepEqual([...subscriptions.values()], [subscription]);
-  }
-});
-
-test('push endpoints and malformed subscription crypto are rejected before fake dispatch', async () => {
-  const { p256dh, auth } = subscription.keys;
-  assert.equal(Buffer.from(p256dh, 'base64url').length, 65);
-  assert.equal(Buffer.from(p256dh, 'base64url')[0], 4);
-  assert.equal(Buffer.from(auth, 'base64url').length, 16);
-  const invalidSubscriptions = [
-    {}, { ...subscription, keys: undefined }, { ...subscription, keys: null },
-    ...[
-      {}, { p256dh }, { auth }, { p256dh: 42, auth }, { p256dh, auth: 42 },
-      { p256dh: 'key', auth }, { p256dh, auth: 'auth' },
-      { p256dh: `${p256dh}=`, auth }, { p256dh, auth: `${auth}==` },
-      { p256dh: `${p256dh.slice(0, -1)}B`, auth },
-      { p256dh, auth: `${auth.slice(0, -1)}B` },
-      { p256dh: `+${p256dh.slice(1)}`, auth },
-      { p256dh, auth: `/${auth.slice(1)}` },
-      { p256dh: ecdh.getPublicKey(undefined, 'compressed').toString('base64url'), auth },
-      { p256dh, auth: Buffer.alloc(15).toString('base64url') },
-      { p256dh, auth: Buffer.alloc(17).toString('base64url') },
-    ].map((keys) => ({ ...subscription, keys })),
-  ];
-  const invalid: [IntentName, object][] = invalidSubscriptions.map((value) =>
-    ['push/subscribe', { subscription: value }]);
-  for (const endpoint of [null, 42, '', 'http://push.example/sub', 'https://user:pass@push.example/sub',
-    'https://push.example/sub#fragment', 'https://127.0.0.1/sub', ' https://push.example/sub']) {
-    invalid.push(['push/subscribe', { subscription: { ...subscription, endpoint } }]);
-    for (const name of ['push/status', 'push/test', 'push/unsubscribe'] as const) {
-      invalid.push([name, { endpoint, ...(name === 'push/test' ? { confirm: true } : {}) }]);
-    }
-  }
-  for (const [name, payload] of invalid) {
-    const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload });
-    assert.equal(response.statusCode, 400, `${name}: ${JSON.stringify(payload)}: ${response.body}`);
-    assert.equal(response.json().code, 'INVALID_INTENT_BODY');
-    assert.deepEqual(calls, []);
-  }
-  assert.equal(subscriptions.size, 0);
-  assert.deepEqual(fakeDeliveries, []);
-});
-
-test('push status and delivery typed failures pass through without engine calls', async (t) => {
-  for (const status of ['accepted', 'failed', 'expired'] as const) {
-    await t.test(status, async (t) => {
-      const delivery: PushDelivery = { status, at: 123, ...(status === 'accepted' ? {} : { error: 'Safe failure' }) };
-      const result: PushStatus = {
-        configured: false, registered: false, subscriptionCount: 0, publicKey: null,
-        error: 'Push is not configured', lastDelivery: delivery,
-      };
-      t.mock.method(fakePush, 'status', (...args: unknown[]) => record('status', args, result));
-      t.mock.method(fakePush, 'test', async (...args: unknown[]) => record('test', args, delivery));
-      for (const [name, expected, method, args] of [
-        ['push/status', result, 'status', [undefined]],
-        ['push/test', delivery, 'test', [subscription.endpoint, true]],
-      ] as const) {
-        calls.length = 0;
-        const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: cases[name].body });
-        assert.equal(response.statusCode, 200, response.body);
-        assert.deepEqual(response.json(), expected);
-        assert.deepEqual(calls, [{ method, args }]);
-      }
-      assert.deepEqual(fakeDeliveries, []);
-    });
-  }
-});
-
-test('inbox/seen delegates the observed waterline to the synchronous product-state owner', async (t) => {
-  for (const [label, currentId, observedId, shouldMark] of [
-    ['stale', 7, 6, false], ['future', 7, 8, false], ['current', 7, 7, true],
-    ['zero is stale', 7, 0, false], ['zero is current', 0, 0, true],
-    ['omitted acknowledges current', 7, undefined, true],
-    ['legacy zero', undefined, 0, true], ['legacy future', undefined, 1, false],
-    ['legacy omitted', undefined, undefined, true],
-    ['null meta zero', null, 0, true], ['null meta future', null, 1, false],
-    ['null meta omitted', null, undefined, true],
-  ] as const) {
-    await t.test(label, async (t) => {
-      void currentId;
-      void shouldMark;
-      t.mock.method(engine, 'getMeta', () => { throw new Error('Seen must not depend on a native metadata read'); });
-      calls.length = 0;
-      const response = await app.inject({
-        method: 'POST', url: '/intent/inbox/seen', payload: { sessionId: 's', attnId: observedId },
-      });
-      assert.equal(response.statusCode, 200, response.body);
-      assert.deepEqual(response.json(), { ok: true });
-      assert.deepEqual(calls, [
-        { method: 'markSeen', args: observedId === undefined ? ['s'] : ['s', observedId] },
-      ]);
-      assert.deepEqual(fakeDeliveries, []);
-    });
-  }
-});
-
-test('inbox/seen rejects invalid observed counters before reading or mutating metadata', async () => {
-  for (const attnId of [null, -1, 1.5, '0', false, Number.MAX_SAFE_INTEGER + 1]) {
-    const response = await app.inject({
-      method: 'POST', url: '/intent/inbox/seen', payload: { sessionId: 's', attnId },
-    });
-    assert.equal(response.statusCode, 400, response.body);
-    assert.equal(response.json().code, 'INVALID_INTENT_BODY');
-    assert.deepEqual(calls, []);
-  }
-});
-
-test('inbox/seen performs one synchronous product-state action without a native preflight', async (t) => {
-  let meta = { ...busySession, attention: 'ready' as const, attnId: 7, seenId: 6 };
-  const order: string[] = [];
-  t.mock.method(engine, 'getMeta', () => { throw new Error('Unexpected native metadata read'); });
-  t.mock.method(engine, 'markSeen', (...args: unknown[]) => {
-    order.push('markSeen');
-    assert.equal(args[1], meta.attnId);
-    meta = { ...meta, seenId: meta.attnId };
-    queueMicrotask(() => {
-      order.push('new attention');
-      meta = { ...meta, attnId: 8 };
-    });
-    return record('markSeen', args, undefined);
-  });
-  const response = await app.inject({
-    method: 'POST', url: '/intent/inbox/seen', payload: { sessionId: 's', attnId: 7 },
-  });
-  assert.equal(response.statusCode, 200, response.body);
-  assert.deepEqual(response.json(), { ok: true });
-  assert.deepEqual(order, ['markSeen', 'new attention']);
-  assert.deepEqual(calls, [{ method: 'markSeen', args: ['s', 7] }]);
-  assert.equal(meta.seenId, 7);
-  assert.equal(meta.attnId, 8);
-  assert.equal(unreadSessionCount([meta]), 1, 'the newly queued attention remains unread');
 });
 
 test('schema-invalid engine results are 500 INVALID_INTENT_RESULT, not request errors', async (t) => {
@@ -1176,6 +862,9 @@ test('unknown, inherited, and retired intent paths are 404 without engine calls'
     'session/set-spawned-by', 'session/restore', 'session/trash-list',
     'modules/list', 'modules/install', 'modules/updates/check', 'modules/service', 'modules/config/set',
     'modules/wechat/unbind', 'session/modules/get', 'session/modules/apply',
+    'files/list', 'files/get', 'files/associate', 'session/pin', 'session/auto-name',
+    'inbox/seen', 'push/subscribe', 'push/status', 'push/test', 'push/unsubscribe',
+    'speech/token', 'system/consumer/status', 'system/consumer/restart',
   ]) {
     const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: {} });
     assert.equal(response.statusCode, 404, `${name}: ${response.body}`);
@@ -1194,18 +883,6 @@ test('the origin gate protects valid intents, including bodyless mutations', asy
     assert.deepEqual(calls, []);
   }
 });
-
-async function upload(name: string, mime: string, bytes = Buffer.from('fixture bytes')) {
-  const query = new URLSearchParams({ name, mime });
-  const response = await app.inject({
-    method: 'POST', url: `/upload?${query}`,
-    headers: { 'content-type': 'application/octet-stream' }, payload: bytes,
-  });
-  assert.equal(response.statusCode, 200, response.body);
-  const file = UploadedFile.parse(response.json());
-  assert.equal(relative(process.cwd(), file.path), join(uploadDir, basename(file.path)));
-  return file;
-}
 
 test('retired virtual creation and module deletion previews have no transport or capability', async () => {
   for (const name of ['session/start', 'session/start/get', 'session/delete/preview']) {
@@ -1229,277 +906,45 @@ test('native create and prompt are separate one-call operations with no hidden m
   assert.equal(calls.length, 2);
 });
 
-test('managed files preserve originals, source identity, session associations and safe seek downloads', async () => {
-  const bytes = Buffer.concat([Buffer.from('000000186674797069736f6d0000000069736f6d6d703432', 'hex'), Buffer.alloc(160, 7)]);
-  const query = new URLSearchParams({ name: 'movie original.mp4', mime: 'video/mp4',
-    source: 'org.example.external-feed', sessionId: 's', sourceId: 'fixture-message:item-0' });
-  const send = (payload = bytes) => app.inject({ method: 'POST', url: `/upload?${query}`,
-    headers: { 'content-type': 'application/octet-stream' }, payload });
-  const first = await send();
-  assert.equal(first.statusCode, 200, first.body);
-  const file = UploadedFile.parse(first.json());
-  assert.equal(file.mime, 'video/mp4');
-  assert.equal(file.kind, 'file');
-  assert.equal(file.source, 'org.example.external-feed');
-  assert.equal(file.sha256?.length, 64);
-  assert.deepEqual((await send()).json(), file, 'identical source retry returns original retained identity');
-  assert.equal((await send(Buffer.from('different bytes'))).statusCode, 409);
-  const get = await app.inject({ method: 'POST', url: '/intent/files/get', payload: { url: file.url } });
-  assert.deepEqual(get.json(), { ...file, sessions: ['s'] });
-  const list = await app.inject({ method: 'POST', url: '/intent/files/list', payload: { sessionId: 's', query: 'movie', limit: 1 } });
-  assert.deepEqual(list.json().files, [file]);
-  assert.equal((await app.inject({ method: 'POST', url: '/intent/files/associate',
-    payload: { url: file.url, sessionId: 'another' } })).statusCode, 200);
-  const related = await app.inject({ method: 'POST', url: '/intent/files/list', payload: { sessionId: 'another' } });
-  assert.deepEqual(related.json().files, [file]);
-  const details = await app.inject({ method: 'POST', url: '/intent/files/get', payload: { url: file.url } });
-  assert.deepEqual(details.json().sessions, ['another', 's']);
-  const deletion = await app.inject({ method: 'POST', url: '/intent/session/delete',
-    payload: { sessionId: 's', confirm: true } });
-  assert.deepEqual(deletion.json(), { ok: true });
-  onEngineEvent({ type: 'session/removed', sessionId: 's' });
-  assert.deepEqual((await app.inject({ method: 'POST', url: '/intent/files/get',
-    payload: { url: file.url } })).json(), details.json(), 'session deletion retains file metadata and associations');
-  assert.deepEqual((await app.inject({ method: 'POST', url: '/intent/files/list',
-    payload: { sessionId: 's' } })).json().files, [file]);
-  for (const [range, start, end] of [['bytes=10-29', 10, 29], ['bytes=-5', bytes.length - 5, bytes.length - 1],
-    ['bytes=12-', 12, bytes.length - 1]] as const) {
-    const response = await app.inject({ method: 'GET', url: file.url, headers: { range } });
-    assert.equal(response.statusCode, 206);
-    assert.equal(response.headers['content-range'], `bytes ${start}-${end}/${bytes.length}`);
-    assert.deepEqual(response.rawPayload, bytes.subarray(start, end + 1));
-  }
-  for (const range of ['bytes=99999-', 'bytes=2-1', 'bytes=-0', 'bytes=0-1,4-5', 'bytes=-']) {
-    assert.equal((await app.inject({ method: 'GET', url: file.url, headers: { range } })).statusCode, 416);
-  }
-  const download = await app.inject({ method: 'GET', url: `${file.url}?download=1` });
-  assert.deepEqual(download.rawPayload, bytes);
-  assert.match(String(download.headers['content-disposition']), /attachment; filename\*=UTF-8''movie%20original.mp4/);
-  const head = await app.inject({ method: 'HEAD', url: file.url });
-  assert.equal(head.headers['content-length'], String(bytes.length));
-  assert.equal(head.rawPayload.length, 0);
+test('native attachment input passes once without upload, association or content rewriting', async () => {
+  const attachments = [
+    { type: 'file', path: '/fixture/a.txt', displayName: 'Native file' },
+    { type: 'directory', path: '/fixture' },
+    { type: 'selection', filePath: '/fixture/a.txt', displayName: 'Native selection', text: 'Selected native text',
+      selection: { start: { line: 0, character: 0 }, end: { line: 1, character: 2 } } },
+    { type: 'blob', data: 'Zml4dHVyZQ==', mimeType: 'text/plain' },
+  ];
+  const response = await app.inject({ method: 'POST', url: '/intent/prompt',
+    payload: { sessionId: 's', text: 'Native input', mode: 'enqueue', attachments } });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.deepEqual(response.json(), { ok: true, queued: true });
+  assert.deepEqual(calls, [{ method: 'prompt', args: ['s', 'Native input', 'enqueue', attachments] }]);
 });
 
-test('an uploaded original remains reusable for ordered cross-session attachment delivery', async () => {
-  const file = await upload('kept.png', 'image/png', pngFixture);
-  assert.equal(file.mime, 'image/png');
-  assert.deepEqual(readFileSync(file.path), pngFixture);
-  calls.length = 0;
-  const again = await app.inject({ method: 'POST', url: '/intent/files/get', payload: { url: file.url } });
-  assert.deepEqual(again.json(), { ...file, sessions: [] });
-  assert.deepEqual(calls, [], 'retained source remains usable without loading or re-reading native history');
-  const parts = [{ type: 'text', text: 'Before\n' }, { type: 'file', attachment: file },
-    { type: 'text', text: '\nBetween\n' }, { type: 'file', attachment: file }, { type: 'text', text: '\nAfter' }];
-  const sent = await app.inject({ method: 'POST', url: '/intent/prompt', payload: { sessionId: 'another', text: '', parts } });
-  assert.equal(sent.statusCode, 200, sent.body);
-  assert.deepEqual(calls[0]?.args[3], [
-    { type: 'file', path: file.path, displayName: file.name }, { type: 'file', path: file.path, displayName: file.name },
-  ]);
-  const prompt = String(calls[0]?.args[1]);
-  assert.match(prompt, /^Before\n<cockpit-attachment version="2"/);
-  assert.ok(prompt.indexOf('Between') > prompt.indexOf('<cockpit-attachment'));
-  assert.ok(prompt.endsWith('\nAfter'));
-  assert.equal((await app.inject({ method: 'POST', url: '/intent/prompt',
-    payload: { sessionId: 's', text: '', parts, attachment: file } })).statusCode, 400);
-});
-
-test('repeated display of one uploaded image does not store another copy or read native history', async () => {
-  const file = await upload('published-once.png', 'image/png', pngFixture);
-  const before = readdirSync(uploadDir).sort();
-  calls.length = 0;
-  for (let i = 0; i < 2; i++) {
-    const displayed = await app.inject({ method: 'GET', url: file.url });
-    assert.equal(displayed.statusCode, 200);
-    assert.deepEqual(displayed.rawPayload, pngFixture);
+test('managed attachment shapes fail before native submission', async () => {
+  const attachment = { kind: 'file', name: 'old.txt', url: '/uploads/old.txt' };
+  for (const extra of [{ attachment }, { attachments: [attachment] }, { parts: [{ type: 'file', attachment }] }]) {
+    const response = await app.inject({ method: 'POST', url: '/intent/prompt',
+      payload: { sessionId: 's', text: 'Old input', ...extra } });
+    assert.equal(response.statusCode, 400);
+    assert.deepEqual(calls, []);
   }
-  assert.deepEqual(readdirSync(uploadDir).sort(), before);
-  assert.deepEqual(calls, [], 'display does not query native history or publish another file');
 });
 
-test('retired native image lookups fail explicitly without reading history or collecting files', async () => {
-  const before = existsSync(uploadDir) ? readdirSync(uploadDir).sort() : [];
+test('retired file transports and image lookup names have no adapter or native effects', async () => {
   for (const name of ['session/tool-image', 'files/from-tool-image']) {
     assert.equal(isIntentName(name), false);
     const response = await app.inject({ method: 'POST', url: `/intent/${name}`,
       payload: { sessionId: 's', image: { eventId: 'event', toolCallId: 'tool', part: 0 } } });
-    assert.equal(response.statusCode, 410);
-    assert.equal(response.json().code, 'NATIVE_IMAGE_LOOKUP_RETIRED');
+    assert.equal(response.statusCode, 404);
+    assert.match(response.json().error, /unknown intent/);
   }
+  for (const url of ['/uploads/retained.txt', '/system/versions', '/files']) {
+    const response = await app.inject({ method: 'GET', url });
+    assert.equal(response.statusCode, 404, url);
+  }
+  assert.equal((await app.inject({ method: 'POST', url: '/upload', payload: 'retired bytes' })).statusCode, 404);
   assert.deepEqual(calls, []);
-  assert.deepEqual(existsSync(uploadDir) ? readdirSync(uploadDir).sort() : [], before);
-});
-
-test('declared image MIME cannot turn arbitrary bytes into a preview', async () => {
-  const file = await upload('pretend.png', 'image/png', Buffer.from('<script>alert(1)</script>'));
-  assert.equal(file.mime, 'application/octet-stream');
-  assert.equal(file.kind, 'file');
-  const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><image href="https://invalid.example/x"/></svg>');
-  const original = await upload('drawing.svg', 'image/svg+xml', svg);
-  assert.equal(original.mime, 'image/svg+xml');
-  const served = await app.inject({ method: 'GET', url: original.url });
-  assert.deepEqual(served.rawPayload, svg, 'original SVG is not renamed or silently rasterized');
-  assert.match(String(served.headers['content-security-policy']), /sandbox; default-src 'none'/);
-});
-
-test('uploads round-trip literal percent names and authoritative MIME regardless of extension', async () => {
-  for (const [name, mime, kind] of [
-    ['100% ready%2F%25.png', 'image/png', 'image'],
-    ['extensionless', 'image/png', 'image'],
-    ['photo.txt', 'image/webp', 'image'],
-    ['document.png', 'application/octet-stream', 'file'],
-  ] as const) {
-    const bytes = mime === 'image/png' ? pngFixture : mime === 'image/webp'
-      ? Buffer.from('524946461a000000574542505650384c0d0000002f00000000071011118888fe0700', 'hex')
-      : Buffer.from(`inert fixture for ${name}`);
-    const file = await upload(name, mime, bytes);
-    assert.equal(file.name, name, 'Fastify query decoding happens exactly once');
-    assert.equal(file.mime, mime);
-    assert.equal(file.kind, kind);
-    assert.equal(file.size, bytes.length);
-    const served = await app.inject({ method: 'GET', url: file.url });
-    assert.equal(served.statusCode, 200, served.body);
-    assert.deepEqual(served.rawPayload, bytes);
-    assert.equal(served.headers['content-type'], mime);
-    assert.equal(served.headers['x-content-type-options'], 'nosniff');
-    assert.match(String(served.headers['content-security-policy']), /(?:^|;)\s*sandbox(?:;|$)/);
-    assert.match(String(served.headers['content-security-policy']), /default-src 'none'/);
-    assert.equal(served.headers['cache-control'], 'private, max-age=31536000, immutable');
-
-    for (const caption of ['', 'Caption with 中文 and\nnewlines']) {
-      calls.length = 0;
-      const response = await app.inject({
-        method: 'POST', url: '/intent/prompt',
-        payload: {
-          sessionId: 's', text: caption, mode: 'immediate',
-          attachment: {
-            ...file, kind: kind === 'image' ? 'file' : 'image', name: 'forged.exe',
-            mime: 'application/x-forged', size: 99999, path: '/forged/outside-project',
-            storedName: 'forged-stored-name',
-          },
-        },
-      });
-      assert.equal(response.statusCode, 200, response.body);
-      assert.deepEqual(response.json(), { ok: true, queued: true });
-      assert.deepEqual(calls, [{
-        method: 'prompt',
-        args: ['s', attachmentPrompt(file, caption), 'immediate', [
-          { type: 'file', path: file.path, displayName: name },
-        ]],
-      }]);
-      assert.ok(!String(calls[0]?.args[1]).includes('forged'));
-    }
-  }
-  assert.equal(app.server.listening, false);
-});
-
-test('upload defaults are schema-validated and text-only prompts still pass exactly three arguments', async (t) => {
-  const parse = t.mock.method(UploadedFile, 'parse');
-  const response = await app.inject({
-    method: 'POST', url: '/upload', headers: { 'content-type': 'application/octet-stream' },
-    payload: Buffer.from('default fixture'),
-  });
-  assert.equal(response.statusCode, 200, response.body);
-  assert.equal(parse.mock.callCount(), 1, 'upload response must pass the authoritative schema');
-  assert.equal(response.json().name, 'file');
-  assert.equal(response.json().mime, 'application/octet-stream');
-  assert.equal(response.json().kind, 'file');
-  const prompt = await app.inject({
-    method: 'POST', url: '/intent/prompt', payload: { sessionId: 's', text: 'text only' },
-  });
-  assert.equal(prompt.statusCode, 200, prompt.body);
-  assert.deepEqual(calls, [{ method: 'prompt', args: ['s', 'text only', undefined] }]);
-});
-
-test('unsafe attachment URLs and malformed attachments are rejected before any engine call', async () => {
-  const attachment = { kind: 'file', name: 'fixture', url: '/uploads/missing.txt' };
-  for (const url of [
-    'https://example.invalid/file', '//example.invalid/file', 'file:///etc/passwd',
-    '/etc/passwd', '/uploads/', '/uploads/../secret', '/uploads/a..txt',
-    '/uploads/sub/file', '/uploads/sub\\file', '/uploads/%2e%2e%2fsecret',
-    '/uploads/%252e%252e%252fsecret', '/uploads/%66ile.txt',
-    '/uploads/file.txt?download=1', '/uploads/file.txt#preview',
-    '/uploads/file.txt\n', '/uploads/file.txt\0', '/uploads/.hidden',
-  ]) {
-    const response = await app.inject({
-      method: 'POST', url: '/intent/prompt',
-      payload: { sessionId: 's', text: '', attachment: { ...attachment, url } },
-    });
-    assert.equal(response.statusCode, 400, `${JSON.stringify(url)}: ${response.body}`);
-    assert.equal(response.json().code, 'INVALID_INTENT_BODY');
-    assert.deepEqual(calls, []);
-  }
-  for (const value of [null, [], [attachment], { ...attachment, mime: 42 }, { ...attachment, kind: 'video' }]) {
-    const response = await app.inject({
-      method: 'POST', url: '/intent/prompt', payload: { sessionId: 's', text: '', attachment: value },
-    });
-    assert.equal(response.statusCode, 400, response.body);
-    assert.equal(response.json().code, 'INVALID_INTENT_BODY');
-    assert.deepEqual(calls, []);
-  }
-  const missing = await app.inject({
-    method: 'POST', url: '/intent/prompt', payload: { sessionId: 's', text: '', attachment },
-  });
-  assert.equal(missing.statusCode, 404, missing.body);
-  assert.match(missing.json().error, /not found/i);
-  assert.deepEqual(calls, []);
-  assert.equal(existsSync(uploadDir), false, 'invalid attachments must not create upload storage');
-});
-
-test('upload rejects unknown/repeated queries and invalid MIME before writing any files', async () => {
-  const queries = [
-    'name=a&name=b', 'name=a&name=a', 'mime=image/png&mime=image/png',
-    'mime=image/png&mime=text/plain', 'name=a&path=elsewhere', 'extra=value',
-    'name[]=a', 'mime[]=image/png',
-    ...['invalid', 'image/', '/png', 'image/png\r\nX-Injected: yes', 'text/plain\n',
-      'image/png;broken', 'image/png; charset="unterminated', 'x'.repeat(513)]
-      .map((mime) => new URLSearchParams({ name: 'fixture', mime }).toString()),
-  ];
-  for (const query of queries) {
-    const response = await app.inject({
-      method: 'POST', url: `/upload?${query}`,
-      headers: { 'content-type': 'application/octet-stream' }, payload: Buffer.from('fixture'),
-    });
-    assert.equal(response.statusCode, 400, `${query}: ${response.body}`);
-    assert.equal(typeof response.json().error, 'string');
-    assert.equal(existsSync(uploadDir), false);
-    assert.deepEqual(calls, []);
-  }
-  const empty = await app.inject({
-    method: 'POST', url: '/upload?name=empty',
-    headers: { 'content-type': 'application/octet-stream' }, payload: Buffer.alloc(0),
-  });
-  assert.equal(empty.statusCode, 400, empty.body);
-  assert.equal(existsSync(uploadDir), false);
-});
-
-test('missing, malformed, and mismatched upload sidecars fail serving and attachment dispatch explicitly', async () => {
-  for (const corrupt of ['missing', 'json', 'mime', 'size', 'storedName', 'version', 'name'] as const) {
-    const file = await upload('authoritative.png', 'image/png');
-    const sidecar = join(uploadDir, '.metadata', `${basename(file.path)}.json`);
-    const original = readFileSync(sidecar, 'utf8');
-    const metadata = JSON.parse(original);
-    if (corrupt === 'missing') rmSync(sidecar);
-    else if (corrupt === 'json') writeFileSync(sidecar, '{invalid json');
-    else {
-      const changes = {
-        mime: 'image/png\r\nbad: header', size: file.size + 1,
-        storedName: 'other-file.png', version: 2, name: 'bad\nname',
-      };
-      writeFileSync(sidecar, JSON.stringify({ ...metadata, [corrupt]: changes[corrupt] }));
-    }
-    const served = await app.inject({ method: 'GET', url: file.url });
-    assert.equal(served.statusCode, 500, `${corrupt}: ${served.body}`);
-    assert.match(served.json().message, /metadata/i);
-    const prompt = await app.inject({
-      method: 'POST', url: '/intent/prompt', payload: { sessionId: 's', text: '', attachment: file },
-    });
-    assert.equal(prompt.statusCode, 500, `${corrupt}: ${prompt.body}`);
-    assert.match(prompt.json().error, /metadata/i);
-    assert.notEqual(prompt.json().code, 'INVALID_INTENT_BODY');
-    assert.notEqual(prompt.json().code, 'INVALID_INTENT_RESULT');
-    assert.deepEqual(calls, [], corrupt);
-  }
-  assert.ok(readdirSync(uploadDir).length > 0);
 });
 
 test('health/status and restart use only injected state and retain every busy safeguard', async () => {
@@ -1568,193 +1013,6 @@ async function openViewer(expected: Snapshot = projectedSnapshot()) {
     close();
     throw error;
   }
-}
-
-test('snapshot intents, initial SSE, and engine events project unread counts without inventing revisions', async (t) => {
-  for (const counters of [{}, { unreadCount: 0 }, { unreadCount: 0, inboxRevision: 0 },
-    { unreadCount: 9, inboxRevision: 31 }, { inboxRevision: 32 }]) {
-    await t.test(JSON.stringify(counters), async (t) => {
-      sessions = attentionSessions();
-      assert.equal(unreadSessionCount(sessions), 2, 'seen choices and legacy absent IDs are not unread');
-      const raw: Snapshot = { ...snapshot(), ...counters };
-      const original = structuredClone(raw);
-      const expected = projectedSnapshot(raw);
-      assert.equal(expected.unreadCount, counters.unreadCount ?? 2);
-      t.mock.method(engine, 'snapshot', () => record('snapshot', [], raw));
-      t.mock.method(engine, 'attentionCount', () => { throw new Error('must derive unread from snapshot'); });
-      calls.length = 0;
-      const response = await app.inject({ method: 'POST', url: '/intent/runtime/snapshot', payload: {} });
-      assert.equal(response.statusCode, 200, response.body);
-      assert.deepEqual(response.json(), expected);
-      assert.deepEqual(calls, [{ method: 'snapshot', args: [] }]);
-      const viewer = await openViewer(expected);
-      t.after(viewer.close);
-      assert.deepEqual(calls, [{ method: 'snapshot', args: [] }, { method: 'snapshot', args: [] }]);
-      const eventSnapshot: Snapshot = { ...raw, sessions: [...raw.sessions].reverse() };
-      calls.length = 0;
-      onEngineEvent(eventSnapshot);
-      await nextTurn();
-      assert.deepEqual(viewer.frames, [
-        'retry: 2000', `data: ${JSON.stringify(expected)}`,
-        `data: ${JSON.stringify(projectedSnapshot(eventSnapshot))}`,
-      ]);
-      assert.deepEqual(calls, [], 'snapshot events project their own sessions without re-querying the engine');
-      assert.deepEqual(raw, original, 'projection does not mutate the engine snapshot');
-      assert.equal(Object.hasOwn(eventSnapshot, 'unreadCount'), Object.hasOwn(counters, 'unreadCount'));
-      if (!Object.hasOwn(counters, 'inboxRevision')) {
-        assert.equal(Object.hasOwn(response.json(), 'inboxRevision'), false);
-        for (const frame of viewer.frames.slice(1)) {
-          assert.equal(Object.hasOwn(JSON.parse(frame.slice(6)), 'inboxRevision'), false);
-        }
-      }
-    });
-  }
-});
-
-type NotifyEvent = Extract<ServerEvent, { type: 'session/notify' }>;
-test('session/notify uses committed event counters without a native snapshot or metadata read', async (t) => {
-  const scenarios: {
-    label: string;
-    attention: NotifyEvent['attention'];
-    event: Partial<Pick<NotifyEvent, 'attnId' | 'inboxRevision' | 'unreadCount'>>;
-    snapshot: Partial<Pick<Snapshot, 'unreadCount' | 'inboxRevision'>>;
-    metaId?: number;
-    expected: { badge: number; attnId?: number; inboxRevision?: number };
-  }[] = [
-    {
-      label: 'ready prefers event IDs and event unread over snapshot unread',
-      attention: 'ready', event: { attnId: 20, inboxRevision: 21, unreadCount: 99 },
-      snapshot: { unreadCount: 3, inboxRevision: 11 }, metaId: 10,
-      expected: { badge: 99, attnId: 20, inboxRevision: 21 },
-    },
-    {
-      label: 'choice preserves explicit event zero IDs and explicit snapshot zero unread',
-      attention: 'choice', event: { attnId: 0, inboxRevision: 0, unreadCount: 0 },
-      snapshot: { unreadCount: 0, inboxRevision: 11 }, metaId: 10,
-      expected: { badge: 0, attnId: 0, inboxRevision: 0 },
-    },
-    {
-      label: 'choice falls back to engine metadata, snapshot revision and derived unread',
-      attention: 'choice', event: {}, snapshot: { inboxRevision: 11 }, metaId: 10,
-      expected: { badge: 2, attnId: 10, inboxRevision: 11 },
-    },
-    {
-      label: 'ready falls back independently for revision without querying metadata',
-      attention: 'ready', event: { attnId: 20 }, snapshot: { inboxRevision: 0 }, metaId: 10,
-      expected: { badge: 2, attnId: 20, inboxRevision: 0 },
-    },
-    {
-      label: 'choice falls back independently for metadata and preserves event revision',
-      attention: 'choice', event: { inboxRevision: 0 }, snapshot: { inboxRevision: 11 }, metaId: 0,
-      expected: { badge: 2, attnId: 0, inboxRevision: 0 },
-    },
-    {
-      label: 'legacy missing counters remain undefined',
-      attention: 'ready', event: {}, snapshot: {},
-      expected: { badge: 2, attnId: undefined, inboxRevision: undefined },
-    },
-  ];
-  for (const scenario of scenarios) {
-    await t.test(scenario.label, async (t) => {
-      sessions = attentionSessions();
-      const raw: Snapshot = { ...snapshot(), ...scenario.snapshot };
-      t.mock.method(engine, 'snapshot', () => record('snapshot', [], raw));
-      t.mock.method(engine, 'attentionCount', () => { throw new Error('attentionCount is not an unread badge'); });
-      t.mock.method(engine, 'getMeta', (...args: unknown[]) =>
-        record('getMeta', args, { ...busySession, attnId: scenario.metaId }));
-      const viewer = await openViewer(projectedSnapshot(raw));
-      t.after(viewer.close);
-      const ev: NotifyEvent = {
-        type: 'session/notify', sessionId: 's', title: 'Fixture title',
-        attention: scenario.attention, body: 'Fixture notification body', ...scenario.event,
-      };
-      const writes = t.mock.method(viewer.connection.raw.res, 'write');
-      t.mock.method(fakePush, 'sendAttention', async (...args: unknown[]) => {
-        assert.equal(writes.mock.callCount(), 1, 'notification is broadcast before attempting push');
-        assert.equal(writes.mock.calls[0]?.arguments[0], `data: ${JSON.stringify(ev)}\n\n`);
-        return record('sendAttention', args, undefined);
-      });
-      calls.length = 0;
-      assert.equal(onEngineEvent(ev), undefined);
-      await nextTurn();
-      const complete = scenario.event.attnId !== undefined && scenario.event.inboxRevision !== undefined
-        && scenario.event.unreadCount !== undefined;
-      assert.deepEqual(calls, complete ? [{
-          method: 'sendAttention', args: [ev.title, 's', ev.attention, ev.body, scenario.expected.badge, {
-            attnId: scenario.expected.attnId, inboxRevision: scenario.expected.inboxRevision,
-          }],
-      }] : [], 'incomplete legacy events cannot invent a committed waterline by later reads');
-      assert.deepEqual(viewer.frames, [
-        'retry: 2000', `data: ${JSON.stringify(projectedSnapshot(raw))}`, `data: ${JSON.stringify(ev)}`,
-      ]);
-      assert.deepEqual(fakeDeliveries, []);
-    });
-  }
-});
-
-for (const mode of ['async rejection', 'synchronous throw'] as const) {
-  test(`notification push ${mode} is redacted and does not interrupt SSE or chat`, async (t) => {
-    const viewer = await openViewer();
-    t.after(viewer.close);
-    const error = Object.assign(new Error('private SDK error https://push.example/private-token'), {
-      endpoint: 'https://push.example/private-token', body: 'private transport body',
-      status: 'unsafe status', at: 'unsafe timestamp', error: 'private nested error',
-    });
-    const warn = t.mock.method(app.log, 'warn', () => {});
-    const pending = deferred();
-    t.mock.method(fakePush, 'sendAttention', (...args: unknown[]) => {
-      record('sendAttention', args, undefined);
-      if (mode === 'synchronous throw') throw error;
-      return pending.promise;
-    });
-    const ev: NotifyEvent = {
-      type: 'session/notify', sessionId: 's', title: 'private notification title',
-      attention: 'choice', body: 'private notification body', attnId: 0, inboxRevision: 0, unreadCount: 0,
-    };
-    const reset = ServerEvent.parse({
-      type: 'chat/invalidated', sessionId: 's', reason: 'rewind',
-    });
-    calls.length = 0;
-    const before = Date.now();
-    try {
-      assert.doesNotThrow(() => onEngineEvent(ev));
-      assert.doesNotThrow(() => onEngineEvent(reset));
-      const chat = await app.inject({ method: 'POST', url: '/intent/prompt', payload: cases.prompt.body });
-      assert.equal(chat.statusCode, 200, chat.body);
-      assert.deepEqual(chat.json(), { ok: true, queued: true }, 'chat stays responsive even while push is pending');
-      if (mode === 'async rejection') {
-        assert.equal(warn.mock.callCount(), 0);
-        pending.reject(error);
-      }
-      await nextTurn();
-      assert.equal(warn.mock.callCount(), 1);
-      const [fields] = warn.mock.calls[0]!.arguments as unknown as [Record<string, unknown>];
-      assert.deepEqual(Object.keys(fields).sort(), ['at', 'error', 'status']);
-      assert.deepEqual(fields, { status: 'failed', at: fields.at, error: 'Push notification failed' });
-      assert.equal(typeof fields.at, 'number');
-      assert.ok(Number.isFinite(fields.at));
-      assert.ok((fields.at as number) >= before && (fields.at as number) <= Date.now());
-      assert.doesNotMatch(JSON.stringify(warn.mock.calls[0]!.arguments),
-        /private|push\.example|SDK error|unsafe|transport body/);
-      assert.deepEqual(viewer.frames, [
-        'retry: 2000', `data: ${JSON.stringify(projectedSnapshot())}`,
-        `data: ${JSON.stringify(ev)}`, `data: ${JSON.stringify(reset)}`,
-      ]);
-      assert.doesNotThrow(() => onEngineEvent(reset));
-      await nextTurn();
-      assert.equal(viewer.frames.at(-1), `data: ${JSON.stringify(reset)}`);
-      assert.equal(viewer.frames.length, 5, 'the SSE client remains attached after failure');
-      assert.equal(viewer.connection.raw.res.destroyed, false);
-      assert.deepEqual(calls, [
-        { method: 'sendAttention', args: [ev.title, 's', 'choice', ev.body, 0, { attnId: 0, inboxRevision: 0 }] },
-        { method: 'prompt', args: ['s', 'hello', 'enqueue'] },
-      ]);
-      assert.deepEqual(fakeDeliveries, []);
-      assert.equal(app.server.listening, false);
-    } finally {
-      pending.resolve();
-    }
-  });
 }
 
 test('SSE sends exact snapshot/retry/ping frames on reconnect and enforces the connection cap', { timeout: 5000 }, async (t) => {

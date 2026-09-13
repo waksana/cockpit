@@ -47,19 +47,19 @@ Cockpit startup does not activate sessions based on saved schedule preferences.
 The scheduler or webhook receiver belongs outside Cockpit and can send a prompt
 through the same API; that explicit operation resumes the target when needed.
 
-For an explicitly requested fresh model window without replacing the session,
-use the bundled [self-context-reset skill and native tool](context-reset.md).
-The session owns persistence and recovery; Cockpit does not summarize its memory.
+The [module catalog](module-catalog.md) describes the parked enhancements.
+This source has no bundled self-reset workflow, browser file transfer, voice,
+notifications, organization or system dashboard. Native compaction, rewind and
+normal load/unload remain distinct operations.
 
 ## Configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `COCKPIT_PORT` | `8771` | Loopback listening port |
-| `COCKPIT_HOME` | `~/.copilot` | Cockpit state root |
+| `COCKPIT_HOME` | `~/.copilot` | Native Copilot storage used by this host |
 | `COCKPIT_SERVE_WEB` | `1` through the launcher | Serve the built SPA from the API process |
 | `COCKPIT_WEB_DIR` | `apps/web/dist` | Built SPA directory |
-| `COCKPIT_UPLOAD_DIR` | `<COCKPIT_HOME>/cockpit-uploads` | Uploaded file storage |
 | `COCKPIT_ALLOWED_ORIGINS` | Built-in origin allowlist | Additional comma-separated browser origins |
 | `COCKPIT_MAX_OLD_SPACE_MB` | Node default | Optional server child's V8 old-space ceiling override |
 
@@ -68,17 +68,16 @@ server directly rather than the launcher, SPA serving is opt-in.
 
 ## Remote access
 
-Put the web app, `/intent/*`, `/events`, `/chat/stream`, `/capabilities`, `/upload` and
-`/uploads/*` behind the same authenticated HTTPS origin. Forward SSE without
-proxy buffering and allow long-lived streams. Protect file downloads just as
-carefully as chat and command endpoints.
+Put the web app, `/intent/*`, `/events`, `/chat/stream` and `/capabilities`
+behind the same authenticated HTTPS origin. Forward SSE without proxy buffering
+and allow long-lived streams. There is no built-in file transfer route.
 
 Keep `/admin/restart` and operational status private unless the gateway explicitly
 authorizes them. Origin checks are CSRF protection, **not authentication**. Do not
 expose a raw loopback service through an unauthenticated tunnel.
 
 After this one-time setup, computers and phones use the web app for session
-selection, chat, execution controls, questions and file exchange. Reconnecting
+selection, native chat, execution controls and questions. Reconnecting
 clients receive a fresh metadata snapshot. Their browser-owned chat windows
 continue through native event cursors; see [native chat transport](native-chat.md)
 for paging, incomplete streaming messages and explicit cursor invalidation.
@@ -92,9 +91,9 @@ Build `apps/mcp` as part of `pnpm build`, then register its
 tools and gateway credentials.
 
 The MCP client reads sessions and transcripts through the API; it does not need
-the server's session database or event-log directories mounted locally. A local
-file path passed to an upload/download tool belongs to the **MCP client's**
-machine. API-returned server paths are not assumed to exist on that machine.
+the server's session database or event-log directories mounted locally.
+SDK-native attachment paths refer to the **Copilot runtime's** filesystem.
+Passing a path does not transfer a file from the MCP client's machine.
 
 ## Existing installations and governance
 
@@ -120,33 +119,19 @@ as foundation setup procedures. No replacement governance service is bundled.
 
 ## Session list
 
-The sidebar has a global pinned section followed by all remaining sessions.
-Each section is sorted by most recent activity, without directory/project
+The sidebar lists sessions by most recent native activity, without directory/project
 grouping or worktree labels. Rows display their cwd basename; search matches
 title, full cwd and session ID. The backend does not resolve Git project or
 worktree identity for session organization.
 
 ## Restarting safely
 
-On startup, `Prefs` removes only the retired top-level Cockpit fields
-`mcpDefaultOn`, `mcpBySession`, `skillsDisabledBySession`,
-`skillsAllowlistBySession`, `hooks`, `flowSchedules`, `scheduledSessions`,
-`welcomedSessions`, `spawnedBySession`, `trashed`, and `trashedMeta` from `cockpit-prefs.json`.
-These fields had Cockpit writers in the original implementation; current
-MCP/skill selection and scheduling belong to Copilot, and Hook/Flow governance
-has been removed. `workerMetadata` has no established historical Cockpit writer
-and is treated as unknown, not retired.
-
-Cleanup preserves `pinnedSessions`, `inbox` (including its monotonic
-IDs), and unknown fields. It never touches uploads, push registration or native
-configuration, and never replays retired settings into Copilot. After validating
-the inbox, startup atomically replaces the file only if a retired key exists;
-failure aborts loading instead of exposing a partially migrated instance.
-Successful cleanup logs field names only. Subsequent startups do not rewrite a
-clean file. Do not edit the live prefs file out of band to deploy this change:
-the old process could save its in-memory copy again. Let the graceful restart
-finish so the new owning process performs cleanup before accepting mutations.
-A pending restart is not evidence that persisted fields have already been removed.
+The thin foundation no longer reads, migrates or writes `cockpit-prefs.json`.
+Old pin/inbox/governance records, uploads, push registrations and rich browser
+drafts remain untouched. No background cleanup or automatic replay is added.
+Old managed links have no download service in this source. The text-only
+composer uses a new key and does not inherit old rich drafts or their captions;
+see [adoption boundaries](module-catalog.md#interim-behavior-and-adoption).
 
 There is no Cockpit trash or restore operation. Removing legacy trash marks only
 unhides existing native sessions in the normal list; it does not delete history.
@@ -169,12 +154,10 @@ ordinary update while sessions are running or waiting for answers.
 If the owned Copilot process dies unexpectedly, the API exits nonzero for that
 same supervisor to recover it. Potentially accepted prompts are never replayed.
 
-`node scripts/graceful-restart.mjs` (or the Bash wrapper) requests that same
-backend-owned restart. It exits after the request is acknowledged; it does not
-claim the new process has started. `DRY_RUN=1` reads status only. Set
-`COCKPIT_URL`/`COCKPIT_PORT` and, for a compatible authenticated gateway,
-`COCKPIT_API_TOKEN` as needed. The helper never directly restarts a service when
-the backend is unreachable.
+The convenience restart scripts and MCP command are parked, not installed.
+An external deployment controller or the owned consumer launcher can still use
+the protected lifecycle. Acknowledgement is not proof that a new process started;
+never use an unreachable backend as permission to bypass its busy protection.
 
 ### Do not make a restart observer block its own restart
 
@@ -183,7 +166,7 @@ native active work even with tool-level `detach:true`; detaching a process is
 not the same as removing its tool/task from the session. In particular,
 `systemd-run --wait` inside a background tool creates a cycle: the tool waits for
 an observer, the observer waits for restart, and restart waits for that tool.
-The restart helper intentionally has no wait/poll mode and rejects CLI options.
+The initiating command must return without waiting for itself to become idle.
 Do not bypass the busy gate or classify all background tasks as idle.
 
 Usually, report that restart is pending and verify after the next user entry.
@@ -212,6 +195,7 @@ pnpm --filter @cockpit/web exec vite build --outDir /absolute/staging/web-dist
 ```
 
 After deploying, exercise the real remote-use journey: open a session on a
-computer, send a message or image, disconnect, reopen it on a phone, and confirm
+computer, send a text message, disconnect, reopen it on a phone, and confirm
 the same history and controls are available. Also use MCP to address another
-session and exchange a file. None of these steps should require a Butler session.
+session. These native journeys do not require a business module. File/voice/
+notification journeys must wait for separately adapted modules.

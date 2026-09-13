@@ -1,8 +1,7 @@
 # Native event chat transport
 
-This describes checked-in source, not a deployment receipt. In particular, the
-all-agent SSE and subsequent SDK remediation changes remain local at the
-[2026-09-11 source status](cockpit-plan.md#source-delivery-and-paused-work-2026-09-11).
+This describes checked-in source, not a deployment receipt. See the
+[source status](cockpit-plan.md#source-status) and [module boundary](module-catalog.md).
 
 Copilot owns durable history and model context. Cockpit does not keep chat
 windows, a live message fold, a message-ID index, resume checkpoints, or a
@@ -10,9 +9,9 @@ second conversation store. The browser owns its loaded messages, tool/agent
 relationships, scroll position, and native cursors.
 
 The global `/events` connection carries session metadata, control state and
-notification signals, not chat message upserts. A chat reader exists only for
+resource invalidations, not chat message upserts. A chat reader exists only for
 an actual consumer request. Ending that request never aborts the agent.
-Native SDK callbacks still handle control/notification work; registering no
+Native SDK callbacks still handle control/resource events; registering no
 chat handler does not promise that the SDK transport stops receiving all native
 notifications.
 

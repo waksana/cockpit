@@ -9,7 +9,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { z } from 'zod';
-import { Intents, type Attachment, type NativeChatEvent, type ScheduleEntry, type SessionMeta, type SessionPanels, type SessionPlan, type Snapshot } from '../../../packages/protocol/src/index.ts';
+import { Intents, type NativeAttachment, type NativeChatEvent, type ScheduleEntry, type SessionMeta, type SessionPanels, type SessionPlan, type Snapshot } from '../../../packages/protocol/src/index.ts';
 
 type Request = { path: string; method: string; body: unknown; authorization: string | undefined };
 const requests: Request[] = [];
@@ -17,11 +17,7 @@ const schemas: Record<string, z.ZodType> = {
   ...Object.fromEntries(Object.entries(Intents).map(([name, definition]) => [name, definition.body])),
   'future/operation': z.object({ value: z.number() }).strict(),
 };
-const attachment: Attachment = { kind: 'image', name: 'display name.png', url: '/uploads/safe-image.png', size: 20, mime: 'image/png' };
-const retainedFile = {
-  ...attachment, size: 20, mime: 'image/png', path: '/remote/uploads/safe-image.png',
-  source: 'tool-image', sessionId: 'B', sha256: 'a'.repeat(64), createdAt: 1,
-};
+const attachment: NativeAttachment = { type: 'file', path: '/native/image.png', displayName: 'display name.png' };
 const nativeEvents: NativeChatEvent[] = [
   { id: 'e1', type: 'user.message', data: { content: 'earlier question' } },
   {
@@ -47,7 +43,7 @@ let scheduleStopped = true;
 const meta: SessionMeta = {
   sessionId: 'B', title: 'Backend title', cwd: '/only-on-backend/project',
   status: 'unloaded', loaded: false, lastActivity: 1,
-  error: null, ask: null, planRequest: null, elicitation: null, intent: null, attention: null,
+  error: null, ask: null, planRequest: null, elicitation: null, intent: null,
   currentReasoningEffort: null, currentContextTier: null, currentMode: null,
   queue: [{ id: 'q1', text: 'pending' }],
   todo: { done: 1, total: 3, intent: 'Testing canonical state' },
@@ -55,7 +51,7 @@ const meta: SessionMeta = {
   loading: true, closing: false, cancelling: true,
 };
 const snapshot: Snapshot = {
-  type: 'snapshot', agentStatus: 'up', models: meta.availableModels ?? [], vapidPublicKey: null,
+  type: 'snapshot', agentStatus: 'up', models: meta.availableModels ?? [],
   sessions: [meta], permissionPolicy: 'allow-all',
 };
 const plan: SessionPlan = {
@@ -157,21 +153,7 @@ mockHttp((res, req) => {
     if (name === 'session/new') return send({ sessionId: 'new-id' });
     if (name === 'session/fork') return send({ sessionId: 'forked-id' });
     if (name === 'session/interrupt') return send({ ok: true, interrupted: Intents['session/interrupt'].body.parse(body).sessionId === 'running' });
-    if (name === 'session/auto-name') return send({
-      ok: true, applied: false, title: 'User title', reason: 'user-named',
-    });
     if (name === 'future/operation') return send({ echoed: parsed.data });
-    if (name === 'files/list') return send({
-      files: [retainedFile], hasMore: false,
-      errors: [{ url: '/uploads/unreadable.bin', error: 'Missing metadata' }],
-    });
-    if (['files/get', 'files/associate'].includes(name)) return send(retainedFile);
-    if (name === 'prompt') {
-      const input = Intents.prompt.body.parse(body);
-      if (input.attachment && !/^\/uploads\/[A-Za-z0-9][A-Za-z0-9._-]{0,254}$/.test(input.attachment.url)) {
-        return send({ error: 'Expected /uploads/<safe-basename>' }, 400);
-      }
-    }
     if (name === 'session/rewind' && Intents['session/rewind'].body.parse(body).rollbackFiles) {
       return send({ error: 'File rollback is unsupported; no mutation performed' }, 400);
     }
@@ -360,18 +342,18 @@ for (const status of ['needs_auth', 'future-status']) {
   });
 }
 
-test('registry exposes foundation, native schedules, manual settings and files, not governance', async () => {
+test('registry exposes native controls without parked file, organization or restart tools', async () => {
   const { tools } = await client.listTools();
   const names = tools.map(({ name }) => name);
   const expected = [
-    'cockpit_capabilities', 'cockpit_call_intent', 'cockpit_service_status', 'cockpit_service_restart',
-    'cockpit_read_session', 'cockpit_send_prompt', 'cockpit_upload_file', 'cockpit_download_file',
+    'cockpit_capabilities', 'cockpit_call_intent', 'cockpit_service_status',
+    'cockpit_read_session', 'cockpit_send_prompt',
     'cockpit_schedule_add', 'cockpit_list_schedules', 'cockpit_stop_schedule',
     'cockpit_list_session_mcp', 'cockpit_set_session_mcp', 'cockpit_set_session_skill',
     'cockpit_get_snapshot', 'cockpit_list_sessions', 'cockpit_get_session',
     'cockpit_get_panels', 'cockpit_get_plan', 'cockpit_new_session', 'cockpit_delete_session',
     'cockpit_purge_session', 'cockpit_unload_session', 'cockpit_reload_session',
-    'cockpit_rename_session', 'cockpit_set_session_pin', 'cockpit_cancel_turn', 'cockpit_remove_queued',
+    'cockpit_rename_session', 'cockpit_cancel_turn', 'cockpit_remove_queued',
     'cockpit_respond_ask', 'cockpit_respond_plan', 'cockpit_plan_supersede', 'cockpit_respond_elicitation',
     'cockpit_set_model', 'cockpit_set_mode', 'cockpit_compact_session', 'cockpit_rewind_session',
     'cockpit_list_global_mcp', 'cockpit_set_global_mcp_default', 'cockpit_refresh_mcp',
@@ -387,13 +369,13 @@ test('registry exposes foundation, native schedules, manual settings and files, 
   assert.equal(requests.length, 0, 'registry construction must not read HTTP or local state');
 });
 
-test('published tool guidance matches direct intents, retained images and native timer limits', async () => {
+test('published tool guidance matches native inputs and timer limits', async () => {
   const { tools } = await client.listTools();
   const guidance = [
     ['cockpit_call_intent', [
       /one POST without a capability preflight/i, /backend.*validates.*body and result/i,
       /use cockpit_capabilities when the API schema is unknown/i,
-      /native tool-image history lookup is retired/i, /existing local original.*managed file/i,
+      /SDK-native attachments/i, /no managed upload/i,
     ]],
     ['cockpit_read_session', [
       /default limit is 16 events, not a byte bound/i, /original input cursor/i,
@@ -401,11 +383,11 @@ test('published tool guidance matches direct intents, retained images and native
       /no native body offset, cache, or saved copy/i, /query and complete page/i,
     ]],
     ['cockpit_send_prompt', [
-      /server resolves authoritative metadata.*native file paths/i,
-      /agent must explicitly read\/view/i, /native tool-image lookup is retired/i,
+      /SDK-native.*file\/directory\/selection\/blob/i,
+      /Paths belong to the native runtime filesystem/i, /No upload, file-library association/i,
     ]],
     ['cockpit_schedule_add', [
-      /no self-paced creation or rearming/i, /pinning does not keep the target loaded/i,
+      /no self-paced creation or rearming/i, /schedules do not keep the target loaded/i,
       /native idle cleanup pauses schedules/i, /not an always-on scheduler/i,
     ]],
     ['cockpit_list_schedules', [
@@ -416,7 +398,6 @@ test('published tool guidance matches direct intents, retained images and native
       /known id/i, /native stop result, not a list read/i,
       /reports that as an error/i, /native failures propagate/i,
     ]],
-    ['cockpit_set_session_pin', [/NOT keep the session loaded/i, /including sessions with future schedules/i]],
   ] as const;
   for (const [name, patterns] of guidance) {
     const tool = tools.find(tool => tool.name === name);
@@ -657,7 +638,7 @@ test('generic validation and purge confirmation are owned by backend, semantic p
   assert.deepEqual(requests[0]?.body, { sessionId: 'B', confirm: true });
 });
 
-test('session creation forwards cwd only and fixed service tools preserve confirmation and credentials', async () => {
+test('session creation and minimal service reads preserve credentials without a restart tool', async () => {
   assert.equal((await call('cockpit_new_session', { cwd: '/remote/cwd' })).isError, false);
   assert.deepEqual(requests[0]?.body, { cwd: '/remote/cwd' });
   await json('cockpit_service_status', { operation: 'health' });
@@ -665,11 +646,8 @@ test('session creation forwards cwd only and fixed service tools preserve confir
   assert.equal((await call('cockpit_service_status', { operation: '../admin/restart' })).isError, true);
   assert.equal((await call('cockpit_service_restart', { pending: true })).isError, true);
   assert.equal(requests.length, 3);
-  await json('cockpit_service_restart', { pending: true, confirm: true });
-  await json('cockpit_service_restart', { pending: false, confirm: true });
-  assert.deepEqual(requests.slice(1).map(({ path }) => path), ['/health', '/status', '/admin/restart', '/admin/restart']);
-  assert.deepEqual(requests[3]?.body, { pending: true });
-  assert.deepEqual(requests[4]?.body, { pending: false });
+  assert.equal((await call('cockpit_service_restart', { pending: true, confirm: true })).isError, true);
+  assert.deepEqual(requests.slice(1).map(({ path }) => path), ['/health', '/status']);
   assert.ok(requests.every((request) => request.authorization === 'Bearer session-test-token'));
 });
 
@@ -825,18 +803,6 @@ test('native global skill configuration is available through the shared generic 
   assert.deepEqual(requests.at(-1)?.body, { name: 'review', enabled: false, cwd: '/backend/project' });
 });
 
-test('automatic naming uses the shared API without pretending a manual title was replaced', async () => {
-  const result = await json('cockpit_call_intent', {
-    name: 'session/auto-name', body: { sessionId: 'B' },
-  });
-
-  assert.deepEqual(result, { ok: true, applied: false, title: 'User title', reason: 'user-named' });
-  assert.deepEqual(requests.map(({ path }) => path), [
-    '/intent/session/auto-name',
-  ]);
-  assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B' });
-});
-
 for (const interrupted of [false, true]) {
   test(`generic native interrupt preserves interrupted:${interrupted} and makes exactly one mutation`, async () => {
     const sessionId = interrupted ? 'running' : 'idle';
@@ -849,23 +815,6 @@ for (const interrupted of [false, true]) {
     assert.deepEqual(requests.at(-1)?.body, { sessionId });
   });
 }
-
-test('naming progress and errors remain distinct from ordinary execution errors', async () => {
-  const previous = { autoNaming: meta.autoNaming, autoNameError: meta.autoNameError };
-  try {
-    meta.autoNaming = true;
-    meta.autoNameError = null;
-    assert.match((await call('cockpit_get_session', { session_id: 'B' })).text, /automatic naming: in progress \(not a chat turn\)/);
-    meta.autoNaming = false;
-    meta.autoNameError = 'Auxiliary query unavailable';
-    assert.match((await call('cockpit_get_session', { session_id: 'B' })).text, /naming error: Auxiliary query unavailable/);
-    assert.equal(meta.error, null);
-  } finally {
-    Object.assign(meta, previous);
-    if (previous.autoNaming === undefined) delete meta.autoNaming;
-    if (previous.autoNameError === undefined) delete meta.autoNameError;
-  }
-});
 
 test('snapshot exposes required allow-all policy and complete canonical state through semantic and generic tools', async () => {
   assert.deepEqual(await json('cockpit_get_snapshot'), snapshot);
@@ -946,30 +895,30 @@ test('child native filtering requires live reads and never resumes a session', a
   });
   assert.ok(requests.every(({ path }) => path === '/intent/session/chat'));
 });
-test('semantic and generic prompt deliver attachment JSON unchanged with no marker or local/backend path', async () => {
+test('semantic and generic prompt forward native attachments without file storage or markers', async () => {
   for (const text of ['Review this image', '']) {
-    const semantic = await call('cockpit_send_prompt', { session_id: 'B', text, attachment });
+    const semantic = await call('cockpit_send_prompt', { session_id: 'B', text, attachments: [attachment] });
     assert.equal(semantic.isError, false, semantic.text);
-    assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', text, attachment, mode: 'enqueue' });
-    await json('cockpit_call_intent', { name: 'prompt', body: { sessionId: 'B', text, attachment } });
-    assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', text, attachment });
+    assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', text, attachments: [attachment], mode: 'enqueue' });
+    await json('cockpit_call_intent', { name: 'prompt', body: { sessionId: 'B', text, attachments: [attachment] } });
+    assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', text, attachments: [attachment] });
   }
-  const minimal: Attachment = { kind: 'file', name: 'Report', url: '/uploads/report.pdf' };
-  assert.equal((await call('cockpit_send_prompt', { session_id: 'B', text: '', attachment: minimal })).isError, false);
-  assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', text: '', mode: 'enqueue', attachment: minimal });
-  assert.equal((await call('cockpit_send_prompt', {
-    session_id: 'B', text: '', attachment: { ...attachment, path: '/server-only/image.png', storedName: 'safe-image.png' },
-  })).isError, false);
-  assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', text: '', mode: 'enqueue', attachment });
+  const minimal: NativeAttachment = { type: 'file', path: '/native/report.pdf' };
+  assert.equal((await call('cockpit_send_prompt', { session_id: 'B', text: '', attachments: [minimal] })).isError, false);
+  assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', text: '', mode: 'enqueue', attachments: [minimal] });
   assert.ok(requests.every((request) => !JSON.stringify(request.body ?? {}).includes('<cockpit-attachment')));
+  assert.ok(requests.every(request => request.path === '/intent/prompt'));
   requests.length = 0;
-  for (const url of ['https://evil.invalid/file', '/uploads/../secret', '/uploads/a..png', '/uploads/a.png?x=1', '/uploads/%2e%2e', '/local/path']) {
-    assert.equal((await call('cockpit_send_prompt', { session_id: 'B', text: 'Review', attachment: { ...attachment, url } })).isError, true);
+  for (const invalid of [
+    { attachment }, { parts: [] }, { attachments: [{ kind: 'file', name: 'Old', url: '/uploads/old' }] },
+    { attachments: [{ ...minimal, storedName: 'old' }] },
+  ]) {
+    assert.equal((await call('cockpit_send_prompt', { session_id: 'B', text: 'Review', ...invalid })).isError, true);
   }
   assert.equal((await call('cockpit_send_prompt', { session_id: 'B', text: '' })).isError, true);
   assert.equal(requests.length, 0);
   assert.equal((await call('cockpit_call_intent', {
-    name: 'prompt', body: { sessionId: 'B', text: 'Review', attachment: { ...attachment, url: 'https://evil.invalid/file' } },
+    name: 'prompt', body: { sessionId: 'B', text: 'Review', attachment },
   })).isError, true, 'generic body validation belongs to the backend');
 });
 
@@ -982,32 +931,26 @@ test('global skills forwards optional backend cwd and omits it for server-home d
   assert.deepEqual(requests.at(-1)?.body, { cwd: '/backend/other' });
 });
 
-test('retained files remain discoverable and selectable for attachment delivery without native image lookup', async () => {
+test('parked file and organization APIs are absent from discovery and rejected by the backend', async () => {
   const catalog = z.object({ intents: z.array(z.object({ name: z.string() })) })
     .parse(await json('cockpit_capabilities', { prefix: 'files/' }));
-  assert.deepEqual(catalog.intents.map(item => item.name), ['files/associate', 'files/get', 'files/list']);
-  const listing = await json('cockpit_call_intent', {
-    name: 'files/list', body: { query: 'display', sessionId: 'B', limit: 10, offset: 0 },
-  });
-  assert.deepEqual(listing, {
-    files: [retainedFile], hasMore: false,
-    errors: [{ url: '/uploads/unreadable.bin', error: 'Missing metadata' }],
-  });
-  for (const [name, body] of [
-    ['files/get', { url: attachment.url }],
-    ['files/associate', { url: attachment.url, sessionId: 'B' }],
-  ] as const) assert.deepEqual(await json('cockpit_call_intent', { name, body }), retainedFile);
-  const result = await call('cockpit_send_prompt', { session_id: 'B', text: 'Retained native image', attachment });
-  assert.equal(result.isError, false, result.text);
-  assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', text: 'Retained native image', attachment, mode: 'enqueue' });
-  assert.ok(requests.every(request => !JSON.stringify(request.body ?? {}).includes('/remote/')));
+  assert.deepEqual(catalog.intents, []);
+  for (const name of ['files/list', 'files/get', 'files/associate', 'session/pin', 'session/auto-name']) {
+    const before = requests.length;
+    const result = await call('cockpit_call_intent', { name, body: {} });
+    assert.equal(result.isError, true);
+    assert.equal(requests.length, before + 1, 'no hidden preflight or retry');
+  }
 });
 
-test('multiple attachments and ordered parts preserve input order in semantic and generic prompt tools', async () => {
-  const video: Attachment = { kind: 'file', name: 'video.mp4', url: '/uploads/video.mp4', mime: 'video/mp4' };
-  const parts = [{ type: 'text', text: 'Before' }, { type: 'file', attachment }, { type: 'text', text: 'Then' },
-    { type: 'file', attachment: video }, { type: 'text', text: 'After' }];
-  for (const form of [{ attachments: [attachment, video], text: 'Review both' }, { parts, text: '' }]) {
+test('multiple native attachment variants preserve their order in semantic and generic tools', async () => {
+  const attachments: NativeAttachment[] = [
+    attachment, { type: 'directory', path: '/native/project' },
+    { type: 'selection', filePath: '/native/code.ts', displayName: 'Snippet', text: 'const value = 1;' },
+    { type: 'blob', data: 'dGV4dA==', mimeType: 'text/plain' },
+  ];
+  for (const text of ['Review these', '']) {
+    const form = { attachments, text };
     const result = await call('cockpit_send_prompt', { session_id: 'B', ...form });
     assert.equal(result.isError, false, result.text);
     assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', mode: 'enqueue', ...form });

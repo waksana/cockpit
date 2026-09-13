@@ -62,7 +62,7 @@ test('different native messages keep separate groups; blank answers create no bo
   session.messages = [
     message,
     { ...message, id: 'next', content: ' \n ', thought: undefined, toolCalls: message.toolCalls?.slice(0, 1) },
-    { ...message, id: 'parts', parts: [{ type: 'text', text: '\n  ' }] },
+    { ...message, id: 'blank', content: '\n  ' },
     { id: 'empty', role: 'assistant', content: '', timestamp: 1001 },
   ];
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
@@ -86,18 +86,4 @@ test('formal text stays visible outside the process with compact text-only copy'
   assert.doesNotMatch(copy, /tgico|data-icon/);
   const defaultCopy = renderToStaticMarkup(createElement(CopyButton, { text: 'code', label: '复制代码' }));
   assert.match(defaultCopy, /data-icon="file"/);
-});
-
-test('attachment-only replies remain visible and copyable when there is no text', () => {
-  const session = fixtureSession('empty');
-  session.messages = [{
-    ...message, content: '', parts: [
-      { type: 'text', text: ' \n ' },
-      { type: 'file', attachment: { kind: 'file', url: '/uploads/example.txt', name: 'example.txt', mime: 'text/plain' } },
-    ],
-  }];
-  const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
-  assert.match(html, /data-file-url="\/uploads\/example.txt"/);
-  assert.match(html, /class="message-actions"/);
-  assert.doesNotMatch(html, /class="message-body"/);
 });

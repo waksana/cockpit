@@ -8,7 +8,7 @@
 //
 // Everything is overridable from the environment before you run it:
 //   COCKPIT_PORT       listen port (default 8771)
-//   COCKPIT_HOME       state root (default ~/.copilot) — prefs/sessions/uploads
+//   COCKPIT_HOME       native Copilot storage (default ~/.copilot)
 //   COCKPIT_SERVE_WEB  serve the SPA from this process (default 1 here)
 //   COCKPIT_WEB_DIR    built SPA dir (default apps/web/dist)
 //   COCKPIT_MAX_OLD_SPACE_MB  V8 old-space ceiling in MB for the server child

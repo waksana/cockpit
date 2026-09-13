@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "API-only MCP client for Cockpit sessions, capabilities, and file transfers.",
+  "description": "API-only MCP client for native Copilot sessions and capabilities.",
   "bin": {
     "cockpit-mcp-server": "dist/index.js"
   },

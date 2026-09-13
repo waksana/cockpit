@@ -31,13 +31,13 @@ test('immutable delivery serves current and retained hashed assets without SPA f
 });
 
 test('SPA fallback serves only recognized application routes', async () => {
-  for (const path of ['/', '/session/fixture', '/session/fixture/info', '/mcp', '/skills/project',
-    '/files', '/files?url=%2Fuploads%2Ffixture.mp4&sessionId=fixture']) {
+  for (const path of ['/', '/session/fixture', '/session/fixture/info', '/mcp', '/skills/project']) {
     const response = await app.inject({ method: 'GET', url: path });
     assert.equal(response.statusCode, 200, path);
     assert.match(response.headers['content-type'] ?? '', /text\/html/);
   }
   for (const path of ['/trash', '/trash/fixture', '/flows/old', '/workers/old', '/modules/task',
+    '/files', '/files?url=%2Fuploads%2Ffixture.mp4&sessionId=fixture',
     '/modules/task/api/status', '/modules/wechat', '/intent/modules/list',
     '/intent/session/history', '/uploads/no/such/file', '/health/typo', '/assets/missing.js', '/home/user/chart.png']) {
     const response = await app.inject({ method: 'GET', url: path });

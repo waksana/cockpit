@@ -71,7 +71,7 @@ test('native model settings: capability enrichment, partial changes and cold rea
         enableSessionTelemetry: false, remoteSession: 'off', availableTools: [],
       },
     });
-    engine = new Engine({ runtime, prefsFile: join(dirs.state!, 'prefs.json') });
+    engine = new Engine({ runtime });
     await engine.start();
     const id = await engine.newSession(dirs.work!);
     const initial = (await engine.getMeta(id))!;

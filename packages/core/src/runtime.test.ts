@@ -4,7 +4,6 @@ import { EventEmitter } from 'node:events';
 import { channel } from 'node:diagnostics_channel';
 import { RuntimeConnection, approveAll, type CopilotClientOptions, type CopilotSession, type GetAuthStatusResponse, type ModelInfo, type SessionConfig, type SessionEvent } from '@github/copilot-sdk';
 import { OfficialRuntime, modelOption, sessionModelOptions, type RuntimeClient } from './runtime.ts';
-import { bundledSkillsDirectory } from './paths.ts';
 
 function fixture(options: { clientOptions?: CopilotClientOptions; sessionConfig?: Partial<SessionConfig>; child?: boolean } = {}) {
   const clients: RuntimeClient[] = [];
@@ -146,7 +145,7 @@ test('native close failure retains ownership; retry does not detach prematurely'
   await f.runtime.stop();
 });
 
-test('create and resume compose host tools and expose bundled skills without replacing configured directories', async () => {
+test('create and resume preserve explicitly configured native tools and skill directories without bundled extras', async () => {
   const hostTool = { name: 'host_tool', handler: () => 'host' };
   const sessionTool = { name: 'session_tool', handler: () => 'session', isTerminal: true };
   const f = fixture({ sessionConfig: { tools: [hostTool], skillDirectories: ['/host-skills'] } });
@@ -154,7 +153,7 @@ test('create and resume compose host tools and expose bundled skills without rep
   const b = await f.runtime.resumeSession('existing', { tools: [sessionTool], skillDirectories: ['/session-skills'] });
   for (const config of f.configs) {
     assert.deepEqual(config.tools, [hostTool, sessionTool]);
-    assert.deepEqual(config.skillDirectories, ['/host-skills', '/session-skills', bundledSkillsDirectory]);
+    assert.deepEqual(config.skillDirectories, ['/host-skills', '/session-skills']);
   }
   await f.runtime.closeSession(a);
   await f.runtime.closeSession(b);

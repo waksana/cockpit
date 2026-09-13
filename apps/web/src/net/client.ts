@@ -2,7 +2,7 @@
 // projections remain in the browser; typed POSTs also serve older event pages.
 
 import { ServerEvent, Intents, NativeChatStreamRequest } from '@cockpit/protocol';
-import type { Attachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction, NativeChatPage } from '@cockpit/protocol';
+import type { NativeAttachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction, NativeChatPage } from '@cockpit/protocol';
 import { EVENTS_URL, CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { reportUxError, describeReason } from '../lib/errorReporter';
 import { consumeChatStream } from './chatStream';
@@ -196,9 +196,7 @@ export class NetClient {
         throw new Error('通知服务请求失败或超时，请检查连接后重试。');
       }
       // Diagnostics stay local. Never execute a prompt or retry an uncertain POST.
-      // File metadata errors are rendered by the preview/detail resource owner;
-      // a duplicate global notification would resize the chat during loading.
-      if (!signal?.aborted && !isSessionUnloadedError(e) && name !== 'speech/token' && name !== 'files/get'
+      if (!signal?.aborted && !isSessionUnloadedError(e)
         && (name !== 'session/chat' || !isTransportError(e))) {
         reportUxError(`${source ? `${source}：` : ''}接口 ${name} 调用失败：${describeReason(e, false)}`, { deduplicate: false });
       }
@@ -249,8 +247,8 @@ export class NetClient {
       controller.abort();
     }
   }
-  prompt(sessionId: string, text: string, attachment?: Attachment, mode?: 'enqueue' | 'immediate', attachments?: Attachment[]) {
-    return this.intent('prompt', { sessionId, text, ...(attachment ? { attachment } : {}),
+  prompt(sessionId: string, text: string, attachments?: NativeAttachment[], mode?: 'enqueue' | 'immediate') {
+    return this.intent('prompt', { sessionId, text,
       ...(attachments?.length ? { attachments } : {}), ...(mode ? { mode } : {}) });
   }
   cancel(sessionId: string) { return this.intent('cancel', { sessionId }); }
@@ -264,7 +262,6 @@ export class NetClient {
   }
   unloadSession(sessionId: string) { return this.intent('session/unload', { sessionId }); }
   reloadSession(sessionId: string) { return this.intent('session/reload', { sessionId }); }
-  pinSession(sessionId: string, pinned: boolean) { return this.intent('session/pin', { sessionId, pinned }); }
   compactSession(sessionId: string, customInstructions?: string) { return this.intent('session/compact', { sessionId, ...(customInstructions ? { customInstructions } : {}) }); }
   rewindSession(sessionId: string, toMsgId: string, rollbackFiles?: boolean) { return this.intent('session/rewind', { sessionId, toMsgId, ...(rollbackFiles ? { rollbackFiles } : {}) }); }
   setMode(sessionId: string, mode: 'interactive' | 'plan' | 'autopilot') { return this.intent('setMode', { sessionId, mode }); }
@@ -308,14 +305,4 @@ export class NetClient {
   skillsSession(sessionId: string) { return this.intent('skills/session', { sessionId }); }
   skillsToggleSession(sessionId: string, name: string, enabled: boolean) { return this.intent('skills/session-toggle', { sessionId, name, enabled }); }
   listDir(path?: string) { return this.intent('fs/listDir', path === undefined ? {} : { path }); }
-  subscribePush(subscription: PushSubscriptionJSON) {
-    return this.intent('push/subscribe', { subscription: subscription as never });
-  }
-  pushStatus(endpoint?: string) { return this.intent('push/status', endpoint ? { endpoint } : {}); }
-  unsubscribePush(endpoint: string) { return this.intent('push/unsubscribe', { endpoint }); }
-  testPush(endpoint: string) { return this.intent('push/test', { endpoint, confirm: true }); }
-  inboxSeen(sessionId: string, attnId?: number) {
-    return this.intent('inbox/seen', { sessionId, ...(attnId === undefined ? {} : { attnId }) });
-  }
-  speechToken() { return this.intent('speech/token', {}); }
 }

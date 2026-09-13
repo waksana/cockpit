@@ -7,10 +7,7 @@ export default defineConfig({
   plugins: [
     ...(process.env.COCKPIT_CHAT_LAB === '1' ? [chatLabPlugin()] : []),
     react(),
-    // PWA: generate the manifest + build our custom service worker (src/sw.ts)
-    // via injectManifest. We register the SW ourselves (lib/push.ts), so
-    // injectRegister is disabled. The SW is emitted as /sw.js (matches the
-    // manual registration). Push/notificationclick logic lives in src/sw.ts.
+    // App install metadata and a minimal worker lifecycle, without push handling.
     VitePWA({
       strategies: 'injectManifest',
       srcDir: 'src',
@@ -21,7 +18,6 @@ export default defineConfig({
         'favicon-refined-r4.ico', 'favicon-refined-r4.svg',
         'favicon-refined-r4-16.png', 'favicon-refined-r4-32.png', 'icon-refined-r4.svg',
         'icon-refined-r4-192.png', 'icon-refined-r4-512.png', 'apple-touch-icon-refined-r4.png',
-        'badge-refined-r4-96.png',
       ],
       injectManifest: {
         globPatterns: ['**/*.{js,css,html}'],

@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 // Opt-in end-to-end test against an operator-owned ISOLATED test backend. Exercises
-// the real HTTP surface: health/status, intent validation, the upload roundtrip
-// (+ path-traversal rejection), session create/delete, and the MCP/skill intents.
+// the real HTTP surface: health/status, intent validation, session create/delete,
+// and native MCP/skill intents.
 //
 // Run: node scripts/e2e.mjs --synthetic-fixture-root /absolute/synthetic-workspace
 //                         --test-base-url http://127.0.0.1:<test-port>
 //
-// No default execution. This MUTATES sessions, skills/MCP, schedules and uploads.
+// No default execution. This MUTATES sessions, skills/MCP and schedules.
 // The operator must provision separate synthetic backend state/config/workspace
-// and uploads with no personal credentials or real model endpoint. CLI flags do
+// with no personal credentials or real model endpoint. CLI flags do
 // not establish that isolation. Port 8771 and remote targets are prohibited.
-// Never sends a prompt; retained test uploads are not automatically deleted.
+// Never sends a prompt.
 
 import assert from 'node:assert/strict';
 import { diagnosticOptions, diagnosticFetch } from './diagnostic-safety.mjs';
@@ -57,8 +57,13 @@ await t('capabilities publishes the foundation contract without governance', asy
   }
   assert.ok(!names.some((name) => /^(hook|flow|flow-schedule)\//.test(name)));
   assert.ok(!names.includes('session/set-spawned-by'));
-  assert.ok(catalog.transports.some((entry) => entry.method === 'POST' && entry.path === '/upload'));
-  assert.ok(catalog.transports.some((entry) => entry.method === 'GET' && entry.path === '/uploads/:name'));
+  assert.ok(catalog.transports.some((entry) => entry.method === 'POST' && entry.path === '/chat/stream'));
+  for (const path of ['/upload', '/uploads/:name', '/system/versions']) {
+    assert.ok(!catalog.transports.some(entry => entry.path === path));
+  }
+  for (const name of ['files/list', 'session/pin', 'session/auto-name', 'push/status', 'speech/token', 'inbox/seen']) {
+    assert.ok(!names.includes(name), `${name} is parked, not a foundation capability`);
+  }
   const detail = await j(await fetch(`${BASE}/capabilities?name=session%2Fchat`));
   assert.equal(detail.name, 'session/chat');
   assert.equal(detail.inputSchema.type, 'object');
@@ -115,50 +120,6 @@ await t('fs/listDir rejects an empty path instead of falling back to home', asyn
   assert.ok(response.status >= 400 && response.status < 500);
 });
 
-// ── upload roundtrip + traversal rejection ────────────────────────────────────
-let uploadedUrl = null;
-await t('POST /upload → stores file, returns metadata', async () => {
-  const payload = Buffer.from(`e2e-${Date.now()}-${Math.random()}`);
-  const r = await fetch(`${BASE}/upload?name=${encodeURIComponent('e2e test.txt')}&mime=${encodeURIComponent('text/plain')}`, {
-    method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: payload,
-  });
-  assert.equal(r.status, 200);
-  const b = await j(r);
-  assert.equal(b.kind, 'file');
-  assert.equal(b.name, 'e2e test.txt');
-  assert.equal(b.size, payload.length);
-  assert.ok(b.url.startsWith('/uploads/'));
-  uploadedUrl = b.url;
-  globalThis.__e2ePayload = payload;
-});
-
-await t('GET /uploads/:name → byte-identical', async () => {
-  assert.ok(uploadedUrl, 'upload must have succeeded');
-  const r = await fetch(`${BASE}${uploadedUrl}`);
-  assert.equal(r.status, 200);
-  const got = Buffer.from(await r.arrayBuffer());
-  assert.ok(got.equals(globalThis.__e2ePayload), 'served bytes match uploaded bytes');
-});
-
-await t('served upload carries XSS-hardening headers', async () => {
-  const r = await fetch(`${BASE}${uploadedUrl}`);
-  assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
-  assert.match(r.headers.get('content-security-policy') ?? '', /sandbox/);
-});
-
-await t('POST /upload empty body → 400', async () => {
-  const r = await fetch(`${BASE}/upload?name=x&mime=text/plain`, {
-    method: 'POST', headers: { 'content-type': 'application/octet-stream' }, body: '',
-  });
-  assert.equal(r.status, 400);
-});
-
-await t('GET /uploads/<traversal> → 404 (no escape)', async () => {
-  for (const bad of ['..%2f..%2fetc%2fpasswd', '..%2fcockpit-prefs.json']) {
-    const r = await fetch(`${BASE}/uploads/${bad}`);
-    assert.ok(r.status === 404 || r.status === 400, `traversal ${bad} got ${r.status}`);
-  }
-});
 
 // Only the session created by this run may be permanently deleted.
 const listSupported = (await intent('session/list', {})).status !== 404;
@@ -220,15 +181,6 @@ await t('mcp/session-toggle → native disabled state is confirmed', async () =>
     const after = await j(await intent('mcp/session', { sessionId: id }));
     assert.equal(after.servers.find((s) => s.name === name).enabled, false, 'mcp left disabled for this session');
   }
-});
-
-await t('session/pin → UI mark applies, then release', async () => {
-  const id = globalThis.__e2eSession;
-  const on = await j(await intent('session/pin', { sessionId: id, pinned: true }));
-  assert.equal(on.ok, true);
-  assert.equal(on.pinned, true, 'pin applied');
-  const off = await j(await intent('session/pin', { sessionId: id, pinned: false }));
-  assert.equal(off.pinned, false, 'unpin applied');
 });
 
 await t('unloaded history stays passive; native details require explicit resume', async () => {

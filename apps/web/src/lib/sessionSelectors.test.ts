@@ -68,9 +68,9 @@ test('streaming store updates do not notify the metadata/sidebar render boundary
     assert.equal(store.getState().sessions[0].messages[0].content, 'delta 50');
     assert.equal(render(), before);
     store.setState((state) => ({
-      sessions: state.sessions.map((s) => s.sessionId === 'active' ? { ...s, attention: 'ready', attnId: 1, seenId: 0 } : s),
+      sessions: state.sessions.map((s) => s.sessionId === 'active' ? { ...s, scheduleCount: 1 } : s),
     }));
     assert.equal(renderCount, 3);
-    assert.match(render(), /dialog-unread/);
+    assert.match(render(), /dialog-schedule/);
   } finally { unsubscribe(); }
 });

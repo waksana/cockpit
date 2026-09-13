@@ -6,7 +6,6 @@ import { test, type TestContext } from 'node:test';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import type { CopilotSession, SessionConfig, SessionEvent, SessionMetadata } from '@github/copilot-sdk';
 import { Engine, type EngineRuntime } from './engine.ts';
-import { Prefs } from './prefs.ts';
 
 type Rpc = CopilotSession['rpc'];
 function fixture(t: TestContext) {
@@ -84,7 +83,7 @@ function fixture(t: TestContext) {
       user: { settings: { get: async () => ({ settings: { disabledSkills: { value: [] } } }) } },
     },
   } as unknown as EngineRuntime;
-  const engine = new Engine({ runtime, prefsFile: join(root, 'prefs.json') });
+  const engine = new Engine({ runtime });
   const retained = () => (engine as unknown as { sessions: Map<string, Record<string, unknown>> }).sessions;
   return { engine, native, rpc, runtime, retained, config: () => config };
 }
@@ -101,6 +100,39 @@ async function emitReply(h: ReturnType<typeof fixture>, id: string) {
   await nextTurn();
   await nextTurn();
 }
+
+test('native reply events do not trigger naming, notification work or metadata reads', async t => {
+  const h = fixture(t);
+  await h.engine.start();
+  await h.engine.reload('native-id');
+  const reads = h.rpc.metadata.snapshot.mock.callCount();
+  const controls = h.rpc.metadata.activity.mock.callCount();
+  await emitReply(h, 'first');
+  assert.equal(h.rpc.ui.ephemeralQuery.mock.callCount(), 0);
+  assert.equal(h.rpc.metadata.snapshot.mock.callCount(), reads);
+  assert.equal(h.rpc.metadata.activity.mock.callCount(), controls);
+  assert.equal('prefs' in h.engine, false);
+  assert.equal(h.config()?.tools, undefined);
+  await h.engine.unload('native-id');
+  await h.engine.stop();
+});
+
+test('native removal wakes the host lifecycle after its final ownership guard releases', async t => {
+  const h = fixture(t);
+  await h.engine.start();
+  await h.engine.reload('native-id');
+  const counts: number[] = [];
+  const check = () => { void h.engine.busyCount().then(count => counts.push(count)); };
+  const offEvent = h.engine.onEvent(check);
+  const offSettled = h.engine.onActivitySettled(check);
+  await h.engine.deleteSession('native-id', true);
+  await nextTurn();
+  assert.ok(counts.includes(1));
+  assert.equal(counts.at(-1), 0);
+  offEvent();
+  offSettled();
+  await h.engine.stop();
+});
 
 test('native reads retain no unloaded rows, model catalog, or resource responses', async t => {
   const h = fixture(t);
@@ -363,117 +395,6 @@ test('resource reads that lose admission cannot obstruct a closing operation', a
   assert.equal(h.rpc.plan.read.mock.callCount(), 0);
   await h.engine.stop();
   await assert.rejects(h.engine.snapshot(), { code: 'SESSION_TRANSITION' });
-});
-
-test('busy automatic naming waits for a new native event instead of retrying its preflight', async t => {
-  const h = fixture(t);
-  h.native.title = '';
-  await h.engine.start();
-  await h.engine.reload('native-id');
-  const emit = h.config()!.onEvent!;
-  emit({ type: 'assistant.turn_start', id: 'start', timestamp: '2026-09-10T00:00:00Z', parentId: null, data: { turnId: 'turn' } });
-  emit({ type: 'assistant.message', id: 'message', timestamp: '2026-09-10T00:00:00Z', parentId: null,
-    data: { messageId: 'reply', content: 'Reply awaiting notification' } });
-  const reads = h.rpc.metadata.activity.mock.callCount();
-  h.rpc.metadata.activity.mock.mockImplementationOnce(async () => {
-    h.native.busy = true;
-    return { hasActiveWork: false, abortable: false };
-  });
-  emit({ type: 'assistant.turn_end', id: 'end', timestamp: '2026-09-10T00:00:00Z', parentId: null, data: { turnId: 'turn' } });
-  await nextTurn();
-  await nextTurn();
-  assert.equal(h.rpc.metadata.activity.mock.callCount(), reads + 2, 'one reply confirmation, one naming preflight');
-  h.native.busy = false;
-  emit({ type: 'session.error', id: 'stop-naming', timestamp: '2026-09-10T00:00:00Z', parentId: null,
-    data: { errorType: 'test', message: 'Synthetic turn ended' } });
-  await h.engine.unload('native-id');
-  await h.engine.stop();
-});
-
-test('naming eligibility is read from native history, not remembered from loaded metadata', async t => {
-  const h = fixture(t);
-  h.native.title = '';
-  await h.engine.start();
-  await h.engine.reload('native-id');
-  await emitReply(h, 'first');
-  assert.equal(h.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-  await emitReply(h, 'second');
-  assert.equal(h.rpc.ui.ephemeralQuery.mock.callCount(), 1, 'a rejected/uncertain query is never automatically retried');
-  await h.engine.unload('native-id');
-  await h.engine.reload('native-id');
-  assert.equal(h.retained().get('native-id')?.namingAttempted, undefined, 'historical replies are not saved as eligibility flags');
-  await emitReply(h, 'third');
-  assert.equal(h.rpc.ui.ephemeralQuery.mock.callCount(), 1, 'fresh native eligibility prevents naming an old conversation');
-  const reads = h.rpc.eventLog.read.mock.calls.map(call => call.arguments[0]);
-  assert.ok(reads.some(read => read.direction === 'forward' && read.max === 32 && read.types !== '*'));
-  await h.engine.unload('native-id');
-  await h.engine.stop();
-});
-
-test('the final metadata reader releases already-pending first-reply naming', async t => {
-  const h = fixture(t);
-  h.native.title = '';
-  await h.engine.start();
-  await h.engine.reload('native-id');
-  const metadata = await h.rpc.metadata.snapshot();
-  let release!: () => void;
-  const hold = new Promise<void>(resolve => { release = resolve; });
-  h.rpc.metadata.snapshot.mock.mockImplementationOnce(async () => { await hold; return metadata; });
-  const reading = h.engine.getMeta('native-id');
-  await nextTurn();
-  await emitReply(h, 'first');
-  assert.equal(h.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  assert.equal(h.retained().get('native-id')?.namingDeferred, true);
-  release();
-  await reading;
-  await nextTurn();
-  await nextTurn();
-  assert.equal(h.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-  assert.equal(h.retained().get('native-id')?.namingDeferred, false);
-  await h.engine.unload('native-id');
-  await h.engine.stop();
-});
-
-test('reply delivery and removal completion wake graceful safety after their last blockers clear', async t => {
-  const h = fixture(t);
-  h.native.title = '';
-  await h.engine.start();
-  await h.engine.reload('native-id');
-  await emitReply(h, 'first');
-  assert.equal(h.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-  const counts: number[] = [];
-  const check = () => { void h.engine.busyCount().then(count => counts.push(count)); };
-  const offEvent = h.engine.onEvent(check);
-  const offSettled = h.engine.onActivitySettled(check);
-  await emitReply(h, 'second');
-  assert.ok(counts.includes(1));
-  assert.equal(counts.at(-1), 0, 'delivery emits a wake after pendingReply is released');
-  counts.length = 0;
-  await h.engine.deleteSession('native-id', true);
-  await nextTurn();
-  assert.ok(counts.includes(1));
-  assert.equal(counts.at(-1), 0, 'removal emits a wake after removing ownership is released');
-  offEvent();
-  offSettled();
-  await h.engine.stop();
-});
-
-test('a failed closed-session delivery remains a contact and explicit cancel releases it without resume', async t => {
-  const h = fixture(t);
-  h.native.title = '';
-  await h.engine.start();
-  await h.engine.reload('native-id');
-  await emitReply(h, 'first');
-  t.mock.method(Prefs.prototype, 'setAttention', () => { throw new Error('Synthetic product-write failure'); });
-  await emitReply(h, 'second');
-  h.native.live = false;
-  assert.equal((await h.engine.getMeta('native-id'))?.loaded, false);
-  assert.equal(h.retained().get('native-id')?.sdk, null);
-  assert.ok(h.retained().get('native-id')?.pendingReply);
-  await h.engine.cancel('native-id');
-  assert.equal(h.native.live, false);
-  assert.equal(h.retained().size, 0);
-  await h.engine.stop();
 });
 
 test('resource events invalidate consumers without background resource projections', async t => {

@@ -6,7 +6,7 @@ findings in the other numbered review documents.
 
 > Historical release evidence, not the current capability catalog. Later native
 > image lookup retirement, direct generic intent invocation, chat/SSE and SDK
-> remediation contracts are described in [the foundation document](../cockpit-plan.md#source-delivery-and-paused-work-2026-09-11)
+> remediation contracts are described in [the foundation document](../cockpit-plan.md#source-status)
 > and [API/MCP reference](../../apps/mcp/README.md). Local source delivery does
 > not extend this report's dated deployment claims; model and voice work remain
 > paused as stated there.

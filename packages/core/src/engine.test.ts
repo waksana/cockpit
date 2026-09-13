@@ -11,9 +11,6 @@ import { Intents, NativeChatRead, unreadSessionCount } from '@cockpit/protocol';
 import { Engine, coreCapabilities, sessionMetaBusy, type EngineRuntime } from './engine.ts';
 import { CHAT_EVENT_TYPES } from './native-chat.ts';
 import { validateForkHistory } from './fork.ts';
-import { autoNameQuestion } from './auto-name.ts';
-import type { CockpitPrefs } from './prefs.ts';
-import { bundledSkillsDirectory } from './paths.ts';
 
 type Rpc = CopilotSession['rpc'];
 type Queue = Awaited<ReturnType<Rpc['queue']['pendingItems']>>;
@@ -248,7 +245,7 @@ function fakeSession(t: TestContext, sessionId: string) {
 
 function harness(t: TestContext, options: {
   mcpServers?: McpDefinitions;
-  prefs?: Partial<CockpitPrefs> & Record<string, unknown>;
+  prefs?: Record<string, unknown>;
 } = {}) {
   t.mock.timers.enable({ apis: ['setInterval'] });
   const relativeRoot = `.engine-test-${randomUUID()}`;
@@ -418,7 +415,7 @@ function harness(t: TestContext, options: {
   };
   // The SDK class contains private transport fields. Only this boundary casts;
   // every exercised public method above is structural and independently observable.
-  const engine = new Engine({ runtime: runtime as unknown as EngineRuntime, prefsFile });
+  const engine = new Engine({ runtime: runtime as unknown as EngineRuntime });
   const off = engine.onEvent(value => events.push(structuredClone(value)));
   t.after(async () => {
     await nextTurn();
@@ -427,7 +424,7 @@ function harness(t: TestContext, options: {
   });
   return {
     engine, runtime, events, natives, attached, configs, rows, journals, trace, cwd, prefsFile, discoveredSkills, discoveredMcp, mcpDefinitions, userSettings,
-    prefs: () => JSON.parse(readFileSync(prefsFile, 'utf8')) as Partial<CockpitPrefs> & Record<string, unknown> & {
+    prefs: () => JSON.parse(readFileSync(prefsFile, 'utf8')) as Record<string, unknown> & {
       scheduledSessions?: Record<string, number>; mcpDefaultOn?: string[];
       mcpBySession?: Record<string, string[]>; skillsDisabledBySession?: Record<string, string[]>;
     },
@@ -549,48 +546,6 @@ test('session/load rejects unknown targets and mismatched native resume identiti
   assert.equal(h.attached.has(other.id), true);
   assert.equal(h.runtime.closeSession.mock.callCount(), 0);
   assert.equal(h.runtime.createSession.mock.callCount(), 0);
-});
-
-test('self clear gates host mutations until native tool completion and rejects stale bindings after reload', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  const file = join(h.cwd, 'handoff.txt');
-  writeFileSync(file, 'Synthetic persisted continuation');
-  const config = h.configs.get(s.id)!;
-  const tool = config.tools!.find(tool => tool.name === 'self_clear_context')!;
-  const call = { sessionId: s.id, toolCallId: 'clear-call', toolName: tool.name, arguments: {} };
-  const args = { prompt: `Read ${file} and continue only this synthetic goal.`, handoffFiles: [file] };
-  s.emit(event('assistant.message', {
-    messageId: 'message', content: '', toolRequests: [{ name: tool.name, toolCallId: call.toolCallId }],
-  }));
-  s.emit(event('tool.execution_start', { toolName: tool.name, toolCallId: call.toolCallId }));
-  s.emit(event('external_tool.requested', { sessionId: s.id, toolName: tool.name, toolCallId: call.toolCallId, requestId: 'request' }));
-  const entered = deferred();
-  const release = deferred();
-  s.rpc.history.clearContext.mock.mockImplementationOnce(async () => {
-    entered.resolve();
-    await release.promise;
-    return { messagesCleared: 2 };
-  });
-  const running = Promise.resolve(tool.handler!(args, call));
-  await entered.promise;
-  for (const action of [
-    () => h.engine.prompt(s.id, 'must not enter'),
-    () => h.engine.compact(s.id),
-    () => h.engine.cancel(s.id),
-    () => h.engine.reload(s.id),
-    () => h.engine.setMode(s.id, 'plan'),
-  ]) await assert.rejects(action(), /context clear is in progress/);
-  assert.equal((await h.engine.getMeta(s.id))?.sessionId, s.id, 'Read-only status remains available');
-  release.resolve();
-  await running;
-  await assert.rejects(h.engine.prompt(s.id, 'not before completion'), /context clear is in progress/);
-  s.emit(event('tool.execution_complete', { toolCallId: call.toolCallId, success: true }));
-  s.emit(event('session.idle', {}));
-  await h.engine.reload(s.id);
-  assert.notEqual(h.configs.get(s.id)!.tools![0], tool);
-  await assert.rejects(Promise.resolve(tool.handler!(args, call)), /bound main session/);
-  assert.equal(s.rpc.history.clearContext.mock.callCount(), 1);
 });
 
 test('startup never polls native catalogs and models and login are fresh on every request', async t => {
@@ -1679,7 +1634,7 @@ test('startup leaves legacy scheduled sessions unloaded with unknown counts and 
   assert.deepEqual(nativeCalls(scheduled), before);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
   assert.deepEqual(scheduled.state.schedules, [schedule(42)]);
-  assert.equal(h.prefs().scheduledSessions, undefined, 'retiring stale local counts never cancels native schedules');
+  assert.deepEqual(h.prefs().scheduledSessions, { scheduled: 1 }, 'inert old records are not rewritten or replayed');
 });
 
 test('native expiry retains schedules without local persistence or startup resumption', async t => {
@@ -1810,31 +1765,6 @@ test('routine tool completions perform zero native reads without clearing runnin
   await h.engine.unload(s.id);
 });
 
-test('reply notification reads only current control and remains quiescent after completion', async t => {
-
-  const h = harness(t);
-  const s = await h.load();
-  await finishReply(s, 'Previously completed reply', 'before-boundary');
-  const before = nativeCalls(s);
-  s.emit(event('assistant.turn_start', { turnId: 'boundary' }));
-  s.emit(assistant('boundary-answer', 'boundary-message', 'native completed reply'));
-  s.emit(event('assistant.turn_end', { turnId: 'boundary' }));
-  s.emit(event('session.idle', {}));
-  s.emit(event('pending_messages.modified', {}));
-  s.emit(event('session.background_tasks_changed', {}));
-  await nextTurn();
-  const delta = nativeCallDelta(s, before);
-  for (const key of ['metadata.snapshot', 'model.getCurrent', 'mode.get', 'plan.readSqlTodos', 'schedule.list']) {
-    assert.equal(delta[key], undefined, 'notifications need current control, not resource projections');
-  }
-  assert.ok(s.rpc.metadata.activity.mock.callCount() > before['metadata.activity']!);
-  const settled = nativeCalls(s);
-  await nextTurn();
-  assert.deepEqual(nativeCalls(s), settled, 'notification control reads are finite');
-  assert.equal((await h.engine.getMeta(s.id))?.status, 'idle');
-  assert.equal(h.engine.attentionCount(), 1);
-});
-
 test('a new turn after a metadata request is reflected by the next request and safety guard', async t => {
 
   const h = harness(t);
@@ -1848,7 +1778,6 @@ test('a new turn after a metadata request is reflected by the next request and s
   activity.resolve({ hasActiveWork: false, abortable: false });
   await reading;
   assert.equal((await h.engine.getMeta(s.id))?.status, 'running');
-  assert.equal(h.engine.attentionCount(), 0);
   await assert.rejects(h.engine.unload(s.id), protectedWork);
 });
 
@@ -2012,14 +1941,12 @@ test('routine closure preserves early live replies even when initialization meta
   h.runtime.expire(s.id, true);
   await promptly(loading);
   assert.equal((await h.engine.getMeta(s.id))?.loaded, false);
-  assert.equal(h.engine.attentionCount(), 1);
-  assert.equal(h.events.filter(event => event.type === 'session/notify').length, 1);
+  assert.equal(h.events.filter(event => String(event.type) === 'session/notify').length, 0);
   await h.engine.reload(s.id);
   eligibility.resolve(metadata);
   await nextTurn();
   assert.equal((await h.engine.getMeta(s.id))?.loaded, true);
-  assert.equal(h.engine.attentionCount(), 1);
-  assert.equal(h.events.filter(event => event.type === 'session/notify').length, 1);
+  assert.equal(h.events.filter(event => String(event.type) === 'session/notify').length, 0);
   await h.engine.stop();
 });
 
@@ -2041,24 +1968,6 @@ test('native closure during an MCP mutation cannot restore phantom pending conne
   assert.equal(s.rpc.mcp.list.mock.callCount(), before);
   assert.equal((await h.engine.getMeta(s.id))?.activeMcpOperations, undefined);
   await h.engine.unload(s.id);
-  await h.engine.stop();
-});
-
-test('an inbox write can be retried after native closure without any native state reads', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  mkdirSync(`${h.prefsFile}.tmp`);
-  await finishReply(s, 'ready before expiry', 'closed-inbox');
-  h.runtime.expire(s.id, true);
-  await nextTurn();
-  assert.equal((await h.engine.getMeta(s.id))?.loaded, false);
-  assert.equal(h.engine.attentionCount(), 0);
-  const before = nativeCalls(s);
-  rmSync(`${h.prefsFile}.tmp`, { recursive: true });
-  await h.engine.unload(s.id);
-  assert.equal(h.engine.attentionCount(), 1);
-  assert.equal(h.events.filter(event => event.type === 'session/notify').length, 1);
-  assert.deepEqual(nativeCalls(s), before);
   await h.engine.stop();
 });
 
@@ -2085,9 +1994,8 @@ for (const source of ['runtime callback', 'passive poll'] as const) {
     assert.equal(h.runtime.closeSession.mock.callCount(), 0);
     assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
     assert.deepEqual(h.prefs().inbox, attention);
-    assert.equal(h.engine.attentionCount(), 1);
     assert.deepEqual((await chat(h, s.id)).events, history.events);
-    assert.ok(!h.events.some(event => event.type === 'session/removed' || event.type === 'session/notify'));
+    assert.ok(!h.events.some(event => event.type === 'session/removed'));
     assert.ok(h.events.some(event => event.type === 'session/patch' && event.sessionId === s.id && event.loaded === false));
     await h.engine.stop();
   });
@@ -2190,7 +2098,6 @@ test('native absence leaves no unloaded state while preserving files and product
 
   const h = harness(t);
   const id = await h.engine.newSession(h.cwd);
-  await h.engine.pin(id, true);
   const draftFile = join(h.cwd, 'composer-draft.txt');
   writeFileSync(draftFile, 'unsent user text');
   const prefs = readFileSync(h.prefsFile, 'utf8');
@@ -2385,7 +2292,7 @@ for (const accepted of [false, true]) {
     await h.engine.start();
     await finishReply(unread, 'keep the unread reply', 'fatal-history');
     h.journals.set(unread.id, structuredClone(unread.state.events));
-    const savedAttention = h.prefs().inbox!.sessions[unread.id];
+    const savedPreferences = readFileSync(h.prefsFile, 'utf8');
     const reports: Error[] = [];
     const off = h.engine.onFatal((error: Error) => reports.push(error));
     const removed = t.mock.fn();
@@ -2426,7 +2333,7 @@ for (const accepted of [false, true]) {
       assert.equal(s.listeners.size, 0);
     }
     assert.ok(h.events.some(event => event.type === 'agent/status' && event.status === 'restarting'));
-    assert.deepEqual(h.prefs().inbox!.sessions[unread.id], savedAttention);
+    assert.equal(readFileSync(h.prefsFile, 'utf8'), savedPreferences);
     t.mock.timers.tick(24_000);
     await nextTurn();
     assert.equal(h.runtime.listSessions.mock.callCount(), lists);
@@ -2460,7 +2367,7 @@ test('a new Engine cannot reuse a runtime whose failure is already terminal', as
   const h = harness(t);
   const fatal = new Error('fatal before replacement engine');
   h.runtime.emitFatal(fatal);
-  const replacement = new Engine({ runtime: h.runtime as unknown as EngineRuntime, prefsFile: h.prefsFile });
+  const replacement = new Engine({ runtime: h.runtime as unknown as EngineRuntime });
   await assert.rejects(replacement.start(), /fatal before replacement engine/);
   await assert.rejects(replacement.newSession(h.cwd), /fatal before replacement engine/);
   assert.equal(replacement.failure, fatal);
@@ -2570,7 +2477,7 @@ test('send acceptance does not invent a message, complete a turn, or permit tear
   assert.deepEqual(s.sdk.send.mock.calls[0]!.arguments, [{ prompt: 'queued instruction', mode: 'enqueue', attachments: undefined }]);
   assert.equal(serverChatEvents(h).length, 0);
   assert.equal((await h.engine.getMeta(s.id))?.status, 'running');
-  assert.ok(!h.events.some(event => event.type === 'session/notify' && event.attention === 'ready'));
+  assert.ok(!h.events.some(event => String(event.type) === 'session/notify'));
   for (const operation of [() => h.engine.unload(s.id), () => h.engine.stop()]) {
     await assert.rejects(operation(), protectedWork);
   }
@@ -2685,7 +2592,7 @@ test('removing one queue entry cannot discard another accepted but not yet journ
 });
 
 for (const failedInit of [false, true]) {
-test(`live reply attention survives in-flight native initialization (initialization failure: ${failedInit})`, async t => {
+test(`live replies remain in native history during initialization (initialization failure: ${failedInit})`, async t => {
   const h = harness(t);
   const s = await h.seed();
   const metadata = await s.rpc.metadata.snapshot();
@@ -2703,8 +2610,7 @@ test(`live reply attention survives in-flight native initialization (initializat
   else mode.resolve(metadata);
   await outcome;
   await nextTurn();
-  assert.equal(h.engine.attentionCount(), 1, 'early live completion still becomes unread');
-  assert.equal(h.events.filter(event => event.type === 'session/notify').length, 1);
+  assert.equal(h.events.filter(event => String(event.type) === 'session/notify').length, 0);
   s.emit(assistant('native-event-id', 'canonical-message-id', 'streamed once'));
   assert.equal(serverChatEvents(h).length, 0);
   s.emit(assistant('second-event-id', 'canonical-message-id', 'confirmed final'));
@@ -2757,7 +2663,7 @@ for (const operation of ['create', 'resume'] as const) {
     assert.equal((await chat(h, s.id, { source: 'live' })).events.find(event => event.id === 'early-final')?.data.content, 'final once');
     assert.equal('fold' in activeState(h, s.id), false);
     assert.equal(serverChatEvents(h).length, 0, 'early display events stay in native history, not SSE');
-    assert.equal(h.events.filter(value => value.type === 'session/notify').length, 1);
+    assert.equal(h.events.filter(value => String(value.type) === 'session/notify').length, 0);
     await h.engine.unload(s.id);
     const meta = (await h.engine.getMeta(s.id));
     lateCallback(event('assistant.turn_start', { turnId: 'stale-turn' }));
@@ -2801,12 +2707,12 @@ test('native closure before resume returns preserves the buffered reply without 
   });
   await assert.rejects(h.engine.reload(s.id), /closed while loading/);
   assert.equal((await h.engine.getMeta(s.id))?.loaded, false);
-  assert.equal(h.events.filter(value => value.type === 'session/notify').length, 1);
+  assert.equal(h.events.filter(value => String(value.type) === 'session/notify').length, 0);
   assert.equal(s.rpc.eventLog.read.mock.callCount(), 0);
   assert.equal(s.listeners.size, 0);
 });
 
-test('failed initialization metadata preserves early reply attention and native user acknowledgements', async t => {
+test('failed initialization metadata preserves native reply history and user acknowledgements', async t => {
   const h = harness(t);
   const s = await h.seed();
   const reading = deferred<Awaited<ReturnType<Rpc['metadata']['snapshot']>>>();
@@ -2822,7 +2728,7 @@ test('failed initialization metadata preserves early reply attention and native 
   await loading;
   await nextTurn();
   assert.equal((await chat(h, s.id, { source: 'live' })).events.find(event => event.id === 'read-failed-final')?.data.content, 'final answer');
-  assert.equal(h.events.filter(value => value.type === 'session/notify').length, 1);
+  assert.equal(h.events.filter(value => String(value.type) === 'session/notify').length, 0);
   s.sdk.send.mock.mockImplementationOnce(async () => {
     s.emit(user('read-failed-accepted'));
     return 'read-failed-accepted';
@@ -2918,7 +2824,7 @@ for (const action of ['unload', 'stop'] as const) {
     assert.equal(h.runtime.stop.mock.callCount(), 0);
     assert.equal(h.runtime.start.mock.callCount(), 0);
     assert.ok(!h.events.some(event => event.type === 'session/patch' && event.status === 'idle'));
-    assert.ok(!h.events.some(event => event.type === 'session/notify' && event.attention === 'ready'));
+    assert.ok(!h.events.some(event => String(event.type) === 'session/notify'));
     s.state.processing = false;
     s.emit(event('session.idle', {}));
     await nextTurn();
@@ -2948,7 +2854,6 @@ for (const action of ['stop'] as const) {
         assert.equal((await h.engine.getMeta(s.id))?.closing, false);
         assert.equal(s.listeners.size, 1);
       }
-      await h.engine.pin(first.id, true);
     });
   }
 }
@@ -2980,7 +2885,6 @@ test('explicit stop/start closes handles and rereads native indexed metadata wit
     id: 'confirmed-model', name: 'Fixture', supportedReasoningEfforts: ['high'], supportedContextTiers: ['default', 'long_context'],
   }] }));
   await h.engine.setModel(id, 'confirmed-model', 'high', 'long_context');
-  await h.engine.pin(id, true);
   h.trace.length = 0;
   await h.engine.stop();
   await h.engine.start();
@@ -2989,7 +2893,7 @@ test('explicit stop/start closes handles and rereads native indexed metadata wit
   await h.engine.refreshList();
   const unloaded = (await h.engine.getMeta(id))!;
   assert.equal(unloaded.title, 'current indexed title');
-  assert.equal(unloaded.pinned, true);
+  assert.equal('pinned' in unloaded, false);
   assert.equal(unloaded.currentModelId, undefined);
   assert.equal(unloaded.loaded, false);
   assert.equal(activeState(h, id), undefined);
@@ -3323,7 +3227,7 @@ for (const oldKind of ['ask', 'plan'] as const) {
   });
 }
 
-test('interrupt late ACK and old interaction events cannot erase queued reply or name it as cancelled', async t => {
+test('interrupt late ACK and old interaction events preserve the queued native turn', async t => {
   const h = harness(t);
   const s = await h.load();
   s.state.processing = true;
@@ -3344,9 +3248,10 @@ test('interrupt late ACK and old interaction events cannot erase queued reply or
   s.state.processing = false;
   s.emit(event('session.idle', {}));
   await nextTurn();
-  const notices = h.events.filter(event => event.type === 'session/notify');
-  assert.equal(notices.length, 1);
-  assert.equal(notices[0]!.body, 'A finished');
+  assert.equal((await h.engine.getMeta(s.id))?.status, 'idle');
+  assert.equal(s.state.events.find(event => event.type === 'assistant.message' && event.data.messageId === 'new-answer')?.data.content, 'A finished');
+  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
+  assert.equal(s.sdk.send.mock.callCount(), 0);
 });
 
 test('interrupt false and failure leave existing decisions intact and never resume unloaded sessions', async t => {
@@ -4447,7 +4352,7 @@ for (const action of ['listGlobalSkills', 'readSkillBody'] as const) {
     if (action === 'listGlobalSkills') assert.deepEqual(await h.engine.listGlobalSkills(directory), []);
     else await assert.rejects(h.engine.readSkillBody('fixture', directory), /Unknown skill in this working directory/);
     assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls.map(call => call.arguments),
-      [[{ projectPaths: [resolve(directory)], skillDirectories: [bundledSkillsDirectory] }]]);
+      [[{ projectPaths: [resolve(directory)] }]]);
     assert.equal(h.runtime.createSession.mock.callCount(), 0);
     assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
     assert.equal(h.runtime.closeSession.mock.callCount(), 0);
@@ -4475,7 +4380,7 @@ test('global skill discovery uses server truth even when a loaded session has th
   assert.deepEqual(await h.engine.listGlobalSkills(h.cwd), [{
     name: 'fixture', description: 'discovered project skill', source: 'project', userInvocable: true, enabled: true,
   }]);
-  assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls[0]!.arguments, [{ projectPaths: [h.cwd], skillDirectories: [bundledSkillsDirectory] }]);
+  assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls[0]!.arguments, [{ projectPaths: [h.cwd] }]);
   assert.deepEqual(nativeCalls(s), before);
   assert.equal(h.runtime.createSession.mock.callCount(), 0);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
@@ -4490,7 +4395,7 @@ for (const cwd of [undefined, '']) {
   test(`global skill discovery defaults ${cwd === undefined ? 'omitted' : 'empty'} cwd to the home project path`, async t => {
     const h = harness(t);
     assert.deepEqual(await h.engine.listGlobalSkills(cwd), []);
-    assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls[0]!.arguments, [{ projectPaths: [resolve(homedir())], skillDirectories: [bundledSkillsDirectory] }]);
+    assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls[0]!.arguments, [{ projectPaths: [resolve(homedir())] }]);
     assert.equal(h.runtime.createSession.mock.callCount(), 0);
     assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
     assert.equal(h.runtime.closeSession.mock.callCount(), 0);
@@ -4514,7 +4419,7 @@ test('readSkillBody reads the discovered local path rather than a matching sessi
   assert.deepEqual(await h.engine.readSkillBody('fixture', h.cwd), {
     name: 'fixture', description: 'discovered body', source: 'project', userInvocable: true, enabled: true, body,
   });
-  assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls[0]!.arguments, [{ projectPaths: [h.cwd], skillDirectories: [bundledSkillsDirectory] }]);
+  assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls[0]!.arguments, [{ projectPaths: [h.cwd] }]);
   assert.deepEqual(nativeCalls(s), before);
   assert.equal(h.runtime.createSession.mock.callCount(), 0);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
@@ -4546,7 +4451,7 @@ test('refreshSkills with no loaded sessions uses native discovery without loadin
   const s = await h.seed();
   await h.engine.refreshSkills();
   assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls.map(call => call.arguments),
-    [[{ projectPaths: [resolve(homedir())], skillDirectories: [bundledSkillsDirectory] }]]);
+    [[{ projectPaths: [resolve(homedir())] }]]);
   assert.equal(h.runtime.createSession.mock.callCount(), 0);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
   assert.equal(h.runtime.closeSession.mock.callCount(), 0);
@@ -5019,7 +4924,7 @@ test('passive metadata follows native index removal and return without retaining
   assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
 });
 
-test('legacy trash migration unhides native sessions without deletion, resume, lost marks, or metadata replicas', async t => {
+test('legacy preferences remain untouched and cannot hide or decorate native sessions', async t => {
   const h = harness(t, { prefs: {
     trashed: { legacy: { at: '2026-09-01', reason: 'old soft deletion' } },
     trashedMeta: { legacy: { title: 'obsolete' } },
@@ -5029,20 +4934,19 @@ test('legacy trash migration unhides native sessions without deletion, resume, l
     } },
     workerMetadata: { legacy: { opaque: true } },
   } });
+  const original = readFileSync(h.prefsFile, 'utf8');
   await h.seed('legacy');
   const meta = (await h.engine.getMeta('legacy'))!;
   assert.equal(meta.loaded, false);
   assert.equal(meta.title, 'indexed title');
-  assert.equal(meta.pinned, true);
-  assert.equal(meta.attention, 'ready');
-  assert.equal(h.engine.attentionCount(), 1);
+  assert.equal('pinned' in meta, false);
+  assert.equal('attention' in meta, false);
   assert.equal((await h.engine.listLive()).some(row => row.sessionId === 'legacy'), true);
   assert.equal(activeState(h, 'legacy'), undefined);
   assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
   assert.equal(h.runtime.createSession.mock.callCount(), 0);
-  assert.equal(h.prefs().trashed, undefined);
-  assert.equal(h.prefs().trashedMeta, undefined);
+  assert.equal(readFileSync(h.prefsFile, 'utf8'), original);
   assert.deepEqual(h.prefs().workerMetadata, { legacy: { opaque: true } });
   for (const retired of ['listTrash', 'restoreSession', 'purgeSession']) assert.equal(retired in h.engine, false);
 });
@@ -5102,7 +5006,7 @@ test('session creation and resume delegate discovery and selection entirely to C
     for (const key of ['mcpServers', 'disabledMcpServers']) assert.equal(Object.hasOwn(config, key), false);
     assert.deepEqual(config.disabledSkills, ['native-disabled']);
   }
-  assert.deepEqual(h.prefs(), {}, 'retired Cockpit choices are removed rather than replayed into native config');
+  assert.deepEqual(h.prefs(), legacy, 'retired choices remain inert rather than being rewritten or replayed');
   assert.equal(s.rpc.skills.disable.mock.callCount(), 0);
   assert.equal(s.rpc.mcp.disable.mock.callCount(), 0);
   assert.equal(h.runtime.rpc.mcp.config.list.mock.callCount(), 0);
@@ -5111,7 +5015,7 @@ test('session creation and resume delegate discovery and selection entirely to C
   await h.engine.unload(s.id);
   await h.engine.reload(s.id);
   assert.deepEqual(h.configs.get(s.id)!.disabledSkills, ['changed-natively'], 'cold resume reads current native global choices');
-  assert.deepEqual(h.prefs(), {});
+  assert.deepEqual(h.prefs(), legacy);
 });
 
 test('session allocation refuses unreadable native skill defaults rather than enabling everything', async t => {
@@ -5132,768 +5036,6 @@ async function finishReply(s: Awaited<ReturnType<Harness['load']>>, content: str
   await nextTurn();
   return end;
 }
-
-test('auto naming begins after the first effective reply and unread commit, coalesces clients, and never sends', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  s.state.userNamed = false;
-  const query = deferred<{ answer: string }>();
-  s.rpc.ui.ephemeralQuery.mock.mockImplementationOnce(() => query.promise);
-  const end = await finishReply(s, 'Backend naming implementation', 'auto-first');
-  const before = structuredClone(s.state.events);
-  const inbox = (await h.engine.snapshot());
-  assert.equal(inbox.unreadCount, 1, 'Reply notification is not delayed by the auxiliary query');
-  assert.equal((await h.engine.getMeta(s.id))?.status, 'idle');
-  assert.equal((await h.engine.getMeta(s.id))?.autoNaming, true);
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-  assert.deepEqual(s.rpc.ui.ephemeralQuery.mock.calls[0]!.arguments, [{ question: autoNameQuestion }],
-    'the native model receives a context question, not the eligibility page as its context');
-  assert.deepEqual(s.rpc.eventLog.read.mock.calls.map(({ arguments: [params] }) => [params.direction, params.max]),
-    [['forward', 32], ['backward', 1]]);
-  const one = h.engine.autoName(s.id), two = h.engine.autoName(s.id);
-  for (const listener of s.listeners) listener(end);
-  await assert.rejects(h.engine.unload(s.id), protectedWork);
-  await assert.rejects(h.engine.stop(), protectedWork);
-  query.resolve({ answer: '后端首次回复自动命名' });
-  assert.deepEqual(await one, { ok: true, applied: true, title: '后端首次回复自动命名' });
-  assert.deepEqual(await two, await one);
-  assert.equal((await h.engine.getMeta(s.id))?.autoNaming, false);
-  assert.equal((await h.engine.snapshot()).inboxRevision, inbox.inboxRevision);
-  assert.equal(s.sdk.send.mock.callCount(), 0);
-  assert.equal(s.sdk.getEvents.mock.callCount(), 0);
-  assert.equal(h.runtime.createSession.mock.callCount(), 0);
-  assert.equal(h.runtime.liveCount, 1);
-  assert.deepEqual(s.state.events.slice(0, before.length), before);
-  await finishReply(s, 'Later answer', 'auto-second');
-  await h.engine.reload(s.id);
-  await finishReply(s, 'Cold resumed answer', 'auto-third');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-  assert.equal((await h.engine.autoName(s.id)).applied, true, 'An explicit later button may regenerate a native automatic title');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 2);
-  assert.equal(Object.hasOwn(h.prefs(), 'titles'), false);
-  assert.equal(JSON.stringify(h.prefs()).includes('autoName'), false);
-});
-
-test('auto naming ignores historical completed replies, even on a new Engine and passive history reads', async t => {
-  const h = harness(t);
-  const s = await h.seed();
-  s.state.userNamed = false;
-  s.state.events.push(user('old-user'), event('assistant.turn_start', { turnId: 'old' }),
-    assistant('old-answer', 'old-message'), event('assistant.turn_end', { turnId: 'old' }));
-  h.journals.set(s.id, structuredClone(s.state.events));
-  await chat(h, s.id);
-  assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
-  await h.engine.reload(s.id);
-  await finishReply(s, 'New answer in old session');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  await h.engine.unload(s.id);
-  const restored = new Engine({ runtime: h.runtime as unknown as EngineRuntime, prefsFile: h.prefsFile });
-  await restored.refreshList();
-  await restored.reload(s.id);
-  await finishReply(s, 'New process answer');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  await restored.unload(s.id);
-  const before = h.runtime.resumeSession.mock.callCount();
-  assert.equal((await restored.autoName(s.id)).applied, true);
-  assert.equal(h.runtime.resumeSession.mock.callCount(), before + 1, 'Explicit manual naming may load an old native session');
-  assert.equal(s.sdk.getEvents.mock.callCount(), 0);
-  assert.equal(s.sdk.send.mock.callCount(), 0);
-  await restored.unload(s.id);
-});
-
-test('automatic naming rereads native eligibility instead of remembering prior completed replies', async t => {
-  const h = harness(t);
-  const s = await h.seed();
-  s.state.userNamed = false;
-  s.state.events = [
-    ...Array.from({ length: 40 }, (_, index) => user(`prior-${index}`)),
-    event('assistant.turn_start', { turnId: 'old' }), assistant('old-message', 'old-reply'),
-    event('assistant.turn_end', { turnId: 'old' }),
-  ];
-  await h.engine.reload(s.id);
-  await finishReply(s, 'Not eligible for automatic naming yet');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  assert.equal(s.rpc.eventLog.read.mock.callCount(), 2);
-  s.state.name = null;
-  s.state.events = [];
-  await finishReply(s, 'First effective reply after native history and title changed');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1, 'a prior native read is not a host naming attempt');
-  assert.equal(s.rpc.eventLog.read.mock.calls[2]!.arguments[0].cursor, undefined, 'a new eligibility query starts fresh');
-  assert.equal(s.rpc.eventLog.read.mock.callCount(), 4, 'two old pages, one fresh page and one presence read');
-  assert.equal(s.state.name, 'Native session naming');
-  assert.equal(s.sdk.send.mock.callCount(), 0);
-});
-
-test('automatic first-reply checks read filtered native events in forward order without a cached result', async t => {
-  const h = harness(t);
-  const s = await h.seed();
-  s.state.userNamed = false;
-  s.state.events = [
-    { ...assistant('child-answer', 'child-reply'), agentId: 'child' },
-    { ...event('assistant.turn_end', { turnId: 'child' }), agentId: 'child' },
-    { ...assistant('ephemeral-answer', 'ephemeral-reply'), ephemeral: true },
-    { ...event('assistant.turn_end', { turnId: 'ephemeral' }), ephemeral: true },
-    event('assistant.turn_start', { turnId: 'failed' }),
-    assistant('failed-answer', 'failed-reply'),
-    event('session.error', { errorType: 'test', message: 'Failed before completion' }),
-  ];
-  await h.engine.reload(s.id);
-  await finishReply(s, 'First durable completed primary reply', 'eligible');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-  const reads = s.rpc.eventLog.read.mock.calls.filter(({ arguments: [options] }) =>
-    options.agentScope === 'primary' && options.includeEphemeral === false && options.direction === 'forward');
-  assert.equal(reads.length, 1);
-  assert.deepEqual(reads[0]!.arguments[0], {
-    cursor: undefined, direction: 'forward', max: 32, agentScope: 'primary', includeEphemeral: false,
-    types: ['assistant.turn_start', 'assistant.message', 'assistant.turn_end', 'tool.execution_start',
-      'user.message', 'abort', 'session.error'],
-  });
-  const page = await reads[0]!.result;
-  assert.ok(page);
-  assert.deepEqual(page.events.map(native => native.type), [
-    'assistant.turn_start', 'assistant.message', 'session.error',
-    'assistant.turn_start', 'assistant.message', 'assistant.turn_end',
-  ]);
-  assert.equal(page.events.at(-1)?.id, 'end-eligible');
-  assert.equal(page.hasMore, false);
-});
-
-test('automatic naming stops at an early historical reply instead of reading the remaining conversation', async t => {
-  const h = harness(t);
-  const s = await h.seed();
-  s.state.userNamed = false;
-  s.state.events = [event('assistant.turn_start', { turnId: 'old' }), assistant('old-message', 'old-reply'),
-    event('assistant.turn_end', { turnId: 'old' }),
-    ...Array.from({ length: 1500 }, (_, index) => user(`later-${index}`))];
-  await h.engine.reload(s.id);
-  await finishReply(s, 'Later reply in an old conversation');
-  assert.equal(s.rpc.eventLog.read.mock.callCount(), 1);
-  const page = await s.rpc.eventLog.read.mock.calls[0]!.result;
-  assert.equal(page?.events.length, 32);
-  assert.equal(page?.hasMore, true);
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  assert.equal(s.rpc.name.setAuto.mock.callCount(), 0);
-  assert.equal(s.sdk.send.mock.callCount(), 0);
-});
-
-for (const prior of [30, 997]) {
-  test(`automatic naming accepts its first effective reply after ${prior} filtered events`, async t => {
-    const h = harness(t);
-    const s = await h.seed();
-    s.state.userNamed = false;
-    s.state.events = Array.from({ length: prior }, (_, index) => user(`prior-${index}`));
-    await h.engine.reload(s.id);
-    await finishReply(s, 'First effective reply spanning eligibility pages');
-    const reads = s.rpc.eventLog.read.mock.calls;
-    const eligibility = reads.filter(({ arguments: [params] }) => params.direction === 'forward');
-    assert.equal(eligibility.length, Math.ceil((prior + 3) / 32));
-    assert.equal(reads.length, eligibility.length + 1);
-    assert.equal(eligibility[0]!.arguments[0].cursor, undefined);
-    let count = 0;
-    for (const [index, call] of eligibility.entries()) {
-      const page = await call.result;
-      assert.ok(page);
-      count += page.events.length;
-      if (index + 1 < eligibility.length) assert.equal(eligibility[index + 1]!.arguments[0].cursor, page.cursor);
-    }
-    assert.equal(count, prior + 3);
-    assert.equal(reads.at(-1)!.arguments[0].max, 1, 'presence remains a separate one-event query');
-    assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-    assert.deepEqual(s.rpc.ui.ephemeralQuery.mock.calls[0]!.arguments, [{ question: autoNameQuestion }]);
-    assert.equal(s.rpc.name.setAuto.mock.callCount(), 1);
-    assert.equal(s.sdk.send.mock.callCount(), 0);
-    assert.ok(h.events.some(value => value.type === 'session/patch' && value.title === 'Native session naming'));
-  });
-}
-
-test('automatic naming reports exhausted native eligibility budget without inference and still permits manual naming', async t => {
-  const h = harness(t);
-  const s = await h.seed();
-  s.state.userNamed = false;
-  s.state.events = Array.from({ length: 1000 }, (_, index) => user(`prior-context-${index}`));
-  await h.engine.reload(s.id);
-  await finishReply(s, 'Reply beyond the bounded eligibility page');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  assert.ok(h.events.some(value => value.type === 'session/patch'
-    && /exceeds the bounded native query/.test(value.autoNameError ?? '')));
-  const reads = s.rpc.eventLog.read.mock.callCount();
-  assert.equal(reads, 32);
-  assert.deepEqual(s.rpc.eventLog.read.mock.calls.map(({ arguments: [params] }) => params.max),
-    [...Array.from({ length: 31 }, () => 32), 8]);
-  await nextTurn();
-  assert.equal(s.rpc.eventLog.read.mock.callCount(), reads, 'budget failure does not trigger a background retry');
-  assert.equal((await h.engine.getMeta(s.id))?.autoNameError, undefined);
-  assert.equal((await h.engine.autoName(s.id)).applied, true);
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-  assert.equal(s.rpc.eventLog.read.mock.callCount(), reads + 1, 'manual naming only checks bounded conversation presence');
-  assert.equal(s.rpc.eventLog.read.mock.calls.at(-1)?.arguments[0].max, 1);
-});
-
-for (const failure of ['expired', 'rejected'] as const) {
-  test(`automatic naming does not restart or query the model after a later eligibility page is ${failure}`, async t => {
-    const h = harness(t);
-    const s = await h.seed();
-    s.state.userNamed = false;
-    s.state.events = Array.from({ length: 40 }, (_, index) => user(`prior-${index}`));
-    await h.engine.reload(s.id);
-    s.rpc.eventLog.read.mock.mockImplementationOnce(async () => {
-      if (failure === 'rejected') throw new Error('Eligibility read failed');
-      return { events: [], cursor: 'expired-cursor', cursorStatus: 'expired', hasMore: false };
-    }, 1);
-    await finishReply(s, 'Reply during a failed eligibility scan');
-    assert.equal(s.rpc.eventLog.read.mock.callCount(), 2);
-    assert.ok(s.rpc.eventLog.read.mock.calls[1]!.arguments[0].cursor);
-    assert.ok(h.events.some(value => value.type === 'session/patch'
-      && /eligibility is unavailable|Eligibility read failed/.test(value.autoNameError ?? '')));
-    await finishReply(s, 'Later reply must not automatically retry');
-    assert.equal(s.rpc.eventLog.read.mock.callCount(), 2);
-    assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-    assert.equal(s.rpc.name.setAuto.mock.callCount(), 0);
-    assert.equal(s.sdk.send.mock.callCount(), 0);
-  });
-}
-
-for (const prior of [30, 64]) {
-  test(`closure during paginated naming suppresses a late ${prior === 30 ? 'effective reply' : 'continuation'} page`, async t => {
-    const h = harness(t);
-    const s = await h.seed();
-    s.state.userNamed = false;
-    s.state.events = Array.from({ length: prior }, (_, index) => user(`prior-${index}`));
-    await h.engine.reload(s.id);
-    const page = deferred<Awaited<ReturnType<Rpc['eventLog']['read']>>>();
-    s.rpc.eventLog.read.mock.mockImplementationOnce(() => page.promise, 1);
-    await finishReply(s, 'First reply while an eligibility page is pending');
-    assert.equal(s.rpc.eventLog.read.mock.callCount(), 2);
-    assert.equal((await h.engine.getMeta(s.id))?.autoNaming, true);
-    assert.ok(await h.engine.busyCount());
-    await assert.rejects(h.engine.unload(s.id), protectedWork);
-    await assert.rejects(h.engine.stop(), protectedWork);
-    const naming = h.engine.autoName(s.id);
-    const rejected = assert.rejects(naming, /Native session closed/);
-    h.runtime.expire(s.id, true);
-    await rejected;
-    const replacement = fakeSession(t, s.id);
-    replacement.state.name = 'Current manual title';
-    replacement.state.userNamed = true;
-    h.natives.set(s.id, replacement);
-    await h.engine.reload(s.id);
-    page.resolve({ events: s.state.events.slice(32, 64), cursor: 'late-page', cursorStatus: 'ok',
-      hasMore: s.state.events.length > 64 });
-    await nextTurn();
-    assert.equal(s.rpc.eventLog.read.mock.callCount(), 2, 'closed eligibility never dispatches another page or presence read');
-    assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-    assert.equal(s.rpc.name.setAuto.mock.callCount(), 0);
-    assert.equal(s.sdk.abort.mock.callCount(), 0);
-    assert.equal(replacement.rpc.eventLog.read.mock.callCount(), 0);
-    assert.equal((await h.engine.getMeta(s.id))?.title, 'Current manual title');
-  });
-}
-
-test('auto naming preserves first live completion buffered before the native create result', async t => {
-  const h = harness(t);
-  const initialized = deferred<CopilotSession>();
-  let native!: ReturnType<typeof fakeSession>;
-  h.runtime.createSession.mock.mockImplementationOnce(async config => {
-    native = fakeSession(t, config.sessionId!);
-    h.natives.set(config.sessionId!, native);
-    h.configs.set(config.sessionId!, config);
-    h.attached.add(config.sessionId!);
-    native.sdk.on(config.onEvent!);
-    native.state.userNamed = false;
-    native.emit(user('early-user'));
-    native.emit(event('assistant.turn_start', { turnId: 'early-turn' }));
-    native.emit(assistant('early-answer', 'early-message', 'Early initialization answer'));
-    native.emit(event('assistant.turn_end', { turnId: 'early-turn' }));
-    return initialized.promise;
-  });
-  const loading = h.engine.newSession(h.cwd);
-  await nextTurn();
-  assert.equal(native.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  initialized.resolve(native.sdk as unknown as CopilotSession);
-  const id = await loading;
-  await nextTurn();
-  assert.equal((await h.engine.getMeta(id))?.title, 'Native session naming');
-  assert.equal(native.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-  assert.equal(h.engine.attentionCount(), 1);
-});
-
-test('auto naming defers new native MCP work found in preflight without a model attempt or error', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  s.state.userNamed = false;
-  s.state.mcp.host!.pendingConnections = ['unannounced-native-connection'];
-  await finishReply(s, 'First successful root reply');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  assert.equal((await h.engine.getMeta(s.id))?.autoNameError, undefined);
-  s.state.mcp.host!.pendingConnections = [];
-  s.emit(event('session.mcp_server_status_changed', { serverName: 'unannounced-native-connection', status: 'connected' }));
-  await nextTurn();
-  assert.equal(h.engine.attentionCount(), 1, 'native MCP completion must release the pending reply notification');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-});
-
-test('cold native workspaces rewound to empty may regenerate an automatic title on their next first reply', async t => {
-  const h = harness(t);
-  const s = await h.seed();
-  s.state.userNamed = false;
-  await h.engine.reload(s.id);
-  await finishReply(s, 'First reply before cold rewind');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-  await h.engine.unload(s.id);
-  s.state.events = [];
-  s.state.name = 'Existing automatic title';
-  await h.engine.reload(s.id);
-  assert.equal(s.rpc.eventLog.read.mock.callCount(), 2, 'cold resume itself does not read eligibility');
-  await finishReply(s, 'Reply after history was rewound away');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 2);
-  assert.equal(s.rpc.eventLog.read.mock.calls[2]!.arguments[0].cursor, undefined);
-  assert.equal(s.state.name, 'Native session naming');
-});
-
-test('automatic naming preserves manual titles before eligibility and during a paginated read', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  await h.engine.rename(s.id, 'Manual before reply');
-  await finishReply(s, 'First reply with a manual title');
-  assert.equal(s.rpc.eventLog.read.mock.callCount(), 0);
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  assert.equal(s.state.name, 'Manual before reply');
-  s.state.userNamed = false;
-  s.state.events = Array.from({ length: 30 }, (_, index) => user(`prior-${index}`));
-  const page = deferred<Awaited<ReturnType<Rpc['eventLog']['read']>>>();
-  s.rpc.eventLog.read.mock.mockImplementationOnce(() => page.promise, 1);
-  await finishReply(s, 'First reply after native history changed');
-  const naming = h.engine.autoName(s.id);
-  await h.engine.rename(s.id, 'Manual during eligibility');
-  page.resolve({ events: s.state.events.slice(32), cursor: 'last-page', cursorStatus: 'ok', hasMore: false });
-  assert.deepEqual(await naming, { ok: true, applied: false, title: 'Manual during eligibility', reason: 'user-named' });
-  assert.equal(s.rpc.eventLog.read.mock.callCount(), 3);
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1, 'no extra model query was added for the manual-title race');
-  assert.equal(s.rpc.name.setAuto.mock.callCount(), 1);
-  assert.equal(s.state.name, 'Manual during eligibility');
-  assert.equal(s.sdk.send.mock.callCount(), 0);
-});
-
-test('the last metadata reader releases already-pending naming across eligibility pages', async t => {
-  const h = harness(t);
-  const s = await h.seed();
-  s.state.userNamed = false;
-  s.state.events = Array.from({ length: 40 }, (_, index) => user(`prior-${index}`));
-  await h.engine.reload(s.id);
-  const snapshot = await s.rpc.metadata.snapshot();
-  const hold = deferred<typeof snapshot>();
-  s.rpc.metadata.snapshot.mock.mockImplementationOnce(() => hold.promise);
-  const reading = h.engine.getMeta(s.id);
-  await nextTurn();
-  await finishReply(s, 'First reply waiting for the metadata reader');
-  assert.equal(s.rpc.eventLog.read.mock.callCount(), 0);
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  hold.resolve(snapshot);
-  await reading;
-  await nextTurn();
-  assert.equal(s.rpc.eventLog.read.mock.callCount(), 3, 'two eligibility pages and one presence read');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-  assert.equal(s.rpc.name.setAuto.mock.callCount(), 1);
-  assert.equal(s.sdk.send.mock.callCount(), 0);
-});
-
-test('a native first-prompt placeholder is not mistaken for a generated automatic title', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  s.state.userNamed = false;
-  s.state.name = 'Initial prompt preview';
-  await finishReply(s, 'First effective reply');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-  assert.equal(s.state.name, 'Native session naming');
-});
-
-test('queued work and native decisions defer automatic naming until their natural completion', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  s.state.userNamed = false;
-  s.state.queue.items = [queued('queued-work', 'Next work')];
-  await finishReply(s, 'First successful root reply');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  const ask = Promise.resolve(h.configs.get(s.id)!.onUserInputRequest!({ question: 'Choose?' }, { sessionId: s.id }));
-  s.state.queue.items = [];
-  s.emit(event('pending_messages.modified', {}));
-  await nextTurn();
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  await h.engine.respondAsk(s.id, (await h.engine.getMeta(s.id))!.ask!.requestId, 'Answer', true);
-  await ask;
-  s.emit(event('session.idle', {}));
-  await nextTurn();
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-});
-
-test('auto naming waits for natural native background/MCP/compaction idle and ignores reasoning, child and tool-only turns', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  s.state.userNamed = false;
-  s.emit(event('assistant.turn_start', { turnId: 'tools' }));
-  s.emit(event('assistant.reasoning', { reasoningId: 'reason', content: 'Reasoning is not a reply' }));
-  s.emit(event('assistant.message', { messageId: 'tool-message', content: 'Looking at files',
-    toolRequests: [{ toolCallId: 'view-file', name: 'view', arguments: { path: 'fixture' } }] }));
-  s.emit(event('assistant.turn_end', { turnId: 'tools' }));
-  s.emit({ ...assistant('child-event', 'child-message', 'Child answer'), agentId: 'child' });
-  s.emit({ ...event('assistant.turn_end', { turnId: 'child' }), agentId: 'child' });
-  s.emit({ ...assistant('ephemeral-event', 'ephemeral-message', 'Ephemeral answer'), ephemeral: true });
-  s.emit({ ...event('assistant.turn_end', { turnId: 'ephemeral' }), ephemeral: true });
-  await nextTurn();
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  s.state.activeWork = true;
-  s.state.tasks = [task()];
-  s.state.mcp = mcpState();
-  s.state.mcp.host!.pendingConnections = ['native-connect'];
-  s.emit(event('session.compaction_start', {}));
-  s.emit(event('session.mcp_server_status_changed', { serverName: 'native-connect', status: 'pending' }));
-  await finishReply(s, '<cockpit-attachment kind="file" name="report.txt" url="/uploads/report.txt"/>', 'real-reply');
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  s.state.activeWork = false;
-  s.state.tasks = [];
-  s.emit(event('session.background_tasks_changed', {}));
-  await nextTurn();
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  s.state.mcp.host!.pendingConnections = [];
-  s.emit(event('session.mcp_server_status_changed', { serverName: 'native-connect', status: 'connected' }));
-  s.emit(event('session.compaction_complete', { success: true }));
-  await nextTurn();
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-});
-
-for (const signal of ['session.error', 'abort'] as const) {
-  test(`auto naming does not consume eligibility on first ${signal} or retry a failed query`, async t => {
-    const h = harness(t);
-    const s = await h.load();
-    s.state.userNamed = false;
-    s.state.activeWork = true;
-    s.emit(event('assistant.turn_start', { turnId: 'failed-turn' }));
-    s.emit(assistant('partial-message', 'partial-reply', 'Partial reply before failure'));
-    s.emit(signal === 'abort' ? event('abort', { reason: 'user_initiated' }) : event('session.error', { errorType: 'test', message: 'Turn failed' }));
-    s.state.activeWork = false;
-    s.emit(event('session.idle', {}));
-    await nextTurn();
-    assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-    s.rpc.ui.ephemeralQuery.mock.mockImplementationOnce(async () => { throw new Error('Auxiliary model failed'); });
-    const logged: string[] = [];
-    h.engine.log = message => logged.push(message);
-    await finishReply(s, 'Actual successful reply');
-    assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-    const meta = (await h.engine.getMeta(s.id))!;
-    assert.equal(meta.status, 'idle');
-    assert.equal(meta.error, undefined);
-    assert.equal(meta.autoNaming, false);
-    assert.equal(meta.autoNameError, undefined);
-    assert.ok(h.events.some(event => event.type === 'session/patch' && event.autoNameError === 'Auxiliary model failed'));
-    assert.equal(meta.attention, 'ready');
-    assert.equal(s.rpc.name.setAuto.mock.callCount(), 0);
-    assert.ok(logged.includes('automatic session naming failed'));
-    await finishReply(s, 'Next reply is not a retry');
-    assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-  });
-}
-
-test('native manual naming wins both preflight and a race during a coalesced query', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  await h.engine.rename(s.id, '用户指定名称');
-  s.emit(user('context-user'));
-  assert.deepEqual(await h.engine.autoName(s.id), { ok: true, applied: false, title: '用户指定名称', reason: 'user-named' });
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  s.state.userNamed = false;
-  const query = deferred<{ answer: string }>();
-  s.rpc.ui.ephemeralQuery.mock.mockImplementationOnce(() => query.promise);
-  const one = h.engine.autoName(s.id), two = h.engine.autoName(s.id);
-  await nextTurn();
-  await h.engine.rename(s.id, '用户最终名称');
-  query.resolve({ answer: 'Generated title' });
-  assert.deepEqual(await one, { ok: true, applied: false, title: '用户最终名称', reason: 'user-named' });
-  assert.deepEqual(await two, await one);
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 1);
-  assert.equal(s.state.name, '用户最终名称');
-});
-
-test('manual naming rejects missing empty sessions and busy work without recreating or queueing', async t => {
-  const h = harness(t);
-  const id = await h.engine.newSession(h.cwd);
-  h.runtime.expire(id, true);
-  h.runtime.resumeSession.mock.mockImplementationOnce(async () => { throw new Error('native session missing'); });
-  await assert.rejects(h.engine.autoName(id), /native session missing/);
-  assert.equal(h.runtime.createSession.mock.callCount(), 1);
-  assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
-  const s = await h.load();
-  s.state.userNamed = false;
-  s.emit(user('manual-user'));
-  s.state.activeWork = true;
-  await assert.rejects(h.engine.autoName(s.id), { statusCode: 409, code: 'SESSION_BUSY' });
-  s.state.activeWork = false;
-  s.emit(event('session.idle', {}));
-  await nextTurn();
-  const ask = Promise.resolve(h.configs.get(s.id)!.onUserInputRequest!({ question: 'Choose?' }, { sessionId: s.id }));
-  await assert.rejects(h.engine.autoName(s.id), { statusCode: 409, code: 'SESSION_BUSY' });
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  await h.engine.respondAsk(s.id, (await h.engine.getMeta(s.id))!.ask!.requestId, 'Answer', true);
-  await ask;
-  assert.equal(s.sdk.send.mock.callCount(), 0);
-  const closing = deferred();
-  h.runtime.closeSession.mock.mockImplementationOnce(async sdk => {
-    await closing.promise;
-    h.attached.delete(sdk.sessionId);
-    s.listeners.clear();
-  });
-  const unloaded = h.engine.unload(s.id);
-  await nextTurn();
-  await assert.rejects(h.engine.autoName(s.id), { statusCode: 409, code: 'SESSION_BUSY' });
-  closing.resolve();
-  await unloaded;
-});
-
-for (const answer of ['', 'x'.repeat(101), '🧪'.repeat(33), 'bad\nname']) {
-  test(`invalid generated title (${JSON.stringify(answer.slice(0, 12))}) leaves native title unchanged`, async t => {
-    const h = harness(t);
-    const s = await h.load();
-    s.state.userNamed = false;
-    s.state.name = 'Previous native title';
-    s.emit(user('validation-user'));
-    s.rpc.ui.ephemeralQuery.mock.mockImplementationOnce(async () => ({ answer }));
-    await assert.rejects(h.engine.autoName(s.id), { code: 'AUTO_NAME_INVALID_TITLE' });
-    assert.equal(s.rpc.name.setAuto.mock.callCount(), 0);
-    assert.equal(s.state.name, 'Previous native title');
-    assert.equal((await h.engine.getMeta(s.id))?.error, undefined);
-    assert.equal((await h.engine.getMeta(s.id))?.status, 'idle');
-  });
-}
-
-test('native automatic naming confirms readback, and reports nonapplication rather than fabricated success', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  s.state.userNamed = false;
-  s.emit(user('readback-user'));
-  s.rpc.name.setAuto.mock.mockImplementationOnce(async () => ({ applied: false }));
-  assert.deepEqual(await h.engine.autoName(s.id), { ok: true, applied: false, title: null, reason: 'not-applied' });
-  s.rpc.name.setAuto.mock.mockImplementationOnce(async () => ({ applied: true }));
-  await assert.rejects(h.engine.autoName(s.id), { code: 'AUTO_NAME_NOT_CONFIRMED' });
-  assert.equal((await h.engine.getMeta(s.id))?.title, 'indexed title');
-});
-
-test('native closure releases naming protection and a late auxiliary response cannot mutate a closed session', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  s.state.userNamed = false;
-  s.emit(user('closed-query-user'));
-  const query = deferred<{ answer: string }>();
-  s.rpc.ui.ephemeralQuery.mock.mockImplementationOnce(() => query.promise);
-  const naming = h.engine.autoName(s.id);
-  const rejected = assert.rejects(naming, /Native session closed/);
-  await nextTurn();
-  assert.equal((await h.engine.getMeta(s.id))?.autoNaming, true);
-  h.runtime.expire(s.id, true);
-  await rejected;
-  assert.equal((await h.engine.getMeta(s.id))?.autoNaming, undefined);
-  assert.equal((await h.engine.getMeta(s.id))?.status, 'unloaded');
-  await h.engine.unload(s.id);
-  query.resolve({ answer: 'Late title' });
-  await nextTurn();
-  assert.equal(s.rpc.name.setAuto.mock.callCount(), 0);
-});
-
-test('a late naming preflight cannot overwrite the authoritative title of a resumed native handle', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  s.state.userNamed = false;
-  s.emit(user('late-naming-preflight-user'));
-  const workspace = deferred<Awaited<ReturnType<Rpc['workspaces']['getWorkspace']>>>();
-  s.rpc.workspaces.getWorkspace.mock.mockImplementationOnce(() => workspace.promise);
-  const naming = h.engine.autoName(s.id);
-  const rejected = assert.rejects(naming, /Native session closed/);
-  await nextTurn();
-  assert.equal(s.rpc.workspaces.getWorkspace.mock.callCount(), 1);
-  h.runtime.expire(s.id, true);
-  await rejected;
-  const replacement = fakeSession(t, s.id);
-  replacement.state.name = 'Current manual title';
-  replacement.state.userNamed = true;
-  replacement.state.events = [...s.state.events];
-  h.natives.set(s.id, replacement);
-  await h.engine.reload(s.id);
-  workspace.resolve({ workspace: { id: s.id, user_named: true, name: 'Obsolete manual title' } });
-  await nextTurn();
-  assert.equal((await h.engine.getMeta(s.id))?.title, 'Current manual title');
-  assert.equal((await h.engine.getMeta(s.id))?.loaded, true);
-  assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-  assert.equal(replacement.rpc.ui.ephemeralQuery.mock.callCount(), 0);
-});
-
-test('startup restores unread replies without SDK sessions and drops only orphaned native choices', async t => {
-  const h = harness(t, { prefs: {
-    inbox: { revision: 80, counter: 42, sessions: {
-      reply: { attention: 'ready', attnId: 41, seenId: 0, eventId: 'end-old' },
-      choice: { attention: 'choice', attnId: 42, seenId: 42, eventId: 'old-request' },
-    } },
-  } });
-  await h.seed('reply');
-  await h.seed('choice');
-  await h.engine.start();
-  const snapshot = (await h.engine.snapshot());
-  assert.equal(await h.engine.login(), '', 'BYOK does not need a made-up GitHub username');
-  assert.equal(snapshot.inboxRevision, 81);
-  assert.equal(snapshot.unreadCount, 1);
-  assert.equal(unreadSessionCount(snapshot.sessions), 1);
-  assert.equal((await h.engine.getMeta('reply'))?.attention, 'ready');
-  assert.equal((await h.engine.getMeta('choice'))?.attention, null);
-  assert.equal((await h.engine.getMeta('choice'))?.ask, null);
-  assert.equal(h.runtime.createSession.mock.callCount(), 0);
-  assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
-  assert.equal(h.events.some(event => event.type === 'session/notify'), false);
-  await h.engine.reload('reply');
-  assert.equal(h.engine.attentionCount(), 1, 'loading does not consume an unread reply');
-  await h.engine.stop();
-  assert.equal(h.prefs().inbox?.sessions.reply?.attention, 'ready', 'controlled stop keeps unread and native history');
-  assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
-});
-
-test('reply notifications use final content or attachment names, once per native turn end, with committed counts', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  h.events.length = 0;
-  const off = h.engine.onEvent(event => {
-    if (event.type !== 'session/notify') return;
-    const inbox = h.prefs().inbox!;
-    assert.equal(event.inboxRevision, inbox.revision);
-    assert.equal(event.attnId, inbox.sessions[s.id]?.attnId);
-    assert.equal(event.unreadCount, unreadSessionCount(Object.values(inbox.sessions)));
-    assert.equal(event.unreadCount, h.engine.attentionCount());
-  });
-  t.after(off);
-  s.emit(event('assistant.turn_start', { turnId: 'turn' }));
-  s.emit(event('assistant.message_delta', { messageId: 'final', deltaContent: 'fragment' }));
-  s.emit(event('session.idle', {}));
-  await nextTurn();
-  assert.equal(h.engine.attentionCount(), 0, 'idle and streaming fragments alone are not a reply signal');
-  s.emit(assistant('final-event', 'final', '## 已完成 **构建**\n[报告](https://example.invalid/?token=hidden)'));
-  assert.equal(h.events.some(event => event.type === 'session/notify'), false);
-  const end = event('assistant.turn_end', { turnId: 'turn' }, 'native-turn-end');
-  s.emit(end);
-  s.emit(end);
-  s.emit(event('session.idle', {}));
-  await nextTurn();
-  let notifications = h.events.filter(event => event.type === 'session/notify');
-  assert.equal(notifications.length, 1);
-  assert.equal(notifications[0]?.body, '已完成 构建 报告');
-  assert.equal(h.events.some(event => event.type === 'snapshot'), false);
-  h.engine.markSeen(s.id);
-  await finishReply(s, '<cockpit-attachment kind="file" name="report.txt" url="/uploads/report.txt"/>', 'attachment');
-  notifications = h.events.filter(event => event.type === 'session/notify');
-  assert.equal(notifications.length, 2);
-  assert.equal(notifications[1]?.body, '附件：report.txt');
-  assert.equal(h.engine.attentionCount(), 1);
-  await finishReply(s, '**password**: demo-private-value {"password":"json-private-value"} 密钥：another-private-value', 'redaction');
-  const redacted = h.events.filter(event => event.type === 'session/notify').at(-1)!;
-  assert.doesNotMatch(redacted.body, /private-value/);
-  assert.match(redacted.body, /已隐藏/);
-  assert.ok((await chat(h, s.id, { source: 'live' })).events.some(event =>
-    typeof event.data.content === 'string' && event.data.content.includes('demo-private-value')),
-  'notification redaction must not alter native conversation content');
-  assert.equal(serverChatEvents(h).length, 0);
-  await h.engine.unload(s.id);
-  assert.equal(h.engine.attentionCount(), 1);
-});
-
-test('late seen waterlines cannot consume newer replies and IDs advance across restart without replay notifications', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  await finishReply(s, '第一条回复', 'first');
-  const first = (await h.engine.getMeta(s.id))!.attnId!;
-  h.engine.markSeen(s.id, first);
-  assert.equal(h.engine.attentionCount(), 0);
-  const end = await finishReply(s, '第二条回复', 'second');
-  const second = (await h.engine.getMeta(s.id))!.attnId!;
-  const revision = (await h.engine.snapshot()).inboxRevision!;
-  assert.ok(second > first);
-  h.engine.markSeen(s.id, first);
-  assert.equal((await h.engine.getMeta(s.id))?.attention, 'ready');
-  assert.equal((await h.engine.snapshot()).inboxRevision, revision);
-  s.emit(end);
-  await nextTurn();
-  assert.equal((await h.engine.snapshot()).inboxRevision, revision);
-  await h.engine.stop();
-  const restored = new Engine({ runtime: h.runtime as unknown as EngineRuntime, prefsFile: h.prefsFile });
-  const events: ServerEvent[] = [];
-  restored.onEvent(event => events.push(event));
-  const resumes = h.runtime.resumeSession.mock.callCount();
-  await restored.start();
-  assert.equal((await restored.snapshot()).inboxRevision, revision);
-  assert.equal(restored.attentionCount(), 1);
-  assert.equal(h.runtime.resumeSession.mock.callCount(), resumes);
-  assert.equal(events.some(event => event.type === 'session/notify'), false);
-  restored.markSeen(s.id, first);
-  assert.equal(restored.attentionCount(), 1);
-  restored.markSeen(s.id, second);
-  await restored.reload(s.id);
-  s.emit(end);
-  await nextTurn();
-  assert.equal(restored.attentionCount(), 0, 'persisted/replayed native event cannot become unread again');
-  await finishReply(s, '第三条回复', 'third');
-  assert.ok((await restored.getMeta(s.id))!.attnId! > second);
-  assert.ok((await restored.snapshot()).inboxRevision! > revision);
-  await restored.stop();
-});
-
-test('inbox IO failures remain explicit and uncommitted, do not escape SDK callbacks, and retry before close', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  const initial = (await h.engine.snapshot());
-  const bytes = readFileSync(h.prefsFile, 'utf8');
-  mkdirSync(`${h.prefsFile}.tmp`);
-  await finishReply(s, '已完成检查', 'io-failure');
-  assert.equal((await h.engine.snapshot()).unreadCount, initial.unreadCount);
-  assert.equal((await h.engine.snapshot()).inboxRevision, initial.inboxRevision);
-  assert.equal(readFileSync(h.prefsFile, 'utf8'), bytes);
-  visibleError(h, s.id, /Inbox save failed.*not committed/);
-  assert.equal(h.events.some(event => event.type === 'session/notify'), false);
-  await assert.rejects(h.engine.unload(s.id), protectedWork);
-  assert.equal(h.runtime.closeSession.mock.callCount(), 0, 'uncommitted final reply must not be discarded by teardown');
-  rmSync(`${h.prefsFile}.tmp`, { recursive: true });
-  s.emit(event('session.idle', {}));
-  await nextTurn();
-  assert.equal(h.engine.attentionCount(), 1);
-  assert.equal(h.events.filter(event => event.type === 'session/notify').length, 1);
-  const committed = (await h.engine.snapshot());
-  mkdirSync(`${h.prefsFile}.tmp`);
-  assert.throws(() => h.engine.markSeen(s.id), { code: 'EISDIR' });
-  assert.equal((await h.engine.snapshot()).inboxRevision, committed.inboxRevision);
-  assert.equal(h.engine.attentionCount(), 1);
-  rmSync(`${h.prefsFile}.tmp`, { recursive: true });
-  h.engine.markSeen(s.id);
-  assert.equal(h.engine.attentionCount(), 0);
-  assert.equal((await h.engine.getMeta(s.id))?.error, undefined);
-});
-
-test('seen choices remain actionable but not unread; the next real pending callback gets a new attention ID', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  const config = h.configs.get(s.id)!;
-  const first = config.onUserInputRequest!({ question: '**请选择**下一步' }, { sessionId: s.id });
-  const second = config.onUserInputRequest!({ question: '确认继续？' }, { sessionId: s.id });
-  const request = (await h.engine.getMeta(s.id))!.ask!.requestId;
-  const firstId = (await h.engine.getMeta(s.id))!.attnId!;
-  h.engine.markSeen(s.id, firstId);
-  assert.equal(h.engine.attentionCount(), 0);
-  assert.equal((await h.engine.getMeta(s.id))?.attention, 'choice');
-  assert.equal((await h.engine.getMeta(s.id))?.ask?.requestId, request);
-  await assert.rejects(h.engine.reloadSessionMcp(s.id), protectedWork);
-  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
-  await h.engine.respondAsk(s.id, request, '原样回答', true);
-  assert.deepEqual(await first, { answer: '原样回答', wasFreeform: true });
-  assert.equal(h.engine.attentionCount(), 1);
-  assert.ok((await h.engine.getMeta(s.id))!.attnId! > firstId);
-  const notifications = h.events.filter(event => event.type === 'session/notify');
-  assert.deepEqual(notifications.map(event => event.body), ['请选择下一步', '确认继续？']);
-  await h.engine.respondAsk(s.id, (await h.engine.getMeta(s.id))!.ask!.requestId, '继续', true);
-  await second;
-  assert.equal(h.engine.attentionCount(), 0);
-  assert.equal((await h.engine.getMeta(s.id))?.attention, null);
-});
 
 for (const loaded of [false, true]) {
   test(`confirmed native deletion ignores retired schedule counts and ${loaded ? 'checks and closes live work' : 'does not load paused schedules'}`, async t => {
@@ -5917,14 +5059,14 @@ for (const loaded of [false, true]) {
     assert.equal(s.rpc.schedule.list.mock.callCount(), reads, 'teardown checks work, not future timers');
     assert.equal(s.rpc.schedule.stop.mock.callCount(), 0);
     assert.equal(s.sdk.abort.mock.callCount(), 0);
-    assert.equal(h.prefs().scheduledSessions, undefined);
+    assert.deepEqual(h.prefs().scheduledSessions, { 'legacy-scheduled': 999 });
   });
 }
 
-test('native deletion honors confirmation and idle guards, and cleans preferences only after native acknowledgement', async t => {
-  const h = harness(t);
+test('native deletion honors confirmation and idle guards without modifying external preferences', async t => {
+  const h = harness(t, { prefs: { preserved: 'external capability data' } });
+  const original = readFileSync(h.prefsFile, 'utf8');
   const s = await h.load();
-  await h.engine.pin(s.id, true);
   await finishReply(s, '可删除的测试回复', 'purge');
   for (const name of ['session/delete', 'session/purge'] as const) {
     assert.equal(Intents[name].body.safeParse({ sessionId: s.id }).success, false);
@@ -5939,30 +5081,18 @@ test('native deletion honors confirmation and idle guards, and cleans preference
   assert.equal(h.runtime.closeSession.mock.callCount(), 0);
   s.state.processing = false;
   await finishReply(s, '工作完成，可以删除', 'purge-after-work');
-  const counter = h.prefs().inbox!.counter;
   h.runtime.closeSession.mock.mockImplementationOnce(async () => { throw new Error('close failed'); });
   await assert.rejects(h.engine.deleteSession(s.id, true), /close failed/);
   assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
   h.runtime.deleteSession.mock.mockImplementationOnce(async () => { throw new Error('native delete failed'); });
   await assert.rejects(h.engine.deleteSession(s.id, true), /native delete failed/);
-  assert.equal(h.prefs().pinnedSessions?.includes(s.id), true);
-  assert.equal(h.engine.attentionCount(), 1);
-  mkdirSync(`${h.prefsFile}.tmp`);
-  await assert.rejects(h.engine.deleteSession(s.id, true), /Native history deleted; preferences cleanup failed/);
-  assert.equal(h.prefs().pinnedSessions?.includes(s.id), true);
-  assert.equal(await h.engine.getMeta(s.id), null, 'preferences cannot fabricate deleted native metadata');
-  assert.equal(activeState(h, s.id), undefined, 'cleanup retry does not retain an unloaded native replica');
-  rmSync(`${h.prefsFile}.tmp`, { recursive: true });
   await h.engine.deleteSession(s.id, true);
   assert.equal((await h.engine.getMeta(s.id)), null);
-  assert.equal(h.prefs().pinnedSessions?.includes(s.id), false);
-  assert.equal(h.prefs().inbox?.sessions[s.id], undefined);
-  assert.equal(h.prefs().inbox?.counter, counter);
-  assert.equal(h.engine.attentionCount(), 0);
+  assert.equal(activeState(h, s.id), undefined);
+  assert.equal(readFileSync(h.prefsFile, 'utf8'), original);
   assert.ok(h.trace.indexOf(`close:${s.id}`) < h.trace.indexOf(`delete:${s.id}`));
   const removed = h.events.findLast(event => event.type === 'session/removed');
-  assert.deepEqual(removed, { type: 'session/removed', sessionId: s.id,
-    inboxRevision: (await h.engine.snapshot()).inboxRevision, unreadCount: 0 });
+  assert.deepEqual(removed, { type: 'session/removed', sessionId: s.id });
   const deleting = await h.load();
   await h.engine.unload(deleting.id);
   const deletion = deferred();
@@ -5992,7 +5122,7 @@ test('global MCP refresh invalidates only native definitions and never disrupts 
   assert.equal(second.rpc.mcp.reload.mock.callCount(), 0);
   h.runtime.rpc.mcp.config.reload.mock.mockImplementationOnce(async () => { throw new Error('native cache reload failed'); });
   await assert.rejects(h.engine.refreshMcp(), /native cache reload failed/);
-  assert.equal(h.prefs().mcpDefaultOn, undefined, 'retired defaults cannot override the native configuration');
+  assert.deepEqual(h.prefs().mcpDefaultOn, ['fixture'], 'retired records cannot override native configuration and are not rewritten');
 });
 
 test('session MCP reload uses the guarded native connection operation without close or resume', async t => {

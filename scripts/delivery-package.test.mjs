@@ -1,82 +1,90 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { lstat, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const repository = fileURLToPath(new URL('../', import.meta.url));
-test('the committed runtime closure includes bundled skills instead of relying on global copies', async () => {
+const required = [
+  'apps/server/src/index.ts', 'packages/core/src/index.ts', 'packages/protocol/src/index.ts',
+  'apps/mcp/dist/index.js', 'apps/web/dist/index.html', 'consumer-runtime.json',
+  'scripts/consumer/cli.mjs', 'delivery-manifest.json',
+];
+const retired = [
+  'modules/', 'module-staging/', 'skills/',
+  'packages/core/src/modules/', 'packages/core/src/context-reset.ts',
+  'packages/core/src/prefs.ts', 'packages/core/src/attention.ts', 'packages/core/src/auto-name.ts',
+  'apps/server/src/uploads.ts', 'apps/server/src/push.ts', 'apps/server/src/speech.ts',
+  'apps/server/src/delivery-status.ts', 'scripts/consumer/module-runner.mjs',
+];
+
+function checkArchive(archive) {
+  const entries = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+    .trim().split('\n').map(path => path.replace(/^\.\//, ''));
+  assert.ok(entries.every(path => !path.startsWith('/') && !path.split('/').includes('..')));
+  for (const path of required) assert.ok(entries.includes(path), `Missing native runtime file: ${path}`);
+  for (const path of retired) {
+    assert.equal(entries.some(entry => path.endsWith('/') ? entry.startsWith(path) : entry === path),
+      false, `Parked capability must not ship: ${path}`);
+  }
+  assert.equal(entries.some(path => /node_modules\/(?:\.pnpm\/)?(?:microsoft-cognitiveservices-speech-sdk|web-push)(?:@|\/)/.test(path)),
+    false, 'Detached speech/push dependencies must not leak through an old node_modules tree');
+}
+
+test('the runtime closure excludes parked capabilities and preserves the native source and launcher', async () => {
   const config = JSON.parse(await readFile(join(repository, 'service-delivery.json'), 'utf8'));
-  assert.ok(config.build.artifactPaths.includes('skills'), 'Root bundled skills must be packaged');
-  assert.ok(config.build.artifactPaths.includes('packages/core/src'), 'Packaged core must resolve its own skill directory');
-  assert.equal(config.build.artifactPaths.includes('modules'), false, 'Business module payloads are not main artifacts');
+  const paths = config.build.artifactPaths;
+  for (const path of ['packages/core/src', 'packages/protocol/src', 'apps/server/src', 'apps/web/dist', 'scripts/consumer']) {
+    assert.ok(paths.includes(path), path);
+  }
+  for (const path of ['.', 'modules', 'module-staging', 'skills']) assert.equal(paths.includes(path), false, path);
+  assert.equal(paths.some(path => path.startsWith('module-staging/')), false);
 });
 
-test('archive guard accepts complete fixtures and rejects omitted skills or broken references', {
-  skip: Boolean(process.env.COCKPIT_RELEASE_ARCHIVE),
-}, async t => {
-  const root = await mkdtemp(join(tmpdir(), 'cockpit-skill-fixture-'));
+test('parked source inventory preserves ordinary immutable source bytes and original file modes', async () => {
+  const inventory = JSON.parse(await readFile(join(repository, 'module-staging/source-inventory.json'), 'utf8'));
+  assert.equal(inventory.kind, 'parked-source-inventory');
+  const seen = new Set();
+  for (const entry of inventory.records) {
+    assert.match(entry.sourceSha, /^[a-f0-9]{40}$/);
+    assert.ok(entry.destination.startsWith('module-staging/'));
+    assert.equal(entry.destination.split('/').includes('..'), false);
+    assert.equal(seen.has(entry.destination), false);
+    seen.add(entry.destination);
+    const path = join(repository, entry.destination);
+    const stat = await lstat(path);
+    assert.ok(stat.isFile() && !stat.isSymbolicLink());
+    assert.equal(createHash('sha256').update(await readFile(path)).digest('hex'), entry.sha256, entry.destination);
+    assert.equal(Boolean(stat.mode & 0o111), entry.mode === '100755', entry.destination);
+  }
+});
+
+test('the archive guard rejects reintroduced parked payloads or missing native entry files', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'cockpit-native-package-'));
   t.after(() => rm(root, { recursive: true, force: true }));
   const source = join(root, 'source'), archive = join(root, 'runtime.tar.gz');
-  await mkdir(join(source, 'skills/self-context-reset'), { recursive: true });
-  await mkdir(join(source, 'packages/core/src'), { recursive: true });
-  await writeFile(join(source, 'packages/core/src/paths.ts'),
-    await readFile(join(repository, 'packages/core/src/paths.ts')));
-  await writeFile(join(source, 'skills/self-context-reset/SKILL.md'),
-    await readFile(join(repository, 'skills/self-context-reset/SKILL.md')));
-  await writeFile(join(source, 'delivery-manifest.json'), JSON.stringify({
-    files: { 'skills/self-context-reset/SKILL.md': { sha256: 'a'.repeat(64) } },
-  }));
-  const check = () => {
-    execFileSync('tar', ['-czf', archive, '-C', source, '.']);
-    const { NODE_TEST_CONTEXT: _testContext, ...environment } = process.env;
-    return () => execFileSync(process.execPath, ['--test', fileURLToPath(import.meta.url)], {
-      env: { ...environment, COCKPIT_RELEASE_ARCHIVE: archive }, stdio: 'pipe',
-    });
-  };
-  assert.doesNotThrow(check());
-  await writeFile(join(source, 'skills/self-context-reset/SKILL.md'),
-    '---\nname: self-context-reset\n---\n[Required procedure](references/missing.md)\n');
-  assert.throws(check());
-  await rm(join(source, 'skills/self-context-reset/SKILL.md'));
-  assert.throws(check());
+  for (const path of required) {
+    await mkdir(dirname(join(source, path)), { recursive: true });
+    await writeFile(join(source, path), path.endsWith('.json') ? '{}' : 'export {};');
+  }
+  const pack = () => execFileSync('tar', ['-czf', archive, '-C', source, '.']);
+  pack();
+  checkArchive(archive);
+  await mkdir(join(source, 'module-staging/files'), { recursive: true });
+  await writeFile(join(source, 'module-staging/files/parked.txt'), 'Must not be in the runtime');
+  pack();
+  assert.throws(() => checkArchive(archive), /Parked capability/);
+  await rm(join(source, 'module-staging'), { recursive: true });
+  await rm(join(source, 'apps/server/src/index.ts'));
+  pack();
+  assert.throws(() => checkArchive(archive), /Missing native runtime file/);
 });
 
-test('actual release archive resolves bundled skills and readable local references inside its package', {
+test('the actual fixed-commit archive contains native runtime files and no parked capabilities', {
   skip: !process.env.COCKPIT_RELEASE_ARCHIVE,
-}, async t => {
-  const archive = resolve(process.env.COCKPIT_RELEASE_ARCHIVE);
-  const entries = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 }).trim().split('\n');
-  assert.ok(entries.every(path => !path.startsWith('/') && !path.split('/').includes('..')));
-  assert.ok(entries.includes('./skills/self-context-reset/SKILL.md'), 'Actual archive omits self-context-reset');
-  assert.equal(entries.some(path => /^\.\/(?:modules\/|packages\/core\/src\/modules\/.+|scripts\/consumer\/module-runner\.mjs$)/.test(path)),
-    false, 'Actual main archive must not ship business modules or their retired runtime');
-  const root = await mkdtemp(join(tmpdir(), 'cockpit-skill-package-'));
-  t.after(() => rm(root, { recursive: true, force: true }));
-  execFileSync('tar', ['-xzf', archive, '-C', root, './skills', './packages/core/src/paths.ts', './delivery-manifest.json']);
-  const manifest = JSON.parse(await readFile(join(root, 'delivery-manifest.json'), 'utf8'));
-  assert.ok(manifest.files['skills/self-context-reset/SKILL.md']?.sha256);
-  const { bundledSkillsDirectory } = await import(pathToFileURL(join(root, 'packages/core/src/paths.ts')).href);
-  assert.equal(resolve(bundledSkillsDirectory), join(root, 'skills'));
-  const definition = await readFile(join(bundledSkillsDirectory, 'self-context-reset/SKILL.md'), 'utf8');
-  assert.match(definition, /^name: self-context-reset$/m);
-  async function check(directory) {
-    for (const entry of await readdir(directory, { withFileTypes: true })) {
-      const file = join(directory, entry.name);
-      const actual = await realpath(file);
-      assert.ok(actual.startsWith(`${root}${sep}`), 'Bundled skill must not point into a development/user directory');
-      if (entry.isDirectory()) { await check(file); continue; }
-      if (!entry.name.endsWith('.md')) continue;
-      const text = await readFile(file, 'utf8');
-      for (const [, link] of text.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
-        if (/^(?:[a-z]+:|#)/i.test(link)) continue;
-        const target = await realpath(resolve(dirname(file), link.split('#')[0]));
-        assert.ok(target.startsWith(`${root}${sep}`), 'Local skill reference escapes release');
-        assert.ok((await stat(target)).isFile(), `Unreadable bundled reference: ${link}`);
-      }
-    }
-  }
-  await check(bundledSkillsDirectory);
+}, () => {
+  checkArchive(resolve(process.env.COCKPIT_RELEASE_ARCHIVE));
 });

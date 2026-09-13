@@ -139,6 +139,20 @@ by source extraction. Old preferences are inert; removing their writer is not
 permission to rewrite their stored file. Future file access and data migration
 need an explicit design rather than deletion or native-history rewriting.
 
+The text-only composer uses `cockpit:native-composer:<sessionId>`. Existing
+`cockpit:composer:<sessionId>` rich drafts remain untouched and are not loaded
+or silently converted. Users must not expect old staged attachments or their
+captions to appear in the thin composer. Old native messages remain readable,
+but module-specific file markers/URLs have no enhanced renderer or download
+service. Existing device push registrations are not remotely revoked by this
+source change; the new worker and backend contain no push handlers/delivery.
+
+There is no published `files/*`, `inbox/seen`, `push/*`, `speech/token`,
+`session/pin`, `session/auto-name` or `system/consumer/*` intent. The upload,
+download and system-dashboard transports and the MCP file/pin/restart helpers
+are removed. Native message APIs and the private process lifecycle primitives
+are not substitutes for those retired enhancements.
+
 Source integration is not production activation. This extraction does not
 deploy, restart, reset a session or enable any module. The independent review
 of its own fixed baseline is not silently redirected to this new scope.

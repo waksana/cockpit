@@ -19,8 +19,9 @@ test('only the main workspace owns a global menu and section navigation pushes d
   const management = readFileSync(new URL('./ManageWorkspace.tsx', import.meta.url), 'utf8');
   assert.doesNotMatch(management, /GlobalNavigation/);
   assert.doesNotMatch(source, /showSessionListEntry|label: '会话列表'|replace:/);
-  assert.match(source, /navigate\(`\/\$\{section\}`\)/);
+  assert.match(source, /navigate\('\/mcp'\)/);
+  assert.match(source, /navigate\('\/skills'\)/);
   assert.match(source, /pathname === '\/'.*triggerRef.current\?\.focus/);
-  for (const label of ['文件', '全局 MCP', '全局 Skills', '通知设置']) assert.ok(source.includes(label));
-  assert.doesNotMatch(source, /垃圾桶|trash/);
+  for (const label of ['全局 MCP', '全局 Skills']) assert.ok(source.includes(label));
+  assert.doesNotMatch(source, /文件|通知设置|SystemVersions|垃圾桶|trash/);
 });

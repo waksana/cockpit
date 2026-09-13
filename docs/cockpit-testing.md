@@ -13,19 +13,19 @@ For the deployed modernization's conclusions and remaining limits, see the
 
 | Layer | What | Run |
 | --- | --- | --- |
-| **Unit (core)** | control lifecycle, bounded native reads, `prefs`, `mcp-config`, shared fold semantics | `pnpm --filter @cockpit/core test` |
-| **Unit (server)** | `uploads` (save/serve, path-traversal, mime, name safety) | `pnpm --filter @cockpit/server test` |
-| **Unit (MCP)** | API client, tool boundaries, file exchange | `pnpm --filter @cockpit/mcp test` |
-| **Unit (web)** | native event windows/cursors, gap handling, bounded retained details, drafts, diagnostics and files | `pnpm --filter @cockpit/web test` |
-| **All workspaces** | every workspace's unit-test script, plus launcher/restart helpers | `pnpm test` |
+| **Unit (core)** | control lifecycle, bounded native reads, configuration and shared fold semantics | `pnpm --filter @cockpit/core test` |
+| **Unit (server)** | actual native intent dispatch, schema/CSRF, streaming and protected lifecycle | `pnpm --filter @cockpit/server test` |
+| **Unit (MCP)** | shared API client, native attachments, tool boundaries and pagination | `pnpm --filter @cockpit/mcp test` |
+| **Unit (web)** | native event windows/cursors, gap handling, text drafts and diagnostics | `pnpm --filter @cockpit/web test` |
+| **All workspaces** | workspace suites, external launcher, source preservation and package boundary | `pnpm test` |
 | **Build** | workspace compilation, including the web app's actual TypeScript sources | `pnpm build` |
 | **Synthetic fold regression** | shared browser fold/schema on an explicit flat JSONL fixture directory | `pnpm regress --synthetic-fixture-root /absolute/synthetic-jsonl` |
 | **Isolated E2E** | HTTP contract checks on a separately provisioned test backend; mutates only its test data | `pnpm e2e --synthetic-fixture-root /absolute/synthetic-workspace --test-base-url http://127.0.0.1:45678` |
-| **Isolated perf** | synthetic fold throughput, test-backend latency/upload/serve/concurrent SSE | `pnpm perf --synthetic-fixture-root /absolute/synthetic-jsonl --test-base-url http://127.0.0.1:45678` |
+| **Isolated perf** | synthetic fold throughput, test-backend latency/concurrent SSE | `pnpm perf --synthetic-fixture-root /absolute/synthetic-jsonl --test-base-url http://127.0.0.1:45678` |
 
 Unit tests use `node:test` + `tsx` (no extra framework). Use isolated fixtures and
 mock transports for the foundation's governance-free boot, API/MCP coverage,
-cross-session interaction, file exchange and reconnect behavior. Do not use a
+cross-session interaction, native input forwarding and reconnect behavior. Do not use a
 personal session store or restart the running service for ordinary unit tests.
 Test files are `*.test.ts` next to the code; they're excluded from the `tsc`
 builds. The optional scripts now refuse missing arguments before inspecting
@@ -42,14 +42,14 @@ HTTP targets must be explicit IPv4 loopback on a test port, not production port
 remote URLs, URL paths/credentials and redirects are rejected.
 
 The examples' port is only illustrative. Provision a separate test runtime,
-configuration, workspace and upload directory first, without personal
+configuration and workspace first, without personal
 credentials or real model endpoints. A flag or alternate port does **not**
 isolate a running service or prove that arbitrary input is synthetic.
 
 With valid explicit arguments, `perf` still makes repeated HTTP requests,
-opens concurrent SSE connections and leaves test uploads behind. `e2e` still
+opens concurrent SSE connections. `e2e` still
 creates, changes and permanently deletes its own fixture session and creates
-schedules/uploads. Interrupted runs may leave test data or timers; these tools
+schedules. Interrupted runs may leave test data or timers; these tools
 are not non-destructive. Only use operator-owned isolated fixtures.
 Guard tests exercise rejected defaults and allowed synthetic paths without
 reading personal logs or mutating production.
@@ -63,6 +63,24 @@ Semantic acceptance compares the supported native operations' actual outcomes:
 ordered messages and queues, pending decisions, effective model/configuration,
 filesystem effects and failures. GUI formatting can differ. The intentional
 always-approve permission policy is not default interactive CLI equivalence.
+
+The optional native tests use fresh synthetic homes and loopback model
+providers, with no logged-in user or copied native state:
+
+```sh
+cd packages/core
+COCKPIT_NATIVE_SMOKE=1 COCKPIT_NATIVE_STATE_SMOKE=1 COCKPIT_NATIVE_FORK=1 \
+COCKPIT_NATIVE_MODEL_SMOKE=1 COCKPIT_NATIVE_DELETE_TEST=1 \
+  node --import tsx --test src/runtime-smoke.test.ts src/native-state-smoke.test.ts \
+  src/fork-native.test.ts src/model-settings-native.test.ts src/delete-native.test.ts
+```
+
+Native file-input proof forwards a synthetic file through Engine and lets the
+native view tool read it. HTTP/MCP schema cases cover the four SDK attachment
+shapes; that does not certify every blob/media format or a browser file module.
+Parked tests are not run. `scripts/delivery-package.test.mjs` verifies archived
+source digests/modes and the active artifact list; its optional real-archive
+case requires `COCKPIT_RELEASE_ARCHIVE`. No archive claim follows from a skipped case.
 
 Resource acceptance distinguishes the API process, Copilot runtime and MCP
 children. Repeated load/release cycles must release the actual SDK-owned session,
@@ -100,25 +118,19 @@ access boundary; native tools run with the service account's authority.
 - Backend binds **127.0.0.1 only**; all external access is via nginx with
   the deployed **passkey-gate authentication**.
 - The current gateway protects the whole proxied surface, including
-  `/admin/restart`, `/status`, `/events`, `/intent/*`, uploads and the SPA.
+  `/admin/restart`, `/status`, `/events`, `/intent/*` and the SPA.
   Operational routes are not loopback-only merely because the API binds loopback.
 - Origin/Referer checks protect browser mutations against CSRF; they are not
   authentication. Do not expose the backend through an unauthenticated tunnel.
 
 ### Hardening in place
-1. **Path traversal** — `resolveUpload` rejects any name containing `/`, `\`, or
-   `..`, and only serves plain basenames inside the upload dir. Unit + e2e tested.
-2. **Stored filenames** — generated as `<ts>-<rand><ext>`; no user-controlled
-   characters reach the filesystem. The display name is preserved separately and
-   only ever rendered as text.
-3. **Upload XSS** — served with `X-Content-Type-Options: nosniff` and
-   `Content-Security-Policy: sandbox; default-src 'none'; img-src 'self'`. A
-   navigated SVG/HTML upload runs script-less; inline `<img>` rendering is
-   unaffected. (Fix applied after this review found SVG was served as
-   `image/svg+xml`, a stored-XSS vector.)
-4. **Intent validation** — every intent body and result is schema-validated;
+1. **Intent validation** — every intent body and result is schema-validated;
    unknown intents return 404.
-5. **Per-file size limit** — 25 MiB (backend) / `25m` (nginx).
+2. **Native lifecycle** — queued/active work, decisions, in-flight calls and
+   unknown outcomes cannot be replaced by a cached idle display.
+3. **Transport bounds** — existing HTTP size/deadline, origin, SSE backpressure
+   and cursor checks remain. File-transfer hardening is preserved with the
+   parked file source, not advertised as a running foundation service.
 
 ### Accepted risks (by design, single-operator)
 - **YOLO tool execution** — the agent auto-approves every tool (bash/edit/…). Anyone
@@ -127,11 +139,10 @@ access boundary; native tools run with the service account's authority.
   server credentials and operator-authored MCP/skills accordingly.
 
 ### Residual gaps (low priority for single-user; worth noting)
-6. **Upload storage has no total quota or retention policy.** Monitor disk usage;
-   do not introduce automatic deletion without an explicit retention requirement.
-7. **No multi-tenant authorization boundary.** Hardening must not be mistaken for
+- **No multi-tenant authorization boundary.** Hardening must not be mistaken for
    safety against an already authorized operator or malicious installed tools.
-8. **No malware/content scanning** on uploads — outside this single-operator scope.
+- **Parked data is retained.** No cleanup, quota policy or module adaptation is
+  implied by source extraction.
 
 ### Not applicable
 - **CORS** — all client calls are same-origin; no cross-origin access is granted.
@@ -144,7 +155,7 @@ access boundary; native tools run with the service account's authority.
 ### Graceful restart and interrupted work
 
 The backend waits for active work and native callbacks to settle, then awaits
-native shutdown and pending notification deliveries before closing transport.
+native shutdown before closing transport.
 Confirmed native process death instead causes a nonzero exit for supervisor
 recovery. Neither case blindly replays an uncertain submitted prompt.
 

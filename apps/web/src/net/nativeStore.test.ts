@@ -4,7 +4,7 @@ import { setImmediate } from 'node:timers/promises';
 import type { NativeChatEvent, NativeChatPage, NativeChatRead, ServerEvent, SessionMeta } from '@cockpit/protocol';
 import { createCockpitStore } from './store';
 import { dismissUxError, getUxErrors } from '../lib/errorReporter';
-import { createSessionDrafts } from '../lib/attachmentSend';
+import { createSessionDrafts } from '../lib/textDraft';
 import { NativeWindow } from './nativeWindow';
 
 function replace(t: TestContext, key: string, value: unknown) {
@@ -293,7 +293,7 @@ test('older history and the latest native update interleave without dropping row
   await h.reply(2, [message('older')]);
   assert.deepEqual(h.ids(), ['older', 'A', 'B']);
   assert.equal(h.state().loadingHistory, false);
-  assert.equal(h.store.getState().unreadCount, 0, 'chat payloads do not invent attention');
+  assert.equal('unreadCount' in h.store.getState(), false, 'native reading does not introduce an inbox');
 });
 
 test('all browser reading windows and drafts survive navigation without a three-window cap', async t => {

@@ -1,7 +1,7 @@
 // Session list (master pane) — tweb .chatlist contract. One unified list of
 // every session on the box (each maps 1:1 to a Copilot session). Per-row actions
 // via right-click (desktop) / long-press (mobile) → context menu.
-// Pinned sessions form a top group. Search/filtering is owned by the header
+// Search/filtering is owned by the header
 // (App); this component receives the query string read-only.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -10,8 +10,7 @@ import type { SessionMeta, SessionStatus } from '../net/types';
 import { ContextMenu, type MenuItem } from './ContextMenu';
 import { Icon } from './Icon';
 import { useLongPress } from '../lib/longpress';
-import { groupSessions } from '../pages/session-list';
-import { isUnreadAttention } from '../lib/inboxProjection';
+import { filterSessions } from '../pages/session-list';
 import { menuFocusTarget } from '../lib/menuFocus';
 
 const STATUS_TEXT: Record<SessionStatus, string> = {
@@ -43,15 +42,14 @@ interface RowActions {
   onMenu: (x: number, y: number, trigger?: HTMLElement) => void;
 }
 
-function SessionRow({ s, active, pinned, actions }: {
-  s: SessionMeta; active: boolean; pinned: boolean; actions: RowActions;
+function SessionRow({ s, active, actions }: {
+  s: SessionMeta; active: boolean; actions: RowActions;
 }) {
   const firedRef = useRef(false);
   const lp = useLongPress(actions.onMenu, firedRef);
 
   const statusText = STATUS_TEXT[s.status] ?? '';
   const { mono, hue } = cwdChip(s.cwd);
-  const unread = isUnreadAttention(s);
 
   return (
     <li
@@ -86,13 +84,8 @@ function SessionRow({ s, active, pinned, actions }: {
         {!!s.scheduleCount && s.scheduleCount > 0 && (
           <span className="dialog-schedule" title={`${s.scheduleCount} 个定时任务`}><Icon name="schedule" size={15} /></span>
         )}
-        {pinned && <span className="dialog-pinned" title="已置顶"><Icon name="pin" size={15} /></span>}
         {statusText && <span className="dialog-status" data-tone={s.status}>{statusText}</span>}
-        {s.attention === 'choice'
-          ? <span className={`dialog-choice${unread ? '' : ' is-seen'}`} title={unread ? '未读 · 需要选择' : '已读 · 仍需选择'} aria-label={unread ? '未读，需要选择' : '已读，仍需选择'}>选</span>
-          : unread
-          ? <span className="dialog-unread" title="有新结果">新</span>
-          : null}
+        {(s.ask || s.planRequest || s.elicitation) && <span className="dialog-status" title="需要选择" aria-label="需要选择">选</span>}
       </span>
     </li>
   );
@@ -128,9 +121,7 @@ export function Sidebar(props: SidebarProps) {
   const menuItems = useMemo(() => menuSession ? getMenuItems(menuSession) : [], [menuSession, getMenuItems]);
   if (menu && (!menuSession || menu.activeId !== activeId)) setMenu(null);
 
-  // Pin is authoritative server state (s.pinned) — a pinned session is sorted to
-  // the top, synced across every device. No localStorage.
-  const { pinnedList, restList } = groupSessions(sessions, query);
+  const visible = filterSessions(sessions, query);
 
   useEffect(() => {
     if (!menu || !menuRef.current) return;
@@ -160,20 +151,14 @@ export function Sidebar(props: SidebarProps) {
       key={s.sessionId}
       s={s}
       active={s.sessionId === activeId}
-      pinned={!!s.pinned}
       actions={{ onSelect: () => onSelect(s.sessionId), onMenu: openMenu(s) }}
     />
   );
 
   return (
     <ul ref={listRef} className="chatlist">
-      {pinnedList.length > 0 && <li className="chatlist-group-title"><span role="heading" aria-level={2}>置顶</span></li>}
-      {pinnedList.map(renderRow)}
-      {pinnedList.length > 0 && restList.length > 0 && (
-        <li className="chatlist-group-title"><span role="heading" aria-level={2}>全部</span></li>
-      )}
-      {restList.map(renderRow)}
-      {pinnedList.length === 0 && restList.length === 0 && (
+      {visible.map(renderRow)}
+      {visible.length === 0 && (
         <li className="chatlist-empty">{query.trim() ? '没有匹配的会话' : '服务器上没有 session'}</li>
       )}
       {menu && menuSession && menu.activeId === activeId && (

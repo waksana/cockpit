@@ -24,7 +24,7 @@ import { registerSettingsTools } from './tools/settings.js';
 import { registerLifecycleTools } from './tools/lifecycle.js';
 import { registerReadTools } from './tools/read.js';
 import { registerGlobalTools } from './tools/global.js';
-import { registerFileTools } from './tools/files.js';
+import { registerDirectoryTools } from './tools/directory.js';
 import { registerFoundationTools } from './tools/foundation.js';
 import { registerTranscriptTools } from './tools/transcript.js';
 
@@ -122,9 +122,7 @@ server.registerTool(
     description:
       "Set a session's title — the name shown in the cockpit sidebar (same as the CLI " +
       '/rename). Use this to give a session a clear, descriptive name, e.g. after reading ' +
-      'it with cockpit_read_session. Applies live; cockpit echoes back the authoritative title. ' +
-      'For AI-generated naming without adding a chat turn, use cockpit_call_intent with ' +
-      'name:"session/auto-name", body:{sessionId}; it uses a native ephemeral query and protects manual names.',
+      'it with cockpit_read_session. Applies live; cockpit echoes back the authoritative title.',
     inputSchema: {
       session_id: z.string().min(1).describe('The session id to rename'),
       name: z.string().min(1).max(120).describe('The new title (trimmed/clamped by cockpit)'),
@@ -311,32 +309,6 @@ server.registerTool(
   },
 );
 
-// ── cockpit_set_session_pin ────────────────────────────────────────────────────
-server.registerTool(
-  'cockpit_set_session_pin',
-  {
-    title: 'Pin (mark) or unpin a session',
-    description:
-      'Pin a session (pinned=true) to mark it / sort it to the top of the list, synced ' +
-      'across devices, or release it (pinned=false). This is a pure UI mark — it does ' +
-      'NOT keep the session loaded. Native idle cleanup controls residency, including ' +
-      'sessions with future schedules. Returns the applied flag.',
-    inputSchema: {
-      session_id: z.string().min(1).describe('The session id'),
-      pinned: z.boolean().describe('true to mark/pin-to-top, false to release (UI mark only — not keep-loaded)'),
-    },
-    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  },
-  async ({ session_id, pinned }): Promise<ToolResult> => {
-    try {
-      const res = await intent('session/pin', { sessionId: session_id, pinned });
-      return ok(`Session ${session_id} ${res.pinned ? 'pinned (UI mark)' : 'unpinned'}.`);
-    } catch (e) {
-      return fail(e instanceof CockpitError ? e.message : String(e));
-    }
-  },
-);
-
 // ── cockpit_refresh_skills ─────────────────────────────────────────────────────
 server.registerTool(
   'cockpit_refresh_skills',
@@ -369,7 +341,7 @@ server.registerTool(
       '  - interval: a relative interval such as "10s", "5m", "2h", "1d" (recurring by default)\n' +
       '  - at: an absolute epoch-MILLISECONDS fire time (one-shot)\n' +
       'Delays must be 1 second to 24 hours. Cron, timezone, labels and recurring-at are not supported. ' +
-      'No self-paced creation or rearming is exposed. Pinning does not keep the target loaded. ' +
+      'No self-paced creation or rearming is exposed. Schedules do not keep the target loaded. ' +
       'The prompt must be single-line plain text, without command flags or a leading slash. The ' +
       'target session must be loaded for ticks to fire. Native idle cleanup pauses schedules; ' +
       'relative delays restart on resume. This is not an always-on scheduler. ' +
@@ -479,7 +451,7 @@ registerSettingsTools(server);     // set_model, set_mode, compact_session, rewi
 registerLifecycleTools(server);    // new/delete/unload/reload_session
 registerReadTools(server);         // get_session, get_panels, get_plan
 registerGlobalTools(server);       // list_global_mcp, set_global_mcp_default, refresh_mcp, list_global_skills
-registerFileTools(server);
+registerDirectoryTools(server);
 registerTranscriptTools(server);
 registerFoundationTools(server);
 return server;
