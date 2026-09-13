@@ -26,6 +26,10 @@ can briefly be red: fix the source forward, while production stays at its last
 healthy release. Main is not proof of the currently running version.
 
 The [ordinary package contract](packaging.md) owns build outputs and provenance.
+Keep the workspace injection/deduplication settings and lockfile together:
+they let pnpm derive an offline runtime closure without re-resolving package ranges.
+The current peer topology keeps workspace imports linked to source; build also
+synchronizes any dependencies that require physical injection.
 CI validates/builds/packages only; it does not transfer to a private host or
 activate a production version. A push is not deployment authorization.
 An operator chooses how to install/run the package, keeping native data and

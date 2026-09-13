@@ -24,11 +24,11 @@
 | `licensing/` | 原仓库 LICENSE 和 NOTICE。 |
 
 根 `source-inventory.json` 记录原路径、新路径、源 SHA、文件摘要、字节数和 Git mode。
-本次清单保存 **420 份原件**（含 315 个原 `module-staging` 文件及其来源资料）。
+本次清单保存 **421 份原件**（含 315 个原 `module-staging` 文件及其来源资料）。
 清单文件 SHA-256：
 
 ```text
-c3ee83e01f53fb7771e9c4b2c4450d0e7f360376d4126c4a90c01eadc7cddefb
+85909852fe2f60dd93866bd6049a069cbb7cc00e803de824d2f780d3d431f80e
 ```
 
 原件不改 imports，不在新位置直接运行脚本，也不因转存就声称模块已适配。

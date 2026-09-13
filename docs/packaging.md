@@ -17,6 +17,11 @@ node scripts/package-runtime.mjs --source-sha "$(git rev-parse HEAD)" --output r
 输出目录必须是仓库根下一个尚不存在的普通直接子目录名，默认 `runtime-output`。
 它不是线上安装目录；已有目录、链接输出、脏源和不匹配的 HEAD 均拒绝。
 输出为 `runtime.tar.gz` 和 `runtime.tar.gz.sha256`，失败不留下半成品供误用。
+这里的 `pnpm deploy` 仅是包管理器的可搬迁依赖导出，不是部署到服务器。
+使用从共享 lockfile 派生的模式，不用会重新解析 registry metadata 的 legacy 模式，
+也不依赖开发机碰巧已有的元数据缓存。
+workspace 的 injected/deduped 配置为此提供锁定图；当前无 peer 冲突的工作区依赖仍指向
+源码，build 后同步实际需要注入的依赖副本。没有因此增加常驻后台或模块热加载。
 
 在独立位置解压后，进入包根直接运行，无需 pnpm 或开发工作树：
 

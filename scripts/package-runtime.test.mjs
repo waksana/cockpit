@@ -8,7 +8,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  firstPartyRuntimePath, inventoryTree, MCP_START_COMMAND, packageRuntime, REQUIRED_FILES, safeRelativePath, sha256, START_COMMAND,
+  command, firstPartyRuntimePath, inventoryTree, MCP_START_COMMAND, packageRuntime, REQUIRED_FILES, safeRelativePath, sha256, START_COMMAND,
 } from './package-runtime.mjs';
 
 const repository = fileURLToPath(new URL('../', import.meta.url)).replace(/\/$/, '');
@@ -66,7 +66,6 @@ function fakeDeploy(source, target, app, state) {
   }
   put(modules, 'tsx/package.json', { name: 'tsx', version: '4.23.13', type: 'module' });
   if (!state.missingLoader) put(modules, 'tsx/dist/loader.mjs', 'export {};');
-  link(join(source, 'apps', app), join(modules, '.pnpm/node_modules/@cockpit', app));
   put(modules, '.modules.yaml', 'Must not retain build-machine package-manager metadata');
   put(modules, '.pnpm/lock.yaml', 'Must not retain generated deployment metadata');
   if (state.externalLink) link(state.externalLink, join(modules, 'external-link'));
@@ -149,7 +148,8 @@ console.log(JSON.stringify({ pid: process.pid, server: typeof Server, protocolMa
     }
     return execFileSync(program, args, {
       cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, TMPDIR: root }, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, TMPDIR: root, XDG_CACHE_HOME: join(root, 'empty-registry-cache') },
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
   };
   return { root, source, state, calls, tracked, track, run,
@@ -207,6 +207,16 @@ test('the root and server commands enter Node directly with a production loader'
   assert.equal(mcp.scripts.start, 'node --import tsx dist/index.js');
   assert.ok(mcp.dependencies.tsx);
   assert.equal(mcp.devDependencies?.tsx, undefined);
+  const workspace = readFileSync(join(repository, 'pnpm-workspace.yaml'), 'utf8');
+  assert.match(workspace, /^injectWorkspacePackages: true$/m);
+  assert.match(workspace, /^dedupeInjectedDeps: true$/m);
+  assert.match(workspace, /syncInjectedDepsAfterScripts:\s+- build/);
+});
+
+test('subprocess failures include the original diagnostic instead of hiding package-manager stdout', () => {
+  assert.throws(() => command(process.execPath, [
+    '-e', 'process.stdout.write("synthetic dependency diagnostic"); process.exit(1)',
+  ], repository), /synthetic dependency diagnostic/);
 });
 
 test('the workflow only validates, builds, packages, and uploads on main pushes', () => {
@@ -248,6 +258,7 @@ test('synthetic packaging inventories its complete closure and preserves depende
   assert.equal(paths.some(path => path.includes('untracked.ts') || path.endsWith('.modules.yaml') || path.endsWith('/lock.yaml')
     || path.endsWith('/.bin/build-shim')), false);
   for (const call of f.calls.filter(call => call.program === 'pnpm' && call.args.includes('deploy'))) {
+    assert.equal(call.args.includes('--legacy'), false, 'Legacy deploy re-resolves registry metadata instead of deriving the locked graph');
     for (const flag of ['--prod', '--offline', '--frozen-lockfile', '--ignore-scripts', '--config.package-import-method=copy']) {
       assert.ok(call.args.includes(flag), flag);
     }
@@ -327,7 +338,7 @@ test('the inventory rejects broken links and records hashes, sizes, and executab
   await assert.rejects(inventoryTree(tree), /manifest must be a regular file/);
 });
 
-test('real offline pnpm closure starts directly after relocation, without pnpm or native user state', {
+test('real offline pnpm closure needs no registry metadata cache and starts directly after relocation', {
   skip: process.env.COCKPIT_PACKAGE_PNPM_SMOKE !== '1',
 }, async t => {
   const f = await fixture(t, { realDeploy: true });

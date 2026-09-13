@@ -1,6 +1,10 @@
 packages:
   - 'packages/*'
   - 'apps/*'
+injectWorkspacePackages: true
+dedupeInjectedDeps: true
+syncInjectedDepsAfterScripts:
+  - build
 onlyBuiltDependencies:
   - esbuild
 minimumReleaseAge: 0

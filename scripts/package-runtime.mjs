@@ -31,12 +31,18 @@ const omittedDirectories = new Set([
   'docs', 'archive', 'archives', 'diagnostics', 'fixtures', '__fixtures__', 'test', 'tests', '__tests__',
 ]);
 
-function command(program, args, cwd) {
-  return execFileSync(program, args, {
-    cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
-    env: { ...process.env, TMPDIR: cwd },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+export function command(program, args, cwd) {
+  try {
+    return execFileSync(program, args, {
+      cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024,
+      env: { ...process.env, TMPDIR: cwd },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (error) {
+    const output = [error.stdout, error.stderr].filter(Boolean).map(value => String(value).trim()).filter(Boolean);
+    if (output.length) throw new Error(`${error.message}\n${output.join('\n')}`, { cause: error });
+    throw error;
+  }
 }
 
 function contained(root, path) {
@@ -145,16 +151,6 @@ async function relocateWorkspace(root, app, name, destination, reuse = false) {
     await symlink(relative(target, peers), join(target, 'node_modules'), 'dir');
   }
   await symlink(relative(dirname(source), target), source, 'dir');
-}
-
-async function relocatePnpmSelfLink(runtime, source, app) {
-  const path = join(runtime, 'apps', app, 'node_modules/.pnpm/node_modules/@cockpit', app);
-  // Legacy deploy leaves one hoisted self-reference pointing into its input workspace.
-  if (!(await lstat(path)).isSymbolicLink() || await realpath(path) !== join(source, 'apps', app)) {
-    throw new Error(`Unexpected pnpm workspace self-link: ${path}`);
-  }
-  await rm(path);
-  await symlink(relative(dirname(path), join(runtime, 'apps', app)), path, 'dir');
 }
 
 async function runtimePackageJson(path) {
@@ -294,11 +290,10 @@ export async function packageRuntime({ repository, sourceSha, output = 'runtime-
     await mkdir(join(runtime, 'apps'), { recursive: true });
     for (const app of ['server', 'mcp']) {
       run('pnpm', [
-        '--filter', `@cockpit/${app}`, 'deploy', '--legacy', '--prod', '--offline',
+        '--filter', `@cockpit/${app}`, 'deploy', '--prod', '--offline',
         '--frozen-lockfile', '--ignore-scripts', '--config.package-import-method=copy',
         join(runtime, 'apps', app),
       ], source);
-      await relocatePnpmSelfLink(runtime, source, app);
       await removePnpmMetadata(join(runtime, 'apps', app, 'node_modules'));
     }
     await relocateWorkspace(runtime, 'apps/server', '@cockpit/core', 'packages/core');
