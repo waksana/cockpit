@@ -15,6 +15,26 @@ Cockpit 是原生 Copilot 的薄远程接口，覆盖其部分能力，不是完
 与这些同名业务概念无关，正常保留。[模块目录](module-catalog.md)说明迁出结果，
 [基础协议](module-contract-draft.md)说明以后如何接回，不能当成现有 API。
 
+<a id="target-gap"></a>
+## 当前事实与已确认目标
+
+2026-09-13 晚间的[产品决定](product-requirements.md#single-service-target)收紧了运行边界。
+本文后续的 launcher/consumer 描述是**尚在源码和现行安装中存在的事实**，
+不是继续把它们保留在本体的要求。本文只记录和分析，不执行迁移。
+
+| 主题 | 当前事实 | 已确认目标 / 尚需实现 |
+| --- | --- | --- |
+| 包与启动 | Web/API 已能同进程 serve；运行包仍含 consumer 和交付校验文件，默认根启动命令是循环 wrapper。 | 一个前后端包和直接服务入口；不内置自更新/重拉或依赖部署控制器。 |
+| 实际进程 | 已记录安装由外部 runner 控制，systemd 启动 launch，再启动一个 Cockpit Node 服务及 SDK 原生子进程。 | Cockpit 自身只运行服务入口；SDK/原生工具子进程不被误算成模块守护进程。 |
+| 模块 | 只有停放原件，无加载器。 | 后端同进程 import、前后端同包、宿主统一 serve；随本体加载/关闭，无独立进程和自治生命周期。 |
+| 模块更新 | 尚无可用的新协议安装/应用流程。 | 冷加载；变更显示待重启，当前实际版本不变，下一次本体启动生效；首版不热加载。 |
+| MCP | `apps/mcp` 是 stdio API 客户端，宿主未提供逐模块 HTTP MCP 端点。 | 同端口不同 path 的独立工具/资源/prompt 和协议连接，不共享一个大工具表；不是安全沙箱。 |
+| 关闭 | 原生 busy/在途保护已在 Engine；SIGTERM/SIGINT 和 `/admin/restart` 都进入等待空闲路径，仍带部署/consumer 分支和重启措辞。 | 本体仅提供 graceful 退出，不依赖模块主持，不判断业务目标，不保证重新拉起。 |
+| 启动接续消息 | runner 的部署终态回调会给绑定 session 发 prompt；Engine 启动只发状态事件。 | 可选模块保存下一次启动消息和发送状态；本体/SDK/API 就绪后处理，未知不自动重发。 |
+
+路径级迁出分析只维护在[模块目录的待迁出盘点](module-catalog.md#pending-extraction)；
+新模块的冷加载、MCP 隔离和启动消息语义只维护在[模块协议](module-contract-draft.md)。
+
 ## 代码与进程
 
 ```text
@@ -64,8 +84,9 @@ autopilot 是交互模式，不是权限开关。原生 ask/plan/elicitation 仍
 <a id="launchers"></a>
 ## 启动器、重启与部署
 
-**外部 launcher 指在 Cockpit 应用进程之外运行，不表示代码已移出本仓库。**
-应用退出后必须由仍存活的外围进程完成重新启动，否则“自己重启自己”没有后半程。
+**本节是当前尚未迁出的运行外围。** 外部 launcher 指在 Cockpit 应用进程之外运行，
+不表示代码已移出本仓库。现行安装需要由外围进程完成重新启动；
+新目标只要求本体退出，不保证该后半程一定发生。
 
 | 入口 | 所在位置与职责 | 不做什么 |
 | --- | --- | --- |
@@ -94,8 +115,20 @@ autopilot 是交互模式，不是权限开关。原生 ask/plan/elicitation 仍
 空闲 handle 可以正常关闭，不是等待所有已保存会话消失。安全读取失败不能当成 idle。
 被重启服务承载的发起回合必须结束，不能后台等待自己退出；受理不等于重启成功。
 
-Graceful Restart 模块将来只提供便利控制和进度展示。底层退出、版本选择和恢复
-必须独立可用，不能依赖一个已随应用退出的插件。
+新目标不再让 Graceful Restart 模块主持关闭、版本选择或进程重拉。
+graceful 退出留在本体，可选模块只提供下次启动消息/便利调用；详见
+[目标协议](module-contract-draft.md#7-可选的下次启动消息模块)。
+现行运维原语和启动链尚未被新目标替换。
+
+### 当前启动后消息的实际来源
+
+Engine 的 `start()` 启动 SDK 后发布 `agent/status`，server 随后开放 HTTP，
+没有本体通用的“启动后给所有 session 发 prompt”逻辑。
+现有消息来自外部 runner 的 [`notify()`](../.delivery/toolkit/bin/runner.mjs)：
+部署请求达到终态后，找提交者绑定的 session，先持久化通知 attempted，
+再调用普通 `/intent/prompt`，使用 `mode:"enqueue"`。
+失败或 build-only 等终态也可通知，所以它不是“每次启动成功”的事件；
+标记已尝试也不等于保证消息送达。
 
 ## 原生权威与本体保留状态
 

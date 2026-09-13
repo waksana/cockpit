@@ -1,6 +1,9 @@
 # 私有不可变交付
 
 本文维护 Cockpit 已接入的 **`github-actions-v1` 私有部署流程**，不记录持续运行状态。
+**这是现行、目标待迁出的集成，不是未来本体必须承担的职责。**
+最新目标只保留普通产包和直接 serve，见[产品决定](product-requirements.md#single-service-target)；
+这份文档仍如实描述尚未替换的安装，不能据目标声明直接停止控制器或删除真实回执。
 已完成的运行事实集中在[部署记录](deployments.md)。
 开源消费者的发行/更新是另一条路径，见[消费者产包](consumer-publishing.md)与
 [消费者安装](consumer-installation.md)；不要求消费者取得开发者的私有 CD 凭据。

@@ -1,5 +1,10 @@
 # Explicit consumer release publishing
 
+> **Existing consumer-format tooling, not the target Cockpit runtime.** Under
+> the [new boundary](product-requirements.md#single-service-target), updater/
+> bootstrap-specific code moves out; ordinary build and package production can
+> remain. This guide describes the current tools until that extraction happens.
+
 This is an opt-in **publisher** command, not a deployment or a consumer updater.
 It does not alter the existing private delivery workflows, register a signing
 authority, publish a repository, or grant users private CD credentials.

@@ -2,6 +2,9 @@
 
 本文是安装路径的选择入口。当前功能见[架构](cockpit-plan.md)，迁出的增强及旧数据
 规则见[模块目录](module-catalog.md)。安装 Cockpit 不会安装业务模块、创建角色或启用渠道。
+本页描述现行方式；[下一版目标](product-requirements.md#single-service-target)是前后端包
+直接 serve、无自更新/循环 launcher/私有部署启动依赖，尚未完成相应入口和包闭包改造。
+不要把以下三条现行路径误读为未来本体必须一起保留的组件。
 
 ## 先选一种路径
 

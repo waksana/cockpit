@@ -15,6 +15,11 @@ and the [documentation index](../../docs/README.md). The
 [module catalog](../../docs/module-catalog.md#retired-capabilities) is the single
 inventory of retired enhancement interfaces; [deployment records](../../docs/deployments.md)
 separately identify accepted running versions.
+The agreed [module target](../../docs/module-contract-draft.md#4-同端口独立-mcp-path)
+will give modules separate HTTP MCP paths on the host's one port. That is not
+implemented by this current stdio API client. Module cold-loading and native
+per-session MCP switches are different operations; this document only describes
+the currently available tools.
 
 Binary: `cockpit-mcp-server` → `dist/index.js`. Requires Node ≥22.12; raw Node 24 is
 supported without a TypeScript loader. Canonical schemas and types come from

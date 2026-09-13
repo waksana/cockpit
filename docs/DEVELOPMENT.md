@@ -7,6 +7,12 @@ engineering commands or delivery behavior.
 The [documentation index](README.md) defines each topic's single canonical page.
 Deployment observations belong only in [deployment records](deployments.md),
 not in a moving source implementation guide.
+The latest [single-service/module decisions](product-requirements.md#single-service-target)
+are goals, not completed code. They retire product-owned deployment/update
+machinery from the target boundary without automatically disabling the existing
+pipeline. Use the [remaining extraction inventory](module-catalog.md#pending-extraction)
+before planning changes; preserve a working installation throughout any separately
+authorized transition.
 
 Each owner uses an independent worktree and short-lived branch. Keep other
 owners' source, unfinished trees and runtime data untouched. After implementation

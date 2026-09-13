@@ -1,5 +1,11 @@
 # Consumer installation and explicit main-program updates
 
+> **Existing implementation, planned to move out of Cockpit.** The agreed
+> [single-service target](product-requirements.md#single-service-target) no longer
+> includes a main-program updater or launcher. This page preserves the actual
+> current CLI contract; it is not permission to stop an installation, delete data,
+> or treat these commands as the future module installer.
+
 This CLI manages a **new, core-only**, single-user Linux x64/glibc installation.
 It manages the Cockpit main process, not business modules. It does not adopt
 private-CD deployments, alter systemd/DNS/TLS/Passkey, edit global MCP settings,
