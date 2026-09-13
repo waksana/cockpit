@@ -1,160 +1,111 @@
-# Thin Cockpit and its capability modules
+# 模块目录与迁出边界
 
-This catalog records the agreed extraction boundary. It is not an installed
-module registry or a promise that the parked code is usable as a plugin.
-The immediate work is **document, preserve, detach**. Module adaptation comes
-later, one capability at a time, under the
-[frontend/backend plugin contract](module-contract-draft.md).
+本文是**能力归属、源码停放和退役采用边界的唯一目录**，不是安装注册表。
+薄本体已完成源码摘除；实际部署证据见[部署记录](deployments.md)。
+下列目录均为待适配原件，当前没有可用的模块加载器。
 
-## Foundation boundary
+本体保留什么、认证网关和 launcher 是什么，统一见
+[架构与运行边界](cockpit-plan.md)。未来的通用接入、前端组合、API 与版本语义，
+统一见[基础模块协议](module-contract-draft.md)。
 
-Cockpit remains a remote interface to the native Copilot runtime: real session
-identities, messages and event history, models, tools/subagents, MCP, skills,
-queues, plans, user decisions and native schedules. Native rename, compaction,
-rewind, load/unload and fork remain native adapters, not module business.
-Native attachment parameters may be accepted by the API without implementing a
-browser file library or interpreting a module's file references.
+## 十类能力
 
-The remaining non-native infrastructure must have a concrete hosting purpose:
-authenticated transport boundaries, API/schema publication, HTTP/SSE, native
-connection and in-flight ownership, the ordinary text editor, safe shutdown,
-actual process identity, immutable packaging and the external launcher.
-Future generic module loading and public UI composition belong at this layer;
-they are not implemented as part of parking the old code.
-
-The foundation does not keep module business state or replicas of native
-session/chat/model/queue/MCP/skill state. A pending native callback or request
-is an owned in-flight resource, not a reusable native-state cache.
-
-## Capability catalog
-
-All ten entries below are **future module identities / parked source**, not
-installed plugins. Their pre-extraction built-in implementations are distinct
-from that future status. Folder names organize source ownership and are not
-a host module-ID allowlist.
-
-| Folder | Purpose and capabilities | Frontend contribution | Backend / native interaction |
+| 目录 | 作用和能力 | 前端贡献 | 后端/原生边界 |
 | --- | --- | --- | --- |
-| `files` | Receive, retain, describe, browse and download files; preserve originals and associations; resolve module-owned references. | File selection, clipboard/drop handling, upload progress, staged items, library page, chat-stream cards, image/video previews and downloads. | Own HTTP file transfer/storage/validation. Produce SDK-native attachment input when needed; do not own native history, cursor or send scheduling. |
-| `notifications` | Inbox attention, unread/seen waterlines, notification deduplication, subscriptions and Web Push. | Inbox/settings, unread markers and application badges. | Observe native events without a second conversation database; own notification state and push delivery. Real ask/plan decisions remain native. |
-| `voice` | Dictation, language settings, recognition providers, audio capture and token/secret handling. | Microphone action, recording state and transcript feedback. | Supply recognition services/tokens where needed. Insert text into the original draft; do not own message sending. Dictation does not require the file module. |
-| `session-organization` | Pinning and Cockpit's first-reply automatic naming policy. | Optional ordering/marks and organization controls. | Own pin choices and naming policy. Use native name/ephemeral-query APIs; no title/history mirror. Native manual rename and native-generated titles are not removed. |
-| `system-status` | Optional runtime/version and deployment status presentation, including the external CI/CD viewer. | System/version dashboard and explicit status refresh. | Read actual identity and the relevant external authority. No fabricated success from Git HEAD or cached display state. Not the generic module installer. |
-| `graceful-restart` | User/agent restart controls, convenience commands, retained-operation presentation and explicit recovery interaction. | Restart action and progress/reason display. | Request the host's protected lifecycle or owned launcher. The module cannot supply the only implementation of safe shutdown or force a busy host to exit. |
-| `context-reset` | The existing `self-context-reset` workflow: prepare/reread a local handoff, invoke self-only context clearing and resume with a recovery prompt. | An optional control only if later implemented; no page is required. | Own the contributed tool/skill and workflow guards. Invoke native `history.clearContext` in its supported context. Preserve the original session ID/history; do not confuse reset with delete, reload or compaction. |
-| `assistant` | Optional assistant role instructions, skills and public templates. | No page or service is required. | Append explicitly selected content without replacing workspace instructions or automatically initializing personal files. |
-| `task` | Goals, authorization, Commander/Owner roles, task identities, dispatch, progress and results. Commander and Owner are roles of this one module, not foundation concepts. | Its own task views and controls. | Own business records, scoped credentials and task lifecycle; consume real native session APIs. Do not replace native queues or inherit Assistant implicitly. |
-| `wechat` | Channel binding, inbound/outbound messages, media and uncertain-delivery handling. | Its own channel configuration and status. | Own channel protocol, credentials, business identity and recovery. No automatic resend of unknown outcomes or activation of a paused channel. |
+| `files` | 上传、托管、原件/元数据、关联、浏览、下载及自有文件引用解析。 | 文件选择、粘贴/拖拽、暂存/进度、文件库；**聊天流的附件卡片、图片/视频预览和下载**也归它。 | 自己负责传输、存储和校验，再提供原生附件输入；不接管 native history、cursor、队列或发送权威。 |
+| `notifications` | 收件箱、未读/已读记录、提醒策略、去重、订阅和 Web Push。 | 收件箱/设置、未读标记与应用 badge。 | 自有通知状态，不建立第二份会话数据库；这里的“消息”指提醒，不是原生消息收发和决策。 |
+| `voice` | 听写、语言/识别服务、采音、令牌与秘密管理。 | 麦克风、采音状态和转写反馈。 | 写入原草稿文字，不接管发送；纯听写不依赖文件模块，发送录音文件的能力才需要文件传输。 |
+| `session-organization` | 置顶和 Cockpit 的首回复额外自动命名策略。 | 可选排序/标记及整理操作。 | 置顶数据和命名策略自有，调用原生命名/ephemeral query；不镜像标题或历史。原生手动命名仍在本体。 |
+| `system-status` | 主程序/模块版本、运行状态和外部 CI/CD 状态展示。 | 系统看板、版本页及显式刷新。 | 读取实际身份与对应权威，不从 Git HEAD 猜运行成功；不是通用模块安装器。 |
+| `graceful-restart` | 用户/agent 的重启便利操作、原操作进度与恢复交互。 | 重启按钮、状态与等待原因。 | 请求受保护生命周期或外围 launcher；**不拥有唯一的安全退出实现**，不能强停忙宿主。 |
+| `context-reset` | 原 `self-context-reset`：准备并重读本地交接，再执行 self-only 清上下文和恢复提示。 | 将来需要时才贡献界面，页面不是必选。 | 原工具、skill 和工作流保护随能力停放；依赖支持的原生上下文 API，保留 session ID/事件历史，不混同删除、reload 或 compaction。 |
+| `assistant` | 可选角色说明、skills 和公开模板。 | 不强制有页面或服务。 | 显式选择内容，不替代工作区规则，不自动初始化用户人格/记忆实例。 |
+| `task` | 目标、授权、Commander/Owner 角色、业务身份、投递、进展和结果。 | 自己的任务页面与操作。 | 业务数据/凭据/生命周期自有，消费真实 session API；不代替原生队列，不默认继承 Assistant。 |
+| `wechat` | 渠道绑定、收发、媒体及不确定投递处理。 | 渠道配置与状态。 | 渠道协议、凭据、身份和业务恢复自有；不自动启用暂停渠道，不重发 unknown。 |
 
-Other capabilities may be designed later. Historical Butler/Flow material is
-parked as retired governance background, not a decision to revive another
-module. Native `assistant` messages and `task` subagent tools are unrelated to
-the business names in this catalog and remain supported.
+目录名用于组织源码，不是宿主 moduleId 白名单，也不决定未来安装身份。
+Task/微信的独立业务源码分别属于 [cockpit-task](https://github.com/waksana/cockpit-task)
+和 [cockpit-wechat-connector](https://github.com/waksana/cockpit-wechat-connector)；
+这里停放的是曾在宿主中的接入材料，不是把独立仓库或真实数据复制回来。
+Assistant 目录同样只含公开内容，不是用户实例。
 
-## What moves, and what must remain
+## 迁出不等于去掉原生能力
 
-| Area | Park / detach from the active product | Keep in the foundation |
-| --- | --- | --- |
-| Files | Managed upload/download/library APIs, source metadata, module file markers, file UI/renderers and client transfer tools. | Supported SDK-native attachment inputs, native file tools/events and ordinary text/link transport; no substitute managed-file implementation. |
-| Notifications | Durable inbox and seen counters, pin-independent attention badges, push configuration/registrations, notification UI and server delivery policy. | Native decisions and actual busy/queue/task status. Removing an unread mark must not remove a pending question. |
-| Organization | Pins and automatic naming triggers/prompts/guards. | Native manual rename and native metadata/title reads. |
-| Voice | Capture/recognition controller, browser SDK dependency and token service. | Text editing and native prompt submission. |
-| System dashboard | Optional system UI, delivery-viewer adapter and its client wiring. | Minimal `/health`, `/version` and lifecycle status used by process ownership and delivery. |
-| Graceful restart | Optional Web/MCP/CLI control surfaces and their module-owned interaction. | Native safe-idle checks, normal signal handling, draining/closing owned resources, the deployment control primitive and external launcher. No circular dependency on a plugin that exits first. |
-| Reset | Contributed self-clear tool, bundled skill, handoff workflow and their tests. | Native history/context operations in the SDK, ordinary reload/compaction/rewind adapters and their independent guards. No cross-session self-clear endpoint is invented. |
-| Earlier business modules | Public content and host-specific integration code previously removed from the repository. | No old registration list, business route, role binding, issuer or compatibility layer. |
-
-The protected internal restart primitive must remain available to the existing
-external deployment controller. Detaching a convenience module is not permission
-to break future deployment, remove native activity protection or introduce a
-force-stop shortcut. Likewise, native context clearing is not reimplemented in
-the reset module; its existing integration/workflow is what is parked.
-
-## Frontend cooperation
-
-Each module may supply separately compiled frontend and backend entries.
-The frontend exports a plugin registration entry rather than taking ownership
-of the App root. It composes against public, versioned UI objects and draft
-interfaces, not private DOM selectors or private stores.
-
-There are no predeclared file/voice slots or hidden fallback implementations.
-Existing public components can be combined with plugin contributions at
-runtime. Module appearance, lifecycle and native-message input use the generic
-contract; business rendering and state remain in the module.
-
-The file module owns **all enhanced file presentation in the chat stream**,
-not just the input button and library. Native messages, identities, parent/child
-ownership, the current event window, paging and reconnect remain shared
-foundation responsibilities. A renderer does not open another whole-history
-reader or mutate the native event log.
-
-Trusted enabled modules use the same authenticated public API and its existing
-confirmation/busy/unknown rules. No `hostAccess` or `hostGrant` layer is added.
-Frontend code of the same trust level is not a malicious-code sandbox.
-
-## Parking procedure and provenance
-
-`module-staging/` is outside active workspace packages, builds, tests and
-published runtime payloads. It is intentionally **not** a collection of
-installable plugins. Preserve original repository-relative paths below each
-capability folder. Do not repair parked imports, add drivers, reorganize
-business internals or claim that the parked tests run.
-
-For a file wholly owned by a capability, retain its original source, tests,
-fixtures, styles and directly related documentation in that folder. For a file
-containing both native foundation and extracted features, retain a complete
-original snapshot in `_shared-originals/` and record the relevant consumers;
-then remove only the feature sections from the active file. A snapshot is not
-an assertion that the whole original file belongs to a module.
-
-Use fixed public Git commits as provenance:
-
-| Source | Meaning |
+| 已迁出的增强 | 仍保留的原生/宿主能力 |
 | --- | --- |
-| `21fdcc264de347467e4cf42b44af114902878177` | Active pre-extraction code and the agreed frontend-plugin design. |
-| `33696b81c5d2ebe073e4700410c1cc4adabc4c1b` | Public source before the earlier official-module removal; used only to retain previously removed content and integration material. |
+| 文件库、传输、托管描述和文件 UI | SDK 原生附件参数、原生文件工具、普通文本/链接；不提供替代上传服务。 |
+| 收件箱、未读、push 与 badge | 真实 ask/plan/elicitation、队列和运行状态；未读标记消失不等于问题已回答。 |
+| 置顶、额外自动命名与语音 | 原生命名/标题读取、普通文字草稿和原生 prompt。 |
+| 系统看板、重启便利脚本/工具 | 最小身份/健康/生命周期端点、安全退出和独立 launcher。 |
+| 自清上下文工具/skill | SDK 自有上下文能力及已接入的 reload、compaction、rewind；不新增跨会话 self-clear 接口。 |
+| 业务角色、注册、服务和渠道接入 | 原生 `assistant` 消息与 `task` 子代理，不保留旧业务兼容层。 |
 
-Earlier shared module-host code belongs in `_legacy-host/`, not in the new
-foundation. Historical governance material belongs in `_retired-governance/`.
-Do not copy private session artifacts, unmerged experiments, credentials,
-business databases or native homes into this public repository.
-The parked-source inventory records source SHA, original path, destination and
-content digest; it is source provenance, not a task ledger.
+原生用户配置中的普通 MCP/skill 仍由用户管理；删除宿主业务接入不授权清空这些配置。
+停放功能不等于抹掉旧模型上下文中的文字或原生日志。
+本地 API 错误提示、发送反馈和当前阅读窗口的新内容滚动提示仍是普通交互，
+不属于已迁出的持久未读/推送业务，不能因为名称含“通知”就删掉。
 
-## Interim behavior and adoption
+## 源码停放与来源
 
-This is the required post-extraction behavior, not a statement that a currently
-deployed installation changed when this document was written.
+[`module-staging/`](../module-staging/README.md) 在 workspace、测试入口和运行产物之外。
+独占能力文件按类别保留原路径；混合文件先保留整份原件，再从活跃文件删除增强部分。
+**混合原件不是整份文件都属于模块的声明。**
 
-Until adapted modules are explicitly installed later, the active product has
-ordinary native chat and controls but no parked enhancement: no browser
-managed-file UI or download service, unread/push system, dictation, pinning,
-Cockpit auto-name workflow, optional deployment dashboard or contributed reset
-tool. Native attachment API clients can still use the supported native input
-contract. Missing enhancement must be explicit, not silently substituted.
+| 分组 | 含义 |
+| --- | --- |
+| 十个能力目录 | 原代码、测试、文档、样例和资源；不修 imports、不补 driver、不宣称可运行。 |
+| `_shared-originals` | 同时含原生适配和增强逻辑的完整提取前文件。 |
+| `_legacy-host` | 旧官方模块宿主，不是下一代通用插件宿主。 |
+| `_retired-governance` | 旧 Butler/Flow 背景，不是恢复这些能力的决定。 |
 
-Existing native conversations, workspace files, credentials, preferences,
-uploads and module business data are not deleted, copied, migrated or replayed
-by source extraction. Old preferences are inert; removing their writer is not
-permission to rewrite their stored file. Future file access and data migration
-need an explicit design rather than deletion or native-history rewriting.
+原件路径为 `<分组>/<源 SHA 前七位>/<原仓库相对路径>`。
+[`source-inventory.json`](../module-staging/source-inventory.json) 记录每份源 SHA、路径、
+目标、SHA-256 和 Git mode。薄本体提取基线保全了 300 份原件，来源为：
 
-The text-only composer uses `cockpit:native-composer:<sessionId>`. Existing
-`cockpit:composer:<sessionId>` rich drafts remain untouched and are not loaded
-or silently converted. Users must not expect old staged attachments or their
-captions to appear in the thin composer. Old native messages remain readable,
-but module-specific file markers/URLs have no enhanced renderer or download
-service. Existing device push registrations are not remotely revoked by this
-source change; the new worker and backend contain no push handlers/delivery.
+| 固定源码 | 用途 |
+| --- | --- |
+| `21fdcc264de347467e4cf42b44af114902878177` | 摘除前的活跃源码和前端插件设计。 |
+| `33696b81c5d2ebe073e4700410c1cc4adabc4c1b` | 更早已移除的公开官方模块内容/接入，不复制私有运行资料。 |
 
-There is no published `files/*`, `inbox/seen`, `push/*`, `speech/token`,
-`session/pin`, `session/auto-name` or `system/consumer/*` intent. The upload,
-download and system-dashboard transports and the MCP file/pin/restart helpers
-are removed. Native message APIs and the private process lifecycle primitives
-are not substitutes for those retired enhancements.
+维护当前说明不得改写这些原始副本；来源清单不是业务任务账本。
+未来适配另行组织模块源码，不能把停放目录直接加入 workspace 或打进运行包。
 
-Source integration is not production activation. This extraction does not
-deploy, restart, reset a session or enable any module. The independent review
-of its own fixed baseline is not silently redirected to this new scope.
-Future adaptation must prove each complete frontend/backend capability,
-including failure/uninstall behavior, before advertising it as available.
+<a id="retired-capabilities"></a>
+## 退役接口
+
+以下是破坏性边界，不提供兼容层或空成功结果：
+
+| 表面 | 已移除内容 |
+| --- | --- |
+| 产品 intents | `files/*`、`inbox/seen`、`push/*`、`speech/token`、`session/pin`、`session/auto-name`、`system/consumer/*`。 |
+| 旧模块接入 | `modules/*`、`session/modules/*`、旧专用网关及 `session/new` 的 `modules` 参数。 |
+| HTTP / Web | `/upload`、`/uploads/*`、`/files`、`/system/versions`，以及对应增强页面。 |
+| MCP / 便利命令 | 文件上传/下载、置顶、服务重启工具，以及 `scripts/graceful-restart.*`。 |
+| 原托管附件 | singular `attachment`、ordered `parts`、`{kind,name,url,...}` 描述；不能当成 SDK 原生输入。 |
+| 原生图片查找 | `session/tool-image`、`files/from-tool-image` 无处理器；不再保留专用 410 兼容提示。 |
+| Reset 接入 | bundled `self-context-reset` skill 和 `self_clear_context` 工具，不因原生 SDK 有清上下文函数就变为可调用的本体入口。 |
+
+未知/已移除 intent 的标准结果是 404；旧输入字段由当前对应 schema 拒绝。
+聊天旧消息分页接口的 `410 CHAT_PROTOCOL_CHANGED` 属于另一条原生协议迁移，
+详见[原生聊天](native-chat.md#protocol-migration)，不要混成所有退役路径都返回 410。
+精确当前 schema 以 `/capabilities` 为准；上表不是另一个路由注册表。
+
+<a id="interim-behavior-and-adoption"></a>
+## 保留数据与未来采用
+
+没有适配模块时，这些增强不可用，但既有 native history、工作区文件、偏好、上传原件、
+凭据和模块业务记录不随摘除而删除、迁移或重放。
+本体不再读取/写入 `cockpit-prefs.json`；保留数据不等于仍有旧业务服务。
+
+文字输入使用 `cockpit:native-composer:<sessionId>`。原
+`cockpit:composer:<sessionId>` 富草稿保持原样，不自动继承附件或文字 caption；
+不得以“迁移”名义悄悄覆盖。旧聊天文字仍在，但自有文件标记没有增强渲染，
+旧托管链接也没有下载服务。以后要访问这些资料，需显式设计模块采用路径。
+
+源码更新不能远程撤销所有设备上的历史通知/订阅，也不抹掉已显示消息。
+薄本体的后端和新 worker 没有 push 处理，不代表旧设备注册记录已被清理。
+原语音的已知 late-start/token 缺口仍在原件中，不因停放就算修复。
+
+后续逐个模块适配：先实现真实需要的最小通用能力，再验证完整前后端使用、
+失败、冷恢复、版本应用和保留数据的卸载。独立编译、模块目录或一个按钮样例
+都不能替代真实接通；验收标准由[基础协议](module-contract-draft.md)统一维护。

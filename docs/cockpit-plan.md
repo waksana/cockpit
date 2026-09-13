@@ -1,370 +1,175 @@
-# Cockpit foundation
+# Cockpit 架构与运行边界
 
-Cockpit is a thin remote interface to native Copilot from a computer or phone.
-Web and MCP access one authoritative backend API.
-It intentionally covers a subset of CLI capabilities, not a second agent platform.
+本文说明当前源码，不替代[产品要求](product-requirements.md)。
+每个主题的维护位置见[文档索引](README.md)；已实际部署的版本只记录在
+[部署记录](deployments.md)，不由这里推断所有安装实例的运行状态。
 
-Stable product decisions and review criteria are defined in
-[Cockpit 定位与验收准则 (R1–R8)](product-requirements.md). The implementation
-details and dated delivery notes below do not add or override those requirements.
+<a id="source-status"></a>
+## 实现状态
 
-The old module runtime, official roles, business gateways and module UI are
-removed. Only a [basic module contract design](module-contract-draft.md) remains;
-future module adaptation and generic loading are separate work, not currently
-implemented capability or deployment status. Native Copilot MCP/skills and
-assistant/task semantics remain part of the foundation.
-The extraction boundary and parked source responsibilities are described
-in the [complete module catalog](module-catalog.md). Source parking is not a
-working plugin implementation or a production deployment.
+Cockpit 是原生 Copilot 的薄远程接口，覆盖其部分能力，不是完整 CLI 替代品、
+第二套 agent 平台或任务调度系统。Web、HTTP 与 MCP 共用同一产品契约。
 
-## Source status
+旧业务模块宿主和自有增强已迁出；当前没有模块加载器，也没有预置官方角色/ID、
+渠道网关或业务初始化。原生 `assistant` 消息、`task` 子代理工具、原生 MCP/skill
+与这些同名业务概念无关，正常保留。[模块目录](module-catalog.md)说明迁出结果，
+[基础协议](module-contract-draft.md)说明以后如何接回，不能当成现有 API。
 
-The contracts below describe repository source. A local commit, merged main,
-running backend and already-connected MCP process are different delivery states.
-This extraction parks enhancements without adapting modules or deploying them.
-The earlier naming, voice and file implementations, including their known
-limitations, are preserved as original source rather than represented as active
-or repaired capabilities.
-
-MCP defaults to 16 native events. Oversized multi-event pages require an explicit
-smaller query; only `limit:1` fragments giant events through complete rereads.
-The SDK has no single-event body offset. This accepted cost is detailed in
-[MCP pagination](../apps/mcp/README.md#native-event-pagination), not a requirement
-for a cache, saved native copy, LRU, artifact or new opt-in.
-
-Earlier review reports retain their dated observations, not authority over the
-current contract or deployment status. Native limits, accepted behavior and
-user-paused work must not be reported as completed repairs. This status note is
-not deployment authorization.
-
-## Product boundary
-
-Reliability, usable mobile chat and simple ownership take priority over adding
-features. Keep native chat, session controls, questions/plans, explicit
-cross-session interaction and history. Optional enhancements belong to modules.
-
-Cockpit does not own fleet governance. Hooks, flows, executable gates, worker
-classification, automatic outfitting and governance timers are not part of the
-foundation. Old governance preferences are preserved as inert data, not re-armed.
-Upper-layer applications can use the same published APIs and MCP.
-Reliable wall-clock schedules and external webhooks belong in that upper layer:
-receive the event there, apply its rules, then call a Cockpit API. Native
-execution hooks remain native; exposing their capabilities is not a workflow
-engine. API acceptance, task completion and uncertain delivery are distinct
-outcomes, so callers must not blindly retry a timed-out prompt.
-
-The owner explicitly chose **always-approve tool permissions**. This is separate
-from interactive/plan/autopilot mode and differs from the default interactive CLI.
-Anyone authorized to control this single-operator application effectively controls
-the server account. There is no multi-tenant isolation claim.
-
-## Architecture
+## 代码与进程
 
 ```text
-Web GUI ---- HTTP commands/queries ----+
-                                      +-- Server -- Engine -- Official SDK
-Session ---- Cockpit MCP -- HTTP ------+                |          |
-                                                       |     JSON-RPC/stdio
-Web GUI <------------- SSE control state ---------------+          |
-Web GUI <------------- /chat/stream event pages --------+          |
-                                                             Copilot runtime
+浏览器 ── HTTPS / 外部认证网关 ──┐
+                               ├─ Cockpit HTTP/SSE ── Engine ── 官方 SDK
+MCP 客户端 ── 同一后端 API ─────┘                                  │
+                                                         JSON-RPC / stdio
+                                                                 │
+                                                        原生 Copilot 进程
 ```
 
-- `packages/protocol`: shared schemas, typed native intents and events.
-  `GET /capabilities` publishes schemas and current native limits.
-- `packages/core`: Copilot session ownership and request-local native reads.
-  `runtime.ts` owns the official SDK client and its process.
-- `apps/server`: HTTP/SSE and protected process lifecycle. It validates
-  requests and results rather than maintaining another conversation model.
-- `apps/web`: native event folding and React/Zustand projection. URL owns selection;
-  local state owns loaded pages/cursors, text drafts and reading position.
-- `apps/mcp`: API client and agent-friendly presentation, not a local session
-  database reader or a separate fold implementation.
-
-### Native metadata is request-owned
-
-Model capability projection uses the session's model list as the selectable
-membership. Missing capability fields may be enriched from the same model ID in
-a fresh public global catalog request; explicit empty effort lists, false context
-support and empty defaults are never overwritten. No catalog or selected-state
-copy is retained. Explicit provider `supportedContextTiers` supplies context
-capability without pricing; absent tiers retain the billing compatibility path.
-An explicit empty/default-only tier list cannot be widened by pricing or catalog
-fallback. Unknown current effort/tier remains unknown, not an inferred
-default. Same-model option edits preserve the other option from a native
-request-local read, because native `switchTo` clears omitted options. Immediate
-changes require authoritative readback; deferred changes remain pending native
-work rather than an optimistic selected value. User selections pass
-`deferIfModelChangeQueued: true` so the native FIFO preserves their order even
-after a turn ends but before older queued model changes drain; Cockpit does not
-keep or replay a second model-selection queue. Long context does not disable
-native compaction.
-
-The backend does not retain native session metadata, model inventories, mode,
-queue/task/todo/schedule projections or MCP connection-state snapshots, including
-short-lived caches and last-successful-value fallbacks. Snapshot, list, session
-detail and resource reads call public Copilot APIs and release their results when
-the request ends. A resource event invalidates consumers instead of filling a
-backend projection. There is no periodic session-list/resource refresh. The browser
-can keep its currently displayed data and requests fresh metadata after an
-invalidation; this is not a shared application-wide request manager.
-
-`session/list` reads identity, current model and control status, without model
-inventories, todos or schedules. Snapshot/SSE adds the mode and sidebar schedule
-count, but not queue bodies, model inventories or todos. `session/get` preserves
-the full detail contract. `session/resources` selects metadata dependencies
-(`identity`, `control`, `queue`, `model`, `models`, `mode`, `todo`, `schedule`);
-an omitted field was not requested, not cleared. `loaded:false` clears prior
-native fields, and `meta:null` means the session is unknown. Identity and mode
-in one response share `metadata.snapshot.currentMode`; `model.getCurrent` still
-supplies effort/tier. A list request reuses its indexed modification time rather
-than re-fetching every record. `metadataLimit:0` is not a sidebar substitute.
-
-Resource invalidations carry explicit dependencies. Read-lease patches publish
-balanced operation counts without invalidating native data. Mutation-scoped
-resource hints coalesce native events with the final readback; control/queue
-hints still flow while work is active. Web refreshes only sidebar and mounted
-consumers, fences source changes, and discards late invalidated fields even if
-their consumer has since unmounted. A dirty read repeats only affected resources.
-No event fills a backend native-state cache. `/status` uses its own projection,
-not the UI snapshot, and separately obtains a fresh busy confirmation.
-
-The public SDK has no queue-count getter: exact control status still requires
-`queue.pendingItems` (including its native text payload), tasks and MCP host
-state to detect queue-only, steering-only or connector-only work. Omitting queue
-bodies from the summary response is not a claim of eliminating this necessary
-native safety read. Display results never authorize destructive operations.
-`session/panel` reads one section; `session/panels` and the default MCP panel tool
-retain the full five-section contract. MCP's optional `section` selects the
-single-section endpoint. Context uses only tasks, instructions and usage; model
-inventories are read when Settings is mounted.
-
-Unloaded sessions have no retained metadata State; an unfinished host delivery
-or cleanup contact may outlive its SDK handle, without retaining resource values.
-Native index metadata is read
-on demand; missing cwd is explicitly unknown, not the server's home directory.
-Model, mode, available models, queue and schedule/todo/task/MCP state require a
-loaded SDK handle and are omitted/unavailable otherwise. Reads never resume a
-session. The index may omit metadata for older entries; it is not repaired by
-unbounded journal replay or private databases. Snapshot/list `lastActivity` is native persisted
-modification time, not a claim of a live activity timestamp (a newly loaded
-session without an indexed row can only expose its native construction snapshot).
-Live display patches label their host receipt time separately as
-`host-event-receipt`; it is sent to the browser, not saved in the backend.
-Read failures are errors, not empty inventories, idle confirmations or prior values.
-SDK-internal caches are outside this boundary.
-
-The remaining backend ownership has a specific lifetime, not a general
-"runtime state" exemption:
-
-| Retained contact or product data | Why a native read cannot replace it; release |
+| 位置 | 当前责任 |
 | --- | --- |
-| Session ID, SDK handle, event subscription/owner identity and native-close/disconnect contact | These identify this host's actual transport and callbacks, not a native metadata copy. Detach removes the session entry once its operations finish; failed disconnect retains ownership until it is resolved. |
-| Load, close, cancel, interrupt and schedule-operation promises; operation/send counts; creation/removal/lifecycle gates | Public activity does not include this host's not-yet-settled calls. Creation IDs hide early index entries until this host receives a real SDK handle; the IDs are released when the create call settles. Other contacts clear on completion or teardown. Serialization gates resolve to `undefined`, never to the last RPC result. Unknown mutation outcomes are not retried. |
-| Pending send receipt IDs and interaction/turn identities | Correlate send acknowledgement with racing events, and prevent an old interrupted turn from clearing the new turn's contacts. Receipt windows end with their in-flight sends; accepted IDs end on consumption, explicit queue removal/cancel or detach. The interaction ID ends at native idle confirmation when no interrupt response still needs it; the interrupted epoch ends at the next turn or detach. |
-| Ask/plan/elicitation request IDs, validation and resolve/reject closures | These are the actual waiting SDK handlers. Public permission-request APIs do not resolve these distinct callbacks. Release on answer, cancellation or detach; unanswered decisions block teardown. |
-| Native control-confirmation promise and event revision | Protect an in-flight cancel/interrupt/queue confirmation against newer events; no native read result is retained. Cleared when confirmation settles or the handle closes. |
-| Mutation-scoped resource notification holds and pending resource names | Coalesce duplicate invalidation hints, not native values. Names are released when the scoped operations settle; no read result is retained or reused. |
-| Engine/client lifecycle failure and connection status | Records host connection failure and uncertain cleanup, not native session display state. Lasts until successful stop or host replacement. |
-| HTTP/SSE connections and initial-response delivery frames | These are active deliveries, not reusable response caches. Frames are bounded by SSE backpressure limits and released after initial snapshot delivery or disconnect. |
-| Browser text draft and visible event window | Client-owned interaction state. Old rich drafts and all retired enhancement data are left untouched, not converted into new foundation stores. |
+| [`packages/protocol`](../packages/protocol/src/index.ts) | Zod 输入/结果、typed intents、原生事件传输和共享浏览器折叠。`/capabilities` 从这里生成契约。 |
+| [`packages/core`](../packages/core/src/engine.ts) | 拥有本宿主的真实 SDK handle、回调和在途操作；按需读取原生状态，执行原生适配与安全保护。 |
+| [`runtime.ts`](../packages/core/src/runtime.ts) | 创建并关闭一个 SDK 管理的进程外运行时；固定 SDK 1.0.13 / runtime 1.0.83 / protocol 3。 |
+| [`apps/server`](../apps/server/src/index.ts) | HTTP、控制 SSE、聊天流、静态 Web 和受保护的本进程生命周期。 |
+| [`apps/web`](../apps/web/src/App.tsx) | 原生状态的当前展示窗口、普通文字输入、阅读位置与交互；不拥有执行权威。 |
+| [`apps/mcp`](../apps/mcp/README.md) | stdio MCP 到 HTTP 的客户端；不读取本地 session 数据库，不另建聊天折叠。 |
 
-Teardown and graceful restart always read current public processing/activity,
-queue, tasks and MCP pending connections in addition to the host's in-flight
-contacts. Failed safety reads prevent teardown.
+服务端/core 以 TypeScript + `tsx` 运行，Web 和 MCP 有构建产物。
+安装/发行包还必须包含匹配平台的原生依赖；“TS 无需转成 JS”不等于“无需构建、
+依赖或运行环境”。宿主支持范围见[安装指南](DEPLOY-PORTABLE.md)。
 
-The session list is the home screen. Its hamburger opens Copilot-global MCP and
-Skills; management lists are child pages,
-not parallel workspaces with their own hamburger. A list's Back returns home;
-an item detail's Back returns to its list first. Desktop master/detail and narrow
-full-page layouts expose one relevant Back, using the existing parent fallback
-for cold deep links. Browser Back preserves the actual entry source. Session rows
-open only their chat; row context/long-press and the chat kebab share one
-session-ID-bound action catalog: seven pages (Settings, session MCP, session
-Skills, plans/tasks, context, schedules, runtime maintenance), then fork,
-and permanent deletion. Deletion requires an irreversible confirmation;
-there is no trash or restore operation. Managed files and workspaces are retained.
-Separators and viewport-bounded scrolling
-keep this one-level menu reachable on short screens. Detail panels contain only
-the current page's owner-labelled title, Close/Back, page actions and content;
-there are no page-switching tabs or More menu. The chat title remains a shortcut
-to Settings. On narrow screens switching pages means Back to chat, then its menu.
-Settings reads summary identity and on-demand model state only; opening it does not
-load plan or MCP resources. Unloaded native MCP/Skills pages require an explicit
-resume before claiming current per-session state. Existing direct URLs remain
-valid, and mode controls and the allow-all permission policy are unchanged.
+<a id="authentication"></a>
+## 认证边界
 
-MCP definitions/defaults and global skill selections belong to Copilot, not
-`cockpit-prefs.json`. Native discovery and configuration APIs are authoritative;
-Cockpit does not copy old overrides or replay per-session preferences.
-Native session toggles are temporary. Cold resume uses global defaults, and
-native MCP reload also reapplies those defaults while refreshing definitions.
-For SDK 1.0.13, the global disabled-skill list is read through native user settings
-and passed into session creation/resume because the runtime does not apply it
-automatically. This is one native-owned source, not another durable setting store.
-An unloaded view does not claim to know that session's effective tool choices.
+**Cockpit 没有内置账号、密码库或独立登录系统。** 两种认证不能混称“本体认证”：
 
-Manual native rename and native-generated titles remain available. Cockpit's
-first-reply naming triggers, auxiliary queries and one-shot guards are parked
-with session organization. Reading or completing a chat no longer starts that
-extra policy or model request.
+| 边界 | 谁负责 | Cockpit 的实际行为 |
+| --- | --- | --- |
+| 远程访问 Web/API | 安装者配置的外部 HTTPS/认证网关；已记录部署使用 Passkey 网关。 | 后端只监听 `127.0.0.1`，信任该入口。源码启动本身不创建或安装网关。 |
+| 使用 Copilot 服务 | 原生 Copilot 的登录/提供方配置。 | 默认复用运行账户的原生登录；不把网页 Passkey 变成 Copilot 凭据，不建立凭据副本。 |
+| MCP 访问后端 | MCP 所在环境及其网关凭据。 | 可向兼容网关发送 Bearer；后端本身没有新增 Bearer 登录系统。详见 [MCP 配置](../apps/mcp/README.md#configuration)。 |
 
-Stay in TypeScript. The main simplification is the runtime boundary, not a
-language rewrite, microservices or another generic orchestration framework.
+后端检查浏览器修改请求的 Origin/Referer，防止跨站请求；这是 **CSRF 保护，不是
+身份认证**。不能把“监听 loopback”“来源检查通过”或“已列出 capability”
+当成独立的用户权限校验。无认证的远程隧道不属于支持的部署方式。
 
-## Runtime and history
+产品使用 `permissionPolicy:"allow-all"`：原生工具自动批准。interactive、plan、
+autopilot 是交互模式，不是权限开关。原生 ask/plan/elicitation 仍需要实际回答；
+永久删除等产品操作仍有既有确认和 busy 保护。此应用是单操作者、服务账户信任模型，
+不是多租户系统或恶意同用户代码沙箱。
+确认位于哪一层取决于操作，不能把 Web/MCP 的交互确认写成所有 HTTP 接口强制校验；
+当前区别见 [MCP 确认边界](../apps/mcp/README.md#confirmation-boundaries)。
 
-The implementation uses `@github/copilot-sdk` **1.0.13** with Copilot runtime
-**1.0.83**, explicitly out of process. Advanced typed RPCs are experimental, so
-these versions are pinned. The old internal SDK bootstrap, definition symlinks,
-manual journal/database repair and image-weight/forced-GC watchdog are retired.
+<a id="launchers"></a>
+## 启动器、重启与部署
 
-Copilot owns persisted conversations, execution, model requests and automatic
-context compaction. Cockpit does not construct a second model transcript or
-override the native compaction thresholds. Native infinite sessions and large
-tool-output handling retain their defaults. CAPI WebSocket Responses also keeps
-its native default: used when the selected model supports it, not forced by Web.
-Browser SSE and SDK stdio are separate transports, not model-request size bypasses.
+**外部 launcher 指在 Cockpit 应用进程之外运行，不表示代码已移出本仓库。**
+应用退出后必须由仍存活的外围进程完成重新启动，否则“自己重启自己”没有后半程。
 
-An oversized model request is not an upload-limit error. Native runtime updates
-include Responses size-limit and oversized tool-image improvements, but no
-unlimited-request guarantee. Surface native failures without blindly resending a
-prompt; explicit context compaction delegates to the same SDK.
+| 入口 | 所在位置与职责 | 不做什么 |
+| --- | --- | --- |
+| 源码启动器 | [`scripts/start.mjs`](../scripts/start.mjs)，`pnpm start` 使用；启动后端、继承环境，并在子进程退出后重拉，连续快速退出则放弃。 | 不下载新版本，不选择 Release，不保证正在执行的回合跨进程延续。 |
+| 消费者安装/更新器 | [`scripts/consumer/`](../scripts/consumer/cli.mjs)，安装后有独立稳定入口；签名下载、不可变版本、显式切换、健康身份与恢复。 | 不安装业务模块，不自动检查/更新，不自动崩溃重拉，不接管现有私有 CD。 |
+| 私有交付控制器及 launcher | 外部独立安装的 service-delivery 工具；本仓保存固定集成/构建工具。控制器串行处理授权部署，launcher 在安全退出后启动已批准包。 | 不是开源消费者必须依赖的服务，不受原生会话或 Task 模块调度。 |
 
-A persisted session, an executing runtime session and a visible browser window
-are different things. Opening history does not resume a Copilot session or connect
-its MCP tools. `session/chat` returns one bounded native event page directly to
-its requester, without a history cache, full-log fold, or message-ID lookup.
-The browser owns its loaded window and opaque forward/backward cursors. It loads
-small pages toward roughly two screen heights, then reads older pages on demand.
-Switching away preserves loaded pages and native cursors in that browser;
-re-entering the chat lands at latest. The same mounted reading view still
-preserves its anchor during live updates and older-page insertion.
-Browser reload loses this memory, not native history or independently stored drafts.
+三种安装方式按各自的进程所有权工作，不能把不同 launcher 叠起来争抢同一个后端
+或原生 home。完整前提分别见[源码安装](DEPLOY-PORTABLE.md)、
+[消费者安装](consumer-installation.md)与[私有交付](DELIVERY.md)。
 
-Only a visible consumer reads chat. A browser disconnect cancels its request and
-stops future reads without stopping native work. Reconnection resumes durable
-events from the browser's cursor. A missing ephemeral interval freezes the partial
-message until its complete durable message can replace it. Cursor expiry and
-rewind preserve readable content while requiring explicit resynchronization.
-Compaction is not a chat-history rewrite and does not invalidate the window.
-There is no HMAC continuation token, whole-window replay, or silent latest jump.
+| 动作 | 实际含义 |
+| --- | --- |
+| 普通重启 | 安全退出后重新启动当前选择的版本；不会把 Git `main` 自动部署上去。 |
+| 部署后重启 | 验证新产物，等待旧实例安全退出，再选择并启动新包，回读新 SHA/摘要/实例。 |
+| 原生 session reload | 关闭/恢复一个空闲 session 的 handle；不是服务器重启或代码更新。 |
+| Context Reset | 已停放的 self-only 上下文清理工具/skill 工作流；不是 reload、compaction、rewind 或删除。 |
 
-Main and child messages share one browser-local all-agent window and one
-`/chat/stream` connection. Child cards display the shared nested projection;
-expanding or collapsing one changes presentation without a separate history read
-or manual refresh. Child messages and lifecycle changes travel on the same stream,
-even while collapsed. Separate MCP consumers can still request native agent-ID
-filtering on a loaded handle; passive filtered queries require explicit resume.
-The server does not scan a whole task list to simulate an exact status getter.
-See [native chat transport](./native-chat.md) for migration and native limits;
-the local source delivery status above does not assert this stream is deployed.
+本体保留 `/health`、`/version`、`/status`、`/admin/lifecycle`、
+`/admin/restart` 和正常信号退出。这些是运维原语，不是已恢复的系统看板或重启模块，
+也不因出现在 transport 清单中就获得额外授权。
+源码/私有 CD 安装的 restart 请求与 consumer 的稳定 operation ID/IPC 契约不同；
+操作入口必须使用对应安装文档，不能互换回执。
 
-Within the active chat, all loaded message text, DOM and component state remain
-available; there is no virtual list or message eviction. A memoized transcript
-boundary avoids rebuilding the list for unrelated metadata changes. Supporting
-browsers can skip offscreen layout/paint for completed message blocks after their
-real height is measured; width changes invalidate stale measurements. Live work
-and child cards retain normal layout. The existing scroll owner preserves the
-visible semantic anchor, including margins, selection/focus navigation and
-explicit End-to-bottom following. This reduces rendering work, not retained-data
-memory, native context size or cold-history read time.
+安全退出等待实际运行、队列/steering、用户决策、子任务、MCP 连接操作和本宿主在途调用；
+空闲 handle 可以正常关闭，不是等待所有已保存会话消失。安全读取失败不能当成 idle。
+被重启服务承载的发起回合必须结束，不能后台等待自己退出；受理不等于重启成功。
 
-Initialization attaches native control callbacks before create/resume completes,
-but does not build a chat fold or replay display history. Targeted native metadata,
-queue/task/control queries remain independent.
-Global SSE carries metadata, decisions and history invalidation,
-not streamed chat bodies or viewer-specific pages. Native execution safety does
-not depend on whether a browser is displaying a child card.
+Graceful Restart 模块将来只提供便利控制和进度展示。底层退出、版本选择和恢复
+必须独立可用，不能依赖一个已随应用退出的插件。
 
-Native idle cleanup uses `sessionIdleTimeoutSeconds: 1800`. Cockpit has no session
-count cap, automatic eviction policy, retained-wrapper recycling or idle heartbeat.
-It reconciles native cleanup through passive liveness reads and drops its projection
-handles. A prompt or explicit resume loads a session again; history reads do not.
-Native-only detail reads return `409 SESSION_UNLOADED` when a resume is needed.
-New sessions are published only after native creation succeeds. Copilot may
-discard an empty session before its first submitted work; Cockpit does not
-recreate it or replay its model, mode or name. Native resume and history errors
-are returned as errors. List refresh removes an inactive projection only after
-passive native metadata confirms its absence, without deleting history,
-preferences or composer draft files. Uncertain submissions are never retried.
+## 原生权威与本体保留状态
 
-Native close is awaited before release is reported. Explicit close/restart guards
-protect running work, questions, queues, subagents and mutations, but future
-schedules do not prevent native idle cleanup. Schedules persist but
-pause while unloaded; relative delays restart on resume. A background shell may
-outlive cleanup without remaining accessible through session task RPCs. These are
-native semantics, not an always-on scheduler guarantee. Node's normal GC/heap sizing
-is the API default, with an optional operator heap override.
-Cockpit does not restore sessions at startup merely because an old preference
-listed schedules. Startup lists history; explicit execution/resume activates it.
-Legacy scheduling preferences remain inert rather than controlling residency.
+Copilot 唯一拥有持久会话、消息事件、模型上下文、执行与队列。Cockpit 不保留
+后端聊天窗口、资源快照、原生开关副本、私库查询兜底或另一个投递队列。
 
-Ordinary tool completion does not trigger a full native status read. Work
-boundaries reconcile activity, queue and task facts, while model/todo/MCP/schedule
-events refresh their own resource. Explicit teardown still confirms native safety.
-The passive eight-second inventory/attach fallback remains because headless
-cleanup notifications do not cover every native cleanup path.
+| 本体保留项 | 必要用途和释放边界 |
+| --- | --- |
+| session ID、SDK handle、订阅、连接归属 | 定位本宿主实际连接；关闭后释放，未完成的断开不能伪报成功。 |
+| 创建/加载/关闭、发送/取消/打断、配置操作的 Promise 和计数 | 原生状态不包含尚未完成的宿主调用；完成或明确结束后释放，不缓存结果。 |
+| 发送回执、interaction/turn 身份及并发 gate | 关联早到事件和晚结果，避免旧回合清掉新回合；按对应在途操作/原生结束释放。 |
+| ask/plan/elicitation 的真实 request ID 与回调 | 回答 SDK 当前等待的请求；答复、取消或结束后释放，不从历史伪造请求。 |
+| 事件 revision、资源失效名称和当前读取保护 | 合并失效、隔离旧结果，不保存跨请求的原生值。 |
+| HTTP/SSE 连接与有限待写帧 | 当前传输和背压，结束即释放；不是可回放聊天缓存。 |
+| 浏览器当前展示窗口、原生 cursor、文字草稿和交互状态 | 供当前用户阅读/编辑，不取代后端原生权威。 |
 
-Process restart is not browser reconnect. Only a safe idle restart is supported;
-there is no promise that an interrupted turn or pending callback survives a crash.
-Confirmed native process death causes the API host to exit for supervisor recovery,
-without replaying potentially accepted requests.
+没有周期性后台全量会话/资源同步，也没有旧的八秒 inventory/attach 轮询。
+元数据请求和实际操作按需读取。SSE 传输心跳不是原生状态同步。
 
-## Parked enhancements and native input
+### 元数据与模型
 
-The [module catalog](module-catalog.md) identifies files, notifications, voice,
-organization, system status, graceful-restart interaction, context reset and
-the earlier business modules. Their original sources are not in workspace
-builds or runtime archives. No plugin loader or substitute implementation is
-introduced by the extraction.
+`session/list` 读取身份、当前模型和控制状态，不预读完整模型选项、todos 或 schedules。
+snapshot/SSE 增加模式和侧栏定时数量；完整详情用 `session/get`。
+`session/resources` 按声明字段读依赖，`session/panel` 只读一个原生面板。
+读取结果在请求结束后释放；资源事件只通知失效，不能填充后端镜像。
 
-The composer is text-only. It retains revision-bound acknowledgements and
-session-bound draft ownership; old rich drafts remain in their separate key
-without conversion. File buttons, paste/drop capture, voice and file-stream
-renderers are absent. Ordinary native text/Markdown and navigation remain.
+字段未请求不等于清空；`loaded:false` 不能夹带缓存的运行态，`meta:null` 才是原生对象
+未知。缺少 cwd 明确未知，不退回 home。列表活动时间来自原生持久索引；
+Web 实时 patch 的宿主接收时间另标来源，不伪称原生持久时间。
+精确 busy 仍可能需要原生完整 `queue.pendingItems`，不能以响应省略队列正文宣称省掉了该 RPC。
 
-API/MCP callers may supply the SDK's native `file`, `directory`, `selection`
-and `blob` input shapes. Runtime-side paths are not client-local file paths,
-and receipt does not mean their bytes were read or every media format is
-supported. See [native attachments](../apps/mcp/README.md#native-attachment-input).
-There is no managed file library, upload/download service, notification sender,
-pin store, extra title query or contributed self-clear tool in the foundation.
-Preserved legacy data does not make a retired endpoint available.
+模型选项以当前原生 session 的候选集合为准；缺失能力可在同一次请求中按同模型 ID
+从原生全局目录补充，但不能覆盖显式空 effort、false 或受限 context tiers。
+同模型只改一个选项时，从原生即时读取保留另一个；排队变更保持原生 FIFO，
+未生效不乐观改写。未知档位仍未知，不硬编码模型名单；长 context 不关闭原生 compaction。
 
-## Deliberate capability limits
+### 原生生命周期与配置
 
-- Native schedules currently create simple after/every delays from one second
-  through 24 hours, or a one-shot absolute time in that range. Cron/timezone,
-  display labels and recurring absolute creation are not exposed. Existing
-  entries remain readable; no hidden model parser guesses structured API input.
-- Structured/URL elicitation acceptance is not implemented as a generic form
-  renderer. The request exposes only the actions the current adapter can honor.
-- MCP connection reload uses the native API on an idle loaded session; it also
-  restores native global defaults. Global configuration refresh does not restart
-  sessions. Skill definitions can reload without restarting Cockpit.
-- Native path inputs are interpreted by the actual Copilot host. The browser
-  does not transfer a local file merely by supplying its local path.
+`session/new(cwd)` 返回真实 ID，不发送消息；再显式 `prompt`。
+空且未持久化的原生会话可能在卸载后消失，不预留虚拟身份、不自动重建。
+history 读取不恢复 session；需要 loaded handle 的详情显式返回 `SESSION_UNLOADED`。
 
-## Operations and review
+原生 idle timeout 配置为 30 分钟。这不是永远保活承诺：原生未来 schedules 不阻止
+卸载，卸载期间暂停，相对延时恢复时重新起算；Cockpit 不按旧偏好自动恢复它们。
+原生后台工作和进程故障有各自的语义，不能承诺所有工作都跨崩溃续跑。
+确认 SDK 子进程死亡时，本体报告失败并退出给外围恢复，不重发可能已受理的输入。
 
-The [2026-09-08 final review](./review/2026-09-08-foundation.md) records the
-architecture, performance, reliability, security and usability conclusions,
-implemented changes and remaining evidence limits.
+MCP/skill 选择归原生配置。冷恢复及 native MCP reload 按原生全局默认重新发现，
+不读取 Cockpit 原生开关副本；全局定义刷新不自动改写所有已加载 session。
+SDK 1.0.13 对全局 disabled-skill 列表的缺口，由适配层读取原生用户设置并传入
+create/resume，不另存一份设置。技能正文重读与旧模型上下文不会被混为一谈。
 
-See [DEPLOY-PORTABLE.md](./DEPLOY-PORTABLE.md) for setup and
-[cockpit-testing.md](./cockpit-testing.md) for the existing checks.
+## Web 与聊天
 
-The current Linux deployment uses the system `cockpit.service`, behind an
-authenticated HTTPS gateway. Keep the raw backend on loopback. Compress static
-JS/CSS and ordinary HTTP JSON at the proxy, not SSE.
+原生消息、工具、思考、子代理、决策和队列仍可展示。会话列表按原生活动排序，
+没有置顶分组。全局菜单只有原生 MCP/Skills；会话菜单有七个详情页及 fork/永久删除。
+“运行维护”指单个原生会话的生命周期页，不是已迁出的系统部署看板。
 
-Stage assets separately from the directory served by the running process.
-`POST /admin/restart` is the single restart authority: it waits for protected
-work, shuts down the owned runtime and exits for its supervisor. Optional
-restart scripts/UI/MCP conveniences are parked; the protected internal primitive
-and external launcher remain independent of plugins.
+普通文字 Composer 保留草稿版本、同会话身份和 ACK 保护。文件/语音按钮、富附件
+状态及文件卡片不再内置；旧草稿和文件数据的采用边界由[模块目录](module-catalog.md)
+统一说明。手动命名走原生 API，首回复额外命名策略不运行。
 
-Imported reviews and earlier governance designs in Git history are historical context, not instructions to
-reinstall retired governance. Future changes must name a concrete remote-use
-problem and prefer removing unnecessary work over adding more managers.
+全局 `/events` 用于元数据/决策/失效，`/chat/stream` 用于当前共享 all-agent 阅读窗口。
+展开子代理不另读全历史，重连沿原生 cursor 补齐；普通 Markdown/文本展示不是文件服务。
+精确分页、完整消息、缺失临时 delta、compaction 和媒体行为以[原生聊天](native-chat.md)
+为唯一详细说明；MCP 的较小输出窗口及 JSON 分片以 [MCP 文档](../apps/mcp/README.md)
+为准。会话 fork 的特殊前检与继承见[原生 fork](session-fork.md)。
+
+## 明确不承诺
+
+本体不提供托管文件上传下载、原生工具图片查找、通知收件箱、语音识别、自动命名、
+可运行模块系统或自有 self-clear 工具。SDK 原生附件的参数传递不等于所有媒体格式都已
+被模型读取；原生普通文件工具不受“文件模块缺席”这一 UI 边界替代。
+
+当前调度创建只支持原生简单 after/every 或区间内单次绝对时间；不会用隐藏模型消息
+猜测 cron。结构化/URL elicitation 不被包装成一个尚未实现的通用表单系统。
+临时流片段逐 token 恢复、跨崩溃无损续跑、任意宿主零前提更新均不属于能力承诺。

@@ -11,7 +11,10 @@ The client does not read or write local files on behalf of attachment inputs.
 
 This documents the checked-in source, not automatic deployment or hot replacement
 of an already-running MCP process. See [source status](../../docs/cockpit-plan.md#source-status)
-and the [parked module catalog](../../docs/module-catalog.md).
+and the [documentation index](../../docs/README.md). The
+[module catalog](../../docs/module-catalog.md#retired-capabilities) is the single
+inventory of retired enhancement interfaces; [deployment records](../../docs/deployments.md)
+separately identify accepted running versions.
 
 Binary: `cockpit-mcp-server` → `dist/index.js`. Requires Node ≥22.12; raw Node 24 is
 supported without a TypeScript loader. Canonical schemas and types come from
@@ -107,8 +110,9 @@ Trash listing and restoration are retired. Legacy hidden sessions reappear in
 the normal list without deleting native history. Managed files, associations and
 workspaces remain intact. Never automatically retry an uncertain deletion.
 Deletion never requires module unbind preview/approval or invokes module hooks.
-Manual module unbind is a separate configuration operation. Modules discover
-missing active targets on use, preserving business history and unknown effects.
+There is no current module-unbind operation in the host. External applications
+own their references and must distinguish authoritative absence from unload,
+timeout or permission failure.
 
 `cockpit_get_session` defaults to a compact Markdown summary, including
 queue/decision IDs but only queue text previews. For `availableModels`, complete
@@ -117,9 +121,18 @@ read; the default summary intentionally omits those fields. JSON retains the
 existing output-size limit and reports overflow rather than returning partial
 JSON. `mcp/session` does not materialize an unloaded session.
 
+<a id="confirmation-boundaries"></a>
+
 `cockpit_compact_session` summarizes the model-facing context, not the retained
 chat event history. There is no compaction undo; explicit `confirm:true` remains
 required. It is distinct from conversation rewind or permanent deletion.
+Here `confirm` is a semantic MCP tool guard. The current raw
+`session/compact` and `session/rewind` wire schemas do not include that guard:
+generic callers must use their published schema and obtain the necessary user
+authorization, rather than assume an extra `confirm` field is enforced there.
+Permanent `session/delete|purge`, in contrast, requires literal `confirm:true`
+in the backend schema itself. This documents the existing distinction, not
+permission to bypass a user decision.
 
 `cockpit_cancel_turn` / `POST /intent/cancel {sessionId}` follows native Stop
 semantics: cancel current work and discard pending queued messages. It does not
@@ -139,7 +152,7 @@ interruption, not idle or completed queue processing. `interrupted:false`
 means there was no main turn to interrupt. Background agents/shells keep running
 and may delay the queue; interruption does not undo tool effects. Real failures
 propagate and uncertain calls are never automatically retried. The Web exposes
-the same action as "打断并继续" in a running session's queued-message area.
+the same action as "打断并继续" in the execution controls above the composer.
 Ordinary sends, pending-question/plan replies and the existing Stop are unchanged.
 
 Native idle cleanup is set to 30 minutes. History and metadata remain readable
@@ -155,16 +168,13 @@ MCP and skill selection belongs to Copilot. Global MCP defaults use native user
 configuration, and `skills/global-toggle {name,enabled,cwd?}` changes the native global
 skill setting through `cockpit_call_intent`. Cockpit does not persist or replay
 per-session tool overrides. Session-level controls report native effective state;
-their lifetime follows the SDK rather than a Cockpit persistence promise. Native
-MCP reload and cold session resume use native global defaults, not module-role
-restoration or a Cockpit snapshot. Skill definition reload retains current
-session choices. Global changes do not automatically mutate loaded sessions.
+their lifetime follows the SDK rather than a Cockpit persistence promise.
+Cold-resume/definition-reload ownership is maintained in the
+[native configuration boundary](../../docs/cockpit-plan.md); it is not module-role
+restoration. Global changes do not automatically mutate loaded sessions.
 An unloaded MCP query returns no invented per-session choices; explicitly resume
 for effective session settings or read the global catalog separately.
 Failure/settling status and operation IDs remain visible.
-The SDK's global disabled-skill list is read from native user settings and passed
-into create/resume because runtime 1.0.83 does not apply it automatically. No
-second persisted list is created.
 For a project-only skill, pass the same `cwd` used for discovery; this validates
 the target in that project without changing the setting's global scope.
 Nullable model effort/context/mode, errors and requests remain null in JSON;
@@ -369,8 +379,9 @@ pnpm --filter @cockpit/mcp test
 
 The workspace dependency must be linked before typechecking. Tests use existing
 `node:test`/`tsx`, mock HTTP/HTTPS and configuration before client imports, and
-connect MCP through in-memory transports. They never listen or issue live HTTP
-requests.
+connect MCP through in-memory transports by default. The separately opted-in
+[native fork fixture](../../docs/session-fork.md#local-regression-fixture) uses
+isolated real SDK/loopback transports; it must not be described as a mock-only run.
 
 Example MCP configuration (replace paths/URL for your installation):
 
@@ -391,9 +402,8 @@ through your environment/secret configuration, not committed source files.
 
 ## Breaking migration
 
-The thin-source extraction additionally removes managed file tools/contracts,
-pinning, automatic naming, notifications, speech and restart conveniences.
-The originals are parked in `module-staging/`, not built into modules.
+The complete enhancement retirement and retained-data rules are in the
+[module catalog](../../docs/module-catalog.md#retired-capabilities).
 Old upload/download-root variables are no longer read. Rebuild/reconnect MCP
 only under ordinary idle lifecycle rules; already-loaded descriptions do not
 magically change, and retired requests must not be retried as a workaround.
@@ -410,8 +420,8 @@ magically change, and retired requests must not be retried as a workaround.
   Migrate to native `events`, source/direction and opaque cursor pagination above.
 - Both API and generic MCP `session/delete` and its `session/purge` alias require
   `confirm:true`. Semantic delete/purge tools use the already-destructive purge
-  wire name for staggered releases. Trash/restore are retired; removing old trash
-  marks unhides native sessions, without deleting their history or managed files.
+  wire name for staggered releases. Trash/restore are retired; the thin backend
+  does not read or rewrite legacy preference marks to filter native sessions.
 
 ## Native session fork
 

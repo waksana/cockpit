@@ -5,6 +5,10 @@ It manages the Cockpit main process, not business modules. It does not adopt
 private-CD deployments, alter systemd/DNS/TLS/Passkey, edit global MCP settings,
 or move native Copilot storage. Publishing is a separate
 [publisher operation](consumer-publishing.md).
+This page is the canonical consumer CLI guide. It describes implemented source,
+not a promise that a hosted signed release/channel is already available.
+The currently recorded private deployment does not become a consumer installation;
+see [installation choices](DEPLOY-PORTABLE.md) and [deployment records](deployments.md).
 
 ## Breaking boundary
 
@@ -133,6 +137,10 @@ node "$INSTALL_ROOT/launcher/cli.mjs" serve --root "$INSTALL_ROOT"
 `init` rejects nonempty roots, symlink ancestors, overlapping roots, competing
 selectors and private-CD authority. It never overwrites an earlier installation.
 `serve` starts only the stable launcher; it does not adopt or start a backend.
+Keep that process running outside Cockpit and invoke the following client commands
+from another shell/process. On a later launcher start, an existing selected release
+is not automatically booted either: use the explicit `start` operation after
+resolving any old operation/ownership state.
 
 ```text
 INSTALL_ROOT/
@@ -177,8 +185,12 @@ main's native drain over instance-bound parent IPC, waits for a clean exit,
 atomically changes selection, starts the new child, and checks matching
 `/version`, health and lifecycle readiness. It preserves prior code and assets.
 
-`restart --root "$INSTALL_ROOT" --id restart-example-001` uses the same safe
-drain but retains the selected release. Optional Web/MCP restart and system
+After a clean launcher restart with an installed selection but no owned running
+backend, `start --root "$INSTALL_ROOT" --id start-example-001` starts that selection.
+It is not needed after an installation that already started its new backend.
+`restart --root "$INSTALL_ROOT" --id restart-example-001` instead requires an
+already-owned running backend; it uses the same safe drain but retains the
+selected release. Optional Web/MCP restart and system
 status controls have been parked; there is no `system/consumer/*` public intent.
 The independent launcher CLI remains available for installation and recovery
 without depending on a module. Main download/install remains CLI-only.

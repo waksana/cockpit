@@ -1,71 +1,39 @@
-# cockpit — testing, performance & security
+# 验证与证据边界
 
-How cockpit is tested, its measured performance baseline, and a review of its
-security posture. Commands run from the repo root unless noted.
+本文维护现有验证入口和隔离要求，不是当前运行健康、安全认证或永久测试数字。
+产品门槛以 [R1–R8](product-requirements.md) 为准，运行证据见[部署记录](deployments.md)。
+以下命令默认从仓库根执行，已明确子目录的例外除外。
 
-The current product acceptance criteria are [R1–R8](product-requirements.md).
-Historical measurements below are not current architecture or release evidence.
+## 按改动选择最小范围
 
-For the deployed modernization's conclusions and remaining limits, see the
-[2026-09-08 final review](./review/2026-09-08-foundation.md).
+| 范围 | 命令 |
+| --- | --- |
+| 协议 schema / fold | `pnpm --filter @cockpit/protocol test` |
+| 原生控制、资源和生命周期 | `pnpm --filter @cockpit/core test` |
+| 真实 HTTP handler、schema、CSRF、流和退出 | `pnpm --filter @cockpit/server test` |
+| MCP 映射、附件、分页和传输 | `pnpm --filter @cockpit/mcp test` |
+| Web 原生窗口、文字草稿和交互 | `pnpm --filter @cockpit/web test` |
+| Web 类型 / lint | `pnpm --filter @cockpit/web typecheck` / `pnpm --filter @cockpit/web lint` |
+| 全仓现有套件 | `pnpm test` |
+| 当前构建 | `pnpm build` |
+| 原件清单与运行包边界 | `node --test scripts/delivery-package.test.mjs` |
 
-## Test suites
+需要定向到文件时，用各 package 已有的 Node test/tsx runner，不安装另一套测试框架。
+同 runner 的相关选择器合并执行；仅当改变范围或结果需要时再扩大到全套。
+文档变更核对链接、锚点、来源和命令路径；没有专门文档用例时无需运行产品构建或测试。
 
-| Layer | What | Run |
-| --- | --- | --- |
-| **Unit (core)** | control lifecycle, bounded native reads, configuration and shared fold semantics | `pnpm --filter @cockpit/core test` |
-| **Unit (server)** | actual native intent dispatch, schema/CSRF, streaming and protected lifecycle | `pnpm --filter @cockpit/server test` |
-| **Unit (MCP)** | shared API client, native attachments, tool boundaries and pagination | `pnpm --filter @cockpit/mcp test` |
-| **Unit (web)** | native event windows/cursors, gap handling, text drafts and diagnostics | `pnpm --filter @cockpit/web test` |
-| **All workspaces** | workspace suites, external launcher, source preservation and package boundary | `pnpm test` |
-| **Build** | workspace compilation, including the web app's actual TypeScript sources | `pnpm build` |
-| **Synthetic fold regression** | shared browser fold/schema on an explicit flat JSONL fixture directory | `pnpm regress --synthetic-fixture-root /absolute/synthetic-jsonl` |
-| **Isolated E2E** | HTTP contract checks on a separately provisioned test backend; mutates only its test data | `pnpm e2e --synthetic-fixture-root /absolute/synthetic-workspace --test-base-url http://127.0.0.1:45678` |
-| **Isolated perf** | synthetic fold throughput, test-backend latency/concurrent SSE | `pnpm perf --synthetic-fixture-root /absolute/synthetic-jsonl --test-base-url http://127.0.0.1:45678` |
+默认用例采用合成输入和受控依赖；明确 opt-in 的 native probes 不包含在普通成功数字里。
+server/core/MCP 的构建排除其测试文件；protocol 及 Web 的 tsconfig 包含 `src`
+下的测试，所以相应类型检查也覆盖它们。以各自实际脚本/tsconfig 为准，
+不能用“所有测试都不参与类型检查”概括。
 
-Unit tests use `node:test` + `tsx` (no extra framework). Use isolated fixtures and
-mock transports for the foundation's governance-free boot, API/MCP coverage,
-cross-session interaction, native input forwarding and reconnect behavior. Do not use a
-personal session store or restart the running service for ordinary unit tests.
-Test files are `*.test.ts` next to the code; they're excluded from the `tsc`
-builds. The optional scripts now refuse missing arguments before inspecting
-fixtures or contacting a backend. They never default to personal native history
-or the production service. The old `regress-reallog.mts` filename remains only
-for command compatibility; it reads synthetic fixtures, not native session trees.
+`module-staging` 不是 workspace，其旧 tests/imports 未适配，不能运行后宣称模块已可用。
+原件守卫只核对源字节/摘要/mode 和产物边界，不给旧业务代码重新背书。
 
-Fold fixtures are 1–32 flat, regular, non-linked `.jsonl` files, at most 4 MiB
-each and 16 MiB total. Personal/configuration roots, native-directory trees,
-symlink components, hard-linked logs and malformed JSON are rejected.
-Configured Cockpit data roots and their ancestors are also excluded.
-HTTP targets must be explicit IPv4 loopback on a test port, not production port
-8771 or a production port named by `COCKPIT_PORT`, `PORT` or `COCKPIT_URL`;
-remote URLs, URL paths/credentials and redirects are rejected.
+## 真正的 SDK 与包
 
-The examples' port is only illustrative. Provision a separate test runtime,
-configuration and workspace first, without personal
-credentials or real model endpoints. A flag or alternate port does **not**
-isolate a running service or prove that arbitrary input is synthetic.
-
-With valid explicit arguments, `perf` still makes repeated HTTP requests,
-opens concurrent SSE connections. `e2e` still
-creates, changes and permanently deletes its own fixture session and creates
-schedules. Interrupted runs may leave test data or timers; these tools
-are not non-destructive. Only use operator-owned isolated fixtures.
-Guard tests exercise rejected defaults and allowed synthetic paths without
-reading personal logs or mutating production.
-
-Do not run deployment-facing E2E/performance scripts against a personal service
-as ordinary unit checks. Native SDK probes use a separate configuration/state
-root, a synthetic workspace and a controlled model endpoint. Confirm the actual
-runtime data path and child process before creating fixture sessions.
-
-Semantic acceptance compares the supported native operations' actual outcomes:
-ordered messages and queues, pending decisions, effective model/configuration,
-filesystem effects and failures. GUI formatting can differ. The intentional
-always-approve permission policy is not default interactive CLI equivalence.
-
-The optional native tests use fresh synthetic homes and loopback model
-providers, with no logged-in user or copied native state:
+现有 native 用例使用新建 synthetic home/config/workspace 和 loopback 模型替身，
+不读取生产登录、复制用户 session，也不连接真实渠道：
 
 ```sh
 cd packages/core
@@ -75,98 +43,52 @@ COCKPIT_NATIVE_MODEL_SMOKE=1 COCKPIT_NATIVE_DELETE_TEST=1 \
   src/fork-native.test.ts src/model-settings-native.test.ts src/delete-native.test.ts
 ```
 
-Native file-input proof forwards a synthetic file through Engine and lets the
-native view tool read it. HTTP/MCP schema cases cover the four SDK attachment
-shapes; that does not certify every blob/media format or a browser file module.
-Parked tests are not run. `scripts/delivery-package.test.mjs` verifies archived
-source digests/modes and the active artifact list; its optional real-archive
-case requires `COCKPIT_RELEASE_ARCHIVE`. No archive claim follows from a skipped case.
+文件输入用例让 Engine 传入合成原生文件，再由 native view 读取。
+四种附件 schema/转发用例不等于每种媒体/模型均实测可读。完整 MCP/native fork 用例
+见[分叉指南](session-fork.md#local-regression-fixture)，不要用 schema 样例代替真实连接。
 
-Resource acceptance distinguishes the API process, Copilot runtime and MCP
-children. Repeated load/release cycles must release the actual SDK-owned session,
-not only Cockpit's reference. Passive history queries must not resume the target session or create a second
-runtime, emit no viewer-specific control SSE pages and leave other devices'
-scrollback unchanged. The backend's existing SDK runtime serves the passive RPC.
+实际运行包必须来自干净固定提交，使用已有 packager 和 manifest 校验。
+`COCKPIT_RELEASE_ARCHIVE=/absolute/runtime.tar.gz` 才启用实际 tar 的守卫；
+不带变量的通过不证明某份 tar。按产包/解包工具保留精确字节和可执行 mode，
+从包自己的依赖入口运行；不能借用开发树依赖让缺包伪装成功。
+具体命令由[交付](DELIVERY.md)和[消费者产包](consumer-publishing.md)维护。
 
-## Historical performance baseline
+## 可选诊断
 
-Measured on an earlier deployment (`pnpm perf`, single-user box); not a
-modernization acceptance threshold or evidence of bounded runtime ownership:
+| 诊断 | 显式入口 |
+| --- | --- |
+| 合成 fold | `pnpm regress --synthetic-fixture-root /absolute/synthetic-jsonl` |
+| 隔离 HTTP E2E | `pnpm e2e --synthetic-fixture-root /absolute/synthetic-workspace --test-base-url http://127.0.0.1:45678` |
+| 合成 fold / HTTP / SSE 性能 | `pnpm perf --synthetic-fixture-root /absolute/synthetic-jsonl --test-base-url http://127.0.0.1:45678` |
+| 无后端组件 lab | [开发指南](DEVELOPMENT.md#isolated-chat-component-review) |
 
-- **Fold throughput** — ~490k events/sec. The largest real session (35.7k events)
-  replays in ~70ms. Fold runs on every session load; at this rate even a
-  100k-event session loads in <250ms. Not a bottleneck.
-- **Endpoint latency** — `/health` p99 ~2.5ms, `/status` p99 ~1.3ms. The
-  graceful-restart poller and any UI status polling are effectively free.
-- **Upload / serve** — 1MB: ~10ms up / ~12ms serve; 5MB: ~12ms up / ~77ms serve
-  (~65–400 MB/s loopback).
-- **Concurrent SSE** — 50 simultaneous clients all receive their first snapshot
-  within ~123ms. For a single-user console this is far beyond need.
+诊断默认缺参数即拒绝，不使用用户历史或生产 URL。旧文件名
+`regress-reallog.mts` 只保留命令位置，输入是显式合成日志。
+日志限平坦的 1–32 个普通非链接 JSONL 文件，每个最多 4 MiB、合计 16 MiB。
+个人/native/config 根、链接、硬链接和格式错误被拒绝。
+HTTP 只能指定独立 IPv4 loopback 测试端口，不能用 8771 或已声明的生产端口，
+也不能通过重定向跨目标。
 
-These historical measurements do not establish current production capacity or
-bounded memory. The old materialized-session cap and heap watchdog no longer
-exist. Native SDK idle cleanup is set to 30 minutes; Cockpit no longer caches
-chat history. Browser windows and native runtime memory are separate budgets,
-and uploads/persisted history remain independently retained disk data.
+**参数或端口不提供环境隔离。** 必须先独立配置 runtime/home/workspace/凭据与模型替身。
+`e2e` 会创建/修改/删除自己的原生 fixture，并创建/停止原生 schedules；
+`perf` 会重复读接口并开启并发 SSE。失败或中断可能留下测试资源，不能当成无副作用操作。
+它们不再做已停放的文件上传/下载诊断。
 
-## Security posture
+## 如何解释证据
 
-Cockpit is a **single-operator** console. The authenticated gateway is the remote
-access boundary; native tools run with the service account's authority.
+| 证据 | 能说明什么 | 不能替代什么 |
+| --- | --- | --- |
+| 源码/schema 检查 | 声明、调用路径和静态边界 | 模型真的读取媒体、进程实际关闭或现场部署 |
+| 合成单元/组件用例 | 已构造输入的行为、失败和并发情况 | 所有真实设备、iOS 麦克风或渠道验收 |
+| 隔离 native SDK 用例 | 固定 SDK/runtime 的真实调用与合成副作用 | 生产凭据/历史、真实渠道和整机容量 |
+| 固定产物与入口运行 | 包闭包、原生资产、实际可解析的 Web/API/MCP | 该包已经上线 |
+| 认证交付回执与实例回读 | 精确部署、产物、实例和健康 | 用户业务结果或未来一直健康 |
 
-### Boundary & authN
-- Backend binds **127.0.0.1 only**; all external access is via nginx with
-  the deployed **passkey-gate authentication**.
-- The current gateway protects the whole proxied surface, including
-  `/admin/restart`, `/status`, `/events`, `/intent/*` and the SPA.
-  Operational routes are not loopback-only merely because the API binds loopback.
-- Origin/Referer checks protect browser mutations against CSRF; they are not
-  authentication. Do not expose the backend through an unauthenticated tunnel.
+分别度量 RPC、事件数、字节、前端计算和可测 I/O；不能把一种代理成另一种或推成 token。
+原生 accepted/queued 不是完成，历史子代理“此次结束”不是整个目标完成。
+旧性能数字和旧审阅仅在[历史区](archive/README.md)或其固定 Git 版本中保留，
+不能当成当前安全/容量承诺。
 
-### Hardening in place
-1. **Intent validation** — every intent body and result is schema-validated;
-   unknown intents return 404.
-2. **Native lifecycle** — queued/active work, decisions, in-flight calls and
-   unknown outcomes cannot be replaced by a cached idle display.
-3. **Transport bounds** — existing HTTP size/deadline, origin, SSE backpressure
-   and cursor checks remain. File-transfer hardening is preserved with the
-   parked file source, not advertised as a running foundation service.
-
-### Accepted risks (by design, single-operator)
-- **YOLO tool execution** — the agent auto-approves every tool (bash/edit/…). Anyone
-  authorized through the gateway can control tools as the service account. This
-  is explicit product policy, not multi-user isolation. Protect gateway sessions,
-  server credentials and operator-authored MCP/skills accordingly.
-
-### Residual gaps (low priority for single-user; worth noting)
-- **No multi-tenant authorization boundary.** Hardening must not be mistaken for
-   safety against an already authorized operator or malicious installed tools.
-- **Parked data is retained.** No cleanup, quota policy or module adaptation is
-  implied by source extraction.
-
-### Not applicable
-- **CORS** — all client calls are same-origin; no cross-origin access is granted.
-- **Untrusted MCP installation is not isolated** — server configuration is
-  operator-authored. This is an explicit trust assumption, not a blanket SSRF
-  immunity claim.
-
-## Diagnostics / known findings
-
-### Graceful restart and interrupted work
-
-The backend waits for active work and native callbacks to settle, then awaits
-native shutdown before closing transport.
-Confirmed native process death instead causes a nonzero exit for supervisor
-recovery. Neither case blindly replays an uncertain submitted prompt.
-
-The imported MCP reader previously depended on a lossy SDK `turns` table and its
-own local event-log fold. The current reader calls `session/chat` for native event
-pages, with no local SQL fallback. `session/peek` is retired. The browser folds
-its own reading window; there is no backend canonical-transcript cache.
-See [`apps/mcp/README.md`](../apps/mcp/README.md) for native event-cursor pagination.
-
-When changing restart or transcript handling, use an isolated backend fixture to
-compare API/MCP messages with the same history projected to the web client.
-Browser disconnection must not affect execution. Restarting the process remains
-a separate operation: it must wait for idle and must not be described as preserving
-an in-flight turn.
+验证结束要关闭本人的 loopback 监听、SSE、SDK 子进程和临时 fixture，
+记录真实清理失败；不借清理删除真实 session、native home、用户上传或其他人的 worktree。
+原生安全退出与认证本身的行为只维护在[架构边界](cockpit-plan.md)，不在测试指南另写一套。

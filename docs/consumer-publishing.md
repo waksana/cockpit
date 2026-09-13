@@ -3,12 +3,19 @@
 This is an opt-in **publisher** command, not a deployment or a consumer updater.
 It does not alter the existing private delivery workflows, register a signing
 authority, publish a repository, or grant users private CD credentials.
+This is the canonical main-program publisher guide, separate from the future
+[module protocol](module-contract-draft.md). Implemented packaging commands do
+not prove that a public channel/key or signing/upload workflow has been provisioned.
 
 The supported packaging host is Linux x64/glibc, Node 24, Python 3.12+ (including
 `tarfile`'s data filter). The runtime's exact Node version must match the build
 manifest. Use the current CI toolchain, not an arbitrary Node patch release.
 
 Build and validate a fixed, clean source SHA using the existing CI configuration.
+The CI action installs the vendored toolkit's own locked dependencies separately
+from workspace dependencies. When invoking its packager locally, that installation
+must also exist (`npm ci --ignore-scripts --prefix .delivery/toolkit`), rather than
+silently using another checkout's dependencies.
 Run the existing packager, which produces `runtime.tar.gz` and its inventory:
 
 ```sh

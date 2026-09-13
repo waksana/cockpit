@@ -1,23 +1,26 @@
-# cockpit — attribution & licensing
+# Cockpit - attribution and licensing
 
-cockpit is a personal, single-user web console for driving GitHub Copilot CLI
-agent sessions. It is licensed under the **GNU General Public License v3.0**
-(see [`LICENSE`](./LICENSE)).
+Cockpit is a single-operator Web/API/MCP interface to native GitHub Copilot
+sessions, licensed under **GPL-3.0-only**; see [LICENSE](LICENSE).
 
-## Third-party design/interaction attribution
+## Telegram Web K
 
-The session-list and interaction design (context menu, list-row information
-density, search, pinning, responsive master–detail breakpoints) is **derived
-from and inspired by Telegram Web K**:
+[Telegram Web K / tweb](https://github.com/morethanwords/tweb), copyright
+Telegram / morethanwords, is licensed GPL-3.0-only.
 
-- **Telegram Web K** — <https://github.com/morethanwords/tweb> — © Telegram /
-  morethanwords, licensed **GPL-3.0-only**.
+Cockpit includes the tweb-derived structural style layer and the vendored
+`tgico` font/codepoints, not only abstract design inspiration. Relevant source
+attribution remains in
+[`styles/tgico.scss`](apps/web/src/styles/tgico.scss),
+[`styles/tokens.scss`](apps/web/src/styles/tokens.scss),
+[`styles/base.scss`](apps/web/src/styles/base.scss) and component/primitives
+styles. Cockpit uses its own Solarized color mapping and product-specific
+interaction behavior; this is not a claim of current upstream UI parity.
 
-cockpit borrows Telegram Web K's *structural* design language and interaction
-patterns (studied in [`docs/telegram-study.md`](./docs/telegram-study.md)) while
-substituting its own Solarized color palette and a zero-animation presentation
-doctrine. Because Telegram Web K is GPL-3.0-only, cockpit is distributed under
-the same GPL-3.0 license.
+The [historical design study](docs/archive/telegram-study.md) and
+[historical difference registry](docs/archive/cockpit-tweb-diff.md) preserve
+design background, not a second current licensing or implementation statement.
 
-No Telegram Web K source code is copied verbatim; the influence is on layout,
-information organization, and interaction logic.
+Retained dependencies keep their respective licenses and notices. Parking
+original source in `module-staging` does not erase its attribution or license,
+and this document does not relicense third-party packages.

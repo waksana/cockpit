@@ -5,6 +5,8 @@ Cockpit exposes the installed SDK's experimental `sessions.fork` RPC as
 protocol 3**. The separately installed `copilot` CLI is not the server runtime.
 There is no dependency upgrade, transcript reconstruction, database copying by
 Cockpit, or summary-as-fork fallback.
+This is the canonical fork behavior guide, not a task/role assignment workflow
+or deployment receipt. See the [documentation index](README.md).
 
 ## Call paths
 
@@ -41,7 +43,7 @@ explicit discovery, not a mandatory preflight for each call. Discover the child 
 normal session list, read its history passively, and send its **new goal**
 explicitly when ready. A prompt or explicit reload resumes it.
 
-### Already-connected discussion sessions
+### Already-connected MCP clients
 
 The existing `cockpit_call_intent` tool accepts a generic `name` and JSON `body`.
 It sends **one POST**, without reading `/capabilities` first. The backend
@@ -51,25 +53,25 @@ is enough for an already-connected client to discover and invoke `session/fork`;
 no MCP discovery refresh, forced reconnect, or discussion-session migration is
 required to acquire this intent.
 
-For an existing discussion session, use:
+For an existing MCP client, use:
 
 1. If publication or schema is unknown, read `cockpit_capabilities({name:"session/fork"})`.
    A 404 means the backend has not published the change; refreshing MCP
    configuration cannot fix that. Skip this discovery when the contract is known.
-2. Inspect the intended **old owner** with `cockpit_get_session`. It must be loaded
-   and idle without timers. Do not use the currently running discussion session
+2. Inspect the intended **source session** with `cockpit_get_session`. It must be loaded
+   and idle without timers. Do not use the currently running initiating session
    itself as the source, and do not cancel a busy source to make it forkable.
-3. `cockpit_call_intent({name:"session/fork",body:{sessionId:"old-owner-id",name:"New independent goal"}})`.
-4. Send the explicit new assignment to the returned ID through
-   `cockpit_send_prompt`, including the new goal/workstream and
-   its actual discussion session ID as `caller_session_id`. Inherited historical
-   assignments and callback obligations are not renewed authorization.
+3. `cockpit_call_intent({name:"session/fork",body:{sessionId:"source-id",name:"New independent goal"}})`.
+4. Send any intended new message to the returned ID through `cockpit_send_prompt`.
+   Fork itself sends none. Business roles, workstreams, caller bindings and
+   callback obligations are not Cockpit fields; inherited text does not renew
+   authorization or schedule another application's work.
 
 The MCP build also gives fork requests the normal 45-second long-operation
 deadline. An already-running older MCP process retains its previous timeout
 (10 seconds unless configured otherwise); it does **not** hot-load rebuilt
 JavaScript. This is not a schema blocker. A future normal connection gets the new
-deadline. Do not force-reload a busy discussion or blindly retry a timed-out fork.
+deadline. Do not force-reload a busy session or blindly retry a timed-out fork.
 
 `mcp/refresh` rereads native MCP definitions; it does not restart the Cockpit
 backend or replace code in running MCP processes. `mcp/reload-session` reconnects
@@ -91,7 +93,7 @@ automatically receiving a hot update.
 | cwd and files | The child retains the same working directory. This does **not** create a Git branch, worktree, filesystem snapshot or credential sandbox. `cwd` overrides are rejected rather than silently ignored. For an isolated workspace, use an independently prepared worktree and `session/new`; this fork API does not relocate native sessions. |
 | Skills and MCP | Cold-resume discovery/configuration applies. The fixture confirms source session-only disabled skill/MCP choices do not carry over; global configuration still applies. This is not a full runtime-settings clone. |
 | Plans and todos | Native copies the current `plan.md`, **even when the event boundary predates that plan**. The fixture's SQL todo row does not carry over. Treat inherited plans as context, not a new assignment or a point-in-time filesystem snapshot. |
-| Tasks and queue | The fixture's active shell task and paused queued prompt do not carry into the child's live task/queue registries; the parent's registries are not changed by fork. Cockpit copies no pending callback, decision, attention receipt or scheduling preference, and sends no automatic task or old receipt. |
+| Tasks and queue | The fixture's active shell task and paused queued prompt do not carry into the child's live task/queue registries; the parent's registries are not changed by fork. Cockpit copies no pending callback or decision, and sends no automatic message. Business notification receipts and scheduling policy are outside this adapter. |
 | Schedules | Native **does** recreate inherited schedules on resume. Cockpit therefore rejects any selected prefix containing `session.schedule_created`, even if that schedule was later stopped. It also rejects sources with currently active timers. A boundary before schedule creation is supported once the source has no live timers. No journal rewriting or post-resume cancellation race is used. |
 
 The operation is **non-idempotent**. Neither Web, API nor MCP automatically

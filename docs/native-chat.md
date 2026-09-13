@@ -3,7 +3,7 @@
 This describes checked-in source, not a deployment receipt. See the
 [source status](cockpit-plan.md#source-status) and [module boundary](module-catalog.md).
 
-Copilot owns durable history and model context. Cockpit does not keep chat
+Copilot owns durable history and model context. The Cockpit backend does not keep chat
 windows, a live message fold, a message-ID index, resume checkpoints, or a
 second conversation store. The browser owns its loaded messages, tool/agent
 relationships, scroll position, and native cursors.
@@ -241,14 +241,25 @@ manual compaction failures remain visible as operation errors.
 ## Media
 
 Native tool binary payloads are removed from chat responses, without generating
-image locators or maintaining a chat/image cache.
+image locators or maintaining a chat/image cache. The current thin Web has no
+file cards, image/video previews or managed download service. Ordinary
+text/Markdown remains; unsupported media syntax is not a reason to fetch,
+retain or republish native images.
 
-Only agent-published images appear in chat. Before posting an image link, upload
-an existing local original or select an existing managed file. Reuse its URL:
-viewing the link does not publish another copy. Native-only image lookup was
-explicitly rejected, including bounded searches; `session/tool-image` and
-`files/from-tool-image` return `410 NATIVE_IMAGE_LOOKUP_RETIRED`. Existing
-managed uploads, including previously retained native images, remain available.
+Enhanced file rendering belongs to a future frontend plugin, including both
+new and historical messages in the same shared native event window. There is
+no installed renderer ABI yet. Old module-owned markers and managed URLs are
+not parsed by the foundation. `session/tool-image` and `files/from-tool-image`
+are unknown intents (404), not a retained 410 lookup adapter. Existing files are
+left on disk, but are not served merely because their old link is in history.
+The complete retired-surface and data rules are maintained in the
+[module catalog](module-catalog.md#retired-capabilities).
+
+Native prompt attachments are separate from chat presentation. HTTP/MCP can
+forward SDK file/directory/selection/blob inputs; this neither uploads a
+browser-local file nor promises a renderer or model support for every format.
+The exact client shape is documented under
+[native attachment input](../apps/mcp/README.md#native-attachment-input).
 
 Native binary results arrive as event JSON/base64, not a public byte stream or
 a confirmed single-part asset getter. The adapter cannot avoid bytes that
@@ -264,18 +275,9 @@ replace these contracts for Web, MCP and other API consumers.
 
 The session plan keeps native plan text and todos. The old changed-files list,
 which depended on replaying the complete transcript, has been removed.
-Queue, decisions, native tasks, stop protection, notifications and file APIs
-retain their independent responsibilities.
-
-First-reply naming uses native eligibility pages of at most 32 filtered events,
-stopping at the first effective reply within a shared 1,000-event budget, not a
-saved already-named/history flag. Conversation presence is still a separate
-one-event read; neither read limits the ephemeral naming model's native context.
-Copilot's first-input preview and generated automatic
-titles are both non-user names; a nonempty name is not proof of prior naming.
-The first completed reply in the current native history may generate a title,
-including after a cold rewind to empty. Native manual names always remain
-protected. An ordinary later reply does not retrigger the naming model query.
+Queue, decisions, native tasks and stop protection remain independent of chat
+display. Cockpit's additional first-reply naming query/eligibility policy has
+also been parked; reading or finishing a reply does not run it.
 
 An isolated runtime 1.0.83 fixture confirmed forward cursor reuse between live
 and passive readers, including passive continuation after runtime restart,
@@ -289,7 +291,7 @@ fixture exercised all-agent HTTP/SSE and recovered a completed child response
 after a consumer disconnect. The tested background-child path did not emit
 child text deltas, so it does not establish token-by-token child replay.
 Duplicate system-message
-events need not be present on disk; shutdown adds its own event. The connector
+events need not be present on disk; shutdown adds its own event. The chat reader
 uses this durable forward boundary when native unloads, and still treats native
 expiry as an error rather than inventing a replacement cursor. This is not a
 promise that every native cursor lasts forever or every live event is durable.
@@ -299,38 +301,16 @@ properties. A bounded event response does not prove constant-time disk access.
 Cost experiments distinguish native RPC count, returned event/byte volume,
 client projection work and actual I/O.
 
-The semantic MCP reader has a separate default of 16 events and a 25,000-character
-page threshold. Oversized multi-event pages require explicit narrowing with the
-original input cursor; only `limit:1` offers 8,000-code-unit JSON fragments.
-Each fragment rereads the complete native page (and bootstrap tail when requested).
-Query/page hashes prevent mixing changing pages, but do not make a moving tail
-stable or provide a native body offset. This is the accepted giant-event cost,
-not a saved native copy or a new caching requirement. The existing 25 MiB MCP
-transport limit still applies. See [MCP pagination](../apps/mcp/README.md#native-event-pagination).
+MCP adds a smaller output window and explicit single-event JSON fragments,
+not a different native history source or a body-offset API. Its bounds and
+reread cost are maintained only in
+[MCP pagination](../apps/mcp/README.md#native-event-pagination).
 
-An isolated 1.0.83 runtime with a local synthetic model produced the following
-single-run samples (not production latency guarantees or disk-index proofs):
-
-| Native query | RPCs | Events / JSON bytes | Elapsed |
-| --- | ---: | ---: | ---: |
-| Cold latest 64 after runtime restart | 1 | 64 / 23,071 | 17.09 ms |
-| Warm latest 64 | 1 | 64 / 23,071 | 9.70 ms |
-| Browser-size latest page | 1 | 8 / 3,293 | 12.50 ms |
-| Next older browser page, known cursor | 1 | 8 / 2,925 | 4.53 ms |
-| Forward continuation, known cursor | 1 | 64 / 22,685 | 3.02 ms |
-
-The same fixture delivered one message start, four deltas and one complete
-message through native forward polling, and accepted backward cursors across
-the live/passive readers without repeating their latest rows. Smaller returned
-pages are not automatically faster in every individual sample.
-
-The unified built browser's synthetic HTTP/SSE fixture initially read 32 events
-in one page and exceeded two viewport heights. At 390×844, opening a child made
-zero requests, its next message arrived over the existing connection, and
-reconnection delivered two new child events with no old history read. An upward
-prefetch read the remaining 15 events once. Reconnection preserved its reading
-anchor exactly; the older prepend differed by 0.27 CSS pixels after layout.
-These are browser/transport fixtures, not native disk-I/O measurements.
+Historical single-run timing and browser-geometry samples are preserved in the
+[fixed pre-maintenance guide](https://github.com/waksana/cockpit/blob/a1f4a9a7c9e72b151958c270c4f790b32b72636e/docs/native-chat.md#protocol-migration).
+They are not current page defaults, production latency guarantees or disk-index
+proofs. Existing commands and evidence requirements are maintained in the
+[testing guide](cockpit-testing.md).
 
 This chat transport does not make inherently history-wide operations into
 point queries. For example, existing fork safety preflight checks inherited

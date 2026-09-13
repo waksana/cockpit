@@ -5,6 +5,8 @@ They are not workspace packages, are not loaded by the application and must
 not enter a main runtime archive. Do not run their scripts or tests as if
 their former paths and dependencies had already been adapted.
 
+These original snapshots are not current usage documentation. Start with
+the [documentation index](../docs/README.md) for the active guides.
 See [the module catalog](../docs/module-catalog.md) for scope, provenance and
 future responsibilities, and [the base contract](../docs/module-contract-draft.md)
 for native API and frontend composition boundaries.

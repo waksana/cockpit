@@ -1,228 +1,126 @@
-# Explicit immutable delivery
+# 私有不可变交付
 
-This document defines the opt-in `github-actions-v1` integration. Source files
-alone do not mean the host has migrated; installed runner configuration and the
-authenticated request result are the authority.
+本文维护 Cockpit 已接入的 **`github-actions-v1` 私有部署流程**，不记录持续运行状态。
+已完成的运行事实集中在[部署记录](deployments.md)。
+开源消费者的发行/更新是另一条路径，见[消费者产包](consumer-publishing.md)与
+[消费者安装](consumer-installation.md)；不要求消费者取得开发者的私有 CD 凭据。
 
-New development owners must request their own submit-role credential from the
-installation operator, never borrow another owner's file. Credential issuance is
-`bin/issue-credential.mjs` in the installed toolkit; it grants neither admin nor
-deployment approval. After integration the owner supplies a complete SHA, unique
-request ID, project/environment and actual user authorization. The operator
-registers a matching approval and returns the bound request JSON; the owner then
-submits once and reads the original request ID. The current submit role is not
-project-scoped, so it must not be described as a cross-project isolation boundary.
-The detailed installed CLI contract is in the toolkit's
-`skills/service-development/references/commands.md`.
+## 三个不同阶段
 
-The runtime closure excludes `module-staging/`, old `modules/` and root `skills/`.
-The foundation does not register a bundled reset skill. Before accepting a new archive, run
-`COCKPIT_RELEASE_ARCHIVE=/absolute/runtime.tar.gz node --test scripts/delivery-package.test.mjs`.
-This checks the actual tar's native entries and absence of parked capabilities.
-The normal source suite also guards the committed artifact list and archived
-source digests/modes;
-it does not claim to have checked an archive when that variable is absent.
+| 阶段 | 谁负责 | 结果不代表什么 |
+| --- | --- | --- |
+| 源码集成 | 开发者在隔离 worktree 集成最新目标，保留他人成果并推送。 | 不等于运行版本已变化。 |
+| CI 固定产包 | 根据固定 SHA 和已提交配置，执行验证/构建并产出不可变归档。 | 不等于已授权部署，也不是自动公开签名 Release。 |
+| CD 安全激活 | 独立外部控制器核对审批、顺序、产物和运行身份，等待安全退出并启动新包。 | 受理/构建/等待空闲均不等于成功上线。 |
 
-## Historical multi-project release (2026-09-11)
+仓库为 `waksana/cockpit`，目标 `refs/heads/main`。
+[`delivery-ci.yml`](../.github/workflows/delivery-ci.yml) 的 push 入口只构建；
+[`delivery-transfer.yml`](../.github/workflows/delivery-transfer.yml) 只接收成功的显式请求产物。
+不得通过手工 `workflow_dispatch`、改文件指针或应用 `systemctl restart` 绕过交付权威。
 
-Cockpit source `1a3c49c4e9d549216e036e1563853775206964fc` ran from archive
-`172b361e35efe8aa90a0d7b8f8849382a827f0db0d5eb01e98a982b8049da6fe`
-after native safe-idle replacement, request `cockpit-v3-deploy-1a3c49c-20260911`.
-That release's system menu showed per-project runtime/version and delivery state.
-The viewer has since been [parked](../module-staging/README.md), not kept as a
-current `/system/versions` capability. This dated receipt is not a substitute
-for current `/version` evidence.
+## 配置与包的边界
 
-The external controller is toolkit 0.2.2, commit
-`d39b915010dccb5919385e1a7952f4078816ba50`. It invalidates expired rollback
-selection without blocking known-good boot, gives explicit original-run build
-reconciliation its own finite window without redispatch, and selects indexed
-actionable work instead of repeatedly reading retained history. Synthetic failure
-fixtures cover those paths; no production timeout/rollback was manufactured.
-That historical package included the reset skill. The thin runtime excludes it;
-hashed Web resource retention remains a separate launcher responsibility.
+[`service-delivery.json`](../service-delivery.json) 是提交内的构建命令、产物路径和
+no-force busy 策略。当前 CI 工具链为 Ubuntu 24.04 x64、Node 24.20.0、
+pnpm 10.34.5、frozen lockfile；workflow actions 固定到提交。
+工具集来源固定在 [`.delivery/provenance.json`](../.delivery/provenance.json)，
+不能未经审阅跟随其上游 main。
 
-At that release, Task and WeChat had independent versions, launchers and lifecycle contracts.
-Task's first migration used an explicitly authorized temporary ingress gate and
-completed-operation boundary; subsequent updates use native drain. A connector
-may have a historical successful delivery while its current process is unavailable.
-The parked viewer distinguished both facts rather than treating historical success as present health.
-Business recovery and any message transmission remain the connector owner's scope.
+运行包必须包含 built Web/MCP、server/core/protocol TypeScript、`tsx` 及匹配平台依赖，
+而不只是假定存在的 `dist/`。声明列表不包含 `module-staging/`、旧 `modules/` 或 root
+`skills/`。源目录中 retained tests 与可运行增强是不同东西；精确内容由实际 manifest 定义。
 
-## Build and submission
+包不包含原生 home、用户偏好/上传、业务数据库、认证、审批和控制器凭据。
+构建目录不得被生产进程直接读取，产物 symlink 不得逃向开发 worktree。
+同一已验证归档从 CI 进入按摘要命名的目录，不在部署机重新构建。
 
-The repository is `waksana/cockpit`, target `refs/heads/main`
-(GitHub repository ID `1360000893`, formerly `waksana/cockpit-foundation`).
-The old Go repository is now `waksana/agent-orchestrator-go`; do not rely on
-the reused `waksana/cockpit` name redirecting to that repository.
-Local directories, session working directories and the `cockpit` project ID
-are unchanged. The host policy's `repository` and Git `origin` must explicitly
-target `waksana/cockpit`. This repository rename does not change committed
-project-config bytes, trusted config hashes or existing immutable release
-identities, and does not request a deployment.
-On 2026-09-12 the user explicitly authorized making Cockpit, Task and the
-WeChat connector source repositories public. The private production control
-plane, credentials and runtime data remain private. The subsequent core-only
-cleanup removes module packaging and consumption from this repository; the
-[basic future module contract](module-contract-draft.md) does not reopen them.
-Main-program [consumer publishing](consumer-publishing.md) remains separate from
-private deployment authority and does not require consumers to access CI artifacts.
-`.github/workflows/delivery-ci.yml` validates/builds a fixed SHA on push and on
-explicit workflow dispatch. A push builds only. Authenticated toolkit `submit`
-dispatches a named request; `.github/workflows/delivery-transfer.yml` transports
-only successful explicitly requested artifacts. No PR requirement, paid
-environment gate, production self-hosted GitHub runner or public listener is
-introduced.
-
-Toolchain: Ubuntu 24.04 x64, Node 24.20.0, pnpm 10.34.5, frozen lockfile. Workflow
-actions are pinned to commits. Full CI runs configured lint/tests/build and
-isolated native SDK contract fixtures. Failed builds never deploy.
-
-The reviewed toolkit is vendored under `.delivery/toolkit` with source commit
-recorded in `.delivery/provenance.json`. Refresh only from an explicitly reviewed
-module commit with `scripts/vendor-delivery.mjs`; never silently follow its main.
-The host control plane must use that compatible module version.
-
-Project config's complete runtime closure includes Web, server TypeScript,
-core/protocol TypeScript, built MCP and locked dependencies. Server/core builds
-are no-emit; publishing only assumed `dist` directories would be incomplete.
-Runtime links cannot point back to a development worktree. The same verified
-archive moves from CI to a content-addressed release directory.
-
-## Installed host boundary
-
-The runner is an external singleton, not a Copilot task, native schedule or
-Commander service. Its private config maps this project's repository/config
-hash/environment to host paths, launch argv and exact health/version authority.
-The restricted SSH account accepts only `receive REQUEST_ID RUN_ID ARTIFACT_ID`;
-the host re-verifies GitHub run and artifact digest instead of trusting SSH
-arguments. No source checkout executes in the privileged transfer job.
-
-Approval is a server-retained record bound to project, SHA, environment and
-expiry. Per-owner submit credentials identify the request owner and optional
-completion callback; the request JSON itself cannot self-authorize. Credentials,
-approvals and runner SQLite are private and must not enter Git or CI artifacts.
-The operator explicitly approved reuse of the existing personal `gh` login for
-this installation. That credential is broader than the preferred single-repo
-Contents-read/Actions-write token; the installation must not be called
-least-privilege GitHub authentication. SSH and HTTP roles remain restricted.
-
-The backend's existing `/admin/restart` owns safe-idle exit. It protects active
-turns, queues, decisions, subagents and native operations. A pending request
-returns promptly; it is not completion. A finite busy deadline can fail a
-candidate without forcing the service down. Systemd's fixed singleton launcher
-selects the approved immutable package only after the old backend exits.
-
-`GET /version` reports captured `sha`, `artifactSha256`, `requestId` and a fresh
-`instanceId`; `/health` reports that same instance, both with no-store caching.
-Source-mode `/version` returns 503 rather than inventing a SHA from moving Git
-HEAD. `queued`, `building`, `built`, `waiting-idle`, `verifying` and `succeeded`
-are distinct. Only matched runtime identity plus healthy same-instance readback
-can produce `succeeded`.
-
-Web/API/MCP are one coherent release. Future MCP processes use the current
-package's fixed entry; existing MCP connections are not forcibly reloaded.
-Their older tool descriptions can remain until native reconnect/resume.
-The service is single-instance: rolling duplicate backends do not make native
-session state safely shareable.
-
-## Data, recovery and first migration
-
-Native home/session history, preferences, credentials, uploads, logs and
-Work Commander SQLite/credentials/bindings stay outside releases. Static hashed
-assets are retained separately for existing browser clients. Compile cache is
-external; rollback does not delete or restore live data.
-
-Deployments serialize by accepted order, not GitHub workflow completion order.
-Each activation rechecks its fence, expiry, authorization and current ancestry;
-an old build cannot roll production back after a newer healthy release.
-Uncertain effects block later activation until explicit evidence-based recovery.
-There is no cancel-in-progress deployment kill or automatic redispatch.
-
-Binary fallback requires an actually known-good package and compatible live
-data. A still-running unhealthy/busy candidate is not killed; explicit rollback
-requests safe idle. Failed rollback is a failed/unknown recovery, not success.
-First migration must preserve the original source-mode service as an explicitly
-identified bootstrap recovery option, never fabricate a previously successful
-immutable result. Installing a drop-in or arming restart is not migration
-acceptance.
-
-Keep the earlier disabled pipeline/old staged packages out of the new authority.
-The first integration preserves the reviewed current product source and records
-the obsolete private remote pipeline ancestry without publishing that old
-product snapshot. Work Commander remains a separate unchanged service. Weixin's
-unknown outcome remains paused; voice and recursive Commander work are outside
-this delivery integration.
-
-## Installed instance and operator commands
-
-First accepted immutable deployment (2026-09-11):
-
-| Evidence | Value |
-| --- | --- |
-| Source | `6fc9b641c19d1ecc01ffa5cc7a1678b1d818460b` |
-| Production request | `cockpit-deploy-6fc9b64-20260911` |
-| Hosted build / transfer | Actions runs `34547123281` / `34547354291`, both successful |
-| Runtime archive SHA-256 | `d0449d70f936da588995994cb1a1aeeeefef2d95096aa1371f74e3a5cfea3eef` |
-| Observed process instance | `7c3b6dbc-85ad-4e41-b27a-e4e22f927cf0` |
-| Host toolkit commit | `d6de960e85f50471f719148a5baeb40d2eb90b25` (0.2.0, adapter/contracts v1) |
-| Build-side toolkit commit | `.delivery/provenance.json`, compatible 0.2.0/v1 build interface |
-
-These are historical acceptance identities, not a promise that later main or
-production never advances. Read the authority for every subsequent request.
-The installed host toolkit includes longer bounded archive-verification
-acknowledgements and explicit truncated-response uncertainty; build-side
-packaging semantics are unchanged.
-
-This instance's control plane is `cockpit-delivery.service`, root-owned code at
-`/opt/service-delivery-toolkit/current`, loopback `http://127.0.0.1:8791`.
-Its private configuration is under `~/.config/service-delivery/cockpit/`;
-its durable requests, immutable releases and retained assets are under
-`~/.local/state/service-delivery/cockpit/`. No token values belong in this guide.
-`cockpit.service` has a fixed next-start drop-in at
-`/etc/systemd/system/cockpit.service.d/40-service-delivery.conf`.
-Future Cockpit MCP starts use the same `current/apps/mcp/dist/index.js`.
-Do not use an application `systemctl restart` to bypass the native busy gate.
-
-Use the main toolkit checkout's documented CLI. The operator issues each owner
-a submit credential using `issue-credential.mjs`; `OWNER_CREDENTIAL` below is
-that explicit file path, never a shared caller/Commander credential.
+已有产物边界命令：
 
 ```sh
-TOOLKIT=/opt/service-delivery-toolkit/current
-REPO=/home/honglai/cockpit-foundation
-SHA=$(git -C "$REPO" rev-parse HEAD)
-# The private plan path must be new; preserve it and its stable ID on uncertainty.
-umask 077
-node "$TOOLKIT/bin/service-delivery.mjs" prepare \
-  --repo "$REPO" --sha "$SHA" --config service-delivery.json \
-  --request-id "$REQUEST_ID" --intent build-only > "$PRIVATE_PLAN"
-node "$TOOLKIT/bin/service-delivery.mjs" submit \
-  --request "$PRIVATE_PLAN" --credential "$OWNER_CREDENTIAL"
-node "$TOOLKIT/bin/service-delivery.mjs" lookup \
-  --request-id "$REQUEST_ID" --credential "$OWNER_CREDENTIAL"
+COCKPIT_RELEASE_ARCHIVE=/absolute/runtime.tar.gz \
+  node --test scripts/delivery-package.test.mjs
 ```
 
-For an authorized deployment, the operator registers the exact-SHA approval
-using the toolkit's `authorize` command, then the owner prepares with
-`--intent deploy --authorization "$PRIVATE_APPROVAL"` and submits once.
-Never convert a build-only request in place: that is a conflicting body.
-Approval-file content alone does not register an approval. A changed committed
-project config hash needs explicit review and a matching operator allowlist
-update before submission. Push current source to main first;
-the runner verifies requested/observed/main ancestry and never force-pushes.
+正常源码套件只验证声明和停放来源；未提供变量时跳过实际 tar case，
+不能据此声称已检查某个包。更多证据界限见[验证指南](cockpit-testing.md)。
 
-Unknown dispatch or acknowledgement: read the original ID. Do not automatically
-rerun a workflow or resubmit with a new ID. The first build-only transfer exposed
-exactly this case: its job timed out, but authenticated lookup established the
-verified `built` artifact. It was not replayed. The receiver now allows five
-minutes for archive verification; interactive calls remain bounded at 30 seconds.
-An operator can use `recover` for original-run/process reconciliation or explicit
-compatible binary rollback as documented by the toolkit.
+## 独立控制器与权限
 
-The initial bootstrap fallback has been removed after live acceptance; its
-archived former-runtime snapshot remains retained, not selected or reported as
-an immutable successful deployment. No automatic release/data cleanup is
-installed. Work Commander is independently deployed: acceptance observed
-v1.2.0/release `b3f0861fe5cb`, not the earlier v1.1.0 snapshot. This pipeline did
-not deploy, downgrade or alter that service.
+控制器不是 Copilot 子任务、原生 schedule 或 Task 模块。其外部安装策略维护仓库身份、
+允许的配置摘要、目标环境、启动参数、健康/版本权威及时间界限。
+应用退出后，独立 singleton launcher 才选择已批准包并启动下一实例。
+“外部”的含义见[进程边界](cockpit-plan.md#launchers)。
+
+提交者使用安装者分配给自己的 submit-role 凭据文件；文件路径可作为参数，
+令牌不进入命令输出、Git 或 CI 产物。不能借用其他 owner/Task 的身份。
+部署审批由操作员通过独立 admin 权限登记，绑定项目、完整 SHA、环境和有效期；
+本地 JSON 中写一个 `reference` 不会自行产生权威。
+当前 submit role 不是项目级隔离，不能把它宣传为跨项目最小权限边界。
+
+新配置摘要必须先审阅其实际差异，再由操作员更新外部允许项；不能为“让部署过”
+关闭校验或放宽所有配置。如果控制器需要重读配置，必须先确认没有在途激活，
+按该控制器的正常退出机制处理，不中断正在部署的实例。
+这不授权启用另一个项目、更换用户认证或重启忙碌的 Cockpit。
+
+## 一次请求的操作顺序
+
+先读安装者提供的可信 toolkit 操作说明；下例变量均为本次实际指定的路径/值，
+不是内置凭据或默认生产命令。
+
+1. 在独立源码视图确认完整 `$SHA` 已包含在最新远端 main。`prepare` 还检查本地
+   目标 ref 包含该 SHA；本地旧 ref 不是真实远端状态，不得移动他人的工作区来绕过它。
+2. 根据真实用户授权，由操作员登记精确部署 approval，并保留原始引用及期限。
+3. 生成私有 request 文件并只提交一次；成功、失败或超时后都保留原请求身份。
+4. 若当前回合由待重启应用承载，提交后结束回合；由外部完成事件或下一次真实入口续验。
+5. 认证 lookup 原 `requestId`，并核对实际版本、产物和新实例健康，才记录上线。
+
+```sh
+node "$TOOLKIT/bin/service-delivery.mjs" prepare \
+  --repo "$REPO" --sha "$SHA" --config service-delivery.json \
+  --request-id "$REQUEST_ID" --intent deploy \
+  --authorization "$PRIVATE_AUTHORIZATION_JSON"
+
+node "$TOOLKIT/bin/service-delivery.mjs" submit \
+  --request "$PRIVATE_REQUEST_JSON" --credential "$OWN_SUBMIT_CREDENTIAL"
+
+node "$TOOLKIT/bin/service-delivery.mjs" lookup \
+  --request-id "$REQUEST_ID" --credential "$OWN_SUBMIT_CREDENTIAL"
+```
+
+`prepare` 只向 stdout 输出预览，不提交、不执行项目命令。保存时使用新私有文件和
+限制权限，避免覆盖旧请求；`submit` 接受整个 plan envelope 或其中的 request。
+只构建时用 `--intent build-only` 且不带部署 approval；它的终态 `built` 不是上线。
+不能在原请求 ID 下把 build-only 变成 deploy。
+
+## 安全切换与完成证据
+
+```text
+queued → building → built → waiting-idle → verifying → succeeded
+                       原生安全退出          新包/新实例身份与健康
+```
+
+同环境部署按受理顺序串行，不按 CI 结束先后激活。每次切换重新核对授权期限、配置、
+目标祖先关系和当前激活 fence；旧构建不能在较新健康版本之后倒退安装。
+忙超时可失败，但不强停应用。停止源进程之前不覆盖它正在运行的文件。
+
+`/version` 报告捕获的 SHA、产物摘要、requestId 和实例 ID；
+`/health` 必须健康且属于同一实例。source 模式无可信包身份时返回 503，
+不从移动 Git HEAD 猜版本。实际 Web 资源也应与该包一致，HTTP 200 本身不够。
+
+只重启当前安装版本不会部署 main。部署流程已包含所需安全重启，
+完成后不再追加一个重复重启请求。新 Web/API/MCP 源于同一个包，但已经运行的
+外部 MCP 进程不会热加载 JS；它们需要正常的原生重连/恢复，不能强重载忙会话。
+
+## 失败、恢复与数据
+
+副作用未知时只读取原请求，禁止自动 redispatch、换 ID 重发或从“未查到”推断未执行。
+操作员的 `recover` 先核对原构建/进程；不把恢复当作新部署。
+二进制回退需要真实已知健康旧包和兼容数据，候选仍忙或归属未知时不能直接杀掉。
+失败/未知回退必须如实保留，不报告成功，不还原业务数据库或原生历史。
+
+禁止在待退出回合里启动后台 waiter、定时轮询或 `systemd-run --wait` 等待自己的重启。
+detached shell 也可能仍计入原生活动，不能伪造 idle。外部 controller 的一次完成通知
+是恢复读回的入口，不是额外的任务回执或业务完成证明。
+
+旧包、用户数据、日志及操作回执不因这次流程自动删除。该流程没有自动模块恢复、
+Task/微信启用或 unknown 渠道重发语义；增强退役与数据保留见[模块目录](module-catalog.md)。
