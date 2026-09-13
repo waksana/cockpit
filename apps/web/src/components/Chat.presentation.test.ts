@@ -143,7 +143,7 @@ test('a native cancelling flag disables duplicate stop clicks without claiming c
   assert.doesNotMatch(html, /class="chat-typing-stop"[^>]*>已取消/);
 });
 
-test('user copy and time share one footer outside the bubble without changing message identity or assistant bylines', () => {
+test('user time stays outside its bubble without external copy controls on either message role', () => {
   const session = fixtureSession('reading');
   session.messages = [
     { id: 'short', role: 'user', content: 'Short', timestamp: 1000 },
@@ -154,9 +154,8 @@ test('user copy and time share one footer outside the bubble without changing me
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
   assert.equal((html.match(/class="user-message"/g) ?? []).length, 3);
   assert.equal((html.match(/class="message-time"/g) ?? []).length, 3);
-  assert.equal((html.match(/class="user-message-meta"><span class="chat-copy is-text">/g) ?? []).length, 3);
-  assert.equal((html.match(/<\/span><span class="message-time">\d{2}:\d{2}<\/span><\/div>/g) ?? []).length, 3);
-  assert.doesNotMatch(html, /class="message-actions" data-role="user"/);
+  assert.equal((html.match(/class="user-message-meta"><span class="message-time">\d{2}:\d{2}<\/span><\/div>/g) ?? []).length, 3);
+  assert.doesNotMatch(html, /class="message-actions"|aria-label="复制消息"|class="chat-copy"/);
   for (const id of ['short', 'long', 'third']) assert.match(html, new RegExp(`class="message is-out[^"]*" data-message-id="${id}"`));
   assert.match(html, /class="doc-time"/);
 });
@@ -198,11 +197,33 @@ test('expanded tools share one surface and expose the full title only in their h
   assert.match(source, /tc\.name && tc\.name !== tc\.title/);
 });
 
-test('message process spacing and text copy do not retain old document or toolbar gaps', () => {
+test('message process spacing does not retain old document or copy toolbar gaps', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.msg-group\[data-assistant-message\] > \.message\.is-doc \{\s*margin: 0/);
   assert.match(css, /\.msg-group\[data-assistant-message\] \+ \.msg-group\[data-assistant-message\] \{[^}]*border-top: 1px/);
   assert.match(css, /\.message-process-content \.msg-tools \{[^}]*margin: 0;[^}]*gap: 4px/);
-  assert.match(css, /\.message-actions \{[^}]*min-height: 0;[^}]*margin: 0/);
-  assert.match(css, /\.chat-copy\.is-text \.chat-copy-button \{[^}]*min-height: 24px/);
+  assert.doesNotMatch(css, /\.message-actions|\.chat-copy\.is-text/);
+  assert.match(css, /\.message-process \+ \.message-body \{\s*margin-top: 8px;\s*\}/);
+});
+
+test('message and activity hover do not add fill while keyboard focus and local copy remain visible', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  for (const rule of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    if (!rule[1].includes(':hover')) continue;
+    assert.doesNotMatch(rule[1], /\.(?:message-body|process-summary|activity-head|subagent-head|msg-group|msg-tool)\b/);
+  }
+  assert.match(css, /\.chat :is\(button, a, textarea, summary, \[tabindex\]\):focus-visible \{[^}]*outline: 2px/);
+  assert.match(css, /\.chat-copy-button:hover/);
+});
+
+test('code copying inside user and assistant Markdown quotes survives removal of external message copying', () => {
+  const session = fixtureSession('reading');
+  session.messages = [
+    { id: 'user-code', role: 'user', content: '> Quoted source\n>\n> ```ts\n> const answer = 42;\n> ```', timestamp: 1 },
+    { id: 'assistant-code', role: 'assistant', content: '```sh\nprintf "exact\\n"\n```', timestamp: 2 },
+  ];
+  const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
+  assert.equal((html.match(/aria-label="复制代码"/g) ?? []).length, 2);
+  assert.match(html, /<blockquote>/);
+  assert.doesNotMatch(html, /aria-label="复制消息"|class="message-actions"/);
 });

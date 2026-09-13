@@ -215,7 +215,7 @@
   }
 }
 
-// Bubble and its compact copy/time row share the same right edge.
+// The timestamp stays just below its bubble, aligned with the same right edge.
 .user-message {
   display: flex;
   flex-direction: column;
@@ -230,7 +230,6 @@
   align-self: flex-end;
   align-items: flex-start;
   justify-content: flex-end;
-  gap: 0.4rem;
   margin-top: 2px;
   max-width: 100%;
   .message-time {
@@ -238,9 +237,6 @@
     font-size: var(--font-size-12); line-height: 24px;
     color: var(--secondary-text-color);
   }
-  .chat-copy { flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
-  .chat-copy-button { min-height: 28px; min-width: 4rem; }
-  .chat-copy-error { flex-basis: 100%; overflow-wrap: anywhere; text-align: end; }
 }
 .message.is-out {
   align-self: flex-end;
@@ -352,7 +348,6 @@
   padding: 0 4px; border: 0; border-radius: 6px;
   background: transparent; color: var(--secondary-text-color);
   font: inherit; font-size: var(--font-size-13); text-align: start; cursor: pointer;
-  &:hover { background: var(--ripple-color); }
   time { flex: none; font-size: var(--font-size-12); font-variant-numeric: tabular-nums; }
   &[aria-expanded='false'] .process-summary-chevron { transform: rotate(-90deg); }
 }
@@ -367,12 +362,11 @@
   .msg-tools { margin: 0; gap: 4px; }
   .msg-thought-block + .msg-tools { margin-top: 4px; }
   .activity-head { background: transparent; }
-  button.activity-head:hover { background: var(--ripple-color); }
 }
-.message-process + .message-body,
+.message-process + .message-body { margin-top: 8px; }
 button.activity-head {
   cursor: pointer;
-  &:hover, &[aria-expanded='true'] { background: var(--ripple-color); }
+  &[aria-expanded='true'] { background: var(--ripple-color); }
 }
 .activity-icon { grid-column: 1; display: inline-flex; align-items: center; justify-content: center; }
 .activity-title {
@@ -405,7 +399,6 @@ button.activity-head {
       background: transparent;
       .activity-icon, .activity-chevron { height: 20px; }
       .activity-title { white-space: normal; overflow-wrap: anywhere; color: var(--primary-text-color); }
-      &:hover { background: var(--ripple-color); }
     }
   }
   &[data-status='completed'] .activity-icon { color: var(--green-color); }
@@ -453,7 +446,6 @@ button.activity-head {
   min-height: 44px; padding: 0.65rem 0.8rem;
   border: none; background: transparent; cursor: pointer;
   font: inherit; color: inherit; text-align: start;
-  &:hover { background: var(--ripple-color); }
 }
 .subagent-ico { flex: none; display: inline-flex; color: var(--secondary-text-color); }
 .subagent-name { flex: 1 1 auto; min-width: 0; font-size: var(--font-size-14); font-weight: 600; color: var(--primary-text-color); overflow-wrap: anywhere; }
@@ -559,17 +551,6 @@ button.activity-head {
   &:hover { background: var(--ripple-color); color: var(--primary-text-color); }
 }
 .chat-copy-error { color: var(--chat-danger-ink); font-size: 12px; line-height: 1.5; }
-.chat-copy.is-text {
-  flex-wrap: wrap; justify-content: flex-end; gap: 2px 6px;
-  .chat-copy-button {
-    min-width: 24px; min-height: 24px; padding: 2px 4px;
-    font-size: var(--font-size-12); line-height: 20px;
-    &:hover { background: transparent; }
-  }
-}
-.message-actions {
-  display: flex; justify-content: flex-end; min-height: 0; margin: 0;
-}
 .chat-copy-notice {
   position: absolute; bottom: 5rem; left: 50%; transform: translateX(-50%);
   max-width: calc(100% - 2rem); padding: 0.4rem 0.75rem; border-radius: 8px;
