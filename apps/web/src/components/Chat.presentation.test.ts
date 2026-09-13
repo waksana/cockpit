@@ -43,14 +43,14 @@ test('clipboard failure is propagated, never reported as success', async t => {
   await assert.rejects(copyText('retained'), /浏览器不支持剪贴板/);
 });
 
-test('tool history has a per-message summary with explicit recorded failure and unknown states', () => {
+test('latest tool overview exposes explicit recorded failure and unknown states', () => {
   const html = renderToStaticMarkup(createElement(Thread, {
     session: fixtureSession('process'), readOnly: true, onLoadMore() {},
   }));
   assert.match(html, /1 项状态未知/);
   assert.match(html, /1 项失败/);
   assert.match(html, /class="process-summary"/);
-  assert.doesNotMatch(html, /class="activity-head tool-head tool-toggle"/);
+  assert.match(html, /class="activity-head tool-head tool-toggle"/);
   assert.match(html, /记录：本次执行已结束/);
   assert.doesNotMatch(html, /任务目标已完成<\/span>|🤖/);
 });
@@ -169,7 +169,7 @@ test('thought, tool and skill use one single-line activity header, with static s
   const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession('process'), readOnly: true, onLoadMore() {} }));
   assert.match(html, /class="process-summary"/);
   assert.doesNotMatch(html, /class="activity-head thought-toggle"/);
-  assert.doesNotMatch(html, /class="activity-head tool-head tool-toggle"/);
+  assert.match(html, /class="activity-head tool-head tool-toggle"/);
   assert.match(html, /class="message is-skill"[^>]*><div class="activity-head /);
   assert.doesNotMatch(html, /class="tool-detail-name"|class="msg-thought"/);
   const staticHeader = renderToStaticMarkup(createElement(ActivityHeader, { icon: 'icon', title: 'skill · long skill name' }));
@@ -200,10 +200,11 @@ test('expanded tools share one surface and expose the full title only in their h
 test('message process spacing does not retain old document or copy toolbar gaps', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.msg-group\[data-assistant-message\] > \.message\.is-doc \{\s*margin: 0/);
-  assert.match(css, /\.msg-group\[data-assistant-message\] \+ \.msg-group\[data-assistant-message\] \{[^}]*border-top: 1px/);
-  assert.match(css, /\.message-process-content \.msg-tools \{[^}]*margin: 0;[^}]*gap: 4px/);
+  assert.doesNotMatch(css, /\.msg-group\[data-assistant-message\] \+ \.msg-group\[data-assistant-message\]/);
+  assert.match(css, /\.message-process-content \{\s*padding: 0 0 0 22px/);
+  assert.match(css, /\.user-message \{[^}]*margin: 0/);
   assert.doesNotMatch(css, /\.message-actions|\.chat-copy\.is-text/);
-  assert.match(css, /\.message-process \+ \.message-body \{\s*margin-top: 8px;\s*\}/);
+  assert.doesNotMatch(css, /\.message-process \+ \.message-body/);
 });
 
 test('message and activity hover do not add fill while keyboard focus and local copy remain visible', () => {

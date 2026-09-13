@@ -29,12 +29,13 @@ function live(events: Ev[], engineIntercepts: string[] = []) {
   for (const ev of events) {
     if (engineIntercepts.includes(ev.type)) continue;
     const res = foldEvent(st, normalizeEvent({ ...ev, data: ev.data ?? {} }));
+    for (const id of res.removed ?? []) client.delete(id);
     for (const id of res.changed) {
       const idx = st.byId.get(id);
       if (idx !== undefined) client.set(id, structuredClone(st.messages[idx]));
     }
   }
-  return { st, client };
+  return { st, client: new Map(st.messages.map(message => [message.id, client.get(message.id)])) };
 }
 
 const tStart = (i = 0): Ev => ({ type: 'assistant.turn_start', data: {}, id: `ts-${i}` });
@@ -157,16 +158,19 @@ test('streaming deltas accumulate into one message', () => {
   assert.equal(st.messages[0].content, 'foobar');
 });
 
-test('reasoning pairs with the following message (one bubble)', () => {
+test('reasoning keeps its own native identity before the following body', () => {
   const evs: Ev[] = [
     tStart(),
     { type: 'assistant.reasoning', data: { reasoningId: 'r1', content: 'thinking…' } },
     asstMsg('a1', 'answer'),
   ];
   const st = replay(evs);
-  assert.equal(st.messages.length, 1);
+  assert.equal(st.messages.length, 2);
   assert.equal(st.messages[0].thought, 'thinking…');
-  assert.equal(st.messages[0].content, 'answer');
+  assert.equal(st.messages[0].id, 'reasoning-r1');
+  assert.equal(st.messages[0].content, '');
+  assert.equal(st.messages[1].content, 'answer');
+  assert.equal(st.messages[1].thought, undefined);
 });
 
 // --- H1: cancel mid-stream must not merge the next turn into the cancelled one ---
@@ -222,19 +226,16 @@ test('M2: multiple reasoning segments are preserved', () => {
     asstMsg('a1', 'answer'),
   ];
   const st = replay(evs);
-  assert.equal(st.messages.length, 1);
+  assert.equal(st.messages.length, 3);
   // Both reasoning segments should survive (not just the last).
   assert.match(st.messages[0].thought ?? '', /first thought/);
-  assert.match(st.messages[0].thought ?? '', /second thought/);
+  assert.match(st.messages[1].thought ?? '', /second thought/);
+  assert.deepEqual(st.messages.map(message => message.id), ['reasoning-r1', 'reasoning-r2', 'a1']);
 });
 
 // ── D1: streaming reasoning survives reload (live == replay) ──────────────────
-// Live, reasoning streams onto a placeholder before the message; the persisted
-// form (what getEvents() returns) has NO reasoning events — only the final
-// assistant.message carrying `reasoningText`. The fold must reconstruct the
-// thought from that persisted field so a reload shows what the user saw live.
-// Canonical message IDs must also match: history before/after anchors and the
-// upsert-only live client cannot safely retain reasoning-placeholder IDs.
+// Explicit native reasoning records have their own identity. Message-only
+// journals use a deterministic message-based reasoning fallback instead.
 
 // The live store projection in first-upsert (insertion) order.
 function liveProjection(events: Ev[]) {
@@ -256,20 +257,21 @@ test('D1: streaming reasoning survives reload — thought rebuilt from reasoning
   const replayEvs: Ev[] = [tStart(), asstMsg('a1', 'The answer.', { reasoningText })];
 
   const replayed = replay(replayEvs);
-  assert.equal(replayed.messages.length, 1);
+  assert.equal(replayed.messages.length, 2);
   // The headline assertion — fails today, passes with the reasoningText fallback.
   assert.equal(replayed.messages[0].thought, reasoningText);
-  assert.equal(replayed.messages[0].content, 'The answer.');
+  assert.equal(replayed.messages[0].id, 'reasoning-message-a1');
+  assert.equal(replayed.messages[1].content, 'The answer.');
 
   // Live carries the same thought, accumulated from the streamed reasoning.
   const liveMsgs = liveProjection(liveEvs);
-  assert.equal(liveMsgs.length, 1);
+  assert.equal(liveMsgs.length, 2);
   assert.equal(liveMsgs[0].thought, reasoningText);
-  assert.equal(liveMsgs[0].content, 'The answer.');
+  assert.equal(liveMsgs[1].content, 'The answer.');
 
   // Live and replay share the canonical anchor, not only visible text.
-  assert.equal(liveMsgs[0].id, 'a1');
-  assert.equal(liveMsgs[0].id, replayed.messages[0].id);
+  assert.equal(liveMsgs[0].id, 'reasoning-r1');
+  assert.equal(liveMsgs[1].id, replayed.messages[1].id);
   assert.equal(liveMsgs[0].thought, replayed.messages[0].thought);
   assert.equal(liveMsgs[0].content, replayed.messages[0].content);
 });
@@ -310,17 +312,17 @@ test('D1: multi-segment reasoning reload — combined reasoningText rebuilds the
   const replayEvs: Ev[] = [tStart(), asstMsg('a1', 'done', { reasoningText: combined })];
 
   const replayed = replay(replayEvs);
-  assert.equal(replayed.messages.length, 1);
+  assert.equal(replayed.messages.length, 2);
   // Both segments present after reload.
   assert.match(replayed.messages[0].thought ?? '', /first thought/);
   assert.match(replayed.messages[0].thought ?? '', /second thought/);
 
   const liveMsgs = liveProjection(liveEvs);
-  assert.equal(liveMsgs.length, 1);
+  assert.equal(liveMsgs.length, 3);
   assert.match(String(liveMsgs[0].thought ?? ''), /first thought/);
-  assert.match(String(liveMsgs[0].thought ?? ''), /second thought/);
+  assert.match(String(liveMsgs[1].thought ?? ''), /second thought/);
   // live == replay on the rebuilt thought.
-  assert.equal(liveMsgs[0].thought, replayed.messages[0].thought);
+  assert.equal(liveMsgs.slice(0, 2).map(message => message.thought).join('\n\n'), replayed.messages[0].thought);
 });
 
 test('D1: sub-agent streaming reload — inner thought rebuilt inside the card', () => {
@@ -356,20 +358,20 @@ test('D1: sub-agent streaming reload — inner thought rebuilt inside the card',
   const card = replayed.messages.find((m) => m.subtype === 'subagent');
   assert.ok(card, 'sub-agent card exists on replay');
   const innerReplay = card!.subMessages ?? [];
-  assert.equal(innerReplay.length, 1);
+  assert.equal(innerReplay.length, 2);
   // Fails today (inner thought dropped); passes with the reasoningText fallback.
   assert.equal(innerReplay[0].thought, innerThought);
-  assert.equal(innerReplay[0].content, 'inner ans');
+  assert.equal(innerReplay[1].content, 'inner ans');
 
   // Live rebuilds the same inner thought from the streamed reasoning.
   const { st: liveSt } = live(liveEvs);
   const liveCard = liveSt.messages.find((m) => m.subtype === 'subagent');
   assert.ok(liveCard, 'sub-agent card exists live');
   const innerLive = liveCard!.subMessages ?? [];
-  assert.equal(innerLive.length, 1);
+  assert.equal(innerLive.length, 2);
   assert.equal(innerLive[0].thought, innerThought);
-  assert.equal(innerLive[0].content, 'inner ans');
-  assert.equal(innerLive[0].id, innerReplay[0].id);
+  assert.equal(innerLive[1].content, 'inner ans');
+  assert.equal(innerLive[1].id, innerReplay[1].id);
 });
 
 // --- tool calls ---

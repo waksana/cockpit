@@ -7,10 +7,14 @@ export const NATIVE_PAGE = 32;
 const displayTypes = new Set(CHAT_EVENT_TYPES);
 export type ChatPosition = Pick<NativeChatRead, 'source' | 'cursor' | 'agentScope' | 'agentIds' | 'types'>;
 
+const reasoningId = (event: NativeChatEvent) =>
+  `reasoning-${typeof event.data.reasoningId === 'string' && event.data.reasoningId ? event.data.reasoningId : event.id}`;
 const finalizedId = (event: NativeChatEvent) => event.type === 'assistant.message'
-  ? typeof event.data.messageId === 'string' ? event.data.messageId : event.id : undefined;
+  ? typeof event.data.messageId === 'string' && event.data.messageId ? event.data.messageId : event.id
+  : event.type === 'assistant.reasoning' ? reasoningId(event) : undefined;
 const streamId = (event: NativeChatEvent) =>
-  typeof event.data.messageId === 'string' ? event.data.messageId : undefined;
+  event.type === 'assistant.reasoning_delta' ? reasoningId(event)
+    : typeof event.data.messageId === 'string' ? event.data.messageId : undefined;
 function projectMessages(messages: ChatMessage[], previous: ChatMessage[], changed: Set<string>): ChatMessage[] {
   const byId = new Map(previous.map(message => [message.id, message]));
   const projected = messages.map(message => {
@@ -106,7 +110,13 @@ export class NativeWindow {
     this.streaming.clear();
     this.recentEphemeral.clear();
     this.catchingUp = true;
-    for (const state of states(this.state)) resetTurn(state);
+    for (const state of states(this.state)) {
+      const reasoningIds = state.reasoningIds;
+      resetTurn(state);
+      // Retain only identity links for final reconciliation, never an accumulator
+      // that could append a post-gap suffix to an incomplete reasoning prefix.
+      state.reasoningIds = reasoningIds;
+    }
   }
 
   invalidate() { this.disconnect(); this.invalid = true; }
@@ -143,9 +153,13 @@ export class NativeWindow {
         if (!this.complete.has(id)) { this.blocked.add(id); this.partial = true; }
         return [];
       }
+      if (event.type === 'assistant.reasoning_delta' && id) {
+        if (this.complete.has(id) || this.blocked.has(id)) return [];
+      }
     }
     const finalId = finalizedId(event);
     const final = finalId ? this.eventKey(event, finalId) : undefined;
+    const finalizingTransient = !event.ephemeral && !!final && (this.streaming.has(final) || this.blocked.has(final));
     if (final && !event.ephemeral) {
       this.complete.add(final);
       this.streaming.delete(final);
@@ -159,6 +173,11 @@ export class NativeWindow {
         this.noteMissing(event);
       }
     }
+    const eventOwners = ownersOf(event);
+    const reasoningOwner = eventOwners.length
+      ? states(this.state).find(state => eventOwners.some(owner => state.agentIds.has(owner))) : this.state;
+    const reconciled = event.type === 'assistant.message' && typeof event.data.reasoningText === 'string'
+      ? [...reasoningOwner?.reasoningIds ?? []] : [];
     const result = foldEvent(this.state, event, {
       eventOrder: order,
       ...event.display, toolArgs: event.display?.toolArgs ? new Map(event.display.toolArgs) : undefined,
@@ -168,14 +187,45 @@ export class NativeWindow {
       this.noteMissing(event, true);
     }
     if (event.type === 'subagent.started') this.resolveStreamOwners();
-    const changed = [...result.changed, ...result.nestedChanged ?? []];
-    const eventOwners = ownersOf(event);
+    if (reasoningOwner) for (const reasoningId of reconciled) {
+      const key = this.key(reasoningOwner, reasoningId);
+      this.complete.add(key);
+      this.streaming.delete(key);
+      this.blocked.delete(key);
+    }
+    if (!this.blocked.size) this.partial = false;
+    const changed = [...result.changed, ...result.nestedChanged ?? [], ...result.removed ?? []];
+    if (event.ephemeral && event.type === 'assistant.reasoning_delta' && id && result.changed.length) {
+      this.streaming.add(id);
+    }
     const known = states(this.state);
     if (this.missingEphemeral.size) this.resolveMissingEphemeral(known);
     for (const state of known) {
       let orders = this.orders.get(state);
       if (!orders) this.orders.set(state, orders = new Map());
       for (const id of changed) if (state.byId.has(id) && !orders.has(id)) orders.set(id, order);
+      if (finalizingTransient && finalId && final === this.key(state, finalId) && state.byId.has(finalId)) {
+        // Temporary deltas are not a durable ordering anchor. The first complete
+        // record fixes its position so cold pages and live catch-up converge.
+        const requested = event.type === 'assistant.message' && Array.isArray(event.data.toolRequests)
+          ? event.data.toolRequests.flatMap(request => request && typeof request === 'object' && typeof request.toolCallId === 'string'
+            && orders.get(`tool-${request.toolCallId}`) === order ? [`tool-${request.toolCallId}`] : []) : [];
+        const ids = event.type === 'assistant.message' ? [`reasoning-message-${finalId}`, finalId, ...requested] : [finalId];
+        const finalized = ids.flatMap(id => {
+          const index = state.byId.get(id);
+          return index === undefined ? [] : [state.messages[index]];
+        });
+        for (let index = state.messages.length - 1; index >= 0; index--) {
+          if (ids.includes(state.messages[index].id)) state.messages.splice(index, 1);
+        }
+        state.messages.push(...finalized);
+        state.byId = new Map(state.messages.map((message, index) => [message.id, index]));
+        for (const item of finalized) orders.set(item.id, order);
+      }
+      if (event.type === 'assistant.message' && messageId && state.byId.has(messageId)) {
+        const fallback = `reasoning-message-${messageId}`;
+        if (state.byId.has(fallback)) orders.set(fallback, Math.min(orders.get(fallback) ?? order, orders.get(messageId) ?? order));
+      }
       if (event.ephemeral && event.type === 'assistant.reasoning_delta' && state.pendingReasoning
         && (eventOwners.length ? eventOwners.some(owner => state.agentIds.has(owner)) : state === this.state)) {
         this.ephemeralReasoning.add(state.pendingReasoning);
@@ -196,7 +246,7 @@ export class NativeWindow {
         .flatMap(id => state.byId.has(id) ? [state.messages[state.byId.get(id)!]] : []),
       scratch: {
         streamingId: state.streamingId, pendingReasoning: state.pendingReasoning,
-        reasoningId: state.reasoningId, reasoningBase: state.reasoningBase,
+        reasoningId: state.reasoningId, reasoningIds: state.reasoningIds,
       },
     }));
     const incoming = this.history.order(events, true);
@@ -210,15 +260,15 @@ export class NativeWindow {
     for (const item of incoming) {
       this.ids.add(item.event.id);
       for (const id of this.project(item.event, item.order)) changed.add(id);
-      for (const dependent of this.history.dependencies(item.event, knownOwners)) enqueue(dependent);
+      for (const dependent of this.history.dependencies(item.event, knownOwners, known)) enqueue(dependent);
     }
     for (const state of states(this.state)) {
-      if (state.pendingReasoning || state.streamingId) {
+      if (state.reasoningIds.length || state.streamingId) {
         for (const item of this.history.head(state)) enqueue(item);
       }
     }
     for (const item of replay.values()) {
-      for (const dependent of this.history.dependencies(item.event, knownOwners)) enqueue(dependent);
+      for (const dependent of this.history.dependencies(item.event, knownOwners, known)) enqueue(dependent);
     }
     for (const item of [...replay.values()].sort((a, b) => a.order - b.order)) {
       for (const id of this.project(item.event, item.order)) changed.add(id);
@@ -240,7 +290,8 @@ export class NativeWindow {
       }
       const { scratch } = saved;
       if ((scratch.streamingId && !this.complete.has(this.key(target, scratch.streamingId)))
-        || (scratch.pendingReasoning && this.ephemeralReasoning.has(scratch.pendingReasoning))) Object.assign(target, scratch);
+        || (scratch.pendingReasoning && this.ephemeralReasoning.has(scratch.pendingReasoning)
+          && !this.complete.has(this.key(target, scratch.pendingReasoning.id)))) Object.assign(target, scratch);
     }
   }
 

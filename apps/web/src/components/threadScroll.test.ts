@@ -142,14 +142,14 @@ test('incremental backward owner repair and interleaved live rows retain the act
   frames.flush();
   assert.deepEqual(scroll.position(), anchor);
   assert.equal(window.snapshot().messages.find(message => message.id === 'm3'), stable);
-  assert.equal(view.top, 525);
+  assert.equal(view.top, 625, 'owner body, tool row and ask reply precede the same reading anchor');
   accept([message('older')]);
   accept([message('more-live')], 'forward');
   view.rows = window.snapshot().messages.map(message => ({ id: message.id, height: 100 }));
   scroll.changed();
   frames.flush();
   assert.deepEqual(scroll.position(), anchor);
-  assert.equal(view.top, 625);
+  assert.equal(view.top, 725);
   scroll.dispose();
 });
 
@@ -180,6 +180,7 @@ test('each mounted scroll adapter starts at latest and real gestures cancel queu
   const row = (id: string) => ({
     getBoundingClientRect: () => ({ top: view.offset(id)!, bottom: view.offset(id)! + 100 }),
     getAttribute: () => id,
+    closest: () => null,
   });
   const content = Object.assign(new EventTarget(), {
     querySelectorAll: () => view.rows.map(value => ({ ...row(value.id), querySelector: () => row(value.id) })),

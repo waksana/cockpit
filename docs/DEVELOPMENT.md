@@ -71,3 +71,9 @@ documents the historical original/v3/v4 comparison and real-device limits.
 The former global VisualViewport controller and its simulated-geometry lab
 are removed. Stop temporary previews after review; do not leave resident
 background work, open native sessions or publish user screenshots.
+
+For current event ordering and process disclosure behavior, choose `ordered-events`.
+Its controls feed synthetic historical/live/reconnect pages through the production
+browser projection. The [native chat guide](native-chat.md#ordered-presentation)
+owns the current grouping and update contract; archived design reviews are not
+the current visual specification.

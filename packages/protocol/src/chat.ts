@@ -28,16 +28,14 @@ export interface FoldState {
   pendingTask: Map<string, { prompt?: string; description?: string; agentType?: string }>;
   // Browser-local order of child activity/terminal evidence; duplicate starts cannot supersede it.
   executionOrder?: number;
-  // Reasoning has no messageId. Buffer it until the canonical message ID arrives;
-  // publishing a placeholder would leave stale client IDs and pagination anchors.
+  // Stream scratch is separate from the independently anchored display records.
   streamingId?: string;
+  // Reference to the latest reasoning row, not a second copy of its content.
   pendingReasoning?: ChatMessage;
-  // Active reasoning segment within the current turn. A turn can emit several
-  // reasoning blocks (distinct reasoningId); `reasoningId` is the one currently
-  // accumulating and `reasoningBase` is the thought text committed before it, so a
-  // new block appends instead of overwriting prior ones (M2).
   reasoningId?: string;
-  reasoningBase?: string;
+  reasoningIds: string[];
+  finalReasoning: Set<string>;
+  messageReasoning: Map<string, string[]>;
   currentModelId?: string;
 }
 
@@ -46,11 +44,13 @@ export function newFoldState(): FoldState {
     messages: [], byId: new Map(), toolMsg: new Map(),
     askToolIds: new Set(),
     subFolds: new Map(), subCard: new Map(), agentIds: new Set(), pendingTask: new Map(),
+    reasoningIds: [], finalReasoning: new Set(), messageReasoning: new Map(),
   };
 }
 
 export interface FoldResult {
   changed: string[]; // message ids upserted
+  removed?: string[]; // transient/fallback rows superseded by durable records
   nestedChanged?: string[];
   metaChanged: boolean;
   missingOwner?: boolean;
@@ -89,13 +89,6 @@ function upsert(state: FoldState, msg: ChatMessage): void {
   }
 }
 
-// The current turn's streaming assistant message, if one exists.
-function streamingMsg(state: FoldState): ChatMessage | undefined {
-  if (state.streamingId === undefined) return undefined;
-  const idx = state.byId.get(state.streamingId);
-  return idx === undefined ? undefined : state.messages[idx];
-}
-
 interface FoldRoute { fold: FoldState; cards: ChatMessage[] }
 
 function findRoute(state: FoldState, owns: (fold: FoldState) => boolean): FoldRoute | undefined {
@@ -112,65 +105,53 @@ function stringOf(value: unknown): string | undefined {
   return typeof value === 'string' && value ? value : undefined;
 }
 
-// Get-or-create a canonical assistant message, adopting any buffered reasoning.
+// Body updates never adopt reasoning or tool rows.
 function ensureStreaming(state: FoldState, id: string, ts: number): ChatMessage {
   state.streamingId = id;
   const idx = state.byId.get(id);
   if (idx !== undefined) {
     const existing = state.messages[idx];
     if (existing) {
-      if (state.pendingReasoning?.thought) existing.thought = state.pendingReasoning.thought;
-      state.pendingReasoning = undefined;
       return existing;
     }
   }
   const msg: ChatMessage = {
     id, role: 'assistant', content: '', timestamp: ts,
-    ...(state.pendingReasoning?.thought ? { thought: state.pendingReasoning.thought } : {}),
   };
-  state.pendingReasoning = undefined;
   upsert(state, msg);
   return msg;
 }
 
 function reasoningMsg(state: FoldState, rid: string, ts: number): ChatMessage {
-  return streamingMsg(state) ?? (state.pendingReasoning ??= {
-    id: `stream-${rid || state.messages.length}`, role: 'assistant', content: '', timestamp: ts,
-  });
+  const id = `reasoning-${rid}`;
+  const index = state.byId.get(id);
+  const message = index === undefined
+    ? { id, role: 'assistant' as const, content: '', timestamp: ts }
+    : state.messages[index]!;
+  upsert(state, message);
+  state.pendingReasoning = message;
+  state.reasoningId = rid;
+  if (!state.reasoningIds.includes(id)) state.reasoningIds.push(id);
+  return message;
 }
 
-function flushReasoning(state: FoldState, boundaryId?: string): string[] {
-  const pending = state.pendingReasoning;
-  if (!pending?.thought) return [];
-  // Older pages can extend the first reasoning segment; the closing event is
-  // the stable identity of a reasoning-only row and its reading anchor.
-  if (boundaryId) pending.id = `stream-${boundaryId}`;
-  upsert(state, pending);
-  state.pendingReasoning = undefined;
-  return [pending.id];
+function removeMessages(state: FoldState, ids: Set<string>): void {
+  if (!ids.size) return;
+  for (let index = state.messages.length - 1; index >= 0; index--) {
+    if (ids.has(state.messages[index]!.id)) state.messages.splice(index, 1);
+  }
+  state.byId = new Map(state.messages.map((message, index) => [message.id, index]));
 }
 
-// Reset the streaming/turn scratch state. Exported so the engine can clear it on
-// an out-of-band turn end (e.g. cancel/abort, which emits no final message).
+// Reset active accumulators without discarding the readable partial records.
 export function resetTurn(state: FoldState): void {
   state.streamingId = undefined;
   state.pendingReasoning = undefined;
   state.reasoningId = undefined;
-  state.reasoningBase = undefined;
+  state.reasoningIds = [];
 }
 
 const endTurn = resetTurn;
-
-// Begin a reasoning segment on `m` for `rid`: if it differs from the active one,
-// commit the prior thought as the base (with a separator) so the new segment
-// appends rather than overwrites. Returns the base for this segment.
-function beginReasoningSegment(state: FoldState, m: ChatMessage, rid: string): string {
-  if (state.reasoningId !== rid) {
-    state.reasoningBase = m.thought ? `${m.thought}\n\n` : '';
-    state.reasoningId = rid;
-  }
-  return state.reasoningBase ?? '';
-}
 
 // Get the sub-agent card message (by toolCallId) from this fold, if it exists.
 function subCardMsg(state: FoldState, toolCallId: string): ChatMessage | undefined {
@@ -368,9 +349,10 @@ export function foldEvent(state: FoldState, ev: SdkEvent, projection?: FoldProje
     }
   }
   const result = foldLocalEvent(route.fold, ev, projection);
-  if ((result.changed.length || executionChanged) && route.cards[0]) {
+  if ((result.changed.length || result.removed?.length || executionChanged) && route.cards[0]) {
     return { changed: [route.cards[0].id], metaChanged: result.metaChanged,
-      nestedChanged: [...route.cards.map(card => card.id), ...result.changed, ...result.nestedChanged ?? []] };
+      nestedChanged: [...route.cards.map(card => card.id), ...result.changed, ...result.nestedChanged ?? []],
+      ...(result.removed?.length ? { removed: result.removed } : {}) };
   }
   return result;
 }
@@ -415,7 +397,6 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       ?? [...state.subFolds].find(([, sub]) => !!ev.agentId && sub.agentIds.has(ev.agentId))?.[0] ?? '';
     const card = subCardMsg(state, toolCallId);
     if (!card?.subagent) return empty;
-    let nestedChanged: string[] = [];
     if (ev.type !== 'subagent.configured') {
       card.subagent.status = ev.type === 'subagent.failed' ? 'failed'
         : d.cancelled === true ? 'cancelled' : 'completed';
@@ -423,13 +404,13 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       const sub = state.subFolds.get(toolCallId);
       if (sub) {
         sub.executionOrder = projection?.eventOrder;
-        nestedChanged = flushReasoning(sub, ev.id); endTurn(sub);
+        endTurn(sub);
       }
     }
     if (typeof d.model === 'string') card.subagent.model = d.model;
     if (typeof d.totalToolCalls === 'number') card.subagent.toolCount = d.totalToolCalls;
     if (typeof d.error === 'string') card.subagent.error = d.error;
-    return { changed: [card.id], nestedChanged, metaChanged: false };
+    return { changed: [card.id], metaChanged: false };
   }
   // subagent.selected/deselected carry agent metadata but no per-event work to fold.
   if (ev.type === 'subagent.selected' || ev.type === 'subagent.deselected') return empty;
@@ -440,9 +421,8 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
     case 'session.idle':
     case 'abort':
     case 'assistant.turn_start': {
-      const changed = flushReasoning(state, ev.id);
       endTurn(state);
-      return { changed, metaChanged: false };
+      return empty;
     }
 
     case 'user.message': {
@@ -455,11 +435,10 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       // the `skill.invoked` event instead (CLI-style skill pill), so drop this.
       const source = typeof d.source === 'string' ? d.source : '';
       if (source.startsWith('skill-')) return empty;
-      const changed = flushReasoning(state, ev.id);
       endTurn(state);
       const id = ev.id ?? `u-${state.messages.length}`;
       upsert(state, { id, role: 'user', content, timestamp: tsOf(ev) });
-      return { changed: [...changed, id], metaChanged: false };
+      return { changed: [id], metaChanged: false };
     }
 
     case 'skill.invoked': {
@@ -475,31 +454,23 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
     }
 
     case 'assistant.reasoning_delta': {
-      const rid = typeof d.reasoningId === 'string' ? d.reasoningId : '';
+      const rid = stringOf(d.reasoningId) ?? ev.id ?? `segment-${state.messages.length}`;
       const delta = typeof d.deltaContent === 'string' ? d.deltaContent : '';
-      if (!delta) return empty;
+      if (!delta || state.finalReasoning.has(`reasoning-${rid}`)) return empty;
       const m = reasoningMsg(state, rid, tsOf(ev));
-      // A new reasoning block commits the prior thought as a base, so multiple
-      // blocks in one turn accumulate instead of overwriting (M2).
-      const previousRid = state.reasoningId;
-      const base = beginReasoningSegment(state, m, rid || `seg-${state.messages.length}`);
-      if (state.reasoningId !== previousRid) m.thought = base;
       m.thought = (m.thought ?? '') + delta;
-      return { changed: state.pendingReasoning === m ? [] : [m.id], metaChanged: false };
+      return { changed: [m.id], metaChanged: false };
     }
 
     case 'assistant.reasoning': {
-      // Final, complete thinking text (persisted → replays on reload). Replaces the
-      // CURRENT segment's streamed partial (from its base), preserving earlier
-      // segments. Pairs with the upcoming assistant.message by order.
-      const rid = typeof d.reasoningId === 'string' ? d.reasoningId : '';
+      const rid = stringOf(d.reasoningId) ?? ev.id ?? `segment-${state.messages.length}`;
       const content = typeof d.content === 'string' ? d.content : '';
       if (!content) return empty;
       const m = reasoningMsg(state, rid, tsOf(ev));
-      const base = beginReasoningSegment(state, m, rid || `seg-${state.messages.length}`);
-      m.thought = base + content;
-      if (state.pendingReasoning === m) m.timestamp = tsOf(ev);
-      return { changed: state.pendingReasoning === m ? [] : [m.id], metaChanged: false };
+      m.thought = content;
+      m.timestamp = tsOf(ev);
+      state.finalReasoning.add(m.id);
+      return { changed: [m.id], metaChanged: false };
     }
 
     case 'assistant.message_start': {
@@ -549,39 +520,83 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
           if (args) tc.args = args;
           return tc;
         });
+      // An atomic native event has no internal chronology. Its local convention
+      // is reasoningText, body, then tool requests in their array order. Separate
+      // reasoning/stream events keep their original positions instead.
+      const changed: string[] = [];
+      const removed: string[] = [];
+      const persistedThought = typeof d.reasoningText === 'string' && d.reasoningText.trim() ? d.reasoningText : undefined;
+      const previousReasoning = state.messageReasoning.get(id);
+      const reasoning = previousReasoning && !persistedThought ? previousReasoning
+        : [...new Set([...(previousReasoning ?? []), ...state.reasoningIds])];
+      const fallbackId = `reasoning-message-${id}`;
+      const explicit = reasoning.filter(reasoningId => state.finalReasoning.has(reasoningId));
+      const explicitText = explicit.map(reasoningId => state.messages[state.byId.get(reasoningId)!]?.thought ?? '').join('\n\n');
+      // Omit only a complete duplicate of the preceding explicit records.
+      // Differing snapshots remain intact; no prefix slicing or later text-matching ownership.
+      const fallbackThought = persistedThought !== explicitText ? persistedThought : undefined;
+      if (persistedThought) {
+        const transient = new Set(reasoning.filter(reasoningId => reasoningId !== fallbackId && !state.finalReasoning.has(reasoningId)));
+        removeMessages(state, transient);
+        removed.push(...transient);
+      }
+      if (fallbackThought) {
+        // A message-only persisted record has no native reasoning identity.
+        // Replace transient-only segments with its durable message-based anchor.
+        const thought: ChatMessage = {
+          id: fallbackId, role: 'assistant', content: '', thought: fallbackThought, timestamp: tsOf(ev),
+        };
+        upsert(state, thought);
+        // A body may already exist from message_start. Keep the bundled fallback
+        // immediately before that body rather than appending it after the stream.
+        const bodyIndex = state.byId.get(id);
+        const thoughtIndex = state.byId.get(fallbackId)!;
+        if (bodyIndex !== undefined && thoughtIndex > bodyIndex) {
+          state.messages.splice(thoughtIndex, 1);
+          state.messages.splice(bodyIndex, 0, thought);
+          state.byId = new Map(state.messages.map((message, index) => [message.id, index]));
+        }
+        state.messageReasoning.set(id, [...explicit, fallbackId]);
+        changed.push(fallbackId);
+      } else {
+        state.messageReasoning.set(id, [...(persistedThought ? explicit : reasoning)]);
+        if (persistedThought && explicit.length && state.byId.has(fallbackId)) {
+          removeMessages(state, new Set([fallbackId]));
+          removed.push(fallbackId);
+        }
+      }
+      const prevIdx = state.byId.get(id);
+      if (content || prevIdx !== undefined) {
+        upsert(state, { id, role: 'assistant', content, timestamp: tsOf(ev) });
+        changed.push(id);
+      }
+      for (const tool of toolCalls) {
+        const toolId = `tool-${tool.toolCallId}`;
+        const oldIndex = state.byId.get(toolId);
+        const old = oldIndex === undefined ? undefined : state.messages[oldIndex];
+        const previous = old?.toolCalls?.[0];
+        upsert(state, {
+          id: toolId, role: 'assistant', content: '', timestamp: old?.timestamp ?? tsOf(ev),
+          toolCalls: [{ ...tool, ...(previous ? {
+            status: previous.status, ...(previous.output ? { output: previous.output } : {}),
+          } : {}) }],
+        });
+        changed.push(toolId);
+      }
       // Remember which tool calls are ask_user prompts so their completion event
       // can surface the user's answer as a visible "my reply" message.
       for (const r of reqs) {
         if (typeof r.toolCallId !== 'string') continue;
         // Ownership exists even when a dedicated UI replaces the ordinary tool row.
-        state.toolMsg.set(r.toolCallId, id);
+        state.toolMsg.set(r.toolCallId, toolCalls.some(tool => tool.toolCallId === r.toolCallId)
+          ? `tool-${r.toolCallId}` : id);
         if (r.name === 'ask_user') state.askToolIds.add(r.toolCallId);
         // `task` → capture the sub-agent's prompt/agent_type now; the
         // subagent.started event (which builds the card) doesn't carry the prompt.
         rememberTask(state, r, projection?.scope);
       }
-      // Preserve any thought (reasoning) already attached to this message.
-      const prevIdx = state.byId.get(id);
-      const prevThought = (prevIdx !== undefined ? state.messages[prevIdx]?.thought : undefined)
-        ?? state.pendingReasoning?.thought;
-      // The final text is authoritative, not another reasoning segment to append.
-      const persistedThought = typeof d.reasoningText === 'string' && d.reasoningText.trim()
-        ? d.reasoningText : undefined;
-      const thought = persistedThought ?? prevThought;
-      // A message whose only tool was `task` (now a sub-agent card) and that has no
-      // text/thought would render as an empty byline — skip it. Still end the turn.
-      if (!content && toolCalls.length === 0 && !thought && prevIdx === undefined) {
-        endTurn(state);
-        return empty;
-      }
-      const msg: ChatMessage = {
-        id, role: 'assistant', content, timestamp: tsOf(ev),
-        ...(thought ? { thought } : {}),
-        ...(toolCalls.length ? { toolCalls } : {}),
-      };
-      upsert(state, msg);
       endTurn(state); // the turn's assistant message is finalized
-      return { changed: [id], metaChanged: false };
+      return { changed, ...(removed.length ? { removed } : {}), metaChanged: false };
     }
 
     // The callback/request lifecycle belongs to Engine. Only the durable tool

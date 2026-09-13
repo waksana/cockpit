@@ -199,12 +199,7 @@
 
 .msg-group { display: flex; flex-direction: column; min-width: 0; }
 .msg-group[data-assistant-message] {
-  margin-top: 12px;
   > .message.is-doc { margin: 0; }
-  + .msg-group[data-assistant-message] {
-    margin-top: 6px; padding-top: 6px;
-    border-top: 1px solid var(--border-color);
-  }
 }
 .msg-group[data-empty] > .message.is-doc { margin: 0; }
 
@@ -222,8 +217,7 @@
   align-self: flex-end;
   min-width: 0;
   max-width: min(88%, 40rem);
-  margin: 0.5rem 0 0;
-  margin-bottom: 0.5rem;
+  margin: 0;
 }
 .user-message-meta {
   display: flex;
@@ -264,11 +258,11 @@
 .message.is-doc {
   align-self: stretch;
   min-width: 0;
-  margin: 0.75rem 0 0.25rem;
+  margin: 0;
   padding: 0;
   .doc-byline {
     display: flex; align-items: center; gap: 0.4rem;
-    margin: 0.25rem 0 0.6rem;
+    margin: 0;
     color: var(--secondary-text-color);
   }
   .doc-mark {
@@ -347,7 +341,7 @@
   width: 100%; min-width: 0; min-height: 44px;
   padding: 0 4px; border: 0; border-radius: 6px;
   background: transparent; color: var(--secondary-text-color);
-  font: inherit; font-size: var(--font-size-13); text-align: start; cursor: pointer;
+  font: inherit; font-size: var(--font-size-12); text-align: start; cursor: pointer;
   time { flex: none; font-size: var(--font-size-12); font-variant-numeric: tabular-nums; }
   &[aria-expanded='false'] .process-summary-chevron { transform: rotate(-90deg); }
 }
@@ -356,14 +350,11 @@
 .process-summary-status { flex: none; font-size: var(--font-size-12); white-space: nowrap; }
 .message-process[data-failed] .process-summary-status { color: var(--chat-danger-ink); }
 .message-process-content {
-  padding: 0 0 8px 22px;
+  padding: 0 0 0 22px;
   &[hidden] { display: none; }
   .msg-thought-block { margin: 0; }
-  .msg-tools { margin: 0; gap: 4px; }
-  .msg-thought-block + .msg-tools { margin-top: 4px; }
   .activity-head { background: transparent; }
 }
-.message-process + .message-body { margin-top: 8px; }
 button.activity-head {
   cursor: pointer;
   &[aria-expanded='true'] { background: var(--ripple-color); }
@@ -381,8 +372,7 @@ button.activity-head {
   min-width: 0; color: var(--secondary-text-color);
   font-size: var(--font-size-14); line-height: 1.65; overflow-wrap: anywhere;
 }
-.msg-thought-block { margin: 2px 0; }
-.msg-thought-block[data-live='true'] .activity-icon { color: var(--chat-accent-ink); }
+.msg-thought-block { margin: 0; }
 .msg-thought {
   white-space: pre-wrap;
 }
@@ -479,7 +469,7 @@ button.activity-head {
   background: color-mix(in srgb, var(--danger-color) 10%, transparent);
   font-size: var(--font-size-13);
 }
-.subagent-msg { margin: 0.3rem 0; padding: 0; }
+.subagent-msg { margin: 0; padding: 0; }
 .subagent-empty { padding: 0.65rem 0; font-size: var(--font-size-13); color: var(--secondary-text-color); }
 
 // Markdown body shared (document + bubble).

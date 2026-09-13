@@ -38,7 +38,7 @@ test('history follows native pages through a tool result to its owning message, 
   assert.ok(h.requests.every(request => request.max === 32 && request.agentScope === 'primary'));
   assert.equal(h.window.live?.cursor, 'tail-before-first');
   assert.equal(h.window.snapshot().incompleteBoundary, false);
-  assert.equal(h.window.snapshot().messages[0].toolCalls?.[0].output, 'done');
+  assert.equal(h.window.snapshot().messages.find(item => item.id === 'tool-tool')?.toolCalls?.[0].output, 'done');
 });
 
 test('a message already at the page boundary needs no extra native read or tool completion wait', async () => {
@@ -112,7 +112,7 @@ test('filtered child histories complete their own tools without reading parent h
     h.read, h.controller.signal, () => true);
   assert.equal(h.requests.length, 2);
   assert.ok(h.requests.every(request => request.agentIds?.[0] === 'child'));
-  assert.equal(h.window.snapshot().messages[0].toolCalls?.[0].output, 'done');
+  assert.equal(h.window.snapshot().messages.find(item => item.id === 'tool-tool')?.toolCalls?.[0].output, 'done');
 });
 
 test('unavailable parent history ends explicitly, without guessing ownership or scanning again', async () => {
@@ -131,7 +131,7 @@ test('a distant message boundary is completed in one action without an arbitrary
   await h.run();
   assert.equal(h.requests.length, pages.length);
   assert.equal(h.window.snapshot().incompleteBoundary, false);
-  assert.equal(h.window.snapshot().messages[0].toolCalls?.[0].output, 'done');
+  assert.equal(h.window.snapshot().messages.find(item => item.id === 'tool-tool')?.toolCalls?.[0].output, 'done');
 });
 
 test('cancellation or loss of ownership between pages prevents another read and stale acceptance', async () => {

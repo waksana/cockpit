@@ -7,23 +7,23 @@ import { fixtureSession } from '../dev/chat-fixtures';
 import { MessageProcess, Thread } from './Thread';
 import { CopyButton } from './CopyButton';
 
-const message: ChatMessage = {
-  id: 'process-message', role: 'assistant', content: '', timestamp: 1000,
-  thought: 'Recorded reasoning, not a generated summary.',
-  toolCalls: [
-    { toolCallId: 'done', name: 'view', title: 'Read source', status: 'completed', output: 'Native output' },
-    { toolCallId: 'failed', name: 'bash', title: 'Command failed', status: 'failed', output: 'Exact error output' },
+const message: ChatMessage = { id: 'body', role: 'assistant', content: '', timestamp: 1000 };
+const items: ChatMessage[] = [
+  { ...message, id: 'thought', thought: 'Recorded reasoning, not a generated summary.' },
+  ...[
+    { toolCallId: 'done', name: 'view', title: 'Read source', status: 'completed' as const, output: 'Native output' },
+    { toolCallId: 'failed', name: 'bash', title: 'Command failed', status: 'failed' as const, output: 'Exact error output' },
     { toolCallId: 'unknown', title: 'Unknown tool state' },
-  ],
-};
-const renderProcess = (value = message, live = false) =>
-  renderToStaticMarkup(createElement(MessageProcess, { message: value, sessionId: 'fixture', live }));
+  ].map(tool => ({ ...message, id: tool.toolCallId, toolCalls: [tool] })),
+];
+const renderProcess = (value = items, latest = false) =>
+  renderToStaticMarkup(createElement(MessageProcess, { items: value, sessionId: 'fixture', latest }));
 
-test('history summarizes only this message and retains failures without mounting hidden tool bodies', t => {
+test('older overview summarizes consecutive items and retains failures without mounting hidden tool bodies', t => {
   t.mock.method(globalThis, 'fetch', async () => { assert.fail('Process disclosure must not read history'); });
   const html = renderProcess();
   assert.match(html, /class="process-summary" aria-expanded="false"/);
-  assert.match(html, /3 次工具 · 含思考/);
+  assert.match(html, /3 次工具调用 · 1 次思考/);
   assert.match(html, /1 项失败/);
   assert.match(html, /1 项状态未知/);
   assert.match(html, /<time dateTime="1970-01-01T00:00:01.000Z">/);
@@ -33,8 +33,8 @@ test('history summarizes only this message and retains failures without mounting
   assert.ok(contentId && html.includes(`id="${contentId}"`));
 });
 
-test('live records start open and completed tools do not repeat their visual status', () => {
-  const html = renderProcess(message, true);
+test('latest overview starts open even when idle and completed tools do not repeat their visual status', () => {
+  const html = renderProcess(items, true);
   assert.match(html, /class="process-summary" aria-expanded="true"/);
   assert.match(html, /Recorded reasoning/);
   assert.equal((html.match(/class="activity-head tool-head tool-toggle"/g) ?? []).length, 3);
@@ -44,38 +44,36 @@ test('live records start open and completed tools do not repeat their visual sta
   assert.match(html, /class="activity-status">状态未知/);
 });
 
-test('thought-only and incomplete states have literal summaries, never invented counts or success', () => {
-  const thought = renderProcess({ ...message, toolCalls: [] });
-  assert.match(thought, /process-summary-title">思考过程/);
-  assert.doesNotMatch(thought, /0 次工具|1 次思考|已完成/);
+test('thought-only and incomplete states have literal counts, never invented success or duration', () => {
+  const thought = renderProcess([items[0], { ...items[0], id: 'second-thought' }]);
+  assert.match(thought, /process-summary-title">2 次思考/);
+  assert.doesNotMatch(thought, /0 次工具|已完成|耗时/);
   for (const [status, summary] of [
     ['in_progress', '1 项执行中'], ['pending', '1 项待执行'], [undefined, '1 项状态未知'],
   ] as const) {
-    const html = renderProcess({ ...message, thought: undefined, toolCalls: [{ toolCallId: 'one', title: 'Tool', status }] });
+    const html = renderProcess([{ ...message, toolCalls: [{ toolCallId: 'one', title: 'Tool', status }] }]);
     assert.ok(html.includes(summary));
     assert.doesNotMatch(html, /含思考|已完成/);
   }
 });
 
-test('different native messages keep separate groups; blank answers create no body or copy controls', () => {
+test('consecutive process items share an overview and blank bodies do not create a boundary or space', () => {
   const session = fixtureSession('empty');
   session.messages = [
-    message,
-    { ...message, id: 'next', content: ' \n ', thought: undefined, toolCalls: message.toolCalls?.slice(0, 1) },
-    { ...message, id: 'blank', content: '\n  ' },
-    { id: 'empty', role: 'assistant', content: '', timestamp: 1001 },
+    ...items,
+    { ...message, id: 'blank', content: '\n  ' }, { ...message, id: 'empty' },
+    { ...items[0], id: 'second-thought' },
   ];
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
-  assert.equal((html.match(/class="process-summary"/g) ?? []).length, 3);
-  assert.equal((html.match(/data-message-frame=/g) ?? []).length, 4);
-  assert.equal((html.match(/data-message-id=/g) ?? []).length, 4);
-  assert.doesNotMatch(html, /class="message-body"|class="message-actions"|复制消息|doc-byline/);
-  assert.match(html, /data-message-frame="empty" data-empty="true"/);
+  assert.equal((html.match(/class="process-summary"/g) ?? []).length, 1);
+  assert.equal((html.match(/data-message-frame=/g) ?? []).length, 1);
+  assert.match(html, /3 次工具调用 · 2 次思考/);
+  assert.doesNotMatch(html, /class="message-body"|class="message-actions"|复制消息|doc-byline|data-message-id="empty"/);
 });
 
 test('formal text stays visible outside the process without a whole-message copy footer', () => {
   const session = fixtureSession('empty');
-  session.messages = [{ ...message, content: '  Actual answer, unchanged.  ' }];
+  session.messages = [...items, { ...message, content: '  Actual answer, unchanged.  ' }];
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
   assert.match(html, /class="message-body"/);
   assert.match(html, /Actual answer, unchanged/);
@@ -84,4 +82,17 @@ test('formal text stays visible outside the process without a whole-message copy
   assert.match(copy, /aria-label="复制代码"/);
   assert.match(copy, /role="status"/);
   assert.match(copy, /data-icon="file"/);
+});
+
+test('speech boundaries split consecutive process with no extra round or message hierarchy', () => {
+  const session = fixtureSession('empty');
+  session.messages = [items[0], { ...message, content: 'Before the tool', id: 'speech' },
+    items[1], { ...message, role: 'user', content: 'Next request', id: 'user' }, items[2]];
+  const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
+  assert.equal((html.match(/class="process-summary"/g) ?? []).length, 3);
+  assert.equal((html.match(/class="process-summary" aria-expanded="true"/g) ?? []).length, 1);
+  assert.equal((html.match(/class="process-summary" aria-expanded="false"/g) ?? []).length, 2);
+  assert.ok(html.indexOf('1 次思考') < html.indexOf('Before the tool'));
+  assert.ok(html.indexOf('Before the tool') < html.indexOf('1 次工具调用'));
+  assert.doesNotMatch(html, /第.*轮|含思考|耗时/);
 });

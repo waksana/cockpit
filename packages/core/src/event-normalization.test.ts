@@ -20,13 +20,17 @@ function fold(events: Array<SessionEvent | SdkEvent>) {
   const client = new Map<string, ChatMessage>();
   for (const event of events) {
     const result = foldEvent(state, normalizeEvent(event));
+    for (const id of result.removed ?? []) {
+      assert.equal(state.byId.has(id), false, `removed ID ${id} no longer exists`);
+      client.delete(id);
+    }
     for (const id of result.changed) {
       const index = state.byId.get(id);
       assert.notEqual(index, undefined, `changed ID ${id} exists`);
       client.set(id, structuredClone(state.messages[index!])!);
     }
   }
-  return { state, client };
+  return { state, client: new Map(state.messages.map(message => [message.id, client.get(message.id)!])) };
 }
 
 const started = (toolCallId: string, agentId: string, parentId?: string) => native('subagent.started', {
@@ -115,27 +119,44 @@ for (const withStart of [true, false]) {
       native('assistant.message_delta', { messageId: 'answer-id', deltaContent: 'wer' }, { ephemeral: true }),
       final,
     ]);
-    for (const persisted of [[user, reasoning, final], [user, final]]) {
+    for (const persisted of [[user, reasoning, final]]) {
       const replay = fold(persisted);
       assert.deepEqual(stream.state.messages, replay.state.messages);
       assert.deepEqual([...stream.client.values()], replay.state.messages);
-      assert.deepEqual([...stream.client.keys()], ['u', 'answer-id']);
+      assert.deepEqual([...stream.client.keys()], ['u', 'reasoning-r', 'answer-id']);
     }
+    const fallback = fold([user, final]).state.messages;
+    assert.deepEqual(fallback.map(message => message.id), ['u', 'reasoning-message-answer-id', 'answer-id']);
+    assert.equal(fallback[1].thought, stream.state.messages[1].thought);
   });
 }
 
-test('reasoning waits for a canonical ID rather than emitting an unremovable placeholder', () => {
+test('reasoning publishes its native ID independently before a body starts', () => {
   const state = newFoldState();
   assert.deepEqual(foldEvent(state, normalizeEvent(native('assistant.reasoning_delta', {
     reasoningId: 'r', deltaContent: 'thinking',
-  }, { ephemeral: true }))).changed, []);
-  assert.equal(state.messages.length, 0);
+  }, { ephemeral: true }))).changed, ['reasoning-r']);
+  assert.equal(state.messages.length, 1);
   const result = foldEvent(state, normalizeEvent(native('assistant.message_start', { messageId: 'm' }, { ephemeral: true })));
   assert.deepEqual(result.changed, ['m']);
   assert.equal(state.messages[0]?.thought, 'thinking');
+  assert.equal(state.messages[1]?.thought, undefined);
 });
 
-test('final reasoningText replaces partial or duplicated reasoning rather than double rendering', () => {
+test('message-only final reports durable fallback upserts and removes transient-only thought IDs', () => {
+  const final = native('assistant.message', { messageId: 'm', content: 'Body', reasoningText: 'Final thought' });
+  const live = fold([
+    native('assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Partial' }, { ephemeral: true }),
+    native('assistant.message_start', { messageId: 'm' }, { ephemeral: true }),
+    final,
+  ]);
+  const persisted = fold([final]);
+  assert.deepEqual(live.state.messages, persisted.state.messages);
+  assert.deepEqual([...live.client.values()], persisted.state.messages);
+  assert.deepEqual([...live.client.keys()], ['reasoning-message-m', 'm']);
+});
+
+test('final reasoningText replaces transient fragments without truncating a differing durable snapshot', () => {
   const final = native('assistant.message', { messageId: 'm', content: 'done', reasoningText: 'full first\n\nfull second' });
   const { state } = fold([
     native('assistant.reasoning_delta', { reasoningId: 'r1', deltaContent: 'partial' }, { ephemeral: true }),
@@ -145,8 +166,11 @@ test('final reasoningText replaces partial or duplicated reasoning rather than d
     native('assistant.reasoning_delta', { reasoningId: 'r2', deltaContent: 'second' }, { ephemeral: true }),
     final,
   ]);
-  assert.deepEqual(state.messages, fold([final]).state.messages);
-  assert.equal(state.messages.length, 1);
+  assert.deepEqual(state.messages.map(message => [message.id, message.content, message.thought]), [
+    ['reasoning-r1', '', 'full first'],
+    ['reasoning-message-m', '', 'full first\n\nfull second'],
+    ['m', 'done', undefined],
+  ]);
 });
 
 test('standalone reasoning survives a turn boundary and cannot absorb the next answer', () => {
@@ -155,7 +179,7 @@ test('standalone reasoning survives a turn boundary and cannot absorb the next a
   const events = [reasoning, end, native('assistant.message', { messageId: 'next', content: 'new turn' })];
   const { state, client } = fold(events);
   assert.deepEqual([...client.values()], state.messages);
-  assert.equal(state.messages[0]?.id, `stream-${end.id}`);
+  assert.equal(state.messages[0]?.id, 'reasoning-standalone');
   assert.equal(state.messages[0]?.thought, 'no answer needed');
   assert.equal(state.messages[1]?.id, 'next');
   assert.equal(state.messages[1]?.thought, undefined);
@@ -168,13 +192,13 @@ test('standalone reasoning survives a turn boundary and cannot absorb the next a
   assert.deepEqual(streamed.state.messages, state.messages, 'standalone timestamp comes from the durable reasoning');
 });
 
-test('native multi-segment reasoning deltas preserve separators without a final reasoningText', () => {
+test('native multi-segment reasoning deltas retain distinct items without a final reasoningText', () => {
   const { state } = fold([
     native('assistant.reasoning_delta', { reasoningId: 'one', deltaContent: 'first' }, { ephemeral: true }),
     native('assistant.reasoning_delta', { reasoningId: 'two', deltaContent: 'second' }, { ephemeral: true }),
     native('assistant.message', { messageId: 'm', content: 'answer' }),
   ]);
-  assert.equal(state.messages[0]?.thought, 'first\n\nsecond');
+  assert.deepEqual(state.messages.map(message => message.thought), ['first', 'second', undefined]);
 });
 
 test('distinct concurrent message IDs are not aliased to an earlier stream', () => {
@@ -222,7 +246,7 @@ test('native nested background aliases route deltas, tools and late completion t
   assert.equal(innerCard?.subagent?.status, 'completed');
   assert.equal(innerCard?.subagent?.model, 'configured-model');
   assert.equal(innerCard?.subagent?.toolCount, 1);
-  assert.equal(innerCard?.subMessages?.[0]?.toolCalls?.[0]?.output, 'output');
+  assert.equal(innerCard?.subMessages?.find(message => message.id === 'tool-view-call')?.toolCalls?.[0]?.output, 'output');
 });
 
 test('nested task ownership wins when lifecycle envelope names its parent agent', () => {

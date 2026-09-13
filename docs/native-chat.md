@@ -106,6 +106,42 @@ deliver obsolete data or continue reading.
 
 ## Browser reading
 
+### Ordered presentation
+
+The browser projects speech, reasoning and tools as separate display items in
+native event order. It does not collect them into a single assistant message and
+then move every tool above that message's text. Native message IDs still associate
+streamed text with its final content; tool IDs associate execution updates with
+the original tool row. Tool completion and repeated durable events do not move
+that row to the end of the transcript. Temporary text/reasoning positions settle
+at their first complete durable event's position, retaining their IDs, so a live
+stream and a cold read converge even when transient delivery had a different
+order. Event order describes recorded evidence, not an inferred token-generation
+timeline.
+
+Consecutive process items are grouped only by the renderer. User speech,
+assistant text and other visible records end a process group; empty message
+starts do not. A group contains direct reasoning/tool rows, not an extra hierarchy
+of rounds or messages. Its counts describe visible tool and reasoning items,
+with recorded failures retained in the collapsed summary. There is no elapsed
+time estimate, round count or generated summary.
+
+The last overview defaults open, with only its last reasoning item defaulting
+open. A newer overview/reasoning item closes the former automatic selection.
+Explicit user choices take priority, including closing the latest item. These
+choices are local to the mounted session view; older-page extension preserves
+the group's mounted identity. They are not a second native state or history store.
+The transcript uses no group divider lines or extra inter-group gaps. It retains
+internal text/button spacing, original timestamps, keyboard focus and local
+code/tool copying. Whole-message copy footers and row hover fills are absent.
+
+The opt-in lab's `ordered-events` scenario feeds synthetic native pages through
+the actual `NativeWindow`, including repeated pages, older prefixes, new speech
+and reasoning, disconnected partial text followed by a full event, and a cold
+projection of the same durable events. It does not initialize a native client.
+
+### Paging and live updates
+
 An authoritative complete session snapshot releases browser reading windows for
 IDs no longer present, including sessions deleted while this browser was offline.
 An authoritative single-session `meta:null` or removal event releases the same
@@ -146,9 +182,23 @@ into the existing fold in native append order, preserving untouched message
 objects, ownership indexes, live partials, and reading-anchor IDs. Bootstrap
 adoption appends only events beyond the last overlap; empty/duplicate pages
 advance positions without folding or replacing the view.
-Reasoning-only rows use their closing native event ID rather than the earliest
-reasoning segment as their stable identity, so prepending earlier thought
-segments extends one row without duplicating it or losing its reading anchor.
+Reasoning rows use their native reasoning ID (or event ID when none is supplied);
+distinct records remain separate. Tool rows use the invocation identity and body
+rows retain the native message ID. When one final message bundles reasoning,
+text and tool requests without an internal sequence, its deterministic local
+convention is reasoning, text, then requests in array order. Separate explicit
+events retain their recorded positions.
+
+Message-level `reasoningText` is a complete snapshot, not another delta. When
+it exactly repeats that message's preceding explicit reasoning aggregate, it
+does not add another row. Otherwise its full text is retained under a
+message-based reasoning identity; it is not sliced into guessed segments.
+Later independent reasoning with equal text does not establish ownership or
+erase the earlier snapshot. A body-only update does not delete known reasoning.
+When only transient reasoning was available, its authoritative message-level
+snapshot replaces those fragments. Without a persisted native reasoning ID,
+this transition can replace a temporary reasoning anchor; it cannot promise
+to recover absent segment identities from a cold journal.
 
 Projection calls are proportional to new events plus the dependency frontier
 actually replayed, not the full loaded suffix on every page. A distant missing

@@ -40,7 +40,7 @@ function compare(window: NativeWindow, history: NativeChatEvent[]) {
   assert.equal(window.unresolved, baseline.window.unresolved);
   const state = (fold: FoldState): unknown => ({
     ...fold, executionOrder: undefined, currentModelId: fold.currentModelId, streamingId: fold.streamingId,
-    pendingReasoning: fold.pendingReasoning, reasoningId: fold.reasoningId, reasoningBase: fold.reasoningBase,
+    pendingReasoning: fold.pendingReasoning, reasoningId: fold.reasoningId, reasoningIds: fold.reasoningIds,
     subFolds: new Map([...fold.subFolds].map(([id, child]) => [id, state(child)])),
   });
   assert.deepEqual(state(window.projection), state(baseline.window.projection));
@@ -183,7 +183,7 @@ test('partial reasoning and child messages survive older pages, overlap, disconn
     ephemeral('prefix', 'assistant.message_delta', { messageId: 'live', deltaContent: 'Prefix' }),
   ], 'forward', { hasMore: false });
   const child = () => window.snapshot().messages.find(message => message.subagent)?.subMessages;
-  assert.equal(child()?.at(-1)?.thought, 'Live thought');
+  assert.equal(child()?.find(message => message.id === 'reasoning-r')?.thought, 'Live thought');
   assert.equal(child()?.at(-1)?.content, 'Prefix');
   accept(window, [event('older')]);
   window.disconnect();
@@ -194,11 +194,13 @@ test('partial reasoning and child messages survive older pages, overlap, disconn
   const final = event('final', 'assistant.message', { messageId: 'live', content: 'Whole response', reasoningText: 'Whole thought' }, 'child');
   accept(window, [final, final], 'forward', { hasMore: false });
   assert.equal(child()?.at(-1)?.content, 'Whole response');
-  assert.equal(child()?.at(-1)?.thought, 'Whole thought');
+  assert.equal(child()?.find(message => message.thought)?.thought, 'Whole thought');
+  assert.equal(child()?.filter(message => message.thought).length, 1);
+  assert.equal(child()?.at(-1)?.thought, undefined);
   assert.equal(window.partial, false);
 });
 
-test('open durable reasoning heads are repaired while unpublished live reasoning remains intact', () => {
+test('open durable reasoning heads are repaired while independent live reasoning remains intact', () => {
   const window = new NativeWindow(undefined, true);
   const thoughts = Array.from({ length: 12 }, (_, i) =>
     event(`thought-${i}`, 'assistant.reasoning', { reasoningId: `r-${i}`, content: `Thought ${i}` }));
@@ -216,7 +218,8 @@ test('open durable reasoning heads are repaired while unpublished live reasoning
   }), ephemeral: true }], 'forward', { hasMore: false });
   accept(live, [thoughts[0]]);
   accept(live, [event('live-answer')], 'forward', { hasMore: false });
-  assert.equal(live.snapshot().messages.at(-1)?.thought, 'Unpublished live thought');
+  assert.equal(live.snapshot().messages.find(message => message.id === 'reasoning-live-r')?.thought, 'Unpublished live thought');
+  assert.equal(live.snapshot().messages.at(-1)?.thought, undefined);
 });
 
 test('filtered child reasoning uses the normalized root lane across old page boundaries', () => {
@@ -224,7 +227,7 @@ test('filtered child reasoning uses the normalized root lane across old page bou
   accept(window, [event('answer', 'assistant.message', {}, 'child')]);
   accept(window, [event('reason-2', 'assistant.reasoning', { reasoningId: 'r2', content: 'Second' }, 'child')]);
   accept(window, [event('reason-1', 'assistant.reasoning', { reasoningId: 'r1', content: 'First' }, 'child')]);
-  assert.equal(window.snapshot().messages[0]?.thought, 'First\n\nSecond');
+  assert.deepEqual(window.snapshot().messages.map(message => message.thought), ['First', 'Second', undefined]);
   assert.equal(window.unresolved, false);
 });
 
@@ -282,7 +285,7 @@ test('an alias introduced in the incoming older page repairs retained alias-only
   }
 });
 
-test('reasoning-only boundary rows extend in place without duplicate bubbles or drifting anchor IDs', () => {
+test('reasoning-only rows retain each native anchor when older distinct blocks prepend', () => {
   for (const boundary of ['assistant.turn_end', 'user.message', 'abort', 'session.idle']) {
     const window = new NativeWindow(undefined, true);
     const thoughts = Array.from({ length: 8 }, (_, i) =>
@@ -293,8 +296,8 @@ test('reasoning-only boundary rows extend in place without duplicate bubbles or 
     for (let i = thoughts.length - 2; i >= 0; i--) {
       accept(window, [thoughts[i]]);
       compare(window, [...thoughts.slice(i), end, event('following')]);
-      assert.equal(window.snapshot().messages[0].id, anchorId);
-      assert.equal(window.snapshot().messages.filter(message => message.thought).length, 1);
+      assert.equal(window.snapshot().messages.filter(message => message.id === anchorId).length, 1);
+      assert.equal(window.snapshot().messages.filter(message => message.thought).length, thoughts.length - i);
     }
   }
 });

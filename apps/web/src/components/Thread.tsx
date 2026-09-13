@@ -19,6 +19,9 @@ import { useKeyedAction } from '../lib/useKeyedResource';
 import { CopyButton } from './CopyButton';
 import { copyText, messageCopyText } from '../lib/copyText';
 import { ActivityHeader } from './ActivityHeader';
+import { DisclosureChoices } from './DisclosureChoices';
+import { useDisclosureChoice } from '../lib/disclosureChoice';
+import { groupTranscript, type TranscriptRow } from '../lib/transcriptRows';
 
 // Plan-exit action → button label. The SDK offers a subset of these (incl.
 // autopilot_fleet); the card renders one button per offered action rather than a
@@ -41,8 +44,8 @@ function ToolStatusIcon({ status }: { status: ToolCall['status'] }) {
   }
 }
 
-function ToolCallRow({ tc }: { tc: ToolCall; sessionId: string }) {
-  const [open, setOpen] = useState(false);
+function ToolCallRow({ tc, sessionId }: { tc: ToolCall; sessionId: string }) {
+  const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'tool', tc.toolCallId]), false);
   const status = tc.status ? {
     completed: '已完成', failed: '失败', in_progress: '执行中', pending: '待执行',
   }[tc.status] : '状态未知';
@@ -50,7 +53,7 @@ function ToolCallRow({ tc }: { tc: ToolCall; sessionId: string }) {
     <div className="msg-tool" data-status={tc.status ?? 'unknown'} data-open={open || undefined}>
       <ActivityHeader className="tool-head tool-toggle" icon={<ToolStatusIcon status={tc.status} />}
         title={tc.title} status={tc.status === 'completed' ? undefined : status} accessibleStatus={status}
-        disclosure={{ open, onToggle: () => setOpen(v => !v) }} />
+        disclosure={{ open, onToggle: toggle }} />
       {open && (
         <div className="activity-detail tool-detail">
           {tc.name && tc.name !== tc.title && <div className="tool-detail-name">{tc.name}</div>}
@@ -65,17 +68,13 @@ function ToolCallRow({ tc }: { tc: ToolCall; sessionId: string }) {
   );
 }
 
-// Reasoning/thinking block. While live (turn streaming) it's expanded so you can
-// watch it think (CLI ctrl+t); once the turn ends it auto-collapses to a quiet
-// toggle the user can re-open.
-function Thought({ text, live }: { text: string; live: boolean }) {
-  const [openOverride, setOpenOverride] = useState<boolean | null>(null);
-  const open = openOverride ?? live;
+function Thought({ message, latest, sessionId }: { message: ChatMessage; latest: boolean; sessionId: string }) {
+  const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'thought', message.id]), latest);
   return (
-    <div className="msg-thought-block" data-live={live ? 'true' : 'false'}>
+    <div className="msg-thought-block">
       <ActivityHeader className="thought-toggle" icon={<Icon name="skills" size={16} />}
-        title={live ? '正在思考…' : '思考过程'} disclosure={{ open, onToggle: () => setOpenOverride(!open) }} />
-      {open && <div className="activity-detail msg-thought">{text}</div>}
+        title="思考过程" disclosure={{ open, onToggle: toggle }} />
+      {open && <div className="activity-detail msg-thought">{message.thought}</div>}
     </div>
   );
 }
@@ -84,17 +83,17 @@ function SkillActivity({ message }: { message: ChatMessage }) {
   return <ActivityHeader icon={<Icon name="skills" size={16} />} title={`skill · ${messageCopyText(message)}`} />;
 }
 
-function hasMessageProcess(message: ChatMessage): boolean {
-  return !!(message.thought?.trim() || message.toolCalls?.length);
-}
-
-export function MessageProcess({ message, sessionId, live = false }: { message: ChatMessage; sessionId: string; live?: boolean }) {
-  // Open live work on first mount. Finishing/streaming must not override a reader's choice.
-  const [view, setView] = useState({ open: live, mounted: live });
+export function MessageProcess({ items, sessionId, latest = false, identity = items[0].id }: {
+  items: ChatMessage[]; sessionId: string; latest?: boolean; identity?: string;
+}) {
+  const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'overview', identity]), latest);
+  const [mounted, setMounted] = useState(open);
+  if (open && !mounted) setMounted(true);
   const contentId = useId();
-  const tools = message.toolCalls ?? [];
-  const thought = message.thought?.trim() ? message.thought : undefined;
-  const title = [tools.length ? `${tools.length} 次工具` : '', thought ? tools.length ? '含思考' : '思考过程' : ''].filter(Boolean).join(' · ');
+  const tools = items.flatMap(item => item.toolCalls ?? []);
+  const thoughts = items.filter(item => item.thought?.trim());
+  const latestThoughtId = latest ? thoughts.at(-1)?.id : undefined;
+  const title = [tools.length ? `${tools.length} 次工具调用` : '', thoughts.length ? `${thoughts.length} 次思考` : ''].filter(Boolean).join(' · ');
   const states = [
     [tools.filter(tool => tool.status === 'failed').length, '项失败'],
     [tools.filter(tool => tool.status === 'in_progress').length, '项执行中'],
@@ -103,23 +102,24 @@ export function MessageProcess({ message, sessionId, live = false }: { message: 
   ] as const;
   const notices = states.filter(([count]) => count > 0).map(([count, label]) => `${count} ${label}`);
   const description = [title, ...notices].join(' · ');
-  const time = clock(message.timestamp);
+  const timestamp = items[0].timestamp;
+  const time = clock(timestamp);
   return <section className="message-process" data-failed={states[0][0] > 0 || undefined}>
-    <button type="button" className="process-summary" aria-expanded={view.open} aria-controls={contentId}
-      aria-label={`${view.open ? '收起' : '展开'}过程：${description} · ${time}`} title={description}
-      onClick={() => setView(current => ({ open: !current.open, mounted: true }))}>
+    <div data-message-id={JSON.stringify([sessionId, identity])}><button type="button" className="process-summary" aria-expanded={open} aria-controls={contentId}
+      aria-label={`${open ? '收起' : '展开'}过程：${description} · ${time}`} title={description}
+      onClick={toggle}>
       <span className="process-summary-chevron"><Icon name="down" size={14} /></span>
       <span className="process-summary-title">{title}</span>
       {notices.length > 0 && <span className="process-summary-status">{notices[0]}</span>}
-      <time dateTime={new Date(message.timestamp).toISOString()}>{time}</time>
-    </button>
-    <div id={contentId} className="message-process-content" hidden={!view.open}>
-      {view.mounted && <>
-        {thought && <Thought text={thought} live={live} />}
-        {tools.length > 0 && <div className="msg-tools">
-          {tools.map(tc => <ToolCallRow key={tc.toolCallId} tc={tc} sessionId={sessionId} />)}
-        </div>}
-      </>}
+      <time dateTime={new Date(timestamp).toISOString()}>{time}</time>
+    </button></div>
+    <div id={contentId} className="message-process-content" hidden={!open} data-child-history>
+      {(mounted || open) && items.map(item => <div key={item.id} data-child-message-frame={item.id}>
+        <div data-message-id={JSON.stringify([sessionId, item.id])}>
+          {item.thought?.trim() && <Thought message={item} latest={item.id === latestThoughtId} sessionId={sessionId} />}
+          {item.toolCalls?.map(tc => <ToolCallRow key={tc.toolCallId} tc={tc} sessionId={sessionId} />)}
+        </div>
+      </div>)}
     </div>
   </section>;
 }
@@ -141,20 +141,6 @@ function dateLabel(ts: number, today: number): string {
   if (that === today - dayMs) return '昨天';
   if (d.getFullYear() === now.getFullYear()) return `${d.getMonth() + 1}月${d.getDate()}日`;
   return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
-}
-
-// Renders the inner content of an assistant message (thought + tools + body).
-// Shared by top-level assistant messages and the nested messages inside a
-// sub-agent card.
-function MessageInner({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
-  if (m.role === 'system' && m.subtype === 'skill') return <div className="message is-skill"><SkillActivity message={m} /></div>;
-  return (
-    <>
-      {hasMessageProcess(m) && <MessageProcess key={JSON.stringify([sessionId, m.id])} message={m} sessionId={sessionId} />}
-      <MessageContent message={m} sessionId={sessionId} />
-      {m.subtype === 'subagent' && m.subagent && <SubagentCard key={m.subagent.toolCallId ?? m.id} m={m} sessionId={sessionId} />}
-    </>
-  );
 }
 
 // A sub-agent (spawned via the `task` tool) as one collapsible card. The header
@@ -211,11 +197,8 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
       {sa.error && <div className="subagent-error">{sa.error}</div>}
       {!connected && toolCallId && <div role="status">等待连接…</div>}
       <div ref={contentRef} data-child-history>
-        {sub.map((sm) => (
-          <article key={sm.id} className="message is-doc subagent-msg" data-child-message-frame={sm.id}>
-            <div data-message-id={JSON.stringify([toolCallId, sm.id])}><MessageInner m={sm} sessionId={sessionId} /></div>
-          </article>
-        ))}
+        <TranscriptMessages messages={sub} sessionId={JSON.stringify([sessionId, toolCallId ?? m.id])}
+          today={new Date().setHours(0, 0, 0, 0)} onMenu={ignoreMessageMenu} nested />
       </div>
       {!sub.length && <div className="subagent-empty">
         当前阅读窗口内暂无子代理消息。
@@ -229,9 +212,10 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
 //  - assistant replies are NOT bubbles — they read as a full-width document,
 //    with a light byline (icon + Copilot + time) shown once per assistant group;
 //  - system messages are a quiet centered note.
-const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinkingLive, onMenu }: { m: ChatMessage; sessionId: string; showByline: boolean; thinkingLive: boolean; onMenu: (e: React.MouseEvent, m: ChatMessage) => void }) {
+const MessageRow = memo(function MessageRow({ m, sessionId, showByline, onMenu, nested }: { m: ChatMessage; sessionId: string; showByline: boolean; onMenu: (e: React.MouseEvent, m: ChatMessage) => void; nested?: boolean }) {
+  const anchorId = nested ? JSON.stringify([sessionId, m.id]) : m.id;
   if (m.subtype === 'subagent' && m.subagent) {
-    return <div className="message is-doc" data-message-id={m.id} onContextMenu={(e) => onMenu(e, m)}><SubagentCard key={m.subagent.toolCallId ?? m.id} m={m} sessionId={sessionId} /></div>;
+    return <div className="message is-doc" data-message-id={anchorId} onContextMenu={(e) => onMenu(e, m)}><SubagentCard key={m.subagent.toolCallId ?? m.id} m={m} sessionId={sessionId} /></div>;
   }
   if (m.role === 'user') {
     const isAskReply = m.subtype === 'ask-reply';
@@ -239,7 +223,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
     if (isAskReply) cls.push('is-ask-reply');
     return (
       <div className="user-message" onContextMenu={(e) => onMenu(e, m)}>
-        <div className={cls.join(' ')} data-message-id={m.id}>
+        <div className={cls.join(' ')} data-message-id={anchorId}>
           {isAskReply && <span className="ask-reply-tag" aria-label="对提问的回复">↩ 回复</span>}
           <MessageContent message={m} sessionId={sessionId} />
         </div>
@@ -252,14 +236,14 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
   if (m.role === 'system') {
     if (m.subtype === 'skill') {
       return (
-        <div className="message is-skill" data-message-id={m.id} onContextMenu={(e) => onMenu(e, m)}>
+        <div className="message is-skill" data-message-id={anchorId} onContextMenu={(e) => onMenu(e, m)}>
           <SkillActivity message={m} />
         </div>
       );
     }
     const level = m.level ?? 'info';
     return (
-      <div className="message is-system" data-message-id={m.id} data-level={level} onContextMenu={(e) => onMenu(e, m)}>
+      <div className="message is-system" data-message-id={anchorId} data-level={level} onContextMenu={(e) => onMenu(e, m)}>
         {level === 'error' && <span className="sys-ico" aria-hidden="true"><Icon name="error" size={14} /></span>}
         {m.content}
       </div>
@@ -267,15 +251,14 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
   }
   return (
     <article className="message is-doc" onContextMenu={(e) => onMenu(e, m)}>
-      {showByline && !hasMessageProcess(m) && hasMessageContent(m) && (
+      {showByline && hasMessageContent(m) && (
         <header className="doc-byline">
           <span className="doc-mark" aria-hidden="true"><Icon name="compose" size={15} /></span>
           <span className="doc-time">{clock(m.timestamp)}</span>
         </header>
       )}
       {/* Date/byline removal on prepend must not move the reading anchor. */}
-      <div data-message-id={m.id}>
-        {hasMessageProcess(m) && <MessageProcess key={JSON.stringify([sessionId, m.id])} message={m} sessionId={sessionId} live={thinkingLive} />}
+      <div data-message-id={anchorId}>
         <MessageContent message={m} sessionId={sessionId} />
       </div>
     </article>
@@ -283,40 +266,58 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
 });
 
 type MessageMenu = (event: React.MouseEvent, message: ChatMessage) => void;
+const ignoreMessageMenu: MessageMenu = () => {};
 
-const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline, live, layout, onMenu }: {
+const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline, live, layout, onMenu, nested }: {
   m: ChatMessage; sessionId: string; date?: string; showByline: boolean; live: boolean;
-  layout: ReturnType<typeof createMessageLayout>; onMenu: MessageMenu;
+  layout: ReturnType<typeof createMessageLayout>; onMenu: MessageMenu; nested?: boolean;
 }) {
   const frame = useRef<HTMLDivElement | null>(null);
   const skippable = canSkipMessageLayout(m, live);
   const answer = hasMessageContent(m);
   const plainAssistant = m.role === 'assistant' && m.subtype !== 'subagent';
-  const empty = plainAssistant && !answer && !hasMessageProcess(m);
+  const empty = plainAssistant && !answer;
   useLayoutEffect(() => {
     if (skippable && frame.current) return layout.observe(frame.current);
   }, [layout, skippable, m, date, showByline]);
   return (
-    <div ref={frame} className="msg-group" data-message-frame={m.id}
+    <div ref={frame} className="msg-group" data-message-frame={nested ? undefined : m.id} data-child-message-frame={nested ? m.id : undefined}
+      data-window-item-id={m.id}
       data-assistant-message={plainAssistant && !empty || undefined} data-empty={empty || undefined}>
       {date && !empty && <div className="date-separator" aria-hidden="true">{date}</div>}
-      <MessageRow m={m} sessionId={sessionId} showByline={showByline} thinkingLive={live} onMenu={onMenu} />
+      <MessageRow m={m} sessionId={sessionId} showByline={showByline} onMenu={onMenu} nested={nested} />
     </div>
   );
 });
 
-const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionId, liveId, today, onMenu }: {
-  messages: ChatMessage[]; sessionId: string; liveId?: string; today: number; onMenu: MessageMenu;
+const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionId, liveId, today, onMenu, nested = false }: {
+  messages: ChatMessage[]; sessionId: string; liveId?: string; today: number; onMenu: MessageMenu; nested?: boolean;
 }) {
   const layout = useMemo(() => createMessageLayout(), []);
   useLayoutEffect(() => () => layout.dispose(), [layout]);
-  return messages.map((m, i) => {
-    const previous = messages[i - 1];
-    const newDay = !previous || !sameDay(previous.timestamp, m.timestamp);
+  const [grouped, setGrouped] = useState(() => ({ source: messages, rows: groupTranscript(messages) }));
+  let rows = grouped.rows;
+  if (grouped.source !== messages) {
+    rows = groupTranscript(messages, grouped.rows);
+    setGrouped({ source: messages, rows });
+  }
+  const lastProcess = rows.findLast(row => row.kind === 'process');
+  const firstItem = (row: TranscriptRow) => row.kind === 'process' ? row.items[0] : row.message;
+  return rows.map((row, i) => {
+    const m = firstItem(row);
+    const previous = rows[i - 1] && firstItem(rows[i - 1]);
+    const newDay = !nested && (!previous || !sameDay(previous.timestamp, m.timestamp));
+    const date = newDay ? dateLabel(m.timestamp, today) : undefined;
+    if (row.kind === 'process') return <div key={row.key} className="msg-group"
+      data-window-item-id={m.id}
+      data-message-frame={nested ? undefined : row.key} data-child-message-frame={nested ? row.key : undefined}>
+      {date && <div className="date-separator" aria-hidden="true">{date}</div>}
+      <MessageProcess items={row.items} identity={row.key} sessionId={sessionId} latest={row === lastProcess} />
+    </div>;
     return (
       <MessageGroup key={m.id} m={m} sessionId={sessionId}
-        date={newDay ? dateLabel(m.timestamp, today) : undefined}
-        showByline={m.role === 'assistant' && (newDay || previous.role !== 'assistant')}
+        date={date} nested={nested}
+        showByline={m.role === 'assistant' && (newDay || previous?.role !== 'assistant')}
         live={m.role === 'assistant' && m.id === liveId} layout={layout} onMenu={onMenu} />
     );
   });
@@ -416,7 +417,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     if (!el || !content) return;
     prevLastIdRef.current = undefined;
     const owner = observeThreadScroll(el, content, () => setNewCount(0), (active) => {
-      const id = content.querySelector<HTMLElement>('[data-message-id]')?.dataset.messageId;
+      const id = content.querySelector<HTMLElement>('[data-window-item-id]')?.getAttribute('data-window-item-id') ?? undefined;
       setHeldHead(active && id ? { sessionId: session.sessionId, id } : null);
     });
     scrollOwnerRef.current = owner.scroll;
@@ -502,7 +503,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   ), [ask, onRespondAsk, runAction]);
 
   return (
-    <main className="chat">
+    <DisclosureChoices key={session.sessionId}><main className="chat">
       <div className="chat-transcript">
         <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-label="对话消息" aria-busy={preparingHistory}>
           <div ref={contentRef} className="chat-message-content">
@@ -686,6 +687,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
       {msgMenu && (
         <ContextMenu x={msgMenu.x} y={msgMenu.y} items={msgMenu.items} onClose={() => setMsgMenu(null)} />
       )}
-    </main>
+    </main></DisclosureChoices>
   );
 }

@@ -11,6 +11,7 @@ import { UxErrorNotifications } from '../components/UxErrorNotifications';
 import { getSessionDraft } from '../lib/textDraft';
 import { useCockpit } from '../net/store';
 import { fixtureSession, scenarios, type Scenario } from './chat-fixtures';
+import { orderedFixture } from './ordered-fixtures';
 import '../styles/index.scss';
 import '../components/UxErrorNotifications.scss';
 import './chat-lab.scss';
@@ -35,6 +36,7 @@ export function Lab() {
   const pending = useRef<(() => void)[]>([]);
   const generation = useRef(0);
   const counter = useRef(0);
+  const ordered = useRef<ReturnType<typeof orderedFixture> | null>(null);
   const historyBusy = useRef(false);
   const modeRef = useRef<HTMLButtonElement | null>(null);
   const moreRef = useRef<HTMLButtonElement | null>(null);
@@ -52,9 +54,16 @@ export function Lab() {
     setModeOpen(false);
     setMoreOpen(false);
     setScenario(value);
+    ordered.current = null;
     setSession(fixtureSession(value));
     history.replaceState(null, '', `/chat-lab.html?scene=${value}${compact ? '&compact=1' : ''}`);
     setReceipt(`场景：${value}。操作不会发送到后端。`);
+  }
+  function orderedAction(action: 'thought' | 'body' | 'tool' | 'older' | 'duplicate' | 'reconnect' | 'cold') {
+    ordered.current ??= orderedFixture();
+    const snapshot = ordered.current[action]();
+    setSession(value => ({ ...value, ...snapshot }));
+    setReceipt(`合成原生事件：${action}；经过同一 NativeWindow，无后端请求。`);
   }
   async function action(label: string, apply: () => void): Promise<boolean> {
     const owner = generation.current;
@@ -113,6 +122,15 @@ export function Lab() {
       <button onClick={() => setSession(value => ({ ...value, status: 'idle', compacting: false, intent: null }))}>结束回合</button>
       <button onClick={loadMore}>插入历史 / 完成加载</button>
       <button onClick={() => choose(scenario)}>重置场景</button>
+      {scenario === 'ordered-events' && <>
+        <button onClick={() => orderedAction('thought')}>追加思考事件</button>
+        <button onClick={() => orderedAction('body')}>追加正文事件</button>
+        <button onClick={() => orderedAction('tool')}>追加工具事件</button>
+        <button onClick={() => orderedAction('older')}>前插原生事件</button>
+        <button onClick={() => orderedAction('duplicate')}>重复事件页</button>
+        <button onClick={() => orderedAction('reconnect')}>断线并补全</button>
+        <button onClick={() => orderedAction('cold')}>同记录冷加载</button>
+      </>}
     </header>
     <output className="lab-receipt" aria-live="polite">{receipt}</output>
     </details>

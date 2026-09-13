@@ -1,5 +1,6 @@
 import type { ChatMessage } from '@cockpit/protocol';
 import type { ChatSession } from '../net/types';
+import { orderedFixture } from './ordered-fixtures';
 
 const timestamp = new Date('2026-09-11T09:40:00').getTime();
 
@@ -145,7 +146,8 @@ export const scenarios = [
   ['reading', '正文 / Markdown / 代码'],
   ['user-time', '用户时间 / 短长文本'],
   ['process', '思考 / 工具 / 子代理'],
-  ['process-history', '消息级过程 / 无正文 / 轻量复制'],
+  ['process-history', '连续过程 / 无正文 / 最新展开'],
+  ['ordered-events', '原生事件 / 连续概览 / 重连补全'],
   ['streaming', '流式 / 队列 / 停止'],
   ['cancelling', '停止请求中'],
   ['ask', '选择 / 自由回答'],
@@ -165,6 +167,16 @@ export const scenarios = [
   ['readonly', '现存只读分支'],
 ] as const;
 export type Scenario = typeof scenarios[number][0];
+
+// Static component fixtures use the same single-content item contract as the event projection.
+function fixtureItems(messages: ChatMessage[]): ChatMessage[] {
+  return messages.flatMap(({ thought, toolCalls, subMessages, ...message }) => [
+    ...(thought?.trim() ? [{ ...message, id: `${message.id}-thought`, content: '', thought }] : []),
+    ...(message.content.trim() || message.subtype === 'subagent' || message.role !== 'assistant'
+      ? [{ ...message, ...(subMessages ? { subMessages: fixtureItems(subMessages) } : {}) }] : []),
+    ...(toolCalls ?? []).map(tool => ({ ...message, id: `fixture-tool-${tool.toolCallId}`, content: '', toolCalls: [tool] })),
+  ]);
+}
 
 export function fixtureSession(scenario: Scenario): ChatSession {
   const session: ChatSession = {
@@ -208,5 +220,7 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   if (scenario === 'compacting') session.compacting = true;
   if (scenario === 'auto-compacting') Object.assign(session, { compacting: true, status: 'running' });
   if (scenario === 'unloaded') Object.assign(session, { status: 'unloaded', loaded: false });
+  session.messages = fixtureItems(session.messages);
+  if (scenario === 'ordered-events') Object.assign(session, orderedFixture().snapshot());
   return session;
 }

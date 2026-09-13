@@ -133,7 +133,7 @@ test('ordinary tools require their actual owning message, which older paging can
   accept(window, [
     event('owner', 'assistant.message', { toolRequests: [{ toolCallId: 'tool', name: 'bash' }] }),
   ], { cursor: 'older' });
-  assert.equal(window.snapshot().messages[0].toolCalls?.[0].output, 'result');
+  assert.equal(window.snapshot().messages.find(message => message.id === 'tool-tool')?.toolCalls?.[0].output, 'result');
   assert.equal(window.unresolved, false);
 });
 
@@ -296,7 +296,7 @@ test('retained output is not capped twice when older paging supplies its owner',
   accept(window, [event('owner', 'assistant.message', {
     toolRequests: [{ toolCallId: 'tool', name: 'bash', arguments: { command: 'echo test' } }],
   })], { cursor: 'older' });
-  const tool = window.snapshot().messages[0].toolCalls?.[0];
+  const tool = window.snapshot().messages.find(message => message.id === 'tool-tool')?.toolCalls?.[0];
   assert.equal(tool?.args, '$ echo test');
   assert.match(tool?.output ?? '', /已截断，共 100000 字符/);
 });
@@ -311,4 +311,279 @@ test('a retained ask answer can be owned by a subsequently loaded older message'
     toolRequests: [{ toolCallId: 'ask', name: 'ask_user' }],
   })], { cursor: 'older' });
   assert.equal(window.snapshot().messages.find(message => message.id === 'reply-ask')?.content, answer);
+});
+
+test('atomic native items converge across every history split and duplicated forward chunk', () => {
+  const history = [
+    event('zz-user', 'user.message', { content: 'Question' }),
+    event('zz-thought', 'assistant.reasoning', { reasoningId: 'first', content: 'First thought' }),
+    event('aa-body', 'assistant.message', {
+      messageId: 'body', content: 'Before tools', reasoningText: 'First thought',
+      toolRequests: [
+        { toolCallId: 'view', name: 'view', arguments: { path: '/synthetic/input' } },
+        { toolCallId: 'bash', name: 'bash', arguments: { command: 'echo synthetic' } },
+      ],
+    }),
+    event('zy-thought', 'assistant.reasoning', { reasoningId: 'second', content: 'After tools' }),
+    event('ab-thought', 'assistant.reasoning', { reasoningId: 'third', content: 'Another block' }),
+    event('z-start', 'tool.execution_start', { toolCallId: 'view' }),
+    event('a-result', 'tool.execution_complete', { toolCallId: 'view', result: { content: 'Output' } }),
+    event('end-body', 'assistant.message', {
+      messageId: 'after', content: 'After reasoning', reasoningText: 'After tools\n\nAnother block',
+    }),
+    event('ask-owner', 'assistant.message', {
+      content: '', toolRequests: [{ toolCallId: 'ask', name: 'ask_user' }],
+    }),
+    event('ask-result', 'tool.execution_complete', { toolCallId: 'ask', result: { content: 'User selected: yes' } }),
+    taskMessage('task', 'spawn'), spawn('spawn', 'child'),
+    owned('child', event('child-thought', 'assistant.reasoning', { reasoningId: 'child-r', content: 'Child thinking' })),
+    owned('child', event('child-body')),
+    event('child-done', 'subagent.completed', { toolCallId: 'spawn' }),
+    owned('child', event('child-followup')),
+  ];
+  const baseline = new NativeWindow(undefined, true);
+  accept(baseline, history, all);
+  const expected = baseline.snapshot().messages;
+  assert.deepEqual(expected.map(message => message.id), [
+    'zz-user', 'reasoning-first', 'body', 'tool-view', 'tool-bash',
+    'reasoning-second', 'reasoning-third', 'after', 'tool-ask', 'reply-ask', 'task', 'subagent-spawn',
+  ]);
+  assert.equal(expected[3].toolCalls?.[0].status, 'completed');
+  assert.equal(expected[3].toolCalls?.[0].output, 'Output');
+  assert.equal(expected.at(-1)?.subagent?.status, 'activity');
+  for (const message of [...expected, ...expected.at(-1)?.subMessages ?? []]) {
+    if (message.thought || message.toolCalls) assert.equal(message.content, '');
+    if (message.toolCalls) {
+      assert.equal(message.toolCalls.length, 1);
+      assert.equal(message.thought, undefined);
+    }
+  }
+  for (let size = 1; size <= history.length; size++) {
+    const backward = new NativeWindow(undefined, true);
+    for (let end = history.length; end > 0; end -= size) {
+      accept(backward, history.slice(Math.max(0, end - size), end), all);
+    }
+    assert.deepEqual(backward.snapshot().messages, expected, `backward size ${size}`);
+    assert.equal(backward.unresolved, false);
+    const live = new NativeWindow(undefined, true);
+    accept(live, [], liveAll);
+    for (let start = 0; start < history.length; start += size) {
+      const chunk = history.slice(start, start + size);
+      accept(live, chunk.flatMap(value => [value, value]), liveAll);
+    }
+    assert.deepEqual(live.snapshot().messages, expected, `forward size ${size}`);
+  }
+});
+
+test('bundled reasoning, body and tool requests use a deterministic local order', () => {
+  const window = new NativeWindow(undefined, true);
+  const bundled = event('bundle', 'assistant.message', {
+    messageId: 'body', content: 'Body', reasoningText: 'Bundled thought',
+    toolRequests: [{ toolCallId: 'second', name: 'view' }, { toolCallId: 'first', name: 'bash' }],
+  });
+  accept(window, [bundled], all);
+  assert.deepEqual(window.snapshot().messages.map(message => message.id), [
+    'reasoning-message-body', 'body', 'tool-second', 'tool-first',
+  ]);
+  const body = window.snapshot().messages[1];
+  accept(window, [event('complete', 'tool.execution_complete', {
+    toolCallId: 'second', result: { content: 'Result' },
+  })], liveAll);
+  assert.equal(window.snapshot().messages[1], body);
+  assert.equal(window.snapshot().messages[2].toolCalls?.[0].status, 'completed');
+});
+
+test('older explicit reasoning removes only its redundant bundled fallback and preserves body anchors', () => {
+  const window = new NativeWindow(undefined, true);
+  const final = event('final', 'assistant.message', { messageId: 'body', content: 'Body', reasoningText: 'Thought' });
+  accept(window, [final], all);
+  accept(window, [event('reason', 'assistant.reasoning', { reasoningId: 'r', content: 'Thought' })], all);
+  assert.deepEqual(window.snapshot().messages.map(message => message.id), ['reasoning-r', 'body']);
+  assert.equal(window.snapshot().messages[1].thought, undefined);
+});
+
+test('reasoning streams are independent, suppress disconnected suffixes, and converge to durable records', () => {
+  const window = new NativeWindow(undefined, true);
+  accept(window, [], liveAll);
+  const start = ephemeral('start', 'assistant.message_start', { messageId: 'body' });
+  accept(window, [
+    ephemeral('r-prefix', 'assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Partial' }),
+    start,
+    ephemeral('body-prefix', 'assistant.message_delta', { messageId: 'body', deltaContent: 'Partial body' }),
+  ], liveAll);
+  assert.deepEqual(window.snapshot().messages.map(message => message.id), ['reasoning-r', 'body']);
+  accept(window, [event('older-user', 'user.message', { content: 'Older' })], all);
+  window.disconnect();
+  accept(window, [], liveAll);
+  accept(window, [
+    ephemeral('r-suffix', 'assistant.reasoning_delta', { reasoningId: 'r', deltaContent: ' lost suffix' }),
+    ephemeral('body-suffix', 'assistant.message_delta', { messageId: 'body', deltaContent: ' lost suffix' }),
+  ], liveAll);
+  assert.equal(window.snapshot().messages[1].thought, 'Partial');
+  assert.equal(window.snapshot().messages[2].content, 'Partial body');
+  const durable = [
+    event('final-r', 'assistant.reasoning', { reasoningId: 'r', content: 'Complete thought' }),
+    event('final-body', 'assistant.message', { messageId: 'body', content: 'Complete body', reasoningText: 'Complete thought' }),
+  ];
+  accept(window, durable, liveAll);
+  assert.equal(window.partial, false);
+  const replay = new NativeWindow(undefined, true);
+  accept(replay, [event('older-user', 'user.message', { content: 'Older' }), ...durable], all);
+  assert.deepEqual(window.snapshot().messages, replay.snapshot().messages);
+  const before = window.snapshot().messages;
+  accept(window, [
+    ...durable,
+    ephemeral('late-r', 'assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Not appended' }),
+  ], liveAll);
+  assert.equal(window.snapshot().messages, before);
+});
+
+test('a message-only final reconciles interrupted thought fragments to one durable fallback', () => {
+  const window = new NativeWindow(undefined, true);
+  accept(window, [], liveAll);
+  accept(window, [
+    ephemeral('r-prefix', 'assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Partial' }),
+    ephemeral('start', 'assistant.message_start', { messageId: 'body' }),
+  ], liveAll);
+  window.disconnect();
+  const final = event('final', 'assistant.message', { messageId: 'body', content: 'Body', reasoningText: 'Whole thought' });
+  accept(window, [final], liveAll);
+  const baseline = new NativeWindow(undefined, true);
+  accept(baseline, [final], all);
+  assert.deepEqual(window.snapshot().messages, baseline.snapshot().messages);
+  assert.equal(window.partial, false);
+});
+
+test('later reasoning with matching text cannot erase a previous message snapshot without ownership', () => {
+  const history = [
+    event('body', 'assistant.message', { content: 'Body first', reasoningText: 'Complete thought' }),
+    event('reasoning', 'assistant.reasoning', { reasoningId: 'r', content: 'Complete thought' }),
+    event('next-reasoning', 'assistant.reasoning', { reasoningId: 'r2', content: 'Different later thought' }),
+  ];
+  for (const split of [0, 1, 2]) {
+    const window = new NativeWindow(undefined, true);
+    accept(window, history.slice(split), all);
+    if (split) accept(window, history.slice(0, split), all);
+    assert.deepEqual(window.snapshot().messages.map(message => message.id), ['reasoning-message-body', 'body', 'reasoning-r', 'reasoning-r2']);
+    assert.equal(window.snapshot().messages[0].thought, 'Complete thought');
+  }
+  const reconnect = new NativeWindow(undefined, true);
+  for (const value of history) {
+    reconnect.disconnect();
+    accept(reconnect, [value], liveAll);
+  }
+  assert.deepEqual(reconnect.snapshot().messages.map(message => message.id), ['reasoning-message-body', 'body', 'reasoning-r', 'reasoning-r2']);
+});
+
+test('differing durable reasoning snapshots and body-only updates never erase recorded thoughts', () => {
+  for (const history of [
+    [
+      event('r', 'assistant.reasoning', { reasoningId: 'r', content: 'A' }),
+      event('m', 'assistant.message', { messageId: 'm', content: 'Body', reasoningText: 'B' }),
+    ],
+    [
+      event('m', 'assistant.message', { messageId: 'm', content: 'Initial', reasoningText: 'A' }),
+      event('r', 'assistant.reasoning', { reasoningId: 'r', content: 'B' }),
+      event('update', 'assistant.message', { messageId: 'm', content: 'Updated' }),
+    ],
+  ]) {
+    const baseline = new NativeWindow(undefined, true);
+    accept(baseline, history, all);
+    assert.deepEqual(baseline.snapshot().messages.flatMap(item => item.thought ? [item.thought] : []), ['A', 'B']);
+    for (let split = 1; split < history.length; split++) {
+      const paged = new NativeWindow(undefined, true);
+      accept(paged, history.slice(split), all);
+      accept(paged, history.slice(0, split), all);
+      assert.deepEqual(paged.snapshot().messages, baseline.snapshot().messages, `split ${split}`);
+    }
+  }
+});
+
+test('mixed snapshot and separate reasoning converge without guessing shared ownership from a text suffix', () => {
+  const history = [
+    event('r1', 'assistant.reasoning', { reasoningId: 'r1', content: 'A' }),
+    event('m', 'assistant.message', { messageId: 'm', content: 'Body', reasoningText: 'A\n\nB' }),
+    event('r2', 'assistant.reasoning', { reasoningId: 'r2', content: 'B' }),
+  ];
+  const baseline = new NativeWindow(undefined, true);
+  accept(baseline, history, all);
+  assert.deepEqual(baseline.snapshot().messages.map(item => [item.id, item.thought]), [
+    ['reasoning-r1', 'A'], ['reasoning-message-m', 'A\n\nB'], ['m', undefined], ['reasoning-r2', 'B'],
+  ]);
+  for (let split = 1; split < history.length; split++) {
+    const paged = new NativeWindow(undefined, true);
+    accept(paged, history.slice(split), all);
+    accept(paged, history.slice(0, split), all);
+    paged.disconnect();
+    accept(paged, history, liveAll);
+    assert.deepEqual(paged.snapshot().messages, baseline.snapshot().messages, `split ${split}`);
+  }
+});
+
+test('durable ordering wins over transient arrival order without duplicating text or reasoning identities', () => {
+  const history = [
+    event('body-final', 'assistant.message', { messageId: 'body', content: 'Final body',
+      toolRequests: [{ toolCallId: 'after-body', name: 'view' }] }),
+    event('thought-final', 'assistant.reasoning', { reasoningId: 'r', content: 'Final thought' }),
+  ];
+  const cold = new NativeWindow(undefined, true);
+  accept(cold, history, all);
+  const live = new NativeWindow(undefined, true);
+  accept(live, [], liveAll);
+  accept(live, [
+    ephemeral('r-start', 'assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Partial thought' }),
+    ephemeral('body-start', 'assistant.message_start', { messageId: 'body' }),
+    ephemeral('body-part', 'assistant.message_delta', { messageId: 'body', deltaContent: 'Partial body' }),
+  ], liveAll);
+  accept(live, history, liveAll);
+  assert.deepEqual(live.snapshot().messages, cold.snapshot().messages);
+});
+
+test('later authoritative body records cannot duplicate newly explicit reasoning blocks', () => {
+  const window = new NativeWindow(undefined, true);
+  const history = [
+    event('first', 'assistant.reasoning', { reasoningId: 'first', content: 'First' }),
+    event('body-initial', 'assistant.message', { messageId: 'body', content: 'Initial', reasoningText: 'First' }),
+    event('second', 'assistant.reasoning', { reasoningId: 'second', content: 'Second' }),
+    event('body-final', 'assistant.message', { messageId: 'body', content: 'Final', reasoningText: 'First\n\nSecond' }),
+  ];
+  accept(window, history, all);
+  assert.deepEqual(window.snapshot().messages.map(message => [message.id, message.content, message.thought]), [
+    ['reasoning-first', '', 'First'], ['body', 'Final', undefined], ['reasoning-second', '', 'Second'],
+  ]);
+  for (let split = 1; split < history.length; split++) {
+    const paged = new NativeWindow(undefined, true);
+    accept(paged, history.slice(split), all);
+    accept(paged, history.slice(0, split), all);
+    assert.deepEqual(paged.snapshot().messages, window.snapshot().messages, `split ${split}`);
+  }
+});
+
+test('bootstrap overlap and reconnect preserve atomic request positions and terminal tool output', () => {
+  const history = [
+    event('zz-reasoning', 'assistant.reasoning', { reasoningId: 'r', content: 'Thought' }),
+    event('aa-owner', 'assistant.message', {
+      messageId: 'body', content: 'Text', reasoningText: 'Thought',
+      toolRequests: [{ toolCallId: 't', name: 'view' }],
+    }),
+    event('zz-after', 'assistant.reasoning', { reasoningId: 'after', content: 'After request' }),
+    event('aa-complete', 'tool.execution_complete', { toolCallId: 't', result: { content: 'Output' } }),
+  ];
+  const window = new NativeWindow(undefined, true);
+  accept(window, history.slice(2), { ...all, bootstrap: true }, { liveCursor: 'tail', hasMore: true });
+  accept(window, history.slice(0, 2), liveAll, { hasMore: true });
+  accept(window, history.slice(0, 2), all);
+  window.disconnect();
+  accept(window, history.slice(2), liveAll);
+  const baseline = new NativeWindow(undefined, true);
+  accept(baseline, history, all);
+  assert.deepEqual(window.snapshot().messages, baseline.snapshot().messages);
+  const ids = window.snapshot().messages.map(message => message.id);
+  accept(window, [event('owner-reasserted', 'assistant.message', {
+    messageId: 'body', content: 'Updated text',
+    toolRequests: [{ toolCallId: 't', name: 'view' }],
+  })], liveAll);
+  assert.deepEqual(window.snapshot().messages.map(message => message.id), ids);
+  assert.equal(window.snapshot().messages.find(message => message.id === 'tool-t')?.toolCalls?.[0].output, 'Output');
+  assert.equal(window.snapshot().messages.find(message => message.id === 'tool-t')?.toolCalls?.[0].status, 'completed');
 });

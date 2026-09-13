@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { act, createElement } from 'react';
+import { act, createElement, useLayoutEffect } from 'react';
 import { createRoot } from 'react-dom/client';
 import { getSessionDraft } from '../lib/textDraft';
 import { useCockpit } from '../net/store';
 import type { ChatSession } from '../net/types';
 import { MessageProcess, Thread } from './Thread';
 import { MessageBody } from './MessageBody';
+import { DisclosureChoices } from './DisclosureChoices';
+import { useDisclosureChoice } from '../lib/disclosureChoice';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
 // scroll owner. Each rendered message occupies 100px in a 300px viewport.
@@ -243,14 +245,51 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   assert.equal(getSessionDraft(a.sessionId).getSnapshot(), draftSnapshot);
 
   const processMessage = { id: 'process', role: 'assistant' as const, content: '', timestamp: 1, thought: 'Actual reasoning' };
-  await act(() => root.render(createElement(MessageProcess, { message: processMessage, sessionId: 'A', live: true })));
+  await act(() => root.render(createElement(MessageProcess, { items: [processMessage], sessionId: 'A', latest: true })));
   assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'true');
-  await act(() => root.render(createElement(MessageProcess, { message: { ...processMessage, thought: 'Updated reasoning' }, sessionId: 'A', live: false })));
-  assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'true', 'turn end must not snap the expanded process closed');
+  await act(() => root.render(createElement(MessageProcess, { items: [{ ...processMessage, thought: 'Updated reasoning' }], sessionId: 'A', latest: false })));
+  assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'false', 'an automatically open overview closes when it is no longer latest');
   await act(() => root.render(null));
-  await act(() => root.render(createElement(MessageProcess, { message: processMessage, sessionId: 'A', live: false })));
+  await act(() => root.render(createElement(MessageProcess, { items: [processMessage], sessionId: 'A', latest: false })));
   assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'false', 'history re-entry starts compact');
   assert.equal(container.querySelector('.msg-thought'), null);
+
+  let toggleChoice: () => void = () => { throw new Error('Choice probe not mounted'); };
+  function ChoiceProbe({ choice }: { choice: string }) {
+    const { toggle } = useDisclosureChoice(choice, false);
+    useLayoutEffect(() => { toggleChoice = toggle; }, [toggle]);
+    return null;
+  }
+  const choiceKey = JSON.stringify(['A', 'overview', 'stable-overview']);
+  const renderProcess = async (latest: boolean, items = [processMessage], choice = choiceKey) => {
+    await act(() => root.render(createElement(DisclosureChoices, {
+      children: [
+        createElement(MessageProcess, { key: 'process', identity: 'stable-overview', items, sessionId: 'A', latest }),
+        createElement(ChoiceProbe, { key: 'probe', choice }),
+      ],
+    })));
+  };
+  await renderProcess(false);
+  assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'false');
+  await act(() => toggleChoice());
+  await renderProcess(false, [{ ...processMessage, thought: 'Updated after manual expansion' }]);
+  assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'true', 'manual open survives updates of an older overview');
+  await renderProcess(true);
+  await act(() => toggleChoice());
+  await renderProcess(true, [{ ...processMessage, thought: 'Latest, but manually closed' }]);
+  assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'false', 'manual close overrides latest default');
+  await renderProcess(false);
+  await renderProcess(true);
+  assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'false', 'latest transitions do not erase a manual choice');
+  await act(() => toggleChoice());
+  const secondThought = { ...processMessage, id: 'second-thought', thought: 'Second thought' };
+  const firstThoughtKey = JSON.stringify(['A', 'thought', processMessage.id]);
+  await renderProcess(true, [processMessage, secondThought], firstThoughtKey);
+  assert.deepEqual(container.querySelectorAll('.thought-toggle').map(node => node.getAttribute('aria-expanded')), ['false', 'true']);
+  await act(() => toggleChoice());
+  await renderProcess(true, [processMessage, secondThought, { ...secondThought, id: 'third-thought' }], firstThoughtKey);
+  assert.deepEqual(container.querySelectorAll('.thought-toggle').map(node => node.getAttribute('aria-expanded')), ['true', 'false', 'true'],
+    'only latest thought opens automatically; a manually opened old thought stays open');
 
   const body = '| A | B |\n|---|---|\n| one | two |\n\nStable native text.';
   const renderBody = (content = body) => act(async () => root.render(createElement(MessageBody, {

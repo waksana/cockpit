@@ -231,7 +231,7 @@ export function observeThreadScroll(el: HTMLDivElement, content: HTMLDivElement,
     },
     offset: (id) => {
       const row = content.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
-      return row ? row.getBoundingClientRect().top - top() : null;
+      return row && !row.closest('[hidden]') ? row.getBoundingClientRect().top - top() : null;
     },
     write: (value) => { el.scrollTop = value; },
   }, {

@@ -263,8 +263,8 @@ test('initial history keeps loading until its tool owner is present, then follow
   } }], { hasMore: true });
   assert.equal(h.state().loadingHistory, false);
   assert.equal(h.state().incompleteBoundary, false);
-  assert.deepEqual(h.ids(), ['A', 'B']);
-  assert.equal(h.state().messages[0].toolCalls?.[0].output, 'result');
+  assert.deepEqual(h.ids(), ['A', 'tool-tool', 'B']);
+  assert.equal(h.state().messages[1].toolCalls?.[0].output, 'result');
   assert.ok(h.requests[2].path.endsWith('/chat/stream'));
   assert.equal(h.requests[2].body.cursor, 'tail-before-page');
 });
