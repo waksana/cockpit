@@ -1,0 +1,214 @@
+// Left column (master pane) — ported from tweb _leftSidebar / _chatlist / _row /
+// _inputSearch. Real structure + values; Solarized colors via tokens. cockpit
+// maps Telegram's person-avatar to a project-colored cwd monogram.
+
+// ── Sidebar header: search fills it, symmetric header-height ────────────────
+.sidebar-header {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  height: var(--header-height);
+  min-height: var(--header-height);
+  padding: 0 0.5rem;
+  border-bottom: 1px solid var(--border-color);
+}
+.sidebar-hamburger { flex: none; }
+
+// ── Input-search (pill, leading icon ↔ spinner on loading, clear) ───────────
+.input-search {
+  --height: 2.5rem;
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  height: var(--height);
+
+  &-icon {
+    position: absolute;
+    inset-inline-start: 0.7rem;
+    font-size: 1.35rem;
+    color: var(--secondary-text-color);
+    opacity: 0.6;
+    pointer-events: none;
+    display: inline-flex;
+  }
+  .spinner {
+    position: absolute;
+    inset-inline-start: 0.78rem;
+    pointer-events: none;
+  }
+  &-input {
+    width: 100%;
+    height: var(--height);
+    padding: 0 2.5rem;
+    border: none;
+    border-radius: calc(var(--height) / 2);
+    background-color: var(--input-search-background-color);
+    color: var(--primary-text-color);
+    font-size: var(--font-size-15);
+    line-height: var(--line-height-16);
+    outline: none;
+    &::placeholder { color: var(--input-placeholder-color); }
+    &::-webkit-search-cancel-button { display: none; }
+    &:focus { background-color: color-mix(in srgb, var(--primary-color) 10%, transparent); }
+    &:focus ~ .input-search-icon { color: var(--primary-color); opacity: 1; }
+  }
+  &-clear {
+    position: absolute;
+    inset-inline-end: 0.45rem;
+    width: 1.75rem; height: 1.75rem;
+    border: none; background: transparent; cursor: pointer;
+    color: var(--secondary-text-color);
+    border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 1.1rem;
+    @media (hover: hover) { &:hover { background-color: var(--ripple-color); } }
+  }
+}
+
+// ── Chat list ───────────────────────────────────────────────────────────────
+.chatlist {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem;
+  display: flex;
+  flex-direction: column;
+  -webkit-touch-callout: none;
+}
+
+.chatlist-group-title {
+  padding: 0.5rem 0.75rem 0.25rem;
+  font-size: var(--font-size-13);
+  font-weight: 500;
+  color: var(--secondary-text-color);
+  opacity: 0.65;
+}
+
+// One session row — tweb .row 3-col grid (avatar | title/subtitle | time/meta).
+.chatlist-chat {
+  position: relative;
+  display: grid;
+  grid-template-columns: 3.375rem 1fr auto;
+  grid-template-rows: auto auto;
+  grid-template-areas: 'avatar title  time' 'avatar subtitle meta';
+  align-items: center;
+  column-gap: 0.6rem;
+  min-height: 4.25rem;
+  padding: 0.25rem 0.6rem;
+  border-radius: var(--border-radius-medium);
+  cursor: pointer;
+  color: var(--primary-text-color);
+  overflow: hidden;             // clip content to the rounded row
+
+  @media (hover: hover) {
+    &:hover:not(.active) { background-color: var(--ripple-color); }
+  }
+  &.active { background-color: var(--selected-fill); }
+
+  // Unloaded = not resident in memory. Dim the row's identity/content so
+  // "what's loaded" reads at a glance, replacing the old "空闲" status word.
+  // Attention badges (.dialog-meta) stay full strength — an unloaded session
+  // can still be waiting on you.
+  &.is-unloaded {
+    .dialog-avatar, .dialog-title, .dialog-time, .dialog-subtitle { opacity: 0.45; }
+  }
+
+  .dialog-avatar {
+    grid-area: avatar;
+    width: 3.375rem; height: 3.375rem;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 1.25rem; font-weight: 600;
+    color: #fff;
+    user-select: none;
+    // hue set inline via --chip-h
+    background: oklch(58% 0.11 calc(var(--chip-h, 220) * 1deg));
+  }
+  .dialog-title {
+    grid-area: title;
+    align-self: flex-end;
+    min-width: 0;
+    font-size: var(--font-size-16);
+    font-weight: 500;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .dialog-time {
+    grid-area: time;
+    align-self: flex-end;
+    justify-self: end;
+    font-size: var(--font-size-12);
+    color: var(--tertiary-text-color);
+    white-space: nowrap;
+  }
+  .dialog-subtitle {
+    grid-area: subtitle;
+    align-self: flex-start;
+    min-width: 0;
+    margin-top: 0.1rem;
+    font-size: var(--font-size-14);
+    color: var(--secondary-text-color);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .dialog-meta {
+    grid-area: meta;
+    align-self: flex-start;
+    justify-self: end;
+    display: flex; align-items: center; gap: 0.35rem;
+    margin-top: 0.1rem;
+  }
+  .dialog-status {
+    font-size: var(--font-size-12);
+    color: var(--secondary-text-color);
+    &[data-tone='running'] { color: var(--primary-color); }
+    &[data-tone='error'] { color: var(--danger-color); }
+  }
+  .dialog-pinned {
+    font-size: 0.95rem;
+    color: var(--chatlist-pinned-color);
+    display: inline-flex;
+  }
+  // Scheduled-prompts indicator (a session with one or more active schedules).
+  .dialog-schedule {
+    font-size: 0.95rem;
+    color: var(--secondary-text-color);
+    display: inline-flex;
+  }
+  .dialog-unread {
+    min-width: 1.1rem; height: 1.1rem;
+    padding: 0 0.32rem;
+    border-radius: 999px;
+    background-color: var(--danger-color);
+    color: var(--badge-text-color);
+    font-size: var(--font-size-12);
+    font-weight: 500;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  // Needs-a-decision badge — the session is blocked on ask_user / plan / elicitation.
+  // Both unread indicators are red; a seen choice remains actionable, not unread.
+  .dialog-choice {
+    min-width: 1.1rem; height: 1.1rem;
+    padding: 0 0.32rem;
+    border-radius: 999px;
+    background-color: var(--danger-color);
+    color: var(--badge-text-color);
+    font-size: var(--font-size-12);
+    font-weight: 600;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  .dialog-choice.is-seen {
+    background-color: transparent;
+    color: var(--primary-color);
+    box-shadow: inset 0 0 0 1px currentColor;
+    font-weight: 500;
+  }
+}
+
+.chatlist-empty {
+  padding: 1.5rem 0.8rem;
+  text-align: center;
+  font-size: var(--font-size-14);
+  color: var(--secondary-text-color);
+}

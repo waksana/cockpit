@@ -1,0 +1,478 @@
+{
+  "notice": "DESIGN ONLY. These are synthetic messages for a proposed hostProtocol 2, not current production API results. URLs use .invalid; hashes, keys and IDs are illustrative. No archive or link code was fetched or executed.",
+  "inspect": {
+    "request": {
+      "intent": "modules/inspect",
+      "body": {
+        "url": "https://modules.example.invalid/clipbook/stable.module-release.json"
+      }
+    },
+    "response": {
+      "inspectionId": "inspect_demo_01",
+      "kind": "signed-release",
+      "module": {
+        "moduleId": "org.example.clipbook",
+        "version": "0.3.0-draft.1"
+      },
+      "descriptorDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "recognition": "recognized",
+      "compatibility": "compatible",
+      "target": {
+        "os": "linux",
+        "arch": "x64",
+        "libc": "glibc",
+        "runtime": "node24"
+      },
+      "signature": "self-consistent",
+      "publisherTrust": "untrusted",
+      "requiredDecision": "TRUST_MODULE_PUBLISHER",
+      "executionStarted": false
+    }
+  },
+  "verify": {
+    "request": {
+      "intent": "modules/verify",
+      "body": {
+        "inspectionId": "inspect_demo_01",
+        "descriptorDigest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      }
+    },
+    "response": {
+      "verificationId": "verify_demo_01",
+      "inspectionId": "inspect_demo_01",
+      "manifestDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "artifactDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "target": {
+        "os": "linux",
+        "arch": "x64",
+        "libc": "glibc",
+        "runtime": "node24"
+      },
+      "integrity": "verified",
+      "compatibility": "compatible",
+      "publisherTrust": "untrusted",
+      "executionAllowed": false
+    }
+  },
+  "usePlan": {
+    "request": {
+      "intent": "modules/use/plan",
+      "body": {
+        "verificationId": "verify_demo_01",
+        "desired": {
+          "install": true,
+          "configuration": {
+            "maxNoteLength": 2000
+          },
+          "startService": true,
+          "apply": {
+            "target": {
+              "kind": "existing-session",
+              "sessionId": "native_demo_existing"
+            },
+            "roles": [
+              "writer"
+            ]
+          }
+        }
+      }
+    },
+    "response": {
+      "planId": "plan_demo_01",
+      "planDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "steps": [
+        "install",
+        "configure",
+        "start",
+        "apply"
+      ],
+      "requiredDecisions": [
+        {
+          "kind": "trust-and-use",
+          "publisherKeyFingerprint": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "scope": "this-module",
+          "capabilityDigest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }
+      ],
+      "nativeSessionCreated": false,
+      "moduleCodeExecuted": false
+    }
+  },
+  "executePlan": {
+    "request": {
+      "intent": "modules/use/execute",
+      "body": {
+        "operationId": "op_demo_use_01",
+        "planId": "plan_demo_01",
+        "planDigest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "approval": {
+          "confirm": true,
+          "publisherKeyFingerprint": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "capabilityDigest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "trustScope": "this-module"
+        }
+      }
+    },
+    "accepted": {
+      "operationId": "op_demo_use_01",
+      "phase": "accepted",
+      "step": "install",
+      "effect": "none",
+      "completedSteps": []
+    },
+    "waiting": {
+      "operationId": "op_demo_use_01",
+      "phase": "waiting",
+      "step": "apply",
+      "effect": "partial",
+      "completedSteps": [
+        "install",
+        "configure",
+        "start"
+      ],
+      "reason": {
+        "code": "SESSION_BUSY",
+        "requiredAction": "wait-for-safe-idle"
+      },
+      "moduleRef": "mod_demo_clipbook",
+      "installedVersion": "0.3.0-draft.1",
+      "runningVersion": "0.3.0-draft.1",
+      "appliedVersion": null
+    },
+    "done": {
+      "operationId": "op_demo_use_01",
+      "phase": "succeeded",
+      "step": "complete",
+      "effect": "applied",
+      "completedSteps": [
+        "install",
+        "configure",
+        "start",
+        "apply"
+      ],
+      "result": {
+        "moduleRef": "mod_demo_clipbook",
+        "installedVersion": "0.3.0-draft.1",
+        "defaultVersion": "0.3.0-draft.1",
+        "service": {
+          "version": "0.3.0-draft.1",
+          "instanceId": "run_demo_01"
+        },
+        "session": {
+          "sessionId": "native_demo_existing",
+          "roleId": "writer",
+          "appliedVersion": "0.3.0-draft.1"
+        }
+      },
+      "warnings": []
+    }
+  },
+  "invoke": {
+    "http": {
+      "intent": "modules/invoke",
+      "body": {
+        "moduleRef": "mod_demo_clipbook",
+        "providerRef": "provider_demo_running_01",
+        "contract": "notes.v1",
+        "contractDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+        "action": "notes.add",
+        "operationId": "op_demo_note_01",
+        "input": {
+          "text": "Synthetic note supplied by the user."
+        }
+      }
+    },
+    "mcp": {
+      "tool": "cockpit_call_intent",
+      "arguments": {
+        "name": "modules/invoke",
+        "body": {
+          "moduleRef": "mod_demo_clipbook",
+          "providerRef": "provider_demo_running_01",
+          "contract": "notes.v1",
+          "contractDigest": "1111111111111111111111111111111111111111111111111111111111111111",
+          "action": "notes.add",
+          "operationId": "op_demo_note_01",
+          "input": {
+            "text": "Synthetic note supplied by the user."
+          }
+        }
+      }
+    },
+    "response": {
+      "operationId": "op_demo_note_01",
+      "phase": "succeeded",
+      "step": "complete",
+      "effect": "applied",
+      "completedSteps": [
+        "invoke"
+      ],
+      "result": {
+        "noteId": "note_demo_01"
+      }
+    }
+  },
+  "capabilities": {
+    "request": {
+      "intent": "modules/capabilities/get",
+      "body": {
+        "moduleRef": "mod_demo_clipbook",
+        "target": {
+          "kind": "service"
+        },
+        "contract": "notes.v1"
+      }
+    },
+    "response": {
+      "providerRef": "provider_demo_running_01",
+      "provider": {
+        "kind": "service",
+        "moduleRef": "mod_demo_clipbook",
+        "version": "0.3.0-draft.1",
+        "releaseDigest": "3333333333333333333333333333333333333333333333333333333333333333",
+        "instanceId": "run_demo_01",
+        "configRevision": 1,
+        "contract": "notes.v1",
+        "contractDigest": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "definition": {
+        "provider": "service",
+        "actions": {
+          "notes.list": {
+            "effect": "read",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "limit": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 50
+                }
+              },
+              "additionalProperties": false
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "notes": {
+                  "type": "array",
+                  "maxItems": 50,
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "text": {
+                        "type": "string",
+                        "maxLength": 2000
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "text"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "required": [
+                "notes"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "notes.add": {
+            "effect": "local-write",
+            "operationId": "required",
+            "confirmation": "explicit-call",
+            "inputSchema": {
+              "type": "object",
+              "properties": {
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 2000
+                }
+              },
+              "required": [
+                "text"
+              ],
+              "additionalProperties": false
+            },
+            "outputSchema": {
+              "type": "object",
+              "properties": {
+                "noteId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "noteId"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "events": {
+          "notes.changed": {
+            "durability": "module-cursor",
+            "schema": {
+              "type": "object",
+              "properties": {
+                "revision": {
+                  "type": "integer",
+                  "minimum": 1
+                }
+              },
+              "required": [
+                "revision"
+              ],
+              "additionalProperties": false
+            }
+          }
+        }
+      },
+      "authorizationGrantedByThisRead": false
+    }
+  },
+  "moduleControl": {
+    "hostToModule": {
+      "protocol": "cockpit.module-control/1",
+      "type": "request",
+      "requestId": "control_demo_01",
+      "operationId": "op_demo_attach_01",
+      "method": "session.attach",
+      "context": {
+        "moduleRef": "mod_demo_task",
+        "releaseDigest": "2222222222222222222222222222222222222222222222222222222222222222",
+        "sessionId": "native_demo_confirmed",
+        "roleId": "commander",
+        "contextRef": "private-context:attach_demo_01"
+      },
+      "input": {
+        "defaults": {
+          "mode": "caller"
+        },
+        "dynamic": {}
+      }
+    },
+    "moduleToHost": {
+      "protocol": "cockpit.module-control/1",
+      "type": "response",
+      "requestId": "control_demo_01",
+      "operationId": "op_demo_attach_01",
+      "phase": "succeeded",
+      "step": "complete",
+      "effect": "applied",
+      "completedSteps": [
+        "attach"
+      ],
+      "result": {
+        "bindingRef": "module-owned-binding:demo_01",
+        "configurationReferences": {
+          "access": {
+            "kind": "module-file",
+            "root": "data",
+            "path": "session-access/native_demo_confirmed.json"
+          }
+        }
+      }
+    },
+    "hostCall": {
+      "protocol": "cockpit.module-control/1",
+      "type": "request",
+      "requestId": "hostcall_demo_01",
+      "method": "host.invoke",
+      "input": {
+        "intent": "session/get",
+        "body": {
+          "sessionId": "native_demo_confirmed"
+        }
+      }
+    }
+  },
+  "moduleHostCallAuthentication": "The shown host.invoke call is an optional small-JSON helper. Trusted enabled modules may directly call every public host API through the existing authentication boundary. Body fields are not authentication; endpoint confirmations and module business authorization remain in force.",
+  "errors": [
+    {
+      "http": 409,
+      "error": {
+        "code": "MODULE_SESSION_INCOMPLETE",
+        "operationId": "op_demo_create_01",
+        "nativeSessionId": "native_demo_confirmed",
+        "phase": "unknown",
+        "step": "attach",
+        "effect": "unknown",
+        "requiredAction": "read-original-operation",
+        "message": "The native session exists; module attachment is not confirmed. No replacement was created."
+      }
+    },
+    {
+      "http": 409,
+      "error": {
+        "code": "MODULE_IDENTITY_CONFLICT",
+        "phase": "failed",
+        "step": "install",
+        "effect": "none",
+        "requiredAction": "choose-distinct-installation-or-explicit-identity-migration",
+        "message": "A different publisher cannot overwrite an installed module with the same display ID."
+      }
+    },
+    {
+      "operationId": "op_demo_install_01",
+      "phase": "succeeded",
+      "step": "complete",
+      "effect": "applied",
+      "completedSteps": [
+        "install"
+      ],
+      "result": {
+        "moduleRef": "mod_demo_clipbook",
+        "installedVersion": "0.3.0-draft.1"
+      },
+      "warnings": [
+        {
+          "code": "SCRATCH_CLEANUP_FAILED",
+          "resourceRef": "retained-staging:op_demo_install_01"
+        }
+      ]
+    }
+  ],
+  "operationRead": {
+    "request": {
+      "intent": "modules/operations/get",
+      "body": {
+        "operationId": "op_demo_use_01"
+      }
+    },
+    "rule": "A read may return a failed/unknown receipt successfully. It does not replay any step or turn a business failure into success."
+  },
+  "events": {
+    "request": {
+      "intent": "modules/events/read",
+      "body": {
+        "moduleRef": "mod_demo_clipbook",
+        "providerRef": "provider_demo_running_01",
+        "contract": "notes.v1",
+        "event": "notes.changed",
+        "cursor": "opaque-module-cursor-demo",
+        "limit": 50,
+        "waitMs": 1000
+      }
+    },
+    "response": {
+      "streamId": "notes-stream-1",
+      "cursorStatus": "ok",
+      "items": [
+        {
+          "event": "notes.changed",
+          "data": {
+            "revision": 1
+          }
+        }
+      ],
+      "nextCursor": "opaque-module-cursor-demo-2",
+      "hasMore": false
+    }
+  }
+}

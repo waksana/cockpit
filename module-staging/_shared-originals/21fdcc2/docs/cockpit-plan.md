@@ -13,9 +13,6 @@ removed. Only a [basic module contract design](module-contract-draft.md) remains
 future module adaptation and generic loading are separate work, not currently
 implemented capability or deployment status. Native Copilot MCP/skills and
 assistant/task semantics remain part of the foundation.
-The next extraction boundary and parked source responsibilities are described
-in the [complete module catalog](module-catalog.md). Source parking is not a
-working plugin implementation or a production deployment.
 
 ## Source delivery and paused work (2026-09-11)
 

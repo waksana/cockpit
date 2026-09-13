@@ -1,0 +1,2284 @@
+{
+  "schemaVersion": 1,
+  "kind": "parked-source-inventory",
+  "note": "Unadapted source only. Mixed originals preserve entire files, not module ownership of every line.",
+  "records": [
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/server/src/consumer-control.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/server/src/consumer-control.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "01bdd26df50ad4c10e766aa8381719aba338e45ef7bd7560e31612bfc0056d29"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/server/src/module-intents.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/server/src/module-intents.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "ee29520fa39c2675635845f9747ef878c608e99ca491c755455e5d3ee40054ca"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/server/src/module-system.fixture.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/server/src/module-system.fixture.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "5c5dc9bcacc028e87f4c26b12d3f8d0827bcd3c9c5044933f5c8d65222b7aebf"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/components/ModuleInitializationControls.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/components/ModuleInitializationControls.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "74a7d14d35d36ecb97ca090c94001919b84881fc0e3336d35860eaa76c856d03"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/components/ModuleInitializationControls.tsx",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/components/ModuleInitializationControls.tsx",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "2790b1b3ba93527853631b6b4b7b42e68b379cd38e2020fe856da10aed367bab"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/components/ModuleMutationControls.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/components/ModuleMutationControls.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "181556623c0b9bfaf4f2c20898b05ef8b5ae7b695e5132cd061a0714de3b9f5e"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/components/ModuleMutationControls.tsx",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/components/ModuleMutationControls.tsx",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "add796b337171797025a7b58659e5da2d3f00d7661c52093eab96b3e385488bf"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/components/Modules.scss",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/components/Modules.scss",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "9563528f7521292328484bebd5d57f948bf0c4ddfbb13b2e73e6ecc1a8098642"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/components/Modules.service.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/components/Modules.service.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "f2a0fae7b5b2b76ffdbac59ba8c1103542310b2f172570bf02c68e0fc5f56ec6"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/components/Modules.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/components/Modules.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "a420dc355890165e3e5e164609f883e03b9f1126618eae0720584dba29e44c4d"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/components/Modules.tsx",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/components/Modules.tsx",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "7e4bef0edd9cdc77930540965c9455fd6b0be726590e121d854e9912e20e9cb6"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/lib/moduleInitialization.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/lib/moduleInitialization.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "2c8a0cc5ec21bc6067490f38a333b23121e0b5ca40841d2edf7c8f0fe244d340"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/lib/moduleInitialization.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/lib/moduleInitialization.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "3772c6116265e6baf670625f5ec97a56f31064201b2074cdee58c3a9ae307225"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/lib/moduleMutation.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/lib/moduleMutation.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "a36c64f6e71684de48f4bcd0104a1306412ca3a492dfa4712c1aaa3d50b5dcce"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/lib/moduleMutation.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/lib/moduleMutation.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "74246138b891436472db9d43a72a8df4bc998be1afd0e59473b36b91845df451"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/lib/moduleService.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/lib/moduleService.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "0d2b7a10435ed7b9b5dd4c68a70f6720daef64f60edfad9d8eb28703cf8fd9d2"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/lib/moduleService.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/lib/moduleService.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "7f7f64c3225d9a19ea2d4a87f6079c214fd908cb0db3f1c91f3a716e7933e6e4"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/lib/moduleUpdate.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/lib/moduleUpdate.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "c4224b933a415cdf7667d7fc8e684cef7cd21d8fb8b1f4b99833d661831a4eae"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/web/src/lib/moduleUpdate.ts",
+      "destination": "module-staging/_legacy-host/33696b8/apps/web/src/lib/moduleUpdate.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "f68d002ae6b84e6a734a76328d517768d678bd08fadcb1e257587103de929171"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/examples/module-contract-v2/assistant.module.json",
+      "destination": "module-staging/_legacy-host/33696b8/docs/examples/module-contract-v2/assistant.module.json",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "8b0dcce66e949105e5013700523e95e3adfcff6ba11ae9d40aa8b32e42d42dfe"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/examples/module-contract-v2/atomic-lifecycle.json",
+      "destination": "module-staging/_legacy-host/33696b8/docs/examples/module-contract-v2/atomic-lifecycle.json",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "b8e65b43e220fd8106282ab953a9da5b7a0f48e6e230e6d668377a1b054c1beb"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/examples/module-contract-v2/clipbook.home.page.json",
+      "destination": "module-staging/_legacy-host/33696b8/docs/examples/module-contract-v2/clipbook.home.page.json",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "064d1255722d574cbccde6b9b3c14cc9594f001df25635819c6d6bb832a29fe6"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/examples/module-contract-v2/clipbook.module.json",
+      "destination": "module-staging/_legacy-host/33696b8/docs/examples/module-contract-v2/clipbook.module.json",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "ae3b67133f0e7c1e2a28c3b0986a41c359e6c4e4b57395f3edc9762c511b2399"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/examples/module-contract-v2/clipbook.release-payload.json",
+      "destination": "module-staging/_legacy-host/33696b8/docs/examples/module-contract-v2/clipbook.release-payload.json",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "245ae1b20b97b351d017ebeaccf3698b979221bbe35df1e861995bc69ff8d9bf"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/examples/module-contract-v2/context-and-wire.json",
+      "destination": "module-staging/_legacy-host/33696b8/docs/examples/module-contract-v2/context-and-wire.json",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "99fdc5a802158cdbe7f3bc9e21096cf43a8520783734ba2e0ab8499a766b6d80"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/examples/module-contract-v2/files-via-http.json",
+      "destination": "module-staging/_legacy-host/33696b8/docs/examples/module-contract-v2/files-via-http.json",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "74440b2b40b5cf136277ae31cdb16a274850ea4190bed1a5f4d67c5bb99da63c"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/examples/module-contract-v2/README.md",
+      "destination": "module-staging/_legacy-host/33696b8/docs/examples/module-contract-v2/README.md",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "817a78c127c7cfd343fe3daeea1f328f21b7230a53c8edc08120078b28b7db21"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/examples/module-contract-v2/requests-and-receipts.json",
+      "destination": "module-staging/_legacy-host/33696b8/docs/examples/module-contract-v2/requests-and-receipts.json",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "a52381aa0388e2c2617222d3453e6c89e7d79719f242e2e973e6b81ae411be94"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/examples/module-contract-v2/task-adapted.module.json",
+      "destination": "module-staging/_legacy-host/33696b8/docs/examples/module-contract-v2/task-adapted.module.json",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "2fc8bc984495018698d5a1f69ac0b0ded1f47728b38b260c87da15d2fa0ea4ba"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/examples/module-contract-v2/task.dashboard.page.json",
+      "destination": "module-staging/_legacy-host/33696b8/docs/examples/module-contract-v2/task.dashboard.page.json",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "2f4f25315e075fd559dbd595fe32f8573810eca3ae5dd03ea0feef31a1375d5f"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/module-releases.md",
+      "destination": "module-staging/_legacy-host/33696b8/docs/module-releases.md",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "d9d81e63d0c3f15aab4612fb58ebb609f1ce07a69a32bbe96e63e28cc6b83497"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/module-system.md",
+      "destination": "module-staging/_legacy-host/33696b8/docs/module-system.md",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "378bda914a17db42a0150be0441866417907558a844b3a1834b05e94aadd8df8"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/module-role-mcp.fixture.mjs",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/module-role-mcp.fixture.mjs",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "85763e36612d354d51da51e8d3c324afd770c279380d63b38c0177c82da13375"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/module-role-native.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/module-role-native.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "d452e05b5b3b103685ed5f8a76cfa800332c5f6bff63d61a89cf26c2113ce595"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/module-session.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/module-session.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "0be3e05311f0d4ffd7b494b572af4dedf2775102247350af6f8830c40cc60803"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/adapters.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/adapters.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "4f594aeed6e6a531ee3a0051e1202fbcd57994ca11bf20c44250a92319a613c3"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/adapters.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/adapters.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "f236e5148c73b8b4b5f0be8f5bbbf1dd75f5fc5a560b47b665c7fe1e146c2818"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/catalog.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/catalog.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "8987c0c201e3a251f322709e7dea2b3b69295753a4e2c98e34728df224dddcf3"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/catalog.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/catalog.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "c3095224bef5043e1e7283c9c5fddd618d6b33fa608a1fe3315396b8b0ee5eab"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/initialization-driver.fixture.mjs",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/initialization-driver.fixture.mjs",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "c0e02d6e5160d3b82c8592926c695cb386188812f8dbbbcca0a36f43a7fce30a"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/initialization-hook.fixture.mjs",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/initialization-hook.fixture.mjs",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "68aa7d75e4bae0ee3ed8dfd7be96a0b1b3fc129befd0e047542c4dfa158851b4"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/initialization.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/initialization.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "ed80f81df3eb3e2ac1269309263a0409e14ce9a0bd9968b4ce44f865d2dd3ddf"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/initialization.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/initialization.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "ed0d9ca56cf43cfaa1f43eddd175c251e573d08954a9bf0024f065a697bda2bd"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/manager-admission.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/manager-admission.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "be99795ad7396bb9e7d708fdf24c6d5a0082b60cf438edfee8c336d4631dc12e"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/manager-deletion.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/manager-deletion.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "a9199470975452211bc3647fbf55ee4cd5079e69f4bd67f74d1244af9d32a2c7"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/manager-initialization.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/manager-initialization.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "fbb8655134c92c007e308358466ff2b66467870f1c35344fc4a2f71349a3d74b"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/manager-service.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/manager-service.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "d04666ad5cc1f76e0b46311be39fb662c6f84814ed5f24b216ee0e362537e48a"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/manager.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/manager.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "f7a7feb715a6e02dabe902b26176fb056963e5f4bf46ab20606c19926092a892"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/manager.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/manager.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "6d8730694ca1fadcaa1fb8d48502e7e123ec9bcafe979a1fb6593836fb09536f"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/official-channel.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/official-channel.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "433a9f5b5257a5860ea01647938a87af3a08fa2990783bcac13edd0e9d7d058d"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/owned-lifecycle.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/owned-lifecycle.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "a41efe47ebfc8268cba325885fbfa53d2f58307df1159a15c59384f65342e722"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/owned-lifecycle.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/owned-lifecycle.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "00d9f662d7475b599fa64f66b972f9dc04f5603c81c907e02537ccf54c4e10ac"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/private-files.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/private-files.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "ac173c9b6bc7a081d777f0e2f19fd95e4e8d5a717c2101dab00bee9ed1404bea"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/release-channel.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/release-channel.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "502bf95a281d08dc941d19994c79da48f59bc539267a3fe1f7cf0f191683e286"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/release-channel.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/release-channel.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "15df38d3c2f9618d89d51164423caf01d2dc3cfa1ce87ac1f81e15592bf06df4"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/release-discovery.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/release-discovery.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "3144b65cfcb470a4c2760d7224798919c939d304d6da3879b71510913c0bb1f8"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/role-environment.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/role-environment.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "f01cb4de31e2f572b2c61db63ba16a4ea77bb5cf2beb5128cc714d2615594ce1"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/supervisor-entry.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/supervisor-entry.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "643314bdd7b159c958a3827dc5f8c75cf0adb47d3413bb9dd0398e88b0bcf551"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/supervisor-service.fixture.mjs",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/supervisor-service.fixture.mjs",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "c0dcb4cf1abdc77fb323c067d61bf422a566fbdb4fb51d90340f2383d4b32df9"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/supervisor.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/supervisor.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "0c0447294cfc33fc69dc75dedbc7c5f1f3b0c67ab0b356255ae994f6b947f4fc"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/supervisor.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/supervisor.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "891585e3141d194c931c1dfb327b5fab2a826842f8b24a2ccaad8d4c9a89042a"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/updates-local.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/updates-local.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "b73d0c511b864af0329340ac4172bd20b98778b9ef24637a875d2fdec720d927"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/updates.test.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/updates.test.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "4e49bd9bfedc11dbc00e90f068fabfe1e3fc139252c901019949897e81cd005b"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/updates.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/core/src/modules/updates.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "eeb67051cb476ee2ff899ccf5fc9d89db9eec07e1884388eb84b663ddf23b73a"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/protocol/src/modules.ts",
+      "destination": "module-staging/_legacy-host/33696b8/packages/protocol/src/modules.ts",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "d822fee5fda7d2684d1b80777077be79b4b533c95a47c6451a16ccd5745ae70f"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "scripts/consumer/module-runner.mjs",
+      "destination": "module-staging/_legacy-host/33696b8/scripts/consumer/module-runner.mjs",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "285a5d37c38ffcbb1a9b28edb14ee9a40d9bed3cb6eb7adf0797ab92b07ce131"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "scripts/fixtures/consumer-module-runner.mjs",
+      "destination": "module-staging/_legacy-host/33696b8/scripts/fixtures/consumer-module-runner.mjs",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "ddd97348c999dbe58610a2ad1fde6853ab8ad3a92a9f4613408236ee684de6ad"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "scripts/package-module-release.mjs",
+      "destination": "module-staging/_legacy-host/33696b8/scripts/package-module-release.mjs",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "09519e7db5b8ff6b15154dbc77e93f85f58c33c3225bce38cc8fa63febaf83c4"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "scripts/package-module-release.test.mjs",
+      "destination": "module-staging/_legacy-host/33696b8/scripts/package-module-release.test.mjs",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "07bd2cdc845def2b9ca7a81b3e50a55e0bb8b80544a8fd3d252b26182eae5ec5"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "scripts/sign-module-release.mjs",
+      "destination": "module-staging/_legacy-host/33696b8/scripts/sign-module-release.mjs",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "42f3184d7cafebd6aa976c897bc3f25cb3075484d14bbb7ef376b5dd2eb2963e"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "scripts/sign-module-release.test.mjs",
+      "destination": "module-staging/_legacy-host/33696b8/scripts/sign-module-release.test.mjs",
+      "module": "_legacy-host",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "7a87c8137918c1833f5b02021fd91df16a0e58621e52a18d3b6891cb0159fe40"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/butler.md",
+      "destination": "module-staging/_retired-governance/33696b8/docs/butler.md",
+      "module": "_retired-governance",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "028771f0245dd660f4859df2ddf8aaae97ffb5099b3ea715300e17c331cce263"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/examples/flows/README.md",
+      "destination": "module-staging/_retired-governance/33696b8/docs/examples/flows/README.md",
+      "module": "_retired-governance",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "663d75f417ac51b7df4707d6cf96f6cda0a3a482531d067a808fdee499b1b30c"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/examples/flows/welcome-gate.sh",
+      "destination": "module-staging/_retired-governance/33696b8/docs/examples/flows/welcome-gate.sh",
+      "module": "_retired-governance",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "10a364d51dcbfd3d9372bb867240f799689e87bfd78211bf322cae0e305bfa31"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "docs/examples/flows/welcome.json",
+      "destination": "module-staging/_retired-governance/33696b8/docs/examples/flows/welcome.json",
+      "module": "_retired-governance",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "f17f7c37ac7ede6a4cf71340da53050fb2f6a6c79bb44a30e203c7f819ee8a02"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/package.json",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/package.json",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "01799d7b0455e02e197e4349a48e9234ad3187abd0c987feef2b06f36260221c"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/README.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/README.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "a2d0258fd6031d09c7257e8662ef36ec817799c98b9c7530c5da8393c9f9a9cc"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/fork-native.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/fork-native.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "cb53b820196a1f3c59ccbe88345dde5ed33d6d3146d2c25b66c07707c2ab118e"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/index.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/index.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "a36e1e88690355c2486205191b54ce7c2bcaae1af84dd3d09b0e7d8f7f2846b8"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/index.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/index.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "f3e3f5ffd3953c5884154612ce3f8133a7e6eaba7c17f150d316fb22fe947a3e"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/shared.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/shared.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "cde68a85d694be250a469523a3a5deceb360cb67b43803e9cc1c4ac42ffbb2f6"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/tools/conversation.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/tools/conversation.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "f19a7085e111804d9cfdf848f923b122c1b2a54d9a62ecf38c2d26b6fbe8f1c0"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/tools/files.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/tools/files.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "05bef952227895efea93fca88db0af84bb4a7d7867d99dcdd26c27f4067e9215"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/tools/foundation.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/tools/foundation.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "a508ec720db14aada58b41c23a2cefe4fdcd3e9c834b8bca83696bb66696f8e5"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/tools/read.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/mcp/src/tools/read.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "62ecfc4b62b51459fbd186f5937b5de511b0f5e51ef6051d2159b50e47549ca7"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/server/package.json",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/server/package.json",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "b4a409cb45a17c97473ab8280debdb4f4aa7593075d65fa99c24a18036a203cd"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/server/src/index.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/server/src/index.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "923504d3bc67af2088c0662433c5c092789f95c212d209b6430289cc909b6148"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/server/src/intents.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/server/src/intents.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "a9fb2f506416f9ae91e0d3073727214d769b22710e9c95cfa924da4ad46943a3"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/server/src/shutdown.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/server/src/shutdown.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "62d2b5f76112c4c3ae06f3370eb4f9cf4629ed697a8c1cc8dc30dad08fbe4db6"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/index.html",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/index.html",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "624d4c6816f163b765dfb3e40e466ff4245223de04c52885cb9250fa499f2123"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/package.json",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/package.json",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "989789b7265010cdcc5e4d3d0562a85d9e35cef737e913b6f2d574c9fcc1012a"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/review/Review.tsx",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/Review.tsx",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "0e15ec5bd5239b2163d6aeacb7e97cf8b4dc08e0a2ba7e429763b7e985d19998"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/review/source-exception.mjs",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/source-exception.mjs",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "a63f0557c3e276984686b611755dac3b83748adbfc57aae5cfc3c2f7d29c6afe"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/review/store.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/store.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "c2a098bcb358d384d619f8b2f96a868e1c57e3a1b80779c042a4ddc31457c1da"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/review/vite.config.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/review/vite.config.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "a654be5d6dc3eae18dd4c96736d61088537feb66bf50c6b009555f73038175c9"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/App.tsx",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/App.tsx",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "8171c782fdc495617f03d1e49d8590ee41615de6af038a77b94b3578faa865ba"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/AnchoredMenu.tsx",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/AnchoredMenu.tsx",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "0c48764811d2189bce0a92ad61355e9c7ec54f327d2035b105575a27c9b876dd"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/Composer.tsx",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/Composer.tsx",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "c09b40e1cc71624369d87f322398b5734acf51f136d7c107a3288e6c94e8a4bb"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/ConnectedThread.tsx",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/ConnectedThread.tsx",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "7d7c404387a8aee4d7bda892eaadfe1b691c1deb29d01a0410d0175a0c364f4e"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/GlobalNavigation.tsx",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/GlobalNavigation.tsx",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "2c7f8716e3fb2e6d97e4b45f8525807326f269a266f0d3b8a199fdd9bc390c44"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/MessageBody.tsx",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/MessageBody.tsx",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "3370e8085991bc88893f486ca6f9441a6440f7b258a51d0b6cfe5e9e0a7ba3cf"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/MessageContent.tsx",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/MessageContent.tsx",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "c5e9ce4264607d04892afc0a6272ac6a136a99b8d37a0ad167f9eda209767b40"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/ModeMenu.tsx",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/ModeMenu.tsx",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "134d383bd19d69548d0cf53add4d1fc25a4df2eaeae9811761eb9a7c62d2b732"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/Sidebar.tsx",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/Sidebar.tsx",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "97693cdf1ee68433afeb0d8621aeed5bf169ff4deb5b0714d94cc2f4e5e27022"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/Thread.lifecycle.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/Thread.lifecycle.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "cdb1910862789d2d29cf12f31971ef0cc0093cc564722676bfccfcbee9032334"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/Thread.tsx",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/Thread.tsx",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "a1db2f089579476721518d4cc2c78222fdc7893fed2699e3bfecf8b87d35eddc"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/UxErrorNotifications.scss",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/UxErrorNotifications.scss",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "4ccf4c9266384c26a931b98e1baf31f6236c4293d2af93b14ae8381ce6cfbdc9"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/UxErrorNotifications.tsx",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/components/UxErrorNotifications.tsx",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "3715d88fd5537dc88c26629922025bc85eb5011086a17e379fe9ea2b81131b44"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/dev/chat-fixtures.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/dev/chat-fixtures.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "06666880351217cc9fef83ff34fe00675a87515fb7c3c7b4d4ff616df149ef40"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/dev/chat-lab.tsx",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/dev/chat-lab.tsx",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "8bd089c2bdd273f1eb075aa5be0dc8f0a5db7885dee914a006a333a626784987"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/copyText.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/lib/copyText.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "2892888c101c319118f7f2a715d7ad237943dbc2d0e93a52a19156231f92d06b"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/draft.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/lib/draft.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "b5c96549578486b946aa61fc30438f349a028d1d264461b90621bfd609beeb9a"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/errorReporter.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/lib/errorReporter.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "6a83dc8af26113a02d74250862c3c4b7a591078c839ae30f990f6916799e0720"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/errorReporter.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/lib/errorReporter.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "0a8dad7c618c9c6c1bfcd7c7edb1e454b1a6b975354057f26f273c2bff1a80ce"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/routeOwnership.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/lib/routeOwnership.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "66a16c406b7f6fcd72279566db135cd8781df1180b49ff07eb29a44ebf4ebb68"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/routeOwnership.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/lib/routeOwnership.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "3c40da2edfba5c2ba7dabf816276e5ca7f6d101d564057fb02875811f22fbb48"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/sessionActions.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/lib/sessionActions.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "4898775092ce148a10e249ea88646f7d3e636fd9d5150c75d61f8b473e05eacb"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/sessionActions.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/lib/sessionActions.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "b85a1fa5813b6d2dabb3e22303df30fcc63e3dd62ae25ff3c4dd281775cb755e"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/sessionSelectors.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/lib/sessionSelectors.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "bd98dd39e7779d3cbf6c14ab5dad6a60bcfc3571cb68e3db02bd093ce161717b"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/net/client.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/net/client.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "41cc1d18e17077d2cc5091cc1610d3983fb2102e06c4441d66340ed83ee37637"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/net/client.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/net/client.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "852a80005b1b35ac19b98349d5b90587e29462c972e120022e0eb3a1c6812013"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/net/nativeStore.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/net/nativeStore.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "84a3c47004b45d0db8f266dc6c3b31a8793ee48abd82808602ff5099ef175140"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/net/store.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/net/store.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "d0e979123c4b228b08babfd9dffc252d1d57865804c3a1b8a074b6e30580137b"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/net/store.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/net/store.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "9e566b1c23a802ae91f6daf865b95161178a284699560218f7551ea0102c5efc"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/net/types.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/net/types.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "ee519b60bba83cfe065579c6e0e8f7226d05484fb13da89a4477dc1abe1429f7"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/pages/session-list.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/pages/session-list.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "816d841e2ff543e33a092f1cb41df5e6f8fdfd2e771b5948355e980d64ae1bc6"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/pages/session-list.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/pages/session-list.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "6e73885a8756839aca2fa3ea326b04eda70e08cf743a3f19364236b534765f21"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/styles/components/sidebar.scss",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/styles/components/sidebar.scss",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "7959b8eb92237c85c5187cfa7f4a1320b04d49bd717f511b4d55e5ba2a27e0b4"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/styles/tokens.scss",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/src/styles/tokens.scss",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "ddec33e02cd313d04f28a70a838a97d4b4cfcaca7e02a8867e708b87983209c2"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/vite.config.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/apps/web/vite.config.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "5934e2dc04cf9335f679adc2e819158b074b78b916843533a30cc0ebe62a8337"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/chat-review-page.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/chat-review-page.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "7da4799cfc7dfeab18451cf7baec2332cd80255d9b04f2a1609cb6ce343fc035"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/cockpit-plan.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/cockpit-plan.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "282d3a174ae31b96ef7af4f5b3eacfb9cd657f8a267cba64e1d0fff27127531a"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/cockpit-testing.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/cockpit-testing.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "14005df28e12e22d1e4aeec557c7ebef6463c76d8a91b202a38f7c5adf496158"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/cockpit-tweb-diff.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/cockpit-tweb-diff.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "89a60d32c7c0428b1c1bf96b6c5c533bbe1ae42f4b663417185e4a540b421384"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/consumer-installation.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/consumer-installation.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "0db3dd933ccb631f4a8a4eb252d51a54a07ff2a72bdcb2d2696a70252e16f4b2"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/consumer-publishing.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/consumer-publishing.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "b27ad55592aadeef9d68ad4fa4b526595fb777a62d13ebbf00f56118f2224e99"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/context-reset.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/context-reset.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "95dbaa5b6f17f58dca56f0ccaf33b4e1318eddf7f43c28c32b106e1ba65d899e"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/DELIVERY.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/DELIVERY.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "adfc5d816bb379c9f8431b1e85ec178a40b7217fe073adc15d4d0efd1ace1ce1"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/DEPLOY-PORTABLE.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/DEPLOY-PORTABLE.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "5a9d8816263c6f818705fdf5e8c3e2246c248ea82f6d850b18f9b764e159189f"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/native-chat.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/native-chat.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "3275412a10b8867e5cdcc6d636abd6a95b7429aa292c2751d22abdc2a9ccbaae"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/review/01-protocol.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/review/01-protocol.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "b87629a9c36a8b75d118e612aca1ee35824b4755cfc4284c19da6befb73fe451"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/review/02-engine.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/review/02-engine.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "8434f40192dbdb830e1cf3ca82fb6ae47dd99e79c742e42790ad0f5f5fba5347"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/review/04-orchestration.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/review/04-orchestration.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "36362dbdbb0b0f79742030f4872838840a292e44fce5a050a7ba33c88ea9a969"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/review/07-web.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/review/07-web.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "50119ec40a0c2c842959b23ae6a8b4a20d33a3bcf5f3a63c4efa80318fddecca"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/review/2026-09-08-foundation.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/review/2026-09-08-foundation.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "904ad8683a7c57ac45f3ad61982b3eb003f0e1267c1c470641744db8a715310c"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/review/20260622-0756/02-web-sessionid.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/review/20260622-0756/02-web-sessionid.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "3328a855990e21ffe7472a01e2c88e0cf4ad9b90b1bbe804113344dd871f255b"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/review/deep/dr-engine-turn.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/review/deep/dr-engine-turn.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "aba669fa57591802e547c69585f13b14a0d6c221a7c77647cef58427e1256e7c"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/review/deep/dr-protocol-refine.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/review/deep/dr-protocol-refine.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "e98613cfd0ba7bc68bf2d10d412f625204028e77648b3c135c9e1146bb636085"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/review/deep/dr-server-security.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/review/deep/dr-server-security.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "e11af63fb2495db010ee9f43ec9c3ae81b5b106ccc5f58eb32f710f7b5b4eb73"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/review/deep/dr-web-projection.md",
+      "destination": "module-staging/_shared-originals/21fdcc2/docs/review/deep/dr-web-projection.md",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "b294349c37e6684e2242846a0cb96c9aad499bca804b799b993d7aaff61b5614"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "package.json",
+      "destination": "module-staging/_shared-originals/21fdcc2/package.json",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "38c75a99f7d7948ff80dd467b08c0e0938808973056843da362b4072d92fdb35"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/package.json",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/package.json",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "8fbf7144ecce52bdfe2a5f2ef03e7f8ec55ca8a5f73137fe0cab47f847e55767"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/engine.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/engine.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "9c3b46d8390d0f1b70e198647988dd959e882d4beb5bf22d871fe936294d8852"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/engine.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/engine.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "9ebfcf1e2fe61c002c9dd00bf49098e4ca750f6c717768dfaba5ed4c470f6f42"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/fold.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/fold.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "18b074a1c6d7713e1869ce23fffe3915fb79d3672b7d4e580144acf16d02e0bc"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/fork-native.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/fork-native.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "ec09b8446da492c78755200c4e7ffbf5bd5895f7c8ab526405d54f0f7d089059"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/index.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/index.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "9320d282843f298f4f50b9de00d18f057012290bf2ad42224011ab9748c02884"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/lifecycle.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/lifecycle.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "de08a36ecf2240a8256914ff13661b6a3ecc73324aceb92c236a1806bc526820"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/native-state-smoke.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/native-state-smoke.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "5187d2d3ad2d68c618f58ab416cf9f945615af7fe4f5573c02119f9045e20237"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/native-state.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/native-state.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "bb2e87770b70195fc2081862119c7088d5e97f674dc411913c9643ca9f8ad8a2"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/paths.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/paths.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "91ca5f38a92ef7061fcf86d95d570963e7567c7668f64b2def5aa2d82314a670"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/prefs.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/prefs.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "1b622f50e8db1bb8e4484829b78e9c4af8fa024fa973b8c0b33b94b07531b774"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/prefs.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/prefs.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "0ab7adbe7c11cf2d2a2d6c3108092f3b939602fd7839e4a226187700a6576e94"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/runtime-smoke.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/runtime-smoke.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "9f5f577f98799f5fdbb6a74be9e992bcec9e81520fd5e9089df58bf69a3e3a2d"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/runtime.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/runtime.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "12ee13b91ed0945e9ca14db5b66667db5f01c224a6f7c8c9799e658cc60e2737"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/runtime.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/core/src/runtime.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "fb839921f319825d6699662d8180b21ec2d95131a0894182cca409698e645d46"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/protocol/package.json",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/protocol/package.json",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "df309cbf7b8116d229104f5189acb79b442ffd165d0e30ccf83b82fca426e616"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/protocol/src/chat.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/protocol/src/chat.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "45ed8b79cdb9b047aa497cfe34b6eff5f2b9d69032444f126d33571a829aa054"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/protocol/src/index.test.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/protocol/src/index.test.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "a7108bcbfb39cb34ced537a69688be0f5d129812187f7706a9dd3ade40d2f7b5"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/protocol/src/index.ts",
+      "destination": "module-staging/_shared-originals/21fdcc2/packages/protocol/src/index.ts",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "8e8b7b9f30ec09ddb5359530abbecf139837a2c2d825cfd3ac6a53c4b23377cd"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "pnpm-lock.yaml",
+      "destination": "module-staging/_shared-originals/21fdcc2/pnpm-lock.yaml",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "69e3250b2536a3cf14b196252243012e0f5b5a9f60d109539100ac12d2c39e11"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "pnpm-workspace.yaml",
+      "destination": "module-staging/_shared-originals/21fdcc2/pnpm-workspace.yaml",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "42a57b50944e8f7faca7d0eb16fc80df1ee732617170ebe3381dfd6b4e6a725b"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "scripts/delivery-package.test.mjs",
+      "destination": "module-staging/_shared-originals/21fdcc2/scripts/delivery-package.test.mjs",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "266efb0ee3223f460e23e60f41097fba024eaf0894606a058c65b7cd3d99b587"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "scripts/diagnostic-e2e-fixture.mjs",
+      "destination": "module-staging/_shared-originals/21fdcc2/scripts/diagnostic-e2e-fixture.mjs",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "e56e746f56b8012b9c830583dff9bd47139d7a7f7b6ce0a5ecafef91aa319849"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "scripts/e2e.mjs",
+      "destination": "module-staging/_shared-originals/21fdcc2/scripts/e2e.mjs",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "a9ba25a42cd9909afa0823051ae34d911751f301238b2999420405a08931a1ea"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "service-delivery.json",
+      "destination": "module-staging/_shared-originals/21fdcc2/service-delivery.json",
+      "module": "_shared-originals",
+      "kind": "mixed-original",
+      "mode": "100644",
+      "sha256": "8335de576c8bde7686cd7286b5332ce93a9aebc98053945819b06cd1a04c2308"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "modules/assistant/module.json",
+      "destination": "module-staging/assistant/33696b8/modules/assistant/module.json",
+      "module": "assistant",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "7feec2dc6f9a53c940432d4f9b343cd3ae4bb7ea9e371b512f7ee88475e34244"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "modules/assistant/roles/assistant.md",
+      "destination": "module-staging/assistant/33696b8/modules/assistant/roles/assistant.md",
+      "module": "assistant",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "9f3c62e98613dead5f237f73c6a5dd390e23cb0442b20e69fb9ea9aac93b71dd"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "modules/assistant/skills/cockpit-assistant/references/memory.md",
+      "destination": "module-staging/assistant/33696b8/modules/assistant/skills/cockpit-assistant/references/memory.md",
+      "module": "assistant",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "d525104c0c21119fa705eb7e32d53909d72a6a5ac58ec06d27f14ce6d88ad873"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "modules/assistant/skills/cockpit-assistant/references/personality.md",
+      "destination": "module-staging/assistant/33696b8/modules/assistant/skills/cockpit-assistant/references/personality.md",
+      "module": "assistant",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "01cb8d1b524241adbd12037cd6299a93fce288f4ea6dd01968ef4c3b18571a70"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "modules/assistant/skills/cockpit-assistant/SKILL.md",
+      "destination": "module-staging/assistant/33696b8/modules/assistant/skills/cockpit-assistant/SKILL.md",
+      "module": "assistant",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "5c6bf384982838c2e73e507d4cf281b683ac9882e72ca53b07f797162a20d7e3"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/context-reset-native.test.ts",
+      "destination": "module-staging/context-reset/21fdcc2/packages/core/src/context-reset-native.test.ts",
+      "module": "context-reset",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "cd5bd7bc56986711ead47effc034435a4fb7cf71974251227c6afe88a0e6c264"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/context-reset.test.ts",
+      "destination": "module-staging/context-reset/21fdcc2/packages/core/src/context-reset.test.ts",
+      "module": "context-reset",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "ecd011258f0b9177311a792713119fe661b75f20bfbe60ed25888aad67c7423c"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/context-reset.ts",
+      "destination": "module-staging/context-reset/21fdcc2/packages/core/src/context-reset.ts",
+      "module": "context-reset",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "d148e992d8ddc549148224e966d2d063538cbae829ac2df97ee80cdfcdcc2f9f"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "skills/self-context-reset/SKILL.md",
+      "destination": "module-staging/context-reset/21fdcc2/skills/self-context-reset/SKILL.md",
+      "module": "context-reset",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "972880746951eab2e66e6b7807c673d368f557d95a6c3bebf184a9bd3eed654d"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/file-client.ts",
+      "destination": "module-staging/files/21fdcc2/apps/mcp/src/file-client.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "c4c8d00e9e22c025dbddc9420fee626fdadc358e88e4995d1c50d49c621fc10d"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/mcp/src/tools/files.test.ts",
+      "destination": "module-staging/files/21fdcc2/apps/mcp/src/tools/files.test.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "af9cc64f3d8c23a2de817b0fedb46f260a1fb89d14f83670d2d99c9d5a5aac63"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/server/src/uploads.test.ts",
+      "destination": "module-staging/files/21fdcc2/apps/server/src/uploads.test.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "3922d7315e629c45a38adf9d0f44a74f34ea9cbfe6d67a842560a0192f5c3c88"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/server/src/uploads.ts",
+      "destination": "module-staging/files/21fdcc2/apps/server/src/uploads.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "07b75cdbe7fc0b2cb8d546e5b68511984f4309f53e64cf969fe21b44f7caf83d"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/Composer.attachment.test.ts",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/components/Composer.attachment.test.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "2c399c8f4c4ad20e3857d31e1064883ef0b69be471e1ef3ccfa230963fb48020"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/Composer.input.fixture.tsx",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/components/Composer.input.fixture.tsx",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "a7f2e5f323d5c66d2d572e10bb59516f06bd51c83fbb7f56e401c008bb1c0fb6"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/FileCard.tsx",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/components/FileCard.tsx",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "357d94f0e9bc1bb97a1af16b76ea65b0f650f230dc8cf804a9fe2e0cf970162b"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/ManagedFiles.test.ts",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/components/ManagedFiles.test.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "81d45c425dd4ee9fb3ffefa40f95e8e87cba5239d87c4d7934a73ced00d840e7"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/attachmentInput.test.ts",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/lib/attachmentInput.test.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "ad67ffd30e61bb84a4f5e7c27782b8008ebcc65918ec3956cf81f78e3d4140c8"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/attachmentInput.ts",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/lib/attachmentInput.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "860891f4beef6f4c9a781345c98421edc43fc316f6fd2b27f3aa70fa2023f9ad"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/attachmentSend.multiple.test.ts",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/lib/attachmentSend.multiple.test.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "e55f67d482fd1039bb3688e85f0860c513f70e56ae739fcf3aec69d25925b310"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/attachmentSend.test.ts",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/lib/attachmentSend.test.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "78ef8e1c0bb676d070b1820c9e393f14a0ddead22bf8098125bfaf77b25f29d9"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/attachmentSend.ts",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/lib/attachmentSend.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "6e9832719ed631fa4a8c17a664e34518b31f182563b5fc4b64fa3caeef06bcf2"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/managedFile.test.ts",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/lib/managedFile.test.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "66ed75656723d28e65e70a307571bc98de6b0efffa2b1ef4523db36c5abe389d"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/managedFile.ts",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/lib/managedFile.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "65af01664fcc56bcc8f37e0c68d2a6b0b0c3d9deff707e120c253f05600f9a40"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/messageImage.ts",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/lib/messageImage.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "02bb250161487996287e3a1ca0a0907290106d7afde923b3fdf670d7a8aa47b9"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/upload.test.ts",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/lib/upload.test.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "54f0e4a6efa1a178b84d88ab7d6df6e906ff7c3832c2794b11b7ebd26bf22359"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/upload.ts",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/lib/upload.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "1d67e44a4d837f4d6107f2d6b70808b269e30afd4d22382323b423026f0d089a"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/pages/Files.tsx",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/pages/Files.tsx",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "7082350a9792281ae20e2b86d914d46fa50d2c30ed32b462aa31075e0a9dd98c"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/styles/components/files.scss",
+      "destination": "module-staging/files/21fdcc2/apps/web/src/styles/components/files.scss",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "abcbb897a14147e5e3cf2edbb6ccb3cfae6ba84d693fca762ba203c7335fcc0c"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/managed-files.md",
+      "destination": "module-staging/files/21fdcc2/docs/managed-files.md",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "0e39eb3b07770bad5ba242204737cb65a59e5f958b72418541c2cabf7d7cd5d7"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/native-tool-images.md",
+      "destination": "module-staging/files/21fdcc2/docs/native-tool-images.md",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "f1a8562b2f56a9d48d514169ff2e00f09934cfb69b030579e6cdbfa3b96c33fe"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/managed-files-native.test.ts",
+      "destination": "module-staging/files/21fdcc2/packages/core/src/managed-files-native.test.ts",
+      "module": "files",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "4005c4b9378d090ace22990394c30843a0f5f539cab8c3a88b55a75f355bd651"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/ConsumerRuntime.tsx",
+      "destination": "module-staging/graceful-restart/21fdcc2/apps/web/src/components/ConsumerRuntime.tsx",
+      "module": "graceful-restart",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "8329356ba3d1810be11fc3fd89075cfde0179c89e5be2e74eb5c0b6081d03f32"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "scripts/graceful-restart.mjs",
+      "destination": "module-staging/graceful-restart/21fdcc2/scripts/graceful-restart.mjs",
+      "module": "graceful-restart",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "2972d31d4ec575cbf237a5e3051a56a2e6b960e47b1714d8c5d9bb2e23e0c14e"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "scripts/graceful-restart.sh",
+      "destination": "module-staging/graceful-restart/21fdcc2/scripts/graceful-restart.sh",
+      "module": "graceful-restart",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "2ec07f2609752aba75d02e7a6939bbddac1f89e8bb051f8acdc799d217269cac"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "scripts/graceful-restart.test.mjs",
+      "destination": "module-staging/graceful-restart/21fdcc2/scripts/graceful-restart.test.mjs",
+      "module": "graceful-restart",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "3ca85626f9ba382bc1146d1b180e75b9034315e634541589f90f18b0d238d6d3"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/server/src/push.test.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/server/src/push.test.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "bde2b0c4af7342d7b0d05eedab9f7629a8f2943f399d2a7c9c51ea7f50817558"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/server/src/push.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/server/src/push.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "307bc9e3da345f7ad4ead5dee45fe8ec626a89b218b0272089978301ad96f294"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/NotificationSettings.scss",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/components/NotificationSettings.scss",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "0ff15c2843f5ef468efedef0961df44e74136b3dd4665fd87f550bb83d5c9d8b"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/NotificationSettings.test.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/components/NotificationSettings.test.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "c5b68ec9064cb7308701fe3693c9f5fb4846e14afd6cfe6554ecc26499c747ea"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/NotificationSettings.tsx",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/components/NotificationSettings.tsx",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "7d74c3f9882f8674f5f174ed8646bf997c2575b3e25dc60ccd2bb51eecf16277"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/badge.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/lib/badge.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "db09b6a00d17ee8941529a6bf9cd08a331bfb68163fac391a73d0094c5c311a1"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/inboxProjection.test.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/lib/inboxProjection.test.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "9cc9d698021a9bfe63d82ba89fa41ea3056ea4ac3e0dea92022f5f786525b6ba"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/inboxProjection.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/lib/inboxProjection.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "0221621fabc965abe238f12bc4e5ffd19cafa462a1ffb154272820c90a746def"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/notificationRouting.test.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/lib/notificationRouting.test.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "d750e1be20a9dd75abb54ee9a0aaf01bcda33e7f518a336a3853197fe4cc86fd"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/notificationRouting.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/lib/notificationRouting.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "c5d7c66ef3377f618cece3c6ae95a5b83b069605340b7a6fc889735fadced191"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/notificationSettings.test.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/lib/notificationSettings.test.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "b36982c17a031f7b06e7e112e809cf560223e82af96d843abddb453c8022551d"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/notificationSettings.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/lib/notificationSettings.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "f9ae4265fd1d2df50cdc145baa5fd3d10307546e016c0aa3cfb74a0b1ce223d4"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/notificationTransport.test.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/lib/notificationTransport.test.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "06a5ee8c37e2cbcb10737c44c3c668c1a961f9e24f07a2b114e924fe902d427b"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/notificationTransport.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/lib/notificationTransport.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "f1fbc2697d210ca2a2c785eec5e960348d4f091ab01b30a00ab7962087c2ab60"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/notificationWorker.test.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/lib/notificationWorker.test.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "f16a88761dd2f17f766038ba00cc0cf86ac1a6b8c354b1b97be7ef6a3696e361"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/notify.test.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/lib/notify.test.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "9303d710341aff460d7a59dd66966238443190f0b9e5e1f6767045a730f28067"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/notify.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/lib/notify.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "6cfbc6f6ca1ebaa7a78f48e2f09daed79dcbf39f3cb53fe84ded8c005ae055af"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/push.test.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/lib/push.test.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "730c5264cf755e3daeaea774df59c078f358357b2e778d00e894a21ed0be1ea4"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/push.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/lib/push.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "341d4f392d8e2c6759aef9a71e25d849ef9c0c823b6dc61b7188b847119df9d3"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/sw.ts",
+      "destination": "module-staging/notifications/21fdcc2/apps/web/src/sw.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "6128e39e52d958a9c1a678d5e5506bbcdbf6f632461f8eba829efad0c4519a0d"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/attention.test.ts",
+      "destination": "module-staging/notifications/21fdcc2/packages/core/src/attention.test.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "706ed6aae4af67df7445927aff4922146772e255999840949988d32add05894a"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/attention.ts",
+      "destination": "module-staging/notifications/21fdcc2/packages/core/src/attention.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "40d766b23276217040a480bc76b9d8308f77b56b63897413fb4335ce3d80c953"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/protocol/src/notification.test.ts",
+      "destination": "module-staging/notifications/21fdcc2/packages/protocol/src/notification.test.ts",
+      "module": "notifications",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "a92b74c818915344353beff545d638f3659beab8df7e43e498442263a9e54125"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/auto-name.test.ts",
+      "destination": "module-staging/session-organization/21fdcc2/packages/core/src/auto-name.test.ts",
+      "module": "session-organization",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "0aac9651442571f8e04c25492b5a162489c8c5f60cfa81a0fc3e9d9f0c3feca8"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/core/src/auto-name.ts",
+      "destination": "module-staging/session-organization/21fdcc2/packages/core/src/auto-name.ts",
+      "module": "session-organization",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "3fceb376de5370126977e47f7d898f954b539edc795d7862828f27b626a7d200"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/server/src/delivery-status.test.ts",
+      "destination": "module-staging/system-status/21fdcc2/apps/server/src/delivery-status.test.ts",
+      "module": "system-status",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "c3be1f1e3f5a8fad62c8aa341eccafa26a2e92e50eea94093d5f3a5e13c0f368"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/server/src/delivery-status.ts",
+      "destination": "module-staging/system-status/21fdcc2/apps/server/src/delivery-status.ts",
+      "module": "system-status",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "443a686a76a14af712c8bad04b1971ea0545de0689a94b5a55df5e034599c70c"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/SystemVersions.scss",
+      "destination": "module-staging/system-status/21fdcc2/apps/web/src/components/SystemVersions.scss",
+      "module": "system-status",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "77f35da025ef0f5924688e21f9ee3fedffe14462f505cd53270113710ca70e01"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/SystemVersions.test.ts",
+      "destination": "module-staging/system-status/21fdcc2/apps/web/src/components/SystemVersions.test.ts",
+      "module": "system-status",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "2de7c4987003796e0d0cc85c9f057bfd162d6d467f426c2e71c9c359bf1c0aec"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/components/SystemVersions.tsx",
+      "destination": "module-staging/system-status/21fdcc2/apps/web/src/components/SystemVersions.tsx",
+      "module": "system-status",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "b7da39e9b4f5a65cd85e4e5defab69dc186c891bc346e726bc29289409823a7b"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/deliveryStatus.test.ts",
+      "destination": "module-staging/system-status/21fdcc2/apps/web/src/lib/deliveryStatus.test.ts",
+      "module": "system-status",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "391a8dcc61376de943be238833112143875803eae8fe9cefed79f4afc06341b3"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/deliveryStatus.ts",
+      "destination": "module-staging/system-status/21fdcc2/apps/web/src/lib/deliveryStatus.ts",
+      "module": "system-status",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "bd4291d6f9562bc8a428edfb4b5076bb597b14a1e8e3ccdb059973fb0a1763f5"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "docs/system-versions.md",
+      "destination": "module-staging/system-status/21fdcc2/docs/system-versions.md",
+      "module": "system-status",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "6ce682877b4e94d6649a68debdc1989499d88a5e08fa3de337bb17b75f2c47de"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "packages/protocol/src/delivery-status.ts",
+      "destination": "module-staging/system-status/21fdcc2/packages/protocol/src/delivery-status.ts",
+      "module": "system-status",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "f2f31e2cfa4f74e00349acffd7dcfc7c28319feb1affeb95fe7fa6dfa8886644"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/server/src/module-proxy.test.ts",
+      "destination": "module-staging/task/33696b8/apps/server/src/module-proxy.test.ts",
+      "module": "task",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "d30dd9913dc207b2f8ccb19e8bd8459235eb2c3944efcdabcfa4bae737f523f7"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "apps/server/src/module-proxy.ts",
+      "destination": "module-staging/task/33696b8/apps/server/src/module-proxy.ts",
+      "module": "task",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "1a51fa26e27152a5a24b6aeefdf9215bc02532abc06562fc5b57f8617be95e48"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/server/src/speech.ts",
+      "destination": "module-staging/voice/21fdcc2/apps/server/src/speech.ts",
+      "module": "voice",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "ceca417ba05720ab1198b8049813e9a6c931996a6a3c65fa1255446213568656"
+    },
+    {
+      "sourceSha": "21fdcc264de347467e4cf42b44af114902878177",
+      "sourcePath": "apps/web/src/lib/voice.ts",
+      "destination": "module-staging/voice/21fdcc2/apps/web/src/lib/voice.ts",
+      "module": "voice",
+      "kind": "capability-source",
+      "mode": "100644",
+      "sha256": "0bb553a395f7e7b0cf8b0ac1acdb8132011da20182836c729eab4d821ba13542"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/manager-initialization-wechat.fixture.mjs",
+      "destination": "module-staging/wechat/33696b8/packages/core/src/modules/manager-initialization-wechat.fixture.mjs",
+      "module": "wechat",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "67d6caf02233aace894042db433b37945d63dec38516bd43d80fef674825a7fe"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/manager-unbind.fixture.mjs",
+      "destination": "module-staging/wechat/33696b8/packages/core/src/modules/manager-unbind.fixture.mjs",
+      "module": "wechat",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "f177c3ceaa9d66794483d601da257e7e83183431e9dc55883c7222200959be5a"
+    },
+    {
+      "sourceSha": "33696b81c5d2ebe073e4700410c1cc4adabc4c1b",
+      "sourcePath": "packages/core/src/modules/manager-unbind.test.ts",
+      "destination": "module-staging/wechat/33696b8/packages/core/src/modules/manager-unbind.test.ts",
+      "module": "wechat",
+      "kind": "historical-source",
+      "mode": "100644",
+      "sha256": "4615bc614749eaabf45dad4f09a0fa19f99ad3cbbc1da4f1245d76376cb1adc3"
+    }
+  ]
+}

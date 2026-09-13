@@ -1,0 +1,9 @@
+packages:
+  - 'packages/*'
+  - 'apps/*'
+onlyBuiltDependencies:
+  - esbuild
+minimumReleaseAge: 0
+allowBuilds:
+  '@parcel/watcher': false
+  esbuild: true

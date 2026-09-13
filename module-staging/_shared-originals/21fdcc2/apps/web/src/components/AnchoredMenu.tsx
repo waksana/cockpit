@@ -1,0 +1,98 @@
+// Button-anchored dropdown — pinned to its trigger button's LIVE bounding rect,
+// not to coordinates passed at click time (which can go stale on a layout shift).
+// Rendered `fixed` because the pane layout deliberately clips overflow, so a CSS
+// `absolute` child of the topbar would be cut off. The trigger's right edge is
+// pinned via the CSS `right` property and the menu grows leftward + downward —
+// so it is STRUCTURALLY impossible for the menu to spill past the viewport's
+// right edge (the trigger is always on-screen). TG-style.
+
+import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { MenuItemButton, type MenuItem } from './ContextMenu';
+import { useMenuDismiss } from '../lib/useMenuDismiss';
+import { menuFocusTarget } from '../lib/menuFocus';
+
+export function AnchoredMenu({ triggerRef, items, onClose, align = 'right', label }: {
+  triggerRef: RefObject<HTMLElement | null>;
+  items: MenuItem[];
+  onClose: () => void;
+  align?: 'left' | 'right';
+  label?: string;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const focusInitialized = useRef(false);
+  const focusedItem = useRef<HTMLButtonElement | null>(null);
+  // Pin one edge to the trigger (via `right` or `left` = distance from that
+  // viewport edge), top just below the trigger. Read the trigger's LIVE rect so
+  // the position is always correct regardless of prior layout shifts. Anchoring an
+  // edge to the on-screen trigger makes overflow on that side structurally
+  // impossible.
+  const [style, setStyle] = useState<{ left?: number; right?: number; top: number; maxHeight: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const r = trigger.getBoundingClientRect();
+    const gap = 4;
+    const pad = 8;
+    const top = r.bottom + gap;
+    const maxHeight = window.innerHeight - r.bottom - gap - pad;
+    if (align === 'left') setStyle({ left: Math.max(pad, r.left), top, maxHeight });
+    else setStyle({ right: Math.max(pad, window.innerWidth - r.right), top, maxHeight });
+  }, [triggerRef, items, align]);
+  const visible = style !== null;
+  useLayoutEffect(() => {
+    const menu = ref.current;
+    if (!visible || !menu) return;
+    const enabled = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
+    const target = menuFocusTarget(focusInitialized.current, focusedItem.current, enabled);
+    focusInitialized.current = true;
+    if (target !== undefined) {
+      focusedItem.current = target;
+      (target ?? menu).focus();
+    }
+  }, [visible, items]);
+
+  const close = () => {
+    onClose();
+    triggerRef.current?.focus();
+  };
+  useMenuDismiss(close);
+
+  return (
+    <div
+      ref={ref}
+      className="btn-menu active"
+      role="menu"
+      aria-label={label}
+      tabIndex={-1}
+      style={{
+        ...(style?.right != null ? { right: style.right, left: 'auto' } : {}),
+        ...(style?.left != null ? { left: style.left, right: 'auto' } : {}),
+        top: style?.top ?? 0,
+        maxHeight: style?.maxHeight,
+        overflowY: 'auto',
+        visibility: style ? 'visible' : 'hidden',
+      }}
+      onFocusCapture={(event) => {
+        if (event.target instanceof HTMLButtonElement && event.target.getAttribute('role') === 'menuitem') {
+          focusedItem.current = event.target;
+        }
+      }}
+      onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(event) => {
+        if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+        event.preventDefault();
+        const buttons = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
+        if (!buttons.length) return;
+        const current = buttons.indexOf(document.activeElement as HTMLButtonElement);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+          : (current + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+        buttons[next].focus();
+        buttons[next].scrollIntoView({ block: 'nearest' });
+      }}
+    >
+      {label && <div className="btn-menu-caption" aria-hidden="true">{label}</div>}
+      {items.map((it) => <MenuItemButton key={it.id ?? it.label} item={it} onClose={close} />)}
+    </div>
+  );
+}

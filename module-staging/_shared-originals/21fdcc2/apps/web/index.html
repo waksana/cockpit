@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/vnd.microsoft.icon" sizes="16x16 32x32" href="/favicon-refined-r4.ico" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon-refined-r4.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#fdf6e3" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="cockpit" />
+    <title>cockpit</title>
+    <!-- Boot placeholder shown before the JS bundle + app CSS load. Inlined so it
+         needs no external stylesheet (which hasn't loaded yet); matches the app's
+         Solarized-cream background + spinner so there's no white flash or stray
+         text, and transitions seamlessly into the app's own connecting state. -->
+    <style>
+      #boot {
+        position: fixed; inset: 0;
+        display: flex; align-items: center; justify-content: center;
+        background: #fdf6e3;
+      }
+      #boot > i {
+        width: 28px; height: 28px; border-radius: 50%;
+        border: 3px solid rgba(101, 123, 131, 0.2);
+        border-top-color: #2aa198;
+        animation: boot-spin 0.7s linear infinite;
+      }
+      @keyframes boot-spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { #boot > i { animation-duration: 1.6s; } }
+    </style>
+  </head>
+  <body>
+    <div id="root"><div id="boot"><i></i></div></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

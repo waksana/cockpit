@@ -1,0 +1,1142 @@
+// Regression fixtures for the slim wire contract and retained SDK capabilities.
+// Run: pnpm --filter @cockpit/protocol test
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { z } from 'zod';
+import * as Protocol from './index.ts';
+import {
+  SessionMeta,
+  SessionBrief,
+  SessionPanels,
+  ScheduleEntry,
+  ServerEvent,
+  Intents,
+  PushSubscriptionJson,
+  ChatMessage,
+  McpToggleResult,
+  type IntentName,
+  type IntentBody,
+  type IntentResult,
+} from './index.ts';
+
+test('session/load accepts only an existing target selector and a positive identity receipt', () => {
+  const schema = Intents['session/load'];
+  assert.deepEqual(schema.body.parse({ sessionId: 'original' }), { sessionId: 'original' });
+  for (const body of [{ sessionId: '' }, { sessionId: 'original', cwd: '/replacement' },
+    { sessionId: 'original', text: 'Do not send' }, { sessionId: 'original', create: true }]) {
+    assert.equal(schema.body.safeParse(body).success, false);
+  }
+  assert.equal(schema.result.safeParse({ ok: true, sessionId: 'original' }).success, true);
+  assert.equal(schema.result.safeParse({ ok: true }).success, false);
+  assert.equal(schema.result.safeParse({ ok: false, sessionId: 'original' }).success, false);
+});
+
+test('native chat rejects retired message-ID and resume-token selectors instead of simulating a seek', () => {
+  const schema = Intents['session/chat'].body;
+  for (const selector of [{ resume: {} }, { beforeMsgId: 'a' }, { afterMsgId: 'b' }, { details: 'full' }]) {
+    assert.equal(schema.safeParse({ sessionId: 's', ...selector }).success, false);
+  }
+  for (const retired of ['session/history', 'session/peek', 'session/subagent-history']) {
+    assert.equal(retired in Intents, false);
+  }
+});
+
+test('attachment Markdown uses only published URLs and supports multiple independent images', () => {
+  const first = Protocol.attachmentMarkdown({ kind: 'image', name: 'chart one.png', url: '/uploads/one.png' });
+  const second = Protocol.attachmentMarkdown({ kind: 'image', name: 'chart two.png', url: '/uploads/two.png' });
+  assert.equal(`${first}\n\n${second}`, '![chart one.png](/uploads/one.png)\n\n![chart two.png](/uploads/two.png)');
+  assert.equal(
+    Protocol.attachmentMarkdown({ kind: 'file', name: 'report [final].pdf', url: '/uploads/report.pdf' }),
+    '[report \\[final\\].pdf](/uploads/report.pdf)',
+  );
+  for (const url of ['/home/user/chart.png', 'sandbox:/chart.png', 'file:///chart.png', '//external.example/chart.png']) {
+    assert.throws(() => Protocol.attachmentMarkdown({ kind: 'image', name: 'chart', url }));
+  }
+});
+
+test('native runtime busy state survives the shared wire projection', () => {
+  const patch = ServerEvent.parse({
+    type: 'session/patch', sessionId: 'runtime-session', activeOperations: 2, nativeProcessing: true,
+  });
+  assert.deepEqual(patch, {
+    type: 'session/patch', sessionId: 'runtime-session', activeOperations: 2, nativeProcessing: true,
+  });
+  assert.equal(ServerEvent.safeParse({
+    type: 'session/patch', sessionId: 'runtime-session', activeOperations: -1,
+  }).success, false);
+});
+
+function roundTrip(schema: z.ZodTypeAny, value: unknown, label?: string) {
+  assert.deepEqual(schema.parse(JSON.parse(JSON.stringify(value))), value, label);
+}
+
+// A minimal, valid SessionMeta: only the keys with no default and no optional.
+// `error` and `ask` are nullable-but-required, so they must be present as null.
+const minimalMeta = {
+  sessionId: 's1',
+  title: 'T',
+  cwd: '/workspace/project',
+  lastActivity: 1,
+  status: 'idle',
+  error: null,
+  loaded: true,
+  queue: [],
+  ask: null,
+} satisfies SessionMeta;
+
+test('retired project identity is stripped from session metadata and SSE patches', () => {
+  for (const project of [
+    { kind: 'unknown' },
+    { kind: 'directory', path: '/', error: 'unavailable' },
+    { kind: 'git', commonDir: '/repo/.git', path: '/repo', worktreePath: '/task', main: false },
+  ]) {
+    assert.equal('project' in SessionMeta.parse({ ...minimalMeta, project }), false);
+    assert.equal('project' in SessionBrief.parse({ ...minimalMeta, project }), false);
+    assert.deepEqual(ServerEvent.parse({ type: 'session/patch', sessionId: 's1', project }), {
+      type: 'session/patch', sessionId: 's1',
+    });
+  }
+});
+
+// A fully-populated SessionMeta (snapshot shape): every optional field set to a
+// real value, exercising the whole object.
+const fullMeta = {
+  ...minimalMeta,
+  createdAt: 0,
+  currentModelId: 'gpt-x',
+  currentReasoningEffort: 'high',
+  currentContextTier: 'long_context',
+  currentMode: 'interactive',
+  availableModels: [{
+    modelId: 'gpt-x', name: 'GPT-X', supportedReasoningEfforts: ['low', 'high'],
+    defaultReasoningEffort: 'high', supportsLongContext: true,
+  }],
+  loading: false,
+  closing: false,
+  cancelling: true,
+  queue: [{ id: 'q1', text: 'queued' }],
+  ask: { requestId: 'r1', question: 'q?', choices: ['A', 'B'], allowFreeform: true },
+  planRequest: {
+    requestId: 'p1', summary: 's', planContent: '# Plan\nImplement the change.',
+    actions: ['exit_only', 'interactive', 'autopilot', 'autopilot_fleet'],
+    recommendedAction: 'interactive',
+  },
+  elicitation: { requestId: 'e1', message: 'm' },
+  todo: { done: 1, total: 2, intent: 'doing' },
+  intent: 'Investigating',
+  attention: 'ready',
+  attnId: 3,
+  seenId: 2,
+  pinned: true,
+  scheduleCount: 1,
+  activeSubagents: 0,
+  compacting: false,
+  activeMcpOperations: 1,
+} satisfies SessionMeta;
+
+const snapshot = {
+  type: 'snapshot',
+  agentStatus: 'up',
+  models: fullMeta.availableModels,
+  sessions: [fullMeta],
+  vapidPublicKey: null,
+  permissionPolicy: 'allow-all',
+} satisfies Protocol.Snapshot;
+
+// session/patch is derived exactly as the ServerEvent member is.
+const SessionPatch = SessionMeta.partial().required({ sessionId: true });
+
+// ───────────────────────────────────────────────────────────────────────────
+// A. SessionMeta round-trip & null discipline
+// ───────────────────────────────────────────────────────────────────────────
+
+test('A1: a fully-populated SessionMeta parses', () => {
+  roundTrip(SessionMeta, fullMeta);
+});
+
+test('A2: a minimal SessionMeta (only required keys) parses', () => {
+  assert.ok(SessionMeta.safeParse(minimalMeta).success);
+});
+
+test('A3: null for every already-nullable field parses', () => {
+  const cleared = {
+    ...minimalMeta,
+    error: null,
+    ask: null,
+    planRequest: null,
+    elicitation: null,
+    todo: null,
+    intent: null,
+    attention: null,
+  };
+  assert.ok(SessionMeta.safeParse(cleared).success);
+});
+
+test('A4: null for a non-nullable key (title) is rejected', () => {
+  assert.equal(SessionMeta.safeParse({ ...minimalMeta, title: null }).success, false);
+});
+
+test('A5: snapshot gotcha — null for a non-nullable optional (currentModelId) is rejected', () => {
+  // Encodes "omit absent optionals, never send null" for the snapshot shape.
+  assert.equal(SessionMeta.safeParse({ ...minimalMeta, currentModelId: null }).success, false);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// B. session/patch — the M1/T5 clearable-null contract
+// ───────────────────────────────────────────────────────────────────────────
+
+test('B6: patch {sessionId, error:null} parses (baseline clearable)', () => {
+  assert.ok(SessionPatch.safeParse({ sessionId: 's1', error: null }).success);
+});
+
+test('B7: patch clearing each new nullable field to null parses', () => {
+  for (const field of ['currentReasoningEffort', 'currentContextTier', 'currentMode'] as const) {
+    const res = SessionPatch.safeParse({ sessionId: 's1', [field]: null });
+    assert.ok(res.success, `${field}:null should be a valid patch`);
+  }
+});
+
+test('B8: over-nullable guard — patch {sessionId, currentModelId:null} is rejected', () => {
+  // Proves we did NOT nullable a never-cleared field.
+  assert.equal(SessionPatch.safeParse({ sessionId: 's1', currentModelId: null }).success, false);
+  assert.equal(SessionPatch.safeParse({ sessionId: 's1', availableModels: null }).success, false);
+});
+
+test('B9: a patch without sessionId is rejected (required key preserved)', () => {
+  assert.equal(SessionPatch.safeParse({ error: null }).success, false);
+});
+
+test('B10: wire fidelity — null survives JSON round-trip, undefined is dropped', () => {
+  const withNull = { sessionId: 's1', currentReasoningEffort: null };
+  const roundNull = JSON.parse(JSON.stringify(withNull));
+  assert.ok('currentReasoningEffort' in roundNull, 'null key must survive JSON');
+  assert.ok(SessionPatch.safeParse(roundNull).success);
+
+  const withUndef = { sessionId: 's1', currentReasoningEffort: undefined };
+  const roundUndef = JSON.parse(JSON.stringify(withUndef));
+  assert.equal('currentReasoningEffort' in roundUndef, false, 'undefined key is dropped by JSON');
+  // The dropped key means the client never clears — exactly the bug emit-null fixes.
+  assert.ok(SessionPatch.safeParse(roundUndef).success);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// C. Exactly-one-of intent bodies
+// ───────────────────────────────────────────────────────────────────────────
+
+test('C11–C13: schedule/add enforces exactly one of interval/at', () => {
+  const base = { sessionId: 's1', prompt: 'p' };
+  const body = Intents['schedule/add'].body;
+  // none
+  assert.equal(body.safeParse(base).success, false);
+  // two
+  assert.equal(body.safeParse({ ...base, interval: '5m', at: 123 }).success, false);
+  // exactly one (each kind)
+  assert.ok(body.safeParse({ ...base, interval: '5m' }).success);
+  assert.equal(body.safeParse({ ...base, cron: '0 * * * *' }).success, false);
+  assert.ok(body.safeParse({ ...base, at: 123 }).success);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// D. URL constraints
+// ───────────────────────────────────────────────────────────────────────────
+
+test('D18: push/subscribe endpoint must be a valid https url', () => {
+  const keys = { p256dh: 'B' + 'A'.repeat(86), auth: 'A'.repeat(22) };
+  for (const endpoint of ['not-a-url', 'file:///etc/passwd', 'http://push.example/x']) {
+    assert.equal(PushSubscriptionJson.safeParse({ endpoint, keys }).success, false, `${endpoint} must be rejected`);
+  }
+  assert.ok(PushSubscriptionJson.safeParse({ endpoint: 'https://push.example/x', keys }).success);
+  // The body schema (as the live server parses it) tightens too.
+  const body = Intents['push/subscribe'].body;
+  assert.equal(body.safeParse({ subscription: { endpoint: 'file:///etc/passwd' } }).success, false);
+  assert.ok(body.safeParse({ subscription: { endpoint: 'https://push.example/x', keys } }).success);
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// E. Union & parity (cheap regression guards)
+// ───────────────────────────────────────────────────────────────────────────
+
+test('E19: every ServerEvent variant parses a representative sample', () => {
+  const samples = {
+    snapshot,
+    'agent/status': { type: 'agent/status', status: 'up' },
+    'session/added': { type: 'session/added', session: fullMeta },
+    'session/invalidated': { type: 'session/invalidated', sessionId: 's1' },
+    'session/patch': { type: 'session/patch', ...fullMeta, currentReasoningEffort: null },
+    'session/removed': { type: 'session/removed', sessionId: 's1' },
+    'chat/invalidated': { type: 'chat/invalidated', sessionId: 's1', reason: 'rewind' },
+    'session/notify': { type: 'session/notify', sessionId: 's1', title: 't', attention: 'ready', body: 'b' },
+  } satisfies { [K in Protocol.ServerEventType]: Extract<Protocol.ServerEvent, { type: K }> };
+  assert.deepEqual(
+    ServerEvent.options.map((schema) => schema.shape.type.value).sort(),
+    Object.keys(samples).sort(),
+  );
+  for (const [type, sample] of Object.entries(samples)) {
+    roundTrip(ServerEvent, sample, `ServerEvent ${type}`);
+  }
+});
+
+test('F20: mcp/session-toggle requires an authoritative target-level result', () => {
+  const result = {
+    ok: false,
+    applied: false,
+    sessionId: 's1',
+    name: 'agency-icm',
+    enabled: false,
+    status: 'needs-auth',
+    error: 'Sign in to continue',
+    operation: {
+      id: 'mcp-toggle-1',
+      desiredEnabled: true,
+      state: 'failed',
+      startedAt: 1,
+      completedAt: 2,
+      status: 'needs-auth',
+      error: 'Sign in to continue',
+    },
+  };
+  assert.ok(McpToggleResult.safeParse(result).success);
+  assert.ok(Intents['mcp/session-toggle'].result.safeParse(result).success);
+  assert.equal(Intents['mcp/session-toggle'].result.safeParse({ ok: true }).success, false);
+});
+
+test('E21: ChatMessage schema parses a deeply-nested (sub-agent) sample', () => {
+  const nested = {
+    id: 'm1',
+    role: 'assistant',
+    content: 'top',
+    thought: 'Delegate investigation',
+    timestamp: 1,
+    subtype: 'subagent',
+    subagent: { name: 'explore', displayName: 'Explore', status: 'running', description: 'Investigate', model: 'gpt-x', toolCount: 2, prompt: 'Find the issue' },
+    subMessages: [
+      {
+        id: 'm2', role: 'assistant', content: 'inner', timestamp: 2,
+        subtype: 'subagent', subagent: { name: 'task', displayName: 'Task', status: 'completed' },
+        toolCalls: [{ toolCallId: 't1', title: 'ran', status: 'completed', name: 'bash', args: '{"command":"true"}', output: 'done' }],
+        subMessages: [{
+          id: 'm3', role: 'system', content: 'failed', timestamp: 3, level: 'error',
+          subtype: 'subagent', subagent: { name: 'task', displayName: 'Nested task', status: 'failed', error: 'Test failure' },
+          subMessages: [{ id: 'm4', role: 'user', content: 'answer', timestamp: 4, subtype: 'ask-reply' }],
+        }],
+      },
+    ],
+  } satisfies ChatMessage;
+  roundTrip(ChatMessage, nested);
+  for (const invalid of [{ role: 'invalid' }, { timestamp: '4' }, { subagent: { name: 'task', displayName: 'Task', status: 'launching' } }]) {
+    const broken = structuredClone(nested);
+    Object.assign(broken.subMessages[0]!.subMessages[0]!.subMessages[0]!, invalid);
+    assert.equal(ChatMessage.safeParse(broken).success, false, 'validate recursively, not just the outer card');
+  }
+});
+
+test('E22: mcp/session explicitly distinguishes unloaded state and rejects unknown status', () => {
+  const result = Intents['mcp/session'].result;
+  assert.ok(result.safeParse({
+    loaded: false,
+    servers: [{
+      name: 'cockpit',
+      detail: 'node cockpit.js',
+      status: 'unloaded',
+      enabled: true,
+    }],
+  }).success);
+  assert.equal(result.safeParse({
+    servers: [],
+  }).success, false, 'loaded is required even when no MCP servers are configured');
+  assert.equal(result.safeParse({
+    loaded: true,
+    servers: [{
+      name: 'cockpit',
+      detail: 'node cockpit.js',
+      status: 'not-a-real-status',
+      enabled: true,
+    }],
+  }).success, false);
+});
+
+test('summary cards retain native identity without nested content or mutating full transcripts', () => {
+  const message: ChatMessage = {
+    id: 'subagent-native-tool', role: 'assistant', subtype: 'subagent', content: '', timestamp: 1,
+    subagent: { name: 'explore', displayName: 'Research', status: 'completed', prompt: 'Large task prompt' },
+    subMessages: [{ id: 'child', role: 'assistant', content: 'Child detail', timestamp: 2 }],
+  };
+  const original = structuredClone(message);
+  const summary = Protocol.summarizeMessage(message);
+  assert.equal(summary.subMessages, undefined);
+  assert.equal(summary.subagent?.prompt, undefined);
+  assert.equal(summary.subagent?.toolCallId, 'native-tool');
+  assert.deepEqual(message, original);
+  roundTrip(ChatMessage, summary);
+});
+
+test('native passive reads cannot pretend to filter agents, types or ephemeral content', () => {
+  const body = Intents['session/chat'].body;
+  for (const selector of [{ types: ['assistant.message'] }, { agentIds: ['child'] },
+    { agentScope: 'primary' }, { waitMs: 1 }, { includeEphemeral: true }]) {
+    assert.equal(body.safeParse({ sessionId: 's', source: 'persisted', ...selector }).success, false);
+  }
+  assert.equal(body.safeParse({ sessionId: 's', source: 'live', agentIds: ['child'] }).success, true);
+});
+
+const sid = { sessionId: 's1' };
+const ok = { ok: true };
+
+test('native global skill selection validates the target and preserves authoritative enabled state', () => {
+  const schema = Intents['skills/global-toggle'].body;
+  assert.deepEqual(schema.parse({ name: 'review', enabled: false }), { name: 'review', enabled: false });
+  assert.deepEqual(schema.parse({ name: 'review', enabled: true, cwd: '/project' }), { name: 'review', enabled: true, cwd: '/project' });
+  assert.equal(schema.safeParse({ name: 'review', enabled: true, cwd: '' }).success, false);
+  for (const body of [{ name: '', enabled: true }, { name: 'review' }, { name: 'review', enabled: 'false' }]) {
+    assert.equal(schema.safeParse(body).success, false);
+  }
+  assert.equal(Protocol.SkillGlobal.parse({ name: 'review', enabled: false }).enabled, false);
+  assert.equal(Intents['skills/read'].result.parse({ name: 'review', enabled: false }).enabled, false);
+});
+
+test('automatic naming keeps request scope narrow and preserves non-applied native outcomes', () => {
+  const intent = Intents['session/auto-name'];
+  assert.deepEqual(intent.body.parse({ sessionId: 's', question: 'not a public arbitrary query' }), { sessionId: 's' });
+  assert.equal(intent.body.safeParse({ sessionId: '' }).success, false);
+  for (const reason of ['user-named', 'no-context', 'not-applied'] as const) {
+    const result = { ok: true, applied: false, title: null, reason };
+    assert.deepEqual(intent.result.parse(result), result);
+  }
+  roundTrip(ServerEvent, {
+    type: 'session/patch', sessionId: 's', autoNaming: true, autoNameError: null,
+  });
+  roundTrip(ServerEvent, {
+    type: 'session/patch', sessionId: 's', autoNaming: false, autoNameError: 'Automatic naming failed',
+  });
+});
+
+const chat = { id: 'm1', role: 'user', content: 'hello', timestamp: 1 } satisfies ChatMessage;
+const attachment = {
+  kind: 'image', name: 'Résumé "a&b" <1>%\n.png', url: '/uploads/Ab_1-2.png',
+  size: 0, mime: 'image/png; charset=utf-8',
+} satisfies Protocol.Attachment;
+const uploadedFile = {
+  ...attachment, path: '/workspace/uploads/Ab_1-2.png', storedName: 'Ab_1-2.png',
+} satisfies Protocol.UploadedFile;
+const brief = {
+  ...sid, title: 'T', cwd: minimalMeta.cwd, status: 'idle',
+  loaded: true, lastActivity: 1, currentModelId: 'gpt-x',
+} satisfies SessionBrief;
+const panels = {
+  skills: [{ label: 'review', sublabel: 'User skill', enabled: true }],
+  mcpServers: [{ label: 'tools', sublabel: 'Connected', enabled: true }],
+  tasks: [{ label: 'explore', sublabel: 'Running' }],
+  instructionSources: [{ label: 'AGENTS.md', sublabel: 'Repository' }],
+  schedules: [{ label: 'Check progress', enabled: false }],
+} satisfies SessionPanels;
+const plan = {
+  planMarkdown: '# Plan',
+  todos: (['pending', 'in_progress', 'done', 'blocked'] as const).map((status, i) => ({
+    id: `todo-${i}`, title: `Step ${i}`, description: 'Details', status,
+  })),
+} satisfies Protocol.SessionPlan;
+const scheduleBase = { prompt: 'check progress', nextRunAt: 123, displayPrompt: 'Check' };
+const scheduleEntries = [
+  { ...scheduleBase, id: 1, recurring: true, intervalMs: 300_000 },
+  { ...scheduleBase, id: 2, recurring: true, cron: '0 * * * *', tz: 'Asia/Shanghai' },
+  { ...scheduleBase, id: 3, recurring: false, at: 123 },
+  { ...scheduleBase, id: 4, recurring: true, selfPaced: true },
+  { ...scheduleBase, id: 5, recurring: true, selfPaced: false, intervalMs: 60_000 },
+] satisfies ScheduleEntry[];
+const operation = {
+  id: 'op1', desiredEnabled: true, state: 'succeeded',
+  startedAt: 1, completedAt: 2, status: 'connected',
+} satisfies Protocol.McpToggleOperation;
+const toggleResult = {
+  ...ok, ...sid, applied: true, name: 'tools', enabled: true, status: 'connected', operation,
+} satisfies McpToggleResult;
+const skill = { name: 'review', description: 'Review code', source: 'user' };
+const nativePage: Protocol.NativeChatPage = {
+  ...sid, source: 'persisted', direction: 'backward',
+  events: [{ id: 'event', type: 'assistant.message', data: { messageId: 'm1', content: 'Answer' } }],
+  cursor: 'native-next', cursorStatus: 'ok', hasMore: true, read: { rpc: 1, events: 1 },
+};
+
+// Each retained intent must have a lossless body AND result fixture.
+const intentFixtures = {
+  'system/consumer/status': { body: {}, result: { available: false, reason: 'Not a consumer installation' } },
+  'system/consumer/restart': { body: { operationId: 'consumer-restart-fixture', confirm: true },
+    result: { operation: { operationId: 'consumer-restart-fixture', kind: 'restart', state: 'waiting-idle', updatedAt: '2026-09-12T00:00:00Z' } } },
+  'runtime/snapshot': { body: {}, result: snapshot },
+  'session/new': { body: { cwd: minimalMeta.cwd }, result: sid },
+  'session/fork': { body: { sessionId: 'parent', toEventId: 'user-event', name: 'Child' }, result: sid },
+  'session/chat': { body: { ...sid, source: 'persisted', direction: 'backward', max: 64, waitMs: 0, bootstrap: false }, result: nativePage },
+  'files/list': { body: { query: 'file', limit: 1, offset: 0 }, result: { files: [], hasMore: false } },
+  'files/get': { body: { url: '/uploads/file.txt' },
+    result: { kind: 'file', name: 'file.txt', url: '/uploads/file.txt', path: '/fixture/file.txt', size: 1, mime: 'text/plain' } },
+  'files/associate': { body: { ...sid, url: '/uploads/file.txt' },
+    result: { kind: 'file', name: 'file.txt', url: '/uploads/file.txt', path: '/fixture/file.txt', size: 1, mime: 'text/plain' } },
+  prompt: { body: { ...sid, text: 'continue', mode: 'enqueue', attachment }, result: { ...ok, queued: true } },
+  cancel: { body: sid, result: ok },
+  'session/interrupt': { body: sid, result: { ok: true, interrupted: false } },
+  setModel: { body: { ...sid, modelId: 'gpt-x', reasoningEffort: 'high', contextTier: 'long_context' }, result: ok },
+  'session/rename': { body: { ...sid, name: 'Renamed' }, result: { ...ok, title: 'Renamed' } },
+  'session/auto-name': { body: sid, result: { ok: true, applied: true, title: 'Short topic' } },
+  'session/compact': { body: { ...sid, customInstructions: 'Keep decisions' }, result: ok },
+  'session/rewind': { body: { ...sid, toMsgId: 'm1', rollbackFiles: true }, result: ok },
+  setMode: { body: { ...sid, mode: 'plan' }, result: ok },
+  'session/delete': { body: { ...sid, confirm: true }, result: ok },
+  'session/unload': { body: sid, result: ok },
+  'session/load': { body: sid, result: { ok: true, ...sid } },
+  'session/reload': { body: sid, result: ok },
+  'session/pin': { body: { ...sid, pinned: true }, result: { ...ok, pinned: true } },
+  'session/plan': { body: sid, result: plan },
+  'session/usage': { body: sid, result: { ...sid, sampledAt: 1, context: null,
+    usage: { sessionStartTime: '2026-09-09T00:00:00Z', totalUserRequests: 0,
+      lastCallInputTokens: 0, lastCallOutputTokens: 0, modelMetrics: {} } } },
+  'session/panels': { body: sid, result: panels },
+  'session/panel': { body: { ...sid, section: 'tasks' }, result: { items: panels.tasks } },
+  'session/resources': { body: { ...sid, resources: ['schedule'] }, result: { meta: { ...sid, loaded: true, scheduleCount: 2 } } },
+  respondAsk: { body: { ...sid, requestId: 'r1', answer: 'yes', wasFreeform: false }, result: ok },
+  respondPlan: { body: { ...sid, requestId: 'r1', action: 'autopilot_fleet' }, result: ok },
+  planSupersede: { body: { ...sid, requestId: 'r1', message: 'Do this instead' }, result: ok },
+  respondElicitation: { body: { ...sid, requestId: 'r1', action: 'accept' }, result: ok },
+  'queue/remove': { body: { ...sid, itemId: 'q1' }, result: ok },
+  'session/refresh': { body: {}, result: ok },
+  'session/list': { body: {}, result: { sessions: [brief] } },
+  'session/get': { body: sid, result: { meta: fullMeta } },
+  'push/subscribe': {
+    body: { subscription: { endpoint: 'https://push.example/x', expirationTime: null, keys: { p256dh: 'B' + 'A'.repeat(86), auth: 'A'.repeat(22) } } },
+    result: ok,
+  },
+  'push/status': {
+    body: { endpoint: 'https://push.example/x' },
+    result: { configured: false, registered: false, subscriptionCount: 0, publicKey: null },
+  },
+  'push/test': {
+    body: { endpoint: 'https://push.example/x', confirm: true },
+    result: { status: 'accepted', at: 1 },
+  },
+  'push/unsubscribe': { body: { endpoint: 'https://push.example/x' }, result: ok },
+  'inbox/seen': { body: sid, result: ok },
+  'speech/token': { body: {}, result: { enabled: true, token: 'fixture-token', region: 'eastus' } },
+  'mcp/global': {
+    body: {},
+    result: { servers: [{ name: 'tools', detail: 'node tools.js', defaultOn: true, config: { command: 'node', args: ['tools.js'], env: { TOKEN: '[redacted]' } } }] },
+  },
+  'mcp/global-default': { body: { name: 'tools', on: true }, result: ok },
+  'mcp/refresh': { body: {}, result: ok },
+  'mcp/reload-session': { body: sid, result: { ...ok, reconnected: 2 } },
+  'mcp/session': { body: sid, result: { loaded: true, servers: [{ name: 'tools', detail: 'node tools.js', status: 'connected', enabled: true, operation }] } },
+  'mcp/session-toggle': { body: { ...sid, name: 'tools', on: true }, result: toggleResult },
+  'skills/global': { body: { cwd: minimalMeta.cwd }, result: { skills: [{ ...skill, userInvocable: true, enabled: false }] } },
+  'skills/read': { body: { name: skill.name }, result: { ...skill, userInvocable: true, enabled: false, body: '# Review\nCheck correctness.' } },
+  'skills/global-toggle': { body: { name: skill.name, enabled: true }, result: ok },
+  'skills/session': { body: sid, result: { skills: [{ ...skill, enabled: true }] } },
+  'skills/session-toggle': { body: { ...sid, name: skill.name, enabled: true }, result: ok },
+  'skills/refresh': { body: {}, result: { ...ok, willRestartWhenIdle: true } },
+  'fs/listDir': { body: { path: '/workspace' }, result: { path: '/workspace', parent: '/', entries: [{ name: 'project', isDir: true }, { name: 'file.txt', isDir: false }] } },
+  'session/purge': { body: { ...sid, confirm: true }, result: ok },
+  'schedule/add': { body: { ...sid, prompt: scheduleBase.prompt, interval: '5m' }, result: { ...ok, entry: scheduleEntries[0]! } },
+  'schedule/stop': { body: { ...sid, id: 1 }, result: ok },
+  'schedule/list': { body: sid, result: { entries: scheduleEntries } },
+} satisfies { [K in IntentName]: { body: IntentBody<K>; result: IntentResult<K> } };
+
+for (const name of Object.keys(intentFixtures) as Array<keyof typeof intentFixtures>) {
+  test(`${name}: retained body and result round-trip without field loss`, () => {
+    const { body, result } = intentFixtures[name];
+    roundTrip(Intents[name].body, body, `${name} body`);
+    roundTrip(Intents[name].result, result, `${name} result`);
+  });
+}
+
+test('the intent registry contains precisely the retained fixture names', () => {
+  assert.deepEqual(Object.keys(Intents).sort(), Object.keys(intentFixtures).sort());
+});
+
+test('resource projections distinguish omitted fields, explicit clearing, unknown sessions and invalid selectors', () => {
+  for (const meta of [{ ...sid, loaded: false }, { ...sid, loaded: true, currentReasoningEffort: null }, null]) {
+    roundTrip(Intents['session/resources'].result, { meta });
+  }
+  for (const resources of [[], ['unknown'], ['plan']]) {
+    assert.equal(Intents['session/resources'].body.safeParse({ ...sid, resources }).success, false);
+  }
+  assert.equal(Intents['session/panel'].body.safeParse({ ...sid, section: 'unknown' }).success, false);
+  roundTrip(ServerEvent, { type: 'session/invalidated', ...sid, resources: ['tasks', 'instructions'] });
+  roundTrip(ServerEvent, { type: 'session/invalidated', ...sid });
+  assert.equal(ServerEvent.safeParse({ type: 'session/invalidated', ...sid, resources: ['unknown'] }).success, false);
+});
+
+const removedExports = [
+  'SessionEventType', 'SessionEventCtx', 'HookFilter', 'HookEntry', 'GateSpec',
+  'SessionTemplate', 'FlowAction', 'Flow', 'InlineScheduleTarget', 'FlowScheduleEntry',
+  'SessionLaunchState', 'SafeBasename',
+] as const;
+type RemovedIntentName = `hook/${string}` | `flow/${string}` | `flow-schedule/${string}` | 'session/set-spawned-by';
+type RemovedMetaField = 'hookCount' | 'spawnedBy' | 'launchState';
+
+test('governance intents and schema exports are absent, not compatibility aliases', () => {
+  assert.deepEqual(Object.keys(Intents).filter((name) =>
+    /^(hook|flow|flow-schedule)\//.test(name) || name === 'session/set-spawned-by'), []);
+  for (const name of removedExports) {
+    assert.equal(Object.hasOwn(Protocol, name), false, `${name} must not be exported`);
+  }
+});
+
+test('session metadata and SSE patches strip removed governance fields', () => {
+  const removed = { hookCount: 2, spawnedBy: 'old-worker', launchState: 'launching' };
+  for (const field of Object.keys(removed)) {
+    assert.equal(Object.hasOwn(SessionMeta.shape, field), false);
+    assert.equal(Object.hasOwn(SessionBrief.shape, field), false);
+  }
+  assert.deepEqual(SessionMeta.parse({ ...fullMeta, ...removed }), fullMeta);
+  assert.deepEqual(SessionBrief.parse({ ...brief, ...removed }), brief);
+  assert.deepEqual(Intents['session/get'].result.parse({ meta: { ...fullMeta, ...removed } }), { meta: fullMeta });
+  assert.deepEqual(Intents['session/list'].result.parse({ sessions: [{ ...brief, ...removed }] }), { sessions: [brief] });
+  const patch = { type: 'session/patch', ...sid };
+  assert.deepEqual(ServerEvent.parse({ ...patch, ...removed }), patch);
+});
+
+test('session/fork uses strict native fields and never accepts cwd or blank boundaries', () => {
+  const schema = Intents['session/fork'].body;
+  assert.deepEqual(schema.parse({ sessionId: 's', name: '  child  ' }), { sessionId: 's', name: 'child' });
+  for (const body of [{}, { sessionId: '' }, { sessionId: 's', toEventId: '' }, { sessionId: 's', name: ' ' },
+    { sessionId: 's', cwd: '/different-worktree' }, { sessionId: 's', toMsgId: 'ambiguous' }]) {
+    assert.equal(schema.safeParse(body).success, false);
+  }
+});
+
+test('session/new accepts only the native cwd and rejects retired module or hidden launch inputs', () => {
+  const schema = Intents['session/new'].body;
+  assert.deepEqual(Object.keys(schema.shape), ['cwd']);
+  assert.equal(schema.safeParse({ cwd: '/workspace/project', modules: [] }).success, false);
+  for (const cwd of ['/workspace/project', 'relative/path']) {
+    roundTrip(schema, { cwd });
+    assert.equal(schema.safeParse({
+      cwd, spawnedBy: 'old-worker', title: 'Ignored', prompt: 'Do not launch',
+      skills: ['review'], mcps: ['tools'], model: 'gpt-x', mode: 'autopilot',
+      template: {}, launchState: 'launching', unknown: true,
+    }).success, false);
+    assert.equal(schema.safeParse({ cwd, sessionId: 'virtual-id' }).success, false);
+  }
+  for (const value of [{}, null, [], { cwd: '' }, { cwd: undefined }, { cwd: null }, { cwd: false }, { cwd: 1 }, { cwd: [] }, { cwd: {} }]) {
+    assert.equal(schema.safeParse(value).success, false, JSON.stringify(value));
+  }
+});
+
+test('module loading and retired creation/deletion coordinators are not APIs', () => {
+  assert.equal(Object.keys(Intents).some(name => name.startsWith('modules/') || name.startsWith('session/modules/')), false);
+  assert.equal('ModuleId' in Protocol, false);
+  for (const name of ['session/start', 'session/start/get', 'session/delete/preview', 'session/modules/apply', 'modules/list']) {
+    assert.equal(Object.hasOwn(Intents, name), false);
+  }
+});
+
+test('native load descriptions do not promise retired role restoration or empty-session protection', () => {
+  for (const name of ['session/load', 'session/reload'] as const) {
+    assert.match(Intents[name].description, /native configuration discovery/);
+    assert.doesNotMatch(Intents[name].description, /pinned module|refused before close|partial-load failure gates/);
+  }
+  assert.match(Intents['session/load'].description, /Never creates a replacement, closes an already-loaded handle, or sends a prompt/);
+  assert.match(Intents['session/reload'].description, /may disappear on close and then fail to resume; no automatic replacement/);
+});
+
+test('session/purge requires sessionId and literal confirm:true without coercion', () => {
+  const schema = Intents['session/purge'].body;
+  roundTrip(schema, { ...sid, confirm: true });
+  assert.equal(schema.safeParse(sid).success, false);
+  for (const confirm of [undefined, false, 'true', 'false', '', 0, 1, null, [], {}]) {
+    assert.equal(schema.safeParse({ ...sid, confirm }).success, false, `confirm=${JSON.stringify(confirm)}`);
+  }
+  for (const value of [{ confirm: true }, { sessionId: 1, confirm: true }, { sessionId: null, confirm: true }]) {
+    assert.equal(schema.safeParse(value).success, false);
+  }
+});
+
+test('session reads retain native pages and authoritative metadata wrappers', () => {
+  roundTrip(Intents['session/chat'].result, nativePage);
+  for (const [name, empty] of [
+    ['session/list', { sessions: [] }],
+    ['session/get', { meta: null }],
+  ] as const) {
+    roundTrip(Intents[name].result, empty);
+    for (const invalid of [{}, [], null, { ok: true }]) {
+      assert.equal(Intents[name].result.safeParse(invalid).success, false, name);
+    }
+  }
+  assert.equal(Intents['session/list'].result.safeParse({ sessions: [minimalMeta.sessionId] }).success, false);
+  assert.equal(Intents['session/get'].result.safeParse({ meta: brief }).success, false);
+});
+
+test('SessionPanels retains precisely the five native sections', () => {
+  const keys = ['skills', 'mcpServers', 'tasks', 'instructionSources', 'schedules'];
+  assert.deepEqual(Object.keys(SessionPanels.shape).sort(), [...keys].sort());
+  roundTrip(SessionPanels, panels);
+  assert.deepEqual(SessionPanels.parse({ ...panels, hooks: [], flows: [], flowSchedules: [] }), panels);
+  for (const key of keys) {
+    const missing: Record<string, unknown> = { ...panels };
+    delete missing[key];
+    assert.equal(SessionPanels.safeParse(missing).success, false, `${key} is required`);
+    assert.equal(SessionPanels.safeParse({ ...panels, [key]: null }).success, false);
+  }
+});
+
+test('native schedule creation is narrow while existing entries retain their metadata', () => {
+  const timings = [{ interval: '5m' }, { interval: '1d' }, { at: 123 }, { at: 0 }];
+  for (const timing of timings) {
+    const body = { ...sid, prompt: 'check progress', ...timing };
+    roundTrip(Intents['schedule/add'].body, body);
+    for (const recurring of ('at' in timing ? [false] : [true, false])) {
+      roundTrip(Intents['schedule/add'].body, { ...body, recurring });
+    }
+  }
+  for (const entry of scheduleEntries) {
+    roundTrip(ScheduleEntry, entry);
+    roundTrip(Intents['schedule/add'].result, { ...ok, entry });
+    roundTrip(Intents['schedule/stop'].body, { ...sid, id: entry.id });
+    assert.equal(ScheduleEntry.safeParse({ ...entry, id: String(entry.id) }).success, false);
+    assert.equal(ScheduleEntry.safeParse({ ...entry, selfPaced: 'true' }).success, false);
+  }
+  roundTrip(Intents['schedule/list'].result, { entries: scheduleEntries });
+  roundTrip(Intents['schedule/list'].result, { entries: [] });
+  roundTrip(Intents['schedule/add'].result, ok);
+  roundTrip(Intents['schedule/add'].result, { ok: false, error: 'Invalid schedule' });
+  assert.equal(Intents['schedule/stop'].body.safeParse({ ...sid, id: '1' }).success, false);
+  assert.equal(Intents['schedule/stop'].body.safeParse(sid).success, false);
+  // ScheduleEntry is a wire object; only schedule/add enforces timing exclusivity.
+  roundTrip(ScheduleEntry, { ...scheduleBase, id: 0, recurring: false });
+  roundTrip(ScheduleEntry, { ...scheduleBase, id: 0, recurring: true, intervalMs: 1000, cron: '* * * * *', at: 123 });
+});
+
+test('self-paced schedule metadata does not authorize creation or rearming', () => {
+  assert.equal(Intents['schedule/add'].body.safeParse({
+    ...sid, prompt: 'check progress', selfPaced: true,
+  }).success, false);
+  assert.equal(Intents['schedule/add'].body.safeParse({
+    ...sid, prompt: 'check progress', interval: '5m', selfPaced: true,
+  }).success, false);
+  assert.ok(!Object.keys(Intents).some(name => /schedule.*(?:rearm|wakeup|self-paced)/.test(name)));
+});
+
+test('schedule/add rejects every missing or conflicting timing combination', () => {
+  const base = { ...sid, prompt: 'check progress' };
+  const timings = [{ interval: '5m' }, { at: 123 }];
+  for (let mask = 0; mask < 4; mask++) {
+    const selected = timings.filter((_, i) => mask & (1 << i));
+    const body = Object.assign({}, base, ...selected);
+    assert.equal(Intents['schedule/add'].body.safeParse(body).success, selected.length === 1, JSON.stringify(body));
+  }
+  for (const invalid of [
+    { prompt: '', interval: '5m' }, { interval: 5 }, { cron: 5 }, { at: '123' },
+    { interval: null }, { cron: null }, { at: null }, { interval: '5m', recurring: 'true' },
+    { interval: '5m', tz: 1 }, { interval: '5m', displayPrompt: false },
+    { cron: '0 * * * *' }, { interval: '2d' }, { at: 123, recurring: true },
+  ]) {
+    assert.equal(Intents['schedule/add'].body.safeParse({ ...base, ...invalid }).success, false);
+  }
+  assert.equal(Intents['schedule/add'].body.safeParse({ prompt: 'p', interval: '5m' }).success, false);
+});
+
+test('MCP and skills controls preserve explicit on/off and authoritative results', () => {
+  for (const enabled of [true, false]) {
+    roundTrip(Intents['mcp/global-default'].body, { name: 'tools', on: enabled });
+    roundTrip(Intents['mcp/session-toggle'].body, { ...sid, name: 'tools', on: enabled });
+    roundTrip(Intents['skills/session-toggle'].body, { ...sid, name: skill.name, enabled });
+    roundTrip(Intents['mcp/global'].result, { servers: [{ name: 'tools', detail: 'node tools.js', defaultOn: enabled }] });
+    roundTrip(Intents['skills/global'].result, { skills: [{ ...skill, userInvocable: enabled }] });
+    roundTrip(Intents['skills/session'].result, { skills: [{ ...skill, enabled }] });
+    roundTrip(Intents['skills/refresh'].result, { ...ok, willRestartWhenIdle: enabled });
+  }
+  for (const [name, field] of [
+    ['mcp/global-default', 'on'], ['mcp/session-toggle', 'on'], ['skills/session-toggle', 'enabled'],
+  ] as const) {
+    assert.equal(Intents[name].body.safeParse({ ...sid, name: 'tools' }).success, false);
+    for (const value of ['true', 1, null]) {
+      assert.equal(Intents[name].body.safeParse({ ...sid, name: 'tools', [field]: value }).success, false);
+    }
+  }
+  for (const status of ['connected', 'failed', 'needs-auth', 'pending', 'disabled', 'stopped', 'not_configured', 'unloaded'] as const) {
+    roundTrip(Protocol.McpServerStatus, status);
+    for (const loaded of [true, false]) {
+      roundTrip(Intents['mcp/session'].result, {
+        loaded, servers: [{ name: 'tools', detail: 'node tools.js', status, enabled: false, error: 'Detail', operation: { ...operation, status } }],
+      });
+    }
+    roundTrip(McpToggleResult, { ...toggleResult, status, operation: { ...operation, status } });
+  }
+  for (const state of ['running', 'cancelling', 'settling', 'succeeded', 'failed'] as const) {
+    roundTrip(Intents['mcp/session-toggle'].result, {
+      ...toggleResult, ok: false, applied: false, enabled: false, error: 'Operation detail',
+      operation: { ...operation, desiredEnabled: false, state, error: 'Operation detail' },
+    });
+  }
+  for (const field of ['ok', 'applied', 'sessionId', 'name', 'enabled', 'status', 'operation']) {
+    const missing: Record<string, unknown> = { ...toggleResult };
+    delete missing[field];
+    assert.equal(McpToggleResult.safeParse(missing).success, false, `toggle result requires ${field}`);
+  }
+  assert.equal(McpToggleResult.safeParse({ ...toggleResult, operation: { ...operation, state: 'unknown' } }).success, false);
+  assert.equal(Intents['skills/refresh'].result.safeParse(ok).success, false);
+  assert.equal(Intents['mcp/reload-session'].result.safeParse(ok).success, false);
+  roundTrip(Intents['skills/read'].result, { name: skill.name });
+});
+
+test('native plans, todos and context/model controls remain intact', () => {
+  roundTrip(Protocol.SessionPlan, plan);
+  roundTrip(Intents['session/plan'].result, { planMarkdown: null, todos: [] });
+  for (const invalid of [{ todos: [] }, { planMarkdown: null }, { planMarkdown: null, todos: [{ id: 't1', title: 'T', status: 'cancelled' }] }]) {
+    assert.equal(Protocol.SessionPlan.safeParse(invalid).success, false);
+  }
+  for (const intent of ['Working', null]) {
+    roundTrip(Protocol.TodoProgress, { done: 1, total: 2, intent });
+  }
+  assert.equal(Protocol.TodoProgress.safeParse({ done: 0, total: 1 }).success, false);
+  const model = {
+    modelId: 'gpt-x', name: 'GPT-X', supportedReasoningEfforts: ['low', 'high'],
+    defaultReasoningEffort: 'high', supportsLongContext: true,
+  };
+  roundTrip(Protocol.ModelOption, model);
+  roundTrip(Protocol.ModelOption, { ...model, supportedReasoningEfforts: [], supportsLongContext: false });
+  for (const contextTier of ['default', 'long_context'] as const) {
+    roundTrip(Intents.setModel.body, { ...sid, modelId: model.modelId, reasoningEffort: 'high', contextTier });
+    roundTrip(SessionMeta, { ...fullMeta, currentContextTier: contextTier, availableModels: [model] });
+  }
+  roundTrip(Intents.setModel.body, { ...sid, modelId: model.modelId });
+  for (const contextTier of ['unknown', null]) {
+    assert.equal(Intents.setModel.body.safeParse({ ...sid, modelId: model.modelId, contextTier }).success, false);
+  }
+});
+
+test('queues and decisions retain every plan action and native mode', () => {
+  const actions = ['exit_only', 'interactive', 'autopilot', 'autopilot_fleet'] as const;
+  assert.deepEqual(Protocol.ExitPlanModeAction.options, [...actions]);
+  for (const action of actions) {
+    const planRequest = { requestId: 'p1', summary: 'Ready', planContent: '# Plan', actions: [...actions], recommendedAction: action };
+    roundTrip(Protocol.PlanRequest, planRequest);
+    roundTrip(ServerEvent, { type: 'session/patch', ...sid, planRequest });
+    roundTrip(Intents.respondPlan.body, { ...sid, requestId: 'p1', action });
+  }
+  assert.deepEqual(Protocol.AgentMode.options, ['interactive', 'plan', 'autopilot']);
+  for (const mode of ['interactive', 'plan', 'autopilot'] as const) {
+    roundTrip(Intents.setMode.body, { ...sid, mode });
+    roundTrip(SessionMeta, { ...fullMeta, currentMode: mode });
+  }
+  for (const action of ['unknown', 'plan', null]) {
+    assert.equal(Intents.respondPlan.body.safeParse({ ...sid, requestId: 'p1', action }).success, false);
+    assert.equal(Protocol.PlanRequest.safeParse({ requestId: 'p1', summary: 'Ready', actions: [action] }).success, false);
+    assert.equal(Protocol.PlanRequest.safeParse({ requestId: 'p1', summary: 'Ready', recommendedAction: action }).success, false);
+  }
+  for (const mode of ['fleet', 'autopilot_fleet', null]) {
+    assert.equal(Intents.setMode.body.safeParse({ ...sid, mode }).success, false);
+  }
+  roundTrip(Protocol.AskRequest, { requestId: 'r1', question: 'Choose', choices: ['A', 'B'], allowFreeform: true });
+  for (const wasFreeform of [true, false]) {
+    roundTrip(Intents.respondAsk.body, { ...sid, requestId: 'r1', answer: 'A', wasFreeform });
+  }
+  for (const action of ['accept', 'decline', 'cancel'] as const) {
+    roundTrip(Intents.respondElicitation.body, { ...sid, requestId: 'e1', action });
+  }
+  assert.equal(Intents.respondElicitation.body.safeParse({ ...sid, requestId: 'e1', action: 'unknown' }).success, false);
+  for (const mode of ['enqueue', 'immediate'] as const) {
+    roundTrip(Intents.prompt.body, { ...sid, text: 'continue', mode });
+    roundTrip(Intents.prompt.result, { ...ok, queued: mode === 'enqueue' });
+  }
+  roundTrip(Intents.prompt.body, { ...sid, text: 'continue' });
+  for (const queue of [[], [{ id: 'q1', text: 'first' }, { id: 'q2', text: 'second' }]]) {
+    roundTrip(ServerEvent, { type: 'session/patch', ...sid, queue });
+  }
+  assert.equal(Intents['queue/remove'].body.safeParse(sid).success, false);
+  assert.equal(ServerEvent.safeParse({ type: 'session/patch', ...sid, queue: [{ text: 'missing id' }] }).success, false);
+});
+
+test('all clearable metadata survives snapshots and actual SSE patches as null', () => {
+  const cleared = {
+    error: null, ask: null, planRequest: null, elicitation: null, todo: null,
+    intent: null, attention: null, currentReasoningEffort: null, currentContextTier: null, currentMode: null,
+  };
+  roundTrip(SessionMeta, { ...fullMeta, ...cleared });
+  roundTrip(ServerEvent, { type: 'session/patch', ...sid, ...cleared });
+  for (const key of Object.keys(cleared)) {
+    roundTrip(ServerEvent, { type: 'session/patch', ...sid, [key]: null });
+  }
+  for (const key of ['title', 'currentModelId', 'availableModels', 'queue', 'loaded', 'loading', 'closing', 'cancelling', 'activeSubagents', 'scheduleCount', 'compacting', 'activeMcpOperations']) {
+    assert.equal(ServerEvent.safeParse({ type: 'session/patch', ...sid, [key]: null }).success, false, key);
+  }
+  for (const activeMcpOperations of [0, 2]) {
+    roundTrip(ServerEvent, { type: 'session/patch', ...sid, activeMcpOperations });
+  }
+  for (const activeMcpOperations of [-1, 0.5, '1']) {
+    assert.equal(SessionMeta.safeParse({ ...minimalMeta, activeMcpOperations }).success, false);
+  }
+  for (const required of ['ask']) {
+    const missing: Record<string, unknown> = { ...minimalMeta };
+    delete missing[required];
+    assert.equal(SessionMeta.safeParse(missing).success, false, `${required} is nullable but required`);
+  }
+  const { error: _error, ...withoutError } = minimalMeta;
+  roundTrip(SessionMeta, withoutError);
+  assert.equal('error' in SessionMeta.parse(withoutError), false, 'native has no authoritative current-error getter');
+});
+
+test('SSE discriminators, pagination flags and nested payload validation are preserved', () => {
+  for (const agentStatus of ['starting', 'up', 'restarting'] as const) {
+    roundTrip(ServerEvent, { ...snapshot, agentStatus, vapidPublicKey: 'public-key' });
+    roundTrip(ServerEvent, { type: 'agent/status', status: agentStatus });
+  }
+  for (const status of ['unloaded', 'idle', 'running', 'error'] as const) {
+    roundTrip(SessionBrief, { ...brief, status });
+    roundTrip(ServerEvent, { type: 'session/added', session: { ...fullMeta, status } });
+  }
+  for (const attention of ['ready', 'choice'] as const) {
+    roundTrip(ServerEvent, { type: 'session/notify', ...sid, title: 'T', body: 'Notice', attention });
+  }
+  for (const reason of ['rewind', 'compaction']) roundTrip(ServerEvent, { type: 'chat/invalidated', ...sid, reason });
+  for (const invalid of [
+    { type: 'unknown' }, { type: 'session/patch', error: null },
+    { type: 'agent/status', status: 'down' }, { type: 'session/added', session: brief },
+    { type: 'session/notify', ...sid, title: 'T', body: 'Notice', attention: null },
+    { type: 'session/reset', page: { ...sid, messages: [], hasMore: 'false' } },
+    { type: 'session/reset', page: { ...sid, messages: [{ ...chat, role: 'invalid' }], hasMore: false } },
+    { type: 'msg/upsert', ...sid, message: { id: 'missing-fields' } },
+  ]) {
+    assert.equal(ServerEvent.safeParse(invalid).success, false, JSON.stringify(invalid));
+  }
+});
+
+test('Snapshot is the shared SSE and passive runtime result with required allow-all policy', () => {
+  assert.equal(Intents['runtime/snapshot'].result, Protocol.Snapshot);
+  assert.equal(ServerEvent.options.find((schema) => schema.shape.type.value === 'snapshot'), Protocol.Snapshot);
+  const minimalSnapshot = {
+    type: 'snapshot', agentStatus: 'starting', models: [], sessions: [], permissionPolicy: 'allow-all',
+  } satisfies Protocol.Snapshot;
+  for (const schema of [Protocol.Snapshot, Intents['runtime/snapshot'].result, ServerEvent]) {
+    roundTrip(schema, snapshot);
+    roundTrip(schema, minimalSnapshot);
+    for (const vapidPublicKey of [null, 'public-key']) {
+      roundTrip(schema, { ...minimalSnapshot, vapidPublicKey });
+    }
+    for (const field of Object.keys(minimalSnapshot)) {
+      const missing: Record<string, unknown> = { ...minimalSnapshot };
+      delete missing[field];
+      assert.equal(schema.safeParse(missing).success, false, `snapshot requires ${field}`);
+    }
+    for (const invalid of [
+      { models: [{ modelId: 'missing-name' }] },
+      { models: [{ ...snapshot.models[0], supportedReasoningEfforts: [1] }] },
+      { sessions: [brief] },
+      { sessions: [{ ...fullMeta, ask: { requestId: 'r1' } }] },
+      { vapidPublicKey: 1 },
+    ]) {
+      assert.equal(schema.safeParse({ ...snapshot, ...invalid }).success, false, JSON.stringify(invalid));
+    }
+  }
+});
+
+test('permission policy stays allow-all independently of every interaction mode', () => {
+  for (const mode of ['interactive', 'plan', 'autopilot'] as const) {
+    roundTrip(Intents.setMode.body, { ...sid, mode });
+    const value = { ...snapshot, sessions: [{ ...fullMeta, currentMode: mode }] };
+    for (const schema of [Protocol.Snapshot, Intents['runtime/snapshot'].result, ServerEvent]) {
+      roundTrip(schema, value);
+      for (const permissionPolicy of [undefined, null, mode, 'deny-all', 'ask', true, {}]) {
+        assert.equal(schema.safeParse({ ...value, permissionPolicy }).success, false, `policy=${JSON.stringify(permissionPolicy)}`);
+      }
+    }
+  }
+  assert.equal(Protocol.AgentMode.safeParse('allow-all').success, false);
+  assert.equal(Intents.setMode.body.safeParse({ ...sid, mode: 'allow-all' }).success, false);
+  assert.equal(SessionMeta.safeParse({ ...fullMeta, currentMode: 'allow-all' }).success, false);
+  assert.equal(ServerEvent.safeParse({ ...snapshot, sessions: [{ ...fullMeta, currentMode: 'allow-all' }] }).success, false);
+});
+
+test('session transition flags are optional booleans in metadata, reads, snapshots and patches', () => {
+  roundTrip(SessionMeta, minimalMeta);
+  roundTrip(ServerEvent, { type: 'session/patch', ...sid });
+  for (const field of ['loading', 'closing', 'cancelling'] as const) {
+    const boundaries = [
+      { schema: SessionMeta, wrap: (value: unknown) => ({ ...minimalMeta, [field]: value }) },
+      { schema: Intents['session/get'].result, wrap: (value: unknown) => ({ meta: { ...minimalMeta, [field]: value } }) },
+      { schema: Protocol.Snapshot, wrap: (value: unknown) => ({ ...snapshot, sessions: [{ ...minimalMeta, [field]: value }] }) },
+      { schema: ServerEvent, wrap: (value: unknown) => ({ type: 'session/patch', ...sid, [field]: value }) },
+    ];
+    for (const { schema, wrap } of boundaries) {
+      for (const value of [true, false]) {
+        roundTrip(schema, wrap(value), `${field}=${value}`);
+      }
+      for (const value of [null, 'true', 'false', 0, 1, [], {}]) {
+        assert.equal(schema.safeParse(wrap(value)).success, false, `${field}=${JSON.stringify(value)}`);
+      }
+    }
+  }
+});
+
+test('native pages require bounded counts, directional cursors and explicit expiry status', () => {
+  const schema = Intents['session/chat'].body;
+  assert.deepEqual(schema.parse(sid), { ...sid, source: 'persisted', direction: 'backward', max: 64, waitMs: 0, bootstrap: false });
+  for (const max of [1, 64, 256]) assert.equal(schema.parse({ ...sid, max }).max, max);
+  for (const max of [0, -1, 0.5, 257, Infinity, '64', null]) assert.equal(schema.safeParse({ ...sid, max }).success, false);
+  for (const cursor of ['', null, 0, false, [], {}, 'a'.repeat(16385)]) {
+    assert.equal(schema.safeParse({ ...sid, cursor }).success, false);
+  }
+  for (const invalid of [{ bootstrap: true, cursor: 'old' }, { bootstrap: true, direction: 'forward' },
+    { direction: 'backward', waitMs: 10 }, { source: 'live', direction: 'forward', waitMs: 30001 }]) {
+    assert.equal(schema.safeParse({ ...sid, ...invalid }).success, false);
+  }
+  for (const cursorStatus of ['ok', 'expired']) roundTrip(Intents['session/chat'].result, { ...nativePage, cursorStatus });
+  assert.equal(Intents['session/chat'].result.safeParse({ ...nativePage, cursorStatus: undefined }).success, false);
+  assert.equal(ServerEvent.safeParse({ type: 'msg/upsert', ...sid, message: chat }).success, false);
+  assert.equal(ServerEvent.safeParse({ type: 'session/reset', page: { ...sid, messages: [chat], hasMore: true } }).success, false);
+});
+
+test('chat SSE requires an explicit cursor, preserves all-agent scope and bounds native waiting', () => {
+  const schema = Protocol.NativeChatStreamRequest;
+  assert.deepEqual(schema.parse({ ...sid, cursor: '', agentScope: 'all' }), { ...sid, cursor: '', agentScope: 'all', max: 64 });
+  for (const body of [sid, { ...sid, cursor: 'c', max: 65 }, { ...sid, cursor: 'c', source: 'persisted' }]) {
+    assert.equal(schema.safeParse(body).success, false);
+  }
+  assert.equal(Intents['session/chat'].body.parse({ ...sid, source: 'live', direction: 'forward', waitMs: 30000 }).waitMs, 30000);
+  assert.equal(Protocol.NativeChatStreamEvent.safeParse({ type: 'error', error: 'Unloaded', code: 'SESSION_UNLOADED' }).success, true);
+});
+
+test('skills/global accepts an optional nonempty cwd without a session selector', () => {
+  const schema = Intents['skills/global'].body;
+  roundTrip(schema, {});
+  for (const cwd of ['/workspace/project', 'relative/project', '/']) {
+    roundTrip(schema, { cwd });
+    assert.deepEqual(schema.parse({ cwd, sessionId: 'not-a-global-selector' }), { cwd });
+  }
+  assert.deepEqual(schema.parse({ sessionId: 'not-a-global-selector' }), {});
+  for (const cwd of ['', null, false, 0, [], {}]) {
+    assert.equal(schema.safeParse({ cwd }).success, false, `cwd=${JSON.stringify(cwd)}`);
+  }
+});
+
+test('prompt attachment is optional, singular and strips client-side path metadata', () => {
+  for (const text of ['', '  Caption\nKeep this spacing.  ']) {
+    roundTrip(Intents.prompt.body, { ...sid, text });
+    for (const kind of ['image', 'file'] as const) {
+      const minimalAttachment = { kind, name: 'file', url: attachment.url };
+      roundTrip(Intents.prompt.body, { ...sid, text, attachment: minimalAttachment });
+      roundTrip(Intents.prompt.body, { ...sid, text, attachment: { ...attachment, kind } });
+      roundTrip(ChatMessage, { ...chat, attachment: { ...attachment, kind } });
+      assert.deepEqual(Intents.prompt.body.parse({
+        ...sid, text, path: '/client/ignored', attachment: { ...uploadedFile, kind, path: '/client/not-authoritative' },
+      }), { ...sid, text, attachment: { ...attachment, kind } });
+    }
+  }
+  for (const value of [null, [], [attachment], 'file', {}, { ...attachment, kind: 'video' }, { ...attachment, name: null }]) {
+    assert.equal(Intents.prompt.body.safeParse({ ...sid, text: 'caption', attachment: value }).success, false);
+  }
+  for (const field of ['kind', 'name', 'url']) {
+    const missing: Record<string, unknown> = { ...attachment };
+    delete missing[field];
+    assert.equal(Intents.prompt.body.safeParse({ ...sid, text: '', attachment: missing }).success, false, `attachment requires ${field}`);
+  }
+});
+
+test('UploadUrl accepts only literal local safe basenames up to 200 characters', () => {
+  for (const url of ['/uploads/a', '/uploads/0', '/uploads/Az09._-report.png', `/uploads/${'a'.repeat(200)}`]) {
+    roundTrip(Protocol.UploadUrl, url);
+    roundTrip(Protocol.UploadedFile, { ...uploadedFile, url });
+    roundTrip(Intents.prompt.body, { ...sid, text: '', attachment: { ...attachment, url } });
+  }
+});
+
+test('upload and prompt boundaries reject external, escaped, traversing and newline URLs', () => {
+  const unsafeUrls = [
+    '', '/uploads/', 'uploads/a', '/Uploads/a', '/uploads/.hidden', '/uploads/_file', '/uploads/-file',
+    '/uploads/.', '/uploads/..', '/uploads/../secret', '/uploads/a..png', '/uploads/a/../b',
+    '/uploads/a/b', '/uploads//a', '/uploads/a\\b', '/uploads/..\\secret',
+    'https://example.com/uploads/a', 'http://example.com/uploads/a', '//example.com/uploads/a',
+    'file:///uploads/a', 'data:text/plain,hello', 'javascript:alert(1)',
+    '/uploads/a?download=1', '/uploads/a#fragment', '/uploads/a;b', '/uploads/a b',
+    '/uploads/%2e%2e', '/uploads/a%2F..%2Fb', '/uploads/a%5Cb', '/uploads/a%252e%252e',
+    '/uploads/a%20b', '/uploads/a%00', '/uploads/a%0A', '/uploads/a%0D%0A', '/uploads/%61',
+    '/uploads/a%', '/uploads/é.png', '/uploads/a"b', '/uploads/a<b',
+    '/uploads/a\n', '/uploads/a\r', '/uploads/a\r\n', '/uploads/a\n/b',
+    '/uploads/a\t', '/uploads/a\0', '/uploads/a\u2028', '/uploads/a\u2029', ' /uploads/a',
+    `/uploads/${'a'.repeat(201)}`,
+  ];
+  for (const url of [...unsafeUrls, null, 1, false, [], {}]) {
+    const label = JSON.stringify(url);
+    assert.equal(Protocol.UploadUrl.safeParse(url).success, false, `UploadUrl ${label}`);
+    assert.equal(Protocol.UploadedFile.safeParse({ ...uploadedFile, url }).success, false, `UploadedFile ${label}`);
+    assert.equal(Intents.prompt.body.safeParse({ ...sid, text: 'caption', attachment: { ...attachment, url } }).success, false, `prompt ${label}`);
+  }
+});
+
+test('UploadedFile requires authoritative metadata and validates size, mime and path', () => {
+  roundTrip(Protocol.UploadedFile, uploadedFile);
+  const { storedName: _storedName, ...withoutStoredName } = uploadedFile;
+  roundTrip(Protocol.UploadedFile, withoutStoredName);
+  for (const kind of ['image', 'file'] as const) {
+    for (const size of [0, 1, 25 * 1024 * 1024]) {
+      roundTrip(Protocol.UploadedFile, { ...uploadedFile, kind, size });
+    }
+  }
+  roundTrip(Protocol.UploadedFile, { ...uploadedFile, mime: 'x'.repeat(512) });
+  for (const field of ['kind', 'name', 'url', 'path', 'size', 'mime']) {
+    const missing: Record<string, unknown> = { ...uploadedFile };
+    delete missing[field];
+    assert.equal(Protocol.UploadedFile.safeParse(missing).success, false, `UploadedFile requires ${field}`);
+  }
+  for (const size of [-1, 0.5, 25 * 1024 * 1024 + 1, NaN, Infinity, -Infinity, '0', null, true]) {
+    assert.equal(Protocol.UploadedFile.safeParse({ ...uploadedFile, size }).success, false, `size=${String(size)}`);
+  }
+  for (const mime of ['', 'x'.repeat(513), null, 1, false]) {
+    assert.equal(Protocol.UploadedFile.safeParse({ ...uploadedFile, mime }).success, false, `mime=${JSON.stringify(mime)}`);
+  }
+  for (const path of ['', null, 1, false, []]) {
+    assert.equal(Protocol.UploadedFile.safeParse({ ...uploadedFile, path }).success, false, `path=${JSON.stringify(path)}`);
+  }
+  for (const invalid of [{ storedName: null }, { storedName: 1 }, { name: null }, { kind: 'video' }]) {
+    assert.equal(Protocol.UploadedFile.safeParse({ ...uploadedFile, ...invalid }).success, false);
+  }
+});
+
+test('attachmentMarker uses the exact shared encoded format including zero-size metadata', () => {
+  const expected = '<cockpit-attachment version="2" kind="image" name="R%C3%A9sum%C3%A9%20%22a%26b%22%20%3C1%3E%25%0A.png" url="%2Fuploads%2FAb_1-2.png" size="0" mime="image%2Fpng%3B%20charset%3Dutf-8"/>';
+  assert.equal(Protocol.attachmentMarker(attachment), expected);
+  assert.equal(Protocol.attachmentMarker(uploadedFile), expected, 'server paths and stored names are not marker attributes');
+  const minimalAttachment = { kind: 'file', name: 'notes.txt', url: '/uploads/notes.txt' } satisfies Protocol.Attachment;
+  assert.equal(Protocol.attachmentMarker(minimalAttachment), '<cockpit-attachment version="2" kind="file" name="notes.txt" url="%2Fuploads%2Fnotes.txt"/>');
+  assert.equal(Protocol.attachmentMarker({ ...minimalAttachment, size: 42 }), '<cockpit-attachment version="2" kind="file" name="notes.txt" url="%2Fuploads%2Fnotes.txt" size="42"/>');
+  assert.equal(Protocol.attachmentMarker({ ...minimalAttachment, mime: 'text/plain' }), '<cockpit-attachment version="2" kind="file" name="notes.txt" url="%2Fuploads%2Fnotes.txt" mime="text%2Fplain"/>');
+});
+
+test('attachmentPrompt preserves captions verbatim and adds no generic read-path guidance', () => {
+  for (const kind of ['image', 'file'] as const) {
+    const value = { ...attachment, kind };
+    const marker = Protocol.attachmentMarker(value);
+    assert.equal(Protocol.attachmentPrompt(value, ''), marker, 'no fallback guidance or trailing newline');
+    for (const caption of ['Describe this.', '  ', '\n', '\r\nCaption\r\n', '  原文 "quoted" & <tag>\nSecond line.  ']) {
+      assert.equal(Protocol.attachmentPrompt(value, caption), `${marker}\n${caption}`);
+    }
+  }
+  assert.equal(Protocol.attachmentPrompt(uploadedFile, 'Use this file'), `${Protocol.attachmentMarker(attachment)}\nUse this file`);
+});
+
+// Compile-time parity lock (enforced by `tsc` build; tsx strips it at runtime):
+// the hand-written `interface ChatMessage` must equal the schema's inferred type.
+type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
+const _chatMessageParity: Equal<z.infer<typeof ChatMessage>, ChatMessage> = true;
+void _chatMessageParity;
+
+type Expect<T extends true> = T;
+type SlimContractGuards = [
+  Expect<Equal<Extract<IntentName, RemovedIntentName>, never>>,
+  Expect<Equal<Extract<keyof typeof Protocol, typeof removedExports[number]>, never>>,
+  Expect<Equal<Extract<keyof SessionMeta, RemovedMetaField>, never>>,
+  Expect<Equal<Extract<keyof SessionBrief, RemovedMetaField>, never>>,
+  Expect<Equal<Extract<keyof Extract<Protocol.ServerEvent, { type: 'session/patch' }>, RemovedMetaField>, never>>,
+  Expect<Equal<IntentBody<'session/new'>, { cwd: string }>>,
+  Expect<Equal<IntentBody<'session/purge'>, { sessionId: string; confirm: true }>>,
+  Expect<Equal<IntentBody<'session/chat'>, Protocol.NativeChatRead>>,
+  Expect<Equal<IntentBody<'skills/global'>, { cwd?: string }>>,
+  Expect<Equal<IntentBody<'prompt'>, { sessionId: string; text: string; mode?: 'enqueue' | 'immediate';
+    attachment?: Protocol.Attachment; attachments?: Protocol.Attachment[]; parts?: Protocol.MessagePart[] }>>,
+  Expect<Equal<IntentResult<'session/chat'>, Protocol.NativeChatPage>>,
+  Expect<Equal<IntentResult<'runtime/snapshot'>, Protocol.Snapshot>>,
+  Expect<Equal<Extract<Protocol.ServerEvent, { type: 'snapshot' }>, Protocol.Snapshot>>,
+  Expect<Equal<Extract<Protocol.ServerEventType, 'session/history-page'>, never>>,
+  Expect<Equal<Protocol.Snapshot['permissionPolicy'], 'allow-all'>>,
+  Expect<Equal<Pick<SessionMeta, 'loading' | 'closing' | 'cancelling'>, { loading?: boolean; closing?: boolean; cancelling?: boolean }>>,
+  Expect<Equal<IntentResult<'session/list'>, { sessions: SessionBrief[] }>>,
+  Expect<Equal<IntentResult<'session/get'>, { meta: SessionMeta | null }>>,
+  Expect<Equal<keyof SessionPanels, 'skills' | 'mcpServers' | 'tasks' | 'instructionSources' | 'schedules'>>,
+];
