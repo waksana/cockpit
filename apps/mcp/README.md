@@ -21,9 +21,12 @@ implemented by this current stdio API client. Module cold-loading and native
 per-session MCP switches are different operations; this document only describes
 the currently available tools.
 
-Binary: `cockpit-mcp-server` → `dist/index.js`. Requires Node ≥22.12; raw Node 24 is
-supported without a TypeScript loader. Canonical schemas and types come from
-the `@cockpit/protocol` workspace dependency.
+Entry: `dist/index.js`, started with the packaged `tsx` loader so the
+`@cockpit/protocol` TypeScript workspace dependency is also supported.
+From the source/package root use `pnpm start:mcp`, or use the direct Node command
+in the [package guide](../../docs/packaging.md) without pnpm. The packaged
+Node/platform requirements are authoritative; do not rely on implicit TypeScript
+stripping in an arbitrary Node version.
 
 ## Discover and invoke the API
 
@@ -40,10 +43,10 @@ draft-07. Name detail cannot be combined with listing parameters.
 | `cockpit_get_snapshot` | Read `runtime/snapshot`: agent readiness, models, sessions and permission policy |
 | `cockpit_service_status` | Fixed `operation`: `health` or `status` |
 
-Optional restart conveniences and consumer status UI/API adapters are parked.
-There is no `cockpit_service_restart` tool or `system/consumer/*` intent.
-The private deployment lifecycle and external launcher remain independent
-infrastructure, not a required running module.
+There is no `cockpit_service_restart` tool, private lifecycle adapter or
+`system/consumer/*` intent. Their originals are [outside the repository](../../docs/extractions.md).
+The main service exposes `system/shutdown` and `system/status` through the same
+generic caller; there is no separate restart or deployment system.
 
 Example:
 
@@ -80,6 +83,19 @@ elicitation tools answer agent interaction requests, not tool-permission prompts
 
 All tools below wrap the same backend API; they do not introduce another domain
 store or capability policy.
+
+For service shutdown, discover the current schema if needed and invoke:
+
+```json
+{"name":"system/shutdown","body":{"confirm":true}}
+```
+
+This accepts a graceful exit request, not a restart. New independent work is
+refused while existing native work settles. The initiating native turn must
+finish; do not keep a background tool waiting for its own host to exit.
+`system/status {}` or `cockpit_service_status {operation:"status"}` reports the
+native activity, protected HTTP requests and shutdown phase. Unknown safety or
+close results are not success; there is no force/cancel/deployment mode.
 
 Creation is identical to Web: `cockpit_new_session` calls
 `session/new {cwd}` once and returns the actual Copilot ID, using native
@@ -395,7 +411,10 @@ Example MCP configuration (replace paths/URL for your installation):
   "mcpServers": {
     "cockpit": {
       "command": "node",
-      "args": ["/path/to/cockpit/apps/mcp/dist/index.js"],
+      "args": [
+        "--import", "/path/to/cockpit/apps/mcp/node_modules/tsx/dist/loader.mjs",
+        "/path/to/cockpit/apps/mcp/dist/index.js"
+      ],
       "env": {"COCKPIT_URL":"http://127.0.0.1:8771"}
     }
   }
@@ -409,6 +428,9 @@ through your environment/secret configuration, not committed source files.
 
 The complete enhancement retirement and retained-data rules are in the
 [module catalog](../../docs/module-catalog.md#retired-capabilities).
+`/admin/restart` and `/admin/lifecycle` are removed rather than forwarded.
+`skills/refresh` no longer returns `willRestartWhenIdle`; skill definition
+refresh remains a native operation without service restart.
 Old upload/download-root variables are no longer read. Rebuild/reconnect MCP
 only under ordinary idle lifecycle rules; already-loaded descriptions do not
 magically change, and retired requests must not be retried as a workaround.

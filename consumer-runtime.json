@@ -1,6 +1,0 @@
-{
-  "schemaVersion": 2,
-  "dataCompatibility": "cockpit-core-user-root-v2",
-  "automaticDataMigrations": false,
-  "mainLifecycleApi": 1
-}

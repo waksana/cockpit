@@ -17,7 +17,8 @@ globalThis.fetch = async (url, init = {}) => {
   assert.equal(target.origin, 'http://127.0.0.1:45678');
   const path = target.pathname;
   if (path === '/health') return json({ ok: true, login: 'synthetic' });
-  if (path === '/status') return json({ sessions: session ? [session] : [], running: 0, restartPending: false });
+  if (path === '/status') return json({ sessions: session ? [session] : [], running: 0, busy: 0, inFlightRequests: 0,
+    shutdown: { phase: 'running', requestedAt: null, error: null } });
   if (path === '/capabilities') {
     if (target.searchParams.has('name')) return json({
       name: 'session/chat', inputSchema: { type: 'object' }, resultSchema: { type: 'object' },

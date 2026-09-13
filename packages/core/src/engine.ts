@@ -178,9 +178,9 @@ export class Engine {
     if (this.fatalError) return;
     this.fatalError = error;
     this.started = false;
-    this.agentStatus = 'restarting';
+    this.agentStatus = 'failed';
     for (const st of this.sessions.values()) this.detach(st, error);
-    this.emit({ type: 'agent/status', status: 'restarting' });
+    this.emit({ type: 'agent/status', status: 'failed' });
     this.bus.emit('fatal', error);
   }
 
@@ -239,8 +239,8 @@ export class Engine {
       this.emit({ type: 'agent/status', status: 'up' });
     }).catch(error => {
       this.started = false;
-      this.agentStatus = 'restarting';
-      this.emit({ type: 'agent/status', status: 'restarting' });
+      this.agentStatus = 'failed';
+      this.emit({ type: 'agent/status', status: 'failed' });
       throw error;
     }).finally(() => { this.startPromise = undefined; this.bus.emit('activity-settled'); });
     return this.startPromise;
@@ -959,8 +959,14 @@ export class Engine {
 
   private async checkIdle(st: State): Promise<void> {
     await this.liveSession(st);
-    if (st.load || st.operations || st.cancelling || st.decisions.size || st.sends || st.accepted.size) throw new Error('Session has protected work');
-    if (await this.busy(st, true)) throw new Error('Session has protected work (turn, task, queue, decision, or operation)');
+    if (st.load || st.operations || st.cancelling || st.decisions.size || st.sends || st.accepted.size) {
+      throw Object.assign(new Error('Session has protected work'), { statusCode: 409, code: 'SESSION_BUSY' });
+    }
+    if (await this.busy(st, true)) {
+      throw Object.assign(new Error('Session has protected work (turn, task, queue, decision, or operation)'), {
+        statusCode: 409, code: 'SESSION_BUSY',
+      });
+    }
   }
 
   private async close(st: State): Promise<void> {
@@ -1032,9 +1038,13 @@ export class Engine {
       this.stopped = true;
       return;
     }
-    if (this.lifecycle || this.births || this.creating.size || this.startPromise || this.removing.size) throw new Error('Engine lifecycle operation is in progress');
+    if (this.lifecycle || this.births || this.creating.size || this.startPromise || this.removing.size) {
+      throw Object.assign(new Error('Engine lifecycle operation is in progress'), { statusCode: 409, code: 'SESSION_BUSY' });
+    }
     const all = [...this.sessions.values()];
-    if (all.some(st => st.closing || st.load || st.operations || st.cancelling)) throw new Error('Session operation is in progress');
+    if (all.some(st => st.closing || st.load || st.operations || st.cancelling)) {
+      throw Object.assign(new Error('Session operation is in progress'), { statusCode: 409, code: 'SESSION_BUSY' });
+    }
     this.lifecycle = true;
     for (const st of all) { st.closing = true; this.patch(st, { closing: true }); }
     try {
@@ -1043,8 +1053,8 @@ export class Engine {
       await this.runtime.stop();
       this.started = false;
       this.stopped = true;
-      this.agentStatus = 'restarting';
-      this.emit({ type: 'agent/status', status: 'restarting' });
+      this.agentStatus = 'stopping';
+      this.emit({ type: 'agent/status', status: 'stopping' });
     } finally {
       for (const st of all) { st.closing = false; this.patch(st, { closing: false }); this.release(st); }
       this.lifecycle = false;

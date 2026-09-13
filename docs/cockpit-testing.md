@@ -3,9 +3,8 @@
 本文维护现有验证入口和隔离要求，不是当前运行健康、安全认证或永久测试数字。
 产品门槛以 [R1–R8](product-requirements.md) 为准，运行证据见[部署记录](deployments.md)。
 以下命令默认从仓库根执行，已明确子目录的例外除外。
-消费者/交付相关用例目前仍有实际源码，因此没有在这次文档更新中删除。
-后续[外围迁出](module-catalog.md#pending-extraction)应连同对应职责的用例移交；
-普通原生与产包验证继续保留，开发测试文件本身不必作为运行包内容。
+消费者/私有交付用例已随对应代码[移到项目外](extractions.md)，不再作为活跃测试运行。
+普通原生、HTTP、graceful 关闭与产包验证继续保留；第一方测试文件不属于运行依赖。
 
 ## 按改动选择最小范围
 
@@ -19,7 +18,7 @@
 | Web 类型 / lint | `pnpm --filter @cockpit/web typecheck` / `pnpm --filter @cockpit/web lint` |
 | 全仓现有套件 | `pnpm test` |
 | 当前构建 | `pnpm build` |
-| 原件清单与运行包边界 | `node --test scripts/delivery-package.test.mjs` |
+| 普通运行包边界 | [产包说明](packaging.md)中的现有 Node test 入口 |
 
 需要定向到文件时，用各 package 已有的 Node test/tsx runner，不安装另一套测试框架。
 同 runner 的相关选择器合并执行；仅当改变范围或结果需要时再扩大到全套。
@@ -30,8 +29,8 @@ server/core/MCP 的构建排除其测试文件；protocol 及 Web 的 tsconfig �
 下的测试，所以相应类型检查也覆盖它们。以各自实际脚本/tsconfig 为准，
 不能用“所有测试都不参与类型检查”概括。
 
-`module-staging` 不是 workspace，其旧 tests/imports 未适配，不能运行后宣称模块已可用。
-原件守卫只核对源字节/摘要/mode 和产物边界，不给旧业务代码重新背书。
+项目外旧 tests/imports 未适配，不能运行后宣称模块已可用。
+原件的字节/摘要/mode 核对不为旧业务代码重新背书。
 
 ## 真正的 SDK 与包
 
@@ -51,10 +50,10 @@ COCKPIT_NATIVE_MODEL_SMOKE=1 COCKPIT_NATIVE_DELETE_TEST=1 \
 见[分叉指南](session-fork.md#local-regression-fixture)，不要用 schema 样例代替真实连接。
 
 实际运行包必须来自干净固定提交，使用已有 packager 和 manifest 校验。
-`COCKPIT_RELEASE_ARCHIVE=/absolute/runtime.tar.gz` 才启用实际 tar 的守卫；
-不带变量的通过不证明某份 tar。按产包/解包工具保留精确字节和可执行 mode，
+只有针对实际 tar 的验证才能证明该包；合成 fixture 的通过不能替代。
+按产包/解包工具保留精确字节和可执行 mode，
 从包自己的依赖入口运行；不能借用开发树依赖让缺包伪装成功。
-具体命令由[交付](DELIVERY.md)和[消费者产包](consumer-publishing.md)维护。
+具体命令由[普通产包](packaging.md)维护。
 
 ## 可选诊断
 

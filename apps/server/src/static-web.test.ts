@@ -22,12 +22,11 @@ after(async () => {
   rmSync(directory, { recursive: true, force: true });
 });
 
-test('immutable delivery serves current and retained hashed assets without SPA fallback', async () => {
-  for (const name of ['current', 'previous']) {
-    const response = await app.inject({ method: 'GET', url: `/assets/${name}-12345678.js` });
-    assert.equal(response.statusCode, 200);
-    assert.equal(response.body, name);
-  }
+test('the package serves its own assets without adopting a retired external asset archive', async () => {
+  const current = await app.inject({ method: 'GET', url: '/assets/current-12345678.js' });
+  assert.equal(current.statusCode, 200);
+  assert.equal(current.body, 'current');
+  assert.equal((await app.inject({ method: 'GET', url: '/assets/previous-12345678.js' })).statusCode, 404);
 });
 
 test('SPA fallback serves only recognized application routes', async () => {

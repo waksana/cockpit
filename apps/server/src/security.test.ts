@@ -1,35 +1,23 @@
 // Tests for the transport-layer security/consistency hardening (fx-server):
-//   - Origin/CSRF gate: accept same-origin / loopback / known / configured /
+//   - Origin/CSRF gate: accept same-origin / loopback / configured /
 //     no-origin; reject cross-origin + opaque "null".
 //   - SSE high-water-mark: drop + destroy a slow consumer; keep healthy ones.
-//   - graceful-restart busy predicate DELEGATES to the engine's sessionMetaBusy.
+//   - the shutdown busy predicate delegates to the engine's sessionMetaBusy.
 //
 // Isolated: the module is imported with COCKPIT_NO_BOOT=1 so the Engine (which
-// reads the real ~/.copilot prefs) is never constructed and no port is bound;
-// COCKPIT_UPLOAD_DIR points at a unique nonexistent path within apps/server.
+// accesses native configuration) is never constructed and no port is bound.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { rmSync } from 'node:fs';
-import { relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { sessionMetaBusy } from '@cockpit/core';
 import type { SessionMeta } from '@cockpit/protocol';
 
-const TEST_UPLOAD_DIR = relative(process.cwd(), fileURLToPath(
-  new URL(`../.cockpit-server-sec-${process.pid}-${randomUUID()}`, import.meta.url),
-));
 process.env.COCKPIT_NO_BOOT = '1';
 process.env.LOG_LEVEL = 'silent';
-process.env.COCKPIT_UPLOAD_DIR = TEST_UPLOAD_DIR;
 process.env.COCKPIT_ALLOWED_ORIGINS = 'https://configured.example';
 
 // Import AFTER the env is set (the module reads these at load time).
 const { app, isAllowedOrigin, sessionBusy, sseWrite, broadcastFrame } = await import('./index.ts');
-after(async () => {
-  try { await app.close(); }
-  finally { rmSync(TEST_UPLOAD_DIR, { recursive: true, force: true }); }
-});
+after(() => app.close());
 await app.ready();
 
 // ── Origin/CSRF gate via app.inject ────────────────────────────────────────
@@ -52,12 +40,12 @@ test('Origin gate: allows same-origin (Origin host == Host)', async () => {
   assert.equal(res.statusCode, 404); // passed the gate → unknown-intent 404
 });
 
-test('Origin gate: allows the known public origin regardless of Host', async () => {
+test('Origin gate: a former deployment host has no implicit trust', async () => {
   const res = await app.inject({
     method: 'POST', url: '/intent/__unknown__',
     headers: { origin: 'https://cockpit.rbym47.com', host: '127.0.0.1:8771' },
   });
-  assert.equal(res.statusCode, 404);
+  assert.equal(res.statusCode, 403);
 });
 
 test('Origin gate: allows a configured (env) origin', async () => {
@@ -89,11 +77,11 @@ test('Origin gate: rejects an opaque "null" Origin', async () => {
   assert.equal(res.statusCode, 403);
 });
 
-test('Origin gate: /admin/restart is gated cross-origin', async () => {
+test('Origin gate: graceful shutdown is gated cross-origin', async () => {
   const res = await app.inject({
-    method: 'POST', url: '/admin/restart',
+    method: 'POST', url: '/intent/system/shutdown',
     headers: { origin: 'https://evil.example', host: 'cockpit.rbym47.com' },
-    payload: { pending: true },
+    payload: { confirm: true },
   });
   assert.equal(res.statusCode, 403);
 });
@@ -125,7 +113,7 @@ test('isAllowedOrigin: opaque "null" → rejected', () => {
 });
 
 test('isAllowedOrigin: Referer fallback when Origin is absent', () => {
-  assert.equal(isAllowedOrigin({ referer: 'https://cockpit.rbym47.com/session/x', host: '127.0.0.1:8771' }), true);
+  assert.equal(isAllowedOrigin({ referer: 'https://configured.example/session/x', host: '127.0.0.1:8771' }), true);
   assert.equal(isAllowedOrigin({ referer: 'https://evil.example/x', host: '127.0.0.1:8771' }), false);
 });
 

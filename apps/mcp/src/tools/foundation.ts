@@ -101,7 +101,7 @@ export function registerFoundationTools(server: McpServer): void {
 
   server.registerTool('cockpit_service_status', {
     title: 'Read Cockpit service health or status',
-    description: 'Read backend health or detailed status, including busy sessions and pending graceful restart.',
+    description: 'Read backend health or detailed status, including native busy sessions, in-flight requests and graceful shutdown state. Shutdown does not restart the service.',
     inputSchema: { operation: z.enum(['health', 'status']).default('status') },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, async ({ operation }): Promise<ToolResult> => {

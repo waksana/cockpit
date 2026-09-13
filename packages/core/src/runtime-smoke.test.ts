@@ -1351,7 +1351,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
           'Native fatal errors must surface rather than returning stale control metadata');
       }
       await assert.rejects(host.snapshot(), error => error === failure);
-      assert.equal(agentStatuses.at(-1), 'restarting');
+      assert.equal(agentStatuses.at(-1), 'failed');
       assert.equal(adapter.liveCount, 0);
       for (const reuse of [
         () => adapter.start(), () => adapter.createSession({}), () => adapter.resumeSession(busyId, {}),

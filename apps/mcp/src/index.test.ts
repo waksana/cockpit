@@ -99,8 +99,8 @@ mockHttp((res, req) => {
       });
     }
     if (url.pathname === '/health') return send({ ok: true });
-    if (url.pathname === '/status') return send({ busy: 1, restartPending: false, permissionPolicy: 'allow-all' });
-    if (url.pathname === '/admin/restart') return send({ busy: 1, restartPending: true, willRestartWhenIdle: true });
+    if (url.pathname === '/status') return send({ running: 1, busy: 1, inFlightRequests: 0, sessions: [],
+      shutdown: { phase: 'running', requestedAt: null, error: null } });
     const name = path.slice('/intent/'.length);
     const schema = Object.hasOwn(schemas, name) ? schemas[name] : undefined;
     if (!path.startsWith('/intent/') || !schema) return send({ error: 'unknown intent' }, 404);

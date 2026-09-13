@@ -11,7 +11,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { z } from 'zod';
 import { Intents, type IntentBody, type IntentName } from '@cockpit/protocol';
 
-test('connected MCP discovers newly published fork, creates a native child and dispatches independent goals', {
+test('connected MCP uses native fork and graceful shutdown waits for an actual native turn', {
   skip: process.env.COCKPIT_NATIVE_FORK !== '1', timeout: 60_000,
 }, async () => {
   const root = resolve(`.cockpit-mcp-native-fork-${randomUUID()}`);
@@ -31,6 +31,7 @@ test('connected MCP discovers newly published fork, creates a native child and d
     COCKPIT_SERVE_WEB: '0',
   };
   const prompts: string[] = [];
+  let releaseHeld: (() => void) | undefined;
   const providerErrors: string[] = [];
   const provider = createServer(async (req, res) => {
     try {
@@ -47,7 +48,9 @@ test('connected MCP discovers newly published fork, creates a native child and d
         choices: [{ index: 0, delta, finish_reason }],
       })}\n\n`;
       res.writeHead(200, { 'content-type': 'text/event-stream' });
-      res.end(chunk({ role: 'assistant', content: `Synthetic reply ${prompt}` }) + chunk({}, 'stop') + 'data: [DONE]\n\n');
+      const finish = () => res.end(chunk({ role: 'assistant', content: `Synthetic reply ${prompt}` }) + chunk({}, 'stop') + 'data: [DONE]\n\n');
+      if (prompt.includes('MCP_FORK_FIXTURE_HELD')) releaseHeld = finish;
+      else finish();
     } catch (error) {
       providerErrors.push(String(error));
       res.writeHead(500).end('Synthetic provider rejected request');
@@ -59,6 +62,7 @@ test('connected MCP discovers newly published fork, creates a native child and d
   const { OfficialRuntime } = await import('../../../packages/core/src/runtime.ts');
   const { Engine, sessionMetaBusy } = await import('../../../packages/core/src/engine.ts');
   const { app, setTestDependencies } = await import('../../server/src/index.ts');
+  const { GracefulShutdown } = await import('../../server/src/shutdown.ts');
   let published = false;
   // A single, already-connected MCP process must observe later publication.
   app.addHook('onRequest', async (request, reply) => {
@@ -85,12 +89,18 @@ test('connected MCP discovers newly published fork, creates a native child and d
       availableTools: [], skillDirectories: [], pluginDirectories: [], instructionDirectories: [],
     },
   });
-  const engine = new Engine({ runtime, prefsFile: join(root, 'prefs.json') });
-  const forbiddenPush = () => { throw new Error('Native fork fixture must not send notifications'); };
-  setTestDependencies({ engine, push: {
-    subscribe: forbiddenPush, status: forbiddenPush, test: forbiddenPush,
-    unsubscribe: forbiddenPush, sendAttention: forbiddenPush,
-  } });
+  const engine = new Engine({ runtime });
+  let shutdownCompleted = false, completeShutdown!: () => void;
+  const closed = new Promise<void>(resolve => { completeShutdown = resolve; });
+  const shutdownErrors: unknown[] = [];
+  const shutdown = new GracefulShutdown({
+    busyCount: () => engine.busyCount(), stopNative: () => engine.stop(), closeTransport: () => app.close(),
+    exit: code => { assert.equal(code, 0); shutdownCompleted = true; completeShutdown(); },
+    report: error => { shutdownErrors.push(error); }, delayMs: 20,
+  });
+  const offActivity = engine.onActivitySettled(() => shutdown.notify());
+  const offEvent = engine.onEvent(() => shutdown.notify());
+  setTestDependencies({ engine, shutdown });
   const client = new Client({ name: 'already-connected-discussion-fixture', version: '1' });
   let transport: StdioClientTransport | undefined;
   const responseSchema = z.object({
@@ -117,7 +127,7 @@ test('connected MCP discovers newly published fork, creates a native child and d
     const deadline = Date.now() + 10_000;
     while (stable < 2 && Date.now() < deadline) {
       const meta = (await engine.getMeta(id))!;
-      stable = meta.status === 'idle' && !sessionMetaBusy(meta) && !meta.autoNaming ? stable + 1 : 0;
+      stable = meta.status === 'idle' && !sessionMetaBusy(meta) ? stable + 1 : 0;
       await sleep(20);
     }
     assert.equal(stable, 2, 'All native work must settle before a fork or teardown');
@@ -127,7 +137,8 @@ test('connected MCP discovers newly published fork, creates a native child and d
     const url = await app.listen({ host: '127.0.0.1', port: 0 });
     transport = new StdioClientTransport({
       command: process.execPath,
-      args: [fileURLToPath(new URL('../dist/index.js', import.meta.url))],
+      args: ['--import', fileURLToPath(new URL('../node_modules/tsx/dist/loader.mjs', import.meta.url)),
+        fileURLToPath(new URL('../dist/index.js', import.meta.url))],
       env: { ...env, COCKPIT_URL: url }, stderr: 'pipe',
     });
     await client.connect(transport);
@@ -174,15 +185,55 @@ test('connected MCP discovers newly published fork, creates a native child and d
     assert.ok(!parentHistory.some(event => typeof event.data.content === 'string' && event.data.content.includes('MCP_FORK_FIXTURE_CHILD')));
     assert.equal(prompts.length, 4);
     assert.deepEqual(providerErrors, []);
+
+    const heldSend = await invoke('cockpit_send_prompt', {
+      session_id: source.sessionId, text: 'MCP_FORK_FIXTURE_HELD',
+    });
+    assert.ok(!heldSend.isError, heldSend.content[0].text);
+    const deadline = Date.now() + 10_000;
+    while (!releaseHeld && Date.now() < deadline) await sleep(20);
+    assert.ok(releaseHeld, 'The synthetic native turn must actually be running');
+    const receipt = Intents['system/shutdown'].result.parse(await intent('system/shutdown', { confirm: true }));
+    assert.equal(receipt.shutdown.phase, 'waiting');
+    assert.equal(shutdownCompleted, false);
+    assert.ok(runtime.liveCount > 0);
+    const refused = await invoke('cockpit_send_prompt', {
+      session_id: child.sessionId, text: 'MCP_FORK_FIXTURE_REFUSED',
+    });
+    assert.equal(refused.isError, true);
+    assert.match(refused.content[0].text, /shutdown|independent work/i);
+    assert.equal(prompts.length, 5, 'Rejected new work never reaches the native provider');
+    const status = Intents['system/status'].result.parse(await intent('system/status', {}));
+    assert.equal(status.shutdown.phase, 'waiting');
+    assert.ok(status.busy > 0);
+    releaseHeld();
+    releaseHeld = undefined;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([closed, new Promise<never>((_resolve, reject) => {
+        timeout = setTimeout(() => reject(new Error('Graceful shutdown did not finish after native completion')), 10_000);
+      })]);
+    } finally { if (timeout) clearTimeout(timeout); }
+    assert.equal(shutdownCompleted, true, 'Native completion must let the host exit without a supervising callback');
+    assert.equal(runtime.liveCount, 0);
+    assert.equal(app.server.listening, false);
+    assert.deepEqual(shutdownErrors, []);
+    assert.deepEqual(providerErrors, []);
   } finally {
+    releaseHeld?.();
+    offEvent();
+    offActivity();
+    shutdown.dispose();
     await client.close();
     await transport?.close();
     await app.close();
     try {
-      for (const row of (await engine.listLive())) {
-        if (row.loaded) { await engine.cancel(row.sessionId); await idle(row.sessionId); }
+      if (!shutdownCompleted) {
+        for (const row of (await engine.listLive())) {
+          if (row.loaded) { await engine.cancel(row.sessionId); await idle(row.sessionId); }
+        }
+        await engine.stop();
       }
-      await engine.stop();
     } finally {
       provider.closeAllConnections();
       await new Promise<void>(resolve => provider.close(() => resolve()));

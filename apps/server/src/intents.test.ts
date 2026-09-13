@@ -12,7 +12,7 @@ import type { ServerEngine } from './index.ts';
 import { isIntentName } from './capabilities.ts';
 import { readNativeChat } from '../../../packages/core/src/native-chat.ts';
 import { Engine } from '../../../packages/core/src/engine.ts';
-import type { ConsumerControl } from './consumer-control.ts';
+import { GracefulShutdown } from './shutdown.ts';
 
 process.env.COCKPIT_NO_BOOT = '1';
 process.env.LOG_LEVEL = 'silent';
@@ -114,20 +114,13 @@ beforeEach(() => {
   sessions = [busySession];
   calls.length = 0;
 });
-afterEach(async () => {
-  // Even skills/refresh only ever sees a busy fake session, so it cannot exit.
-  await app.inject({ method: 'POST', url: '/admin/restart', payload: { pending: false } });
-});
+afterEach(() => { setTestDependencies({ engine }); });
 after(() => app.close());
 
 type Case = { body: unknown; method: string | null; args: unknown[] };
-const consumerOperation = { operationId: 'consumer-restart-fixture', kind: 'restart', state: 'waiting-idle', updatedAt: '2026-09-12T00:00:00Z' };
-const fakeConsumer: ConsumerControl = {
-  status: async (...args) => record('consumerStatus', args, { available: false, reason: 'Isolated fixture' } as const),
-  restart: async (...args) => record('consumerRestart', args, consumerOperation),
-  connect: async () => { assert.fail('This no-boot fixture must not connect a real launcher'); },
-};
 const cases = {
+  'system/shutdown': { body: { confirm: true }, method: null, args: [] },
+  'system/status': { body: {}, method: 'sessionStatus', args: [] },
   'runtime/snapshot': { body: {}, method: 'snapshot', args: [] },
   'session/new': { body: { cwd: '/fixture' }, method: 'newSession', args: ['/fixture'] },
   'session/fork': { body: { sessionId: 's', toEventId: 'user-event', name: 'Child' }, method: 'forkSession', args: ['s', 'user-event', 'Child'] },
@@ -206,7 +199,7 @@ for (const [name, fixture] of Object.entries(cases)) {
       assert.equal(response.headers['cache-control'], 'private, no-store');
       assert.equal(response.headers['x-content-type-options'], 'nosniff');
     }
-    if (name === 'skills/refresh') assert.deepEqual(response.json(), { ok: true, willRestartWhenIdle: false });
+    if (name === 'skills/refresh') assert.deepEqual(response.json(), { ok: true });
   });
 }
 
@@ -215,43 +208,6 @@ test('session/load surfaces readiness failure without reload, prompt or replacem
     throw Object.assign(new Error('Readiness remains unconfirmed'), { statusCode: 409, code: 'LOAD_UNCONFIRMED' });
   });
 
-  test('parked consumer controls are absent from the public intent registry', async () => {
-    const status = await app.inject({ method: 'POST', url: '/intent/system/consumer/status', payload: {} });
-    assert.equal(status.statusCode, 404);
-    const restart = await app.inject({ method: 'POST', url: '/intent/system/consumer/restart',
-      payload: { operationId: consumerOperation.operationId, confirm: true } });
-    assert.equal(restart.statusCode, 404);
-    assert.deepEqual(calls, []);
-  });
-
-  test('internal lifecycle still reaches the owned launcher while optional public controls are absent', async () => {
-    setTestDependencies({ engine, consumer: fakeConsumer });
-    const body = { operationId: consumerOperation.operationId, confirm: true };
-    const typed = await app.inject({ method: 'POST', url: '/intent/system/consumer/restart', payload: body });
-    const admin = await app.inject({ method: 'POST', url: '/admin/restart', payload: { operationId: body.operationId, pending: true } });
-    assert.equal(typed.statusCode, 404);
-    assert.equal(admin.statusCode, 200);
-    assert.deepEqual(admin.json().operation, consumerOperation);
-    assert.deepEqual(calls, [
-      { method: 'consumerRestart', args: [body.operationId] },
-    ]);
-    calls.length = 0;
-    const missingId = await app.inject({ method: 'POST', url: '/admin/restart', payload: { pending: true } });
-    assert.equal(missingId.statusCode, 400);
-    assert.deepEqual(calls, [], 'A missing stable ID never dispatches a mutation');
-  });
-
-  test('consumer cancellation never clears or pretends to undo the launcher drain', async () => {
-    const status = { available: true as const, installationId: '11111111-1111-4111-8111-111111111111',
-      health: 'stopped' as const, runtime: null, mainLifecycleReady: true,
-      activeOperationId: consumerOperation.operationId, operation: consumerOperation };
-    setTestDependencies({ engine,
-      consumer: { ...fakeConsumer, status: async () => status } });
-    const response = await app.inject({ method: 'POST', url: '/admin/restart', payload: { pending: false } });
-    assert.equal(response.statusCode, 409);
-    assert.match(response.json().error, /cannot be cancelled/);
-    assert.deepEqual(calls, []);
-  });
   const response = await app.inject({ method: 'POST', url: '/intent/session/load', payload: { sessionId: 's' } });
   assert.equal(response.statusCode, 409);
   assert.notEqual(response.json().ok, true);
@@ -947,14 +903,16 @@ test('retired file transports and image lookup names have no adapter or native e
   assert.deepEqual(calls, []);
 });
 
-test('health/status and restart use only injected state and retain every busy safeguard', async () => {
+test('health/status and shutdown use only injected state and retain every native busy safeguard', async () => {
   const health = await app.inject({ method: 'GET', url: '/health' });
   assert.equal(health.json().ok, true);
   assert.equal(health.json().login, 'test-only');
   assert.match(health.json().instanceId, /^[a-f0-9-]{36}$/);
   assert.equal(health.headers['cache-control'], 'no-store');
-  assert.equal((await app.inject({ method: 'GET', url: '/version' })).statusCode, 503,
-    'Source mode must not invent immutable runtime provenance');
+  const version = await app.inject({ method: 'GET', url: '/version' });
+  assert.equal(version.statusCode, 200);
+  assert.equal(version.json().sourceSha, null, 'Source mode must not invent a source SHA');
+  assert.equal(version.json().instanceId, health.json().instanceId);
   for (const state of [
     { status: 'running' }, { status: 'idle', activeSubagents: 1 },
     { status: 'idle', activeMcpOperations: 1 }, { status: 'idle', compacting: true },
@@ -965,11 +923,76 @@ test('health/status and restart use only injected state and retain every busy sa
     sessions = [SessionMeta.parse({ ...busySession, ...state })];
     const status = await app.inject({ method: 'GET', url: '/status' });
     assert.equal(status.json().busy, 1);
-    const restart = await app.inject({ method: 'POST', url: '/admin/restart', payload: { pending: true } });
-    assert.deepEqual(restart.json(), { restartPending: true, busy: 1, willRestartWhenIdle: true });
-    const disarm = await app.inject({ method: 'POST', url: '/admin/restart', payload: { pending: false } });
-    assert.deepEqual(disarm.json(), { restartPending: false, busy: 1, willRestartWhenIdle: false });
+    const closing = await app.inject({ method: 'POST', url: '/intent/system/shutdown', payload: { confirm: true } });
+    assert.equal(closing.statusCode, 200);
+    assert.equal(closing.json().ok, true);
+    assert.equal(closing.json().shutdown.phase, 'waiting');
+    assert.equal('restartPending' in status.json(), false);
   }
+});
+
+test('graceful shutdown refuses new work but keeps decisions, queue controls and native reads available', async () => {
+  await app.inject({ method: 'POST', url: '/intent/system/shutdown', payload: { confirm: true } });
+  calls.length = 0;
+  for (const name of ['prompt', 'session/new', 'session/fork', 'setModel', 'schedule/add', 'mcp/global-default'] as const) {
+    const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: cases[name].body });
+    assert.equal(response.statusCode, 503, name);
+    assert.equal(response.json().code, 'SERVICE_SHUTTING_DOWN');
+  }
+  assert.deepEqual(calls, []);
+  for (const name of ['respondAsk', 'respondPlan', 'respondElicitation', 'queue/remove', 'cancel', 'session/interrupt', 'session/get'] as const) {
+    const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: cases[name].body });
+    assert.equal(response.statusCode, 200, `${name}: ${response.body}`);
+  }
+});
+
+test('shutdown requires explicit confirmation and has no force, deployment or cancel mode', async () => {
+  for (const body of [{}, { confirm: false }, { confirm: true, force: true }, { confirm: true, pending: false }]) {
+    const response = await app.inject({ method: 'POST', url: '/intent/system/shutdown', payload: body });
+    assert.equal(response.statusCode, 400);
+  }
+  assert.deepEqual(calls, []);
+  const status = await app.inject({ method: 'POST', url: '/intent/system/status', payload: {} });
+  assert.equal(status.json().shutdown.phase, 'running');
+});
+
+test('old deployment lifecycle endpoints are absent rather than aliases to shutdown', async () => {
+  for (const path of ['/admin/restart', '/admin/lifecycle', '/intent/system/consumer/restart', '/intent/system/consumer/status']) {
+    const response = await app.inject({ method: path.endsWith('/lifecycle') ? 'GET' : 'POST', url: path,
+      ...(path.endsWith('/lifecycle') ? {} : { payload: { pending: true, confirm: true } }) });
+    assert.equal(response.statusCode, 404, path);
+  }
+  assert.deepEqual(calls, []);
+});
+
+test('an acknowledged shutdown cannot close around a held global mutation', async t => {
+  let finish!: () => void, begin!: () => void;
+  const held = new Promise<void>(resolve => { finish = resolve; });
+  const entered = new Promise<void>(resolve => { begin = resolve; });
+  const stopped: string[] = [];
+  const shutdown = new GracefulShutdown({
+    busyCount: async () => 0, stopNative: async () => { stopped.push('native'); },
+    closeTransport: async () => { stopped.push('transport'); }, exit: () => { stopped.push('exit'); },
+    report: error => { assert.fail(String(error)); }, delayMs: 0,
+  });
+  t.after(() => shutdown.dispose());
+  setTestDependencies({ engine, shutdown });
+  t.mock.method(engine, 'setMcpDefault', async () => { begin(); await held; });
+  const changing = app.inject({
+    method: 'POST', url: '/intent/mcp/global-default', payload: cases['mcp/global-default'].body,
+  }).then(response => response);
+  try {
+    await entered;
+    assert.equal(shutdown.inFlightRequests, 1);
+    const response = await app.inject({ method: 'POST', url: '/intent/system/shutdown', payload: { confirm: true } });
+    assert.equal(response.json().shutdown.phase, 'waiting');
+    assert.deepEqual(stopped, []);
+  } finally {
+    finish();
+    assert.equal((await changing).statusCode, 200);
+  }
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.deepEqual(stopped, ['native', 'transport', 'exit']);
 });
 
 test('status reads its projection and fresh safety, not the UI snapshot or global models', async () => {

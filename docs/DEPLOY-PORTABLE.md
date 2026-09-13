@@ -1,42 +1,23 @@
-# 安装与运行 Cockpit
+# 安装与运行
 
-本文是安装路径的选择入口。当前功能见[架构](cockpit-plan.md)，迁出的增强及旧数据
-规则见[模块目录](module-catalog.md)。安装 Cockpit 不会安装业务模块、创建角色或启用渠道。
-本页描述现行方式；[下一版目标](product-requirements.md#single-service-target)是前后端包
-直接 serve、无自更新/循环 launcher/私有部署启动依赖，尚未完成相应入口和包闭包改造。
-不要把以下三条现行路径误读为未来本体必须一起保留的组件。
+Cockpit 提供普通前后端服务包，不包含安装器、更新器、循环 launcher 或私有 CD。
+本页不自动部署、修改 systemd/Nginx、迁移 native home 或提供账号系统。
+最后一次已记录的生产实例与当前源码可能不同，见[部署记录](deployments.md)。
 
-## 先选一种路径
+## 运行前提
 
-| 路径 | 适合谁 | 入口与边界 |
-| --- | --- | --- |
-| 源码运行 | 开发者或自行准备运行环境的安装者 | 本页的 `pnpm start`；不会自动取得、验证或部署新 Release。 |
-| 独立消费者发行 | 使用发布者提供的可信完整包 | [消费者安装/更新](consumer-installation.md)；不依赖开发者私有 CD，不接管已有私有部署。 |
-| 已接入私有 CD 的实例 | 拥有相应安装策略和本次授权的维护者 | [私有不可变交付](DELIVERY.md)；固定 SHA/产物，外部控制器等待安全退出。 |
+需要匹配包 manifest 的 Node、操作系统/架构及 SDK 原生运行条件。
+当前可复验基线是 Linux x64/glibc、Node 24.20.0；Node 不打进包中。
+源码 package 的最低 Node 声明不等于所有平台组合已经验证。
+原生 Copilot 的登录/提供方设置、可写配置和工作目录由安装者准备，不能复制别人的凭据。
 
-不要叠加启动器、重复启动后端或让两个运行时争用同一 native home。
-仓库里的 [systemd](../deploy/systemd/cockpit.service) 与
-[Nginx](../deploy/nginx/cockpit.conf) 是特定环境示例，含示例用户/路径及外部 Passkey
-依赖，**不是任意机器可直接复制的完整安装方案，也不是当前主机所有 drop-in 的快照**。
+Web 与 API 在一个 Node 服务内；SDK 自己的进程外 runtime、原生 MCP/工具子进程正常保留。
+需要长期服务时由人工或宿主自己的进程管理决定如何启动，Cockpit 不配置或依赖它。
+不要对同一原生 home 启动多个相互竞争的宿主。
 
-## 宿主前提
+## 从源码工作
 
-源码要求能运行锁定 SDK 的 Node 环境、pnpm、Git、可写工作区及原生配置目录。
-package 声明的 Node 下限是 22.12，但它不等于所有 Node/OS 组合都已覆盖：
-当前 CI/发行基线为 Linux x64/glibc、Ubuntu 24.04、Node 24.20.0、pnpm 10.34.5。
-消费者安装/解包还需要 Python 3.12+，精确限制以其[安装指南](consumer-installation.md#prerequisites)为准。
-
-Windows/macOS 的源码运行需要对应 SDK 平台资产和独立进程监督配置；
-这里不据一个跨平台 JS 启动器承诺这些平台的发行安装/原地更新已可用。
-当前实现不捆绑 Node，不为用户安装 OS 库，不声称任意宿主无前提解压即用。
-
-默认运行时使用**服务账户的原生 Copilot 登录**；应由安装者先配置并确认可用。
-浏览器不需要自己的 Copilot 进程。远程访问另需认证 HTTPS 网关，
-原生登录和网页认证不能互相替代，详见[认证边界](cockpit-plan.md#authentication)。
-
-## 从源码启动
-
-在独立、已选择的源码目录运行：
+在独立工作树中安装锁定依赖并构建：
 
 ```sh
 pnpm install --frozen-lockfile
@@ -44,54 +25,52 @@ pnpm build
 pnpm start
 ```
 
-`pnpm start` 通过 `scripts/start.mjs` 启动后端，并从 `127.0.0.1:8771`
-同时提供已构建 Web 和 API。启动器在子进程正常退出后可重新启动它，
-连续快速退出则失败退出，交给安装者的进程监督方式处理。
-长期运行需要独立终端或操作系统服务，不能靠待重启的原生会话保活。
-具体 launcher 责任和三条路径的差别见[启动器](cockpit-plan.md#launchers)。
+`start` 是直接服务入口，不再起一个 Cockpit 自写的 respawn 父进程。
+运行包不要求用户安装 pnpm；对应入口与产物结构由[产包说明](packaging.md)维护。
+不要在现有进程直接读取的源码或 Web 目录里构建候选版本。
 
-源码模式没有不可变包 provenance；此时 `/version` 返回 503 是明确未知，
-不是把当前 Git HEAD 当作已部署版本。浏览器关闭不会取消已经提交的原生工作，
-但进程崩溃不保证正在执行的回合无损恢复。
+默认同时提供 built Web 与 API。如果没有 Web 的 `index.html`，启动明确失败，
+不会在健康的名义下悄悄变成没有界面的服务。
+仅在确实需要 API-only 时设置 `COCKPIT_SERVE_WEB=0`。
 
-## 主要环境配置
+## 环境配置
 
-| 变量 | 当前默认/含义 |
+| 变量 | 默认/含义 |
 | --- | --- |
-| `COCKPIT_PORT` | `8771`，后端只监听 loopback。 |
-| `COCKPIT_HOME` | `~/.copilot`，默认原生存储根；不表示复制或迁移了已有 home。 |
-| `COCKPIT_SERVE_WEB` | 经源码 launcher 默认 `1`；直接运行 server 时需显式开启。 |
-| `COCKPIT_WEB_DIR` | built Web 路径；源码 launcher 默认使用本仓 `apps/web/dist`。 |
-| `COCKPIT_ALLOWED_ORIGINS` | 追加浏览器请求来源；仍有代码内已有来源规则，不是登录认证或 API 授权表。 |
-| `COCKPIT_MAX_OLD_SPACE_MB` | 可选的 API 子进程 V8 堆上限；未设置使用 Node 默认，不控制独立原生进程。 |
+| `COCKPIT_PORT` | `8771`，只监听 loopback。 |
+| `COCKPIT_HOME` | `~/.copilot`，给原生 runtime 使用；不代表自动创建或迁移了旧 home。 |
+| `COCKPIT_SERVE_WEB` | 默认开启；`0`/`false` 明确关闭。 |
+| `COCKPIT_WEB_DIR` | 默认使用包/源码相对位置的 `apps/web/dist`，可显式指定。 |
+| `COCKPIT_ALLOWED_ORIGINS` | 可追加请求来源；无写死的生产站点，不是认证或模块 API 授权表。 |
+| `LOG_LEVEL` | 服务日志级别。 |
 
-MCP 客户端变量单独维护在 [MCP 配置](../apps/mcp/README.md#configuration)。
-消费者安装器保存自己的安装根和操作回执，不把这些当作 native session 状态。
-旧上传、语音或模块环境变量不能恢复已经移除的功能。
+MCP 客户端配置单独见 [MCP](../apps/mcp/README.md#configuration)。
+前端默认同源，显式选择的后端地址由使用者负责；开发 lab 不继承真实后端覆盖。
+原 `COCKPIT_CONSUMER_*`、`SERVICE_DELIVERY_*`、`COCKPIT_ASSET_DIR` 和 heap wrapper 配置
+不再控制新服务，不用旧环境变量伪造版本或恢复更新器。
 
-## 远程访问与 MCP
+## 远程入口
 
-使用同一认证 HTTPS 入口保护 Web、`/intent/*`、`/events`、`/chat/stream`、
-`/capabilities` 和需要暴露的运维路径。代理 SSE 时关闭缓冲并保留长连接。
-后端的 Origin/Referer 检查不是登录，不能用未认证隧道代替网关。
-本体没有账户管理、认证安装器或浏览器文件传输服务。
+由外部认证 HTTPS 入口保护 Web、API、MCP 和需要公开的健康/状态接口。
+反向代理 SSE 时关闭缓冲并允许长连接。后端 loopback 和 Origin/Referer 检查
+不是登录认证，不能把未认证的隧道作为替代。
+普通代理与服务管理属于宿主选择，不由 Cockpit 安装或改写。
 
-构建后将 `apps/mcp/dist/index.js` 注册为 stdio MCP，配置它能访问的后端 URL；
-准确工具和示例见 [MCP](../apps/mcp/README.md)。MCP 无需挂载后端历史数据库。
-其原生附件路径属于 Copilot 运行侧，不会把另一台机器的同名路径自动上传。
+## 关闭
 
-## 采用旧安装与重启
+`SIGTERM`、`SIGINT` 或 `POST /intent/system/shutdown`（`{"confirm":true}`）
+请求 graceful 退出。它等待原生活动和受保护调用完成，再关闭 SDK/连接，不重拉自己。
+`system/status` / `GET /status` 报告等待和失败；受理不是进程已经消失。
+具体工作准入、竞态和失败边界见[关闭契约](cockpit-plan.md#shutdown)。
 
-升级前应由安装者安排符合该服务一致性要求的备份；本指南不自动执行备份、
-复制凭据、迁移 native home 或删除用户数据。旧模块协议和托管附件接口不兼容，
-数据保留不代表旧文件链接仍可下载；富草稿也不自动进入新的文字输入框。
-完整采用规则只维护在[模块目录](module-catalog.md#interim-behavior-and-adoption)。
+从被关闭服务承载的 session 发起时，返回受理后结束回合，不能留后台任务等自己退出。
+正常读取/显示不是业务完成条件；已有问题仍可回答，不以删除 session 或清队列制造空闲。
+没有 force、取消或重启模式；重复信号不变成强停。
 
-普通重启只重新启动所选代码，部署新版本才会改变该选择。
-私有实例使用[交付流程](DELIVERY.md)，消费者使用自己的[显式更新/重启](consumer-installation.md#explicit-check-download-install-and-restart)。
-便利重启脚本和 MCP 工具已停放，底层安全退出仍在，不得改用强制服务重启绕过原生 busy。
-当前回合由待重启应用承载时，提交后结束回合，不能后台等自己退出。
+## 旧安装
 
-不要在服务正在读取的源码或 Web 目录里构建候选版本；分离源码、不可变程序、
-原生数据和秘密。刷新网页、重连 MCP、reload 单个 session、重启服务、部署代码和
-Context Reset 是不同操作，不能用其中一个冒充另一个。
+原 private-CD/consumer 程序、身份、数据库和真实模块数据没有随源码提取被删除。
+旧安装不能把此包当作原 bootstrap/launcher 协议的新版本自动采用。
+只有单独授权的部署/主机配置变更才能撤换旧启动方式；源码推送不是这样的操作。
+保留数据的采用边界见[模块目录](module-catalog.md#interim-behavior-and-adoption)，
+移出原件见[项目外归档](extractions.md)。

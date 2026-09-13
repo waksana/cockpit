@@ -49,5 +49,6 @@ poc/
 *.swp
 .idea/
 .vscode/
-delivery-output/
-.delivery/toolkit/node_modules/
+# ── Local runtime packaging output and isolated packaging fixtures ──────────
+runtime-output/
+.runtime-package-tests/

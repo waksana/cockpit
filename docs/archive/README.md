@@ -19,7 +19,7 @@
 重写结论或把旧行号解释为当前行号；文内旧路径/环境按原记录理解。
 找不到旧代码时从固定 Git 来源追溯，不为保住旧链接恢复产品逻辑。
 
-源码提取留下的字节级原件另在 [`module-staging`](../../module-staging/README.md)，
+源码提取留下的字节级原件已转存到[项目外目录](../extractions.md)，
 由 source inventory 管理，不是可自由改写的当前文档副本。
 较早的性能数据可在
 [提取版本的验证文档](https://github.com/waksana/cockpit/blob/a1f4a9a7c9e72b151958c270c4f790b32b72636e/docs/cockpit-testing.md#historical-performance-baseline)

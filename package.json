@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "license": "GPL-3.0-only",
   "type": "module",
+  "packageManager": "pnpm@10.34.5",
   "engines": {
     "node": ">=22.12.0"
   },
@@ -11,8 +12,11 @@
     "dev:server": "pnpm --filter @cockpit/server dev",
     "dev:web": "pnpm --filter @cockpit/web dev",
     "build": "pnpm -r build",
-    "start": "node scripts/start.mjs",
+    "start": "node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/index.ts",
+    "start:mcp": "node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js",
+    "package:runtime": "node scripts/package-runtime.mjs",
     "test": "pnpm -r --if-present test && node --test scripts/*.test.mjs",
+    "lint": "pnpm --filter @cockpit/web lint",
     "e2e": "node scripts/e2e.mjs",
     "perf": "cd packages/core && node --import tsx ../../scripts/perf.mjs",
     "regress": "pnpm --filter @cockpit/core regress"

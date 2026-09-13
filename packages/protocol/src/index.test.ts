@@ -399,6 +399,10 @@ const nativePage: Protocol.NativeChatPage = {
 
 // Each retained intent must have a lossless body AND result fixture.
 const intentFixtures = {
+  'system/shutdown': { body: { confirm: true }, result: { ok: true,
+    shutdown: { phase: 'waiting', requestedAt: 1, error: null } } },
+  'system/status': { body: {}, result: { running: 0, busy: 0, inFlightRequests: 0,
+    shutdown: { phase: 'running', requestedAt: null, error: null }, sessions: [] } },
   'runtime/snapshot': { body: {}, result: snapshot },
   'session/new': { body: { cwd: minimalMeta.cwd }, result: sid },
   'session/fork': { body: { sessionId: 'parent', toEventId: 'user-event', name: 'Child' }, result: sid },
@@ -445,7 +449,7 @@ const intentFixtures = {
   'skills/global-toggle': { body: { name: skill.name, enabled: true }, result: ok },
   'skills/session': { body: sid, result: { skills: [{ ...skill, enabled: true }] } },
   'skills/session-toggle': { body: { ...sid, name: skill.name, enabled: true }, result: ok },
-  'skills/refresh': { body: {}, result: { ...ok, willRestartWhenIdle: true } },
+  'skills/refresh': { body: {}, result: ok },
   'fs/listDir': { body: { path: '/workspace' }, result: { path: '/workspace', parent: '/', entries: [{ name: 'project', isDir: true }, { name: 'file.txt', isDir: false }] } },
   'session/purge': { body: { ...sid, confirm: true }, result: ok },
   'schedule/add': { body: { ...sid, prompt: scheduleBase.prompt, interval: '5m' }, result: { ...ok, entry: scheduleEntries[0]! } },
@@ -656,7 +660,7 @@ test('MCP and skills controls preserve explicit on/off and authoritative results
     roundTrip(Intents['mcp/global'].result, { servers: [{ name: 'tools', detail: 'node tools.js', defaultOn: enabled }] });
     roundTrip(Intents['skills/global'].result, { skills: [{ ...skill, userInvocable: enabled }] });
     roundTrip(Intents['skills/session'].result, { skills: [{ ...skill, enabled }] });
-    roundTrip(Intents['skills/refresh'].result, { ...ok, willRestartWhenIdle: enabled });
+    roundTrip(Intents['skills/refresh'].result, ok);
   }
   for (const [name, field] of [
     ['mcp/global-default', 'on'], ['mcp/session-toggle', 'on'], ['skills/session-toggle', 'enabled'],
@@ -687,7 +691,7 @@ test('MCP and skills controls preserve explicit on/off and authoritative results
     assert.equal(McpToggleResult.safeParse(missing).success, false, `toggle result requires ${field}`);
   }
   assert.equal(McpToggleResult.safeParse({ ...toggleResult, operation: { ...operation, state: 'unknown' } }).success, false);
-  assert.equal(Intents['skills/refresh'].result.safeParse(ok).success, false);
+  assert.equal(Intents['skills/refresh'].result.safeParse(ok).success, true);
   assert.equal(Intents['mcp/reload-session'].result.safeParse(ok).success, false);
   roundTrip(Intents['skills/read'].result, { name: skill.name });
 });
@@ -790,7 +794,7 @@ test('all clearable metadata survives snapshots and actual SSE patches as null',
 });
 
 test('SSE discriminators, pagination flags and nested payload validation are preserved', () => {
-  for (const agentStatus of ['starting', 'up', 'restarting'] as const) {
+  for (const agentStatus of ['starting', 'up', 'stopping', 'failed'] as const) {
     roundTrip(ServerEvent, { ...snapshot, agentStatus });
     roundTrip(ServerEvent, { type: 'agent/status', status: agentStatus });
   }

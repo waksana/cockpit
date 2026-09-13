@@ -7,12 +7,11 @@ engineering commands or delivery behavior.
 The [documentation index](README.md) defines each topic's single canonical page.
 Deployment observations belong only in [deployment records](deployments.md),
 not in a moving source implementation guide.
-The latest [single-service/module decisions](product-requirements.md#single-service-target)
-are goals, not completed code. They retire product-owned deployment/update
-machinery from the target boundary without automatically disabling the existing
-pipeline. Use the [remaining extraction inventory](module-catalog.md#pending-extraction)
-before planning changes; preserve a working installation throughout any separately
-authorized transition.
+The [single-service boundary](product-requirements.md#single-service-target) now
+has direct-serving source and a public graceful shutdown API. Updater/deployment
+originals are [outside the project](extractions.md). The new module loader remains
+a design, not a delivered implementation. Source extraction does not replace
+an already installed old runtime or its external startup chain.
 
 Each owner uses an independent worktree and short-lived branch. Keep other
 owners' source, unfinished trees and runtime data untouched. After implementation
@@ -26,20 +25,12 @@ does not require a PR or duplicate premerge hosted pipeline. Consequently main
 can briefly be red: fix the source forward, while production stays at its last
 healthy release. Main is not proof of the currently running version.
 
-`service-delivery.json` contains the authoritative committed build configuration.
-The connected route is described in [DELIVERY.md](DELIVERY.md). A user may deliver
-code only, request a build-only artifact, or explicitly authorize deployment of
-a full SHA. A push is not a deployment request. Source merges and A/B builds
-may run concurrently; activation has a separate durable per-environment order.
-
-Use the installed `service-development` commands to prepare, submit and read back
-the stable request ID. The pipeline owns build, artifact transfer and safe
-restart, not the development model. End a turn hosted by Cockpit after submitting
-its restart-dependent work; do not keep it busy with a background waiter.
-Only after authoritative runtime evidence and business acceptance is the
-owner's complete runtime goal done. A verified descendant can satisfy the
-business goal if it still includes the owner's changes; do not rewrite the
-original exact-SHA request to pretend that SHA deployed.
+The [ordinary package contract](packaging.md) owns build outputs and provenance.
+CI validates/builds/packages only; it does not transfer to a private host or
+activate a production version. A push is not deployment authorization.
+An operator chooses how to install/run the package, keeping native data and
+credentials separate and preserving any existing installation during a transition.
+Never revive the archived deployment tools as a hidden startup dependency.
 
 Clean only owned, fully integrated and no-longer-in-flight branches/worktrees
 and fixture resources. Never clear native sessions, queues, uploads or another
@@ -55,7 +46,7 @@ an explicit gap, not authority to change either silently.
 
 Documentation-only edits need link, anchor and factual checks, not unrelated
 product builds or new testing tools. They may be committed/integrated without
-deploying or restarting the application. Do not alter archived module-source
+deploying or restarting the application. Do not alter extracted module-source
 bytes to make historical prose match the present.
 
 ## Isolated Chat component review

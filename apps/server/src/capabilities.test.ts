@@ -491,8 +491,8 @@ function transportKeys(transports: Transport[]): string[] {
 test('the actual no-boot server advertises all GET/POST transports without implicit HEAD', async () => {
   const { transports } = await listing();
   assert.deepEqual(transportKeys(transports), [
-    'GET /admin/lifecycle', 'GET /capabilities', 'GET /events', 'GET /health', 'GET /status',
-    'GET /version', 'POST /admin/restart', 'POST /chat/stream', 'POST /intent/*',
+    'GET /capabilities', 'GET /events', 'GET /health', 'GET /status',
+    'GET /version', 'POST /chat/stream', 'POST /intent/*',
   ].sort());
   for (const { method, path } of transports) {
     assert.ok(method === 'GET' || method === 'POST');

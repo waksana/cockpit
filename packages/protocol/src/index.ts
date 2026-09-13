@@ -4,7 +4,6 @@
 // validate against them, so the frontend and backend can never drift.
 
 import { z } from 'zod';
-export { ConsumerOperationId, ConsumerOperation, ConsumerStatus, ConsumerIdentity } from './consumer.ts';
 
 export { CHAT_EVENT_TYPES, NativeChatEvent, NativeChatRead, NativeChatPage, NativeChatStreamRequest, NativeChatStreamEvent } from './native-chat.ts';
 import { NativeChatRead, NativeChatPage } from './native-chat.ts';
@@ -25,8 +24,7 @@ const exactlyOne = (obj: Record<string, unknown>, keys: string[]): boolean =>
 
 export const SessionStatus = z.enum(['unloaded', 'idle', 'running', 'error']);
 export type SessionStatus = z.infer<typeof SessionStatus>;
-// Process/engine readiness (in-process SDK: 'up' once auth is loaded).
-export const AgentStatus = z.enum(['starting', 'up', 'restarting']);
+export const AgentStatus = z.enum(['starting', 'up', 'stopping', 'failed']);
 export type AgentStatus = z.infer<typeof AgentStatus>;
 
 export const ContextTier = z.enum(['default', 'long_context']);
@@ -513,7 +511,36 @@ export const ServerEvent = z.discriminatedUnion('type', [
 export type ServerEvent = z.infer<typeof ServerEvent>;
 export type ServerEventType = ServerEvent['type'];
 
+export const ServiceShutdown = z.object({
+  phase: z.enum(['running', 'waiting', 'closing', 'failed', 'closed']),
+  requestedAt: z.number().nullable(),
+  error: z.string().nullable(),
+});
+export type ServiceShutdown = z.infer<typeof ServiceShutdown>;
+
+export const ServiceStatus = z.object({
+  running: z.number().int().nonnegative(),
+  busy: z.number().int().nonnegative(),
+  inFlightRequests: z.number().int().nonnegative().describe('Mutating HTTP calls whose operation or response is still in flight; read-only display streams do not hold shutdown.'),
+  shutdown: ServiceShutdown,
+  sessions: z.array(z.object({
+    sessionId: z.string(), title: z.string(), status: SessionStatus,
+    awaitingChoice: z.boolean().optional(), activeSubagents: z.number().int().nonnegative().optional(),
+  })),
+});
+export type ServiceStatus = z.infer<typeof ServiceStatus>;
+
 export const Intents = {
+  'system/shutdown': {
+    description: 'Request graceful service shutdown with confirm:true. Returns acceptance, not completed exit. New independent work is refused while existing turns, queues, decisions and in-flight operations settle; future schedules do not keep the service alive. The service closes its own SDK and transports, without restarting itself or sending startup prompts. Never keep the initiating native turn or a background tool waiting for its own exit; read system/status from an independent caller if needed. No force, deployment or cancellation mode.',
+    body: z.object({ confirm: z.literal(true) }).strict(),
+    result: z.object({ ok: z.literal(true), shutdown: ServiceShutdown }),
+  },
+  'system/status': {
+    description: 'Read current native service activity and the host-owned graceful shutdown state. No deployment, launcher, module business or cached native state is consulted. A waiting request is not completed shutdown; safety read failures remain errors.',
+    body: z.object({}).strict(),
+    result: ServiceStatus,
+  },
   'session/chat': {
     description: 'Read one native event page without a server chat cache or projection. max counts events, not display messages or bytes. Keep source/direction with opaque cursors. Passive reads do not load sessions; live reads require an existing handle. Bootstrap captures a live cursor before a fresh backward page. An expired cursor is not a continuation. Binary tool media is omitted, never automatically retained; no file library or image lookup is provided.',
     body: NativeChatRead,
@@ -729,11 +756,10 @@ export const Intents = {
     body: z.object({ name: z.string().min(1), enabled: z.boolean(), cwd: z.string().min(1).optional() }),
     result: z.object({ ok: z.boolean() }),
   },
-  // Native skill reload no longer requires restarting Cockpit.
   'skills/refresh': {
-    description: 'Reload native skill definitions without restarting Cockpit. The retained willRestartWhenIdle field is false.',
+    description: 'Reload native skill definitions without restarting Cockpit.',
     body: z.object({}),
-    result: z.object({ ok: z.boolean(), willRestartWhenIdle: z.boolean() }),
+    result: z.object({ ok: z.boolean() }),
   },
   'fs/listDir': {
     description: 'List a backend directory, directories first, with its resolved path and parent. Omit path for home. Explicit empty, missing, non-directory or inaccessible paths fail without falling back to home; errors retain their code and message (400 for empty/non-directory, 404 for missing, 403 for denied access).',

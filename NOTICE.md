@@ -22,5 +22,5 @@ The [historical design study](docs/archive/telegram-study.md) and
 design background, not a second current licensing or implementation statement.
 
 Retained dependencies keep their respective licenses and notices. Parking
-original source in `module-staging` does not erase its attribution or license,
+original source in the [external extraction archive](docs/extractions.md) does not erase its attribution or license,
 and this document does not relicense third-party packages.

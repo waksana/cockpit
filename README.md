@@ -9,11 +9,13 @@
 | --- | --- |
 | 完整文档及每个主题的唯一维护位置 | [文档索引](docs/README.md) |
 | 产品原则与已确认取舍 | [R1–R8](docs/product-requirements.md) |
-| 当前本体、认证和启动器的边界 | [架构与运行边界](docs/cockpit-plan.md) |
+| 当前本体、认证与关闭的边界 | [架构与运行边界](docs/cockpit-plan.md) |
 | 哪些能力已迁出、以后由谁负责 | [模块目录](docs/module-catalog.md) |
 | 当前事实与下一版还差什么 | [架构对照](docs/cockpit-plan.md#target-gap) · [待迁出盘点](docs/module-catalog.md#pending-extraction) |
 | 前后端插件如何合作 | [基础模块协议设计](docs/module-contract-draft.md) |
 | 安装与使用 | [安装指南](docs/DEPLOY-PORTABLE.md) · [MCP](apps/mcp/README.md) |
+| 完整运行包 | [产包说明](docs/packaging.md) |
+| 移出代码在哪里 | [项目外归档](docs/extractions.md) |
 | 已实际部署过哪个版本 | [部署记录](docs/deployments.md) |
 
 ## 当前范围
@@ -23,29 +25,28 @@
 HTTP/MCP 可以传递 SDK 原生附件参数；这不是浏览器文件上传或托管文件服务。
 
 文件、通知/收件箱、语音、置顶/自动命名、系统看板、重启便利入口、Context Reset、
-Assistant、Task 和微信接入已从运行路径迁出。原件保存在
-[`module-staging/`](module-staging/README.md)，不参与本体构建或运行包；
+Assistant、Task 和微信接入已从运行路径迁出。原件已分类保存在
+[项目外目录](docs/extractions.md)，不参与本体构建或运行包；
 **不是已可安装的模块，当前也没有模块加载器。**
 
-远程登录由外部认证网关承担，Copilot 登录由原生运行时承担。仓库仍含源码启动器、
-独立消费者安装/更新器及私有交付集成；它们是运行外围设施，不是业务模块。
-“外部 launcher”指在 Cockpit 进程之外运行，**不表示已经迁出此仓库**。
+远程登录由外部认证网关承担，Copilot 登录由原生运行时承担。
+源码不再包含主程序更新器、循环重拉 wrapper 或私有部署运行器。
+服务直接提供 Web/API，收到 graceful 关闭请求后等待受保护工作结束并退出，不自重启。
 
 源码、已部署版本和未来设计是不同状态。后续文档提交不自动部署、重启或启用模块；
 实时身份以运行实例和交付控制器为准。
 
 ## 已确认的下一版目标
 
-产出一个可直接启动并统一 serve 的前后端包，不再把主程序更新器、循环启动器、
-私有部署控制或其身份/回执作为本体运行依赖。普通构建、测试和产包 CI 可以保留。
-本体只负责等待原生工作及在途资源收敛后 graceful 退出，不保证再次启动。
+直接服务与普通产包边界已经进入源码。后续仍需实现通用模块宿主：
 
 模块后端同进程 import，前后端同包；首版冷加载，安装/更新/移除后标记待重启，
 不在运行中替换代码。MCP 同端口不同 path，各自工具和协议连接分开，
 不是所有模块共用一张工具表，也不是进程安全隔离。
 下次启动给指定 session 发接续 prompt 是可选模块行为，不是本体启动时隐式发送。
 
-这些目标尚未实施完成，现行 launcher/consumer/交付链仍存在。
+同进程模块、逐模块 MCP 和启动消息仍未实现。已记录生产安装还是旧运行包，
+它的外部启动链未被本次源码提取改动。
 最终决定见[产品要求](docs/product-requirements.md#single-service-target)，
 细节只维护在[同进程冷加载模块协议](docs/module-contract-draft.md)。
 

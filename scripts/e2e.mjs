@@ -44,7 +44,7 @@ await t('GET /status → running count + sessions[]', async () => {
   const b = await j(await fetch(`${BASE}/status`));
   assert.ok(Array.isArray(b.sessions));
   assert.equal(typeof b.running, 'number');
-  assert.equal(typeof b.restartPending, 'boolean');
+  assert.equal(b.shutdown.phase, 'running');
 });
 
 await t('capabilities publishes the foundation contract without governance', async () => {

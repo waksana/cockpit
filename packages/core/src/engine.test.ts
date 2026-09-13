@@ -2332,7 +2332,7 @@ for (const accepted of [false, true]) {
       await assert.rejects(h.engine.getMeta(s.id), /fatal native disconnect/);
       assert.equal(s.listeners.size, 0);
     }
-    assert.ok(h.events.some(event => event.type === 'agent/status' && event.status === 'restarting'));
+    assert.ok(h.events.some(event => event.type === 'agent/status' && event.status === 'failed'));
     assert.equal(readFileSync(h.prefsFile, 'utf8'), savedPreferences);
     t.mock.timers.tick(24_000);
     await nextTurn();
@@ -2923,7 +2923,7 @@ for (const stage of ['start', 'models'] as const) {
     assert.equal(h.engine.failure, fatal);
     assert.deepEqual(reported, [fatal]);
     await assert.rejects(h.engine.snapshot(), /fatal startup/);
-    assert.equal(h.events.filter(event => event.type === 'agent/status').at(-1)?.status, 'restarting');
+    assert.equal(h.events.filter(event => event.type === 'agent/status').at(-1)?.status, 'failed');
     await assert.rejects(h.engine.start(), /fatal startup/);
     await assert.rejects(h.engine.newSession(h.cwd), /fatal startup/);
     assert.equal(h.runtime.start.mock.callCount(), 1);
