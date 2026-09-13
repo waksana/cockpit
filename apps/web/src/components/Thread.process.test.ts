@@ -73,17 +73,15 @@ test('different native messages keep separate groups; blank answers create no bo
   assert.match(html, /data-message-frame="empty" data-empty="true"/);
 });
 
-test('formal text stays visible outside the process with compact text-only copy', () => {
+test('formal text stays visible outside the process without a whole-message copy footer', () => {
   const session = fixtureSession('empty');
   session.messages = [{ ...message, content: '  Actual answer, unchanged.  ' }];
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
   assert.match(html, /class="message-body"/);
   assert.match(html, /Actual answer, unchanged/);
-  assert.match(html, /class="message-actions" data-role="assistant"><span class="chat-copy is-text">/);
-  const copy = renderToStaticMarkup(createElement(CopyButton, { text: '  Exact original text  ', label: '复制消息', textOnly: true }));
-  assert.match(copy, /aria-label="复制消息"/);
+  assert.doesNotMatch(html, /class="message-actions"|aria-label="复制消息"/);
+  const copy = renderToStaticMarkup(createElement(CopyButton, { text: '  Exact original code  ', label: '复制代码' }));
+  assert.match(copy, /aria-label="复制代码"/);
   assert.match(copy, /role="status"/);
-  assert.doesNotMatch(copy, /tgico|data-icon/);
-  const defaultCopy = renderToStaticMarkup(createElement(CopyButton, { text: 'code', label: '复制代码' }));
-  assert.match(defaultCopy, /data-icon="file"/);
+  assert.match(copy, /data-icon="file"/);
 });

@@ -235,7 +235,6 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
   }
   if (m.role === 'user') {
     const isAskReply = m.subtype === 'ask-reply';
-    const copyable = messageCopyText(m);
     const cls = ['message', 'is-out'];
     if (isAskReply) cls.push('is-ask-reply');
     return (
@@ -245,7 +244,6 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, thinking
           <MessageContent message={m} sessionId={sessionId} />
         </div>
         <div className="user-message-meta">
-          {copyable.trim() && <CopyButton text={copyable} label="复制消息" textOnly />}
           <span className="message-time">{clock(m.timestamp)}</span>
         </div>
       </div>
@@ -292,7 +290,6 @@ const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline
 }) {
   const frame = useRef<HTMLDivElement | null>(null);
   const skippable = canSkipMessageLayout(m, live);
-  const copyable = messageCopyText(m);
   const answer = hasMessageContent(m);
   const plainAssistant = m.role === 'assistant' && m.subtype !== 'subagent';
   const empty = plainAssistant && !answer && !hasMessageProcess(m);
@@ -304,9 +301,6 @@ const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline
       data-assistant-message={plainAssistant && !empty || undefined} data-empty={empty || undefined}>
       {date && !empty && <div className="date-separator" aria-hidden="true">{date}</div>}
       <MessageRow m={m} sessionId={sessionId} showByline={showByline} thinkingLive={live} onMenu={onMenu} />
-      {m.role === 'assistant' && answer && copyable.trim() && <div className="message-actions" data-role={m.role}>
-        <CopyButton text={copyable} label="复制消息" textOnly />
-      </div>}
     </div>
   );
 });
