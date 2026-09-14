@@ -1,143 +1,158 @@
-// MCP + Skills management pages (per-session surfaces). The global MCP/Skills/
-// Trash pages live in components/ManageWorkspace.tsx (their own master-detail
-// shell). These per-session pages (kebab → MCP/Skills) render this session's live
-// MCP status / skills with a per-session enable toggle, in the info-panel slot.
-// The connection/status of MCP is per-session (each session owns its McpHost);
-// the server/skill *definitions* are global. See docs/cockpit-plan.md.
-
-import { useCallback } from 'react';
+// Per-session MCP and Skills use the same row presentation, not the same
+// mutation policy: MCP writes are serialized by the native host.
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { ChatSession } from '../net/types';
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { useSessionResource } from '../lib/useSessionResource';
-import { Icon } from './Icon';
 import { McpStatusPill } from './McpStatus';
-import { PanelCloseButton, ResourceStatus, SessionResume } from './SessionPanelKit';
+import { PanelCloseButton, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
 import { PaneHeader } from './PaneHeader';
-import { StateNotice } from './StateNotice';
 
-// ── Switch ─────────────────────────────────────────────────────────────────────
-export function Toggle({ on, onChange, disabled, label }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string }) {
-  return (
-    <button
-      type="button" role="switch" aria-label={label} aria-checked={on} disabled={disabled}
-      className={`switch${on ? ' is-on' : ''}`}
-      onClick={() => onChange(!on)}
-    >
-      <span className="switch-knob" />
-    </button>
-  );
+export function Toggle({ on, onChange, disabled, label, busy }: {
+  on: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string; busy?: boolean;
+}) {
+  return <button type="button" role="switch" aria-label={label} aria-checked={on}
+    aria-busy={busy || undefined} disabled={disabled} className={`switch${on ? ' is-on' : ''}`}
+    onClick={() => onChange(!on)}><span className="switch-knob" /></button>;
 }
 
-// ── Status badge: now shared via McpStatusPill (components/McpStatus.tsx) ────────
-
-// ── Shared row ─────────────────────────────────────────────────────────────────
-function ManageRow({ name, sub, badge, toggle }: {
-  name: string; sub?: string; badge?: React.ReactNode; toggle: React.ReactNode;
+function SessionToggleRow({ identity, name, description, badge, enabled, disabled, nativeError, onChange }: {
+  identity: string; name: string; description?: string; badge?: ReactNode; enabled: boolean;
+  disabled: boolean; nativeError?: string; onChange: (name: string, enabled: boolean) => Promise<void>;
 }) {
-  return (
-    <div className="manage-row manage-session-row">
-      <div className="manage-row-main">
-        <div className="manage-row-name">{name}{badge}</div>
-        {sub && <div className="manage-row-sub">{sub}</div>}
+  const action = useKeyedAction(identity);
+  const [desired, setDesired] = useState(enabled);
+  const error = action.error ?? nativeError;
+  return <div className="manage-row manage-session-row" data-resource-name={name}>
+    <div className="manage-row-main">
+      <div className="manage-row-name">{name}{badge}</div>
+      <div className="manage-row-feedback" role={error ? 'alert' : 'status'} data-error={!!error || undefined}>
+        <span className="manage-row-description" aria-hidden={action.busy || undefined}>
+          {error ? `未确认：${error}` : description}
+        </span>
+        {action.busy && <span className="manage-row-pending">
+          <span className="spinner" aria-hidden="true" />{desired ? '正在开启…' : '正在关闭…'}
+        </span>}
       </div>
-      {toggle}
     </div>
-  );
+    <Toggle label={`启用 ${name}`} disabled={disabled || action.busy} busy={action.busy} on={enabled}
+      onChange={next => {
+        if (disabled || action.busy) return;
+        setDesired(next);
+        void action.run(() => onChange(name, next));
+      }} />
+  </div>;
 }
 
-// ── Shell (header + scrollable body) ───────────────────────────────────────────
-function ManageShell({ title, onClose, action, status, failed, pending, hasData, empty, children, error }: {
-  title: string; onClose: () => void; action?: React.ReactNode;
-  status: string | null; failed?: boolean; pending?: boolean; hasData: boolean; empty?: string; children?: React.ReactNode;
-  error?: string | null;
+// Only in-flight UI ownership is retained here. Values always come from the
+// resource readback; leaving the page must not let a late mutation start a read.
+function useToggleRequests(
+  sessionId: string, mutate: (sessionId: string, name: string, enabled: boolean) => Promise<void>,
+  refresh: () => Promise<boolean>, exclusive: boolean,
+) {
+  const [pending, setPending] = useState<{ sessionId: string; generation: number; count: number } | null>(null);
+  const owner = useRef<{ names: Set<string>; active: boolean }>({ names: new Set(), active: false });
+  const generation = useCockpit(s => s.connectionGeneration);
+  useLayoutEffect(() => {
+    const current = { names: new Set<string>(), active: true };
+    owner.current = current;
+    return () => { current.active = false; };
+  }, [sessionId, generation]);
+  const run = useCallback(async (name: string, enabled: boolean) => {
+    const current = owner.current;
+    const state = useCockpit.getState();
+    const session = state.sessions.find(s => s.sessionId === sessionId);
+    if (!current.active || state.connState !== 'open' || !session?.loaded || session.closing) {
+      throw new Error('会话当前不可操作，请先核对连接与加载状态');
+    }
+    if (current.names.has(name) || (exclusive && (current.names.size || (session.activeMcpOperations ?? 0) > 0))) {
+      throw new Error('已有切换操作正在处理，请等待完成');
+    }
+    current.names.add(name);
+    setPending({ sessionId, generation, count: current.names.size });
+    let refreshed = false;
+    try {
+      try { await mutate(sessionId, name, enabled); }
+      finally {
+        if (current.active && owner.current === current) refreshed = await refresh();
+      }
+      if (current.active && !refreshed) throw new Error('操作已返回，但未能读取最新状态；请刷新核对，不要直接重试');
+    } finally {
+      current.names.delete(name);
+      if (current.active && owner.current === current) setPending({ sessionId, generation, count: current.names.size });
+    }
+  }, [sessionId, generation, mutate, refresh, exclusive]);
+  return { run, pending: pending?.sessionId === sessionId && pending.generation === generation && pending.count > 0 };
+}
+
+function ManageShell({ title, onClose, refresh, status, failed, pending, hasData, working, blocked, empty, children }: {
+  title: string; onClose: () => void; refresh: () => void; status: string | null;
+  failed: boolean; pending: boolean; hasData: boolean; working: boolean; blocked: boolean;
+  empty?: string; children: ReactNode;
 }) {
-  return (
-    <>
-      <PaneHeader className="manage-header" leading={<PanelCloseButton onClose={onClose} />}
-        title={<span className="manage-title info-panel-title" title={title}>{title}</span>} actions={action} />
-      <div className="manage-body scrollable">
-        <ResourceStatus status={status} failed={failed} pending={pending} placement={hasData ? 'inline' : 'pane'} />
-        {error && <div className="manage-empty" role="alert">操作失败：{error}</div>}
-        {children}
-        {empty && <div className="manage-empty">{empty}</div>}
-      </div>
-    </>
-  );
+  return <>
+    <PaneHeader className="manage-header" leading={<PanelCloseButton onClose={onClose} />}
+      title={<span className="manage-title info-panel-title" title={title}>{title}</span>}
+      actions={<RefreshButton pending={hasData && pending && !working}
+        disabled={blocked || pending || working} onClick={refresh} />} />
+    <div className="manage-body scrollable">
+      <ResourceStatus status={hasData && pending ? null : status} failed={failed}
+        pending={pending} placement={hasData ? 'inline' : 'pane'} />
+      {children}
+      {empty && <div className="manage-empty">{empty}</div>}
+    </div>
+  </>;
 }
 
-function RefreshBtn({ onClick, disabled, pending }: { onClick: () => void; disabled?: boolean; pending: boolean }) {
-  return (
-    <button className="btn-icon rp manage-action" type="button" aria-label="刷新" onClick={onClick} disabled={disabled} aria-busy={pending}>
-      {pending ? <span className="spinner" aria-hidden="true" /> : <Icon name="reload" size={20} />}
-    </button>
-  );
-}
-
-// ── Per-session MCP ────────────────────────────────────────────────────────────
 type SessionManageProps = { session: ChatSession; onClose: () => void };
 
 export function SessionMcp({ session, onClose }: SessionManageProps) {
   const sessionId = session.sessionId;
-  const mcpSession = useCockpit((s) => s.mcpSession);
-  const mcpToggleSession = useCockpit((s) => s.mcpToggleSession);
+  const mcpSession = useCockpit(s => s.mcpSession);
+  const mutate = useCockpit(s => s.mcpToggleSession);
+  const nativeBusy = useCockpit(s => (s.sessions.find(row => row.sessionId === sessionId)?.activeMcpOperations ?? 0) > 0);
   const load = useCallback(() => mcpSession(sessionId), [mcpSession, sessionId]);
   const resource = useSessionResource(sessionId, `mcp:${sessionId}`, load, 0, ['mcp']);
-  const action = useKeyedAction(`mcp:${sessionId}`);
-  const disabled = !resource.valid || action.busy;
-  const toggle = (name: string, on: boolean) => {
-    void action.run(async () => {
-      await mcpToggleSession(sessionId, name, on);
-    });
-  };
-
-  return (
-    <ManageShell title={`本会话 MCP · ${session.title}`} onClose={onClose}
-      action={<RefreshBtn pending={resource.pending} disabled={resource.closing || resource.requiresResume || !resource.connected || resource.pending || action.busy} onClick={() => { void resource.refresh(); }} />}
-      status={resource.status} failed={resource.failed} pending={resource.pending} hasData={resource.data !== undefined} error={action.error}
-      empty={resource.valid && resource.data?.length === 0 ? '本会话没有可用的 MCP 服务器' : undefined}>
-      <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
-      {action.busy && <StateNotice kind="loading">正在提交…</StateNotice>}
-      {resource.valid && !action.error && !!resource.data?.length &&
-        <p className="manage-scope">开关仅本会话有效；冷加载采用原生全局默认，不恢复临时开关。</p>}
-      {resource.data?.map((s) => (
-        <ManageRow key={s.name} name={s.name} sub={s.error || s.detail}
-          badge={<McpStatusPill status={s.status} />}
-          toggle={<Toggle label={`启用 ${s.name}`} disabled={disabled} on={s.enabled} onChange={(v) => toggle(s.name, v)} />} />
-      ))}
-    </ManageShell>
-  );
+  const action = useToggleRequests(sessionId, mutate, resource.refresh, true);
+  const settling = resource.data?.some(server => server.status === 'pending') ?? false;
+  const busy = action.pending || nativeBusy || settling;
+  return <ManageShell title={`本会话 MCP · ${session.title}`} onClose={onClose}
+    refresh={() => { void resource.refresh(); }} status={resource.status} failed={resource.failed}
+    pending={resource.pending} hasData={resource.data !== undefined} working={action.pending}
+    blocked={resource.closing || resource.requiresResume || !resource.connected}
+    empty={resource.valid && resource.data?.length === 0 ? '本会话没有可用的 MCP 服务器' : undefined}>
+    <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
+    {resource.data !== undefined && <>
+      <p className="manage-scope">仅本会话有效；重新加载采用全局默认。</p>
+      <p className="manage-serial-note" role="status">
+        {busy ? 'MCP 正在切换或连接，请等待完成后再修改其他项。' : 'MCP 按会话逐项切换；开启不等于已连接。'}
+      </p>
+    </>}
+    {resource.data?.map(server => <SessionToggleRow key={server.name}
+      identity={JSON.stringify(['mcp', sessionId, server.name])} name={server.name}
+      description={server.detail} nativeError={server.error} badge={<McpStatusPill status={server.status} />}
+      enabled={server.enabled} disabled={!resource.usable || busy} onChange={action.run} />)}
+  </ManageShell>;
 }
 
-// ── Per-session Skills ─────────────────────────────────────────────────────────
 export function SessionSkills({ session, onClose }: SessionManageProps) {
   const sessionId = session.sessionId;
-  const skillsSession = useCockpit((s) => s.skillsSession);
-  const skillsToggleSession = useCockpit((s) => s.skillsToggleSession);
+  const skillsSession = useCockpit(s => s.skillsSession);
+  const mutate = useCockpit(s => s.skillsToggleSession);
   const load = useCallback(() => skillsSession(sessionId), [skillsSession, sessionId]);
   const resource = useSessionResource(sessionId, `skills:${sessionId}`, load, 0, ['skills']);
-  const action = useKeyedAction(`skills:${sessionId}`);
-  const toggle = (name: string, enabled: boolean) => {
-    void action.run(async () => {
-      await skillsToggleSession(sessionId, name, enabled);
-    });
-  };
-
-  return (
-    <ManageShell title={`本会话 Skills · ${session.title}`} onClose={onClose}
-      action={<RefreshBtn pending={resource.pending} disabled={resource.closing || resource.requiresResume || !resource.connected || resource.pending || action.busy} onClick={() => { void resource.refresh(); }} />}
-      status={resource.status} failed={resource.failed} pending={resource.pending} hasData={resource.data !== undefined} error={action.error}
-      empty={resource.valid && resource.data?.length === 0 ? '没有可用的 skill' : undefined}>
-      <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
-      {action.busy && <StateNotice kind="loading">正在提交…</StateNotice>}
-      {resource.valid && !action.error && !!resource.data?.length &&
-        <p className="manage-scope">开关仅本会话临时有效；冷加载采用原生配置发现和全局禁用列表，不恢复临时开关。</p>}
-      {resource.data?.map((s) => (
-        <ManageRow key={s.name} name={s.name} sub={s.description}
-          badge={s.source ? <span className="manage-tag">{s.source}</span> : undefined}
-          toggle={<Toggle label={`启用 ${s.name}`} disabled={!resource.valid || action.busy}
-            on={s.enabled} onChange={(v) => toggle(s.name, v)} />} />
-      ))}
-    </ManageShell>
-  );
+  const action = useToggleRequests(sessionId, mutate, resource.refresh, false);
+  return <ManageShell title={`本会话 Skills · ${session.title}`} onClose={onClose}
+    refresh={() => { void resource.refresh(); }} status={resource.status} failed={resource.failed}
+    pending={resource.pending} hasData={resource.data !== undefined} working={action.pending}
+    blocked={resource.closing || resource.requiresResume || !resource.connected}
+    empty={resource.valid && resource.data?.length === 0 ? '没有可用的 skill' : undefined}>
+    <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
+    {resource.data !== undefined && <p className="manage-scope">仅本会话有效；重新加载采用全局默认。</p>}
+    {resource.data?.map(skill => <SessionToggleRow key={skill.name}
+      identity={JSON.stringify(['skills', sessionId, skill.name])} name={skill.name}
+      description={skill.description} badge={skill.source ? <span className="manage-tag">{skill.source}</span> : undefined}
+      enabled={skill.enabled} disabled={!resource.usable} onChange={action.run} />)}
+  </ManageShell>;
 }

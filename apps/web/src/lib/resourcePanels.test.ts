@@ -46,7 +46,8 @@ test('open info panel identifies its session without cross-page navigation', () 
   const html = renderToStaticMarkup(createElement(SessionInfoPanel, {
     session, models: [], open: true, onClose: noop, onSetModel: noModelMutation,
   }));
-  assert.match(html, /会话设置 · Resource test/);
+  assert.match(html, /会话设置/);
+  assert.match(html, /Resource test/);
   assert.doesNotMatch(html, /<nav|info-panel-more|role="tab"/);
   assert.match(html, /allow-all/);
   assert.match(html, /allow-all · 自动批准/);
@@ -149,7 +150,7 @@ test('thin session catalog keeps native membership and never invents per-session
   assert.equal(model.options.length, 1, 'global entries must not expand the session allow-list');
   assert.doesNotMatch(html, /aria-label="思考力度"|aria-label="上下文长度"/);
   assert.match(html, /原生未提供思考力度选项；当前值：极高/);
-  assert.match(html, /原生未提供上下文档位能力；当前值：long_context/);
+  assert.match(html, /原生未提供上下文档位能力；当前值：长上下文/);
   for (const currentReasoningEffort of [undefined, null, '']) {
     assert.doesNotMatch(renderModelSettings({ ...patch, currentReasoningEffort }, rich), /aria-label="思考力度"/);
   }
@@ -201,7 +202,7 @@ test('empty model and effort values remain unknown instead of selecting defaults
   }]), '思考力度');
   assert.equal(withoutDefault.text, '未指定（交由原生处理）');
   const html = renderModelSettings({ currentModelId: 'beta' });
-  assert.match(html, /未指定的选项不会发送，其行为由原生决定/);
+  assert.match(html, /未指定（交由原生处理）/);
   assert.doesNotMatch(html, /原生默认 \/ 重置|不保留旧值/);
 });
 
@@ -332,9 +333,9 @@ for (const Component of [SessionMcp, SessionSkills]) {
     const html = renderToStaticMarkup(createElement(Component, { session, onClose: noop }));
     assert.doesNotMatch(html, /manage-scope|Cockpit 不保存或重放选择/);
     const manage = readFileSync(new URL('../components/Manage.tsx', import.meta.url), 'utf8');
-    assert.match(manage, /resource.valid && !action.error && !!resource.data\?\.length/);
-    assert.match(manage, /冷加载采用原生全局默认，不恢复临时开关/);
-    assert.match(manage, /冷加载采用原生配置发现和全局禁用列表，不恢复临时开关/);
+    assert.match(manage, /resource.data !== undefined/);
+    assert.match(manage, /仅本会话有效；重新加载采用全局默认/);
+    assert.doesNotMatch(manage, /resource.valid && !action.error/);
     assert.doesNotMatch(manage, /重载技能|刷新技能定义后/);
   });
 }
@@ -346,7 +347,7 @@ test('unloaded info settings expose explicit resume rather than global model val
   }));
   assert.doesNotMatch(html, /<select/);
   assert.match(html, /恢复会话|加载会话/);
-  assert.match(html, /不显示上次读值或全局默认值/);
+  assert.doesNotMatch(html, /info-model-current|info-select/);
   assert.doesNotMatch(html, /任务清单|MCP 服务器|置顶会话/);
 });
 

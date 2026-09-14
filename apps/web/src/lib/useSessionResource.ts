@@ -24,6 +24,7 @@ export function useSessionResource<T>(
     closing,
     requiresResume,
     data: requiresResume ? undefined : resource.data,
+    usable: !requiresResume && resource.usable,
     valid: !requiresResume && resource.valid,
     status: closing ? '会话正在关闭，等待关闭完成…' : requiresResume && resource.connected ? null : resource.status,
     failed: !requiresResume && resource.failed,

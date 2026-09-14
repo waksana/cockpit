@@ -9,7 +9,7 @@ function useOwnedAsync<T>(key: string, enabled = true) {
   const snapshot = useSyncExternalStore(task.subscribe, task.getSnapshot, task.getSnapshot);
   useLayoutEffect(() => {
     if (enabled) task.activate();
-    else task.deactivate(true);
+    else task.release();
     return () => task.deactivate();
   }, [task, connected, generation, enabled]);
   return { task, snapshot, connected, generation };
@@ -26,10 +26,13 @@ export function useKeyedResource<T>(
   }, [task, refresh, connected, generation, revision, enabled, canAutoRefresh]);
   const pending = enabled && connected && (snapshot.pending || snapshot.generation !== generation);
   const error = enabled && snapshot.generation === generation ? snapshot.error : null;
+  // Same-connection refreshes retain accepted data; failed or reconnected reads do not.
+  const usable = enabled && connected && !error && snapshot.dataGeneration === generation;
   return {
     data: enabled ? snapshot.data : undefined, error, pending, connected, refresh,
     errorCause: enabled ? snapshot.errorCause : undefined,
-    valid: enabled && connected && !pending && !error && snapshot.dataGeneration === generation,
+    usable,
+    valid: usable && !pending,
     failed: Boolean(error),
     status: !connected ? '等待连接…' : !enabled ? null : error ? `加载失败：${error}` : pending ? '加载中…' : null,
   };

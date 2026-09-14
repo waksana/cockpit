@@ -5,9 +5,9 @@ import { createRoot } from 'react-dom/client';
 import { getSessionDraft } from '../lib/textDraft';
 import { useCockpit } from '../net/store';
 import type { ChatSession } from '../net/types';
-import type { IntentResult } from '@cockpit/protocol';
+import type { IntentResult, SessionProjection } from '@cockpit/protocol';
 import { MessageProcess, Thread } from './Thread';
-import { ModelControls } from './SessionInfoPanel';
+import { ModelControls, SessionInfoPanel } from './SessionInfoPanel';
 import { MessageBody } from './MessageBody';
 import { DisclosureChoices } from './DisclosureChoices';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
@@ -396,8 +396,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(control('思考力度').value, 'high', 'queued ACK preserves the newer unsent edit');
     assert.match(container.textContent, /已接受，等待原生应用/);
     assert.doesNotMatch(container.textContent, /上次原生返回：已应用/);
-    assert.match(container.textContent, /原生消息：Model changed/);
-    assert.match(container.textContent, /当前原生值：a/);
+    assert.match(container.querySelector('.info-model-details')?.textContent ?? '', /Model changed/);
+    assert.match(container.textContent, /当前：a/);
     current = { ...current, currentModelId: 'b' };
     await editor();
     assert.equal(control('思考力度').value, 'high', 'native current updates are not desired editor state');
@@ -424,6 +424,118 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(control('选择模型').value, 'a');
     assert.doesNotMatch(container.textContent, /Late old-session failure|Uncertain HTTP result/);
     assert.equal(calls.length, 4, 'no queued or rejected result generates a follow-up');
+  });
+
+  await t.test('model panel keeps its latest draft editable through refresh and submission with one busy indicator', async () => {
+    const previous = useCockpit.getState();
+    const current: ChatSession = {
+      ...session('model-panel'), currentModelId: 'a', currentReasoningEffort: 'high', currentContextTier: 'default',
+      availableModels: ['a', 'b'].map(modelId => ({
+        modelId, name: modelId, supportedReasoningEfforts: ['high', 'max'], supportsLongContext: true,
+      })),
+    };
+    const native: SessionProjection = {
+      sessionId: current.sessionId, loaded: true, currentModelId: 'a',
+      currentReasoningEffort: 'high', currentContextTier: 'default', availableModels: current.availableModels,
+    };
+    const reads: { resolve: (value: SessionProjection) => void; reject: (error: Error) => void }[] = [];
+    const mutations: { resolve: (value: IntentResult<'setModel'>) => void; opts: unknown }[] = [];
+    const onSetModel = (_modelId: string, opts: unknown) => new Promise<IntentResult<'setModel'>>(resolve => {
+      mutations.push({ resolve, opts });
+    });
+    const panel = (value = current) => act(async () => root.render(createElement(SessionInfoPanel, {
+      session: value, models: [], open: true, onClose: () => {}, onSetModel,
+    })));
+    const node = (selector: string) => {
+      const found = container.querySelector(selector);
+      assert.ok(found, selector);
+      return found;
+    };
+    const event = (target: HostNode, type: string) => act(() => {
+      const event = new Event(type, { bubbles: true });
+      Object.defineProperty(event, 'target', { value: target });
+      container.dispatchEvent(event);
+    });
+    const change = async (label: string, value: string) => {
+      const target = node(`[aria-label="${label}"]`);
+      assert.equal(target.attributes.has('disabled'), false, `${label} remains editable`);
+      target.value = value;
+      await event(target, 'change');
+    };
+    const apply = () => node('.dialog-btn');
+    const refresh = () => node('[aria-label="刷新"]');
+    const invalidate = (revision: number) => act(async () => {
+      useCockpit.setState({ resourceRevisions: { [current.sessionId]: { model: revision } } });
+    });
+    try {
+      await act(() => useCockpit.setState({
+        sessions: [current], resourceRevisions: {},
+        getResources: () => new Promise((resolve, reject) => reads.push({ resolve, reject })),
+      }));
+      await panel();
+      assert.equal(reads.length, 1);
+      assert.equal(apply().attributes.has('disabled'), true, 'summary metadata cannot authorize Apply');
+      assert.equal(container.querySelectorAll('.spinner').length, 1, 'first read has only the body loader');
+      assert.equal(refresh().getAttribute('aria-busy'), 'false');
+      assert.equal(refresh().attributes.has('disabled'), true);
+      assert.equal(node('.info-meta-details').getAttribute('open'), null, 'ID starts collapsed');
+      await act(() => reads[0].resolve(native));
+      assert.match(node('.info-model-current').textContent, /思考力度：高.*上下文：标准上下文/);
+      await change('选择模型', 'b');
+      await change('思考力度', 'max');
+      await change('上下文长度', 'long_context');
+      await invalidate(1);
+      assert.equal(reads.length, 2);
+      assert.equal(container.querySelectorAll('.spinner').length, 1, 'background refresh has only the icon spinner');
+      assert.equal(refresh().getAttribute('aria-busy'), 'true');
+      assert.doesNotMatch(container.textContent, /加载中/);
+      assert.equal(apply().attributes.has('disabled'), false, 'accepted same-generation data still authorizes Apply');
+      await event(apply(), 'click');
+      assert.equal(mutations.length, 1);
+      assert.deepEqual(mutations[0].opts, { reasoningEffort: 'max', contextTier: 'long_context' });
+      assert.equal(apply().textContent, '正在提交…');
+      assert.equal(apply().getAttribute('aria-busy'), 'true');
+      assert.equal(container.querySelectorAll('.spinner').length, 0, 'submission owns the sole busy feedback');
+      assert.doesNotMatch(container.textContent, /正在应用|正在提交配置/);
+      assert.equal(apply().attributes.has('disabled'), true);
+      await event(apply(), 'click');
+      assert.equal(mutations.length, 1);
+      await change('思考力度', 'high');
+      await panel({ ...current, title: 'Background metadata', currentReasoningEffort: 'max' });
+      await act(() => reads[1].resolve({ ...native, currentModelId: 'b', currentReasoningEffort: 'max' }));
+      assert.equal(node('[aria-label="思考力度"]').value, 'high', 'metadata and accepted rereads never reset a local draft');
+      assert.match(node('.info-model-details').textContent, /上次提交：b.*思考力度：最大.*上下文：长上下文/);
+      await act(() => mutations[0].resolve({ ok: true, result: { status: 'applied', deferred: true } }));
+      assert.match(node('.info-model-status').textContent, /已接受，等待原生应用/);
+      assert.doesNotMatch(node('.info-model-status').textContent, /已应用/);
+      assert.equal(apply().attributes.has('disabled'), false, 'the newer draft can be submitted explicitly');
+      await event(apply(), 'click');
+      assert.equal(mutations.length, 2);
+      assert.deepEqual(mutations[1].opts, { reasoningEffort: 'high', contextTier: 'long_context' });
+      await invalidate(2);
+      await change('上下文长度', 'default');
+      assert.equal(container.querySelectorAll('.spinner').length, 0);
+      await act(() => mutations[1].resolve({ ok: true, result: { status: 'applied', persistenceError: 'Native save failed' } }));
+      assert.match(node('.info-model-status').textContent, /已应用，但原生持久化失败：Native save failed/);
+      assert.equal(node('.info-model-status').getAttribute('role'), 'alert');
+      assert.equal(container.querySelectorAll('.spinner').length, 1, 'unfinished reread resumes its own indicator');
+      await act(() => reads[2].reject(new Error('Native read unavailable')));
+      assert.match(container.textContent, /加载失败：Native read unavailable/);
+      assert.equal(container.querySelectorAll('.spinner').length, 0);
+      assert.equal(node('[aria-label="上下文长度"]').value, 'default');
+      assert.equal(node('[aria-label="上下文长度"]').attributes.has('disabled'), true);
+      assert.equal(apply().attributes.has('disabled'), true);
+      await event(apply(), 'click');
+      assert.equal(mutations.length, 2, 'an unavailable read blocks further mutations');
+      assert.equal(reads.length, 3, 'neither failure is automatically retried');
+      await act(() => useCockpit.setState({ connState: 'connecting' }));
+      assert.equal(refresh().attributes.has('disabled'), true);
+      assert.equal(node('[aria-label="选择模型"]').attributes.has('disabled'), true);
+      assert.match(container.textContent, /等待连接/);
+    } finally {
+      await act(() => root.render(null));
+      await act(() => useCockpit.setState(previous, true));
+    }
   });
 
   const processMessage = { id: 'process', role: 'assistant' as const, content: '', timestamp: 1, thought: 'Actual reasoning' };

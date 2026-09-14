@@ -8,7 +8,7 @@ import type { IntentResult, NativeModelSwitchResult } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
 import { useSessionResource } from '../lib/useSessionResource';
 import { useKeyedAction } from '../lib/useKeyedResource';
-import { PanelPageShell, PermissionPolicy, ResourceStatus, SessionResume } from './SessionPanelKit';
+import { PanelPageShell, PermissionPolicy, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
 import type { ChatSession, ModelOption } from '../net/types';
 
 type ContextTier = 'default' | 'long_context';
@@ -16,6 +16,7 @@ type ContextTier = 'default' | 'long_context';
 const EFFORT_LABEL: Record<string, string> = {
   none: '不思考', minimal: '最小', low: '低', medium: '中', high: '高', xhigh: '极高', max: '最大',
 };
+const CONTEXT_LABEL: Record<ContextTier, string> = { default: '标准上下文', long_context: '长上下文' };
 
 type ModelSelection = { modelId: string; reasoningEffort?: string; contextTier?: ContextTier };
 const selectionFrom = (session: ChatSession): ModelSelection => ({
@@ -25,11 +26,19 @@ const selectionFrom = (session: ChatSession): ModelSelection => ({
 });
 const selectionLabel = (selection: ModelSelection) => [
   selection.modelId || '模型未提供',
-  `思考力度：${selection.reasoningEffort || '未指定'}`,
-  `上下文：${selection.contextTier || '未指定'}`,
+  `思考力度：${selection.reasoningEffort ? EFFORT_LABEL[selection.reasoningEffort] ?? selection.reasoningEffort : '未指定'}`,
+  `上下文：${selection.contextTier ? CONTEXT_LABEL[selection.contextTier] ?? selection.contextTier : '未指定'}`,
 ].join(' · ');
 
-export function ModelOutcome({ result }: { result: NativeModelSwitchResult }) {
+function ModelSubmissionDetails({ selection, result }: { selection?: ModelSelection; result?: NativeModelSwitchResult }) {
+  return <details className="info-model-details">
+    <summary>提交详情</summary>
+    {selection && <div>上次提交：{selectionLabel(selection)}</div>}
+    {result && <pre>{JSON.stringify(result, null, 2)}</pre>}
+  </details>;
+}
+
+export function ModelOutcome({ result, selection }: { result: NativeModelSwitchResult; selection?: ModelSelection }) {
   const classification = classifyNativeModelSwitchResult(result);
   const status = {
     applied: '已应用',
@@ -39,28 +48,33 @@ export function ModelOutcome({ result }: { result: NativeModelSwitchResult }) {
     'needs-action': '原生要求确认或后续操作，尚未确认应用',
     unknown: `应用结果未确认${result.status ? `（${result.status}）` : '（原生未提供状态）'}`,
   }[classification.state];
-  return <div className="info-empty info-model-result" role={classification.isError ? 'alert' : 'status'}>
-    <div>上次原生返回：{status}</div>
-    {classification.persistenceFailed && <div>
-      {classification.state === 'applied' ? '已应用，但原生持久化失败' : '原生持久化失败'}：{result.persistenceError || '原生未提供错误详情'}
-    </div>}
+  const persistence = classification.persistenceFailed
+    ? `${classification.state === 'applied' ? '，但' : '；'}原生持久化失败：${result.persistenceError || '原生未提供错误详情'}` : '';
+  const message = (classification.state === 'failed' || classification.state === 'needs-action') && result.message
+    ? `：${result.message}` : '';
+  return <div className="info-model-result">
+    <div className="info-model-status" role={classification.isError ? 'alert' : 'status'}>
+      {status + persistence + message}
+    </div>
     {result.confirmation && <div>
       目标：{result.confirmation.targetModelDisplayName}；当前令牌：{result.confirmation.currentTokens}；目标上限：{result.confirmation.targetLimit}。
       本页不会自动确认或继续执行。
     </div>}
-    {result.message && <div>原生消息：{result.message}</div>}
-    {result.warning && <div>{result.warning}</div>}
-    {result.deprecationWarnings?.map((warning, index) => <div key={index}>{warning}</div>)}
-    <details><summary>原生返回详情</summary><pre>{JSON.stringify(result, null, 2)}</pre></details>
+    {result.warning && <div className="info-model-warning">{result.warning}</div>}
+    <ModelSubmissionDetails selection={selection} result={result} />
   </div>;
 }
 
 // A mounted editor owns desired settings; snapshots remain the separate native
 // current value. A late result never rewrites this draft or submits a follow-up.
-export function ModelControls({ session, onSetModel, disabled }: {
+export function ModelControls({ session, onSetModel, disabled, resource }: {
   session: ChatSession;
   onSetModel: SessionInfoPanelProps['onSetModel'];
   disabled: boolean;
+  resource?: {
+    status: string | null; failed: boolean; pending: boolean; usable: boolean;
+    onRefresh: () => void; refreshDisabled: boolean;
+  };
 }) {
   const [draft, setDraft] = useState<{ selection: ModelSelection; revision: number } | null>(null);
   const [submission, setSubmission] = useState<{ selection: ModelSelection; revision: number } | null>(null);
@@ -70,22 +84,34 @@ export function ModelControls({ session, onSetModel, disabled }: {
   const selection = draft?.selection ?? selectionFrom(session);
   const revision = draft?.revision ?? 0;
   const edit = (next: ModelSelection) => setDraft({ selection: next, revision: revision + 1 });
+  const heading = <>
+    <div className="info-section-name">模型
+      {resource && <RefreshButton onClick={resource.onRefresh}
+        disabled={resource.refreshDisabled || resource.pending || action.busy}
+        pending={resource.pending && resource.usable && !action.busy} />}
+    </div>
+    {resource && <ResourceStatus
+      status={resource.pending && (resource.usable || action.busy) ? null : resource.status}
+      failed={resource.failed} pending={resource.pending} />}
+  </>;
   const resultView = <>
-    {submission && <div className="info-empty">上次提交：{selectionLabel(submission.selection)}</div>}
-    {action.busy && <div className="info-empty" role="status">正在提交配置，尚未确认应用…</div>}
-    {action.error && <div className="info-empty" role="alert">
+    {action.error && <div className="info-model-status" role="alert">
       应用结果未确认：{action.error}。请核对原生状态；不会自动重试。
     </div>}
     {submission && !action.busy && !action.error && !outcome
-      && <div className="info-empty" role="status">提交结果尚未确认，请核对原生状态；不会自动重试。</div>}
-    {outcome && <ModelOutcome result={outcome.result} />}
+      && <div className="info-model-status" role="status">提交结果尚未确认，请核对原生状态；不会自动重试。</div>}
+    {outcome ? <ModelOutcome result={outcome.result} selection={submission?.selection} />
+      : submission && <ModelSubmissionDetails selection={submission.selection} />}
   </>;
   const list = session.availableModels;
   if (!list || list.length === 0) return <section className="info-section">
-    <div className="info-section-name">模型</div>
-    <div className="info-section-content">{session.currentModelId ?? '当前模型不可用'}</div>
-    <div className="info-empty">{list ? '原生可选模型列表为空' : '原生可选模型列表不可用'}</div>
-    <div className="info-section-content info-controls">{resultView}</div>
+    {heading}
+    <div className="info-section-content info-controls">
+      <div className="info-model-current">当前：{selectionLabel(selectionFrom(session))}</div>
+      <div className="info-empty">{list ? '原生可选模型列表为空' : '原生可选模型列表不可用'}</div>
+      {action.busy && <div className="info-model-status" role="status">正在提交…</div>}
+      {resultView}
+    </div>
   </section>;
 
   const current = selection.modelId;
@@ -110,9 +136,9 @@ export function ModelControls({ session, onSetModel, disabled }: {
 
   return (
     <section className="info-section">
-      <div className="info-section-name">模型</div>
-      <div className="info-empty info-model-current">当前原生值：{selectionLabel(selectionFrom(session))}</div>
+      {heading}
       <div className="info-section-content info-controls">
+        <div className="info-model-current">当前：{selectionLabel(selectionFrom(session))}</div>
         <label className="info-control">
           <span className="info-control-label">模型</span>
           <select className="info-select" disabled={disabled} value={current}
@@ -149,19 +175,18 @@ export function ModelControls({ session, onSetModel, disabled }: {
         {currentModel && currentModel.supportedReasoningEfforts === undefined
           && <div className="info-empty">原生未提供思考力度选项{curEffort ? `；当前值：${EFFORT_LABEL[curEffort] ?? curEffort}` : ''}</div>}
         {currentModel && currentModel.supportsLongContext === undefined
-          && <div className="info-empty">原生未提供上下文档位能力{curTier ? `；当前值：${curTier}` : ''}</div>}
+          && <div className="info-empty">原生未提供上下文档位能力{curTier ? `；当前值：${CONTEXT_LABEL[curTier] ?? curTier}` : ''}</div>}
         {currentModel?.supportedReasoningEfforts?.length === 0 && curEffort
           && <div className="info-empty">思考力度当前值：{EFFORT_LABEL[curEffort] ?? curEffort}（原生未列出可选档位）</div>}
         {currentModel?.supportsLongContext === false && curTier
-          && <div className="info-empty">上下文长度当前值：{curTier === 'default' ? '标准上下文' : curTier}（原生未列出长上下文支持）</div>}
-        <div className="info-empty">先选择完整组合，再应用一次。未指定的选项不会发送，其行为由原生决定。</div>
+          && <div className="info-empty">上下文长度当前值：{CONTEXT_LABEL[curTier] ?? curTier}（原生未列出长上下文支持）</div>}
         <div className="info-model-actions">
           <button type="button" className="dialog-btn primary rp"
             disabled={disabled || invalid || action.busy || submission?.revision === revision}
             aria-busy={action.busy}
-            onClick={apply}>{action.busy ? '正在应用…' : '应用配置'}</button>
-          <button type="button" className="dialog-btn rp" disabled={disabled}
-            onClick={() => edit(selectionFrom(session))}>使用当前原生值</button>
+            onClick={apply}>{action.busy ? '正在提交…' : '应用配置'}</button>
+          <button type="button" className="dialog-btn rp" aria-label="使用当前原生值"
+            disabled={disabled || !draft} onClick={() => edit(selectionFrom(session))}>重置</button>
         </div>
         {resultView}
       </div>
@@ -189,19 +214,26 @@ function InfoDetails({ session, onClose, onSetModel }: SessionInfoPanelProps) {
   const resource = useSessionResource(sid, `models:${sid}`, load, 0, ['model', 'models']);
 
   return (
-    <PanelPageShell title={`会话设置 · ${session.title}`} onClose={onClose}>
+    <PanelPageShell title="会话设置" onClose={onClose}>
       <section className="info-section">
         <div className="info-section-name">{session.title}</div>
         <div className="info-section-content info-meta-cwd">{session.cwd || '工作目录：原生未提供'}</div>
-        <div className="info-section-content info-meta-id"><span className="info-meta-id-label">ID</span>{session.sessionId}</div>
+        <details className="info-section-content info-meta-details">
+          <summary>会话详情</summary>
+          <div className="info-meta-id"><span className="info-meta-id-label">ID</span>{session.sessionId}</div>
+          <PermissionPolicy />
+        </details>
       </section>
 
       <SessionResume sessionId={sid} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
-      {resource.requiresResume && <div className="info-empty">未加载：模型及资源状态不可用，不显示上次读值或全局默认值。</div>}
-      <ResourceStatus status={resource.status} failed={resource.failed} pending={resource.pending} />
+      {resource.requiresResume && <ResourceStatus status={resource.status} failed={resource.failed} pending={resource.pending} />}
+      {/* Accepted same-connection data supports edits and Apply during refresh. */}
       {!resource.requiresResume && <ModelControls key={sid} session={{ ...session, ...resource.data }}
-        disabled={!resource.valid} onSetModel={onSetModel} />}
-      <PermissionPolicy />
+        disabled={!resource.usable} onSetModel={onSetModel}
+        resource={{
+          ...resource, onRefresh: () => { void resource.refresh(); },
+          refreshDisabled: !resource.connected || resource.closing,
+        }} />}
     </PanelPageShell>
   );
 }

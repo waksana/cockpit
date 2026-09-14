@@ -210,9 +210,10 @@ for (const page of pages) {
     if (pendingRefresh) {
       assert.equal(pendingRefresh.getAttribute('aria-busy'), 'true');
       assert.ok(pendingRefresh.querySelector('.spinner'));
-      assert.equal(h.container.querySelector('[data-kind="loading"]')?.getAttribute('data-placement'), 'inline');
+      assert.equal(h.container.querySelector('[data-kind="loading"]'), null, 'retained refresh belongs only to the header');
     }
-    assert.ok(controls().every(disabled));
+    assert.ok(controls().every(node => !disabled(node)),
+      'healthy same-generation refresh does not lock unrelated rows or interrupt draft editing');
     await act(async () => request.reject(new IntentHttpError('Native session is unloaded', 409, 'SESSION_UNLOADED')));
     assert.equal(useCockpit.getState().sessions[0].loaded, true, 'the fixture reproduces lagging metadata');
     assert.equal(controls().length, 0, 'unloaded resources cannot expose model or toggle values');
@@ -277,9 +278,10 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.equal(calls, 1);
     assert.equal(disabled(control), true);
     assert.equal(control.getAttribute('aria-checked'), 'true', 'no optimistic native value');
-    const notice = h.container.querySelector('[data-kind="loading"]');
+    const notice = h.container.querySelector('.manage-row-feedback');
     assert.ok(notice);
-    assert.equal(notice.textContent, '正在提交…');
+    assert.equal(notice.querySelector('.manage-row-pending')?.textContent, '正在关闭…');
+    assert.equal(h.container.querySelectorAll('.spinner').length, 1);
     const refresh = h.container.querySelector('[aria-label="刷新"]');
     assert.ok(refresh);
     assert.equal(disabled(refresh), true);
@@ -288,8 +290,8 @@ for (const Component of [SessionMcp, SessionSkills]) {
     await h.event(control, 'click');
     assert.equal(calls, 1);
     await act(async () => mutation.reject(new Error('Native toggle rejected')));
-    assert.equal(h.container.querySelector('[data-kind="loading"]'), null);
-    assert.match(h.container.textContent, /操作失败：Native toggle rejected/);
+    assert.equal(h.container.querySelector('.spinner'), null);
+    assert.match(notice.textContent, /未确认：Native toggle rejected/);
     assert.equal(control.getAttribute('aria-checked'), 'true');
     assert.equal(disabled(control), false);
     assert.equal(calls, 1, 'native rejection does not trigger an automatic retry');
@@ -339,6 +341,182 @@ test('resource owner aborts closing reads and rejects their late values without 
   assert.deepEqual(resource.data, ['fresh']);
 });
 
+for (const Component of [SessionMcp, SessionSkills]) {
+  test(`${Component.name}: overlapping invalidation stays local to the changed row through readback`, async t => {
+    const h = mount(t);
+    const mutation = deferred<void>();
+    const reread = deferred<void>();
+    const changed = new Set<string>();
+    const calls: string[] = [];
+    let hold = false;
+    const read = async () => {
+      if (hold) await reread.promise;
+      return ['one', 'two'].map(name => ({ name, enabled: !changed.has(name), detail: 'native', status: 'connected' as const }));
+    };
+    useCockpit.setState({
+      mcpSession: read, skillsSession: read,
+      mcpToggleSession: async (_id, name) => { calls.push(name); await mutation.promise; changed.add(name); },
+      skillsToggleSession: async (_id, name) => { calls.push(name); await mutation.promise; changed.add(name); },
+    });
+    await h.render(createElement(Component, { session, onClose: noop }));
+    const [first, second] = h.container.querySelectorAll('[role="switch"]');
+    const row = h.container.querySelector('[data-resource-name="one"]')!;
+    const other = h.container.querySelector('[data-resource-name="two"]')!;
+    const scope = h.container.querySelector('.manage-scope');
+    await h.event(first, 'click');
+    assert.equal(disabled(first), true);
+    assert.equal(disabled(second), Component === SessionMcp, 'MCP is serial; Skills operations are per item');
+    await act(async () => {
+      hold = true;
+      useCockpit.setState({ resourceRevisions: { [session.sessionId]: { mcp: 1, skills: 1 } } });
+    });
+    assert.equal(h.container.querySelectorAll('.spinner').length, 1, 'only the target row owns loading during a mutation');
+    assert.equal(h.container.querySelector('.manage-scope'), scope, 'scope does not disappear during refresh');
+    assert.match(row.textContent, /正在关闭/);
+    assert.doesNotMatch(other.textContent, /正在关闭|未确认/);
+    assert.equal(first.getAttribute('aria-checked'), 'true', 'never use optimistic native state');
+    assert.equal(disabled(second), Component === SessionMcp);
+    await act(async () => mutation.resolve());
+    assert.equal(disabled(first), true, 'the target stays guarded until authoritative readback');
+    await act(async () => { hold = false; reread.resolve(); });
+    assert.equal(first.getAttribute('aria-checked'), 'false');
+    assert.equal(second.getAttribute('aria-checked'), 'true');
+    assert.ok(!disabled(first) && !disabled(second));
+    assert.equal(h.container.querySelector('.spinner'), null);
+    assert.deepEqual(calls, ['one']);
+  });
+}
+
+test('Skills supports independent pending rows and keeps an error with its own row', async t => {
+  const h = mount(t);
+  const one = deferred<void>(), two = deferred<void>();
+  const calls: string[] = [];
+  const disabledNames = new Set<string>();
+  useCockpit.setState({
+    skillsSession: async () => ['one', 'two'].map(name => ({ name, enabled: !disabledNames.has(name) })),
+    skillsToggleSession: async (_id, name) => {
+      calls.push(name);
+      await (name === 'one' ? one.promise : two.promise);
+      disabledNames.add(name);
+    },
+  });
+  await h.render(createElement(SessionSkills, { session, onClose: noop }));
+  const [first, second] = h.container.querySelectorAll('[role="switch"]');
+  await h.event(first, 'click');
+  await h.event(second, 'click');
+  await h.event(first, 'click');
+  assert.deepEqual(calls, ['one', 'two']);
+  await act(async () => two.reject(new Error('Second skill was rejected')));
+  assert.match(h.container.querySelector('[data-resource-name="two"]')!.textContent, /未确认：Second skill was rejected/);
+  assert.match(h.container.querySelector('[data-resource-name="one"]')!.textContent, /正在关闭/);
+  assert.equal(disabled(first), true);
+  assert.equal(disabled(second), false);
+  await act(async () => one.resolve());
+  assert.equal(first.getAttribute('aria-checked'), 'false');
+  assert.equal(second.getAttribute('aria-checked'), 'true');
+});
+
+test('MCP honors native busy or settling states after remount, without a local action', async t => {
+  const h = mount(t);
+  let settling = false;
+  useCockpit.setState({
+    sessions: [{ ...session, activeMcpOperations: 1 }],
+    mcpSession: async () => [{ name: 'one', enabled: true, detail: '', status: settling ? 'pending' : 'connected' }],
+    mcpToggleSession: noMutation,
+  });
+  await h.render(createElement(SessionMcp, { session, onClose: noop }));
+  assert.equal(disabled(h.container.querySelector('[role="switch"]')!), true);
+  assert.match(h.container.textContent, /等待完成后再修改其他项/);
+  await h.render(null);
+  await h.render(createElement(SessionMcp, { session, onClose: noop }));
+  assert.equal(disabled(h.container.querySelector('[role="switch"]')!), true);
+  await act(async () => {
+    settling = true;
+    useCockpit.setState({ sessions: [session], resourceRevisions: { [session.sessionId]: { mcp: 1 } } });
+  });
+  assert.equal(disabled(h.container.querySelector('[role="switch"]')!), true);
+  assert.equal(h.container.querySelector('.spinner'), null, 'native settling is not a local request');
+});
+
+test('late toggles cannot trigger readback or feedback in a replaced page', async t => {
+  const h = mount(t);
+  const mutation = deferred<void>();
+  let reads = 0;
+  useCockpit.setState({
+    skillsSession: async () => { reads++; return [{ name: 'one', enabled: true }]; },
+    skillsToggleSession: async () => mutation.promise,
+  });
+  await h.render(createElement(SessionSkills, { session, onClose: noop }));
+  await h.event(h.container.querySelector('[role="switch"]')!, 'click');
+  await h.render(null);
+  await h.render(createElement(SessionSkills, { session, onClose: noop }));
+  assert.equal(reads, 2);
+  await act(async () => mutation.resolve());
+  assert.equal(reads, 2, 'old owner must not start a fresh read');
+  assert.doesNotMatch(h.container.textContent, /正在关闭|未确认/);
+});
+
+test('unavailable and reconnecting resources cannot reuse accepted values as usable', async t => {
+  const h = mount(t);
+  const next = deferred<string[]>();
+  let reads = 0;
+  let resource!: ReturnType<typeof useSessionResource<string[]>>;
+  const load = async () => ++reads === 1 ? ['initial'] : next.promise;
+  function Probe() { resource = useSessionResource(session.sessionId, 'usable', load); return null; }
+  await h.render(createElement(Probe));
+  assert.equal(resource.usable, true);
+  await act(async () => useCockpit.setState({ sessions: [{ ...session, closing: true }] }));
+  assert.equal(resource.usable, false);
+  await act(async () => useCockpit.setState({ sessions: [session] }));
+  assert.equal(resource.pending, true);
+  assert.equal(resource.usable, false, 'reenabling a resource requires a new read even in the same connection');
+  await act(async () => next.resolve(['fresh']));
+  assert.equal(resource.usable, true);
+  await act(async () => useCockpit.setState({ connState: 'connecting', connectionGeneration: 2 }));
+  assert.equal(resource.usable, false);
+});
+
+test('a successful write with failed readback stays unconfirmed and does not enable stale toggles', async t => {
+  const h = mount(t);
+  let reads = 0, writes = 0;
+  useCockpit.setState({
+    skillsSession: async () => {
+      if (++reads > 1) throw new Error('Native read unavailable');
+      return [{ name: 'one', enabled: true }];
+    },
+    skillsToggleSession: async () => { writes++; },
+  });
+  await h.render(createElement(SessionSkills, { session, onClose: noop }));
+  await h.event(h.container.querySelector('[role="switch"]')!, 'click');
+  assert.equal(reads, 2);
+  assert.equal(writes, 1);
+  assert.match(h.container.textContent, /未能读取最新状态/);
+  assert.match(h.container.textContent, /加载失败：Native read unavailable/);
+  const toggle = h.container.querySelector('[role="switch"]')!;
+  assert.equal(toggle.getAttribute('aria-checked'), 'true', 'a stale value is not an optimistic success');
+  assert.equal(disabled(toggle), true);
+  assert.equal(h.container.querySelector('.spinner'), null);
+});
+
+test('failed old-generation writes never refresh or overwrite a reconnected page', async t => {
+  const h = mount(t);
+  const mutation = deferred<void>();
+  let reads = 0;
+  useCockpit.setState({
+    skillsSession: async () => { reads++; return [{ name: 'one', enabled: true }]; },
+    skillsToggleSession: async () => mutation.promise,
+  });
+  await h.render(createElement(SessionSkills, { session, onClose: noop }));
+  await h.event(h.container.querySelector('[role="switch"]')!, 'click');
+  await act(async () => useCockpit.setState({ connState: 'connecting', connectionGeneration: 2 }));
+  await act(async () => useCockpit.setState({ connState: 'open', connectionGeneration: 3 }));
+  assert.equal(reads, 2);
+  await act(async () => mutation.reject(new Error('Obsolete failure')));
+  assert.equal(reads, 2);
+  assert.doesNotMatch(h.container.textContent, /Obsolete failure|正在关闭/);
+  assert.equal(disabled(h.container.querySelector('[role="switch"]')!), false);
+});
+
 test('model Apply has a pending label and busy state while preserving native result diagnostics', async t => {
   const h = mount(t);
   const read = deferred<SessionProjection>();
@@ -356,7 +534,7 @@ test('model Apply has a pending label and busy state while preserving native res
   const apply = button(h.container, '应用配置');
   assert.equal(disabled(apply), false);
   await h.event(apply, 'click');
-  const pending = button(h.container, '正在应用…');
+  const pending = button(h.container, '正在提交…');
   assert.equal(disabled(pending), true);
   assert.equal(pending.getAttribute('aria-busy'), 'true');
   await h.event(pending, 'click');

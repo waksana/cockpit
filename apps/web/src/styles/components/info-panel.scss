@@ -3,7 +3,7 @@
 //   • narrowest (<600px): full page (covers the chat)
 //   • medium (600–1199px): floating overlay over the chat + scrim
 //   • wide (≥1200px): docked — the chat compresses to make room, no scrim
-// Rounded section cards inside; read-only.
+// Rounded section cards inside.
 
 .info-panel-scrim {
   position: fixed;
@@ -113,6 +113,14 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+.info-meta-details,
+.info-model-details {
+  color: var(--secondary-text-color);
+  font-size: var(--font-size-13);
+  min-width: 0;
+  summary { cursor: pointer; }
+  &[open] > summary { margin-bottom: 0.5rem; }
+}
 
 .info-empty {
   display: flex; align-items: center; gap: 0.5rem;
@@ -160,12 +168,27 @@
 // Model controls (model / effort / context) — labeled rows in the info panel.
 .info-controls { display: flex; flex-direction: column; gap: 0.5rem; padding-top: 0.2rem; }
 .info-controls .info-empty { min-width: 0; overflow-wrap: anywhere; }
-.info-model-current { display: block; padding-inline: 1rem; overflow-wrap: anywhere; }
+.info-model-current {
+  color: var(--secondary-text-color);
+  font-size: var(--font-size-13);
+  overflow-wrap: anywhere;
+  padding-block: 0.1rem 0.35rem;
+}
 .info-model-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.info-model-status {
+  color: var(--secondary-text-color);
+  &[role='alert'] { color: var(--danger-color); }
+}
 .info-model-result {
+  display: flex;
   flex-direction: column;
-  align-items: stretch;
+  gap: 0.5rem;
+}
+.info-model-result,
+.info-model-status,
+.info-model-details {
   min-width: 0;
+  font-size: var(--font-size-13);
   overflow-wrap: anywhere;
   pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 }

@@ -71,8 +71,15 @@ owns the current grouping and update contract.
 
 `PaneHeader` and `StateNotice` share presentation, not routing or resource state.
 The management route keeps its header and back control during lazy loading.
-First loads use a pane placeholder; refreshes retain content with an inline
-status. Pending actions report submission without claiming native application.
+First loads use a pane placeholder. Session settings refreshes retain content
+and use the header indicator; a toggle mutation instead owns its row's feedback,
+including its final readback, without additional page-level loading indicators.
+Same-connection accepted data remains usable during a healthy refresh; errors,
+reconnections and disabled resources do not imply usable current values.
+MCP mutations keep the native per-session serial constraint (including reported
+active operations and settling connections); Skills mutations are isolated per row.
+No optimistic enablement, client mutation queue or native-state mirror is added.
+Pending actions report submission without claiming native application.
 Consumers must use the existing session resource's availability, including
 closing and resume-required states, rather than infer readiness from old metadata.
 `PendingDecision` shares the ask/plan/elicitation card frame while their callbacks

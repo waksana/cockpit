@@ -50,6 +50,15 @@ export function ResourceStatus({ status, failed, pending, placement = 'inline' }
   return status ? <StateNotice kind={failed ? 'error' : pending ? 'loading' : 'info'} placement={placement}>{status}</StateNotice> : null;
 }
 
+export function RefreshButton({ onClick, disabled, pending }: {
+  onClick: () => void; disabled?: boolean; pending: boolean;
+}) {
+  return <button className="btn-icon rp manage-action" type="button" aria-label="刷新"
+    onClick={onClick} disabled={disabled} aria-busy={pending}>
+    {pending ? <span className="spinner" aria-hidden="true" /> : <Icon name="reload" size={20} />}
+  </button>;
+}
+
 export function SessionResume({ sessionId, required, onResumed }: {
   sessionId: string; required: boolean; onResumed?: () => void;
 }) {
