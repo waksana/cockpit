@@ -1,175 +1,236 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { createDocumentDrafts, createSessionDrafts, getSessionDraft } from './textDraft';
+import { afterEach, beforeEach, mock, test } from 'node:test';
+import { createSessionDrafts, getSessionDraft } from './textDraft';
+import { dismissUxError, getUxErrors } from './errorReporter';
 
-function fixture(legacy?: Parameters<typeof createSessionDrafts>[1]) {
+const key = (id: string) => `cockpit:chat-draft:${id}`;
+function fixture() {
   const values = new Map<string, string>();
   const storage = {
-    getItem: key => values.get(key) ?? null,
-    setItem: (key, value) => { values.set(key, value); },
-  } satisfies Pick<Storage, 'getItem' | 'setItem'>;
-  const drafts = createSessionDrafts(storage, legacy);
-  return { values, drafts, storage };
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value); },
+    removeItem: (key: string) => { values.delete(key); },
+  };
+  return { values, storage, drafts: createSessionDrafts(storage) };
 }
 
-test('text drafts preserve old rich data and never import or overwrite its state', async () => {
-  const { values, drafts } = fixture();
-  const old = '{"version":1,"text":"old","attachment":{"url":"/uploads/retained"}}';
-  values.set('cockpit:composer:A', old);
-  const draft = drafts('A');
-  assert.equal(draft.getSnapshot().text, '');
-  draft.edit('Native text');
-  assert.equal(await draft.send(async text => { assert.equal(text, 'Native text'); return true; }), true);
-  assert.equal(values.get('cockpit:composer:A'), old);
-  assert.equal(draft.getSnapshot().text, '');
+beforeEach(() => {
+  mock.method(console, 'error', () => {});
+  for (const error of getUxErrors()) dismissUxError(error.id);
+});
+afterEach(() => {
+  mock.restoreAll();
+  for (const error of getUxErrors()) dismissUxError(error.id);
 });
 
-test('a late native acknowledgement preserves newer edits and a different session draft', async () => {
-  const { drafts } = fixture();
+test('each session has one in-memory draft and one compact tab-storage record', () => {
+  const { drafts, values, storage } = fixture();
   const a = drafts('A'), b = drafts('B');
-  a.edit('First');
-  let acknowledge!: (accepted: boolean) => void;
-  const pending = a.send(() => new Promise(resolve => { acknowledge = resolve; }));
-  assert.equal(a.getSnapshot().pending, true);
-  assert.equal(await a.send(async () => assert.fail('Concurrent send')), false);
-  a.edit('Later');
-  b.edit('Other session');
-  acknowledge(true);
-  assert.equal(await pending, true);
-  assert.equal(a.getSnapshot().text, 'Later');
-  assert.equal(b.getSnapshot().text, 'Other session');
-  assert.equal(a.getSnapshot().pending, false);
+  assert.equal(drafts('A'), a);
+  assert.equal(values.size, 0, 'opening an empty draft must not write a record');
+  a.edit('  Native text\n');
+  b.edit('Separate text');
+  assert.deepEqual(JSON.parse(values.get(key('A'))!), { text: '  Native text\n', unconfirmed: false });
+  assert.deepEqual(createSessionDrafts(storage)('A').getSnapshot(), {
+    text: '  Native text\n', revision: 0, pending: false, unconfirmed: false,
+  });
+  a.edit('');
+  assert.equal(values.has(key('A')), false);
+  assert.equal(b.getSnapshot().text, 'Separate text');
+  assert.equal(values.size, 1);
 });
 
-test('unknown native submission retains text and never retries', async () => {
-  const { drafts } = fixture();
+test('subscribers receive stable snapshots until an edit and can unsubscribe', () => {
+  const draft = createSessionDrafts()('A');
+  const before = draft.getSnapshot();
+  assert.equal(draft.getSnapshot(), before);
+  let changes = 0;
+  const unsubscribe = draft.subscribe(() => { changes++; });
+  draft.edit('Edited');
+  assert.notEqual(draft.getSnapshot(), before);
+  assert.equal(before.text, '');
+  assert.equal(changes, 1);
+  unsubscribe();
+  draft.edit('Later');
+  assert.equal(changes, 1);
+});
+
+test('accepted sends clear only their original draft and remove its storage record', async () => {
+  const { drafts, values } = fixture();
   const draft = drafts('A');
-  draft.edit('Keep this');
-  let calls = 0;
-  assert.equal(await draft.send(async () => { calls++; throw new Error('Unknown outcome'); }), false);
-  assert.equal(calls, 1);
-  assert.equal(draft.getSnapshot().text, 'Keep this');
-  assert.ok(draft.getSnapshot().error);
+  draft.edit('  Send once  ');
+  let finish!: (value: boolean) => void;
+  const sending = draft.send(text => {
+    assert.equal(text, 'Send once');
+    return new Promise(resolve => { finish = resolve; });
+  });
+  assert.equal(draft.getSnapshot().text, '  Send once  ');
+  assert.equal(draft.getSnapshot().pending, true);
+  assert.deepEqual(JSON.parse(values.get(key('A'))!), { text: '  Send once  ', unconfirmed: true });
+  assert.equal(await draft.send(async () => assert.fail('Concurrent send')), false);
+  assert.equal(await draft.runAction(async () => assert.fail('Concurrent decision')), false);
+  finish(true);
+  assert.equal(await sending, true);
+  assert.deepEqual(draft.getSnapshot(), { text: '', revision: 2, pending: false, unconfirmed: false });
+  assert.equal(values.has(key('A')), false);
 });
 
-test('same SID in independent tabs has independent pending, late ACK and failure writes', async () => {
-  for (const accepted of [true, false]) {
-    const a = fixture(), b = fixture();
+for (const edited of ['New text', 'Original']) {
+  test(`late ACK cannot erase a newer revision even if the text is ${edited}`, async () => {
+    const { drafts, storage } = fixture();
+    const a = drafts('A'), b = drafts('B');
+    a.edit('Original');
+    let finish!: (value: boolean) => void;
+    const sending = a.send(() => new Promise(resolve => { finish = resolve; }));
+    a.edit('Intermediate');
+    a.edit(edited);
+    b.edit('Other session');
+    finish(true);
+    assert.equal(await sending, true);
+    assert.equal(a.getSnapshot().text, edited);
+    assert.equal(b.getSnapshot().text, 'Other session');
+    assert.equal(createSessionDrafts(storage)('A').getSnapshot().text, edited);
+  });
+}
+
+for (const failure of ['false', 'throw', 'undefined'] as const) {
+  test(`an unconfirmed ${failure} outcome keeps edits, survives reload and never resends`, async () => {
+    const { drafts, storage } = fixture();
+    const draft = drafts('A');
+    draft.edit('Keep this');
+    let calls = 0;
+    const sent = await draft.runAction(() => {
+      calls++;
+      if (failure === 'throw') throw new Error('Unknown outcome');
+      return failure === 'undefined' ? undefined : Promise.resolve(false);
+    });
+    assert.equal(sent, false);
+    assert.equal(calls, 1);
+    assert.equal(draft.getSnapshot().text, 'Keep this');
+    assert.equal(draft.getSnapshot().pending, false);
+    assert.equal(draft.getSnapshot().unconfirmed, true);
+    for (let reload = 0; reload < 2; reload++) {
+      assert.equal(createSessionDrafts(storage)('A').getSnapshot().unconfirmed, true);
+    }
+    draft.dismissNotice();
+    assert.equal(createSessionDrafts(storage)('A').getSnapshot().unconfirmed, false);
+    assert.equal(calls, 1);
+  });
+}
+
+test('reload converts an outstanding request to unknown without locking or replaying input', async () => {
+  const { drafts, storage } = fixture();
+  const draft = drafts('A');
+  draft.edit('Submitting');
+  let finish!: (value: boolean) => void;
+  const sending = draft.send(() => new Promise(resolve => { finish = resolve; }));
+  draft.edit('New unsent text');
+  const restored = createSessionDrafts(storage)('A');
+  assert.deepEqual(restored.getSnapshot(), {
+    text: 'New unsent text', revision: 0, pending: false, unconfirmed: true,
+  });
+  finish(false);
+  await sending;
+  assert.equal(draft.getSnapshot().text, 'New unsent text');
+});
+
+test('a rejected text send retains the draft and releases the pending lock without retrying', async () => {
+  const { drafts, storage } = fixture();
+  const draft = drafts('A');
+  draft.edit('Uncertain text');
+  let calls = 0;
+  assert.equal(await draft.send(async () => { calls++; throw new Error('Connection lost'); }), false);
+  assert.equal(calls, 1);
+  assert.deepEqual(createSessionDrafts(storage)('A').getSnapshot(), {
+    text: 'Uncertain text', revision: 0, pending: false, unconfirmed: true,
+  });
+  assert.equal(await draft.send(async () => true), true);
+  assert.equal(draft.getSnapshot().text, '');
+  assert.equal(draft.getSnapshot().unconfirmed, false);
+});
+
+for (const accepted of [true, false]) {
+  test(`separate and duplicated tabs cannot overwrite each other after ACK=${accepted}`, async () => {
+    const a = fixture(), b = fixture(), fresh = fixture();
     a.drafts('same').edit('Tab A');
-    let finish!: (accepted: boolean) => void;
-    const pending = a.drafts('same').send(() => new Promise(resolve => { finish = resolve; }));
-    b.drafts('same').edit('Tab B newer');
-    const storedB = b.values.get('cockpit:native-composer:same');
+    let finish!: (value: boolean) => void;
+    const sending = a.drafts('same').send(() => new Promise(resolve => { finish = resolve; }));
+    // Duplicate Tab copies sessionStorage once; subsequent writes are independent.
+    for (const [name, value] of a.values) b.values.set(name, value);
+    const copied = b.drafts('same');
+    assert.equal(copied.getSnapshot().unconfirmed, true);
+    assert.equal(copied.getSnapshot().pending, false);
+    copied.edit('Tab B newer');
+    const storedB = b.values.get(key('same'));
     finish(accepted);
-    assert.equal(await pending, accepted);
-    assert.equal(b.values.get('cockpit:native-composer:same'), storedB);
+    assert.equal(await sending, accepted);
+    assert.equal(b.values.get(key('same')), storedB);
     assert.equal(createSessionDrafts(b.storage)('same').getSnapshot().text, 'Tab B newer');
     assert.equal(createSessionDrafts(a.storage)('same').getSnapshot().text, accepted ? '' : 'Tab A');
+    assert.equal(fresh.drafts('same').getSnapshot().text, '');
+  });
+}
+
+test('blank sends do nothing, and decision ACKs never clear unrelated typed text', async () => {
+  const { drafts, values } = fixture();
+  const draft = drafts('A');
+  assert.equal(await draft.send(async () => assert.fail('Empty send')), false);
+  assert.equal(values.size, 0);
+  draft.edit(' \n ');
+  assert.equal(await draft.send(async () => assert.fail('Whitespace send')), false);
+  draft.edit('Keep for later');
+  assert.equal(await draft.runAction(async () => true), true);
+  assert.equal(draft.getSnapshot().text, 'Keep for later');
+  draft.edit('');
+  assert.equal(await draft.runAction(async () => false), false);
+  assert.deepEqual(JSON.parse(values.get(key('A'))!), { text: '', unconfirmed: true });
+  draft.dismissNotice();
+  assert.equal(values.has(key('A')), false);
+});
+
+test('malformed tab records stay untouched and report read failures', () => {
+  for (const stored of ['', 'null', '[]', '{}', '{"text":1,"unconfirmed":false}', '{"text":"a","unconfirmed":"yes"}']) {
+    const { values, drafts } = fixture();
+    values.set(key('A'), stored);
+    assert.equal(drafts('A').getSnapshot().text, '');
+    assert.equal(values.get(key('A')), stored);
+    assert.ok(getUxErrors().some(error => error.message.includes('无法读取标签页草稿')));
   }
 });
 
-test('tab storage recovers on reload and imports legacy localStorage read-only once', async () => {
-  const old = JSON.stringify({ version: 1, text: 'Legacy text', pending: true });
-  let reads = 0;
-  const legacy = { getItem: () => { reads++; return old; } };
-  const tab = fixture(legacy);
-  const draft = tab.drafts('reload');
-  assert.equal(draft.getSnapshot().text, 'Legacy text');
-  assert.ok(draft.getSnapshot().error);
-  assert.equal(tab.drafts('reload'), draft, 'same-document remount retains ownership');
-  const reloaded = createSessionDrafts(tab.storage, legacy)('reload');
-  assert.equal(reads, 1);
-  assert.ok(reloaded.getSnapshot().error, 'unknown send survives multiple reloads');
-  reloaded.edit('New tab-owned text');
-  let finish!: (accepted: boolean) => void;
-  const pending = reloaded.send(() => new Promise(resolve => { finish = resolve; }));
-  const interrupted = createSessionDrafts(tab.storage, legacy)('reload');
-  assert.equal(interrupted.getSnapshot().pending, false);
-  assert.ok(interrupted.getSnapshot().error);
-  assert.equal(interrupted.getSnapshot().text, 'New tab-owned text');
-  finish(true);
-  await pending;
-  assert.equal(createSessionDrafts(tab.storage, legacy)('reload').getSnapshot().text, '');
-  assert.equal(reads, 1, 'cleared tab draft must not re-import shared legacy text');
-});
-
-test('storage failures keep the in-document draft and submission usable', async t => {
-  t.mock.method(console, 'error', () => {});
+test('storage errors are visible without disabling in-memory editing or sending', async () => {
   const draft = createSessionDrafts({
-    getItem() { throw null; },
-    setItem() { throw new Error('Quota exceeded'); },
+    getItem() { throw new Error('Read blocked'); },
+    setItem() { throw new Error('Write blocked'); },
+    removeItem() { throw new Error('Remove blocked'); },
   })('blocked');
-  draft.edit('Still here');
-  assert.equal(draft.getSnapshot().text, 'Still here');
-  assert.equal(await draft.send(async () => false), false);
-  assert.equal(draft.getSnapshot().text, 'Still here');
-  assert.ok(draft.getSnapshot().error);
+  assert.ok(getUxErrors().some(error => error.message.includes('Read blocked')));
+  draft.edit('Still usable');
+  assert.equal(draft.getSnapshot().text, 'Still usable');
+  assert.ok(getUxErrors().some(error => error.message.includes('Write blocked')));
+  assert.equal(await draft.send(async () => true), true);
+  assert.equal(draft.getSnapshot().text, '');
+  assert.ok(getUxErrors().some(error => error.message.includes('Remove blocked')));
 });
 
-test('the browser persists only document-owned localStorage records and never rewrites legacy drafts', async t => {
-  const tab = fixture();
-  const persistent = fixture();
-  const shared = JSON.stringify({ version: 1, text: 'Shared legacy draft' });
-  persistent.values.set('cockpit:native-composer:browser-owned', shared);
+test('browser drafts use only the current sessionStorage key, with no other storage or identity access', async t => {
+  const { storage, values } = fixture();
+  const reads: string[] = [];
   const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: {
-    sessionStorage: tab.storage,
-    localStorage: persistent.storage,
+    sessionStorage: {
+      ...storage,
+      getItem(name: string) { reads.push(name); return storage.getItem(name); },
+    },
+    get localStorage() { return assert.fail('Drafts must not access persistent or historical storage'); },
+    get crypto() { return assert.fail('Drafts need no generated owner identity'); },
   } });
   t.after(() => original ? Object.defineProperty(globalThis, 'window', original) : Reflect.deleteProperty(globalThis, 'window'));
-  const draft = getSessionDraft('browser-owned');
-  assert.equal(draft.getSnapshot().text, 'Shared legacy draft');
-  draft.edit('Owned by this tab');
+  const draft = getSessionDraft('browser');
+  assert.deepEqual(reads, [key('browser')]);
+  assert.equal(values.size, 0);
+  draft.edit('Tab-only text');
+  assert.deepEqual(JSON.parse(values.get(key('browser'))!), { text: 'Tab-only text', unconfirmed: false });
   assert.equal(await draft.send(async () => true), true);
-  assert.equal(persistent.values.get('cockpit:native-composer:browser-owned'), shared);
-  const records = [...persistent.values].filter(([key]) => key.startsWith('cockpit:native-composer-document:'));
-  assert.equal(records.length, 1);
-  assert.deepEqual(JSON.parse(records[0][1]), {
-    version: 1, text: '', pending: false,
-  });
-  assert.equal(createDocumentDrafts('browser-reload', persistent.storage, tab.storage)('browser-owned').getSnapshot().text, '');
-});
-
-test('duplicated tabs fork persisted ownership before pending, failure and late ACK writes', async () => {
-  for (const accepted of [true, false]) {
-    const persistent = fixture(), tabA = fixture(), tabB = fixture();
-    const a = createDocumentDrafts('A', persistent.storage, tabA.storage)('same');
-    a.edit('Tab A submitting');
-    let finish!: (accepted: boolean) => void;
-    const pending = a.send(() => new Promise(resolve => { finish = resolve; }));
-    for (const [key, value] of tabA.values) tabB.values.set(key, value); // Browser Duplicate Tab.
-    const b = createDocumentDrafts('B', persistent.storage, tabB.storage)('same');
-    assert.ok(b.getSnapshot().error, 'inherited pending text is unconfirmed, not resent');
-    b.edit('Tab B newer');
-    const bPointer = tabB.values.get('cockpit:native-composer:same');
-    const ownedB = [...persistent.values].find(([key]) => key.includes('"B"'));
-    assert.ok(ownedB);
-    finish(accepted);
-    assert.equal(await pending, accepted);
-    assert.equal(tabB.values.get('cockpit:native-composer:same'), bPointer);
-    assert.equal(persistent.values.get(ownedB[0]), ownedB[1]);
-    const reload = createDocumentDrafts('B-reload', persistent.storage, tabB.storage)('same');
-    assert.equal(reload.getSnapshot().text, 'Tab B newer');
-    assert.ok(reload.getSnapshot().error);
-    assert.equal(persistent.values.get(ownedB[0]), ownedB[1], 'reload keeps predecessor records intact');
-    const retained = [...persistent.values];
-    const fresh = createDocumentDrafts('fresh-tab', persistent.storage, fixture().storage)('same');
-    assert.equal(fresh.getSnapshot().text, '', 'a fresh tab does not silently choose another tab’s draft');
-    for (const [key, value] of retained) assert.equal(persistent.values.get(key), value, 'closing a tab does not erase its persistent records');
-  }
-});
-
-test('owned draft storage errors fall back to reloadable tab snapshots without losing in-page edits', t => {
-  t.mock.method(console, 'error', () => {});
-  const tab = fixture();
-  const persistent = { getItem: () => null, setItem() { throw new Error('Persistent storage blocked'); } };
-  const draft = createDocumentDrafts('blocked-local', persistent, tab.storage)('same');
-  draft.edit('Recoverable in this tab');
-  assert.equal(createDocumentDrafts('reload', persistent, tab.storage)('same').getSnapshot().text, 'Recoverable in this tab');
-  const local = fixture();
-  const blockedTab = { getItem: () => null, setItem() { throw null; } };
-  const memory = createDocumentDrafts('blocked-tab', local.storage, blockedTab)('same');
-  memory.edit('Still persistent');
-  assert.equal(memory.getSnapshot().text, 'Still persistent');
-  assert.ok([...local.values.values()].some(value => JSON.parse(value).text === 'Still persistent'));
+  assert.equal(values.size, 0);
 });

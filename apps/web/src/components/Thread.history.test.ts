@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatSession } from '../net/types';
+import { createSessionDrafts } from '../lib/textDraft';
+import { Composer } from './Composer';
 import { Thread } from './Thread';
 
 const base: ChatSession = {
@@ -36,14 +38,36 @@ test('plan cards render only native actions in offered order, including no actio
   assert.doesNotMatch(html, /自动执行/);
 });
 
-test('composer discloses independent local draft ownership and the fresh-tab recovery tradeoff', () => {
+test('composer keeps the input without a persistent draft-storage explanation', () => {
   const html = renderToStaticMarkup(createElement(Thread, {
     session: base, onLoadMore() { assert.fail('render must not load history'); },
   }));
-  assert.match(html, /本地草稿保存说明/);
-  assert.match(html, /刷新可恢复/);
-  assert.match(html, /新开的标签页不会自动接管原草稿/);
-  assert.match(html, /本地记录仍保留/);
+  assert.match(html, /aria-label="消息输入"/);
+  assert.doesNotMatch(html, /chat-draft-storage|本地草稿保存说明|新开的标签页不会自动接管原草稿/);
+});
+
+test('composer displays a dismissible notice only for unconfirmed outcomes, not normal editing or sending', async () => {
+  const draft = createSessionDrafts()('composer-notice');
+  const renderComposer = () => renderToStaticMarkup(createElement(Composer, {
+    draft, onSend: async () => assert.fail('render must not send'),
+  }));
+  draft.edit('Retained input');
+  assert.doesNotMatch(renderComposer(), /chat-input-notice/);
+  let finish!: (accepted: boolean) => void;
+  const sending = draft.send(() => new Promise(resolve => { finish = resolve; }));
+  const pending = renderComposer();
+  assert.match(pending, /aria-label="正在提交"/);
+  assert.doesNotMatch(pending, /chat-input-notice|<textarea[^>]*disabled/);
+  finish(false);
+  await sending;
+  const failed = renderComposer();
+  assert.match(failed, /chat-input-notice" role="alert"/);
+  assert.match(failed, /aria-label="关闭发送提示"/);
+  assert.match(failed, /重发前请先检查会话/);
+  draft.dismissNotice();
+  const dismissed = renderComposer();
+  assert.doesNotMatch(dismissed, /chat-input-notice/);
+  assert.match(dismissed, /Retained input<\/textarea>/);
 });
 
 test('cold history loading is not presented as an empty conversation', () => {

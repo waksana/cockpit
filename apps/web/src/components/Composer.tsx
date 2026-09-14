@@ -17,7 +17,7 @@ interface ComposerProps {
   onFocusPin?: () => void;
 }
 export function Composer({ disabled, busy, placeholder, draft, onSend, sendBlocked, onFocusPin }: ComposerProps) {
-  const { text, pending, error } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
+  const { text, pending, unconfirmed } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const active = useRef(false);
   const textarea = useRef<HTMLTextAreaElement | null>(null);
   useLayoutEffect(() => {
@@ -40,14 +40,10 @@ export function Composer({ disabled, busy, placeholder, draft, onSend, sendBlock
     void onSend();
   };
   return <>
-    {error && <div className="chat-input-notice" role="alert" tabIndex={0}>
-      <span>{error}</span>
-      <button type="button" onClick={draft.dismissError} aria-label="关闭发送提示"><Icon name="close" size={18} /></button>
+    {unconfirmed && <div className="chat-input-notice" role="alert" tabIndex={0}>
+      <span>发送失败或结果尚未确认，草稿已保留；重发前请先检查会话。</span>
+      <button type="button" onClick={draft.dismissNotice} aria-label="关闭发送提示"><Icon name="close" size={18} /></button>
     </div>}
-    <details className="chat-draft-storage">
-      <summary>本地草稿保存说明</summary>
-      <p>草稿按标签页独立保存，刷新可恢复。关闭后新开的标签页不会自动接管原草稿；旧的浏览器本地记录仍保留，不会相互覆盖。</p>
-    </details>
     <div className="chat-input">
       <textarea ref={textarea} className="chat-input-message" aria-label="消息输入" value={text}
         disabled={disabled} onChange={event => update(event.target.value)} placeholder={placeholder ?? '输入消息…'} rows={1}
