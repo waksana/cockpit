@@ -82,7 +82,7 @@ printf '%s\\n' 'This_is_a_deliberately_long_terminal_argument_that_must_remain_o
 ## 下一步
 
 逐组件查看展开、聚焦、失败与窄屏状态，再决定改动或保留。`),
-  message('reply', 'user', '优先保证清晰和稳定。', { subtype: 'ask-reply' }),
+  message('reply', 'user', '优先保证清晰和稳定。', { subtype: 'ask-reply', replyQuestion: '你希望这次调整优先保证什么？' }),
   message('followup', 'assistant', '收到。保留现有 Solarized 色彩与文档式助手回复，不重做全站风格。'),
 ];
 
@@ -191,7 +191,7 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   if (scenario === 'user-time') session.messages = [
     message('time-short', 'user', '收到。'),
     message('time-long', 'user', '这是一段合成的多行用户消息。\n请把时间放在气泡外，并紧贴对应气泡。\n保留文字、附件、复制操作和时间的自然归属。'),
-    message('time-reply', 'user', '选择已确认。', { subtype: 'ask-reply' }),
+    message('time-reply', 'user', '选择已确认。', { subtype: 'ask-reply', replyQuestion: '是否保留当前选择？' }),
     message('time-assistant', 'assistant', '助手的时间来源与展示分组保持不变。'),
   ];
   if (scenario === 'streaming' || scenario === 'cancelling') Object.assign(session, {

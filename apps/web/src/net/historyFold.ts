@@ -62,6 +62,13 @@ export class HistoryFoldIndex {
       if (event.type === 'assistant.message') {
         const owners = ownersOf(event);
         for (const owner of owners.length ? owners : ['']) this.addDependency(`message:${owner}\0${messageId(event)}`, item);
+        if (Array.isArray(event.data.toolRequests)) for (const request of event.data.toolRequests) {
+          if (!request || typeof request !== 'object' || typeof request.toolCallId !== 'string') continue;
+          if (request.name === 'task') this.addDependency(`task:${request.toolCallId}`, item);
+          for (const owner of owners.length ? owners : ['']) {
+            this.addDependency(`tool:${owner}\0${request.toolCallId}`, item);
+          }
+        }
       }
       if (event.type === 'assistant.reasoning' && typeof event.data.reasoningId === 'string') {
         const owners = ownersOf(event);
@@ -75,9 +82,14 @@ export class HistoryFoldIndex {
         else {
           const owners = ownersOf(event);
           for (const owner of owners.length ? owners : ['']) this.addDependency(`tool:${owner}\0${event.data.toolCallId}`, item);
-          if (!owners.length && event.type === 'tool.execution_complete') {
-            this.addDependency(`unowned-tool:${event.data.toolCallId}`, item);
+          if (event.type === 'tool.execution_start' && (event.parentToolCallId || event.data.parentToolCallId)) {
+            this.addDependency(`legacy-tool:${event.data.toolCallId}`, item);
           }
+        }
+      }
+      if (event.type === 'subagent.started') {
+        for (const owner of [event.data.toolCallId, event.data.agentId, event.agentId]) {
+          if (typeof owner === 'string') this.addDependency(`owner-definition:${owner}`, item);
         }
       }
       for (const owner of ownersOf(event)) this.addDependency(`owner:${owner}`, item);
@@ -94,10 +106,16 @@ export class HistoryFoldIndex {
   dependencies(event: DisplayEvent, knownOwners: Set<string>): OrderedEvent[] {
     const keys: string[] = [];
     for (const owner of this.ownerAliases([ownerOf(event)])) keys.push(`reference:${owner}\0${event.id}`);
-    if (event.type === 'tool.execution_start' && typeof event.data.toolCallId === 'string') {
+    if ((event.type === 'tool.execution_start' || event.type === 'user_input.requested')
+      && typeof event.data.toolCallId === 'string') {
       const owners = ownersOf(event);
       for (const owner of this.ownerAliases(owners.length ? owners : [''])) keys.push(`tool:${owner}\0${event.data.toolCallId}`);
-      keys.push(`unowned-tool:${event.data.toolCallId}`, `task:${event.data.toolCallId}`);
+      if (event.type === 'tool.execution_start' && (event.parentToolCallId || event.data.parentToolCallId)) {
+        keys.push(`tool:\0${event.data.toolCallId}`, `legacy-tool:${event.data.toolCallId}`);
+        keys.push(`owner-definition:${event.data.parentToolCallId ?? event.parentToolCallId}`);
+      }
+      if (!owners.length) keys.push(`legacy-tool:${event.data.toolCallId}`);
+      keys.push(`task:${event.data.toolCallId}`);
     }
     if (event.type === 'assistant.reasoning' && typeof event.data.reasoningId === 'string') {
       const owners = ownersOf(event);
@@ -110,13 +128,22 @@ export class HistoryFoldIndex {
       for (const owner of this.ownerAliases(owners.length ? owners : [''])) keys.push(`message:${owner}\0${messageId(event)}`);
       if (Array.isArray(event.data.toolRequests)) {
         for (const request of event.data.toolRequests) {
-          if (request && typeof request === 'object' && request.name === 'task' && typeof request.toolCallId === 'string') {
+          if (!request || typeof request !== 'object' || typeof request.toolCallId !== 'string') continue;
+          if (request.name === 'task') {
             keys.push(`task:${request.toolCallId}`);
+            for (const owner of owners) keys.push(`owner-definition:${owner}`);
+          }
+          else for (const owner of this.ownerAliases(owners.length ? owners : [''])) {
+            keys.push(`tool:${owner}\0${request.toolCallId}`);
+            if (!owner) keys.push(`legacy-tool:${request.toolCallId}`);
           }
         }
       }
     }
     if (event.type === 'subagent.started') {
+      for (const owner of [event.data.parentId, event.data.parentToolCallId, event.parentToolCallId, event.agentId]) {
+        if (typeof owner === 'string') keys.push(`owner-definition:${owner}`);
+      }
       const owners = [event.data.toolCallId, event.data.agentId, event.agentId]
         .filter((owner): owner is string => typeof owner === 'string' && !knownOwners.has(owner));
       for (const owner of this.ownerAliases(owners)) if (!knownOwners.has(owner)) keys.push(`owner:${owner}`);
@@ -131,6 +158,7 @@ export type MessageOrders = WeakMap<FoldState, Map<string, number>>;
 /** Merge only projected dependencies; untouched messages keep their object identity. */
 export function mergeHistoryFold(
   prefix: FoldState, suffix: FoldState, orders: MessageOrders, changed: Set<string>,
+  rootTools = new Set(prefix.messages.flatMap(message => message.toolCalls?.map(tool => tool.toolCallId) ?? [])),
 ): FoldState {
   const prefixOrders = orders.get(prefix) ?? new Map<string, number>();
   const suffixOrders = orders.get(suffix) ?? new Map<string, number>();
@@ -138,16 +166,46 @@ export function mergeHistoryFold(
     suffixOrders.set(id, Math.min(order, suffixOrders.get(id) ?? Infinity));
   }
   orders.set(suffix, suffixOrders);
+  for (const [id, metadata] of prefix.toolMetadata) {
+    suffix.toolMetadata.set(id, { ...metadata, ...suffix.toolMetadata.get(id) });
+  }
   for (const message of prefix.messages) {
     const tool = message.toolCalls?.[0];
     if (!tool || prefix.toolMsg.has(tool.toolCallId) || !suffix.toolMsg.has(tool.toolCallId)) continue;
     const actual = suffix.messages[suffix.byId.get(message.id) ?? -1]?.toolCalls?.[0];
-    if (actual) Object.assign(tool, { title: actual.title,
+    const metadata = suffix.toolMetadata.get(tool.toolCallId);
+    if (actual) Object.assign(tool, { title: metadata?.executionTitle ?? metadata?.title ?? actual.title,
       ...(actual.name !== undefined ? { name: actual.name } : {}),
       ...(actual.args !== undefined ? { args: actual.args } : {}) });
   }
   const replacements = new Map(prefix.messages.map(message => [message.id, message]));
+  for (const toolCallId of prefix.toolMetadata.keys()) {
+    const metadata = suffix.toolMetadata.get(toolCallId)!;
+    const replyId = `reply-${toolCallId}`;
+    const reply = replacements.get(replyId) ?? suffix.messages[suffix.byId.get(replyId) ?? -1];
+    if (reply && metadata.question && reply.replyQuestion !== metadata.question) {
+      reply.replyQuestion = metadata.question;
+      changed.add(replyId);
+    }
+  }
   const removed = new Set([...prefix.toolMsg].filter(([, owner]) => !owner).map(([id]) => `tool-${id}`));
+  if (prefix.agentIds.size) for (const [id, metadata] of prefix.toolMetadata) {
+    if (metadata.legacyOwner && rootTools.has(id) && !prefix.byId.has(`reply-${id}`)) {
+      removed.add(`reply-${id}`);
+      changed.add(`reply-${id}`);
+    }
+  }
+  if (!prefix.agentIds.size && !suffix.agentIds.size) {
+    for (const child of states(prefix).slice(1)) for (const [id, metadata] of child.toolMetadata) {
+      // An explicitly parented legacy start can move a result-only root row
+      // into its child. Never remove an independently observed root invocation.
+      const messageId = `tool-${id}`;
+      if (metadata.legacyOwner && !prefix.byId.has(messageId) && !suffix.toolMsg.has(id)
+        && !suffix.toolMetadata.has(id) && !suffix.askToolIds.has(id)) {
+        removed.add(messageId);
+      }
+    }
+  }
   for (const [rid, response] of prefix.reasoning) {
     const previous = suffix.reasoning.get(rid);
     if (previous && previous !== response && suffix.messages[suffix.byId.get(previous) ?? -1]?.incomplete) {
@@ -169,7 +227,7 @@ export function mergeHistoryFold(
       const status = old.status === 'running' && info.status !== 'running' ? 'activity' : old.status;
       card.subagent = { ...info, status, ...(old.error ? { error: old.error } : {}) };
     }
-    const merged = existing ? mergeHistoryFold(sub, existing, orders, changed) : sub;
+    const merged = existing ? mergeHistoryFold(sub, existing, orders, changed, rootTools) : sub;
     suffix.subFolds.set(tool, merged);
     if (card?.subMessages) card.subMessages = merged.messages;
   }

@@ -1,5 +1,4 @@
 import type { ReactNode } from 'react';
-import { Icon } from './Icon';
 
 export function ActivityHeader({ icon, title, status, accessibleStatus = status, className = '', disclosure }: {
   icon: ReactNode;
@@ -13,7 +12,6 @@ export function ActivityHeader({ icon, title, status, accessibleStatus = status,
     <span className="activity-icon">{icon}</span>
     <span className="activity-title" title={title}>{title}</span>
     {status && <span className="activity-status">{status}</span>}
-    {disclosure && <span className="activity-chevron"><Icon name={disclosure.open ? 'up' : 'down'} size={14} /></span>}
   </>;
   return disclosure
     ? <button type="button" className={`activity-head ${className}`} aria-expanded={disclosure.open}

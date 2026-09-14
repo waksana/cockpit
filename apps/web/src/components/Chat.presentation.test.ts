@@ -129,15 +129,15 @@ test('the native composer keeps a compact send action without parked file or voi
   assert.doesNotMatch(html, /添加文件一起讨论/);
 });
 
-test('decision details stay in their cards rather than inflating an empty textarea placeholder', t => {
+test('decision send semantics stay visible without inflating an empty textarea placeholder', t => {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
   t.after(() => original ? Object.defineProperty(globalThis, 'window', original) : Reflect.deleteProperty(globalThis, 'window'));
   for (const [scene, placeholder] of [['ask', '输入回答…'], ['plan', '输入新指令…'], ['compacting', '正在压缩…']] as const) {
     const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession(scene), onLoadMore() {} }));
     assert.ok(html.includes(`placeholder="${placeholder}"`), html);
-    if (scene === 'plan') assert.match(html, /或在下方直接输入新指令/);
-    if (scene === 'ask') assert.match(html, /也可以在下方输入自己的回答/);
+    if (scene === 'plan') assert.match(html, /发送新指令将替代当前待确认计划/);
+    if (scene === 'ask') assert.match(html, /输入内容将回答当前问题/);
   }
 });
 
@@ -148,7 +148,7 @@ test('a choice-only request keeps the draft editable but does not offer a freefo
   const session = fixtureSession('choice-only');
   getSessionDraft(session.sessionId).edit('Retained draft');
   const html = renderToStaticMarkup(createElement(Thread, { session, onLoadMore() {} }));
-  assert.match(html, /class="chat-input-btn send rp" disabled="" aria-label="发送"/);
+  assert.match(html, /class="chat-input-btn send rp" disabled="" aria-label="提交回答"/);
   assert.match(html, /<textarea[^>]*aria-label="消息输入"[^>]*>Retained draft<\/textarea>/);
   assert.doesNotMatch(html, /<textarea[^>]*disabled/);
 });
@@ -181,6 +181,21 @@ test('user time stays outside its bubble without external copy controls on eithe
   assert.match(html, /class="doc-time"/);
 });
 
+test('question replies retain the original question without an emoji or repeated options', () => {
+  const session = fixtureSession('empty');
+  session.messages = [
+    { id: 'reply', role: 'user', subtype: 'ask-reply', content: 'Yes', replyQuestion: 'Keep this setting?', timestamp: 1 },
+    { id: 'missing', role: 'user', subtype: 'ask-reply', content: 'Unlinked answer', timestamp: 2 },
+  ];
+  const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
+  assert.match(html, /class="ask-reply-question" aria-label="回答的问题"/);
+  assert.match(html, /Keep this setting\?/);
+  assert.match(html, /原问题记录不可用/);
+  assert.match(html, /Unlinked answer/);
+  assert.doesNotMatch(html, /↩|ask-reply-tag/);
+  assert.ok(html.indexOf('Keep this setting?') < html.indexOf('<p>Yes</p>'));
+});
+
 test('chat leaves right-click and text selection to the browser instead of mounting a copy menu', () => {
   const thread = readFileSync(new URL('./Thread.tsx', import.meta.url), 'utf8');
   assert.doesNotMatch(thread, /onContextMenu|ContextMenu|MessageMenu|msgMenu|openMsgMenu|copyNotice|messageCopyText/);
@@ -190,9 +205,9 @@ test('chat leaves right-click and text selection to the browser instead of mount
   assert.doesNotMatch(css, /\.chat-copy-notice/);
 });
 
-test('thought, tool and skill use one single-line activity header, with static skill records', () => {
+test('tool and thought rows stay single-line while expanded skill records can show their full name', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.activity-head \{[^}]*height: 36px/);
+  assert.match(css, /\.activity-head \{[^}]*height: 44px/);
   assert.match(css, /\.activity-title \{[^}]*overflow: hidden;[^}]*white-space: nowrap;[^}]*text-overflow: ellipsis/);
   assert.doesNotMatch(css, /\.tool-name|\.skill-label|\.tool-title/);
   assert.match(css, /\.msg-tools \{[^}]*gap: 4px/);
@@ -204,7 +219,7 @@ test('thought, tool and skill use one single-line activity header, with static s
   const skillSession = fixtureSession('empty');
   skillSession.messages = [{ id: 'skill', role: 'system', subtype: 'skill', content: 'example', timestamp: 1 }];
   const skills = renderToStaticMarkup(createElement(Thread, { session: skillSession, readOnly: true, onLoadMore() {} }));
-  assert.match(skills, /技能使用/);
+  assert.match(skills, /Skill · example/);
   assert.match(skills, /<div class="activity-head /);
   assert.match(skills, /skill · example/);
   assert.doesNotMatch(skills, /次工具调用/);
@@ -222,22 +237,23 @@ test('activity disclosure labels retain the full title, state and keyboard butto
   assert.match(html, /title="Long tool intent"/);
 });
 
-test('expanded tools share one surface and expose the full title only in their header', () => {
+test('expanded tools keep their header geometry and show full metadata only when clipped', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.msg-tool\[data-open=true\] \{[^}]*box-shadow: inset/);
-  assert.match(css, /\.msg-tool\[data-open=true\] > \.activity-head \{[^}]*height: auto/);
-  assert.match(css, /\.msg-tool\[data-open=true\] > \.activity-head \.activity-title \{[^}]*white-space: normal/);
+  assert.doesNotMatch(css, /\.msg-tool\[data-open=true\]/);
+  assert.match(css, /\.tool-label \{[^}]*max-width: min\(18ch, 45%\);[^}]*direction: rtl/);
+  assert.match(css, /\.tool-description \{[^}]*white-space: nowrap;[^}]*text-overflow: ellipsis/);
   assert.match(css, /\.activity-detail\.tool-detail \{[^}]*margin: 0;[^}]*border-inline-start: 0/);
-  const source = readFileSync(new URL('./Thread.tsx', import.meta.url), 'utf8');
-  assert.doesNotMatch(source, /tool-detail-title/);
-  assert.match(source, /tc\.name && tc\.name !== tc\.title/);
+  const source = readFileSync(new URL('./ToolCallRow.tsx', import.meta.url), 'utf8');
+  assert.match(source, /nameClipped &&/);
+  assert.match(source, /descriptionClipped && description/);
+  assert.doesNotMatch(source, /activity-chevron|activity-status/);
 });
 
 test('message process spacing does not retain old document or copy toolbar gaps', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.msg-group\[data-assistant-message\] > \.message\.is-doc \{\s*margin: 0/);
   assert.doesNotMatch(css, /\.msg-group\[data-assistant-message\] \+ \.msg-group\[data-assistant-message\]/);
-  assert.match(css, /\.message-process-content \{\s*padding: 0 0 0 22px/);
+  assert.match(css, /\.message-process-content \{\s*padding: 0;/);
   assert.match(css, /\.user-message \{[^}]*margin: 0/);
   assert.doesNotMatch(css, /\.message-actions|\.chat-copy\.is-text/);
   assert.doesNotMatch(css, /\.message-process \+ \.message-body/);

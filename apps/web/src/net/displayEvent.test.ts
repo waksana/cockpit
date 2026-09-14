@@ -56,3 +56,35 @@ test('skill context injections retain an event identity without hidden prompt by
   assert.deepEqual(retained.data, { source: 'skill-review' });
   assert.equal(retained.id, 'skill');
 });
+
+test('ordinary tool inputs use the same bounded serialization regardless of name', () => {
+  const args = { command: 'echo test', path: '/project', pattern: '**/*', custom: [1, true] };
+  for (const name of ['bash', 'view', 'grep', 'glob', 'edit', 'create', 'web_fetch', 'unknown']) {
+    assert.equal(toolArgsOf(name, args), JSON.stringify(args));
+    assert.match(toolArgsOf(name, { large: 'x'.repeat(5000) }), /已截断/);
+  }
+  assert.equal(toolArgsOf('unknown', 'native string input'), 'native string input');
+  assert.equal(toolArgsOf('unknown', false), 'false');
+  assert.equal(toolArgsOf('unknown', undefined), '');
+  assert.equal(toolArgsOf('ask_user', { question: 'Q?' }), '');
+  const invalid: { self?: unknown } = {};
+  invalid.self = invalid;
+  assert.throws(() => toolArgsOf('unknown', invalid), /circular/i, 'invalid input cannot silently become an empty detail');
+});
+
+test('retention keeps only explicit request titles and ask questions before discarding inputs', () => {
+  const question = 'Original question '.repeat(1000);
+  const start = displayEvent({ id: 'ask', type: 'tool.execution_start', data: {
+    toolName: 'ask_user', toolCallId: 'ask', arguments: { question, choices: ['Yes'], hidden: 'discard' },
+  } });
+  assert.equal(start.display?.askQuestion, question);
+  assert.equal(start.data.arguments, undefined);
+  const requests = displayEvent({ id: 'requests', type: 'assistant.message', data: { toolRequests: [
+    { toolCallId: 'ordinary', name: 'unknown', description: 'Native description', arguments: { large: 'x'.repeat(100_000) } },
+    { toolCallId: 'ask', name: 'ask_user', arguments: { question, choices: ['Yes'], hidden: 'discard' } },
+  ] } });
+  assert.deepEqual(requests.data.toolRequests, [
+    { toolCallId: 'ordinary', name: 'unknown', intentionSummary: 'Native description' },
+    { toolCallId: 'ask', name: 'ask_user', arguments: { question } },
+  ]);
+});
