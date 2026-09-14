@@ -9,6 +9,7 @@ import type { ChatSession } from '../net/types';
 import { useSessionResource } from '../lib/useSessionResource';
 import { SessionInfoPanel } from './SessionInfoPanel';
 import { SessionMcp, SessionSkills } from './Manage';
+import { CopyButton } from './CopyButton';
 
 // The same deterministic React DOM host as Thread.lifecycle, limited to the
 // controls these panels use. Reads and mutations stay in fixture-owned stores.
@@ -545,6 +546,7 @@ test('model Apply has a pending label and busy state while preserving native res
 });
 
 test('session ID copies its exact value without invoking a native operation', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
   const h = mount(t);
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
   const copied: string[] = [];
@@ -558,8 +560,44 @@ test('session ID copies its exact value without invoking a native operation', as
   }));
   const copy = h.container.querySelector('[aria-label="复制 session ID"]');
   assert.ok(copy);
+  assert.equal(copy.textContent, session.sessionId);
+  assert.equal(copy.querySelector('.tgico'), null, 'the ID itself is the target, not an extra copy glyph');
   await h.event(copy, 'click');
   assert.deepEqual(copied, [session.sessionId]);
   assert.match(copy.textContent, /已复制/);
+  assert.equal(copy.querySelector('.copy-value-text')?.getAttribute('aria-hidden'), 'true');
+  await act(async () => t.mock.timers.tick(2000));
+  assert.equal(copy.textContent, session.sessionId);
+  assert.equal(copy.querySelector('.copy-value-text')?.getAttribute('aria-hidden'), null);
+  assert.equal(h.container.querySelector('.chat-sr-only')?.textContent, '');
   assert.doesNotMatch(h.container.textContent, /工具权限|allow-all|交由原生处理/);
+});
+
+test('copy feedback is scoped to the value and unmount cancels its restoration timer', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const h = mount(t);
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const request = deferred<void>();
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {
+    clipboard: { writeText: async () => request.promise },
+  } });
+  t.after(() => previous ? Object.defineProperty(globalThis, 'navigator', previous) : Reflect.deleteProperty(globalThis, 'navigator'));
+  const render = (text: string, variant: 'value' | 'button' = 'value') =>
+    h.render(createElement(CopyButton, { text, variant, label: 'Copy value' }));
+  await render('first');
+  await h.event(h.container.querySelector('button')!, 'click');
+  await render('second');
+  await act(async () => request.resolve());
+  assert.equal(h.container.querySelector('button')?.textContent, 'second', 'old content cannot show a new value as copied');
+  await h.event(h.container.querySelector('button')!, 'click');
+  assert.match(h.container.textContent, /已复制/);
+  await h.render(null);
+  await render('third');
+  await act(async () => t.mock.timers.tick(2000));
+  assert.equal(h.container.querySelector('button')?.textContent, 'third');
+  await h.render(null);
+  await render('code', 'button');
+  await h.event(h.container.querySelector('button')!, 'click');
+  await act(async () => t.mock.timers.tick(2000));
+  assert.match(h.container.textContent, /已复制/, 'existing code/tool copy behavior stays unchanged');
 });

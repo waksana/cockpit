@@ -1,6 +1,6 @@
 // Shared layout and resource controls for session settings, MCP and Skills.
 
-import type { ReactNode } from 'react';
+import { useId, type ReactNode } from 'react';
 import { Icon } from './Icon';
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
@@ -66,6 +66,7 @@ export function SessionResume({ sessionId, required, onResumed }: {
   const session = useCockpit((s) => s.sessions.find((item) => item.sessionId === sessionId));
   const loadSession = useCockpit((s) => s.loadSession);
   const action = useKeyedAction(`resume:${sessionId}`);
+  const descriptionId = useId();
   if (!required) return null;
   const resume = () => action.run(async () => {
     const current = useCockpit.getState().sessions.find((item) => item.sessionId === sessionId);
@@ -73,11 +74,12 @@ export function SessionResume({ sessionId, required, onResumed }: {
     await loadSession(sessionId);
   }, onResumed);
   return (
-    <div className="info-section-content">
-      <p className="info-option-hint" role="status">会话未加载。恢复后可查看这些设置；聊天历史仍可直接查看。</p>
+    <div className="session-resume" role="group" aria-label="会话未加载">
+      <p id={descriptionId} className="session-resume-message" role="status">会话未加载。恢复后可查看这些设置；聊天历史仍可直接查看。</p>
       <button type="button" className="dialog-btn rp"
         disabled={!action.connected || !session || session.closing || session.status === 'running' || session.compacting || action.busy}
         aria-busy={action.busy}
+        aria-describedby={descriptionId}
         onClick={() => { void resume(); }}>{action.busy ? '恢复中…' : '恢复会话'}</button>
       {action.error && <ResourceStatus status={`恢复失败：${action.error}`} failed />}
     </div>

@@ -299,7 +299,8 @@ for (const page of nativePages) {
     const html = renderToStaticMarkup(page.render());
     assert.match(html, /会话未加载。恢复后可查看这些设置/);
     assert.match(html, /聊天历史仍可直接查看/);
-    assert.match(html, /class="dialog-btn rp" aria-busy="false">恢复会话<\/button>/);
+    assert.match(html, /class="dialog-btn rp" aria-busy="false" aria-describedby="[^"]+">恢复会话<\/button>/);
+    assert.match(html, /class="session-resume" role="group" aria-label="会话未加载"/);
     assert.doesNotMatch(html, /没有可用的 skill|本会话没有可用的 MCP|没有配置 MCP/);
     assert.match(html, /aria-label="刷新" disabled=""/);
   });
@@ -352,8 +353,8 @@ test('unloaded info settings expose explicit resume rather than global model val
 test('resume is disabled offline and after session removal without changing authoritative loaded state', (t) => {
   withSession(t, false, false);
   const render = (sessionId: string) => renderToStaticMarkup(createElement(SessionResume, { sessionId, required: true }));
-  assert.match(render(session.sessionId), /disabled="" aria-busy="false">恢复会话<\/button>/);
-  assert.match(render('removed'), /disabled="" aria-busy="false">恢复会话<\/button>/);
+  assert.match(render(session.sessionId), /disabled="" aria-busy="false" aria-describedby="[^"]+">恢复会话<\/button>/);
+  assert.match(render('removed'), /disabled="" aria-busy="false" aria-describedby="[^"]+">恢复会话<\/button>/);
 });
 
 test('retained settings resume without the removed close-and-reload operation', () => {

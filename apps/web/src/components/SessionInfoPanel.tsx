@@ -228,8 +228,8 @@ function InfoDetails({ session, onClose, onSetModel }: SessionInfoPanelProps) {
         <div className="info-section-name">{session.title}</div>
         <div className="info-section-content info-meta-cwd">{session.cwd || '工作目录：原生未提供'}</div>
         <div className="info-section-content info-session-id">
-          <div className="info-meta-id"><span className="info-meta-id-label">ID</span><code>{session.sessionId}</code></div>
-          <CopyButton text={session.sessionId} label="复制 session ID" />
+          <span className="info-meta-id-label">ID</span>
+          <CopyButton text={session.sessionId} label="复制 session ID" variant="value" />
         </div>
       </section>
 
