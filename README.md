@@ -2,6 +2,8 @@
 
 **原生 Copilot 的薄 Web / HTTP / MCP 接入层。** 会话身份、执行、历史、模型、
 队列和原生配置由 Copilot 管理；Cockpit 提供远程交互。
+后端忠实适配 Copilot 功能的子集；Web 使用所提供 API 的子集实现聊天工具，
+不要求后端覆盖全部 SDK，也不要求 Web 覆盖全部 API。
 
 ## 从这里开始
 
