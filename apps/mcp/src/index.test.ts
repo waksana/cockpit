@@ -40,6 +40,7 @@ let mcpToggleResult: unknown;
 let unconfirmedMcp = false;
 let scheduleEntries: ScheduleEntry[] = [];
 let scheduleStopped = true;
+let scheduleAddResult: unknown = { ok: true };
 const meta: SessionMeta = {
   sessionId: 'B', title: 'Backend title', cwd: '/only-on-backend/project',
   status: 'unloaded', loaded: false, lastActivity: 1,
@@ -130,6 +131,7 @@ mockHttp((res, req) => {
       return send({ items: panels[section] });
     }
     if (name === 'schedule/list') return send({ entries: scheduleEntries });
+    if (name === 'schedule/add') return send(scheduleAddResult);
     if (name === 'schedule/stop') return send({ ok: scheduleStopped });
     if (name === 'skills/global') return send({ skills: [{ name: 'review', description: 'Review changes', source: 'project' }] });
     if (name === 'session/chat') {
@@ -157,6 +159,10 @@ mockHttp((res, req) => {
     if (name === 'session/rewind' && Intents['session/rewind'].body.parse(body).rollbackFiles) {
       return send({ error: 'File rollback is unsupported; no mutation performed' }, 400);
     }
+    if (name === 'session/rewind') return send({
+      ok: true, result: { outcome: 'success', eventsRemoved: 2, restoredFiles: [], skippedFiles: [] },
+    });
+    if (name === 'setMode') return send({ ok: true, result: { status: 'applied', modelChanged: false } });
     return send({ ok: true });
 });
 process.env.COCKPIT_API_TOKEN = 'session-test-token';
@@ -184,6 +190,7 @@ beforeEach(() => {
   unconfirmedMcp = false;
   scheduleEntries = [];
   scheduleStopped = true;
+  scheduleAddResult = { ok: true };
   rejectedIntent = undefined;
   intentFailure = undefined;
   largeContent = initialLargeContent;
@@ -235,6 +242,26 @@ test('schedule markdown distinguishes model-controlled timing from ordinary sche
   assert.match(result.text, /#4 · once at .* \(one-shot\) · next/);
   assert.doesNotMatch(result.text, /#1[^\n]*(?:one-shot|\?)/);
 });
+
+for (const outcome of [
+  { ok: true, entry: { id: 9, prompt: 'Review', recurring: true, intervalMs: 60000, nextRunAt: 123 } },
+  { ok: true, entry: { id: 9, prompt: 'Review', recurring: true, intervalMs: 60000, nextRunAt: 123 },
+    error: 'Native acknowledgement warning' },
+  { ok: false, entry: { id: 9, prompt: 'Review', recurring: true, intervalMs: 60000, nextRunAt: 123 },
+    error: 'Entry created despite an unexpected acknowledgement' },
+  { ok: false, error: 'Acknowledgement or readback was inconclusive', possiblyCreated: true },
+  { ok: true },
+]) {
+  test(`schedule creation preserves its entire outcome without inferring absent effects: ${JSON.stringify(outcome)}`, async () => {
+    scheduleAddResult = outcome;
+    const result = await call('cockpit_schedule_add', { session_id: 'B', interval: '1m', prompt: 'Review' });
+    assert.equal(result.isError, !outcome.ok);
+    assert.deepEqual(JSON.parse(outcome.ok ? result.text : result.text.split('did not succeed: ')[1]!), outcome);
+    assert.deepEqual(requests.map(({ path, body }) => ({ path, body })), [{
+      path: '/intent/schedule/add', body: { sessionId: 'B', prompt: 'Review', interval: '1m' },
+    }]);
+  });
+}
 
 test('schedule panels retain the model-controlled label and next-run time in both tool formats', async t => {
   const previous = panels.schedules;
@@ -581,7 +608,7 @@ test('generic invocation surfaces authoritative unknown and retired name errors 
     requests.length = 0;
     const result = await call('cockpit_call_intent', { name, body: {} });
     assert.equal(result.isError, true, name);
-    assert.match(result.text, /HTTP 404: unknown intent/);
+    assert.match(result.text, /HTTP 404: .*unknown intent/);
     assert.deepEqual(requests.map(({ method, path }) => [method, path]), [['POST', `/intent/${name}`]]);
   }
 });
@@ -603,10 +630,10 @@ test('generic invocation rejects malformed names and non-object bodies before HT
 
 test('generic service, protocol and connection failures remain MCP errors without retries', async () => {
   for (const [failure, message] of [
-    [401, /HTTP 401: authoritative service failure/],
-    [421, /HTTP 421: authoritative service failure/],
-    [500, /HTTP 500: authoritative service failure/],
-    [503, /HTTP 503: authoritative service failure/],
+    [401, /HTTP 401: .*authoritative service failure/],
+    [421, /HTTP 421: .*authoritative service failure/],
+    [500, /HTTP 500: .*authoritative service failure/],
+    [503, /HTTP 503: .*authoritative service failure/],
     ['invalid-json', /returned invalid JSON/],
     ['connection', /Cannot connect.*socket hang up/],
   ] as const) {
@@ -619,23 +646,24 @@ test('generic service, protocol and connection failures remain MCP errors withou
   }
 });
 
-test('generic validation and purge confirmation are owned by backend, semantic purge forwards true', async () => {
+test('generic validation stays backend-owned and deletion has no added confirmation gate', async () => {
   for (const body of [{}, { value: 'wrong type' }]) {
     const result = await call('cockpit_call_intent', { name: 'future/operation', body });
     assert.equal(result.isError, true);
     assert.match(result.text, /HTTP 400/);
   }
-  for (const body of [{ sessionId: 'B' }, { sessionId: 'B', confirm: false }]) {
-    assert.equal((await call('cockpit_call_intent', { name: 'session/purge', body })).isError, true);
+  for (const body of [{ sessionId: 'B' }, { sessionId: 'B', confirm: false }, { sessionId: 'B', confirm: true }]) {
+    assert.equal((await call('cockpit_call_intent', { name: 'session/purge', body })).isError, false);
   }
-  assert.equal(requests.filter(({ method }) => method === 'POST').length, 4);
-  assert.equal(requests.length, 4, 'invalid bodies are sent once to the backend without preflight');
-  await json('cockpit_call_intent', { name: 'session/purge', body: { sessionId: 'B', confirm: true } });
+  assert.equal(requests.filter(({ method }) => method === 'POST').length, 5);
+  assert.equal(requests.length, 5, 'bodies are sent once to the backend without preflight');
   requests.length = 0;
-  assert.equal((await call('cockpit_purge_session', { session_id: 'B' })).isError, true);
-  assert.equal(requests.length, 0);
-  assert.equal((await call('cockpit_purge_session', { session_id: 'B', confirm: true })).isError, false);
-  assert.deepEqual(requests[0]?.body, { sessionId: 'B', confirm: true });
+  for (const confirm of [undefined, false, true]) {
+    assert.equal((await call('cockpit_purge_session', {
+      session_id: 'B', ...(confirm === undefined ? {} : { confirm }),
+    })).isError, false);
+  }
+  assert.deepEqual(requests.map(request => request.body), Array(3).fill({ sessionId: 'B' }));
 });
 
 test('session creation and minimal service reads preserve credentials without a restart tool', async () => {
@@ -667,21 +695,23 @@ test('MCP native creation and prompt match the Web API sequence without virtual 
   assert.doesNotMatch(tools.find(tool => tool.name === 'cockpit_new_session')!.description!, /session\/start|planned session/);
 });
 
-test('permanent delete requires explicit confirmation and retired trash tools are absent', async () => {
+test('permanent delete explains irreversibility without requiring a confirmation input', async () => {
   const { tools } = await client.listTools();
   assert.equal(tools.some(t => ['cockpit_list_trash', 'cockpit_restore_session'].includes(t.name)), false);
   const tool = tools.find(t => t.name === 'cockpit_delete_session')!;
-  assert.ok(tool.inputSchema.required?.includes('confirm'));
+  assert.ok(!tool.inputSchema.required?.includes('confirm'));
   assert.match(tool.description!, /IRREVERSIBLE/);
-  for (const args of [{ session_id: 'B' }, { session_id: 'B', reason: 'declutter' },
-    { session_id: 'B', confirm: false }, { session_id: 'B', confirm: 'true' }]) {
-    assert.equal((await call('cockpit_delete_session', args)).isError, true);
-    assert.equal(requests.length, 0);
+  assert.match(tool.description!, /Busy sessions are protected/);
+  assert.equal((await call('cockpit_delete_session', { session_id: 'B', confirm: 'true' })).isError, true);
+  assert.equal(requests.length, 0);
+  for (const confirm of [undefined, false, true]) {
+    assert.equal((await call('cockpit_delete_session', {
+      session_id: 'B', ...(confirm === undefined ? {} : { confirm }),
+    })).isError, false);
   }
-  assert.equal((await call('cockpit_delete_session', { session_id: 'B', confirm: true })).isError, false);
-  assert.deepEqual(requests.map(r => ({ path: r.path, body: r.body })), [
-    { path: '/intent/session/purge', body: { sessionId: 'B', confirm: true } },
-  ]);
+  assert.deepEqual(requests.map(r => ({ path: r.path, body: r.body })), Array(3).fill({
+    path: '/intent/session/purge', body: { sessionId: 'B' },
+  }));
 });
 
 test('retired module choices are rejected rather than silently ignored by MCP creation', async () => {
@@ -692,11 +722,11 @@ test('retired module choices are rejected rather than silently ignored by MCP cr
 
 test('delete aliases issue one native deletion without module preflight or retries', async () => {
   for (const name of ['cockpit_delete_session', 'cockpit_purge_session']) {
-    assert.equal((await call(name, { session_id: 'B', confirm: true })).isError, false);
+    assert.equal((await call(name, { session_id: 'B' })).isError, false);
   }
   assert.deepEqual(requests.map(r => ({ path: r.path, body: r.body })), [
-    { path: '/intent/session/purge', body: { sessionId: 'B', confirm: true } },
-    { path: '/intent/session/purge', body: { sessionId: 'B', confirm: true } },
+    { path: '/intent/session/purge', body: { sessionId: 'B' } },
+    { path: '/intent/session/purge', body: { sessionId: 'B' } },
   ]);
 });
 
@@ -828,8 +858,7 @@ test('snapshot exposes required allow-all policy and complete canonical state th
   for (const mode of ['interactive', 'plan', 'autopilot']) {
     const result = await call('cockpit_set_mode', { session_id: 'B', mode });
     assert.equal(result.isError, false, result.text);
-    assert.match(result.text, /interaction mode/);
-    assert.match(result.text, /permissionPolicy remains allow-all/);
+    assert.deepEqual(JSON.parse(result.text), { ok: true, result: { status: 'applied', modelChanged: false } });
     assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', mode });
   }
   invalidPolicy = true;
@@ -981,9 +1010,10 @@ test('semantic and generic mutations surface HTTP-200 ok:false as genuine errors
   for (const [name, tool, args] of [
     ['prompt', 'cockpit_send_prompt', { session_id: 'B', text: 'hello' }],
     ['setMode', 'cockpit_set_mode', { session_id: 'B', mode: 'plan' }],
-    ['session/rewind', 'cockpit_rewind_session', { session_id: 'B', to_msg_id: 'm1', confirm: true }],
-    ['session/purge', 'cockpit_purge_session', { session_id: 'B', confirm: true }],
-    ['session/purge', 'cockpit_delete_session', { session_id: 'B', confirm: true }],
+    ['session/compact', 'cockpit_compact_session', { session_id: 'B' }],
+    ['session/rewind', 'cockpit_rewind_session', { session_id: 'B', to_msg_id: 'm1' }],
+    ['session/purge', 'cockpit_purge_session', { session_id: 'B' }],
+    ['session/purge', 'cockpit_delete_session', { session_id: 'B' }],
     ['respondAsk', 'cockpit_respond_ask', { session_id: 'B', request_id: 'q1', answer: 'yes' }],
     ['mcp/global-default', 'cockpit_set_global_mcp_default', { name: 'test-server', on: true }],
     ['skills/session-toggle', 'cockpit_set_session_skill', { session_id: 'B', name: 'review', enabled: true }],
@@ -1002,14 +1032,16 @@ test('semantic and generic mutations surface HTTP-200 ok:false as genuine errors
 test('rewind delegates file rollback support to the backend and propagates rejection', async () => {
   const { tools } = await client.listTools();
   assert.match(tools.find((tool) => tool.name === 'cockpit_rewind_session')?.description ?? '', /backend owns support/);
-  const args = { session_id: 'B', to_msg_id: 'm1', confirm: true };
+  const args = { session_id: 'B', to_msg_id: 'm1' };
   const rejected = await call('cockpit_rewind_session', { ...args, rollback_files: true });
   assert.equal(rejected.isError, true);
   assert.match(rejected.text, /File rollback is unsupported/);
   assert.deepEqual(requests[0]?.body, { sessionId: 'B', toMsgId: 'm1', rollbackFiles: true });
   const result = await call('cockpit_rewind_session', args);
   assert.equal(result.isError, false, result.text);
-  assert.match(result.text, /Files were not rolled back/);
+  assert.deepEqual(JSON.parse(result.text), {
+    ok: true, result: { outcome: 'success', eventsRemoved: 2, restoredFiles: [], skippedFiles: [] },
+  });
   assert.deepEqual(requests.at(-1)?.body, { sessionId: 'B', toMsgId: 'm1' });
   const generic = await call('cockpit_call_intent', {
     name: 'session/rewind', body: { sessionId: 'B', toMsgId: 'm1', rollbackFiles: true },

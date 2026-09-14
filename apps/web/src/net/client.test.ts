@@ -76,8 +76,8 @@ test('text-only prompt sends no file metadata or hidden upload', async t => {
 
 test('native delete forwards one confirmation without any module preflight or approval', async t => {
   const { client, fetch } = setup(t, async () => Response.json({ ok: true }));
-  await client.deleteSession('session', true);
-  assertOnlyPost(fetch, 'session/purge', { sessionId: 'session', confirm: true });
+  await client.deleteSession('session');
+  assertOnlyPost(fetch, 'session/purge', { sessionId: 'session' });
 });
 
 test('removed session pages have no dedicated Web client helpers', t => {
@@ -110,9 +110,9 @@ for (const response of [
 test('native deletion failure or missing acknowledgement is not retried or accepted', async t => {
   let response = Response.json({ error: 'Native protected work' }, { status: 409 });
   const { client, fetch } = setup(t, async () => response);
-  await assert.rejects(client.deleteSession('session', true), /Native protected work/);
+  await assert.rejects(client.deleteSession('session'), /Native protected work/);
   response = Response.json({});
-  await assert.rejects(client.deleteSession('session', true));
+  await assert.rejects(client.deleteSession('session'));
   assert.equal(fetch.mock.callCount(), 2);
   assert.ok(fetch.mock.calls.every(call => call.arguments[0] === intentUrl('session/purge')));
 });

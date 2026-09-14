@@ -23,15 +23,13 @@ import { groupTranscript, type TranscriptRow, type ProcessItem } from '../lib/tr
 
 // Plan-exit action → button label. The SDK offers a subset of these (incl.
 // autopilot_fleet); the card renders one button per offered action rather than a
-// fixed three, so a new action surfaces automatically. The recommended one is
-// emphasized. Order here is the fallback when the event omits an explicit order.
+// fixed three. The recommended one is emphasized; native order is preserved.
 const PLAN_ACTION_LABEL: Record<ExitPlanModeAction, string> = {
   interactive: '开始执行（交互）',
   autopilot: '自动执行',
   autopilot_fleet: '并行执行（fleet）',
   exit_only: '仅退出计划',
 };
-const PLAN_ACTION_ORDER: ExitPlanModeAction[] = ['interactive', 'autopilot', 'autopilot_fleet', 'exit_only'];
 
 // Static glyphs accompany the explicit status text; no decorative motion.
 function ToolStatusIcon({ status }: { status: ToolCall['status'] }) {
@@ -339,6 +337,7 @@ interface ThreadProps {
 
 export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSupersede, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, readOnly = false }: ThreadProps) {
   const connected = useCockpit((s) => s.connState === 'open');
+  const snapshotReady = useCockpit((s) => s.snapshotReady);
   const interruptAction = useKeyedAction(`interrupt:${session.sessionId}`);
   const [interruptNotice, setInterruptNotice] = useState<{ sessionId: string; text: string } | null>(null);
   const canInterrupt = !!onInterrupt && session.loaded && session.status === 'running'
@@ -359,7 +358,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const scrollOwnerRef = useRef<ThreadScroll | null>(null);
-  const initialFill = useRef({ sessionId: session.sessionId, done: session.materialized });
   const [readySession, setReadySession] = useState(session.materialized ? session.sessionId : null);
   const [pageVisible, setPageVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
   useEffect(() => {
@@ -403,32 +401,35 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   }, [session.sessionId]);
 
   useLayoutEffect(() => {
-    if (initialFill.current.sessionId !== session.sessionId) {
-      initialFill.current = { sessionId: session.sessionId, done: session.materialized };
-    }
-    const fill = initialFill.current;
+    if (readySession === session.sessionId || !connected || !snapshotReady || !pageVisible
+      || !session.materialized || session.loadingHistory || session.historyStale || prependHeld) return;
     const el = scrollRef.current;
-    if (fill.done) { setReadySession(session.sessionId); return; }
-    if (!connected || !pageVisible || !el || !session.materialized || session.loadingHistory || session.historyStale || session.historyError || session.error || prependHeld) return;
-    // Measure hidden initial rows, then reveal the accumulated viewport in one batch.
-    if (!session.hasMore || session.incompleteBoundary || el.scrollHeight >= el.clientHeight * 2) {
-      fill.done = true;
+    if (!session.hasMore || session.incompleteBoundary
+      || (el && el.clientHeight > 0 && el.scrollHeight >= el.clientHeight * 2)) {
       setReadySession(session.sessionId);
-    } else if (el.clientHeight > 0) {
-      onLoadMore();
     }
-  }, [session.sessionId, session.materialized, session.loadingHistory, session.historyStale, session.historyError, session.error, session.hasMore, session.incompleteBoundary, messages, onLoadMore, prependHeld, pageVisible, connected]);
+  }, [readySession, connected, snapshotReady, pageVisible, session.sessionId, session.materialized,
+    session.loadingHistory, session.historyStale, session.hasMore, session.incompleteBoundary, messages, prependHeld]);
 
-  // The scroll owner continuously remembers the visible message, not a
-  // request-time scrollHeight that can include unrelated loader/media growth.
+  // Every mounted viewport owns its measured fill and near-head prefetch. A
+  // retained native page proves neither two screens nor this viewport's size.
+  // Existing rows stay visible; the separate scroll owner preserves the reader.
   useLayoutEffect(() => {
     const el = scrollRef.current;
     const content = contentRef.current;
-    if (!connected || !pageVisible || !el || !content || preparingHistory || !session.materialized || !session.hasMore
-      || session.loadingHistory || session.historyError || session.historyStale || session.incompleteBoundary || prependHeld) return;
-    return observeHistoryPrefetch(el, content, () => !scrollOwnerRef.current?.following, onLoadMore);
+    if (!connected || !snapshotReady || !pageVisible || !el || !content || !session.materialized
+      || session.loadingHistory || session.historyError || session.error || session.historyStale || prependHeld) return;
+    const needsFill = () => el.clientHeight > 0 && el.scrollHeight < el.clientHeight * 2;
+    return observeHistoryPrefetch(el, content, () => {
+      if (!session.hasMore || session.incompleteBoundary || (el.clientHeight > 0 && !needsFill())) {
+        setReadySession(session.sessionId);
+      }
+      return session.hasMore && !session.incompleteBoundary
+        && (needsFill() || (!preparingHistory && !scrollOwnerRef.current?.following));
+    }, onLoadMore, () => el.scrollTop, needsFill);
   }, [session.sessionId, session.hasMore, session.materialized, session.loadingHistory, session.historyError,
-    session.historyStale, session.incompleteBoundary, onLoadMore, prependHeld, preparingHistory, pageVisible, connected]);
+    session.error, session.historyStale, session.incompleteBoundary, onLoadMore,
+    prependHeld, preparingHistory, pageVisible, connected, snapshotReady]);
 
   // Reconnect/metadata renders with identical geometry do not schedule a write.
   // Count only messages after the previous tail, never an older-page prepend.
@@ -566,13 +567,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
           <div className="chat-ask-choices">
             {(() => {
               const pr = session.planRequest!;
-              // Render exactly the actions the SDK offered, in the canonical order;
-              // fall back to the legacy three if the event carried none. The
-              // recommended action is emphasized.
-              const offered = pr.actions && pr.actions.length > 0
-                ? PLAN_ACTION_ORDER.filter((a) => pr.actions!.includes(a))
-                : (['interactive', 'autopilot', 'exit_only'] as ExitPlanModeAction[]);
-              return offered.map((a) => (
+              return (pr.actions ?? []).map((a) => (
                 <button
                   key={a}
                   type="button"
@@ -585,6 +580,9 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
               ));
             })()}
           </div>
+          {!session.planRequest.actions?.length && <div className="chat-pending-hint" role="status">
+            {session.planRequest.actions ? '原生未提供可用的计划操作。' : '原生计划操作列表不可用。'}
+          </div>}
           <div className="chat-pending-hint" role="status">{actionPending ? '正在提交选择…' : '或在下方直接输入新指令，我先照做再回到计划'}</div>
         </div>
       )}

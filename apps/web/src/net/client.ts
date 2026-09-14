@@ -160,9 +160,6 @@ export class NetClient {
       ? `目录 ${'path' in body && typeof body.path === 'string' ? body.path : '服务器主目录（未指定路径）'}`
       : 'name' in body && typeof body.name === 'string' ? body.name : undefined;
     const source = [target, resource].filter(Boolean).join(' · ');
-    const pushIntent = name.startsWith('push/');
-    const controller = pushIntent ? new AbortController() : null;
-    const timeout = controller ? setTimeout(() => controller.abort(), 15_000) : undefined;
     try {
       // Upload responses may contain server paths; only shared prompt metadata
       // belongs on the wire, even when callers pass extra runtime properties.
@@ -173,7 +170,7 @@ export class NetClient {
         headers: { 'content-type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify(payload),
-        ...(controller || signal ? { signal: controller?.signal ?? signal } : {}),
+        ...(signal ? { signal } : {}),
       });
       const json: unknown = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -189,19 +186,12 @@ export class NetClient {
       }
       return result as IntentResult<K>;
     } catch (e) {
-      if (pushIntent) {
-        // HTTP/auth and platform failures may contain endpoint credentials.
-        // eslint-disable-next-line preserve-caught-error -- Deliberately discard private transport errors.
-        throw new Error('通知服务请求失败或超时，请检查连接后重试。');
-      }
       // Diagnostics stay local. Never execute a prompt or retry an uncertain POST.
       if (!signal?.aborted && !isSessionUnloadedError(e)
         && (name !== 'session/chat' || !isTransportError(e))) {
         reportUxError(`${source ? `${source}：` : ''}接口 ${name} 调用失败：${describeReason(e, false)}`, { deduplicate: false });
       }
       throw e;
-    } finally {
-      clearTimeout(timeout);
     }
   }
 
@@ -255,8 +245,8 @@ export class NetClient {
     return this.intent('setModel', { sessionId, modelId, ...opts });
   }
   // The purge name was already permanently destructive in older backends.
-  deleteSession(sessionId: string, confirm: true) {
-    return this.intent('session/purge', { sessionId, confirm });
+  deleteSession(sessionId: string) {
+    return this.intent('session/purge', { sessionId });
   }
   loadSession(sessionId: string) { return this.intent('session/load', { sessionId }); }
   getSession(sessionId: string, signal?: AbortSignal) { return this.intent('session/get', { sessionId }, signal); }

@@ -28,7 +28,7 @@ after(() => {
 // Config is initialized once at import time; never point these tests at a live backend.
 const { COCKPIT_URL, requestTimeoutMs } = await import('./config.ts');
 assert.equal(COCKPIT_URL, MOCK_ORIGIN);
-const { CockpitError, MAX_TRANSFER_BYTES, backendJson, backendRequest, intent, readBoundedBody, assertIntentSuccess } =
+const { CockpitError, MAX_TRANSFER_BYTES, MAX_ERROR_BYTES, backendJson, backendRequest, intent, readBoundedBody, assertIntentSuccess } =
   await import('./cockpit.ts');
 const { McpToggleResult } = await import('./shared.ts');
 const runNode = promisify(execFile);
@@ -362,6 +362,38 @@ test('JSON, text, empty and oversized HTTP errors remain bounded backend errors'
     );
   }
   assert.equal(requests.length, 6);
+});
+
+test('HTTP failures retain structured backend body, status and native cause without another request', async () => {
+  const body = {
+    error: 'Cockpit is closing', code: 'SERVICE_CLOSING',
+    shutdown: { phase: 'failed', requestedAt: 1770000000123, error: 'native close rejected' },
+    cause: { code: 'NATIVE_CLOSE', message: 'Original native cause' },
+  };
+  respond = response => response.writeHead(503).end(JSON.stringify(body));
+  await assert.rejects(() => intent('system/status'), error => {
+    assert.ok(error instanceof CockpitError);
+    assert.equal(error.httpStatus, 503);
+    assert.equal(error.intentName, 'system/status');
+    assert.deepEqual(error.responseBody, body);
+    assert.deepEqual(JSON.parse(error.message.split('HTTP 503: ')[1]!), body);
+    return true;
+  });
+  assert.equal(requests.length, 1);
+});
+
+test('HTTP error byte cap uses UTF-8 bytes and explicitly reports body omission', async () => {
+  const body = JSON.stringify({ error: '界'.repeat(MAX_ERROR_BYTES / 2) });
+  assert.ok(body.length < MAX_ERROR_BYTES);
+  assert.ok(Buffer.byteLength(body) > MAX_ERROR_BYTES);
+  respond = response => response.writeHead(503).end(body);
+  await assert.rejects(() => intent('system/status'), error => {
+    assert.ok(error instanceof CockpitError);
+    assert.match(error.message, /byte limit/);
+    assert.equal((error.responseBody as { _truncated: boolean })._truncated, true);
+    return true;
+  });
+  assert.equal(requests.length, 1);
 });
 
 test('HTTP error body consumption obeys the same deadline', async () => {

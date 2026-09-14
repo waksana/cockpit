@@ -246,8 +246,8 @@ test('listing and detail descriptions convey refinements and runtime guarantees 
       /no list read.*infer success/i, /errors propagate/i, /does not rearm/i,
     ]],
     ['session/rewind', [
-      /native file rollback/i, /backend validates runtime support/i,
-      /conflicts or partial failures/i,
+      /native file rollback/i,       /native busy\/support safeguards/i,
+      /result\.outcome.*eventsRemoved.*restoredFiles.*skippedFiles.*error.*partial effects/i,
     ]],
     ['setMode', [
       /interaction mode.*interactive.*plan.*autopilot/i,
@@ -446,18 +446,34 @@ test('native event schema preserves identity and opaque payload without a recurs
   assert.equal('subMessages' in properties, false);
 });
 
-test('session/purge requires an explicit literal confirm:true', async () => {
-  const { inputSchema } = await detail('session/purge');
-  assert.ok(Array.isArray(inputSchema.required) && inputSchema.required.includes('sessionId'));
-  assert.ok(Array.isArray(inputSchema.required) && inputSchema.required.includes('confirm'));
-  assert.deepEqual(schemaAt(inputSchema, 'properties', 'confirm'), { type: 'boolean', const: true });
-  assert.equal(Intents['session/purge'].body.safeParse({ sessionId: 'test', confirm: true }).success, true);
-  for (const body of [
-    { sessionId: 'test' }, { sessionId: 'test', confirm: false },
-    { sessionId: 'test', confirm: 'true' }, { sessionId: 'test', confirm: 1 },
-  ]) {
-    assert.equal(Intents['session/purge'].body.safeParse(body).success, false);
+test('session delete and purge expose ignored optional boolean confirmation, not a second guard', async () => {
+  for (const name of ['session/delete', 'session/purge'] as const) {
+    const { inputSchema, description } = await detail(name);
+    assert.deepEqual(inputSchema.required, ['sessionId']);
+    const confirm = schemaAt(inputSchema, 'properties', 'confirm');
+    assert.equal(confirm.type, 'boolean');
+    assert.equal('const' in confirm, false);
+    assert.match(String(confirm.description), /deprecated.*ignored/i);
+    assert.match(description, /confirm is ignored/i);
+    for (const confirm of [undefined, false, true]) {
+      assert.equal(Intents[name].body.safeParse({ sessionId: 'test', confirm }).success, true);
+    }
+    for (const confirm of ['true', 1]) {
+      assert.equal(Intents[name].body.safeParse({ sessionId: 'test', confirm }).success, false);
+    }
   }
+});
+
+test('mutation discovery requires native structured results without narrowing native status values', async () => {
+  for (const name of ['setModel', 'setMode', 'session/compact', 'session/rewind'] as const) {
+    const { resultSchema, description } = await detail(name);
+    assert.deepEqual(resultSchema.required, ['ok', 'result']);
+    assert.match(description, /ok acknowledges.*native result/i);
+    assert.equal(schemaAt(resultSchema, 'properties', 'result').additionalProperties, true);
+  }
+  const { resultSchema } = await detail('setModel');
+  assert.equal('enum' in schemaAt(resultSchema, 'properties', 'result', 'properties', 'status'), false);
+  assert.match(String(schemaAt(resultSchema, 'properties', 'result', 'properties', 'deferred').description), /even when.*status says applied/);
 });
 
 test('retired capability families and native image lookups are absent from listings', async (t) => {

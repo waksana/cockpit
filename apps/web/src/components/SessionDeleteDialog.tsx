@@ -13,7 +13,7 @@ export function SessionDeleteDialog({ sessionId, name, onCancel, onSuccess }: {
     onConfirm={async () => {
       if (submitted.current) throw new Error('删除结果尚未确认，请先核对原生会话状态；不会重复发送。');
       submitted.current = true;
-      await deleteSession(sessionId, true);
+      await deleteSession(sessionId);
     }}
     onSuccess={onSuccess} onCancel={onCancel} />;
 }

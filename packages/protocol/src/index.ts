@@ -7,6 +7,12 @@ import { z } from 'zod';
 
 export { CHAT_EVENT_TYPES, NativeChatEvent, NativeChatRead, NativeChatPage, NativeChatStreamRequest, NativeChatStreamEvent } from './native-chat.ts';
 import { NativeChatRead, NativeChatPage } from './native-chat.ts';
+export {
+  NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult,
+  classifyNativeModelSwitchResult, classifyNativeModeSetResult, classifyNativeCompactResult, classifyNativeRewindResult,
+} from './native-operations.ts';
+export type { NativeOperationClassification } from './native-operations.ts';
+import { NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult } from './native-operations.ts';
 
 // ---------------------------------------------------------------------------
 // Shared schema helpers (boundary invariants encoded ONCE, in the contract)
@@ -589,35 +595,37 @@ export const Intents = {
     result: z.object({ ok: z.literal(true), interrupted: z.boolean() }),
   },
   setModel: {
+    description: 'Submit a complete native model selection. Omitted effort/context options retain their native meaning; the backend never backfills previous or queued settings. Genuine user changes join the native FIFO. ok acknowledges a returned native result, not application: inspect result status, deferred, confirmation, persistenceError and warnings; missing or unknown status is not proof of application. No automatic retry or follow-up is sent.',
     body: z.object({
       sessionId: z.string(),
       modelId: z.string(),
       reasoningEffort: z.string().optional(),
       contextTier: ContextTier.optional(),
     }),
-    result: z.object({ ok: z.boolean() }),
+    result: z.object({ ok: z.literal(true), result: NativeModelSwitchResult }),
   },
   'session/rename': {
     body: z.object({ sessionId: z.string(), name: z.string() }),
     result: z.object({ ok: z.boolean(), title: z.string().optional() }),
   },
   'session/compact': {
+    description: 'Compact native model context. ok acknowledges the returned native result, not successful compaction; inspect result.success and removal counts. No automatic retry is sent.',
     body: z.object({ sessionId: z.string(), customInstructions: z.string().optional() }),
-    result: z.object({ ok: z.boolean() }),
+    result: z.object({ ok: z.literal(true), result: NativeCompactResult }),
   },
   'session/rewind': {
-    description: 'Rewind to before a selected user message. rollbackFiles:true requests native file rollback; the backend validates runtime support and reports conflicts or partial failures rather than silently ignoring it.',
+    description: 'Rewind to before a selected user message. rollbackFiles:true requests native file rollback. ok acknowledges the returned native result, not successful rewind; inspect result.outcome, eventsRemoved, restoredFiles, skippedFiles and error for partial effects. Native busy/support safeguards remain in force. Never automatically retry an uncertain or partially applied result.',
     body: z.object({ sessionId: z.string(), toMsgId: z.string(), rollbackFiles: z.boolean().optional() }),
-    result: z.object({ ok: z.boolean() }),
+    result: z.object({ ok: z.literal(true), result: NativeRewindResult }),
   },
   setMode: {
-    description: 'Set interaction mode: interactive, plan, or autopilot. Permissions remain always auto-approved (allow-all) in every mode.',
+    description: 'Set interaction mode: interactive, plan, or autopilot. Permissions remain always auto-approved (allow-all) in every mode. ok acknowledges the returned native result, not application; inspect result.status, confirmation, deferImplementation and armInteractiveContinuation. Required native follow-up is reported, never automatically sent.',
     body: z.object({ sessionId: z.string(), mode: AgentMode }),
-    result: z.object({ ok: z.boolean() }),
+    result: z.object({ ok: z.literal(true), result: NativeModeSetResult }),
   },
   'session/delete': {
-    description: 'IRREVERSIBLE native session deletion. Explicit confirm:true is required; old soft-delete requests are rejected. Managed files and workspaces are retained. Never automatically retry an uncertain result.',
-    body: z.object({ sessionId: z.string().min(1), confirm: z.literal(true) }).strict(),
+    description: 'IRREVERSIBLE native session deletion. Managed files and workspaces are retained. The deprecated optional boolean confirm is ignored: absent, false and true all perform the same native deletion with native busy and existence safeguards. Never automatically retry an uncertain result.',
+    body: z.object({ sessionId: z.string().min(1), confirm: z.boolean().optional().describe('Deprecated compatibility field; ignored, not a deletion guard.') }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   'session/unload': {
@@ -774,13 +782,13 @@ export const Intents = {
   },
   // Compatibility for existing explicitly destructive clients; one implementation.
   'session/purge': {
-    description: 'Compatibility alias for session/delete: irreversible native deletion, requiring explicit confirm:true. Managed files and workspaces are retained. Never automatically retry an uncertain result.',
-    body: z.object({ sessionId: z.string().min(1), confirm: z.literal(true) }).strict(),
+    description: 'Compatibility alias for session/delete: irreversible native deletion. Managed files and workspaces are retained. The deprecated optional boolean confirm is ignored: absent, false and true have identical semantics. Native busy and existence safeguards remain in force. Never automatically retry an uncertain result.',
+    body: z.object({ sessionId: z.string().min(1), confirm: z.boolean().optional().describe('Deprecated compatibility field; ignored, not a deletion guard.') }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   // Native after/every supports relative delays and one-shot absolute times.
   'schedule/add': {
-    description: 'Schedule a native after/every prompt. The current runtime supports exactly one of interval or at, from 1 second to 24 hours. Interval uses s, m, h, or d and defaults to recurring; at is one-shot. Prompt must be single-line plain text, without command flags or a leading slash. Legacy cron, timezone, displayPrompt and recurring-at options are not supported and are rejected. No self-paced creation or rearming is exposed. Ticks require a loaded session; schedules pause on native idle unload and relative delays restart on resume. Schedules do not keep it loaded. This is not an always-on scheduler.',
+    description: 'Schedule a native after/every prompt. The current runtime supports exactly one of interval or at, from 1 second to 24 hours. Interval uses s, m, h, or d and defaults to recurring; at is one-shot. Prompt must be single-line plain text, without command flags or a leading slash; surrounding whitespace is trimmed only after validating the original text. A returned entry establishes creation even alongside an error. possiblyCreated:true means acknowledgement/readback was inconclusive: do not automatically retry. Legacy cron, timezone, displayPrompt and recurring-at options are not supported and are rejected. No self-paced creation or rearming is exposed. Ticks require a loaded session; schedules pause on native idle unload and relative delays restart on resume. Schedules do not keep it loaded. This is not an always-on scheduler.',
     body: z.object({
       sessionId: z.string(),
       prompt: z.string().min(1).refine(
@@ -799,7 +807,7 @@ export const Intents = {
       if (v.at !== undefined && v.recurring === true)
         ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'absolute schedules are one-shot' });
     }),
-    result: z.object({ ok: z.boolean(), entry: ScheduleEntry.optional(), error: z.string().optional() }),
+    result: z.object({ ok: z.boolean(), entry: ScheduleEntry.optional(), error: z.string().optional(), possiblyCreated: z.boolean().optional() }),
   },
   'schedule/stop': {
     description: 'Stop one native schedule by its id, including self-paced entries. ok reflects whether the native stop result contained the stopped entry; false means none was returned. No list read is used to infer success and errors propagate. This does not rearm or replace the schedule.',

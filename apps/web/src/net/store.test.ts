@@ -211,6 +211,32 @@ function observe<T>(promise: Promise<T>): Promise<T> {
   return promise;
 }
 
+test('absence becomes authoritative only after a complete snapshot in the current connection', t => {
+  const fixture = setup(t);
+  assert.equal(useCockpit.getState().snapshotReady, false);
+  fixture.source.open();
+  assert.equal(useCockpit.getState().connState, 'open');
+  assert.equal(useCockpit.getState().snapshotReady, false, 'first open is not a session list');
+  fixture.snapshot(['a']);
+  assert.equal(useCockpit.getState().snapshotReady, true);
+  const retained = session('a');
+  const generation = useCockpit.getState().connectionGeneration;
+  fixture.source.drop();
+  assert.equal(useCockpit.getState().snapshotReady, false);
+  assert.ok(useCockpit.getState().connectionGeneration > generation);
+  fixture.source.open();
+  assert.equal(useCockpit.getState().snapshotReady, false, 'reopen still awaits the new snapshot');
+  assert.deepEqual(session('a'), retained, 'retain the previous display during reconnect');
+  const observations: State[] = [];
+  const stop = useCockpit.subscribe(state => observations.push(state));
+  fixture.snapshot([]);
+  stop();
+  assert.equal(useCockpit.getState().snapshotReady, true);
+  assert.deepEqual(useCockpit.getState().sessions, []);
+  assert.ok(observations.every(state => !state.snapshotReady || state.sessions.length === 0),
+    'readiness and complete list must publish together');
+});
+
 test('removed session pages have no dedicated Web store actions or readers', () => {
   const state = createCockpitStore().getState();
   for (const name of [
@@ -226,8 +252,8 @@ test('native deletion supports unloaded sessions and failures never retry or rem
   h.source.open();
   h.snapshot(['a']);
   h.source.emit({ type: 'session/patch', sessionId: 'a', loaded: false });
-  const deletion = observe(store.getState().deleteSession('a', true));
-  h.assertPost(0, 'session/purge', { sessionId: 'a', confirm: true });
+  const deletion = observe(store.getState().deleteSession('a'));
+  h.assertPost(0, 'session/purge', { sessionId: 'a' });
   h.request(0).response.resolve(Response.json({ error: 'Native protected work' }, { status: 409 }));
   await assert.rejects(deletion, /Native protected work/);
   await setImmediate();
@@ -242,12 +268,12 @@ test('late load and delete failures cannot resurrect an authoritatively removed 
   h.source.open();
   h.snapshot(['a', 'b']);
   const loading = useCockpit.getState().loadSession('a');
-  const deleting = useCockpit.getState().deleteSession('a', true);
+  const deleting = useCockpit.getState().deleteSession('a');
   const rejected = [assert.rejects(loading, /load interrupted/), assert.rejects(deleting, /delete interrupted/)];
   h.source.emit({ type: 'session/removed', sessionId: 'a' });
   const before = useCockpit.getState().sessions;
   h.assertPost(0, 'session/load', { sessionId: 'a' }).reject(new Error('load interrupted'));
-  h.assertPost(1, 'session/purge', { sessionId: 'a', confirm: true }).reject(new Error('delete interrupted'));
+  h.assertPost(1, 'session/purge', { sessionId: 'a' }).reject(new Error('delete interrupted'));
   await Promise.all(rejected);
   await setImmediate();
   assert.strictEqual(useCockpit.getState().sessions, before);
@@ -749,12 +775,7 @@ const mcpSuccess: IntentResult<'mcp/session-toggle'> = {
 
 const mutations: MutationCase[] = [
   { name: 'cancel', body: { sessionId: 'a' }, send: (s) => s.cancel('a'), success: { ok: true }, sessionId: 'a' },
-  {
-    name: 'setModel', body: { sessionId: 'a', modelId: 'model', reasoningEffort: 'high', contextTier: 'long_context' },
-    send: (s) => s.setModel('a', 'model', { reasoningEffort: 'high', contextTier: 'long_context' }),
-    success: { ok: true }, sessionId: 'a',
-  },
-  { name: 'session/purge', body: { sessionId: 'a', confirm: true }, send: (s) => s.deleteSession('a', true), success: { ok: true }, sessionId: 'a' },
+  { name: 'session/purge', body: { sessionId: 'a' }, send: (s) => s.deleteSession('a'), success: { ok: true }, sessionId: 'a' },
   {
     name: 'session/load', body: { sessionId: 'a' }, send: (s) => s.loadSession('a'),
     success: { ok: true, sessionId: 'a' }, sessionId: 'a',
@@ -779,6 +800,42 @@ const mutations: MutationCase[] = [
     send: (s) => s.skillsToggleSession('a', 'fixture-skill', false), success: { ok: true }, sessionId: 'a',
   },
 ];
+
+for (const result of [
+  { status: 'applied', modelId: 'model', modelState: { modelId: 'model', reasoningEffort: 'high', contextTier: 'long_context' } },
+  { status: 'queued', deferred: true },
+  { status: 'rejected', message: 'Native refusal' },
+  { status: 'confirmation_required', confirmation: { targetModelDisplayName: 'Model', currentTokens: 100, targetLimit: 80 } },
+  { status: 'applied', persistenceError: 'Native save failed', warning: 'Current process only', deprecationWarnings: ['Deprecated'] },
+  {},
+] satisfies IntentResult<'setModel'>['result'][]) {
+  test(`setModel preserves the complete native ${result.status ?? 'unknown'} result without optimistic state`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot(['a', 'b']);
+    const beforeA = session('a'), beforeB = session('b');
+    const sent = useCockpit.getState().setModel('a', 'model', { reasoningEffort: 'high', contextTier: 'long_context' });
+    h.assertPost(0, 'setModel', { sessionId: 'a', modelId: 'model', reasoningEffort: 'high', contextTier: 'long_context' });
+    useCockpit.setState({ activeId: 'b' });
+    await h.reply(0, { ok: true, result });
+    assert.deepEqual(await sent, { ok: true, result });
+    assert.strictEqual(session('a'), beforeA);
+    assert.strictEqual(session('b'), beforeB);
+    assert.equal(h.requests.length, 1, 'neither deferred nor confirmation results cause another command');
+  });
+}
+
+test('a model-only selection omits options instead of backfilling current snapshot values', async t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), currentModelId: 'old', currentReasoningEffort: 'max', currentContextTier: 'long_context' }] });
+  const sent = useCockpit.getState().setModel('a', 'new');
+  h.assertPost(0, 'setModel', { sessionId: 'a', modelId: 'new' });
+  await h.reply(0, { ok: true, result: { status: 'queued' } });
+  await sent;
+  assert.equal(session('a').currentModelId, 'old');
+  assert.equal(session('a').currentReasoningEffort, 'max');
+});
 
 for (const kind of ['MCP', 'Skill'] as const) {
   for (const failure of ['ok:false', 'HTTP', 'rejected'] as const) {

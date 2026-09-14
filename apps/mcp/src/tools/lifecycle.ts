@@ -45,21 +45,20 @@ export function registerLifecycleTools(server: McpServer): void {
       title: 'Permanently delete a session',
       description:
         'IRREVERSIBLE. Delete a session through the public native Copilot deleteSession API. ' +
-        'Only run when permanent deletion is intended, with explicit confirm:true. ' +
+        'Only run when permanent deletion is intended. ' +
         'Managed files, file associations and workspaces are retained. Busy sessions are protected. ' +
         'Never automatically retry an uncertain result.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id to permanently delete'),
-        confirm: z.literal(true).describe('Explicit confirmation of irreversible native deletion; required'),
+        confirm: z.boolean().optional().describe('Deprecated compatibility input; ignored. Deletion is irreversible.'),
       },
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ session_id, confirm }): Promise<ToolResult> => {
+    async ({ session_id }): Promise<ToolResult> => {
       try {
         // Retain the already-destructive wire name across staggered deployments.
         await intent('session/purge', {
           sessionId: session_id,
-          confirm,
         });
         return ok(`Deleted ${session_id} permanently. Managed files and workspaces are retained.`);
       } catch (e) {

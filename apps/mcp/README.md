@@ -1,7 +1,8 @@
 # Cockpit API/MCP session client (`@cockpit/mcp`)
 
 A **stdio MCP server backed by the Cockpit API**: a thin remote Copilot adapter.
-The backend owns one capability set, shared by the web UI and sessions using MCP.
+The backend publishes a selected native Copilot API subset. Web and MCP are
+independent consumers, not separate authorities or a promise of full UI parity.
 
 All session metadata, lists, transcripts and mutations come from HTTP.
 The MCP process needs **no backend filesystem access, SDK, session database or event
@@ -60,11 +61,16 @@ newly published intents need no new MCP wrapper or reconnect. There is no
 arbitrary URL, HTTP method or path proxy. Invalid names and path traversal are
 rejected locally; the authoritative backend rejects unknown commands.
 Redirects and mismatched explicit discovery responses fail. Bodies use the API's
-**camelCase** field names; the backend validates both bodies and results, including
-`confirm:true` on `session/purge`. No automatic retries are performed, even on
+**camelCase** field names; the backend validates both bodies and results.
+Native compact/rewind/delete/purge operations add no required confirmation
+parameter; host `system/shutdown` still requires `confirm:true`.
+No automatic retries are performed, even on
 timeout or service errors. Generic results are complete JSON; use semantic pagination when
 reading large histories. HTTP errors and results with `ok:false` are MCP errors,
 not successful mutations; backend error/operation details remain visible.
+For model/mode/compact/rewind, generic and semantic tools use the same shared
+protocol outcome classifier. Explicit native failures and partial failures also
+set MCP `isError:true` while retaining the complete native JSON.
 
 `runtime/snapshot {}` returns `Snapshot` with `type:"snapshot"`, `agentStatus`,
 `models`, `sessions`, and required
@@ -95,7 +101,13 @@ close results are not success; there is no force/cancel/deployment mode.
 Normal status responses are available while running/waiting. During closing or
 failed shutdown the host may instead return `503 SERVICE_CLOSING` with shutdown
 details; after exit there is no HTTP response. The MCP surfaces errors rather
-than fabricating a completed status. See the [shutdown boundary](../../docs/cockpit-plan.md#shutdown).
+than fabricating a completed status. Both status tools retain the structured error
+body, including `code`, `shutdown.phase`, `shutdown.requestedAt` and the actual
+`shutdown.error`; a failed close is not reported as merely closing.
+HTTP error bodies are bounded to 64 KiB. MCP error text is bounded to 25,000
+characters with explicit compaction/omission markers and valid serialized JSON,
+never silently sliced JSON. Non-JSON backend errors remain visible as quoted text.
+See the [shutdown boundary](../../docs/cockpit-plan.md#shutdown).
 
 Creation is identical to Web: `cockpit_new_session` calls
 `session/new {cwd}` once and returns the actual Copilot ID, using native
@@ -123,7 +135,7 @@ such as `session/refresh` and
 `skills/read`. `session/chat` returns one bounded native event page as JSON.
 
 Deletion uses irreversible native Copilot `deleteSession`.
-Both delete and purge currently require explicit `confirm:true`.
+Neither delete nor its purge alias adds a confirmation gate.
 Independent managed files and workspaces remain intact. Never automatically retry
 an uncertain deletion. External applications own their references and must
 distinguish authoritative absence from unload, timeout or permission failure.
@@ -137,24 +149,51 @@ JSON. `mcp/session` does not materialize an unloaded session.
 
 <a id="confirmation-boundaries"></a>
 
-### Current confirmation behavior
+### Native outcomes and irreversible operations
 
 `cockpit_compact_session` summarizes the model-facing context, not the retained
-chat event history. There is no compaction undo; explicit `confirm:true` remains
-required. It is distinct from conversation rewind or permanent deletion.
-Here `confirm` is a semantic MCP tool guard. The current raw
-`session/compact` and `session/rewind` wire schemas do not include that guard:
-generic callers must use their published schema and obtain the necessary user
-authorization, rather than assume an extra `confirm` field is enforced there.
-Permanent `session/delete|purge`, in contrast, requires literal `confirm:true`
-in the backend schema itself. This documents the existing distinction, not
-permission to bypass a user decision.
-The confirmed target in [R3](../../docs/product-requirements.md#r3--忠实使用-sdk-契约)
-is to follow native confirmation contracts in API/MCP, with optional additional
-human-facing confirmations in Web. SDK 1.0.13 compact/rewind/delete interfaces
-do not have these `confirm` inputs. The current Cockpit-specific guards above
-have not yet been changed; clients must continue to use the published schema.
-Service shutdown is a host operation, distinct from those native session APIs.
+chat event history. There is no compaction undo. It is distinct from conversation
+rewind or permanent deletion, which irreversibly discard history.
+SDK 1.0.13 compact/rewind/delete methods have no required `confirm` input, and
+these semantic tools add no confirmation guard. They accept a deprecated optional
+boolean for compatibility, ignore either value, and do not send it to the backend.
+Generic delete/purge also accepts a deprecated optional boolean without effect;
+callers should omit it. Native busy/decision protections remain in force.
+Use the operations only when their effects are intended, and never automatically
+retry an uncertain mutation. Service shutdown is a distinct host operation with
+its own required confirmation.
+
+`cockpit_set_model` takes the intended **complete model configuration**, not a
+patch that promises to preserve omitted effort or context tier. Omitted options
+follow native semantics; MCP promises neither preservation nor resetting.
+Use a known model ID directly; if unknown, read
+`cockpit_get_session {response_format:"json"}` for `availableModels`.
+The tool sends the requested combination once, without discovery, cached option
+merging, a verification read, or retry.
+
+Model, mode, compact and rewind tools return the backend's
+`{ok:true,result:<native outcome>}` JSON unchanged. The outer `ok` acknowledges the
+native call, not that every requested effect completed. Model `status`, `deferred`,
+`modelState`, confirmation details, persistence errors and warnings remain visible.
+`deferred:true` takes precedence over native `status:"applied"` or an applied-sounding
+message: the change is still queued, and `modelState` may describe the old state.
+Mode status, model changes, confirmation and continuation/defer details also remain
+visible; the client never sends an automatic follow-up prompt. A queued result is
+not reported as applied, and persistence warnings do not erase a successful native
+change. Compact retains native `success`, removal counts and summary/context
+details. Rewind retains the native outcome, restored/skipped files and errors,
+including partial effects. No follow-up read can relabel a completed mutation as
+failed because these wrappers perform no such read.
+Machine error indication is separate from the native envelope: compact
+`success:false`, explicit model/mode rejection, known rewind failure outcomes,
+and native persistence errors set MCP `isError:true` without rewriting the body.
+An applied model with `persistenceError` retains its applied state and persistence
+detail even though the partial failure is flagged. Error does not mean that no
+effects occurred or that they were rolled back.
+Queued changes and needs-action outcomes are not themselves failures.
+Confirmation or continuation requests remain needs-action, with no automatic
+follow-up. Missing or unfamiliar statuses remain unknown: they neither establish
+application nor trigger an invented exception.
 
 `cockpit_cancel_turn` / `POST /intent/cancel {sessionId}` follows native Stop
 semantics: cancel current work and discard pending queued messages. It does not
@@ -207,21 +246,31 @@ requested `section`.
 `cockpit_list_global_skills` accepts optional backend `cwd`; omitting it uses the
 **server home**, never the MCP client's working directory.
 
-`cockpit_rewind_session` rewinds history with `confirm:true`; file changes are
-left alone by default.
+`cockpit_rewind_session` rewinds history; file changes are left alone by default.
 File rollback is a native runtime operation: semantic `rollback_files:true` and
 generic `session/rewind {rollbackFiles:true,...}` delegate capability validation to
-the backend. Unsupported operations and native conflicts must fail explicitly
-rather than ignoring the requested file rollback.
+the backend. Unsupported operations and native conflicts remain explicit in the
+result/error rather than ignoring the requested file rollback or hiding partial
+effects.
+
+`cockpit_list_dir` resolves paths on the backend and uses the server home only
+when `path` is omitted. Large JSON listings keep their resolved `path` and
+`parent` while compacting only entries. `count` is the original total and
+`_returned` reports the retained entry count; compaction is explicitly marked.
 
 ## Native schedules
 
 `schedule/add` (or `cockpit_schedule_add`) accepts exactly one deterministic
 `interval` or one-shot epoch-millisecond `at`, with a delay of 1 second to 24 hours.
-It uses native `every`/`after` commands and confirms the created entry; it is not a
+It uses native `every`/`after` commands and retains the creation outcome; it is not a
 public SDK `schedule.add` RPC or a model-prompt fallback. Plain single-line prompts
 cannot contain command flags or a leading slash. Cron, timezone, display labels,
 recurring absolute times and self-paced creation/rearming are not exposed.
+The semantic tool preserves the complete response instead of replacing it with
+a “scheduled” summary. A returned `entry` establishes creation even alongside an
+error. `possiblyCreated:true` means acknowledgement/readback was inconclusive;
+missing an entry is not proof that nothing was created. These details remain
+visible in MCP errors too. The MCP adds no verification read or automatic retry.
 
 `schedule/list` requires an already-loaded session and preserves native
 `selfPaced`. When true, the model controls the next run; this is not an ordinary

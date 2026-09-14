@@ -2,10 +2,10 @@ import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { Readable } from 'node:stream';
 import type { IntentBody, IntentName, IntentResult } from '@cockpit/protocol';
-import { COCKPIT_API_TOKEN, COCKPIT_URL, requestTimeoutMs } from './config.js';
+import { CHARACTER_LIMIT, COCKPIT_API_TOKEN, COCKPIT_URL, requestTimeoutMs } from './config.js';
 
 export const MAX_TRANSFER_BYTES = 25 * 1024 * 1024;
-const MAX_ERROR_BYTES = 64 * 1024;
+export const MAX_ERROR_BYTES = 64 * 1024;
 const INTENT_NAME = /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/;
 
 export class CockpitError extends Error {
@@ -13,10 +13,57 @@ export class CockpitError extends Error {
     message: string,
     readonly kind: 'timeout' | 'connection' | 'backend' | 'protocol' = 'backend',
     readonly intentName?: string,
+    readonly responseBody?: unknown,
+    readonly httpStatus?: number,
   ) {
     super(message);
     this.name = 'CockpitError';
   }
+}
+
+const ERROR_DETAIL_KEYS = new Set(['error', 'cause', 'code', 'shutdown', 'phase', 'requestedAt']);
+
+function compactErrorDetail(value: unknown, stringLimit: number, itemLimit: number, depth: number): unknown {
+  if (typeof value === 'string') {
+    return value.length <= stringLimit ? value
+      : `${value.slice(0, stringLimit)}…[truncated ${value.length - stringLimit} chars]`;
+  }
+  if (value === null || typeof value !== 'object') return value;
+  if (depth === 0) return { _truncated: true, _note: 'Nested error detail omitted' };
+  const compact = (item: unknown) => compactErrorDetail(item, stringLimit, itemLimit, depth - 1);
+  if (Array.isArray(value)) {
+    const items = value.slice(0, itemLimit).map(compact);
+    return items.length === value.length ? items
+      : { _truncated: true, _total: value.length, _returned: items.length, items };
+  }
+  const entries = Object.entries(value);
+  const retained = entries.filter(([key], index) =>
+    ERROR_DETAIL_KEYS.has(key) || (index < itemLimit && key.length <= stringLimit));
+  return {
+    ...Object.fromEntries(retained.map(([key, item]) => [key, compact(item)])),
+    ...(retained.length < entries.length ? { _truncated: true, _omittedFields: entries.length - retained.length } : {}),
+  };
+}
+
+function errorBodyText(value: unknown, budget: number): string {
+  const full = JSON.stringify(value);
+  if (full.length <= budget) return full;
+  const marker = {
+    _truncated: true,
+    _fullLength: full.length,
+    _note: 'Error detail exceeds the MCP character budget; the body below is a compact projection.',
+  };
+  for (const [stringLimit, itemLimit, depth] of [[1024, 32, 8], [256, 8, 4], [16, 1, 2]] as const) {
+    const text = JSON.stringify({ ...marker, body: compactErrorDetail(value, stringLimit, itemLimit, depth) });
+    if (text.length <= budget) return text;
+  }
+  return JSON.stringify({ ...marker, _note: 'Error detail omitted because it exceeds the MCP character budget.' });
+}
+
+function backendFailure(prefix: string, name: string | undefined, body: unknown, status?: number): CockpitError {
+  // Reserve the semantic tool's "Error: " prefix without slicing serialized JSON.
+  const detail = errorBodyText(body, CHARACTER_LIMIT - 'Error: '.length - prefix.length - 2);
+  return new CockpitError(`${prefix}: ${detail}`, 'backend', name, body, status);
 }
 
 function validateBackendPath(path: string): void {
@@ -234,24 +281,21 @@ export async function backendRequest<T>(
       );
     }
     if (!response.ok) {
-      let message = `HTTP ${response.status}`;
+      let body: unknown;
       try {
         const text = new TextDecoder().decode(await readBoundedBody(response, MAX_ERROR_BYTES));
-        let detail = text;
+        body = text;
         try {
-          const data: unknown = JSON.parse(text);
-          if (data !== null && typeof data === 'object' && 'error' in data && typeof data.error === 'string') {
-            detail = data.error;
-          }
-        } catch {
+          body = JSON.parse(text);
+        } catch (error) {
+          if (!(error instanceof SyntaxError)) throw error;
           // A non-JSON error page is still a backend failure, not a JSON protocol error.
         }
-        if (detail.trim()) message += `: ${detail.slice(0, 1024)}`;
       } catch (error) {
         if (!(error instanceof CockpitError) || error.kind !== 'protocol') throw error;
-        message += `: ${error.message}`;
+        body = { _truncated: true, _note: 'Error body was not retained.', error: error.message };
       }
-      throw new CockpitError(`${label} failed: ${message}`, 'backend', name);
+      throw backendFailure(`${label} failed: HTTP ${response.status}`, name, body, response.status);
     }
     // Only network/body-read errors are translated; decoding errors retain identity.
     return consume(response);
@@ -262,7 +306,7 @@ export async function backendRequest<T>(
   } catch (error) {
     if (timedOut) throw timeoutError;
     if (error instanceof CockpitError && name && error.intentName === undefined) {
-      throw new CockpitError(error.message, error.kind, name);
+      throw new CockpitError(error.message, error.kind, name, error.responseBody, error.httpStatus);
     }
     throw error;
   } finally {
@@ -312,7 +356,7 @@ export async function intent<T = unknown>(
 
 export function assertIntentSuccess<T>(result: T, name: string): T {
   if (result !== null && typeof result === 'object' && 'ok' in result && result.ok === false) {
-    throw new CockpitError(`cockpit intent "${name}" did not succeed: ${JSON.stringify(result)}`, 'backend', name);
+    throw backendFailure(`cockpit intent "${name}" did not succeed`, name, result);
   }
   return result;
 }

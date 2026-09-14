@@ -167,6 +167,9 @@ batching away intermediate layout changes. It does not initialize a native clien
 
 An authoritative complete session snapshot releases browser reading windows for
 IDs no longer present, including sessions deleted while this browser was offline.
+Opening the control connection alone is not an authoritative session list.
+Before its complete snapshot is applied, the browser shows synchronization rather
+than declaring an absent row deleted.
 An authoritative single-session `meta:null` or removal event releases the same
 window and pending read contacts. Unloaded sessions, partial resource responses,
 filtered lists and transient failures are not deletion signals. Surviving
@@ -181,6 +184,9 @@ anchor and gestures rather than forcing the reader to the bottom.
 
 Initial loading fills at least two viewport heights when sufficient history is
 available, not a fixed number of messages.
+Having a materialized page does not mean the current viewport is filled. Re-entering
+with a short retained window continues from its existing cursor when more history
+is available, while keeping that retained content visible.
 Upward reading prefetches older messages when the remaining loaded history above
 the viewport falls to about one current viewport. After insertion, the reading
 anchor is restored before deciding whether another bounded batch is needed.

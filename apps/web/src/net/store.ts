@@ -21,6 +21,7 @@ const isVisible = () => typeof document !== 'undefined' && document.visibilitySt
 
 interface CockpitState {
   connState: ConnState;
+  snapshotReady: boolean;
   connectionGeneration: number;
   permissionPolicy: 'allow-all';
   agentStatus: AgentStatus;
@@ -38,8 +39,8 @@ interface CockpitState {
   sendPrompt: (sessionId: string, text: string, attachments?: NativeAttachment[]) => Promise<boolean>;
   cancel: (sessionId: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<{ ok: true; interrupted: boolean }>;
-  setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => Promise<void>;
-  deleteSession: (sessionId: string, confirm: true) => Promise<void>;
+  setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => Promise<IntentResult<'setModel'>>;
+  deleteSession: (sessionId: string) => Promise<void>;
   loadSession: (sessionId: string) => Promise<void>;
   getResources: (sessionId: string, resources: MetaResource[], signal?: AbortSignal) => Promise<SessionProjection>;
   // MCP + Skills management
@@ -129,7 +130,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       } while (request.dirty.size);
     }).catch(error => {
       if (!request.controller.signal.aborted && client === net && get().connectionGeneration === generation) {
-        reportUxError('读取会话状态失败', error);
+        reportUxError(`读取会话状态失败：${describeReason(error, false)}`);
       }
     }).finally(() => {
       if (metaRequests.get(sessionId) !== request) return;
@@ -141,7 +142,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
   };
   const patchLocal = (sid: string, fn: (s: ChatSession) => ChatSession) =>
     set((st) => ({ sessions: st.sessions.map((s) => (s.sessionId === sid ? fn(s) : s)) }));
-  let snapshotReady = false;
   let historyRequest: { sessionId: string; generation: number; controller: AbortController } | null = null;
   let liveRequest: { sessionId: string; controller: AbortController } | null = null;
   let liveSessionId: string | null = null;
@@ -275,7 +275,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     const window = windows.get(sid);
     const session = get().sessions.find(s => s.sessionId === sid);
     if (!window?.live || window.invalid || liveRequest || !session || !isVisible()
-      || get().activeId !== sid || !snapshotReady || get().connState !== 'open') return;
+      || get().activeId !== sid || !get().snapshotReady || get().connState !== 'open') return;
     const source = session.loaded ? 'live' : 'persisted';
     if (window.live.source !== source) window.disconnect();
     const request = { sessionId: sid, controller: new AbortController() };
@@ -364,7 +364,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
 
   const maybeMaterialize = () => {
     const { activeId, connState, sessions } = get();
-    if (!snapshotReady || !activeId || connState !== 'open' || !client || !isVisible()) return;
+    if (!get().snapshotReady || !activeId || connState !== 'open' || !client || !isVisible()) return;
     const s = sessions.find((x) => x.sessionId === activeId);
     const window = windows.get(activeId);
     if (!s || window?.invalid || s.loadingHistory) return;
@@ -377,7 +377,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
   const invalidateRequests = () => {
     for (const request of metaRequests.values()) request.controller.abort();
     metaRequests.clear();
-    snapshotReady = false;
+    set({ snapshotReady: false });
     cancelHistory();
     cancelLive();
     for (const window of windows.values()) window.disconnect();
@@ -396,12 +396,11 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         const known = new Set([...windows.keys(), ...get().sessions.map(session => session.sessionId),
           ...Object.keys(get().resourceRevisions)]);
         releaseSessions([...known].filter(id => !present.has(id)));
-        snapshotReady = true;
-        set({ agentStatus: ev.agentStatus, permissionPolicy: ev.permissionPolicy, globalModels: ev.models });
         set((st) => {
           const byId = new Map(st.sessions.map((s) => [s.sessionId, s]));
           const sessions = ev.sessions.map((m) => metaToSession(m, byId.get(m.sessionId)));
-          return { sessions, };
+          return { sessions, snapshotReady: true, agentStatus: ev.agentStatus,
+            permissionPolicy: ev.permissionPolicy, globalModels: ev.models };
         });
         const active = get().sessions.find(s => s.sessionId === get().activeId);
         if (active?.loaded && active.queue === undefined) refreshMeta(active.sessionId, ['queue']);
@@ -507,13 +506,14 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
   const onStateChange = (state: ConnState) => {
     if (state === 'connecting') invalidateRequests();
     set({ connState: state });
-    if (state === 'open' && snapshotReady) {
+    if (state === 'open' && get().snapshotReady) {
       maybeMaterialize();
     }
   };
 
   return {
     connState: 'connecting',
+    snapshotReady: false,
     connectionGeneration: 0,
     permissionPolicy: 'allow-all',
     agentStatus: 'starting',
@@ -551,7 +551,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         cancelLive();
         set({ activeId: id });
         const active = get().sessions.find(s => s.sessionId === id);
-        if (active?.loaded && active.queue === undefined && snapshotReady) refreshMeta(active.sessionId, ['queue']);
+        if (active?.loaded && active.queue === undefined && get().snapshotReady) refreshMeta(active.sessionId, ['queue']);
       }
       maybeMaterialize();
     },
@@ -568,14 +568,14 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     },
 
     loadMore(sid) {
-      if (get().activeId !== sid || !isVisible() || !snapshotReady || get().connState !== 'open' || !client) return;
+      if (get().activeId !== sid || !isVisible() || !get().snapshotReady || get().connState !== 'open' || !client) return;
       const s = get().sessions.find((x) => x.sessionId === sid);
       if (!s || s.historyStale || !s.hasMore || s.loadingHistory) return;
       requestHistory(sid, true);
     },
 
     retryHistory(sid) {
-      if (get().activeId !== sid || !snapshotReady || get().connState !== 'open' || !client) return;
+      if (get().activeId !== sid || !get().snapshotReady || get().connState !== 'open' || !client) return;
       const s = get().sessions.find((x) => x.sessionId === sid);
       if (!s || s.loadingHistory) return;
       if (s.historyError && !s.historyStale) {
@@ -594,8 +594,12 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
 
     cancel(sid) { return mutation(sid, '取消', (net) => net.cancel(sid)); },
     interrupt(sid) { return nativeRead(sid, (net) => net.interrupt(sid)); },
-    setModel(sid, modelId, opts) { return mutation(sid, '切换模型', (net) => net.setModel(sid, modelId, opts)); },
-    deleteSession(sid, confirm) { return mutation(sid, '永久删除会话', (net) => net.deleteSession(sid, confirm)); },
+    setModel(sid, modelId, opts) {
+      // Native ACKs include queued, confirmation and partial-persistence outcomes.
+      // They are not void mutations and never become optimistic session state.
+      return read(net => net.setModel(sid, modelId, opts));
+    },
+    deleteSession(sid) { return mutation(sid, '永久删除会话', (net) => net.deleteSession(sid)); },
     loadSession(sid) { return mutation(sid, '恢复会话', (net) => net.loadSession(sid)); },
     respondAsk(sid, requestId, answer, wasFreeform) { return acknowledged(sid, (net) => net.respondAsk(sid, requestId, answer, wasFreeform)); },
     respondPlan(sid, requestId, action) { return acknowledged(sid, (net) => net.respondPlan(sid, requestId, action)); },

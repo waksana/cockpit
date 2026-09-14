@@ -114,7 +114,7 @@ globalThis.fetch = async (url, init = {}) => {
     case 'schedule/stop':
       return result({ ok: schedules.delete(body.id) });
     case 'session/delete':
-      assert.equal(body.confirm, true);
+      assert.equal(Object.hasOwn(body, 'confirm'), false);
       assert.equal(schedules.size, 0);
       assert.equal(skillEnabled, true);
       assert.equal(mcpEnabled, false);
@@ -127,8 +127,8 @@ globalThis.fetch = async (url, init = {}) => {
 };
 
 process.on('exit', () => {
-  assert.ok(deleted, 'happy path reaches confirmed synthetic deletion');
-  assert.equal(invalidBodies, 4, 'schema rejects malformed MCP, zero interval and both unconfirmed deletes');
+  assert.ok(deleted, 'happy path reaches native-acknowledged synthetic deletion');
+  assert.equal(invalidBodies, 4, 'schema rejects malformed MCP, zero interval and both deletes without a target');
   for (const name of ['mcp/session-toggle', 'session/chat', 'schedule/add', 'session/delete']) assert.ok(validated.has(name));
   console.log(`SYNTHETIC_E2E ${validated.size} intent contracts validated, no real backend`);
 });

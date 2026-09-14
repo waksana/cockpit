@@ -23,16 +23,3 @@ export function sessionMetaBusy(
     || (s.activeOperations ?? 0) > 0
     || !!s.nativeProcessing;
 }
-
-// Engine-authoritative wrapper: ORs the live in-memory in-flight `task` count
-// (the Set the Engine maintains) on top of the projected predicate. The Engine
-// passes `st.inflightTasks.size`; the meta's `activeSubagents` is the projection
-// of that same set, so this is belt-and-suspenders against a not-yet-projected
-// add. Exported for reuse (the transport can call `sessionMetaBusy` directly with
-// just a snapshot; this overload is for callers that also hold the live count).
-export function engineSessionBusy(
-  meta: Parameters<typeof sessionMetaBusy>[0],
-  inflightTaskCount: number,
-): boolean {
-  return sessionMetaBusy(meta) || inflightTaskCount > 0;
-}

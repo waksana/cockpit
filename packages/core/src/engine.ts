@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { accessSync, constants, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -15,15 +15,15 @@ import type {
   MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem,
 } from '@cockpit/protocol';
 import { NativeChatRead, SessionUsage, MetaResource as MetaResources } from '@cockpit/protocol';
+import { NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult } from '@cockpit/protocol';
 import { OfficialRuntime, sessionModelOptions } from './runtime.ts';
 import { normalizeEvent, type RuntimeAttachment } from './sdk-types.ts';
 import { cleanSessionTitle } from './fold.ts';
-import { engineSessionBusy } from './lifecycle.ts';
 import { readNativeChat } from './native-chat.ts';
 import { describeMcpServer, redactMcpConfig } from './mcp-config.ts';
 import { validateForkHistory } from './fork.ts';
 
-export { sessionMetaBusy, engineSessionBusy } from './lifecycle.ts';
+export { sessionMetaBusy } from './lifecycle.ts';
 export type EngineRuntime = Pick<OfficialRuntime,
   'start' | 'models' | 'listSessions' | 'createSession' | 'resumeSession' |
   'closeSession' | 'deleteSession' | 'getAuthStatus' | 'stop' | 'rpc' | 'liveCount' |
@@ -1062,16 +1062,13 @@ export class Engine {
     }
   }
 
-  async setModel(id: string, modelId: string, reasoningEffort?: string, contextTier?: 'default' | 'long_context'): Promise<void> {
-    await this.operation(id, (sdk, st) => this.serializeMutation(st, 'modelGate', async () => {
-      const before = await this.readResource(st, sdk, 'model');
-      // Native switchTo clears omitted effort/tier options even for the same
-      // model. A single-control edit must preserve the other authoritative value.
+  async setModel(id: string, modelId: string, reasoningEffort?: string, contextTier?: 'default' | 'long_context') {
+    return this.operation(id, (sdk, st) => this.serializeMutation(st, 'modelGate', async () => {
       const options = {
         modelId,
         deferIfModelChangeQueued: true,
-        reasoningEffort: reasoningEffort ?? (before.modelId === modelId ? before.reasoningEffort : undefined),
-        contextTier: contextTier ?? (before.modelId === modelId ? before.contextTier : undefined),
+        ...(reasoningEffort !== undefined ? { reasoningEffort } : {}),
+        ...(contextTier !== undefined ? { contextTier } : {}),
       };
       if (reasoningEffort !== undefined || contextTier === 'long_context') {
         const [models, catalog] = await this.withSession(st, sdk, () => settled([
@@ -1086,31 +1083,14 @@ export class Engine {
         }
       }
       const result = await this.withSession(st, sdk, () => sdk.rpc.model.switchTo(options));
-      const current = await this.readResource(st, sdk, 'model');
-      if (result.persistenceError || result.confirmation
-        || (result.status !== undefined && !['applied', 'unchanged', 'deferred', 'queued'].includes(result.status))) {
-        throw new Error(`Native model change ${result.status ?? 'not applied'}: ${result.persistenceError ?? result.message ?? 'confirmation or additional host action required'}`);
-      }
-      if (!result.deferred && !['deferred', 'queued'].includes(result.status ?? '')
-        && ((options.reasoningEffort !== undefined && current.reasoningEffort !== options.reasoningEffort)
-          || (options.contextTier !== undefined && current.contextTier !== options.contextTier))) {
-        throw new Error('Native model settings were not confirmed by authoritative readback');
-      }
       if (result.deferred) this.scheduleSync(st);
+      return NativeModelSwitchResult.parse(result);
     }), ['model', 'models', 'usage', 'control', 'queue']);
   }
-  async setMode(id: string, mode: 'interactive' | 'plan' | 'autopilot'): Promise<void> {
-    await this.operation(id, async (sdk, st) => {
+  async setMode(id: string, mode: 'interactive' | 'plan' | 'autopilot') {
+    return this.operation(id, async (sdk, st) => {
       const result = await this.withSession(st, sdk, () => sdk.rpc.mode.set({ mode }));
-      if (!['applied', 'unchanged'].includes(result.status) || result.confirmation
-        || result.deferImplementation || result.armInteractiveContinuation) {
-        throw new Error(`Native mode change ${result.status}: ${result.message ?? 'additional host action required; no continuation was sent'}`);
-      }
-      const currentMode = await this.withSession(st, sdk, () => sdk.rpc.mode.get());
-      this.patch(st, { currentMode });
-      if (result.modelChanged) {
-        await this.readResource(st, sdk, 'model');
-      }
+      return NativeModeSetResult.parse(result);
     }, ['mode', 'model', 'models', 'usage']);
   }
   async rename(id: string, name: string): Promise<string> {
@@ -1123,20 +1103,19 @@ export class Engine {
       return title;
     }, ['identity']);
   }
-  async compact(id: string, customInstructions?: string): Promise<void> {
-    await this.operation(id, async (sdk, st) => {
+  async compact(id: string, customInstructions?: string) {
+    return this.operation(id, async (sdk, st) => {
       this.patch(st, { compacting: true });
       try {
-        const result = await this.withSession(st, sdk, () => sdk.rpc.history.compact({ customInstructions }));
-        if (!result.success) throw new Error('Native compaction was unsuccessful');
+        return NativeCompactResult.parse(await this.withSession(st, sdk, () => sdk.rpc.history.compact({ customInstructions })));
       }
       finally { this.patch(st, { compacting: false }); }
     }, ['usage']);
   }
-  async rewind(id: string, toMsgId: string, rollbackFiles = false): Promise<void> {
+  async rewind(id: string, toMsgId: string, rollbackFiles = false) {
     const st = await this.state(id);
     await this.ensureLoaded(st);
-    await this.transition(st, async () => {
+    return this.transition(st, async () => {
       const sdk = st.sdk;
       if (!sdk) throw new Error('Native session is unavailable; explicitly resume to rewind');
       const result = await this.withSession(st, sdk, () => sdk.rpc.history.rewind({
@@ -1147,9 +1126,7 @@ export class Engine {
       if (mutated) {
         this.emit({ type: 'chat/invalidated', sessionId: id, reason: 'rewind' });
       }
-      if (result.outcome !== 'success') {
-        throw new Error(`Rewind ${result.outcome}${mutated ? ' (partially applied)' : ''}: ${result.error ?? 'native operation unavailable'}`);
-      }
+      return NativeRewindResult.parse(result);
     });
   }
 
@@ -1442,7 +1419,7 @@ export class Engine {
 
   async addSchedule(id: string, options: {
     prompt: string; interval?: string; cron?: string; at?: number; recurring?: boolean; tz?: string; displayPrompt?: string;
-  }): Promise<{ entry?: ScheduleEntry; error?: string }> {
+  }): Promise<{ entry?: ScheduleEntry; error?: string; possiblyCreated?: boolean }> {
     if (options.cron !== undefined || options.tz !== undefined || options.displayPrompt !== undefined) {
       return unsupported('Cron, timezone and displayPrompt schedule options');
     }
@@ -1450,6 +1427,7 @@ export class Engine {
     if (!options.prompt.trim() || /[\r\n]/.test(options.prompt) || /(^|\s)--/.test(options.prompt) || options.prompt.trimStart().startsWith('/')) {
       throw new Error('Schedule prompt must be plain single-line text without command flags');
     }
+    const prompt = options.prompt.trim();
     let seconds: number;
     if (options.at !== undefined) {
       if (options.recurring) return unsupported('Recurring absolute schedules');
@@ -1461,21 +1439,38 @@ export class Engine {
     }
     if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 86400) throw new Error('Schedule delay must be between 1 second and 24 hours');
     const recurring = options.at === undefined && (options.recurring ?? true);
+    let dispatched = false;
     return this.operation(id, (sdk, st) => this.serializeMutation(st, 'scheduleGate', async () => {
       if (options.at !== undefined) {
         seconds = Math.ceil((options.at - Date.now()) / 1000);
         if (seconds < 1) throw new Error('Absolute schedule time passed while waiting for the runtime');
       }
       const before = new Set((await this.withSession(st, sdk, () => sdk.rpc.schedule.list())).entries.map(entry => entry.id));
-      const result = await this.withSession(st, sdk, () => sdk.rpc.commands.invoke({ name: recurring ? 'every' : 'after', input: `${seconds}s ${options.prompt}` }));
-      const entries = (await this.readResource(st, sdk, 'schedule')).entries;
-      const created = entries.find(entry => !before.has(entry.id) && entry.prompt === options.prompt
+      let result: Awaited<ReturnType<CopilotSession['rpc']['commands']['invoke']>>;
+      try {
+        dispatched = true;
+        result = await this.withSession(st, sdk, () => sdk.rpc.commands.invoke({ name: recurring ? 'every' : 'after', input: `${seconds}s ${prompt}` }));
+      } catch (error) {
+        return { possiblyCreated: true, error: `Native schedule command acknowledgement is unknown; a schedule may have been created: ${messageOf(error)}. Do not retry automatically` };
+      }
+      let entries: Awaited<ReturnType<CopilotSession['rpc']['schedule']['list']>>['entries'];
+      try {
+        entries = (await this.readResource(st, sdk, 'schedule')).entries;
+      } catch (error) {
+        return { possiblyCreated: true, error: `Native schedule readback failed after command acknowledgement (${result.kind}); a schedule may have been created: ${messageOf(error)}. Do not retry automatically` };
+      }
+      const created = entries.find(entry => !before.has(entry.id) && entry.prompt === prompt
         && entry.recurring === recurring && entry.intervalMs === seconds * 1000);
-      if (!created) return { error: `Native schedule was not confirmed (${result.kind}); no model fallback was sent` };
+      if (!created) return { possiblyCreated: true, error: `Native schedule was not confirmed (${result.kind}); a schedule may have been created. No model fallback or automatic retry was sent` };
       const entry = this.scheduleEntry(created);
       if (result.kind !== 'text' && result.kind !== 'completed') return { entry, error: `Native schedule created with unexpected command outcome: ${result.kind}` };
       return { entry };
-    }), ['schedule']);
+    }), ['schedule']).catch(error => {
+      if (!dispatched) throw error;
+      // A fatal/closed-session race can win the enclosing operation before the
+      // RPC catch runs. It cannot establish that a dispatched command did nothing.
+      return { possiblyCreated: true, error: `Native schedule operation ended after dispatch; a schedule may have been created: ${messageOf(error)}. Do not retry automatically` };
+    });
   }
   private serializeMutation<T>(st: State, gate: 'scheduleGate' | 'modelGate', work: () => Promise<T>): Promise<T> {
     const next = st[gate].then(work);
@@ -1520,8 +1515,7 @@ export class Engine {
     if (!st || st.closing || st.cancelling || this.lifecycle) throw new Error('Request is no longer pending or session is transitioning');
     this.answer(st, requestId, kind, value);
   }
-  async deleteSession(id: string, confirm?: true): Promise<void> {
-    if (confirm !== true) throw new Error('Permanent deletion is irreversible; explicit confirm:true is required');
+  async deleteSession(id: string, _confirm?: boolean): Promise<void> {
     this.assertAvailable();
     if (this.stopped || this.lifecycle || this.startPromise || this.removing.has(id)) throw new Error('Session lifecycle transition is in progress');
     const st = await this.state(id);
@@ -1530,8 +1524,7 @@ export class Engine {
     this.removing.add(id);
     try {
       await this.transition(st, async () => {
-        // The API's confirm:true gate precedes this operation. Native deletion is
-        // authoritative; never remove files to simulate success.
+        // Native deletion is authoritative; never remove files to simulate success.
         await this.close(st);
         await this.untilFatal(() => this.runtime.deleteSession(id));
         this.sessions.delete(id);

@@ -86,27 +86,18 @@ server.registerTool(
     title: 'Permanently delete a session',
     description:
       'Compatibility alias for cockpit_delete_session. IRREVERSIBLE native deletion through session/purge. Only run ' +
-      'this when permanent deletion is intended. Requires ' +
-      'confirm=true. Managed files and workspaces are retained. Never hand-delete session-store.db rows ' +
+      'this when permanent deletion is intended. Managed files and workspaces are retained. ' +
+      'Busy sessions are protected. Never hand-delete session-store.db rows ' +
       'or automatically retry an uncertain result.',
     inputSchema: {
       session_id: z.string().min(1).describe('The session id to permanently delete'),
-      confirm: z
-        .boolean()
-        .default(false)
-        .describe('Must be true to proceed — guards against accidental irreversible deletion'),
+      confirm: z.boolean().optional().describe('Deprecated compatibility input; ignored. Deletion is irreversible.'),
     },
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   },
-  async ({ session_id, confirm }): Promise<ToolResult> => {
-    if (!confirm) {
-      return fail(
-        `Refusing to purge ${session_id}: pass confirm=true to permanently delete. ` +
-          `This is irreversible; use cockpit_read_session to inspect it before deciding.`,
-      );
-    }
+  async ({ session_id }): Promise<ToolResult> => {
     try {
-      await intent('session/purge', { sessionId: session_id, confirm });
+      await intent('session/purge', { sessionId: session_id });
       return ok(`Purged ${session_id} permanently. The session is gone.`);
     } catch (e) {
       return fail(e instanceof CockpitError ? e.message : String(e));
@@ -346,7 +337,9 @@ server.registerTool(
       'target session must be loaded for ticks to fire. Native idle cleanup pauses schedules; ' +
       'relative delays restart on resume. This is not an always-on scheduler. ' +
       'Use cockpit_list_sessions to get the session id.\n' +
-      'Returns { ok, entry } with the created schedule (id used to stop it), or { ok:false, error }.',
+      'Returns the complete native-backed outcome. A returned entry establishes creation even alongside an error; ' +
+      'possiblyCreated:true means acknowledgement/readback was inconclusive. Missing entry is not proof that nothing was created. ' +
+      'Never automatically retry an uncertain result.',
     inputSchema: {
       session_id: z.string().min(1).describe('The session id to schedule the prompt on'),
       prompt: z.string().min(1).describe('The prompt text enqueued on every tick'),
@@ -367,10 +360,7 @@ server.registerTool(
         ...(at !== undefined ? { at } : {}),
         ...(recurring !== undefined ? { recurring } : {}),
       });
-      if (!res.ok || !res.entry) return fail(res.error ?? 'schedule was not created.');
-      const e = res.entry;
-      const cadence = e.cron ? `cron "${e.cron}"${e.tz ? ` (${e.tz})` : ''}` : e.intervalMs ? `every ${Math.round(e.intervalMs / 1000)}s` : e.at ? `once at ${new Date(e.at).toLocaleString()}` : 'unknown';
-      return ok(`Scheduled #${e.id} on ${session_id}: ${cadence}${e.recurring ? ' (recurring)' : ' (one-shot)'}. Next: ${new Date(e.nextRunAt).toLocaleString()}.`);
+      return ok(JSON.stringify(res, null, 2));
     } catch (e) {
       return fail(e instanceof CockpitError ? e.message : String(e));
     }
@@ -443,8 +433,7 @@ server.registerTool(
 );
 
 // ── Tool groups (split by concern into ./tools/*) ────────────────────────────
-// The 15 tools above (trash bin, per-session metadata, schedules, refresh) plus
-// these groups give the MCP parity with what a person can see/do in the UI.
+// Semantic tools independently consume the backend's selected native API subset.
 registerConversationTools(server); // send_prompt, cancel_turn, remove_queued
 registerRespondTools(server);      // respond_ask, respond_plan, respond_elicitation
 registerSettingsTools(server);     // set_model, set_mode, compact_session, rewind_session

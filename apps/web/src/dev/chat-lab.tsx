@@ -22,7 +22,7 @@ if (!import.meta.env.DEV || import.meta.env.COCKPIT_CHAT_LAB !== true) {
 // No App/ConnectedThread/init: these are synthetic component inputs, never
 // registered sessions or a substitute native store. Unhandled HTTP is rejected
 // by the opt-in Vite lab server as well.
-useCockpit.setState({ connState: 'open' });
+useCockpit.setState({ connState: 'open', snapshotReady: true });
 
 export function Lab() {
   const query = new URLSearchParams(location.search);

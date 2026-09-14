@@ -5,6 +5,11 @@
 import { z } from 'zod';
 import {
   Intents,
+  classifyNativeModelSwitchResult,
+  classifyNativeModeSetResult,
+  classifyNativeCompactResult,
+  classifyNativeRewindResult,
+  type NativeOperationClassification,
   type IntentResult,
   McpServerSession as ProtocolMcpServerSession,
   McpServerStatus as ProtocolMcpServerStatus,
@@ -48,6 +53,36 @@ export type ToolResult = {
 // in the CLI host, and no tool declares an outputSchema requiring that copy.
 export function ok(text: string): ToolResult {
   return { content: [{ type: 'text', text }] };
+}
+
+export function intentJson(name: string, value: unknown): ToolResult {
+  let classification: NativeOperationClassification | undefined;
+  switch (name) {
+    case 'setModel': {
+      const parsed = Intents.setModel.result.parse(value);
+      classification = classifyNativeModelSwitchResult(parsed.result);
+      break;
+    }
+    case 'setMode': {
+      const parsed = Intents.setMode.result.parse(value);
+      classification = classifyNativeModeSetResult(parsed.result);
+      break;
+    }
+    case 'session/compact': {
+      const parsed = Intents['session/compact'].result.parse(value);
+      classification = classifyNativeCompactResult(parsed.result);
+      break;
+    }
+    case 'session/rewind': {
+      const parsed = Intents['session/rewind'].result.parse(value);
+      classification = classifyNativeRewindResult(parsed.result);
+      break;
+    }
+  }
+  return {
+    ...ok(JSON.stringify(value, null, 2)),
+    ...(classification?.isError ? { isError: true } : {}),
+  };
 }
 
 export function fail(message: string): ToolResult {
@@ -111,8 +146,6 @@ export function cappedJson(value: unknown, shrink?: (attempt: number) => unknown
 //               so cappedJson terminates (and only then falls to the stub)
 // The projection carries a `_compacted` marker (and `_returned` when items were
 // shed) so the consumer knows detail was elided and can re-query in markdown.
-// Nested-payload tools (flows/flow-schedules) flatten each item to a shape with a
-// top-level clip field before calling this.
 export function shrinkList<T>(
   items: readonly T[],
   listKey: string,

@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { assertIntentSuccess, backendJson, CockpitError, intent, protocolIntent } from '../cockpit.js';
-import { fail, ok, type ToolResult } from '../shared.js';
+import { fail, ok, intentJson, type ToolResult } from '../shared.js';
 
 const IntentName = z.string().min(1).max(200).regex(/^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/);
 const Summary = z.object({ name: IntentName, description: z.string() });
@@ -61,12 +61,14 @@ export function registerFoundationTools(server: McpServer): void {
     title: 'Invoke a published Cockpit intent',
     description: 'Call any intent published by cockpit_capabilities using its exact API body (camelCase keys). '
       + 'Sends one POST without a capability preflight; the authoritative backend rejects unknown or retired names and validates '
-      + 'the body and result, including explicit confirm:true for irreversible session/delete and session/purge. '
+      + 'the body and result. Session compact/rewind/delete/purge add no confirm guard; host system/shutdown still requires confirm:true. '
       + 'prompt accepts text and optional SDK-native attachments; no managed upload or file-reference resolution is provided. '
       + 'session/rewind with rollbackFiles:true '
       + 'requests native file rollback; conflicts fail explicitly. permissionPolicy stays allow-all; modes are interaction settings. '
       + 'May mutate or delete data; use cockpit_capabilities when the API schema is unknown. No automatic retries, including on timeout. '
-      + 'Returns the complete JSON result; prefer paginated semantic reads for large transcripts.',
+      + 'Returns the complete JSON result. Known native failures/partial failures set MCP isError without removing native details; '
+      + 'queued and needs-action outcomes are not failures, and unknown status is not proof of application. '
+      + 'Prefer paginated semantic reads for large transcripts.',
     inputSchema: {
       name: IntentName,
       body: z.record(z.unknown()).default({}),
@@ -74,7 +76,7 @@ export function registerFoundationTools(server: McpServer): void {
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, async ({ name, body }): Promise<ToolResult> => {
     try {
-      return ok(JSON.stringify(await invokePublishedIntent(name, body), null, 2));
+      return intentJson(name, await invokePublishedIntent(name, body));
     } catch (error) {
       return fail(error instanceof Error ? error.message : String(error));
     }

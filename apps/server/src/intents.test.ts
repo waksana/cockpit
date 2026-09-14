@@ -55,11 +55,11 @@ const engine: ServerEngine = {
   prompt: async (...args) => record('prompt', args, { ok: true, queued: true }),
   cancel: (...args) => record('cancel', args, undefined),
   interrupt: async (...args) => record('interrupt', args, { ok: true as const, interrupted: true }),
-  setModel: async (...args) => record('setModel', args, undefined),
+  setModel: async (...args) => record('setModel', args, { status: 'applied', modelId: args[1] }),
   rename: async (...args) => record('rename', args, 'renamed'),
-  compact: async (...args) => record('compact', args, undefined),
-  rewind: async (...args) => record('rewind', args, undefined),
-  setMode: async (...args) => record('setMode', args, undefined),
+  compact: async (...args) => record('compact', args, { success: true, tokensRemoved: 10, messagesRemoved: 2 }),
+  rewind: async (...args) => record('rewind', args, { outcome: 'success' as const, eventsRemoved: 2, restoredFiles: [], skippedFiles: [] }),
+  setMode: async (...args) => record('setMode', args, { status: 'applied', modelChanged: false }),
   deleteSession: async (...args) => record('deleteSession', args, undefined),
   unload: (...args) => record('unload', args, undefined),
   load: async (...args) => record('load', args, undefined),
@@ -136,8 +136,8 @@ const cases = {
   'session/compact': { body: { sessionId: 's', customInstructions: 'keep context' }, method: 'compact', args: ['s', 'keep context'] },
   'session/rewind': { body: { sessionId: 's', toMsgId: 'm', rollbackFiles: true }, method: 'rewind', args: ['s', 'm', true] },
   setMode: { body: { sessionId: 's', mode: 'plan' }, method: 'setMode', args: ['s', 'plan'] },
-  'session/delete': { body: { sessionId: 's', confirm: true }, method: 'deleteSession', args: ['s', true] },
-  'session/purge': { body: { sessionId: 's', confirm: true }, method: 'deleteSession', args: ['s', true] },
+  'session/delete': { body: { sessionId: 's', confirm: true }, method: 'deleteSession', args: ['s'] },
+  'session/purge': { body: { sessionId: 's', confirm: true }, method: 'deleteSession', args: ['s'] },
   'session/unload': { body: { sessionId: 's' }, method: 'unload', args: ['s'] },
   'session/load': { body: { sessionId: 's' }, method: 'load', args: ['s'] },
   'session/reload': { body: { sessionId: 's' }, method: 'reload', args: ['s'] },
@@ -636,6 +636,55 @@ test('result validation returns parsed data rather than leaking unknown engine f
   assert.deepEqual(response.json(), { ok: true, queued: false });
 });
 
+test('native operation envelopes retain queued, follow-up and partially applied outcomes', async t => {
+  const model = { status: 'queued', deferred: true, modelId: 'native', message: 'Queued natively',
+    warning: 'Native warning', deprecationWarnings: ['Native deprecation'], nativeExtension: 1 };
+  const mode = { status: 'applied', modelChanged: true, deferImplementation: true, armInteractiveContinuation: true,
+    confirmation: { targetModelDisplayName: 'Native model', currentTokens: 20, targetLimit: 10 } };
+  const compact = { success: false, tokensRemoved: 100, messagesRemoved: 2, summaryContent: 'Partial native summary' };
+  const rewind = { outcome: 'snapshot-prune-failed', eventsRemoved: 3, restoredFiles: ['/fixture/restored'],
+    skippedFiles: [{ path: '/fixture/kept', reason: 'native-conflict' }], error: 'Native cleanup failed' };
+  t.mock.method(engine, 'setModel', async () => model);
+  t.mock.method(engine, 'setMode', async () => mode);
+  t.mock.method(engine, 'compact', async () => compact);
+  t.mock.method(engine, 'rewind', async () => rewind);
+  for (const [name, result] of [
+    ['setModel', model], ['setMode', mode], ['session/compact', compact], ['session/rewind', rewind],
+  ] as const) {
+    const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: cases[name].body });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json(), { ok: true, result });
+  }
+  assert.deepEqual(calls, [], 'no metadata readback or host follow-up is dispatched');
+});
+
+test('model refusal, persistence failures and unknown outcomes remain returned native results', async t => {
+  for (const result of [
+    {}, { status: 'future-native-status' }, { status: 'rejected', message: 'Native refusal' },
+    { status: 'applied', persistenceError: 'Native persistence failed', modelState: {
+      modelId: 'native', reasoningEffort: 'high', contextTier: 'long_context',
+    } },
+  ]) {
+    t.mock.method(engine, 'setModel', async () => result);
+    const response = await app.inject({ method: 'POST', url: '/intent/setModel', payload: cases.setModel.body });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json(), { ok: true, result });
+  }
+});
+
+test('schedule creation uncertainty and known IDs with warnings are not discarded by dispatch', async t => {
+  for (const result of [
+    { possiblyCreated: true, error: 'Native acknowledgement unknown; a schedule may have been created' },
+    { entry: { id: 9, prompt: 'remind', recurring: true, intervalMs: 30_000, nextRunAt: 1 },
+      error: 'Native schedule created with unexpected command outcome' },
+  ]) {
+    t.mock.method(engine, 'addSchedule', async () => result);
+    const response = await app.inject({ method: 'POST', url: '/intent/schedule/add', payload: cases['schedule/add'].body });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json(), { ok: false, ...result });
+  }
+});
+
 test('engine exceptions default to 500 and honor only valid statusCode and string code', async (t) => {
   const zodFailure = Intents.prompt.body.safeParse({});
   assert.equal(zodFailure.success, false);
@@ -781,23 +830,24 @@ for (const name of ['session/delete', 'session/purge']) {
     assert.equal(response.statusCode, 400);
     assert.deepEqual(calls, []);
   });
-  test(`${name} requires protocol confirm:true and never reaches the engine otherwise`, async () => {
-    for (const confirm of [undefined, false, 'true', 1, null]) {
+  test(`${name} accepts absent or ignored boolean confirmation and rejects other types`, async () => {
+    for (const confirm of [undefined, false, true, 'true', 1, null]) {
       calls.length = 0;
       const response = await app.inject({
         method: 'POST', url: `/intent/${name}`, payload: { sessionId: 's', confirm },
       });
-      assert.equal(response.statusCode, 400, response.body);
-      assert.deepEqual(calls, []);
+      const valid = confirm === undefined || typeof confirm === 'boolean';
+      assert.equal(response.statusCode, valid ? 200 : 400, response.body);
+      assert.deepEqual(calls, valid ? [{ method: 'deleteSession', args: ['s'] }] : []);
     }
   });
 }
 
-test('old soft-delete requests cannot silently become permanent deletion', async () => {
-  for (const body of [{ sessionId: 's' }, { sessionId: 's', reason: 'declutter' }]) {
+test('retired soft-delete options remain rejected', async () => {
+  for (const body of [{ sessionId: 's', reason: 'declutter' }]) {
     const response = await app.inject({ method: 'POST', url: '/intent/session/delete', payload: body });
     assert.equal(response.statusCode, 400);
-    assert.match(response.body, /confirm/);
+    assert.match(response.body, /reason/);
     assert.deepEqual(calls, []);
   }
 });
@@ -1111,6 +1161,7 @@ test('two simultaneous viewers see no query events and receive exactly one mocke
     t.mock.method(engine, 'rewind', async (...args: unknown[]) => {
       record('rewind', args, undefined);
       broadcastFrame(recipients, `data: ${JSON.stringify(reset)}\n\n`);
+      return { outcome: 'success', eventsRemoved: 2, restoredFiles: [], skippedFiles: [] };
     });
     calls.length = 0;
     const response = await app.inject({
@@ -1118,7 +1169,7 @@ test('two simultaneous viewers see no query events and receive exactly one mocke
       payload: { sessionId: 's', toMsgId: 'm', rollbackFiles: false },
     });
     assert.equal(response.statusCode, 200, response.body);
-    assert.deepEqual(response.json(), { ok: true });
+    assert.deepEqual(response.json(), { ok: true, result: { outcome: 'success', eventsRemoved: 2, restoredFiles: [], skippedFiles: [] } });
     assert.deepEqual(calls, [{ method: 'rewind', args: ['s', 'm', false] }]);
     await nextTurn();
     for (const viewer of opened) {

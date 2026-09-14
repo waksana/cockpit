@@ -159,7 +159,7 @@ function fakeSession(t: TestContext, sessionId: string) {
     model: {
       list: t.mock.fn(async (): Promise<Awaited<ReturnType<Rpc['model']['list']>>> => ({ list: [] })),
       getCurrent: t.mock.fn(async () => structuredClone(state.model)),
-      switchTo: t.mock.fn(async (options: Parameters<Rpc['model']['switchTo']>[0]) => {
+      switchTo: t.mock.fn(async (options: Parameters<Rpc['model']['switchTo']>[0]): Promise<Awaited<ReturnType<Rpc['model']['switchTo']>>> => {
         state.model = { ...state.model, modelId: options.modelId,
           reasoningEffort: options.reasoningEffort, contextTier: options.contextTier };
         return { modelId: state.model.modelId };
@@ -1222,14 +1222,13 @@ for (const outcome of ['success', 'failure'] as const) {
   });
 }
 
-test('setter readback failure rejects only its own command without rolling back native current metadata', async t => {
+test('a failed independent read cannot discard a completed native model acknowledgement', async t => {
   const h = harness(t);
   const s = await h.load();
   const held = deferred<Awaited<ReturnType<Rpc['model']['getCurrent']>>>();
-  const reads = s.rpc.model.getCurrent.mock.callCount();
-  s.rpc.model.getCurrent.mock.mockImplementationOnce(async () => structuredClone(s.state.model), reads);
-  s.rpc.model.getCurrent.mock.mockImplementationOnce(() => held.promise, reads + 1);
-  const rejected = assert.rejects(h.engine.setModel(s.id, 'command'), /own read failure/);
+  s.rpc.model.getCurrent.mock.mockImplementationOnce(() => held.promise);
+  const rejected = assert.rejects(h.engine.getResources(s.id, ['model']), /own read failure/);
+  assert.deepEqual(await h.engine.setModel(s.id, 'command'), { modelId: 'command' });
   await nextTurn();
   s.state.model.modelId = 'later-native';
   assert.equal((await h.engine.getMeta(s.id))?.currentModelId, 'later-native');
@@ -2145,7 +2144,7 @@ test('native mode changes still read back a changed model without draft settings
   assert.equal(native.sdk.send.mock.callCount(), 0);
 });
 
-test('model changes retain current-state confirmation without reading an unused inventory afterward', async t => {
+test('model changes return the native acknowledgement without current-state or unused inventory readback', async t => {
   const h = harness(t);
   const s = await h.load();
   const lists = s.rpc.model.list.mock.callCount();
@@ -2154,7 +2153,7 @@ test('model changes retain current-state confirmation without reading an unused 
   await h.engine.setModel(s.id, 'new-model');
   assert.equal(s.state.model.modelId, 'new-model');
   assert.equal(s.rpc.model.switchTo.mock.callCount(), 1);
-  assert.equal(s.rpc.model.getCurrent.mock.callCount() - currents, 2, 'preserve option read and authoritative confirmation');
+  assert.equal(s.rpc.model.getCurrent.mock.callCount() - currents, 0, 'native result must not depend on stale or failed readback');
   assert.equal(s.rpc.model.list.mock.callCount(), lists, 'successful mutation has no unused inventory dependency');
 });
 
@@ -2173,7 +2172,7 @@ test('model option validation reads its inventory once before switching, never a
 });
 
 for (const failCurrent of [false, true]) {
-  test(`mode-selected model keeps required current readback, not unused inventory (failure=${failCurrent})`, async t => {
+  test(`mode-selected model returns native outcome without readback (unavailable=${failCurrent})`, async t => {
     const h = harness(t);
     const s = await h.load();
     const lists = s.rpc.model.list.mock.callCount();
@@ -2185,9 +2184,9 @@ for (const failCurrent of [false, true]) {
     });
     s.rpc.model.list.mock.mockImplementation(async () => { throw new Error('unrelated inventory unavailable'); });
     if (failCurrent) s.rpc.model.getCurrent.mock.mockImplementation(async () => { throw new Error('required current read failed'); });
-    if (failCurrent) await assert.rejects(h.engine.setMode(s.id, 'plan'), /required current read failed/);
-    else await h.engine.setMode(s.id, 'plan');
-    assert.equal(s.rpc.model.getCurrent.mock.callCount() - currents, 1);
+    s.rpc.mode.get.mock.mockImplementation(async () => { throw new Error('mode read unavailable'); });
+    assert.deepEqual(await h.engine.setMode(s.id, 'plan'), { status: 'applied', modelChanged: true });
+    assert.equal(s.rpc.model.getCurrent.mock.callCount() - currents, 0);
     assert.equal(s.rpc.model.list.mock.callCount(), lists);
     assert.equal(s.rpc.mode.set.mock.callCount(), 1, 'never replay an applied change after read failure');
   });
@@ -2376,14 +2375,13 @@ test('a new Engine cannot reuse a runtime whose failure is already terminal', as
   await promptly(replacement.stop());
 });
 
-test('fatal runtime failure rejects a hung native model readback and permits stop before it settles', async t => {
+test('fatal runtime failure rejects a hung native model switch and permits stop before it settles', async t => {
 
   const h = harness(t);
   const s = await h.load();
   await h.engine.start();
-  const readback = deferred<typeof s.state.model>();
-  let reads = 0;
-  s.rpc.model.getCurrent.mock.mockImplementation(() => ++reads === 2 ? readback.promise : Promise.resolve(structuredClone(s.state.model)));
+  const readback = deferred<Awaited<ReturnType<Rpc['model']['switchTo']>>>();
+  s.rpc.model.switchTo.mock.mockImplementation(() => readback.promise);
   const changing = assert.rejects(h.engine.setModel(s.id, 'pending-model'), /fatal during model readback/);
   await nextTurn();
   assert.equal(s.rpc.model.switchTo.mock.callCount(), 1);
@@ -3042,13 +3040,12 @@ test('explicit reload blocks unload, cancel, and stop until resume completes', a
   assert.equal(h.runtime.closeSession.mock.callCount(), 0);
 });
 
-test('in-flight model operations protect otherwise idle sessions until native read-back settles', async t => {
+test('in-flight model operations protect otherwise idle sessions until native switch acknowledgement settles', async t => {
 
   const h = harness(t);
   const s = await h.load();
-  const readback = deferred<typeof s.state.model>();
-  let reads = 0;
-  s.rpc.model.getCurrent.mock.mockImplementation(() => ++reads === 2 ? readback.promise : Promise.resolve(structuredClone(s.state.model)));
+  const readback = deferred<Awaited<ReturnType<Rpc['model']['switchTo']>>>();
+  s.rpc.model.switchTo.mock.mockImplementation(() => readback.promise);
   const changing = h.engine.setModel(s.id, 'next-model');
   await nextTurn();
   assert.ok((await h.engine.getMeta(s.id))!.activeOperations! > 0);
@@ -3081,19 +3078,18 @@ test('manual compaction protects the session until the RPC settles and clears it
   await h.engine.unload(s.id);
 });
 
-test('structured unsuccessful compaction rejects without fabricating a history reset or retaining progress', async t => {
+test('structured unsuccessful compaction retains its result without fabricating a history reset or retaining progress', async t => {
   const h = harness(t);
   const s = await h.load();
   s.rpc.history.compact.mock.mockImplementation(async () => ({ success: false, tokensRemoved: 0, messagesRemoved: 0 }));
   h.events.length = 0;
-  await assert.rejects(h.engine.compact(s.id, 'retain decisions'), /compaction.*unsuccessful/i);
+  assert.deepEqual(await h.engine.compact(s.id, 'retain decisions'), { success: false, tokensRemoved: 0, messagesRemoved: 0 });
   assert.deepEqual(s.rpc.history.compact.mock.calls[0]!.arguments, [{ customInstructions: 'retain decisions' }]);
   assert.equal((await h.engine.getMeta(s.id))?.activeOperations, 0);
   assert.equal((await h.engine.getMeta(s.id))?.loaded, true);
   assert.equal(serverChatEvents(h).length, 0);
   assert.ok(!h.events.some(event => event.type === 'chat/invalidated'));
   assert.equal(s.sdk.send.mock.callCount(), 0);
-  visibleError(h, s.id, /compaction.*unsuccessful/i);
   await h.engine.unload(s.id);
 });
 
@@ -3480,12 +3476,10 @@ for (const stage of ['mutation', 'readback'] as const) {
     const before = (await h.engine.getMeta(s.id))!;
     const fail = async () => { throw new Error(`model ${stage} rejected`); };
     if (stage === 'mutation') s.rpc.model.switchTo.mock.mockImplementation(fail);
-    else {
-      let reads = 0;
-      s.rpc.model.getCurrent.mock.mockImplementation(async () => ++reads === 1 ? structuredClone(s.state.model) : fail());
-    }
+    else s.rpc.model.getCurrent.mock.mockImplementation(fail);
     h.events.length = 0;
-    await assert.rejects(h.engine.setModel(s.id, 'unconfirmed-model', 'high', 'long_context'), /model .* rejected/);
+    if (stage === 'mutation') await assert.rejects(h.engine.setModel(s.id, 'unconfirmed-model', 'high', 'long_context'), /model .* rejected/);
+    else assert.deepEqual(await h.engine.setModel(s.id, 'unconfirmed-model', 'high', 'long_context'), { modelId: 'unconfirmed-model' });
     if (stage === 'readback') await assert.rejects(h.engine.getMeta(s.id), /model readback rejected/);
     else {
       const after = (await h.engine.getMeta(s.id))!;
@@ -3494,7 +3488,7 @@ for (const stage of ['mutation', 'readback'] as const) {
       assert.equal(after.currentContextTier, before.currentContextTier);
     }
     assert.ok(!h.events.some(event => event.type === 'session/patch' && event.currentModelId === 'unconfirmed-model'));
-    visibleError(h, s.id, /model .* rejected/);
+    if (stage === 'mutation') visibleError(h, s.id, /model .* rejected/);
     s.rpc.model.getCurrent.mock.mockImplementation(async () => structuredClone(s.state.model));
     assert.equal((await h.engine.getMeta(s.id))?.currentModelId,
       stage === 'readback' ? 'unconfirmed-model' : before.currentModelId, 'later reads report actual native state');
@@ -3527,7 +3521,7 @@ test('model, mode, and name success publish authoritative native read-back rathe
   s.rpc.model.list.mock.mockImplementation(async () => ({ list: [{
     id: 'alias', supportedReasoningEfforts: ['high'], billing: { token_prices: { long_context: {} } },
   }] }));
-  await assert.rejects(h.engine.setModel(s.id, 'alias', 'high', 'long_context'), /not confirmed by authoritative readback/);
+  assert.deepEqual(await h.engine.setModel(s.id, 'alias', 'high', 'long_context'), { modelId: 'alias' });
   assert.deepEqual(s.rpc.model.switchTo.mock.calls[0]!.arguments, [{ modelId: 'alias', deferIfModelChangeQueued: true, reasoningEffort: 'high', contextTier: 'long_context' }]);
   assert.equal((await h.engine.getMeta(s.id))?.currentModelId, 'normalized-model');
   assert.equal((await h.engine.getMeta(s.id))?.currentReasoningEffort, 'low');
@@ -3599,7 +3593,11 @@ for (const mutated of [false, true]) {
       };
     });
     const reads = s.rpc.eventLog.read.mock.callCount();
-    await assert.rejects(h.engine.rewind(s.id, 'keep', true), /Rewind .*checkpoint cleanup failed|Rewind .*unknown event/);
+    assert.deepEqual(await h.engine.rewind(s.id, 'keep', true), {
+      outcome: mutated ? 'checkpoint-cleanup-failed' : 'truncation-failed',
+      restoredFiles: [], skippedFiles: [], ...(mutated ? { eventsRemoved: 1 } : {}),
+      error: mutated ? 'checkpoint cleanup failed' : 'unknown event',
+    });
     assert.deepEqual(s.rpc.history.rewind.mock.calls[0]!.arguments, [{ eventId: 'keep', mode: 'conversation-and-files' }]);
     const invalidations = h.events.filter(event => event.type === 'chat/invalidated');
     assert.deepEqual(invalidations, mutated ? [{ type: 'chat/invalidated', sessionId: s.id, reason: 'rewind' }] : []);
@@ -3607,7 +3605,6 @@ for (const mutated of [false, true]) {
     assert.equal(s.rpc.eventLog.read.mock.callCount(), reads, 'mutation never replays chat on the server');
     if (mutated) {
       assert.deepEqual((await chat(h, s.id, { source: 'live' })).events.map(event => event.id), ['keep']);
-      visibleError(h, s.id, /partially applied/);
     }
     assert.equal((await h.engine.getMeta(s.id))?.closing, false);
     assert.equal((await h.engine.getMeta(s.id))?.loaded, true);
@@ -3633,7 +3630,10 @@ test('incomplete file rollback is reported as a real partial mutation without in
     skippedFiles: [], error: 'rollback could not restore one file',
   }));
   const reads = s.rpc.eventLog.read.mock.callCount();
-  await assert.rejects(h.engine.rewind(s.id, 'unchanged-conversation', true), /rollback-incomplete \(partially applied\)/);
+  assert.deepEqual(await h.engine.rewind(s.id, 'unchanged-conversation', true), {
+    outcome: 'rollback-incomplete', restoredFiles: [join(h.cwd, 'native-restored-file')],
+    skippedFiles: [], error: 'rollback could not restore one file',
+  });
   assert.deepEqual(h.events.filter(event => event.type === 'chat/invalidated'), [
     { type: 'chat/invalidated', sessionId: s.id, reason: 'rewind' },
   ]);
@@ -3693,6 +3693,7 @@ const invalidSchedules = [
   { interval: '1m', at: Date.parse(timestamp) }, { interval: 'tomorrow' },
   { interval: '1m', prompt: 'hello --model other' }, { interval: '1m', prompt: '/dangerous-command' },
   { interval: '1m', prompt: 'line one\nline two' }, { interval: '1m', prompt: '  ' },
+  { interval: '1m', prompt: '\ncheck build\n' }, { interval: '1m', prompt: 'check build\r' },
 ] satisfies Array<Partial<Parameters<Engine['addSchedule']>[1]>>;
 for (const options of invalidSchedules) {
   test(`invalid schedule is rejected before resume or command invocation: ${JSON.stringify(options)}`, async t => {
@@ -3779,8 +3780,69 @@ test('schedule command acknowledgement without a matching new entry is not succe
   const result = await h.engine.addSchedule(s.id, { prompt: 'check build', interval: '1m' });
   assert.equal(result.entry, undefined);
   assert.match(result.error!, /not confirmed/);
+  assert.equal(result.possiblyCreated, true);
   assert.equal(s.sdk.send.mock.callCount(), 0);
   assert.equal((await h.engine.getMeta(s.id))?.scheduleCount, 1);
+});
+
+for (const recurring of [false, true]) {
+  test(`schedule ${recurring ? 'every' : 'after'} normalizes surrounding whitespace once and preserves a created ID with a warning`, async t => {
+    const h = harness(t);
+    const s = await h.load();
+    s.rpc.commands.invoke.mock.mockImplementation(async ({ input }) => {
+      assert.equal(input, '60s check build');
+      s.state.schedules = [schedule(92, recurring)];
+      return { kind: 'agent-prompt', prompt: 'must not be sent', displayPrompt: 'must not be sent' };
+    });
+    const result = await h.engine.addSchedule(s.id, { prompt: '  check build  ', interval: '1m', recurring });
+    assert.equal(result.entry?.id, 92);
+    assert.equal(result.entry?.prompt, 'check build');
+    assert.match(result.error!, /created.*unexpected command outcome/);
+    assert.equal(result.possiblyCreated, undefined, 'a matching native entry establishes creation');
+    assert.equal(s.rpc.commands.invoke.mock.callCount(), 1);
+    assert.equal(s.sdk.send.mock.callCount(), 0);
+  });
+}
+
+for (const failure of ['acknowledgement', 'readback'] as const) {
+  test(`schedule ${failure} failure reports possible creation without replay`, async t => {
+    const h = harness(t);
+    const s = await h.load();
+    s.rpc.commands.invoke.mock.mockImplementation(async () => {
+      s.state.schedules = [schedule(93)];
+      if (failure === 'acknowledgement') throw new Error('response lost');
+      s.rpc.schedule.list.mock.mockImplementation(async () => { throw new Error('readback lost'); });
+      return { kind: 'completed' };
+    });
+    const result = await h.engine.addSchedule(s.id, { prompt: ' check build ', interval: '1m' });
+    assert.equal(result.possiblyCreated, true);
+    assert.match(result.error!, /may have been created/);
+    assert.match(result.error!, /Do not retry automatically/);
+    assert.equal(s.state.schedules[0]?.id, 93, 'a response failure must not imply that native creation failed');
+    assert.equal(s.rpc.commands.invoke.mock.callCount(), 1);
+    assert.equal(s.sdk.send.mock.callCount(), 0);
+  });
+}
+
+test('fatal after schedule dispatch reports possible creation without late readback or retry', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const command = deferred<Awaited<ReturnType<Rpc['commands']['invoke']>>>();
+  s.rpc.commands.invoke.mock.mockImplementation(() => command.promise);
+  const creating = h.engine.addSchedule(s.id, { prompt: 'check build', interval: '1m' });
+  await nextTurn();
+  assert.equal(s.rpc.commands.invoke.mock.callCount(), 1);
+  const reads = s.rpc.schedule.list.mock.callCount();
+  h.runtime.emitFatal(new Error('native connection lost after dispatch'));
+  const result = await promptly(creating);
+  assert.equal(result.possiblyCreated, true);
+  assert.match(result.error!, /may have been created.*native connection lost after dispatch/);
+  command.resolve({ kind: 'completed' });
+  await nextTurn();
+  assert.equal(s.rpc.schedule.list.mock.callCount(), reads);
+  assert.equal(s.rpc.commands.invoke.mock.callCount(), 1);
+  assert.equal(s.sdk.send.mock.callCount(), 0);
+  await h.engine.stop();
 });
 
 test('absolute schedules use a bounded native after delay and require a real returned entry', async t => {
@@ -4988,7 +5050,7 @@ test('a completely rolled-back file rewind does not claim a lasting mutation', a
     outcome: 'files-rolled-back', restoredFiles: ['restored-then-reverted.txt'],
     skippedFiles: [], error: 'Restore failed; workspace restored to pre-rewind state',
   }));
-  await assert.rejects(h.engine.rewind(s.id, 'boundary', true), /files-rolled-back/);
+  assert.equal((await h.engine.rewind(s.id, 'boundary', true)).outcome, 'files-rolled-back');
   assert.equal(serverChatEvents(h).length, 0);
   assert.equal(h.events.filter(event => event.type === 'chat/invalidated').length, 0);
 });
@@ -5063,20 +5125,18 @@ for (const loaded of [false, true]) {
   });
 }
 
-test('native deletion honors confirmation and idle guards without modifying external preferences', async t => {
+test('native deletion retains idle guards without an extra confirmation or modifying external preferences', async t => {
   const h = harness(t, { prefs: { preserved: 'external capability data' } });
   const original = readFileSync(h.prefsFile, 'utf8');
   const s = await h.load();
   await finishReply(s, '可删除的测试回复', 'purge');
   for (const name of ['session/delete', 'session/purge'] as const) {
-    assert.equal(Intents[name].body.safeParse({ sessionId: s.id }).success, false);
+    assert.equal(Intents[name].body.safeParse({ sessionId: s.id }).success, true);
+    assert.equal(Intents[name].body.safeParse({ sessionId: s.id, confirm: false }).success, true);
     assert.equal(Intents[name].body.safeParse({ sessionId: s.id, confirm: true }).success, true);
   }
-  await assert.rejects(h.engine.deleteSession(s.id), /confirm:true/);
-  assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
-  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
   s.state.processing = true;
-  await assert.rejects(h.engine.deleteSession(s.id, true), protectedWork);
+  await assert.rejects(h.engine.deleteSession(s.id), protectedWork);
   assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
   assert.equal(h.runtime.closeSession.mock.callCount(), 0);
   s.state.processing = false;
@@ -5086,7 +5146,7 @@ test('native deletion honors confirmation and idle guards without modifying exte
   assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
   h.runtime.deleteSession.mock.mockImplementationOnce(async () => { throw new Error('native delete failed'); });
   await assert.rejects(h.engine.deleteSession(s.id, true), /native delete failed/);
-  await h.engine.deleteSession(s.id, true);
+  await h.engine.deleteSession(s.id, false);
   assert.equal((await h.engine.getMeta(s.id)), null);
   assert.equal(activeState(h, s.id), undefined);
   assert.equal(readFileSync(h.prefsFile, 'utf8'), original);
@@ -5235,7 +5295,7 @@ test('loaded sessions publish their native provider-qualified model inventory', 
   }]);
 });
 
-test('thin native session models expose fresh rich capabilities and settings require confirmed readback', async t => {
+test('thin native session models expose fresh capabilities and complete selections do not backfill omitted options', async t => {
   const h = harness(t);
   const s = await h.load();
   s.rpc.model.list.mock.mockImplementation(async () => ({ list: [{ id: 'native-model', name: 'Native' }] }));
@@ -5268,11 +5328,11 @@ test('thin native session models expose fresh rich capabilities and settings req
   assert.equal(after.currentContextTier, 'long_context');
   await h.engine.setModel(s.id, 'native-model', 'low');
   assert.deepEqual(s.rpc.model.switchTo.mock.calls[1]!.arguments, [{
-    modelId: 'native-model', deferIfModelChangeQueued: true, reasoningEffort: 'low', contextTier: 'long_context',
+    modelId: 'native-model', deferIfModelChangeQueued: true, reasoningEffort: 'low',
   }]);
   await h.engine.setModel(s.id, 'native-model', undefined, 'default');
   assert.deepEqual(s.rpc.model.switchTo.mock.calls[2]!.arguments, [{
-    modelId: 'native-model', deferIfModelChangeQueued: true, reasoningEffort: 'low', contextTier: 'default',
+    modelId: 'native-model', deferIfModelChangeQueued: true, contextTier: 'default',
   }]);
   s.state.model.contextTier = 'long_context';
   await assert.rejects(h.engine.setModel(s.id, 'native-model', 'invented'), /does not list reasoning/);
@@ -5350,7 +5410,7 @@ test('user model choices join the native FIFO even when the turn ended before qu
   }
 });
 
-test('concurrent partial model changes serialize native read-modify-confirm without lost options', async t => {
+test('concurrent complete model selections serialize acknowledgements without backfilling current options', async t => {
   const h = harness(t);
   const s = await h.load();
   const held = deferred<void>();
@@ -5362,16 +5422,52 @@ test('concurrent partial model changes serialize native read-modify-confirm with
       id: 'native-model', supportedReasoningEfforts: ['low', 'high'], supportsLongContext: true,
     }] };
   });
-  const effort = h.engine.setModel(s.id, 'native-model', 'low');
+  const effort = h.engine.setModel(s.id, 'native-model', 'high', 'default');
   await started.promise;
-  const tier = h.engine.setModel(s.id, 'native-model', undefined, 'long_context');
+  const tier = h.engine.setModel(s.id, 'native-model', 'high', 'long_context');
   await nextTurn();
   assert.equal(s.rpc.model.switchTo.mock.callCount(), 0);
   held.resolve();
   await Promise.all([effort, tier]);
   const current = (await h.engine.getMeta(s.id))!;
-  assert.equal(current.currentReasoningEffort, 'low');
+  assert.equal(current.currentReasoningEffort, 'high');
   assert.equal(current.currentContextTier, 'long_context');
+});
+
+test('queued native full configs never copy stale current settings and omitted fields remain omitted', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  s.state.model = { modelId: 'native-model', reasoningEffort: 'low', contextTier: 'default' };
+  s.rpc.model.list.mock.mockImplementation(async () => ({ list: [{
+    id: 'native-model', supportedReasoningEfforts: ['low', 'high'], supportsLongContext: true,
+  }] }));
+  const queue: Parameters<Rpc['model']['switchTo']>[0][] = [];
+  s.rpc.model.switchTo.mock.mockImplementation(async options => {
+    queue.push(options);
+    return { deferred: true };
+  });
+  const currents = s.rpc.model.getCurrent.mock.callCount();
+  for (const result of await Promise.all([
+    h.engine.setModel(s.id, 'native-model', 'high', 'default'),
+    h.engine.setModel(s.id, 'native-model', 'high', 'long_context'),
+  ])) assert.deepEqual(result, { deferred: true });
+  assert.deepEqual(queue, [
+    { modelId: 'native-model', reasoningEffort: 'high', contextTier: 'default', deferIfModelChangeQueued: true },
+    { modelId: 'native-model', reasoningEffort: 'high', contextTier: 'long_context', deferIfModelChangeQueued: true },
+  ]);
+  assert.equal(s.rpc.model.getCurrent.mock.callCount(), currents);
+  for (const options of queue) s.state.model = {
+    modelId: options.modelId, reasoningEffort: options.reasoningEffort, contextTier: options.contextTier,
+  };
+  assert.equal((await h.engine.getMeta(s.id))?.currentReasoningEffort, 'high');
+  assert.equal((await h.engine.getMeta(s.id))?.currentContextTier, 'long_context');
+  await h.engine.setModel(s.id, 'native-model', undefined, 'default');
+  await h.engine.setModel(s.id, 'native-model');
+  assert.deepEqual(queue.slice(2), [
+    { modelId: 'native-model', contextTier: 'default', deferIfModelChangeQueued: true },
+    { modelId: 'native-model', deferIfModelChangeQueued: true },
+  ]);
+  assert.equal(s.sdk.send.mock.callCount(), 0);
 });
 
 test('concurrent identical schedule prompts retain distinct native timing and IDs', async t => {
@@ -5384,23 +5480,81 @@ test('concurrent identical schedule prompts retain distinct native timing and ID
     return { kind: 'completed' };
   });
 
-  test('structured native model and mode refusals are not converted into successful acknowledgements', async t => {
-    const h = harness(t);
-    const s = await h.load();
-    s.rpc.model.switchTo.mock.mockImplementation(async () => ({
-      modelId: 'native-model', status: 'rejected', message: 'model is unavailable',
-    }));
-    await assert.rejects(h.engine.setModel(s.id, 'unavailable'), /model is unavailable/);
-    assert.equal((await h.engine.getMeta(s.id))?.currentModelId, 'native-model');
-    s.rpc.mode.set.mock.mockImplementation(async () => ({
-      status: 'cancelled', modelChanged: false, deferImplementation: true,
-    }));
-    await assert.rejects(h.engine.setMode(s.id, 'plan'), /cancelled/);
-    assert.equal(s.sdk.send.mock.callCount(), 0);
-  });
   const results = await Promise.all([
     h.engine.addSchedule(s.id, { prompt: 'check build', interval: '1m' }),
     h.engine.addSchedule(s.id, { prompt: 'check build', interval: '1h' }),
   ]);
   assert.deepEqual(results.map(result => [result.entry?.id, result.entry?.intervalMs]), [[1, 60_000], [2, 3_600_000]]);
+});
+
+test('structured native model and mode refusals retain their full outcomes without host continuation', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  s.rpc.model.switchTo.mock.mockImplementation(async () => ({
+    modelId: 'native-model', status: 'rejected', message: 'model is unavailable',
+  }));
+  assert.deepEqual(await h.engine.setModel(s.id, 'unavailable'), {
+    modelId: 'native-model', status: 'rejected', message: 'model is unavailable',
+  });
+
+  test('all native model outcomes survive failed readbacks without fabricated application or retry', async t => {
+    const h = harness(t);
+    const s = await h.load();
+    const outcomes: Awaited<ReturnType<Rpc['model']['switchTo']>>[] = [
+      {}, { modelId: 'native-model' }, { status: 'future-outcome' },
+      { status: 'applied', modelId: 'native-model', modelState: {
+        modelId: 'native-model', reasoningEffort: 'high', contextTier: 'long_context',
+      }, persistenceError: 'setting could not be written', warning: 'native warning',
+      message: 'Applied in memory only', deprecationWarnings: ['native deprecation'] },
+      { status: 'unchanged' }, { status: 'queued' }, { status: 'deferred', deferred: true },
+      { status: 'confirmation_required', confirmation: {
+        targetModelDisplayName: 'Small native model', currentTokens: 200, targetLimit: 100,
+      } },
+    ];
+    const reads = s.rpc.model.getCurrent.mock.callCount();
+    s.rpc.model.getCurrent.mock.mockImplementation(async () => { throw new Error('readback unavailable'); });
+    for (const outcome of outcomes) {
+      s.rpc.model.switchTo.mock.mockImplementationOnce(async () => outcome);
+      assert.deepEqual(await h.engine.setModel(s.id, 'native-model'), outcome);
+    }
+    assert.equal(s.rpc.model.getCurrent.mock.callCount(), reads);
+    assert.equal(s.rpc.model.switchTo.mock.callCount(), outcomes.length);
+    assert.equal(s.sdk.send.mock.callCount(), 0);
+  });
+
+  test('mode follow-up flags, confirmation and warnings survive without readback or automatic host actions', async t => {
+    const h = harness(t);
+    const s = await h.load();
+    const outcome: Awaited<ReturnType<Rpc['mode']['set']>> = {
+      status: 'applied', modelChanged: true, deferImplementation: true, armInteractiveContinuation: true,
+      confirmation: { targetModelDisplayName: 'Native plan model', currentTokens: 200, targetLimit: 100 },
+      message: 'Native host action required', warning: 'Native warning', deprecationWarnings: ['native deprecation'],
+    };
+    s.rpc.mode.set.mock.mockImplementationOnce(async () => outcome);
+    s.rpc.mode.get.mock.mockImplementation(async () => { throw new Error('mode readback unavailable'); });
+    s.rpc.model.getCurrent.mock.mockImplementation(async () => { throw new Error('model readback unavailable'); });
+    assert.deepEqual(await h.engine.setMode(s.id, 'plan'), outcome);
+    assert.equal(s.rpc.mode.set.mock.callCount(), 1);
+    assert.equal(s.sdk.send.mock.callCount(), 0);
+  });
+
+  for (const confirm of [undefined, false, true]) {
+    test(`native deletion ignores compatibility confirm=${confirm} but never loads missing sessions`, async t => {
+      const h = harness(t);
+      const s = await h.seed();
+      await h.engine.deleteSession(s.id, confirm);
+      assert.deepEqual(h.runtime.deleteSession.mock.calls[0]!.arguments, [s.id]);
+      assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+      await assert.rejects(h.engine.deleteSession('missing-owned-fixture', confirm), /Unknown session/);
+      assert.equal(h.runtime.deleteSession.mock.callCount(), 1);
+    });
+  }
+  assert.equal((await h.engine.getMeta(s.id))?.currentModelId, 'native-model');
+  s.rpc.mode.set.mock.mockImplementation(async () => ({
+    status: 'cancelled', modelChanged: false, deferImplementation: true,
+  }));
+  assert.deepEqual(await h.engine.setMode(s.id, 'plan'), {
+    status: 'cancelled', modelChanged: false, deferImplementation: true,
+  });
+  assert.equal(s.sdk.send.mock.callCount(), 0);
 });

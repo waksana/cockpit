@@ -16,6 +16,36 @@ const render = (overrides: Partial<ChatSession>) => renderToStaticMarkup(createE
   onRetryHistory() { assert.fail('render must not retry history'); },
 }));
 
+test('plan cards render only native actions in offered order, including no actions', () => {
+  const plan = (actions?: NonNullable<ChatSession['planRequest']>['actions']) =>
+    renderToStaticMarkup(createElement(Thread, {
+      session: { ...base, planRequest: { requestId: 'plan', summary: 'Native plan', actions } },
+      onLoadMore() { assert.fail('render must not read'); },
+      onRespondPlan() { assert.fail('render must not respond'); },
+      onPlanSupersede() { assert.fail('render must not supersede'); },
+    }));
+  for (const actions of [undefined, []]) {
+    const html = plan(actions);
+    assert.doesNotMatch(html, /开始执行（交互）|自动执行|并行执行（fleet）|仅退出计划/);
+    assert.match(html, actions ? /原生未提供可用的计划操作/ : /原生计划操作列表不可用/);
+    assert.match(html, /下方直接输入新指令/);
+  }
+  const html = plan(['exit_only', 'autopilot_fleet', 'interactive']);
+  assert.ok(html.indexOf('仅退出计划') < html.indexOf('并行执行（fleet）'));
+  assert.ok(html.indexOf('并行执行（fleet）') < html.indexOf('开始执行（交互）'));
+  assert.doesNotMatch(html, /自动执行/);
+});
+
+test('composer discloses independent local draft ownership and the fresh-tab recovery tradeoff', () => {
+  const html = renderToStaticMarkup(createElement(Thread, {
+    session: base, onLoadMore() { assert.fail('render must not load history'); },
+  }));
+  assert.match(html, /本地草稿保存说明/);
+  assert.match(html, /刷新可恢复/);
+  assert.match(html, /新开的标签页不会自动接管原草稿/);
+  assert.match(html, /本地记录仍保留/);
+});
+
 test('cold history loading is not presented as an empty conversation', () => {
   const html = render({});
   assert.match(html, /正在同步对话历史/);

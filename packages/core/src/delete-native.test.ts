@@ -8,7 +8,7 @@ import { RuntimeConnection } from '@github/copilot-sdk';
 import { OfficialRuntime } from './runtime.ts';
 import { Engine } from './engine.ts';
 
-test('confirmed Engine deletion uses native SDK and preserves unrelated files', {
+test('Engine deletion without an extra confirmation uses native SDK and preserves unrelated files', {
   skip: process.env.COCKPIT_NATIVE_DELETE_TEST !== '1', timeout: 60_000,
 }, async () => {
   const root = mkdtempSync(join(tmpdir(), 'cockpit-delete-native-'));
@@ -39,7 +39,8 @@ test('confirmed Engine deletion uses native SDK and preserves unrelated files', 
   const runtime = new OfficialRuntime({
     clientOptions: {
       connection: RuntimeConnection.forStdio({ env: {
-        HOME: root, COPILOT_HOME: state, XDG_CONFIG_HOME: root,
+        HOME: root, USERPROFILE: root, COCKPIT_HOME: state, COPILOT_HOME: state,
+        XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root, XDG_STATE_HOME: state, XDG_RUNTIME_DIR: root,
         TMPDIR: root, PATH: '/usr/bin:/bin', LANG: 'C.UTF-8',
         COPILOT_DISABLE_KEYTAR: '1', COPILOT_TELEMETRY_DISABLED: '1', DO_NOT_TRACK: '1',
         GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: join(root, 'gitconfig'),
@@ -77,10 +78,7 @@ test('confirmed Engine deletion uses native SDK and preserves unrelated files', 
     assert.equal((await engine.getMeta(id))?.cwd, work);
     assert.equal((await engine.getMeta(id))?.title, 'Owned permanent-delete fixture');
     assert.equal((await runtime.getSessionMetadata(id))?.sessionId, id);
-    await assert.rejects(engine.deleteSession(id), /confirm:true/);
-    assert.equal((await engine.getMeta(id))?.loaded, true);
-    assert.equal(runtime.liveCount, 1);
-    await engine.deleteSession(id, true);
+    await engine.deleteSession(id);
     deleted = true;
     assert.equal(runtime.liveCount, 0);
     assert.equal(await engine.getMeta(id), null);

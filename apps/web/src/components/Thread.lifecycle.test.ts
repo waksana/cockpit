@@ -5,7 +5,9 @@ import { createRoot } from 'react-dom/client';
 import { getSessionDraft } from '../lib/textDraft';
 import { useCockpit } from '../net/store';
 import type { ChatSession } from '../net/types';
+import type { IntentResult } from '@cockpit/protocol';
 import { MessageProcess, Thread } from './Thread';
+import { ModelControls } from './SessionInfoPanel';
 import { MessageBody } from './MessageBody';
 import { DisclosureChoices } from './DisclosureChoices';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
@@ -28,6 +30,8 @@ class HostNode extends EventTarget {
   clientHeight = 300;
   clientWidth = 600;
   private text = '';
+  selected = false;
+  private controlValue = '';
 
   constructor(tag: string, document: HostDocument) {
     super();
@@ -43,6 +47,16 @@ class HostNode extends EventTarget {
     this.childNodes = [];
   }
   get dataset() { return { messageId: this.getAttribute('data-message-id') }; }
+  get options(): HostNode[] { return this.childNodes; }
+  get value(): string {
+    if (this.tagName === 'OPTION') return this.getAttribute('value') ?? this.textContent;
+    if (this.tagName === 'SELECT') return this.options.find(option => option.selected)?.value ?? '';
+    return this.controlValue;
+  }
+  set value(value: string) {
+    this.controlValue = value;
+    if (this.tagName === 'SELECT') for (const option of this.options) option.selected = option.value === value;
+  }
   get scrollHeight() { return this.querySelectorAll('[data-message-frame]').length * 100; }
   appendChild(node: HostNode) { return this.insertBefore(node, null); }
   insertBefore(node: HostNode, before: HostNode | null) {
@@ -108,6 +122,7 @@ class HostDocument extends EventTarget {
 test('Thread lifecycle: re-entry follows latest while mounted updates preserve the reader and resources', async t => {
   const document = new HostDocument();
   const frames = new Map<number, FrameRequestCallback>();
+  const resizes = new Set<() => void>();
   let frameId = 0;
   const globals: Record<string, unknown> = {
     document,
@@ -117,6 +132,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     IS_REACT_ACT_ENVIRONMENT: true,
     requestAnimationFrame: (callback: FrameRequestCallback) => { frames.set(++frameId, callback); return frameId; },
     cancelAnimationFrame: (id: number) => { frames.delete(id); },
+    ResizeObserver: class {
+      private callback: () => void;
+      constructor(callback: () => void) { this.callback = callback; resizes.add(callback); }
+      observe() {}
+      disconnect() { resizes.delete(this.callback); }
+    },
   };
   const restoreGlobals: (() => void)[] = [];
   for (const [key, value] of Object.entries(globals)) {
@@ -126,12 +147,13 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   }
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('Lifecycle fixture must not access a backend'); });
   const previousConnection = useCockpit.getState().connState;
-  useCockpit.setState({ connState: 'open' });
+  const previousSnapshotReady = useCockpit.getState().snapshotReady;
+  useCockpit.setState({ connState: 'open', snapshotReady: true });
   const container = document.createElement('div');
   const root = createRoot(container as unknown as HTMLElement);
   t.after(async () => {
     await act(() => root.unmount());
-    useCockpit.setState({ connState: previousConnection });
+    useCockpit.setState({ connState: previousConnection, snapshotReady: previousSnapshotReady });
     for (const restore of restoreGlobals) restore();
   });
   let prefetches = 0;
@@ -244,6 +266,165 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   assert.equal(viewport().scrollTop, bottom(), 'phone detail → chat remount must enter at latest');
   assert.equal(a.messages, retainedMessages, 're-entry must retain the existing loaded window');
   assert.equal(getSessionDraft(a.sessionId).getSnapshot(), draftSnapshot);
+
+  let short = { ...session('interrupted-fill'), messages: session('interrupted-fill').messages.slice(0, 2) };
+  await render(null);
+  await act(() => useCockpit.setState({ snapshotReady: false }));
+  const beforeFill = prefetches;
+  await render(short);
+  assert.equal(prefetches, beforeFill, 'an open transport cannot consume a fill before its snapshot');
+  await act(() => useCockpit.setState({ snapshotReady: true }));
+  await flush();
+  assert.equal(prefetches, beforeFill + 1, 'a retained short page is not a completed initial viewport');
+  assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), null,
+    'retained content remains visible while filling');
+  await render({ ...short, loadingHistory: true });
+  await render(null); // Leave while its older-page request is interrupted.
+  await render(short);
+  assert.equal(prefetches, beforeFill + 2, 're-entry resumes an interrupted short fill');
+  await render({ ...short, loadingHistory: true });
+  short = { ...short, messages: session(short.sessionId).messages.slice(0, 5) };
+  await render(short);
+  assert.equal(prefetches, beforeFill + 3);
+  await render({ ...short, loadingHistory: true });
+  short = { ...short, messages: session(short.sessionId).messages.slice(0, 6) };
+  await render(short);
+  assert.equal(prefetches, beforeFill + 3, 'two measured screens complete the fill');
+  const enlarged = viewport();
+  await act(() => {
+    enlarged.clientHeight = 500;
+    for (const resize of resizes) resize();
+  });
+  await flush();
+  assert.equal(prefetches, beforeFill + 4, 'a larger mounted viewport requires renewed initial headroom');
+  await render({ ...short, historyError: 'Fixture interruption' });
+  await act(() => { for (const resize of resizes) resize(); });
+  await flush();
+  assert.equal(prefetches, beforeFill + 4, 'an error stops automatic filling without hiding retained rows');
+  await render({ ...short, hasMore: false });
+  assert.equal(prefetches, beforeFill + 4, 'native exhaustion completes a short viewport');
+
+  await t.test('initial fill follows arbitrarily sparse pages until geometry is sufficient', async () => {
+    let sparse = { ...session('sparse-fill'), messages: [] as ChatSession['messages'], materialized: false };
+    await render(sparse);
+    const before = prefetches;
+    sparse = { ...sparse, materialized: true };
+    for (let page = 0; page < 40; page++) {
+      await render({ ...sparse, loadingHistory: true });
+      await render(sparse);
+      assert.equal(prefetches, before + page + 1, 'no fixed low-density page budget');
+      assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), 'true');
+    }
+    await render({ ...sparse, loadingHistory: true });
+    await render({ ...sparse, messages: session(sparse.sessionId).messages.slice(0, 6) });
+    assert.equal(prefetches, before + 40);
+    assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), null);
+  });
+
+  for (const hasMore of [false, true]) {
+    await t.test(`continuous streaming cannot starve readiness or pending viewport fill (hasMore=${hasMore})`, async () => {
+      const live = { ...session(`continuous-${hasMore}`), hasMore, materialized: false,
+        messages: [] as ChatSession['messages'] };
+      await render(live);
+      const before = prefetches;
+      for (let frame = 0; frame < 120; frame++) {
+        await act(() => root.render(createElement(Thread, {
+          key: live.sessionId, session: { ...live, materialized: true, messages: [
+            { id: 'live-message', role: 'assistant', content: `Stream ${frame}`, timestamp: 1 },
+          ] }, readOnly: true, onLoadMore,
+        })));
+        await act(() => {
+          const pending = [...frames.values()];
+          frames.clear();
+          for (const callback of pending) callback(frame);
+        });
+        if (!hasMore) assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), null);
+      }
+      assert.equal(prefetches, before + (hasMore ? 1 : 0), 'stream frames cannot postpone or duplicate the bounded older read');
+      await render(null);
+    });
+  }
+
+  await t.test('model editor stages a full command and late outcomes never rewrite newer local edits', async () => {
+    let current = { ...session('model-editor'), currentModelId: 'a',
+      availableModels: [
+        { modelId: 'a', name: 'Alpha', supportedReasoningEfforts: ['high', 'max'], supportsLongContext: true },
+        { modelId: 'b', name: 'Beta', supportedReasoningEfforts: ['high', 'max'], supportsLongContext: true },
+      ],
+    };
+    const calls: { modelId: string; opts: unknown; resolve: (value: IntentResult<'setModel'>) => void; reject: (error: Error) => void }[] = [];
+    const onSetModel = (modelId: string, opts: unknown) => new Promise<IntentResult<'setModel'>>((resolve, reject) => {
+      calls.push({ modelId, opts, resolve, reject });
+    });
+    const editor = () => act(() => root.render(createElement(ModelControls, {
+      key: current.sessionId, session: current, disabled: false, onSetModel,
+    })));
+    const control = (label: string) => {
+      const node = container.querySelector(`[aria-label="${label}"]`);
+      assert.ok(node, label);
+      return node;
+    };
+    const event = async (node: HostNode, type: string) => act(() => {
+      const event = new Event(type, { bubbles: true });
+      Object.defineProperty(event, 'target', { value: node });
+      container.dispatchEvent(event);
+    });
+    const change = async (label: string, value: string) => {
+      const node = control(label);
+      node.value = value;
+      await event(node, 'change');
+    };
+    const apply = async () => {
+      const button = container.querySelectorAll('.dialog-btn').find(node => node.textContent === '应用配置');
+      assert.ok(button);
+      await event(button, 'click');
+    };
+    await editor();
+    await change('选择模型', 'b');
+    await change('思考力度', 'max');
+    await change('上下文长度', 'long_context');
+    assert.equal(calls.length, 0, 'changes only stage the component-owned draft');
+    await apply();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].modelId, 'b');
+    assert.deepEqual(calls[0].opts, { reasoningEffort: 'max', contextTier: 'long_context' });
+    await change('思考力度', 'high');
+    await act(() => calls[0].resolve({ ok: true, result: {
+      deferred: true, status: 'applied', message: 'Model changed...',
+      modelState: { modelId: 'a', reasoningEffort: 'low', contextTier: 'default' },
+    } }));
+    assert.equal(control('思考力度').value, 'high', 'queued ACK preserves the newer unsent edit');
+    assert.match(container.textContent, /已接受，等待原生应用/);
+    assert.doesNotMatch(container.textContent, /上次原生返回：已应用/);
+    assert.match(container.textContent, /原生消息：Model changed/);
+    assert.match(container.textContent, /当前原生值：a/);
+    current = { ...current, currentModelId: 'b' };
+    await editor();
+    assert.equal(control('思考力度').value, 'high', 'native current updates are not desired editor state');
+    await apply();
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[1].opts, { reasoningEffort: 'high', contextTier: 'long_context' });
+    await change('上下文长度', '');
+    await act(() => calls[1].resolve({ ok: true, result: { status: 'applied', persistenceError: 'Fixture save failed' } }));
+    assert.equal(control('上下文长度').value, '');
+    assert.match(container.textContent, /已应用，但原生持久化失败：Fixture save failed/);
+    await apply();
+    assert.equal(calls.length, 3);
+    assert.deepEqual(calls[2].opts, { reasoningEffort: 'high' }, 'unselected context is omitted for native handling');
+    await act(() => calls[2].reject(new Error('Uncertain HTTP result')));
+    assert.match(container.textContent, /应用结果未确认：Uncertain HTTP result/);
+    await apply();
+    assert.equal(calls.length, 3, 'the same uncertain submission is not silently retried');
+    await change('思考力度', 'max');
+    await apply();
+    assert.equal(calls.length, 4);
+    current = { ...current, sessionId: 'another-model-editor', currentModelId: 'a' };
+    await editor();
+    await act(() => calls[3].resolve({ ok: true, result: { status: 'rejected', message: 'Late old-session failure' } }));
+    assert.equal(control('选择模型').value, 'a');
+    assert.doesNotMatch(container.textContent, /Late old-session failure|Uncertain HTTP result/);
+    assert.equal(calls.length, 4, 'no queued or rejected result generates a follow-up');
+  });
 
   const processMessage = { id: 'process', role: 'assistant' as const, content: '', timestamp: 1, thought: 'Actual reasoning' };
   const processItems = (messages: typeof processMessage[]) => groupTranscript(messages).flatMap(row => row.kind === 'process' ? row.items : []);

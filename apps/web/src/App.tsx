@@ -42,10 +42,10 @@ function Workspace() {
   const selectMetadata = useMemo(() => createSessionMetadataSelector(), []);
   const sessions = useCockpit(selectMetadata);
   const {
-    connState, newSession,
+    connState, snapshotReady, newSession,
     globalModels,
   } = useCockpit(useShallow((s) => ({
-    connState: s.connState, newSession: s.newSession,
+    connState: s.connState, snapshotReady: s.snapshotReady, newSession: s.newSession,
     globalModels: s.globalModels,
   })));
   const active = useMemo(
@@ -105,10 +105,11 @@ function Workspace() {
   // The detail pane shows the chat, or — when the URL points at a session that
   // doesn't exist (bad deep-link or one deleted remotely) — a NotFound. Both sit
   // at the detail level on mobile so the message (and its back button) is visible.
-  // Gated on connState==='open' so a deep-link doesn't flash NotFound before the
-  // snapshot (the authoritative session list) has loaded.
-  const notFound = !active && routeId != null && connState === 'open';
-  const mobileView: 'list' | 'detail' = active || notFound ? 'detail' : 'list';
+  // Opening SSE is not a session list. Reconnect retains the old display until
+  // the complete snapshot for this connection has been applied.
+  const notFound = !active && routeId != null && snapshotReady;
+  const syncing = !active && routeId != null && !snapshotReady;
+  const mobileView: 'list' | 'detail' = active || notFound || syncing ? 'detail' : 'list';
 
   const doNewSession = () => {
     setDirPicker(true);
@@ -195,6 +196,8 @@ function Workspace() {
             key={active.sessionId}
             sessionId={active.sessionId}
           />
+        ) : syncing ? (
+          <div className="detail-empty" role="status">正在同步会话…</div>
         ) : notFound ? (
           <div className="detail-empty">
             <div>

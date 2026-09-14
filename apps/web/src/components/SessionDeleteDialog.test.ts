@@ -19,7 +19,7 @@ test('native deletion uses the ordinary confirmation and retains module data wit
   assert.match(html, /只执行原生删除，不调用外部业务流程/);
   assert.doesNotMatch(html, /解除关联并删除|预览|planId|operationId/);
   const source = readFileSync(new URL('./SessionDeleteDialog.tsx', import.meta.url), 'utf8');
-  assert.match(source, /await deleteSession\(sessionId, true\)/);
+  assert.match(source, /await deleteSession\(sessionId\)/);
   assert.match(source, /if \(submitted.current\) throw/);
   assert.doesNotMatch(source, /moduleIntent|previewDeleteSession|useKeyedResource|\.refresh\(/);
 });

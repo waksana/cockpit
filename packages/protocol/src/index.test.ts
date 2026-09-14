@@ -418,11 +418,11 @@ const intentFixtures = {
     attachments: [{ type: 'file', path: '/fixture/native.txt' }] }, result: { ...ok, queued: true } },
   cancel: { body: sid, result: ok },
   'session/interrupt': { body: sid, result: { ok: true, interrupted: false } },
-  setModel: { body: { ...sid, modelId: 'gpt-x', reasoningEffort: 'high', contextTier: 'long_context' }, result: ok },
+  setModel: { body: { ...sid, modelId: 'gpt-x', reasoningEffort: 'high', contextTier: 'long_context' }, result: { ok: true, result: { status: 'deferred', deferred: true } } },
   'session/rename': { body: { ...sid, name: 'Renamed' }, result: { ...ok, title: 'Renamed' } },
-  'session/compact': { body: { ...sid, customInstructions: 'Keep decisions' }, result: ok },
-  'session/rewind': { body: { ...sid, toMsgId: 'm1', rollbackFiles: true }, result: ok },
-  setMode: { body: { ...sid, mode: 'plan' }, result: ok },
+  'session/compact': { body: { ...sid, customInstructions: 'Keep decisions' }, result: { ok: true, result: { success: true, tokensRemoved: 10, messagesRemoved: 2 } } },
+  'session/rewind': { body: { ...sid, toMsgId: 'm1', rollbackFiles: true }, result: { ok: true, result: { outcome: 'success', eventsRemoved: 2, restoredFiles: [], skippedFiles: [] } } },
+  setMode: { body: { ...sid, mode: 'plan' }, result: { ok: true, result: { status: 'applied', modelChanged: false } } },
   'session/delete': { body: { ...sid, confirm: true }, result: ok },
   'session/unload': { body: sid, result: ok },
   'session/load': { body: sid, result: { ok: true, ...sid } },
@@ -563,11 +563,12 @@ test('native load descriptions do not promise retired role restoration or empty-
   assert.match(Intents['session/reload'].description, /may disappear on close and then fail to resume; no automatic replacement/);
 });
 
-test('session/purge requires sessionId and literal confirm:true without coercion', () => {
+test('session/purge requires sessionId and accepts ignored boolean confirm compatibility without coercion', () => {
   const schema = Intents['session/purge'].body;
   roundTrip(schema, { ...sid, confirm: true });
-  assert.equal(schema.safeParse(sid).success, false);
-  for (const confirm of [undefined, false, 'true', 'false', '', 0, 1, null, [], {}]) {
+  roundTrip(schema, sid);
+  roundTrip(schema, { ...sid, confirm: false });
+  for (const confirm of ['true', 'false', '', 0, 1, null, [], {}]) {
     assert.equal(schema.safeParse({ ...sid, confirm }).success, false, `confirm=${JSON.stringify(confirm)}`);
   }
   for (const value of [{ confirm: true }, { sessionId: 1, confirm: true }, { sessionId: null, confirm: true }]) {
@@ -940,7 +941,7 @@ type SlimContractGuards = [
   Expect<Equal<Extract<keyof SessionBrief, RemovedMetaField>, never>>,
   Expect<Equal<Extract<keyof Extract<Protocol.ServerEvent, { type: 'session/patch' }>, RemovedMetaField>, never>>,
   Expect<Equal<IntentBody<'session/new'>, { cwd: string }>>,
-  Expect<Equal<IntentBody<'session/purge'>, { sessionId: string; confirm: true }>>,
+  Expect<Equal<IntentBody<'session/purge'>, { sessionId: string; confirm?: boolean }>>,
   Expect<Equal<IntentBody<'session/chat'>, Protocol.NativeChatRead>>,
   Expect<Equal<IntentBody<'skills/global'>, { cwd?: string }>>,
   Expect<Equal<IntentBody<'prompt'>, { sessionId: string; text: string; mode?: 'enqueue' | 'immediate';

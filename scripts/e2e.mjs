@@ -237,16 +237,16 @@ if (scheduleSupported) {
   });
 }
 
-await t('session/delete rejects legacy requests, then permanently deletes the owned fixture', async () => {
+await t('session/delete validates the target, then deletes the owned fixture without an extra confirmation field', async () => {
   const id = globalThis.__e2eSession;
   assert.ok(id, 'this run must have created the session');
   for (const name of ['session/delete', 'session/purge']) {
-    const response = await intent(name, { sessionId: id });
-    assert.equal(response.status, 400, `${name} requires explicit confirmation`);
+    const response = await intent(name, {});
+    assert.equal(response.status, 400, `${name} requires a session identity`);
   }
   const before = await j(await intent('session/get', { sessionId: id }));
   assert.equal(before.meta.sessionId, id);
-  const del = await j(await intent('session/delete', { sessionId: id, confirm: true }));
+  const del = await j(await intent('session/delete', { sessionId: id }));
   assert.equal(del.ok, true);
   const status = await j(await fetch(`${BASE}/status`));
   assert.ok(!status.sessions.some((s) => s.sessionId === id), 'deleted session not in status');

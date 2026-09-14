@@ -321,28 +321,28 @@ const handlers: IntentHandlers = {
   },
   'session/interrupt': async (b) => await engine.interrupt(b.sessionId),
   setModel: async (b) => {
-    await engine.setModel(b.sessionId, b.modelId, b.reasoningEffort, b.contextTier);
-    return { ok: true };
+    const result = await engine.setModel(b.sessionId, b.modelId, b.reasoningEffort, b.contextTier);
+    return { ok: true, result };
   },
   'session/rename': async (b) => ({ ok: true, title: await engine.rename(b.sessionId, b.name) }),
   'session/compact': async (b) => {
-    await engine.compact(b.sessionId, b.customInstructions);
-    return { ok: true };
+    const result = await engine.compact(b.sessionId, b.customInstructions);
+    return { ok: true, result };
   },
   'session/rewind': async (b) => {
-    await engine.rewind(b.sessionId, b.toMsgId, b.rollbackFiles);
-    return { ok: true };
+    const result = await engine.rewind(b.sessionId, b.toMsgId, b.rollbackFiles);
+    return { ok: true, result };
   },
   setMode: async (b) => {
-    await engine.setMode(b.sessionId, b.mode);
-    return { ok: true };
+    const result = await engine.setMode(b.sessionId, b.mode);
+    return { ok: true, result };
   },
   'session/delete': async (b) => {
-    await engine.deleteSession(b.sessionId, b.confirm);
+    await engine.deleteSession(b.sessionId);
     return { ok: true };
   },
   'session/purge': async (b) => {
-    await engine.deleteSession(b.sessionId, b.confirm);
+    await engine.deleteSession(b.sessionId);
     return { ok: true };
   },
   'session/unload': async (b) => {
@@ -419,7 +419,7 @@ const handlers: IntentHandlers = {
   },
   'schedule/add': async ({ sessionId, ...options }) => {
     const res = await engine.addSchedule(sessionId, options);
-    return { ok: !res.error, ...(res.entry ? { entry: res.entry } : {}), ...(res.error ? { error: res.error } : {}) };
+    return { ok: !res.error, ...res };
   },
   'schedule/stop': async (b) => ({ ok: await engine.stopSchedule(b.sessionId, b.id) }),
   'schedule/list': async (b) => ({ entries: await engine.listSchedules(b.sessionId) }),

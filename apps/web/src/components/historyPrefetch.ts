@@ -6,6 +6,7 @@ export function withinHistoryPrefetch(remaining: number, viewport: number): bool
 export function observeHistoryPrefetch(
   viewport: HTMLElement, content: HTMLElement, canRead: () => boolean, read: () => void,
   remaining = () => viewport.scrollTop,
+  needsFill = () => false,
 ) {
   let frame: number | undefined;
   let requested = false;
@@ -15,8 +16,8 @@ export function observeHistoryPrefetch(
     if (disposed || requested || document.visibilityState !== 'visible' || !canRead()) return;
     const bounds = viewport.getBoundingClientRect();
     const rows = content.getBoundingClientRect();
-    if (rows.bottom <= bounds.top || rows.top >= bounds.bottom
-      || !withinHistoryPrefetch(remaining(), viewport.clientHeight)) return;
+    if (!needsFill() && (rows.bottom <= bounds.top || rows.top >= bounds.bottom
+      || !withinHistoryPrefetch(remaining(), viewport.clientHeight))) return;
     requested = true;
     read();
   };

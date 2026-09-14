@@ -1662,7 +1662,12 @@ for (const mutation of ['send', 'compact', 'schedule'] as const) {
     dispatch.mock.mockImplementation(async () => { throw new Error('Dispatch outcome unknown'); });
     const operation = mutation === 'send' ? h.engine.prompt(id, 'unknown fixture send')
       : mutation === 'compact' ? h.engine.compact(id) : h.engine.addSchedule(id, { interval: '1h', prompt: 'fixture schedule' });
-    await assert.rejects(operation, /Dispatch outcome unknown/);
+    if (mutation === 'schedule') {
+      const outcome = await operation;
+      assert.ok(outcome && typeof outcome === 'object' && 'possiblyCreated' in outcome);
+      assert.equal(outcome.possiblyCreated, true);
+      assert.match(String(outcome.error), /Dispatch outcome unknown/);
+    } else await assert.rejects(operation, /Dispatch outcome unknown/);
     assert.equal(dispatch.mock.callCount(), 1);
     assert.deepEqual(native.state.events, []);
     assert.equal(h.runtime.resumeSession.mock.callCount(), 0, 'A rejected dispatch is not a resume/retry signal');
@@ -1677,21 +1682,25 @@ for (const mutation of ['send', 'compact', 'schedule'] as const) {
 }
 
 for (const setting of ['rename', 'model', 'mode'] as const) {
-  test(`native settings: unknown ${setting} readback cannot return a stale confirmed projection`, async t => {
+  test(`native settings: ${setting} result stays separate from an unavailable later projection`, async t => {
     const h = await draftFixture(t);
     const id = await h.engine.newSession(h.cwd);
     await draftSettings[setting](h.engine, id);
     const confirmed = (await draftProjection(h.engine, id));
     const native = h.natives.get(id)!;
     const fail = async (): Promise<never> => { throw new Error('Setting readback unknown'); };
-    let modelReads = 0;
     const readback = setting === 'rename' ? t.mock.method(native.rpc.name, 'get', fail)
-      : setting === 'model' ? t.mock.method(native.rpc.model, 'getCurrent', async () =>
-        modelReads++ === 0 ? { ...native.state.model } : fail())
+      : setting === 'model' ? t.mock.method(native.rpc.model, 'getCurrent', fail)
       : t.mock.method(native.rpc.mode, 'get', fail);
-    await assert.rejects(setting === 'rename' ? h.engine.rename(id, 'Unconfirmed name')
-      : setting === 'model' ? h.engine.setModel(id, 'unconfirmed-model', 'low', 'default')
-      : h.engine.setMode(id, 'autopilot'), /Setting readback unknown/);
+    if (setting === 'rename') {
+      await assert.rejects(h.engine.rename(id, 'Unconfirmed name'), /Setting readback unknown/);
+    } else {
+      const outcome = setting === 'model' ? await h.engine.setModel(id, 'unconfirmed-model', 'low', 'default')
+        : await h.engine.setMode(id, 'autopilot');
+      assert.deepEqual(outcome, setting === 'model'
+        ? { modelId: 'unconfirmed-model' } : { status: 'applied', modelChanged: false });
+      assert.equal(readback.mock.callCount(), 0, 'the native result requires no unrelated post-write readback');
+    }
     await assert.rejects(setting === 'mode'
       ? h.engine.getResources(id, ['mode']) : h.engine.getMeta(id), /Setting readback unknown/);
     readback.mock.restore();

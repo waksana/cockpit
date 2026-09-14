@@ -5,8 +5,34 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Dialog, DirectoryModal } from './Dialog';
 import { MenuItemButton } from './ContextMenu';
+import { MemoryRouter } from 'react-router-dom';
+import App from '../App';
+import { useCockpit } from '../net/store';
 
 const source = (name: string) => readFileSync(new URL(name, import.meta.url), 'utf8').replace(/\s+/g, ' ');
+
+test('session absence is gated by the applied snapshot rather than the open transport', () => {
+  const app = source('../App.tsx');
+  assert.match(app, /snapshotReady: s.snapshotReady/);
+  assert.match(app, /const notFound = !active && routeId != null && snapshotReady/);
+  assert.doesNotMatch(app, /const notFound = [^;]*connState === 'open'/);
+});
+
+test('a deep link shows synchronization before the snapshot and absence only after it', () => {
+  const state = useCockpit.getInitialState();
+  const previous = { ...state };
+  try {
+    Object.assign(state, { connState: 'open', sessions: [], snapshotReady: false });
+    const render = () => renderToStaticMarkup(createElement(MemoryRouter, {
+      initialEntries: ['/session/synthetic-waiting'], children: createElement(App),
+    }));
+    assert.match(render(), /role="status">正在同步会话/);
+    assert.doesNotMatch(render(), /这个会话不存在|或已被删除/);
+    state.snapshotReady = true;
+    assert.match(render(), /这个会话不存在,或已被删除/);
+    assert.doesNotMatch(render(), /正在同步会话/);
+  } finally { Object.assign(state, previous); }
+});
 
 test('creation has one native action owner and no first-message or virtual identity path', () => {
   const app = source('../App.tsx');

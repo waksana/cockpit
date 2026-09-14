@@ -20,6 +20,7 @@ const { SessionInfoPanel } = await import('../components/SessionInfoPanel');
 styles.deregister();
 
 const noop = () => {};
+const noModelMutation = async () => { assert.fail('Rendering must not change native model settings'); };
 function composerWindow(t: TestContext) {
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
@@ -36,14 +37,14 @@ const session = {
 
 test('closed info panel has no hidden focus targets or mounted navigation', () => {
   const html = renderToStaticMarkup(createElement(SessionInfoPanel, {
-    session, models: [], open: false, onClose: noop, onSetModel: noop,
+    session, models: [], open: false, onClose: noop, onSetModel: noModelMutation,
   }));
   assert.equal(html, '');
 });
 
 test('open info panel identifies its session without cross-page navigation', () => {
   const html = renderToStaticMarkup(createElement(SessionInfoPanel, {
-    session, models: [], open: true, onClose: noop, onSetModel: noop,
+    session, models: [], open: true, onClose: noop, onSetModel: noModelMutation,
   }));
   assert.match(html, /会话设置 · Resource test/);
   assert.doesNotMatch(html, /<nav|info-panel-more|role="tab"/);
@@ -121,7 +122,7 @@ test('missing confirmed or default effort is explicit without adding a selectabl
   const fallback = selectedOption(renderModelSettings({ currentModelId: 'beta', currentReasoningEffort: null }, [{
     ...narrow[0], defaultReasoningEffort: 'max',
   }]), '思考力度');
-  assert.equal(fallback.text, '原生未提供当前值');
+  assert.equal(fallback.text, '未指定（交由原生处理）');
 });
 
 test('thin session catalog keeps native membership and never invents per-session capabilities from globals', () => {
@@ -162,7 +163,7 @@ test('explicit session capabilities override richer globals per field, including
       const selected = selectedOption(html, '思考力度');
       assert.equal(selected.text, 'max（当前值，列表未提供）');
       assert.match(selected.attributes, /disabled/);
-      assert.equal(selected.options.length, 2);
+      assert.equal(selected.options.length, 3);
     }
   }
   for (const defaultReasoningEffort of ['max', '']) {
@@ -186,12 +187,15 @@ test('empty model and effort values remain unknown instead of selecting defaults
   }
   for (const currentReasoningEffort of [undefined, null, '']) {
     const selected = selectedOption(renderModelSettings({ currentModelId: 'beta', currentReasoningEffort }), '思考力度');
-    assert.equal(selected.text, '原生未提供当前值');
+    assert.equal(selected.text, '未指定（交由原生处理）');
   }
   const withoutDefault = selectedOption(renderModelSettings({ currentModelId: 'beta' }, [{
     ...modelOptions[1], defaultReasoningEffort: undefined,
   }]), '思考力度');
-  assert.equal(withoutDefault.text, '原生未提供当前值');
+  assert.equal(withoutDefault.text, '未指定（交由原生处理）');
+  const html = renderModelSettings({ currentModelId: 'beta' });
+  assert.match(html, /未指定的选项不会发送，其行为由原生决定/);
+  assert.doesNotMatch(html, /原生默认 \/ 重置|不保留旧值/);
 });
 
 test('capability-free models keep controls hidden and all legal context tiers have corresponding options', () => {
@@ -205,7 +209,7 @@ test('capability-free models keep controls hidden and all legal context tiers ha
     assert.equal(selectedOption(html, '选择模型').text, 'Beta');
     assert.equal(selectedOption(html, '思考力度').text, '最大');
     assert.equal(selectedOption(html, '上下文长度').text, currentContextTier === 'long_context' ? '长上下文'
-      : currentContextTier === 'default' ? '标准上下文' : '原生未提供当前值');
+      : currentContextTier === 'default' ? '标准上下文' : '未指定（交由原生处理）');
   }
 });
 
@@ -331,7 +335,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
 test('unloaded info settings expose explicit resume rather than global model values', (t) => {
   withSession(t, false);
   const html = renderToStaticMarkup(createElement(SessionInfoPanel, {
-    session, models: [{ modelId: 'model', name: 'Model' }], open: true, onClose: noop, onSetModel: noop,
+    session, models: [{ modelId: 'model', name: 'Model' }], open: true, onClose: noop, onSetModel: noModelMutation,
   }));
   assert.doesNotMatch(html, /<select/);
   assert.match(html, /恢复会话|加载会话/);
