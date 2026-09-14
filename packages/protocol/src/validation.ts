@@ -5,7 +5,7 @@ export const ToolCall = z.object({
   toolCallId: z.string(),
   title: z.string(),
   status: z.enum(['pending', 'in_progress', 'completed', 'failed']).optional(),
-  // `title` comes from the native execution start; `name` is the raw
+  // `title` comes from the native execution start or scoped request metadata; `name` is the raw
   // tool (bash/edit/view…) shown as a small badge; `args` + `output` are the
   // collapsible detail (formatted + capped). Detail is shown only when present.
   name: z.string().optional(),
@@ -51,6 +51,7 @@ export interface ChatMessage {
   // 'ask-reply' = the user's answer to an ask_user tool; 'subagent' = a sub-agent
   // card; 'skill' = a compact skill-activation pill.
   subtype?: 'ask-reply' | 'subagent' | 'skill';
+  replyQuestion?: string;
   // Severity for system messages (runtime errors/warnings folded into the thread).
   level?: 'info' | 'warning' | 'error';
   subagent?: SubagentInfo;
@@ -66,6 +67,7 @@ export const ChatMessage: z.ZodType<ChatMessage> = z.lazy(() => z.object({
   incomplete: z.string().optional(),
   toolCalls: z.array(ToolCall).optional(),
   subtype: z.enum(['ask-reply', 'subagent', 'skill']).optional(),
+  replyQuestion: z.string().optional(),
   level: z.enum(['info', 'warning', 'error']).optional(),
   subagent: SubagentInfo.optional(),
   subMessages: z.array(ChatMessage).optional(),

@@ -47,6 +47,243 @@ function compare(window: NativeWindow, history: NativeChatEvent[]) {
   return baseline.count();
 }
 
+test('native request descriptions enrich execution rows without creating or moving them across page splits', () => {
+  for (const field of ['intentionSummary', 'description', 'toolTitle']) {
+    const history = [
+      event('request', 'assistant.message', { content: '', toolRequests: [
+        { toolCallId: 'tool', name: 'unknown', [field]: 'Native purpose' },
+      ] }),
+      event('speech'),
+      event('start', 'tool.execution_start', { toolCallId: 'tool', toolName: 'unknown', arguments: { x: 1 } }),
+      event('later'),
+      event('done', 'tool.execution_complete', { toolCallId: 'tool', success: true, result: { content: 'Output' } }),
+    ];
+    for (let split = 0; split <= history.length; split++) {
+      const window = new NativeWindow(undefined, true);
+      accept(window, history.slice(split));
+      accept(window, history.slice(0, split));
+      compare(window, history);
+      assert.deepEqual(window.snapshot().messages.map(message => message.id), ['speech', 'tool-tool', 'later']);
+      assert.equal(window.snapshot().messages[1].toolCalls?.[0].title, 'Native purpose');
+    }
+    const live = new NativeWindow(undefined, true);
+    accept(live, history.slice(1));
+    const before = live.snapshot().messages;
+    accept(live, history.slice(0, 1), 'forward');
+    assert.deepEqual(live.snapshot().messages.map(message => message.id), before.map(message => message.id));
+    assert.equal(live.snapshot().messages[1].toolCalls?.[0].title, 'Native purpose');
+  }
+});
+
+test('persisted ask questions converge from starts, requests and assistant metadata on every page split', () => {
+  for (const source of ['start', 'request', 'assistant']) {
+    const question = 'Original question\nwith detail';
+    const questionEvent = source === 'start'
+      ? event('question', 'tool.execution_start', { toolCallId: 'ask', toolName: 'ask_user', arguments: { question } })
+      : source === 'request'
+        ? event('question', 'user_input.requested', { toolCallId: 'ask', requestId: 'request', question })
+        : event('question', 'assistant.message', { content: '', toolRequests: [
+          { toolCallId: 'ask', name: 'ask_user', arguments: { question } },
+        ] });
+    const history = [
+      questionEvent,
+      event('ask-start', 'tool.execution_start', { toolCallId: 'ask', toolName: 'ask_user' }),
+      event('wrong-question', 'user_input.requested', { requestId: 'unlinked', question: 'Do not guess this question' }),
+      event('reply', 'tool.execution_complete', { toolCallId: 'ask', success: true, result: { content: 'User selected: Yes' } }),
+      event('after'),
+    ];
+    const baseline = new NativeWindow(undefined, true);
+    accept(baseline, history);
+    for (let split = 0; split <= history.length; split++) {
+      const window = new NativeWindow(undefined, true);
+      accept(window, history.slice(split));
+      accept(window, history.slice(0, split));
+      compare(window, history);
+      const reply = window.snapshot().messages.find(message => message.id === 'reply-ask');
+      assert.equal(reply?.replyQuestion, question);
+      assert.equal(reply?.content, 'Yes');
+      window.disconnect();
+      accept(window, history, 'forward', { hasMore: false });
+      assert.deepEqual(window.snapshot().messages, baseline.snapshot().messages);
+    }
+    const late = new NativeWindow(undefined, true);
+    accept(late, history.slice(1));
+    assert.equal(late.snapshot().messages.find(message => message.id === 'reply-ask')?.replyQuestion, undefined);
+    const ids = late.snapshot().messages.map(message => message.id);
+    accept(late, [questionEvent], 'forward');
+    assert.deepEqual(late.snapshot().messages.map(message => message.id), ids);
+    assert.equal(late.snapshot().messages.find(message => message.id === 'reply-ask')?.replyQuestion, question);
+  }
+});
+
+test('reused root and child tool IDs never share question or request description metadata', () => {
+  const history = [
+    task('owner', 'spawn'), spawn('spawn', 'child'),
+    event('root-question', 'user_input.requested', { toolCallId: 'ask', requestId: 'same', question: 'Root question' }),
+    event('child-question', 'user_input.requested', { toolCallId: 'ask', requestId: 'same', question: 'Child question' }, 'child'),
+    event('root-request', 'assistant.message', { content: '', toolRequests: [
+      { toolCallId: 'ask', name: 'ask_user', description: 'Root ask' },
+    ] }),
+    event('child-request', 'assistant.message', { content: '', toolRequests: [
+      { toolCallId: 'ask', name: 'ask_user', description: 'Child ask' },
+    ] }, 'child'),
+    event('child-start', 'tool.execution_start', { toolCallId: 'ask', toolName: 'ask_user' }, 'child'),
+    event('root-start', 'tool.execution_start', { toolCallId: 'ask', toolName: 'ask_user' }),
+    event('root-answer', 'tool.execution_complete', { toolCallId: 'ask', success: true, result: { content: 'User selected: Root answer' } }),
+    event('child-answer', 'tool.execution_complete', { toolCallId: 'ask', success: true, result: { content: 'User selected: Child answer' } }, 'child'),
+  ];
+  for (let split = 0; split <= history.length; split++) {
+    const window = new NativeWindow(undefined, true);
+    accept(window, history.slice(split));
+    accept(window, history.slice(0, split));
+    compare(window, history);
+    const root = window.snapshot().messages;
+    const child = root.find(message => message.subagent)?.subMessages ?? [];
+    assert.equal(root.find(message => message.subtype === 'ask-reply')?.replyQuestion, 'Root question');
+    assert.equal(child.find(message => message.subtype === 'ask-reply')?.replyQuestion, 'Child question');
+    assert.equal(root.find(message => message.toolCalls)?.toolCalls?.[0].title, 'Root ask');
+    assert.equal(child.find(message => message.toolCalls)?.toolCalls?.[0].title, 'Child ask');
+  }
+});
+
+test('execution-native descriptions take precedence over later request metadata without moving rows', () => {
+  for (const nativeTitle of [undefined, 'Execution purpose']) {
+    const history = [
+      event('start', 'tool.execution_start', { toolCallId: 'tool', toolName: 'unknown',
+        ...(nativeTitle ? { description: nativeTitle } : {}), arguments: { description: 'Not a title' } }),
+      event('before-request'),
+      event('request', 'assistant.message', { content: '', toolRequests: [
+        { toolCallId: 'tool', name: 'unknown', description: 'Request purpose' },
+      ] }),
+      event('done', 'tool.execution_complete', { toolCallId: 'tool', success: false, error: { message: 'Failure' } }),
+    ];
+    for (let split = 0; split <= history.length; split++) {
+      const window = new NativeWindow(undefined, true);
+      accept(window, history.slice(split));
+      accept(window, history.slice(0, split));
+      compare(window, history);
+      assert.deepEqual(window.snapshot().messages.map(message => message.id), ['tool-tool', 'before-request']);
+      assert.equal(window.snapshot().messages[0].toolCalls?.[0].title, nativeTitle ?? 'Request purpose');
+    }
+  }
+});
+
+test('a root result missing its start never borrows a child question with the same invocation ID', () => {
+  const window = new NativeWindow(undefined, true);
+  const history = [
+    task('owner', 'spawn'), spawn('spawn', 'child'),
+    event('child-start', 'tool.execution_start', {
+      toolCallId: 'ask', toolName: 'ask_user', arguments: { question: 'Only the child question' },
+    }, 'child'),
+    event('root-result', 'tool.execution_complete', {
+      toolCallId: 'ask', success: true, result: { content: 'User selected: Root answer' },
+    }),
+  ];
+  accept(window, history);
+  const child = window.snapshot().messages.find(message => message.subagent)?.subMessages ?? [];
+  assert.equal(child.some(message => message.subtype === 'ask-reply'), false);
+  assert.equal(window.snapshot().messages.find(message => message.id === 'tool-ask')?.toolCalls?.[0].name, undefined);
+  accept(window, [event('root-start', 'tool.execution_start', { toolCallId: 'ask', toolName: 'ask_user' })]);
+  const reply = window.snapshot().messages.find(message => message.id === 'reply-ask');
+  assert.equal(reply?.content, 'Root answer');
+  assert.equal(reply?.replyQuestion, undefined);
+});
+
+test('explicit legacy tool parents retain ownerless completion routing across history pages and reconnect', () => {
+  for (const name of ['view', 'ask_user']) {
+    const history = [
+      task('outer-owner', 'outer'), spawn('outer', 'outer-agent'),
+      task('inner-owner', 'inner', 'outer-agent'),
+      event('inner-spawn', 'subagent.started', { toolCallId: 'inner', agentId: 'inner-agent' }),
+      event('legacy-start', 'tool.execution_start', {
+        toolCallId: 'legacy', toolName: name, parentToolCallId: 'inner',
+        arguments: name === 'ask_user' ? { question: 'Legacy question' } : { path: '/input' },
+      }),
+      event('main'),
+      event('legacy-done', 'tool.execution_complete', {
+        toolCallId: 'legacy', success: true,
+        result: { content: name === 'ask_user' ? 'User selected: Yes' : 'Output' },
+      }),
+    ];
+    const baseline = new NativeWindow(undefined, true);
+    accept(baseline, history);
+    assert.deepEqual(baseline.snapshot().messages.map(message => message.id), ['outer-owner', 'subagent-outer', 'main']);
+    const child = baseline.snapshot().messages.find(message => message.subagent)?.subMessages
+      ?.find(message => message.subagent)?.subMessages ?? [];
+    assert.equal(child[0].toolCalls?.[0].status, 'completed');
+    if (name === 'ask_user') assert.equal(child[1].replyQuestion, 'Legacy question');
+    else assert.equal(child[0].toolCalls?.[0].output, 'Output');
+    for (let split = 0; split <= history.length; split++) {
+      const window = new NativeWindow(undefined, true);
+      accept(window, history.slice(split));
+      accept(window, history.slice(0, split));
+      compare(window, history);
+      const live = new NativeWindow(undefined, true);
+      accept(live, history.slice(0, split));
+      live.disconnect();
+      accept(live, history.slice(split), 'forward', { hasMore: false });
+      assert.deepEqual(live.snapshot().messages, baseline.snapshot().messages);
+    }
+    for (let partition = 0; partition < 2 ** (history.length - 1); partition++) {
+      const window = new NativeWindow(undefined, true);
+      let end = history.length;
+      for (let index = history.length - 1; index >= 0; index--) {
+        if (index && !(partition & (1 << (index - 1)))) continue;
+        accept(window, history.slice(index, end));
+        compare(window, history.slice(index));
+        end = index;
+      }
+    }
+  }
+});
+
+test('earlier root invocation evidence supersedes a legacy-only match without retaining a child answer', () => {
+  const history = [
+    event('root-start', 'tool.execution_start', { toolCallId: 'ask', toolName: 'ask_user' }),
+    task('owner', 'child'), spawn('child', 'child-agent'),
+    event('legacy-start', 'tool.execution_start', {
+      toolCallId: 'ask', toolName: 'ask_user', parentToolCallId: 'child', arguments: { question: 'Child question' },
+    }),
+    event('root-result', 'tool.execution_complete', {
+      toolCallId: 'ask', success: true, result: { content: 'User selected: Root answer' },
+    }),
+  ];
+  for (let split = 0; split <= history.length; split++) {
+    const window = new NativeWindow(undefined, true);
+    accept(window, history.slice(split));
+    accept(window, history.slice(0, split));
+    assert.equal(window.snapshot().messages.find(message => message.id === 'reply-ask')?.replyQuestion, undefined);
+    const child = window.snapshot().messages.find(message => message.subagent)?.subMessages ?? [];
+    assert.equal(child.some(message => message.subtype === 'ask-reply'), false, `split=${split}`);
+    compare(window, history);
+  }
+});
+
+test('ambiguous legacy invocation IDs never choose the first child question', () => {
+  const history = [
+    task('first-owner', 'first'), spawn('first', 'first-agent'),
+    event('first-start', 'tool.execution_start', {
+      toolCallId: 'ask', toolName: 'ask_user', parentToolCallId: 'first', arguments: { question: 'First question' },
+    }),
+    task('second-owner', 'second'), spawn('second', 'second-agent'),
+    event('second-start', 'tool.execution_start', {
+      toolCallId: 'ask', toolName: 'ask_user', parentToolCallId: 'second', arguments: { question: 'Second question' },
+    }),
+    event('unknown-result', 'tool.execution_complete', {
+      toolCallId: 'ask', success: true, result: { content: 'User selected: Unknown answer' },
+    }),
+  ];
+  for (let split = 0; split <= history.length; split++) {
+    const window = new NativeWindow(undefined, true);
+    accept(window, history.slice(split));
+    accept(window, history.slice(0, split));
+    compare(window, history);
+    for (const card of window.snapshot().messages.filter(message => message.subagent)) {
+      assert.equal(card.subMessages?.some(message => message.subtype === 'ask-reply'), false);
+    }
+  }
+});
+
 test('execution status survives every page split, duplicate start, and later child turns without extra projection scans', () => {
   const history = [
     task('owner', 'spawn'), spawn('spawn', 'child'),

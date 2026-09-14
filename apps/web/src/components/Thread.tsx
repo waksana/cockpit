@@ -7,7 +7,7 @@ import { MessageContent } from './MessageContent';
 import { hasMessageContent } from '../lib/messageContent';
 import { Composer } from './Composer';
 import { Icon } from './Icon';
-import type { ChatMessage, ChatSession, ToolCall, ExitPlanModeAction } from '../net/types';
+import type { ChatMessage, ChatSession, ExitPlanModeAction } from '../net/types';
 import { acknowledgeInView, sendThreadDraft } from '../lib/draft';
 import { getSessionDraft } from '../lib/textDraft';
 import { observeThreadScroll, READING_ACTIVITY_EVENT, type ThreadScroll } from './threadScroll';
@@ -15,46 +15,16 @@ import { observeHistoryPrefetch } from './historyPrefetch';
 import { canSkipMessageLayout, createMessageLayout } from './messageLayout';
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
-import { CopyButton } from './CopyButton';
+import { ToolCallRow, ToolStatusIcon } from './ToolCallRow';
+import { toolStatusLabel } from '../lib/toolStatus';
 import { ActivityHeader } from './ActivityHeader';
 import { DisclosureChoices } from './DisclosureChoices';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
 import { groupTranscript, type TranscriptRow, type ProcessItem } from '../lib/transcriptRows';
 import { AskCard, PlanCard, ElicitationCard } from './PendingDecision';
 import { StateNotice } from './StateNotice';
-
-// Static glyphs accompany the explicit status text; no decorative motion.
-function ToolStatusIcon({ status }: { status: ToolCall['status'] }) {
-  switch (status) {
-    case 'completed': return <Icon name="check" size={16} />;
-    case 'failed': return <Icon name="error" size={16} />;
-    default: return <Icon name="radiooff" size={16} />;
-  }
-}
-
-function ToolCallRow({ tc, sessionId }: { tc: ToolCall; sessionId: string }) {
-  const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'tool', tc.toolCallId]), false);
-  const status = tc.status ? {
-    completed: '已完成', failed: '失败', in_progress: '执行中', pending: '待执行',
-  }[tc.status] : '状态未知';
-  return (
-    <div className="msg-tool" data-status={tc.status ?? 'unknown'} data-open={open || undefined}>
-      <ActivityHeader className="tool-head tool-toggle" icon={<ToolStatusIcon status={tc.status} />}
-        title={tc.title} status={tc.status === 'completed' ? undefined : status} accessibleStatus={status}
-        disclosure={{ open, onToggle: toggle }} />
-      {open && (
-        <div className="activity-detail tool-detail">
-          {tc.name && tc.name !== tc.title && <div className="tool-detail-name">{tc.name}</div>}
-          {!tc.args && !tc.output && <div className="tool-detail-empty">暂无参数或输出记录。</div>}
-          {tc.args && <section><div className="tool-detail-label">参数 <CopyButton text={tc.args} label="复制工具参数" /></div>
-            <pre className="tool-args" tabIndex={0} aria-label="工具参数">{tc.args}</pre></section>}
-          {tc.output && <section><div className="tool-detail-label">输出 <CopyButton text={tc.output} label="复制工具输出" /></div>
-            <pre className="tool-output" tabIndex={0} aria-label="工具输出">{tc.output}</pre></section>}
-        </div>
-      )}
-    </div>
-  );
-}
+import { useClippedText } from '../lib/useClippedText';
+import { hasNewTranscriptContent } from '../lib/transcriptActivity';
 
 function Thought({ message, latest, sessionId }: { message: ChatMessage; latest: boolean; sessionId: string }) {
   const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'thought', message.thoughtKey ?? message.id]), latest);
@@ -69,7 +39,7 @@ function Thought({ message, latest, sessionId }: { message: ChatMessage; latest:
 }
 
 function SkillActivity({ message }: { message: ChatMessage }) {
-  return <ActivityHeader icon={<Icon name="skills" size={16} />} title={`skill · ${message.content}`} />;
+  return <ActivityHeader className="skill-activity" icon={<Icon name="skills" size={16} />} title={`skill · ${message.content}`} />;
 }
 
 export function MessageProcess({ items, sessionId, latest = false, identity = items[0].key,
@@ -82,16 +52,19 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
   const contentId = useId();
   const tools = items.flatMap(item => item.kind === 'tool' ? [item.tool] : []);
   const thoughts = items.filter(item => item.kind === 'thought');
+  const skills = items.filter(item => item.kind === 'skill');
   const latestThoughtId = latest && items.at(-1)?.key === latestItemId && items.at(-1)?.kind === 'thought'
     ? latestItemId : undefined;
-  const title = [tools.length ? `${tools.length} 次工具调用` : '', thoughts.length ? `${thoughts.length} 次思考` : ''].filter(Boolean).join(' · ') || '技能使用';
+  const title = [tools.length ? `${tools.length} 次工具调用` : '', thoughts.length ? `${thoughts.length} 次思考` : '',
+    skills.length ? skills.length === 1 ? `Skill · ${skills[0].message.content}` : `${skills.length} 次 Skill 使用` : ''].filter(Boolean).join(' · ');
+  const { ref: titleRef, clipped: titleClipped } = useClippedText(title);
   const states = [
-    [tools.filter(tool => tool.status === 'failed').length, '项失败'],
-    [tools.filter(tool => tool.status === 'in_progress').length, '项执行中'],
-    [tools.filter(tool => tool.status === 'pending').length, '项待执行'],
-    [tools.filter(tool => !tool.status).length, '项状态未知'],
+    [tools.filter(tool => tool.status === 'failed').length, 'failed'],
+    [tools.filter(tool => tool.status === 'in_progress').length, 'in_progress'],
+    [tools.filter(tool => tool.status === 'pending').length, 'pending'],
+    [tools.filter(tool => !tool.status).length, undefined],
   ] as const;
-  const notices = states.filter(([count]) => count > 0).map(([count, label]) => `${count} ${label}`);
+  const notices = states.filter(([count]) => count > 0).map(([count, status]) => `${count} 项${toolStatusLabel(status)}`);
   if (thoughts.some(item => item.message.incomplete)) notices.push('思考归属未确认');
   const description = [title, ...notices].join(' · ');
   const timestamp = items[0].message.timestamp;
@@ -101,11 +74,18 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
       aria-label={`${open ? '收起' : '展开'}过程：${description} · ${time}`} title={description}
       onClick={toggle}>
       <span className="process-summary-chevron"><Icon name="down" size={14} /></span>
-      <span className="process-summary-title">{title}</span>
-      {notices.length > 0 && <span className="process-summary-status">{notices[0]}</span>}
+      <span ref={titleRef} className="process-summary-title">{title}</span>
+      <span className="process-summary-states">
+        {states.filter(([count]) => count > 0).map(([count, status]) => <span key={status ?? 'unknown'}
+          className="process-summary-status" title={`${count} 项${toolStatusLabel(status)}`} data-status={status ?? 'unknown'}>
+          <ToolStatusIcon status={status} />{count}
+        </span>)}
+        {thoughts.some(item => item.message.incomplete) && <span title="思考归属未确认"><Icon name="error" size={16} /></span>}
+      </span>
       <time dateTime={new Date(timestamp).toISOString()}>{time}</time>
     </button></div>
     <div id={contentId} className="message-process-content" hidden={!open} data-child-history>
+      {open && titleClipped && <div className="process-expanded-summary">{title}</div>}
       {(mounted || open) && items.map(item => <div key={item.key} data-child-message-frame={item.key}>
         <div data-message-id={JSON.stringify([sessionId, item.key])}>
           {item.kind === 'thought' && <Thought message={item.message} latest={item.key === latestThoughtId} sessionId={sessionId} />}
@@ -217,7 +197,10 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
     return (
       <div className="user-message">
         <div className={cls.join(' ')} data-message-id={anchorId}>
-          {isAskReply && <span className="ask-reply-tag" aria-label="对提问的回复">↩ 回复</span>}
+          {isAskReply && <div className="ask-reply-question" aria-label="回答的问题">
+            <span className="ask-reply-label">问题</span>
+            {m.replyQuestion || '原问题记录不可用'}
+          </div>}
           <MessageContent message={m} />
         </div>
         <div className="user-message-meta">
@@ -344,7 +327,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   const executionLabel = session.compacting ? '正在压缩上下文…'
     : session.ask ? '等待你的回答' : session.planRequest ? '等待确认计划'
       : session.elicitation ? '等待工具确认' : session.status === 'running'
-        ? session.intent || '回复中…' : queueCount > 0 ? '排队中的消息' : '执行结果';
+        ? session.cancelling ? '正在停止…' : session.intent || '执行中…' : queueCount > 0 ? '排队中的消息' : '执行结果';
   const draft = useMemo(() => getSessionDraft(session.sessionId), [session.sessionId]);
   const { pending: actionPending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -367,23 +350,24 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     return start > 0 ? session.messages.slice(start) : session.messages;
   }, [heldHead, session.sessionId, session.messages]);
   const prependHeld = messages !== session.messages;
-  const [newCount, setNewCount] = useState(0);
+  const [hasNewContent, setHasNewContent] = useState(false);
+  const [awayFromBottom, setAwayFromBottom] = useState(false);
   const actionScopeRef = useRef({ active: false });
   useLayoutEffect(() => {
     const scope = { active: true };
     actionScopeRef.current = scope;
     return () => { scope.active = false; };
   }, [session.sessionId]);
-  const prevLastIdRef = useRef<string | undefined>(undefined);
+  const previousMessages = useRef<ChatMessage[]>([]);
   useLayoutEffect(() => {
     const el = scrollRef.current;
     const content = contentRef.current;
     if (!el || !content) return;
-    prevLastIdRef.current = undefined;
-    const owner = observeThreadScroll(el, content, () => setNewCount(0), (active) => {
+    previousMessages.current = [];
+    const owner = observeThreadScroll(el, content, () => setHasNewContent(false), (active) => {
       const id = content.querySelector<HTMLElement>('[data-window-item-id]')?.getAttribute('data-window-item-id') ?? undefined;
       setHeldHead(active && id ? { sessionId: session.sessionId, id } : null);
-    });
+    }, setAwayFromBottom);
     scrollOwnerRef.current = owner.scroll;
     // A new view enters at latest; only this mounted owner retains reading anchors.
     return () => {
@@ -423,15 +407,11 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     session.error, session.historyStale, session.incompleteBoundary, onLoadMore,
     prependHeld, preparingHistory, pageVisible, connected, snapshotReady]);
 
-  // Reconnect/metadata renders with identical geometry do not schedule a write.
-  // Count only messages after the previous tail, never an older-page prepend.
   useLayoutEffect(() => {
-    const lastId = session.messages.at(-1)?.id;
-    if (!scrollOwnerRef.current?.following && prevLastIdRef.current && lastId !== prevLastIdRef.current) {
-      const previousTail = session.messages.findIndex((m) => m.id === prevLastIdRef.current);
-      if (previousTail >= 0) setNewCount((n) => n + session.messages.length - previousTail - 1);
+    if (!scrollOwnerRef.current?.following && hasNewTranscriptContent(previousMessages.current, session.messages)) {
+      setHasNewContent(true);
     }
-    prevLastIdRef.current = lastId;
+    previousMessages.current = session.messages;
     scrollOwnerRef.current?.changed();
   }, [messages, session.messages, session.status, session.compacting, session.error]);
 
@@ -443,6 +423,12 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   // a pending plan (planSupersede), or otherwise sends a normal prompt.
   const ask = session.ask;
   const planRequest = session.planRequest;
+  const hasPendingDecision = !readOnly && !!(ask || planRequest || session.elicitation);
+  const composerHint = ask ? ask.allowFreeform === false ? '请选择上方选项，当前问题不接受自由输入。'
+    : ask.choices?.length ? '输入内容将回答当前问题，也可以选择上方选项。' : '输入内容将回答当前问题。'
+    : planRequest ? '发送新指令将替代当前待确认计划，先执行新指令，再返回计划模式。'
+      : session.elicitation ? '请使用上方按钮回应工具确认，普通消息不会代替确认。'
+        : session.status === 'running' ? '发送后加入队列，当前执行继续。' : undefined;
   const runInView = useCallback((send: () => Promise<boolean>): Promise<boolean> => (
     acknowledgeInView(actionScopeRef.current, send, {
       scrollRevision: () => scrollOwnerRef.current?.revision ?? 0,
@@ -520,23 +506,24 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
         {preparingHistory && <StateNotice className="chat-initial-loading" kind="loading" placement="pane">
           正在同步对话历史…
         </StateNotice>}
-        {newCount > 0 && (
+        {awayFromBottom && (
           <button className="new-msg-badge" type="button" onClick={jumpToBottom}>
-            {newCount} 条新消息
+            {hasNewContent ? '有新内容 · 回到最新' : '回到最新'}
           </button>
         )}
       </div>
 
-      {!readOnly && ask && <AskCard request={ask} pending={actionPending} onChoice={choice => { void handleChoice(choice); }} />}
-      {!readOnly && planRequest && <PlanCard request={planRequest} pending={actionPending}
-        onSelect={action => { void runAction(() => onRespondPlan?.(planRequest.requestId, action)); }} />}
-      {!readOnly && session.elicitation && <ElicitationCard request={session.elicitation} pending={actionPending}
-        onSelect={action => { void runAction(() => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
-
-      {(session.compacting || session.status === 'running' || (!readOnly && (queueCount > 0 || interruptResult))) && (
-        <section className="chat-execution" aria-label="执行与排队">
-          <div className="chat-execution-head">
-            <span className="chat-execution-label" role="status" title={executionLabel}>{executionLabel}</span>
+      {(hasPendingDecision || session.compacting || session.status === 'running' || (!readOnly && (queueCount > 0 || interruptResult))) && (
+        <section className="chat-execution" aria-label="当前交互与排队" data-pending={hasPendingDecision || undefined}>
+          {hasPendingDecision && <div className="chat-decisions">
+            {ask && <AskCard request={ask} pending={actionPending} onChoice={choice => { void handleChoice(choice); }} />}
+            {planRequest && <PlanCard request={planRequest} pending={actionPending}
+              onSelect={action => { void runAction(() => onRespondPlan?.(planRequest.requestId, action)); }} />}
+            {session.elicitation && <ElicitationCard request={session.elicitation} pending={actionPending}
+              onSelect={action => { void runAction(() => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
+          </div>}
+          {(!hasPendingDecision || showStop || showInterrupt) && <div className="chat-execution-head">
+            {!hasPendingDecision && <span className="chat-execution-label" role="status" title={executionLabel}>{executionLabel}</span>}
             {(showStop || showInterrupt) && <div className="chat-execution-actions" role="group" aria-label="执行操作">
               {showInterrupt && <button type="button" className="chat-interrupt"
                 disabled={!interruptAction.connected || (!!session.activeOperations && !interruptAction.busy)}
@@ -549,12 +536,12 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
                   }, () => setInterruptNotice({ sessionId: session.sessionId, text: interrupted
                     ? '已请求打断；队列由 Copilot 接着处理。'
                     : '当前没有可打断的主回合；队列未改动。' }));
-                }}>{interruptAction.busy ? '正在请求…' : '打断并继续'}</button>}
+                }}>{interruptAction.busy ? '正在请求…' : '打断并处理队列'}</button>}
               {showStop && <button type="button" className="chat-typing-stop" disabled={session.cancelling || !onCancel} onClick={() => onCancel?.()}>
                 {session.cancelling ? '正在停止…' : queueCount > 0 ? '停止并清空队列' : '停止'}
               </button>}
             </div>}
-          </div>
+          </div>}
           {interruptResult && <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
             {interruptResult}
           </p>}
@@ -563,7 +550,9 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
             <div className="chat-queue" aria-label="排队中的消息">
               {session.queue?.map((q) => (
                 <div key={q.id} className="chat-queue-item">
-                  <span className="chat-queue-text" title={q.text}>{q.text}</span>
+                  <details className="chat-queue-entry">
+                    <summary className="chat-queue-text" aria-label={`查看排队消息：${q.text}`}>{q.text}</summary>
+                  </details>
                   <button type="button" className="chat-queue-remove" aria-label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)}><Icon name="close" size={16} /></button>
                 </div>
               ))}
@@ -577,7 +566,9 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
       ) : (
         <Composer
           key={session.sessionId}
-          busy={session.status === 'running' && !ask}
+          busy={session.status === 'running' && !ask && !planRequest}
+          hint={composerHint}
+          submitLabel={ask ? '提交回答' : planRequest ? '发送新指令' : undefined}
           disabled={!!session.compacting && session.status !== 'running'}
           placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : '输入消息…'))}
           draft={draft}

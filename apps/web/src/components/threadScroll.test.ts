@@ -190,7 +190,9 @@ test('each mounted scroll adapter starts at latest and real gestures cancel queu
       return id ? row(id) : null;
     },
   });
-  owner = observeThreadScroll(el as HTMLDivElement, content as unknown as HTMLDivElement, () => {});
+  const distances: boolean[] = [];
+  owner = observeThreadScroll(el as HTMLDivElement, content as unknown as HTMLDivElement, () => {}, undefined,
+    away => distances.push(away));
   frames.flush();
   assert.equal(view.top, view.bottom);
   const wheel = new Event('wheel');
@@ -201,12 +203,14 @@ test('each mounted scroll adapter starts at latest and real gestures cancel queu
   t.mock.timers.tick(180);
   frames.flush();
   assert.equal(view.top, 423, 'current reading stays in place');
+  assert.deepEqual(distances, [true], 'reading away exposes a return action without requiring new messages');
   const end = new Event('keydown', { cancelable: true });
   Object.defineProperty(end, 'key', { value: 'End' });
   el.dispatchEvent(end);
   assert.equal(end.defaultPrevented, true);
   frames.flush();
   assert.equal(view.top, view.bottom);
+  assert.deepEqual(distances, [true, false], 'following hides the return action again');
   assert.equal(owner.scroll.following, true);
   owner.scroll.follow();
   el.dispatchEvent(wheel);

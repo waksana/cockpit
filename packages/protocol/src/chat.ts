@@ -20,6 +20,8 @@ export interface FoldState {
   byId: Map<string, number>; // messageId -> index in messages
   toolMsg: Map<string, string>; // observed start -> tool row ID, or '' for dedicated UI
   askToolIds: Set<string>; // toolCallIds that are ask_user prompts
+  // Retained metadata and explicit legacy ownership, scoped to this fold's invocation IDs.
+  toolMetadata: Map<string, { title?: string; executionTitle?: string; question?: string; legacyOwner?: true }>;
   // Child folds/cards are keyed by spawning toolCallId. Each child also remembers
   // task-registry/envelope aliases, which need not equal that toolCallId.
   subFolds: Map<string, FoldState>;
@@ -40,7 +42,7 @@ export interface FoldState {
 export function newFoldState(): FoldState {
   return {
     messages: [], byId: new Map(), toolMsg: new Map(),
-    askToolIds: new Set(),
+    askToolIds: new Set(), toolMetadata: new Map(),
     subFolds: new Map(), subCard: new Map(), agentIds: new Set(), pendingTask: new Map(),
     responses: new Map(), reasoning: new Map(), completed: new Set(),
   };
@@ -61,6 +63,7 @@ export interface FoldProjection {
   toolOutput?: string;
   toolArgs?: string;
   askAnswer?: string;
+  askQuestion?: string;
   scope?: FoldHistoryScope;
   strictOwnership?: boolean;
 }
@@ -169,7 +172,14 @@ function subCardMsg(state: FoldState, toolCallId: string): ChatMessage | undefin
   return idx === undefined ? undefined : state.messages[idx];
 }
 
-interface ToolRequest { toolCallId?: string; name?: string; arguments?: unknown }
+interface ToolRequest {
+  toolCallId?: string; name?: string; arguments?: unknown;
+  intentionSummary?: unknown; description?: unknown; toolTitle?: unknown;
+}
+
+export function nativeToolTitle(data: Record<string, unknown>): string | undefined {
+  return stringOf(data.intentionSummary) ?? stringOf(data.description) ?? stringOf(data.toolTitle);
+}
 
 function recordOf(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' ? value as Record<string, unknown> : {};
@@ -209,41 +219,36 @@ export function toolOutputOf(result: unknown, error?: unknown): string {
   return raw ? cap(raw) : failure ? cap(failure) : '';
 }
 
-// Format a tool's arguments into a readable, capped one-or-few-line detail (the
-// "what" behind the intent): `$ cmd` for bash, the path/range for view, a mini
-// diff for edit, the pattern for grep/glob, etc. Empty ⇒ no args detail.
+// Ordinary inputs share one serialization; native decisions keep their dedicated UI.
 export function toolArgsOf(name: string | undefined, args: unknown): string {
-  if (!args || typeof args !== 'object') return '';
-  // ask_user has its own pending-card + reply bubble; don't duplicate its
-  // question/choices as a redundant tool detail.
-  if (name === 'ask_user') return '';
-  const a = args as Record<string, unknown>;
-  const s = (k: string): string | undefined => (typeof a[k] === 'string' ? (a[k] as string) : undefined);
-  let out = '';
-  switch (name) {
-    case 'bash': out = s('command') ? `$ ${s('command')}` : ''; break;
-    case 'view': {
-      const p = s('path'); const r = Array.isArray(a.view_range) ? (a.view_range as unknown[]) : null;
-      out = p ? (r && r.length === 2 ? `${p} [${r[0]}-${r[1]}]` : p) : '';
-      break;
-    }
-    case 'grep': out = s('pattern') ? `grep: ${s('pattern')}${s('paths') ? `  @ ${s('paths')}` : ''}` : ''; break;
-    case 'glob': out = s('pattern') ? `glob: ${s('pattern')}` : ''; break;
-    case 'web_fetch': out = s('url') ?? ''; break;
-    case 'edit': {
-      const parts: string[] = [];
-      if (s('path')) parts.push(s('path') as string);
-      if (s('old_str') !== undefined) parts.push(`- ${s('old_str')}`);
-      if (s('new_str') !== undefined) parts.push(`+ ${s('new_str')}`);
-      out = parts.join('\n');
-      break;
-    }
-    case 'create': out = [s('path'), s('file_text')].filter(Boolean).join('\n'); break;
-    default: {
-      try { const j = JSON.stringify(a); out = j && j !== '{}' ? j : ''; } catch { out = ''; }
-    }
+  if (args == null || name === 'ask_user') return '';
+  const text = typeof args === 'string' ? args : JSON.stringify(args);
+  return text && text !== '{}' ? cap(text) : '';
+}
+
+function rememberToolMetadata(
+  state: FoldState, toolCallId: string, data: Record<string, unknown>, question?: string, execution = false,
+): string[] {
+  const previous = state.toolMetadata.get(toolCallId) ?? {};
+  const title = nativeToolTitle(data);
+  if (!title && !question) return [];
+  const metadata = { ...previous, ...(title ? execution ? { executionTitle: title } : { title } : {}),
+    ...(question ? { question } : {}) };
+  state.toolMetadata.set(toolCallId, metadata);
+  const changed: string[] = [];
+  const toolMessage = state.messages[state.byId.get(`tool-${toolCallId}`) ?? -1];
+  const tool = toolMessage?.toolCalls?.[0];
+  const resolvedTitle = metadata.executionTitle ?? metadata.title;
+  if (tool && resolvedTitle && tool.title !== resolvedTitle) {
+    tool.title = resolvedTitle;
+    changed.push(toolMessage.id);
   }
-  return out ? cap(out) : '';
+  const reply = state.messages[state.byId.get(`reply-${toolCallId}`) ?? -1];
+  if (reply && metadata.question && reply.replyQuestion !== metadata.question) {
+    reply.replyQuestion = metadata.question;
+    changed.push(reply.id);
+  }
+  return changed;
 }
 
 function routeEvent(state: FoldState, ev: SdkEvent): FoldRoute | undefined {
@@ -271,8 +276,14 @@ function routeEvent(state: FoldState, ev: SdkEvent): FoldRoute | undefined {
   } else {
     route = agentRoute(eventAgent) ?? agentRoute(legacyOwner);
     if (!route && !eventAgent && !legacyOwner) {
-      route = tcId && ev.type.startsWith('tool.')
-        ? findRoute(state, (s) => s.toolMsg.has(tcId)) : undefined;
+      // Only legacy starts establish an ownerless completion relationship.
+      // Modern agent-scoped starts must never lend their questions to root work.
+      if (ev.type === 'tool.execution_complete' && tcId && !state.toolMsg.has(tcId)
+        && !state.toolMetadata.has(tcId) && !state.askToolIds.has(tcId)) {
+        const legacy = findRoute(state, fold => fold.toolMetadata.get(tcId)?.legacyOwner === true);
+        if (legacy && !findRoute(state, fold => fold !== legacy.fold
+          && fold.toolMetadata.get(tcId)?.legacyOwner === true)) route = legacy;
+      }
       route ??= { fold: state, cards: [] };
     }
     // Legacy ownership can establish the native registry ID before it is seen
@@ -317,6 +328,11 @@ export function foldEvent(state: FoldState, ev: SdkEvent, projection?: FoldProje
   }
   // Bounded history can omit a spawning task. Unknown agent work is not main work.
   if (!route) return { changed: [], metaChanged: false };
+  if (ev.type === 'tool.execution_start' && typeof ev.data.toolCallId === 'string'
+    && (stringOf(ev.data.parentToolCallId) || stringOf(ev.parentToolCallId))) {
+    const id = ev.data.toolCallId;
+    route.fold.toolMetadata.set(id, { ...route.fold.toolMetadata.get(id), legacyOwner: true });
+  }
   if (projection?.scope && !visibleRoute(route, projection.scope) && !ev.type.startsWith('subagent.')) {
     if (ev.type === 'assistant.message' && Array.isArray(ev.data.toolRequests)) {
       for (const request of ev.data.toolRequests as ToolRequest[]) {
@@ -535,7 +551,11 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       const reconciled = [...state.reasoning].filter(([, response]) => response === id)
         .map(([rid]) => `reasoning-${rid}`);
       for (const r of reqs) {
+        if (!r || typeof r.toolCallId !== 'string') continue;
         rememberTask(state, r, projection?.scope);
+        if (r.name === 'ask_user') state.askToolIds.add(r.toolCallId);
+        changed.push(...rememberToolMetadata(state, r.toolCallId, { ...r },
+          r.name === 'ask_user' ? stringOf(recordOf(r.arguments).question) : undefined));
       }
       endTurn(state);
       return { changed, ...(removed.length ? { removed } : {}),
@@ -547,8 +567,9 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
     // result is an answer; user_input.completed is ephemeral and may be empty.
     case 'user_input.requested': {
       const toolCallId = stringOf(d.toolCallId);
-      if (toolCallId) state.askToolIds.add(toolCallId);
-      return empty;
+      if (!toolCallId) return empty;
+      state.askToolIds.add(toolCallId);
+      return { changed: rememberToolMetadata(state, toolCallId, {}, stringOf(d.question)), metaChanged: false };
     }
 
     case 'tool.execution_start':
@@ -558,6 +579,8 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       const start = ev.type === 'tool.execution_start';
       const name = start ? stringOf(d.toolName) : undefined;
       if (name === 'ask_user') state.askToolIds.add(toolCallId);
+      const changed = start ? rememberToolMetadata(state, toolCallId, d,
+        name === 'ask_user' ? projection?.askQuestion ?? stringOf(recordOf(d.arguments).question) : undefined, true) : [];
       const msgId = `tool-${toolCallId}`;
       const previous = state.messages[state.byId.get(msgId) ?? -1];
       const oldTool = previous?.toolCalls?.[0];
@@ -573,18 +596,17 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
         return empty;
       }
       const args = start ? projection?.toolArgs ?? toolArgsOf(name, d.arguments) : undefined;
+      const metadata = state.toolMetadata.get(toolCallId);
       const tc: ToolCall = start ? {
-        toolCallId, title: stringOf(d.intentionSummary) ?? stringOf(d.description)
-          ?? stringOf(d.toolTitle) ?? name ?? '缺少工具名称',
+        toolCallId, title: metadata?.executionTitle ?? metadata?.title ?? name ?? '缺少工具名称',
         ...(name ? { name } : {}),
         ...(args ? { args } : {}),
         status: oldTool?.status === 'completed' || oldTool?.status === 'failed' ? oldTool.status : 'in_progress',
         ...(oldTool?.output ? { output: oldTool.output } : {}),
       } : {
-        ...(oldTool ?? { toolCallId, title: '缺少工具开始记录' }),
+        ...(oldTool ?? { toolCallId, title: metadata?.executionTitle ?? metadata?.title ?? '缺少工具开始记录' }),
         status: d.success === false || d.error != null ? 'failed' : d.success === true ? 'completed' : undefined,
       };
-      const changed: string[] = [];
       upsert(state, { id: msgId, role: 'assistant', content: '', timestamp: previous?.timestamp ?? tsOf(ev), toolCalls: [tc] });
       changed.push(msgId);
       // Attach the (capped) tool output to the collapsible detail for ALL tools
@@ -601,7 +623,8 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
         const answer = projection?.askAnswer ?? askAnswerOf(d);
         if (answer) {
           const replyId = `reply-${toolCallId}`;
-          upsert(state, { id: replyId, role: 'user', subtype: 'ask-reply', content: answer, timestamp: tsOf(ev) });
+          upsert(state, { id: replyId, role: 'user', subtype: 'ask-reply', content: answer, timestamp: tsOf(ev),
+            ...(metadata?.question ? { replyQuestion: metadata.question } : {}) });
           changed.push(replyId);
         }
       }

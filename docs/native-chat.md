@@ -131,6 +131,14 @@ placement. Bounded windows can lack a start or completion; missing metadata and
 unknown outcomes remain explicit. Dedicated decisions, agent lifecycle and
 system events retain their own semantics.
 
+Tool headers always occupy one line, both collapsed and expanded. They show one
+status glyph, the bounded tool name (leading ellipsis preserves its suffix), and
+an optional native description. They do not infer an intention from arguments.
+Input and output appear only after expansion, including for failed tools. Only
+actually clipped name/description fields are repeated in full in the details.
+Complete header fields are not repeated. The whole header is a keyboard-operable
+disclosure without a trailing arrow, hover fill or expanded container frame.
+
 Consecutive process items are grouped only by the renderer. User speech,
 assistant text and dedicated system/agent records end a process group; empty
 message starts and skill activations do not. A response can contribute thinking
@@ -138,8 +146,9 @@ to the preceding process overview and text to the next speech row. The renderer
 references the same response object rather than maintaining another history.
 A group contains direct reasoning/tool/skill rows, not an extra hierarchy
 of rounds or messages. Its counts describe visible tool and reasoning items;
-skill activations are not counted as tool executions. Recorded failures remain
-visible in the collapsed summary. There is no elapsed
+skill activations are counted separately and remain discoverable in mixed groups.
+Recorded failures and simultaneous active/unknown states remain visible as
+separate glyph/count pairs in the single-line collapsed summary. There is no elapsed
 time estimate, round count or generated summary.
 
 The last overview defaults open. A reasoning item defaults open only while it
@@ -151,12 +160,26 @@ the group's mounted identity. They are not a second native state or history stor
 The transcript uses no group divider lines or extra inter-group gaps. It retains
 internal text/button spacing, original timestamps, keyboard focus and local
 code/tool copying.
-Activity disclosure keeps its first-line baseline and icon slots fixed; a long
-expanded tool title can wrap without shifting the first line or compensating
-the transcript scroll position. Initial history loading is a pane-level status
+Activity disclosure keeps its header height and icon slots fixed. Long tool
+titles do not wrap on expansion; clipped fields wrap only in the details below.
+Process items share one text column without accumulated nesting indents or
+progressively smaller text. Initial history loading is a pane-level status
 outside the measured rows; older-page refresh status stays inline.
 Right-clicking chat content uses the browser's native context menu, not a custom
 message-copy menu. Code and tool-detail copy buttons remain available.
+
+Pending questions, plans and tool confirmations share the execution area above
+the composer. A pending decision replaces the generic execution label, not the
+other native requests or the queue. Composer hints identify whether text answers
+a question, supersedes a pending plan, or joins the queue. Queue items can be
+expanded to read their full text independently of their remove action; this does
+not add editing, reordering or a new steering mode.
+
+Persisted question replies show the original question above the answer in the
+user bubble, without an emoji or a duplicate option list. Association uses
+explicit native invocation references within the agent scope, not the nearest
+question or the current pending card. Missing question records stay explicit;
+older history can enrich the same reply without adding another message.
 
 The opt-in lab's `ordered-events` scenario feeds isolated native inputs through
 the actual `NativeWindow`, including repeated pages, older prefixes, new speech
@@ -185,6 +208,10 @@ does not restore the previous cross-view reading position; retained history and
 native cursors still avoid a fresh history read. Within the same mounted view,
 rerenders, live updates and older-page insertion preserve the active reading
 anchor and gestures rather than forcing the reader to the bottom.
+An away-from-bottom viewport always offers a return-to-latest action. Text
+increments and recorded tool updates can mark new content without requiring a
+new message ID; unchanged pages and older history prefixes do not count as new
+messages. The existing scroll owner remains the only writer of scroll position.
 
 Initial loading fills at least two viewport heights when sufficient history is
 available, not a fixed number of messages.

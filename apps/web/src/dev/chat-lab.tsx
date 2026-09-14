@@ -70,9 +70,9 @@ export function Lab() {
     apply();
     return true;
   }
-  function append(text: string, role: ChatMessage['role'] = 'assistant', subtype?: ChatMessage['subtype']) {
+  function append(text: string, role: ChatMessage['role'] = 'assistant', subtype?: ChatMessage['subtype'], replyQuestion?: string) {
     setSession(value => ({ ...value, messages: [...value.messages, {
-      id: `lab-add-${++counter.current}`, role, content: text, timestamp: Date.now(), subtype,
+      id: `lab-add-${++counter.current}`, role, content: text, timestamp: Date.now(), subtype, replyQuestion,
     }] }));
   }
   const loadMore = useCallback(() => {
@@ -145,7 +145,7 @@ export function Lab() {
         }}
         onSend={(text) => action('发送', () => append(text, 'user'))}
         onRespondAsk={(id, answer, freeform) => action(`${id} / ${answer} / freeform=${freeform}`, () => {
-          setSession(value => ({ ...value, ask: null })); append(answer, 'user', 'ask-reply');
+          setSession(value => ({ ...value, ask: null })); append(answer, 'user', 'ask-reply', session.ask?.question);
         })}
         onRespondPlan={(id, answer) => action(`${id} / ${answer}`, () => setSession(value => ({ ...value, planRequest: null })))}
         onPlanSupersede={(id, text) => action(`${id} / 新指令`, () => {

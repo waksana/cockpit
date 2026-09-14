@@ -42,10 +42,10 @@ test('latest overview starts open even when idle and completed tools do not repe
   assert.doesNotMatch(html, /Recorded reasoning/);
   assert.match(html, /class="activity-head thought-toggle" aria-expanded="false"/);
   assert.equal((html.match(/class="activity-head tool-head tool-toggle"/g) ?? []).length, 3);
-  assert.match(html, /展开细节：Read source · 已完成/);
-  assert.doesNotMatch(html, /class="activity-status">已完成/);
-  assert.match(html, /class="activity-status">失败/);
-  assert.match(html, /class="activity-status">状态未知/);
+  assert.match(html, /展开细节：view · Read source · 已完成/);
+  assert.doesNotMatch(html, /class="activity-status"/);
+  assert.match(html, /class="tool-state-icon" data-status="failed"/);
+  assert.match(html, /class="tool-state-icon" data-status="unknown"/);
 });
 
 test('reasoning opens by default only when it is the latest visible item, not the latest thought', () => {

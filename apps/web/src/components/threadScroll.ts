@@ -213,8 +213,14 @@ export class ThreadScroll {
   }
 }
 
-export function observeThreadScroll(el: HTMLDivElement, content: HTMLDivElement, onFollow: () => void, onActivity?: (active: boolean) => void) {
+export function observeThreadScroll(el: HTMLDivElement, content: HTMLDivElement, onFollow: () => void,
+  onActivity?: (active: boolean) => void, onAwayChange?: (away: boolean) => void) {
   const top = () => el.getBoundingClientRect().top + el.clientTop;
+  let away = false;
+  const reportDistance = () => {
+    const next = el.scrollHeight - el.clientHeight - el.scrollTop > 2;
+    if (away !== next) { away = next; onAwayChange?.(next); }
+  };
   const scroll = new ThreadScroll({
     measure: () => ({ top: el.scrollTop, height: el.scrollHeight, viewport: el.clientHeight, width: el.clientWidth }),
     firstVisible: () => {
@@ -226,7 +232,7 @@ export function observeThreadScroll(el: HTMLDivElement, content: HTMLDivElement,
       const row = content.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(id)}"]`);
       return row && !row.closest('[hidden]') ? row.getBoundingClientRect().top - top() : null;
     },
-    write: (value) => { el.scrollTop = value; },
+    write: (value) => { el.scrollTop = value; reportDistance(); },
   }, {
     request: (callback) => requestAnimationFrame(callback),
     cancel: (id) => cancelAnimationFrame(id),
@@ -246,6 +252,7 @@ export function observeThreadScroll(el: HTMLDivElement, content: HTMLDivElement,
       mouseTop = el.scrollTop;
     }
     scroll.scroll();
+    reportDistance();
     later();
   };
   let touchY = 0;
@@ -300,7 +307,7 @@ export function observeThreadScroll(el: HTMLDivElement, content: HTMLDivElement,
     if (selection && !selection.isCollapsed
       && (content.contains(selection.anchorNode) || content.contains(selection.focusNode))) navigate();
   };
-  const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => scroll.changed());
+  const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => { scroll.changed(); reportDistance(); });
   ro?.observe(el);
   ro?.observe(content);
   el.addEventListener('scroll', onScroll, { passive: true });

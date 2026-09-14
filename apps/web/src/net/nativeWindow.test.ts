@@ -135,7 +135,7 @@ test('tool starts are self-contained, and message toolRequests neither create no
   accept(window,[start()],forward);
   assert.equal(window.unresolved,false);
   assert.deepEqual(window.snapshot().messages[0].toolCalls,[{
-    toolCallId:'tool',name:'bash',title:'bash',args:'$ echo test',status:'in_progress',
+    toolCallId:'tool',name:'bash',title:'bash',args:'{"command":"echo test"}',status:'in_progress',
   }]);
 });
 
@@ -170,7 +170,7 @@ test('retained output is capped exactly once when an earlier start provides meta
   accept(window,[event('result','tool.execution_complete',{toolCallId:'tool',result:{content:'x'.repeat(100_000)}})]);
   accept(window,[start()]);
   const tool = window.snapshot().messages[0].toolCalls![0];
-  assert.equal(tool.args,'$ echo test');
+  assert.equal(tool.args,'{"command":"echo test"}');
   assert.match(tool.output ?? '',/已截断，共 100000 字符/);
 });
 

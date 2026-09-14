@@ -49,13 +49,13 @@ test('queue contents do not change the existing running and compacting visibilit
 test('interrupt action keeps its context without the removed persistent hint or stale description reference', () => {
   const queue = [{ id: 'q', text: 'next' }];
   const html = render({ queue });
-  assert.match(html, /打断并继续/);
+  assert.match(html, /打断并处理队列/);
   assert.doesNotMatch(html, /只打断主回合|后台任务继续，可能延后处理|interrupt-help|chat-execution-hint/);
   assert.match(html, /停止并清空队列/);
-  assert.doesNotMatch(render(), /打断并继续/);
+  assert.doesNotMatch(render(), /打断并处理队列/);
   for (const patch of [{ loaded: false }, { status: 'idle' as const }, { nativeProcessing: false },
     { cancelling: true }, { closing: true }, { loading: true }, { compacting: true }]) {
-    assert.doesNotMatch(render({ queue, ...patch }), /打断并继续/);
+    assert.doesNotMatch(render({ queue, ...patch }), /打断并处理队列/);
   }
   assert.match(render({ queue, activeOperations: 1 }), /class="chat-interrupt" disabled=""/);
 });
@@ -66,7 +66,7 @@ test('stop and interrupt share one execution action group outside the scrolling 
   assert.ok(section);
   const actions = section.match(/class="chat-execution-actions"[^>]*>([\s\S]+?)<\/div>/)?.[1];
   assert.ok(actions);
-  assert.match(actions, /打断并继续/);
+  assert.match(actions, /打断并处理队列/);
   assert.match(actions, /停止并清空队列/);
   assert.match(section, /Working on the response/);
   assert.match(section, /排队消息 · 1/);
@@ -82,4 +82,37 @@ test('idle queues show their messages without inventing a running operation, and
     session, readOnly: true, onLoadMore() {}, onCancel() {}, async onInterrupt() { return { ok: true, interrupted: true }; },
   }));
   assert.doesNotMatch(readonly, /chat-typing-stop|chat-interrupt"|chat-execution-actions/);
+});
+
+test('a pending question replaces generic execution status in the same region', () => {
+  const html = render({ intent: 'Generic running intent', ask: {
+    requestId: 'question', question: 'Which option?', choices: ['A', 'B'], allowFreeform: true,
+  } });
+  const region = html.match(/<section class="chat-execution"[\s\S]+?<\/section>/)![0];
+  assert.match(region, /data-pending="true"/);
+  assert.match(region, /Which option\?/);
+  assert.equal((region.match(/等待你的回答/g) ?? []).length, 1);
+  assert.doesNotMatch(region, /Generic running intent|chat-execution-label/);
+  assert.match(html, /输入内容将回答当前问题/);
+  assert.doesNotMatch(html, /发送后加入队列/);
+});
+
+test('multiple native decisions remain reachable without a second generic status line', () => {
+  const html = render({
+    ask: { requestId: 'ask', question: 'Question?' },
+    planRequest: { requestId: 'plan', summary: 'Proposed plan', actions: ['exit_only'] },
+    elicitation: { requestId: 'confirm', message: 'Tool confirmation' },
+  });
+  assert.match(html, /Question\?/);
+  assert.match(html, /Proposed plan/);
+  assert.match(html, /Tool confirmation/);
+  assert.doesNotMatch(html, /chat-execution-label/);
+});
+
+test('queue text has a keyboard-readable expansion separate from its removal action', () => {
+  const html = render({ queue: [{ id: 'q', text: 'A long queued request' }] });
+  assert.match(html, /<details class="chat-queue-entry"><summary class="chat-queue-text"/);
+  assert.match(html, /<\/details><button type="button" class="chat-queue-remove"/);
+  assert.match(html, /发送后加入队列，当前执行继续/);
+  assert.doesNotMatch(html, /重排|编辑排队/);
 });

@@ -435,7 +435,7 @@ test('tool call args + output captured; status transitions', () => {
   assert.ok(tc);
   assert.equal(tc!.title, 'list files');
   assert.equal(tc!.name, 'bash');
-  assert.equal(tc!.args, '$ ls');
+  assert.equal(tc!.args, '{"command":"ls"}');
   assert.equal(tc!.output, 'file1\nfile2');
   assert.equal(tc!.status, 'completed');
 });
@@ -454,6 +454,7 @@ test('ask_user reply surfaces as a user bubble (prefix stripped)', () => {
   assert.ok(reply, 'ask-reply message exists');
   assert.equal(reply!.role, 'user');
   assert.equal(reply!.content, 'my answer');
+  assert.equal(reply!.replyQuestion, 'Q?');
 });
 
 test('errors/warnings fold into system messages with level', () => {
