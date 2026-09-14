@@ -164,7 +164,13 @@ export function mergeHistoryFold(
 ): FoldState {
   const prefixOrders = orders.get(prefix) ?? new Map<string, number>();
   const suffixOrders = orders.get(suffix) ?? new Map<string, number>();
-  for (const [id, order] of prefixOrders) suffixOrders.set(id, Math.min(order, suffixOrders.get(id) ?? Infinity));
+  for (const [id, order] of prefixOrders) {
+    const previous = suffix.messages[suffix.byId.get(id) ?? -1];
+    // A replayed fallback may have been retired and recreated by a later native
+    // write. Its surviving source, not the obsolete suffix anchor, owns order.
+    suffixOrders.set(id, id.startsWith('reasoning-message-') || previous?.provisional
+      ? order : Math.min(order, suffixOrders.get(id) ?? Infinity));
+  }
   orders.set(suffix, suffixOrders);
   const replacements = new Map(prefix.messages.map(message => [message.id, message]));
   const removed = new Set<string>();
@@ -172,6 +178,7 @@ export function mergeHistoryFold(
     const fallback = `reasoning-message-${messageId}`;
     if (!reasoning.includes(fallback)) removed.add(fallback);
   }
+  for (const id of removed) suffixOrders.delete(id);
   for (const [tool, sub] of prefix.subFolds) {
     const existing = suffix.subFolds.get(tool);
     const cardId = prefix.subCard.get(tool)!;
@@ -199,17 +206,21 @@ export function mergeHistoryFold(
     }
   }
   if (replacements.size || removed.size) {
-    const incoming = [...prefix.messages].sort((a, b) => suffixOrders.get(a.id)! - suffixOrders.get(b.id)!);
+    const incoming = [...prefix.messages].filter(message => !message.provisional)
+      .sort((a, b) => suffixOrders.get(a.id)! - suffixOrders.get(b.id)!);
+    const drafts = prefix.messages.filter(message => message.provisional);
     const messages: ChatMessage[] = [];
     let position = 0;
     for (const message of suffix.messages) {
       if (replacements.has(message.id) || removed.has(message.id)) continue;
+      if (message.provisional) { drafts.push(message); continue; }
       while (position < incoming.length && suffixOrders.get(incoming[position].id)! < suffixOrders.get(message.id)!) {
         messages.push(incoming[position++]);
       }
       messages.push(message);
     }
     messages.push(...incoming.slice(position));
+    messages.push(...drafts);
     suffix.messages = messages;
     suffix.byId = new Map(messages.map((message, position) => [message.id, position]));
   }
@@ -219,7 +230,13 @@ export function mergeHistoryFold(
   for (const id of prefix.agentIds) suffix.agentIds.add(id);
   for (const [id, card] of prefix.subCard) suffix.subCard.set(id, card);
   for (const id of prefix.finalReasoning) suffix.finalReasoning.add(id);
-  for (const [id, reasoning] of prefix.messageReasoning) suffix.messageReasoning.set(id, reasoning);
+  for (const [id, reasoning] of prefix.messageReasoning) {
+    // Selective durable replay cannot recreate ephemeral identity links. Keep
+    // unresolved links so a later same-message final can actually retire them.
+    const drafts = (suffix.messageReasoning.get(id) ?? []).filter(reasoningId =>
+      suffix.messages[suffix.byId.get(reasoningId) ?? -1]?.provisional);
+    suffix.messageReasoning.set(id, [...new Set([...reasoning, ...drafts])]);
+  }
   if ((prefix.pendingReasoning || prefix.streamingId) && !index.hasScratchBoundary(suffix)) {
     suffix.streamingId = prefix.streamingId;
     suffix.pendingReasoning = prefix.pendingReasoning;

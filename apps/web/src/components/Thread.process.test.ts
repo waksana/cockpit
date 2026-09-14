@@ -36,12 +36,46 @@ test('older overview summarizes consecutive items and retains failures without m
 test('latest overview starts open even when idle and completed tools do not repeat their visual status', () => {
   const html = renderProcess(items, true);
   assert.match(html, /class="process-summary" aria-expanded="true"/);
-  assert.match(html, /Recorded reasoning/);
+  assert.doesNotMatch(html, /Recorded reasoning/);
+  assert.match(html, /class="activity-head thought-toggle" aria-expanded="false"/);
   assert.equal((html.match(/class="activity-head tool-head tool-toggle"/g) ?? []).length, 3);
   assert.match(html, /展开细节：Read source · 已完成/);
   assert.doesNotMatch(html, /class="activity-status">已完成/);
   assert.match(html, /class="activity-status">失败/);
   assert.match(html, /class="activity-status">状态未知/);
+});
+
+test('reasoning opens by default only when it is the latest visible item, not the latest thought', () => {
+  const session = fixtureSession('empty');
+  for (const next of [
+    items[1],
+    { ...message, id: 'reply', content: 'New assistant reply' },
+    { ...message, id: 'request', role: 'user' as const, content: 'New user request' },
+  ]) {
+    session.messages = [items[0], next];
+    const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
+    assert.doesNotMatch(html, /class="activity-detail msg-thought"/);
+    assert.match(html, /class="activity-head thought-toggle" aria-expanded="false"/);
+  }
+  session.messages = [items[1], items[0]];
+  const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
+  assert.match(html, /class="activity-detail msg-thought">Recorded reasoning/);
+});
+
+test('provisional previews are labelled and cannot extend confirmed process groups', () => {
+  const session = fixtureSession('empty');
+  session.messages = [
+    items[0], items[1],
+    { ...items[0], id: 'stream-thought', provisional: true },
+    { ...message, id: 'stream-body', content: 'Unconfirmed draft', provisional: true },
+  ];
+  const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
+  assert.equal((html.match(/class="process-summary"/g) ?? []).length, 2);
+  assert.equal((html.match(/class="chat-provisional-label"/g) ?? []).length, 1);
+  assert.equal((html.match(/data-provisional="true"/g) ?? []).length, 2);
+  assert.match(html, /临时内容 · 待完整记录/);
+  assert.match(html, /Unconfirmed draft/);
+  assert.doesNotMatch(html, /class="activity-detail msg-thought"/);
 });
 
 test('thought-only and incomplete states have literal counts, never invented success or duration', () => {

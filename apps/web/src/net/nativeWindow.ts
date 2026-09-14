@@ -159,7 +159,6 @@ export class NativeWindow {
     }
     const finalId = finalizedId(event);
     const final = finalId ? this.eventKey(event, finalId) : undefined;
-    const finalizingTransient = !event.ephemeral && !!final && (this.streaming.has(final) || this.blocked.has(final));
     if (final && !event.ephemeral) {
       this.complete.add(final);
       this.streaming.delete(final);
@@ -174,10 +173,9 @@ export class NativeWindow {
       }
     }
     const eventOwners = ownersOf(event);
-    const reasoningOwner = eventOwners.length
+    const eventOwner = eventOwners.length
       ? states(this.state).find(state => eventOwners.some(owner => state.agentIds.has(owner))) : this.state;
-    const reconciled = event.type === 'assistant.message' && typeof event.data.reasoningText === 'string'
-      ? [...reasoningOwner?.reasoningIds ?? []] : [];
+    const previousFinal = finalId && eventOwner ? eventOwner.messages[eventOwner.byId.get(finalId) ?? -1] : undefined;
     const result = foldEvent(this.state, event, {
       eventOrder: order,
       ...event.display, toolArgs: event.display?.toolArgs ? new Map(event.display.toolArgs) : undefined,
@@ -187,8 +185,8 @@ export class NativeWindow {
       this.noteMissing(event, true);
     }
     if (event.type === 'subagent.started') this.resolveStreamOwners();
-    if (reasoningOwner) for (const reasoningId of reconciled) {
-      const key = this.key(reasoningOwner, reasoningId);
+    for (const { fold, ids } of result.reconciled ?? []) for (const id of ids) {
+      const key = this.key(fold, id);
       this.complete.add(key);
       this.streaming.delete(key);
       this.blocked.delete(key);
@@ -203,28 +201,12 @@ export class NativeWindow {
     for (const state of known) {
       let orders = this.orders.get(state);
       if (!orders) this.orders.set(state, orders = new Map());
-      for (const id of changed) if (state.byId.has(id) && !orders.has(id)) orders.set(id, order);
-      if (finalizingTransient && finalId && final === this.key(state, finalId) && state.byId.has(finalId)) {
-        // Temporary deltas are not a durable ordering anchor. The first complete
-        // record fixes its position so cold pages and live catch-up converge.
-        const requested = event.type === 'assistant.message' && Array.isArray(event.data.toolRequests)
-          ? event.data.toolRequests.flatMap(request => request && typeof request === 'object' && typeof request.toolCallId === 'string'
-            && orders.get(`tool-${request.toolCallId}`) === order ? [`tool-${request.toolCallId}`] : []) : [];
-        const ids = event.type === 'assistant.message' ? [`reasoning-message-${finalId}`, finalId, ...requested] : [finalId];
-        const finalized = ids.flatMap(id => {
-          const index = state.byId.get(id);
-          return index === undefined ? [] : [state.messages[index]];
-        });
-        for (let index = state.messages.length - 1; index >= 0; index--) {
-          if (ids.includes(state.messages[index].id)) state.messages.splice(index, 1);
-        }
-        state.messages.push(...finalized);
-        state.byId = new Map(state.messages.map((message, index) => [message.id, index]));
-        for (const item of finalized) orders.set(item.id, order);
+      for (const id of changed) {
+        if (!state.byId.has(id)) orders.delete(id);
+        else if (!orders.has(id)) orders.set(id, order);
       }
-      if (event.type === 'assistant.message' && messageId && state.byId.has(messageId)) {
-        const fallback = `reasoning-message-${messageId}`;
-        if (state.byId.has(fallback)) orders.set(fallback, Math.min(orders.get(fallback) ?? order, orders.get(messageId) ?? order));
+      if (!event.ephemeral && previousFinal?.provisional && finalId && state === eventOwner && state.byId.has(finalId)) {
+        orders.set(finalId, order);
       }
       if (event.ephemeral && event.type === 'assistant.reasoning_delta' && state.pendingReasoning
         && (eventOwners.length ? eventOwners.some(owner => state.agentIds.has(owner)) : state === this.state)) {

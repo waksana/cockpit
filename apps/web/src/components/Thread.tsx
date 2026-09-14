@@ -81,8 +81,9 @@ function SkillActivity({ message }: { message: ChatMessage }) {
   return <ActivityHeader icon={<Icon name="skills" size={16} />} title={`skill · ${message.content}`} />;
 }
 
-export function MessageProcess({ items, sessionId, latest = false, identity = items[0].id }: {
-  items: ChatMessage[]; sessionId: string; latest?: boolean; identity?: string;
+export function MessageProcess({ items, sessionId, latest = false, identity = items[0].id,
+  latestItemId = latest ? items.at(-1)?.id : undefined }: {
+  items: ChatMessage[]; sessionId: string; latest?: boolean; identity?: string; latestItemId?: string;
 }) {
   const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'overview', identity]), latest);
   const [mounted, setMounted] = useState(open);
@@ -90,7 +91,8 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
   const contentId = useId();
   const tools = items.flatMap(item => item.toolCalls ?? []);
   const thoughts = items.filter(item => item.thought?.trim());
-  const latestThoughtId = latest ? thoughts.at(-1)?.id : undefined;
+  const latestThoughtId = latest && items.at(-1)?.id === latestItemId && items.at(-1)?.thought?.trim()
+    ? latestItemId : undefined;
   const title = [tools.length ? `${tools.length} 次工具调用` : '', thoughts.length ? `${thoughts.length} 次思考` : ''].filter(Boolean).join(' · ');
   const states = [
     [tools.filter(tool => tool.status === 'failed').length, '项失败'],
@@ -263,12 +265,12 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
   );
 });
 
-const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline, live, layout, nested }: {
+const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline, live, layout, nested, showProvisional }: {
   m: ChatMessage; sessionId: string; date?: string; showByline: boolean; live: boolean;
-  layout: ReturnType<typeof createMessageLayout>; nested?: boolean;
+  layout: ReturnType<typeof createMessageLayout>; nested?: boolean; showProvisional?: boolean;
 }) {
   const frame = useRef<HTMLDivElement | null>(null);
-  const skippable = canSkipMessageLayout(m, live);
+  const skippable = !m.provisional && canSkipMessageLayout(m, live);
   const answer = hasMessageContent(m);
   const plainAssistant = m.role === 'assistant' && m.subtype !== 'subagent';
   const empty = plainAssistant && !answer;
@@ -278,8 +280,10 @@ const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline
   return (
     <div ref={frame} className="msg-group" data-message-frame={nested ? undefined : m.id} data-child-message-frame={nested ? m.id : undefined}
       data-window-item-id={m.id}
+      data-provisional={m.provisional || undefined}
       data-assistant-message={plainAssistant && !empty || undefined} data-empty={empty || undefined}>
       {date && !empty && <div className="date-separator" aria-hidden="true">{date}</div>}
+      {showProvisional && <span className="chat-provisional-label">临时内容 · 待完整记录</span>}
       <MessageRow m={m} sessionId={sessionId} showByline={showByline} nested={nested} />
     </div>
   );
@@ -298,20 +302,26 @@ const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionI
   }
   const lastProcess = rows.findLast(row => row.kind === 'process');
   const firstItem = (row: TranscriptRow) => row.kind === 'process' ? row.items[0] : row.message;
+  const lastRow = rows.at(-1);
+  const latestItemId = lastRow?.kind === 'process' ? lastRow.items.at(-1)?.id : lastRow?.message.id;
   return rows.map((row, i) => {
     const m = firstItem(row);
     const previous = rows[i - 1] && firstItem(rows[i - 1]);
     const newDay = !nested && (!previous || !sameDay(previous.timestamp, m.timestamp));
     const date = newDay ? dateLabel(m.timestamp, today) : undefined;
+    const showProvisional = !!m.provisional && !previous?.provisional;
     if (row.kind === 'process') return <div key={row.key} className="msg-group"
       data-window-item-id={m.id}
+      data-provisional={m.provisional || undefined}
       data-message-frame={nested ? undefined : row.key} data-child-message-frame={nested ? row.key : undefined}>
       {date && <div className="date-separator" aria-hidden="true">{date}</div>}
-      <MessageProcess items={row.items} identity={row.key} sessionId={sessionId} latest={row === lastProcess} />
+      {showProvisional && <span className="chat-provisional-label">临时内容 · 待完整记录</span>}
+      <MessageProcess items={row.items} identity={row.key} sessionId={sessionId}
+        latest={row === lastProcess} latestItemId={latestItemId} />
     </div>;
     return (
       <MessageGroup key={m.id} m={m} sessionId={sessionId}
-        date={date} nested={nested}
+        date={date} nested={nested} showProvisional={showProvisional}
         showByline={m.role === 'assistant' && (newDay || previous?.role !== 'assistant')}
         live={m.role === 'assistant' && m.id === liveId} layout={layout} />
     );

@@ -102,6 +102,8 @@ export interface ChatMessage {
   content: string;
   thought?: string;
   timestamp: number;
+  // Ephemeral-only drafts trail confirmed records within their owning scope.
+  provisional?: boolean;
   toolCalls?: ToolCall[];
   // 'ask-reply' = the user's answer to an ask_user tool; 'subagent' = a sub-agent
   // card; 'skill' = a compact skill-activation pill.
@@ -117,6 +119,7 @@ export const ChatMessage: z.ZodType<ChatMessage> = z.lazy(() => z.object({
   content: z.string(),
   thought: z.string().optional(),
   timestamp: z.number(),
+  provisional: z.boolean().optional(),
   toolCalls: z.array(ToolCall).optional(),
   subtype: z.enum(['ask-reply', 'subagent', 'skill']).optional(),
   level: z.enum(['info', 'warning', 'error']).optional(),
