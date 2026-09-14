@@ -110,6 +110,8 @@ test('model controls retain missing native choices and translate known current v
   assert.doesNotMatch(unknown, /正在提交|先选择完整组合/);
   const futureEffort = editor({ ...session, currentModelId: 'known', currentReasoningEffort: 'future-effort' });
   assert.match(futureEffort, /future-effort（当前值，列表未提供）/);
+  assert.match(futureEffort, /class="info-model-name" title="known">Known/);
+  assert.doesNotMatch(futureEffort, /原生未提供思考力度选项|原生未提供上下文档位能力/);
   for (const availableModels of [undefined, []]) {
     const missing = editor({ ...session, availableModels });
     assert.match(missing, /unknown-native-model.*思考力度：高.*上下文：标准上下文/);

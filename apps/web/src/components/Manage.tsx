@@ -17,14 +17,14 @@ export function Toggle({ on, onChange, disabled, label, busy }: {
     onClick={() => onChange(!on)}><span className="switch-knob" /></button>;
 }
 
-function SessionToggleRow({ identity, name, description, badge, enabled, disabled, nativeError, onChange }: {
+function SessionToggleRow({ identity, name, description, badge, enabled, disabled, disabledReason, nativeError, onChange }: {
   identity: string; name: string; description?: string; badge?: ReactNode; enabled: boolean;
-  disabled: boolean; nativeError?: string; onChange: (name: string, enabled: boolean) => Promise<void>;
+  disabled: boolean; disabledReason?: string; nativeError?: string; onChange: (name: string, enabled: boolean) => Promise<void>;
 }) {
   const action = useKeyedAction(identity);
   const [desired, setDesired] = useState(enabled);
   const error = action.error ?? nativeError;
-  return <div className="manage-row manage-session-row" data-resource-name={name}>
+  return <div className="manage-row manage-session-row" data-resource-name={name} title={disabled ? disabledReason : undefined}>
     <div className="manage-row-main">
       <div className="manage-row-name">{name}{badge}</div>
       <div className="manage-row-feedback" role={error ? 'alert' : 'status'} data-error={!!error || undefined}>
@@ -123,16 +123,11 @@ export function SessionMcp({ session, onClose }: SessionManageProps) {
     blocked={resource.closing || resource.requiresResume || !resource.connected}
     empty={resource.valid && resource.data?.length === 0 ? '本会话没有可用的 MCP 服务器' : undefined}>
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
-    {resource.data !== undefined && <>
-      <p className="manage-scope">仅本会话有效；重新加载采用全局默认。</p>
-      <p className="manage-serial-note" role="status">
-        {busy ? 'MCP 正在切换或连接，请等待完成后再修改其他项。' : 'MCP 按会话逐项切换；开启不等于已连接。'}
-      </p>
-    </>}
     {resource.data?.map(server => <SessionToggleRow key={server.name}
       identity={JSON.stringify(['mcp', sessionId, server.name])} name={server.name}
       description={server.detail} nativeError={server.error} badge={<McpStatusPill status={server.status} />}
-      enabled={server.enabled} disabled={!resource.usable || busy} onChange={action.run} />)}
+      enabled={server.enabled} disabled={!resource.usable || busy}
+      disabledReason={busy ? 'MCP 正在切换或连接，请等待完成后再修改。' : undefined} onChange={action.run} />)}
   </ManageShell>;
 }
 
@@ -149,7 +144,6 @@ export function SessionSkills({ session, onClose }: SessionManageProps) {
     blocked={resource.closing || resource.requiresResume || !resource.connected}
     empty={resource.valid && resource.data?.length === 0 ? '没有可用的 skill' : undefined}>
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
-    {resource.data !== undefined && <p className="manage-scope">仅本会话有效；重新加载采用全局默认。</p>}
     {resource.data?.map(skill => <SessionToggleRow key={skill.name}
       identity={JSON.stringify(['skills', sessionId, skill.name])} name={skill.name}
       description={skill.description} badge={skill.source ? <span className="manage-tag">{skill.source}</span> : undefined}

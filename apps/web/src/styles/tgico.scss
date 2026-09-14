@@ -49,7 +49,7 @@
 .tgico[data-icon='more']::before       { content: '\e9f5'; } // kebab
 .tgico[data-icon='down']::before       { content: '\e97c'; }
 .tgico[data-icon='up']::before         { content: '\ea99'; }
-.tgico[data-icon='reload']::before     { content: '\ea4d'; } // rotate
+.refresh-icon { display: inline-flex; flex: none; vertical-align: middle; }
 .tgico[data-icon='unload']::before     { content: '\e95e'; } // clouddownload
 .tgico[data-icon='sending']::before    { content: '\ea5b'; }
 .tgico[data-icon='error']::before      { content: '\ea5c'; } // sendingerror

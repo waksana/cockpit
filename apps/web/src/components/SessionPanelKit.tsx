@@ -21,19 +21,20 @@ export function PanelCloseButton({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function PanelPageShell({ title, onClose, loading, empty, children, action }: {
+export function PanelPageShell({ title, onClose, loading, empty, children, action, bodyClassName = '' }: {
   title: string;
   onClose: () => void;
   loading?: boolean;
   empty?: string;
   children?: ReactNode;
   action?: ReactNode;
+  bodyClassName?: string;
 }) {
   return (
     <>
       <PaneHeader className="info-panel-header" leading={<PanelCloseButton onClose={onClose} />}
         title={<span className="info-panel-title" title={title}>{title}</span>} actions={action} />
-      <div className="info-panel-body scrollable">
+      <div className={`info-panel-body scrollable ${bodyClassName}`.trim()}>
         {loading
           ? <StateNotice kind="loading" placement="pane">加载中…</StateNotice>
           : empty != null
@@ -79,16 +80,6 @@ export function SessionResume({ sessionId, required, onResumed }: {
         aria-busy={action.busy}
         onClick={() => { void resume(); }}>{action.busy ? '恢复中…' : '恢复会话'}</button>
       {action.error && <ResourceStatus status={`恢复失败：${action.error}`} failed />}
-    </div>
-  );
-}
-
-export function PermissionPolicy() {
-  const policy = useCockpit((s) => s.permissionPolicy);
-  return (
-    <div className="info-permission" data-permission-policy={policy}>
-      <span>工具权限（只读）</span>
-      <span>allow-all · 自动批准</span>
     </div>
   );
 }

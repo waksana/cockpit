@@ -197,7 +197,7 @@ for (const page of pages) {
     });
     await h.render(page.render());
     assert.equal(reads, 1);
-    assert.match(h.container.textContent, /native-model|native-item/);
+    assert.match(h.container.textContent, /Native model|native-item/);
     const controls = () => [...h.container.querySelectorAll('select'), ...h.container.querySelectorAll('[role="switch"]')];
     assert.ok(controls().length > 0);
     assert.ok(controls().every(node => !disabled(node)));
@@ -217,7 +217,7 @@ for (const page of pages) {
     await act(async () => request.reject(new IntentHttpError('Native session is unloaded', 409, 'SESSION_UNLOADED')));
     assert.equal(useCockpit.getState().sessions[0].loaded, true, 'the fixture reproduces lagging metadata');
     assert.equal(controls().length, 0, 'unloaded resources cannot expose model or toggle values');
-    assert.doesNotMatch(h.container.textContent, /native-model|native-item|metadata-model|Metadata model/);
+    assert.doesNotMatch(h.container.textContent, /Native model|native-item|metadata-model|Metadata model/);
     assert.match(h.container.textContent, /会话未加载/);
     assert.equal(h.container.querySelector('.spinner'), null);
     const refresh = h.container.querySelector('[aria-label="刷新"]');
@@ -237,7 +237,7 @@ for (const page of pages) {
     assert.equal(reads, 3, 'successful explicit resume refreshes the existing owner');
     assert.ok(controls().length > 0);
     assert.ok(controls().every(node => !disabled(node)));
-    assert.match(h.container.textContent, /native-model|native-item/);
+    assert.match(h.container.textContent, /Native model|native-item/);
     assert.doesNotMatch(h.container.textContent, /会话未加载/);
   });
 }
@@ -362,7 +362,6 @@ for (const Component of [SessionMcp, SessionSkills]) {
     const [first, second] = h.container.querySelectorAll('[role="switch"]');
     const row = h.container.querySelector('[data-resource-name="one"]')!;
     const other = h.container.querySelector('[data-resource-name="two"]')!;
-    const scope = h.container.querySelector('.manage-scope');
     await h.event(first, 'click');
     assert.equal(disabled(first), true);
     assert.equal(disabled(second), Component === SessionMcp, 'MCP is serial; Skills operations are per item');
@@ -371,7 +370,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
       useCockpit.setState({ resourceRevisions: { [session.sessionId]: { mcp: 1, skills: 1 } } });
     });
     assert.equal(h.container.querySelectorAll('.spinner').length, 1, 'only the target row owns loading during a mutation');
-    assert.equal(h.container.querySelector('.manage-scope'), scope, 'scope does not disappear during refresh');
+    assert.equal(h.container.querySelector('.manage-scope'), null, 'no persistent scope explanation');
     assert.match(row.textContent, /正在关闭/);
     assert.doesNotMatch(other.textContent, /正在关闭|未确认/);
     assert.equal(first.getAttribute('aria-checked'), 'true', 'never use optimistic native state');
@@ -426,7 +425,7 @@ test('MCP honors native busy or settling states after remount, without a local a
   });
   await h.render(createElement(SessionMcp, { session, onClose: noop }));
   assert.equal(disabled(h.container.querySelector('[role="switch"]')!), true);
-  assert.match(h.container.textContent, /等待完成后再修改其他项/);
+  assert.match(h.container.querySelector('[data-resource-name="one"]')!.getAttribute('title')!, /等待完成后再修改/);
   await h.render(null);
   await h.render(createElement(SessionMcp, { session, onClose: noop }));
   assert.equal(disabled(h.container.querySelector('[role="switch"]')!), true);
@@ -543,4 +542,24 @@ test('model Apply has a pending label and busy state while preserving native res
   assert.equal(button(h.container, '应用配置').getAttribute('aria-busy'), 'false');
   assert.match(h.container.textContent, /已应用，但原生持久化失败：Native save failed/);
   assert.equal(disabled(button(h.container, '应用配置')), true, 'the same revision is not resubmitted');
+});
+
+test('session ID copies its exact value without invoking a native operation', async t => {
+  const h = mount(t);
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const copied: string[] = [];
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {
+    clipboard: { writeText: async (text: string) => { copied.push(text); } },
+  } });
+  t.after(() => previous ? Object.defineProperty(globalThis, 'navigator', previous) : Reflect.deleteProperty(globalThis, 'navigator'));
+  useCockpit.setState({ getResources: async () => modelData });
+  await h.render(createElement(SessionInfoPanel, {
+    session, models: [], open: true, onClose: noop, onSetModel: noMutation,
+  }));
+  const copy = h.container.querySelector('[aria-label="复制 session ID"]');
+  assert.ok(copy);
+  await h.event(copy, 'click');
+  assert.deepEqual(copied, [session.sessionId]);
+  assert.match(copy.textContent, /已复制/);
+  assert.doesNotMatch(h.container.textContent, /工具权限|allow-all|交由原生处理/);
 });

@@ -8,6 +8,8 @@ import { PaneHeader } from './PaneHeader';
 import { StateNotice } from './StateNotice';
 import { ResourceStatus, PanelPageShell } from './SessionPanelKit';
 import { ManagementShell } from './ManagementShell';
+import { Icon } from './Icon';
+import { readFileSync } from 'node:fs';
 
 test('shared state presentation distinguishes actual loading, errors, offline and empty', () => {
   const render = (props: Parameters<typeof ResourceStatus>[0]) => renderToStaticMarkup(createElement(ResourceStatus, props));
@@ -66,4 +68,18 @@ test('activity headers retain one first-line baseline and icon slot across expan
   assert.ok(expanded);
   assert.doesNotMatch(expanded, /align-items|padding/);
   assert.doesNotMatch(css, /\.msg-tool\[data-open=true\] > \.activity-head \.activity-(icon|chevron)/);
+});
+test('refresh uses one circular arrow everywhere, with no font glyph or square overlay', () => {
+  const html = renderToStaticMarkup(createElement(Icon, { name: 'reload', size: 20 }));
+  assert.match(html, /class="refresh-icon" data-icon="reload" aria-hidden="true"/);
+  assert.match(html, /width:20px;height:20px/);
+  assert.match(html, /viewBox="0 0 24 24"/);
+  assert.match(html, /stroke="currentColor"/);
+  assert.equal((html.match(/<path /g) ?? []).length, 1);
+  assert.doesNotMatch(html, /class="tgico"|<rect/);
+  const icons = readFileSync(new URL('../styles/tgico.scss', import.meta.url), 'utf8');
+  assert.doesNotMatch(icons, /\.tgico\[data-icon='reload'\]/);
+  for (const name of ['search', 'back', 'file'] as const) {
+    assert.match(renderToStaticMarkup(createElement(Icon, { name })), /class="tgico"/);
+  }
 });

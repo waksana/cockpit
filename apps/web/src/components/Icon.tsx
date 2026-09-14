@@ -1,6 +1,4 @@
-// Icon — renders a real Telegram tgico glyph (font in styles/tgico.scss). The
-// `name` maps to a tgico data-icon; size sets the font-size. This replaces the
-// hand-drawn SVG set with Telegram's authentic icons.
+// Shared icon vocabulary; refresh uses a plain circular arrow.
 
 import type { HTMLAttributes } from 'react';
 
@@ -41,6 +39,13 @@ export interface IconProps extends HTMLAttributes<HTMLSpanElement> {
 }
 
 export function Icon({ name, size = 24, style, ...rest }: IconProps) {
+  if (name === 'reload') return <span className="refresh-icon" data-icon={name} aria-hidden="true"
+    style={{ width: size, height: size, ...style }} {...rest}>
+    <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none" focusable="false">
+      <path d="M20 10a8 8 0 1 0-2.35 7.65M20 4v6h-6"
+        stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  </span>;
   return (
     <span
       className="tgico"

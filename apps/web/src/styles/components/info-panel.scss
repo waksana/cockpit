@@ -85,13 +85,6 @@
   text-align: start;
   overflow-wrap: anywhere;
 }
-.info-permission {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem 0.75rem;
-  font-size: var(--font-size-12);
-  color: var(--secondary-text-color);
-}
 .info-section-content { padding: 0 1rem 0.7rem; }
 .info-meta-cwd {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -113,7 +106,6 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
-.info-meta-details,
 .info-model-details {
   color: var(--secondary-text-color);
   font-size: var(--font-size-13);
@@ -169,10 +161,34 @@
 .info-controls { display: flex; flex-direction: column; gap: 0.5rem; padding-top: 0.2rem; }
 .info-controls .info-empty { min-width: 0; overflow-wrap: anywhere; }
 .info-model-current {
+  display: flex; flex-direction: column; gap: 0.4rem;
   color: var(--secondary-text-color);
   font-size: var(--font-size-13);
   overflow-wrap: anywhere;
-  padding-block: 0.1rem 0.35rem;
+  padding-block: 0.25rem 1rem;
+}
+.info-model-eyebrow { font-size: var(--font-size-12); }
+.info-model-name { color: var(--primary-text-color); font-size: var(--font-size-20); font-weight: 600; line-height: 1.4; }
+.info-model-specs {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.75rem;
+  > span + span { border-inline-start: 1px solid var(--border-color); padding-inline-start: 0.75rem; }
+}
+.info-session-id {
+  display: flex; align-items: center; gap: 0.5rem; min-width: 0;
+  .info-meta-id { flex: 1; min-width: 0; }
+  .chat-copy { flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-end; max-width: 45%; }
+  .chat-copy-button { min-width: 5.25rem; color: var(--secondary-text-color); }
+  .chat-copy-error { color: var(--danger-color); }
+  code { font: inherit; }
+}
+.session-settings {
+  background: var(--surface-color);
+  .info-section { background: transparent; border-radius: 0; overflow: visible; margin-bottom: 1rem; }
+  .info-section + .info-section { border-top: 1px solid var(--border-color); }
+  .info-section-name { color: var(--primary-text-color); padding-inline: 0.5rem; }
+  .info-section-content { padding-inline: 0.5rem; }
+  .info-controls { gap: 0.8rem; }
+  :is(button, summary, select):focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
 }
 .info-model-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .info-model-status {

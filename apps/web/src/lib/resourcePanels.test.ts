@@ -6,7 +6,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatSession, ModelOption } from '../net/types';
 import { SessionMcp, SessionSkills } from '../components/Manage';
-import { PanelPageShell, PermissionPolicy, ResourceStatus, SessionResume } from '../components/SessionPanelKit';
+import { PanelPageShell, ResourceStatus, SessionResume } from '../components/SessionPanelKit';
 import { useCockpit } from '../net/store';
 import { useSessionResource } from './useSessionResource';
 
@@ -49,8 +49,8 @@ test('open info panel identifies its session without cross-page navigation', () 
   assert.match(html, /会话设置/);
   assert.match(html, /Resource test/);
   assert.doesNotMatch(html, /<nav|info-panel-more|role="tab"/);
-  assert.match(html, /allow-all/);
-  assert.match(html, /allow-all · 自动批准/);
+  assert.doesNotMatch(html, /allow-all|工具权限/);
+  assert.match(html, /aria-label="复制 session ID"/);
   assert.doesNotMatch(html, /交互模式/);
 });
 
@@ -130,7 +130,7 @@ test('missing confirmed or default effort is explicit without adding a selectabl
   const fallback = selectedOption(renderModelSettings({ currentModelId: 'beta', currentReasoningEffort: null }, [{
     ...narrow[0], defaultReasoningEffort: 'max',
   }]), '思考力度');
-  assert.equal(fallback.text, '未指定（交由原生处理）');
+  assert.equal(fallback.text, '未指定');
 });
 
 test('thin session catalog keeps native membership and never invents per-session capabilities from globals', () => {
@@ -149,8 +149,9 @@ test('thin session catalog keeps native membership and never invents per-session
   assert.equal(model.text, 'Session Astra');
   assert.equal(model.options.length, 1, 'global entries must not expand the session allow-list');
   assert.doesNotMatch(html, /aria-label="思考力度"|aria-label="上下文长度"/);
-  assert.match(html, /原生未提供思考力度选项；当前值：极高/);
-  assert.match(html, /原生未提供上下文档位能力；当前值：长上下文/);
+  assert.match(html, /aria-label="思考力度：极高"/);
+  assert.match(html, /aria-label="上下文：长上下文"/);
+  assert.doesNotMatch(html, /原生未提供思考力度选项|原生未提供上下文档位能力/);
   for (const currentReasoningEffort of [undefined, null, '']) {
     assert.doesNotMatch(renderModelSettings({ ...patch, currentReasoningEffort }, rich), /aria-label="思考力度"/);
   }
@@ -195,14 +196,14 @@ test('empty model and effort values remain unknown instead of selecting defaults
   }
   for (const currentReasoningEffort of [undefined, null, '']) {
     const selected = selectedOption(renderModelSettings({ currentModelId: 'beta', currentReasoningEffort }), '思考力度');
-    assert.equal(selected.text, '未指定（交由原生处理）');
+    assert.equal(selected.text, '未指定');
   }
   const withoutDefault = selectedOption(renderModelSettings({ currentModelId: 'beta' }, [{
     ...modelOptions[1], defaultReasoningEffort: undefined,
   }]), '思考力度');
-  assert.equal(withoutDefault.text, '未指定（交由原生处理）');
+  assert.equal(withoutDefault.text, '未指定');
   const html = renderModelSettings({ currentModelId: 'beta' });
-  assert.match(html, /未指定（交由原生处理）/);
+  assert.match(html, /未指定/);
   assert.doesNotMatch(html, /原生默认 \/ 重置|不保留旧值/);
 });
 
@@ -217,18 +218,17 @@ test('capability-free models keep controls hidden and all legal context tiers ha
     assert.equal(selectedOption(html, '选择模型').text, 'Beta');
     assert.equal(selectedOption(html, '思考力度').text, '最大');
     assert.equal(selectedOption(html, '上下文长度').text, currentContextTier === 'long_context' ? '长上下文'
-      : currentContextTier === 'default' ? '标准上下文' : '未指定（交由原生处理）');
+      : currentContextTier === 'default' ? '标准上下文' : '未指定');
   }
 });
 
-test('permission policy is read-only and does not confuse interactive mode with permission prompts', () => {
-  const html = renderToStaticMarkup(createElement(PermissionPolicy));
-  assert.doesNotMatch(html, /高级设置/);
-  assert.match(html, /只读/);
-  assert.match(html, /allow-all/);
-  assert.match(html, /allow-all · 自动批准/);
-  assert.doesNotMatch(html, /交互模式/);
-  assert.doesNotMatch(html, /<(select|input|button)\b/);
+test('settings omit permission explanations without changing native policy', () => {
+  const before = useCockpit.getState().permissionPolicy;
+  const html = renderToStaticMarkup(createElement(SessionInfoPanel, {
+    session, models: [], open: true, onClose: noop, onSetModel: noModelMutation,
+  }));
+  assert.doesNotMatch(html, /工具权限|allow-all|自动批准|交互模式/);
+  assert.equal(useCockpit.getState().permissionPolicy, before);
 });
 
 test('directory picker without an initial path has no hardcoded home and cannot create before a listing', t => {
@@ -328,14 +328,12 @@ test('unloaded native resource hooks are invalid and explicit refresh cannot iss
 });
 
 for (const Component of [SessionMcp, SessionSkills]) {
-  test(`${Component.name} distinguishes native cold defaults from temporary session choices`, (t) => {
+  test(`${Component.name} omits persistent scope explanations without changing native calls`, (t) => {
     withSession(t, true);
     const html = renderToStaticMarkup(createElement(Component, { session, onClose: noop }));
     assert.doesNotMatch(html, /manage-scope|Cockpit 不保存或重放选择/);
     const manage = readFileSync(new URL('../components/Manage.tsx', import.meta.url), 'utf8');
-    assert.match(manage, /resource.data !== undefined/);
-    assert.match(manage, /仅本会话有效；重新加载采用全局默认/);
-    assert.doesNotMatch(manage, /resource.valid && !action.error/);
+    assert.doesNotMatch(manage, /manage-scope|manage-serial-note|仅本会话有效/);
     assert.doesNotMatch(manage, /重载技能|刷新技能定义后/);
   });
 }

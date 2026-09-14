@@ -59,18 +59,6 @@
   .manage-row-name { flex-wrap: wrap; overflow-wrap: anywhere; }
   .manage-row-sub { white-space: normal; overflow-wrap: anywhere; }
 }
-.manage-scope {
-  margin: 0 0.75rem 0.6rem;
-  font-size: var(--font-size-12);
-  line-height: 1.5;
-  color: var(--secondary-text-color);
-}
-.manage-serial-note {
-  margin: 0 0.75rem 0.6rem;
-  min-height: 3em;
-  font-size: var(--font-size-12); line-height: 1.5;
-  color: var(--secondary-text-color);
-}
 .manage-row-feedback {
   display: grid;
   min-height: 1.5em; margin-top: 0.15rem;

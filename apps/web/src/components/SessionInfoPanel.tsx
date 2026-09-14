@@ -8,7 +8,8 @@ import type { IntentResult, NativeModelSwitchResult } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
 import { useSessionResource } from '../lib/useSessionResource';
 import { useKeyedAction } from '../lib/useKeyedResource';
-import { PanelPageShell, PermissionPolicy, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
+import { PanelPageShell, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
+import { CopyButton } from './CopyButton';
 import type { ChatSession, ModelOption } from '../net/types';
 
 type ContextTier = 'default' | 'long_context';
@@ -29,6 +30,22 @@ const selectionLabel = (selection: ModelSelection) => [
   `思考力度：${selection.reasoningEffort ? EFFORT_LABEL[selection.reasoningEffort] ?? selection.reasoningEffort : '未指定'}`,
   `上下文：${selection.contextTier ? CONTEXT_LABEL[selection.contextTier] ?? selection.contextTier : '未指定'}`,
 ].join(' · ');
+
+function CurrentModel({ session }: { session: ChatSession }) {
+  const { currentModelId, currentReasoningEffort, currentContextTier } = session;
+  const name = session.availableModels?.find(model => model.modelId === currentModelId)?.name
+    ?? currentModelId ?? '模型未提供';
+  const effort = currentReasoningEffort ? EFFORT_LABEL[currentReasoningEffort] ?? currentReasoningEffort : null;
+  const context = currentContextTier ? CONTEXT_LABEL[currentContextTier] ?? currentContextTier : null;
+  return <div className="info-model-current" aria-label="当前模型">
+    <span className="info-model-eyebrow">当前模型</span>
+    <strong className="info-model-name" title={currentModelId ?? undefined}>{name}</strong>
+    {(effort || context) && <div className="info-model-specs">
+      {effort && <span aria-label={`思考力度：${effort}`}>{effort}</span>}
+      {context && <span aria-label={`上下文：${context}`}>{context}</span>}
+    </div>}
+  </div>;
+}
 
 function ModelSubmissionDetails({ selection, result }: { selection?: ModelSelection; result?: NativeModelSwitchResult }) {
   return <details className="info-model-details">
@@ -107,7 +124,7 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
   if (!list || list.length === 0) return <section className="info-section">
     {heading}
     <div className="info-section-content info-controls">
-      <div className="info-model-current">当前：{selectionLabel(selectionFrom(session))}</div>
+      <CurrentModel session={session} />
       <div className="info-empty">{list ? '原生可选模型列表为空' : '原生可选模型列表不可用'}</div>
       {action.busy && <div className="info-model-status" role="status">正在提交…</div>}
       {resultView}
@@ -138,7 +155,7 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
     <section className="info-section">
       {heading}
       <div className="info-section-content info-controls">
-        <div className="info-model-current">当前：{selectionLabel(selectionFrom(session))}</div>
+        <CurrentModel session={session} />
         <label className="info-control">
           <span className="info-control-label">模型</span>
           <select className="info-select" disabled={disabled} value={current}
@@ -154,7 +171,7 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
             <span className="info-control-label">思考力度</span>
             <select className="info-select" disabled={disabled} value={curEffort}
               onChange={(e) => edit({ ...selection, reasoningEffort: e.target.value || undefined })} aria-label="思考力度">
-              <option value="">未指定（交由原生处理）</option>
+              <option value="">未指定</option>
               {curEffort !== '' && !efforts.includes(curEffort) && <option value={curEffort} disabled>{curEffort}（当前值，列表未提供）</option>}
               {efforts.map((e) => <option key={e} value={e}>{EFFORT_LABEL[e] ?? e}</option>)}
             </select>
@@ -166,20 +183,12 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
             <span className="info-control-label">上下文长度</span>
             <select className="info-select" disabled={disabled} value={curTier}
               onChange={(e) => edit({ ...selection, contextTier: e.target.value ? e.target.value as ContextTier : undefined })} aria-label="上下文长度">
-              <option value="">未指定（交由原生处理）</option>
+              <option value="">未指定</option>
               <option value="default">标准上下文</option>
               <option value="long_context">长上下文</option>
             </select>
           </label>
         )}
-        {currentModel && currentModel.supportedReasoningEfforts === undefined
-          && <div className="info-empty">原生未提供思考力度选项{curEffort ? `；当前值：${EFFORT_LABEL[curEffort] ?? curEffort}` : ''}</div>}
-        {currentModel && currentModel.supportsLongContext === undefined
-          && <div className="info-empty">原生未提供上下文档位能力{curTier ? `；当前值：${CONTEXT_LABEL[curTier] ?? curTier}` : ''}</div>}
-        {currentModel?.supportedReasoningEfforts?.length === 0 && curEffort
-          && <div className="info-empty">思考力度当前值：{EFFORT_LABEL[curEffort] ?? curEffort}（原生未列出可选档位）</div>}
-        {currentModel?.supportsLongContext === false && curTier
-          && <div className="info-empty">上下文长度当前值：{CONTEXT_LABEL[curTier] ?? curTier}（原生未列出长上下文支持）</div>}
         <div className="info-model-actions">
           <button type="button" className="dialog-btn primary rp"
             disabled={disabled || invalid || action.busy || submission?.revision === revision}
@@ -214,15 +223,14 @@ function InfoDetails({ session, onClose, onSetModel }: SessionInfoPanelProps) {
   const resource = useSessionResource(sid, `models:${sid}`, load, 0, ['model', 'models']);
 
   return (
-    <PanelPageShell title="会话设置" onClose={onClose}>
+    <PanelPageShell title="会话设置" onClose={onClose} bodyClassName="session-settings">
       <section className="info-section">
         <div className="info-section-name">{session.title}</div>
         <div className="info-section-content info-meta-cwd">{session.cwd || '工作目录：原生未提供'}</div>
-        <details className="info-section-content info-meta-details">
-          <summary>会话详情</summary>
-          <div className="info-meta-id"><span className="info-meta-id-label">ID</span>{session.sessionId}</div>
-          <PermissionPolicy />
-        </details>
+        <div className="info-section-content info-session-id">
+          <div className="info-meta-id"><span className="info-meta-id-label">ID</span><code>{session.sessionId}</code></div>
+          <CopyButton text={session.sessionId} label="复制 session ID" />
+        </div>
       </section>
 
       <SessionResume sessionId={sid} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />

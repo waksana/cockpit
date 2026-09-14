@@ -397,7 +397,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.match(container.textContent, /已接受，等待原生应用/);
     assert.doesNotMatch(container.textContent, /上次原生返回：已应用/);
     assert.match(container.querySelector('.info-model-details')?.textContent ?? '', /Model changed/);
-    assert.match(container.textContent, /当前：a/);
+    assert.equal(container.querySelector('.info-model-name')?.textContent, 'Alpha');
     current = { ...current, currentModelId: 'b' };
     await editor();
     assert.equal(control('思考力度').value, 'high', 'native current updates are not desired editor state');
@@ -478,9 +478,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(container.querySelectorAll('.spinner').length, 1, 'first read has only the body loader');
       assert.equal(refresh().getAttribute('aria-busy'), 'false');
       assert.equal(refresh().attributes.has('disabled'), true);
-      assert.equal(node('.info-meta-details').getAttribute('open'), null, 'ID starts collapsed');
+      assert.ok(node('[aria-label="复制 session ID"]'), 'ID copying is directly available');
       await act(() => reads[0].resolve(native));
-      assert.match(node('.info-model-current').textContent, /思考力度：高.*上下文：标准上下文/);
+      assert.match(node('.info-model-current').textContent, /高.*标准上下文/);
       await change('选择模型', 'b');
       await change('思考力度', 'max');
       await change('上下文长度', 'long_context');
