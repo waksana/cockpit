@@ -259,7 +259,6 @@ export class NetClient {
     return this.intent('session/purge', { sessionId, confirm });
   }
   loadSession(sessionId: string) { return this.intent('session/load', { sessionId }); }
-  setMode(sessionId: string, mode: 'interactive' | 'plan' | 'autopilot') { return this.intent('setMode', { sessionId, mode }); }
   getSession(sessionId: string, signal?: AbortSignal) { return this.intent('session/get', { sessionId }, signal); }
   getResources(sessionId: string, resources: import('@cockpit/protocol').MetaResource[], signal?: AbortSignal) {
     return this.intent('session/resources', { sessionId, resources }, signal);

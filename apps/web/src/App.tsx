@@ -18,7 +18,6 @@ import { NewSessionFab } from './components/NewSessionFab';
 import { Icon } from './components/Icon';
 import { ChatHeader } from './components/ChatHeader';
 import { AnchoredMenu } from './components/AnchoredMenu';
-import { ModeMenu } from './components/ModeMenu';
 import { DirectoryModal } from './components/Dialog';
 import { GlobalNavigation } from './components/GlobalNavigation';
 import { sessionActionItems, type SessionActionHandlers } from './lib/sessionActions';
@@ -44,10 +43,10 @@ function Workspace() {
   const sessions = useCockpit(selectMetadata);
   const {
     connState, newSession,
-    setMode, globalModels,
+    globalModels,
   } = useCockpit(useShallow((s) => ({
     connState: s.connState, newSession: s.newSession,
-    setMode: s.setMode, globalModels: s.globalModels,
+    globalModels: s.globalModels,
   })));
   const active = useMemo(
     () => sessions.find((s) => s.sessionId === routeId) ?? null,
@@ -66,8 +65,6 @@ function Workspace() {
     }
     previousPanel.current = { sessionId: routeId, open: panel !== null };
   }, [panel, routeId, panelTrigger]);
-  const [modeMenuOpen, setModeMenuOpen] = useState(false);
-  const modeChipRef = useRef<HTMLButtonElement | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ sessionId: string; name: string } | null>(null);
   const [dirPicker, setDirPicker] = useState(false);
   const [overlayRoute, setOverlayRoute] = useState(location.key);
@@ -76,7 +73,6 @@ function Workspace() {
     setDeleteTarget(null);
     setDirPicker(false);
     setDetailMenuOpen(false);
-    setModeMenuOpen(false);
   }
 
   // ── URL is the single source of truth for what's on screen ──────────────────
@@ -165,10 +161,10 @@ function Workspace() {
     : '';
 
   const detailHeader = active ? (
-    <ChatHeader title={active.title} modelLabel={modelLabel} mode={active.currentMode}
-      modeRef={modeChipRef} moreRef={kebabRef} modeOpen={modeMenuOpen} moreOpen={detailMenuOpen}
+    <ChatHeader title={active.title} modelLabel={modelLabel}
+      moreRef={kebabRef} moreOpen={detailMenuOpen}
       onBack={() => up()} onInfo={() => openDetails(active.sessionId)}
-      onMode={() => setModeMenuOpen(v => !v)} onMore={() => setDetailMenuOpen(true)} />
+      onMore={() => setDetailMenuOpen(true)} />
   ) : undefined;
 
   return (
@@ -215,15 +211,6 @@ function Workspace() {
       {detailMenuOpen && active && (
         <AnchoredMenu triggerRef={kebabRef} items={getSessionMenuItems(active)} label={active.title}
           onClose={() => setDetailMenuOpen(false)} />
-      )}
-      {modeMenuOpen && active && (
-        <ModeMenu
-          triggerRef={modeChipRef}
-          current={active.currentMode ?? null}
-          running={active.status === 'running'}
-          onPick={(mode) => setMode(active.sessionId, mode)}
-          onClose={() => setModeMenuOpen(false)}
-        />
       )}
       {deleteTarget && <SessionDeleteDialog key={`${location.key}:${deleteTarget.sessionId}`}
         sessionId={deleteTarget.sessionId} name={deleteTarget.name}

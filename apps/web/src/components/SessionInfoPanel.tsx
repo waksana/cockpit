@@ -1,6 +1,6 @@
 // Session settings panel — opened by the chat title or the shared session menu.
-// It reads identifying summary fields and on-demand model state; native plan,
-// MCP and Skills resources are owned by their dedicated pages.
+// It reads identifying summary fields and on-demand model state; MCP and Skills
+// resources are owned by their dedicated pages.
 
 import { useCallback } from 'react';
 import { useCockpit } from '../net/store';
@@ -120,7 +120,7 @@ function InfoDetails({ session, models, onClose, onSetModel }: SessionInfoPanelP
       </section>
 
       <SessionResume sessionId={sid} required={!loaded} />
-      {!loaded && <div className="info-empty">未加载：模型、模式及资源状态不可用，不显示上次读值或全局默认值。</div>}
+      {!loaded && <div className="info-empty">未加载：模型及资源状态不可用，不显示上次读值或全局默认值。</div>}
       <ResourceStatus status={resource.status} failed={resource.failed} />
       {loaded && <ModelControls session={{ ...session, ...resource.data }} models={models} disabled={!connected || action.busy || resource.pending || resource.failed}
         onSetModel={(model, opts) => { void action.run(() => onSetModel(model, opts)); }} />}

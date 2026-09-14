@@ -32,9 +32,7 @@ export type IconName =
   | 'attach'
   | 'file'
   | 'folder'
-  | 'mode_interactive'
   | 'mode_plan'
-  | 'mode_autopilot'
   | 'radiooff';
 
 export interface IconProps extends HTMLAttributes<HTMLSpanElement> {

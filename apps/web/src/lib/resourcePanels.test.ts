@@ -48,7 +48,8 @@ test('open info panel identifies its session without cross-page navigation', () 
   assert.match(html, /会话设置 · Resource test/);
   assert.doesNotMatch(html, /<nav|info-panel-more|role="tab"/);
   assert.match(html, /allow-all/);
-  assert.match(html, /自动批准（所有交互模式）/);
+  assert.match(html, /allow-all · 自动批准/);
+  assert.doesNotMatch(html, /交互模式/);
 });
 
 const modelOptions: ModelOption[] = [
@@ -213,7 +214,8 @@ test('permission policy is read-only and does not confuse interactive mode with 
   assert.doesNotMatch(html, /高级设置/);
   assert.match(html, /只读/);
   assert.match(html, /allow-all/);
-  assert.match(html, /自动批准（所有交互模式）/);
+  assert.match(html, /allow-all · 自动批准/);
+  assert.doesNotMatch(html, /交互模式/);
   assert.doesNotMatch(html, /<(select|input|button)\b/);
 });
 

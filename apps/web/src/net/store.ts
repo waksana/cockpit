@@ -41,7 +41,6 @@ interface CockpitState {
   setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => Promise<void>;
   deleteSession: (sessionId: string, confirm: true) => Promise<void>;
   loadSession: (sessionId: string) => Promise<void>;
-  setMode: (sessionId: string, mode: 'interactive' | 'plan' | 'autopilot') => Promise<void>;
   getResources: (sessionId: string, resources: MetaResource[], signal?: AbortSignal) => Promise<SessionProjection>;
   // MCP + Skills management
   mcpGlobal: () => Promise<import('@cockpit/protocol').McpServerGlobal[]>;
@@ -65,7 +64,7 @@ interface CockpitState {
 
 export const createCockpitStore = () => create<CockpitState>((set, get) => {
   let client: NetClient | null = null;
-  const summaryResources: MetaResource[] = ['identity', 'control', 'model', 'mode'];
+  const summaryResources: MetaResource[] = ['identity', 'control', 'model'];
   const metaRequests = new Map<string, {
     dirty: Set<MetaResource>; stale: Set<MetaResource>; controller: AbortController; patches: Partial<SessionMeta>;
   }>();
@@ -598,7 +597,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     setModel(sid, modelId, opts) { return mutation(sid, '切换模型', (net) => net.setModel(sid, modelId, opts)); },
     deleteSession(sid, confirm) { return mutation(sid, '永久删除会话', (net) => net.deleteSession(sid, confirm)); },
     loadSession(sid) { return mutation(sid, '恢复会话', (net) => net.loadSession(sid)); },
-    setMode(sid, mode) { return mutation(sid, '切换模式', (net) => net.setMode(sid, mode)); },
     respondAsk(sid, requestId, answer, wasFreeform) { return acknowledged(sid, (net) => net.respondAsk(sid, requestId, answer, wasFreeform)); },
     respondPlan(sid, requestId, action) { return acknowledged(sid, (net) => net.respondPlan(sid, requestId, action)); },
     planSupersede(sid, requestId, message) { return acknowledged(sid, (net) => net.planSupersede(sid, requestId, message)); },

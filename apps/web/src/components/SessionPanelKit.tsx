@@ -77,7 +77,7 @@ export function PermissionPolicy() {
   return (
     <div className="info-permission" data-permission-policy={policy}>
       <span>工具权限（只读）</span>
-      <span>allow-all · 自动批准（所有交互模式）</span>
+      <span>allow-all · 自动批准</span>
     </div>
   );
 }
