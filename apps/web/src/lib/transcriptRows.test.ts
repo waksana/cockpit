@@ -42,3 +42,12 @@ test('invisible starts do not break process; user answers and errors do', () => 
     thought('c'), { ...speech('error'), role: 'system', level: 'error' }, thought('d')]);
   assert.deepEqual(rows.map(row => row.kind), ['process', 'message', 'process', 'message', 'process']);
 });
+test('provisional reasoning stays outside the confirmed overview and has no effect on its count', () => {
+  const first = thought('confirmed'), preview = { ...thought('preview'), provisional: true };
+  const previous = groupTranscript([first]);
+  const next = groupTranscript([first, preview], previous);
+  assert.equal(next.length, 2);
+  assert.equal(next[0].key, previous[0].key);
+  assert.deepEqual(next[0].kind === 'process' && next[0].items, [first]);
+  assert.deepEqual(next[1].kind === 'process' && next[1].items, [preview]);
+});

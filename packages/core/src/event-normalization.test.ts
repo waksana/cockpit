@@ -138,9 +138,11 @@ test('reasoning publishes its native ID independently before a body starts', () 
   }, { ephemeral: true }))).changed, ['reasoning-r']);
   assert.equal(state.messages.length, 1);
   const result = foldEvent(state, normalizeEvent(native('assistant.message_start', { messageId: 'm' }, { ephemeral: true })));
-  assert.deepEqual(result.changed, ['m']);
+  assert.deepEqual(result.changed, []);
   assert.equal(state.messages[0]?.thought, 'thinking');
-  assert.equal(state.messages[1]?.thought, undefined);
+  assert.equal(state.messages[0]?.provisional, true);
+  assert.equal(state.messages.length, 1, 'empty start establishes identity, not a display position');
+  assert.equal(state.streamingId, 'm');
 });
 
 test('message-only final reports durable fallback upserts and removes transient-only thought IDs', () => {
@@ -154,6 +156,37 @@ test('message-only final reports durable fallback upserts and removes transient-
   assert.deepEqual(live.state.messages, persisted.state.messages);
   assert.deepEqual([...live.client.values()], persisted.state.messages);
   assert.deepEqual([...live.client.keys()], ['reasoning-message-m', 'm']);
+});
+
+test('normalized later message finals report all actually reconciled identities in their owning fold', () => {
+  for (const child of [false, true]) {
+    const state = newFoldState();
+    if (child) foldEvent(state, normalizeEvent(started('spawn', 'child')));
+    const envelope = child ? { agentId: 'child' } : {};
+    const apply = (event: SessionEvent) => foldEvent(state, normalizeEvent(event));
+    apply(native('assistant.reasoning_delta', { reasoningId: 'previous', deltaContent: 'Old partial' }, {
+      ...envelope, ephemeral: true,
+    }));
+    apply(native('assistant.message_start', { messageId: 'm' }, { ...envelope, ephemeral: true }));
+    apply(native('assistant.message', { messageId: 'm', content: 'Body' }, envelope));
+    apply(native('assistant.reasoning_delta', { reasoningId: 'current', deltaContent: 'Current partial' }, {
+      ...envelope, ephemeral: true,
+    }));
+    const target = child ? state.subFolds.get('spawn')! : state;
+    assert.deepEqual(target.reasoningIds, ['reasoning-current']);
+    assert.deepEqual(target.messageReasoning.get('m'), ['reasoning-previous']);
+    const result = apply(native('assistant.message', {
+      messageId: 'm', content: 'Updated body', reasoningText: 'Whole reasoning',
+    }, envelope));
+    assert.deepEqual(result.removed, ['reasoning-previous', 'reasoning-current']);
+    assert.equal(result.reconciled?.[0]?.fold, target);
+    assert.deepEqual(result.reconciled?.[0]?.ids, ['reasoning-previous', 'reasoning-current']);
+    assert.deepEqual(target.messages.map(item => [item.id, item.provisional]), [
+      ['m', undefined], ['reasoning-message-m', undefined],
+    ]);
+    assert.equal(target.messages[0]?.content, 'Updated body');
+    assert.equal(target.messages[1]?.thought, 'Whole reasoning');
+  }
 });
 
 test('final reasoningText replaces transient fragments without truncating a differing durable snapshot', () => {
@@ -198,7 +231,10 @@ test('native multi-segment reasoning deltas retain distinct items without a fina
     native('assistant.reasoning_delta', { reasoningId: 'two', deltaContent: 'second' }, { ephemeral: true }),
     native('assistant.message', { messageId: 'm', content: 'answer' }),
   ]);
-  assert.deepEqual(state.messages.map(message => message.thought), ['first', 'second', undefined]);
+  assert.deepEqual(state.messages.map(message => [message.thought, message.provisional]), [
+    [undefined, undefined], ['first', true], ['second', true],
+  ]);
+  assert.equal(state.messages[0]?.content, 'answer');
 });
 
 test('distinct concurrent message IDs are not aliased to an earlier stream', () => {
@@ -208,7 +244,8 @@ test('distinct concurrent message IDs are not aliased to an earlier stream', () 
     native('assistant.message', { messageId: 'second', content: 'separate' }),
     native('assistant.message', { messageId: 'first', content: 'finished' }),
   ]);
-  assert.deepEqual(state.messages.map((m) => [m.id, m.content]), [['first', 'finished'], ['second', 'separate']]);
+  assert.deepEqual(state.messages.map((m) => [m.id, m.content]), [['second', 'separate'], ['first', 'finished']]);
+  assert.equal(state.messages.some(message => message.provisional), false);
 });
 
 test('native nested background aliases route deltas, tools and late completion to one outer card', () => {

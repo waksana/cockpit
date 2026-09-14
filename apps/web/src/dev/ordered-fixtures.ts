@@ -29,7 +29,20 @@ export function orderedFixture() {
   const window = new NativeWindow(undefined, true);
   let cursor = 0;
   let count = 0;
+  let streamPosition = 0;
   let durable = [...orderedEvents];
+  const streamEvents: NativeChatEvent[] = [
+    { ...event('demo-reasoning-delta', 'assistant.reasoning_delta', { reasoningId: 'demo-r', deltaContent: '临时思考，等待完整记录。' }), ephemeral: true },
+    { ...event('demo-message-start', 'assistant.message_start', { messageId: 'demo-m' }), ephemeral: true },
+    { ...event('demo-message-delta', 'assistant.message_delta', { messageId: 'demo-m', deltaContent: '临时正文，不切割已确认的过程。' }), ephemeral: true },
+    event('demo-reasoning-final', 'assistant.reasoning', { reasoningId: 'demo-r', content: '完整思考在原生确认事件的位置显示。' }),
+    event('demo-tool-only', 'assistant.message', { messageId: 'demo-m', content: '', toolRequests: [
+      { toolCallId: 'demo-tool', name: 'view', intentionSummary: '已确认工具，不保留空正文位置' },
+    ] }),
+    event('demo-body-final', 'assistant.message', { messageId: 'demo-m', content: '已确认正文在工具之后，冷读也保持相同顺序。' }),
+    event('demo-late-thought', 'assistant.message', { messageId: 'demo-m', content: '已确认正文在工具之后，冷读也保持相同顺序。',
+      reasoningText: '这段思考由后续记录补充，不插回已经确认的正文之前。' }),
+  ];
   const apply = (events: NativeChatEvent[], backward = false) => {
     const query: NativeChatRead = {
       sessionId: 'chat-lab-ordered-events', source: 'live', direction: backward ? 'backward' : 'forward',
@@ -69,6 +82,7 @@ export function orderedFixture() {
       return apply(events, true);
     },
     duplicate: () => apply(durable.slice(-3)),
+    streamStep: () => streamPosition < streamEvents.length ? append([streamEvents[streamPosition++]]) : window.snapshot(),
     reconnect: () => {
       const messageId = `reconnect-${++count}`;
       append([

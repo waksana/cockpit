@@ -24,7 +24,8 @@ export function groupTranscript(messages: ChatMessage[], previous: TranscriptRow
       continue;
     }
     const last = rows.at(-1);
-    if (last?.kind === 'process') last.items.push(message);
+    // A draft preview must never extend or split a confirmed process overview.
+    if (last?.kind === 'process' && !!last.items[0].provisional === !!message.provisional) last.items.push(message);
     else rows.push({ kind: 'process', key: '', anchorId: message.id, items: [message] });
   }
   const processIds = new Set(rows.flatMap(row => row.kind === 'process' ? row.items.map(item => item.id) : []));

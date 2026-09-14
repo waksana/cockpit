@@ -59,7 +59,7 @@ export function Lab() {
     history.replaceState(null, '', `/chat-lab.html?scene=${value}${compact ? '&compact=1' : ''}`);
     setReceipt(`场景：${value}。操作不会发送到后端。`);
   }
-  function orderedAction(action: 'thought' | 'body' | 'tool' | 'older' | 'duplicate' | 'reconnect' | 'cold') {
+  function orderedAction(action: 'thought' | 'body' | 'tool' | 'older' | 'duplicate' | 'reconnect' | 'cold' | 'streamStep') {
     ordered.current ??= orderedFixture();
     const snapshot = ordered.current[action]();
     setSession(value => ({ ...value, ...snapshot }));
@@ -128,6 +128,7 @@ export function Lab() {
         <button onClick={() => orderedAction('tool')}>追加工具事件</button>
         <button onClick={() => orderedAction('older')}>前插原生事件</button>
         <button onClick={() => orderedAction('duplicate')}>重复事件页</button>
+        <button onClick={() => orderedAction('streamStep')}>逐条推进流式事件</button>
         <button onClick={() => orderedAction('reconnect')}>断线并补全</button>
         <button onClick={() => orderedAction('cold')}>同记录冷加载</button>
       </>}

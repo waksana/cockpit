@@ -219,7 +219,9 @@ test('open durable reasoning heads are repaired while independent live reasoning
   accept(live, [thoughts[0]]);
   accept(live, [event('live-answer')], 'forward', { hasMore: false });
   assert.equal(live.snapshot().messages.find(message => message.id === 'reasoning-live-r')?.thought, 'Unpublished live thought');
-  assert.equal(live.snapshot().messages.at(-1)?.thought, undefined);
+  assert.deepEqual(live.snapshot().messages.map(message => [message.id, message.provisional]), [
+    ['reasoning-r-0', undefined], ['live-answer', undefined], ['reasoning-live-r', true],
+  ]);
 });
 
 test('filtered child reasoning uses the normalized root lane across old page boundaries', () => {
@@ -365,4 +367,128 @@ test('repeated aliased child pages wait for their owner without repeatedly foldi
   assert.equal(incremental.count(), 1026);
   assert.equal(incremental.window.snapshot().messages.at(-1)?.subMessages?.length, 512);
   t.diagnostic(`aliased child events=${history.length}, incremental=${incremental.count()}, full-refold=${referenceCost}`);
+});
+
+test('surviving fallback provenance converges for every backward partition and intermediate same-ID final', () => {
+  for (const child of [false, true]) for (const firstBody of ['', 'Early body']) {
+    const owner = child ? 'child' : undefined;
+    const setup = child ? [task('owner', 'spawn'), spawn('spawn', 'child')] : [];
+    const history = [
+      ...setup,
+      event('r1', 'assistant.reasoning', { reasoningId: 'r1', content: 'A' }, owner),
+      event('m-initial', 'assistant.message', {
+        messageId: 'm', content: firstBody, reasoningText: 'A',
+        toolRequests: [{ toolCallId: 't', name: 'view' }],
+      }, owner),
+      event('n', 'assistant.message', { content: 'N' }, owner),
+      event('m-intermediate', 'assistant.message', { messageId: 'm', content: 'M', reasoningText: 'B' }, owner),
+      event('tool-final', 'tool.execution_complete', { toolCallId: 't', result: { content: 'Output' } }, owner),
+      event('m-final', 'assistant.message', { messageId: 'm', content: 'Final M', reasoningText: 'Uncut\n\nB' }, owner),
+    ];
+    const baseline = new NativeWindow(undefined, true);
+    accept(baseline, history);
+    const rows = child ? baseline.snapshot().messages.find(item => item.subagent)!.subMessages! : baseline.snapshot().messages;
+    assert.deepEqual(rows.map(item => item.id), firstBody
+      ? ['reasoning-r1', 'm', 'tool-t', 'n', 'reasoning-message-m']
+      : ['reasoning-r1', 'tool-t', 'n', 'reasoning-message-m', 'm']);
+    assert.equal(rows.find(item => item.id === 'reasoning-message-m')?.thought, 'Uncut\n\nB');
+    assert.equal(rows.find(item => item.id === 'm')?.content, 'Final M');
+    for (let partition = 0; partition < 2 ** (history.length - 1); partition++) {
+      const boundaries = [0, ...history.flatMap((_, i) => i > 0 && (partition & (1 << (i - 1))) ? [i] : []), history.length];
+      const paged = new NativeWindow(undefined, true);
+      for (let page = boundaries.length - 2; page >= 0; page--) {
+        const chunk = history.slice(boundaries[page], boundaries[page + 1]);
+        accept(paged, chunk);
+        try { compare(paged, history.slice(boundaries[page])); }
+        catch (error) { throw new Error(`child=${child}, firstBody=${firstBody}, partition=${partition}, page=${page}`, { cause: error }); }
+        const view = paged.snapshot().messages;
+        accept(paged, chunk);
+        assert.equal(paged.snapshot().messages, view);
+      }
+      paged.disconnect();
+      accept(paged, history, 'forward', { hasMore: false });
+      assert.deepEqual(paged.snapshot().messages, baseline.snapshot().messages);
+    }
+    for (let split = 0; split <= history.length; split++) {
+      const live = new NativeWindow(undefined, true);
+      accept(live, history.slice(0, split));
+      live.disconnect();
+      for (let i = split; i < history.length; i++) {
+        accept(live, [history[i]], 'forward', { hasMore: i < history.length - 1 });
+        compare(live, history.slice(0, i + 1));
+      }
+      assert.deepEqual(live.snapshot().messages, baseline.snapshot().messages);
+    }
+  }
+});
+
+test('retired fallback provenance cannot leak into a later forward recreation during ask-owner repair', () => {
+  const owner = event('owner', 'assistant.message', {
+    content: '', toolRequests: [{ toolCallId: 'ask', name: 'ask_user' }],
+  });
+  const thought = event('r', 'assistant.reasoning', { reasoningId: 'r', content: 'A' });
+  const first = event('first', 'assistant.message', { messageId: 'm', content: 'Body', reasoningText: 'A' });
+  const next = event('n', 'assistant.message', { content: 'N' });
+  const reply = event('reply', 'tool.execution_complete', {
+    toolCallId: 'ask', result: { content: 'User selected: yes' },
+  });
+  const final = event('final', 'assistant.message', { messageId: 'm', content: 'Updated body', reasoningText: 'B' });
+  const window = new NativeWindow(undefined, true);
+  accept(window, [first, next, reply]);
+  accept(window, [thought]);
+  assert.equal(window.snapshot().messages.some(item => item.id === 'reasoning-message-m'), false);
+  accept(window, [final], 'forward', { hasMore: false });
+  accept(window, [owner]);
+  assert.deepEqual(window.snapshot().messages.map(item => item.id), [
+    'tool-ask', 'reasoning-r', 'm', 'n', 'reply-ask', 'reasoning-message-m',
+  ]);
+  compare(window, [owner, thought, first, next, reply, final]);
+});
+
+test('later equal explicit updates preserve existing fallback anchors across every partition and reconnect', () => {
+  for (const child of [false, true]) {
+    const owner = child ? 'child' : undefined;
+    const setup = child ? [task('owner', 'spawn'), spawn('spawn', 'child')] : [];
+    const history = [
+      ...setup,
+      event('r-first', 'assistant.reasoning', { reasoningId: 'r', content: 'A' }, owner),
+      event('m', 'assistant.message', { messageId: 'm', content: 'Other body' }, owner),
+      event('n-first', 'assistant.message', { messageId: 'n', content: 'Body', reasoningText: 'B' }, owner),
+      event('r-update', 'assistant.reasoning', { reasoningId: 'r', content: 'B' }, owner),
+      event('n-equal', 'assistant.message', { messageId: 'n', content: 'Body', reasoningText: 'B' }, owner),
+      event('n-final', 'assistant.message', { messageId: 'n', content: 'Body', reasoningText: 'C' }, owner),
+    ].map((item, i) => ({ ...item, id: `00000000-0000-4000-8000-${String(i + 1).padStart(12, '0')}` }));
+    const rows = (window: NativeWindow) => child
+      ? window.snapshot().messages.find(item => item.subagent)?.subMessages ?? [] : window.snapshot().messages;
+    for (const length of [history.length - 1, history.length]) {
+      const journal = history.slice(0, length);
+      const baseline = new NativeWindow(undefined, true);
+      accept(baseline, journal);
+      assert.deepEqual(rows(baseline).map(item => item.id), ['reasoning-r', 'm', 'reasoning-message-n', 'n']);
+      assert.equal(rows(baseline).find(item => item.id === 'reasoning-message-n')?.thought,
+        length === history.length ? 'C' : 'B');
+      for (let partition = 0; partition < 2 ** (journal.length - 1); partition++) {
+        const boundaries = [0, ...journal.flatMap((_, i) => i > 0 && (partition & (1 << (i - 1))) ? [i] : []), journal.length];
+        const paged = new NativeWindow(undefined, true);
+        for (let page = boundaries.length - 2; page >= 0; page--) {
+          const chunk = journal.slice(boundaries[page], boundaries[page + 1]);
+          accept(paged, chunk);
+          try { compare(paged, journal.slice(boundaries[page])); }
+          catch (error) { throw new Error(`child=${child}, length=${length}, partition=${partition}, page=${page}`, { cause: error }); }
+        }
+        paged.disconnect();
+        accept(paged, journal, 'forward', { hasMore: false });
+        assert.deepEqual(paged.snapshot().messages, baseline.snapshot().messages);
+      }
+    }
+    const live = new NativeWindow(undefined, true);
+    accept(live, [], 'forward', { hasMore: false });
+    for (const [index, item] of history.entries()) {
+      const before = rows(live).map(item => item.id);
+      live.disconnect();
+      accept(live, [item], 'forward', { hasMore: false });
+      assert.deepEqual(rows(live).filter(item => before.includes(item.id)).map(item => item.id), before);
+      compare(live, history.slice(0, index + 1));
+    }
+  }
 });

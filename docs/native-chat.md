@@ -113,11 +113,22 @@ native event order. It does not collect them into a single assistant message and
 then move every tool above that message's text. Native message IDs still associate
 streamed text with its final content; tool IDs associate execution updates with
 the original tool row. Tool completion and repeated durable events do not move
-that row to the end of the transcript. Temporary text/reasoning positions settle
-at their first complete durable event's position, retaining their IDs, so a live
-stream and a cold read converge even when transient delivery had a different
-order. Event order describes recorded evidence, not an inferred token-generation
-timeline.
+that row to the end of the transcript. Confirmed positions come from durable
+event provenance, never an empty `message_start` placeholder or a completion
+timestamp. Later body-only updates do not inherit a discarded empty body's
+position or move existing confirmed rows.
+
+New ephemeral-only text and reasoning are marked `provisional` in the same browser
+projection and shown at its trailing edge, labelled as temporary content awaiting
+a complete record. They do not split or extend a confirmed process overview.
+Confirmation removes the temporary marker and places the item at its durable
+event's position without reordering other confirmed items. A tool-only final
+does not leave an empty body anchor for a later message update to fill.
+This keeps streaming visible without pretending its temporary arrival order
+is the persisted timeline. Provisional rows can settle as confirmation arrives;
+only the confirmed sequence has the stable-order guarantee. No second history,
+server buffer or extra read is created. Event order describes recorded evidence,
+not an inferred token-generation timeline.
 
 Consecutive process items are grouped only by the renderer. User speech,
 assistant text and other visible records end a process group; empty message
@@ -126,8 +137,9 @@ of rounds or messages. Its counts describe visible tool and reasoning items,
 with recorded failures retained in the collapsed summary. There is no elapsed
 time estimate, round count or generated summary.
 
-The last overview defaults open, with only its last reasoning item defaulting
-open. A newer overview/reasoning item closes the former automatic selection.
+The last overview defaults open. A reasoning item defaults open only while it
+is the latest visible item in that agent's transcript, not merely the last thought.
+A subsequent tool, assistant body or user message closes its automatic selection.
 Explicit user choices take priority, including closing the latest item. These
 choices are local to the mounted session view; older-page extension preserves
 the group's mounted identity. They are not a second native state or history store.
@@ -138,7 +150,9 @@ code/tool copying.
 The opt-in lab's `ordered-events` scenario feeds synthetic native pages through
 the actual `NativeWindow`, including repeated pages, older prefixes, new speech
 and reasoning, disconnected partial text followed by a full event, and a cold
-projection of the same durable events. It does not initialize a native client.
+projection of the same durable events. Its step-by-step stream action exposes
+each temporary, tool-only and full-message transition separately, rather than
+batching away intermediate layout changes. It does not initialize a native client.
 
 ### Paging and live updates
 
@@ -190,13 +204,21 @@ convention is reasoning, text, then requests in array order. Separate explicit
 events retain their recorded positions.
 
 Message-level `reasoningText` is a complete snapshot, not another delta. When
-it exactly repeats that message's preceding explicit reasoning aggregate, it
-does not add another row. Otherwise its full text is retained under a
-message-based reasoning identity; it is not sliced into guessed segments.
+it first appears and exactly repeats that message's preceding explicit reasoning
+aggregate, it does not add another row. Otherwise its full text is retained
+under a message-based reasoning identity; it is not sliced into guessed segments.
+Once that durable snapshot exists, later updates retain its source position,
+even if their text now matches another reasoning row. A newly supplied snapshot
+does not insert itself before an already confirmed body from an earlier event.
 Later independent reasoning with equal text does not establish ownership or
 erase the earlier snapshot. A body-only update does not delete known reasoning.
 When only transient reasoning was available, its authoritative message-level
-snapshot replaces those fragments. Without a persisted native reasoning ID,
+snapshot replaces those fragments and retires all their scoped stream identities.
+Subsequent deltas cannot resurrect the retired fragments or leave a permanent
+partial-history indication. Older-page dependency repair replaces obsolete
+fallback provenance with that of the surviving source rather than keeping a
+superseded minimum order.
+Without a persisted native reasoning ID,
 this transition can replace a temporary reasoning anchor; it cannot promise
 to recover absent segment identities from a cold journal.
 

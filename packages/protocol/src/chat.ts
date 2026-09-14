@@ -54,6 +54,8 @@ export interface FoldResult {
   nestedChanged?: string[];
   metaChanged: boolean;
   missingOwner?: boolean;
+  // Identity retirement is scoped; a child can reuse the root's native IDs.
+  reconciled?: { fold: FoldState; ids: string[] }[];
 }
 
 export interface FoldProjection {
@@ -80,10 +82,21 @@ function tsOf(ev: { timestamp?: string | number }): number {
 }
 
 function upsert(state: FoldState, msg: ChatMessage): void {
-  const idx = state.byId.get(msg.id);
+  let idx = state.byId.get(msg.id);
+  if (idx !== undefined && state.messages[idx]!.provisional && !msg.provisional) {
+    removeMessages(state, new Set([msg.id]));
+    idx = undefined;
+  }
   if (idx === undefined) {
-    state.byId.set(msg.id, state.messages.length);
-    state.messages.push(msg);
+    const draft = msg.provisional || !state.messages.at(-1)?.provisional
+      ? -1 : state.messages.findIndex(message => message.provisional);
+    if (draft < 0) {
+      state.byId.set(msg.id, state.messages.length);
+      state.messages.push(msg);
+    } else {
+      state.messages.splice(draft, 0, msg);
+      state.byId = new Map(state.messages.map((message, index) => [message.id, index]));
+    }
   } else {
     state.messages[idx] = msg;
   }
@@ -116,17 +129,17 @@ function ensureStreaming(state: FoldState, id: string, ts: number): ChatMessage 
     }
   }
   const msg: ChatMessage = {
-    id, role: 'assistant', content: '', timestamp: ts,
+    id, role: 'assistant', content: '', timestamp: ts, provisional: true,
   };
   upsert(state, msg);
   return msg;
 }
 
-function reasoningMsg(state: FoldState, rid: string, ts: number): ChatMessage {
+function reasoningMsg(state: FoldState, rid: string, ts: number, provisional = true): ChatMessage {
   const id = `reasoning-${rid}`;
   const index = state.byId.get(id);
   const message = index === undefined
-    ? { id, role: 'assistant' as const, content: '', timestamp: ts }
+    ? { id, role: 'assistant' as const, content: '', timestamp: ts, ...(provisional ? { provisional: true } : {}) }
     : state.messages[index]!;
   upsert(state, message);
   state.pendingReasoning = message;
@@ -352,7 +365,8 @@ export function foldEvent(state: FoldState, ev: SdkEvent, projection?: FoldProje
   if ((result.changed.length || result.removed?.length || executionChanged) && route.cards[0]) {
     return { changed: [route.cards[0].id], metaChanged: result.metaChanged,
       nestedChanged: [...route.cards.map(card => card.id), ...result.changed, ...result.nestedChanged ?? []],
-      ...(result.removed?.length ? { removed: result.removed } : {}) };
+      ...(result.removed?.length ? { removed: result.removed } : {}),
+      ...(result.reconciled ? { reconciled: result.reconciled } : {}) };
   }
   return result;
 }
@@ -466,17 +480,26 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       const rid = stringOf(d.reasoningId) ?? ev.id ?? `segment-${state.messages.length}`;
       const content = typeof d.content === 'string' ? d.content : '';
       if (!content) return empty;
-      const m = reasoningMsg(state, rid, tsOf(ev));
-      m.thought = content;
-      m.timestamp = tsOf(ev);
+      const previous = reasoningMsg(state, rid, tsOf(ev), false);
+      const { provisional: _provisional, ...body } = previous;
+      const m = { ...body, thought: content, timestamp: tsOf(ev) };
+      if (previous.provisional) {
+        // An earlier streamed association cannot make this later durable source
+        // belong to a past message. The next message can associate it normally.
+        for (const [messageId, reasoning] of state.messageReasoning) {
+          if (reasoning.includes(m.id)) state.messageReasoning.set(messageId, reasoning.filter(id => id !== m.id));
+        }
+      }
+      upsert(state, m);
+      state.pendingReasoning = m;
       state.finalReasoning.add(m.id);
       return { changed: [m.id], metaChanged: false };
     }
 
     case 'assistant.message_start': {
       const mid = (typeof d.messageId === 'string' && d.messageId) || ev.id || `a-${state.messages.length}`;
-      const m = ensureStreaming(state, mid, tsOf(ev));
-      return { changed: [m.id], metaChanged: false };
+      state.streamingId = mid;
+      return empty;
     }
 
     case 'assistant.message_delta': {
@@ -532,9 +555,10 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       const fallbackId = `reasoning-message-${id}`;
       const explicit = reasoning.filter(reasoningId => state.finalReasoning.has(reasoningId));
       const explicitText = explicit.map(reasoningId => state.messages[state.byId.get(reasoningId)!]?.thought ?? '').join('\n\n');
-      // Omit only a complete duplicate of the preceding explicit records.
-      // Differing snapshots remain intact; no prefix slicing or later text-matching ownership.
-      const fallbackThought = persistedThought !== explicitText ? persistedThought : undefined;
+      // Suppress exact duplicates only at first creation. Once a durable
+      // snapshot exists, later matching text cannot retire its source anchor.
+      const fallbackThought = state.byId.has(fallbackId) || persistedThought !== explicitText
+        ? persistedThought : undefined;
       if (persistedThought) {
         const transient = new Set(reasoning.filter(reasoningId => reasoningId !== fallbackId && !state.finalReasoning.has(reasoningId)));
         removeMessages(state, transient);
@@ -547,28 +571,18 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
           id: fallbackId, role: 'assistant', content: '', thought: fallbackThought, timestamp: tsOf(ev),
         };
         upsert(state, thought);
-        // A body may already exist from message_start. Keep the bundled fallback
-        // immediately before that body rather than appending it after the stream.
-        const bodyIndex = state.byId.get(id);
-        const thoughtIndex = state.byId.get(fallbackId)!;
-        if (bodyIndex !== undefined && thoughtIndex > bodyIndex) {
-          state.messages.splice(thoughtIndex, 1);
-          state.messages.splice(bodyIndex, 0, thought);
-          state.byId = new Map(state.messages.map((message, index) => [message.id, index]));
-        }
         state.messageReasoning.set(id, [...explicit, fallbackId]);
         changed.push(fallbackId);
       } else {
         state.messageReasoning.set(id, [...(persistedThought ? explicit : reasoning)]);
-        if (persistedThought && explicit.length && state.byId.has(fallbackId)) {
-          removeMessages(state, new Set([fallbackId]));
-          removed.push(fallbackId);
-        }
       }
       const prevIdx = state.byId.get(id);
-      if (content || prevIdx !== undefined) {
+      if (content.trim() || (prevIdx !== undefined && !state.messages[prevIdx]!.provisional)) {
         upsert(state, { id, role: 'assistant', content, timestamp: tsOf(ev) });
         changed.push(id);
+      } else if (prevIdx !== undefined) {
+        removeMessages(state, new Set([id]));
+        removed.push(id);
       }
       for (const tool of toolCalls) {
         const toolId = `tool-${tool.toolCallId}`;
@@ -596,7 +610,10 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
         rememberTask(state, r, projection?.scope);
       }
       endTurn(state); // the turn's assistant message is finalized
-      return { changed, ...(removed.length ? { removed } : {}), metaChanged: false };
+      return { changed, ...(removed.length ? { removed } : {}),
+        ...(persistedThought ? { reconciled: [{ fold: state, ids: reasoning.filter(reasoningId =>
+          reasoningId !== fallbackId && !state.finalReasoning.has(reasoningId)) }] } : {}),
+        metaChanged: false };
     }
 
     // The callback/request lifecycle belongs to Engine. Only the durable tool

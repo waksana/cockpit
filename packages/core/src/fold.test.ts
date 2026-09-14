@@ -158,6 +158,32 @@ test('streaming deltas accumulate into one message', () => {
   assert.equal(st.messages[0].content, 'foobar');
 });
 
+test('durable body, thought and tools retain their first actual record positions through streaming updates', () => {
+  const st = newFoldState();
+  const apply = (type: string, data: Record<string, unknown>) => foldEvent(st, { type, data, timestamp: 1 });
+  const tool = (toolCallId: string) => ({ toolRequests: [{ toolCallId, name: 'view' }] });
+  apply('assistant.message', { messageId: 'prior', content: '', ...tool('t1') });
+  apply('assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Partial' });
+  apply('assistant.message_start', { messageId: 'm' });
+  assert.deepEqual(st.messages.map(item => item.id), ['tool-t1', 'reasoning-r']);
+  apply('assistant.message_delta', { messageId: 'm', deltaContent: 'Draft' });
+  assert.deepEqual(st.messages.map(item => item.provisional), [undefined, true, true]);
+  const toolOnly = apply('assistant.message', { messageId: 'm', content: '', ...tool('t2') });
+  assert.deepEqual(toolOnly.removed, ['m']);
+  assert.deepEqual(st.messages.map(item => item.id), ['tool-t1', 'tool-t2', 'reasoning-r']);
+  apply('assistant.message', { messageId: 'm', content: 'Answer', ...tool('t2') });
+  apply('assistant.reasoning', { reasoningId: 'r', content: 'Complete' });
+  assert.deepEqual(st.messages.map(item => item.id), ['tool-t1', 'tool-t2', 'm', 'reasoning-r']);
+  apply('assistant.message', { messageId: 'm', content: 'Updated', reasoningText: 'Different intact snapshot' });
+  apply('tool.execution_complete', { toolCallId: 't2', success: true, result: { content: 'Output' } });
+  assert.deepEqual(st.messages.map(item => item.id), ['tool-t1', 'tool-t2', 'm', 'reasoning-r', 'reasoning-message-m']);
+  assert.equal(st.messages[1]?.toolCalls?.[0]?.output, 'Output');
+  assert.equal(st.messages[2]?.content, 'Updated');
+  assert.equal(st.messages[3]?.thought, 'Complete');
+  assert.equal(st.messages[4]?.thought, 'Different intact snapshot');
+  assert.equal(st.messages.some(item => item.provisional), false);
+});
+
 test('reasoning keeps its own native identity before the following body', () => {
   const evs: Ev[] = [
     tStart(),
@@ -171,6 +197,28 @@ test('reasoning keeps its own native identity before the following body', () => 
   assert.equal(st.messages[0].content, '');
   assert.equal(st.messages[1].content, 'answer');
   assert.equal(st.messages[1].thought, undefined);
+});
+
+test('equal explicit text never retires or reanchors an existing durable message snapshot', () => {
+  const st = newFoldState();
+  const events = [
+    { type: 'assistant.reasoning', data: { reasoningId: 'r', content: 'A' } },
+    asstMsg('m', 'Other body'),
+    asstMsg('n', 'Body', { reasoningText: 'B' }),
+    { type: 'assistant.reasoning', data: { reasoningId: 'r', content: 'B' } },
+    asstMsg('n', 'Body', { reasoningText: 'B' }),
+    asstMsg('n', 'Body', { reasoningText: 'C' }),
+  ];
+  for (const [index, event] of events.entries()) {
+    const before = st.messages.map(item => item.id);
+    const result = foldEvent(st, normalizeEvent({ ...event, data: event.data ?? {}, id: `unique-${index}`, timestamp: 1 }));
+    assert.deepEqual(result.removed ?? [], []);
+    assert.deepEqual(st.messages.filter(item => before.includes(item.id)).map(item => item.id), before);
+    if (index >= 2) {
+      assert.deepEqual(st.messages.map(item => item.id), ['reasoning-r', 'm', 'reasoning-message-n', 'n']);
+      assert.equal(st.messages[2]?.thought, index === 5 ? 'C' : 'B');
+    }
+  }
 });
 
 // --- H1: cancel mid-stream must not merge the next turn into the cancelled one ---
@@ -191,7 +239,9 @@ test('H1: cancelled turn does not absorb the next turn (live == replay)', () => 
 
   // Replay yields TWO messages (cancelled partial + the real second turn).
   assert.equal(replayed.messages.length, 2, 'replay: two separate turns');
-  assert.equal(replayed.messages[1].content, 'second turn answer');
+  assert.deepEqual(replayed.messages.map(message => [message.id, message.content, message.provisional]), [
+    ['a2', 'second turn answer', undefined], ['a1', 'partial…', true],
+  ]);
 
   // Live MUST match replay — the second turn must be its own message, not merged
   // into the cancelled a1 bubble.
@@ -214,7 +264,9 @@ test('H1b: resetTurn after a cancelled stream separates the next turn', () => {
   // next turn arrives WITHOUT a turn_start (e.g. immediate new prompt after cancel)
   foldEvent(st, asstMsg('a2', 'after cancel') as never);
   assert.equal(st.messages.length, 2, 'cancelled partial + new turn are separate');
-  assert.equal(st.messages[1].content, 'after cancel');
+  assert.deepEqual(st.messages.map(message => [message.id, message.content, message.provisional]), [
+    ['a2', 'after cancel', undefined], ['a1', 'partial…', true],
+  ]);
 });
 
 // --- M2: multiple reasoning blocks in one turn must not be lost ---

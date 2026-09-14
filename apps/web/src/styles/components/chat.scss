@@ -336,6 +336,10 @@
   font: inherit; font-size: var(--font-size-14); line-height: 20px; text-align: start;
 }
 .message-process { min-width: 0; }
+.chat-provisional-label {
+  color: var(--secondary-text-color);
+  font-size: var(--font-size-12); line-height: 1.5;
+}
 .process-summary {
   display: flex; align-items: center; gap: 8px;
   width: 100%; min-width: 0; min-height: 44px;

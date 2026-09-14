@@ -261,10 +261,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     return null;
   }
   const choiceKey = JSON.stringify(['A', 'overview', 'stable-overview']);
-  const renderProcess = async (latest: boolean, items = [processMessage], choice = choiceKey) => {
+  const renderProcess = async (latest: boolean, items = [processMessage], choice = choiceKey, latestItemId = items.at(-1)?.id) => {
     await act(() => root.render(createElement(DisclosureChoices, {
       children: [
-        createElement(MessageProcess, { key: 'process', identity: 'stable-overview', items, sessionId: 'A', latest }),
+        createElement(MessageProcess, { key: 'process', identity: 'stable-overview', items, sessionId: 'A', latest, latestItemId }),
         createElement(ChoiceProbe, { key: 'probe', choice }),
       ],
     })));
@@ -290,6 +290,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   await renderProcess(true, [processMessage, secondThought, { ...secondThought, id: 'third-thought' }], firstThoughtKey);
   assert.deepEqual(container.querySelectorAll('.thought-toggle').map(node => node.getAttribute('aria-expanded')), ['true', 'false', 'true'],
     'only latest thought opens automatically; a manually opened old thought stays open');
+  await renderProcess(true, [processMessage, secondThought], firstThoughtKey, 'newer-body');
+  assert.deepEqual(container.querySelectorAll('.thought-toggle').map(node => node.getAttribute('aria-expanded')), ['true', 'false'],
+    'newer speech closes automatic thought selection but retains the manually opened thought');
 
   const body = '| A | B |\n|---|---|\n| one | two |\n\nStable native text.';
   const renderBody = (content = body) => act(async () => root.render(createElement(MessageBody, {

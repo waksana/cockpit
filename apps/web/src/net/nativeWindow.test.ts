@@ -587,3 +587,266 @@ test('bootstrap overlap and reconnect preserve atomic request positions and term
   assert.equal(window.snapshot().messages.find(message => message.id === 'tool-t')?.toolCalls?.[0].output, 'Output');
   assert.equal(window.snapshot().messages.find(message => message.id === 'tool-t')?.toolCalls?.[0].status, 'completed');
 });
+
+test('empty starts and tool-only finals never anchor the later durable body, in root and child scopes', () => {
+  for (const child of [false, true]) for (const priorThought of [false, true]) for (const withDelta of [false, true]) {
+    const scope = (value: NativeChatEvent) => child ? owned('child', value) : value;
+    const setup = child ? [taskMessage('task', 'spawn'), spawn('spawn', 'child')] : [];
+    const tools = (toolCallId: string) => ({ toolRequests: [{ toolCallId, name: 'view' }] });
+    const prior = scope(priorThought
+      ? event('prior-r', 'assistant.reasoning', { reasoningId: 'r', content: 'Earlier thought' })
+      : event('prior-tool', 'assistant.message', { content: '', ...tools('t1') }));
+    const first = scope(event('first', 'assistant.message', { messageId: 'm', content: '', ...tools('t2') }));
+    const update = scope(event('update', 'assistant.message', { messageId: 'm', content: 'Answer', ...tools('t2') }));
+    const live = new NativeWindow(undefined, true);
+    accept(live, setup, all);
+    accept(live, [], liveAll);
+    accept(live, [prior, scope(ephemeral('start', 'assistant.message_start', { messageId: 'm' }))], liveAll);
+    const rows = () => child ? live.snapshot().messages.find(item => item.subagent)!.subMessages! : live.snapshot().messages;
+    assert.deepEqual(rows().map(item => item.id), [priorThought ? 'reasoning-r' : 'tool-t1']);
+    if (withDelta) {
+      accept(live, [scope(ephemeral('delta', 'assistant.message_delta', { messageId: 'm', deltaContent: 'Draft' }))], liveAll);
+      assert.equal(rows().at(-1)?.provisional, true);
+    }
+    accept(live, [first], liveAll);
+    assert.deepEqual(rows().map(item => item.id), [priorThought ? 'reasoning-r' : 'tool-t1', 'tool-t2']);
+    accept(live, [scope(ephemeral('late', 'assistant.message_delta', { messageId: 'm', deltaContent: 'Late draft' }))], liveAll);
+    assert.equal(rows().some(item => item.id === 'm'), false);
+    live.disconnect();
+    assert.equal(live.partial, false, 'tool-only final completed the body stream');
+    accept(live, [update], liveAll);
+    assert.deepEqual(rows().map(item => item.id), [priorThought ? 'reasoning-r' : 'tool-t1', 'tool-t2', 'm']);
+    const cold = new NativeWindow(undefined, true);
+    accept(cold, [...setup, prior, first, update], all);
+    assert.deepEqual(live.snapshot().messages, cold.snapshot().messages);
+    const before = rows().map(item => item.id);
+    accept(live, [scope(event('complete', 'tool.execution_complete', {
+      toolCallId: 't2', success: true, result: { content: 'Tool output' },
+    }))], liveAll);
+    assert.deepEqual(rows().map(item => item.id), before);
+    assert.equal(rows().find(item => item.id === 'tool-t2')?.toolCalls?.[0].output, 'Tool output');
+  }
+});
+
+test('whitespace-only first bodies never anchor before tools while confirmed updates preserve original bytes', () => {
+  for (const child of [false, true]) for (const withDelta of [false, true]) {
+    const scope = (value: NativeChatEvent) => child ? owned('child', value) : value;
+    const setup = child ? [taskMessage('task', 'spawn'), spawn('spawn', 'child')] : [];
+    const whitespace = ' \n ';
+    const content = ' \n Answer \n ';
+    const first = scope(event('first', 'assistant.message', {
+      messageId: 'm', content: whitespace, toolRequests: [{ toolCallId: 't', name: 'view' }],
+    }));
+    const body = scope(event('body', 'assistant.message', { messageId: 'm', content }));
+    const next = scope(event('next', 'assistant.message', { content: 'Another body' }));
+    const blankUpdate = scope(event('blank-update', 'assistant.message', { messageId: 'm', content: whitespace }));
+    const restored = scope(event('restored', 'assistant.message', { messageId: 'm', content }));
+    const live = new NativeWindow(undefined, true);
+    accept(live, setup, all);
+    accept(live, [], liveAll);
+    const rows = () => child ? live.snapshot().messages.find(item => item.subagent)!.subMessages! : live.snapshot().messages;
+    if (withDelta) accept(live, [
+      scope(ephemeral('start', 'assistant.message_start', { messageId: 'm' })),
+      scope(ephemeral('delta', 'assistant.message_delta', { messageId: 'm', deltaContent: 'Draft' })),
+    ], liveAll);
+    accept(live, [first], liveAll);
+    assert.deepEqual(rows().map(item => item.id), ['tool-t']);
+    live.disconnect();
+    assert.equal(live.partial, false);
+    accept(live, [body, next], liveAll);
+    assert.deepEqual(rows().map(item => item.id), ['tool-t', 'm', 'next']);
+    assert.equal(rows()[1].content, content);
+    accept(live, [blankUpdate], liveAll);
+    assert.deepEqual(rows().map(item => item.id), ['tool-t', 'm', 'next']);
+    assert.equal(rows()[1].content, whitespace);
+    assert.equal(rows()[1].provisional, undefined);
+    accept(live, [restored], liveAll);
+    assert.deepEqual(rows().map(item => item.id), ['tool-t', 'm', 'next']);
+    assert.equal(rows()[1].content, content);
+    const journal = [...setup, first, body, next, blankUpdate, restored];
+    for (let split = 0; split <= journal.length; split++) {
+      const cold = new NativeWindow(undefined, true);
+      accept(cold, journal.slice(split), all);
+      accept(cold, journal.slice(0, split), all);
+      assert.deepEqual(live.snapshot().messages, cold.snapshot().messages);
+    }
+  }
+});
+
+test('later message reasoning retires previously linked streams without touching an equal root identity', () => {
+  for (const child of [false, true]) for (const reconnect of [false, true]) {
+    const scope = (value: NativeChatEvent) => child ? owned('child', value) : value;
+    const window = new NativeWindow(undefined, true);
+    accept(window, child ? [taskMessage('task', 'spawn'), spawn('spawn', 'child')] : [], all);
+    accept(window, [], liveAll);
+    if (child) accept(window, [ephemeral('root-partial', 'assistant.reasoning_delta', {
+      reasoningId: 'r', deltaContent: 'Independent root',
+    })], liveAll);
+    const first = scope(event('first', 'assistant.message', { messageId: 'm', content: 'Body' }));
+    const final = scope(event('final', 'assistant.message', {
+      messageId: 'm', content: 'Body', reasoningText: 'Complete',
+    }));
+    accept(window, [
+      scope(ephemeral('partial', 'assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Partial' })),
+      scope(ephemeral('start', 'assistant.message_start', { messageId: 'm' })),
+      first,
+    ], liveAll);
+    const rows = () => child ? window.snapshot().messages.find(item => item.subagent)!.subMessages! : window.snapshot().messages;
+    assert.deepEqual(rows().map(item => [item.id, item.provisional]), [['m', undefined], ['reasoning-r', true]]);
+    if (reconnect) {
+      window.disconnect();
+      assert.equal(window.partial, true);
+    }
+    accept(window, [final], liveAll);
+    assert.deepEqual(rows().map(item => [item.id, item.thought, item.provisional]), [
+      ['m', undefined, undefined], ['reasoning-message-m', 'Complete', undefined],
+    ]);
+    accept(window, [scope(ephemeral('late', 'assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Late suffix' }))], liveAll);
+    assert.equal(rows().some(item => item.id === 'reasoning-r'), false);
+    if (child) {
+      assert.equal(window.snapshot().messages.find(item => item.id === 'reasoning-r')?.thought, 'Independent root');
+      accept(window, [event('root-final', 'assistant.reasoning', { reasoningId: 'r', content: 'Whole root' })], liveAll);
+    }
+    window.disconnect();
+    assert.equal(window.partial, false, 'no reconciled stream remains to mark a disconnect partial');
+    accept(window, [], liveAll);
+    accept(window, [
+      scope(event('next', 'assistant.message', { content: 'New completed message' })),
+      scope(event('idle', 'session.idle')),
+    ], liveAll);
+    assert.equal(window.partial, false);
+    assert.equal(rows().some(item => item.provisional), false);
+    const cold = new NativeWindow(undefined, true);
+    accept(cold, [first, final, scope(event('next', 'assistant.message', { content: 'New completed message' })),
+      scope(event('idle', 'session.idle'))].map(value => ({ ...value, agentId: undefined })), all);
+    assert.deepEqual(rows(), cold.snapshot().messages);
+  }
+});
+
+test('provisional tails promote in durable append order without reordering any confirmed pair', () => {
+  for (const child of [false, true]) for (const thoughtFirst of [false, true]) {
+    const scope = (value: NativeChatEvent) => child ? owned('child', value) : value;
+    const setup = child ? [taskMessage('task', 'spawn'), spawn('spawn', 'child')] : [];
+    const thought = scope(event('thought-final', 'assistant.reasoning', { reasoningId: 'r', content: 'Whole thought' }));
+    const body = scope(event('body-final', 'assistant.message', { messageId: 'm', content: 'Whole body' }));
+    const sequence = [
+      scope(ephemeral('r-delta', 'assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Partial thought' })),
+      scope(ephemeral('m-start', 'assistant.message_start', { messageId: 'm' })),
+      scope(ephemeral('m-delta', 'assistant.message_delta', { messageId: 'm', deltaContent: 'Partial body' })),
+      ...(thoughtFirst ? [thought, body] : [body, thought]),
+      scope(event('later', 'assistant.message', { content: 'Later content' })),
+      scope(event('body-update', 'assistant.message', { messageId: 'm', content: 'Updated body' })),
+    ];
+    const live = new NativeWindow(undefined, true);
+    accept(live, setup, all);
+    accept(live, [], liveAll);
+    let confirmed: string[] = [];
+    const durable: NativeChatEvent[] = [...setup];
+    for (const item of sequence) {
+      accept(live, [item], liveAll);
+      if (!item.ephemeral) durable.push(item);
+      const rows = child ? live.snapshot().messages.find(item => item.subagent)!.subMessages! : live.snapshot().messages;
+      const next = rows.filter(row => !row.provisional).map(row => row.id);
+      assert.deepEqual(next.filter(id => confirmed.includes(id)), confirmed);
+      assert.equal(rows.slice(next.length).every(row => row.provisional), true);
+      const cold = new NativeWindow(undefined, true);
+      accept(cold, durable, all);
+      const expected = child ? cold.snapshot().messages.find(item => item.subagent)!.subMessages! : cold.snapshot().messages;
+      assert.deepEqual(rows.filter(row => !row.provisional), expected);
+      confirmed = next;
+    }
+    assert.deepEqual(confirmed, thoughtFirst ? ['reasoning-r', 'm', 'later'] : ['m', 'reasoning-r', 'later']);
+    const cold = new NativeWindow(undefined, true);
+    accept(cold, durable, all);
+    assert.deepEqual(live.snapshot().messages, cold.snapshot().messages);
+  }
+});
+
+test('new final reasoning follows an already durable body and preserves differing snapshots intact', () => {
+  const history = [
+    event('first', 'assistant.message', { messageId: 'm', content: 'Body first' }),
+    event('other', 'assistant.message', { content: 'Interleaved' }),
+    event('final', 'assistant.message', { messageId: 'm', content: 'Body updated', reasoningText: 'Complete\n\nUncut' }),
+    event('independent', 'assistant.reasoning', { reasoningId: 'r', content: 'Complete\n\nUncut' }),
+  ];
+  const live = new NativeWindow(undefined, true);
+  accept(live, [], liveAll);
+  accept(live, history.slice(0, 2), liveAll);
+  const other = live.snapshot().messages[1];
+  accept(live, history.slice(2), liveAll);
+  assert.equal(live.snapshot().messages[1], other);
+  assert.deepEqual(live.snapshot().messages.map(item => [item.id, item.thought]), [
+    ['m', undefined], ['other', undefined], ['reasoning-message-m', 'Complete\n\nUncut'], ['reasoning-r', 'Complete\n\nUncut'],
+  ]);
+  for (let split = 0; split <= history.length; split++) {
+    const paged = new NativeWindow(undefined, true);
+    accept(paged, history.slice(split), all);
+    accept(paged, history.slice(0, split), all);
+    assert.deepEqual(paged.snapshot().messages, live.snapshot().messages);
+  }
+});
+
+test('older reasoning repair keeps unresolved stream links until the later same-message final reconciles them', () => {
+  const window = new NativeWindow(undefined, true);
+  accept(window, [], liveAll);
+  const first = event('first', 'assistant.message', { messageId: 'm', content: 'Body' });
+  accept(window, [
+    ephemeral('partial', 'assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Partial' }),
+    ephemeral('start', 'assistant.message_start', { messageId: 'm' }),
+    first,
+  ], liveAll);
+  const older = event('older', 'assistant.reasoning', { reasoningId: 'older', content: 'Earlier independent' });
+  accept(window, [older], all);
+  const final = event('final', 'assistant.message', { messageId: 'm', content: 'Body', reasoningText: 'Complete' });
+  accept(window, [final], liveAll);
+  accept(window, [ephemeral('late', 'assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Late' })], liveAll);
+  const cold = new NativeWindow(undefined, true);
+  accept(cold, [older, first, final], all);
+  assert.deepEqual(window.snapshot().messages, cold.snapshot().messages);
+  window.disconnect();
+  assert.equal(window.partial, false);
+});
+
+test('repeated message writes cannot equate an earlier fallback with an independent later equal thought', () => {
+  const history = [
+    event('initial', 'assistant.message', { messageId: 'm', content: 'Initial body', reasoningText: 'A' }),
+    event('later', 'assistant.reasoning', { reasoningId: 'r', content: 'A' }),
+    event('intermediate', 'assistant.message', { messageId: 'm', content: 'Intermediate body', reasoningText: 'A' }),
+    event('final', 'assistant.message', { messageId: 'm', content: 'Final body', reasoningText: 'A' }),
+  ];
+  const live = new NativeWindow(undefined, true);
+  accept(live, [], liveAll);
+  for (const value of history) accept(live, [value], liveAll);
+  assert.deepEqual(live.snapshot().messages.map(item => [item.id, item.content, item.thought]), [
+    ['reasoning-message-m', '', 'A'], ['m', 'Final body', undefined], ['reasoning-r', '', 'A'],
+  ]);
+  for (let size = 1; size <= history.length; size++) {
+    const cold = new NativeWindow(undefined, true);
+    for (let end = history.length; end > 0; end -= size) {
+      accept(cold, history.slice(Math.max(0, end - size), end), all);
+    }
+    assert.deepEqual(cold.snapshot().messages, live.snapshot().messages);
+  }
+});
+
+test('a later durable thought does not retroactively inherit its provisional link to an earlier body', () => {
+  const journal = [
+    event('first', 'assistant.message', { messageId: 'm', content: 'Body' }),
+    event('thought', 'assistant.reasoning', { reasoningId: 'r', content: 'A' }),
+    event('idle', 'session.idle'),
+    event('final', 'assistant.message', { messageId: 'm', content: 'Updated body', reasoningText: 'A' }),
+  ];
+  const live = new NativeWindow(undefined, true);
+  accept(live, [], liveAll);
+  accept(live, [
+    ephemeral('partial', 'assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Partial' }),
+    ephemeral('start', 'assistant.message_start', { messageId: 'm' }),
+  ], liveAll);
+  for (const item of journal) accept(live, [item], liveAll);
+  assert.deepEqual(live.snapshot().messages.map(item => [item.id, item.thought]), [
+    ['m', undefined], ['reasoning-r', 'A'], ['reasoning-message-m', 'A'],
+  ]);
+  const cold = new NativeWindow(undefined, true);
+  accept(cold, journal, all);
+  assert.deepEqual(live.snapshot().messages, cold.snapshot().messages);
+});
