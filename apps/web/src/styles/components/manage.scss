@@ -94,6 +94,14 @@
   &[data-tone='pending'] { color: var(--secondary-text-color); background: var(--ripple-color); }
   &[data-tone='off']     { color: var(--tertiary-text-color); background: var(--ripple-color); }
 }
+.manage-row-status {
+  display: inline-flex; align-items: center; flex: none;
+  min-width: 8.5em; font-size: var(--font-size-11);
+}
+.mcp-operation-status {
+  display: inline-flex; align-items: center; gap: 4px;
+  .spinner { flex: none; width: 10px; height: 10px; }
+}
 
 // Toggle switch (tweb-style).
 .switch {

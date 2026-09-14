@@ -17,23 +17,26 @@ export function Toggle({ on, onChange, disabled, label, busy }: {
     onClick={() => onChange(!on)}><span className="switch-knob" /></button>;
 }
 
-function SessionToggleRow({ identity, name, description, badge, enabled, disabled, disabledReason, nativeError, onChange }: {
-  identity: string; name: string; description?: string; badge?: ReactNode; enabled: boolean;
+function SessionToggleRow({ identity, name, description, badge, status, enabled, disabled, disabledReason, nativeError, onChange }: {
+  identity: string; name: string; description?: string; badge?: ReactNode; status?: ReactNode; enabled: boolean;
   disabled: boolean; disabledReason?: string; nativeError?: string; onChange: (name: string, enabled: boolean) => Promise<void>;
 }) {
   const action = useKeyedAction(identity);
   const [desired, setDesired] = useState(enabled);
   const error = action.error ?? nativeError;
+  const progress = <><span className="spinner" aria-hidden="true" />{desired ? '正在开启…' : '正在关闭…'}</>;
   return <div className="manage-row manage-session-row" data-resource-name={name} title={disabled ? disabledReason : undefined}>
     <div className="manage-row-main">
-      <div className="manage-row-name">{name}{badge}</div>
+      <div className="manage-row-name">{name}{badge}
+        {status && <span className="manage-row-status">
+          {action.busy ? <span className="mcp-status mcp-operation-status" data-tone="pending" role="status">{progress}</span> : status}
+        </span>}
+      </div>
       <div className="manage-row-feedback" role={error ? 'alert' : 'status'} data-error={!!error || undefined}>
-        <span className="manage-row-description" aria-hidden={action.busy || undefined}>
+        <span className="manage-row-description" aria-hidden={action.busy && !status || undefined}>
           {error ? `未确认：${error}` : description}
         </span>
-        {action.busy && <span className="manage-row-pending">
-          <span className="spinner" aria-hidden="true" />{desired ? '正在开启…' : '正在关闭…'}
-        </span>}
+        {action.busy && !status && <span className="manage-row-pending">{progress}</span>}
       </div>
     </div>
     <Toggle label={`启用 ${name}`} disabled={disabled || action.busy} busy={action.busy} on={enabled}
@@ -125,7 +128,7 @@ export function SessionMcp({ session, onClose }: SessionManageProps) {
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
     {resource.data?.map(server => <SessionToggleRow key={server.name}
       identity={JSON.stringify(['mcp', sessionId, server.name])} name={server.name}
-      description={server.detail} nativeError={server.error} badge={<McpStatusPill status={server.status} />}
+      description={server.detail} nativeError={server.error} status={<McpStatusPill status={server.status} />}
       enabled={server.enabled} disabled={!resource.usable || busy}
       disabledReason={busy ? 'MCP 正在切换或连接，请等待完成后再修改。' : undefined} onChange={action.run} />)}
   </ManageShell>;

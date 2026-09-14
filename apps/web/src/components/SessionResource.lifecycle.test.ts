@@ -281,7 +281,11 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.equal(control.getAttribute('aria-checked'), 'true', 'no optimistic native value');
     const notice = h.container.querySelector('.manage-row-feedback');
     assert.ok(notice);
-    assert.equal(notice.querySelector('.manage-row-pending')?.textContent, '正在关闭…');
+    assert.equal(h.container.querySelector(Component === SessionMcp ? '.mcp-operation-status' : '.manage-row-pending')?.textContent, '正在关闭…');
+    if (Component === SessionMcp) {
+      assert.equal(notice.querySelector('.manage-row-pending'), null);
+      assert.equal(notice.querySelector('.manage-row-description')?.getAttribute('aria-hidden'), null);
+    }
     assert.equal(h.container.querySelectorAll('.spinner').length, 1);
     const refresh = h.container.querySelector('[aria-label="刷新"]');
     assert.ok(refresh);
@@ -363,6 +367,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
     const [first, second] = h.container.querySelectorAll('[role="switch"]');
     const row = h.container.querySelector('[data-resource-name="one"]')!;
     const other = h.container.querySelector('[data-resource-name="two"]')!;
+    const source = row.querySelector('.manage-row-description')!;
     await h.event(first, 'click');
     assert.equal(disabled(first), true);
     assert.equal(disabled(second), Component === SessionMcp, 'MCP is serial; Skills operations are per item');
@@ -373,6 +378,12 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.equal(h.container.querySelectorAll('.spinner').length, 1, 'only the target row owns loading during a mutation');
     assert.equal(h.container.querySelector('.manage-scope'), null, 'no persistent scope explanation');
     assert.match(row.textContent, /正在关闭/);
+    if (Component === SessionMcp) {
+      assert.equal(source.textContent, 'native');
+      assert.equal(source.getAttribute('aria-hidden'), null);
+      assert.equal(row.querySelector('.mcp-operation-status')?.textContent, '正在关闭…');
+      assert.doesNotMatch(row.querySelector('.manage-row-name')!.textContent, /已连接/);
+    }
     assert.doesNotMatch(other.textContent, /正在关闭|未确认/);
     assert.equal(first.getAttribute('aria-checked'), 'true', 'never use optimistic native state');
     assert.equal(disabled(second), Component === SessionMcp);
@@ -383,6 +394,10 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.equal(second.getAttribute('aria-checked'), 'true');
     assert.ok(!disabled(first) && !disabled(second));
     assert.equal(h.container.querySelector('.spinner'), null);
+    if (Component === SessionMcp) {
+      assert.equal(source.textContent, 'native');
+      assert.match(row.querySelector('.manage-row-status')!.textContent, /已连接/);
+    }
     assert.deepEqual(calls, ['one']);
   });
 }
@@ -424,6 +439,7 @@ test('MCP honors native busy or settling states after remount, without a local a
     mcpSession: async () => [{ name: 'one', enabled: true, detail: '', status: settling ? 'pending' : 'connected' }],
     mcpToggleSession: noMutation,
   });
+
   await h.render(createElement(SessionMcp, { session, onClose: noop }));
   assert.equal(disabled(h.container.querySelector('[role="switch"]')!), true);
   assert.match(h.container.querySelector('[data-resource-name="one"]')!.getAttribute('title')!, /等待完成后再修改/);
@@ -437,6 +453,32 @@ test('MCP honors native busy or settling states after remount, without a local a
   assert.equal(disabled(h.container.querySelector('[role="switch"]')!), true);
   assert.equal(h.container.querySelector('.spinner'), null, 'native settling is not a local request');
 });
+
+for (const initiallyEnabled of [false, true]) {
+  test(`MCP ${initiallyEnabled ? 'disable' : 'enable'} replaces connection status, never its source`, async t => {
+    const h = mount(t);
+    const mutation = deferred<void>();
+    let enabled = initiallyEnabled;
+    useCockpit.setState({
+      mcpSession: async () => [{ name: 'native-server', enabled, detail: 'builtin',
+        status: enabled ? 'connected' : 'disabled' }],
+      mcpToggleSession: async (_id, _name, next) => { await mutation.promise; enabled = next; },
+    });
+    await h.render(createElement(SessionMcp, { session, onClose: noop }));
+    const row = h.container.querySelector('[data-resource-name="native-server"]')!;
+    const source = row.querySelector('.manage-row-description')!;
+    await h.event(row.querySelector('[role="switch"]')!, 'click');
+    assert.equal(source.textContent, 'builtin');
+    assert.equal(source.getAttribute('aria-hidden'), null);
+    assert.equal(row.querySelector('.mcp-operation-status')?.textContent, initiallyEnabled ? '正在关闭…' : '正在开启…');
+    assert.equal(row.querySelector('.manage-row-pending'), null);
+    assert.equal(h.container.querySelectorAll('.spinner').length, 1);
+    await act(async () => mutation.resolve());
+    assert.equal(row.querySelector('.manage-row-status')?.textContent, initiallyEnabled ? '已关闭' : '已连接');
+    assert.equal(row.querySelector('.manage-row-description'), source);
+    assert.equal(source.textContent, 'builtin');
+  });
+}
 
 test('late toggles cannot trigger readback or feedback in a replaced page', async t => {
   const h = mount(t);
