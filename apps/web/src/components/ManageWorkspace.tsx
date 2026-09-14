@@ -1,19 +1,15 @@
 // URL-driven master-detail management; Shell keeps list/detail navigation responsive.
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { McpServerGlobal } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
-import { useUp } from '../lib/nav';
 import { useKeyedAction, useKeyedResource } from '../lib/useKeyedResource';
-import { Shell, MasterPane, DetailPane } from './Shell';
-import { Icon } from './Icon';
+import { ManagementShell, type ManageSection } from './ManagementShell';
+import { StateNotice } from './StateNotice';
 import { MessageBody } from './MessageBody';
 import { ResourceStatus } from './SessionPanelKit';
 import { Toggle } from './Manage';
 
-export type ManageSection = 'mcp' | 'skills';
-
-const SECTION_TITLE: Record<ManageSection, string> = { mcp: '全局 MCP', skills: '全局 Skills' };
 type ListProps = { selected: string | null; onSelect: (name: string) => void; revision: number };
 type McpCatalog = ReturnType<typeof useKeyedResource<McpServerGlobal[]>>;
 
@@ -30,22 +26,22 @@ function NavRow({ name, sub, badge, active, onClick }: {
   );
 }
 
-function ListBody({ status, failed, empty, children }: {
-  status: string | null; failed: boolean; empty: string; children?: ReactNode;
+function ListBody({ status, failed, pending, empty, children }: {
+  status: string | null; failed: boolean; pending: boolean; empty: string; children?: ReactNode;
 }) {
   const hasRows = children && (!Array.isArray(children) || children.length > 0);
   return <>
-    <ResourceStatus status={status} failed={failed} />
+    <ResourceStatus status={status} failed={failed} pending={pending} placement={hasRows ? 'inline' : 'pane'} />
     {hasRows ? <div className="manage-list">{children}</div>
-      : !status && <div className="manage-empty">{empty}</div>}
+      : !status && <StateNotice kind="empty" placement="pane">{empty}</StateNotice>}
   </>;
 }
 
 function McpList({ selected, onSelect, catalog }: Omit<ListProps, 'revision'> & { catalog: McpCatalog }) {
-  const { data: rows, status, failed } = catalog;
+  const { data: rows, status, failed, pending } = catalog;
   return (
     <>
-      <ListBody status={status} failed={failed} empty="没有配置 MCP 服务器">
+      <ListBody status={status} failed={failed} pending={pending} empty="没有配置 MCP 服务器">
         {rows?.map((server) => (
           <NavRow key={server.name} name={server.name} sub={server.detail}
             badge={server.defaultOn ? <span className="manage-tag">新会话默认开启</span> : undefined}
@@ -63,13 +59,14 @@ function McpDefault({ name, on, onChanged, disabled }: { name: string; on: boole
   return (
     <div className="manage-detail-line">
       <button type="button" className={`switch${on ? ' is-on' : ''}`} role="switch"
-        aria-label="新会话默认开启" aria-checked={on} disabled={disabled || connState !== 'open' || busy}
+        aria-label="新会话默认开启" aria-checked={on} aria-busy={busy} disabled={disabled || connState !== 'open' || busy}
         onClick={() => { void run(async () => {
           try { await mcpSetDefault(name, !on); }
           finally { onChanged(); }
         }); }}>
         <span className="switch-knob" />
       </button>{' '}新会话默认开启
+      {busy && <StateNotice kind="loading">正在提交…</StateNotice>}
       {!disabled && <p className="manage-note">不改变已加载会话的连接。</p>}
       {error && <div className="manage-note" role="alert">设置失败：{error}</div>}
     </div>
@@ -77,13 +74,13 @@ function McpDefault({ name, on, onChanged, disabled }: { name: string; on: boole
 }
 
 function McpDetail({ name, onChanged, catalog }: { name: string; onChanged: () => void; catalog: McpCatalog }) {
-  const { data: rows, status, failed, valid } = catalog;
+  const { data: rows, status, failed, valid, pending } = catalog;
   const row = rows?.find((server) => server.name === name);
-  if (!row) return status ? <ResourceStatus status={status} failed={failed} />
+  if (!row) return status ? <ResourceStatus status={status} failed={failed} pending={pending} placement="pane" />
     : <div className="detail-empty"><p>未找到该 MCP 服务器。</p></div>;
   return (
     <div className="manage-detail scrollable">
-      <ResourceStatus status={status} failed={failed} />
+      <ResourceStatus status={status} failed={failed} pending={pending} />
       <h2 className="manage-detail-title">{row.name}</h2>
       <div className="manage-detail-line">{row.detail}</div>
       <McpDefault name={row.name} on={row.defaultOn} disabled={!valid} onChanged={onChanged} />
@@ -95,9 +92,9 @@ function McpDetail({ name, onChanged, catalog }: { name: string; onChanged: () =
 function SkillsList({ selected, onSelect, revision }: ListProps) {
   const skillsGlobal = useCockpit((s) => s.skillsGlobal);
   const load = useCallback(() => skillsGlobal(), [skillsGlobal]);
-  const { data: rows, status, failed } = useKeyedResource('global:skills', load, revision);
+  const { data: rows, status, failed, pending } = useKeyedResource('global:skills', load, revision);
   return (
-    <ListBody status={status} failed={failed} empty="没有可用的 skill">
+    <ListBody status={status} failed={failed} pending={pending} empty="没有可用的 skill">
       {rows?.map((skill) => (
         <NavRow key={skill.name} name={skill.name} sub={skill.description}
           badge={skill.source ? <span className="manage-tag">{skill.source}</span> : undefined}
@@ -120,6 +117,7 @@ function SkillGlobalToggle({ name, enabled, disabled, onChanged }: {
           finally { onChanged(); }
         }); }} />{' '}全局默认启用
       {!disabled && <p className="manage-note">用于新建或卸载后重新加载的会话，不改变当前已加载会话。</p>}
+      {action.busy && <StateNotice kind="loading">正在提交…</StateNotice>}
       {action.error && <div className="manage-note" role="alert">设置失败：{action.error}</div>}
     </div>
   );
@@ -128,13 +126,13 @@ function SkillGlobalToggle({ name, enabled, disabled, onChanged }: {
 function SkillDetail({ name, revision, onChanged }: { name: string; revision: number; onChanged: () => void }) {
   const skillsRead = useCockpit((s) => s.skillsRead);
   const load = useCallback(() => skillsRead(name), [skillsRead, name]);
-  const { data, status, failed, valid } = useKeyedResource(`global:skill:${name}`, load, revision);
-  if (!data) return status ? <ResourceStatus status={status} failed={failed} />
+  const { data, status, failed, valid, pending } = useKeyedResource(`global:skill:${name}`, load, revision);
+  if (!data) return status ? <ResourceStatus status={status} failed={failed} pending={pending} placement="pane" />
     : <div className="detail-empty"><p>未找到该 skill。</p></div>;
   const meta = [data.source, data.userInvocable ? '可手动调用' : null].filter(Boolean).join(' · ');
   return (
     <div className="manage-detail scrollable">
-      <ResourceStatus status={status} failed={failed} />
+      <ResourceStatus status={status} failed={failed} pending={pending} />
       <h2 className="manage-detail-title">{data.name}</h2>
       {meta && <div className="manage-detail-meta">{meta}</div>}
       {typeof data.enabled === 'boolean'
@@ -144,54 +142,6 @@ function SkillDetail({ name, revision, onChanged }: { name: string; revision: nu
       {data.body ? <div className="manage-detail-body"><MessageBody body={data.body} /></div>
         : <div className="manage-empty">没有 SKILL.md 内容</div>}
     </div>
-  );
-}
-
-function MasterHeader({ section, item, onRefresh }: {
-  section: ManageSection; item: string | null; onRefresh: () => void;
-}) {
-  const up = useUp();
-  const backRef = useRef<HTMLButtonElement | null>(null);
-  const connState = useCockpit((s) => s.connState);
-  const mcpRefresh = useCockpit((s) => s.mcpRefresh);
-  const { run, busy, error } = useKeyedAction(`global:refresh:${section}`);
-  useLayoutEffect(() => {
-    if (item === null) backRef.current?.focus();
-  }, [item]);
-  return (
-    <>
-      <header className="manage-header">
-        <button ref={backRef} className="btn-icon rp" type="button"
-          aria-label={item === null ? '返回会话列表' : `返回${SECTION_TITLE[section]}列表`}
-          onClick={() => up(item === null ? '/' : `/${section}`)}>
-          <Icon name="back" size={24} />
-        </button>
-        <span className="manage-title">{SECTION_TITLE[section]}</span>
-        <button className="btn-icon rp manage-action" type="button" aria-label={section === 'mcp' ? '刷新 Copilot MCP 配置缓存' : '刷新'}
-          disabled={connState !== 'open' || busy} aria-busy={busy} onClick={() => {
-            void run(async () => { if (section === 'mcp') await mcpRefresh(); }, onRefresh);
-          }}>
-          <Icon name="reload" size={20} />
-        </button>
-      </header>
-      {error && <div className="manage-note" role="alert">刷新失败：{error}</div>}
-    </>
-  );
-}
-
-function DetailHeader({ item }: { item: string }) {
-  const up = useUp();
-  const titleRef = useRef<HTMLSpanElement | null>(null);
-  useLayoutEffect(() => { titleRef.current?.focus(); }, [item]);
-  return (
-    <>
-      <header className="chat-topbar">
-        <button className="chat-back btn-icon rp lg:hidden" type="button" aria-label="返回" onClick={() => up()}>
-          <Icon name="back" size={24} />
-        </button>
-        <span ref={titleRef} tabIndex={-1} className="manage-title manage-detail-headtitle">{item}</span>
-      </header>
-    </>
   );
 }
 
@@ -213,24 +163,13 @@ function ManagementContent({ section, item }: {
   const mcpCatalog = useKeyedResource('global:mcp', mcpGlobal, refreshNonce, section === 'mcp');
   const refresh = () => setRefreshNonce((n) => n + 1);
   const select = (name: string) => { void navigate(`/${section}/${encodeURIComponent(name)}`, { replace: item !== null }); };
-  const masterHeader = (
-    <MasterHeader section={section} item={item} onRefresh={refresh} />
-  );
-  const detailHeader = item !== null ? (
-    <DetailHeader item={item} />
-  ) : undefined;
   return (
-    <Shell ariaLabel="管理">
-      <MasterPane ariaLabel={SECTION_TITLE[section]} mobileVisible={item === null} header={masterHeader}>
-        {section === 'mcp' ? <McpList catalog={mcpCatalog} selected={item} onSelect={select} />
-          : <SkillsList revision={refreshNonce} selected={item} onSelect={select} />}
-      </MasterPane>
-      <DetailPane ariaLabel="详情" mobileVisible={item !== null} header={detailHeader}>
-        {item === null ? (
+    <ManagementShell section={section} item={item} onRefresh={refresh}
+      master={section === 'mcp' ? <McpList catalog={mcpCatalog} selected={item} onSelect={select} />
+        : <SkillsList revision={refreshNonce} selected={item} onSelect={select} />}
+      detail={item === null ? (
           <div className="detail-empty manage-selection-hint"><p>选择左侧的一项查看详情。</p></div>
         ) : section === 'mcp' ? <McpDetail catalog={mcpCatalog} name={item} onChanged={refresh} />
-          : <SkillDetail revision={refreshNonce} name={item} onChanged={refresh} />}
-      </DetailPane>
-    </Shell>
+          : <SkillDetail revision={refreshNonce} name={item} onChanged={refresh} />} />
   );
 }

@@ -13,6 +13,8 @@ import { useSessionResource } from '../lib/useSessionResource';
 import { Icon } from './Icon';
 import { McpStatusPill } from './McpStatus';
 import { PanelCloseButton, ResourceStatus, SessionResume } from './SessionPanelKit';
+import { PaneHeader } from './PaneHeader';
+import { StateNotice } from './StateNotice';
 
 // ── Switch ─────────────────────────────────────────────────────────────────────
 export function Toggle({ on, onChange, disabled, label }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string }) {
@@ -45,20 +47,17 @@ function ManageRow({ name, sub, badge, toggle }: {
 }
 
 // ── Shell (header + scrollable body) ───────────────────────────────────────────
-function ManageShell({ title, onClose, action, status, failed, empty, children, error }: {
+function ManageShell({ title, onClose, action, status, failed, pending, hasData, empty, children, error }: {
   title: string; onClose: () => void; action?: React.ReactNode;
-  status: string | null; failed?: boolean; empty?: string; children?: React.ReactNode;
+  status: string | null; failed?: boolean; pending?: boolean; hasData: boolean; empty?: string; children?: React.ReactNode;
   error?: string | null;
 }) {
   return (
     <>
-      <header className="manage-header">
-        <PanelCloseButton onClose={onClose} />
-        <span className="manage-title info-panel-title" title={title}>{title}</span>
-        {action}
-      </header>
+      <PaneHeader className="manage-header" leading={<PanelCloseButton onClose={onClose} />}
+        title={<span className="manage-title info-panel-title" title={title}>{title}</span>} actions={action} />
       <div className="manage-body scrollable">
-        <ResourceStatus status={status} failed={failed} />
+        <ResourceStatus status={status} failed={failed} pending={pending} placement={hasData ? 'inline' : 'pane'} />
         {error && <div className="manage-empty" role="alert">操作失败：{error}</div>}
         {children}
         {empty && <div className="manage-empty">{empty}</div>}
@@ -67,10 +66,10 @@ function ManageShell({ title, onClose, action, status, failed, empty, children, 
   );
 }
 
-function RefreshBtn({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+function RefreshBtn({ onClick, disabled, pending }: { onClick: () => void; disabled?: boolean; pending: boolean }) {
   return (
-    <button className="btn-icon rp manage-action" type="button" aria-label="刷新" onClick={onClick} disabled={disabled}>
-      <Icon name="reload" size={20} />
+    <button className="btn-icon rp manage-action" type="button" aria-label="刷新" onClick={onClick} disabled={disabled} aria-busy={pending}>
+      {pending ? <span className="spinner" aria-hidden="true" /> : <Icon name="reload" size={20} />}
     </button>
   );
 }
@@ -94,10 +93,11 @@ export function SessionMcp({ session, onClose }: SessionManageProps) {
 
   return (
     <ManageShell title={`本会话 MCP · ${session.title}`} onClose={onClose}
-      action={<RefreshBtn disabled={resource.requiresResume || !resource.connected || resource.pending || action.busy} onClick={() => { void resource.refresh(); }} />}
-      status={resource.status} failed={resource.failed} error={action.error}
+      action={<RefreshBtn pending={resource.pending} disabled={resource.closing || resource.requiresResume || !resource.connected || resource.pending || action.busy} onClick={() => { void resource.refresh(); }} />}
+      status={resource.status} failed={resource.failed} pending={resource.pending} hasData={resource.data !== undefined} error={action.error}
       empty={resource.valid && resource.data?.length === 0 ? '本会话没有可用的 MCP 服务器' : undefined}>
-      <SessionResume sessionId={sessionId} required={resource.requiresResume} />
+      <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
+      {action.busy && <StateNotice kind="loading">正在提交…</StateNotice>}
       {resource.valid && !action.error && !!resource.data?.length &&
         <p className="manage-scope">开关仅本会话有效；冷加载采用原生全局默认，不恢复临时开关。</p>}
       {resource.data?.map((s) => (
@@ -125,10 +125,11 @@ export function SessionSkills({ session, onClose }: SessionManageProps) {
 
   return (
     <ManageShell title={`本会话 Skills · ${session.title}`} onClose={onClose}
-      action={<RefreshBtn disabled={resource.requiresResume || !resource.connected || resource.pending || action.busy} onClick={() => { void resource.refresh(); }} />}
-      status={resource.status} failed={resource.failed} error={action.error}
+      action={<RefreshBtn pending={resource.pending} disabled={resource.closing || resource.requiresResume || !resource.connected || resource.pending || action.busy} onClick={() => { void resource.refresh(); }} />}
+      status={resource.status} failed={resource.failed} pending={resource.pending} hasData={resource.data !== undefined} error={action.error}
       empty={resource.valid && resource.data?.length === 0 ? '没有可用的 skill' : undefined}>
-      <SessionResume sessionId={sessionId} required={resource.requiresResume} />
+      <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
+      {action.busy && <StateNotice kind="loading">正在提交…</StateNotice>}
       {resource.valid && !action.error && !!resource.data?.length &&
         <p className="manage-scope">开关仅本会话临时有效；冷加载采用原生配置发现和全局禁用列表，不恢复临时开关。</p>}
       {resource.data?.map((s) => (

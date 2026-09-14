@@ -47,7 +47,7 @@ test('streaming store updates do not notify the metadata/sidebar render boundary
   const render = () => {
     renderCount++;
     return renderToStaticMarkup(createElement(Sidebar, {
-      sessions: metadata, activeId: 'active', query: '',
+      sessions: metadata, activeId: 'active', query: '', snapshotReady: true, connected: true,
       onSelect() {}, getMenuItems: () => [],
     }));
   };

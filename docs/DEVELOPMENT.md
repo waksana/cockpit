@@ -66,3 +66,15 @@ For current event ordering and process disclosure behavior, choose `ordered-even
 Its controls feed synthetic historical/live/reconnect pages through the production
 browser projection. The [native chat guide](native-chat.md#ordered-presentation)
 owns the current grouping and update contract.
+
+## Web presentation boundaries
+
+`PaneHeader` and `StateNotice` share presentation, not routing or resource state.
+The management route keeps its header and back control during lazy loading.
+First loads use a pane placeholder; refreshes retain content with an inline
+status. Pending actions report submission without claiming native application.
+Consumers must use the existing session resource's availability, including
+closing and resume-required states, rather than infer readiness from old metadata.
+`PendingDecision` shares the ask/plan/elicitation card frame while their callbacks
+and native action lists remain distinct. Chat read ownership and scrolling still
+belong to the existing route/window and single scroll owner.

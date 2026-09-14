@@ -44,16 +44,6 @@
   }
 }
 
-.info-panel-header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  height: var(--header-height);
-  min-height: var(--header-height);
-  padding: 0 0.5rem;
-  border-bottom: 1px solid var(--border-color);
-}
 .info-panel-title {
   flex: 1 1 auto;
   font-size: var(--font-size-16);
@@ -124,7 +114,7 @@
   letter-spacing: 0.04em;
 }
 
-.info-loading, .info-empty {
+.info-empty {
   display: flex; align-items: center; gap: 0.5rem;
   padding: 0.5rem 0;
   font-size: var(--font-size-14);

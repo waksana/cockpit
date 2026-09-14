@@ -26,7 +26,8 @@ test('a deep link shows synchronization before the snapshot and absence only aft
     const render = () => renderToStaticMarkup(createElement(MemoryRouter, {
       initialEntries: ['/session/synthetic-waiting'], children: createElement(App),
     }));
-    assert.match(render(), /role="status">正在同步会话/);
+    assert.match(render(), /data-kind="loading" data-placement="pane" role="status"/);
+    assert.match(render(), /正在同步会话/);
     assert.doesNotMatch(render(), /这个会话不存在|或已被删除/);
     state.snapshotReady = true;
     assert.match(render(), /这个会话不存在,或已被删除/);

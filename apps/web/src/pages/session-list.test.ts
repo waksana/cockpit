@@ -70,7 +70,7 @@ test('search and rendering never read retired business fields', () => {
 const noAction = () => { throw new Error('Rendering must not dispatch native actions'); };
 function render(sessions: ChatSession[], overrides: Partial<ComponentProps<typeof Sidebar>> = {}) {
   return renderToStaticMarkup(createElement(Sidebar, {
-    sessions, activeId: null, query: '', onSelect: noAction, getMenuItems: () => [], ...overrides,
+    sessions, activeId: null, query: '', snapshotReady: true, connected: true, onSelect: noAction, getMenuItems: () => [], ...overrides,
   }));
 }
 const titles = (html: string) => [...html.matchAll(/<span class="dialog-title">([^<]*)<\/span>/g)].map(match => match[1]);
@@ -107,4 +107,15 @@ test('sidebar preserves its basic grid, native cwd label and empty-state distinc
   assert.match(html, /<span class="dialog-subtitle">项目<\/span><span class="dialog-meta"><\/span>/);
   assert.match(render([]), /服务器上没有 session/);
   assert.match(render([session('one')], { query: 'missing' }), /没有匹配的会话/);
+});
+test('an empty list is not authoritative before the first connection snapshot', () => {
+  for (const connected of [true, false]) {
+    const html = render([], { snapshotReady: false, connected });
+    assert.match(html, /aria-busy="true"/);
+    assert.match(html, connected ? /正在同步会话/ : /等待连接/);
+    assert.doesNotMatch(html, /服务器上没有 session|没有匹配的会话/);
+  }
+  const reconnect = render([session('retained')], { snapshotReady: false, connected: false });
+  assert.match(reconnect, /Session retained/);
+  assert.doesNotMatch(reconnect, /服务器上没有 session/);
 });

@@ -12,17 +12,6 @@
   background: var(--surface-color);
 }
 
-// Header — mirrors .info-panel-header dimensions so the two slots align.
-.manage-header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  height: var(--header-height);
-  min-height: var(--header-height);
-  padding: 0 0.5rem;
-  border-bottom: 1px solid var(--border-color);
-}
 .manage-title { flex: 1 1 auto; font-size: var(--font-size-16); font-weight: 500; }
 .manage-action { flex: none; }
 

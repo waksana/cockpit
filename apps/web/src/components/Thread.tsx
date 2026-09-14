@@ -20,16 +20,8 @@ import { ActivityHeader } from './ActivityHeader';
 import { DisclosureChoices } from './DisclosureChoices';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
 import { groupTranscript, type TranscriptRow, type ProcessItem } from '../lib/transcriptRows';
-
-// Plan-exit action → button label. The SDK offers a subset of these (incl.
-// autopilot_fleet); the card renders one button per offered action rather than a
-// fixed three. The recommended one is emphasized; native order is preserved.
-const PLAN_ACTION_LABEL: Record<ExitPlanModeAction, string> = {
-  interactive: '开始执行（交互）',
-  autopilot: '自动执行',
-  autopilot_fleet: '并行执行（fleet）',
-  exit_only: '仅退出计划',
-};
+import { AskCard, PlanCard, ElicitationCard } from './PendingDecision';
+import { StateNotice } from './StateNotice';
 
 // Static glyphs accompany the explicit status text; no decorative motion.
 function ToolStatusIcon({ status }: { status: ToolCall['status'] }) {
@@ -484,12 +476,12 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
           <div ref={contentRef} className="chat-message-content">
             <div className="chat-history-controls">
               <div className="chat-history-actions">
-                {session.loadingHistory || preparingHistory ? (
-                  <div className="chat-loading-older" role="status">
-                    {preparingHistory || session.historyStale || !session.materialized ? '正在同步对话历史…' : '加载更早的消息…'}
-                  </div>
+                {preparingHistory ? null : session.loadingHistory ? (
+                  <StateNotice className="chat-loading-older" kind="loading">
+                    {session.historyStale || !session.materialized ? '正在同步对话历史…' : '加载更早的消息…'}
+                  </StateNotice>
                 ) : session.historyStale || !session.materialized ? (
-                  <div className="chat-loading-older" role={session.historyError ? 'alert' : 'status'}>
+                  <StateNotice className="chat-loading-older" kind={session.historyError ? 'error' : 'info'}>
                     {session.historyError ? `历史加载失败：${session.historyError}` : '对话历史尚未同步。'}
                     {onRetryHistory && <button type="button" className="dialog-btn rp" onClick={() => {
                       scrollOwnerRef.current?.follow();
@@ -497,11 +489,11 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
                     }}>
                       重新读取最新历史
                     </button>}
-                  </div>
-                ) : session.historyError ? <div className="chat-loading-older" role="alert">
+                  </StateNotice>
+                ) : session.historyError ? <StateNotice className="chat-loading-older" kind="error">
                   历史加载失败：{session.historyError}
                   <button type="button" className="dialog-btn rp" onClick={onRetryHistory}>重试加载历史</button>
-                </div> : null}
+                </StateNotice> : null}
               </div>
               {session.partialHistory && <p className="chat-history-note" role="status">
                 断线期间的临时片段可能不完整；已保留现有文字，以原生保存后的完整消息为准。
@@ -514,7 +506,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
               aria-hidden={preparingHistory || undefined} inert={preparingHistory || undefined}>
               {session.messages.length === 0 && session.materialized && !session.historyStale && !session.loadingHistory && !session.hasMore && (
                 <div className="chat-empty-hint"><Icon name="newchat" size={28} />
-                  <strong>开始对话</strong><span>输入消息，或添加文件一起讨论。</span><code>{session.cwd}</code></div>
+                  <strong>开始对话</strong><span>输入消息开始讨论。</span><code>{session.cwd}</code></div>
               )}
               <TranscriptMessages messages={messages} sessionId={session.sessionId}
                 liveId={session.status === 'running' ? session.messages.at(-1)?.id : undefined}
@@ -528,6 +520,9 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
           </div>
         </div>
 
+        {preparingHistory && <StateNotice className="chat-initial-loading" kind="loading" placement="pane">
+          正在同步对话历史…
+        </StateNotice>}
         {newCount > 0 && (
           <button className="new-msg-badge" type="button" onClick={jumpToBottom}>
             {newCount} 条新消息
@@ -535,73 +530,11 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
         )}
       </div>
 
-      {!readOnly && ask && (
-        <div className="chat-ask" role="group" aria-label="需要你的选择" aria-busy={actionPending}>
-          <div className="chat-pending-head"><Icon name="newchat" size={16} />需要你的回答</div>
-          <div className="chat-ask-q">{ask.question}</div>
-          {ask.choices && ask.choices.length > 0 && (
-            <div className="chat-ask-choices">
-              {ask.choices.map((c) => (
-                <button key={c} type="button" className="chat-ask-choice" disabled={actionPending} onClick={() => { void handleChoice(c); }}>{c}</button>
-              ))}
-            </div>
-          )}
-          <div className="chat-pending-hint" role="status">{actionPending ? '正在提交回答…' : ask.allowFreeform === false ? '请选择一个选项。' : '也可以在下方输入自己的回答。'}</div>
-        </div>
-      )}
-
-      {!readOnly && session.planRequest && (
-        <div className="chat-ask chat-pending chat-plan" role="group" aria-label="计划待确认" aria-busy={actionPending}>
-          <div className="chat-pending-head"><Icon name="mode_plan" size={16} />计划已就绪</div>
-          <div className="chat-pending-content" role="region" tabIndex={0} aria-label="计划内容">
-            <div className="chat-pending-summary">
-              <MessageBody body={session.planRequest.summary} />
-            </div>
-            {session.planRequest.planContent && (
-              <details className="chat-pending-detail">
-                <summary>查看完整计划</summary>
-                <pre className="chat-pending-pre">{session.planRequest.planContent}</pre>
-              </details>
-            )}
-          </div>
-          <div className="chat-ask-choices">
-            {(() => {
-              const pr = session.planRequest!;
-              return (pr.actions ?? []).map((a) => (
-                <button
-                  key={a}
-                  type="button"
-                  className={`chat-ask-choice${a === pr.recommendedAction ? ' is-recommended' : ''}`}
-                  disabled={actionPending}
-                  onClick={() => { void runAction(() => onRespondPlan?.(pr.requestId, a)); }}
-                >
-                  {PLAN_ACTION_LABEL[a]}
-                </button>
-              ));
-            })()}
-          </div>
-          {!session.planRequest.actions?.length && <div className="chat-pending-hint" role="status">
-            {session.planRequest.actions ? '原生未提供可用的计划操作。' : '原生计划操作列表不可用。'}
-          </div>}
-          <div className="chat-pending-hint" role="status">{actionPending ? '正在提交选择…' : '或在下方直接输入新指令，我先照做再回到计划'}</div>
-        </div>
-      )}
-
-      {!readOnly && session.elicitation && (
-        <div className="chat-ask chat-pending" role="group" aria-label="需要你的输入" aria-busy={actionPending}>
-          <div className="chat-pending-head"><Icon name="mcp" size={16} />工具请求确认</div>
-          <div className="chat-ask-q">{session.elicitation.message}</div>
-          <div className="chat-ask-choices">
-            {(session.elicitation.actions ?? ['accept', 'decline', 'cancel']).map(action => (
-              <button key={action} type="button" className="chat-ask-choice" disabled={actionPending}
-                onClick={() => { void runAction(() => onRespondElicitation?.(session.elicitation!.requestId, action)); }}>
-                {{ accept: '同意', decline: '拒绝', cancel: '取消' }[action]}
-              </button>
-            ))}
-          </div>
-          {actionPending && <div className="chat-pending-hint" role="status">正在提交选择…</div>}
-        </div>
-      )}
+      {!readOnly && ask && <AskCard request={ask} pending={actionPending} onChoice={choice => { void handleChoice(choice); }} />}
+      {!readOnly && planRequest && <PlanCard request={planRequest} pending={actionPending}
+        onSelect={action => { void runAction(() => onRespondPlan?.(planRequest.requestId, action)); }} />}
+      {!readOnly && session.elicitation && <ElicitationCard request={session.elicitation} pending={actionPending}
+        onSelect={action => { void runAction(() => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
 
       {(session.compacting || session.status === 'running' || (!readOnly && (queueCount > 0 || interruptResult))) && (
         <section className="chat-execution" aria-label="执行与排队">

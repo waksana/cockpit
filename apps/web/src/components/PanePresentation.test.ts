@@ -1,0 +1,69 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { MemoryRouter } from 'react-router-dom';
+import { compile } from 'sass';
+import { PaneHeader } from './PaneHeader';
+import { StateNotice } from './StateNotice';
+import { ResourceStatus, PanelPageShell } from './SessionPanelKit';
+import { ManagementShell } from './ManagementShell';
+
+test('shared state presentation distinguishes actual loading, errors, offline and empty', () => {
+  const render = (props: Parameters<typeof ResourceStatus>[0]) => renderToStaticMarkup(createElement(ResourceStatus, props));
+  const loading = render({ status: '加载中…', pending: true });
+  assert.match(loading, /data-kind="loading"/);
+  assert.match(loading, /class="spinner" aria-hidden="true"/);
+  assert.match(loading, /role="status"/);
+  const failed = render({ status: '加载失败：offline', failed: true });
+  assert.match(failed, /role="alert"/);
+  assert.doesNotMatch(failed, /class="spinner"/);
+  const waiting = render({ status: '等待连接…' });
+  assert.match(waiting, /data-kind="info"/);
+  assert.doesNotMatch(waiting, /class="spinner"/);
+  assert.equal(render({ status: null }), '');
+  assert.match(renderToStaticMarkup(createElement(StateNotice, { kind: 'empty', placement: 'pane', children: '没有记录' })), /data-placement="pane"/);
+});
+
+test('the shared header accepts page-specific controls without owning navigation', () => {
+  const html = renderToStaticMarkup(createElement(PaneHeader, {
+    title: 'Native title',
+    leading: createElement('button', { type: 'button', 'aria-label': '返回' }),
+    actions: createElement('button', { type: 'button', 'aria-label': '刷新', disabled: true }),
+  }));
+  assert.match(html, /class="pane-header"/);
+  assert.match(html, /class="pane-header-content">Native title/);
+  assert.equal((html.match(/<button /g) ?? []).length, 2);
+  assert.match(html, /aria-label="刷新" disabled=""/);
+});
+
+test('lazy management and panel loads retain their navigation shell and announced loading', () => {
+  const html = renderToStaticMarkup(createElement(MemoryRouter, {
+    children: createElement(ManagementShell, {
+      section: 'skills', item: 'skill-one',
+      master: createElement(StateNotice, { kind: 'loading', placement: 'pane', children: '加载页面…' }),
+      detail: createElement(StateNotice, { kind: 'loading', placement: 'pane', children: '加载页面…' }),
+    }),
+  }));
+  assert.match(html, /全局 Skills/);
+  assert.match(html, /skill-one/);
+  assert.match(html, /aria-label="返回"/);
+  assert.match(html, /aria-label="刷新" disabled=""/);
+  assert.equal((html.match(/class="spinner"/g) ?? []).length, 2);
+  const panel = renderToStaticMarkup(createElement(PanelPageShell, { title: 'Session settings', onClose() {}, loading: true }));
+  assert.match(panel, /Session settings/);
+  assert.match(panel, /role="status"/);
+  assert.match(panel, /data-kind="loading"/);
+});
+
+test('activity headers retain one first-line baseline and icon slot across expansion', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.activity-head \{[^}]*align-items: start;[^}]*height: 36px;[^}]*padding: 8px;/);
+  for (const slot of ['icon', 'chevron']) {
+    assert.match(css, new RegExp(`\\.activity-${slot} \\{[^}]*height: 20px;`));
+  }
+  const expanded = css.match(/\.msg-tool\[data-open=true\] > \.activity-head \{([^}]*)\}/)?.[1];
+  assert.ok(expanded);
+  assert.doesNotMatch(expanded, /align-items|padding/);
+  assert.doesNotMatch(css, /\.msg-tool\[data-open=true\] > \.activity-head \.activity-(icon|chevron)/);
+});

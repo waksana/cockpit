@@ -151,6 +151,10 @@ the group's mounted identity. They are not a second native state or history stor
 The transcript uses no group divider lines or extra inter-group gaps. It retains
 internal text/button spacing, original timestamps, keyboard focus and local
 code/tool copying.
+Activity disclosure keeps its first-line baseline and icon slots fixed; a long
+expanded tool title can wrap without shifting the first line or compensating
+the transcript scroll position. Initial history loading is a pane-level status
+outside the measured rows; older-page refresh status stays inline.
 Right-clicking chat content uses the browser's native context menu, not a custom
 message-copy menu. Code and tool-detail copy buttons remain available.
 

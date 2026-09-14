@@ -38,6 +38,7 @@ for (const section of ['mcp', 'skills']) {
 // The existing server renderer cannot run resource layout effects. Keep the
 // loaded-detail control contract covered alongside transport and resource tests.
 const source = readFileSync(new URL('./ManageWorkspace.tsx', import.meta.url), 'utf8').replace(/\s+/g, ' ');
+const shell = readFileSync(new URL('./ManagementShell.tsx', import.meta.url), 'utf8').replace(/\s+/g, ' ');
 
 for (const section of ['mcp', 'skills']) {
   test(`${section} list has one parent back control and no global hamburger`, (t) => {
@@ -48,10 +49,10 @@ for (const section of ['mcp', 'skills']) {
 }
 
 test('desktop master and narrow detail return one level without duplicate visible controls', () => {
-  assert.match(source, /up\(item === null \? '\/' : `\/\$\{section\}`\)/);
-  assert.match(source, /className="chat-back btn-icon rp lg:hidden".*onClick=\{\(\) => up\(\)\}/);
-  assert.match(source, /if \(item === null\) backRef.current\?\.focus\(\)/);
-  assert.match(source, /useLayoutEffect\(\(\) => \{ titleRef.current\?\.focus\(\); \}, \[item\]\)/);
+  assert.match(shell, /up\(item === null \? '\/' : `\/\$\{section\}`\)/);
+  assert.match(shell, /className="chat-back btn-icon rp lg:hidden".*onClick=\{\(\) => up\(\)\}/);
+  assert.match(shell, /if \(item === null\) backRef.current\?\.focus\(\)/);
+  assert.match(shell, /useLayoutEffect\(\(\) => \{ titleRef.current\?\.focus\(\); \}, \[item\]\)/);
 });
 
 test('global skill toggles render only authoritative booleans and never assume unknown means enabled', () => {
@@ -87,7 +88,7 @@ test('MCP parent owns one route-independent catalog and disables it outside MCP'
 
 test('MCP detail derives the route target and write validity from the shared accepted catalog', () => {
   const detail = source.slice(source.indexOf('function McpDetail'), source.indexOf('function SkillsList'));
-  assert.match(detail, /data: rows, status, failed, valid \} = catalog/);
+  assert.match(detail, /data: rows, status, failed, valid, pending \} = catalog/);
   assert.match(detail, /rows\?\.find\(\(server\) => server.name === name\)/);
   assert.match(detail, /if \(!row\) return status \? <ResourceStatus/);
   assert.match(detail, /未找到该 MCP 服务器/);
@@ -96,8 +97,8 @@ test('MCP detail derives the route target and write validity from the shared acc
 });
 
 test('global MCP refresh invalidates configuration cache without invoking session lifecycle', () => {
-  assert.match(source, /if \(section === 'mcp'\) await mcpRefresh\(\);/);
-  assert.doesNotMatch(source, /reloadSession|unloadSession|mcpToggleSession/);
+  assert.match(shell, /if \(section === 'mcp'\) await mcpRefresh\(\);/);
+  assert.doesNotMatch(source + shell, /reloadSession|unloadSession|mcpToggleSession/);
   assert.match(source, /不改变已加载会话的连接/);
   assert.match(source, /用于新建或卸载后重新加载的会话，不改变当前已加载会话/);
   assert.doesNotMatch(source, /Cockpit 不保存偏好/);

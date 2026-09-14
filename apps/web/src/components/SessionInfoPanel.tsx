@@ -158,7 +158,8 @@ export function ModelControls({ session, onSetModel, disabled }: {
         <div className="info-model-actions">
           <button type="button" className="dialog-btn primary rp"
             disabled={disabled || invalid || action.busy || submission?.revision === revision}
-            onClick={apply}>应用配置</button>
+            aria-busy={action.busy}
+            onClick={apply}>{action.busy ? '正在应用…' : '应用配置'}</button>
           <button type="button" className="dialog-btn rp" disabled={disabled}
             onClick={() => edit(selectionFrom(session))}>使用当前原生值</button>
         </div>
@@ -183,10 +184,7 @@ export function SessionInfoPanel(props: SessionInfoPanelProps) {
 }
 
 function InfoDetails({ session, onClose, onSetModel }: SessionInfoPanelProps) {
-  const connected = useCockpit((s) => s.connState === 'open');
   const sid = session.sessionId;
-  const authoritative = useCockpit((s) => s.sessions.find(row => row.sessionId === sid));
-  const loaded = authoritative?.loaded ?? session.loaded;
   const load = useCallback((signal: AbortSignal) => useCockpit.getState().getResources(sid, ['model', 'models'], signal), [sid]);
   const resource = useSessionResource(sid, `models:${sid}`, load, 0, ['model', 'models']);
 
@@ -198,11 +196,11 @@ function InfoDetails({ session, onClose, onSetModel }: SessionInfoPanelProps) {
         <div className="info-section-content info-meta-id"><span className="info-meta-id-label">ID</span>{session.sessionId}</div>
       </section>
 
-      <SessionResume sessionId={sid} required={!loaded} />
-      {!loaded && <div className="info-empty">未加载：模型及资源状态不可用，不显示上次读值或全局默认值。</div>}
-      <ResourceStatus status={resource.status} failed={resource.failed} />
-      {loaded && <ModelControls key={sid} session={{ ...session, ...resource.data }}
-        disabled={!connected || resource.pending || resource.failed} onSetModel={onSetModel} />}
+      <SessionResume sessionId={sid} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
+      {resource.requiresResume && <div className="info-empty">未加载：模型及资源状态不可用，不显示上次读值或全局默认值。</div>}
+      <ResourceStatus status={resource.status} failed={resource.failed} pending={resource.pending} />
+      {!resource.requiresResume && <ModelControls key={sid} session={{ ...session, ...resource.data }}
+        disabled={!resource.valid} onSetModel={onSetModel} />}
       <PermissionPolicy />
     </PanelPageShell>
   );

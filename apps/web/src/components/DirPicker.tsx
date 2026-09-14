@@ -6,6 +6,7 @@ import { useKeyedAction, useKeyedResource } from '../lib/useKeyedResource';
 import { readDirectory } from '../lib/directoryResource';
 import { Icon } from './Icon';
 import { DirectoryModal } from './Dialog';
+import { StateNotice } from './StateNotice';
 
 export interface DirPickerProps {
   initialPath?: string;
@@ -66,7 +67,8 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
       </button>
     </div>
     <div className="dirpicker-list scrollable">
-      {resource.status && <div className="dirpicker-empty" role={resource.failed ? 'alert' : 'status'}>{resource.status}</div>}
+      {resource.status && <StateNotice kind={resource.failed ? 'error' : resource.pending ? 'loading' : 'info'}
+        placement={entries?.length ? 'inline' : 'pane'}>{resource.status}</StateNotice>}
       {parent && <button type="button" className="dirpicker-row up rp" disabled={!resource.valid || locked} onClick={() => load(parent)}>
         <span className="dirpicker-ico"><Icon name="back" size={18} /></span>
         <span className="dirpicker-name">上级目录</span>

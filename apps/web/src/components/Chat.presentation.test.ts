@@ -126,6 +126,7 @@ test('the native composer keeps a compact send action without parked file or voi
   const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession('empty'), onLoadMore() {} }));
   assert.match(html, /data-icon="arrow_up" aria-hidden="true" style="font-size:22px"/);
   assert.doesNotMatch(html, /data-icon="attach"|data-icon="microphone"|type="file"/);
+  assert.doesNotMatch(html, /添加文件一起讨论/);
 });
 
 test('decision details stay in their cards rather than inflating an empty textarea placeholder', t => {

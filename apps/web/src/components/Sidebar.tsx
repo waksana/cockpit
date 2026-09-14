@@ -11,6 +11,7 @@ import { ContextMenu, type MenuItem } from './ContextMenu';
 import { useLongPress } from '../lib/longpress';
 import { filterSessions } from '../pages/session-list';
 import { menuFocusTarget } from '../lib/menuFocus';
+import { StateNotice } from './StateNotice';
 
 const STATUS_TEXT: Record<SessionStatus, string> = {
   unloaded: '', idle: '', running: '回复中', error: '出错',
@@ -91,6 +92,8 @@ interface SidebarProps {
   sessions: SessionMeta[];
   activeId: string | null;
   query: string;
+  snapshotReady: boolean;
+  connected: boolean;
   onSelect: (id: string) => void;
   getMenuItems: (session: SessionMeta) => MenuItem[];
 }
@@ -105,7 +108,7 @@ interface SessionMenu {
 
 export function Sidebar(props: SidebarProps) {
   const {
-    sessions, activeId, query,
+    sessions, activeId, query, snapshotReady, connected,
     onSelect, getMenuItems,
   } = props;
   const [menu, setMenu] = useState<SessionMenu | null>(null);
@@ -152,10 +155,12 @@ export function Sidebar(props: SidebarProps) {
   );
 
   return (
-    <ul ref={listRef} className="chatlist">
+    <ul ref={listRef} className="chatlist" aria-busy={!snapshotReady}>
       {visible.map(renderRow)}
       {visible.length === 0 && (
-        <li className="chatlist-empty">{query.trim() ? '没有匹配的会话' : '服务器上没有 session'}</li>
+        <li className="chatlist-empty"><StateNotice kind={!snapshotReady ? connected ? 'loading' : 'info' : 'empty'}>
+          {!snapshotReady ? connected ? '正在同步会话…' : '等待连接…' : query.trim() ? '没有匹配的会话' : '服务器上没有 session'}
+        </StateNotice></li>
       )}
       {menu && menuSession && menu.activeId === activeId && (
         <li

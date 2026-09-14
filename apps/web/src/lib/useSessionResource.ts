@@ -21,10 +21,11 @@ export function useSessionResource<T>(
   const requiresResume = !loaded || isSessionUnloadedError(resource.errorCause);
   return {
     ...resource,
+    closing,
     requiresResume,
     data: requiresResume ? undefined : resource.data,
     valid: !requiresResume && resource.valid,
-    status: requiresResume && resource.connected ? null : resource.status,
+    status: closing ? '会话正在关闭，等待关闭完成…' : requiresResume && resource.connected ? null : resource.status,
     failed: !requiresResume && resource.failed,
   };
 }

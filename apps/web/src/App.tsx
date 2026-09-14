@@ -2,7 +2,7 @@
 // Desktop: sidebar + chat side-by-side. Mobile: list ↔ detail two-level nav.
 
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Link, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { Link, Routes, Route, useNavigate, useLocation, useParams } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { useCockpit } from './net/store';
 import { useUp, recordLocation } from './lib/nav';
@@ -23,9 +23,22 @@ import { GlobalNavigation } from './components/GlobalNavigation';
 import { sessionActionItems, type SessionActionHandlers } from './lib/sessionActions';
 import { SessionDetails } from './components/SessionDetails';
 import { SessionDeleteDialog } from './components/SessionDeleteDialog';
+import { StateNotice } from './components/StateNotice';
+import { ManagementShell } from './components/ManagementShell';
 
 const ManageWorkspace = lazy(() => import('./components/ManageWorkspace').then((m) => ({ default: m.ManageWorkspace })));
 const DirPicker = lazy(() => import('./components/DirPicker').then((m) => ({ default: m.DirPicker })));
+
+function ManagementRoute() {
+  const { pathname } = useLocation();
+  const { item } = useParams();
+  const section = pathname.startsWith('/skills') ? 'skills' : 'mcp';
+  return <Suspense fallback={
+    <ManagementShell section={section} item={item ?? null}
+      master={<StateNotice kind="loading" placement="pane">加载页面…</StateNotice>}
+      detail={<StateNotice kind="loading" placement="pane">加载页面…</StateNotice>} />
+  }><ManageWorkspace section={section} /></Suspense>;
+}
 
 const PHONE_QUERY = '(max-width: 599px)';
 const phoneSnapshot = () => typeof window.matchMedia === 'function' && window.matchMedia(PHONE_QUERY).matches;
@@ -185,6 +198,8 @@ function Workspace() {
           sessions={sessions}
           activeId={routeId}
           query={query}
+          snapshotReady={snapshotReady}
+          connected={connState === 'open'}
           onSelect={selectSession}
           getMenuItems={getSessionMenuItems}
         />
@@ -197,7 +212,7 @@ function Workspace() {
             sessionId={active.sessionId}
           />
         ) : syncing ? (
-          <div className="detail-empty" role="status">正在同步会话…</div>
+          <StateNotice kind="loading" placement="pane">正在同步会话…</StateNotice>
         ) : notFound ? (
           <div className="detail-empty">
             <div>
@@ -224,7 +239,7 @@ function Workspace() {
       {dirPicker && (
         <Suspense fallback={
           <DirectoryModal onCancel={() => setDirPicker(false)}>
-              <p role="status">加载目录选择器…</p>
+              <StateNotice kind="loading" placement="pane">加载目录选择器…</StateNotice>
               <button type="button" className="dialog-btn rp" onClick={() => setDirPicker(false)}>取消</button>
           </DirectoryModal>
         }>
@@ -257,21 +272,16 @@ export default function App() {
   // tell when "back" can pop to the real parent vs. must synthesize it. Runs for
   // every navigation across BOTH Workspace and ManageWorkspace.
   useLayoutEffect(() => { recordLocation(location.pathname); }, [location.key, location.pathname]);
-  // Every route renders the SAME <Workspace/> element, so the master-detail shell
-  // never remounts as you navigate — React reconciles the same component type at
-  // the Routes outlet, only the matched params/path change (Workspace reads them
-  // via useParams/useLocation). This keeps the responsive CSS layout, scroll
-  // positions, and drafts intact across every navigation. Sessions are namespaced
-  // under /session/ so the global pages (/mcp, /skills) can be top-level
-  // without colliding with a session id.
+  // Session routes share Workspace; global management has its own route shell.
+  // Changing a panel preserves Workspace, while visible chat ownership decides
+  // whether ConnectedThread is mounted. Neither shell owns native resource data.
   return (
-    <Suspense fallback={<div className="detail-empty" role="status">加载页面…</div>}>
       <Routes>
       <Route path="/" element={<Workspace />} />
-      <Route path="/mcp" element={<ManageWorkspace />} />
-      <Route path="/mcp/:item" element={<ManageWorkspace />} />
-      <Route path="/skills" element={<ManageWorkspace />} />
-      <Route path="/skills/:item" element={<ManageWorkspace />} />
+      <Route path="/mcp" element={<ManagementRoute />} />
+      <Route path="/mcp/:item" element={<ManagementRoute />} />
+      <Route path="/skills" element={<ManagementRoute />} />
+      <Route path="/skills/:item" element={<ManagementRoute />} />
       <Route path="/session/:sessionId" element={<Workspace />} />
       {SESSION_PANELS.map(panel => (
         <Route key={panel} path={`/session/:sessionId/${panel}`} element={<Workspace />} />
@@ -280,6 +290,5 @@ export default function App() {
         <div><p>页面不存在。</p><Link className="dialog-btn primary rp" to="/">返回列表</Link></div>
       </div>} />
       </Routes>
-    </Suspense>
   );
 }

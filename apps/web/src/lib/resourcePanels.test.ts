@@ -58,11 +58,18 @@ const modelOptions: ModelOption[] = [
   { modelId: 'beta', name: 'Beta', supportedReasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high', supportsLongContext: true },
   { modelId: 'basic', name: 'Basic' },
 ];
-const renderModelSettings = (patch: Partial<ChatSession>, models = modelOptions) =>
-  renderToStaticMarkup(createElement(SessionInfoPanel, {
-    session: { ...session, availableModels: models, ...patch }, models, open: true, onClose: noop,
-    onSetModel: () => { assert.fail('Rendering confirmed values must never mutate them'); },
-  }));
+const renderModelSettings = (patch: Partial<ChatSession>, models = modelOptions) => {
+  const state = useCockpit.getInitialState();
+  const previous = state.sessions;
+  const current = { ...session, availableModels: models, ...patch };
+  state.sessions = [current];
+  try {
+    return renderToStaticMarkup(createElement(SessionInfoPanel, {
+      session: current, models, open: true, onClose: noop,
+      onSetModel: () => { assert.fail('Rendering confirmed values must never mutate them'); },
+    }));
+  } finally { state.sessions = previous; }
+};
 function selectedOption(html: string, label: string) {
   const select = html.match(new RegExp(`<select[^>]*aria-label="${label}"[^>]*>(.*?)</select>`))?.[1];
   assert.ok(select, `Missing select: ${label}`);
@@ -266,7 +273,7 @@ test('refresh errors and retained data can render together in a detail shell', (
       createElement('div', { key: 'data' }, 'previous valid data'),
     ],
   }));
-  assert.match(html, /role="alert">加载失败：not allowed/);
+  assert.match(html, /role="alert"><div class="state-notice-content">加载失败：not allowed/);
   assert.match(html, /previous valid data/);
 });
 
@@ -291,7 +298,7 @@ for (const page of nativePages) {
     const html = renderToStaticMarkup(page.render());
     assert.match(html, /会话未加载。恢复后可查看这些设置/);
     assert.match(html, /聊天历史仍可直接查看/);
-    assert.match(html, /class="dialog-btn rp">恢复会话<\/button>/);
+    assert.match(html, /class="dialog-btn rp" aria-busy="false">恢复会话<\/button>/);
     assert.doesNotMatch(html, /没有可用的 skill|本会话没有可用的 MCP|没有配置 MCP/);
     assert.match(html, /aria-label="刷新" disabled=""/);
   });
@@ -346,8 +353,8 @@ test('unloaded info settings expose explicit resume rather than global model val
 test('resume is disabled offline and after session removal without changing authoritative loaded state', (t) => {
   withSession(t, false, false);
   const render = (sessionId: string) => renderToStaticMarkup(createElement(SessionResume, { sessionId, required: true }));
-  assert.match(render(session.sessionId), /disabled="">恢复会话<\/button>/);
-  assert.match(render('removed'), /disabled="">恢复会话<\/button>/);
+  assert.match(render(session.sessionId), /disabled="" aria-busy="false">恢复会话<\/button>/);
+  assert.match(render('removed'), /disabled="" aria-busy="false">恢复会话<\/button>/);
 });
 
 test('retained settings resume without the removed close-and-reload operation', () => {
