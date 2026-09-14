@@ -17,10 +17,5 @@ attribution remains in
 styles. Cockpit uses its own Solarized color mapping and product-specific
 interaction behavior; this is not a claim of current upstream UI parity.
 
-The [historical design study](docs/archive/telegram-study.md) and
-[historical difference registry](docs/archive/cockpit-tweb-diff.md) preserve
-design background, not a second current licensing or implementation statement.
-
-Retained dependencies keep their respective licenses and notices. Parking
-original source in the [external extraction archive](docs/extractions.md) does not erase its attribution or license,
-and this document does not relicense third-party packages.
+Retained dependencies keep their respective licenses and notices.
+This document does not relicense third-party packages.

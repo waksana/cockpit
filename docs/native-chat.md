@@ -1,6 +1,6 @@
 # Native event chat transport
 
-This describes checked-in source, not a deployment receipt. See the
+This describes the current event transport. See the
 [source status](cockpit-plan.md#source-status) and [module boundary](module-catalog.md).
 
 Copilot owns durable history and model context. The Cockpit backend does not keep chat
@@ -133,7 +133,7 @@ choices are local to the mounted session view; older-page extension preserves
 the group's mounted identity. They are not a second native state or history store.
 The transcript uses no group divider lines or extra inter-group gaps. It retains
 internal text/button spacing, original timestamps, keyboard focus and local
-code/tool copying. Whole-message copy footers and row hover fills are absent.
+code/tool copying.
 
 The opt-in lab's `ordered-events` scenario feeds synthetic native pages through
 the actual `NativeWindow`, including repeated pages, older prefixes, new speech
@@ -207,11 +207,9 @@ message-array assembly and existing agent routing also have their own costs.
 This is a local projection optimization, not a reduction in all native reads,
 a fixed action budget, a truncated reading window, or a server chat cache.
 
-There is no eight-page hard stop. Completing a message/ownership boundary and
-filling two screens can require more than one page, especially with low visible
-density or a distant parent task. The user explicitly chose to preserve these
-behaviors rather than use fixed pages with incomplete messages or a short
-initial screen. Consequently the whole history action has no universal event
+Completing a message/ownership boundary and filling two screens can require
+multiple pages, especially with low visible density or a distant parent task.
+Consequently the whole history action has no universal event
 ceiling; a single bounded native request must not be advertised as one.
 Cancellation, errors, expiry, nonadvancing cursors and authoritative exhaustion
 still terminate automatic reading. Reaching the beginning without an owner is
@@ -284,8 +282,7 @@ Context compaction is not a chat-history rewrite. Successful manual and
 automatic compaction on runtime 1.0.83 preserved original event IDs/content and
 same-source backward/forward/tail cursors, including subsequent new replies.
 Compaction therefore updates operation status without invalidating chat or
-cancelling in-flight reads. The Web also ignores legacy compaction invalidation
-signals from older hosts. Actual native cursor expiry is still handled above;
+cancelling in-flight reads. Actual native cursor expiry is still handled above;
 manual compaction failures remain visible as operation errors.
 
 ## Media
@@ -298,12 +295,8 @@ retain or republish native images.
 
 Enhanced file rendering belongs to a future frontend plugin, including both
 new and historical messages in the same shared native event window. There is
-no installed renderer ABI yet. Old module-owned markers and managed URLs are
-not parsed by the foundation. `session/tool-image` and `files/from-tool-image`
-are unknown intents (404), not a retained 410 lookup adapter. Existing files are
-left on disk, but are not served merely because their old link is in history.
-The complete retired-surface and data rules are maintained in the
-[module catalog](module-catalog.md#retired-capabilities).
+no installed renderer ABI yet. The planned module owns its file references and
+content delivery, as described in the [module catalog](module-catalog.md).
 
 Native prompt attachments are separate from chat presentation. HTTP/MCP can
 forward SDK file/directory/selection/blob inputs; this neither uploads a
@@ -316,18 +309,9 @@ a confirmed single-part asset getter. The adapter cannot avoid bytes that
 native already included. It must not advertise zero-copy or source-side field
 projection. There is no separate native-image history lookup or tail scan.
 
-## Protocol migration
+## Native cursor and cost boundaries
 
-`session/history`, `session/peek` and `session/subagent-history` are retired.
-Their HTTP requests return `410 CHAT_PROTOCOL_CHANGED`; message IDs and old
-HMAC resume tokens are not translated by scanning history. Native event pages
-replace these contracts for Web, MCP and other API consumers.
-
-The session plan keeps native plan text and todos. The old changed-files list,
-which depended on replaying the complete transcript, has been removed.
-Queue, decisions, native tasks and stop protection remain independent of chat
-display. Cockpit's additional first-reply naming query/eligibility policy has
-also been parked; reading or finishing a reply does not run it.
+Queue, decisions, native tasks and stop protection remain independent of chat display.
 
 An isolated runtime 1.0.83 fixture confirmed forward cursor reuse between live
 and passive readers, including passive continuation after runtime restart,
@@ -356,11 +340,7 @@ not a different native history source or a body-offset API. Its bounds and
 reread cost are maintained only in
 [MCP pagination](../apps/mcp/README.md#native-event-pagination).
 
-Historical single-run timing and browser-geometry samples are preserved in the
-[fixed pre-maintenance guide](https://github.com/waksana/cockpit/blob/a1f4a9a7c9e72b151958c270c4f790b32b72636e/docs/native-chat.md#protocol-migration).
-They are not current page defaults, production latency guarantees or disk-index
-proofs. Existing commands and evidence requirements are maintained in the
-[testing guide](cockpit-testing.md).
+Commands and evidence requirements are maintained in the [testing guide](cockpit-testing.md).
 
 This chat transport does not make inherently history-wide operations into
 point queries. For example, existing fork safety preflight checks inherited

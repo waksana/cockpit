@@ -3,10 +3,8 @@
 Cockpit exposes the installed SDK's experimental `sessions.fork` RPC as
 `session/fork`. The validated pair is **SDK 1.0.13 / bundled runtime 1.0.83,
 protocol 3**. The separately installed `copilot` CLI is not the server runtime.
-There is no dependency upgrade, transcript reconstruction, database copying by
-Cockpit, or summary-as-fork fallback.
-This is the canonical fork behavior guide, not a task/role assignment workflow
-or deployment receipt. See the [documentation index](README.md).
+Cockpit delegates history copying to native.
+This is the canonical fork behavior guide. See the [documentation index](README.md).
 
 ## Call paths
 
@@ -43,7 +41,7 @@ explicit discovery, not a mandatory preflight for each call. Discover the child 
 normal session list, read its history passively, and send its **new goal**
 explicitly when ready. A prompt or explicit reload resumes it.
 
-### Already-connected MCP clients
+### MCP connection behavior
 
 The existing `cockpit_call_intent` tool accepts a generic `name` and JSON `body`.
 It sends **one POST**, without reading `/capabilities` first. The backend
@@ -63,15 +61,12 @@ For an existing MCP client, use:
    itself as the source, and do not cancel a busy source to make it forkable.
 3. `cockpit_call_intent({name:"session/fork",body:{sessionId:"source-id",name:"New independent goal"}})`.
 4. Send any intended new message to the returned ID through `cockpit_send_prompt`.
-   Fork itself sends none. Business roles, workstreams, caller bindings and
-   callback obligations are not Cockpit fields; inherited text does not renew
-   authorization or schedule another application's work.
+   Fork itself sends none. Inherited text is conversation context, not a new
+   instruction or authorization to act.
 
-The MCP build also gives fork requests the normal 45-second long-operation
-deadline. An already-running older MCP process retains its previous timeout
-(10 seconds unless configured otherwise); it does **not** hot-load rebuilt
-JavaScript. This is not a schema blocker. A future normal connection gets the new
-deadline. Do not force-reload a busy session or blindly retry a timed-out fork.
+Fork requests use the normal 45-second long-operation deadline unless the
+client has an explicit timeout override. Do not force-reload a busy session or
+blindly retry a timed-out fork.
 
 `mcp/refresh` rereads native MCP definitions; it does not restart the Cockpit
 backend or replace code in running MCP processes. `mcp/reload-session` reconnects

@@ -2,19 +2,15 @@
 
 A **stdio MCP server backed by the Cockpit API**: a thin remote Copilot adapter.
 The backend owns one capability set, shared by the web UI and sessions using MCP.
-This is not a maintainer-only database salvage service or a policy engine.
 
 All session metadata, lists, transcripts and mutations come from HTTP.
 The MCP process needs **no backend filesystem access, SDK, session database or event
 logs**. Backend failures are errors, never successful local-state fallbacks.
 The client does not read or write local files on behalf of attachment inputs.
 
-This documents the checked-in source, not automatic deployment or hot replacement
-of an already-running MCP process. See [source status](../../docs/cockpit-plan.md#source-status)
-and the [documentation index](../../docs/README.md). The
-[module catalog](../../docs/module-catalog.md#retired-capabilities) is the single
-inventory of retired enhancement interfaces; [deployment records](../../docs/deployments.md)
-separately identify accepted running versions.
+This documents the checked-in source. See
+[source status](../../docs/cockpit-plan.md#source-status) and the
+[documentation index](../../docs/README.md).
 The agreed [module target](../../docs/module-contract-draft.md#4-同端口独立-mcp-path)
 will give modules separate HTTP MCP paths on the host's one port. That is not
 implemented by this current stdio API client. Module cold-loading and native
@@ -43,10 +39,8 @@ draft-07. Name detail cannot be combined with listing parameters.
 | `cockpit_get_snapshot` | Read `runtime/snapshot`: agent readiness, models, sessions and permission policy |
 | `cockpit_service_status` | Fixed `operation`: `health` or `status` |
 
-There is no `cockpit_service_restart` tool, private lifecycle adapter or
-`system/consumer/*` intent. Their originals are [outside the repository](../../docs/extractions.md).
 The main service exposes `system/shutdown` and `system/status` through the same
-generic caller; there is no separate restart or deployment system.
+generic caller. Process startup is managed by the operator or host.
 
 Example:
 
@@ -64,7 +58,7 @@ The generic caller sends one POST directly, without a capability preflight or a
 local intent catalog. Use explicit discovery when the API schema is unknown;
 newly published intents need no new MCP wrapper or reconnect. There is no
 arbitrary URL, HTTP method or path proxy. Invalid names and path traversal are
-rejected locally; the authoritative backend rejects unknown/retired commands.
+rejected locally; the authoritative backend rejects unknown commands.
 Redirects and mismatched explicit discovery responses fail. Bodies use the API's
 **camelCase** field names; the backend validates both bodies and results, including
 `confirm:true` on `session/purge`. No automatic retries are performed, even on
@@ -93,6 +87,8 @@ For service shutdown, discover the current schema if needed and invoke:
 This accepts a graceful exit request, not a restart. New independent work is
 refused while existing native work settles. The initiating native turn must
 finish; do not keep a background tool waiting for its own host to exit.
+Future module activity or shutdown acknowledgements do not add a wait condition;
+the shutdown target is native session idleness.
 `system/status {}` or `cockpit_service_status {operation:"status"}` reports the
 native activity, protected HTTP requests and shutdown phase. Unknown safety or
 close results are not success; there is no force/cancel/deployment mode.
@@ -106,9 +102,7 @@ Creation is identical to Web: `cockpit_new_session` calls
 configuration discovery with **no message sent**. `cockpit_send_prompt` then calls
 `prompt` for that ID. There is no virtual session, hidden launch message or
 first-message-only creation API. An empty native session may disappear on unload;
-neither transport silently recreates it. Both transports reject the retired
-`modules` creation parameter. Module installation, service and session-role APIs
-are removed, not success-shaped no-ops. Native MCP and skill controls remain.
+neither transport silently recreates it. Native MCP and skill controls are available.
 The [basic module contract](../../docs/module-contract-draft.md) is a future
 design, not discoverable running capability.
 
@@ -124,20 +118,15 @@ design, not discoverable running capability.
 | Native Copilot schedules | `cockpit_schedule_add`, `cockpit_list_schedules`, `cockpit_stop_schedule` |
 | Native working directory | `cockpit_list_dir` |
 
-Generic invocation also covers surviving API operations without semantic wrappers,
+Generic invocation also covers API operations without semantic wrappers,
 such as `session/refresh` and
 `skills/read`. `session/chat` returns one bounded native event page as JSON.
 
-Deletion is irreversible native Copilot `deleteSession`, not a trash marker.
-Both delete and purge require explicit `confirm:true`; the backend rejects old
-soft-delete requests without confirmation even from stale loaded MCP tools.
-Trash listing and restoration are retired. Legacy hidden sessions reappear in
-the normal list without deleting native history. Managed files, associations and
-workspaces remain intact. Never automatically retry an uncertain deletion.
-Deletion never requires module unbind preview/approval or invokes module hooks.
-There is no current module-unbind operation in the host. External applications
-own their references and must distinguish authoritative absence from unload,
-timeout or permission failure.
+Deletion uses irreversible native Copilot `deleteSession`.
+Both delete and purge currently require explicit `confirm:true`.
+Independent managed files and workspaces remain intact. Never automatically retry
+an uncertain deletion. External applications own their references and must
+distinguish authoritative absence from unload, timeout or permission failure.
 
 `cockpit_get_session` defaults to a compact Markdown summary, including
 queue/decision IDs but only queue text previews. For `availableModels`, complete
@@ -147,6 +136,8 @@ existing output-size limit and reports overflow rather than returning partial
 JSON. `mcp/session` does not materialize an unloaded session.
 
 <a id="confirmation-boundaries"></a>
+
+### Current confirmation behavior
 
 `cockpit_compact_session` summarizes the model-facing context, not the retained
 chat event history. There is no compaction undo; explicit `confirm:true` remains
@@ -158,9 +149,12 @@ authorization, rather than assume an extra `confirm` field is enforced there.
 Permanent `session/delete|purge`, in contrast, requires literal `confirm:true`
 in the backend schema itself. This documents the existing distinction, not
 permission to bypass a user decision.
-Whether all destructive public operations should enforce confirmation at the
-backend is a separate review/design question. Merely documenting this difference
-does not declare it an accepted exception to R3 or authorize a behavior change.
+The confirmed target in [R3](../../docs/product-requirements.md#r3--忠实使用-sdk-契约)
+is to follow native confirmation contracts in API/MCP, with optional additional
+human-facing confirmations in Web. SDK 1.0.13 compact/rewind/delete interfaces
+do not have these `confirm` inputs. The current Cockpit-specific guards above
+have not yet been changed; clients must continue to use the published schema.
+Service shutdown is a host operation, distinct from those native session APIs.
 
 `cockpit_cancel_turn` / `POST /intent/cancel {sessionId}` follows native Stop
 semantics: cancel current work and discard pending queued messages. It does not
@@ -207,8 +201,7 @@ For a project-only skill, pass the same `cwd` used for discovery; this validates
 the target in that project without changing the setting's global scope.
 Nullable model effort/context/mode, errors and requests remain null in JSON;
 optional `loading`, `closing`, `cancelling` and todo `intent` are surfaced.
-`cockpit_get_plan` renders canonical `planMarkdown` and `todos`; the old
-history-derived changed-files list is retired. `cockpit_get_panels` renders
+`cockpit_get_plan` renders canonical `planMarkdown` and `todos`. `cockpit_get_panels` renders
 `label`, `sublabel` and `enabled`, for all five sections by default or only the
 requested `section`.
 `cockpit_list_global_skills` accepts optional backend `cwd`; omitting it uses the
@@ -250,9 +243,8 @@ an always-on cron service.
 ## Native names
 
 `cockpit_rename_session` writes the native title. Lists and metadata read the
-native title, including native-generated names. Cockpit's separate first-reply
-automatic-name policy, extra model query and `session/auto-name` operation are
-parked with session organization; completing or reading a reply does not run them.
+native title, including native-generated names. Additional title policies belong
+to the planned session-organization module.
 
 ## Native event pagination
 
@@ -331,9 +323,7 @@ This is native event filtering, not a tasks-list or whole-history scan. The
 passive API has no equivalent filter, so such an unloaded request explicitly
 requires loading rather than pretending to be an exact passive query. Child
 details do not fabricate current task status or read the whole task registry.
-The retired `operation`, `details`, `tool_call_id`, `before_message_id`, and
-`after_message_id` inputs return a migration error. Retired HTTP history routes
-return `410 CHAT_PROTOCOL_CHANGED`. See [the protocol lifecycle](../../docs/native-chat.md).
+See [the chat protocol](../../docs/native-chat.md).
 
 ### Session A sends to and reads B
 
@@ -343,7 +333,6 @@ return `410 CHAT_PROTOCOL_CHANGED`. See [the protocol lifecycle](../../docs/nati
 4. `cockpit_read_session {session_id:"B",response_format:"json"}` — read B's reply.
 
 Send defaults to `mode:"enqueue"`; acceptance is not turn completion.
-No hook, flow, gate or shared local database is needed.
 
 ## Native attachment input
 
@@ -373,13 +362,9 @@ The receiving agent may still need to read/view a file. Shape acceptance does
 not prove that bytes were read or that the selected runtime/model supports
 every media format. Existing request size and timeout limits still apply.
 
-There is no binary transfer tool, managed file library, `/upload`, `/uploads/*`
-or native tool-image lookup in this thin source. Old singular `attachment`,
-ordered `parts` and `{kind,name,url,...}` managed descriptors are rejected.
-Existing file data is not deleted, but old links have no download service until
-an explicitly adapted file module provides one. Chat reads omit internal image
-bytes and do not collect files. Enhanced file rendering also belongs to that
-future plugin, not to this MCP client or the foundation.
+Chat reads omit internal image bytes. Binary transfer, file management and
+enhanced rendering belong to the planned file module; this client forwards
+native attachment inputs to the runtime.
 
 ## Configuration
 
@@ -430,34 +415,6 @@ Example MCP configuration (replace paths/URL for your installation):
 
 Enable the MCP manually on sessions that should use the backend. Supply credentials
 through your environment/secret configuration, not committed source files.
-
-## Breaking migration
-
-The complete enhancement retirement and retained-data rules are in the
-[module catalog](../../docs/module-catalog.md#retired-capabilities).
-`/admin/restart` and `/admin/lifecycle` are removed rather than forwarded.
-`skills/refresh` no longer returns `willRestartWhenIdle`; skill definition
-refresh remains a native operation without service restart.
-Old upload/download-root variables are no longer read. Rebuild/reconnect MCP
-only under ordinary idle lifecycle rules; already-loaded descriptions do not
-magically change, and retired requests must not be retried as a workaround.
-
-- Removed Cockpit-owned `hook/*`, `flow/*`, `flow-schedule/*`, gate authoring and
-  their `cockpit_hook_*` / `cockpit_flow_*` tools. Retired requests error rather
-  than becoming silent no-ops. Native Copilot `schedule/add|list|stop` remains.
-- Removed `session/set-spawned-by`. New sessions accept `cwd` only;
-  `spawned_by`/`spawnedBy` is no longer a creation setting.
-- Removed local transcript folding and the `COCKPIT_SESSION_STORE`,
-  `COCKPIT_SESSION_STATE_DIR`, and backend-state `COCKPIT_HOME` configuration
-  **from this MCP client**. The service still uses `COCKPIT_HOME` for its native
-  runtime; removing it from this client does not remove that server setting.
-- `cockpit_read_session` no longer accepts turn `offset`, `assistant_view`, or
-  `exclude_skill_context`, and no longer returns `turns`/local diagnostic fields.
-  Migrate to native `events`, source/direction and opaque cursor pagination above.
-- Both API and generic MCP `session/delete` and its `session/purge` alias require
-  `confirm:true`. Semantic delete/purge tools use the already-destructive purge
-  wire name for staggered releases. Trash/restore are retired; the thin backend
-  does not read or rewrite legacy preference marks to filter native sessions.
 
 ## Native session fork
 
