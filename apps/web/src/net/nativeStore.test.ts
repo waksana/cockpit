@@ -488,34 +488,35 @@ test('browser reconnect keeps loaded older rows and resumes from its last native
 });
 
 for (const success of [false, true]) {
-  test(`rewind ${success ? 'success invalidates explicitly' : 'failure resumes the same window'} without a speculative reset`, async t => {
+  test(`explicit load ${success ? 'success' : 'failure'} never interrupts or resets an already loaded chat`, async t => {
     const h = setup(t);
     await h.start();
-    const pending = h.store.getState().rewindSession('a', 'user-boundary');
+    const pending = h.store.getState().loadSession('a');
     void pending.catch(() => {});
     assert.equal(h.state().historyStale, false);
-    assert.equal(h.requests[1].signal?.aborted, true);
-    h.requests[2].resolve(Response.json(success ? { ok: true } : { error: 'rollback unsupported' }, { status: success ? 200 : 400 }));
-    if (success) await pending; else await assert.rejects(pending, /rollback unsupported/);
+    assert.equal(h.requests[1].signal?.aborted, false);
+    assert.ok(h.requests[2].path.endsWith('/session/load'));
+    assert.deepEqual(h.requests[2].body, { sessionId: 'a' });
+    h.requests[2].resolve(Response.json(success ? { ok: true, sessionId: 'a' } : { error: 'native load failed' }, { status: success ? 200 : 400 }));
+    if (success) await pending; else await assert.rejects(pending, /native load failed/);
     await setImmediate();
     assert.deepEqual(h.ids(), ['A']);
-    assert.equal(h.state().historyStale, success);
-    if (success) {
-      assert.equal(h.requests.length, 3);
-      assert.match(h.state().error ?? '', /重新同步/);
-    } else {
-      assert.ok(h.requests[3].path.endsWith('/chat/stream'));
-      assert.equal(h.requests[3].body.cursor, 'cursor-1');
-    }
+    assert.equal(h.state().historyStale, false);
+    assert.equal(h.requests[1].signal?.aborted, false);
+    assert.equal(h.requests.length, 3);
+    await h.reply(1, [message('B')]);
+    assert.deepEqual(h.ids(), ['A', 'B']);
+    assert.equal(h.requests.length, 3, 'load must never close/reload the chat or implicitly read history');
   });
 }
 
-test('an authoritative invalidation before the mutation ACK is not replaced by a fresh window', async t => {
+test('an external rewind invalidation before a retained mutation ACK is not replaced by a fresh window', async t => {
   const h = setup(t);
   await h.start();
-  const pending = h.store.getState().rewindSession('a', 'user-boundary');
+  const pending = h.store.getState().loadSession('a');
   h.source.emit({ type: 'chat/invalidated', sessionId: 'a', reason: 'rewind' });
-  h.requests[2].resolve(Response.json({ ok: true }));
+  assert.equal(h.requests[1].signal?.aborted, true);
+  h.requests[2].resolve(Response.json({ ok: true, sessionId: 'a' }));
   await pending;
   assert.deepEqual(h.ids(), ['A']);
   assert.equal(h.state().historyStale, true);
@@ -523,29 +524,49 @@ test('an authoritative invalidation before the mutation ACK is not replaced by a
   assert.equal(h.requests.length, 3);
 });
 
+test('external rewind cancels concurrent older and live reads and rejects late history before explicit resync', async t => {
+  const h = setup(t);
+  await h.start();
+  h.store.getState().loadMore('a');
+  h.source.emit({ type: 'chat/invalidated', sessionId: 'a', reason: 'rewind' });
+  assert.equal(h.requests[1].signal?.aborted, true);
+  assert.equal(h.requests[2].signal?.aborted, true);
+  assert.equal(h.state().historyStale, true);
+  await h.reply(2, [message('obsolete')]);
+  await h.tick();
+  assert.deepEqual(h.ids(), ['A']);
+  assert.equal(h.requests.length, 3);
+  h.store.getState().retryHistory('a');
+  assert.equal(h.requests[3].body.direction, 'backward');
+  assert.equal(h.requests[3].body.cursor, undefined);
+  await h.reply(3, [message('after-rewind')]);
+  assert.deepEqual(h.ids(), ['after-rewind']);
+  assert.equal(h.state().historyStale, false);
+});
+
 for (const success of [true, false]) {
-  test(`manual compaction (${success}) and legacy invalidation leave older/live reads and their cursors intact`, async t => {
+  test(`external native compaction (${success}) and legacy invalidation leave older/live reads and their cursors intact`, async t => {
     const h = setup(t);
     await h.start();
     h.store.getState().loadMore('a');
-    const pending = h.store.getState().compactSession('a');
-    void pending.catch(() => {});
+    h.source.emit({ type: 'session/patch', sessionId: 'a', compacting: true });
+    assert.equal(h.state().compacting, true);
     assert.equal(h.requests[1].signal?.aborted, false);
     assert.equal(h.requests[2].signal?.aborted, false);
     h.source.emit({ type: 'chat/invalidated', sessionId: 'a', reason: 'compaction' });
     assert.equal(h.state().historyStale, false);
     assert.equal(h.state().loadingHistory, true);
-    h.requests[3].resolve(Response.json(success ? { ok: true } : { error: 'compaction failed' }, { status: success ? 200 : 400 }));
-    if (success) await pending; else await assert.rejects(pending, /compaction failed/);
+    h.source.emit({ type: 'session/patch', sessionId: 'a', compacting: false, error: success ? null : 'compaction failed' });
     await h.reply(2, [message('older')], { hasMore: true });
     await h.reply(1, [message('B')]);
     await h.tick();
     assert.deepEqual(h.ids(), ['older', 'A', 'B']);
     assert.equal(h.state().historyStale, false);
-    assert.equal(h.requests.length, 4);
+    assert.equal(h.requests.length, 3);
     assert.equal(h.requests[1].signal?.aborted, false);
     if (success) assert.equal(h.state().error, null);
-    else assert.ok(getUxErrors().some(error => error.message.includes('compaction failed')));
+    else assert.equal(h.state().error, 'compaction failed');
+    assert.equal(h.state().compacting, false);
     assert.doesNotMatch(h.state().error ?? '', /原生历史已变更|重新同步/);
   });
 }

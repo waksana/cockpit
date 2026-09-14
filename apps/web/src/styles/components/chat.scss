@@ -541,12 +541,6 @@ button.activity-head {
   &:hover { background: var(--ripple-color); color: var(--primary-text-color); }
 }
 .chat-copy-error { color: var(--chat-danger-ink); font-size: 12px; line-height: 1.5; }
-.chat-copy-notice {
-  position: absolute; bottom: 5rem; left: 50%; transform: translateX(-50%);
-  max-width: calc(100% - 2rem); padding: 0.4rem 0.75rem; border-radius: 8px;
-  background: var(--surface-color); box-shadow: var(--menu-box-shadow); font-size: 13px;
-  &:empty { display: none; }
-}
 
 // Empty / typing / error / loading states.
 .chat-empty-hint, .chat-loading-older {

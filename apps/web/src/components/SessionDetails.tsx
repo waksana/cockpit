@@ -9,15 +9,11 @@ import type { SessionInfoPanelProps } from './SessionInfoPanel';
 const SessionInfoPanel = lazy(() => import('./SessionInfoPanel').then((m) => ({ default: m.SessionInfoPanel })));
 const SessionMcp = lazy(() => import('./Manage').then((m) => ({ default: m.SessionMcp })));
 const SessionSkills = lazy(() => import('./Manage').then((m) => ({ default: m.SessionSkills })));
-const SessionSchedules = lazy(() => import('../pages/SessionSchedules').then((m) => ({ default: m.SessionSchedules })));
-const SessionContext = lazy(() => import('./SessionPages').then((m) => ({ default: m.SessionContext })));
-const SessionPlan = lazy(() => import('./SessionPages').then((m) => ({ default: m.SessionPlan })));
-const SessionRuntime = lazy(() => import('./SessionRuntime').then((m) => ({ default: m.SessionRuntime })));
 
 export function SessionDetails({ sessionId, panel }: { sessionId: string; panel: SessionPanel }) {
   const session = useCockpit((s) => s.sessions.find((item) => item.sessionId === sessionId));
-  const { globalModels, setModel, scheduleAdd, scheduleStop } = useCockpit(useShallow((s) => ({
-    globalModels: s.globalModels, setModel: s.setModel, scheduleAdd: s.scheduleAdd, scheduleStop: s.scheduleStop,
+  const { globalModels, setModel } = useCockpit(useShallow((s) => ({
+    globalModels: s.globalModels, setModel: s.setModel,
   })));
   const up = useUp();
   const frame = useRef<HTMLElement | null>(null);
@@ -60,15 +56,7 @@ export function SessionDetails({ sessionId, panel }: { sessionId: string; panel:
                 onSetModel={onSetModel} />
             : panel === 'mcp'
               ? <SessionMcp session={session} onClose={onClose} />
-              : panel === 'skills'
-                ? <SessionSkills session={session} onClose={onClose} />
-                : panel === 'schedules'
-                  ? <SessionSchedules session={session} onAdd={scheduleAdd} onStop={scheduleStop} onClose={onClose} />
-                  : panel === 'plan'
-                    ? <SessionPlan session={session} onClose={onClose} />
-                    : panel === 'context'
-                      ? <SessionContext session={session} onClose={onClose} />
-                      : <SessionRuntime session={session} onClose={onClose} />}
+              : <SessionSkills session={session} onClose={onClose} />}
         </Suspense>
       </aside>
     </>

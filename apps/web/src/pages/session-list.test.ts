@@ -87,7 +87,7 @@ test('sidebar is a single list and keeps unloaded rows focusable and selectable'
   assert.doesNotMatch(html, /chatlist-group-title|dialog-pinned|dialog-unread/);
 });
 
-test('native schedules, running state and pending decisions do not depend on an inbox', () => {
+test('running state and pending decisions remain without schedule indicators or an inbox', () => {
   const html = render([
     session('scheduled', { scheduleCount: 2 }),
     session('running', { status: 'running' }),
@@ -95,7 +95,7 @@ test('native schedules, running state and pending decisions do not depend on an 
     session('plan', { planRequest: { requestId: 'p', summary: 'Plan' } }),
     session('elicit', { elicitation: { requestId: 'e', message: 'Confirm' } }),
   ]);
-  assert.match(html, /class="dialog-schedule" title="2 个定时任务"/);
+  assert.doesNotMatch(html, /dialog-schedule|定时任务/);
   assert.match(html, /data-tone="running">回复中/);
   assert.equal((html.match(/aria-label="需要选择"/g) ?? []).length, 3);
   assert.doesNotMatch(html, /未读|已读|dialog-unread|dialog-pinned/);

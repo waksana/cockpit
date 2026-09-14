@@ -9,7 +9,7 @@ import type {
   AgentStatus, NativeAttachment, ChatSession, ModelOption, ServerEvent,
 } from './types';
 import { MetaResource, SessionResource, type SessionMeta } from '@cockpit/protocol';
-import type { IntentBody, IntentResult, NativeChatRead, NativeChatPage, PanelSection, PanelItem, SessionProjection } from '@cockpit/protocol';
+import type { IntentResult, NativeChatRead, NativeChatPage, SessionProjection } from '@cockpit/protocol';
 import { invalidateWindow, metaToSession } from './sessionWindow';
 import { applyProjection, cleanProjection } from './sessionResources';
 import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
@@ -33,7 +33,6 @@ interface CockpitState {
   // intents
   setActiveId: (id: string | null) => void;
   newSession: (cwd: string) => Promise<string>;
-  forkSession: (sessionId: string) => Promise<string>;
   loadMore: (sessionId: string) => void;
   retryHistory: (sessionId: string) => void;
   sendPrompt: (sessionId: string, text: string, attachments?: NativeAttachment[]) => Promise<boolean>;
@@ -41,19 +40,9 @@ interface CockpitState {
   interrupt: (sessionId: string) => Promise<{ ok: true; interrupted: boolean }>;
   setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => Promise<void>;
   deleteSession: (sessionId: string, confirm: true) => Promise<void>;
-  unloadSession: (sessionId: string) => Promise<void>;
-  reloadSession: (sessionId: string) => Promise<void>;
-  compactSession: (sessionId: string) => Promise<void>;
-  rewindSession: (sessionId: string, toMsgId: string, rollbackFiles?: boolean) => Promise<void>;
+  loadSession: (sessionId: string) => Promise<void>;
   setMode: (sessionId: string, mode: 'interactive' | 'plan' | 'autopilot') => Promise<void>;
-  getPlan: (sessionId: string) => Promise<import('./types').SessionPlan>;
-  getUsage: (sessionId: string, signal?: AbortSignal) => Promise<IntentResult<'session/usage'>>;
-  getPanels: (sessionId: string) => Promise<import('./types').SessionPanels>;
-  getPanel: (sessionId: string, section: PanelSection, signal?: AbortSignal) => Promise<PanelItem[]>;
   getResources: (sessionId: string, resources: MetaResource[], signal?: AbortSignal) => Promise<SessionProjection>;
-  scheduleList: (sessionId: string) => Promise<import('@cockpit/protocol').ScheduleEntry[]>;
-  scheduleAdd: (sessionId: string, input: Omit<IntentBody<'schedule/add'>, 'sessionId'>) => Promise<IntentResult<'schedule/add'>>;
-  scheduleStop: (sessionId: string, id: number) => Promise<IntentResult<'schedule/stop'>>;
   // MCP + Skills management
   mcpGlobal: () => Promise<import('@cockpit/protocol').McpServerGlobal[]>;
   mcpSetDefault: (name: string, on: boolean) => Promise<void>;
@@ -76,7 +65,7 @@ interface CockpitState {
 
 export const createCockpitStore = () => create<CockpitState>((set, get) => {
   let client: NetClient | null = null;
-  const summaryResources: MetaResource[] = ['identity', 'control', 'model', 'mode', 'schedule'];
+  const summaryResources: MetaResource[] = ['identity', 'control', 'model', 'mode'];
   const metaRequests = new Map<string, {
     dirty: Set<MetaResource>; stale: Set<MetaResource>; controller: AbortController; patches: Partial<SessionMeta>;
   }>();
@@ -159,8 +148,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
   let liveSessionId: string | null = null;
   let liveTimer: ReturnType<typeof setTimeout> | undefined;
   const windows = new Map<string, NativeWindow>();
-  const mutationRequests = new Map<string, { released: boolean }>();
-  const historyRecoveryErrors = new Map<string, string>();
   let nativeReadRefresh: { pending: boolean } | null = null;
   const cancelHistory = (sid?: string) => {
     if (!historyRequest || (sid !== undefined && historyRequest.sessionId !== sid)) return;
@@ -194,8 +181,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       cancelHistory(id);
       cancelLive(id);
       windows.delete(id);
-      mutationRequests.delete(id);
-      historyRecoveryErrors.delete(id);
       if (Object.hasOwn(get().resourceRevisions, id)) {
         revisions ??= { ...get().resourceRevisions };
         delete revisions[id];
@@ -238,31 +223,16 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     sid: string | null,
     operation: string,
     send: (net: NetClient) => Promise<{ ok: boolean; applied?: boolean; error?: string }>,
-    changesHistory = false,
   ): Promise<void> => {
     const generation = get().connectionGeneration;
     const origin = sid ? `会话 ${get().sessions.find((s) => s.sessionId === sid)?.title ?? sid} (${sid})：` : '';
     let reportedByTransport = false;
-    const request = { released: false };
-    if (changesHistory && sid) {
-      cancelHistory(sid);
-      historyRecoveryErrors.delete(sid);
-      mutationRequests.set(sid, request);
-      cancelLive(sid);
-    }
-    const current = () => generation === get().connectionGeneration
-      && (!changesHistory || mutationRequests.get(sid!) === request);
     const promise = (async () => {
       const result = await send(connectedClient()).catch((error) => {
         reportedByTransport = !isSessionUnloadedError(error);
         throw error;
       });
       if (!result.ok || result.applied === false) throw new Error(result.error || '服务器未确认操作');
-      if (changesHistory && sid && current()) {
-        mutationRequests.delete(sid);
-        windows.get(sid)?.invalidate();
-        patchLocal(sid, s => ({ ...invalidateWindow(s), error: '原生历史已变更；当前画面已保留，请重新同步。' }));
-      }
     })();
     void promise.catch((error) => {
       const message = `${origin}${operation}失败：${describeReason(error, false)}`;
@@ -270,36 +240,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       // Offline and negative acknowledgements originate here instead.
       if (!reportedByTransport) reportUxError(message, { deduplicate: false });
       if (sid && get().sessions.some(s => s.sessionId === sid)
-        && generation === get().connectionGeneration && (current() || request.released)) {
-        const owns = current();
-        if (changesHistory) {
-          if (owns) mutationRequests.delete(sid);
-          historyRecoveryErrors.set(sid, message);
-        }
-        patchLocal(sid, (s) => ({ ...s, error: message, ...(changesHistory && owns ? { loadingHistory: false } : {}) }));
-        if (changesHistory && owns && get().activeId === sid) maybeMaterialize();
+        && generation === get().connectionGeneration) {
+        patchLocal(sid, (s) => ({ ...s, error: message }));
       }
-    });
-    return promise;
-  };
-
-  const scheduleMutation = <T extends { ok: boolean; error?: string },>(
-    sid: string, fallback: string, send: (net: NetClient) => Promise<T>,
-  ): Promise<T> => {
-    const generation = get().connectionGeneration;
-    const origin = `会话 ${get().sessions.find((s) => s.sessionId === sid)?.title ?? sid} (${sid})`;
-    let reportedByTransport = false;
-    const promise = read(net => send(net).catch((error) => {
-      reportedByTransport = !isSessionUnloadedError(error);
-      throw error;
-    })).then((result) => {
-      if (!result.ok) throw new Error(result.error?.trim() ? result.error : fallback);
-      return result;
-    });
-    void promise.catch((error) => {
-      const message = `${origin}：计划任务操作失败：${describeReason(error, false)}`;
-      if (!reportedByTransport) reportUxError(message, { deduplicate: false });
-      if (generation === get().connectionGeneration) patchLocal(sid, (s) => ({ ...s, error: message }));
     });
     return promise;
   };
@@ -333,7 +276,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     const window = windows.get(sid);
     const session = get().sessions.find(s => s.sessionId === sid);
     if (!window?.live || window.invalid || liveRequest || !session || !isVisible()
-      || get().activeId !== sid || !snapshotReady || get().connState !== 'open' || mutationRequests.has(sid)) return;
+      || get().activeId !== sid || !snapshotReady || get().connState !== 'open') return;
     const source = session.loaded ? 'live' : 'persisted';
     if (window.live.source !== source) window.disconnect();
     const request = { sessionId: sid, controller: new AbortController() };
@@ -405,10 +348,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       patchLocal(sid, (s) => ({
         ...s, ...window.snapshot(),
         historyError: undefined,
-        error: s.error === historyRecoveryErrors.get(sid) || (s.error && s.error !== errorAtStart) ? s.error : null,
+        error: s.error && s.error !== errorAtStart ? s.error : null,
       }));
       historyRequest = null;
-      historyRecoveryErrors.delete(sid);
       streamLive(sid);
     }).catch((error) => {
       if (!current()) return;
@@ -416,7 +358,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       patchLocal(sid, (s) => ({
         ...s, loadingHistory: false, historyStale: window.invalid,
         historyError: describeReason(error, false),
-        ...(s.error !== historyRecoveryErrors.get(sid) ? { error: `加载失败：${describeReason(error, false)}` } : {}),
+        error: `加载失败：${describeReason(error, false)}`,
       }));
     });
   };
@@ -426,7 +368,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     if (!snapshotReady || !activeId || connState !== 'open' || !client || !isVisible()) return;
     const s = sessions.find((x) => x.sessionId === activeId);
     const window = windows.get(activeId);
-    if (!s || window?.invalid || s.loadingHistory || mutationRequests.has(activeId)) return;
+    if (!s || window?.invalid || s.loadingHistory) return;
     if (!window?.materialized || (s.loaded && !window.live)) {
       if (!s.historyError) requestHistory(activeId);
     }
@@ -440,8 +382,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     cancelHistory();
     cancelLive();
     for (const window of windows.values()) window.disconnect();
-    mutationRequests.clear();
-    historyRecoveryErrors.clear();
     nativeReadRefresh = null;
     set((st) => ({
       connectionGeneration: st.connectionGeneration + 1,
@@ -610,12 +550,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       if (id !== previous) {
         cancelHistory();
         cancelLive();
-        if (previous) {
-          const mutation = mutationRequests.get(previous);
-          if (mutation) mutation.released = true;
-          mutationRequests.delete(previous);
-          historyRecoveryErrors.delete(previous);
-        }
         set({ activeId: id });
         const active = get().sessions.find(s => s.sessionId === id);
         if (active?.loaded && active.queue === undefined && snapshotReady) refreshMeta(active.sessionId, ['queue']);
@@ -634,10 +568,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       return promise;
     },
 
-    forkSession(sessionId) {
-      return read(net => net.forkSession(sessionId)).then(result => result.sessionId);
-    },
-
     loadMore(sid) {
       if (get().activeId !== sid || !isVisible() || !snapshotReady || get().connState !== 'open' || !client) return;
       const s = get().sessions.find((x) => x.sessionId === sid);
@@ -648,7 +578,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     retryHistory(sid) {
       if (get().activeId !== sid || !snapshotReady || get().connState !== 'open' || !client) return;
       const s = get().sessions.find((x) => x.sessionId === sid);
-      if (!s || s.loadingHistory || mutationRequests.has(sid)) return;
+      if (!s || s.loadingHistory) return;
       if (s.historyError && !s.historyStale) {
         requestHistory(sid, !!windows.get(sid)?.older);
         return;
@@ -667,12 +597,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     interrupt(sid) { return nativeRead(sid, (net) => net.interrupt(sid)); },
     setModel(sid, modelId, opts) { return mutation(sid, '切换模型', (net) => net.setModel(sid, modelId, opts)); },
     deleteSession(sid, confirm) { return mutation(sid, '永久删除会话', (net) => net.deleteSession(sid, confirm)); },
-    unloadSession(sid) { return mutation(sid, '卸载会话', (net) => net.unloadSession(sid)); },
-    reloadSession(sid) { return mutation(sid, '重载会话', (net) => net.reloadSession(sid)); },
-    compactSession(sid) { return mutation(sid, '压缩会话', (net) => net.compactSession(sid)); },
-    rewindSession(sid, toMsgId, rollbackFiles) {
-      return mutation(sid, '回退会话', (net) => net.rewindSession(sid, toMsgId, rollbackFiles), true);
-    },
+    loadSession(sid) { return mutation(sid, '恢复会话', (net) => net.loadSession(sid)); },
     setMode(sid, mode) { return mutation(sid, '切换模式', (net) => net.setMode(sid, mode)); },
     respondAsk(sid, requestId, answer, wasFreeform) { return acknowledged(sid, (net) => net.respondAsk(sid, requestId, answer, wasFreeform)); },
     respondPlan(sid, requestId, action) { return acknowledged(sid, (net) => net.respondPlan(sid, requestId, action)); },
@@ -680,19 +605,12 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     respondElicitation(sid, requestId, action) { return acknowledged(sid, (net) => net.respondElicitation(sid, requestId, action)); },
     removeQueued(sid, itemId) { return mutation(sid, '移除排队消息', (net) => net.removeQueued(sid, itemId)); },
     refreshList() { return mutation(null, '刷新会话列表', (net) => net.refresh()); },
-    getPlan(sid) { return nativeRead(sid, (net) => net.getPlan(sid)); },
-    getUsage(sid, signal) { return nativeRead(sid, (net) => net.getUsage(sid, signal)); },
-    getPanels(sid) { return nativeRead(sid, (net) => net.getPanels(sid)); },
-    getPanel(sid, section, signal) { return nativeRead(sid, net => net.intent('session/panel', { sessionId: sid, section }, signal)).then(r => r.items); },
     getResources(sid, resources, signal) {
       return nativeRead(sid, net => net.getResources(sid, resources, signal)).then(({ meta }) => {
         if (!meta?.loaded) throw new SessionUnloadedError();
         return meta;
       });
     },
-    scheduleList(sid) { return nativeRead(sid, (net) => net.scheduleList(sid)).then((r) => r.entries); },
-    scheduleAdd(sid, input) { return scheduleMutation(sid, '未能添加定时任务，请核对后再试。', (net) => net.scheduleAdd(sid, input)); },
-    scheduleStop(sid, id) { return scheduleMutation(sid, '未能停止定时任务，请刷新列表后核对。', (net) => net.scheduleStop(sid, id)); },
     mcpGlobal() { return read((net) => net.mcpGlobal()).then((r) => r.servers); },
     mcpSetDefault(name, on) { return mutation(null, `设置 Copilot 全局 MCP ${name}`, (net) => net.mcpSetDefault(name, on)); },
     mcpRefresh() { return mutation(null, '刷新 MCP 配置缓存', (net) => net.mcpRefresh()); },

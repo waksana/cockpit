@@ -7,7 +7,6 @@ import { MessageContent } from './MessageContent';
 import { hasMessageContent } from '../lib/messageContent';
 import { Composer } from './Composer';
 import { Icon } from './Icon';
-import { ContextMenu, type MenuItem } from './ContextMenu';
 import type { ChatMessage, ChatSession, ToolCall, ExitPlanModeAction } from '../net/types';
 import { acknowledgeInView, sendThreadDraft } from '../lib/draft';
 import { getSessionDraft } from '../lib/textDraft';
@@ -17,7 +16,6 @@ import { canSkipMessageLayout, createMessageLayout } from './messageLayout';
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { CopyButton } from './CopyButton';
-import { copyText, messageCopyText } from '../lib/copyText';
 import { ActivityHeader } from './ActivityHeader';
 import { DisclosureChoices } from './DisclosureChoices';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
@@ -80,7 +78,7 @@ function Thought({ message, latest, sessionId }: { message: ChatMessage; latest:
 }
 
 function SkillActivity({ message }: { message: ChatMessage }) {
-  return <ActivityHeader icon={<Icon name="skills" size={16} />} title={`skill · ${messageCopyText(message)}`} />;
+  return <ActivityHeader icon={<Icon name="skills" size={16} />} title={`skill · ${message.content}`} />;
 }
 
 export function MessageProcess({ items, sessionId, latest = false, identity = items[0].id }: {
@@ -198,7 +196,7 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
       {!connected && toolCallId && <div role="status">等待连接…</div>}
       <div ref={contentRef} data-child-history>
         <TranscriptMessages messages={sub} sessionId={JSON.stringify([sessionId, toolCallId ?? m.id])}
-          today={new Date().setHours(0, 0, 0, 0)} onMenu={ignoreMessageMenu} nested />
+          today={new Date().setHours(0, 0, 0, 0)} nested />
       </div>
       {!sub.length && <div className="subagent-empty">
         当前阅读窗口内暂无子代理消息。
@@ -212,17 +210,17 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
 //  - assistant replies are NOT bubbles — they read as a full-width document,
 //    with a light byline (icon + Copilot + time) shown once per assistant group;
 //  - system messages are a quiet centered note.
-const MessageRow = memo(function MessageRow({ m, sessionId, showByline, onMenu, nested }: { m: ChatMessage; sessionId: string; showByline: boolean; onMenu: (e: React.MouseEvent, m: ChatMessage) => void; nested?: boolean }) {
+const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }: { m: ChatMessage; sessionId: string; showByline: boolean; nested?: boolean }) {
   const anchorId = nested ? JSON.stringify([sessionId, m.id]) : m.id;
   if (m.subtype === 'subagent' && m.subagent) {
-    return <div className="message is-doc" data-message-id={anchorId} onContextMenu={(e) => onMenu(e, m)}><SubagentCard key={m.subagent.toolCallId ?? m.id} m={m} sessionId={sessionId} /></div>;
+    return <div className="message is-doc" data-message-id={anchorId}><SubagentCard key={m.subagent.toolCallId ?? m.id} m={m} sessionId={sessionId} /></div>;
   }
   if (m.role === 'user') {
     const isAskReply = m.subtype === 'ask-reply';
     const cls = ['message', 'is-out'];
     if (isAskReply) cls.push('is-ask-reply');
     return (
-      <div className="user-message" onContextMenu={(e) => onMenu(e, m)}>
+      <div className="user-message">
         <div className={cls.join(' ')} data-message-id={anchorId}>
           {isAskReply && <span className="ask-reply-tag" aria-label="对提问的回复">↩ 回复</span>}
           <MessageContent message={m} sessionId={sessionId} />
@@ -236,21 +234,21 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, onMenu, 
   if (m.role === 'system') {
     if (m.subtype === 'skill') {
       return (
-        <div className="message is-skill" data-message-id={anchorId} onContextMenu={(e) => onMenu(e, m)}>
+        <div className="message is-skill" data-message-id={anchorId}>
           <SkillActivity message={m} />
         </div>
       );
     }
     const level = m.level ?? 'info';
     return (
-      <div className="message is-system" data-message-id={anchorId} data-level={level} onContextMenu={(e) => onMenu(e, m)}>
+      <div className="message is-system" data-message-id={anchorId} data-level={level}>
         {level === 'error' && <span className="sys-ico" aria-hidden="true"><Icon name="error" size={14} /></span>}
         {m.content}
       </div>
     );
   }
   return (
-    <article className="message is-doc" onContextMenu={(e) => onMenu(e, m)}>
+    <article className="message is-doc">
       {showByline && hasMessageContent(m) && (
         <header className="doc-byline">
           <span className="doc-mark" aria-hidden="true"><Icon name="compose" size={15} /></span>
@@ -265,12 +263,9 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, onMenu, 
   );
 });
 
-type MessageMenu = (event: React.MouseEvent, message: ChatMessage) => void;
-const ignoreMessageMenu: MessageMenu = () => {};
-
-const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline, live, layout, onMenu, nested }: {
+const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline, live, layout, nested }: {
   m: ChatMessage; sessionId: string; date?: string; showByline: boolean; live: boolean;
-  layout: ReturnType<typeof createMessageLayout>; onMenu: MessageMenu; nested?: boolean;
+  layout: ReturnType<typeof createMessageLayout>; nested?: boolean;
 }) {
   const frame = useRef<HTMLDivElement | null>(null);
   const skippable = canSkipMessageLayout(m, live);
@@ -285,13 +280,13 @@ const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline
       data-window-item-id={m.id}
       data-assistant-message={plainAssistant && !empty || undefined} data-empty={empty || undefined}>
       {date && !empty && <div className="date-separator" aria-hidden="true">{date}</div>}
-      <MessageRow m={m} sessionId={sessionId} showByline={showByline} onMenu={onMenu} nested={nested} />
+      <MessageRow m={m} sessionId={sessionId} showByline={showByline} nested={nested} />
     </div>
   );
 });
 
-const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionId, liveId, today, onMenu, nested = false }: {
-  messages: ChatMessage[]; sessionId: string; liveId?: string; today: number; onMenu: MessageMenu; nested?: boolean;
+const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionId, liveId, today, nested = false }: {
+  messages: ChatMessage[]; sessionId: string; liveId?: string; today: number; nested?: boolean;
 }) {
   const layout = useMemo(() => createMessageLayout(), []);
   useLayoutEffect(() => () => layout.dispose(), [layout]);
@@ -318,7 +313,7 @@ const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionI
       <MessageGroup key={m.id} m={m} sessionId={sessionId}
         date={date} nested={nested}
         showByline={m.role === 'assistant' && (newDay || previous?.role !== 'assistant')}
-        live={m.role === 'assistant' && m.id === liveId} layout={layout} onMenu={onMenu} />
+        live={m.role === 'assistant' && m.id === liveId} layout={layout} />
     );
   });
 });
@@ -388,28 +383,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     actionScopeRef.current = scope;
     return () => { scope.active = false; };
   }, [session.sessionId]);
-  const [msgMenu, setMsgMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
-  const [copyNotice, setCopyNotice] = useState('');
-  useEffect(() => {
-    if (!copyNotice) return;
-    const timer = window.setTimeout(() => setCopyNotice(''), 3000);
-    return () => window.clearTimeout(timer);
-  }, [copyNotice]);
-  const openMsgMenu = useCallback((e: React.MouseEvent, m: ChatMessage) => {
-    const text = messageCopyText(m);
-    if (!text) return;
-    e.preventDefault();
-    setMsgMenu({
-      x: e.clientX, y: e.clientY,
-      items: [{ label: '复制', icon: 'file', onClick: () => {
-        const scope = actionScopeRef.current;
-        void copyText(text).then(
-          () => { if (scope.active) setCopyNotice('已复制消息'); },
-          () => { if (scope.active) setCopyNotice('复制失败，请选择文字后复制。'); },
-        );
-      } }],
-    });
-  }, []);
   const prevLastIdRef = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -543,7 +516,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
               )}
               <TranscriptMessages messages={messages} sessionId={session.sessionId}
                 liveId={session.status === 'running' ? session.messages.at(-1)?.id : undefined}
-                today={new Date().setHours(0, 0, 0, 0)} onMenu={openMsgMenu} />
+                today={new Date().setHours(0, 0, 0, 0)} />
 
               {session.error && <p className="chat-error" role="alert">错误: {session.error}
                 {onRetryHistory && session.materialized && !session.historyStale && <button type="button"
@@ -682,10 +655,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
           onSend={handleSend}
           sendBlocked={ask?.allowFreeform === false}
         />
-      )}
-      <div className="chat-copy-notice" role="status">{copyNotice}</div>
-      {msgMenu && (
-        <ContextMenu x={msgMenu.x} y={msgMenu.y} items={msgMenu.items} onClose={() => setMsgMenu(null)} />
       )}
     </main></DisclosureChoices>
   );

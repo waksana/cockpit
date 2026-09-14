@@ -165,12 +165,6 @@
     &[data-tone='running'] { color: var(--primary-color); }
     &[data-tone='error'] { color: var(--danger-color); }
   }
-  // Scheduled-prompts indicator (a session with one or more active schedules).
-  .dialog-schedule {
-    font-size: 0.95rem;
-    color: var(--secondary-text-color);
-    display: inline-flex;
-  }
 }
 
 .chatlist-empty {

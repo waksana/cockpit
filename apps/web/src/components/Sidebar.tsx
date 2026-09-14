@@ -8,7 +8,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { SessionMeta, SessionStatus } from '../net/types';
 import { ContextMenu, type MenuItem } from './ContextMenu';
-import { Icon } from './Icon';
 import { useLongPress } from '../lib/longpress';
 import { filterSessions } from '../pages/session-list';
 import { menuFocusTarget } from '../lib/menuFocus';
@@ -81,9 +80,6 @@ function SessionRow({ s, active, actions }: {
       <span className="dialog-time">{relTime(s.lastActivity)}</span>
       <span className="dialog-subtitle">{cwdBasename(s.cwd)}</span>
       <span className="dialog-meta">
-        {!!s.scheduleCount && s.scheduleCount > 0 && (
-          <span className="dialog-schedule" title={`${s.scheduleCount} 个定时任务`}><Icon name="schedule" size={15} /></span>
-        )}
         {statusText && <span className="dialog-status" data-tone={s.status}>{statusText}</span>}
         {(s.ask || s.planRequest || s.elicitation) && <span className="dialog-status" title="需要选择" aria-label="需要选择">选</span>}
       </span>

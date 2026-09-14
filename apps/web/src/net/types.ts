@@ -6,7 +6,7 @@
 export type {
   ChatMessage, ToolCall, ChatRole, SessionMeta, SessionStatus, AgentStatus,
   ModelOption, QueuedItem, AskRequest, ServerEvent, TodoProgress,
-  TodoItem, SessionPlan, SessionPanels, PanelItem, NativeAttachment, DirEntry, DirListing,
+  NativeAttachment, DirEntry, DirListing,
   ExitPlanModeAction,
 } from '@cockpit/protocol';
 

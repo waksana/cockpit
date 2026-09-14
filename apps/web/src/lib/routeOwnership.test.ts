@@ -2,10 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { createMemoryRouter } from 'react-router-dom';
-import { Dialog } from '../components/Dialog';
-import { SessionRuntime } from '../components/SessionRuntime';
-import type { ChatSession } from '../net/types';
+import { createMemoryRouter, MemoryRouter } from 'react-router-dom';
+import App from '../App';
 import { parentOf } from './nav';
 import {
   detailsNavigation, focusedSessionId, SESSION_PANELS,
@@ -27,7 +25,7 @@ test('only full-page phone details release the session; desktop details retain v
     assert.equal(focusedSessionId(`/session/a/${panel}`, true), null);
     assert.equal(focusedSessionId(`/session/a/${panel}`, false), 'a');
   }
-  assert.equal(focusedSessionId('/session/a/unknown', true), 'a');
+  assert.equal(focusedSessionId('/session/a/unknown', true), null);
 });
 
 test('encoded session IDs round-trip exactly once for all links and ownership', () => {
@@ -43,28 +41,39 @@ test('encoded session IDs round-trip exactly once for all links and ownership', 
   }
 });
 
-test('trailing slash and unknown panels preserve the same parent while malformed routes own no chat', () => {
+test('only existing panels own chat while unknown and removed routes keep no reader', () => {
+  assert.deepEqual(SESSION_PANELS, ['info', 'mcp', 'skills']);
   assert.deepEqual(sessionRoute('/session/a/'), { sessionId: 'a', panel: null });
   assert.deepEqual(sessionRoute('/session/a/info/'), { sessionId: 'a', panel: 'info' });
+  assert.deepEqual(sessionRoute('/SESSION/a/MCP'), { sessionId: 'a', panel: 'mcp' });
   const unknown = '/session/a%2Fb/unknown';
-  assert.deepEqual(sessionRoute(unknown), { sessionId: 'a/b', panel: null });
-  assert.equal(focusedSessionId(unknown, true), 'a/b');
+  assert.deepEqual(sessionRoute(unknown), { sessionId: null, panel: null });
+  assert.equal(focusedSessionId(unknown, true), null);
   assert.equal(parentOf(unknown), sessionPath('a/b'));
+  for (const panel of ['plan', 'context', 'schedules', 'runtime']) {
+    assert.deepEqual(sessionRoute(`/session/a/${panel}`), { sessionId: null, panel: null });
+    assert.equal(focusedSessionId(`/session/a/${panel}`, false), null);
+    const html = renderToStaticMarkup(createElement(MemoryRouter, {
+      initialEntries: [`/session/a/${panel}`], children: createElement(App),
+    }));
+    assert.match(html, /页面不存在/);
+    assert.doesNotMatch(html, /chat-messages|info-panel-body/);
+  }
   for (const path of ['/session/', '/session//info', '/session/a/info/extra', '/session/%E0%A4%A']) {
     assert.equal(focusedSessionId(path, false), null);
   }
 });
 
 test('session selection and new-session destinations push from lists, replace lateral session routes', () => {
-  for (const from of ['/', '/mcp', '/skills/a', '/trash/a']) {
+  for (const from of ['/', '/mcp', '/skills/a', '/trash/a', '/session/a/runtime', '/session/a/unknown']) {
     assert.deepEqual(sessionNavigation(from, 'new/id'), { to: '/session/new%2Fid', replace: false });
   }
-  for (const from of ['/session/a', '/session/a/info', '/session/a/runtime', '/session/a/unknown']) {
+  for (const from of ['/session/a', '/session/a/info']) {
     assert.deepEqual(sessionNavigation(from, 'new/id'), { to: '/session/new%2Fid', replace: true });
   }
   assert.equal(detailsNavigation('/session/a', 'a', 'info').replace, false);
   for (const panel of SESSION_PANELS) {
-    assert.equal(detailsNavigation(`/session/a/${panel}`, 'a', 'runtime').replace, true);
+    assert.equal(detailsNavigation(`/session/a/${panel}`, 'a', 'info').replace, true);
   }
 });
 
@@ -93,32 +102,4 @@ test('real router history keeps details switches lateral so Back returns to chat
   } finally {
     router.dispose();
   }
-});
-
-test('runtime detail identifies its owner without navigation and disables offline mutations', () => {
-  const html = renderToStaticMarkup(createElement(SessionRuntime, {
-    session: { sessionId: 'offline', title: 'Offline session' } as ChatSession,
-    onClose: () => {},
-  }));
-  assert.match(html, /运行维护 · Offline session/);
-  assert.doesNotMatch(html, /<nav|info-panel-more|role="tab"/);
-  assert.match(html, /等待连接/);
-  for (const label of ['压缩', '回退', '重载', '卸载']) {
-    assert.ok(html.includes(`disabled="">${label}</button>`));
-  }
-});
-
-test('rewind dialogs expose unsupported file rollback without promising success; notices dismiss offline', () => {
-  const html = renderToStaticMarkup(createElement(Dialog, {
-    title: '回退', rollbackFiles: false, onConfirm: () => {}, onCancel: () => {},
-  }));
-  assert.match(html, /type="checkbox"/);
-  assert.doesNotMatch(html, /checked=""/);
-  assert.match(html, /可能不受支持/);
-  assert.match(html, /不勾选时仅回退对话/);
-  assert.match(html, /class="dialog-btn primary rp" disabled=""/);
-  const notice = renderToStaticMarkup(createElement(Dialog, {
-    title: '无法回退', acknowledgementOnly: true, onConfirm: () => {}, onCancel: () => {},
-  }));
-  assert.doesNotMatch(notice, /class="dialog-btn primary rp" disabled/);
 });

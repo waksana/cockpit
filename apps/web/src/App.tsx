@@ -2,14 +2,14 @@
 // Desktop: sidebar + chat side-by-side. Mobile: list ↔ detail two-level nav.
 
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Routes, Route, useNavigate, useLocation } from 'react-router-dom';
+import { Link, Routes, Route, useNavigate, useLocation } from 'react-router-dom';
 import { useShallow } from 'zustand/react/shallow';
 import { useCockpit } from './net/store';
 import { useUp, recordLocation } from './lib/nav';
 import { createSessionMetadataSelector } from './lib/sessionSelectors';
 import {
   detailsNavigation, focusedSessionId, sessionNavigation,
-  sessionRoute, type SessionPanel,
+  sessionRoute, SESSION_PANELS, type SessionPanel,
 } from './lib/routeOwnership';
 import { Shell, MasterPane, DetailPane } from './components/Shell';
 import { Sidebar } from './components/Sidebar';
@@ -19,7 +19,7 @@ import { Icon } from './components/Icon';
 import { ChatHeader } from './components/ChatHeader';
 import { AnchoredMenu } from './components/AnchoredMenu';
 import { ModeMenu } from './components/ModeMenu';
-import { Dialog, DirectoryModal, type DialogProps } from './components/Dialog';
+import { DirectoryModal } from './components/Dialog';
 import { GlobalNavigation } from './components/GlobalNavigation';
 import { sessionActionItems, type SessionActionHandlers } from './lib/sessionActions';
 import { SessionDetails } from './components/SessionDetails';
@@ -43,10 +43,10 @@ function Workspace() {
   const selectMetadata = useMemo(() => createSessionMetadataSelector(), []);
   const sessions = useCockpit(selectMetadata);
   const {
-    connState, newSession, forkSession,
+    connState, newSession,
     setMode, globalModels,
   } = useCockpit(useShallow((s) => ({
-    connState: s.connState, newSession: s.newSession, forkSession: s.forkSession,
+    connState: s.connState, newSession: s.newSession,
     setMode: s.setMode, globalModels: s.globalModels,
   })));
   const active = useMemo(
@@ -68,13 +68,11 @@ function Workspace() {
   }, [panel, routeId, panelTrigger]);
   const [modeMenuOpen, setModeMenuOpen] = useState(false);
   const modeChipRef = useRef<HTMLButtonElement | null>(null);
-  const [dialog, setDialog] = useState<DialogProps | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ sessionId: string; name: string } | null>(null);
   const [dirPicker, setDirPicker] = useState(false);
   const [overlayRoute, setOverlayRoute] = useState(location.key);
   if (overlayRoute !== location.key) {
     setOverlayRoute(location.key);
-    setDialog(null);
     setDeleteTarget(null);
     setDirPicker(false);
     setDetailMenuOpen(false);
@@ -86,7 +84,7 @@ function Workspace() {
   //   /                       — session list, no chat
   //   /session/:id            — that chat
   //   /session/:id/info       — chat + info panel
-  //   /session/:id/mcp|skills|schedules|context|runtime — chat + details
+  //   /session/:id/mcp|skills — chat + details
   // The global sections (/mcp, /skills and their /:item detail) render a
   // separate master-detail <ManageWorkspace/>, not this Workspace.
   // These session routes all render the SAME <Workspace/> (no remount).
@@ -151,23 +149,10 @@ function Workspace() {
   const doDelete = (sessionId: string) => {
     const s = sessions.find((x) => x.sessionId === sessionId);
     const name = s?.title?.trim() || '该会话';
-    setDialog(null);
     setDeleteTarget({ sessionId, name });
   };
   const menuHandlers: SessionActionHandlers = {
     openPanel: openDetails,
-    fork: (sessionId) => {
-      let childId: string;
-      setDialog({
-        title: '分叉为独立会话',
-        message: '继承完整历史，不自动发送任务；父会话会增加分叉记录。两个会话共用工作目录和文件，并非独立 worktree。含定时任务的历史不能分叉。',
-        confirmLabel: '创建分叉',
-        actionKey: `fork:${sessionId}`,
-        onConfirm: async () => { childId = await forkSession(sessionId); },
-        onSuccess: () => selectSession(childId),
-        onCancel: () => setDialog(null),
-      });
-    },
     delete: doDelete,
   };
   const getSessionMenuItems = (session: typeof sessions[number]) => (
@@ -240,7 +225,6 @@ function Workspace() {
           onClose={() => setModeMenuOpen(false)}
         />
       )}
-      {dialog && <Dialog key={location.key} {...dialog} />}
       {deleteTarget && <SessionDeleteDialog key={`${location.key}:${deleteTarget.sessionId}`}
         sessionId={deleteTarget.sessionId} name={deleteTarget.name}
         onCancel={() => setDeleteTarget(null)}
@@ -299,7 +283,12 @@ export default function App() {
       <Route path="/skills" element={<ManageWorkspace />} />
       <Route path="/skills/:item" element={<ManageWorkspace />} />
       <Route path="/session/:sessionId" element={<Workspace />} />
-      <Route path="/session/:sessionId/:panel" element={<Workspace />} />
+      {SESSION_PANELS.map(panel => (
+        <Route key={panel} path={`/session/:sessionId/${panel}`} element={<Workspace />} />
+      ))}
+      <Route path="*" element={<div className="detail-empty">
+        <div><p>页面不存在。</p><Link className="dialog-btn primary rp" to="/">返回列表</Link></div>
+      </div>} />
       </Routes>
     </Suspense>
   );

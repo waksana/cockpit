@@ -80,6 +80,33 @@ test('native delete forwards one confirmation without any module preflight or ap
   assertOnlyPost(fetch, 'session/purge', { sessionId: 'session', confirm: true });
 });
 
+test('removed session pages have no dedicated Web client helpers', t => {
+  const { client, fetch } = setup(t, async () => { throw new Error('Unexpected request'); });
+  for (const name of [
+    'forkSession', 'getPlan', 'getPanels', 'getPanel', 'getUsage',
+    'scheduleList', 'scheduleAdd', 'scheduleStop', 'compactSession',
+    'rewindSession', 'unloadSession', 'reloadSession',
+  ]) assert.equal(name in client, false, name);
+  assert.equal(fetch.mock.callCount(), 0);
+});
+
+test('explicit load sends exactly one non-destructive session/load request', async t => {
+  const result = { ok: true, sessionId: 'session' };
+  const { client, fetch } = setup(t, async () => Response.json(result));
+  assert.deepEqual(await client.loadSession('session'), result);
+  assertOnlyPost(fetch, 'session/load', { sessionId: 'session' });
+});
+
+for (const response of [
+  { ok: false, sessionId: 'session' }, { ok: true }, {},
+]) {
+  test(`explicit load rejects invalid acknowledgement without retry: ${JSON.stringify(response)}`, async t => {
+    const { client, fetch } = setup(t, async () => Response.json(response));
+    await assert.rejects(client.loadSession('session'));
+    assertOnlyPost(fetch, 'session/load', { sessionId: 'session' });
+  });
+}
+
 test('native deletion failure or missing acknowledgement is not retried or accepted', async t => {
   let response = Response.json({ error: 'Native protected work' }, { status: 409 });
   const { client, fetch } = setup(t, async () => response);
@@ -113,32 +140,27 @@ test('Web uses native new followed by ordinary prompt, not a combined first-mess
   assert.equal(fetch.mock.callCount(), 2);
 });
 
-test('native usage client validates the snapshot, forwards cancellation and never resumes on unloaded response', async t => {
-  const usage = { sessionId: 'session', sampledAt: 1, context: null,
-    usage: { sessionStartTime: '2026-09-09T00:00:00Z', totalUserRequests: 0,
-      lastCallInputTokens: 0, lastCallOutputTokens: 0, modelMetrics: {} } };
+test('native resources client validates the projection, forwards cancellation and never resumes on unloaded response', async t => {
+  const resources = { meta: { sessionId: 'session', loaded: true, currentMode: 'plan' } };
   let cold = false;
   const { client, fetch } = setup(t, async () => cold
     ? Response.json({ error: 'Unloaded', code: 'SESSION_UNLOADED' }, { status: 409 })
-    : Response.json(usage));
+    : Response.json(resources));
   const controller = new AbortController();
-  assert.deepEqual(await client.getUsage('session', controller.signal), usage);
+  assert.deepEqual(await client.getResources('session', ['mode'], controller.signal), resources);
   assert.equal(fetch.mock.calls[0].arguments[1]?.signal, controller.signal);
   cold = true;
-  await assert.rejects(client.getUsage('session'), isSessionUnloadedError);
+  await assert.rejects(client.getResources('session', ['mode']), isSessionUnloadedError);
   assert.equal(fetch.mock.callCount(), 2);
-  assert.ok(fetch.mock.calls.every(call => String(call.arguments[0]).endsWith('/intent/session/usage')));
+  assert.ok(fetch.mock.calls.every(call => String(call.arguments[0]).endsWith('/intent/session/resources')));
 });
 
-test('native usage client rejects another session or invalid counters without retry', async t => {
-  let payload = { sessionId: 'other', sampledAt: 1, context: null,
-    usage: { sessionStartTime: 'native-start', totalUserRequests: 0,
-      lastCallInputTokens: 0, lastCallOutputTokens: 0, modelMetrics: {} } };
-  const { client, fetch } = setup(t, async () => Response.json(payload));
-  await assert.rejects(client.getUsage('requested'), /returned sessionId/);
-  payload = { ...payload, sessionId: 'requested', usage: { ...payload.usage, lastCallInputTokens: -1 } };
-  await assert.rejects(client.getUsage('requested'), /greater than or equal/);
-  assert.equal(fetch.mock.callCount(), 2);
+test('native resources client rejects invalid projection fields without retry', async t => {
+  const { client, fetch } = setup(t, async () => Response.json({
+    meta: { sessionId: 'session', loaded: true, currentMode: 'unknown-mode' },
+  }));
+  await assert.rejects(client.getResources('session', ['mode']));
+  assertOnlyPost(fetch, 'session/resources', { sessionId: 'session', resources: ['mode'] });
 });
 
 for (const path of [undefined, '/P', './P', '', '   ']) {
@@ -346,18 +368,15 @@ for (const status of ['connected', 'failed', 'needs-auth', 'pending', 'disabled'
   test(`Web MCP reads and settings preserve native ${status} and separate enablement`, async t => {
     const enabled = status !== 'disabled' && status !== 'not_configured';
     const inventory = { loaded: true, servers: [{ name: 'fixture', detail: 'native', status, enabled }] };
-    const panels = { skills: [], mcpServers: [{ label: 'fixture', sublabel: status, enabled }],
-      tasks: [], instructionSources: [], schedules: [] };
     const toggle = { ok: false, applied: false, sessionId: 'session', name: 'fixture', status, enabled,
       error: 'Native target did not confirm the requested change',
       operation: { id: 'operation', desiredEnabled: true, state: 'failed', startedAt: 1, status } };
     const { client, fetch } = setup(t, async url => Response.json(
-      String(url).endsWith('/mcp/session') ? inventory : String(url).endsWith('/session/panels') ? panels : toggle,
+      String(url).endsWith('/mcp/session') ? inventory : toggle,
     ));
     assert.deepEqual(await client.mcpSession('session'), inventory);
-    assert.deepEqual(await client.getPanels('session'), panels);
     assert.deepEqual(await client.mcpToggleSession('session', 'fixture', true), toggle);
-    assert.equal(fetch.mock.callCount(), 3);
+    assert.equal(fetch.mock.callCount(), 2);
   });
 }
 
@@ -365,11 +384,11 @@ test('Web MCP unknown state is an explicit visible read/setting error, never an 
   const message = 'Native MCP state is unconfirmed for fixture: unknown status "future-status"';
   const { client, fetch } = setup(t, async () => Response.json({ error: message }, { status: 409 }));
   for (const read of [
-    () => client.mcpSession('session'), () => client.getPanels('session'),
+    () => client.mcpSession('session'),
     () => client.mcpToggleSession('session', 'fixture', true),
   ]) await assert.rejects(read(), error => error instanceof Error && error.message === message);
-  assert.equal(fetch.mock.callCount(), 3);
-  assert.equal(getUxErrors().length, 3);
+  assert.equal(fetch.mock.callCount(), 2);
+  assert.equal(getUxErrors().length, 2);
   assert.ok(getUxErrors().every(error => error.message.includes(message)));
 });
 
@@ -429,7 +448,7 @@ const rejected = new Error('Answer submission rejected');
 const offline = new TypeError('Connection lost while answering');
 const unloadedMessage = 'Native session data is unavailable while unloaded; explicitly resume the session first.';
 
-for (const name of ['session/plan', 'session/panels', 'skills/session', 'schedule/list'] as const) {
+for (const name of ['mcp/session', 'skills/session'] as const) {
   for (const field of ['error', 'message'] as const) {
     test(`${name} preserves unloaded HTTP status/code and ${field} without global diagnostics or retries`, async (t) => {
       const { client, fetch, events } = setup(t, async () => Response.json({
@@ -462,7 +481,7 @@ for (const { status, code } of [
     const { client, fetch } = setup(t, async () => Response.json({
       code, message,
     }, { status }));
-    await assert.rejects(client.getPlan('session'), (error: unknown) => {
+    await assert.rejects(client.mcpSession('session'), (error: unknown) => {
       assert.ok(error instanceof IntentHttpError);
       assert.equal(error.status, status);
       assert.equal(error.code, typeof code === 'string' ? code : undefined);
@@ -470,7 +489,7 @@ for (const { status, code } of [
       assert.equal(isSessionUnloadedError(error), false);
       return true;
     });
-    assertOnlyPost(fetch, 'session/plan', { sessionId: 'session' });
+    assertOnlyPost(fetch, 'mcp/session', { sessionId: 'session' });
     assert.equal((console.error as Mock<typeof console.error>).mock.callCount(), 1);
   });
 }
@@ -563,19 +582,17 @@ for (const failure of failures) {
   });
 }
 
-test('unsupported file rollback rejects without falling back to a destructive rewind', async (t) => {
+test('failed explicit load never falls back to reload or creates a replacement session', async (t) => {
   const { client, fetch, events } = setup(t, async () => Response.json({
-    error: 'File rollback is unsupported',
-  }, { status: 501 }));
-  await assert.rejects(client.rewindSession('session', 'turn', true), {
-    message: 'File rollback is unsupported',
+    error: 'Original session is unavailable',
+  }, { status: 404 }));
+  await assert.rejects(client.loadSession('session'), {
+    message: 'Original session is unavailable',
   });
-  assertOnlyPost(fetch, 'session/rewind', {
-    sessionId: 'session', toMsgId: 'turn', rollbackFiles: true,
-  });
+  assertOnlyPost(fetch, 'session/load', { sessionId: 'session' });
   assert.deepEqual(events, []);
   assert.equal(getUxErrors().length, 1);
-  assert.match(getUxErrors()[0].message, /^会话 session \(session\)：接口 session\/rewind 调用失败：File rollback is unsupported$/);
+  assert.match(getUxErrors()[0].message, /^会话 session \(session\)：接口 session\/load 调用失败：Original session is unavailable$/);
 });
 
 for (const [index, response] of [null, { error: { detail: 'unavailable' } }, 'unavailable'].entries()) {

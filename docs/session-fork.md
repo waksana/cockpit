@@ -8,10 +8,10 @@ This is the canonical fork behavior guide. See the [documentation index](README.
 
 ## Call paths
 
-The session menu in both the sidebar and chat has **分叉为独立会话**. It forks
-the full conversation after the existing confirmation dialog explains shared
-files. The backend creates an **unloaded** child and emits the normal
-`session/added` event; the UI navigates to its history without sending a prompt.
+Fork is available through HTTP and the generic MCP caller. The Web session menu
+does not expose a fork action. The backend creates an **unloaded** child and emits
+the normal `session/added` event; it sends no prompt. The child can subsequently
+be selected from the ordinary session list.
 
 API discovery: `GET /capabilities?name=session/fork`.
 
@@ -91,7 +91,7 @@ automatically receiving a hot update.
 | Tasks and queue | The fixture's active shell task and paused queued prompt do not carry into the child's live task/queue registries; the parent's registries are not changed by fork. Cockpit copies no pending callback or decision, and sends no automatic message. Business notification receipts and scheduling policy are outside this adapter. |
 | Schedules | Native **does** recreate inherited schedules on resume. Cockpit therefore rejects any selected prefix containing `session.schedule_created`, even if that schedule was later stopped. It also rejects sources with currently active timers. A boundary before schedule creation is supported once the source has no live timers. No journal rewriting or post-resume cancellation race is used. |
 
-The operation is **non-idempotent**. Neither Web, API nor MCP automatically
+The operation is **non-idempotent**. Neither API nor MCP automatically
 retries it. On a timeout or lost acknowledgement, a child may already exist:
 inspect the authoritative session list before deciding what to do. A unique
 optional `name` helps identify the result. Errors preserve the native reason;

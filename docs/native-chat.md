@@ -134,6 +134,8 @@ the group's mounted identity. They are not a second native state or history stor
 The transcript uses no group divider lines or extra inter-group gaps. It retains
 internal text/button spacing, original timestamps, keyboard focus and local
 code/tool copying.
+Right-clicking chat content uses the browser's native context menu, not a custom
+message-copy menu. Code and tool-detail copy buttons remain available.
 
 The opt-in lab's `ordered-events` scenario feeds synthetic native pages through
 the actual `NativeWindow`, including repeated pages, older prefixes, new speech

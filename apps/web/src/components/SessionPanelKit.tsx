@@ -1,41 +1,10 @@
-// Shared building blocks for the session detail surfaces — the info panel and the
-// per-session detail sub-pages (Automation / Context) that the kebab opens into the
-// info-panel slot. Extracted so the panel and the pages render identical section
-// cards instead of transcribing them twice.
+// Shared layout and resource controls for session settings, MCP and Skills.
 
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Icon } from './Icon';
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { useMediaQuery } from '../lib/useMediaQuery';
-
-// The shared collapsible primitive for every detail section: a toggle header
-// (title + optional count + chevron) over a body that mounts only when open.
-// Keep disclosure state while the same resource refreshes.
-export function CollapsibleSection({ title, count, bodyClassName, children }: {
-  title: ReactNode;
-  count?: number;
-  bodyClassName?: string;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <section className="info-section">
-      <button className="info-section-name info-section-toggle rp" type="button" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-        {title}
-        <span className="info-section-name-right">
-          {count != null && count}
-          <Icon name={open ? 'up' : 'down'} size={20} />
-        </span>
-      </button>
-      {open && (
-        <div className={bodyClassName ? `info-section-content ${bodyClassName}` : 'info-section-content'}>
-          {children}
-        </div>
-      )}
-    </section>
-  );
-}
 
 // The shell for a per-session detail sub-page rendered in the info-panel slot:
 // the same header (close + title) and scrollable body as SessionInfoPanel, so a
@@ -84,13 +53,13 @@ export function SessionResume({ sessionId, required, onResumed }: {
   sessionId: string; required: boolean; onResumed?: () => void;
 }) {
   const session = useCockpit((s) => s.sessions.find((item) => item.sessionId === sessionId));
-  const reloadSession = useCockpit((s) => s.reloadSession);
+  const loadSession = useCockpit((s) => s.loadSession);
   const action = useKeyedAction(`resume:${sessionId}`);
   if (!required) return null;
   const resume = () => action.run(async () => {
     const current = useCockpit.getState().sessions.find((item) => item.sessionId === sessionId);
     if (!current || current.status === 'running' || current.compacting) return;
-    await reloadSession(sessionId);
+    await loadSession(sessionId);
   }, onResumed);
   return (
     <div className="info-section-content">

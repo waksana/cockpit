@@ -211,6 +211,15 @@ function observe<T>(promise: Promise<T>): Promise<T> {
   return promise;
 }
 
+test('removed session pages have no dedicated Web store actions or readers', () => {
+  const state = createCockpitStore().getState();
+  for (const name of [
+    'forkSession', 'getPlan', 'getPanels', 'getPanel', 'getUsage',
+    'scheduleList', 'scheduleAdd', 'scheduleStop', 'compactSession',
+    'rewindSession', 'unloadSession', 'reloadSession',
+  ]) assert.equal(name in state, false, name);
+});
+
 test('native deletion supports unloaded sessions and failures never retry or remove displayed state', async t => {
   const store = createCockpitStore();
   const h = setup(t, store);
@@ -227,6 +236,47 @@ test('native deletion supports unloaded sessions and failures never retry or rem
   assert.equal(session('a', store).loaded, false);
   assert.match(session('a', store).error ?? '', /Native protected work/);
 });
+
+test('late load and delete failures cannot resurrect an authoritatively removed session', async t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a', 'b']);
+  const loading = useCockpit.getState().loadSession('a');
+  const deleting = useCockpit.getState().deleteSession('a', true);
+  const rejected = [assert.rejects(loading, /load interrupted/), assert.rejects(deleting, /delete interrupted/)];
+  h.source.emit({ type: 'session/removed', sessionId: 'a' });
+  const before = useCockpit.getState().sessions;
+  h.assertPost(0, 'session/load', { sessionId: 'a' }).reject(new Error('load interrupted'));
+  h.assertPost(1, 'session/purge', { sessionId: 'a', confirm: true }).reject(new Error('delete interrupted'));
+  await Promise.all(rejected);
+  await setImmediate();
+  assert.strictEqual(useCockpit.getState().sessions, before);
+  assert.deepEqual(before.map(row => row.sessionId), ['b']);
+  assert.equal(session('b').error, null);
+  assert.equal(getUxErrors().length, 2);
+  assert.equal(h.requests.length, 2);
+});
+
+for (const boundary of ['snapshot', 'reconnect', 'cleanup'] as const) {
+  test(`late load failure after ${boundary} rejects without changing the current session projection`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    const loading = useCockpit.getState().loadSession('a');
+    const rejected = assert.rejects(loading, /uncertain load/);
+    if (boundary === 'snapshot') h.snapshot();
+    else if (boundary === 'reconnect') h.reconnect();
+    else h.cleanup();
+    const before = session();
+    h.assertPost(0, 'session/load', { sessionId: 'a' }).reject(new Error('uncertain load'));
+    await rejected;
+    await setImmediate();
+    assert.strictEqual(session(), before);
+    assert.equal(session().error, null);
+    assert.equal(getUxErrors().length, 1);
+    assert.equal(h.requests.length, 1);
+  });
+}
 
 test('native creation result never invents local session state or sends a hidden message', async t => {
   const store = createCockpitStore();
@@ -247,7 +297,7 @@ test('unselected sessions and read-lease patches do not fetch hidden resources o
   const h = setup(t, store);
   h.source.open();
   h.snapshot(['a', 'b']);
-  for (const resource of ['plan', 'skills', 'mcp', 'tasks', 'instructions', 'usage', 'models', 'todo'] as const) {
+  for (const resource of ['plan', 'skills', 'mcp', 'tasks', 'instructions', 'usage', 'models', 'todo', 'schedule'] as const) {
     h.source.emit({ type: 'session/invalidated', sessionId: 'b', resources: [resource] });
   }
   h.source.emit({ type: 'session/patch', sessionId: 'b', activeOperations: 1 });
@@ -255,11 +305,12 @@ test('unselected sessions and read-lease patches do not fetch hidden resources o
   await setImmediate();
   assert.equal(h.requests.length, 0);
   assert.equal(store.getState().resourceRevisions.b?.tasks, 1);
-  h.source.emit({ type: 'session/invalidated', sessionId: 'b', resources: ['schedule'] });
+  assert.equal(store.getState().resourceRevisions.b?.schedule, 1);
+  h.source.emit({ type: 'session/invalidated', sessionId: 'b', resources: ['mode'] });
   await setImmediate();
-  h.assertPost(0, 'session/resources', { sessionId: 'b', resources: ['schedule'] });
-  await h.reply(0, { meta: { sessionId: 'b', loaded: true, scheduleCount: 2 } });
-  assert.equal(session('b', store).scheduleCount, 2);
+  h.assertPost(0, 'session/resources', { sessionId: 'b', resources: ['mode'] });
+  await h.reply(0, { meta: { sessionId: 'b', loaded: true, currentMode: 'plan' } });
+  assert.equal(session('b', store).currentMode, 'plan');
   assert.equal(session('b', store).title, 'b', 'narrow projection must not erase identity');
 });
 
@@ -268,19 +319,19 @@ test('late resource changes rerun only their dependency and retain independent f
   const h = setup(t, store);
   h.source.open();
   h.snapshot(['a']);
-  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['model', 'schedule'] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['model', 'mode'] });
   await setImmediate();
-  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['schedule'] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['mode'] });
   h.source.emit({ type: 'session/patch', sessionId: 'a', activeOperations: 1, ask: { requestId: 'fresh-ask', question: 'Continue?' } });
-  await h.reply(0, { meta: { sessionId: 'a', loaded: true, currentModelId: 'fresh-model', scheduleCount: 1,
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, currentModelId: 'fresh-model', currentMode: 'plan',
     activeOperations: 0, ask: null } });
-  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['schedule'] });
+  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['mode'] });
   assert.equal(session('a', store).currentModelId, 'fresh-model');
-  assert.equal(session('a', store).scheduleCount, undefined, 'obsolete schedule count is never published');
+  assert.equal(session('a', store).currentMode, undefined, 'obsolete mode is never published');
   assert.equal(session('a', store).ask?.requestId, 'fresh-ask');
   assert.equal(session('a', store).activeOperations, 1);
-  await h.reply(1, { meta: { sessionId: 'a', loaded: true, scheduleCount: 2 } });
-  assert.equal(session('a', store).scheduleCount, 2);
+  await h.reply(1, { meta: { sessionId: 'a', loaded: true, currentMode: 'autopilot' } });
+  assert.equal(session('a', store).currentMode, 'autopilot');
   assert.equal(h.requests.length, 2);
 });
 
@@ -327,11 +378,11 @@ test('native metadata invalidations read only the affected session and discard s
   h.snapshot(['a', 'b']);
   h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
   await setImmediate();
-  h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode', 'schedule'] });
+  h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode'] });
   h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
   await h.reply(0, { meta: { ...meta('a'), currentModelId: 'obsolete' } });
   assert.notEqual(session('a', store).currentModelId, 'obsolete');
-  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode', 'schedule'] });
+  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode'] });
   await h.reply(1, { meta: { ...meta('a'), currentModelId: 'current' } });
   assert.equal(session('a', store).currentModelId, 'current');
   assert.equal(session('b', store).currentModelId, undefined);
@@ -366,7 +417,7 @@ test('closing invalidations wait for the settling event rather than entering tea
   h.source.emit({ type: 'session/patch', sessionId: 'a', closing: false });
   h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
   await setImmediate();
-  h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode', 'schedule'] });
+  h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode'] });
   await h.reply(0, { meta: { ...meta('a'), loaded: false, status: 'unloaded' } });
   assert.equal(session('a', store).loaded, false);
 });
@@ -416,7 +467,7 @@ test('a failed old metadata request does not discard a newer settling invalidati
   h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
   h.request(0).response.resolve(Response.json({ error: 'Transition in progress', code: 'SESSION_TRANSITION' }, { status: 409 }));
   await setImmediate();
-  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode', 'schedule'] });
+  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode'] });
   await h.reply(1, { meta: { ...meta('a'), title: 'after transition' } });
   assert.equal(session('a', store).title, 'after transition');
   assert.equal(h.requests.length, 2);
@@ -669,7 +720,6 @@ interface MutationCase {
   send: (state: State) => Promise<void>;
   success: unknown;
   sessionId?: string;
-  changesHistory?: boolean;
 }
 
 const mcpSuccess: IntentResult<'mcp/session-toggle'> = {
@@ -685,18 +735,9 @@ const mutations: MutationCase[] = [
     success: { ok: true }, sessionId: 'a',
   },
   { name: 'session/purge', body: { sessionId: 'a', confirm: true }, send: (s) => s.deleteSession('a', true), success: { ok: true }, sessionId: 'a' },
-  { name: 'session/unload', body: { sessionId: 'a' }, send: (s) => s.unloadSession('a'), success: { ok: true }, sessionId: 'a' },
   {
-    name: 'session/reload', body: { sessionId: 'a' }, send: (s) => s.reloadSession('a'),
-    success: { ok: true }, sessionId: 'a', changesHistory: true,
-  },
-  {
-    name: 'session/compact', body: { sessionId: 'a' }, send: (s) => s.compactSession('a'),
-    success: { ok: true }, sessionId: 'a', changesHistory: true,
-  },
-  {
-    name: 'session/rewind', body: { sessionId: 'a', toMsgId: 'anchor' }, send: (s) => s.rewindSession('a', 'anchor'),
-    success: { ok: true }, sessionId: 'a', changesHistory: true,
+    name: 'session/load', body: { sessionId: 'a' }, send: (s) => s.loadSession('a'),
+    success: { ok: true, sessionId: 'a' }, sessionId: 'a',
   },
   { name: 'setMode', body: { sessionId: 'a', mode: 'plan' }, send: (s) => s.setMode('a', 'plan'), success: { ok: true }, sessionId: 'a' },
   {
@@ -912,14 +953,8 @@ interface ResourceCase {
   expected: unknown;
 }
 
-const plan: IntentResult<'session/plan'> = {
-  planMarkdown: 'fixture plan', todos: [{ id: 'todo', title: 'Read fixture', status: 'pending' }],
-};
-const panels: IntentResult<'session/panels'> = {
-  skills: [], mcpServers: [], tasks: [], instructionSources: [], schedules: [],
-};
-const schedule: IntentResult<'schedule/list'>['entries'][number] = {
-  id: 7, prompt: 'fixture reminder', recurring: true, nextRunAt: 1234, intervalMs: 60_000,
+const projection: IntentResult<'session/resources'>['meta'] = {
+  sessionId: 'a', loaded: true, currentModelId: 'fixture-model', currentMode: 'plan',
 };
 const globalMcp: IntentResult<'mcp/global'>['servers'] = [
   { name: 'fixture-mcp', detail: 'fixture command', defaultOn: true },
@@ -932,15 +967,11 @@ const sessionSkills: IntentResult<'skills/session'>['skills'] = [{ name: 'fixtur
 const skill: IntentResult<'skills/read'> = { name: 'fixture-skill', body: 'fixture body', enabled: false };
 const directory: IntentResult<'fs/listDir'> = { path: '/fixture', parent: '/', entries: [] };
 const resources: ResourceCase[] = [
-  { label: 'getPlan', name: 'session/plan', body: { sessionId: 'a' }, read: (s) => s.getPlan('a'), response: plan, expected: plan },
-  { label: 'getPanels', name: 'session/panels', body: { sessionId: 'a' }, read: (s) => s.getPanels('a'), response: panels, expected: panels },
-  { label: 'scheduleList', name: 'schedule/list', body: { sessionId: 'a' }, read: (s) => s.scheduleList('a'), response: { entries: [schedule] }, expected: [schedule] },
   {
-    label: 'scheduleAdd', name: 'schedule/add', body: { prompt: 'fixture reminder', interval: '1m', sessionId: 'a' },
-    read: (s) => s.scheduleAdd('a', { prompt: 'fixture reminder', interval: '1m' }),
-    response: { ok: true, entry: schedule }, expected: { ok: true, entry: schedule },
+    label: 'getResources', name: 'session/resources', body: { sessionId: 'a', resources: ['model', 'mode'] },
+    read: (s) => s.getResources('a', ['model', 'mode'], new AbortController().signal),
+    response: { meta: projection }, expected: projection,
   },
-  { label: 'scheduleStop', name: 'schedule/stop', body: { sessionId: 'a', id: 7 }, read: (s) => s.scheduleStop('a', 7), response: { ok: true }, expected: { ok: true } },
   { label: 'mcpGlobal', name: 'mcp/global', body: {}, read: (s) => s.mcpGlobal(), response: { servers: globalMcp }, expected: globalMcp },
   { label: 'mcpSession', name: 'mcp/session', body: { sessionId: 'a' }, read: (s) => s.mcpSession('a'), response: { loaded: true, servers: sessionMcp }, expected: sessionMcp },
   { label: 'skillsGlobal()', name: 'skills/global', body: {}, read: (s) => s.skillsGlobal(), response: { skills: globalSkills }, expected: globalSkills },
@@ -953,26 +984,11 @@ const resources: ResourceCase[] = [
 ];
 
 const nativeResources = resources.filter((r) =>
-  ['session/plan', 'session/panels', 'mcp/session', 'skills/session', 'schedule/list'].includes(r.name));
+  ['session/resources', 'mcp/session', 'skills/session'].includes(r.name));
 const unloadedMessage = 'Native session data is unavailable while unloaded; explicitly resume the session first.';
 const unloadedResponse = () => Response.json({
   code: 'SESSION_UNLOADED', message: unloadedMessage,
 }, { status: 409 });
-
-test('scheduleList keeps self-paced and ordinary timing metadata through the Web client and store', async t => {
-  const h = setup(t);
-  h.source.open();
-  h.snapshot(['a']);
-  const entries = [
-    { id: 1, prompt: 'model controlled', recurring: true, selfPaced: true, nextRunAt: 123 },
-    { ...schedule, selfPaced: false },
-    { id: 3, prompt: 'once', recurring: false, at: 123, nextRunAt: 123 },
-  ];
-  const listing = useCockpit.getState().scheduleList('a');
-  h.assertPost(0, 'schedule/list', { sessionId: 'a' }).resolve(Response.json({ entries }));
-  assert.deepEqual(await listing, entries);
-  assert.equal(h.requests.length, 1);
-});
 
 for (const resource of nativeResources) {
   for (const state of ['unloaded', 'missing loaded', 'missing session'] as const) {
@@ -1032,28 +1048,28 @@ test('concurrent unloaded races across sessions share one refresh even after its
   h.snapshot(['a', 'b']);
   const before = useCockpit.getState().sessions;
   const reads = [
-    expectRejection(useCockpit.getState().getPlan('a'), /Native session data/),
-    expectRejection(useCockpit.getState().getPanels('b'), /Native session data/),
+    expectRejection(useCockpit.getState().mcpSession('a'), /Native session data/),
+    expectRejection(useCockpit.getState().mcpSession('b'), /Native session data/),
     expectRejection(useCockpit.getState().skillsSession('a'), /Native session data/),
-    expectRejection(useCockpit.getState().scheduleList('b'), /Native session data/),
+    expectRejection(useCockpit.getState().skillsSession('b'), /Native session data/),
   ];
-  h.assertPost(0, 'session/plan', { sessionId: 'a' }).resolve(unloadedResponse());
+  h.assertPost(0, 'mcp/session', { sessionId: 'a' }).resolve(unloadedResponse());
   await reads[0];
   h.assertPost(4, 'session/refresh', {});
-  h.assertPost(1, 'session/panels', { sessionId: 'b' }).resolve(unloadedResponse());
+  h.assertPost(1, 'mcp/session', { sessionId: 'b' }).resolve(unloadedResponse());
   await reads[1];
   assert.equal(h.requests.length, 5);
-  const duringRefresh = expectRejection(useCockpit.getState().getPlan('b'), /Native session data/);
+  const duringRefresh = expectRejection(useCockpit.getState().mcpSession('b'), /Native session data/);
   await h.reply(4, { ok: true });
   h.assertPost(2, 'skills/session', { sessionId: 'a' }).resolve(unloadedResponse());
-  h.assertPost(3, 'schedule/list', { sessionId: 'b' }).resolve(unloadedResponse());
-  h.assertPost(5, 'session/plan', { sessionId: 'b' }).resolve(unloadedResponse());
+  h.assertPost(3, 'skills/session', { sessionId: 'b' }).resolve(unloadedResponse());
+  h.assertPost(5, 'mcp/session', { sessionId: 'b' }).resolve(unloadedResponse());
   await Promise.all([...reads, duringRefresh]);
   assert.equal(h.requests.length, 6, 'late failures from overlapping reads must not refresh again');
   assert.strictEqual(useCockpit.getState().sessions, before);
 
-  const later = expectRejection(useCockpit.getState().getPlan('a'), /Native session data/);
-  h.assertPost(6, 'session/plan', { sessionId: 'a' }).resolve(unloadedResponse());
+  const later = expectRejection(useCockpit.getState().mcpSession('a'), /Native session data/);
+  h.assertPost(6, 'mcp/session', { sessionId: 'a' }).resolve(unloadedResponse());
   await later;
   h.assertPost(7, 'session/refresh', {});
   await h.reply(7, { ok: true });
@@ -1067,7 +1083,7 @@ for (const obsolete of ['snapshot', 'reconnect', 'replacement client', 'cleanup'
     const h = setup(t);
     h.source.open();
     h.snapshot();
-    const checked = expectRejection(useCockpit.getState().getPlan('a'), /Native session data/);
+    const checked = expectRejection(useCockpit.getState().mcpSession('a'), /Native session data/);
     if (obsolete === 'snapshot') h.snapshot();
     else if (obsolete === 'reconnect') h.reconnect();
     else if (obsolete === 'cleanup') h.cleanup();
@@ -1080,7 +1096,7 @@ for (const obsolete of ['snapshot', 'reconnect', 'replacement client', 'cleanup'
       });
     }
     const before = useCockpit.getState().sessions;
-    h.assertPost(0, 'session/plan', { sessionId: 'a' }).resolve(unloadedResponse());
+    h.assertPost(0, 'mcp/session', { sessionId: 'a' }).resolve(unloadedResponse());
     await checked;
     assert.equal(h.requests.length, 1);
     assert.strictEqual(useCockpit.getState().sessions, before);
@@ -1093,8 +1109,8 @@ test('failed passive reconciliation preserves the unloaded rejection and authori
   h.source.open();
   h.snapshot();
   const before = session();
-  const checked = expectRejection(useCockpit.getState().getPanels('a'), /Native session data/);
-  h.assertPost(0, 'session/panels', { sessionId: 'a' }).resolve(unloadedResponse());
+  const checked = expectRejection(useCockpit.getState().skillsSession('a'), /Native session data/);
+  h.assertPost(0, 'skills/session', { sessionId: 'a' }).resolve(unloadedResponse());
   await checked;
   h.assertPost(1, 'session/refresh', {}).resolve(Response.json({ error: 'refresh denied' }, { status: 403 }));
   await setImmediate();
@@ -1113,8 +1129,8 @@ for (const { status, code } of [
     h.source.open();
     h.snapshot();
     const before = session();
-    const checked = expectRejection(useCockpit.getState().getPlan('a'), /Native session data/);
-    h.assertPost(0, 'session/plan', { sessionId: 'a' }).resolve(Response.json({
+    const checked = expectRejection(useCockpit.getState().mcpSession('a'), /Native session data/);
+    h.assertPost(0, 'mcp/session', { sessionId: 'a' }).resolve(Response.json({
       message: unloadedMessage, code,
     }, { status }));
     await checked;
@@ -1188,21 +1204,27 @@ test('global MCP and Skills remain readable and mutable without any session or o
   assert.deepEqual(getUxErrors(), []);
 });
 
-test('explicit reload remains available while unloaded and only metadata enables native detail reads', async (t) => {
+test('explicit load sends only session/load while unloaded and only metadata enables retained native detail reads', async (t) => {
   const h = setup(t);
   h.source.open();
   h.snapshot([], { sessions: [{ ...meta('a'), loaded: false }] });
-  const reload = useCockpit.getState().reloadSession('a');
-  h.assertPost(0, 'session/reload', { sessionId: 'a' }).resolve(Response.json({ ok: true }));
-  await reload;
+  const loading = useCockpit.getState().loadSession('a');
+  h.assertPost(0, 'session/load', { sessionId: 'a' }).resolve(Response.json({ ok: true, sessionId: 'a' }));
+  await loading;
   assert.equal(session().loaded, false);
-  await assert.rejects(useCockpit.getState().getPlan('a'), SessionUnloadedError);
+  for (const resource of nativeResources) {
+    await assert.rejects(resource.read(useCockpit.getState()), SessionUnloadedError);
+  }
   assert.equal(h.requests.length, 1);
   h.source.emit({ type: 'session/patch', sessionId: 'a', loaded: true });
-  const detail = useCockpit.getState().getPlan('a');
-  h.assertPost(1, 'session/plan', { sessionId: 'a' }).resolve(Response.json(plan));
-  assert.deepEqual(await detail, plan);
-  assert.equal(h.requests.length, 2);
+  for (const [i, resource] of nativeResources.entries()) {
+    const detail = resource.read(useCockpit.getState());
+    h.assertPost(i + 1, resource.name, resource.body).resolve(Response.json(resource.response));
+    assert.deepEqual(await detail, resource.expected);
+  }
+  assert.equal(h.requests.length, 1 + nativeResources.length);
+  assert.equal(h.requests.filter(request => request.url === intentUrl('session/load')).length, 1);
+  assert.equal(h.requests.some(request => request.url === intentUrl('session/reload')), false);
   assert.deepEqual(getUxErrors(), []);
 });
 
@@ -1248,86 +1270,10 @@ for (const resource of resources) {
       else if (failure === 'HTTP') response.resolve(Response.json({ error: 'resource denied' }, { status: 403 }));
       else response.resolve(new Response('not JSON', { headers: { 'content-type': 'application/json' } }));
       await rejected;
-      if (resource.name === 'schedule/add' || resource.name === 'schedule/stop') {
-        assert.ok(session().error);
-        assert.deepEqual(session(), { ...before, error: session().error });
-      } else {
-        assert.strictEqual(session(), before);
-      }
+      assert.strictEqual(session(), before);
       assert.equal(h.requests.length, 1);
     });
   }
-}
-
-for (const resource of resources.filter((r) => r.name === 'schedule/add' || r.name === 'schedule/stop')) {
-  test(`${resource.label} remains safe when void-called and exposes rejected acknowledgements`, async (t) => {
-    const h = setup(t);
-    h.source.open();
-    h.snapshot();
-    void resource.read(useCockpit.getState());
-    await h.reply(0, { ok: false });
-    assert.match(session().error ?? '', resource.name === 'schedule/add' ? /未能添加定时任务/ : /未能停止定时任务/);
-    assert.equal(getUxErrors().length, 1);
-    h.source.drop();
-    void resource.read(useCockpit.getState());
-    await setImmediate();
-    assert.match(session().error ?? '', /未连接/);
-  });
-}
-
-for (const reason of [undefined, '', ' \t ', '模拟：本会话定时任务数量已达上限，请停止一项后再添加。']) {
-  test(`scheduleAdd preserves negative acknowledgement reason or operation fallback: ${JSON.stringify(reason)}`, async (t) => {
-    const h = setup(t);
-    h.source.open();
-    h.snapshot(['a', 'b']);
-    const other = session('b');
-    const before = session();
-    const expected = reason?.trim() ? reason : '未能添加定时任务，请核对后再试。';
-    const pending = useCockpit.getState().scheduleAdd('a', { prompt: 'reminder', interval: '1s' });
-    const rejected = assert.rejects(pending, { message: expected });
-    await h.reply(0, { ok: false, ...(reason === undefined ? {} : { error: reason }) });
-    await rejected;
-    assert.equal(h.requests.length, 1);
-    assert.equal(getUxErrors().length, 1);
-    assert.ok(getUxErrors()[0].message.includes(`会话 a (a)：计划任务操作失败：${expected}`));
-    assert.deepEqual(session(), { ...before, error: session().error });
-    assert.strictEqual(session('b'), other);
-  });
-}
-
-test('scheduleStop rejects false with its own fallback and independent failures are not merged', async (t) => {
-  const h = setup(t);
-  h.source.open();
-  h.snapshot(['a', 'b']);
-  for (let i = 0; i < 2; i++) {
-    const rejected = assert.rejects(useCockpit.getState().scheduleStop('a', 7), {
-      message: '未能停止定时任务，请刷新列表后核对。',
-    });
-    h.assertPost(i, 'schedule/stop', { sessionId: 'a', id: 7 }).resolve(Response.json({ ok: false }));
-    await rejected;
-  }
-  assert.equal(h.requests.length, 2);
-  assert.equal(getUxErrors().length, 2);
-  assert.notEqual(getUxErrors()[0].id, getUxErrors()[1].id);
-  assert.ok(getUxErrors().every(error => error.message.includes('会话 a (a)')));
-  assert.equal(session('b').error, null);
-});
-
-for (const failure of ['500', 'null-error'] as const) {
-  test(`scheduleAdd transport ${failure} keeps one diagnostic and does not use negative ACK fallback`, async (t) => {
-    const h = setup(t);
-    h.source.open();
-    h.snapshot();
-    const pending = useCockpit.getState().scheduleAdd('a', { prompt: 'reminder', interval: '1s' });
-    const rejected = assert.rejects(pending, failure === '500' ? /模拟暂时不可用/ : /error/);
-    h.assertPost(0, 'schedule/add', { sessionId: 'a', prompt: 'reminder', interval: '1s' })
-      .resolve(Response.json({ error: failure === '500' ? '模拟暂时不可用' : null, ok: false }, { status: failure === '500' ? 500 : 200 }));
-    await rejected;
-    await setImmediate();
-    assert.equal(getUxErrors().length, 1);
-    assert.doesNotMatch(getUxErrors()[0].message, /未能添加定时任务/);
-    assert.equal(h.requests.length, 1);
-  });
 }
 
 test('attached prompt failures keep the original false acknowledgement and local diagnostic contract', async (t) => {
@@ -1350,21 +1296,6 @@ test('attached prompt failures keep the original false acknowledgement and local
 });
 
 for (const addedBeforeReply of [false, true]) {
-  test(`forkSession returns new ID without sending, loading or selecting it (SSE first: ${addedBeforeReply})`, async t => {
-    const h = setup(t);
-    h.source.open();
-    h.snapshot(['a']);
-    const pending = useCockpit.getState().forkSession('a');
-    h.assertPost(0, 'session/fork', { sessionId: 'a' });
-    if (addedBeforeReply) h.source.emit({ type: 'session/added', session: { ...meta('child'), loaded: false, status: 'unloaded' } });
-    h.request(0).response.resolve(Response.json({ sessionId: 'child' }));
-    assert.equal(await pending, 'child');
-    if (!addedBeforeReply) h.source.emit({ type: 'session/added', session: { ...meta('child'), loaded: false, status: 'unloaded' } });
-    assert.equal(useCockpit.getState().activeId, null);
-    assert.equal(session('child').loaded, false);
-    assert.equal(h.requests.length, 1);
-  });
-
   test(`newSession returns its SID but never selects it (added SSE before reply: ${addedBeforeReply})`, async (t) => {
     const h = setup(t);
     h.source.open();
@@ -1391,18 +1322,6 @@ for (const addedBeforeReply of [false, true]) {
     assert.equal(h.requests.length, 3, 'cached route selections and creation never reread history');
   });
 }
-
-test('forkSession propagates uncertain delivery once without retry or changing selection', async t => {
-  const h = setup(t);
-  h.source.open();
-  h.snapshot(['a']);
-  const pending = useCockpit.getState().forkSession('a');
-  const failure = new Error('delivery uncertain; inspect session list');
-  h.assertPost(0, 'session/fork', { sessionId: 'a' }).reject(failure);
-  await assert.rejects(pending, error => error === failure);
-  assert.equal(h.requests.length, 1);
-  assert.equal(getUxErrors().length, 1);
-});
 
 test('newSession rejects original failures and disconnected attempts without changing the selected session or double reporting', async (t) => {
   const h = setup(t);

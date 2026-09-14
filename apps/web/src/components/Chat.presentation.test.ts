@@ -160,6 +160,15 @@ test('user time stays outside its bubble without external copy controls on eithe
   assert.match(html, /class="doc-time"/);
 });
 
+test('chat leaves right-click and text selection to the browser instead of mounting a copy menu', () => {
+  const thread = readFileSync(new URL('./Thread.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(thread, /onContextMenu|ContextMenu|MessageMenu|msgMenu|openMsgMenu|copyNotice|messageCopyText/);
+  const base = compile(new URL('../styles/base.scss', import.meta.url).pathname).css;
+  assert.match(base, /\.chat-messages[^{}]*\{[^}]*user-select: text;[^}]*-webkit-touch-callout: default/);
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.doesNotMatch(css, /\.chat-copy-notice/);
+});
+
 test('thought, tool and skill use one single-line activity header, with static skill records', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.activity-head \{[^}]*height: 36px/);

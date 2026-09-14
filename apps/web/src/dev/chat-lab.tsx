@@ -167,7 +167,6 @@ export function Lab() {
       {moreOpen && <AnchoredMenu triggerRef={moreRef} label={session.title} onClose={() => setMoreOpen(false)}
         items={sessionActionItems(session, true, {
           openPanel: (_id, panel) => setReceipt(`面板入口：${panel ?? 'info'}（管理面板不在本次精修范围）。`),
-          fork: () => setReceipt('分叉入口回调；没有创建会话。'),
           delete: () => setReceipt('删除入口回调；没有调用原生删除。'),
         })} />}
     </div>

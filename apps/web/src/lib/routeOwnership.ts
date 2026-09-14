@@ -1,8 +1,7 @@
-export const SESSION_PANELS = ['info', 'mcp', 'skills', 'plan', 'context', 'schedules', 'runtime'] as const;
+export const SESSION_PANELS = ['info', 'mcp', 'skills'] as const;
 export type SessionPanel = typeof SESSION_PANELS[number];
 export const SESSION_PANEL_LABELS: Record<SessionPanel, string> = {
-  info: '设置', mcp: 'MCP', skills: 'Skills', plan: '计划与任务',
-  schedules: '定时任务', context: '上下文资料', runtime: '运行维护',
+  info: '设置', mcp: 'MCP', skills: 'Skills',
 };
 
 export function sessionRoute(pathname: string): { sessionId: string | null; panel: SessionPanel | null } {
@@ -10,8 +9,9 @@ export function sessionRoute(pathname: string): { sessionId: string | null; pane
   if (!match) return { sessionId: null, panel: null };
   try {
     const sessionId = decodeURIComponent(match[1]);
-    const panel = match[2];
-    return { sessionId, panel: SESSION_PANELS.includes(panel as SessionPanel) ? panel as SessionPanel : null };
+    const panel = SESSION_PANELS.find(value => value === match[2]?.toLowerCase()) ?? null;
+    if (match[2] && !panel) return { sessionId: null, panel: null };
+    return { sessionId, panel };
   } catch {
     return { sessionId: null, panel: null };
   }

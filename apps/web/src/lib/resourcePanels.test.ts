@@ -6,10 +6,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatSession, ModelOption } from '../net/types';
 import { SessionMcp, SessionSkills } from '../components/Manage';
-import { SessionContext, SessionPlan } from '../components/SessionPages';
-import { SessionSchedules } from '../pages/SessionSchedules';
 import { PanelPageShell, PermissionPolicy, ResourceStatus, SessionResume } from '../components/SessionPanelKit';
-import { SessionRuntime } from '../components/SessionRuntime';
 import { useCockpit } from '../net/store';
 import { useSessionResource } from './useSessionResource';
 
@@ -267,28 +264,6 @@ test('refresh errors and retained data can render together in a detail shell', (
   assert.match(html, /previous valid data/);
 });
 
-test('context shows independent resource status without a false empty result', () => {
-  const html = renderToStaticMarkup(createElement(SessionContext, {
-    session, onClose: noop,
-  }));
-  assert.doesNotMatch(html, /<nav|info-panel-more|role="tab"/);
-  assert.doesNotMatch(html, /改动文件/);
-  assert.match(html, /指令文件：等待连接/);
-  assert.match(html, /子代理：等待连接/);
-  assert.doesNotMatch(html, /本会话还没有上下文/);
-});
-
-test('schedules keep creation disabled until their authoritative list is available', () => {
-  const html = renderToStaticMarkup(createElement(SessionSchedules, {
-    session, onClose: noop,
-    onAdd: async () => ({ ok: false }), onStop: async () => ({ ok: false }),
-  }));
-  assert.doesNotMatch(html, /<nav|info-panel-more|role="tab"/);
-  assert.match(html, /等待连接/);
-  assert.match(html, /type="submit" class="btn-primary" disabled=""/);
-  assert.doesNotMatch(html, /本会话还没有定时任务/);
-});
-
 function withSession(t: TestContext, loaded: boolean, connected = true) {
   const state = useCockpit.getInitialState();
   const previous = { ...state };
@@ -300,12 +275,7 @@ function withSession(t: TestContext, loaded: boolean, connected = true) {
 }
 
 const nativePages = [
-  { name: 'plan', render: () => createElement(SessionPlan, { session, onClose: noop }) },
-  { name: 'context', render: () => createElement(SessionContext, { session, onClose: noop }) },
   { name: 'skills', render: () => createElement(SessionSkills, { session, onClose: noop }) },
-  { name: 'schedules', render: () => createElement(SessionSchedules, {
-    session, onClose: noop, onAdd: async () => ({ ok: false }), onStop: async () => ({ ok: false }),
-  }) },
   { name: 'mcp', render: () => createElement(SessionMcp, { session, onClose: noop }) },
 ];
 
@@ -316,13 +286,8 @@ for (const page of nativePages) {
     assert.match(html, /会话未加载。恢复后可查看这些设置/);
     assert.match(html, /聊天历史仍可直接查看/);
     assert.match(html, /class="dialog-btn rp">恢复会话<\/button>/);
-    assert.doesNotMatch(html, /本会话还没有任务|本会话还没有上下文|没有可用的 skill|本会话还没有定时任务|本会话没有可用的 MCP|没有配置 MCP/);
-    if (page.name === 'context') assert.match(html, /aria-label="刷新" disabled=""/);
-    if (page.name === 'skills' || page.name === 'mcp') assert.match(html, /aria-label="刷新" disabled=""/);
-    if (page.name === 'schedules') {
-      assert.match(html, /aria-label="刷新列表" disabled=""/);
-      assert.match(html, /type="submit" class="btn-primary" disabled=""/);
-    }
+    assert.doesNotMatch(html, /没有可用的 skill|本会话没有可用的 MCP|没有配置 MCP/);
+    assert.match(html, /aria-label="刷新" disabled=""/);
   });
 
   test(`${page.name} keeps loaded details available without an unnecessary resume prompt`, (t) => {
@@ -379,19 +344,8 @@ test('resume is disabled offline and after session removal without changing auth
   assert.match(render('removed'), /disabled="">恢复会话<\/button>/);
 });
 
-test('runtime and schedules explain SDK idle cleanup, paused persisted schedules and detached shells', (t) => {
-  withSession(t, false);
-  const runtime = renderToStaticMarkup(createElement(SessionRuntime, { session, onClose: noop }));
-  assert.match(runtime, /原生运行时空闲 30 分钟后会卸载/);
-  assert.match(runtime, /置顶或查看历史不会使运行时常驻/);
-  assert.match(runtime, /后台 shell 可能继续运行/);
-  assert.match(runtime, /卸载后可能无法再通过任务接口访问/);
-  assert.ok(runtime.indexOf('>压缩</button>') < runtime.indexOf('原生运行时空闲'));
-  assert.doesNotMatch(runtime, /高级设置|data-permission-policy/);
-  assert.match(runtime, /class="dialog-btn rp">恢复会话<\/button>/);
-  assert.doesNotMatch(runtime, />重载<\/button>/);
-  const schedules = renderToStaticMarkup(nativePages.find((page) => page.name === 'schedules')!.render());
-  assert.match(schedules, /任务会保留；卸载期间暂停/);
-  assert.match(schedules, /恢复后重新计算执行时间/);
-  assert.match(schedules, /定时任务不会让会话常驻/);
+test('retained settings resume without the removed close-and-reload operation', () => {
+  const controls = readFileSync(new URL('../components/SessionPanelKit.tsx', import.meta.url), 'utf8');
+  assert.match(controls, /await loadSession\(sessionId\)/);
+  assert.doesNotMatch(controls, /reloadSession|unloadSession|compactSession|rewindSession/);
 });

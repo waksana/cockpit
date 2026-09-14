@@ -64,12 +64,6 @@
   white-space: nowrap;
 }
 
-.dialog-checkbox {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  input { flex: none; margin-top: 0.25rem; }
-}
 .dialog-error { color: var(--danger-color); overflow-wrap: anywhere; }
 
 .info-panel-body {
@@ -108,13 +102,6 @@
   font-size: var(--font-size-12);
   color: var(--secondary-text-color);
 }
-.info-section-name-right {
-  font-weight: 400;
-  color: var(--secondary-text-color);
-  display: inline-flex;
-  align-items: center;
-}
-.info-section-toggle { cursor: pointer; }
 .info-section-content { padding: 0 1rem 0.7rem; }
 .info-meta-cwd {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -144,44 +131,6 @@
   color: var(--secondary-text-color);
 }
 
-// TODO checklist groups + items.
-.todo-group { margin-top: 0.5rem; &:first-child { margin-top: 0; } }
-.todo-group-label {
-  font-size: var(--font-size-12);
-  color: var(--secondary-text-color);
-  margin: 0.3rem 0 0.2rem;
-}
-.todo-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  padding: 0.35rem 0;
-  &[data-status='done'] .todo-item-title { color: var(--secondary-text-color); text-decoration: line-through; }
-}
-.todo-item-ico {
-  flex: none;
-  width: 1.25rem; height: 1.25rem;
-  margin-top: 0.1rem;
-  display: inline-flex; align-items: center; justify-content: center;
-  border-radius: 50%;
-  &[data-status='done'] { color: var(--green-color); }
-  &[data-status='blocked'] { color: var(--danger-color); }
-  &[data-status='in_progress'] { color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 18%, transparent); }
-  &[data-status='pending'] { color: var(--tertiary-text-color); }
-}
-.todo-item-body { flex: 1 1 auto; min-width: 0; }
-.todo-item-title { font-size: var(--font-size-14); line-height: var(--line-height-14); }
-.todo-item-desc {
-  font-size: var(--font-size-12);
-  color: var(--secondary-text-color);
-  margin-top: 0.1rem;
-  overflow-wrap: anywhere;
-}
-
-// plan.md rendered markdown (reuse .message-body styles).
-.info-plan { font-size: var(--font-size-14); }
-.info-plan .message-body { white-space: normal; }
-
 // Changed files list (diff-review).
 .info-files { display: flex; flex-direction: column; gap: 0.1rem; }
 .info-file {
@@ -200,32 +149,6 @@
   color: var(--secondary-text-color);
 }
 
-// Read-mostly panel rows (skills / mcp / tasks / instructions / schedule).
-.info-panel-list { display: flex; flex-direction: column; gap: 0.15rem; }
-.info-panel-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: baseline;
-  gap: 0.15rem 0.5rem;
-  padding: 0.2rem 0;
-  font-size: var(--font-size-14);
-  &[data-enabled='false'] { opacity: 0.55; }
-}
-.info-panel-row-label { color: var(--primary-text-color); overflow-wrap: anywhere; }
-.info-panel-row-sub {
-  grid-column: 1 / -1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  font-size: var(--font-size-12);
-  color: var(--tertiary-text-color);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.info-panel-row-off {
-  flex: none; margin-inline-start: auto;
-  font-size: var(--font-size-12);
-  color: var(--tertiary-text-color);
-}
-
 // MCP status rows: a header line (name + status pill pushed to the end) and an
 // optional reason line below (server error or a static hint when not connected).
 .info-mcp-row {
@@ -241,33 +164,6 @@
 .info-mcp-reason {
   font-size: var(--font-size-12);
   color: var(--tertiary-text-color);
-  overflow-wrap: anywhere;
-}
-
-// Schedule rows: a header (cadence + next-fire pushed to the end) and the prompt.
-.info-sched-row {
-  display: flex; flex-direction: column; gap: 0.1rem;
-  padding: 0.3rem 0;
-}
-.info-sched-head {
-  display: flex; align-items: center; gap: 0.5rem;
-  font-size: var(--font-size-14);
-}
-.info-sched-cadence {
-  display: inline-flex; align-items: center; gap: 0.3rem;
-  color: var(--primary-text-color);
-  .tgico { color: var(--secondary-text-color); }
-}
-.info-sched-next {
-  margin-inline-start: auto; flex: none;
-  font-size: var(--font-size-12);
-  color: var(--secondary-text-color);
-}
-.info-sched-prompt {
-  font-size: var(--font-size-14);
-  line-height: var(--line-height-14);
-  color: var(--primary-text-color);
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 

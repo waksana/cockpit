@@ -43,11 +43,8 @@ export interface DialogProps {
   confirmLabel?: string;
   cancelLabel?: string;
   destructive?: boolean;
-  rollbackFiles?: boolean;
   actionKey?: string;
-  // Informational dialogs only dismiss; they never invoke a mutation.
-  acknowledgementOnly?: boolean;
-  onConfirm: (value: string, rollbackFiles: boolean) => void | Promise<void>;
+  onConfirm: (value: string) => void | Promise<void>;
   onSuccess?: () => void;
   onCancel: () => void;
 }
@@ -59,10 +56,9 @@ export function Dialog(props: DialogProps) {
 
 function DialogContent({
   title, message, input, confirmLabel = '确定', cancelLabel = '取消', destructive,
-  rollbackFiles, actionKey, acknowledgementOnly = false, onConfirm, onSuccess, onCancel,
+  actionKey, onConfirm, onSuccess, onCancel,
 }: DialogProps) {
   const [value, setValue] = useState(input?.initial ?? '');
-  const [shouldRollbackFiles, setShouldRollbackFiles] = useState(rollbackFiles ?? false);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
   useModalFocus(dialogRef);
@@ -72,12 +68,8 @@ function DialogContent({
 
   const confirm = async () => {
     if (action.busy) return;
-    if (acknowledgementOnly) {
-      onCancel();
-      return;
-    }
     if (!action.connected || (hasInput && !value.trim())) return;
-    await action.run(() => onConfirm(value, shouldRollbackFiles), () => {
+    await action.run(() => onConfirm(value), () => {
       onSuccess?.();
       onCancel();
     });
@@ -121,15 +113,8 @@ function DialogContent({
             }}
           />
         )}
-        {rollbackFiles !== undefined && (
-          <label className="dialog-message dialog-checkbox">
-            <input type="checkbox" checked={shouldRollbackFiles} disabled={action.busy}
-              onChange={(e) => setShouldRollbackFiles(e.target.checked)} />
-            同时回退文件（可能不受支持；不勾选时仅回退对话）
-          </label>
-        )}
         {action.error && <p className="dialog-message dialog-error" role="alert">操作失败：{action.error}</p>}
-        {!action.connected && !acknowledgementOnly && (
+        {!action.connected && (
           <p className="dialog-message" role="status">等待连接…连接恢复后可重试。</p>
         )}
         <div className="dialog-actions">
@@ -137,7 +122,7 @@ function DialogContent({
           <button
             type="button"
             className={`dialog-btn primary rp${destructive ? ' danger' : ''}`}
-            disabled={action.busy || (!acknowledgementOnly && (!action.connected || (hasInput && !value.trim())))}
+            disabled={action.busy || !action.connected || (hasInput && !value.trim())}
             onClick={() => { void confirm(); }}
           >
             {action.busy ? '处理中…' : confirmLabel}

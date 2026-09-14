@@ -184,8 +184,7 @@ export class NetClient {
           typeof details.sessionId === 'string' ? details.sessionId : undefined);
       }
       const result = Intents[name].result.parse(json);
-      if ((name === 'session/chat' || name === 'session/usage')
-        && 'sessionId' in result && result.sessionId !== expectedSessionId) {
+      if (name === 'session/chat' && 'sessionId' in result && result.sessionId !== expectedSessionId) {
         throw new Error(`intent ${name} returned sessionId ${JSON.stringify(result.sessionId)} instead of ${JSON.stringify(expectedSessionId)}`);
       }
       return result as IntentResult<K>;
@@ -208,7 +207,6 @@ export class NetClient {
 
   // --- typed intent helpers --------------------------------------------------
   newSession(cwd: string) { return this.intent('session/new', { cwd }); }
-  forkSession(sessionId: string) { return this.intent('session/fork', { sessionId }); }
   chat(body: IntentBody<'session/chat'>, signal?: AbortSignal) { return this.intent('session/chat', body, signal); }
   async chatStream(
     body: NativeChatStreamRequest, receive: (page: NativeChatPage) => void, signal: AbortSignal,
@@ -260,23 +258,12 @@ export class NetClient {
   deleteSession(sessionId: string, confirm: true) {
     return this.intent('session/purge', { sessionId, confirm });
   }
-  unloadSession(sessionId: string) { return this.intent('session/unload', { sessionId }); }
-  reloadSession(sessionId: string) { return this.intent('session/reload', { sessionId }); }
-  compactSession(sessionId: string, customInstructions?: string) { return this.intent('session/compact', { sessionId, ...(customInstructions ? { customInstructions } : {}) }); }
-  rewindSession(sessionId: string, toMsgId: string, rollbackFiles?: boolean) { return this.intent('session/rewind', { sessionId, toMsgId, ...(rollbackFiles ? { rollbackFiles } : {}) }); }
+  loadSession(sessionId: string) { return this.intent('session/load', { sessionId }); }
   setMode(sessionId: string, mode: 'interactive' | 'plan' | 'autopilot') { return this.intent('setMode', { sessionId, mode }); }
-  getPlan(sessionId: string) { return this.intent('session/plan', { sessionId }); }
   getSession(sessionId: string, signal?: AbortSignal) { return this.intent('session/get', { sessionId }, signal); }
   getResources(sessionId: string, resources: import('@cockpit/protocol').MetaResource[], signal?: AbortSignal) {
     return this.intent('session/resources', { sessionId, resources }, signal);
   }
-  getUsage(sessionId: string, signal?: AbortSignal) { return this.intent('session/usage', { sessionId }, signal); }
-  getPanels(sessionId: string) { return this.intent('session/panels', { sessionId }); }
-  scheduleList(sessionId: string) { return this.intent('schedule/list', { sessionId }); }
-  scheduleAdd(sessionId: string, input: Omit<IntentBody<'schedule/add'>, 'sessionId'>) {
-    return this.intent('schedule/add', { ...input, sessionId });
-  }
-  scheduleStop(sessionId: string, id: number) { return this.intent('schedule/stop', { sessionId, id }); }
   respondAsk(sessionId: string, requestId: string, answer: string, wasFreeform: boolean) {
     return this.intent('respondAsk', { sessionId, requestId, answer, wasFreeform });
   }

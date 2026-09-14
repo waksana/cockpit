@@ -32,7 +32,6 @@ export type IconName =
   | 'attach'
   | 'file'
   | 'folder'
-  | 'schedule'
   | 'mode_interactive'
   | 'mode_plan'
   | 'mode_autopilot'

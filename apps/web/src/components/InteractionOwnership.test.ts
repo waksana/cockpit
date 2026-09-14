@@ -89,8 +89,7 @@ test('session pages have no injected navigation and keep one stable, focused fra
   assert.ok(details.indexOf('<aside ref={frame}') < details.indexOf('<Suspense fallback='));
   assert.match(details, /frame.current\?\.focus\(\); \}, \[panel\]/);
   assert.match(details, /event.defaultPrevented/);
-  for (const file of ['./SessionInfoPanel.tsx', './SessionPanelKit.tsx', './Manage.tsx',
-    './SessionPages.tsx', './SessionRuntime.tsx', '../pages/SessionSchedules.tsx']) {
+  for (const file of ['./SessionInfoPanel.tsx', './SessionPanelKit.tsx', './Manage.tsx']) {
     assert.doesNotMatch(source(file), /navigation[?=:]|info-panel-nav|info-panel-more/);
   }
 });
