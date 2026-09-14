@@ -1,5 +1,4 @@
 import { lazy, Suspense, useCallback, useEffect, useRef } from 'react';
-import { useShallow } from 'zustand/react/shallow';
 import { useCockpit } from '../net/store';
 import { useUp } from '../lib/nav';
 import { SESSION_PANEL_LABELS, type SessionPanel } from '../lib/routeOwnership';
@@ -12,9 +11,7 @@ const SessionSkills = lazy(() => import('./Manage').then((m) => ({ default: m.Se
 
 export function SessionDetails({ sessionId, panel }: { sessionId: string; panel: SessionPanel }) {
   const session = useCockpit((s) => s.sessions.find((item) => item.sessionId === sessionId));
-  const { globalModels, setModel } = useCockpit(useShallow((s) => ({
-    globalModels: s.globalModels, setModel: s.setModel,
-  })));
+  const setModel = useCockpit((s) => s.setModel);
   const up = useUp();
   const frame = useRef<HTMLElement | null>(null);
   const onClose = useCallback(() => up(), [up]);
@@ -52,7 +49,7 @@ export function SessionDetails({ sessionId, panel }: { sessionId: string; panel:
       <aside ref={frame} tabIndex={-1} className="info-panel" data-open="true" aria-label={title}>
         <Suspense fallback={<PanelPageShell title={title} onClose={onClose} loading />}>
           {panel === 'info'
-            ? <SessionInfoPanel session={session} models={globalModels} open onClose={onClose}
+            ? <SessionInfoPanel session={session} open onClose={onClose}
                 onSetModel={onSetModel} />
             : panel === 'mcp'
               ? <SessionMcp session={session} onClose={onClose} />

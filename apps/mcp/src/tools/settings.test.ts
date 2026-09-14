@@ -127,24 +127,22 @@ for (const result of [
   });
 }
 
-test('compact preserves native success/details with no confirmation gate or outbound compatibility field', async () => {
+test('compact preserves native success/details with current native inputs', async () => {
   const { tools } = await client.listTools();
   const compact = tools.find(tool => tool.name === 'cockpit_compact_session')!;
   assert.match(compact.description!, /model-facing context, not the retained chat event history/);
   assert.doesNotMatch(compact.description!, /rewrites history/);
-  assert.ok(!compact.inputSchema.required?.includes('confirm'));
-  for (const confirm of [undefined, false, true]) {
-    for (const success of [true, false]) {
-      outcome = { ok: true, result: {
-        success, tokensRemoved: 321, messagesRemoved: 4, summaryContent: 'Preserved constraints',
-        contextWindow: { tokenLimit: 10000, currentTokens: 900, messagesLength: 6 }, future: 'native detail',
-      } };
-      assert.deepEqual(await json(compact.name, {
-        session_id: 'owned-fixture', custom_instructions: '', ...(confirm === undefined ? {} : { confirm }),
-      }, !success), outcome);
-    }
+  assert.equal('confirm' in compact.inputSchema.properties!, false);
+  for (const success of [true, false]) {
+    outcome = { ok: true, result: {
+      success, tokensRemoved: 321, messagesRemoved: 4, summaryContent: 'Preserved constraints',
+      contextWindow: { tokenLimit: 10000, currentTokens: 900, messagesLength: 6 }, future: 'native detail',
+    } };
+    assert.deepEqual(await json(compact.name, {
+      session_id: 'owned-fixture', custom_instructions: '',
+    }, !success), outcome);
   }
-  assert.equal(requests.length, 6);
+  assert.equal(requests.length, 2);
   for (const request of requests) {
     assert.equal(request.url, '/intent/session/compact');
     assert.deepEqual(JSON.parse(request.body.toString()), { sessionId: 'owned-fixture', customInstructions: '' });
@@ -157,13 +155,10 @@ test('rewind preserves partial native effects and errors without a confirmation 
     skippedFiles: [{ path: '/fixture/changed', reason: 'Native conflict', future: true }],
     error: 'One file could not be restored',
   } };
-  for (const confirm of [undefined, false, true]) {
-    assert.deepEqual(await json('cockpit_rewind_session', {
-      session_id: 'owned-fixture', to_msg_id: 'message', rollback_files: true,
-      ...(confirm === undefined ? {} : { confirm }),
-    }, true), outcome);
-  }
-  assert.equal(requests.length, 3);
+  assert.deepEqual(await json('cockpit_rewind_session', {
+    session_id: 'owned-fixture', to_msg_id: 'message', rollback_files: true,
+  }, true), outcome);
+  assert.equal(requests.length, 1);
   for (const request of requests) {
     assert.equal(request.url, '/intent/session/rewind');
     assert.deepEqual(JSON.parse(request.body.toString()), {
@@ -172,18 +167,36 @@ test('rewind preserves partial native effects and errors without a confirmation 
   }
 });
 
-test('native mutation errors remain errors despite deprecated confirm values and are not retried', async () => {
+test('native mutation errors remain errors and are not retried', async () => {
   outcome = { ok: false, error: 'Native session is busy', code: 'SESSION_BUSY' };
-  for (const confirm of [undefined, false, true]) {
+  for (const name of ['cockpit_compact_session', 'cockpit_rewind_session']) {
     const reply = Reply.parse(await client.callTool({
-      name: 'cockpit_compact_session',
-      arguments: { session_id: 'owned-fixture', ...(confirm === undefined ? {} : { confirm }) },
+      name,
+      arguments: { session_id: 'owned-fixture', ...(name === 'cockpit_rewind_session' ? { to_msg_id: 'message' } : {}) },
     }));
     assert.equal(reply.isError, true);
     assert.match(reply.content[0].text, /Native session is busy/);
     assert.match(reply.content[0].text, /SESSION_BUSY/);
   }
-  assert.equal(requests.length, 3);
+  assert.equal(requests.length, 2);
+});
+
+test('native mutation schemas reject removed confirm and unknown inputs before HTTP', async () => {
+  const { tools } = await client.listTools();
+  for (const name of ['cockpit_compact_session', 'cockpit_rewind_session']) {
+    const tool = tools.find(tool => tool.name === name)!;
+    assert.equal('confirm' in tool.inputSchema.properties!, false);
+    assert.equal(tool.inputSchema.additionalProperties, false);
+    for (const extra of [{ confirm: true }, { confirm: false }, { confirm: 'true' }, { unexpected: true }]) {
+      const reply = Reply.parse(await client.callTool({
+        name,
+        arguments: { session_id: 'owned-fixture', ...(name === 'cockpit_rewind_session' ? { to_msg_id: 'message' } : {}), ...extra },
+      }));
+      assert.equal(reply.isError, true);
+      assert.match(reply.content[0].text, /unrecognized/i);
+    }
+  }
+  assert.equal(requests.length, 0);
 });
 
 for (const operation of [

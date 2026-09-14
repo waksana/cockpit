@@ -19,6 +19,7 @@ type Schema = Record<string, unknown>;
 type Detail = Summary & { inputSchema: Schema; resultSchema: Schema };
 const names = Object.keys(Intents).sort();
 const retired = [
+  'session/purge', 'session/history', 'session/peek', 'session/subagent-history',
   'hook/add', 'hook/stop', 'hook/list',
   'flow/list', 'flow/add', 'flow/remove', 'flow/write-gate', 'flow/run',
   'flow-schedule/add', 'flow-schedule/stop', 'flow-schedule/list',
@@ -129,7 +130,7 @@ test('pagination covers exactly every Intents key once, including the final empt
 test('prefix filtering precedes pagination and preserves the full transport inventory', async (t) => {
   const { transports } = await listing();
   for (const [prefix, limit, offset] of [
-    ['session/', 3, 2], ['ses', 100, 0], ['session/purge', 1, 0],
+    ['session/', 3, 2], ['ses', 100, 0], ['session/delete', 1, 0],
     ['Session/', 100, 0], ['no-such-intent/', 100, 0], ['x'.repeat(200), 100, 0],
   ] as const) {
     await t.test(`${prefix}: limit=${limit}, offset=${offset}`, async () => {
@@ -232,7 +233,7 @@ test('listing and detail descriptions convey refinements and runtime guarantees 
     ]],
     ['schedule/add', [
       /exactly one of interval or at/i, /1 second to 24 hours/i,
-      /cron.*not supported/i, /no self-paced creation or rearming/i,
+      /at is one-shot/i, /no self-paced creation or rearming/i,
       /pause on native idle unload/i, /relative delays restart on resume/i,
       /schedules do not keep it loaded/i, /not an always-on scheduler/i,
     ]],
@@ -446,22 +447,20 @@ test('native event schema preserves identity and opaque payload without a recurs
   assert.equal('subMessages' in properties, false);
 });
 
-test('session delete and purge expose ignored optional boolean confirmation, not a second guard', async () => {
-  for (const name of ['session/delete', 'session/purge'] as const) {
-    const { inputSchema, description } = await detail(name);
-    assert.deepEqual(inputSchema.required, ['sessionId']);
-    const confirm = schemaAt(inputSchema, 'properties', 'confirm');
-    assert.equal(confirm.type, 'boolean');
-    assert.equal('const' in confirm, false);
-    assert.match(String(confirm.description), /deprecated.*ignored/i);
-    assert.match(description, /confirm is ignored/i);
-    for (const confirm of [undefined, false, true]) {
-      assert.equal(Intents[name].body.safeParse({ sessionId: 'test', confirm }).success, true);
-    }
-    for (const confirm of ['true', 1]) {
-      assert.equal(Intents[name].body.safeParse({ sessionId: 'test', confirm }).success, false);
+test('native deletion, compaction and rewind expose only current strict inputs', async () => {
+  for (const name of ['session/delete', 'session/compact', 'session/rewind'] as const) {
+    const { inputSchema } = await detail(name);
+    assert.equal('confirm' in object(inputSchema.properties), false);
+    assert.equal(inputSchema.additionalProperties, false);
+    const body = { sessionId: 'test', ...(name === 'session/rewind' ? { toMsgId: 'm1' } : {}) };
+    assert.equal(Intents[name].body.safeParse(body).success, true);
+    for (const confirm of [false, true, 'true', 1]) {
+      assert.equal(Intents[name].body.safeParse({ ...body, confirm }).success, false);
     }
   }
+  const { inputSchema, description } = await detail('session/delete');
+  assert.deepEqual(inputSchema.required, ['sessionId']);
+  assert.match(description, /IRREVERSIBLE.*native busy and existence safeguards/);
 });
 
 test('mutation discovery requires native structured results without narrowing native status values', async () => {

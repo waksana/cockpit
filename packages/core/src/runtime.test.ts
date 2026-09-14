@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { EventEmitter } from 'node:events';
 import { channel } from 'node:diagnostics_channel';
 import { RuntimeConnection, approveAll, type CopilotClientOptions, type CopilotSession, type GetAuthStatusResponse, type ModelInfo, type SessionConfig, type SessionEvent } from '@github/copilot-sdk';
-import { OfficialRuntime, modelOption, sessionModelOptions, type RuntimeClient } from './runtime.ts';
+import { OfficialRuntime, sessionModelOptions, type RuntimeClient } from './runtime.ts';
 
 function fixture(options: { clientOptions?: CopilotClientOptions; sessionConfig?: Partial<SessionConfig>; child?: boolean } = {}) {
   const clients: RuntimeClient[] = [];
@@ -397,10 +397,11 @@ test('model metadata uses documented billing and preserves provider-qualified se
     supportedReasoningEfforts: ['low', 'high'], defaultReasoningEffort: 'high',
     billing: { tokenPrices: { longContext: {} } },
   };
-  assert.equal(modelOption(info).supportsLongContext, true);
+  const [option] = sessionModelOptions([info]);
+  assert.equal(option?.supportsLongContext, true);
   const provider = { ...info, billing: undefined, supportedContextTiers: ['default', 'long_context'] };
-  assert.equal(modelOption(provider).supportsLongContext, true, 'Global and session projections recognize the same provider tiers');
-  assert.deepEqual(sessionModelOptions([{ ...info, id: 'provider/model' }]), [{ ...modelOption(info), modelId: 'provider/model' }]);
+  assert.equal(sessionModelOptions([provider])[0]?.supportsLongContext, true, 'Global and session projections recognize the same provider tiers');
+  assert.deepEqual(sessionModelOptions([{ ...info, id: 'provider/model' }]), [{ ...option, modelId: 'provider/model' }]);
   assert.deepEqual(sessionModelOptions([{ id: 'hidden', model_picker_enabled: false }]), []);
   assert.throws(() => sessionModelOptions([null]), /invalid model ID/);
 });

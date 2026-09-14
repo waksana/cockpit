@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { z } from 'zod';
 import * as Protocol from './index.ts';
+import { ChatMessage } from './validation.ts';
 import {
   SessionMeta,
   SessionBrief,
@@ -11,12 +12,17 @@ import {
   ScheduleEntry,
   ServerEvent,
   Intents,
-  ChatMessage,
   McpToggleResult,
   type IntentName,
   type IntentBody,
   type IntentResult,
 } from './index.ts';
+
+test('folded-message validators are absent from the production wire entry point', () => {
+  for (const name of ['ToolCall', 'ChatRole', 'SubagentInfo', 'ChatMessage']) {
+    assert.equal(Object.hasOwn(Protocol, name), false);
+  }
+});
 
 test('response messages retain thought, body and explicit incompleteness without provisional state', () => {
   const response = { id: 'native-message', role: 'assistant', content: ' \nBody', thought: 'Thought\n ',
@@ -423,7 +429,7 @@ const intentFixtures = {
   'session/compact': { body: { ...sid, customInstructions: 'Keep decisions' }, result: { ok: true, result: { success: true, tokensRemoved: 10, messagesRemoved: 2 } } },
   'session/rewind': { body: { ...sid, toMsgId: 'm1', rollbackFiles: true }, result: { ok: true, result: { outcome: 'success', eventsRemoved: 2, restoredFiles: [], skippedFiles: [] } } },
   setMode: { body: { ...sid, mode: 'plan' }, result: { ok: true, result: { status: 'applied', modelChanged: false } } },
-  'session/delete': { body: { ...sid, confirm: true }, result: ok },
+  'session/delete': { body: sid, result: ok },
   'session/unload': { body: sid, result: ok },
   'session/load': { body: sid, result: { ok: true, ...sid } },
   'session/reload': { body: sid, result: ok },
@@ -458,7 +464,6 @@ const intentFixtures = {
   'skills/session-toggle': { body: { ...sid, name: skill.name, enabled: true }, result: ok },
   'skills/refresh': { body: {}, result: ok },
   'fs/listDir': { body: { path: '/workspace' }, result: { path: '/workspace', parent: '/', entries: [{ name: 'project', isDir: true }, { name: 'file.txt', isDir: false }] } },
-  'session/purge': { body: { ...sid, confirm: true }, result: ok },
   'schedule/add': { body: { ...sid, prompt: scheduleBase.prompt, interval: '5m' }, result: { ...ok, entry: scheduleEntries[0]! } },
   'schedule/stop': { body: { ...sid, id: 1 }, result: ok },
   'schedule/list': { body: sid, result: { entries: scheduleEntries } },
@@ -563,16 +568,27 @@ test('native load descriptions do not promise retired role restoration or empty-
   assert.match(Intents['session/reload'].description, /may disappear on close and then fail to resume; no automatic replacement/);
 });
 
-test('session/purge requires sessionId and accepts ignored boolean confirm compatibility without coercion', () => {
-  const schema = Intents['session/purge'].body;
-  roundTrip(schema, { ...sid, confirm: true });
+test('session/delete requires sessionId and rejects obsolete confirmation input', () => {
+  const schema = Intents['session/delete'].body;
   roundTrip(schema, sid);
-  roundTrip(schema, { ...sid, confirm: false });
-  for (const confirm of ['true', 'false', '', 0, 1, null, [], {}]) {
+  for (const confirm of [true, false, 'true', 'false', '', 0, 1, null, [], {}]) {
     assert.equal(schema.safeParse({ ...sid, confirm }).success, false, `confirm=${JSON.stringify(confirm)}`);
   }
-  for (const value of [{ confirm: true }, { sessionId: 1, confirm: true }, { sessionId: null, confirm: true }]) {
+  for (const value of [{}, { sessionId: '' }, { sessionId: 1 }, { sessionId: null }]) {
     assert.equal(schema.safeParse(value).success, false);
+  }
+  assert.equal('session/purge' in Intents, false);
+});
+
+test('native compaction and rewind reject unknown input instead of stripping it', () => {
+  for (const [name, body] of [
+    ['session/compact', sid],
+    ['session/rewind', { ...sid, toMsgId: 'm1' }],
+  ] as const) {
+    roundTrip(Intents[name].body, body);
+    for (const extra of [{ confirm: true }, { confirm: false }, { unexpected: true }]) {
+      assert.equal(Intents[name].body.safeParse({ ...body, ...extra }).success, false);
+    }
   }
 });
 
@@ -941,7 +957,7 @@ type SlimContractGuards = [
   Expect<Equal<Extract<keyof SessionBrief, RemovedMetaField>, never>>,
   Expect<Equal<Extract<keyof Extract<Protocol.ServerEvent, { type: 'session/patch' }>, RemovedMetaField>, never>>,
   Expect<Equal<IntentBody<'session/new'>, { cwd: string }>>,
-  Expect<Equal<IntentBody<'session/purge'>, { sessionId: string; confirm?: boolean }>>,
+  Expect<Equal<IntentBody<'session/delete'>, { sessionId: string }>>,
   Expect<Equal<IntentBody<'session/chat'>, Protocol.NativeChatRead>>,
   Expect<Equal<IntentBody<'skills/global'>, { cwd?: string }>>,
   Expect<Equal<IntentBody<'prompt'>, { sessionId: string; text: string; mode?: 'enqueue' | 'immediate';

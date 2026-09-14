@@ -1,16 +1,5 @@
-// MCP + Skills management pages (components/Manage.tsx). Two surfaces share the
-// same header/body/row/switch styling: the global pages cover the master pane
-// (.manage-master), the per-session pages reuse the .info-panel slot.
-
-// Global pages cover the session list (master pane is position:relative).
-.manage-master {
-  position: absolute;
-  inset: 0;
-  z-index: 35;
-  display: flex;
-  flex-direction: column;
-  background: var(--surface-color);
-}
+// MCP + Skills management pages share header/body/row/switch styling.
+// Global pages use ManagementShell; per-session pages use the info-panel slot.
 
 .manage-title { flex: 1 1 auto; font-size: var(--font-size-16); font-weight: 500; }
 .manage-action { flex: none; }
@@ -57,7 +46,6 @@
 }
 .manage-session-row {
   .manage-row-name { flex-wrap: wrap; overflow-wrap: anywhere; }
-  .manage-row-sub { white-space: normal; overflow-wrap: anywhere; }
 }
 .manage-row-feedback {
   display: grid;
@@ -80,9 +68,7 @@
   padding: 0.05rem 0.35rem;
   border-radius: 0.5rem;
 }
-.manage-readonly { flex: none; font-size: var(--font-size-12); color: var(--tertiary-text-color); }
-
-// Per-session MCP connection status pill (shared: manage page + info panel).
+// Per-session MCP connection status pill.
 .mcp-status {
   flex: none;
   font-size: var(--font-size-11);
@@ -137,7 +123,6 @@
 }
 
 // ── Master-detail sections (components/ManageWorkspace.tsx) ──────────────────────
-// A thin bar above the list holding the refresh action, right-aligned.
 .manage-list { padding: 0.6rem; }
 
 // A list row that navigates to its detail. Reuses .manage-row but is a <button>,
@@ -186,11 +171,6 @@
   font-family: var(--font-monospace, ui-monospace, monospace);
   font-size: 0.9em;
   word-break: break-all;
-}
-.manage-detail-status {
-  flex: 1 1 auto;
-  display: flex; align-items: center; justify-content: center;
-  padding: 2rem; color: var(--secondary-text-color); font-size: var(--font-size-14);
 }
 .manage-detail-headtitle {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

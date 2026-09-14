@@ -106,7 +106,6 @@ function requestOnce(
     headers: Headers;
     body?: Uint8Array;
     signal: AbortSignal;
-    redirect: 'error';
   },
 ): Promise<Response> {
   return new Promise((resolve, reject) => {
@@ -123,7 +122,7 @@ function requestOnce(
       agent: false,
     }, (incoming) => {
       const status = incoming.statusCode ?? 500;
-      if (options.redirect === 'error' && [301, 302, 303, 307, 308].includes(status) && incoming.headers.location) {
+      if ([301, 302, 303, 307, 308].includes(status) && incoming.headers.location) {
         incoming.destroy();
         reject(new TypeError('unexpected redirect'));
         return;
@@ -270,7 +269,6 @@ export async function backendRequest<T>(
         headers,
         body: options.body,
         signal: controller.signal,
-        redirect: 'error',
       });
     } catch (error) {
       throw new CockpitError(

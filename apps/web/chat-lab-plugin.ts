@@ -1,6 +1,6 @@
 import type { Plugin } from 'vite';
 
-// Explicit opt-in, loopback-only, dev-only. No proxy, native backend or store.
+// Explicit opt-in, loopback-only, dev-only. No backend connection or proxy.
 export function chatLabPlugin(): Plugin {
   return {
     name: 'isolated-chat-lab',

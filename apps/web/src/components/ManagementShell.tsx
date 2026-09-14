@@ -22,7 +22,7 @@ function MasterHeader({ section, item, onRefresh }: {
     if (item === null) backRef.current?.focus();
   }, [item]);
   return <>
-    <PaneHeader className="manage-header"
+    <PaneHeader
       leading={<button ref={backRef} className="btn-icon rp" type="button"
         aria-label={item === null ? '返回会话列表' : `返回${SECTION_TITLE[section]}列表`}
         onClick={() => up(item === null ? '/' : `/${section}`)}>

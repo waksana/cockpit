@@ -37,14 +37,14 @@ const session = {
 
 test('closed info panel has no hidden focus targets or mounted navigation', () => {
   const html = renderToStaticMarkup(createElement(SessionInfoPanel, {
-    session, models: [], open: false, onClose: noop, onSetModel: noModelMutation,
+    session, open: false, onClose: noop, onSetModel: noModelMutation,
   }));
   assert.equal(html, '');
 });
 
 test('open info panel identifies its session without cross-page navigation', () => {
   const html = renderToStaticMarkup(createElement(SessionInfoPanel, {
-    session, models: [], open: true, onClose: noop, onSetModel: noModelMutation,
+    session, open: true, onClose: noop, onSetModel: noModelMutation,
   }));
   assert.match(html, /会话设置/);
   assert.match(html, /Resource test/);
@@ -66,7 +66,7 @@ const renderModelSettings = (patch: Partial<ChatSession>, models = modelOptions)
   state.sessions = [current];
   try {
     return renderToStaticMarkup(createElement(SessionInfoPanel, {
-      session: current, models, open: true, onClose: noop,
+      session: current, open: true, onClose: noop,
       onSetModel: () => { assert.fail('Rendering confirmed values must never mutate them'); },
     }));
   } finally { state.sessions = previous; }
@@ -222,13 +222,13 @@ test('capability-free models keep controls hidden and all legal context tiers ha
   }
 });
 
-test('settings omit permission explanations without changing native policy', () => {
-  const before = useCockpit.getState().permissionPolicy;
+test('settings omit permission controls and rendering does not mutate the store', () => {
+  const before = useCockpit.getState();
   const html = renderToStaticMarkup(createElement(SessionInfoPanel, {
-    session, models: [], open: true, onClose: noop, onSetModel: noModelMutation,
+    session, open: true, onClose: noop, onSetModel: noModelMutation,
   }));
   assert.doesNotMatch(html, /工具权限|allow-all|自动批准|交互模式/);
-  assert.equal(useCockpit.getState().permissionPolicy, before);
+  assert.equal(useCockpit.getState(), before);
 });
 
 test('directory picker without an initial path has no hardcoded home and cannot create before a listing', t => {
@@ -339,10 +339,11 @@ for (const Component of [SessionMcp, SessionSkills]) {
   });
 }
 
-test('unloaded info settings expose explicit resume rather than global model values', (t) => {
+test('unloaded info settings expose explicit resume rather than stale model values', (t) => {
   withSession(t, false);
   const html = renderToStaticMarkup(createElement(SessionInfoPanel, {
-    session, models: [{ modelId: 'model', name: 'Model' }], open: true, onClose: noop, onSetModel: noModelMutation,
+    session: { ...session, availableModels: [{ modelId: 'model', name: 'Model' }] },
+    open: true, onClose: noop, onSetModel: noModelMutation,
   }));
   assert.doesNotMatch(html, /<select/);
   assert.match(html, /恢复会话|加载会话/);

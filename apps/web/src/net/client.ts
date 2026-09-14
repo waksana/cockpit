@@ -48,7 +48,7 @@ export function isSessionUnloadedError(e: unknown): e is SessionUnloadedError | 
     || (e instanceof IntentHttpError && e.status === 409 && e.code === 'SESSION_UNLOADED');
 }
 
-export interface NetClientCallbacks {
+interface NetClientCallbacks {
   onEvent: (ev: ServerEvent) => void;
   onStateChange: (state: ConnState) => void;
   sessionTitle?: (sessionId: string) => string | undefined;
@@ -161,8 +161,7 @@ export class NetClient {
       : 'name' in body && typeof body.name === 'string' ? body.name : undefined;
     const source = [target, resource].filter(Boolean).join(' · ');
     try {
-      // Upload responses may contain server paths; only shared prompt metadata
-      // belongs on the wire, even when callers pass extra runtime properties.
+      // Validate native prompt fields even when callers pass extra runtime properties.
       const payload = name === 'prompt' ? Intents.prompt.body.parse(body) : body;
       const expectedSessionId = 'sessionId' in payload ? payload.sessionId : undefined;
       const res = await fetch(intentUrl(name), {
@@ -244,12 +243,10 @@ export class NetClient {
   setModel(sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) {
     return this.intent('setModel', { sessionId, modelId, ...opts });
   }
-  // The purge name was already permanently destructive in older backends.
   deleteSession(sessionId: string) {
-    return this.intent('session/purge', { sessionId });
+    return this.intent('session/delete', { sessionId });
   }
   loadSession(sessionId: string) { return this.intent('session/load', { sessionId }); }
-  getSession(sessionId: string, signal?: AbortSignal) { return this.intent('session/get', { sessionId }, signal); }
   getResources(sessionId: string, resources: import('@cockpit/protocol').MetaResource[], signal?: AbortSignal) {
     return this.intent('session/resources', { sessionId, resources }, signal);
   }

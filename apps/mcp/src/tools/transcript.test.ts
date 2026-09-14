@@ -129,6 +129,26 @@ test('schema advertises a native default of 16 and local-only giant fragments', 
   assert.equal(requests.length, 0);
 });
 
+test('only current transcript inputs are published and unknown fields never dispatch', async () => {
+  const tool = (await client.listTools()).tools[0]!;
+  const fields = {
+    operation: 'history', tool_call_id: 'child', details: 'summary',
+    before_message_id: 'before', after_message_id: 'after', unexpected: 'value',
+  };
+  assert.equal(tool.inputSchema.additionalProperties, false);
+  assert.doesNotMatch(tool.description!, /CHAT_PROTOCOL_CHANGED|retired/i);
+  for (const [key, value] of Object.entries(fields)) {
+    assert.equal(key in tool.inputSchema.properties!, false);
+    for (const field of [value, null, false]) {
+      const reply = await call({ [key]: field });
+      assert.equal(reply.isError, true, key);
+      assert.match(reply.text, /unrecognized/i);
+    }
+  }
+  assert.equal(requests.length, 0);
+  assert.equal(nativeCalls.length, 0);
+});
+
 test('ordinary default pages are genuinely narrower native reads with complete events and boundaries', async t => {
   events = Array.from({ length: 40 }, (_, index) => event(`${index}`, 'a'.repeat(1000)));
   const serializations = countPageSerializations(t);

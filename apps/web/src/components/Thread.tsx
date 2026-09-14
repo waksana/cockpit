@@ -203,7 +203,7 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
 // One rendered message. Per @waksana's doctrine:
 //  - user messages are right-aligned bubbles, time just outside, no label;
 //  - assistant replies are NOT bubbles — they read as a full-width document,
-//    with a light byline (icon + Copilot + time) shown once per assistant group;
+//    with a light byline (icon + time) shown once per assistant group;
 //  - system messages are a quiet centered note.
 const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }: { m: ChatMessage; sessionId: string; showByline: boolean; nested?: boolean }) {
   const anchorId = nested ? JSON.stringify([sessionId, m.id]) : m.id;
@@ -218,7 +218,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
       <div className="user-message">
         <div className={cls.join(' ')} data-message-id={anchorId}>
           {isAskReply && <span className="ask-reply-tag" aria-label="对提问的回复">↩ 回复</span>}
-          <MessageContent message={m} sessionId={sessionId} />
+          <MessageContent message={m} />
         </div>
         <div className="user-message-meta">
           <span className="message-time">{clock(m.timestamp)}</span>
@@ -245,7 +245,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
       )}
       {/* Date/byline removal on prepend must not move the reading anchor. */}
       <div data-message-id={anchorId}>
-        <MessageContent message={m} sessionId={sessionId} />
+        <MessageContent message={m} />
       </div>
     </article>
   );
@@ -321,7 +321,7 @@ interface ThreadProps {
   onInterrupt?: () => Promise<{ ok: true; interrupted: boolean }>;
   onLoadMore: () => void;
   onRetryHistory?: () => void;
-  // Read-only transcript (e.g. a trashed-session preview): renders the paginated
+  // Read-only transcript: renders the paginated
   // message list but hides the composer and every interactive banner, so the
   // conversation can be browsed but not driven.
   readOnly?: boolean;
@@ -439,11 +439,8 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
 
   // Sending from THIS device: force-follow the bottom through the user-message
   // append + the stop button appearing (which shrinks the scroll viewport).
-  // When the agent is waiting on an ask_user question, a freeform send answers
-  // it (respondToUserInput) instead of starting a new prompt.
-  // A composer send is context-sensitive: it answers a pending ask (respondToUserInput),
-  // or — while a plan is pending — is taken as a NEW instruction that dismisses the
-  // plan, leaves plan mode, and runs (planSupersede). Otherwise a normal prompt.
+  // A composer send answers a pending ask (respondAsk), submits feedback on
+  // a pending plan (planSupersede), or otherwise sends a normal prompt.
   const ask = session.ask;
   const planRequest = session.planRequest;
   const runInView = useCallback((send: () => Promise<boolean>): Promise<boolean> => (
@@ -576,7 +573,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
       )}
 
       {readOnly ? (
-        <div className="chat-readonly-note" aria-label="只读会话">已删除的会话 · 只读</div>
+        <div className="chat-readonly-note" aria-label="只读会话">只读会话</div>
       ) : (
         <Composer
           key={session.sessionId}

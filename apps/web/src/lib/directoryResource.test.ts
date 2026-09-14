@@ -25,7 +25,7 @@ test('listing failures and missing canonical paths reject rather than producing 
 });
 
 test('an async picker callback cannot close the dialog on failure or before acknowledgement', async () => {
-  const task = createKeyedAsync<void>('directory:/actual/home', () => ({ connState: 'open', connectionGeneration: 1 }));
+  const task = createKeyedAsync<void>(() => ({ connState: 'open', connectionGeneration: 1 }));
   task.activate();
   let reject!: (error: Error) => void;
   let closed = 0;

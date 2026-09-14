@@ -9,9 +9,7 @@ import { PaneHeader } from './PaneHeader';
 import { StateNotice } from './StateNotice';
 
 // The shell for a per-session detail sub-page rendered in the info-panel slot:
-// the same header (close + title) and scrollable body as SessionInfoPanel, so a
-// moved-out section looks identical to where it used to live. Shows a loading or
-// empty placeholder in place of the body when asked.
+// the same header (close + title) and scrollable body as SessionInfoPanel.
 export function PanelCloseButton({ onClose }: { onClose: () => void }) {
   const phone = useMediaQuery('(max-width: 599px)');
   return (
@@ -21,25 +19,21 @@ export function PanelCloseButton({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function PanelPageShell({ title, onClose, loading, empty, children, action, bodyClassName = '' }: {
+export function PanelPageShell({ title, onClose, loading, children, bodyClassName = '' }: {
   title: string;
   onClose: () => void;
   loading?: boolean;
-  empty?: string;
   children?: ReactNode;
-  action?: ReactNode;
   bodyClassName?: string;
 }) {
   return (
     <>
-      <PaneHeader className="info-panel-header" leading={<PanelCloseButton onClose={onClose} />}
-        title={<span className="info-panel-title" title={title}>{title}</span>} actions={action} />
+      <PaneHeader leading={<PanelCloseButton onClose={onClose} />}
+        title={<span className="info-panel-title" title={title}>{title}</span>} />
       <div className={`info-panel-body scrollable ${bodyClassName}`.trim()}>
         {loading
           ? <StateNotice kind="loading" placement="pane">加载中…</StateNotice>
-          : empty != null
-            ? <StateNotice kind="empty" placement="pane">{empty}</StateNotice>
-            : children}
+          : children}
       </div>
     </>
   );

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type { SessionEvent } from '@github/copilot-sdk';
 import type { ChatMessage } from '@cockpit/protocol';
 import { normalizeEvent, type SdkEvent } from './sdk-types.ts';
-import { foldEvent, newFoldState } from './fold.ts';
+import { foldEvent, newFoldState } from '@cockpit/protocol/chat';
 
 const timestamp = '2026-09-07T14:20:00.919Z';
 let sequence = 0;

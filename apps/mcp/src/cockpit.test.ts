@@ -76,7 +76,7 @@ test('configured timeout overrides both generic and load-aware deadlines', async
     for (const request of [
       () => backendJson('/health'),
       () => intent('session/peek'),
-      () => invokePublishedIntent('session/purge', { sessionId: 's1', confirm: true }),
+      () => invokePublishedIntent('session/delete', { sessionId: 's1' }),
     ]) {
       await assert.rejects(request, (error) =>
         error instanceof CockpitError && error.kind === 'timeout'

@@ -208,7 +208,8 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
     await client.stop();
 
     const { OfficialRuntime } = await import('./runtime.ts');
-    const { Engine, sessionMetaBusy } = await import('./engine.ts');
+    const { Engine } = await import('./engine.ts');
+    const { sessionMetaBusy } = await import('../test-support/lifecycle.ts');
     let engineClient: InstanceType<typeof CopilotClient> | undefined;
     const runtime = new OfficialRuntime({
       clientFactory: options => { engineClient = new CopilotClient(options); return engineClient; },

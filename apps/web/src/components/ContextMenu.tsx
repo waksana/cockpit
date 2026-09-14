@@ -1,5 +1,5 @@
 // Pointer-anchored context menu — appears at an arbitrary (x,y) pointer location
-// (right-click / long-press on session rows + messages). Rendered fixed; flips
+// (right-click / long-press on session rows). Rendered fixed; flips
 // left/up near the viewport edges. For BUTTON-anchored dropdowns (kebab, etc.)
 // use AnchoredMenu instead — it pins to the trigger's live rect so it can never
 // drift off-screen.
@@ -59,7 +59,7 @@ export function ContextMenu({ x, y, items, onClose, label }: {
   return (
     <div
       ref={ref}
-      className="btn-menu active"
+      className="btn-menu"
       role="menu"
       aria-label={label}
       style={{ left: pos.left, top: pos.top, maxHeight: 'calc(100dvh - 16px)', overflowY: 'auto' }}

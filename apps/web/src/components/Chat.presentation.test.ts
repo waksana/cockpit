@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ChatMessage, SessionMeta } from '@cockpit/protocol';
+import { SessionMeta } from '@cockpit/protocol';
+import { ChatMessage } from '@cockpit/protocol/validation';
 import { MessageBody } from './MessageBody';
 import { Thread } from './Thread';
 import { fixtureSession, scenarios } from '../dev/chat-fixtures';
@@ -136,7 +137,7 @@ test('decision details stay in their cards rather than inflating an empty textar
   for (const [scene, placeholder] of [['ask', '输入回答…'], ['plan', '输入新指令…'], ['compacting', '正在压缩…']] as const) {
     const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession(scene), onLoadMore() {} }));
     assert.ok(html.includes(`placeholder="${placeholder}"`), html);
-    if (scene === 'plan') assert.match(html, /或在下方直接输入新指令/);
+    if (scene === 'plan') assert.match(html, /或在下方直接输入新指令，作为计划反馈提交给原生会话。/);
     if (scene === 'ask') assert.match(html, /也可以在下方输入自己的回答/);
   }
 });
@@ -195,7 +196,7 @@ test('thought, tool and skill use one single-line activity header, with static s
   assert.match(css, /\.activity-head \{[^}]*height: 36px/);
   assert.match(css, /\.activity-title \{[^}]*overflow: hidden;[^}]*white-space: nowrap;[^}]*text-overflow: ellipsis/);
   assert.doesNotMatch(css, /\.tool-name|\.skill-label|\.tool-title/);
-  assert.match(css, /\.msg-tools \{[^}]*gap: 4px/);
+  assert.match(css, /\.message-process-content\[hidden\] \{[^}]*display: none/);
   const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession('process'), readOnly: true, onLoadMore() {} }));
   assert.match(html, /class="process-summary"/);
   assert.doesNotMatch(html, /class="activity-head thought-toggle"/);

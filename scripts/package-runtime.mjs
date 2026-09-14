@@ -28,7 +28,7 @@ const sourceRoots = [
 const omittedDirectories = new Set([
   '.git', '.github', '.delivery', 'module-staging', 'modules', 'consumer', 'deploy',
   'updater', 'supervisor', 'installer', 'node_modules',
-  'docs', 'archive', 'archives', 'diagnostics', 'fixtures', '__fixtures__', 'test', 'tests', '__tests__',
+  'docs', 'archive', 'archives', 'diagnostics', 'fixtures', '__fixtures__', 'test', 'tests', '__tests__', 'test-support',
 ]);
 
 export function command(program, args, cwd) {

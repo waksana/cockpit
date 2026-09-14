@@ -12,12 +12,12 @@ export interface AsyncSnapshot<T> {
   dataGeneration?: number;
 }
 
-export function resourceError(error: unknown): string {
+function resourceError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
 // One mounted resource/action owns one key. Requests are never shared globally.
-export function createKeyedAsync<T>(key: string, getConnection: () => ResourceConnection) {
+export function createKeyedAsync<T>(getConnection: () => ResourceConnection) {
   let active = false;
   let request: AbortController | undefined;
   let refreshRequest: { dirty: boolean; load: (signal: AbortSignal) => T | Promise<T>; promise: Promise<boolean> } | undefined;
@@ -36,7 +36,6 @@ export function createKeyedAsync<T>(key: string, getConnection: () => ResourceCo
       errorCause: clearError ? undefined : snapshot.errorCause, generation: getConnection().connectionGeneration });
   };
   const task = {
-    key,
     getSnapshot: () => snapshot,
     subscribe: (listener: () => void) => {
       listeners.add(listener);

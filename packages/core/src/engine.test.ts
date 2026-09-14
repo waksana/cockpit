@@ -8,7 +8,8 @@ import { setImmediate as nextTurn, setTimeout as sleep } from 'node:timers/promi
 import type { CopilotClient, CopilotSession, SessionConfig, SessionEvent, SessionMetadata } from '@github/copilot-sdk';
 import type { ExitPlanModeAction, ModelOption, ServerEvent } from '@cockpit/protocol';
 import { Intents, NativeChatRead, unreadSessionCount } from '@cockpit/protocol';
-import { Engine, coreCapabilities, sessionMetaBusy, type EngineRuntime } from './engine.ts';
+import { Engine, coreCapabilities, type EngineRuntime } from './engine.ts';
+import { sessionMetaBusy } from '../test-support/lifecycle.ts';
 import { CHAT_EVENT_TYPES } from './native-chat.ts';
 import { validateForkHistory } from './fork.ts';
 
@@ -599,7 +600,7 @@ test('session organization does not resolve or expose project metadata', async t
   });
   await h.engine.refreshList();
   assert.equal('project' in (await h.engine.getMeta('unknown-project'))!, false);
-  await h.engine.deleteSession('unknown-project', true);
+  await h.engine.deleteSession('unknown-project');
   assert.equal(await h.engine.getMeta('unknown-project'), null);
 });
 
@@ -3102,7 +3103,7 @@ test('closing blocks new operations and competing transitions until close is ack
   await nextTurn();
   await assert.rejects(h.engine.getMeta(s.id), /transition/);
   for (const operation of [
-    () => h.engine.prompt(s.id, 'not sent'), () => h.engine.reload(s.id), () => h.engine.deleteSession(s.id, true),
+    () => h.engine.prompt(s.id, 'not sent'), () => h.engine.reload(s.id), () => h.engine.deleteSession(s.id),
     () => h.engine.cancel(s.id), () => h.engine.stop(),
   ]) await assert.rejects(async () => operation(), protectedWork);
   assert.equal(s.sdk.send.mock.callCount(), 0);
@@ -3316,7 +3317,7 @@ for (const action of ['unload', 'reload', 'deleteSession'] as const) {
     const s = await h.load();
     await h.engine.rename(s.id, 'keep title');
     h.runtime.closeSession.mock.mockImplementation(async () => { throw new Error('native close failed'); });
-    await assert.rejects(action === 'deleteSession' ? h.engine.deleteSession(s.id, true) : h.engine[action](s.id), /native close failed/);
+    await assert.rejects(h.engine[action](s.id), /native close failed/);
     assert.equal((await h.engine.getMeta(s.id))?.loaded, true);
     assert.equal((await h.engine.getMeta(s.id))?.closing, false);
     assert.equal((await h.engine.getMeta(s.id))?.title, 'keep title');
@@ -3694,14 +3695,16 @@ const invalidSchedules = [
   { interval: '1m', prompt: 'hello --model other' }, { interval: '1m', prompt: '/dangerous-command' },
   { interval: '1m', prompt: 'line one\nline two' }, { interval: '1m', prompt: '  ' },
   { interval: '1m', prompt: '\ncheck build\n' }, { interval: '1m', prompt: 'check build\r' },
-] satisfies Array<Partial<Parameters<Engine['addSchedule']>[1]>>;
+  { interval: '1m', unknown: 'value' },
+  { interval: '1m', cron: undefined }, { interval: '1m', tz: undefined }, { interval: '1m', displayPrompt: undefined },
+] satisfies Array<Partial<Parameters<Engine['addSchedule']>[1]> & Record<string, unknown>>;
 for (const options of invalidSchedules) {
   test(`invalid schedule is rejected before resume or command invocation: ${JSON.stringify(options)}`, async t => {
     const h = harness(t);
     const s = await h.seed();
     t.mock.method(Date, 'now', () => Date.parse(timestamp));
     const before = readFileSync(h.prefsFile, 'utf8');
-    await assert.rejects(h.engine.addSchedule(s.id, { prompt: 'check build', ...options }), /unsupported|required|plain|delay/i);
+    await assert.rejects(h.engine.addSchedule(s.id, { prompt: 'check build', ...options }), /unknown|unsupported|required|plain|delay/i);
     assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
     assert.equal(h.runtime.createSession.mock.callCount(), 0);
     assert.equal(s.rpc.commands.invoke.mock.callCount(), 0);
@@ -4877,7 +4880,7 @@ for (const action of ['unload', 'stop'] as const) {
     assert.equal(nativeReadSettled, false);
     assert.equal(activeState(h, s.id).operations, 0);
     assert.deepEqual((await h.engine.snapshot()), beforeRead, 'chat must not publish artificial processing or operations');
-    assert.equal(sessionMetaBusy((await h.engine.getMeta(s.id))!), false, 'the server restart predicate stays idle');
+    assert.equal(sessionMetaBusy((await h.engine.getMeta(s.id))!), false, 'the diagnostic snapshot remains idle');
     await promptly(action === 'unload' ? h.engine.unload(s.id) : h.engine.stop());
     await promptly(pending);
     assert.equal(nativeReadSettled, false, 'close and chat rejection must not wait for the native poll response');
@@ -5109,11 +5112,11 @@ for (const loaded of [false, true]) {
     const resumes = h.runtime.resumeSession.mock.callCount();
     if (loaded) {
       s.state.activeWork = true;
-      await assert.rejects(h.engine.deleteSession(s.id, true), protectedWork);
+      await assert.rejects(h.engine.deleteSession(s.id), protectedWork);
       assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
       s.state.activeWork = false;
     }
-    await h.engine.deleteSession(s.id, true);
+    await h.engine.deleteSession(s.id);
     assert.equal((await h.engine.getMeta(s.id)), null);
     assert.equal(h.runtime.deleteSession.mock.callCount(), 1);
     assert.equal(h.runtime.closeSession.mock.callCount(), loaded ? 1 : 0);
@@ -5129,24 +5132,20 @@ test('native deletion retains idle guards without an extra confirmation or modif
   const h = harness(t, { prefs: { preserved: 'external capability data' } });
   const original = readFileSync(h.prefsFile, 'utf8');
   const s = await h.load();
-  await finishReply(s, '可删除的测试回复', 'purge');
-  for (const name of ['session/delete', 'session/purge'] as const) {
-    assert.equal(Intents[name].body.safeParse({ sessionId: s.id }).success, true);
-    assert.equal(Intents[name].body.safeParse({ sessionId: s.id, confirm: false }).success, true);
-    assert.equal(Intents[name].body.safeParse({ sessionId: s.id, confirm: true }).success, true);
-  }
+  await finishReply(s, '可删除的测试回复', 'delete');
+  assert.equal(Intents['session/delete'].body.safeParse({ sessionId: s.id }).success, true);
   s.state.processing = true;
   await assert.rejects(h.engine.deleteSession(s.id), protectedWork);
   assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
   assert.equal(h.runtime.closeSession.mock.callCount(), 0);
   s.state.processing = false;
-  await finishReply(s, '工作完成，可以删除', 'purge-after-work');
+  await finishReply(s, '工作完成，可以删除', 'delete-after-work');
   h.runtime.closeSession.mock.mockImplementationOnce(async () => { throw new Error('close failed'); });
-  await assert.rejects(h.engine.deleteSession(s.id, true), /close failed/);
+  await assert.rejects(h.engine.deleteSession(s.id), /close failed/);
   assert.equal(h.runtime.deleteSession.mock.callCount(), 0);
   h.runtime.deleteSession.mock.mockImplementationOnce(async () => { throw new Error('native delete failed'); });
-  await assert.rejects(h.engine.deleteSession(s.id, true), /native delete failed/);
-  await h.engine.deleteSession(s.id, false);
+  await assert.rejects(h.engine.deleteSession(s.id), /native delete failed/);
+  await h.engine.deleteSession(s.id);
   assert.equal((await h.engine.getMeta(s.id)), null);
   assert.equal(activeState(h, s.id), undefined);
   assert.equal(readFileSync(h.prefsFile, 'utf8'), original);
@@ -5157,11 +5156,11 @@ test('native deletion retains idle guards without an extra confirmation or modif
   await h.engine.unload(deleting.id);
   const deletion = deferred();
   h.runtime.deleteSession.mock.mockImplementationOnce(() => deletion.promise);
-  const purging = h.engine.deleteSession(deleting.id, true);
+  const removing = h.engine.deleteSession(deleting.id);
   await nextTurn();
   await assert.rejects(h.engine.stop(), protectedWork);
   deletion.resolve();
-  await purging;
+  await removing;
 });
 
 test('global MCP refresh invalidates only native definitions and never disrupts loaded sessions', async t => {
@@ -5277,6 +5276,8 @@ test('plan feedback resolves the exact native callback without mode changes or a
   await h.engine.respondElicitation(s.id, id, 'accept');
   assert.deepEqual(await elicitation, { action: 'accept' });
   assert.equal(coreCapabilities.planSupersede, 'pending-plan-feedback');
+  assert.equal(coreCapabilities.deleteSession, true);
+  assert.equal('purgeSession' in coreCapabilities, false);
   assert.equal(coreCapabilities.elicitationAccept, 'unstructured-only');
   assert.equal(coreCapabilities.schedule.cron, false);
 });
@@ -5538,17 +5539,15 @@ test('structured native model and mode refusals retain their full outcomes witho
     assert.equal(s.sdk.send.mock.callCount(), 0);
   });
 
-  for (const confirm of [undefined, false, true]) {
-    test(`native deletion ignores compatibility confirm=${confirm} but never loads missing sessions`, async t => {
-      const h = harness(t);
-      const s = await h.seed();
-      await h.engine.deleteSession(s.id, confirm);
-      assert.deepEqual(h.runtime.deleteSession.mock.calls[0]!.arguments, [s.id]);
-      assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
-      await assert.rejects(h.engine.deleteSession('missing-owned-fixture', confirm), /Unknown session/);
-      assert.equal(h.runtime.deleteSession.mock.callCount(), 1);
-    });
-  }
+  test('native deletion never loads missing sessions', async t => {
+    const h = harness(t);
+    const s = await h.seed();
+    await h.engine.deleteSession(s.id);
+    assert.deepEqual(h.runtime.deleteSession.mock.calls[0]!.arguments, [s.id]);
+    assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+    await assert.rejects(h.engine.deleteSession('missing-owned-fixture'), /Unknown session/);
+    assert.equal(h.runtime.deleteSession.mock.callCount(), 1);
+  });
   assert.equal((await h.engine.getMeta(s.id))?.currentModelId, 'native-model');
   s.rpc.mode.set.mock.mockImplementation(async () => ({
     status: 'cancelled', modelChanged: false, deferImplementation: true,

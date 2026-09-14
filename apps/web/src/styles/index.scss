@@ -1,17 +1,17 @@
 // cockpit style system — single CSS source of truth (rev26 inheritance model).
 // @use order matters: tokens first (custom properties), then base reset, then
-// primitives, then components, then cockpit-specific diffs (highest priority).
+// primitives, then components.
 @use 'tokens';
 @use 'base';
 @use 'tgico';
 
-// Primitives (P2)
+// Primitives
 @use 'primitives/button';
 @use 'primitives/scrollable';
 @use 'primitives/preloader';
 @use 'primitives/menu';
 
-// Components (P4/P5/P6)
+// Components
 @use 'components/shell';
 @use 'components/pane';
 @use 'components/sidebar';
@@ -19,6 +19,3 @@
 @use 'components/info-panel';
 @use 'components/manage';
 @use 'components/dialog';
-
-// cockpit deviations from tweb (the diff registry, applied last)
-@use 'cockpit/diffs';

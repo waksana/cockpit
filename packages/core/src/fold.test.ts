@@ -7,7 +7,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { newFoldState, foldEvent, resetTurn, cleanSessionTitle } from './fold.ts';
+import { newFoldState, foldEvent, resetTurn } from '@cockpit/protocol/chat';
+import { cleanSessionTitle } from '@cockpit/protocol';
 import { normalizeEvent, type SdkEvent } from './sdk-types.ts';
 
 type Ev = Omit<SdkEvent, 'data'> & { data?: SdkEvent['data'] };

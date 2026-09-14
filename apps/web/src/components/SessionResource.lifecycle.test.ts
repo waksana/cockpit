@@ -7,6 +7,7 @@ import { useCockpit } from '../net/store';
 import { IntentHttpError } from '../net/client';
 import type { ChatSession } from '../net/types';
 import { useSessionResource } from '../lib/useSessionResource';
+import { useKeyedResource } from '../lib/useKeyedResource';
 import { SessionInfoPanel } from './SessionInfoPanel';
 import { SessionMcp, SessionSkills } from './Manage';
 import { CopyButton } from './CopyButton';
@@ -136,7 +137,7 @@ const noop = () => {};
 const noMutation = async () => assert.fail('No native mutation expected');
 const pages = [
   { name: 'info', render: () => createElement(SessionInfoPanel, {
-    session, models: [], open: true, onClose: noop, onSetModel: noMutation,
+    session, open: true, onClose: noop, onSetModel: noMutation,
   }) },
   { name: 'mcp', render: () => createElement(SessionMcp, { session, onClose: noop }) },
   { name: 'skills', render: () => createElement(SessionSkills, { session, onClose: noop }) },
@@ -153,6 +154,49 @@ function button(container: HostNode, text: string) {
   return result;
 }
 function disabled(node: HostNode) { return node.attributes.has('disabled'); }
+
+for (const outcome of ['success', 'failure'] as const) {
+  test(`resource key changes isolate retained data and late ${outcome} without remounting`, async t => {
+    const h = mount(t);
+    const old = deferred<string>();
+    const next = deferred<string>();
+    const signals: AbortSignal[] = [];
+    let reads = 0;
+    let refresh!: () => Promise<boolean>;
+    const loads = {
+      a: (signal: AbortSignal) => {
+        signals.push(signal);
+        return ++reads === 1 ? Promise.resolve('accepted a') : old.promise;
+      },
+      b: () => next.promise,
+    };
+    function Probe({ owner }: { owner: keyof typeof loads }) {
+      const resource = useKeyedResource(owner, loads[owner]);
+      refresh = resource.refresh;
+      return createElement('div', null, resource.error ?? resource.data ?? 'empty');
+    }
+    await h.render(createElement(Probe, { owner: 'a' }));
+    assert.equal(h.container.textContent, 'accepted a');
+    let pending!: Promise<boolean>;
+    await act(async () => { pending = refresh(); });
+    await h.render(createElement(Probe, { owner: 'a' }));
+    assert.equal(reads, 2, 'the same key retains its existing task');
+    assert.equal(signals[1].aborted, false);
+    assert.equal(h.container.textContent, 'accepted a');
+
+    await h.render(createElement(Probe, { owner: 'b' }));
+    assert.equal(signals[1].aborted, true);
+    assert.equal(h.container.textContent, 'empty');
+    await act(async () => {
+      if (outcome === 'success') old.resolve('obsolete a');
+      else old.reject(new Error('obsolete a'));
+      assert.equal(await pending, false);
+    });
+    assert.equal(h.container.textContent, 'empty');
+    await act(async () => { next.resolve('accepted b'); });
+    assert.equal(h.container.textContent, 'accepted b');
+  });
+}
 
 for (const page of pages) {
   test(`${page.name}: closing is explicit, with reads, refresh and model actions disabled`, async t => {
@@ -566,7 +610,7 @@ test('model Apply has a pending label and busy state while preserving native res
   let mutations = 0;
   useCockpit.setState({ getResources: () => read.promise });
   await h.render(createElement(SessionInfoPanel, {
-    session, models: [], open: true, onClose: noop,
+    session, open: true, onClose: noop,
     onSetModel: async () => { mutations++; return result.promise; },
   }));
   assert.equal(disabled(button(h.container, '应用配置')), true, 'metadata cannot enable Apply before the read');
@@ -598,7 +642,7 @@ test('session ID copies its exact value without invoking a native operation', as
   t.after(() => previous ? Object.defineProperty(globalThis, 'navigator', previous) : Reflect.deleteProperty(globalThis, 'navigator'));
   useCockpit.setState({ getResources: async () => modelData });
   await h.render(createElement(SessionInfoPanel, {
-    session, models: [], open: true, onClose: noop, onSetModel: noMutation,
+    session, open: true, onClose: noop, onSetModel: noMutation,
   }));
   const copy = h.container.querySelector('[aria-label="复制 session ID"]');
   assert.ok(copy);

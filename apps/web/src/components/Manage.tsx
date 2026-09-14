@@ -95,7 +95,7 @@ function ManageShell({ title, onClose, refresh, status, failed, pending, hasData
   empty?: string; children: ReactNode;
 }) {
   return <>
-    <PaneHeader className="manage-header" leading={<PanelCloseButton onClose={onClose} />}
+    <PaneHeader leading={<PanelCloseButton onClose={onClose} />}
       title={<span className="manage-title info-panel-title" title={title}>{title}</span>}
       actions={<RefreshButton pending={hasData && pending && !working}
         disabled={blocked || pending || working} onClick={refresh} />} />

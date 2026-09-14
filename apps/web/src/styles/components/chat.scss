@@ -89,19 +89,6 @@
 }
 .chat-topbar-more { flex: none; }
 
-// Inline model/effort/context selects in the subtitle (flat, label-less).
-.model-select {
-  flex: 0 1 auto;
-  min-width: 0; max-width: 14rem;
-  appearance: none; -webkit-appearance: none;
-  border: none; background: transparent; color: inherit;
-  font: inherit; font-size: var(--font-size-13);
-  cursor: pointer;
-  text-overflow: ellipsis;
-  &:hover, &:focus { color: var(--primary-color); outline: none; }
-  option { color: var(--primary-text-color); background: var(--surface-color); }
-}
-
 // ── Thread (scroll area) ────────────────────────────────────────────────────
 .chat-transcript {
   position: relative;
@@ -237,7 +224,6 @@
     background: var(--light-primary-color);
     color: var(--primary-color);
   }
-  .doc-name { font-size: var(--font-size-13); font-weight: 600; color: var(--primary-text-color); }
   .doc-time { font-size: var(--font-size-12); color: var(--secondary-text-color); }
 }
 
@@ -341,7 +327,6 @@ button.activity-head {
 }
 
 // Raw tool metadata belongs in details, never a second collapsed line.
-.msg-tools { display: flex; flex-direction: column; gap: 4px; margin: 2px 0 0.75rem; }
 .msg-tool {
   border-radius: 8px;
   &[data-open='true'] {
@@ -431,7 +416,6 @@ button.activity-head {
   background: color-mix(in srgb, var(--danger-color) 10%, transparent);
   font-size: var(--font-size-13);
 }
-.subagent-msg { margin: 0; padding: 0; }
 .subagent-empty { padding: 0.65rem 0; font-size: var(--font-size-13); color: var(--secondary-text-color); }
 
 // Markdown body shared (document + bubble).
@@ -479,7 +463,6 @@ button.activity-head {
   h4 { font-size: 1em; }
   h5, h6 { font-size: 0.9em; color: var(--secondary-text-color); }
   hr { border: 0; border-top: 1px solid var(--border-color); margin: 1.25rem 0; }
-  img { max-width: 100%; height: auto; }
 }
 .chat-table-scroll { margin: 0.85rem 0; max-width: 100%; }
 .chat-code-block {
@@ -519,7 +502,7 @@ button.activity-head {
   strong { font-size: var(--font-size-20); font-weight: 600; color: var(--primary-text-color); }
   code { font-size: var(--font-size-12); max-width: 100%; }
 }
-// Read-only footer for a trashed-session preview (replaces the composer).
+// Read-only transcript footer (replaces the composer).
 .chat-readonly-note {
   flex: none;
   padding: 0.7rem 1rem calc(0.7rem + env(safe-area-inset-bottom, 0px));

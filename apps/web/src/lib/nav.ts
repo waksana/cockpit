@@ -29,7 +29,7 @@ function historyIdx(): number {
 }
 
 // Record the pathname now showing at the current history index. Call on every
-// location change (see useHistoryTracker).
+// location change (see App's layout effect).
 export function recordLocation(pathname: string): void {
   seenByIdx.set(historyIdx(), pathname);
 }

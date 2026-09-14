@@ -3,7 +3,7 @@
 // state that carries no server-supplied error string.
 import type { McpServerStatus } from '@cockpit/protocol';
 
-export const MCP_STATUS: Record<McpServerStatus, { label: string; tone: string; hint?: string }> = {
+const MCP_STATUS: Record<McpServerStatus, { label: string; tone: string; hint?: string }> = {
   connected: { label: '已连接', tone: 'ok' },
   failed: { label: '失败', tone: 'err' },
   'needs-auth': { label: '待授权', tone: 'warn', hint: '需要授权后才能使用' },

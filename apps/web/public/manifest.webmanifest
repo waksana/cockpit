@@ -1,0 +1,31 @@
+{
+  "id": "/",
+  "name": "cockpit",
+  "short_name": "cockpit",
+  "description": "控制运行在服务器上的 AI 会话",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fdf6e3",
+  "theme_color": "#fdf6e3",
+  "icons": [
+    {
+      "src": "/icon-refined-r4-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-refined-r4-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-refined-r4.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

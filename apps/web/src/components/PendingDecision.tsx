@@ -38,7 +38,7 @@ export function PlanCard({ request, pending, onSelect }: {
   request: NonNullable<ChatSession['planRequest']>; pending: boolean; onSelect: (action: ExitPlanModeAction) => void;
 }) {
   return <PendingDecision label="计划待确认" title="计划已就绪" icon={<Icon name="mode_plan" size={16} />}
-    className="chat-plan" pending={pending} hint={pending ? '正在提交选择…' : '或在下方直接输入新指令，我先照做再回到计划'}>
+    className="chat-plan" pending={pending} hint={pending ? '正在提交选择…' : '或在下方直接输入新指令，作为计划反馈提交给原生会话。'}>
     <div className="chat-pending-content" role="region" tabIndex={0} aria-label="计划内容">
       <div className="chat-pending-summary"><MessageBody body={request.summary} /></div>
       {request.planContent && <details className="chat-pending-detail">

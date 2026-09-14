@@ -5,7 +5,9 @@ import { createKeyedAsync, type AsyncSnapshot } from './keyedAsync';
 function useOwnedAsync<T>(key: string, enabled = true) {
   const connected = useCockpit((s) => s.connState === 'open');
   const generation = useCockpit((s) => s.connectionGeneration);
-  const task = useMemo(() => createKeyedAsync<T>(key, useCockpit.getState), [key]);
+  // A new key owns a new task even when the connection getter is unchanged.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const task = useMemo(() => createKeyedAsync<T>(useCockpit.getState), [key]);
   const snapshot = useSyncExternalStore(task.subscribe, task.getSnapshot, task.getSnapshot);
   useLayoutEffect(() => {
     if (enabled) task.activate();

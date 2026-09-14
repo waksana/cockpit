@@ -8,7 +8,7 @@ import { Icon } from './Icon';
 import { DirectoryModal } from './Dialog';
 import { StateNotice } from './StateNotice';
 
-export interface DirPickerProps {
+interface DirPickerProps {
   initialPath?: string;
   onCreate: (cwd: string) => Promise<string>;
   onCreated: (sessionId: string) => void;

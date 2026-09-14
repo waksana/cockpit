@@ -1,4 +1,4 @@
-// Modal dialog — tweb popup contract (scrim + centered card, scale-in). Supports
+// Modal dialog — scrim and centered card. Supports
 // a confirm (optional destructive) and an optional single text input.
 // Dismisses on scrim tap / Escape / cancel unless an action is pending.
 
@@ -34,14 +34,13 @@ export function DirectoryModal({ children, busy = false, onCancel }: {
   return typeof document === 'undefined' ? modal : createPortal(modal, document.body);
 }
 
-export interface DialogProps {
+interface DialogProps {
   title: string;
   message?: string;
   // When provided, renders a text input seeded with this value; the confirm
   // handler receives the entered text.
   input?: { placeholder?: string; initial?: string };
   confirmLabel?: string;
-  cancelLabel?: string;
   destructive?: boolean;
   actionKey?: string;
   onConfirm: (value: string) => void | Promise<void>;
@@ -55,7 +54,7 @@ export function Dialog(props: DialogProps) {
 }
 
 function DialogContent({
-  title, message, input, confirmLabel = '确定', cancelLabel = '取消', destructive,
+  title, message, input, confirmLabel = '确定', destructive,
   actionKey, onConfirm, onSuccess, onCancel,
 }: DialogProps) {
   const [value, setValue] = useState(input?.initial ?? '');
@@ -118,7 +117,7 @@ function DialogContent({
           <p className="dialog-message" role="status">等待连接…连接恢复后可重试。</p>
         )}
         <div className="dialog-actions">
-          <button type="button" className="dialog-btn rp" disabled={action.busy} onClick={cancel}>{cancelLabel}</button>
+          <button type="button" className="dialog-btn rp" disabled={action.busy} onClick={cancel}>取消</button>
           <button
             type="button"
             className={`dialog-btn primary rp${destructive ? ' danger' : ''}`}

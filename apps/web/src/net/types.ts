@@ -4,9 +4,8 @@
 // window + per-tab flags) layered on top of the server's SessionMeta.
 
 export type {
-  ChatMessage, ToolCall, ChatRole, SessionMeta, SessionStatus, AgentStatus,
-  ModelOption, QueuedItem, AskRequest, ServerEvent, TodoProgress,
-  NativeAttachment, DirEntry, DirListing,
+  ChatMessage, ToolCall, SessionMeta, SessionStatus,
+  ModelOption, ServerEvent, NativeAttachment,
   ExitPlanModeAction,
 } from '@cockpit/protocol';
 

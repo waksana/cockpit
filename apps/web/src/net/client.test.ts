@@ -74,16 +74,16 @@ test('text-only prompt sends no file metadata or hidden upload', async t => {
   assertOnlyPost(fetch, 'prompt', { sessionId: 'session', text: 'hello' });
 });
 
-test('native delete forwards one confirmation without any module preflight or approval', async t => {
+test('native delete sends one canonical request without any module preflight or approval', async t => {
   const { client, fetch } = setup(t, async () => Response.json({ ok: true }));
   await client.deleteSession('session');
-  assertOnlyPost(fetch, 'session/purge', { sessionId: 'session' });
+  assertOnlyPost(fetch, 'session/delete', { sessionId: 'session' });
 });
 
 test('removed session pages have no dedicated Web client helpers', t => {
   const { client, fetch } = setup(t, async () => { throw new Error('Unexpected request'); });
   for (const name of [
-    'forkSession', 'getPlan', 'getPanels', 'getPanel', 'getUsage',
+    'forkSession', 'getSession', 'getPlan', 'getPanels', 'getPanel', 'getUsage',
     'scheduleList', 'scheduleAdd', 'scheduleStop', 'compactSession',
     'rewindSession', 'unloadSession', 'reloadSession', 'setMode',
   ]) assert.equal(name in client, false, name);
@@ -114,7 +114,7 @@ test('native deletion failure or missing acknowledgement is not retried or accep
   response = Response.json({});
   await assert.rejects(client.deleteSession('session'));
   assert.equal(fetch.mock.callCount(), 2);
-  assert.ok(fetch.mock.calls.every(call => call.arguments[0] === intentUrl('session/purge')));
+  assert.ok(fetch.mock.calls.every(call => call.arguments[0] === intentUrl('session/delete')));
 });
 
 test('creation preserves an explicitly reported native identity without automatic retry', async t => {
@@ -188,8 +188,7 @@ for (const [path, status, code] of [
     const { client, fetch } = setup(t, async () => failed
       ? Response.json({ error: message, code }, { status })
       : Response.json(listing));
-    const resource = createKeyedAsync(JSON.stringify(['directory', path]),
-      () => ({ connState: 'open', connectionGeneration: 1 }));
+    const resource = createKeyedAsync(() => ({ connState: 'open', connectionGeneration: 1 }));
     resource.activate();
     let accepted = 0;
     assert.equal(await resource.run(() => readDirectory(p => client.listDir(p), path), () => { accepted++; }), false);
@@ -205,8 +204,7 @@ for (const [path, status, code] of [
     assert.ok(getUxErrors()[0].message.includes(message));
     failed = false;
     resource.deactivate();
-    const next = createKeyedAsync(JSON.stringify(['directory', listing.path]),
-      () => ({ connState: 'open', connectionGeneration: 1 }));
+    const next = createKeyedAsync(() => ({ connState: 'open', connectionGeneration: 1 }));
     next.activate();
     assert.equal(await next.run(() => readDirectory(p => client.listDir(p), listing.path), () => { accepted++; }), true);
     assert.equal(accepted, 1);
@@ -755,7 +753,7 @@ const snapshot: Extract<ServerEvent, { type: 'snapshot' }> = {
   }],
 };
 
-test('SSE snapshots require allow-all and preserve optional lifecycle metadata', (t) => {
+test('SSE validates native policy and agent status while preserving lifecycle metadata', (t) => {
   const { instances } = mockEventSource(t);
   const { client, fetch, events } = setup(t, async () => {
     throw new Error('Snapshot must not POST');
@@ -774,11 +772,15 @@ test('SSE snapshots require allow-all and preserve optional lifecycle metadata',
   source.emit(patch);
   source.emit({ ...snapshot, permissionPolicy: undefined });
   source.emit({ ...snapshot, permissionPolicy: 'ask' });
+  source.emit({ ...snapshot, agentStatus: 'unknown' });
+  source.emit({ type: 'agent/status', status: 'unknown' });
+  const agentStatus: ServerEvent = { type: 'agent/status', status: 'up' };
+  source.emit(agentStatus);
   source.emit({ type: 'session/history-page', page: chatPage });
   source.emit({ type: 'session/reset', page: chatPage });
   source.emit(invalidated);
-  assert.deepEqual(events, [snapshot, withLifecycle, patch, invalidated]);
-  assert.equal(warn.mock.callCount(), 4);
+  assert.deepEqual(events, [snapshot, withLifecycle, patch, agentStatus, invalidated]);
+  assert.equal(warn.mock.callCount(), 6);
   assert.equal(fetch.mock.callCount(), 0);
   assert.deepEqual(getUxErrors(), []);
 });

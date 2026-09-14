@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { sessionMetaBusy } from './lifecycle.ts';
+import { sessionMetaBusy } from '../test-support/lifecycle.ts';
 
 type BusyMeta = Parameters<typeof sessionMetaBusy>[0];
 
@@ -17,6 +17,12 @@ function assertProtected(over: Partial<BusyMeta>): void {
     }
   }
 }
+
+test('snapshot diagnostics are not exposed by production core entry points', async () => {
+  for (const entry of [await import('./index.ts'), await import('./engine.ts')]) {
+    assert.equal('sessionMetaBusy' in entry, false);
+  }
+});
 
 test('sessionMetaBusy: inactive statuses with optional fields absent are not busy', () => {
   for (const status of ['idle', 'error', 'unloaded'] as const) {

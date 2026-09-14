@@ -1,5 +1,5 @@
-// Buttons — ported from tweb _button.scss (.btn / .btn-icon / .btn-corner /
-// .btn-primary), real values + tokens. Hover tint = the ripple/hover-alpha
+// Buttons — ported from tweb _button.scss (.btn / .btn-icon / .btn-corner),
+// real values + tokens. Hover tint = the ripple/hover-alpha
 // fill. Disabled uses --disabled-opacity.
 
 .btn, .btn-icon {
@@ -23,7 +23,6 @@
   align-items: center;
   justify-content: center;
   &.rp { overflow: hidden; }
-  &.active { color: var(--primary-color); }
   @media (hover: hover) {
     &:hover { background-color: var(--ripple-color); }
   }
@@ -54,23 +53,4 @@
   box-shadow: 0 3px 10px var(--menu-box-shadow-color);
   &.is-visible { --translateY: 0; }
   &:disabled { opacity: 0.6; pointer-events: none; }
-}
-
-.btn-primary {
-  height: var(--button-height);
-  border-radius: var(--border-radius-medium);
-  background-color: var(--primary-color);
-  color: var(--badge-text-color);
-  font-size: var(--font-size-15);
-  font-weight: 500;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0 1rem;
-  cursor: pointer;
-  &:disabled { opacity: var(--disabled-opacity); pointer-events: none; }
-  &.btn-secondary {
-    background-color: var(--ripple-color);
-    color: var(--primary-text-color);
-  }
 }

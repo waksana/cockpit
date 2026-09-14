@@ -6,7 +6,7 @@ import { create } from 'zustand';
 import { isSessionUnloadedError, isTransportError, NetClient, SessionUnloadedError } from './client';
 import type { ConnState } from './client';
 import type {
-  AgentStatus, NativeAttachment, ChatSession, ModelOption, ServerEvent,
+  NativeAttachment, ChatSession, ModelOption, ServerEvent,
 } from './types';
 import { MetaResource, SessionResource, type SessionMeta } from '@cockpit/protocol';
 import type { IntentResult, NativeChatRead, NativeChatPage, SessionProjection } from '@cockpit/protocol';
@@ -23,8 +23,6 @@ interface CockpitState {
   connState: ConnState;
   snapshotReady: boolean;
   connectionGeneration: number;
-  permissionPolicy: 'allow-all';
-  agentStatus: AgentStatus;
   sessions: ChatSession[];
   activeId: string | null;
   globalModels: ModelOption[];
@@ -399,8 +397,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         set((st) => {
           const byId = new Map(st.sessions.map((s) => [s.sessionId, s]));
           const sessions = ev.sessions.map((m) => metaToSession(m, byId.get(m.sessionId)));
-          return { sessions, snapshotReady: true, agentStatus: ev.agentStatus,
-            permissionPolicy: ev.permissionPolicy, globalModels: ev.models };
+          return { sessions, snapshotReady: true, globalModels: ev.models };
         });
         const active = get().sessions.find(s => s.sessionId === get().activeId);
         if (active?.loaded && active.queue === undefined) refreshMeta(active.sessionId, ['queue']);
@@ -408,7 +405,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         return;
       }
       case 'agent/status':
-        set({ agentStatus: ev.status });
         return;
       case 'session/invalidated': {
         // Late invalidations cannot recreate resources for an absent session.
@@ -515,8 +511,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     connState: 'connecting',
     snapshotReady: false,
     connectionGeneration: 0,
-    permissionPolicy: 'allow-all',
-    agentStatus: 'starting',
     sessions: [],
     activeId: null,
     globalModels: [],

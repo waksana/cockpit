@@ -61,7 +61,7 @@ export function AnchoredMenu({ triggerRef, items, onClose, align = 'right', labe
   return (
     <div
       ref={ref}
-      className="btn-menu active"
+      className="btn-menu"
       role="menu"
       aria-label={label}
       tabIndex={-1}

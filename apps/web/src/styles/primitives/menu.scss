@@ -60,7 +60,7 @@
   @media (hover: hover) {
     &:hover { background-color: var(--ripple-color); }
   }
-  &:disabled, &.disabled {
+  &:disabled {
     opacity: var(--disabled-opacity);
     pointer-events: none;
   }

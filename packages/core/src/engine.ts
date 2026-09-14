@@ -14,19 +14,17 @@ import type {
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
   MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem,
 } from '@cockpit/protocol';
-import { NativeChatRead, SessionUsage, MetaResource as MetaResources } from '@cockpit/protocol';
+import { NativeChatRead, SessionUsage, MetaResource as MetaResources, cleanSessionTitle } from '@cockpit/protocol';
 import { NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult } from '@cockpit/protocol';
 import { OfficialRuntime, sessionModelOptions } from './runtime.ts';
 import { normalizeEvent, type RuntimeAttachment } from './sdk-types.ts';
-import { cleanSessionTitle } from './fold.ts';
 import { readNativeChat } from './native-chat.ts';
 import { describeMcpServer, redactMcpConfig } from './mcp-config.ts';
 import { validateForkHistory } from './fork.ts';
 
-export { sessionMetaBusy } from './lifecycle.ts';
 export type EngineRuntime = Pick<OfficialRuntime,
   'start' | 'models' | 'listSessions' | 'createSession' | 'resumeSession' |
-  'closeSession' | 'deleteSession' | 'getAuthStatus' | 'stop' | 'rpc' | 'liveCount' |
+  'closeSession' | 'deleteSession' | 'getAuthStatus' | 'stop' | 'rpc' |
   'isSessionLive' | 'onSessionClosed' | 'onFatal' | 'failure' | 'getSessionMetadata'>;
 
 // Parent transports can expose these limits without inventing runtime support.
@@ -35,7 +33,7 @@ export const coreCapabilities = {
     native: true, source: 'loaded-idle', boundary: 'before-root-user-event',
     schedules: false, workspaceIsolation: false, childLoaded: false,
   },
-  purgeSession: true,
+  deleteSession: true,
   mcpReload: 'native-session-connections',
   planSupersede: 'pending-plan-feedback',
   elicitationAccept: 'unstructured-only',
@@ -57,8 +55,6 @@ interface Decision {
   validate?: (value: unknown) => void;
 }
 type ResourceValues = {
-  model: Awaited<ReturnType<CopilotSession['rpc']['model']['getCurrent']>>;
-  models: Awaited<ReturnType<CopilotSession['rpc']['model']['list']>>;
   todos: Awaited<ReturnType<CopilotSession['rpc']['plan']['readSqlTodos']>>;
   schedule: Awaited<ReturnType<CopilotSession['rpc']['schedule']['list']>>;
   mcp: Awaited<ReturnType<CopilotSession['rpc']['mcp']['list']>>;
@@ -748,17 +744,14 @@ export class Engine {
   }
 
   private async readResource<K extends Resource>(
-    st: State, sdk: CopilotSession, resource: K, validate?: (value: ResourceValues[K]) => void,
+    st: State, sdk: CopilotSession, resource: K,
   ): Promise<ResourceValues[K]> {
     this.assertAvailable();
     if (st.sdk !== sdk) throw new Error('Native session closed during resource read');
     const readers: { [R in Resource]: () => Promise<ResourceValues[R]> } = {
-      model: () => sdk.rpc.model.getCurrent(), models: () => sdk.rpc.model.list(),
       todos: () => sdk.rpc.plan.readSqlTodos(), schedule: () => sdk.rpc.schedule.list(), mcp: () => sdk.rpc.mcp.list(),
     };
-    const value = await this.withSession(st, sdk, readers[resource]);
-    validate?.(value);
-    return value;
+    return this.withSession(st, sdk, readers[resource]);
   }
 
   private todoSummary(plan: Awaited<ReturnType<CopilotSession['rpc']['plan']['readSqlTodos']>>): SessionMeta['todo'] {
@@ -937,17 +930,17 @@ export class Engine {
     }, ['control', 'queue']);
   }
 
-  private localBusy(st: State, ownTransition = false, ownOperations = 0): boolean {
-    return (!ownTransition && st.closing) || st.operations > ownOperations || !!st.load
+  private localBusy(st: State, ownTransition = false): boolean {
+    return (!ownTransition && st.closing) || st.operations > 0 || !!st.load
       || !!st.cancelling || st.decisions.size > 0 || st.sends > 0 || st.accepted.size > 0;
   }
 
-  private async busy(st: State, ownTransition = false, ownOperations = 0): Promise<boolean> {
-    if (this.localBusy(st, ownTransition, ownOperations)) return true;
+  private async busy(st: State, ownTransition = false): Promise<boolean> {
+    if (this.localBusy(st, ownTransition)) return true;
     const revision = st.revision;
     const sdk = await this.liveSession(st);
     const active = !!sdk && (await this.readControl(st, sdk)).busy;
-    return active || this.localBusy(st, ownTransition, ownOperations) || st.revision !== revision;
+    return active || this.localBusy(st, ownTransition) || st.revision !== revision;
   }
 
   async busyCount(): Promise<number> {
@@ -1418,11 +1411,10 @@ export class Engine {
   }
 
   async addSchedule(id: string, options: {
-    prompt: string; interval?: string; cron?: string; at?: number; recurring?: boolean; tz?: string; displayPrompt?: string;
+    prompt: string; interval?: string; at?: number; recurring?: boolean;
   }): Promise<{ entry?: ScheduleEntry; error?: string; possiblyCreated?: boolean }> {
-    if (options.cron !== undefined || options.tz !== undefined || options.displayPrompt !== undefined) {
-      return unsupported('Cron, timezone and displayPrompt schedule options');
-    }
+    const unknown = Object.keys(options).filter(key => !['prompt', 'interval', 'at', 'recurring'].includes(key));
+    if (unknown.length) throw new Error(`Unknown schedule options: ${unknown.join(', ')}`);
     if ((options.interval !== undefined) === (options.at !== undefined)) throw new Error('Exactly one of interval or at is required');
     if (!options.prompt.trim() || /[\r\n]/.test(options.prompt) || /(^|\s)--/.test(options.prompt) || options.prompt.trimStart().startsWith('/')) {
       throw new Error('Schedule prompt must be plain single-line text without command flags');
@@ -1515,7 +1507,7 @@ export class Engine {
     if (!st || st.closing || st.cancelling || this.lifecycle) throw new Error('Request is no longer pending or session is transitioning');
     this.answer(st, requestId, kind, value);
   }
-  async deleteSession(id: string, _confirm?: boolean): Promise<void> {
+  async deleteSession(id: string): Promise<void> {
     this.assertAvailable();
     if (this.stopped || this.lifecycle || this.startPromise || this.removing.has(id)) throw new Error('Session lifecycle transition is in progress');
     const st = await this.state(id);

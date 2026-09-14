@@ -25,7 +25,7 @@ export function registerTranscriptTools(server: McpServer): void {
       + 'Repeat that identical query with page_offset:nextPageOffset and page_version:pageVersion; each fragment rereads '
       + 'the whole event (and live bootstrap tail), then slices in memory. No native body offset, cache, or saved copy. '
       + 'The version binds the query and complete page; changed or expired continuations fail rather than mix pages.',
-    inputSchema: {
+    inputSchema: z.object({
       session_id: z.string().min(1),
       source: z.enum(['persisted', 'live']).default('persisted'),
       direction: z.enum(['forward', 'backward']).default('backward'),
@@ -42,19 +42,11 @@ export function registerTranscriptTools(server: McpServer): void {
         .describe('Local JSON string offset, not an SDK offset. Continuation requires limit:1 and page_version; rereads the full event.'),
       page_version: z.string().regex(/^[a-f0-9]{64}$/).optional()
         .describe('Returned query-and-page hash; repeat the same native query to prevent mixed fragments.'),
-      operation: z.string().optional().describe('Retired: use source/direction/native cursor.'),
-      tool_call_id: z.string().optional().describe('Retired: use agent_ids with source:"live".'),
-      details: z.string().optional().describe('Retired: output contains native events.'),
-      before_message_id: z.string().optional().describe('Retired: message IDs are not native cursors.'),
-      after_message_id: z.string().optional().describe('Retired: message IDs are not native cursors.'),
       response_format: ResponseFormat,
-    },
+    }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, async (input): Promise<ToolResult> => {
     try {
-      if ([input.operation, input.tool_call_id, input.details, input.before_message_id, input.after_message_id].some(value => value !== undefined)) {
-        return fail('CHAT_PROTOCOL_CHANGED: use source, direction, cursor, and optional live agent_ids. Message-ID seek and server-folded transcripts have retired; no implicit scan is performed.');
-      }
       if (input.page_offset > 0 && !input.page_version) return fail('page_version is required for fragment continuation.');
       if ((input.page_offset > 0 || input.page_version !== undefined) && input.limit !== 1) {
         return fail('Fragment continuation requires limit:1. Discard earlier fragments and restart the original query with a smaller native page; no read was performed.');

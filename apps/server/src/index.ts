@@ -18,7 +18,7 @@ import fastifyStatic from '@fastify/static';
 import { existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Engine, OfficialRuntime, sessionMetaBusy } from '@cockpit/core';
+import { Engine, OfficialRuntime } from '@cockpit/core';
 import { Intents, type IntentBody, type IntentName, type IntentResult, type ServerEvent, type SessionMeta, type Snapshot } from '@cockpit/protocol';
 import { isIntentName, registerCapabilities } from './capabilities.ts';
 import { GracefulShutdown } from './shutdown.ts';
@@ -139,10 +139,6 @@ app.addHook('onRequest', async (_req, reply) => {
 
 function awaitingChoice(s: { ask?: unknown; planRequest?: unknown; elicitation?: unknown }): boolean {
   return !!(s.ask || s.planRequest || s.elicitation);
-}
-
-export function sessionBusy(s: SessionMeta): boolean {
-  return sessionMetaBusy(s);
 }
 
 export function maybeGracefulExit(): void { shutdown.notify(); }
@@ -341,10 +337,6 @@ const handlers: IntentHandlers = {
     await engine.deleteSession(b.sessionId);
     return { ok: true };
   },
-  'session/purge': async (b) => {
-    await engine.deleteSession(b.sessionId);
-    return { ok: true };
-  },
   'session/unload': async (b) => {
     await engine.unload(b.sessionId);
     return { ok: true };
@@ -485,12 +477,6 @@ function retainResponse(reply: FastifyReply): () => void {
 
 app.post('/intent/*', async (req, reply) => {
   const name = (req.params as Record<string, string>)['*'];
-  if (name && ['session/history', 'session/peek', 'session/subagent-history'].includes(name)) {
-    return reply.code(410).send({
-      code: 'CHAT_PROTOCOL_CHANGED',
-      error: 'Use session/chat with native source, direction and cursor. Message-ID pagination and server resume checkpoints have been retired.',
-    });
-  }
   if (name === undefined || !isIntentName(name)) { reply.code(404); return { error: `unknown intent: ${name}` }; }
   // Body parsing may have overlapped the transition since onRequest ran.
   const phase = shutdown.snapshot().phase;

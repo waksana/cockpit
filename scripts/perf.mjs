@@ -16,7 +16,7 @@ import { diagnosticOptions, readSyntheticLogs, diagnosticFetch } from './diagnos
 
 const { root, base: BASE } = diagnosticOptions('perf');
 const logs = readSyntheticLogs(root);
-const { newFoldState, foldEvent } = await import('../packages/core/src/fold.ts');
+const { newFoldState, foldEvent } = await import('../packages/protocol/src/chat.ts');
 const fetch = diagnosticFetch(BASE);
 const ms = (n) => `${n.toFixed(1)}ms`;
 const pct = (arr, p) => { const s = [...arr].sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(s.length * p))]; };

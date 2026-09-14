@@ -126,7 +126,7 @@ function setup(t: TestContext, store: Store = (useCockpit = createCockpitStore()
     const result = request(index);
     assert.equal(result.url, intentUrl(name));
     let init = result.init;
-    if (name === 'session/chat' || name === 'session/get' || name === 'session/resources') {
+    if (name === 'session/chat' || name === 'session/resources') {
       assert.ok(init?.signal instanceof AbortSignal, 'native reads must have an abort signal');
       const { signal: _signal, ...rest } = init;
       init = rest;
@@ -211,6 +211,23 @@ function observe<T>(promise: Promise<T>): Promise<T> {
   return promise;
 }
 
+test('validated native status events need no unused browser state or additional requests', t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a'], { models: [{ modelId: 'fixture-model', name: 'Fixture model' }] });
+  const state = h.store.getState();
+  assert.equal(state.snapshotReady, true);
+  assert.equal(state.sessions[0].sessionId, 'a');
+  assert.deepEqual(state.globalModels, [{ modelId: 'fixture-model', name: 'Fixture model' }]);
+  assert.equal('agentStatus' in state, false);
+  assert.equal('permissionPolicy' in state, false);
+  for (const status of ['starting', 'up', 'stopping', 'failed'] as const) {
+    h.source.emit({ type: 'agent/status', status });
+    assert.equal(h.store.getState(), state);
+  }
+  assert.equal(h.requests.length, 0);
+});
+
 test('absence becomes authoritative only after a complete snapshot in the current connection', t => {
   const fixture = setup(t);
   assert.equal(useCockpit.getState().snapshotReady, false);
@@ -253,7 +270,7 @@ test('native deletion supports unloaded sessions and failures never retry or rem
   h.snapshot(['a']);
   h.source.emit({ type: 'session/patch', sessionId: 'a', loaded: false });
   const deletion = observe(store.getState().deleteSession('a'));
-  h.assertPost(0, 'session/purge', { sessionId: 'a' });
+  h.assertPost(0, 'session/delete', { sessionId: 'a' });
   h.request(0).response.resolve(Response.json({ error: 'Native protected work' }, { status: 409 }));
   await assert.rejects(deletion, /Native protected work/);
   await setImmediate();
@@ -273,7 +290,7 @@ test('late load and delete failures cannot resurrect an authoritatively removed 
   h.source.emit({ type: 'session/removed', sessionId: 'a' });
   const before = useCockpit.getState().sessions;
   h.assertPost(0, 'session/load', { sessionId: 'a' }).reject(new Error('load interrupted'));
-  h.assertPost(1, 'session/purge', { sessionId: 'a' }).reject(new Error('delete interrupted'));
+  h.assertPost(1, 'session/delete', { sessionId: 'a' }).reject(new Error('delete interrupted'));
   await Promise.all(rejected);
   await setImmediate();
   assert.strictEqual(useCockpit.getState().sessions, before);
@@ -775,7 +792,7 @@ const mcpSuccess: IntentResult<'mcp/session-toggle'> = {
 
 const mutations: MutationCase[] = [
   { name: 'cancel', body: { sessionId: 'a' }, send: (s) => s.cancel('a'), success: { ok: true }, sessionId: 'a' },
-  { name: 'session/purge', body: { sessionId: 'a' }, send: (s) => s.deleteSession('a'), success: { ok: true }, sessionId: 'a' },
+  { name: 'session/delete', body: { sessionId: 'a' }, send: (s) => s.deleteSession('a'), success: { ok: true }, sessionId: 'a' },
   {
     name: 'session/load', body: { sessionId: 'a' }, send: (s) => s.loadSession('a'),
     success: { ok: true, sessionId: 'a' }, sessionId: 'a',

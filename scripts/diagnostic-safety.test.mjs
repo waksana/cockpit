@@ -119,7 +119,7 @@ for (const script of ['scripts/perf.mjs', 'scripts/e2e.mjs']) {
   });
 }
 
-for (const script of ['scripts/perf.mjs', 'scripts/e2e.mjs', 'packages/core/src/regress-reallog.mts']) {
+for (const script of ['scripts/perf.mjs', 'scripts/e2e.mjs', 'packages/core/test-support/regress.mts']) {
   test(`${script}: defaults refuse before private I/O or network`, async () => {
     const result = await run(script);
     assert.equal(result.code, 1);
@@ -191,7 +191,7 @@ test('flat synthetic logs are accepted; native trees, linked files and oversized
 });
 
 test('regression runs the actual fold/schema on synthetic fixtures without network or private reads', async () => {
-  const result = await run('packages/core/src/regress-reallog.mts', rootArgs);
+  const result = await run('packages/core/test-support/regress.mts', rootArgs);
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /2 msgs \| 0 fold errors \| 0 invalid/);
 });
@@ -217,7 +217,7 @@ test('configured data roots and their ancestors refuse before filesystem access'
   for (const key of ['COCKPIT_HOME', 'COCKPIT_SESSION_STATE_DIR', 'COCKPIT_SESSION_STORE']) {
     const env = { [key]: key === 'COCKPIT_SESSION_STORE' ? join(state, 'session-store.db') : state };
     for (const root of [parent, state, join(state, 'child')]) {
-      const result = await run('packages/core/src/regress-reallog.mts', ['--synthetic-fixture-root', root], undefined, env);
+      const result = await run('packages/core/test-support/regress.mts', ['--synthetic-fixture-root', root], undefined, env);
       assert.equal(result.code, 1);
       assert.match(result.stderr, /overlaps a configured Cockpit data root/);
     }

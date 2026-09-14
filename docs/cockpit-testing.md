@@ -9,7 +9,8 @@
 
 | 范围 | 命令 |
 | --- | --- |
-| 协议 schema / fold | `pnpm --filter @cockpit/protocol test` |
+| 协议 schema | `pnpm --filter @cockpit/protocol test` |
+| 共享消息折叠 | `pnpm --filter @cockpit/core exec node --import tsx --test src/fold.test.ts` |
 | 原生控制、资源和生命周期 | `pnpm --filter @cockpit/core test` |
 | 真实 HTTP handler、schema、CSRF、流和退出 | `pnpm --filter @cockpit/server test` |
 | MCP 映射、附件、分页和传输 | `pnpm --filter @cockpit/mcp test` |
@@ -60,8 +61,8 @@ COCKPIT_NATIVE_MODEL_SMOKE=1 COCKPIT_NATIVE_DELETE_TEST=1 \
 | 合成 fold / HTTP / SSE 性能 | `pnpm perf --synthetic-fixture-root /absolute/synthetic-jsonl --test-base-url http://127.0.0.1:45678` |
 | 无后端组件 lab | [开发指南](DEVELOPMENT.md#isolated-chat-component-review) |
 
-诊断默认缺参数即拒绝，不使用用户历史或生产 URL。旧文件名
-`regress-reallog.mts` 只保留命令位置，输入是显式合成日志。
+诊断默认缺参数即拒绝，不使用用户历史或生产 URL。
+`pnpm regress` 执行 `packages/core/test-support/regress.mts`，输入是显式合成日志。
 日志限平坦的 1–32 个普通非链接 JSONL 文件，每个最多 4 MiB、合计 16 MiB。
 个人/native/config 根、链接、硬链接和格式错误被拒绝。
 HTTP 只能指定独立 IPv4 loopback 测试端口，不能用 8771 或已声明的生产端口，

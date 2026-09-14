@@ -46,21 +46,19 @@ export function registerLifecycleTools(server: McpServer): void {
       description:
         'IRREVERSIBLE. Delete a session through the public native Copilot deleteSession API. ' +
         'Only run when permanent deletion is intended. ' +
-        'Managed files, file associations and workspaces are retained. Busy sessions are protected. ' +
+        'Cockpit does not delete workspace or unrelated files. Busy sessions are protected. ' +
         'Never automatically retry an uncertain result.',
-      inputSchema: {
+      inputSchema: z.object({
         session_id: z.string().min(1).describe('The session id to permanently delete'),
-        confirm: z.boolean().optional().describe('Deprecated compatibility input; ignored. Deletion is irreversible.'),
-      },
+      }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async ({ session_id }): Promise<ToolResult> => {
       try {
-        // Retain the already-destructive wire name across staggered deployments.
-        await intent('session/purge', {
+        await intent('session/delete', {
           sessionId: session_id,
         });
-        return ok(`Deleted ${session_id} permanently. Managed files and workspaces are retained.`);
+        return ok(`Deleted ${session_id} permanently. Cockpit did not delete workspace or unrelated files.`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }

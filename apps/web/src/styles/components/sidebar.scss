@@ -53,7 +53,6 @@
     &::placeholder { color: var(--input-placeholder-color); }
     &::-webkit-search-cancel-button { display: none; }
     &:focus { background-color: color-mix(in srgb, var(--primary-color) 10%, transparent); }
-    &:focus ~ .input-search-icon { color: var(--primary-color); opacity: 1; }
   }
   &-clear {
     position: absolute;
@@ -76,14 +75,6 @@
   display: flex;
   flex-direction: column;
   -webkit-touch-callout: none;
-}
-
-.chatlist-group-title {
-  padding: 0.5rem 0.75rem 0.25rem;
-  font-size: var(--font-size-13);
-  font-weight: 500;
-  color: var(--secondary-text-color);
-  opacity: 0.65;
 }
 
 // One session row — tweb .row 3-col grid (avatar | title/subtitle | time/meta).

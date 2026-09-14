@@ -379,7 +379,7 @@ test('registry exposes native controls without parked file, organization or rest
     'cockpit_list_session_mcp', 'cockpit_set_session_mcp', 'cockpit_set_session_skill',
     'cockpit_get_snapshot', 'cockpit_list_sessions', 'cockpit_get_session',
     'cockpit_get_panels', 'cockpit_get_plan', 'cockpit_new_session', 'cockpit_delete_session',
-    'cockpit_purge_session', 'cockpit_unload_session', 'cockpit_reload_session',
+    'cockpit_unload_session', 'cockpit_reload_session',
     'cockpit_rename_session', 'cockpit_cancel_turn', 'cockpit_remove_queued',
     'cockpit_respond_ask', 'cockpit_respond_plan', 'cockpit_plan_supersede', 'cockpit_respond_elicitation',
     'cockpit_set_model', 'cockpit_set_mode', 'cockpit_compact_session', 'cockpit_rewind_session',
@@ -425,13 +425,31 @@ test('published tool guidance matches native inputs and timer limits', async () 
       /known id/i, /native stop result, not a list read/i,
       /reports that as an error/i, /native failures propagate/i,
     ]],
+    ['cockpit_plan_supersede', [
+      /approved:false and feedback:message/i, /native callback only/i,
+      /no separate prompt or mode change/i, /native runtime controls subsequent behavior/i,
+    ]],
   ] as const;
   for (const [name, patterns] of guidance) {
     const tool = tools.find(tool => tool.name === name);
     assert.ok(tool, name);
     for (const pattern of patterns) assert.match(tool.description ?? '', pattern, name);
   }
+  assert.doesNotMatch(tools.find(tool => tool.name === 'cockpit_get_session')!.description!, /\bpin\b/i);
+  assert.doesNotMatch(tools.find(tool => tool.name === 'cockpit_get_plan')!.description!, /plan panel in the UI/i);
+  assert.doesNotMatch(tools.find(tool => tool.name === 'cockpit_plan_supersede')!.description!, /exit_only|one-off direct instruction|returns the session to plan mode/i);
   assert.equal(requests.length, 0, 'reading guidance must not discover or invoke backend operations');
+});
+
+test('plan feedback acknowledgement promises no separate host prompt or mode actions', async () => {
+  const result = await call('cockpit_plan_supersede', { session_id: 'B', request_id: 'plan', message: 'Revise the plan' });
+  assert.equal(result.isError, false);
+  assert.match(result.text, /Submitted native plan feedback/);
+  assert.match(result.text, /Subsequent behavior is controlled by the native runtime/);
+  assert.doesNotMatch(result.text, /message run|plan discarded|returns to plan mode/);
+  assert.deepEqual(requests.map(({ path, body }) => ({ path, body })), [
+    { path: '/intent/planSupersede', body: { sessionId: 'B', requestId: 'plan', message: 'Revise the plan' } },
+  ]);
 });
 
 test('the published executable starts MCP when invoked through a bin symlink', async () => {
@@ -639,10 +657,10 @@ test('generic service, protocol and connection failures remain MCP errors withou
   ] as const) {
     requests.length = 0;
     intentFailure = failure;
-    const result = await call('cockpit_call_intent', { name: 'session/purge', body: { sessionId: 'B', confirm: true } });
+    const result = await call('cockpit_call_intent', { name: 'session/delete', body: { sessionId: 'B' } });
     assert.equal(result.isError, true);
     assert.match(result.text, message);
-    assert.deepEqual(requests.map(({ method, path }) => [method, path]), [['POST', '/intent/session/purge']]);
+    assert.deepEqual(requests.map(({ method, path }) => [method, path]), [['POST', '/intent/session/delete']]);
   }
 });
 
@@ -653,17 +671,13 @@ test('generic validation stays backend-owned and deletion has no added confirmat
     assert.match(result.text, /HTTP 400/);
   }
   for (const body of [{ sessionId: 'B' }, { sessionId: 'B', confirm: false }, { sessionId: 'B', confirm: true }]) {
-    assert.equal((await call('cockpit_call_intent', { name: 'session/purge', body })).isError, false);
+    assert.equal((await call('cockpit_call_intent', { name: 'session/delete', body })).isError, 'confirm' in body);
   }
   assert.equal(requests.filter(({ method }) => method === 'POST').length, 5);
   assert.equal(requests.length, 5, 'bodies are sent once to the backend without preflight');
   requests.length = 0;
-  for (const confirm of [undefined, false, true]) {
-    assert.equal((await call('cockpit_purge_session', {
-      session_id: 'B', ...(confirm === undefined ? {} : { confirm }),
-    })).isError, false);
-  }
-  assert.deepEqual(requests.map(request => request.body), Array(3).fill({ sessionId: 'B' }));
+  assert.equal((await call('cockpit_delete_session', { session_id: 'B' })).isError, false);
+  assert.deepEqual(requests.map(request => request.body), [{ sessionId: 'B' }]);
 });
 
 test('session creation and minimal service reads preserve credentials without a restart tool', async () => {
@@ -697,21 +711,20 @@ test('MCP native creation and prompt match the Web API sequence without virtual 
 
 test('permanent delete explains irreversibility without requiring a confirmation input', async () => {
   const { tools } = await client.listTools();
-  assert.equal(tools.some(t => ['cockpit_list_trash', 'cockpit_restore_session'].includes(t.name)), false);
+  assert.equal(tools.some(t => ['cockpit_list_trash', 'cockpit_restore_session', 'cockpit_purge_session'].includes(t.name)), false);
   const tool = tools.find(t => t.name === 'cockpit_delete_session')!;
-  assert.ok(!tool.inputSchema.required?.includes('confirm'));
+  assert.equal('confirm' in tool.inputSchema.properties!, false);
+  assert.equal(tool.inputSchema.additionalProperties, false);
   assert.match(tool.description!, /IRREVERSIBLE/);
   assert.match(tool.description!, /Busy sessions are protected/);
-  assert.equal((await call('cockpit_delete_session', { session_id: 'B', confirm: 'true' })).isError, true);
-  assert.equal(requests.length, 0);
-  for (const confirm of [undefined, false, true]) {
-    assert.equal((await call('cockpit_delete_session', {
-      session_id: 'B', ...(confirm === undefined ? {} : { confirm }),
-    })).isError, false);
+  for (const confirm of [false, true, 'true']) {
+    assert.equal((await call('cockpit_delete_session', { session_id: 'B', confirm })).isError, true);
   }
-  assert.deepEqual(requests.map(r => ({ path: r.path, body: r.body })), Array(3).fill({
-    path: '/intent/session/purge', body: { sessionId: 'B' },
-  }));
+  assert.equal(requests.length, 0);
+  assert.equal((await call('cockpit_delete_session', { session_id: 'B' })).isError, false);
+  assert.deepEqual(requests.map(r => ({ path: r.path, body: r.body })), [{
+    path: '/intent/session/delete', body: { sessionId: 'B' },
+  }]);
 });
 
 test('retired module choices are rejected rather than silently ignored by MCP creation', async () => {
@@ -720,12 +733,14 @@ test('retired module choices are rejected rather than silently ignored by MCP cr
   assert.equal(requests.length, 0);
 });
 
-test('delete aliases issue one native deletion without module preflight or retries', async () => {
-  for (const name of ['cockpit_delete_session', 'cockpit_purge_session']) {
-    assert.equal((await call(name, { session_id: 'B' })).isError, false);
-  }
+test('removed purge tool never dispatches and its unknown intent is rejected by the backend', async () => {
+  const removed = await call('cockpit_purge_session', { session_id: 'B' });
+  assert.equal(removed.isError, true);
+  assert.equal(requests.length, 0);
+  const generic = await call('cockpit_call_intent', { name: 'session/purge', body: { sessionId: 'B' } });
+  assert.equal(generic.isError, true);
+  assert.match(generic.text, /HTTP 404/);
   assert.deepEqual(requests.map(r => ({ path: r.path, body: r.body })), [
-    { path: '/intent/session/purge', body: { sessionId: 'B' } },
     { path: '/intent/session/purge', body: { sessionId: 'B' } },
   ]);
 });
@@ -1012,8 +1027,7 @@ test('semantic and generic mutations surface HTTP-200 ok:false as genuine errors
     ['setMode', 'cockpit_set_mode', { session_id: 'B', mode: 'plan' }],
     ['session/compact', 'cockpit_compact_session', { session_id: 'B' }],
     ['session/rewind', 'cockpit_rewind_session', { session_id: 'B', to_msg_id: 'm1' }],
-    ['session/purge', 'cockpit_purge_session', { session_id: 'B' }],
-    ['session/purge', 'cockpit_delete_session', { session_id: 'B' }],
+    ['session/delete', 'cockpit_delete_session', { session_id: 'B' }],
     ['respondAsk', 'cockpit_respond_ask', { session_id: 'B', request_id: 'q1', answer: 'yes' }],
     ['mcp/global-default', 'cockpit_set_global_mcp_default', { name: 'test-server', on: true }],
     ['skills/session-toggle', 'cockpit_set_session_skill', { session_id: 'B', name: 'review', enabled: true }],

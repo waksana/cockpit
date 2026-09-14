@@ -1,6 +1,5 @@
 // New-session FAB — tweb .btn-corner compose button (bottom-inline-end of the
-// master pane). Clicking opens the standard centered Dialog (managed by App) to
-// enter a working directory — consistent with compact/delete dialogs.
+// master pane). Opens App's directory picker to choose a working directory.
 
 import { Icon } from './Icon';
 

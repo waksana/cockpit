@@ -7,8 +7,7 @@
     "!src/**/*.test.*",
     "!src/**/__tests__/**",
     "!src/**/__fixtures__/**",
-    "!src/**/fixtures/**",
-    "!src/regress-reallog.mts"
+    "!src/**/fixtures/**"
   ],
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -18,7 +17,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
-    "regress": "node --import tsx src/regress-reallog.mts"
+    "regress": "node --import tsx test-support/regress.mts"
   },
   "dependencies": {
     "@cockpit/protocol": "workspace:*",

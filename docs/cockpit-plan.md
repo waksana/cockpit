@@ -23,7 +23,7 @@ Cockpit 是一个直接启动的 Web/API 服务，通过官方 SDK 控制原生 
 | --- | --- | --- |
 | 前后端运行包 | 包含服务、Web 与必要依赖；Node 由宿主提供。 | 按[普通产包契约](packaging.md)维护。 |
 | 关闭 | `system/shutdown` 等待原生活动和受保护在途调用，再关闭 SDK/连接并退出。 | 等待只关注原生 session；模块业务和关闭回执不参与。当前尚无模块。 |
-| 原生确认 | API/MCP 不额外要求 compact、rewind、delete/purge 的确认字段；Web 删除对话框仍做防误触确认。精确输入见[客户端说明](../apps/mcp/README.md#confirmation-boundaries)。 | 原生条件与决策跟随安装版 SDK；宿主 shutdown 的确认独立保留。 |
+| 原生确认 | API/MCP 不增加 compact、rewind、delete 的确认字段；Web 删除对话框仍做防误触确认。精确输入见[客户端说明](../apps/mcp/README.md#confirmation-boundaries)。 | 原生条件与决策跟随安装版 SDK；宿主 shutdown 的确认独立保留。 |
 | 模块 | 尚未提供加载器。 | 冷加载、前后端同包、独立 MCP path、失败模块局部禁用；执行进程模型待定。 |
 | 启动消息 | 尚未提供。 | 可选模块保存下一次启动 prompt，并处理一次发送尝试。 |
 

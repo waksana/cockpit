@@ -97,7 +97,7 @@ export function Lab() {
     <details className="lab-controls" open={!compact}>
       <summary>合成场景控制</summary>
     <header className="lab-toolbar">
-      <strong>Chat / 组件场景</strong>
+      <strong>Chat Lab / 开发组件场景</strong>
       <label>场景 <select value={scenario} onChange={e => choose(e.target.value as Scenario)}>
         {scenarios.map(([id, title]) => <option key={id} value={id}>{title}</option>)}
       </select></label>
@@ -135,7 +135,7 @@ export function Lab() {
       <ChatHeader title={`${session.title} · 长标题与会话入口边界`} modelLabel="Synthetic model · no native connection"
         moreRef={moreRef} moreOpen={moreOpen}
         onBack={() => setReceipt('返回入口回调（导航不在此场景内执行）。')}
-        onInfo={() => setReceipt('会话信息入口回调（会话管理面板不在本次精修范围）。')}
+        onInfo={() => setReceipt('会话信息入口回调；管理面板由独立组件用例覆盖。')}
         onMore={() => setMoreOpen(true)} />
       <Thread key={scenario} session={session} readOnly={scenario === 'readonly'}
         onLoadMore={loadMore}
@@ -161,7 +161,7 @@ export function Lab() {
       />
       {moreOpen && <AnchoredMenu triggerRef={moreRef} label={session.title} onClose={() => setMoreOpen(false)}
         items={sessionActionItems(session, true, {
-          openPanel: (_id, panel) => setReceipt(`面板入口：${panel ?? 'info'}（管理面板不在本次精修范围）。`),
+          openPanel: (_id, panel) => setReceipt(`面板入口：${panel ?? 'info'}；这里只展示导航回调。`),
           delete: () => setReceipt('删除入口回调；没有调用原生删除。'),
         })} />}
     </div>

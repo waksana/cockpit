@@ -1,13 +1,13 @@
 // Shared browser-fold regression on explicit bounded, flat synthetic JSONL
-// fixtures. Historical filename retained for package-script compatibility.
+// fixtures.
 // Run from packages/core:
-//   node --import tsx src/regress-reallog.mts --synthetic-fixture-root /absolute/fixtures
+//   node --import tsx test-support/regress.mts --synthetic-fixture-root /absolute/fixtures
 import { diagnosticOptions, readSyntheticLogs } from '../../../scripts/diagnostic-safety.mjs';
 
 const { root } = diagnosticOptions('regress');
 const logs = readSyntheticLogs(root);
-const { newFoldState, foldEvent } = await import('./fold.ts');
-const { ChatMessage } = await import('@cockpit/protocol');
+const { newFoldState, foldEvent } = await import('@cockpit/protocol/chat');
+const { ChatMessage } = await import('@cockpit/protocol/validation');
 
 let totalMsgs = 0, totalErrors = 0, totalInvalid = 0, totalCards = 0, totalFixtures = 0;
 

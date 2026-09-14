@@ -1,7 +1,7 @@
 type Geometry = { top: number; height: number; viewport: number; width: number };
 type Anchor = { id: string; offset: number };
 export const READING_ACTIVITY_EVENT = 'cockpit:thread-reading-activity';
-export type ReadingPosition = { following: boolean; anchor: Anchor | null };
+type ReadingPosition = { following: boolean; anchor: Anchor | null };
 
 export interface ThreadScrollView {
   measure(): Geometry;
@@ -183,13 +183,6 @@ export class ThreadScroll {
     return { following: this.following, anchor: this.view.firstVisible() };
   }
 
-  restore(position: ReadingPosition) {
-    this.following = position.following;
-    this.anchor = position.anchor;
-    this.forced = true;
-    this.changed();
-  }
-
   changed() {
     if (this.disposed || this.touching || this.moving || this.frame !== null) return;
     const g = this.view.measure();
@@ -327,15 +320,6 @@ export function observeThreadScroll(el: HTMLDivElement, content: HTMLDivElement,
   scroll.follow();
   return {
     scroll,
-    position(): ReadingPosition {
-      const position = scroll.position();
-      if (!position.anchor) return position;
-      const row = content.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(position.anchor.id)}"]`);
-      const parent = row?.closest('[data-message-frame]')?.querySelector<HTMLElement>('[data-message-id]');
-      // Inline details close on unmount; restore their enclosing card rather than a missing child row.
-      return parent?.dataset.messageId && parent.dataset.messageId !== position.anchor.id
-        ? { ...position, anchor: { id: parent.dataset.messageId, offset: 0 } } : position;
-    },
     dispose() {
       scroll.dispose();
       ro?.disconnect();

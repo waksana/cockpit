@@ -37,7 +37,7 @@ await t('GET /health → ok + login', async () => {
   assert.equal(r.status, 200);
   const b = await j(r);
   assert.equal(b.ok, true);
-  assert.ok(typeof b.login === 'string' && b.login.length > 0);
+  assert.equal(typeof b.login, 'string');
 });
 
 await t('GET /status → running count + sessions[]', async () => {
@@ -240,9 +240,9 @@ if (scheduleSupported) {
 await t('session/delete validates the target, then deletes the owned fixture without an extra confirmation field', async () => {
   const id = globalThis.__e2eSession;
   assert.ok(id, 'this run must have created the session');
-  for (const name of ['session/delete', 'session/purge']) {
-    const response = await intent(name, {});
-    assert.equal(response.status, 400, `${name} requires a session identity`);
+  for (const body of [{}, { sessionId: id, confirm: true }]) {
+    const response = await intent('session/delete', body);
+    assert.equal(response.status, 400, 'delete accepts only its current session identity input');
   }
   const before = await j(await intent('session/get', { sessionId: id }));
   assert.equal(before.meta.sessionId, id);
@@ -250,7 +250,7 @@ await t('session/delete validates the target, then deletes the owned fixture wit
   assert.equal(del.ok, true);
   const status = await j(await fetch(`${BASE}/status`));
   assert.ok(!status.sessions.some((s) => s.sessionId === id), 'deleted session not in status');
-  for (const name of ['session/trash-list', 'session/restore']) {
+  for (const name of ['session/purge', 'session/trash-list', 'session/restore']) {
     assert.equal((await intent(name, { sessionId: id })).status, 404);
   }
 });

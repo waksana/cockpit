@@ -6,7 +6,7 @@ const timestamp = '2026-09-13T15:30:00.000Z';
 const event = (id: string, type: string, data: Record<string, unknown>): NativeChatEvent =>
   ({ id, type, timestamp, data });
 
-export const orderedEvents: NativeChatEvent[] = [
+const orderedEvents: NativeChatEvent[] = [
   event('z-user', 'user.message', { content: '按事件顺序展示，过程连续收纳。' }),
   event('x-request', 'assistant.message', { messageId: 'first-request', content: '', toolRequests: [
     { toolCallId: 'read', name: 'view', intentionSummary: '读取事件记录', arguments: { path: '/synthetic/events' } },

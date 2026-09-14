@@ -10,27 +10,16 @@ import {
   classifyNativeCompactResult,
   classifyNativeRewindResult,
   type NativeOperationClassification,
-  type IntentResult,
   McpServerSession as ProtocolMcpServerSession,
-  McpServerStatus as ProtocolMcpServerStatus,
   McpToggleOperation as ProtocolMcpToggleOperation,
   McpToggleResult as ProtocolMcpToggleResult,
 } from '@cockpit/protocol';
 
-export type {
-  NativeAttachment, DirListing, McpServerGlobal, PanelItem, ScheduleEntry, SessionBrief, SessionMeta,
-  SessionPanels, SessionPlan, SkillGlobal, SkillSession, Snapshot, TodoProgress,
-} from '@cockpit/protocol';
-export type McpSessionResult = IntentResult<'mcp/session'>;
-export type McpServerSession = ProtocolMcpServerSession;
-export type McpServerStatus = ProtocolMcpServerStatus;
-export type McpToggleOperation = ProtocolMcpToggleOperation;
-export type McpToggleResult = ProtocolMcpToggleResult;
+export type { PanelItem } from '@cockpit/protocol';
 
 export const ResponseFormat = z.enum(['markdown', 'json']).default('markdown');
 
 // Preserve forward-compatible fields at each existing MCP envelope boundary.
-export const McpServerStatus = ProtocolMcpServerStatus;
 export const McpToggleOperation = ProtocolMcpToggleOperation.passthrough();
 export const McpServerSession = ProtocolMcpServerSession.extend({
   operation: McpToggleOperation.optional(),

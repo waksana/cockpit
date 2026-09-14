@@ -48,7 +48,7 @@ body {
 // selecting text / popping the iOS loupe.
 input, textarea, [contenteditable='true'],
 .chat-messages, .message-body, .info-panel-body,
-.selectable, .user-select-text {
+.user-select-text {
   -webkit-user-select: text;
   user-select: text;
   -webkit-touch-callout: default;

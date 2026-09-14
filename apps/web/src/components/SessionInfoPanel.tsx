@@ -10,7 +10,7 @@ import { useSessionResource } from '../lib/useSessionResource';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { PanelPageShell, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
 import { CopyButton } from './CopyButton';
-import type { ChatSession, ModelOption } from '../net/types';
+import type { ChatSession } from '../net/types';
 
 type ContextTier = 'default' | 'long_context';
 
@@ -77,7 +77,7 @@ export function ModelOutcome({ result, selection }: { result: NativeModelSwitchR
       目标：{result.confirmation.targetModelDisplayName}；当前令牌：{result.confirmation.currentTokens}；目标上限：{result.confirmation.targetLimit}。
       本页不会自动确认或继续执行。
     </div>}
-    {result.warning && <div className="info-model-warning">{result.warning}</div>}
+    {result.warning && <div>{result.warning}</div>}
     <ModelSubmissionDetails selection={selection} result={result} />
   </div>;
 }
@@ -206,7 +206,6 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
 
 export interface SessionInfoPanelProps {
   session: ChatSession;
-  models: ModelOption[];
   open: boolean;
   onClose: () => void;
   onSetModel: (modelId: string, opts?: { reasoningEffort?: string; contextTier?: ContextTier }) => Promise<IntentResult<'setModel'>>;

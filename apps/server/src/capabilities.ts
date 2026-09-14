@@ -17,8 +17,7 @@ function description(name: IntentName): string {
     ?? name.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[/-]/g, ' ');
 }
 
-// Detail schemas are standalone draft-07 documents; root refs preserve recursive
-// protocol types (notably ChatMessage) without expanding them indefinitely.
+// Detail schemas are standalone draft-07 documents with root references.
 export function registerCapabilities(app: FastifyInstance): void {
   const transports: { method: string; path: string }[] = [];
   app.addHook('onRoute', (route) => {
@@ -32,7 +31,7 @@ export function registerCapabilities(app: FastifyInstance): void {
 
   // GET /capabilities lists names only (default/max limit 100, offset 0).
   // ?prefix=session/&limit=10&offset=0 narrows that listing.
-  // ?name=session/purge returns one input/result schema pair, never the catalog.
+  // ?name=session/delete returns one input/result schema pair, never the catalog.
   app.get<{ Querystring: Record<string, unknown> }>('/capabilities', async (req, reply) => {
     const q = req.query;
     if (Object.keys(q).some((key) => !['name', 'prefix', 'limit', 'offset'].includes(key))) {

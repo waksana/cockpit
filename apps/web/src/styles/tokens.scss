@@ -3,7 +3,7 @@
 //
 // INHERITANCE MODEL (rev26): structural tokens carry Telegram Web K's REAL
 // values (from tweb src/scss/variables.scss + base.scss), so spacing / radius /
-// font-ladder / timing match tweb exactly. Only the COLOR tokens are overridden
+// font-ladder match tweb exactly. Only the COLOR tokens are overridden
 // with the Solarized palette. Ported tweb component CSS references tweb's own
 // custom-property NAMES (--primary-color, --surface-color, --secondary-text-
 // color, …); we define those names here pointing at Solarized values, so the
@@ -18,88 +18,56 @@ $border-radius-medium: 16px;
 $border-radius-big: 24px;
 $hover-alpha: 0.08;
 
-$small-screen: 600px;
-$large-screen: 1680px;
-$floating-left-sidebar: 925px;   // floating-drawer ↔ docked boundary
 $default-column-width: 360px;
-$max-sidebar-width: 480px;
-
-$input-height: 3rem;
-$button-height: 3rem;
 $header-height: 3.5rem;
-$menu-height: 3rem;
 
-// Solarized palette (canonical hex + rgb triples for rgba(var(--x-rgb), a)).
+// Solarized palette (canonical hex and RGB triples for translucent colors).
 // Light.
-$sol-base3:  #fdf6e3;  $sol-base3-rgb:  253, 246, 227;  // bg
-$sol-base2:  #eee8d5;  $sol-base2-rgb:  238, 232, 213;  // bg accent / panels
-$sol-base1:  #93a1a1;  $sol-base1-rgb:  147, 161, 161;  // comments / tertiary
+$sol-base3:  #fdf6e3;  // bg
+$sol-base1:  #93a1a1;  // comments / tertiary
 $sol-base0:  #839496;  $sol-base0-rgb:  131, 148, 150;  // body (dark theme fg)
 $sol-base00: #657b83;  $sol-base00-rgb: 101, 123, 131;  // body (light theme fg)
-$sol-base01: #586e75;  $sol-base01-rgb:  88, 110, 117;  // emphasized
-$sol-base02: #073642;  $sol-base02-rgb:   7,  54,  66;  // bg highlights (dark)
+$sol-base01: #586e75;  // emphasized
 $sol-base03: #002b36;  $sol-base03-rgb:   0,  43,  54;  // bg (dark)
 $sol-yellow: #b58900;  $sol-yellow-rgb: 181, 137,   0;  // accent
-$sol-orange: #cb4b16;  $sol-orange-rgb: 203,  75,  22;
-$sol-red:    #dc322f;  $sol-red-rgb:    220,  50,  47;  // danger
-$sol-blue:   #268bd2;  $sol-blue-rgb:    38, 139, 210;  // link / info
-$sol-cyan:   #2aa198;  $sol-cyan-rgb:    42, 161, 152;
-$sol-green:  #859900;  $sol-green-rgb:  133, 153,   0;  // ok
+$sol-orange: #cb4b16;
+$sol-red:    #dc322f;  // danger
+$sol-blue:   #268bd2;  // link / info
+$sol-green:  #859900;  // ok
 
 :root {
   color-scheme: light dark;
 
   // ── tweb structural custom properties (real values) ───────────────────────
-  --hover-alpha: #{$hover-alpha};
   --border-radius: #{$border-radius};
   --border-radius-medium: #{$border-radius-medium};
   --border-radius-big: #{$border-radius-big};
-  --main-column-border-radius: #{$border-radius-big};
 
   --header-height: #{$header-height};
-  --menu-height: #{$menu-height};
-  --input-height: #{$input-height};
-  --button-height: #{$button-height};
   --column-width: #{$default-column-width};
-  --chat-input-inner-padding: 0.5rem;
-  --chat-input-inner-padding-handhelds: 0.25rem;
 
   // Font-size + line-height ladders (tweb base.scss).
-  --font-size-10: 10px; --font-size-11: 11px; --font-size-12: 12px;
+  --font-size-11: 11px; --font-size-12: 12px;
   --font-size-13: 13px; --font-size-14: 14px; --font-size-15: 15px;
   --font-size-16: 16px; --font-size-18: 18px; --font-size-20: 20px;
-  --font-size-24: 24px;
   --font-size: var(--font-size-16);
-  --line-height-12: 16px; --line-height-13: 17px; --line-height-14: 18px;
-  --line-height-15: 20px; --line-height-16: 21px; --line-height-18: 24px;
-  --line-height-20: 26px; --line-height-24: 30px;
+  --line-height-16: 21px;
   --line-height: 1.3125;
 
   --messages-text-size: 16px;
-  --messages-line-height: 1.3125;
 
-  // Motion removed (owner directive: no animation effects; reverses the earlier
-  // "rev26: polish ≠ no-animation" stance). The tweb micro-motion timing tokens
-  // were deleted; the only motion kept is the functional loading feedback
-  // (.spinner / .shimmer in preloader.scss).
-
+  // Motion is limited to functional loading feedback (.spinner in preloader.scss).
   --disabled-opacity: 0.3;
-  --backdrop-opacity: 0.85;
   --menu-backdrop-filter: none;
-  --z-below: -1;
 
   // ── Color tokens: tweb NAMES → Solarized VALUES (light theme defaults) ─────
   --primary-color: #{$sol-yellow};
-  --primary-color-rgb: #{$sol-yellow-rgb};
   --light-primary-color: rgba(#{$sol-yellow-rgb}, 0.16);
   --primary-text-color: #{$sol-base01};
-  --color-text: #{$sol-base00};
   --secondary-text-color: #{$sol-base00};
   --tertiary-text-color: #{$sol-base1};
-  --light-secondary-text-color: rgba(#{$sol-base00-rgb}, 0.55);
 
   --surface-color: #{$sol-base3};
-  --surface-color-rgb: #{$sol-base3-rgb};
   --body-background-color: #{$sol-base3};
   --background-color: #{$sol-base3};
   --background-color-true: #{$sol-base3};
@@ -107,25 +75,16 @@ $sol-green:  #859900;  $sol-green-rgb:  133, 153,   0;  // ok
   --border-color: rgba(#{$sol-base00-rgb}, 0.18);
   --link-color: #{$sol-blue};
   --danger-color: #{$sol-red};
-  --danger-color-rgb: #{$sol-red-rgb};
   --green-color: #{$sol-green};
   --warning-color: #{$sol-orange};
-  --warning-color-rgb: #{$sol-orange-rgb};
 
   --ripple-color: rgba(#{$sol-base00-rgb}, #{$hover-alpha});
-  --message-out-background-color: rgba(#{$sol-yellow-rgb}, 0.2);  // user bubble
-  --message-out-primary-color: #{$sol-base01};
-
-  --chatlist-status-color: #{$sol-yellow};
-  --chatlist-pinned-color: #{$sol-base1};
   --badge-text-color: #{$sol-base3};
 
   --input-search-background-color: rgba(#{$sol-base00-rgb}, 0.08);
   --input-placeholder-color: rgba(#{$sol-base00-rgb}, 0.5);
-  --input-message-placeholder-color: rgba(#{$sol-base00-rgb}, 0.5);
 
   --scrollbar-color: rgba(#{$sol-base00-rgb}, 0.25);
-  --skeleton-color: rgba(#{$sol-base00-rgb}, 0.12);
   --menu-background-color: #{$sol-base3};
   --menu-box-shadow-color: rgba(#{$sol-base03-rgb}, 0.16);
   --menu-box-shadow: 0 0 10px var(--menu-box-shadow-color);
@@ -137,13 +96,10 @@ $sol-green:  #859900;  $sol-green-rgb:  133, 153,   0;  // ok
 @media (prefers-color-scheme: dark) {
   :root {
     --primary-text-color: #{$sol-base1};
-    --color-text: #{$sol-base0};
     --secondary-text-color: #{$sol-base0};
     --tertiary-text-color: #{$sol-base01};
-    --light-secondary-text-color: rgba(#{$sol-base0-rgb}, 0.55);
 
     --surface-color: #{$sol-base03};
-    --surface-color-rgb: #{$sol-base03-rgb};
     --body-background-color: #{$sol-base03};
     --background-color: #{$sol-base03};
     --background-color-true: #{$sol-base03};
@@ -152,9 +108,7 @@ $sol-green:  #859900;  $sol-green-rgb:  133, 153,   0;  // ok
     --ripple-color: rgba(#{$sol-base0-rgb}, #{$hover-alpha});
     --input-search-background-color: rgba(#{$sol-base0-rgb}, 0.08);
     --input-placeholder-color: rgba(#{$sol-base0-rgb}, 0.5);
-    --input-message-placeholder-color: rgba(#{$sol-base0-rgb}, 0.5);
     --scrollbar-color: rgba(#{$sol-base0-rgb}, 0.25);
-    --skeleton-color: rgba(#{$sol-base0-rgb}, 0.12);
     --menu-background-color: #{$sol-base03};
     --badge-text-color: #{$sol-base03};
   }

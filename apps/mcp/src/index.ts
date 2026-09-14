@@ -79,32 +79,6 @@ server.registerTool(
   },
 );
 
-// ── cockpit_purge_session ──────────────────────────────────────────────────────
-server.registerTool(
-  'cockpit_purge_session',
-  {
-    title: 'Permanently delete a session',
-    description:
-      'Compatibility alias for cockpit_delete_session. IRREVERSIBLE native deletion through session/purge. Only run ' +
-      'this when permanent deletion is intended. Managed files and workspaces are retained. ' +
-      'Busy sessions are protected. Never hand-delete session-store.db rows ' +
-      'or automatically retry an uncertain result.',
-    inputSchema: {
-      session_id: z.string().min(1).describe('The session id to permanently delete'),
-      confirm: z.boolean().optional().describe('Deprecated compatibility input; ignored. Deletion is irreversible.'),
-    },
-    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-  },
-  async ({ session_id }): Promise<ToolResult> => {
-    try {
-      await intent('session/purge', { sessionId: session_id });
-      return ok(`Purged ${session_id} permanently. The session is gone.`);
-    } catch (e) {
-      return fail(e instanceof CockpitError ? e.message : String(e));
-    }
-  },
-);
-
 // ── cockpit_rename_session ─────────────────────────────────────────────────────
 server.registerTool(
   'cockpit_rename_session',

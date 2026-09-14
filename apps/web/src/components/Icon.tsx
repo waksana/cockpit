@@ -7,33 +7,25 @@ export type IconName =
   | 'compose'
   | 'newchat'
   | 'delete'
-  | 'pin'
-  | 'unpin'
-  | 'send'
-  | 'microphone'
   | 'back'
   | 'close'
   | 'check'
-  | 'checks'
-  | 'arrow_down'
   | 'arrow_up'
   | 'more'
   | 'down'
   | 'up'
   | 'reload'
-  | 'unload'
   | 'sending'
   | 'error'
   | 'menu'
   | 'skills'
   | 'mcp'
-  | 'attach'
   | 'file'
   | 'folder'
   | 'mode_plan'
   | 'radiooff';
 
-export interface IconProps extends HTMLAttributes<HTMLSpanElement> {
+interface IconProps extends HTMLAttributes<HTMLSpanElement> {
   name: IconName;
   size?: number;
 }

@@ -11,7 +11,7 @@ import type { PointerEvent as ReactPointerEvent } from 'react';
 const LONG_PRESS_MS = 450;
 const MOVE_CANCEL_PX = 10;
 
-export interface LongPressHandlers {
+interface LongPressHandlers {
   onPointerDown: (e: ReactPointerEvent) => void;
   onPointerMove: (e: ReactPointerEvent) => void;
   onPointerUp: (e: ReactPointerEvent) => void;

@@ -4,7 +4,7 @@ const DEDUP_WINDOW_MS = 30_000;
 const MAX_NOTIFICATIONS = 3;
 const MAX_RECENT = 50;
 
-export interface UxError {
+interface UxError {
   readonly id: number;
   readonly message: string;
 }

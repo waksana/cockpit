@@ -444,7 +444,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       mutations.push({ resolve, opts });
     });
     const panel = (value = current) => act(async () => root.render(createElement(SessionInfoPanel, {
-      session: value, models: [], open: true, onClose: () => {}, onSetModel,
+      session: value, open: true, onClose: () => {}, onSetModel,
     })));
     const node = (selector: string) => {
       const found = container.querySelector(selector);

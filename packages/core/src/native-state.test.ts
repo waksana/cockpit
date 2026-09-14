@@ -125,7 +125,7 @@ test('native removal wakes the host lifecycle after its final ownership guard re
   const check = () => { void h.engine.busyCount().then(count => counts.push(count)); };
   const offEvent = h.engine.onEvent(check);
   const offSettled = h.engine.onActivitySettled(check);
-  await h.engine.deleteSession('native-id', true);
+  await h.engine.deleteSession('native-id');
   await nextTurn();
   assert.ok(counts.includes(1));
   assert.equal(counts.at(-1), 0);

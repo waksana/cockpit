@@ -8,7 +8,7 @@ function message(id: string, role: ChatMessage['role'], content: string, extra: 
   return { id, role, content, timestamp, ...extra };
 }
 
-export const readingMessages: ChatMessage[] = [
+const readingMessages: ChatMessage[] = [
   message('brief', 'user', '请整理这次 Chat 设计评审。保留原生语义，让结果易读、过程可查，操作有明确反馈。'),
   message('reading', 'assistant', `# 阅读优先，过程有序
 
@@ -23,7 +23,7 @@ export const readingMessages: ChatMessage[] = [
 
 1. 保留单一的阅读滚动控制。
 2. 上翻阅读时，不强制跳到最新消息。
-3. 文件加载失败时，保留稳定占位与明确操作。
+3. 历史加载失败时，保留已有内容与明确恢复操作。
 
 - 已有能力不变
   - 子代理只报告已记录的生命周期
@@ -37,8 +37,8 @@ export const readingMessages: ChatMessage[] = [
 | 组件 | 主要内容 | 操作与反馈 |
 | :--- | :--- | :--- |
 | 工具 | 标题、原生名称、状态 | 展开参数与输出 |
-| 附件 | 名称、格式、体积 | 预览、下载、明确重试 |
-| 输入区 | 当前草稿 | 暂存与发送分开 |
+| 子代理 | 名称、记录与归属 | 展开同一事件窗口 |
+| 输入区 | 当前草稿 | 编辑与发送确认分开 |
 
 | 组件标识 | 已加载的记录 | 当前状态 | 阅读位置 | 可用操作 | 结果说明 |
 | --- | --- | --- | --- | --- | --- |
@@ -47,7 +47,7 @@ export const readingMessages: ChatMessage[] = [
 ##### 检查清单
 
 - [x] 正文与辅助信息分层
-- [x] 保留文件预览框
+- [x] 保留原生代码与工具详情
 - [ ] 逐项完成键盘审视
 
 ###### 代码与边界
@@ -86,7 +86,7 @@ printf '%s\\n' 'This_is_a_deliberately_long_terminal_argument_that_must_remain_o
   message('followup', 'assistant', '收到。保留现有 Solarized 色彩与文档式助手回复，不重做全站风格。'),
 ];
 
-export const processMessages: ChatMessage[] = [
+const processMessages: ChatMessage[] = [
   message('process-brief', 'user', '请检查组件状态与展开交互。'),
   message('skill', 'system', 'service-development', { subtype: 'skill' }),
   message('long-skill', 'system', `component-review-${'long-skill-name-'.repeat(12)}`, { subtype: 'skill' }),
@@ -121,7 +121,7 @@ export const processMessages: ChatMessage[] = [
   message('error', 'system', '连接中断，未自动重发请求。', { level: 'error' }),
 ];
 
-export const processHistoryMessages: ChatMessage[] = [
+const processHistoryMessages: ChatMessage[] = [
   message('process-request', 'user', '保留消息结构，把执行过程收好。'),
   message('process-one', 'assistant', '', { thought: '这里是原消息的思考内容，不是额外生成的总结。',
     toolCalls: [
@@ -164,7 +164,7 @@ export const scenarios = [
   ['compacting', '压缩 / 禁用输入'],
   ['auto-compacting', '回合内自动压缩'],
   ['unloaded', '未加载 / 保留历史'],
-  ['readonly', '现存只读分支'],
+  ['readonly', '只读组件视图'],
 ] as const;
 export type Scenario = typeof scenarios[number][0];
 
@@ -190,7 +190,7 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   if (scenario === 'process-history') session.messages = [...processHistoryMessages];
   if (scenario === 'user-time') session.messages = [
     message('time-short', 'user', '收到。'),
-    message('time-long', 'user', '这是一段合成的多行用户消息。\n请把时间放在气泡外，并紧贴对应气泡。\n保留文字、附件、复制操作和时间的自然归属。'),
+    message('time-long', 'user', '这是一段合成的多行用户消息。\n请把时间放在气泡外，并紧贴对应气泡。\n保留文字、代码复制和时间的自然归属。'),
     message('time-reply', 'user', '选择已确认。', { subtype: 'ask-reply' }),
     message('time-assistant', 'assistant', '助手的时间来源与展示分组保持不变。'),
   ];
@@ -203,10 +203,10 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   if (['ask', 'choice-only', 'freeform'].includes(scenario)) session.ask = {
     requestId: 'lab-ask', question: '这次精修先聚焦哪一组组件？所有操作只影响当前隔离场景。',
     allowFreeform: scenario !== 'choice-only',
-    ...(scenario !== 'freeform' ? { choices: ['阅读层级与代码（推荐）', '思考、工具与子代理', '附件与输入反馈：覆盖长名称、加载失败和不可预览格式'] } : {}),
+    ...(scenario !== 'freeform' ? { choices: ['阅读层级与代码（推荐）', '思考、工具与子代理', '输入反馈：覆盖长文字、发送失败和未确认结果'] } : {}),
   };
   if (scenario === 'plan') session.planRequest = {
-    requestId: 'lab-plan', summary: '## 组件精修计划\n\n保留薄原生适配，优先调整展示层。\n\n1. 统一阅读节奏。\n2. 明确工具与子代理状态。\n3. 覆盖附件与输入的完整反馈。\n\n> 按钮只呈现原生提供的操作；推荐不代表自动执行。',
+    requestId: 'lab-plan', summary: '## 组件精修计划\n\n保留薄原生适配，优先调整展示层。\n\n1. 统一阅读节奏。\n2. 明确工具与子代理状态。\n3. 覆盖草稿与输入的完整反馈。\n\n> 按钮只呈现原生提供的操作；推荐不代表自动执行。',
     planContent: Array.from({ length: 24 }, (_, i) => `${i + 1}. 检查组件展开、聚焦、长内容与错误反馈；不更改原生语义。`).join('\n'),
     actions: ['interactive', 'autopilot', 'autopilot_fleet', 'exit_only'], recommendedAction: 'interactive',
   };

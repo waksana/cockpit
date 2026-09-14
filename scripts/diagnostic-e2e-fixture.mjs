@@ -16,7 +16,7 @@ globalThis.fetch = async (url, init = {}) => {
   const target = new URL(url);
   assert.equal(target.origin, 'http://127.0.0.1:45678');
   const path = target.pathname;
-  if (path === '/health') return json({ ok: true, login: 'synthetic' });
+  if (path === '/health') return json({ ok: true, login: '' });
   if (path === '/status') return json({ sessions: session ? [session] : [], running: 0, busy: 0, inFlightRequests: 0,
     shutdown: { phase: 'running', requestedAt: null, error: null } });
   if (path === '/capabilities') {
@@ -128,7 +128,7 @@ globalThis.fetch = async (url, init = {}) => {
 
 process.on('exit', () => {
   assert.ok(deleted, 'happy path reaches native-acknowledged synthetic deletion');
-  assert.equal(invalidBodies, 4, 'schema rejects malformed MCP, zero interval and both deletes without a target');
+  assert.equal(invalidBodies, 4, 'schema rejects malformed MCP, zero interval and invalid delete inputs');
   for (const name of ['mcp/session-toggle', 'session/chat', 'schedule/add', 'session/delete']) assert.ok(validated.has(name));
   console.log(`SYNTHETIC_E2E ${validated.size} intent contracts validated, no real backend`);
 });

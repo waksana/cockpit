@@ -11,9 +11,9 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function setup<T>(key = 'session:a') {
+function setup<T>() {
   let connection: ResourceConnection = { connState: 'open', connectionGeneration: 1 };
-  const task = createKeyedAsync<T>(key, () => connection);
+  const task = createKeyedAsync<T>(() => connection);
   task.activate();
   return {
     task,
@@ -146,8 +146,8 @@ for (const outcome of ['success', 'failure'] as const) {
   });
 
   test(`route ownership and unmount discard late action ${outcome}`, async () => {
-    const old = setup<void>('session:a');
-    const next = setup<void>('session:b');
+    const old = setup<void>();
+    const next = setup<void>();
     const request = deferred<void>();
     let navigations = 0;
     const previous = old.task.run(() => request.promise, () => { navigations++; }, true);
@@ -161,11 +161,11 @@ for (const outcome of ['success', 'failure'] as const) {
   });
 }
 
-test('a new resource key never exposes another key even when that key has valid data', async () => {
-  const first = setup<string[]>('session:a');
+test('a new resource owner never exposes another owner even when it has valid data', async () => {
+  const first = setup<string[]>();
   await first.task.run(async () => ['private to a']);
   first.task.deactivate();
-  const second = setup<string[]>('session:b');
+  const second = setup<string[]>();
   assert.equal(second.task.getSnapshot().data, undefined);
   await second.task.run(async () => { throw new Error('failed b'); });
   assert.equal(second.task.getSnapshot().data, undefined);

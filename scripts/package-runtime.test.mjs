@@ -103,7 +103,7 @@ export const marker = [Fixture.READY, typeof CopilotClient, protocolMarker];
   track('packages/protocol/src/index.ts', 'export const protocolMarker: string = "synthetic";');
   for (const path of ['apps/server/src/example.test.ts', 'apps/server/src/example.test.mjs',
     'apps/server/src/fixtures/payload.ts', 'apps/server/src/__tests__/unit.ts',
-    'packages/core/src/regress-reallog.mts', 'packages/core/src/consumer/cli.ts',
+    'packages/core/test-support/regress.mts', 'packages/core/src/test-support/helper.ts', 'packages/core/src/consumer/cli.ts',
     'packages/core/src/updater/entry.ts', 'apps/server/src/supervisor.ts',
     'packages/core/src/docs/design.md', 'packages/protocol/src/__fixtures__/payload.json',
     'module-staging/original.ts', '.delivery/toolkit/bin/launch.mjs', '.github/workflows/old.yml',
@@ -211,6 +211,44 @@ test('the root and server commands enter Node directly with a production loader'
   assert.match(workspace, /^injectWorkspacePackages: true$/m);
   assert.match(workspace, /^dedupeInjectedDeps: true$/m);
   assert.match(workspace, /syncInjectedDepsAfterScripts:\s+- build/);
+});
+
+test('fresh Web installation keeps static app metadata without a worker or archived pages', () => {
+  const web = join(repository, 'apps/web');
+  const index = readFileSync(join(web, 'index.html'), 'utf8');
+  const config = readFileSync(join(web, 'vite.config.ts'), 'utf8');
+  const manifest = JSON.parse(readFileSync(join(web, 'public/manifest.webmanifest'), 'utf8'));
+  assert.match(index, /rel="manifest" href="\/manifest.webmanifest"/);
+  assert.equal(manifest.id, '/');
+  assert.equal(manifest.start_url, '/');
+  assert.equal(manifest.display, 'standalone');
+  assert.equal(manifest.name, 'cockpit');
+  for (const size of ['192x192', '512x512']) assert.ok(manifest.icons.some(icon => icon.sizes === size));
+  for (const icon of manifest.icons) assert.ok(existsSync(join(web, 'public', icon.src)));
+  for (const path of ['src/sw.ts', 'src/assets/vite.svg', 'fixtures/composer-input.html',
+    'public/icons.svg', 'public/icon.svg', 'public/favicon.svg', 'public/apple-touch-icon.png',
+    'public/icon-192.png', 'public/icon-512.png']) assert.equal(existsSync(join(web, path)), false, path);
+  assert.doesNotMatch(config, /VitePWA|injectManifest|\binput\s*:/);
+  const devDependencies = JSON.parse(readFileSync(join(web, 'package.json'), 'utf8')).devDependencies;
+  assert.equal(devDependencies['vite-plugin-pwa'], undefined);
+});
+
+test('Chat Lab stays an opt-in production-component harness rather than another application', () => {
+  const web = join(repository, 'apps/web');
+  const entry = readFileSync(join(web, 'chat-lab.html'), 'utf8');
+  const source = readFileSync(join(web, 'src/dev/chat-lab.tsx'), 'utf8');
+  const plugin = readFileSync(join(web, 'chat-lab-plugin.ts'), 'utf8');
+  assert.match(entry, /\/src\/dev\/chat-lab\.tsx/);
+  for (const component of ['Thread', 'ChatHeader']) {
+    assert.ok(source.includes(`from '../components/${component}'`));
+  }
+  assert.match(source, /!import\.meta\.env\.DEV.*COCKPIT_CHAT_LAB !== true/);
+  assert.doesNotMatch(source, /\.init\s*\(|new NetClient|fetch\s*\(/);
+  assert.match(plugin, /apply: 'serve'/);
+  assert.match(plugin, /host: '127\.0\.0\.1'/);
+  assert.match(plugin, /path\.startsWith\('\/intent\/'\)/);
+  assert.equal(firstPartyRuntimePath('apps/web/fixtures/composer-input.html'), false);
+  assert.doesNotMatch(readFileSync(join(web, 'index.html'), 'utf8'), /chat-lab/);
 });
 
 test('subprocess failures include the original diagnostic instead of hiding package-manager stdout', () => {

@@ -2,13 +2,14 @@
 //   - Origin/CSRF gate: accept same-origin / loopback / configured /
 //     no-origin; reject cross-origin + opaque "null".
 //   - SSE high-water-mark: drop + destroy a slow consumer; keep healthy ones.
-//   - the shutdown busy predicate delegates to the engine's sessionMetaBusy.
+//   - Snapshot busy diagnostics cover work and pending decisions.
+// Real shutdown safety is exercised through busyCount in intents/shutdown tests.
 //
 // Isolated: the module is imported with COCKPIT_NO_BOOT=1 so the Engine (which
 // accesses native configuration) is never constructed and no port is bound.
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { sessionMetaBusy } from '@cockpit/core';
+import { sessionMetaBusy } from '../../../packages/core/test-support/lifecycle.ts';
 import type { SessionMeta } from '@cockpit/protocol';
 
 process.env.COCKPIT_NO_BOOT = '1';
@@ -16,7 +17,7 @@ process.env.LOG_LEVEL = 'silent';
 process.env.COCKPIT_ALLOWED_ORIGINS = 'https://configured.example';
 
 // Import AFTER the env is set (the module reads these at load time).
-const { app, isAllowedOrigin, sessionBusy, sseWrite, broadcastFrame } = await import('./index.ts');
+const { app, isAllowedOrigin, sseWrite, broadcastFrame } = await import('./index.ts');
 after(() => app.close());
 await app.ready();
 
@@ -262,45 +263,44 @@ function meta(over: Partial<SessionMeta>): SessionMeta {
   } as SessionMeta;
 }
 
-test('sessionBusy delegates to engine sessionMetaBusy across states', () => {
-  const cases: Partial<SessionMeta>[] = [
-    { status: 'idle' },
-    { status: 'running' },
-    { status: 'idle', compacting: true },
-    { status: 'idle', activeSubagents: 2 },
-    { status: 'idle', activeMcpOperations: 1 },
-    { status: 'idle', loading: true },
-    { status: 'idle', closing: true },
-    { status: 'idle', cancelling: true },
-    { status: 'idle', loading: false, closing: false, cancelling: false },
-    { status: 'idle', ask: { requestId: 'r', prompt: 'p' } as unknown as SessionMeta['ask'] },
-    { status: 'idle', planRequest: { requestId: 'r' } as unknown as SessionMeta['planRequest'] },
-    { status: 'idle', elicitation: { requestId: 'r' } as unknown as SessionMeta['elicitation'] },
+test('sessionMetaBusy diagnoses activity and transitions across snapshots', () => {
+  const cases: [Partial<SessionMeta>, boolean][] = [
+    [{ status: 'idle' }, false],
+    [{ status: 'running' }, true],
+    [{ status: 'idle', compacting: true }, true],
+    [{ status: 'idle', activeSubagents: 2 }, true],
+    [{ status: 'idle', activeMcpOperations: 1 }, true],
+    [{ status: 'idle', loading: true }, true],
+    [{ status: 'idle', closing: true }, true],
+    [{ status: 'idle', cancelling: true }, true],
+    [{ status: 'idle', loading: false, closing: false, cancelling: false }, false],
+    [{ status: 'idle', ask: { requestId: 'r', question: 'p' } }, true],
+    [{ status: 'idle', planRequest: { requestId: 'r', summary: 'p' } }, true],
+    [{ status: 'idle', elicitation: { requestId: 'r', message: 'p' } }, true],
   ];
-  for (const c of cases) {
-    const m = meta(c);
-    assert.equal(sessionBusy(m), sessionMetaBusy(m), JSON.stringify(c));
+  for (const [state, busy] of cases) {
+    assert.equal(sessionMetaBusy(meta(state)), busy, JSON.stringify(state));
   }
 });
 
-test('sessionBusy: idle with nothing pending → not busy', () => {
-  assert.equal(sessionBusy(meta({ status: 'idle' })), false);
+test('sessionMetaBusy: idle with nothing pending → not busy', () => {
+  assert.equal(sessionMetaBusy(meta({ status: 'idle' })), false);
 });
 
-test('sessionBusy: an MCP mutation blocks graceful restart', () => {
-  assert.equal(sessionBusy(meta({ activeMcpOperations: 1 })), true);
+test('sessionMetaBusy: an MCP mutation is active work', () => {
+  assert.equal(sessionMetaBusy(meta({ activeMcpOperations: 1 })), true);
 });
 
-test('sessionBusy: compacting while idle → busy (manual /compact gap)', () => {
-  assert.equal(sessionBusy(meta({ status: 'idle', compacting: true })), true);
+test('sessionMetaBusy: compacting while idle → busy (manual /compact gap)', () => {
+  assert.equal(sessionMetaBusy(meta({ status: 'idle', compacting: true })), true);
 });
 
-test('sessionBusy: idle with a background sub-agent → busy', () => {
-  assert.equal(sessionBusy(meta({ status: 'idle', activeSubagents: 1 })), true);
+test('sessionMetaBusy: idle with a background sub-agent → busy', () => {
+  assert.equal(sessionMetaBusy(meta({ status: 'idle', activeSubagents: 1 })), true);
 });
 
-test('sessionBusy: idle but awaiting a choice → busy', () => {
-  assert.equal(sessionBusy(meta({
-    status: 'idle', ask: { requestId: 'r', prompt: 'p' } as unknown as SessionMeta['ask'],
+test('sessionMetaBusy: idle but awaiting a choice → busy', () => {
+  assert.equal(sessionMetaBusy(meta({
+    status: 'idle', ask: { requestId: 'r', question: 'p' },
   })), true);
 });

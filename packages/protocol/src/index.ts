@@ -4,6 +4,8 @@
 // validate against them, so the frontend and backend can never drift.
 
 import { z } from 'zod';
+import type { ChatMessage } from './validation.ts';
+export type { ChatMessage, ChatRole, SubagentInfo, ToolCall } from './validation.ts';
 
 export { CHAT_EVENT_TYPES, NativeChatEvent, NativeChatRead, NativeChatPage, NativeChatStreamRequest, NativeChatStreamEvent } from './native-chat.ts';
 import { NativeChatRead, NativeChatPage } from './native-chat.ts';
@@ -49,39 +51,10 @@ export const ModelOption = z.object({
 });
 export type ModelOption = z.infer<typeof ModelOption>;
 
-export const ToolCall = z.object({
-  toolCallId: z.string(),
-  title: z.string(),
-  status: z.enum(['pending', 'in_progress', 'completed', 'failed']).optional(),
-  // `title` comes from the native execution start; `name` is the raw
-  // tool (bash/edit/view…) shown as a small badge; `args` + `output` are the
-  // collapsible detail (formatted + capped). Detail is shown only when present.
-  name: z.string().optional(),
-  args: z.string().optional(),
-  output: z.string().optional(),
-});
-export type ToolCall = z.infer<typeof ToolCall>;
-
-export const ChatRole = z.enum(['user', 'assistant', 'system']);
-export type ChatRole = z.infer<typeof ChatRole>;
-
-// A sub-agent (spawned via the `task` tool) surfaced as one collapsible card.
-// Its full internal work (tools + reasoning + messages) lives in the owning
-// message's `subMessages`, folded by the SAME fold on a nested state.
-export const SubagentInfo = z.object({
-  toolCallId: z.string().optional(),
-  agentId: z.string().optional(),
-  name: z.string(),          // internal agent_type (general-purpose/explore/…)
-  displayName: z.string(),   // human-readable
-  description: z.string().optional(),
-  model: z.string().optional(),
-  // Last observed execution evidence, not a task-registry current-state snapshot.
-  status: z.enum(['running', 'activity', 'completed', 'failed', 'cancelled', 'unknown']),
-  toolCount: z.number().optional(),
-  error: z.string().optional(),
-  prompt: z.string().optional(), // what the sub-agent was asked to do
-});
-export type SubagentInfo = z.infer<typeof SubagentInfo>;
+export function cleanSessionTitle(raw: string | undefined): string {
+  const trimmed = (raw ?? '').trim();
+  return trimmed.split('\n')[0]?.trim() ?? '';
+}
 
 export const NativeAttachment = z.discriminatedUnion('type', [
   z.object({ type: z.literal('file'), path: z.string().min(1), displayName: z.string().optional() }).strict(),
@@ -99,42 +72,6 @@ export const NativeAttachment = z.discriminatedUnion('type', [
   }).strict(),
 ]);
 export type NativeAttachment = z.infer<typeof NativeAttachment>;
-
-// ChatMessage is recursive: a sub-agent card holds its inner conversation in
-// `subMessages` (each itself a ChatMessage, possibly with its own sub-agents).
-export interface ChatMessage {
-  id: string;
-  role: ChatRole;
-  content: string;
-  thought?: string;
-  // Native response-parent event ID keeps thought disclosure stable before messageId arrives.
-  thoughtKey?: string;
-  timestamp: number;
-  // A bounded native window can retain content without a supported response link.
-  incomplete?: string;
-  toolCalls?: ToolCall[];
-  // 'ask-reply' = the user's answer to an ask_user tool; 'subagent' = a sub-agent
-  // card; 'skill' = a compact skill-activation pill.
-  subtype?: 'ask-reply' | 'subagent' | 'skill';
-  // Severity for system messages (runtime errors/warnings folded into the thread).
-  level?: 'info' | 'warning' | 'error';
-  subagent?: SubagentInfo;
-  subMessages?: ChatMessage[];
-}
-export const ChatMessage: z.ZodType<ChatMessage> = z.lazy(() => z.object({
-  id: z.string(),
-  role: ChatRole,
-  content: z.string(),
-  thought: z.string().optional(),
-  thoughtKey: z.string().optional(),
-  timestamp: z.number(),
-  incomplete: z.string().optional(),
-  toolCalls: z.array(ToolCall).optional(),
-  subtype: z.enum(['ask-reply', 'subagent', 'skill']).optional(),
-  level: z.enum(['info', 'warning', 'error']).optional(),
-  subagent: SubagentInfo.optional(),
-  subMessages: z.array(ChatMessage).optional(),
-}));
 
 export function summarizeMessage(message: ChatMessage): ChatMessage {
   if (message.subtype !== 'subagent' || !message.subagent) return message;
@@ -161,14 +98,7 @@ export const TodoItem = z.object({
 });
 export type TodoItem = z.infer<typeof TodoItem>;
 
-// A repo file the agent created/edited this session (from edit/create tool calls).
-export const ChangedFile = z.object({
-  path: z.string(),
-  operation: z.enum(['create', 'edit']),
-});
-export type ChangedFile = z.infer<typeof ChangedFile>;
-
-// Full session plan payload (on-demand, for the info panel): the plan.md
+// Full session plan payload (on-demand): the plan.md
 // markdown narrative and the complete native TODO checklist.
 export const SessionPlan = z.object({
   planMarkdown: z.string().nullable(),
@@ -380,8 +310,7 @@ export const ElicitationRequest = z.object({
 });
 export type ElicitationRequest = z.infer<typeof ElicitationRequest>;
 
-// Agent TODO progress (from the session DB: counts + current-intent title).
-// SDK exposes only aggregates, not a per-item list. `null` = no todos.
+// Agent TODO progress derived from native readSqlTodos rows. `null` = no todos.
 export const TodoProgress = z.object({
   done: z.number(),
   total: z.number(),
@@ -483,8 +412,7 @@ export type SessionBrief = z.infer<typeof SessionBrief>;
 // Server → client events (delivered over a single SSE stream)
 // ---------------------------------------------------------------------------
 
-export const HistoryDetails = z.enum(['full', 'summary']);
-export type HistoryDetails = z.infer<typeof HistoryDetails>;
+export type HistoryDetails = 'full' | 'summary';
 
 export const Snapshot = z.object({
   type: z.literal('snapshot'),
@@ -610,12 +538,12 @@ export const Intents = {
   },
   'session/compact': {
     description: 'Compact native model context. ok acknowledges the returned native result, not successful compaction; inspect result.success and removal counts. No automatic retry is sent.',
-    body: z.object({ sessionId: z.string(), customInstructions: z.string().optional() }),
+    body: z.object({ sessionId: z.string(), customInstructions: z.string().optional() }).strict(),
     result: z.object({ ok: z.literal(true), result: NativeCompactResult }),
   },
   'session/rewind': {
     description: 'Rewind to before a selected user message. rollbackFiles:true requests native file rollback. ok acknowledges the returned native result, not successful rewind; inspect result.outcome, eventsRemoved, restoredFiles, skippedFiles and error for partial effects. Native busy/support safeguards remain in force. Never automatically retry an uncertain or partially applied result.',
-    body: z.object({ sessionId: z.string(), toMsgId: z.string(), rollbackFiles: z.boolean().optional() }),
+    body: z.object({ sessionId: z.string(), toMsgId: z.string(), rollbackFiles: z.boolean().optional() }).strict(),
     result: z.object({ ok: z.literal(true), result: NativeRewindResult }),
   },
   setMode: {
@@ -624,8 +552,8 @@ export const Intents = {
     result: z.object({ ok: z.literal(true), result: NativeModeSetResult }),
   },
   'session/delete': {
-    description: 'IRREVERSIBLE native session deletion. Managed files and workspaces are retained. The deprecated optional boolean confirm is ignored: absent, false and true all perform the same native deletion with native busy and existence safeguards. Never automatically retry an uncertain result.',
-    body: z.object({ sessionId: z.string().min(1), confirm: z.boolean().optional().describe('Deprecated compatibility field; ignored, not a deletion guard.') }).strict(),
+    description: 'IRREVERSIBLE native session deletion with native busy and existence safeguards. Cockpit does not delete workspace or unrelated files. Never automatically retry an uncertain result.',
+    body: z.object({ sessionId: z.string().min(1) }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   'session/unload': {
@@ -657,7 +585,7 @@ export const Intents = {
     result: SessionPanels,
   },
   'session/panel': {
-    description: 'Read one native panel section on an already-loaded session. Other sections are not read. Full five-section compatibility is available through session/panels.',
+    description: 'Read one native panel section on an already-loaded session. Other sections are not read. Use session/panels to read all five sections.',
     body: z.object({ sessionId: z.string(), section: PanelSection }),
     result: z.object({ items: z.array(PanelItem) }),
   },
@@ -669,9 +597,8 @@ export const Intents = {
     body: z.object({ sessionId: z.string(), requestId: z.string(), action: ExitPlanModeAction }),
     result: z.object({ ok: z.boolean() }),
   },
-  // The user typed a message while a plan was pending — their chosen behavior is
-  // that this is a NEW instruction: dismiss the plan, leave plan mode, run it.
   planSupersede: {
+    description: 'Return approved:false and feedback:message to the native pending plan callback. Cockpit sends no separate prompt or mode change; subsequent behavior is controlled by the native runtime.',
     body: z.object({ sessionId: z.string(), requestId: z.string(), message: z.string() }),
     result: z.object({ ok: z.boolean() }),
   },
@@ -780,15 +707,9 @@ export const Intents = {
     body: z.object({ path: z.string().optional() }),
     result: DirListing,
   },
-  // Compatibility for existing explicitly destructive clients; one implementation.
-  'session/purge': {
-    description: 'Compatibility alias for session/delete: irreversible native deletion. Managed files and workspaces are retained. The deprecated optional boolean confirm is ignored: absent, false and true have identical semantics. Native busy and existence safeguards remain in force. Never automatically retry an uncertain result.',
-    body: z.object({ sessionId: z.string().min(1), confirm: z.boolean().optional().describe('Deprecated compatibility field; ignored, not a deletion guard.') }).strict(),
-    result: z.object({ ok: z.boolean() }),
-  },
   // Native after/every supports relative delays and one-shot absolute times.
   'schedule/add': {
-    description: 'Schedule a native after/every prompt. The current runtime supports exactly one of interval or at, from 1 second to 24 hours. Interval uses s, m, h, or d and defaults to recurring; at is one-shot. Prompt must be single-line plain text, without command flags or a leading slash; surrounding whitespace is trimmed only after validating the original text. A returned entry establishes creation even alongside an error. possiblyCreated:true means acknowledgement/readback was inconclusive: do not automatically retry. Legacy cron, timezone, displayPrompt and recurring-at options are not supported and are rejected. No self-paced creation or rearming is exposed. Ticks require a loaded session; schedules pause on native idle unload and relative delays restart on resume. Schedules do not keep it loaded. This is not an always-on scheduler.',
+    description: 'Schedule a native after/every prompt. The current runtime supports exactly one of interval or at, from 1 second to 24 hours. Interval uses s, m, h, or d and defaults to recurring; at is one-shot. Prompt must be single-line plain text, without command flags or a leading slash; surrounding whitespace is trimmed only after validating the original text. A returned entry establishes creation even alongside an error. possiblyCreated:true means acknowledgement/readback was inconclusive: do not automatically retry. No self-paced creation or rearming is exposed. Ticks require a loaded session; schedules pause on native idle unload and relative delays restart on resume. Schedules do not keep it loaded. This is not an always-on scheduler.',
     body: z.object({
       sessionId: z.string(),
       prompt: z.string().min(1).refine(

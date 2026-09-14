@@ -1,4 +1,4 @@
-// App root. Wires the ACP store to the responsive master-detail shell.
+// App root. Wires the native session store to the responsive master-detail shell.
 // Desktop: sidebar + chat side-by-side. Mobile: list ↔ detail two-level nav.
 
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';

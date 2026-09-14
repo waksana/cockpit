@@ -1,7 +1,7 @@
 import { acknowledge } from './draft';
 import { describeReason, reportUxError } from './errorReporter';
 
-export interface SessionDraftSnapshot {
+interface SessionDraftSnapshot {
   text: string;
   revision: number;
   pending: boolean;

@@ -1,5 +1,5 @@
 // Session info panel — ported from tweb #column-right + .sidebar-left-section.
-// Slides in from the inline-end. Three responsive tiers (Telegram-style):
+// Appears at the inline-end. Three responsive tiers (Telegram-style):
 //   • narrowest (<600px): full page (covers the chat)
 //   • medium (600–1199px): floating overlay over the chat + scrim
 //   • wide (≥1200px): docked — the chat compresses to make room, no scrim
@@ -92,12 +92,6 @@
   color: var(--secondary-text-color);
   word-break: break-all;
 }
-.info-meta-id {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: var(--font-size-13);
-  color: var(--secondary-text-color);
-  word-break: break-all;
-}
 .info-meta-id-label {
   display: inline-block;
   margin-inline-end: 0.4rem;
@@ -119,42 +113,6 @@
   padding: 0.5rem 0;
   font-size: var(--font-size-14);
   color: var(--secondary-text-color);
-}
-
-// Changed files list (diff-review).
-.info-files { display: flex; flex-direction: column; gap: 0.1rem; }
-.info-file {
-  display: flex; align-items: baseline; gap: 0.45rem;
-  padding: 0.15rem 0;
-  font-size: var(--font-size-13);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-}
-.info-file-op {
-  flex: none; width: 0.9rem; text-align: center; font-weight: 700;
-}
-.info-file[data-op='create'] .info-file-op { color: var(--green-color); }
-.info-file[data-op='edit'] .info-file-op { color: var(--warning-color); }
-.info-file-path {
-  min-width: 0; overflow-wrap: anywhere;
-  color: var(--secondary-text-color);
-}
-
-// MCP status rows: a header line (name + status pill pushed to the end) and an
-// optional reason line below (server error or a static hint when not connected).
-.info-mcp-row {
-  display: flex; flex-direction: column; gap: 0.1rem;
-  padding: 0.25rem 0;
-  &[data-enabled='false'] { opacity: 0.6; }
-}
-.info-mcp-head {
-  display: flex; align-items: center; gap: 0.5rem;
-  font-size: var(--font-size-14);
-  .mcp-status { margin-inline-start: auto; }
-}
-.info-mcp-reason {
-  font-size: var(--font-size-12);
-  color: var(--tertiary-text-color);
-  overflow-wrap: anywhere;
 }
 
 // Model controls (model / effort / context) — labeled rows in the info panel.
@@ -232,13 +190,6 @@
   overflow-wrap: anywhere;
   pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 }
-// A single labeled option row with a trailing control (e.g. the keep-loaded toggle).
-.info-option-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
-}
-.info-option-text { display: flex; flex-direction: column; gap: 0.1rem; min-width: 0; }
-.info-option-label { font-size: var(--font-size-14); color: var(--primary-text-color); }
-.info-option-hint { font-size: var(--font-size-12); color: var(--tertiary-text-color); }
 .info-control {
   display: flex;
   align-items: center;

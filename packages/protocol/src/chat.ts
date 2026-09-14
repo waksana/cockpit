@@ -67,7 +67,6 @@ export interface FoldProjection {
 
 export interface FoldHistoryScope {
   details: HistoryDetails;
-  toolCallId?: string;
 }
 
 function tsOf(ev: { timestamp?: string | number }): number {
@@ -210,11 +209,6 @@ export function toolOutputOf(result: unknown, error?: unknown): string {
   return raw ? cap(raw) : failure ? cap(failure) : '';
 }
 
-export function cleanSessionTitle(raw: string | undefined): string {
-  const trimmed = (raw ?? '').trim();
-  return trimmed.split('\n')[0]?.trim() ?? '';
-}
-
 // Format a tool's arguments into a readable, capped one-or-few-line detail (the
 // "what" behind the intent): `$ cmd` for bash, the path/range for view, a mini
 // diff for edit, the pattern for grep/glob, etc. Empty ⇒ no args detail.
@@ -291,22 +285,14 @@ function routeEvent(state: FoldState, ev: SdkEvent): FoldRoute | undefined {
 }
 
 function visibleRoute(route: FoldRoute, scope: FoldHistoryScope): boolean {
-  if (!scope.toolCallId) return scope.details === 'full' || route.cards.length === 0;
-  return route.fold.agentIds.has(scope.toolCallId)
-    || (scope.details === 'full' && route.cards.some(card => card.id === `subagent-${scope.toolCallId}`));
-}
-
-/** Scope content before retaining a passive event; routing remains the canonical fold's. */
-export function isFoldContentVisible(state: FoldState, ev: SdkEvent, scope: FoldHistoryScope): boolean {
-  const route = routeEvent(state, ev);
-  return !!route && visibleRoute(route, scope);
+  return scope.details === 'full' || route.cards.length === 0;
 }
 
 function rememberTask(state: FoldState, request: ToolRequest, scope?: FoldHistoryScope): void {
   if (request.name !== 'task' || typeof request.toolCallId !== 'string') return;
   const a = recordOf(request.arguments);
   state.pendingTask.set(request.toolCallId, {
-    ...(typeof a.prompt === 'string' && (!scope || scope.details === 'full' || scope.toolCallId === request.toolCallId)
+    ...(typeof a.prompt === 'string' && (!scope || scope.details === 'full')
       ? { prompt: a.prompt } : {}),
     ...(typeof a.description === 'string' ? { description: a.description } : {}),
     ...(typeof a.agent_type === 'string' ? { agentType: a.agent_type } : {}),

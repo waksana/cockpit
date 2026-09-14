@@ -14,7 +14,7 @@ export function registerReadTools(server: McpServer): void {
       title: 'Get session state',
       description:
         'Read one session\'s authoritative state. Default markdown is a compact summary of status, ' +
-        'loaded, current model/reasoning/context tier/mode, pin, schedules, queue item IDs with text previews, ' +
+        'loaded, current model/reasoning/context tier/mode, schedules, queue item IDs with text previews, ' +
         'pending request IDs and todo progress. Use response_format:"json" on the initial read when you need ' +
         'full fields, including availableModels, complete queue text or offered plan actions; markdown omits these. ' +
         'Unknown sessions return an error. Interaction mode is separate from the ' +
@@ -115,7 +115,7 @@ export function registerReadTools(server: McpServer): void {
     {
       title: 'Get a session plan',
       description:
-        "Read a session's current plan/todo board (the plan panel in the UI): planMarkdown and todo " +
+        "Read a session's native plan/todo state: planMarkdown and todo " +
         'items with their status. Useful to see what an autonomous or working session is doing ' +
         'without reading the whole transcript. Requires a loaded session; explicitly use ' +
         'cockpit_reload_session if unloaded.',

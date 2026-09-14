@@ -45,9 +45,9 @@ an explicit gap, not authority to change either silently.
 
 Documentation-only edits need link, anchor and factual checks, not unrelated
 product builds or new testing tools. They may be committed/integrated without
-deploying or restarting the application. Keep migration notes, retired-interface
-inventories, deployment history and old reviews outside the product repository,
-with fixed source/version provenance. Keep original bytes separate from new explanations.
+deploying or restarting the application. Maintain the current installation
+contract rather than compatibility aliases, archived pages or migration inventories.
+Generated reviews and build artifacts do not belong in the product source tree.
 
 ## Isolated Chat component review
 
@@ -58,6 +58,19 @@ callbacks, without initializing a native client or creating sessions. Normal
 production builds do not include the entry. The lab exercises
 native text, tools, decisions, queue and reading behavior.
 
+Chat Lab is a maintained developer harness, not a product page, alternate chat
+implementation or saved screenshot gallery. It imports the production components
+and event projection; only session inputs and action callbacks are synthetic.
+It does not cover backend integration or the management resource pages, which
+have their own component and API tests.
+
+When changing a Chat component, update affected shared scenarios in the same
+change and keep their contract tests current. Add a scenario only for a distinct
+interaction or failure boundary; remove scenarios when that behavior is removed.
+Do not add one-off HTML pages or copies of production components. Normal
+component tests consume the same fixtures; visual interaction review uses this
+single opt-in entry. Neither the Lab nor its fixtures are runtime-package inputs.
+
 For focused input-bar review, open `/chat-lab.html?scene=ask&compact=1`
 or choose `plan` / `user-time`. Stop temporary previews after review; do not leave resident
 background work, open native sessions or publish user screenshots.
@@ -66,6 +79,13 @@ For current event ordering and process disclosure behavior, choose `ordered-even
 Its controls feed synthetic historical/live/reconnect pages through the production
 browser projection. The [native chat guide](native-chat.md#ordered-presentation)
 owns the current grouping and update contract.
+
+## Web installation metadata
+
+`public/manifest.webmanifest` and the HTML install metadata describe the current
+application and icons. The service serves them as ordinary static files.
+There is no service worker, offline cache, push handler or old-registration
+migration. Production builds have one HTML entry: `index.html`.
 
 ## Web presentation boundaries
 

@@ -36,27 +36,19 @@
 .tgico[data-icon='compose']::before    { content: '\e983'; } // edit (pencil)
 .tgico[data-icon='newchat']::before    { content: '\e9eb'; } // message
 .tgico[data-icon='delete']::before     { content: '\e973'; }
-.tgico[data-icon='pin']::before        { content: '\ea12'; }
-.tgico[data-icon='unpin']::before      { content: '\ea97'; }
-.tgico[data-icon='send']::before       { content: '\ea59'; }
-.tgico[data-icon='microphone']::before { content: '\e9ef'; }
 .tgico[data-icon='back']::before       { content: '\e932'; }
 .tgico[data-icon='close']::before      { content: '\e95d'; }
 .tgico[data-icon='check']::before      { content: '\e900'; }
-.tgico[data-icon='checks']::before     { content: '\e901'; }
-.tgico[data-icon='arrow_down']::before { content: '\e914'; }
 .tgico[data-icon='arrow_up']::before   { content: '\e914'; transform: rotate(180deg); }
 .tgico[data-icon='more']::before       { content: '\e9f5'; } // kebab
 .tgico[data-icon='down']::before       { content: '\e97c'; }
 .tgico[data-icon='up']::before         { content: '\ea99'; }
 .refresh-icon { display: inline-flex; flex: none; vertical-align: middle; }
-.tgico[data-icon='unload']::before     { content: '\e95e'; } // clouddownload
 .tgico[data-icon='sending']::before    { content: '\ea5b'; }
 .tgico[data-icon='error']::before      { content: '\ea5c'; } // sendingerror
 .tgico[data-icon='menu']::before       { content: '\e9e7'; } // hamburger ☰
 .tgico[data-icon='skills']::before     { content: '\e9ca'; } // lightbulb
 .tgico[data-icon='mcp']::before        { content: '\e9d3'; } // link
-.tgico[data-icon='attach']::before     { content: '\e91a'; } // paperclip
 .tgico[data-icon='file']::before       { content: '\e980'; } // document
 .tgico[data-icon='folder']::before     { content: '\e999'; } // folder
 .tgico[data-icon='mode_plan']::before        { content: '\e95b'; } // clipboard (plan/checklist)

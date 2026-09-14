@@ -60,7 +60,8 @@ test('connected MCP uses native fork and graceful shutdown waits for an actual n
   Object.assign(process.env, env);
   process.chdir(work);
   const { OfficialRuntime } = await import('../../../packages/core/src/runtime.ts');
-  const { Engine, sessionMetaBusy } = await import('../../../packages/core/src/engine.ts');
+  const { Engine } = await import('../../../packages/core/src/engine.ts');
+  const { sessionMetaBusy } = await import('../../../packages/core/test-support/lifecycle.ts');
   const { app, setTestDependencies } = await import('../../server/src/index.ts');
   const { GracefulShutdown } = await import('../../server/src/shutdown.ts');
   let published = false;

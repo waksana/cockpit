@@ -2,6 +2,6 @@ import type { ChatMessage } from '@cockpit/protocol';
 import { MessageBody } from './MessageBody';
 import { hasMessageContent } from '../lib/messageContent';
 
-export function MessageContent({ message }: { message: ChatMessage; sessionId: string }) {
+export function MessageContent({ message }: { message: ChatMessage }) {
   return hasMessageContent(message) ? <MessageBody body={message.content} /> : null;
 }

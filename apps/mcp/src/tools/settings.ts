@@ -82,11 +82,10 @@ export function registerSettingsTools(server: McpServer): void {
         'Optionally pass custom_instructions to steer what the summary preserves. Native busy/decision protections apply; ' +
         'never automatically retry an uncertain result. Returns the native success, removal counts and summary/context details; ' +
         'success:false sets MCP isError while preserving the entire JSON.',
-      inputSchema: {
+      inputSchema: z.object({
         session_id: z.string().min(1).describe('The session id'),
         custom_instructions: z.string().optional().describe('Optional guidance for what the summary should keep'),
-        confirm: z.boolean().optional().describe('Deprecated compatibility input; ignored. Model-context compaction has no undo.'),
-      },
+      }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async ({ session_id, custom_instructions }): Promise<ToolResult> => {
@@ -114,12 +113,11 @@ export function registerSettingsTools(server: McpServer): void {
         'This changes history irreversibly. Native busy/decision protections apply; never automatically retry an uncertain result. ' +
         'Returns the native outcome, restored/skipped files and errors; explicit failures and partial failures set MCP isError ' +
         'while preserving the entire JSON. An error flag does not mean earlier effects were rolled back.',
-      inputSchema: {
+      inputSchema: z.object({
         session_id: z.string().min(1).describe('The session id'),
         to_msg_id: z.string().min(1).describe('The message id to rewind to (from cockpit_read_session)'),
         rollback_files: z.boolean().default(false).describe('Request native file rollback along with the conversation rewind'),
-        confirm: z.boolean().optional().describe('Deprecated compatibility input; ignored. Rewind discards later history irreversibly.'),
-      },
+      }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
     async ({ session_id, to_msg_id, rollback_files }): Promise<ToolResult> => {

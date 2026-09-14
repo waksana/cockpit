@@ -62,7 +62,7 @@ arbitrary URL, HTTP method or path proxy. Invalid names and path traversal are
 rejected locally; the authoritative backend rejects unknown commands.
 Redirects and mismatched explicit discovery responses fail. Bodies use the API's
 **camelCase** field names; the backend validates both bodies and results.
-Native compact/rewind/delete/purge operations add no required confirmation
+Native compact/rewind/delete operations add no required confirmation
 parameter; host `system/shutdown` still requires `confirm:true`.
 No automatic retries are performed, even on
 timeout or service errors. Generic results are complete JSON; use semantic pagination when
@@ -121,7 +121,7 @@ design, not discoverable running capability.
 | Area | Tools |
 | --- | --- |
 | Session reads | `cockpit_get_snapshot`, `cockpit_list_sessions`, `cockpit_read_session`, `cockpit_get_session`, `cockpit_get_panels`, `cockpit_get_plan` |
-| Lifecycle | `cockpit_new_session`, `cockpit_delete_session` (permanent), `cockpit_purge_session` (compatibility alias), `cockpit_unload_session`, `cockpit_reload_session`, `cockpit_rename_session` |
+| Lifecycle | `cockpit_new_session`, `cockpit_delete_session` (permanent), `cockpit_unload_session`, `cockpit_reload_session`, `cockpit_rename_session` |
 | Conversation | `cockpit_send_prompt`, `cockpit_cancel_turn`, `cockpit_remove_queued` |
 | Interaction requests | `cockpit_respond_ask`, `cockpit_respond_plan`, `cockpit_plan_supersede`, `cockpit_respond_elicitation` |
 | Model/session settings | `cockpit_set_model`, `cockpit_set_mode`, `cockpit_compact_session`, `cockpit_rewind_session` |
@@ -134,9 +134,9 @@ Generic invocation also covers API operations without semantic wrappers,
 such as `session/refresh` and
 `skills/read`. `session/chat` returns one bounded native event page as JSON.
 
-Deletion uses irreversible native Copilot `deleteSession`.
-Neither delete nor its purge alias adds a confirmation gate.
-Independent managed files and workspaces remain intact. Never automatically retry
+Deletion uses irreversible native Copilot `deleteSession` through `session/delete`.
+It adds no confirmation parameter. Cockpit does not separately remove workspace
+files or unrelated data. Never automatically retry
 an uncertain deletion. External applications own their references and must
 distinguish authoritative absence from unload, timeout or permission failure.
 
@@ -155,13 +155,18 @@ JSON. `mcp/session` does not materialize an unloaded session.
 chat event history. There is no compaction undo. It is distinct from conversation
 rewind or permanent deletion, which irreversibly discard history.
 SDK 1.0.13 compact/rewind/delete methods have no required `confirm` input, and
-these semantic tools add no confirmation guard. They accept a deprecated optional
-boolean for compatibility, ignore either value, and do not send it to the backend.
-Generic delete/purge also accepts a deprecated optional boolean without effect;
-callers should omit it. Native busy/decision protections remain in force.
+these semantic tools add no confirmation parameter. Only the current input
+schema is accepted; unknown parameters are rejected before dispatch.
+Native busy/decision protections remain in force.
 Use the operations only when their effects are intended, and never automatically
 retry an uncertain mutation. Service shutdown is a distinct host operation with
 its own required confirmation.
+
+`cockpit_plan_supersede` answers the exact pending native plan request with
+`approved:false` and the supplied feedback. It does not select `exit_only`,
+send a separate prompt or force a mode change. The native runtime controls how
+the feedback is handled next; the acknowledgement confirms feedback submission,
+not execution of the proposed replacement task.
 
 `cockpit_set_model` takes the intended **complete model configuration**, not a
 patch that promises to preserve omitted effort or context tier. Omitted options

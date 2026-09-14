@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { McpServerStatus } from '@cockpit/protocol';
 import { mockHttp } from '../test-support/mock-http.ts';
 mockHttp(() => { throw new Error('Unexpected request in pure helper tests'); });
 const {
-  cappedJson, capped, shrinkList, ok, fail, McpServerStatus,
+  cappedJson, capped, shrinkList, ok, fail,
   McpToggleOperation, McpServerSession, McpSessionResult, McpToggleResult,
 } = await import('./shared.ts');
 const { CHARACTER_LIMIT } = await import('./config.ts');

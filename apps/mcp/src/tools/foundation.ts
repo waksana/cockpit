@@ -61,7 +61,7 @@ export function registerFoundationTools(server: McpServer): void {
     title: 'Invoke a published Cockpit intent',
     description: 'Call any intent published by cockpit_capabilities using its exact API body (camelCase keys). '
       + 'Sends one POST without a capability preflight; the authoritative backend rejects unknown or retired names and validates '
-      + 'the body and result. Session compact/rewind/delete/purge add no confirm guard; host system/shutdown still requires confirm:true. '
+      + 'the body and result. Session compact/rewind/delete use native safeguards; host system/shutdown requires confirm:true. '
       + 'prompt accepts text and optional SDK-native attachments; no managed upload or file-reference resolution is provided. '
       + 'session/rewind with rollbackFiles:true '
       + 'requests native file rollback; conflicts fail explicitly. permissionPolicy stays allow-all; modes are interaction settings. '

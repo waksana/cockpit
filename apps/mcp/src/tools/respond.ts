@@ -79,20 +79,17 @@ export function registerRespondTools(server: McpServer): void {
   server.registerTool(
     'cockpit_plan_supersede',
     {
-      title: 'Redirect a pending plan with a new instruction',
+      title: 'Submit feedback on a pending plan',
       description:
-        'Supersede a session paused on an exit_plan_mode request by typing a NEW instruction instead ' +
-        'of picking one of the plan actions. This is distinct from cockpit_respond_plan: it does NOT ' +
-        'execute the proposed plan. Instead it dismisses the pending plan (exit_only, so the plan is ' +
-        'discarded, not run), runs `message` as a one-off direct instruction, then automatically ' +
-        'returns the session to plan mode once that turn finishes. Use this to change course while a ' +
-        'plan is pending — e.g. "forget that, just do X". (Note: plainly enqueuing a prompt via ' +
-        'cockpit_send_prompt while a plan is pending only queues it behind the still-blocking request; ' +
-        'use this tool to actually redirect.) Get the requestId from cockpit_get_session → planRequest.',
+        'Respond to a pending exit_plan_mode request with native approved:false and feedback:message, ' +
+        'rather than approving one of its offered actions. Cockpit resolves the native callback only: ' +
+        'it sends no separate prompt or mode change. The native runtime controls subsequent behavior. ' +
+        'Plainly enqueuing cockpit_send_prompt does not answer the pending request. ' +
+        'Get the requestId from cockpit_get_session → planRequest.',
       inputSchema: {
         session_id: z.string().min(1).describe('The session id'),
         request_id: z.string().min(1).describe('The pending plan requestId (from cockpit_get_session → planRequest.requestId)'),
-        message: z.string().min(1).describe('The new instruction to run instead of the plan (the plan is discarded, not executed)'),
+        message: z.string().min(1).describe('Feedback to return to the native pending plan request'),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
@@ -103,7 +100,7 @@ export function registerRespondTools(server: McpServer): void {
           requestId: request_id,
           message,
         });
-        return ok(`Superseded plan ${request_id} on ${session_id} with a new instruction (plan discarded, message run, session returns to plan mode).`);
+        return ok(`Submitted native plan feedback for ${request_id} on ${session_id}. Subsequent behavior is controlled by the native runtime.`);
       } catch (e) {
         return fail(e instanceof CockpitError ? e.message : String(e));
       }

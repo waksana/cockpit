@@ -1,7 +1,7 @@
 import {
   CopilotClient, RuntimeConnection, approveAll,
   type CopilotClientOptions, type CopilotSession, type SessionConfig,
-  type ResumeSessionConfig, type ModelInfo, type GetAuthStatusResponse,
+  type ResumeSessionConfig, type GetAuthStatusResponse,
 } from '@github/copilot-sdk';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ChildProcess } from 'node:child_process';
@@ -19,10 +19,6 @@ export interface RuntimeOptions {
   clientOptions?: CopilotClientOptions;
   sessionConfig?: Partial<SessionConfig>;
   clientFactory?: (options: CopilotClientOptions) => RuntimeClient;
-}
-
-export function modelOption(model: ModelInfo): ModelOption {
-  return sessionModelOptions([model])[0]!;
 }
 
 export function sessionModelOptions(values: readonly unknown[], catalog: readonly ModelOption[] = []): ModelOption[] {

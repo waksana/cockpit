@@ -12,13 +12,14 @@ import type { ServerEngine } from './index.ts';
 import { isIntentName } from './capabilities.ts';
 import { readNativeChat } from '../../../packages/core/src/native-chat.ts';
 import { Engine } from '../../../packages/core/src/engine.ts';
+import { sessionMetaBusy } from '../../../packages/core/test-support/lifecycle.ts';
 import { GracefulShutdown } from './shutdown.ts';
 
 process.env.COCKPIT_NO_BOOT = '1';
 process.env.LOG_LEVEL = 'silent';
 process.env.COCKPIT_SERVE_WEB = '0';
 process.env.COCKPIT_MAX_SSE_CLIENTS = '2';
-const { app, setTestDependencies, broadcastFrame, onEngineEvent, sessionBusy } = await import('./index.ts');
+const { app, setTestDependencies, broadcastFrame, onEngineEvent } = await import('./index.ts');
 
 const calls: { method: string; args: unknown[] }[] = [];
 function record<T>(method: string, args: unknown[], result: T): T {
@@ -45,7 +46,7 @@ const engine: ServerEngine = {
   stop: async () => { throw new Error('integration fixtures must never stop a real runtime'); },
   login: async () => 'test-only',
   snapshot: async () => record('snapshot', [], snapshot()),
-  busyCount: async () => sessions.filter(sessionBusy).length,
+  busyCount: async () => sessions.filter(sessionMetaBusy).length,
   newSession: async (...args) => record('newSession', args, 'created'),
   forkSession: async (...args) => record('forkSession', args, { sessionId: 'forked' }),
   chat: async (query, signal) => {
@@ -136,8 +137,7 @@ const cases = {
   'session/compact': { body: { sessionId: 's', customInstructions: 'keep context' }, method: 'compact', args: ['s', 'keep context'] },
   'session/rewind': { body: { sessionId: 's', toMsgId: 'm', rollbackFiles: true }, method: 'rewind', args: ['s', 'm', true] },
   setMode: { body: { sessionId: 's', mode: 'plan' }, method: 'setMode', args: ['s', 'plan'] },
-  'session/delete': { body: { sessionId: 's', confirm: true }, method: 'deleteSession', args: ['s'] },
-  'session/purge': { body: { sessionId: 's', confirm: true }, method: 'deleteSession', args: ['s'] },
+  'session/delete': { body: { sessionId: 's' }, method: 'deleteSession', args: ['s'] },
   'session/unload': { body: { sessionId: 's' }, method: 'unload', args: ['s'] },
   'session/load': { body: { sessionId: 's' }, method: 'load', args: ['s'] },
   'session/reload': { body: { sessionId: 's' }, method: 'reload', args: ['s'] },
@@ -468,12 +468,12 @@ test('skills/global forwards explicit cwd without selecting a session or queryin
   assert.deepEqual(calls, [{ method: 'listGlobalSkills', args: ['/fixture/project'] }]);
 });
 
-test('retired message history routes return an explicit migration error without dispatch', async () => {
+test('unknown message history routes return 404 without dispatch', async () => {
   for (const name of ['session/history', 'session/peek', 'session/subagent-history']) {
     calls.length = 0;
     const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: { sessionId: 's' } });
-    assert.equal(response.statusCode, 410, response.body);
-    assert.equal(response.json().code, 'CHAT_PROTOCOL_CHANGED');
+    assert.equal(response.statusCode, 404, response.body);
+    assert.match(response.json().error, /unknown intent/);
     assert.deepEqual(calls, []);
   }
 });
@@ -821,24 +821,24 @@ test('session/interrupt awaits native outcome and propagates uncertain failure w
   assert.equal(interrupt.mock.callCount(), 1);
 });
 
-for (const name of ['session/delete', 'session/purge']) {
+for (const name of ['session/delete', 'session/compact', 'session/rewind'] as const) {
   test(`${name} rejects retired module unbind approvals without calling any engine method`, async () => {
     const unbind = { planId: 'a'.repeat(64), operationId: 'unbind-delete-1' };
     const response = await app.inject({
-      method: 'POST', url: `/intent/${name}`, payload: { sessionId: 's', confirm: true, unbind },
+      method: 'POST', url: `/intent/${name}`, payload: { ...cases[name].body, unbind },
     });
     assert.equal(response.statusCode, 400);
     assert.deepEqual(calls, []);
   });
-  test(`${name} accepts absent or ignored boolean confirmation and rejects other types`, async () => {
+  test(`${name} accepts current input and rejects removed confirmation before dispatch`, async () => {
     for (const confirm of [undefined, false, true, 'true', 1, null]) {
       calls.length = 0;
       const response = await app.inject({
-        method: 'POST', url: `/intent/${name}`, payload: { sessionId: 's', confirm },
+        method: 'POST', url: `/intent/${name}`, payload: { ...cases[name].body, confirm },
       });
-      const valid = confirm === undefined || typeof confirm === 'boolean';
+      const valid = confirm === undefined;
       assert.equal(response.statusCode, valid ? 200 : 400, response.body);
-      assert.deepEqual(calls, valid ? [{ method: 'deleteSession', args: ['s'] }] : []);
+      assert.deepEqual(calls, valid ? [{ method: cases[name].method, args: cases[name].args }] : []);
     }
   });
 }
@@ -861,7 +861,7 @@ test('session/new rejects an obsolete worker label before native creation', asyn
 
 test('unknown, inherited, and retired intent paths are 404 without engine calls', async () => {
   for (const name of [
-    'unknown', 'constructor', '__proto__', 'toString',
+    'unknown', 'constructor', '__proto__', 'toString', 'session/purge',
     'hook/add', 'hook/list', 'hook/stop', 'hook/unknown',
     'flow/add', 'flow/list', 'flow/remove', 'flow/write-gate', 'flow/run', 'flow/unknown',
     'flow-schedule/add', 'flow-schedule/list', 'flow-schedule/stop', 'flow-schedule/unknown',
@@ -879,7 +879,7 @@ test('unknown, inherited, and retired intent paths are 404 without engine calls'
 });
 
 test('the origin gate protects valid intents, including bodyless mutations', async () => {
-  for (const name of ['session/new', 'skills/refresh', 'mcp/refresh', 'session/purge']) {
+  for (const name of ['session/new', 'skills/refresh', 'mcp/refresh', 'session/delete']) {
     const response = await app.inject({
       method: 'POST', url: `/intent/${name}`,
       headers: { origin: 'https://untrusted.example', host: '127.0.0.1:8771' },
