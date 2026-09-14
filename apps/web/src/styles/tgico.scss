@@ -59,7 +59,5 @@
 .tgico[data-icon='attach']::before     { content: '\e91a'; } // paperclip
 .tgico[data-icon='file']::before       { content: '\e980'; } // document
 .tgico[data-icon='folder']::before     { content: '\e999'; } // folder
-.tgico[data-icon='mode_interactive']::before { content: '\ea47'; } // replace (two-arrow swap)
 .tgico[data-icon='mode_plan']::before        { content: '\e95b'; } // clipboard (plan/checklist)
-.tgico[data-icon='mode_autopilot']::before   { content: '\e991'; } // fast_forward (▶▶)
 .tgico[data-icon='radiooff']::before   { content: '\ea3e'; }

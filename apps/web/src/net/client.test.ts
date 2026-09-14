@@ -85,7 +85,7 @@ test('removed session pages have no dedicated Web client helpers', t => {
   for (const name of [
     'forkSession', 'getPlan', 'getPanels', 'getPanel', 'getUsage',
     'scheduleList', 'scheduleAdd', 'scheduleStop', 'compactSession',
-    'rewindSession', 'unloadSession', 'reloadSession',
+    'rewindSession', 'unloadSession', 'reloadSession', 'setMode',
   ]) assert.equal(name in client, false, name);
   assert.equal(fetch.mock.callCount(), 0);
 });
@@ -126,7 +126,7 @@ test('creation preserves an explicitly reported native identity without automati
   assertOnlyPost(fetch, 'session/new', { cwd: '/workspace' });
 });
 
-test('Web uses native new followed by ordinary prompt, not a combined first-message endpoint', async t => {
+test('Web leaves the native default mode intact when creating and sending the first message', async t => {
   let response = Response.json({ sessionId: 'actual-native-id' });
   const { client, fetch } = setup(t, async () => response);
   const created = await client.newSession('/workspace');
@@ -141,26 +141,26 @@ test('Web uses native new followed by ordinary prompt, not a combined first-mess
 });
 
 test('native resources client validates the projection, forwards cancellation and never resumes on unloaded response', async t => {
-  const resources = { meta: { sessionId: 'session', loaded: true, currentMode: 'plan' } };
+  const resources = { meta: { sessionId: 'session', loaded: true, currentModelId: 'model' } };
   let cold = false;
   const { client, fetch } = setup(t, async () => cold
     ? Response.json({ error: 'Unloaded', code: 'SESSION_UNLOADED' }, { status: 409 })
     : Response.json(resources));
   const controller = new AbortController();
-  assert.deepEqual(await client.getResources('session', ['mode'], controller.signal), resources);
+  assert.deepEqual(await client.getResources('session', ['model'], controller.signal), resources);
   assert.equal(fetch.mock.calls[0].arguments[1]?.signal, controller.signal);
   cold = true;
-  await assert.rejects(client.getResources('session', ['mode']), isSessionUnloadedError);
+  await assert.rejects(client.getResources('session', ['model']), isSessionUnloadedError);
   assert.equal(fetch.mock.callCount(), 2);
   assert.ok(fetch.mock.calls.every(call => String(call.arguments[0]).endsWith('/intent/session/resources')));
 });
 
 test('native resources client rejects invalid projection fields without retry', async t => {
   const { client, fetch } = setup(t, async () => Response.json({
-    meta: { sessionId: 'session', loaded: true, currentMode: 'unknown-mode' },
+    meta: { sessionId: 'session', loaded: true, currentModelId: 42 },
   }));
-  await assert.rejects(client.getResources('session', ['mode']));
-  assertOnlyPost(fetch, 'session/resources', { sessionId: 'session', resources: ['mode'] });
+  await assert.rejects(client.getResources('session', ['model']));
+  assertOnlyPost(fetch, 'session/resources', { sessionId: 'session', resources: ['model'] });
 });
 
 for (const path of [undefined, '/P', './P', '', '   ']) {

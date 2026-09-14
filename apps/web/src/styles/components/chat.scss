@@ -87,45 +87,7 @@
   min-width: 0;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-// Mode button — a tweb-style icon button (round ripple, from .btn-icon) showing
-// the current interaction mode's glyph, tinted per mode for at-a-glance reading.
-.chat-topbar-mode {
-  flex: none;
-  &[data-mode='plan'] { color: var(--link-color); }
-  &[data-mode='autopilot'] { color: color-mix(in srgb, var(--primary-color) 50%, var(--primary-text-color)); }
-}
 .chat-topbar-more { flex: none; }
-
-// Mode switcher popover — a compact horizontal row of icon-only buttons; the
-// active mode tints itself + a matching subtle fill (no text/checkmark). Unlike
-// the text context-menus, this menu must size to its icon row — so it opts out of
-// the base .btn-menu 11.25rem min-width (which otherwise leaves dead space on the
-// right of the icons).
-.mode-menu { padding: 0.25rem; min-width: 0; }
-.mode-menu-note {
-  font-size: var(--font-size-12);
-  color: var(--tertiary-text-color);
-  padding: 0.15rem 0.4rem 0.3rem;
-  text-align: center;
-  white-space: nowrap;
-}
-.mode-menu-row { display: flex; justify-content: center; gap: 0.15rem; }
-.mode-menu-item {
-  flex: none;
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 2.5rem; height: 2.5rem;
-  border: none; border-radius: var(--border-radius);
-  background: transparent;
-  color: var(--secondary-text-color);
-  cursor: pointer; position: relative; overflow: hidden;
-  &[data-mode='plan'] { color: var(--link-color); }
-  &[data-mode='autopilot'] { color: var(--primary-color); }
-  &[data-active='true'] { background: color-mix(in srgb, currentColor 15%, transparent); }
-  &:focus-visible { outline: 2px solid var(--primary-text-color); outline-offset: -3px; }
-  @media (hover: hover) {
-    &:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
-  }
-}
 
 // Inline model/effort/context selects in the subtitle (flat, label-less).
 .model-select {

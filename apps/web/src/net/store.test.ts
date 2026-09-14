@@ -216,7 +216,7 @@ test('removed session pages have no dedicated Web store actions or readers', () 
   for (const name of [
     'forkSession', 'getPlan', 'getPanels', 'getPanel', 'getUsage',
     'scheduleList', 'scheduleAdd', 'scheduleStop', 'compactSession',
-    'rewindSession', 'unloadSession', 'reloadSession',
+    'rewindSession', 'unloadSession', 'reloadSession', 'setMode',
   ]) assert.equal(name in state, false, name);
 });
 
@@ -292,12 +292,32 @@ test('native creation result never invents local session state or sends a hidden
   assert.equal(store.getState().sessions.length, 0, 'native sessions arrive through authoritative control events, not GUI attempts');
 });
 
+for (const currentMode of [undefined, null, 'interactive', 'plan', 'autopilot'] as const) {
+  test(`opening and sending to an existing ${currentMode ?? 'unknown'} session never changes its native mode`, async t => {
+    const store = createCockpitStore();
+    const h = setup(t, store);
+    h.source.open();
+    h.snapshot(['a'], { sessions: [{ ...meta('a'), currentMode }] });
+    await h.load('a', [message('previous')], false);
+    h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['mode'] });
+    await setImmediate();
+    assert.equal(h.requests.length, 1, 'hidden mode changes require no dedicated resource read');
+    assert.equal(session('a', store).currentMode, currentMode);
+    const sending = store.getState().sendPrompt('a', 'Continue this session');
+    h.assertPost(1, 'prompt', { sessionId: 'a', text: 'Continue this session' });
+    await h.reply(1, { ok: true });
+    assert.equal(await sending, true);
+    assert.equal(h.requests.length, 2, 'sending must not insert a mode mutation');
+    assert.equal(session('a', store).currentMode, currentMode);
+  });
+}
+
 test('unselected sessions and read-lease patches do not fetch hidden resources or full metadata', async t => {
   const store = createCockpitStore();
   const h = setup(t, store);
   h.source.open();
   h.snapshot(['a', 'b']);
-  for (const resource of ['plan', 'skills', 'mcp', 'tasks', 'instructions', 'usage', 'models', 'todo', 'schedule'] as const) {
+  for (const resource of ['plan', 'skills', 'mcp', 'tasks', 'instructions', 'usage', 'models', 'todo', 'schedule', 'mode'] as const) {
     h.source.emit({ type: 'session/invalidated', sessionId: 'b', resources: [resource] });
   }
   h.source.emit({ type: 'session/patch', sessionId: 'b', activeOperations: 1 });
@@ -306,11 +326,11 @@ test('unselected sessions and read-lease patches do not fetch hidden resources o
   assert.equal(h.requests.length, 0);
   assert.equal(store.getState().resourceRevisions.b?.tasks, 1);
   assert.equal(store.getState().resourceRevisions.b?.schedule, 1);
-  h.source.emit({ type: 'session/invalidated', sessionId: 'b', resources: ['mode'] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'b', resources: ['model'] });
   await setImmediate();
-  h.assertPost(0, 'session/resources', { sessionId: 'b', resources: ['mode'] });
-  await h.reply(0, { meta: { sessionId: 'b', loaded: true, currentMode: 'plan' } });
-  assert.equal(session('b', store).currentMode, 'plan');
+  h.assertPost(0, 'session/resources', { sessionId: 'b', resources: ['model'] });
+  await h.reply(0, { meta: { sessionId: 'b', loaded: true, currentModelId: 'fresh-model' } });
+  assert.equal(session('b', store).currentModelId, 'fresh-model');
   assert.equal(session('b', store).title, 'b', 'narrow projection must not erase identity');
 });
 
@@ -319,19 +339,19 @@ test('late resource changes rerun only their dependency and retain independent f
   const h = setup(t, store);
   h.source.open();
   h.snapshot(['a']);
-  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['model', 'mode'] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['identity', 'model'] });
   await setImmediate();
-  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['mode'] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['model'] });
   h.source.emit({ type: 'session/patch', sessionId: 'a', activeOperations: 1, ask: { requestId: 'fresh-ask', question: 'Continue?' } });
-  await h.reply(0, { meta: { sessionId: 'a', loaded: true, currentModelId: 'fresh-model', currentMode: 'plan',
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, title: 'Fresh title', currentModelId: 'obsolete',
     activeOperations: 0, ask: null } });
-  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['mode'] });
-  assert.equal(session('a', store).currentModelId, 'fresh-model');
-  assert.equal(session('a', store).currentMode, undefined, 'obsolete mode is never published');
+  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['model'] });
+  assert.equal(session('a', store).title, 'Fresh title');
+  assert.equal(session('a', store).currentModelId, undefined, 'obsolete model is never published');
   assert.equal(session('a', store).ask?.requestId, 'fresh-ask');
   assert.equal(session('a', store).activeOperations, 1);
-  await h.reply(1, { meta: { sessionId: 'a', loaded: true, currentMode: 'autopilot' } });
-  assert.equal(session('a', store).currentMode, 'autopilot');
+  await h.reply(1, { meta: { sessionId: 'a', loaded: true, currentModelId: 'fresh-model' } });
+  assert.equal(session('a', store).currentModelId, 'fresh-model');
   assert.equal(h.requests.length, 2);
 });
 
@@ -378,11 +398,11 @@ test('native metadata invalidations read only the affected session and discard s
   h.snapshot(['a', 'b']);
   h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
   await setImmediate();
-  h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode'] });
+  h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model'] });
   h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
   await h.reply(0, { meta: { ...meta('a'), currentModelId: 'obsolete' } });
   assert.notEqual(session('a', store).currentModelId, 'obsolete');
-  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode'] });
+  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model'] });
   await h.reply(1, { meta: { ...meta('a'), currentModelId: 'current' } });
   assert.equal(session('a', store).currentModelId, 'current');
   assert.equal(session('b', store).currentModelId, undefined);
@@ -417,7 +437,7 @@ test('closing invalidations wait for the settling event rather than entering tea
   h.source.emit({ type: 'session/patch', sessionId: 'a', closing: false });
   h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
   await setImmediate();
-  h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode'] });
+  h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model'] });
   await h.reply(0, { meta: { ...meta('a'), loaded: false, status: 'unloaded' } });
   assert.equal(session('a', store).loaded, false);
 });
@@ -467,7 +487,7 @@ test('a failed old metadata request does not discard a newer settling invalidati
   h.source.emit({ type: 'session/invalidated', sessionId: 'a' });
   h.request(0).response.resolve(Response.json({ error: 'Transition in progress', code: 'SESSION_TRANSITION' }, { status: 409 }));
   await setImmediate();
-  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model', 'mode'] });
+  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model'] });
   await h.reply(1, { meta: { ...meta('a'), title: 'after transition' } });
   assert.equal(session('a', store).title, 'after transition');
   assert.equal(h.requests.length, 2);
@@ -739,7 +759,6 @@ const mutations: MutationCase[] = [
     name: 'session/load', body: { sessionId: 'a' }, send: (s) => s.loadSession('a'),
     success: { ok: true, sessionId: 'a' }, sessionId: 'a',
   },
-  { name: 'setMode', body: { sessionId: 'a', mode: 'plan' }, send: (s) => s.setMode('a', 'plan'), success: { ok: true }, sessionId: 'a' },
   {
     name: 'queue/remove', body: { sessionId: 'a', itemId: 'queued' }, send: (s) => s.removeQueued('a', 'queued'),
     success: { ok: true }, sessionId: 'a',
@@ -954,7 +973,7 @@ interface ResourceCase {
 }
 
 const projection: IntentResult<'session/resources'>['meta'] = {
-  sessionId: 'a', loaded: true, currentModelId: 'fixture-model', currentMode: 'plan',
+  sessionId: 'a', loaded: true, currentModelId: 'fixture-model', currentReasoningEffort: 'high',
 };
 const globalMcp: IntentResult<'mcp/global'>['servers'] = [
   { name: 'fixture-mcp', detail: 'fixture command', defaultOn: true },
@@ -968,8 +987,8 @@ const skill: IntentResult<'skills/read'> = { name: 'fixture-skill', body: 'fixtu
 const directory: IntentResult<'fs/listDir'> = { path: '/fixture', parent: '/', entries: [] };
 const resources: ResourceCase[] = [
   {
-    label: 'getResources', name: 'session/resources', body: { sessionId: 'a', resources: ['model', 'mode'] },
-    read: (s) => s.getResources('a', ['model', 'mode'], new AbortController().signal),
+    label: 'getResources', name: 'session/resources', body: { sessionId: 'a', resources: ['model'] },
+    read: (s) => s.getResources('a', ['model'], new AbortController().signal),
     response: { meta: projection }, expected: projection,
   },
   { label: 'mcpGlobal', name: 'mcp/global', body: {}, read: (s) => s.mcpGlobal(), response: { servers: globalMcp }, expected: globalMcp },

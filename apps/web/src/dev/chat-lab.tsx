@@ -4,7 +4,6 @@ import { BrowserRouter } from 'react-router-dom';
 import type { ChatMessage } from '@cockpit/protocol';
 import { Thread } from '../components/Thread';
 import { ChatHeader } from '../components/ChatHeader';
-import { ModeMenu } from '../components/ModeMenu';
 import { AnchoredMenu } from '../components/AnchoredMenu';
 import { sessionActionItems } from '../lib/sessionActions';
 import { UxErrorNotifications } from '../components/UxErrorNotifications';
@@ -38,9 +37,7 @@ export function Lab() {
   const counter = useRef(0);
   const ordered = useRef<ReturnType<typeof orderedFixture> | null>(null);
   const historyBusy = useRef(false);
-  const modeRef = useRef<HTMLButtonElement | null>(null);
   const moreRef = useRef<HTMLButtonElement | null>(null);
-  const [modeOpen, setModeOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
   const draft = getSessionDraft(session.sessionId);
   const compact = query.get('compact') === '1';
@@ -51,7 +48,6 @@ export function Lab() {
     generation.current++;
     pending.current.splice(0).forEach(resolve => resolve());
     historyBusy.current = false;
-    setModeOpen(false);
     setMoreOpen(false);
     setScenario(value);
     ordered.current = null;
@@ -136,11 +132,11 @@ export function Lab() {
     <output className="lab-receipt" aria-live="polite">{receipt}</output>
     </details>
     <div className="lab-stage">
-      <ChatHeader title={`${session.title} · 长标题与会话入口边界`} modelLabel="Synthetic model · no native connection" mode={session.currentMode}
-        modeRef={modeRef} moreRef={moreRef} modeOpen={modeOpen} moreOpen={moreOpen}
+      <ChatHeader title={`${session.title} · 长标题与会话入口边界`} modelLabel="Synthetic model · no native connection"
+        moreRef={moreRef} moreOpen={moreOpen}
         onBack={() => setReceipt('返回入口回调（导航不在此场景内执行）。')}
         onInfo={() => setReceipt('会话信息入口回调（会话管理面板不在本次精修范围）。')}
-        onMode={() => setModeOpen(value => !value)} onMore={() => setMoreOpen(true)} />
+        onMore={() => setMoreOpen(true)} />
       <Thread key={scenario} session={session} readOnly={scenario === 'readonly'}
         onLoadMore={loadMore}
         onRetryHistory={() => {
@@ -163,8 +159,6 @@ export function Lab() {
           return { ok: true, interrupted: true };
         }}
       />
-      {modeOpen && <ModeMenu triggerRef={modeRef} current={session.currentMode ?? null} running={session.status === 'running'}
-        onClose={() => setModeOpen(false)} onPick={mode => { setReceipt(`模式回调：${mode}`); setSession(value => ({ ...value, currentMode: mode })); }} />}
       {moreOpen && <AnchoredMenu triggerRef={moreRef} label={session.title} onClose={() => setMoreOpen(false)}
         items={sessionActionItems(session, true, {
           openPanel: (_id, panel) => setReceipt(`面板入口：${panel ?? 'info'}（管理面板不在本次精修范围）。`),

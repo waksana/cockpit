@@ -11,6 +11,26 @@ import { compile } from 'sass';
 import { getSessionDraft } from '../lib/textDraft';
 import { existsSync, readFileSync } from 'node:fs';
 import { ActivityHeader } from './ActivityHeader';
+import { ChatHeader } from './ChatHeader';
+
+test('chat header keeps session and model details without any mode display or switch', () => {
+  const html = renderToStaticMarkup(createElement(ChatHeader, {
+    title: 'Session title', modelLabel: 'Native model', moreRef: { current: null }, moreOpen: false,
+    onBack() {}, onInfo() {}, onMore() {},
+  }));
+  assert.match(html, /Session title/);
+  assert.match(html, /Native model/);
+  assert.match(html, /aria-label="查看会话信息"/);
+  assert.match(html, /aria-label="更多操作"/);
+  assert.equal((html.match(/aria-haspopup="menu"/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /data-mode=|模式|mode-menu|chat-topbar-mode(?:\s|")/);
+  for (const file of ['../App.tsx', '../dev/chat-lab.tsx', './ChatHeader.tsx']) {
+    assert.doesNotMatch(readFileSync(new URL(file, import.meta.url), 'utf8'), /ModeMenu|setMode\b|modeRef|modeOpen|onMode\b|currentMode\b/);
+  }
+  assert.equal(existsSync(new URL('./ModeMenu.tsx', import.meta.url)), false);
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.doesNotMatch(css, /\.mode-menu|\[data-mode|\.chat-topbar-mode(?:\s|[.{])/);
+});
 
 test('all component scenes conform to the actual message and metadata contracts', () => {
   for (const [scene] of scenarios) {
