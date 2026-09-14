@@ -39,8 +39,8 @@ function compare(window: NativeWindow, history: NativeChatEvent[]) {
   assert.deepEqual(window.snapshot().messages, baseline.window.snapshot().messages);
   assert.equal(window.unresolved, baseline.window.unresolved);
   const state = (fold: FoldState): unknown => ({
-    ...fold, executionOrder: undefined, currentModelId: fold.currentModelId, streamingId: fold.streamingId,
-    pendingReasoning: fold.pendingReasoning, reasoningId: fold.reasoningId, reasoningIds: fold.reasoningIds,
+    ...fold, executionOrder: undefined, currentModelId: fold.currentModelId,
+    activeResponse: fold.activeResponse, responseOrder: undefined,
     subFolds: new Map([...fold.subFolds].map(([id, child]) => [id, state(child)])),
   });
   assert.deepEqual(state(window.projection), state(baseline.window.projection));
@@ -96,6 +96,48 @@ test('repeated independent prepends fold each event once, equivalent to cumulati
     assert.equal(incremental.window.snapshot().messages, view);
     assert.equal(incremental.count(), cost);
   }
+});
+
+test('native journal parent chains do not turn unrelated prefix pages into suffix replays', () => {
+  const history = Array.from({ length: 128 }, (_, i) => ({
+    ...event(`message-${i}`), parentId: i ? `message-${i-1}` : 'before-window',
+  }));
+  const measured = counted();
+  for (let end = history.length; end > 0; end -= 8) {
+    accept(measured.window, history.slice(Math.max(0,end-8),end));
+  }
+  assert.equal(measured.count(),history.length);
+  compare(measured.window,history);
+});
+
+test('root and child tools can reuse an invocation ID without cross-scope prefix repair', () => {
+  const history = [
+    task('owner','spawn'),spawn('spawn','child'),
+    event('root-start','tool.execution_start',{toolCallId:'same',toolName:'bash'}),
+    event('child-start','tool.execution_start',{toolCallId:'same',toolName:'view'},'child'),
+    event('root-result','tool.execution_complete',{toolCallId:'same',success:false}),
+    event('child-result','tool.execution_complete',{toolCallId:'same',success:true},'child'),
+  ];
+  for (let size = 1; size <= history.length; size++) {
+    const window = new NativeWindow(undefined,true);
+    for (let end = history.length; end > 0; end -= size) {
+      accept(window,history.slice(Math.max(0,end-size),end));
+    }
+    compare(window,history);
+    assert.equal(window.snapshot().messages.find(message => message.toolCalls)?.toolCalls?.[0].status,'failed');
+    assert.equal(window.snapshot().messages.find(message => message.subagent)?.subMessages?.[0].toolCalls?.[0].status,'completed');
+  }
+});
+
+test('an earlier response event resolves an exact orphan reasoning parent without equal-text inference', () => {
+  const final = event('final','assistant.message',{messageId:'m',content:'Body',reasoningText:'Whole'});
+  const full = {...event('full','assistant.reasoning',{reasoningId:'r',content:'Whole'}),parentId:'final'};
+  const window = new NativeWindow(undefined,true);
+  accept(window,[full]);
+  assert.ok(window.snapshot().messages[0].incomplete);
+  accept(window,[final]);
+  compare(window,[final,full]);
+  assert.deepEqual(window.snapshot().messages.map(message => message.id),['m']);
 });
 
 test('every page split agrees with chronological replay across nested owners, tools, aliases and turn scratch', () => {
@@ -172,10 +214,11 @@ test('a distant owner repairs only its dependents amid interleaved durable forwa
 
 test('partial reasoning and child messages survive older pages, overlap, disconnect and final replacement', () => {
   const window = new NativeWindow(undefined, true);
-  accept(window, [task('parent', 'outer'), spawn('outer', 'child'), event('stable')]);
+  accept(window, [task('parent', 'outer'), spawn('outer', 'child'), event('stable'),
+    event('child-turn', 'assistant.turn_start', {}, 'child')]);
   accept(window, [], 'forward', { hasMore: false });
   const ephemeral = (id: string, type: string, data: Record<string, unknown>) =>
-    ({ ...event(id, type, data, 'child'), ephemeral: true });
+    ({ ...event(id, type, data, 'child'), parentId: 'child-turn', ephemeral: true });
   accept(window, [ephemeral('thought', 'assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Live thought' })], 'forward', { hasMore: false });
   accept(window, [event('older-thought', 'assistant.reasoning', { reasoningId: 'old', content: 'Older thought' })]);
   accept(window, [
@@ -183,7 +226,7 @@ test('partial reasoning and child messages survive older pages, overlap, disconn
     ephemeral('prefix', 'assistant.message_delta', { messageId: 'live', deltaContent: 'Prefix' }),
   ], 'forward', { hasMore: false });
   const child = () => window.snapshot().messages.find(message => message.subagent)?.subMessages;
-  assert.equal(child()?.find(message => message.id === 'reasoning-r')?.thought, 'Live thought');
+  assert.equal(child()?.find(message => message.id === 'live')?.thought, 'Live thought');
   assert.equal(child()?.at(-1)?.content, 'Prefix');
   accept(window, [event('older')]);
   window.disconnect();
@@ -191,12 +234,12 @@ test('partial reasoning and child messages survive older pages, overlap, disconn
   accept(window, [ephemeral('suffix', 'assistant.message_delta', { messageId: 'live', deltaContent: 'Lost suffix' })], 'forward', { hasMore: false });
   assert.equal(window.partial, true);
   assert.equal(child()?.at(-1)?.content, 'Prefix');
-  const final = event('final', 'assistant.message', { messageId: 'live', content: 'Whole response', reasoningText: 'Whole thought' }, 'child');
+  const final = { ...event('final', 'assistant.message', { messageId: 'live', content: 'Whole response', reasoningText: 'Whole thought' }, 'child'), parentId: 'child-turn' };
   accept(window, [final, final], 'forward', { hasMore: false });
   assert.equal(child()?.at(-1)?.content, 'Whole response');
   assert.equal(child()?.find(message => message.thought)?.thought, 'Whole thought');
   assert.equal(child()?.filter(message => message.thought).length, 1);
-  assert.equal(child()?.at(-1)?.thought, undefined);
+  assert.equal(child()?.at(-1)?.thought, 'Whole thought');
   assert.equal(window.partial, false);
 });
 
@@ -219,9 +262,8 @@ test('open durable reasoning heads are repaired while independent live reasoning
   accept(live, [thoughts[0]]);
   accept(live, [event('live-answer')], 'forward', { hasMore: false });
   assert.equal(live.snapshot().messages.find(message => message.id === 'reasoning-live-r')?.thought, 'Unpublished live thought');
-  assert.deepEqual(live.snapshot().messages.map(message => [message.id, message.provisional]), [
-    ['reasoning-r-0', undefined], ['live-answer', undefined], ['reasoning-live-r', true],
-  ]);
+  assert.deepEqual(live.snapshot().messages.map(message => message.id), ['reasoning-r-0', 'reasoning-live-r', 'live-answer']);
+  assert.ok(live.snapshot().messages[1].incomplete);
 });
 
 test('filtered child reasoning uses the normalized root lane across old page boundaries', () => {
@@ -369,7 +411,7 @@ test('repeated aliased child pages wait for their owner without repeatedly foldi
   t.diagnostic(`aliased child events=${history.length}, incremental=${incremental.count()}, full-refold=${referenceCost}`);
 });
 
-test('surviving fallback provenance converges for every backward partition and intermediate same-ID final', () => {
+test('response-local snapshots converge for every backward partition and intermediate same-ID final', () => {
   for (const child of [false, true]) for (const firstBody of ['', 'Early body']) {
     const owner = child ? 'child' : undefined;
     const setup = child ? [task('owner', 'spawn'), spawn('spawn', 'child')] : [];
@@ -380,6 +422,7 @@ test('surviving fallback provenance converges for every backward partition and i
         messageId: 'm', content: firstBody, reasoningText: 'A',
         toolRequests: [{ toolCallId: 't', name: 'view' }],
       }, owner),
+      event('tool-start', 'tool.execution_start', { toolCallId: 't', toolName: 'view' }, owner),
       event('n', 'assistant.message', { content: 'N' }, owner),
       event('m-intermediate', 'assistant.message', { messageId: 'm', content: 'M', reasoningText: 'B' }, owner),
       event('tool-final', 'tool.execution_complete', { toolCallId: 't', result: { content: 'Output' } }, owner),
@@ -388,10 +431,9 @@ test('surviving fallback provenance converges for every backward partition and i
     const baseline = new NativeWindow(undefined, true);
     accept(baseline, history);
     const rows = child ? baseline.snapshot().messages.find(item => item.subagent)!.subMessages! : baseline.snapshot().messages;
-    assert.deepEqual(rows.map(item => item.id), firstBody
-      ? ['reasoning-r1', 'm', 'tool-t', 'n', 'reasoning-message-m']
-      : ['reasoning-r1', 'tool-t', 'n', 'reasoning-message-m', 'm']);
-    assert.equal(rows.find(item => item.id === 'reasoning-message-m')?.thought, 'Uncut\n\nB');
+    assert.deepEqual(rows.map(item => item.id), ['reasoning-r1', 'm', 'tool-t', 'n']);
+    assert.equal(rows.find(item => item.id === 'm')?.thought, 'Uncut\n\nB');
+    assert.ok(rows[0].incomplete, 'unreferenced legacy reasoning is retained, never text-matched');
     assert.equal(rows.find(item => item.id === 'm')?.content, 'Final M');
     for (let partition = 0; partition < 2 ** (history.length - 1); partition++) {
       const boundaries = [0, ...history.flatMap((_, i) => i > 0 && (partition & (1 << (i - 1))) ? [i] : []), history.length];
@@ -422,10 +464,8 @@ test('surviving fallback provenance converges for every backward partition and i
   }
 });
 
-test('retired fallback provenance cannot leak into a later forward recreation during ask-owner repair', () => {
-  const owner = event('owner', 'assistant.message', {
-    content: '', toolRequests: [{ toolCallId: 'ask', name: 'ask_user' }],
-  });
+test('response identity remains fixed through ask-start repair and later response updates', () => {
+  const owner = event('owner', 'tool.execution_start', { toolCallId: 'ask', toolName: 'ask_user' });
   const thought = event('r', 'assistant.reasoning', { reasoningId: 'r', content: 'A' });
   const first = event('first', 'assistant.message', { messageId: 'm', content: 'Body', reasoningText: 'A' });
   const next = event('n', 'assistant.message', { content: 'N' });
@@ -436,16 +476,16 @@ test('retired fallback provenance cannot leak into a later forward recreation du
   const window = new NativeWindow(undefined, true);
   accept(window, [first, next, reply]);
   accept(window, [thought]);
-  assert.equal(window.snapshot().messages.some(item => item.id === 'reasoning-message-m'), false);
+  assert.equal(window.snapshot().messages.find(item => item.id === 'm')?.thought, 'A');
   accept(window, [final], 'forward', { hasMore: false });
   accept(window, [owner]);
   assert.deepEqual(window.snapshot().messages.map(item => item.id), [
-    'tool-ask', 'reasoning-r', 'm', 'n', 'reply-ask', 'reasoning-message-m',
+    'tool-ask', 'reasoning-r', 'm', 'n', 'reply-ask',
   ]);
   compare(window, [owner, thought, first, next, reply, final]);
 });
 
-test('later equal explicit updates preserve existing fallback anchors across every partition and reconnect', () => {
+test('later unreferenced reasoning never takes ownership through equal text across partitions', () => {
   for (const child of [false, true]) {
     const owner = child ? 'child' : undefined;
     const setup = child ? [task('owner', 'spawn'), spawn('spawn', 'child')] : [];
@@ -464,8 +504,8 @@ test('later equal explicit updates preserve existing fallback anchors across eve
       const journal = history.slice(0, length);
       const baseline = new NativeWindow(undefined, true);
       accept(baseline, journal);
-      assert.deepEqual(rows(baseline).map(item => item.id), ['reasoning-r', 'm', 'reasoning-message-n', 'n']);
-      assert.equal(rows(baseline).find(item => item.id === 'reasoning-message-n')?.thought,
+      assert.deepEqual(rows(baseline).map(item => item.id), ['reasoning-r', 'm', 'n']);
+      assert.equal(rows(baseline).find(item => item.id === 'n')?.thought,
         length === history.length ? 'C' : 'B');
       for (let partition = 0; partition < 2 ** (journal.length - 1); partition++) {
         const boundaries = [0, ...journal.flatMap((_, i) => i > 0 && (partition & (1 << (i - 1))) ? [i] : []), journal.length];

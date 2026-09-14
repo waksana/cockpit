@@ -9,8 +9,8 @@ test('grouping is consecutive, derived and preserves item references and native 
   const messages = [thought('z'), thought('a'), speech('boundary'), thought('b')];
   const rows = groupTranscript(messages);
   assert.equal(rows.length, 3);
-  assert.deepEqual(rows.flatMap(row => row.kind === 'process' ? row.items : [row.message]), messages);
-  assert.equal(rows[0].kind === 'process' && rows[0].items[0], messages[0]);
+  assert.deepEqual(rows.flatMap(row => row.kind === 'process' ? row.items.map(item => item.message) : [row.message]), messages);
+  assert.equal(rows[0].kind === 'process' && rows[0].items[0].message, messages[0]);
 });
 test('prepending and appending process items preserve the mounted group identity', () => {
   const known = [thought('known'), thought('second')];
@@ -42,12 +42,37 @@ test('invisible starts do not break process; user answers and errors do', () => 
     thought('c'), { ...speech('error'), role: 'system', level: 'error' }, thought('d')]);
   assert.deepEqual(rows.map(row => row.kind), ['process', 'message', 'process', 'message', 'process']);
 });
-test('provisional reasoning stays outside the confirmed overview and has no effect on its count', () => {
-  const first = thought('confirmed'), preview = { ...thought('preview'), provisional: true };
-  const previous = groupTranscript([first]);
-  const next = groupTranscript([first, preview], previous);
-  assert.equal(next.length, 2);
-  assert.equal(next[0].key, previous[0].key);
-  assert.deepEqual(next[0].kind === 'process' && next[0].items, [first]);
-  assert.deepEqual(next[1].kind === 'process' && next[1].items, [preview]);
+test('reasoning joins prior process before its own response body, tools after speech remain separate', () => {
+  const first = thought('earlier'), response = { ...speech('response'), thought: 'Later thought' };
+  const tool: ChatMessage = { id: 'execution', role: 'assistant', content: '', timestamp: 0,
+    toolCalls: [{ toolCallId: 'call', title: 'Read', status: 'in_progress' }] };
+  const rows = groupTranscript([first, response, tool]);
+  assert.deepEqual(rows.map(row => row.kind), ['process', 'message', 'process']);
+  assert.equal(rows[0].kind === 'process' && rows[0].items.length, 2);
+  assert.equal(rows[1].kind === 'message' && rows[1].message, response);
+  assert.equal(rows[2].kind === 'process' && rows[2].items[0].kind, 'tool');
+});
+test('body-first response keeps its body identity when thinking arrives and uses no empty placeholders', () => {
+  const original = speech('response');
+  const before = groupTranscript([original]);
+  const after = groupTranscript([{ ...original, thought: 'Thinking arrived later' }], before);
+  assert.deepEqual(after.map(row => row.kind), ['process', 'message']);
+  assert.equal(after[1].key, before[0].key);
+  const onlyThinking = groupTranscript([{ ...original, content: '', thought: 'Thinking only' }]);
+  assert.equal(onlyThinking.length, 1);
+  assert.equal(onlyThinking[0].kind, 'process');
+});
+test('skill activations stay in the continuous process without counting as an extra tool', () => {
+  const rows = groupTranscript([thought('one'), { ...speech('skill'), role: 'system', subtype: 'skill' }, thought('two')]);
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0].kind === 'process' && rows[0].items.map(item => item.kind), ['thought', 'skill', 'thought']);
+});
+test('thought-first response adoption preserves its overview and thought disclosure identity', () => {
+  const temporary = { ...thought('reasoning-native-r'), thoughtKey: 'native-response-parent' };
+  const first = groupTranscript([temporary]);
+  const completed = groupTranscript([{ ...temporary, id: 'native-message', content: 'Final body' }], first);
+  assert.equal(first[0].key, completed[0].key);
+  assert.equal(first[0].kind === 'process' && first[0].items[0].key,
+    completed[0].kind === 'process' && completed[0].items[0].key);
+  assert.equal(completed[1].key, 'native-message');
 });

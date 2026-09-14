@@ -25,9 +25,16 @@ test('tool argument projection drops hidden task prompts without changing visibl
       prompt: 'private task context '.repeat(100_000), description: 'Research', agent_type: 'explore',
     } },
   ] } });
-  assert.equal(new Map(retained.display?.toolArgs).get('bash'), toolArgsOf('bash', args));
+  assert.equal(retained.display?.toolArgs, undefined);
+  assert.equal((retained.data.toolRequests as { name: string }[]).some(request => request.name === 'bash'), false);
   assert.ok(JSON.stringify(retained).length < 8000);
   assert.ok(!JSON.stringify(retained.data).includes('private task context'));
+  const start = displayEvent({ id: 'start', type: 'tool.execution_start', data: {
+    toolCallId: 'bash', toolName: 'bash', arguments: args,
+  } });
+  assert.equal(start.display?.toolArgs, toolArgsOf('bash', args));
+  assert.ok(JSON.stringify(start).length < 4000);
+  assert.equal(start.data.arguments, undefined);
 });
 
 test('ask replies retain the whole accepted answer and never manufacture one from failed or dismissed results', () => {

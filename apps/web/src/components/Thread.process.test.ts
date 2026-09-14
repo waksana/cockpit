@@ -6,6 +6,7 @@ import type { ChatMessage } from '@cockpit/protocol';
 import { fixtureSession } from '../dev/chat-fixtures';
 import { MessageProcess, Thread } from './Thread';
 import { CopyButton } from './CopyButton';
+import { groupTranscript } from '../lib/transcriptRows';
 
 const message: ChatMessage = { id: 'body', role: 'assistant', content: '', timestamp: 1000 };
 const items: ChatMessage[] = [
@@ -17,7 +18,9 @@ const items: ChatMessage[] = [
   ].map(tool => ({ ...message, id: tool.toolCallId, toolCalls: [tool] })),
 ];
 const renderProcess = (value = items, latest = false) =>
-  renderToStaticMarkup(createElement(MessageProcess, { items: value, sessionId: 'fixture', latest }));
+  renderToStaticMarkup(createElement(MessageProcess, {
+    items: groupTranscript(value).flatMap(row => row.kind === 'process' ? row.items : []), sessionId: 'fixture', latest,
+  }));
 
 test('older overview summarizes consecutive items and retains failures without mounting hidden tool bodies', t => {
   t.mock.method(globalThis, 'fetch', async () => { assert.fail('Process disclosure must not read history'); });
@@ -62,19 +65,18 @@ test('reasoning opens by default only when it is the latest visible item, not th
   assert.match(html, /class="activity-detail msg-thought">Recorded reasoning/);
 });
 
-test('provisional previews are labelled and cannot extend confirmed process groups', () => {
+test('response reasoning is placed before its body without a provisional region or repeated content', () => {
   const session = fixtureSession('empty');
   session.messages = [
     items[0], items[1],
-    { ...items[0], id: 'stream-thought', provisional: true },
-    { ...message, id: 'stream-body', content: 'Unconfirmed draft', provisional: true },
+    { ...message, id: 'response', content: 'Visible body', thought: 'Associated thinking' },
   ];
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
-  assert.equal((html.match(/class="process-summary"/g) ?? []).length, 2);
-  assert.equal((html.match(/class="chat-provisional-label"/g) ?? []).length, 1);
-  assert.equal((html.match(/data-provisional="true"/g) ?? []).length, 2);
-  assert.match(html, /临时内容 · 待完整记录/);
-  assert.match(html, /Unconfirmed draft/);
+  assert.equal((html.match(/class="process-summary"/g) ?? []).length, 1);
+  assert.match(html, /1 次工具调用 · 2 次思考/);
+  assert.doesNotMatch(html, /provisional|待完整记录/);
+  assert.match(html, /Visible body/);
+  assert.ok(html.indexOf('2 次思考') < html.indexOf('Visible body'));
   assert.doesNotMatch(html, /class="activity-detail msg-thought"/);
 });
 
@@ -89,6 +91,11 @@ test('thought-only and incomplete states have literal counts, never invented suc
     assert.ok(html.includes(summary));
     assert.doesNotMatch(html, /含思考|已完成/);
   }
+});
+test('unsupported reasoning association stays visible as uncertainty even while its text is collapsed', () => {
+  const html = renderProcess([{ ...items[0], incomplete: '缺少可确认的原生响应引用，未猜测归属。' }], true);
+  assert.match(html, /思考归属未确认/);
+  assert.match(html, /role="status">缺少可确认的原生响应引用/);
 });
 
 test('consecutive process items share an overview and blank bodies do not create a boundary or space', () => {

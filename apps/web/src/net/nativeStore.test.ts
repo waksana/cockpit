@@ -245,7 +245,7 @@ test('older history failures survive metadata refresh and retry the existing old
   assert.deepEqual(h.ids(), ['older', 'A']);
 });
 
-test('initial history keeps loading until its tool owner is present, then follows the original live tail', async t => {
+test('initial result-only history stays bounded and follows the original live tail without an owner scan', async t => {
   const h = setup(t);
   h.source.open(); h.snapshot(); h.store.getState().setActiveId('a');
   const result: NativeChatEvent = {
@@ -253,20 +253,13 @@ test('initial history keeps loading until its tool owner is present, then follow
     data: { toolCallId: 'tool', success: true, result: { content: 'result' } },
   };
   await h.reply(0, [result, message('B')], { hasMore: true });
-  assert.equal(h.state().loadingHistory, true);
-  assert.deepEqual(h.ids(), []);
-  assert.equal(h.requests[1].body.direction, 'backward');
-  assert.equal(h.requests[1].body.cursor, 'cursor-0');
-  assert.equal(h.requests[1].body.bootstrap, false);
-  await h.reply(1, [{ ...message('A'), data: {
-    messageId: 'A', content: 'Run tool', toolRequests: [{ toolCallId: 'tool', name: 'bash' }],
-  } }], { hasMore: true });
   assert.equal(h.state().loadingHistory, false);
   assert.equal(h.state().incompleteBoundary, false);
-  assert.deepEqual(h.ids(), ['A', 'tool-tool', 'B']);
-  assert.equal(h.state().messages[1].toolCalls?.[0].output, 'result');
-  assert.ok(h.requests[2].path.endsWith('/chat/stream'));
-  assert.equal(h.requests[2].body.cursor, 'tail-before-page');
+  assert.deepEqual(h.ids(), ['tool-tool', 'B']);
+  assert.equal(h.state().messages[0].toolCalls?.[0].output, 'result');
+  assert.equal(h.state().messages[0].toolCalls?.[0].title, '缺少工具开始记录');
+  assert.ok(h.requests[1].path.endsWith('/chat/stream'));
+  assert.equal(h.requests[1].body.cursor, 'tail-before-page');
 });
 
 test('switching sessions during boundary completion aborts the remaining history work', async t => {

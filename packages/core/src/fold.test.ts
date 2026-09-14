@@ -41,7 +41,7 @@ function live(events: Ev[], engineIntercepts: string[] = []) {
 const tStart = (i = 0): Ev => ({ type: 'assistant.turn_start', data: {}, id: `ts-${i}` });
 const userMsg = (content: string, id: string): Ev => ({ type: 'user.message', data: { content }, id });
 const asstMsg = (messageId: string, content: string, extra: Record<string, unknown> = {}): Ev =>
-  ({ type: 'assistant.message', data: { messageId, content, ...extra }, id: messageId });
+  ({ type: 'assistant.message', data: { messageId, content, ...extra }, id: messageId, parentId: 'ts-0' });
 
 test('child execution evidence distinguishes cancellation and later activity without inferring a task outcome', () => {
   const state = newFoldState();
@@ -97,12 +97,12 @@ test('user + assistant message fold', () => {
   assert.equal(st.messages[1].content, 'hello');
 });
 
-test('strict ownership records hidden tool requests independently of visible message rows', () => {
+test('dedicated hidden tools index their starts, never ordinary assistant request rows', () => {
   for (const name of ['skill', 'exit_plan_mode', 'task']) {
     const state = newFoldState();
     const owner = asstMsg('hidden-owner', '', { toolRequests: [{ toolCallId: 'hidden', name }] });
     foldEvent(state, normalizeEvent({ ...owner, data: owner.data ?? {} }), { strictOwnership: true });
-    assert.equal(state.toolMsg.get('hidden'), 'hidden-owner');
+    assert.equal(state.toolMsg.get('hidden'), undefined);
     assert.equal(state.messages.length, 0);
     for (const type of ['tool.execution_start', 'tool.execution_complete']) {
       const result = foldEvent(state, normalizeEvent({
@@ -111,6 +111,7 @@ test('strict ownership records hidden tool requests independently of visible mes
       assert.notEqual(result.missingOwner, true);
       assert.deepEqual(result.changed, []);
     }
+    assert.equal(state.toolMsg.get('hidden'), '');
     assert.equal(state.messages.length, 0);
   }
 });
@@ -158,30 +159,24 @@ test('streaming deltas accumulate into one message', () => {
   assert.equal(st.messages[0].content, 'foobar');
 });
 
-test('durable body, thought and tools retain their first actual record positions through streaming updates', () => {
+test('response-local body and thought retain their position beside independent tool starts', () => {
   const st = newFoldState();
-  const apply = (type: string, data: Record<string, unknown>) => foldEvent(st, { type, data, timestamp: 1 });
-  const tool = (toolCallId: string) => ({ toolRequests: [{ toolCallId, name: 'view' }] });
-  apply('assistant.message', { messageId: 'prior', content: '', ...tool('t1') });
+  const apply = (type: string, data: Record<string, unknown>) => foldEvent(st, { type, data, timestamp: 1, parentId: 'turn' });
+  apply('tool.execution_start', { toolCallId: 't1', toolName: 'view' });
+  foldEvent(st, { type: 'assistant.turn_start', id: 'turn', data: {} });
   apply('assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Partial' });
   apply('assistant.message_start', { messageId: 'm' });
-  assert.deepEqual(st.messages.map(item => item.id), ['tool-t1', 'reasoning-r']);
+  assert.deepEqual(st.messages.map(item => item.id), ['tool-t1', 'm']);
   apply('assistant.message_delta', { messageId: 'm', deltaContent: 'Draft' });
-  assert.deepEqual(st.messages.map(item => item.provisional), [undefined, true, true]);
-  const toolOnly = apply('assistant.message', { messageId: 'm', content: '', ...tool('t2') });
-  assert.deepEqual(toolOnly.removed, ['m']);
-  assert.deepEqual(st.messages.map(item => item.id), ['tool-t1', 'tool-t2', 'reasoning-r']);
-  apply('assistant.message', { messageId: 'm', content: 'Answer', ...tool('t2') });
-  apply('assistant.reasoning', { reasoningId: 'r', content: 'Complete' });
-  assert.deepEqual(st.messages.map(item => item.id), ['tool-t1', 'tool-t2', 'm', 'reasoning-r']);
+  assert.equal(st.messages[1].thought, 'Partial');
+  apply('assistant.message', { messageId: 'm', content: 'Answer', reasoningText: 'Complete' });
+  apply('tool.execution_start', { toolCallId: 't2', toolName: 'view' });
   apply('assistant.message', { messageId: 'm', content: 'Updated', reasoningText: 'Different intact snapshot' });
   apply('tool.execution_complete', { toolCallId: 't2', success: true, result: { content: 'Output' } });
-  assert.deepEqual(st.messages.map(item => item.id), ['tool-t1', 'tool-t2', 'm', 'reasoning-r', 'reasoning-message-m']);
-  assert.equal(st.messages[1]?.toolCalls?.[0]?.output, 'Output');
-  assert.equal(st.messages[2]?.content, 'Updated');
-  assert.equal(st.messages[3]?.thought, 'Complete');
-  assert.equal(st.messages[4]?.thought, 'Different intact snapshot');
-  assert.equal(st.messages.some(item => item.provisional), false);
+  assert.deepEqual(st.messages.map(item => item.id), ['tool-t1', 'm', 'tool-t2']);
+  assert.equal(st.messages[2]?.toolCalls?.[0]?.output, 'Output');
+  assert.equal(st.messages[1]?.content, 'Updated');
+  assert.equal(st.messages[1]?.thought, 'Different intact snapshot');
 });
 
 test('reasoning keeps its own native identity before the following body', () => {
@@ -215,7 +210,7 @@ test('equal explicit text never retires or reanchors an existing durable message
     assert.deepEqual(result.removed ?? [], []);
     assert.deepEqual(st.messages.filter(item => before.includes(item.id)).map(item => item.id), before);
     if (index >= 2) {
-      assert.deepEqual(st.messages.map(item => item.id), ['reasoning-r', 'm', 'reasoning-message-n', 'n']);
+      assert.deepEqual(st.messages.map(item => item.id), ['reasoning-r', 'm', 'n']);
       assert.equal(st.messages[2]?.thought, index === 5 ? 'C' : 'B');
     }
   }
@@ -239,8 +234,8 @@ test('H1: cancelled turn does not absorb the next turn (live == replay)', () => 
 
   // Replay yields TWO messages (cancelled partial + the real second turn).
   assert.equal(replayed.messages.length, 2, 'replay: two separate turns');
-  assert.deepEqual(replayed.messages.map(message => [message.id, message.content, message.provisional]), [
-    ['a2', 'second turn answer', undefined], ['a1', 'partial…', true],
+  assert.deepEqual(replayed.messages.map(message => [message.id, message.content]), [
+    ['a1', 'partial…'], ['a2', 'second turn answer'],
   ]);
 
   // Live MUST match replay — the second turn must be its own message, not merged
@@ -264,8 +259,8 @@ test('H1b: resetTurn after a cancelled stream separates the next turn', () => {
   // next turn arrives WITHOUT a turn_start (e.g. immediate new prompt after cancel)
   foldEvent(st, asstMsg('a2', 'after cancel') as never);
   assert.equal(st.messages.length, 2, 'cancelled partial + new turn are separate');
-  assert.deepEqual(st.messages.map(message => [message.id, message.content, message.provisional]), [
-    ['a2', 'after cancel', undefined], ['a1', 'partial…', true],
+  assert.deepEqual(st.messages.map(message => [message.id, message.content]), [
+    ['a1', 'partial…'], ['a2', 'after cancel'],
   ]);
 });
 
@@ -286,8 +281,7 @@ test('M2: multiple reasoning segments are preserved', () => {
 });
 
 // ── D1: streaming reasoning survives reload (live == replay) ──────────────────
-// Explicit native reasoning records have their own identity. Message-only
-// journals use a deterministic message-based reasoning fallback instead.
+// Real native full reasoning is ephemeral and follows its durable message.
 
 // The live store projection in first-upsert (insertion) order.
 function liveProjection(events: Ev[]) {
@@ -299,31 +293,30 @@ test('D1: streaming reasoning survives reload — thought rebuilt from reasoning
   // Live: reasoning streams before the message, then the final message lands.
   const liveEvs: Ev[] = [
     tStart(),
-    { type: 'assistant.reasoning_delta', data: { reasoningId: 'r1', deltaContent: 'Let me think ' } },
-    { type: 'assistant.reasoning', data: { reasoningId: 'r1', content: reasoningText } },
-    { type: 'assistant.message_start', data: { messageId: 'a1' } },
+    { type: 'assistant.reasoning_delta', parentId: 'ts-0', data: { reasoningId: 'r1', deltaContent: 'Let me think ' } },
+    { type: 'assistant.message_start', parentId: 'ts-0', data: { messageId: 'a1' } },
     { type: 'assistant.message_delta', data: { messageId: 'a1', deltaContent: 'The answer.' } },
     asstMsg('a1', 'The answer.', { reasoningText }),
+    { type: 'assistant.reasoning', parentId: 'a1', ephemeral: true, data: { reasoningId: 'r1', content: reasoningText } },
   ];
   // Replay: getEvents() has only turn_start + the final message (with reasoningText).
   const replayEvs: Ev[] = [tStart(), asstMsg('a1', 'The answer.', { reasoningText })];
 
   const replayed = replay(replayEvs);
-  assert.equal(replayed.messages.length, 2);
+  assert.equal(replayed.messages.length, 1);
   // The headline assertion — fails today, passes with the reasoningText fallback.
   assert.equal(replayed.messages[0].thought, reasoningText);
-  assert.equal(replayed.messages[0].id, 'reasoning-message-a1');
-  assert.equal(replayed.messages[1].content, 'The answer.');
+  assert.equal(replayed.messages[0].id, 'a1');
+  assert.equal(replayed.messages[0].content, 'The answer.');
 
   // Live carries the same thought, accumulated from the streamed reasoning.
   const liveMsgs = liveProjection(liveEvs);
-  assert.equal(liveMsgs.length, 2);
+  assert.equal(liveMsgs.length, 1);
   assert.equal(liveMsgs[0].thought, reasoningText);
-  assert.equal(liveMsgs[1].content, 'The answer.');
+  assert.equal(liveMsgs[0].content, 'The answer.');
 
   // Live and replay share the canonical anchor, not only visible text.
-  assert.equal(liveMsgs[0].id, 'reasoning-r1');
-  assert.equal(liveMsgs[1].id, replayed.messages[1].id);
+  assert.equal(liveMsgs[0].id, replayed.messages[0].id);
   assert.equal(liveMsgs[0].thought, replayed.messages[0].thought);
   assert.equal(liveMsgs[0].content, replayed.messages[0].content);
 });
@@ -356,25 +349,25 @@ test('D1: multi-segment reasoning reload — combined reasoningText rebuilds the
   const combined = 'first thought\n\nsecond thought';
   const liveEvs: Ev[] = [
     tStart(),
-    { type: 'assistant.reasoning', data: { reasoningId: 'r1', content: 'first thought' } },
-    { type: 'assistant.reasoning', data: { reasoningId: 'r2', content: 'second thought' } },
+    { type: 'assistant.reasoning_delta', parentId: 'ts-0', data: { reasoningId: 'r1', deltaContent: 'first thought' } },
+    { type: 'assistant.reasoning_delta', parentId: 'ts-0', data: { reasoningId: 'r1', deltaContent: '\n\nsecond thought' } },
     asstMsg('a1', 'done', { reasoningText: combined }),
   ];
   // Replay: only the final message, carrying the SDK's combined reasoningText.
   const replayEvs: Ev[] = [tStart(), asstMsg('a1', 'done', { reasoningText: combined })];
 
   const replayed = replay(replayEvs);
-  assert.equal(replayed.messages.length, 2);
+  assert.equal(replayed.messages.length, 1);
   // Both segments present after reload.
   assert.match(replayed.messages[0].thought ?? '', /first thought/);
   assert.match(replayed.messages[0].thought ?? '', /second thought/);
 
   const liveMsgs = liveProjection(liveEvs);
-  assert.equal(liveMsgs.length, 3);
+  assert.equal(liveMsgs.length, 1);
   assert.match(String(liveMsgs[0].thought ?? ''), /first thought/);
-  assert.match(String(liveMsgs[1].thought ?? ''), /second thought/);
+  assert.match(String(liveMsgs[0].thought ?? ''), /second thought/);
   // live == replay on the rebuilt thought.
-  assert.equal(liveMsgs.slice(0, 2).map(message => message.thought).join('\n\n'), replayed.messages[0].thought);
+  assert.equal(liveMsgs[0].thought, replayed.messages[0].thought);
 });
 
 test('D1: sub-agent streaming reload — inner thought rebuilt inside the card', () => {
@@ -387,11 +380,11 @@ test('D1: sub-agent streaming reload — inner thought rebuilt inside the card',
       { toolCallId: A, name: 'task', arguments: { agent_type: 'explore', prompt: 'do X' } },
     ] }, id: 'a1' },
     { type: 'subagent.started', agentId: A, data: { toolCallId: A, agentName: 'explore', agentDisplayName: 'Explore' } },
-    { type: 'assistant.reasoning_delta', agentId: A, data: { reasoningId: 'ir1', deltaContent: 'inner ' } },
-    { type: 'assistant.reasoning', agentId: A, data: { reasoningId: 'ir1', content: innerThought } },
-    { type: 'assistant.message_start', agentId: A, data: { messageId: 'sa1' } },
+    { type: 'assistant.turn_start', agentId: A, id: 'child-turn', data: {} },
+    { type: 'assistant.reasoning_delta', agentId: A, parentId: 'child-turn', data: { reasoningId: 'ir1', deltaContent: 'inner ' } },
+    { type: 'assistant.message_start', agentId: A, parentId: 'child-turn', data: { messageId: 'sa1' } },
     { type: 'assistant.message_delta', agentId: A, data: { messageId: 'sa1', deltaContent: 'inner ans' } },
-    { type: 'assistant.message', agentId: A, data: { messageId: 'sa1', content: 'inner ans', reasoningText: innerThought }, id: 'sa1' },
+    { type: 'assistant.message', agentId: A, parentId: 'child-turn', data: { messageId: 'sa1', content: 'inner ans', reasoningText: innerThought }, id: 'sa1' },
     { type: 'subagent.completed', agentId: A, data: { toolCallId: A, agentDisplayName: 'Explore', totalToolCalls: 0 } },
   ];
   // Replay: no inner reasoning/streaming events — only the final inner message
@@ -410,20 +403,20 @@ test('D1: sub-agent streaming reload — inner thought rebuilt inside the card',
   const card = replayed.messages.find((m) => m.subtype === 'subagent');
   assert.ok(card, 'sub-agent card exists on replay');
   const innerReplay = card!.subMessages ?? [];
-  assert.equal(innerReplay.length, 2);
+  assert.equal(innerReplay.length, 1);
   // Fails today (inner thought dropped); passes with the reasoningText fallback.
   assert.equal(innerReplay[0].thought, innerThought);
-  assert.equal(innerReplay[1].content, 'inner ans');
+  assert.equal(innerReplay[0].content, 'inner ans');
 
   // Live rebuilds the same inner thought from the streamed reasoning.
   const { st: liveSt } = live(liveEvs);
   const liveCard = liveSt.messages.find((m) => m.subtype === 'subagent');
   assert.ok(liveCard, 'sub-agent card exists live');
   const innerLive = liveCard!.subMessages ?? [];
-  assert.equal(innerLive.length, 2);
+  assert.equal(innerLive.length, 1);
   assert.equal(innerLive[0].thought, innerThought);
-  assert.equal(innerLive[1].content, 'inner ans');
-  assert.equal(innerLive[1].id, innerReplay[1].id);
+  assert.equal(innerLive[0].content, 'inner ans');
+  assert.equal(innerLive[0].id, innerReplay[0].id);
 });
 
 // --- tool calls ---
@@ -433,7 +426,7 @@ test('tool call args + output captured; status transitions', () => {
     { type: 'assistant.message', data: { messageId: 'a1', content: '', toolRequests: [
       { toolCallId: 't1', name: 'bash', intentionSummary: 'list files', arguments: { command: 'ls' } },
     ] }, id: 'a1' },
-    { type: 'tool.execution_start', data: { toolCallId: 't1' } },
+    { type: 'tool.execution_start', data: { toolCallId: 't1', toolName: 'bash', intentionSummary: 'list files', arguments: { command: 'ls' } } },
     { type: 'tool.execution_complete', data: { toolCallId: 't1', success: true, result: { content: 'file1\nfile2' } } },
   ];
   const st = replay(evs);
@@ -452,6 +445,7 @@ test('ask_user reply surfaces as a user bubble (prefix stripped)', () => {
     { type: 'assistant.message', data: { messageId: 'a1', content: '', toolRequests: [
       { toolCallId: 'ask1', name: 'ask_user', arguments: { question: 'Q?' } },
     ] }, id: 'a1' },
+    { type: 'tool.execution_start', data: { toolCallId: 'ask1', toolName: 'ask_user', arguments: { question: 'Q?' } } },
     { type: 'tool.execution_complete', data: { toolCallId: 'ask1', success: true, result: { content: 'User responded: my answer' } } },
   ];
   const st = replay(evs);

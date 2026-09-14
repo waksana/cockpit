@@ -307,14 +307,6 @@
   .sys-ico { display: inline-flex; }
 }
 
-// Skill activation shares the activity row but never advertises a disclosure.
-.message.is-skill {
-  align-self: stretch;
-  margin: 2px 0;
-  min-width: 0;
-  max-width: 100%;
-}
-
 // Date separator (Telegram "Today" pill).
 .date-separator {
   align-self: center;
@@ -336,10 +328,6 @@
   font: inherit; font-size: var(--font-size-14); line-height: 20px; text-align: start;
 }
 .message-process { min-width: 0; }
-.chat-provisional-label {
-  color: var(--secondary-text-color);
-  font-size: var(--font-size-12); line-height: 1.5;
-}
 .process-summary {
   display: flex; align-items: center; gap: 8px;
   width: 100%; min-width: 0; min-height: 44px;
@@ -379,6 +367,11 @@ button.activity-head {
 .msg-thought-block { margin: 0; }
 .msg-thought {
   white-space: pre-wrap;
+}
+.thought-incomplete {
+  margin: 0 8px 4px 32px;
+  color: var(--secondary-text-color);
+  font-size: var(--font-size-12);
 }
 
 // Raw tool metadata belongs in details, never a second collapsed line.

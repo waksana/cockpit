@@ -37,6 +37,7 @@ const started = (toolCallId: string, agentId: string, parentId?: string) => nati
   toolCallId, agentName: 'explore', agentDisplayName: agentId, agentDescription: 'Inspect synthetic data',
   agentType: 'explore', executionMode: 'background', model: 'test-model', ...(parentId ? { parentId } : {}),
 }, { agentId });
+const turn = () => native('assistant.turn_start', { turnId: '0' }, { id: 'response-turn' });
 
 test('normalization preserves native envelopes, payloads and opaque IDs without mutation', () => {
   const event = native('assistant.message', {
@@ -106,56 +107,58 @@ test('native user anchors and original text survive without interpreting module 
 for (const withStart of [true, false]) {
   test(`native reasoning/text live and durable folds have identical IDs and upserts (start=${withStart})`, () => {
     const user = native('user.message', { content: 'question', messageId: 'accepted' }, { id: 'u' });
-    const reasoning = native('assistant.reasoning', { reasoningId: 'r', content: 'complete thought' });
+    const reasoning = native('assistant.reasoning', { reasoningId: 'r', content: 'complete thought' }, { ephemeral: true, parentId: 'answer-event-id' });
     const final = native('assistant.message', {
       messageId: 'answer-id', content: 'answer', reasoningText: 'complete thought',
-    }, { id: 'answer-event-id', parentId: 'reasoning-event' });
+    }, { id: 'answer-event-id', parentId: 'response-turn' });
     const stream = fold([
-      user,
-      native('assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'complete ' }, { ephemeral: true }),
-      reasoning,
-      ...(withStart ? [native('assistant.message_start', { messageId: 'answer-id' }, { ephemeral: true })] : []),
-      native('assistant.message_delta', { messageId: 'answer-id', deltaContent: 'ans' }, { ephemeral: true }),
-      native('assistant.message_delta', { messageId: 'answer-id', deltaContent: 'wer' }, { ephemeral: true }),
-      final,
+      user, turn(),
+      native('assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'complete ' }, { ephemeral: true, parentId: 'response-turn' }),
+      ...(withStart ? [native('assistant.message_start', { messageId: 'answer-id' }, { ephemeral: true, parentId: 'response-turn' })] : []),
+      native('assistant.message_delta', { messageId: 'answer-id', deltaContent: 'ans' }, { ephemeral: true, parentId: 'response-turn' }),
+      native('assistant.message_delta', { messageId: 'answer-id', deltaContent: 'wer' }, { ephemeral: true, parentId: 'response-turn' }),
+      final, reasoning,
     ]);
-    for (const persisted of [[user, reasoning, final]]) {
+    for (const persisted of [[user, turn(), final]]) {
       const replay = fold(persisted);
       assert.deepEqual(stream.state.messages, replay.state.messages);
       assert.deepEqual([...stream.client.values()], replay.state.messages);
-      assert.deepEqual([...stream.client.keys()], ['u', 'reasoning-r', 'answer-id']);
+      assert.deepEqual([...stream.client.keys()], ['u', 'answer-id']);
     }
     const fallback = fold([user, final]).state.messages;
-    assert.deepEqual(fallback.map(message => message.id), ['u', 'reasoning-message-answer-id', 'answer-id']);
+    assert.deepEqual(fallback.map(message => message.id), ['u', 'answer-id']);
     assert.equal(fallback[1].thought, stream.state.messages[1].thought);
   });
 }
 
-test('reasoning publishes its native ID independently before a body starts', () => {
+test('thought-first response adopts the native message ID when its referenced body starts', () => {
   const state = newFoldState();
+  foldEvent(state, normalizeEvent(turn()));
   assert.deepEqual(foldEvent(state, normalizeEvent(native('assistant.reasoning_delta', {
     reasoningId: 'r', deltaContent: 'thinking',
-  }, { ephemeral: true }))).changed, ['reasoning-r']);
+  }, { ephemeral: true, parentId: 'response-turn' }))).changed, ['reasoning-r']);
   assert.equal(state.messages.length, 1);
-  const result = foldEvent(state, normalizeEvent(native('assistant.message_start', { messageId: 'm' }, { ephemeral: true })));
-  assert.deepEqual(result.changed, []);
+  const result = foldEvent(state, normalizeEvent(native('assistant.message_start', { messageId: 'm' }, { ephemeral: true, parentId: 'response-turn' })));
+  assert.deepEqual(result.changed, ['m']);
+  assert.deepEqual(result.removed, ['reasoning-r']);
   assert.equal(state.messages[0]?.thought, 'thinking');
-  assert.equal(state.messages[0]?.provisional, true);
+  assert.equal(state.messages[0]?.id, 'm');
   assert.equal(state.messages.length, 1, 'empty start establishes identity, not a display position');
-  assert.equal(state.streamingId, 'm');
+  assert.equal(state.activeResponse?.id, 'm');
 });
 
-test('message-only final reports durable fallback upserts and removes transient-only thought IDs', () => {
-  const final = native('assistant.message', { messageId: 'm', content: 'Body', reasoningText: 'Final thought' });
+test('message-only final replaces a referenced transient thought without a fallback response', () => {
+  const final = native('assistant.message', { messageId: 'm', content: 'Body', reasoningText: 'Final thought' }, { parentId: 'response-turn' });
   const live = fold([
-    native('assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Partial' }, { ephemeral: true }),
-    native('assistant.message_start', { messageId: 'm' }, { ephemeral: true }),
+    turn(),
+    native('assistant.reasoning_delta', { reasoningId: 'r', deltaContent: 'Partial' }, { ephemeral: true, parentId: 'response-turn' }),
+    native('assistant.message_start', { messageId: 'm' }, { ephemeral: true, parentId: 'response-turn' }),
     final,
   ]);
   const persisted = fold([final]);
   assert.deepEqual(live.state.messages, persisted.state.messages);
   assert.deepEqual([...live.client.values()], persisted.state.messages);
-  assert.deepEqual([...live.client.keys()], ['reasoning-message-m', 'm']);
+  assert.deepEqual([...live.client.keys()], ['m']);
 });
 
 test('normalized later message finals report all actually reconciled identities in their owning fold', () => {
@@ -164,45 +167,46 @@ test('normalized later message finals report all actually reconciled identities 
     if (child) foldEvent(state, normalizeEvent(started('spawn', 'child')));
     const envelope = child ? { agentId: 'child' } : {};
     const apply = (event: SessionEvent) => foldEvent(state, normalizeEvent(event));
+    apply(native('assistant.turn_start', { turnId: '0' }, { ...envelope, id: 'response-turn' }));
     apply(native('assistant.reasoning_delta', { reasoningId: 'previous', deltaContent: 'Old partial' }, {
-      ...envelope, ephemeral: true,
+      ...envelope, ephemeral: true, parentId: 'response-turn',
     }));
-    apply(native('assistant.message_start', { messageId: 'm' }, { ...envelope, ephemeral: true }));
-    apply(native('assistant.message', { messageId: 'm', content: 'Body' }, envelope));
+    apply(native('assistant.message_start', { messageId: 'm' }, { ...envelope, ephemeral: true, parentId: 'response-turn' }));
+    apply(native('assistant.message', { messageId: 'm', content: 'Body' }, { ...envelope, parentId: 'response-turn' }));
     apply(native('assistant.reasoning_delta', { reasoningId: 'current', deltaContent: 'Current partial' }, {
       ...envelope, ephemeral: true,
     }));
     const target = child ? state.subFolds.get('spawn')! : state;
-    assert.deepEqual(target.reasoningIds, ['reasoning-current']);
-    assert.deepEqual(target.messageReasoning.get('m'), ['reasoning-previous']);
+    assert.equal(target.reasoning.get('previous'), 'm');
+    assert.equal(target.reasoning.get('current'), 'reasoning-current');
     const result = apply(native('assistant.message', {
       messageId: 'm', content: 'Updated body', reasoningText: 'Whole reasoning',
     }, envelope));
-    assert.deepEqual(result.removed, ['reasoning-previous', 'reasoning-current']);
+    assert.deepEqual(result.removed ?? [], []);
     assert.equal(result.reconciled?.[0]?.fold, target);
-    assert.deepEqual(result.reconciled?.[0]?.ids, ['reasoning-previous', 'reasoning-current']);
-    assert.deepEqual(target.messages.map(item => [item.id, item.provisional]), [
-      ['m', undefined], ['reasoning-message-m', undefined],
-    ]);
+    assert.deepEqual(result.reconciled?.[0]?.ids, ['reasoning-previous']);
+    assert.deepEqual(target.messages.map(item => item.id), ['m', 'reasoning-current']);
     assert.equal(target.messages[0]?.content, 'Updated body');
-    assert.equal(target.messages[1]?.thought, 'Whole reasoning');
+    assert.equal(target.messages[0]?.thought, 'Whole reasoning');
+    assert.equal(target.messages[1]?.thought, 'Current partial');
+    assert.ok(target.messages[1]?.incomplete, 'unreferenced reasoning is not silently discarded');
   }
 });
 
 test('final reasoningText replaces transient fragments without truncating a differing durable snapshot', () => {
-  const final = native('assistant.message', { messageId: 'm', content: 'done', reasoningText: 'full first\n\nfull second' });
+  const final = native('assistant.message', { messageId: 'm', content: 'done', reasoningText: 'full first\n\nfull second' }, { parentId: 'response-turn' });
   const { state } = fold([
+    turn(),
     native('assistant.reasoning_delta', { reasoningId: 'r1', deltaContent: 'partial' }, { ephemeral: true }),
-    native('assistant.message_start', { messageId: 'm' }, { ephemeral: true }),
+    native('assistant.message_start', { messageId: 'm' }, { ephemeral: true, parentId: 'response-turn' }),
     native('assistant.reasoning', { reasoningId: 'r1', content: 'full first' }),
-    native('assistant.reasoning_delta', { reasoningId: 'r2', deltaContent: 'full ' }, { ephemeral: true }),
-    native('assistant.reasoning_delta', { reasoningId: 'r2', deltaContent: 'second' }, { ephemeral: true }),
+    native('assistant.reasoning_delta', { reasoningId: 'r2', deltaContent: 'full ' }, { ephemeral: true, parentId: 'response-turn' }),
+    native('assistant.reasoning_delta', { reasoningId: 'r2', deltaContent: 'second' }, { ephemeral: true, parentId: 'response-turn' }),
     final,
   ]);
   assert.deepEqual(state.messages.map(message => [message.id, message.content, message.thought]), [
     ['reasoning-r1', '', 'full first'],
-    ['reasoning-message-m', '', 'full first\n\nfull second'],
-    ['m', 'done', undefined],
+    ['m', 'done', 'full first\n\nfull second'],
   ]);
 });
 
@@ -231,10 +235,10 @@ test('native multi-segment reasoning deltas retain distinct items without a fina
     native('assistant.reasoning_delta', { reasoningId: 'two', deltaContent: 'second' }, { ephemeral: true }),
     native('assistant.message', { messageId: 'm', content: 'answer' }),
   ]);
-  assert.deepEqual(state.messages.map(message => [message.thought, message.provisional]), [
-    [undefined, undefined], ['first', true], ['second', true],
-  ]);
-  assert.equal(state.messages[0]?.content, 'answer');
+  assert.deepEqual(state.messages.map(message => message.thought), ['first', 'second', undefined]);
+  assert.ok(state.messages[0]?.incomplete);
+  assert.ok(state.messages[1]?.incomplete);
+  assert.equal(state.messages[2]?.content, 'answer');
 });
 
 test('distinct concurrent message IDs are not aliased to an earlier stream', () => {
@@ -244,8 +248,7 @@ test('distinct concurrent message IDs are not aliased to an earlier stream', () 
     native('assistant.message', { messageId: 'second', content: 'separate' }),
     native('assistant.message', { messageId: 'first', content: 'finished' }),
   ]);
-  assert.deepEqual(state.messages.map((m) => [m.id, m.content]), [['second', 'separate'], ['first', 'finished']]);
-  assert.equal(state.messages.some(message => message.provisional), false);
+  assert.deepEqual(state.messages.map((m) => [m.id, m.content]), [['first', 'finished'], ['second', 'separate']]);
 });
 
 test('native nested background aliases route deltas, tools and late completion to one outer card', () => {
@@ -254,7 +257,7 @@ test('native nested background aliases route deltas, tools and late completion t
   const innerMessage = native('assistant.message', {
     messageId: 'inner-message', content: 'inner answer', reasoningText: 'inner thought',
     toolRequests: [{ toolCallId: 'view-call', name: 'view', arguments: { path: '/synthetic/input' } }],
-  }, { agentId: 'inner-registry' });
+  }, { agentId: 'inner-registry', parentId: 'response-turn' });
   const final = native('subagent.completed', {
     toolCallId: 'inner-call', agentName: 'explore', agentDisplayName: 'inner-registry', totalToolCalls: 1,
   });
@@ -271,8 +274,9 @@ test('native nested background aliases route deltas, tools and late completion t
   const persisted = fold(events);
   const live = fold([
     ...events.slice(0, 5),
-    native('assistant.reasoning_delta', { reasoningId: 'ir', deltaContent: 'inner thought' }, { agentId: 'inner-registry', ephemeral: true }),
-    native('assistant.message_delta', { messageId: 'inner-message', deltaContent: 'inner answer' }, { agentId: 'inner-registry', ephemeral: true }),
+    native('assistant.turn_start', { turnId: '0' }, { id: 'response-turn', agentId: 'inner-registry' }),
+    native('assistant.reasoning_delta', { reasoningId: 'ir', deltaContent: 'inner thought' }, { agentId: 'inner-registry', ephemeral: true, parentId: 'response-turn' }),
+    native('assistant.message_delta', { messageId: 'inner-message', deltaContent: 'inner answer' }, { agentId: 'inner-registry', ephemeral: true, parentId: 'response-turn' }),
     ...events.slice(5),
   ]);
   assert.deepEqual(live.state.messages, persisted.state.messages);
@@ -350,9 +354,8 @@ test('duplicate subagent starts do not erase already folded work or final status
   assert.equal(state.messages[0]?.subMessages?.[0]?.content, 'done');
 });
 
-const ask = native('assistant.message', { messageId: 'ask-message', content: '', toolRequests: [
-  { toolCallId: 'ask-call', name: 'ask_user', arguments: { question: 'Choose?', choices: ['yes', 'no'] } },
-] });
+const ask = native('tool.execution_start', { toolCallId: 'ask-call', toolName: 'ask_user',
+  arguments: { question: 'Choose?', choices: ['yes', 'no'] } });
 
 test('native selected answer renders once from durable completion, not ephemeral callbacks', () => {
   const complete = native('tool.execution_complete', {
@@ -409,8 +412,11 @@ test('ask tool start can correlate a persisted completion without a preceding as
     native('tool.execution_start', { toolCallId: 'ask-call', toolName: 'ask_user', arguments: { question: 'Q?' } }),
     native('tool.execution_complete', { toolCallId: 'ask-call', success: true, result: { content: 'User responded: yes' } }),
   ];
-  assert.equal(fold(events).state.messages[0]?.content, 'yes');
-  assert.equal(fold([events[1]!]).state.messages.length, 0, 'unknown tool output is not a user answer');
+  assert.equal(fold(events).state.messages[1]?.content, 'yes');
+  const unknown = fold([events[1]!]).state.messages;
+  assert.equal(unknown.length, 1);
+  assert.equal(unknown[0]?.toolCalls?.[0].title, '缺少工具开始记录');
+  assert.equal(unknown[0]?.role, 'assistant', 'unknown tool output is not a user answer');
 });
 
 test('native nested ask replies stay in their owning card, including requested-event correlation', () => {
@@ -427,7 +433,7 @@ test('native nested ask replies stay in their owning card, including requested-e
   ]);
   assert.deepEqual([...client.values()], state.messages);
   assert.equal(state.messages.length, 1);
-  const reply = state.messages[0]?.subMessages?.[0]?.subMessages?.[0];
+  const reply = state.messages[0]?.subMessages?.[0]?.subMessages?.find(message => message.subtype === 'ask-reply');
   assert.equal(reply?.id, 'reply-inner-ask');
   assert.equal(reply?.content, 'yes');
 });

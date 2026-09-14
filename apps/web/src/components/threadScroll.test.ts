@@ -129,14 +129,15 @@ test('incremental backward owner repair and interleaved live rows retain the act
     } },
     ...Array.from({ length: 10 }, (_, i) => message(`m${i}`)),
   ]);
-  const { view, frames, scroll } = fixture(325);
+  const { view, frames, scroll } = fixture(425);
+  view.rows = window.snapshot().messages.map(message => ({ id: message.id, height: 100 }));
   scroll.interact();
   const anchor = scroll.position();
-  const stable = window.snapshot().messages[3];
+  const stable = window.snapshot().messages.find(message => message.id === 'm3');
   accept([message('live')], 'forward');
   accept([{ ...message('owner'), data: {
     messageId: 'owner', content: 'Question', toolRequests: [{ toolCallId: 'ask', name: 'ask_user' }],
-  } }]);
+  } }, { id: 'start', type: 'tool.execution_start', timestamp: 1, data: { toolCallId: 'ask', toolName: 'ask_user' } }]);
   view.rows = window.snapshot().messages.map(message => ({ id: message.id, height: 100 }));
   scroll.changed();
   frames.flush();

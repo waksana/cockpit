@@ -19,7 +19,7 @@ import { CopyButton } from './CopyButton';
 import { ActivityHeader } from './ActivityHeader';
 import { DisclosureChoices } from './DisclosureChoices';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
-import { groupTranscript, type TranscriptRow } from '../lib/transcriptRows';
+import { groupTranscript, type TranscriptRow, type ProcessItem } from '../lib/transcriptRows';
 
 // Plan-exit action → button label. The SDK offers a subset of these (incl.
 // autopilot_fleet); the card renders one button per offered action rather than a
@@ -67,11 +67,12 @@ function ToolCallRow({ tc, sessionId }: { tc: ToolCall; sessionId: string }) {
 }
 
 function Thought({ message, latest, sessionId }: { message: ChatMessage; latest: boolean; sessionId: string }) {
-  const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'thought', message.id]), latest);
+  const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'thought', message.thoughtKey ?? message.id]), latest);
   return (
     <div className="msg-thought-block">
       <ActivityHeader className="thought-toggle" icon={<Icon name="skills" size={16} />}
         title="思考过程" disclosure={{ open, onToggle: toggle }} />
+      {message.incomplete && <div className="thought-incomplete" role="status">{message.incomplete}</div>}
       {open && <div className="activity-detail msg-thought">{message.thought}</div>}
     </div>
   );
@@ -81,19 +82,19 @@ function SkillActivity({ message }: { message: ChatMessage }) {
   return <ActivityHeader icon={<Icon name="skills" size={16} />} title={`skill · ${message.content}`} />;
 }
 
-export function MessageProcess({ items, sessionId, latest = false, identity = items[0].id,
-  latestItemId = latest ? items.at(-1)?.id : undefined }: {
-  items: ChatMessage[]; sessionId: string; latest?: boolean; identity?: string; latestItemId?: string;
+export function MessageProcess({ items, sessionId, latest = false, identity = items[0].key,
+  latestItemId = latest ? items.at(-1)?.key : undefined }: {
+  items: ProcessItem[]; sessionId: string; latest?: boolean; identity?: string; latestItemId?: string;
 }) {
   const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'overview', identity]), latest);
   const [mounted, setMounted] = useState(open);
   if (open && !mounted) setMounted(true);
   const contentId = useId();
-  const tools = items.flatMap(item => item.toolCalls ?? []);
-  const thoughts = items.filter(item => item.thought?.trim());
-  const latestThoughtId = latest && items.at(-1)?.id === latestItemId && items.at(-1)?.thought?.trim()
+  const tools = items.flatMap(item => item.kind === 'tool' ? [item.tool] : []);
+  const thoughts = items.filter(item => item.kind === 'thought');
+  const latestThoughtId = latest && items.at(-1)?.key === latestItemId && items.at(-1)?.kind === 'thought'
     ? latestItemId : undefined;
-  const title = [tools.length ? `${tools.length} 次工具调用` : '', thoughts.length ? `${thoughts.length} 次思考` : ''].filter(Boolean).join(' · ');
+  const title = [tools.length ? `${tools.length} 次工具调用` : '', thoughts.length ? `${thoughts.length} 次思考` : ''].filter(Boolean).join(' · ') || '技能使用';
   const states = [
     [tools.filter(tool => tool.status === 'failed').length, '项失败'],
     [tools.filter(tool => tool.status === 'in_progress').length, '项执行中'],
@@ -101,8 +102,9 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
     [tools.filter(tool => !tool.status).length, '项状态未知'],
   ] as const;
   const notices = states.filter(([count]) => count > 0).map(([count, label]) => `${count} ${label}`);
+  if (thoughts.some(item => item.message.incomplete)) notices.push('思考归属未确认');
   const description = [title, ...notices].join(' · ');
-  const timestamp = items[0].timestamp;
+  const timestamp = items[0].message.timestamp;
   const time = clock(timestamp);
   return <section className="message-process" data-failed={states[0][0] > 0 || undefined}>
     <div data-message-id={JSON.stringify([sessionId, identity])}><button type="button" className="process-summary" aria-expanded={open} aria-controls={contentId}
@@ -114,10 +116,11 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
       <time dateTime={new Date(timestamp).toISOString()}>{time}</time>
     </button></div>
     <div id={contentId} className="message-process-content" hidden={!open} data-child-history>
-      {(mounted || open) && items.map(item => <div key={item.id} data-child-message-frame={item.id}>
-        <div data-message-id={JSON.stringify([sessionId, item.id])}>
-          {item.thought?.trim() && <Thought message={item} latest={item.id === latestThoughtId} sessionId={sessionId} />}
-          {item.toolCalls?.map(tc => <ToolCallRow key={tc.toolCallId} tc={tc} sessionId={sessionId} />)}
+      {(mounted || open) && items.map(item => <div key={item.key} data-child-message-frame={item.key}>
+        <div data-message-id={JSON.stringify([sessionId, item.key])}>
+          {item.kind === 'thought' && <Thought message={item.message} latest={item.key === latestThoughtId} sessionId={sessionId} />}
+          {item.kind === 'tool' && <ToolCallRow tc={item.tool} sessionId={sessionId} />}
+          {item.kind === 'skill' && <SkillActivity message={item.message} />}
         </div>
       </div>)}
     </div>
@@ -234,13 +237,6 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
     );
   }
   if (m.role === 'system') {
-    if (m.subtype === 'skill') {
-      return (
-        <div className="message is-skill" data-message-id={anchorId}>
-          <SkillActivity message={m} />
-        </div>
-      );
-    }
     const level = m.level ?? 'info';
     return (
       <div className="message is-system" data-message-id={anchorId} data-level={level}>
@@ -265,12 +261,12 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
   );
 });
 
-const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline, live, layout, nested, showProvisional }: {
+const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline, live, layout, nested }: {
   m: ChatMessage; sessionId: string; date?: string; showByline: boolean; live: boolean;
-  layout: ReturnType<typeof createMessageLayout>; nested?: boolean; showProvisional?: boolean;
+  layout: ReturnType<typeof createMessageLayout>; nested?: boolean;
 }) {
   const frame = useRef<HTMLDivElement | null>(null);
-  const skippable = !m.provisional && canSkipMessageLayout(m, live);
+  const skippable = canSkipMessageLayout(m, live);
   const answer = hasMessageContent(m);
   const plainAssistant = m.role === 'assistant' && m.subtype !== 'subagent';
   const empty = plainAssistant && !answer;
@@ -280,10 +276,8 @@ const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline
   return (
     <div ref={frame} className="msg-group" data-message-frame={nested ? undefined : m.id} data-child-message-frame={nested ? m.id : undefined}
       data-window-item-id={m.id}
-      data-provisional={m.provisional || undefined}
       data-assistant-message={plainAssistant && !empty || undefined} data-empty={empty || undefined}>
       {date && !empty && <div className="date-separator" aria-hidden="true">{date}</div>}
-      {showProvisional && <span className="chat-provisional-label">临时内容 · 待完整记录</span>}
       <MessageRow m={m} sessionId={sessionId} showByline={showByline} nested={nested} />
     </div>
   );
@@ -301,27 +295,24 @@ const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionI
     setGrouped({ source: messages, rows });
   }
   const lastProcess = rows.findLast(row => row.kind === 'process');
-  const firstItem = (row: TranscriptRow) => row.kind === 'process' ? row.items[0] : row.message;
+  const firstItem = (row: TranscriptRow) => row.kind === 'process' ? row.items[0].message : row.message;
   const lastRow = rows.at(-1);
-  const latestItemId = lastRow?.kind === 'process' ? lastRow.items.at(-1)?.id : lastRow?.message.id;
+  const latestItemId = lastRow?.kind === 'process' ? lastRow.items.at(-1)?.key : lastRow?.message.id;
   return rows.map((row, i) => {
     const m = firstItem(row);
     const previous = rows[i - 1] && firstItem(rows[i - 1]);
     const newDay = !nested && (!previous || !sameDay(previous.timestamp, m.timestamp));
     const date = newDay ? dateLabel(m.timestamp, today) : undefined;
-    const showProvisional = !!m.provisional && !previous?.provisional;
     if (row.kind === 'process') return <div key={row.key} className="msg-group"
       data-window-item-id={m.id}
-      data-provisional={m.provisional || undefined}
       data-message-frame={nested ? undefined : row.key} data-child-message-frame={nested ? row.key : undefined}>
       {date && <div className="date-separator" aria-hidden="true">{date}</div>}
-      {showProvisional && <span className="chat-provisional-label">临时内容 · 待完整记录</span>}
       <MessageProcess items={row.items} identity={row.key} sessionId={sessionId}
         latest={row === lastProcess} latestItemId={latestItemId} />
     </div>;
     return (
       <MessageGroup key={m.id} m={m} sessionId={sessionId}
-        date={date} nested={nested} showProvisional={showProvisional}
+        date={date} nested={nested}
         showByline={m.role === 'assistant' && (newDay || previous?.role !== 'assistant')}
         live={m.role === 'assistant' && m.id === liveId} layout={layout} />
     );

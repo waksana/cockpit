@@ -18,6 +18,13 @@ import {
   type IntentResult,
 } from './index.ts';
 
+test('response messages retain thought, body and explicit incompleteness without provisional state', () => {
+  const response = { id: 'native-message', role: 'assistant', content: ' \nBody', thought: 'Thought\n ',
+    thoughtKey: 'native-response-parent', timestamp: 1, incomplete: 'Missing native response reference' };
+  assert.deepEqual(ChatMessage.parse(response), response);
+  assert.equal('provisional' in ChatMessage.parse({ ...response, provisional: true }), false);
+});
+
 test('session/load accepts only an existing target selector and a positive identity receipt', () => {
   const schema = Intents['session/load'];
   assert.deepEqual(schema.body.parse({ sessionId: 'original' }), { sessionId: 'original' });

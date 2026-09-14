@@ -29,16 +29,17 @@ function setup(pages: NativeChatEvent[][], window = new NativeWindow(), hasMore 
   return { requests, controller, window, read, run };
 }
 
-test('history follows native pages through a tool result to its owning message, preserving the first tail', async () => {
+test('result-only history remains bounded with explicit missing metadata and the first tail', async () => {
   const h = setup([[result, event('newer')], [event('start', 'tool.execution_start', { toolCallId: 'tool' })], [owner]]);
   await h.run();
-  assert.equal(h.requests.length, 3);
-  assert.deepEqual(h.requests.map(request => request.cursor), [undefined, 'older-1', 'older-2']);
-  assert.deepEqual(h.requests.map(request => request.bootstrap), [true, false, false]);
+  assert.equal(h.requests.length, 1);
+  assert.deepEqual(h.requests.map(request => request.cursor), [undefined]);
+  assert.deepEqual(h.requests.map(request => request.bootstrap), [true]);
   assert.ok(h.requests.every(request => request.max === 32 && request.agentScope === 'primary'));
   assert.equal(h.window.live?.cursor, 'tail-before-first');
   assert.equal(h.window.snapshot().incompleteBoundary, false);
   assert.equal(h.window.snapshot().messages.find(item => item.id === 'tool-tool')?.toolCalls?.[0].output, 'done');
+  assert.equal(h.window.snapshot().messages[0].toolCalls?.[0].title, '缺少工具开始记录');
 });
 
 test('a message already at the page boundary needs no extra native read or tool completion wait', async () => {
@@ -58,19 +59,22 @@ for (const name of ['skill', 'exit_plan_mode']) {
     ]]);
     await h.run();
     assert.equal(h.requests.length, 1);
-    assert.equal(h.window.projection.toolMsg.get('hidden'), 'hidden-owner');
+    assert.equal(h.window.projection.toolMsg.get('hidden'), '');
     assert.equal(h.window.snapshot().incompleteBoundary, false);
     assert.deepEqual(h.window.snapshot().messages.map(message => message.id), ['visible-reply']);
   });
 
-  test(`${name} split across pages resolves on its hidden owner without reading an extra page`, async () => {
+  test(`${name} result before its start remains explicit without an automatic older scan`, async () => {
     const h = setup([
       [event('hidden-complete', 'tool.execution_complete', { toolCallId: 'hidden', success: true }), event('visible-reply')],
-      [event('hidden-owner', 'assistant.message', { content: '', toolRequests: [{ toolCallId: 'hidden', name }] })],
+      [event('hidden-start', 'tool.execution_start', { toolCallId: 'hidden', toolName: name })],
     ]);
     await h.run();
-    assert.equal(h.requests.length, 2);
+    assert.equal(h.requests.length, 1);
     assert.equal(h.window.snapshot().incompleteBoundary, false);
+    const request = { ...query, bootstrap: false, cursor: 'older-1' };
+    h.window.accept(await h.read(request), request);
+    assert.deepEqual(h.window.snapshot().messages.map(message => message.id), ['visible-reply']);
   });
 }
 
@@ -110,28 +114,32 @@ test('filtered child histories complete their own tools without reading parent h
   const h = setup([[{ ...result, agentId: 'child' }], [{ ...owner, agentId: 'child' }]], new NativeWindow(['child']));
   await readMessageHistory(h.window, { ...query, agentScope: undefined, agentIds: ['child'], bootstrap: false },
     h.read, h.controller.signal, () => true);
-  assert.equal(h.requests.length, 2);
+  assert.equal(h.requests.length, 1);
   assert.ok(h.requests.every(request => request.agentIds?.[0] === 'child'));
   assert.equal(h.window.snapshot().messages.find(item => item.id === 'tool-tool')?.toolCalls?.[0].output, 'done');
 });
 
-test('unavailable parent history ends explicitly, without guessing ownership or scanning again', async () => {
+test('unavailable tool start metadata stays explicit without guessing or scanning again', async () => {
   const h = setup([[result, event('newer')]], undefined, false);
   await h.run();
   assert.equal(h.requests.length, 1);
   assert.equal(h.window.hasMore, false);
-  assert.equal(h.window.snapshot().incompleteBoundary, true);
+  assert.equal(h.window.snapshot().incompleteBoundary, false);
+  assert.equal(h.window.snapshot().messages[0].toolCalls?.[0].name, undefined);
 });
 
-test('a distant message boundary is completed in one action without an arbitrary page stop', async () => {
-  const pages = [[result, event('newer')], ...Array.from({ length: 12 }, (_, index) => [
+test('a distant child lifecycle boundary is completed without an arbitrary page stop', async () => {
+  const pages = [[{ ...result, agentId: 'child' }, event('newer')], ...Array.from({ length: 12 }, (_, index) => [
     event(`metadata-${index}`, 'session.info'),
-  ]), [owner]];
-  const h = setup(pages);
+  ]), [
+    event('task', 'assistant.message', { toolRequests: [{ toolCallId: 'spawn', name: 'task' }] }),
+    event('spawn', 'subagent.started', { toolCallId: 'spawn', agentId: 'child' }),
+  ]];
+  const h = setup(pages, new NativeWindow(undefined, true));
   await h.run();
   assert.equal(h.requests.length, pages.length);
   assert.equal(h.window.snapshot().incompleteBoundary, false);
-  assert.equal(h.window.snapshot().messages.find(item => item.id === 'tool-tool')?.toolCalls?.[0].output, 'done');
+  assert.equal(h.window.snapshot().messages.find(item => item.subagent)?.subMessages?.[0].toolCalls?.[0].output, 'done');
 });
 
 test('cancellation or loss of ownership between pages prevents another read and stale acceptance', async () => {
@@ -149,7 +157,7 @@ test('cancellation or loss of ownership between pages prevents another read and 
 });
 
 test('expired continuation retains already received rows and does not fetch a replacement latest page', async () => {
-  const h = setup([[result, event('newer')]]);
+  const h = setup([[{ ...result, agentId: 'child' }, event('newer')]], new NativeWindow(undefined, true));
   await assert.rejects(readMessageHistory(h.window, query, async request => {
     const page = await h.read(request);
     return h.requests.length > 1 ? { ...page, cursorStatus: 'expired' } : page;

@@ -168,13 +168,13 @@ export const scenarios = [
 ] as const;
 export type Scenario = typeof scenarios[number][0];
 
-// Static component fixtures use the same single-content item contract as the event projection.
+// Keep response thought/body together; tool execution fixtures are independent.
 function fixtureItems(messages: ChatMessage[]): ChatMessage[] {
-  return messages.flatMap(({ thought, toolCalls, subMessages, ...message }) => [
-    ...(thought?.trim() ? [{ ...message, id: `${message.id}-thought`, content: '', thought }] : []),
-    ...(message.content.trim() || message.subtype === 'subagent' || message.role !== 'assistant'
+  return messages.flatMap(({ toolCalls, subMessages, ...message }) => [
+    ...(message.thought?.trim() || message.content.trim() || message.subtype === 'subagent' || message.role !== 'assistant'
       ? [{ ...message, ...(subMessages ? { subMessages: fixtureItems(subMessages) } : {}) }] : []),
-    ...(toolCalls ?? []).map(tool => ({ ...message, id: `fixture-tool-${tool.toolCallId}`, content: '', toolCalls: [tool] })),
+    ...(toolCalls ?? []).map(tool => ({ id: `fixture-tool-${tool.toolCallId}`, role: 'assistant' as const,
+      timestamp: message.timestamp, content: '', toolCalls: [tool] })),
   ]);
 }
 

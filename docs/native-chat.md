@@ -108,33 +108,38 @@ deliver obsolete data or continue reading.
 
 ### Ordered presentation
 
-The browser projects speech, reasoning and tools as separate display items in
-native event order. It does not collect them into a single assistant message and
-then move every tool above that message's text. Native message IDs still associate
-streamed text with its final content; tool IDs associate execution updates with
-the original tool row. Tool completion and repeated durable events do not move
-that row to the end of the transcript. Confirmed positions come from durable
-event provenance, never an empty `message_start` placeholder or a completion
-timestamp. Later body-only updates do not inherit a discarded empty body's
-position or move existing confirmed rows.
+The browser uses one native-event projection for history, streaming and reconnect.
+Within a response, reasoning always precedes text. This is a fixed reading layout,
+not a reconstruction of token-generation order. Text can appear before reasoning
+arrives; later reasoning is inserted above that same response's text, naturally
+moving it down. Missing content has no empty placeholder. Completion does not
+switch to a different layout, create another thought or move tools above speech.
+There is no provisional tail or separate temporary-content region.
 
-New ephemeral-only text and reasoning are marked `provisional` in the same browser
-projection and shown at its trailing edge, labelled as temporary content awaiting
-a complete record. They do not split or extend a confirmed process overview.
-Confirmation removes the temporary marker and places the item at its durable
-event's position without reordering other confirmed items. A tool-only final
-does not leave an empty body anchor for a later message update to fill.
-This keeps streaming visible without pretending its temporary arrival order
-is the persisted timeline. Provisional rows can settle as confirmation arrives;
-only the confirmed sequence has the stable-order guarantee. No second history,
-server buffer or extra read is created. Event order describes recorded evidence,
-not an inferred token-generation timeline.
+Native message IDs identify text updates. Reasoning IDs identify thinking updates;
+their native response references associate thinking with the corresponding text.
+The final message's `reasoningText` must be retained: complete
+`assistant.reasoning` notifications can be ephemeral and absent from history.
+Neither reasoning ownership nor completeness is inferred from equal or similar
+text. A complete snapshot replaces the corresponding incremental content.
+
+Tool execution starts create independent rows, with names and arguments from
+`tool.execution_start`. Results update those rows by scoped invocation ID, without
+moving them to the completion event's position. Ordinary `toolRequests` embedded
+in an assistant message do not create duplicate execution rows or determine tool
+placement. Bounded windows can lack a start or completion; missing metadata and
+unknown outcomes remain explicit. Dedicated decisions, agent lifecycle and
+system events retain their own semantics.
 
 Consecutive process items are grouped only by the renderer. User speech,
-assistant text and other visible records end a process group; empty message
-starts do not. A group contains direct reasoning/tool rows, not an extra hierarchy
-of rounds or messages. Its counts describe visible tool and reasoning items,
-with recorded failures retained in the collapsed summary. There is no elapsed
+assistant text and dedicated system/agent records end a process group; empty
+message starts and skill activations do not. A response can contribute thinking
+to the preceding process overview and text to the next speech row. The renderer
+references the same response object rather than maintaining another history.
+A group contains direct reasoning/tool/skill rows, not an extra hierarchy
+of rounds or messages. Its counts describe visible tool and reasoning items;
+skill activations are not counted as tool executions. Recorded failures remain
+visible in the collapsed summary. There is no elapsed
 time estimate, round count or generated summary.
 
 The last overview defaults open. A reasoning item defaults open only while it
@@ -149,11 +154,13 @@ code/tool copying.
 Right-clicking chat content uses the browser's native context menu, not a custom
 message-copy menu. Code and tool-detail copy buttons remain available.
 
-The opt-in lab's `ordered-events` scenario feeds synthetic native pages through
+The opt-in lab's `ordered-events` scenario feeds isolated native inputs through
 the actual `NativeWindow`, including repeated pages, older prefixes, new speech
 and reasoning, disconnected partial text followed by a full event, and a cold
-projection of the same durable events. Its step-by-step stream action exposes
-each temporary, tool-only and full-message transition separately, rather than
+projection of the same durable events. Its step-by-step stream action replays
+a normalized capture produced by SDK 1.0.13 / native runtime 1.0.83 using an
+isolated synthetic provider: body first, later reasoning, final message, then
+ephemeral complete reasoning. It exposes each transition separately rather than
 batching away intermediate layout changes. It does not initialize a native client.
 
 ### Paging and live updates
@@ -182,56 +189,51 @@ or unresolved-boundary windows do not automatically continue.
 Browser backward reads use 32-event pages and stop initial filling once the
 accumulated content reaches two screen heights (a complete batch can exceed
 that minimum). One history action continues across native pages
-until it adds a display message and resolves the loaded tool/agent records to
-their owning messages. It does not wait for running tools to finish. Main chat
+until it adds visible content and resolves missing child/task ownership.
+Ordinary tool starts are self-contained. Result-only windows show missing-start
+metadata rather than reading backward just to recover an owning message.
+It does not wait for running tools to finish. Main chat
 and nested child messages share one window; metadata-only pages are not treated
 as a finished message load. The initial live tail is captured only once.
-Hidden tool rows, including skill and plan-mode calls, retain their ownership;
+Hidden tool rows, including skill and plan-mode calls, retain invocation identity;
 suppressing duplicate presentation must not trigger extra history reads.
 
 Older pages are folded as a prefix, not by replaying the entire loaded window.
-Browser-local indexes point into the retained display events: message/tool
-dependents, agent aliases, and each agent's leading reasoning/turn boundary.
-A newly supplied owner repairs its waiting tool/child events; a leading thought
-replays only the dependent boundary and its tool updates. Those results merge
+Browser-local indexes point into retained display events: message/tool
+dependents, native response references and agent aliases.
+A newly supplied start repairs its waiting results; a newly supplied child owner
+repairs that child's events. Those results merge
 into the existing fold in native append order, preserving untouched message
 objects, ownership indexes, live partials, and reading-anchor IDs. Bootstrap
 adoption appends only events beyond the last overlap; empty/duplicate pages
 advance positions without folding or replacing the view.
-Reasoning rows use their native reasoning ID (or event ID when none is supplied);
-distinct records remain separate. Tool rows use the invocation identity and body
-rows retain the native message ID. When one final message bundles reasoning,
-text and tool requests without an internal sequence, its deterministic local
-convention is reasoning, text, then requests in array order. Separate explicit
-events retain their recorded positions.
+Body rows retain the native message ID. Thinking that arrives before that ID
+uses the reasoning ID temporarily, then adopts the referenced response identity
+without moving. The native response-parent event ID (`thoughtKey`) keeps its
+disclosure choice stable through that adoption. Tool rows retain invocation IDs.
 
-Message-level `reasoningText` is a complete snapshot, not another delta. When
-it first appears and exactly repeats that message's preceding explicit reasoning
-aggregate, it does not add another row. Otherwise its full text is retained
-under a message-based reasoning identity; it is not sliced into guessed segments.
-Once that durable snapshot exists, later updates retain its source position,
-even if their text now matches another reasoning row. A newly supplied snapshot
-does not insert itself before an already confirmed body from an earlier event.
-Later independent reasoning with equal text does not establish ownership or
-erase the earlier snapshot. A body-only update does not delete known reasoning.
-When only transient reasoning was available, its authoritative message-level
-snapshot replaces those fragments and retires all their scoped stream identities.
-Subsequent deltas cannot resurrect the retired fragments or leave a permanent
-partial-history indication. Older-page dependency repair replaces obsolete
-fallback provenance with that of the surviving source rather than keeping a
-superseded minimum order.
-Without a persisted native reasoning ID,
-this transition can replace a temporary reasoning anchor; it cannot promise
-to recover absent segment identities from a cold journal.
+The supported producer links streamed reasoning and the final message through
+their shared response-parent event. A complete reasoning notification references
+the final message event. These references are scoped per agent, never inferred
+from temporal adjacency or matching text. If a bounded record has no supported
+link, its thinking is retained with an explicit association warning, not attached
+to an arbitrary response. No extra history read or guessed content match repairs it.
+
+Message-level `reasoningText` is a complete snapshot, not another delta or another
+thought row. Its associated stream identities are finalized together, so repeated
+pages or late deltas cannot resurrect an earlier fragment. Existing disconnect,
+partial-stream and scoped event-ID guards remain: an unknown suffix after a gap
+is not silently appended to an incomplete prefix. A full native snapshot resolves
+that incomplete stream.
 
 Projection calls are proportional to new events plus the dependency frontier
 actually replayed, not the full loaded suffix on every page. A distant missing
-owner or an unbroken reasoning chain can still have a large frontier; immutable
+child owner can still have a large frontier; immutable
 message-array assembly and existing agent routing also have their own costs.
 This is a local projection optimization, not a reduction in all native reads,
 a fixed action budget, a truncated reading window, or a server chat cache.
 
-Completing a message/ownership boundary and filling two screens can require
+Resolving child ownership and filling two screens can require
 multiple pages, especially with low visible density or a distant parent task.
 Consequently the whole history action has no universal event
 ceiling; a single bounded native request must not be advertised as one.

@@ -9,6 +9,7 @@ import { MessageProcess, Thread } from './Thread';
 import { MessageBody } from './MessageBody';
 import { DisclosureChoices } from './DisclosureChoices';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
+import { groupTranscript } from '../lib/transcriptRows';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
 // scroll owner. Each rendered message occupies 100px in a 300px viewport.
@@ -245,12 +246,13 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   assert.equal(getSessionDraft(a.sessionId).getSnapshot(), draftSnapshot);
 
   const processMessage = { id: 'process', role: 'assistant' as const, content: '', timestamp: 1, thought: 'Actual reasoning' };
-  await act(() => root.render(createElement(MessageProcess, { items: [processMessage], sessionId: 'A', latest: true })));
+  const processItems = (messages: typeof processMessage[]) => groupTranscript(messages).flatMap(row => row.kind === 'process' ? row.items : []);
+  await act(() => root.render(createElement(MessageProcess, { items: processItems([processMessage]), sessionId: 'A', latest: true })));
   assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'true');
-  await act(() => root.render(createElement(MessageProcess, { items: [{ ...processMessage, thought: 'Updated reasoning' }], sessionId: 'A', latest: false })));
+  await act(() => root.render(createElement(MessageProcess, { items: processItems([{ ...processMessage, thought: 'Updated reasoning' }]), sessionId: 'A', latest: false })));
   assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'false', 'an automatically open overview closes when it is no longer latest');
   await act(() => root.render(null));
-  await act(() => root.render(createElement(MessageProcess, { items: [processMessage], sessionId: 'A', latest: false })));
+  await act(() => root.render(createElement(MessageProcess, { items: processItems([processMessage]), sessionId: 'A', latest: false })));
   assert.equal(container.querySelector('.process-summary')?.getAttribute('aria-expanded'), 'false', 'history re-entry starts compact');
   assert.equal(container.querySelector('.msg-thought'), null);
 
@@ -261,10 +263,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     return null;
   }
   const choiceKey = JSON.stringify(['A', 'overview', 'stable-overview']);
-  const renderProcess = async (latest: boolean, items = [processMessage], choice = choiceKey, latestItemId = items.at(-1)?.id) => {
+  const renderProcess = async (latest: boolean, items = [processMessage], choice = choiceKey, latestItemId = processItems(items).at(-1)?.key) => {
     await act(() => root.render(createElement(DisclosureChoices, {
       children: [
-        createElement(MessageProcess, { key: 'process', identity: 'stable-overview', items, sessionId: 'A', latest, latestItemId }),
+        createElement(MessageProcess, { key: 'process', identity: 'stable-overview', items: processItems(items), sessionId: 'A', latest, latestItemId }),
         createElement(ChoiceProbe, { key: 'probe', choice }),
       ],
     })));
@@ -293,6 +295,17 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   await renderProcess(true, [processMessage, secondThought], firstThoughtKey, 'newer-body');
   assert.deepEqual(container.querySelectorAll('.thought-toggle').map(node => node.getAttribute('aria-expanded')), ['true', 'false'],
     'newer speech closes automatic thought selection but retains the manually opened thought');
+
+  const response = { ...processMessage, id: 'response-body-first', content: 'Body first', thought: undefined };
+  await render({ ...a, messages: [response] });
+  const responseBody = container.querySelector('.message-body');
+  assert.ok(responseBody);
+  await render({ ...a, messages: [{ ...response, thought: 'Thinking arrived afterwards' }] });
+  assert.equal(container.querySelector('.message-body'), responseBody, 'inserting response thinking must not remount its body');
+  assert.equal(container.querySelector('.thought-toggle')?.getAttribute('aria-expanded'), 'false', 'the body is still the latest visible content');
+  await render({ ...a, messages: [{ ...response, content: 'Body first, completed', thought: 'Thinking arrived afterwards' }] });
+  assert.equal(container.querySelector('.message-body'), responseBody, 'the complete response uses the same renderer and layout');
+  assert.equal(container.querySelectorAll('.thought-toggle').length, 1);
 
   const body = '| A | B |\n|---|---|\n| one | two |\n\nStable native text.';
   const renderBody = (content = body) => act(async () => root.render(createElement(MessageBody, {

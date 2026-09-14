@@ -179,8 +179,14 @@ test('thought, tool and skill use one single-line activity header, with static s
   assert.match(html, /class="process-summary"/);
   assert.doesNotMatch(html, /class="activity-head thought-toggle"/);
   assert.match(html, /class="activity-head tool-head tool-toggle"/);
-  assert.match(html, /class="message is-skill"[^>]*><div class="activity-head /);
   assert.doesNotMatch(html, /class="tool-detail-name"|class="msg-thought"/);
+  const skillSession = fixtureSession('empty');
+  skillSession.messages = [{ id: 'skill', role: 'system', subtype: 'skill', content: 'example', timestamp: 1 }];
+  const skills = renderToStaticMarkup(createElement(Thread, { session: skillSession, readOnly: true, onLoadMore() {} }));
+  assert.match(skills, /技能使用/);
+  assert.match(skills, /<div class="activity-head /);
+  assert.match(skills, /skill · example/);
+  assert.doesNotMatch(skills, /次工具调用/);
   const staticHeader = renderToStaticMarkup(createElement(ActivityHeader, { icon: 'icon', title: 'skill · long skill name' }));
   assert.doesNotMatch(staticHeader, /<button|aria-expanded|activity-chevron/);
 });

@@ -47,7 +47,7 @@ export const ToolCall = z.object({
   toolCallId: z.string(),
   title: z.string(),
   status: z.enum(['pending', 'in_progress', 'completed', 'failed']).optional(),
-  // CLI-style uniform display: `title` is the agent's intent; `name` is the raw
+  // `title` comes from the native execution start; `name` is the raw
   // tool (bash/edit/view…) shown as a small badge; `args` + `output` are the
   // collapsible detail (formatted + capped). Detail is shown only when present.
   name: z.string().optional(),
@@ -101,9 +101,11 @@ export interface ChatMessage {
   role: ChatRole;
   content: string;
   thought?: string;
+  // Native response-parent event ID keeps thought disclosure stable before messageId arrives.
+  thoughtKey?: string;
   timestamp: number;
-  // Ephemeral-only drafts trail confirmed records within their owning scope.
-  provisional?: boolean;
+  // A bounded native window can retain content without a supported response link.
+  incomplete?: string;
   toolCalls?: ToolCall[];
   // 'ask-reply' = the user's answer to an ask_user tool; 'subagent' = a sub-agent
   // card; 'skill' = a compact skill-activation pill.
@@ -118,8 +120,9 @@ export const ChatMessage: z.ZodType<ChatMessage> = z.lazy(() => z.object({
   role: ChatRole,
   content: z.string(),
   thought: z.string().optional(),
+  thoughtKey: z.string().optional(),
   timestamp: z.number(),
-  provisional: z.boolean().optional(),
+  incomplete: z.string().optional(),
   toolCalls: z.array(ToolCall).optional(),
   subtype: z.enum(['ask-reply', 'subagent', 'skill']).optional(),
   level: z.enum(['info', 'warning', 'error']).optional(),

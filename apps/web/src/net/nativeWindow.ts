@@ -37,7 +37,6 @@ export class NativeWindow {
   private orders: MessageOrders = new WeakMap();
   private missing = new Set<string>();
   private missingEphemeral = new Map<string, { owners: string[]; tool?: string }>();
-  private ephemeralReasoning = new WeakSet<ChatMessage>();
   private ids = new Set<string>();
   private recentEphemeral = new Set<string>();
   private complete = new Set<string>();
@@ -110,13 +109,7 @@ export class NativeWindow {
     this.streaming.clear();
     this.recentEphemeral.clear();
     this.catchingUp = true;
-    for (const state of states(this.state)) {
-      const reasoningIds = state.reasoningIds;
-      resetTurn(state);
-      // Retain only identity links for final reconciliation, never an accumulator
-      // that could append a post-gap suffix to an incomplete reasoning prefix.
-      state.reasoningIds = reasoningIds;
-    }
+    for (const state of states(this.state)) resetTurn(state);
   }
 
   invalidate() { this.disconnect(); this.invalid = true; }
@@ -134,8 +127,6 @@ export class NativeWindow {
   private project(event: DisplayEvent, order: number): string[] {
     this.missing.delete(event.id);
     if (!this.includeChildren && event.type.startsWith('subagent.') && event.type !== 'subagent.started') return [];
-    if (event.type.startsWith('tool.') && typeof event.data.toolCallId === 'string'
-      && this.state.pendingTask.has(event.data.toolCallId)) return [];
     const messageId = streamId(event);
     const id = messageId ? this.eventKey(event, messageId) : undefined;
     if (event.ephemeral) {
@@ -155,6 +146,10 @@ export class NativeWindow {
       }
       if (event.type === 'assistant.reasoning_delta' && id) {
         if (this.complete.has(id) || this.blocked.has(id)) return [];
+        const owners = ownersOf(event);
+        const owner = owners.length ? states(this.state).find(state => owners.some(id => state.agentIds.has(id))) : this.state;
+        const response = event.parentId ? owner?.responses.get(`turn:${event.parentId}`) : undefined;
+        if (owner && response && this.blocked.has(this.key(owner, response))) return [];
       }
     }
     const finalId = finalizedId(event);
@@ -172,13 +167,9 @@ export class NativeWindow {
         this.noteMissing(event);
       }
     }
-    const eventOwners = ownersOf(event);
-    const eventOwner = eventOwners.length
-      ? states(this.state).find(state => eventOwners.some(owner => state.agentIds.has(owner))) : this.state;
-    const previousFinal = finalId && eventOwner ? eventOwner.messages[eventOwner.byId.get(finalId) ?? -1] : undefined;
     const result = foldEvent(this.state, event, {
       eventOrder: order,
-      ...event.display, toolArgs: event.display?.toolArgs ? new Map(event.display.toolArgs) : undefined,
+      ...event.display,
       scope: { details: this.includeChildren ? 'full' : 'summary' }, strictOwnership: true,
     });
     if (result.missingOwner) {
@@ -201,16 +192,16 @@ export class NativeWindow {
     for (const state of known) {
       let orders = this.orders.get(state);
       if (!orders) this.orders.set(state, orders = new Map());
+      for (const removed of result.removed ?? []) {
+        const response = state.reasoning.get(removed.slice('reasoning-'.length));
+        const previous = orders.get(removed);
+        if (response && previous !== undefined && state.byId.has(response)) {
+          orders.set(response, Math.min(previous, orders.get(response) ?? Infinity));
+        }
+      }
       for (const id of changed) {
         if (!state.byId.has(id)) orders.delete(id);
         else if (!orders.has(id)) orders.set(id, order);
-      }
-      if (!event.ephemeral && previousFinal?.provisional && finalId && state === eventOwner && state.byId.has(finalId)) {
-        orders.set(finalId, order);
-      }
-      if (event.ephemeral && event.type === 'assistant.reasoning_delta' && state.pendingReasoning
-        && (eventOwners.length ? eventOwners.some(owner => state.agentIds.has(owner)) : state === this.state)) {
-        this.ephemeralReasoning.add(state.pendingReasoning);
       }
     }
     return changed;
@@ -221,16 +212,6 @@ export class NativeWindow {
     const suffix = this.state;
     const known = states(suffix);
     const knownOwners = new Set(known.flatMap(state => [...state.agentIds]));
-    const partialIds = [...new Set([...this.streaming, ...this.blocked])].map(key => key.slice(key.indexOf('\0') + 1));
-    const transient = known.map((state, index) => ({
-      root: index === 0, agentIds: [...state.agentIds],
-      partials: partialIds.filter(id => this.streaming.has(this.key(state, id)) || this.blocked.has(this.key(state, id)))
-        .flatMap(id => state.byId.has(id) ? [state.messages[state.byId.get(id)!]] : []),
-      scratch: {
-        streamingId: state.streamingId, pendingReasoning: state.pendingReasoning,
-        reasoningId: state.reasoningId, reasoningIds: state.reasoningIds,
-      },
-    }));
     const incoming = this.history.order(events, true);
     this.history.learnAliases(events);
     this.state = newFoldState();
@@ -242,39 +223,17 @@ export class NativeWindow {
     for (const item of incoming) {
       this.ids.add(item.event.id);
       for (const id of this.project(item.event, item.order)) changed.add(id);
-      for (const dependent of this.history.dependencies(item.event, knownOwners, known)) enqueue(dependent);
-    }
-    for (const state of states(this.state)) {
-      if (state.reasoningIds.length || state.streamingId) {
-        for (const item of this.history.head(state)) enqueue(item);
-      }
+      for (const dependent of this.history.dependencies(item.event, knownOwners)) enqueue(dependent);
     }
     for (const item of replay.values()) {
-      for (const dependent of this.history.dependencies(item.event, knownOwners, known)) enqueue(dependent);
+      for (const dependent of this.history.dependencies(item.event, knownOwners)) enqueue(dependent);
     }
     for (const item of [...replay.values()].sort((a, b) => a.order - b.order)) {
       for (const id of this.project(item.event, item.order)) changed.add(id);
     }
-    this.state = mergeHistoryFold(this.state, suffix, this.orders, this.history, changed);
-    this.history.add(incoming, true);
+    this.state = mergeHistoryFold(this.state, suffix, this.orders, changed);
+    this.history.add(incoming);
     this.resolveStreamOwners();
-    const merged = states(this.state);
-    for (const saved of transient) {
-      const target = saved.root ? this.state : merged.find(state => saved.agentIds.some(id => state.agentIds.has(id)));
-      if (!target) continue;
-      for (const message of saved.partials) {
-        if (this.complete.has(this.key(target, message.id))) continue;
-        const index = target.byId.get(message.id);
-        if (index === undefined) {
-          target.byId.set(message.id, target.messages.length);
-          target.messages.push(message);
-        } else target.messages[index] = message;
-      }
-      const { scratch } = saved;
-      if ((scratch.streamingId && !this.complete.has(this.key(target, scratch.streamingId)))
-        || (scratch.pendingReasoning && this.ephemeralReasoning.has(scratch.pendingReasoning)
-          && !this.complete.has(this.key(target, scratch.pendingReasoning.id)))) Object.assign(target, scratch);
-    }
   }
 
   private append(events: DisplayEvent[], changed: Set<string>) {
@@ -283,7 +242,7 @@ export class NativeWindow {
       const [item] = this.history.order([event], false);
       if (!event.ephemeral) {
         this.ids.add(event.id);
-        this.history.add([item], false);
+        this.history.add([item]);
       }
       for (const id of this.project(event, item.order)) changed.add(id);
     }
