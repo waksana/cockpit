@@ -49,8 +49,21 @@ MCP 客户端 ── 同一后端 API ─────┘                        
 
 SDK 固定为 1.0.13，原生 runtime 1.0.83 / protocol 3，仍是进程外接入。
 “一个 Cockpit 服务”不等于 SDK/MCP/工具完全不产生子进程；没有额外 Cockpit 自监督父进程。
+`apps/mcp` 是可由客户端启动的独立 stdio 适配器，不是后端必需的常驻伴随服务；
+本体尚无 HTTP MCP 宿主端点。未来模块的同进程限制不等于禁止用户原生 MCP/工具子进程。
 服务端/core 继续使用 TypeScript 与必要 loader，Web/MCP 有构建产物。
 运行条件和包闭包见[安装运行](DEPLOY-PORTABLE.md)及[产包](packaging.md)。
+
+### “薄”不是所有代码都原样透传
+
+| 本体保留的层次 | 用途与限制 |
+| --- | --- |
+| 原生操作适配 | 会话、模型、消息、队列、决策、计划、原生定时、MCP/skill 等；调用 SDK 的实际能力，不另建权威状态。 |
+| 远程访问与交互基础 | HTTP/schema、SSE、Web、当前阅读窗口、文字草稿、错误提示及选择 cwd 所需的 `fs/listDir`。目录浏览是宿主文件系统适配，不是 SDK 原生 API 或文件传输模块。 |
+| 服务自身资源管理 | 包版本、实例/健康、活动查询、请求保护和 graceful 退出。它们不是 Copilot 的业务功能，也不是更新/部署系统。 |
+
+快照/资源投影、cursor 和响应大小适配属于必要接口工作，但不能借“基础设施”名义
+恢复后端原生镜像、业务调度或隐式模型请求。新增非原生能力仍要说明具体宿主用途。
 
 <a id="authentication"></a>
 ## 认证边界
@@ -83,12 +96,18 @@ Cockpit 没有内置账号、密码库或独立登录服务。远程 Web/API 的
 上例可通过 `cockpit_call_intent` 或 `POST /intent/system/shutdown` 调用。
 API 严格要求 `confirm:true`；无 `force`、`pending:false`、部署 operationId 或取消模式。
 重复请求只返回当前已受理状态，不重建部署记录。`SIGTERM`/`SIGINT` 请求同一 graceful 退出，
-再次发信号不变成强停。
+再次发信号不变成强停。这里的重复受理只适用于尚在运行/等待、请求可被接纳的阶段；
+已进入关闭或失败阶段时不保证再次返回 `ok:true`。
 
 状态为 `running → waiting → closing → closed`，以及明确的 `failed`。
 `system/status` 与 `GET /status` 给出新鲜原生活动和宿主关闭状态；
 `requestedAt`、错误和受保护在途 HTTP 数量属于宿主控制状态，不是原生副本。
 返回 `ok:true` 表示已受理，不是进程已经退出。
+`running` / `waiting` 阶段可正常读取状态。`closing` / `failed` 阶段的全局请求门禁
+返回 HTTP 503、`SERVICE_CLOSING` 及可用的 shutdown 字段，不再返回成功形状的
+`system/status`；实际完成退出后 HTTP 不可达。`closed` 是关闭状态机的内部终态，
+不能要求已退出的进程通过 HTTP 自证。退出码/进程是否消失由调用方或宿主观察，
+不是要在本体加入另一个常驻观察器。
 
 等待时不接受新的独立 prompt、session 创建、fork 或配置/定时新增。
 已有 ask/plan/elicitation 回答、队列移除、Stop/interrupt、schedule stop 等完成通路保留，
@@ -101,6 +120,8 @@ API 严格要求 `confirm:true`；无 `force`、`pending:false`、部署 operati
 安全读取失败仍等待并报告错误。确认 SDK 进程死亡或服务启动失败时，记录错误、
 清理拥有的资源并非零退出；不重放可能已经受理的输入。
 发起关闭的原生回合必须结束，不能留后台工具等待自己退出。
+未回答的原生问题或仍在运行的工作可以持续阻止退出；当前没有关闭取消、强制超时
+或自动回答机制。这是已选的安全边界，不等于业务目标已完成。
 
 `/admin/restart`、`/admin/lifecycle` 和 `system/consumer/*` 已删除，不是新 API 的别名。
 部署模式、私有回执和主程序安装数据不再进入本体。

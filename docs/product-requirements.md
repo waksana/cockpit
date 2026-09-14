@@ -22,7 +22,8 @@ Copilot 原生的 `assistant` 消息角色/事件与 `task` 子代理工具属�
 清除源码接入不等于删除既有模块数据、凭据、已安装程序文件或原生会话。
 
 进一步确认的范围见[完整模块目录](module-catalog.md)：文件、通知/收件箱、
-语音、会话整理、系统看板、Graceful Restart 和 Context Reset 的增强工作流也迁出。
+语音、会话整理、系统看板、旧重启便利工具和 Context Reset 的增强工作流也迁出。
+之后确认 graceful 关闭本身留在本体，可选的下次启动消息属于模块；二者不混同。
 实施顺序为先按能力保全原始代码、测试、文档和资源，再从运行路径摘除；不立即适配模块。
 前端同样是插件，通过有版本的公开 UI 组合契约协作，不预埋文件或语音专用槽位。
 聊天流中的文件卡片、媒体预览和下载展示也归文件插件。
@@ -53,7 +54,7 @@ MCP path 是协议/工具命名空间，不是新的权限系统；现有认证�
 原生 session 的 MCP 开关不是模块代码热加载，继续遵循原生配置语义。
 
 细节由[模块协议](module-contract-draft.md)维护；当前差距及迁出位置见
-[架构对照](cockpit-plan.md#target-gap)和[待迁出盘点](module-catalog.md#pending-extraction)。
+[架构对照](cockpit-plan.md#target-gap)和[提取结果](module-catalog.md#pending-extraction)。
 
 ## R2 · 原生状态只有一个权威
 
@@ -158,8 +159,9 @@ enabled 不是 connected；UI 标记不是保活；进程 idle 不是工作完�
 
 如实说明单用户本机信任边界及独立外部认证层，不宣传可强隔离所有同用户 agent。
 当前部署的 Passkey 网关不是本体账号系统；Origin/Referer 检查不是身份认证。
-Copilot 登录仍归原生运行时。新源码不依赖自有 launcher；已记录生产安装的外部启动链
-并未因此被替换，事实见[部署记录](deployments.md)。源码提取不得未经授权破坏现有运行方式。
+Copilot 登录仍归原生运行时。新源码不依赖自有 launcher；特定生产安装的外部启动链
+是否迁移由单独授权的操作决定，事实只见[部署记录](deployments.md)，不由源码提交推断。
+源码提取不得未经授权破坏现有运行方式。
 公开页面、API 和文件的权限要求不能被展示功能绕开。
 
 ## R8 · 文档、版本和交付可追溯

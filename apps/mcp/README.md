@@ -96,6 +96,10 @@ finish; do not keep a background tool waiting for its own host to exit.
 `system/status {}` or `cockpit_service_status {operation:"status"}` reports the
 native activity, protected HTTP requests and shutdown phase. Unknown safety or
 close results are not success; there is no force/cancel/deployment mode.
+Normal status responses are available while running/waiting. During closing or
+failed shutdown the host may instead return `503 SERVICE_CLOSING` with shutdown
+details; after exit there is no HTTP response. The MCP surfaces errors rather
+than fabricating a completed status. See the [shutdown boundary](../../docs/cockpit-plan.md#shutdown).
 
 Creation is identical to Web: `cockpit_new_session` calls
 `session/new {cwd}` once and returns the actual Copilot ID, using native
@@ -154,6 +158,9 @@ authorization, rather than assume an extra `confirm` field is enforced there.
 Permanent `session/delete|purge`, in contrast, requires literal `confirm:true`
 in the backend schema itself. This documents the existing distinction, not
 permission to bypass a user decision.
+Whether all destructive public operations should enforce confirmation at the
+backend is a separate review/design question. Merely documenting this difference
+does not declare it an accepted exception to R3 or authorize a behavior change.
 
 `cockpit_cancel_turn` / `POST /intent/cancel {sessionId}` follows native Stop
 semantics: cancel current work and discard pending queued messages. It does not
@@ -441,7 +448,9 @@ magically change, and retired requests must not be retried as a workaround.
 - Removed `session/set-spawned-by`. New sessions accept `cwd` only;
   `spawned_by`/`spawnedBy` is no longer a creation setting.
 - Removed local transcript folding and the `COCKPIT_SESSION_STORE`,
-  `COCKPIT_SESSION_STATE_DIR`, and backend-state `COCKPIT_HOME` configuration.
+  `COCKPIT_SESSION_STATE_DIR`, and backend-state `COCKPIT_HOME` configuration
+  **from this MCP client**. The service still uses `COCKPIT_HOME` for its native
+  runtime; removing it from this client does not remove that server setting.
 - `cockpit_read_session` no longer accepts turn `offset`, `assistant_view`, or
   `exclude_skill_context`, and no longer returns `turns`/local diagnostic fields.
   Migrate to native `events`, source/direction and opaque cursor pagination above.

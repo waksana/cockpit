@@ -11,7 +11,7 @@
 | 产品原则与已确认取舍 | [R1–R8](docs/product-requirements.md) |
 | 当前本体、认证与关闭的边界 | [架构与运行边界](docs/cockpit-plan.md) |
 | 哪些能力已迁出、以后由谁负责 | [模块目录](docs/module-catalog.md) |
-| 当前事实与下一版还差什么 | [架构对照](docs/cockpit-plan.md#target-gap) · [待迁出盘点](docs/module-catalog.md#pending-extraction) |
+| 当前事实与下一版还差什么 | [架构对照](docs/cockpit-plan.md#target-gap) · [已迁出内容的去向](docs/module-catalog.md#pending-extraction) |
 | 前后端插件如何合作 | [基础模块协议设计](docs/module-contract-draft.md) |
 | 安装与使用 | [安装指南](docs/DEPLOY-PORTABLE.md) · [MCP](apps/mcp/README.md) |
 | 完整运行包 | [产包说明](docs/packaging.md) |

@@ -55,12 +55,15 @@ MCP 客户端配置单独见 [MCP](../apps/mcp/README.md#configuration)。
 反向代理 SSE 时关闭缓冲并允许长连接。后端 loopback 和 Origin/Referer 检查
 不是登录认证，不能把未认证的隧道作为替代。
 普通代理与服务管理属于宿主选择，不由 Cockpit 安装或改写。
+当前 MCP 是本地 stdio 客户端，其 HTTP 请求经过同一后端认证入口；
+不是在本体已有一个 `/mcp/...` 网关。逐模块 HTTP MCP path 仍属于未来协议。
 
 ## 关闭
 
 `SIGTERM`、`SIGINT` 或 `POST /intent/system/shutdown`（`{"confirm":true}`）
 请求 graceful 退出。它等待原生活动和受保护调用完成，再关闭 SDK/连接，不重拉自己。
-`system/status` / `GET /status` 报告等待和失败；受理不是进程已经消失。
+`system/status` / `GET /status` 在运行/等待阶段返回状态，关闭/失败阶段可能返回 503
+错误与关闭详情，退出后 HTTP 不可达；受理不是进程已经消失。
 具体工作准入、竞态和失败边界见[关闭契约](cockpit-plan.md#shutdown)。
 
 从被关闭服务承载的 session 发起时，返回受理后结束回合，不能留后台任务等自己退出。
