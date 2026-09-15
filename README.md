@@ -15,6 +15,14 @@
 > contributions in English or Chinese are welcome. See [CONTRIBUTING](CONTRIBUTING.md)
 > and the [security policy](SECURITY.md).
 
+## 界面预览
+
+![Cockpit 工作区：左侧会话列表，中间聊天展示折叠过程、工具详情与子 agent，右侧展开会话配置](docs/images/workspace.png)
+
+当前生产组件的运行截图，使用合成会话与工具记录，不包含真实用户数据。
+左侧切换会话，中间按需展开工具和子 agent，右侧调整模型配置。
+截图可通过 [Chat Lab 工作区场景](docs/DEVELOPMENT.md#isolated-chat-component-review)复现。
+
 ## 快速开始
 
 当前服务从 **v0.1.0** 开始发行。使用 [最新 Cockpit Release](https://github.com/waksana/cockpit/releases/latest)

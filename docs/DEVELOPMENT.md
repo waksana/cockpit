@@ -71,8 +71,8 @@ native text, tools, decisions, queue and reading behavior.
 Chat Lab is a maintained developer harness, not a product page, alternate chat
 implementation or saved screenshot gallery. It imports the production components
 and event projection; only session inputs and action callbacks are synthetic.
-It does not cover backend integration or the management resource pages, which
-have their own component and API tests.
+It does not cover backend integration; management resources have their own
+component and API tests.
 
 When changing a Chat component, update affected shared scenarios in the same
 change and keep their contract tests current. Add a scenario only for a distinct
@@ -89,6 +89,18 @@ For current event ordering and process disclosure behavior, choose `ordered-even
 Its controls feed synthetic historical/live/reconnect pages through the production
 browser projection. The [native chat guide](native-chat.md#ordered-presentation)
 owns the current grouping and update contract.
+
+For the README screenshot, open `/chat-lab.html?scene=workspace` at a desktop
+viewport of 1600 x 1000. This scene mounts the real App, session list, Chat and
+session settings with a synthetic store whose transport initialization is disabled.
+It starts with the settings panel open and a local input draft. Expand the
+`安装文档复核` agent and the latest `检查运行包入口与静态资源` tool; leave the earlier
+process overview collapsed. Return to the latest message so the final tool row
+is fully visible, then capture the browser viewport without the Lab controls.
+All content is synthetic, including tool output and model choices; it is not proof
+of a native execution. Keep the image in `docs/images/workspace.png` and update it
+from this scene when the represented interface changes. Do not substitute private
+session screenshots or add a second demo application.
 
 ## Web installation metadata
 
