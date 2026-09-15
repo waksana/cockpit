@@ -1,13 +1,21 @@
-name: Build runtime
+name: CI
 on:
+  pull_request:
+    branches: [main]
   push:
     branches: [main]
+  workflow_call:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
+    name: Required checks
     runs-on: ubuntu-24.04
     timeout-minutes: 35
     steps:
@@ -51,4 +59,4 @@ jobs:
             runtime-output/runtime.tar.gz
             runtime-output/runtime.tar.gz.sha256
           if-no-files-found: error
-          retention-days: 3
+          retention-days: 7

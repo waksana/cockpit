@@ -257,10 +257,15 @@ test('subprocess failures include the original diagnostic instead of hiding pack
   ], repository), /synthetic dependency diagnostic/);
 });
 
-test('the workflow only validates, builds, packages, and uploads on main pushes', () => {
+test('CI runs the same read-only checks for pull requests, main and release callers', () => {
   const workflow = readFileSync(join(repository, '.github/workflows/build.yml'), 'utf8');
+  assert.match(workflow, /pull_request:\s+branches: \[main\]/);
   assert.match(workflow, /push:\s+branches: \[main\]/);
-  assert.doesNotMatch(workflow, /workflow_dispatch|workflow_call|secrets\.|request_id|requestId|environment:|delivery-|transfer|ssh|scp|curl/i);
+  assert.match(workflow, /workflow_call:/);
+  assert.match(workflow, /name: Required checks/);
+  assert.match(workflow, /permissions:\s+contents: read/);
+  assert.match(workflow, /cancel-in-progress:.*github.event_name == 'pull_request'/);
+  assert.doesNotMatch(workflow, /pull_request_target|secrets\.|contents: write|request_id|requestId|environment:|delivery-|transfer|ssh|scp|curl/i);
   for (const action of [
     'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803',
     'pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa',
@@ -272,6 +277,20 @@ test('the workflow only validates, builds, packages, and uploads on main pushes'
   assert.match(workflow, /COCKPIT_NATIVE_FORK: '1'/);
   assert.ok(workflow.includes(mcpSmoke));
   assert.ok(build >= 0 && build < workflow.indexOf(mcpSmoke), 'The MCP native smoke requires the compiled MCP client');
+});
+
+test('release only publishes the checked fixed-tag artifact and does not deploy a service', () => {
+  const workflow = readFileSync(join(repository, '.github/workflows/release.yml'), 'utf8');
+  assert.match(workflow, /push:\s+tags: \['v\*'\]/);
+  assert.match(workflow, /uses: \.\/\.github\/workflows\/build\.yml/);
+  assert.match(workflow, /publish:\s+needs: checks/);
+  assert.match(workflow, /cancel-in-progress: false/);
+  assert.match(workflow, /git merge-base --is-ancestor "\$GITHUB_SHA" origin\/main/);
+  assert.match(workflow, /node scripts\/check-release\.mjs "\$RELEASE_TAG" "\$GITHUB_SHA"/);
+  assert.match(workflow, /actions\/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093/);
+  assert.match(workflow, /--verify-tag --latest/);
+  assert.doesNotMatch(workflow, /pull_request_target|secrets\.|systemctl|\bssh\b|\bscp\b|release upload|--clobber/);
+  assert.ok(workflow.indexOf('check-release.mjs') < workflow.indexOf('gh release create'));
 });
 
 test('synthetic packaging inventories its complete closure and preserves dependency-owned native assets', async t => {

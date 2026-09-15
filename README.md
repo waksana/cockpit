@@ -1,21 +1,75 @@
 # Cockpit
 
+[![CI](https://github.com/waksana/cockpit/actions/workflows/build.yml/badge.svg)](https://github.com/waksana/cockpit/actions/workflows/build.yml)
+
 **原生 Copilot 的薄 Web / HTTP / MCP 接入层。** 会话身份、执行、历史、模型、
 队列和原生配置由 Copilot 管理；Cockpit 提供远程交互。
 后端忠实适配 Copilot 功能的子集；Web 使用所提供 API 的子集实现聊天工具，
 不要求后端覆盖全部 SDK，也不要求 Web 覆盖全部 API。
 
+适合单操作者在可信机器上使用原生 Copilot，不是多租户服务或工具沙箱。
+**工具权限固定为 `allow-all`**；请只选择可信工作目录，不要直接暴露到公网。
+
+> English: Cockpit is an experimental, single-operator Web/API/MCP adapter for
+> native GitHub Copilot. Start with the [installation guide](docs/DEPLOY-PORTABLE.md);
+> contributions in English or Chinese are welcome. See [CONTRIBUTING](CONTRIBUTING.md)
+> and the [security policy](SECURITY.md).
+
+## 快速开始
+
+当前服务从 **v0.1.0** 开始发行。使用 [最新 Cockpit Release](https://github.com/waksana/cockpit/releases/latest)
+的 `runtime.tar.gz` 与 `runtime.tar.gz.sha256`，不是模块 ZIP 或短期 Actions artifact。
+
+| 条件 | 当前发行基线 |
+| --- | --- |
+| 平台 | Linux x64 / glibc；其他平台组合暂未作为受支持运行包发行。 |
+| Node | **24.20.0，必须精确到 patch**；自行安装，不包含在运行包中。 |
+| 已包含 | SDK **1.0.13**、原生 runtime **1.0.83** / protocol **3**、TypeScript loaders、Web/MCP 产物及运行依赖。 |
+| 仅源码开发需要 | pnpm **10.34.5**，以及 Git。运行包不需要 pnpm。 |
+
+1. 准备 [Node 24.20.0](https://nodejs.org/dist/v24.20.0/)，用 `node --version` 核对。
+2. 下载、校验并解压到一个新目录：
+
+   ```sh
+   mkdir cockpit-download
+   cd cockpit-download
+   curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/latest/download/runtime.tar.gz
+   curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/latest/download/runtime.tar.gz.sha256
+   sha256sum -c runtime.tar.gz.sha256
+   mkdir cockpit
+   tar -xzf runtime.tar.gz -C cockpit
+   cd cockpit
+   ```
+
+3. 首次使用先按[原生认证](docs/DEPLOY-PORTABLE.md#native-authentication)准备凭据。
+   Cockpit 没有 Web 登录向导；不能假定全局最新版 `copilot` 与此包兼容。
+4. 在包根启动：
+
+   ```sh
+   node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/index.ts
+   ```
+
+5. 打开 **http://127.0.0.1:8771**，新建会话、选择本机可信工作目录，再发送第一条文字消息。
+   就绪检查、源码安装和常见错误见[安装指南](docs/DEPLOY-PORTABLE.md)。
+
+checksum 用于校验文件完整性，不是独立发布者签名。远程访问必须另加
+[认证 HTTPS 网关](docs/DEPLOY-PORTABLE.md#remote-access)，本地启动不需要反向代理。
+
 ## 从这里开始
 
 | 想了解什么 | 阅读 |
 | --- | --- |
+| 安装、认证、首次聊天与排错 | [安装指南](docs/DEPLOY-PORTABLE.md) |
+| 报告问题或贡献修改 | [贡献指南](CONTRIBUTING.md) · [Issues](https://github.com/waksana/cockpit/issues/new/choose) |
+| 私密报告安全问题 | [安全政策](SECURITY.md) |
+| 版本与发布 | [版本政策](docs/packaging.md#versioned-releases) · [发行说明](https://github.com/waksana/cockpit/releases) |
 | 完整文档及每个主题的唯一维护位置 | [文档索引](docs/README.md) |
 | 产品原则与已确认取舍 | [R1–R8](docs/product-requirements.md) |
 | 当前本体、认证与关闭的边界 | [架构与运行边界](docs/cockpit-plan.md) |
 | 后续模块的能力归属 | [模块目录](docs/module-catalog.md) |
 | 当前事实与下一版还差什么 | [架构对照](docs/cockpit-plan.md#target-gap) |
 | 前后端插件如何合作 | [基础模块协议设计](docs/module-contract-draft.md) |
-| 安装与使用 | [安装指南](docs/DEPLOY-PORTABLE.md) · [MCP](apps/mcp/README.md) |
+| MCP 客户端 | [MCP](apps/mcp/README.md) |
 | 完整运行包 | [产包说明](docs/packaging.md) |
 
 ## 当前范围
@@ -32,6 +86,9 @@ HTTP/MCP 使用。Web 不展示或切换三种交互模式，新建沿用原生�
 关闭 SDK/连接并退出。进程启动与重新拉起由使用者或宿主管理。
 
 实时身份以运行实例的 `/version`、`/health` 和对应包为准。
+当前为实验性 **0.x**：仅支持当前发行与全新安装，Web、后端和 MCP 使用同一 release；
+不承诺旧 API/客户端兼容，也没有自动迁移。公开发行必须有可区分的版本及真实的
+变更说明，不能把更新安装包等同于删除原生数据。完整政策见[版本发行](docs/packaging.md#versioned-releases)。
 
 ## 已确认的下一版目标
 
@@ -48,8 +105,11 @@ graceful 的等待目标只关注原生 session 空闲；模块业务和关闭�
 
 ## 开发
 
-使用独立工作区，按[开发指南](docs/DEVELOPMENT.md)与[验证指南](docs/cockpit-testing.md)
-工作。服务端/core 保留 TypeScript，通过 `tsx` 运行；Web 与 MCP 需要构建。
+从[贡献指南](CONTRIBUTING.md)进入短期分支 → PR → `Required checks` → 绿色 main 的流程。
+具体命令由[开发指南](docs/DEVELOPMENT.md)与[验证指南](docs/cockpit-testing.md)维护。
+服务端/core 保留 TypeScript，通过 `tsx` 运行；Web 与 MCP 需要构建。
 不要在生产正在读取的源码或静态资源目录里构建候选版本。
+聊天组件使用现有的[维护中 Chat Lab](docs/DEVELOPMENT.md#isolated-chat-component-review)，
+不另建演示应用。版本发布只发布经过检查的包，不自动部署或重启生产服务。
 
 本项目使用 [GPL-3.0-only](LICENSE)；第三方来源与署名见 [NOTICE](NOTICE.md)。

@@ -1,0 +1,37 @@
+name: Feature request / 功能建议
+description: Describe a user problem and a focused proposal within Cockpit's scope.
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English or Chinese is welcome. Read the [current scope](https://github.com/waksana/cockpit#当前范围)
+        and [product requirements](https://github.com/waksana/cockpit/blob/main/docs/product-requirements.md).
+        Planned modules are not installed features. Do not include secrets or real session history.
+        Use [private reporting](https://github.com/waksana/cockpit/security/advisories/new) for vulnerabilities.
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem / 用户问题
+      description: What are you trying to do, on which version, and where does the current behavior fall short?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed scope / 建议范围
+      description: Describe the smallest useful change and how you would know it works. Separate current behavior from future design.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and trade-offs / 替代方案与取舍
+      description: Include workarounds and possible API, permission or compatibility changes.
+  - type: checkboxes
+    id: checked-scope
+    attributes:
+      label: Before submitting / 提交前
+      options:
+        - label: I checked existing issues and the documented current scope.
+          required: true

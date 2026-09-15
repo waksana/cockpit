@@ -1,7 +1,9 @@
 import { after, afterEach, beforeEach, test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import fs from 'node:fs';
 import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { dirname, join, parse, relative } from 'node:path';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import {
@@ -254,9 +256,24 @@ test('directory listing keeps default home, tilde, relative paths, sorting and p
   assert.deepEqual(project.json(), { path: join(home, 'project'), parent: home, entries: [] });
   const parent = await request(project.json().parent);
   assert.equal(parent.json().path, home);
-  const root = await request(parse(home).root);
-  assert.equal(root.statusCode, 200, root.body);
-  assert.equal(root.json().parent, null);
+  const filesystemRoot = parse(home).root;
+  const readdir = t.mock.method(fs, 'readdirSync', (path: fs.PathLike) => {
+    assert.equal(path, filesystemRoot);
+    return [];
+  });
+  const access = t.mock.method(fs, 'accessSync', (path: fs.PathLike) => {
+    assert.equal(path, filesystemRoot);
+  });
+  syncBuiltinESMExports();
+  try {
+    const root = await request(filesystemRoot);
+    assert.equal(root.statusCode, 200, root.body);
+    assert.deepEqual(root.json(), { path: filesystemRoot, parent: null, entries: [] });
+  } finally {
+    readdir.mock.restore();
+    access.mock.restore();
+    syncBuiltinESMExports();
+  }
   assert.equal(list.mock.callCount(), 8);
   assert.deepEqual(calls, [], 'browsing must not touch native sessions or other engine methods');
 });

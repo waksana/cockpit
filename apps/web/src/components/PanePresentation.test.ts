@@ -60,14 +60,18 @@ test('lazy management and panel loads retain their navigation shell and announce
 
 test('activity headers retain one first-line baseline and icon slot across expansion', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.activity-head \{[^}]*align-items: start;[^}]*height: 36px;[^}]*padding: 8px;/);
-  for (const slot of ['icon', 'chevron']) {
-    assert.match(css, new RegExp(`\\.activity-${slot} \\{[^}]*height: 20px;`));
+  const header = css.match(/\.activity-head \{([^}]*)\}/)?.[1];
+  assert.ok(header);
+  for (const declaration of [/align-items: center;/, /height: 28px;/, /padding: 0;/]) {
+    assert.match(header, declaration);
   }
-  const expanded = css.match(/\.msg-tool\[data-open=true\] > \.activity-head \{([^}]*)\}/)?.[1];
-  assert.ok(expanded);
-  assert.doesNotMatch(expanded, /align-items|padding/);
-  assert.doesNotMatch(css, /\.msg-tool\[data-open=true\] > \.activity-head \.activity-(icon|chevron)/);
+  assert.match(css, /\.activity-icon \{[^}]*height: 20px;/);
+  const openRules = [...css.matchAll(/([^{}]*\.msg-tool\[data-open=true\][^{}]*)\{([^}]*)\}/g)];
+  for (const [, selector, declarations] of openRules) {
+    if (/\.activity-(head|icon)/.test(selector)) {
+      assert.doesNotMatch(declarations, /(?:^|;)\s*(?:align-items|height|padding(?:-\w+)?):/);
+    }
+  }
 });
 test('refresh uses one circular arrow everywhere, with no font glyph or square overlay', () => {
   const html = renderToStaticMarkup(createElement(Icon, { name: 'reload', size: 20 }));

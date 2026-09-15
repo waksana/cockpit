@@ -1,0 +1,60 @@
+name: Bug report / 问题报告
+description: Report a reproducible Cockpit problem with redacted evidence.
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English or Chinese is welcome. Use synthetic data; never include tokens,
+        cookies, MCP/provider credentials, native home contents or real session history.
+        For vulnerabilities, use [private reporting](https://github.com/waksana/cockpit/security/advisories/new),
+        not this public form. See [SECURITY.md](https://github.com/waksana/cockpit/blob/main/SECURITY.md).
+  - type: textarea
+    id: environment
+    attributes:
+      label: Version and environment / 版本与环境
+      description: Use /version or runtime-manifest.json for archive identity; git rev-parse HEAD for source. Do not paste /health login or private host details.
+      value: |
+        Cockpit version:
+        Source SHA:
+        Install: runtime archive / source
+        OS / architecture / libc:
+        Node version (node --version):
+        SDK / bundled runtime / protocol:
+        Browser/version, if relevant:
+        Local access or authenticated gateway (no credentials):
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction / 最小复现
+      description: Steps using a synthetic workspace/session, not private files or real conversations.
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected and actual behavior / 预期与实际
+      description: Include whether the result was a failure, a queued action, or an uncertain outcome.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted logs and checks / 脱敏日志与验证
+      description: Paste only relevant redacted output. State commands and results; distinguish skips from passes. Synthetic screenshots only.
+      render: text
+  - type: checkboxes
+    id: safe-report
+    attributes:
+      label: Before submitting / 提交前
+      options:
+        - label: I checked existing issues and the current installation guide.
+          required: true
+        - label: This report contains no secrets, private files or real session history, and is not a private vulnerability disclosure.
+          required: true
