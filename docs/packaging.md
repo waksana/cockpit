@@ -3,6 +3,23 @@
 本页维护构建产物和包身份。
 Cockpit 只产生包含前后端与必要依赖的包，由使用者决定放在哪里、何时运行。
 
+## 获取运行包
+
+普通使用者从 [最新 Cockpit Release](https://github.com/waksana/cockpit/releases/latest)
+下载 `runtime.tar.gz` 和 `runtime.tar.gz.sha256`；不必安装 pnpm 或克隆开发工作树。
+在下载目录验证摘要，再解压到新目录：
+
+```sh
+sha256sum -c runtime.tar.gz.sha256
+mkdir cockpit
+tar -xzf runtime.tar.gz -C cockpit
+cd cockpit
+```
+
+运行前准备该发行所要求的准确 Node 版本和原生认证/提供方，见[安装指南](DEPLOY-PORTABLE.md)。
+当前支持 Linux x64/glibc、Node **24.20.0**。包 manifest 会核对 Node 的完整版本号，
+不仅是主版本。
+
 ## 命令
 
 先在同一干净提交上构建，再产包。产包器不会替使用者重新构建或证明任意已有 dist 的来源。
@@ -56,8 +73,9 @@ Node/平台/架构及文件清单。
 
 ## 构建与使用
 
-普通构建、类型检查与定向用例使用仓库现有命令。CI 只验证、构建、产包和保存产物，
-使用者独立选择安装和运行时机；主分支变化不代表运行实例已经换包。
+普通构建、类型检查与定向用例使用仓库现有命令。PR/main CI 验证、构建、产包，
+开发 artifact 保留 7 天；它不是稳定下载入口。版本 tag 通过同一检查后发布到
+GitHub Releases。使用者独立选择安装和运行时机；主分支变化不代表实例已经换包。
 
 SDK 真机合成用例与实际包入口验证使用隔离 home/config/workspace 和受控提供方。
 不能复制生产凭据或 native home，也不能从正在运行的服务目录做实验。
@@ -74,3 +92,35 @@ COCKPIT_RUNTIME_ARCHIVE="$PWD/runtime-output/runtime.tar.gz" \
 
 前两者分别覆盖合成闭包与真实离线依赖搬迁，后者才检查指定归档。
 未设置变量时相应 case 跳过，不能把跳过写成实际包/原生运行证明。
+
+<a id="versioned-releases"></a>
+## 版本发行
+
+当前为实验性 **0.x**：Web、后端和 MCP 只承诺同一 release 的组合，
+支持全新安装，不维护旧接口别名或自动迁移。破坏性输入/API 变化必须在新版本说明中明确，
+不能让两个不同公开版本都只靠“当前 main”区分。workspace 的版本号统一维护。
+
+维护者按以下顺序发行，不从未提交工作树发包：
+
+1. 通过 PR 更新全部 workspace 版本、MCP 自报版本及本次
+   [`release-notes.md`](release-notes.md)，必要时同步锁文件与支持条件。
+2. 合入 main，确认该固定 SHA 的 `CI / Required checks` 全部成功。
+3. 创建指向该 SHA 的 `vMAJOR.MINOR.PATCH` tag，并推送该 tag。
+4. `Release` workflow 在 tag 的固定 SHA 上重新使用同一 CI；成功后下载该次 CI 的
+   原始 artifact，核对 tag/workspace 版本、源 SHA、Node/平台及 checksum，再发布。
+
+例如首次当前服务发行：
+
+```sh
+git fetch origin
+git tag -a v0.1.0 VERIFIED_MAIN_SHA -m "Cockpit v0.1.0"
+git push origin v0.1.0
+```
+
+将 `VERIFIED_MAIN_SHA` 替换成已通过检查的完整 main 提交。
+发布器要求 tag 位于 main 历史中，并在发布前复核远端 tag 仍指向该提交。
+仓库禁止更新或删除 `v*` 版本 tag；发布器不会覆盖已有 release 资产。
+失败先明确原因；不要移动已公开的版本 tag，源代码问题通过下一个版本修复。
+短期开发 artifact 可过期；当前正式 Release 的下载文件不会随 CI retention 到期而消失。
+`release-notes.md` 只维护下一次/本次发行摘要，已发布说明由 GitHub Release 承载，
+不在源码树堆积逐次构建归档。

@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability / 私密安全报告
+    url: https://github.com/waksana/cockpit/security/advisories/new
+    about: Report vulnerabilities privately. Do not include secrets or real session history.
+  - name: Installation and documentation / 安装与文档
+    url: https://github.com/waksana/cockpit/blob/main/docs/README.md
+    about: Start here for setup, authentication, current scope and troubleshooting.

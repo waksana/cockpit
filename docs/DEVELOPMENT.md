@@ -9,25 +9,35 @@ The service provides Web/API and a public graceful shutdown operation.
 The [module contract](module-contract-draft.md) describes planned capabilities;
 its execution process model remains a design decision.
 
-Each owner uses an independent worktree and short-lived branch. Keep other
-owners' source, unfinished trees and runtime data untouched. After implementation
-and relevant local checks, integrate the latest local/remote main in that tree,
-resolve conflicts and verify the affected behavior. Fast-forward main only if
-its observed head still matches; a racing change requires reintegration, never
-force-push. Do not paste deltas into the running source tree.
+Use a short-lived branch and a pull request against `main`; an independent
+worktree is optional. Keep other contributors' unfinished trees and runtime data
+untouched. Before submitting, integrate current `main`, resolve conflicts and
+run the relevant local checks. Do not paste deltas into running source or
+force-push `main`.
 
-Main receives completed changes and triggers hosted checks/build. This project
-does not require a PR or duplicate premerge hosted pipeline. Consequently main
-can briefly be red: fix the source forward, while production stays at its last
-healthy release. Main is not proof of the currently running version.
+`CI / Required checks` runs for pull requests, main pushes and release tags
+through the same reusable workflow. It installs the frozen lockfile, lints,
+tests, builds, exercises isolated native contracts and verifies the runtime
+archive. Fork PRs use read-only permissions and no production credentials;
+there is no `pull_request_target` execution path.
+
+Main requires a PR, the successful `Required checks` status on an up-to-date
+base, and resolved conversations. A maintainer checks scope and evidence before
+merging; there is no mandatory second-person approval while the project has one
+maintainer. Merge commits preserve the checked branch history. Force pushes and
+branch deletion are disabled; merged contribution branches are deleted.
+A red main is a repair priority, not a release candidate. Branch identity alone
+is not evidence of a validated or deployed version.
 
 The [ordinary package contract](packaging.md) owns build outputs and provenance.
 Keep the workspace injection/deduplication settings and lockfile together:
 they let pnpm derive an offline runtime closure without re-resolving package ranges.
 The current peer topology keeps workspace imports linked to source; build also
 synchronizes any dependencies that require physical injection.
-CI validates/builds/packages only; it does not transfer to a private host or
-activate a production version. A push is not deployment authorization.
+CI creates a short-lived development artifact. A `vMAJOR.MINOR.PATCH` tag invokes
+the same checks and publishes their exact artifact through the
+[release procedure](packaging.md#versioned-releases). Neither workflow transfers
+to a private host or activates a production service. A push is not deployment authorization.
 An operator chooses how to install/run the package, keeping native data and
 credentials separate and preserving any existing installation during a transition.
 
