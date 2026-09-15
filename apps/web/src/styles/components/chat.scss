@@ -280,20 +280,21 @@
 .activity-head {
   display: grid;
   grid-template-columns: 1rem minmax(0, 1fr);
-  align-items: center; gap: 8px;
-  width: 100%; min-width: 0; height: 44px;
+  align-items: center; gap: 6px;
+  width: 100%; min-width: 0; height: 28px;
   padding: 0; border: 0; border-radius: 0;
   background: transparent;
   color: var(--primary-text-color);
-  font: inherit; font-size: var(--messages-text-size); line-height: 24px; text-align: start;
+  font: inherit; font-size: var(--font-size-13); line-height: 20px; text-align: start;
 }
 .message-process { min-width: 0; }
 .process-summary {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; min-width: 0; min-height: 44px;
+  display: flex; align-items: center; gap: 6px;
+  width: 100%; min-width: 0; min-height: 28px;
   padding: 0; border: 0; border-radius: 0;
   background: transparent; color: var(--secondary-text-color);
-  font: inherit; font-size: var(--messages-text-size); text-align: start; cursor: pointer;
+  font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--font-size-13); line-height: 20px; text-align: start; cursor: pointer;
   time { flex: none; font-size: var(--font-size-12); font-variant-numeric: tabular-nums; }
   &[aria-expanded='false'] .process-summary-chevron { transform: rotate(-90deg); }
 }
@@ -302,7 +303,11 @@
 .process-summary-states { display: inline-flex; flex: none; align-items: center; gap: 8px; }
 .process-summary-status { display: inline-flex; align-items: center; gap: 3px; font-size: var(--font-size-13); white-space: nowrap; }
 .process-summary-status[data-status='failed'] { color: var(--chat-danger-ink); }
-.process-expanded-summary { margin-block: 4px 8px; overflow-wrap: anywhere; color: var(--secondary-text-color); }
+.process-expanded-summary {
+  margin-block: 2px 4px; overflow-wrap: anywhere; color: var(--secondary-text-color);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--font-size-13); line-height: 20px;
+}
 .message-process-content {
   padding: 0;
   &[hidden] { display: none; }
@@ -342,36 +347,49 @@ button.activity-head {
   &[data-status='in_progress'] .activity-icon { color: var(--chat-accent-ink); }
 }
 .tool-state-icon { display: block; flex: none; }
-.tool-heading-content { display: flex; min-width: 0; align-items: center; gap: 6px; }
+.tool-state-icon[data-status='in_progress'] {
+  animation: spinner-rotate 0.7s linear infinite;
+  @media (prefers-reduced-motion: reduce) { animation-duration: 1.6s; }
+}
+.tool-head {
+  grid-template-columns: minmax(0, 1fr) 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  .activity-icon { grid-column: 2; }
+}
+.tool-heading-content { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .tool-label {
   flex: 0 1 auto; min-width: 0; max-width: min(18ch, 45%);
+  padding: 0 5px; border-radius: 3px;
+  background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+  color: var(--secondary-text-color);
+  font-size: var(--font-size-12); line-height: 18px;
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   direction: rtl; text-align: left;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.tool-heading-separator { flex: none; color: var(--secondary-text-color); }
 .tool-description { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .skill-activity {
-  height: auto; min-height: 44px;
+  height: auto; min-height: 28px;
   .activity-title { white-space: normal; overflow-wrap: anywhere; }
 }
 .activity-detail.tool-detail {
   margin: 0;
-  padding: 0 0 12px 24px;
+  padding: 2px 0 6px;
   border-inline-start: 0;
-  display: flex; flex-direction: column; gap: 8px;
+  display: flex; flex-direction: column; gap: 4px;
+  font-size: var(--font-size-13); line-height: 1.45;
 }
 .tool-full-name { font-family: ui-monospace, monospace; overflow-wrap: anywhere; }
 .tool-detail-empty { font-size: var(--font-size-12); }
 .tool-detail-label { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
 .tool-args, .tool-output {
   margin: 0;
-  padding: 0.4rem 0;
+  padding: 0.15rem 0;
   max-height: 18rem;
   overflow: auto;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: var(--font-size-13);
-  line-height: 1.6;
+  line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   background: transparent;

@@ -428,7 +428,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     : ask.choices?.length ? '输入内容将回答当前问题，也可以选择上方选项。' : '输入内容将回答当前问题。'
     : planRequest ? '发送新指令将替代当前待确认计划，先执行新指令，再返回计划模式。'
       : session.elicitation ? '请使用上方按钮回应工具确认，普通消息不会代替确认。'
-        : session.status === 'running' ? '发送后加入队列，当前执行继续。' : undefined;
+        : undefined;
   const runInView = useCallback((send: () => Promise<boolean>): Promise<boolean> => (
     acknowledgeInView(actionScopeRef.current, send, {
       scrollRevision: () => scrollOwnerRef.current?.revision ?? 0,
@@ -570,7 +570,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
           hint={composerHint}
           submitLabel={ask ? '提交回答' : planRequest ? '发送新指令' : undefined}
           disabled={!!session.compacting && session.status !== 'running'}
-          placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : '输入消息…'))}
+          placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : session.status === 'running' ? '加入队列' : '输入消息…'))}
           draft={draft}
           onSend={handleSend}
           sendBlocked={ask?.allowFreeform === false}

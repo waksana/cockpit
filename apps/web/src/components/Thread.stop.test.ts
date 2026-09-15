@@ -113,6 +113,14 @@ test('queue text has a keyboard-readable expansion separate from its removal act
   const html = render({ queue: [{ id: 'q', text: 'A long queued request' }] });
   assert.match(html, /<details class="chat-queue-entry"><summary class="chat-queue-text"/);
   assert.match(html, /<\/details><button type="button" class="chat-queue-remove"/);
-  assert.match(html, /发送后加入队列，当前执行继续/);
+  assert.match(html, /placeholder="加入队列"/);
+  assert.doesNotMatch(html, /发送后加入队列|chat-composer-hint/);
   assert.doesNotMatch(html, /重排|编辑排队/);
+});
+
+test('running composer uses only a queue placeholder while idle and questions keep their own semantics', () => {
+  assert.match(render(), /placeholder="加入队列"/);
+  assert.doesNotMatch(render(), /发送后加入队列|chat-composer-hint/);
+  assert.match(render({ status: 'idle' }), /placeholder="输入消息…"/);
+  assert.match(render({ ask: { requestId: 'ask', question: 'Question?' } }), /placeholder="输入回答…"/);
 });

@@ -37,6 +37,15 @@ test('expanded tool details retain copyable inputs and outputs without repeating
   assert.doesNotMatch(detail, /custom_tool|Native intent|已完成|工具名|说明/);
 });
 
+test('tool headers put the name tag first, native description next and status last', () => {
+  for (const open of [false, true]) {
+    const header = render(tool, open).split('</button>')[0];
+    assert.ok(header.indexOf('class="tool-label"') < header.indexOf('class="tool-description"'));
+    assert.ok(header.indexOf('class="tool-description"') < header.indexOf('class="activity-icon"'));
+    assert.doesNotMatch(header, /tool-heading-separator/);
+  }
+});
+
 test('missing tool metadata remains explicit and a name-equivalent title is not repeated', () => {
   assert.match(render({ toolCallId: 'unknown', title: 'Missing start' }), /缺少工具名称/);
   assert.doesNotMatch(render({ ...tool, title: tool.name! }), /tool-description|tool-heading-separator/);

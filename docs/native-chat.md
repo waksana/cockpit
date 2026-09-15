@@ -131,9 +131,11 @@ placement. Bounded windows can lack a start or completion; missing metadata and
 unknown outcomes remain explicit. Dedicated decisions, agent lifecycle and
 system events retain their own semantics.
 
-Tool headers always occupy one line, both collapsed and expanded. They show one
-status glyph, the bounded tool name (leading ellipsis preserves its suffix), and
-an optional native description. They do not infer an intention from arguments.
+Tool headers always occupy one line, both collapsed and expanded: a small tool
+name tag on the left (leading ellipsis preserves its suffix), an optional native
+description in the middle, and one status glyph at the far right. Tool headers
+and overviews use compact 13px monospace text and 28px rows; name tags use 12px
+text. They do not infer an intention from arguments.
 Input and output appear only after expansion, including for failed tools. Only
 actually clipped name/description fields are repeated in full in the details.
 Complete header fields are not repeated. The whole header is a keyboard-operable

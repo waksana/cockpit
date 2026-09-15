@@ -208,7 +208,7 @@ test('chat leaves right-click and text selection to the browser instead of mount
 
 test('tool and thought rows stay single-line while expanded skill records can show their full name', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.activity-head \{[^}]*height: 44px/);
+  assert.match(css, /\.activity-head \{[^}]*height: 28px/);
   assert.match(css, /\.activity-title \{[^}]*overflow: hidden;[^}]*white-space: nowrap;[^}]*text-overflow: ellipsis/);
   assert.doesNotMatch(css, /\.tool-name|\.skill-label|\.tool-title/);
   assert.match(css, /\.message-process-content\[hidden\] \{[^}]*display: none/);
@@ -248,6 +248,16 @@ test('expanded tools keep their header geometry and show full metadata only when
   assert.match(source, /nameClipped &&/);
   assert.match(source, /descriptionClipped && description/);
   assert.doesNotMatch(source, /activity-chevron|activity-status/);
+});
+
+test('process rows use compact typography and tools reserve the right column for status', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.process-summary \{[^}]*min-height: 28px;[^}]*font-family: ui-monospace[^}]*font-size: var\(--font-size-13\)/);
+  assert.match(css, /\.tool-head \{[^}]*grid-template-columns: minmax\(0, 1fr\) 1rem/);
+  assert.match(css, /\.tool-head \.activity-icon \{[^}]*grid-column: 2/);
+  assert.match(css, /\.tool-label \{[^}]*border-radius: 3px;[^}]*font-size: var\(--font-size-12\)/);
+  assert.match(css, /\.tool-state-icon\[data-status=in_progress\] \{[^}]*animation: spinner-rotate 0\.7s linear infinite/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.tool-state-icon\[data-status=in_progress\] \{[^}]*animation-duration: 1\.6s/);
 });
 
 test('message process spacing does not retain old document or copy toolbar gaps', () => {
