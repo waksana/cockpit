@@ -37,11 +37,11 @@ test('expanded tool details retain copyable inputs and outputs without repeating
   assert.doesNotMatch(detail, /custom_tool|Native intent|已完成|工具名|说明/);
 });
 
-test('tool headers put the name tag first, native description next and status last', () => {
+test('tool headers put status first, native description next and the name tag last', () => {
   for (const open of [false, true]) {
     const header = render(tool, open).split('</button>')[0];
-    assert.ok(header.indexOf('class="tool-label"') < header.indexOf('class="tool-description"'));
-    assert.ok(header.indexOf('class="tool-description"') < header.indexOf('class="activity-icon"'));
+    assert.ok(header.indexOf('class="activity-icon"') < header.indexOf('class="tool-description"'));
+    assert.ok(header.indexOf('class="tool-description"') < header.indexOf('class="tool-label"'));
     assert.doesNotMatch(header, /tool-heading-separator/);
   }
 });

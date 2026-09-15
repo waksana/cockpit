@@ -352,13 +352,12 @@ button.activity-head {
   @media (prefers-reduced-motion: reduce) { animation-duration: 1.6s; }
 }
 .tool-head {
-  grid-template-columns: minmax(0, 1fr) 1rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  .activity-icon { grid-column: 2; }
 }
 .tool-heading-content { display: flex; min-width: 0; align-items: center; gap: 8px; }
 .tool-label {
   flex: 0 1 auto; min-width: 0; max-width: min(18ch, 45%);
+  margin-inline-start: auto;
   padding: 0 5px; border-radius: 3px;
   background: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
   color: var(--secondary-text-color);

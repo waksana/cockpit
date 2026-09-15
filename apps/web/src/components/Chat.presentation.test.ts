@@ -250,11 +250,12 @@ test('expanded tools keep their header geometry and show full metadata only when
   assert.doesNotMatch(source, /activity-chevron|activity-status/);
 });
 
-test('process rows use compact typography and tools reserve the right column for status', () => {
+test('process rows use compact typography with leading status and a trailing name tag', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.process-summary \{[^}]*min-height: 28px;[^}]*font-family: ui-monospace[^}]*font-size: var\(--font-size-13\)/);
-  assert.match(css, /\.tool-head \{[^}]*grid-template-columns: minmax\(0, 1fr\) 1rem/);
-  assert.match(css, /\.tool-head \.activity-icon \{[^}]*grid-column: 2/);
+  assert.match(css, /\.activity-head \{[^}]*grid-template-columns: 1rem minmax\(0, 1fr\)/);
+  assert.match(css, /\.activity-icon \{[^}]*grid-column: 1/);
+  assert.match(css, /\.tool-label \{[^}]*margin-inline-start: auto/);
   assert.match(css, /\.tool-label \{[^}]*border-radius: 3px;[^}]*font-size: var\(--font-size-12\)/);
   assert.match(css, /\.tool-state-icon\[data-status=in_progress\] \{[^}]*animation: spinner-rotate 0\.7s linear infinite/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.tool-state-icon\[data-status=in_progress\] \{[^}]*animation-duration: 1\.6s/);

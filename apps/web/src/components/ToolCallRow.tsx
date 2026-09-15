@@ -29,11 +29,11 @@ export function ToolCallRow({ tc, sessionId }: { tc: ToolCall; sessionId: string
   return <div className="msg-tool" data-status={tc.status ?? 'unknown'} data-open={open || undefined}>
     <button type="button" className="activity-head tool-head tool-toggle" aria-expanded={open}
       aria-controls={contentId} aria-label={`${open ? '收起' : '展开'}细节：${label}`} title={label} onClick={toggle}>
-      <span className="tool-heading-content">
-        <span ref={nameRef} className="tool-label" data-clipped={nameClipped || undefined}><bdi dir="ltr">{name}</bdi></span>
-        {description && <span ref={descriptionRef} className="tool-description" data-clipped={descriptionClipped || undefined}>{description}</span>}
-      </span>
       <span className="activity-icon"><ToolStatusIcon status={tc.status} /></span>
+      <span className="tool-heading-content">
+        {description && <span ref={descriptionRef} className="tool-description" data-clipped={descriptionClipped || undefined}>{description}</span>}
+        <span ref={nameRef} className="tool-label" data-clipped={nameClipped || undefined}><bdi dir="ltr">{name}</bdi></span>
+      </span>
     </button>
     {open && <div id={contentId} className="activity-detail tool-detail">
       {nameClipped && <section><div className="tool-detail-label">工具名</div><div className="tool-full-name">{name}</div></section>}
