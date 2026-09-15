@@ -3,6 +3,11 @@
 Cockpit 提供普通前后端服务包。使用者准备运行环境、配置原生登录与远程认证入口，
 并选择如何启动服务。
 
+本指南也供 Agent 执行安装时使用。先核对运行前提，再下载、认证、启动并完成首次聊天。
+如果机器上已有安装或运行中的服务，先与用户确认再替换、停止或变更配置；
+不要把安装请求当成删除旧会话或迁移用户数据的授权。
+需要用户登录时引导其在本机安全输入，不要求将令牌粘贴到聊天中。
+
 ## 运行前提
 
 | 项目 | 当前要求 |
@@ -29,8 +34,25 @@ Web 与 API 在一个 Node 服务内；SDK 自己的进程外 runtime、原生 M
 从 [Latest Release](https://github.com/waksana/cockpit/releases/latest)下载
 `runtime.tar.gz` 与 `runtime.tar.gz.sha256`；需要重现固定版本时选择
 [v0.1.0](https://github.com/waksana/cockpit/releases/tag/v0.1.0)等明确 tag。
-验证摘要并解压到新目录的方法见[README quickstart](../README.md#快速开始)。
 GitHub 自动生成的 Source code ZIP/tar 不包含安装好的依赖，不能替代 `runtime.tar.gz`。
+
+确认已准备上面的 Node 版本后，在新的下载目录执行：
+
+```sh
+mkdir cockpit-download &&
+cd cockpit-download &&
+curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/latest/download/runtime.tar.gz &&
+curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/latest/download/runtime.tar.gz.sha256 &&
+sha256sum -c runtime.tar.gz.sha256 &&
+mkdir cockpit &&
+tar -xzf runtime.tar.gz -C cockpit &&
+cd cockpit
+```
+
+任一步失败都会停止后续步骤；不要忽略下载或摘要错误继续安装。
+两个文件必须来自同一版本；固定版本时，将上述两个 URL 的 `latest/download`
+一并替换为 `download/v0.1.0` 等所选 tag。
+checksum 用于校验文件完整性，不是独立发布者签名。
 
 包内包含 built Web、MCP 客户端、server/core TypeScript、必要 loaders、
 运行依赖以及 LICENSE/NOTICE；**不包含 Node、用户凭据或原生会话数据**。
@@ -41,6 +63,10 @@ GitHub 自动生成的 Source code ZIP/tar 不包含安装好的依赖，不能�
 ```sh
 node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/index.ts
 ```
+
+启动后按下方[首次聊天与就绪检查](#首次聊天与就绪检查)打开
+**http://127.0.0.1:8771** 并确认原生回复。本地使用不需要反向代理；
+远程访问必须先配置[认证 HTTPS 入口](#remote-access)，不能直接暴露未认证的服务。
 
 <a id="from-source"></a>
 ## 从源码安装

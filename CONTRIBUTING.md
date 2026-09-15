@@ -6,7 +6,7 @@ substantial behavior or architecture changes in an issue before implementing the
 
 ## Before you start
 
-- Read the [project scope](README.md#当前范围) and
+- Read the [current architecture and scope](docs/cockpit-plan.md) and
   [product requirements](docs/product-requirements.md). Planned modules are not
   currently installable features.
 - For setup, use the [source installation guide](docs/DEPLOY-PORTABLE.md#from-source):
