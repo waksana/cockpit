@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';
+import { BrowserRouter, MemoryRouter } from 'react-router-dom';
 import type { ChatMessage } from '@cockpit/protocol';
 import { Thread } from '../components/Thread';
 import { ChatHeader } from '../components/ChatHeader';
@@ -19,9 +19,8 @@ if (!import.meta.env.DEV || import.meta.env.COCKPIT_CHAT_LAB !== true) {
   throw new Error('Start the isolated chat lab with COCKPIT_CHAT_LAB=1.');
 }
 
-// No App/ConnectedThread/init: these are synthetic component inputs, never
-// registered sessions or a substitute native store. Unhandled HTTP is rejected
-// by the opt-in Vite lab server as well.
+// Component scenes have no transport. The workspace scene below mounts the real
+// App with an isolated store; unhandled HTTP is rejected by the Vite lab server too.
 useCockpit.setState({ connState: 'open', snapshotReady: true });
 
 export function Lab() {
@@ -98,6 +97,7 @@ export function Lab() {
       <summary>合成场景控制</summary>
     <header className="lab-toolbar">
       <strong>Chat Lab / 开发组件场景</strong>
+      <a href="/chat-lab.html?scene=workspace">完整工作区场景</a>
       <label>场景 <select value={scenario} onChange={e => choose(e.target.value as Scenario)}>
         {scenarios.map(([id, title]) => <option key={id} value={id}>{title}</option>)}
       </select></label>
@@ -169,4 +169,15 @@ export function Lab() {
   </div>;
 }
 
-createRoot(document.getElementById('root')!).render(<BrowserRouter><Lab /></BrowserRouter>);
+const root = createRoot(document.getElementById('root')!);
+if (new URLSearchParams(location.search).get('scene') === 'workspace') {
+  const { installWorkspaceFixture, workspaceSessionId, workspaceDraft } = await import('./workspace-fixtures');
+  installWorkspaceFixture(useCockpit);
+  getSessionDraft(workspaceSessionId).edit(workspaceDraft);
+  const { default: App } = await import('../App');
+  root.render(<MemoryRouter initialEntries={[`/session/${workspaceSessionId}/info`]}>
+    <App /><UxErrorNotifications />
+  </MemoryRouter>);
+} else {
+  root.render(<BrowserRouter><Lab /></BrowserRouter>);
+}

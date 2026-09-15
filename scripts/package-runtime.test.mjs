@@ -244,6 +244,10 @@ test('Chat Lab stays an opt-in production-component harness rather than another 
   }
   assert.match(source, /!import\.meta\.env\.DEV.*COCKPIT_CHAT_LAB !== true/);
   assert.doesNotMatch(source, /\.init\s*\(|new NetClient|fetch\s*\(/);
+  assert.match(source, /installWorkspaceFixture\(useCockpit\)/);
+  const workspace = readFileSync(join(web, 'src/dev/workspace-fixtures.ts'), 'utf8');
+  assert.match(workspace, /init: \(\) => \(\) => \{\}/);
+  assert.doesNotMatch(workspace, /new NetClient|fetch\s*\(/);
   assert.match(plugin, /apply: 'serve'/);
   assert.match(plugin, /host: '127\.0\.0\.1'/);
   assert.match(plugin, /path\.startsWith\('\/intent\/'\)/);
