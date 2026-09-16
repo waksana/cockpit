@@ -64,7 +64,7 @@ export function validateModuleAsset(value: unknown, backend: URL): ModuleAsset {
 
 function validateFrontend(input: unknown): ModuleFrontend {
   if (!record(input)) throw new Error('Module activate must return contributions');
-  const allowed = new Set(['writes', 'composerActions', 'composerAbove', 'fileInput', 'chatRenderers', 'dispose']);
+  const allowed = new Set(['writes', 'rendersDraftAttachments', 'composerActions', 'composerAbove', 'fileInput', 'chatRenderers', 'dispose']);
   for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`Unsupported module contribution: ${key}`);
   if (input.writes !== undefined && (!Array.isArray(input.writes)
     || input.writes.some(value => value !== 'text' && value !== 'attachments'))) throw new Error('Invalid module writes declaration');
@@ -86,6 +86,12 @@ function validateFrontend(input: unknown): ModuleFrontend {
     }
   }
   if (input.dispose !== undefined && typeof input.dispose !== 'function') throw new Error('Invalid module dispose');
+  if (input.rendersDraftAttachments !== undefined && typeof input.rendersDraftAttachments !== 'boolean') {
+    throw new Error('Invalid draft attachment rendering declaration');
+  }
+  if (input.rendersDraftAttachments && (!Array.isArray(input.composerAbove) || !input.composerAbove.length)) {
+    throw new Error('Draft attachment rendering requires a composerAbove contribution');
+  }
   return input as ModuleFrontend;
 }
 
