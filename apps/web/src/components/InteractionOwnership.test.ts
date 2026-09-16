@@ -70,6 +70,10 @@ test('ordinary dialogs participate in the shared modal focus lifecycle with an e
   assert.match(dialog, /useModalFocus\(dialogRef\)/);
   assert.match(dialog, /ref=\{dialogRef\} tabIndex=\{-1\} className="dialog-card"/);
   assert.ok(dialog.indexOf('useModalFocus(dialogRef)') < dialog.indexOf('inputRef.current?.select()'));
+  const focus = source('../lib/useModalFocus.ts');
+  assert.match(focus, /const shell = document.querySelector<HTMLElement>\('\.cockpit-shell'\)/);
+  assert.match(focus, /\.filter\(available\)/);
+  assert.match(focus, /select:not\(:disabled\), textarea:not\(:disabled\), a\[href\], summary/);
   const html = renderToStaticMarkup(createElement(Dialog, {
     title: 'Rename target', input: { initial: 'Target B' },
     onConfirm: () => assert.fail('Rendering must not mutate a session'),

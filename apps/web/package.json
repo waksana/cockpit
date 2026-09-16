@@ -14,6 +14,7 @@
   "dependencies": {
     "@cockpit/module-api": "workspace:*",
     "@cockpit/protocol": "workspace:*",
+    "lucide-react": "1.46.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",

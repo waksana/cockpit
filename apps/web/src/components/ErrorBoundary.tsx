@@ -24,7 +24,7 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="crash-fallback">
           <p>界面出错了，错误仅在本地记录，不会自动执行代理。</p>
-          <button type="button" onClick={() => window.location.reload()}>重新加载</button>
+          <button type="button" className="ck-button" onClick={() => window.location.reload()}>重新加载</button>
         </div>
       );
     }

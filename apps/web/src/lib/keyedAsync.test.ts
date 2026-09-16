@@ -22,6 +22,24 @@ function setup<T>() {
   };
 }
 
+test('settled refresh callbacks run after both outcomes only while their action still owns the view', async () => {
+  for (const outcome of ['success', 'failure'] as const) {
+    for (const leave of ['stay', 'unmount', 'reconnect', 'offline'] as const) {
+      const h = setup<void>();
+      const held = deferred<void>();
+      let refreshes = 0;
+      const result = h.task.run(() => held.promise, undefined, true, () => { refreshes++; });
+      if (leave === 'unmount') h.task.deactivate();
+      if (leave === 'reconnect') h.reconnect();
+      if (leave === 'offline') h.offline();
+      if (outcome === 'failure') held.reject(new Error('Mutation failed'));
+      else held.resolve();
+      await result;
+      assert.equal(refreshes, leave === 'stay' ? 1 : 0, `${outcome}/${leave}`);
+    }
+  }
+});
+
 test('resource refresh coalesces same-turn triggers and loops once for a late dirty read', async () => {
   const { task } = setup<string>();
   let reads = 0;

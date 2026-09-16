@@ -5,7 +5,7 @@
 // contextmenu (right-click) opens at the cursor. A small move budget cancels
 // the long-press so scrolling/swiping still works.
 
-import { useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
 
 const LONG_PRESS_MS = 450;
@@ -28,19 +28,30 @@ export function useLongPress(
 ): LongPressHandlers {
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const start = useRef<{ x: number; y: number } | null>(null);
+  const fired = useRef(false);
 
   const clear = useCallback(() => {
     if (timer.current) { clearTimeout(timer.current); timer.current = null; }
   }, []);
+  useEffect(() => clear, [clear]);
 
   const onPointerDown = useCallback((e: ReactPointerEvent) => {
-    if (e.pointerType === 'mouse') return; // desktop uses contextmenu
-    start.current = { x: e.clientX, y: e.clientY };
+    if (e.pointerType === 'mouse') {
+      clear();
+      fired.current = false;
+      if (firedRef) firedRef.current = false;
+      return;
+    }
+    if (e.isPrimary === false || e.button !== 0) return;
+    fired.current = false;
     if (firedRef) firedRef.current = false;
     clear();
+    start.current = { x: e.clientX, y: e.clientY };
     const { clientX, clientY } = e;
     const trigger = e.currentTarget as HTMLElement;
     timer.current = setTimeout(() => {
+      timer.current = null;
+      fired.current = true;
       if (firedRef) firedRef.current = true;
       open(clientX, clientY, trigger);
     }, LONG_PRESS_MS);
@@ -58,8 +69,12 @@ export function useLongPress(
 
   const onContextMenu = useCallback((e: ReactPointerEvent | React.MouseEvent) => {
     e.preventDefault();
+    clear();
+    if (fired.current) return;
+    fired.current = true;
+    if (firedRef) firedRef.current = true;
     open(e.clientX, e.clientY, e.currentTarget as HTMLElement);
-  }, [open]);
+  }, [open, clear, firedRef]);
 
   return { onPointerDown, onPointerMove, onPointerUp, onPointerCancel, onContextMenu };
 }

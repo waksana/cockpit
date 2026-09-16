@@ -102,26 +102,26 @@ export function Lab() {
       <summary>合成场景控制</summary>
     <header className="lab-toolbar">
       <strong>Chat Lab / 开发组件场景</strong>
-      <a href="/chat-lab.html?scene=workspace">完整工作区场景</a>
-      <label>场景 <select value={scenario} onChange={e => choose(e.target.value as Scenario)}>
+      <a className="ck-button" href="/chat-lab.html?scene=workspace">完整工作区场景</a>
+      <label>场景 <select className="ck-input" value={scenario} onChange={e => choose(e.target.value as Scenario)}>
         {scenarios.map(([id, title]) => <option key={id} value={id}>{title}</option>)}
       </select></label>
       <label><input type="checkbox" checked={fail} onChange={e => setFail(e.target.checked)} />模拟失败</label>
       <label><input type="checkbox" checked={hold} onChange={e => setHold(e.target.checked)} />保持请求中</label>
-      <button onClick={() => pending.current.splice(0).forEach(resolve => resolve())}>释放结果</button>
-      <button onClick={() => {
+      <button type="button" className="ck-button" onClick={() => pending.current.splice(0).forEach(resolve => resolve())}>释放结果</button>
+      <button type="button" className="ck-button" onClick={() => {
         const connected = useCockpit.getState().connState === 'open';
         useCockpit.setState({ connState: connected ? 'connecting' : 'open' });
         setReceipt(connected ? '连接关闭（合成）' : '连接打开（合成）');
       }}>切换连接</button>
-      <button onClick={() => {
+      <button type="button" className="ck-button" onClick={() => {
         draft.edit('一段保留的草稿。');
       }}>草稿样例</button>
-      <button onClick={() => append('新消息到达。正在上翻时应显示新消息入口，不应强跳。')}>追加消息</button>
-      <button onClick={() => setSession(value => ({ ...value, messages: value.messages.map((m, i) => i === value.messages.length - 1
+      <button type="button" className="ck-button" onClick={() => append('新消息到达。正在上翻时应显示新消息入口，不应强跳。')}>追加消息</button>
+      <button type="button" className="ck-button" onClick={() => setSession(value => ({ ...value, messages: value.messages.map((m, i) => i === value.messages.length - 1
         ? { ...m, content: `${m.content}更加清楚。流式增量也不应打断上翻阅读。` } : m) }))}>流式一步</button>
-      <button onClick={() => setSession(value => ({ ...value, status: 'idle', compacting: false, intent: null }))}>结束回合</button>
-      {scenario === 'input-states' && <label>输入状态 <select aria-label="输入状态" defaultValue="reading" onChange={event => {
+      <button type="button" className="ck-button" onClick={() => setSession(value => ({ ...value, status: 'idle', compacting: false, intent: null }))}>结束回合</button>
+      {scenario === 'input-states' && <label>输入状态 <select className="ck-input" aria-label="输入状态" defaultValue="reading" onChange={event => {
         const target = scenarios.find(([id]) => id === event.target.value);
         if (!target) throw new Error('Unknown synthetic input state');
         setSession(value => ({ ...fixtureSession(target[0]), sessionId: value.sessionId, messages: value.messages }));
@@ -134,29 +134,29 @@ export function Lab() {
         <option value="elicitation-queued">工具确认</option>
         <option value="compacting">压缩与禁用</option>
       </select></label>}
-      {scenario === 'thought-markdown' && <button onClick={() => setSession(value => ({
+      {scenario === 'thought-markdown' && <button type="button" className="ck-button" onClick={() => setSession(value => ({
         ...value, messages: value.messages.map(message => ({ ...message, thought: `${message.thought ?? ''}\n\n新增 **思考片段**。` })),
       }))}>追加思考片段</button>}
-      <button onClick={loadMore}>插入历史 / 完成加载</button>
-      {scenario === 'history-loading' && <button onClick={() => setSession(value => ({
+      <button type="button" className="ck-button" onClick={loadMore}>插入历史 / 完成加载</button>
+      {scenario === 'history-loading' && <button type="button" className="ck-button" onClick={() => setSession(value => ({
         ...value, loadingHistory: !value.loadingHistory,
       }))}>切换分页请求状态</button>}
-      <button onClick={() => choose(scenario)}>重置场景</button>
-      {session.ask && <><button onClick={() => setSession(value => ({
+      <button type="button" className="ck-button" onClick={() => choose(scenario)}>重置场景</button>
+      {session.ask && <><button type="button" className="ck-button" onClick={() => setSession(value => ({
         ...value, ask: value.ask ? { ...value.ask, question: `${value.ask.question}\n补充说明：更新同一问题不会自动展开卡片。` } : null,
-      }))}>更新当前问题</button><button onClick={() => setSession(value => ({
+      }))}>更新当前问题</button><button type="button" className="ck-button" onClick={() => setSession(value => ({
         ...value, ask: value.ask ? { ...value.ask, requestId: `lab-question-${++counter.current}`,
           question: '这是下一个原生问题的合成输入；新问题应展开，原输入框和草稿保持不变。' } : null,
       }))}>下一问题</button></>}
       {scenario === 'ordered-events' && <>
-        <button onClick={() => orderedAction('thought')}>追加思考事件</button>
-        <button onClick={() => orderedAction('body')}>追加正文事件</button>
-        <button onClick={() => orderedAction('tool')}>追加工具事件</button>
-        <button onClick={() => orderedAction('older')}>前插原生事件</button>
-        <button onClick={() => orderedAction('duplicate')}>重复事件页</button>
-        <button onClick={() => orderedAction('streamStep')}>逐条推进流式事件</button>
-        <button onClick={() => orderedAction('reconnect')}>断线并补全</button>
-        <button onClick={() => orderedAction('cold')}>同记录冷加载</button>
+        <button type="button" className="ck-button" onClick={() => orderedAction('thought')}>追加思考事件</button>
+        <button type="button" className="ck-button" onClick={() => orderedAction('body')}>追加正文事件</button>
+        <button type="button" className="ck-button" onClick={() => orderedAction('tool')}>追加工具事件</button>
+        <button type="button" className="ck-button" onClick={() => orderedAction('older')}>前插原生事件</button>
+        <button type="button" className="ck-button" onClick={() => orderedAction('duplicate')}>重复事件页</button>
+        <button type="button" className="ck-button" onClick={() => orderedAction('streamStep')}>逐条推进流式事件</button>
+        <button type="button" className="ck-button" onClick={() => orderedAction('reconnect')}>断线并补全</button>
+        <button type="button" className="ck-button" onClick={() => orderedAction('cold')}>同记录冷加载</button>
       </>}
     </header>
     <output className="lab-receipt" aria-live="polite">{receipt}</output>
@@ -183,9 +183,18 @@ export function Lab() {
         })}
         onRespondElicitation={(id, answer) => action(`${id} / ${answer}`, () => setSession(value => ({ ...value, elicitation: null })))}
         onRemoveQueued={id => { setReceipt(`移除队列项：${id}`); setSession(value => ({ ...value, queue: value.queue?.filter(q => q.id !== id) })); }}
-        onCancel={() => { setReceipt('停止回调：清空队列；没有中断任何真实工作。'); setSession(value => ({
-          ...value, status: 'idle', queue: [], ask: null, planRequest: null, elicitation: null,
-        })); append('本次执行已取消（合成记录）。', 'system'); }}
+        onCancel={() => {
+          const owner = generation.current;
+          setSession(value => ({ ...value, cancelling: true }));
+          void action('停止并清空队列（合成）', () => {
+            setSession(value => ({
+              ...value, cancelling: false, status: 'idle', queue: [], ask: null, planRequest: null, elicitation: null,
+            }));
+            append('本次执行已取消（合成记录）。', 'system');
+          }).catch(() => {
+            if (owner === generation.current) setSession(value => ({ ...value, cancelling: false }));
+          });
+        }}
         onInterrupt={async () => {
           await action('打断并保留队列', () => setSession(value => ({
             ...value, status: 'idle', ask: null, planRequest: null, elicitation: null,

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import { act, createElement, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
 import type { IntentResult, SessionProjection } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
 import { IntentHttpError } from '../net/client';
@@ -11,6 +12,8 @@ import { useKeyedResource } from '../lib/useKeyedResource';
 import { SessionInfoPanel } from './SessionInfoPanel';
 import { SessionMcp, SessionSkills } from './Manage';
 import { CopyButton } from './CopyButton';
+import { ManageWorkspace } from './ManageWorkspace';
+import { SessionDetails } from './SessionDetails';
 
 // The same deterministic React DOM host as Thread.lifecycle, limited to the
 // controls these panels use. Reads and mutations stay in fixture-owned stores.
@@ -63,7 +66,14 @@ class HostNode extends EventTarget {
   setAttribute(name: string, value: string) { this.attributes.set(name, String(value)); }
   removeAttribute(name: string) { this.attributes.delete(name); }
   getAttribute(name: string) { return this.attributes.get(name) ?? null; }
+  focus() { this.ownerDocument.activeElement = this; }
+  getClientRects() { return [1]; }
+  closest(selector: string): HostNode | null {
+    return this.matches(selector) ? this : this.parentNode?.closest(selector) ?? null;
+  }
   matches(selector: string): boolean {
+    if (selector.includes(', ')) return selector.split(', ').some(part => this.matches(part));
+    if (selector.endsWith(':not(:disabled)')) return !this.attributes.has('disabled') && this.matches(selector.slice(0, -15));
     if (selector.startsWith('.')) return (this.getAttribute('class') ?? '').split(' ').includes(selector.slice(1));
     const match = /^\[([^=\]]+)(?:="([^"]*)")?\]$/.exec(selector);
     return match ? this.attributes.has(match[1]) && (match[2] === undefined || this.getAttribute(match[1]) === match[2])
@@ -80,6 +90,9 @@ class HostDocument extends EventTarget {
   documentElement = new HostNode('html', this);
   body = new HostNode('body', this);
   activeElement = this.body;
+  nativeModal: HostNode | null = null;
+  querySelector(selector: string) { return selector === ':modal' ? this.nativeModal : this.body.querySelector(selector); }
+  querySelectorAll(selector: string) { return this.body.querySelectorAll(selector); }
   createElement(tag: string) { return new HostNode(tag, this); }
   createElementNS(_namespace: string, tag: string) { return this.createElement(tag); }
   createTextNode(text: string) {
@@ -93,7 +106,10 @@ class HostDocument extends EventTarget {
 function mount(t: TestContext) {
   const document = new HostDocument();
   const globals = {
-    document, window: Object.assign(new EventTarget(), { document, HTMLIFrameElement: class {} }),
+    document, window: Object.assign(new EventTarget(), {
+      document, HTMLIFrameElement: class {}, history: { state: null },
+      matchMedia: () => Object.assign(new EventTarget(), { matches: false }),
+    }),
     Element: HostNode, HTMLElement: HostNode, IS_REACT_ACT_ENVIRONMENT: true,
   };
   const restore: (() => void)[] = [];
@@ -113,7 +129,7 @@ function mount(t: TestContext) {
     for (const reset of restore) reset();
   });
   return {
-    container,
+    container, document,
     render: (children: ReactNode) => act(async () => root.render(children)),
     event: (node: HostNode, type: string) => act(async () => {
       const event = new Event(type, { bubbles: true });
@@ -154,6 +170,128 @@ function button(container: HostNode, text: string) {
   return result;
 }
 function disabled(node: HostNode) { return node.attributes.has('disabled'); }
+
+for (const section of ['mcp', 'skills'] as const) {
+  for (const outcome of ['success', 'failure'] as const) {
+    test(`global ${section}: A → B → late ${outcome} → A reads catalog without leaking feedback`, async t => {
+      const h = mount(t);
+      const pending = deferred<void>();
+      const values: Record<string, boolean> = { A: false, B: false };
+      let reads = 0;
+      useCockpit.setState({
+        mcpGlobal: async () => { reads++; return Object.entries(values).map(([name, defaultOn]) => ({ name, defaultOn, detail: name })); },
+        skillsGlobal: async () => { reads++; return Object.entries(values).map(([name, enabled]) => ({ name, enabled, description: name })); },
+        skillsRead: async name => ({ name, enabled: values[name], body: '', description: name }),
+        mcpSetDefault: () => pending.promise, skillsSetGlobal: () => pending.promise,
+      });
+      await h.render(createElement(MemoryRouter, { initialEntries: [`/${section}/A`] },
+        createElement(Routes, null, createElement(Route, { path: '/:section/:item?', element: createElement(ManageWorkspace) }))));
+      const toggle = () => {
+        const control = h.container.querySelector('[role="switch"]');
+        assert.ok(control);
+        return control;
+      };
+      assert.equal(toggle().getAttribute('aria-checked'), 'false');
+      await h.event(toggle(), 'click');
+      await h.event(h.container.querySelectorAll('.manage-row').find(row => row.textContent === 'BB')!, 'click');
+      const before = reads;
+      await act(async () => {
+        // A failed acknowledgement can still follow a committed native write.
+        values.A = true;
+        if (outcome === 'success') pending.resolve();
+        else pending.reject(new Error('obsolete A failure'));
+      });
+      assert.ok(reads > before, 'the still-mounted catalog reads back either outcome');
+      assert.equal(toggle().getAttribute('aria-checked'), 'false', 'B retains its own value');
+      assert.doesNotMatch(h.container.textContent, /obsolete A failure|设置失败/);
+      await h.event(h.container.querySelectorAll('.manage-row').find(row => row.textContent.startsWith('A'))!, 'click');
+      assert.equal(toggle().getAttribute('aria-checked'), 'true', 'returning A sees authoritative readback');
+      assert.doesNotMatch(h.container.textContent, /obsolete A failure|设置失败/);
+    });
+  }
+
+  for (const leave of ['stay', 'unmount', 'reconnect', 'offline'] as const) {
+    test(`global ${section}: multiple late results belong to catalog lifetime (${leave})`, async t => {
+      const h = mount(t);
+      const requests = [deferred<void>(), deferred<void>()];
+      let writes = 0;
+      let reads = 0;
+      useCockpit.setState({
+        mcpGlobal: async () => { reads++; return ['A', 'B'].map(name => ({ name, defaultOn: false, detail: name })); },
+        skillsGlobal: async () => { reads++; return ['A', 'B'].map(name => ({ name, enabled: false, description: name })); },
+        skillsRead: async name => ({ name, enabled: false, body: '', description: name }),
+        mcpSetDefault: () => requests[writes++].promise, skillsSetGlobal: () => requests[writes++].promise,
+      });
+      const workspace = () => createElement(MemoryRouter, { initialEntries: [`/${section}/A`] },
+        createElement(Routes, null, createElement(Route, { path: '/:section/:item?', element: createElement(ManageWorkspace) })));
+      await h.render(workspace());
+      await h.event(h.container.querySelector('[role="switch"]')!, 'click');
+      await h.event(h.container.querySelectorAll('.manage-row').find(row => row.textContent === 'BB')!, 'click');
+      await h.event(h.container.querySelector('[role="switch"]')!, 'click');
+      assert.equal(writes, 2, 'different detail mutations may overlap');
+      if (leave === 'unmount') {
+        await h.render(null);
+        await h.render(workspace());
+      }
+      if (leave === 'reconnect') await act(async () => useCockpit.setState({ connectionGeneration: 2 }));
+      if (leave === 'offline') await act(async () => useCockpit.setState({ connState: 'connecting' }));
+      const before = reads;
+      await act(async () => { requests[0].resolve(); });
+      const afterFirst = reads;
+      await act(async () => { requests[1].reject(new Error('late B failure')); });
+      if (leave === 'stay') {
+        assert.ok(afterFirst > before);
+        assert.ok(reads > afterFirst, 'each settlement invalidates, not only the latest request');
+        assert.match(h.container.textContent, /late B failure/, 'current detail owns its failure');
+      } else {
+        assert.equal(reads, before, 'old requests cannot invalidate a remounted or reconnected owner');
+        assert.doesNotMatch(h.container.textContent, /late B failure/);
+      }
+    });
+  }
+}
+
+for (const desktop of [true, false]) {
+  test(`session panel yields Escape and Tab to native modal (${desktop ? 'desktop' : 'narrow'})`, async t => {
+    const h = mount(t);
+    t.mock.method(window, 'matchMedia', () => Object.assign(new EventTarget(), { matches: desktop }) as MediaQueryList);
+    useCockpit.setState({ mcpSession: async () => [] });
+    let navigate!: ReturnType<typeof useNavigate>;
+    function Panel() {
+      navigate = useNavigate();
+      return createElement(SessionDetails, { sessionId: session.sessionId, panel: 'mcp' });
+    }
+    await h.render(createElement(MemoryRouter, { initialEntries: [`/session/${session.sessionId}/mcp`] },
+      createElement(Routes, null,
+        createElement(Route, { path: '/session/:id/mcp', element: createElement(Panel) }),
+        createElement(Route, { path: '/session/:id', element: createElement('div', null, 'closed panel') }))));
+    const frame = h.container.querySelector('aside');
+    assert.ok(frame);
+    const modal = h.document.createElement('dialog');
+    h.document.nativeModal = modal;
+    modal.focus();
+    const key = async (value: string, prevented = false) => {
+      const event = new Event('keydown', { cancelable: true });
+      Object.defineProperty(event, 'key', { value });
+      if (prevented) event.preventDefault();
+      await act(async () => { window.dispatchEvent(event); });
+      return event;
+    };
+    assert.equal((await key('Tab')).defaultPrevented, false, 'native modal keeps browser Tab handling');
+    assert.equal(h.document.activeElement, modal, 'background panel cannot steal modal focus');
+    await key('Escape');
+    assert.equal(h.container.querySelector('aside'), frame, 'modal Escape cannot navigate the background');
+    h.document.nativeModal = null;
+    await key('Escape', true);
+    assert.equal(h.container.querySelector('aside'), frame, 'claimed Escape remains ignored');
+    frame.focus();
+    assert.equal((await key('Tab')).defaultPrevented, !desktop, 'original panel Tab behavior remains');
+    await key('Escape');
+    assert.equal(h.container.textContent, 'closed panel');
+    await act(async () => { await navigate(`/session/${session.sessionId}/mcp`); });
+    assert.ok(h.container.querySelector('aside'));
+  });
+}
 
 for (const outcome of ['success', 'failure'] as const) {
   test(`resource key changes isolate retained data and late ${outcome} without remounting`, async t => {
@@ -647,7 +785,7 @@ test('session ID copies its exact value and retains confirmation without a resto
   const copy = h.container.querySelector('[aria-label="复制 session ID"]');
   assert.ok(copy);
   assert.equal(copy.textContent, session.sessionId);
-  assert.equal(copy.querySelector('.tgico'), null, 'the ID itself is the target, not an extra copy glyph');
+  assert.equal(copy.querySelector('.ck-icon'), null, 'the ID itself is the target, not an extra copy icon');
   await h.event(copy, 'click');
   assert.deepEqual(copied, [session.sessionId]);
   assert.match(copy.textContent, /已复制/);

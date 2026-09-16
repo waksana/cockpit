@@ -42,8 +42,8 @@ export function useKeyedResource<T>(
 
 export function useKeyedAction(key: string) {
   const { task, snapshot, connected, generation } = useOwnedAsync<void>(key);
-  const run = useCallback((action: () => void | Promise<void>, onSuccess?: () => void) =>
-    task.run(action, onSuccess, true), [task]);
+  const run = useCallback((action: () => void | Promise<void>, onSuccess?: () => void, onSettled?: () => void) =>
+    task.run(action, onSuccess, true, onSettled), [task]);
   return {
     run, connected,
     busy: snapshot.pending && snapshot.generation === generation,

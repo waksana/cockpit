@@ -101,14 +101,15 @@ function DialogContent({
         {input && (
           <input
             ref={inputRef}
-            className="dialog-input"
+            className="dialog-input ck-input"
             type="text"
+            aria-label={input.placeholder || title}
             value={value}
             placeholder={input.placeholder}
             disabled={action.busy}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.nativeEvent.isComposing) { e.preventDefault(); void confirm(); }
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) { e.preventDefault(); void confirm(); }
             }}
           />
         )}
@@ -117,10 +118,10 @@ function DialogContent({
           <p className="dialog-message" role="status">等待连接…连接恢复后可重试。</p>
         )}
         <div className="dialog-actions">
-          <button type="button" className="dialog-btn rp" disabled={action.busy} onClick={cancel}>取消</button>
+          <button type="button" className="dialog-btn ck-button rp" disabled={action.busy} onClick={cancel}>取消</button>
           <button
             type="button"
-            className={`dialog-btn primary rp${destructive ? ' danger' : ''}`}
+            className={`dialog-btn ck-button ck-primary primary rp${destructive ? ' danger ck-danger' : ''}`}
             disabled={action.busy || !action.connected || (hasInput && !value.trim())}
             onClick={() => { void confirm(); }}
           >

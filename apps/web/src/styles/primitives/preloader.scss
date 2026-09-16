@@ -1,13 +1,6 @@
-// Loading primitive — a small circular spinner.
-// Used for the search-box loading state and inline "loading older messages".
-
-// Small spinner (search loading, inline). Two-tone ring.
+// Motion only: the loading glyph comes from the shared Lucide adapter.
 .spinner {
-  display: inline-block;
-  width: 1.05rem; height: 1.05rem;
-  border-radius: 50%;
-  border: 2px solid var(--ripple-color);
-  border-top-color: var(--primary-color);
+  color: var(--ck-color-accent);
   animation: spinner-rotate 0.7s linear infinite;
   @media (prefers-reduced-motion: reduce) { animation-duration: 1.6s; }
 }

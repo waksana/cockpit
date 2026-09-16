@@ -105,7 +105,7 @@ test('model controls retain missing native choices and translate known current v
   assert.match(unknown, /unknown-native-model（当前值，列表未提供）/);
   assert.match(unknown, /思考力度：高.*上下文：标准上下文/);
   assert.match(unknown, /<button[^>]*disabled=""[^>]*>应用配置<\/button>/);
-  assert.equal((unknown.match(/class="dialog-btn primary rp"/g) ?? []).length, 1, 'only one primary Apply action');
+  assert.equal((unknown.match(/class="dialog-btn ck-button ck-primary primary rp"/g) ?? []).length, 1, 'only one primary Apply action');
   assert.match(unknown, /aria-label="使用当前原生值" disabled="">重置/);
   assert.doesNotMatch(unknown, /正在提交|先选择完整组合/);
   const futureEffort = editor({ ...session, currentModelId: 'known', currentReasoningEffort: 'future-effort' });

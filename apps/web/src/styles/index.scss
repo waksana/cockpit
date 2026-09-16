@@ -3,9 +3,9 @@
 // primitives, then components.
 @use 'tokens';
 @use 'base';
-@use 'tgico';
 
 // Primitives
+@use 'primitives/public-ui';
 @use 'primitives/button';
 @use 'primitives/scrollable';
 @use 'primitives/preloader';

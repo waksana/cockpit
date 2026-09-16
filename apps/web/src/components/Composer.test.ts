@@ -39,11 +39,11 @@ test('active draft blocking only disables sending without a global warning or du
   const html = f.render();
   assert.match(html, /fixture-card/);
   assert.doesNotMatch(html, /chat-input-notice|module-draft-recovery|module-draft-attachments|<details class="module|原生附件/);
-  assert.match(html, /class="chat-input-btn send rp" disabled=""/);
+  assert.match(html, /class="chat-input-btn ck-icon-button send rp" disabled=""/);
   assert.match(html, /title="Wait for file"/);
   assert.equal(await f.draft.send(async () => assert.fail('Blocked draft must not send')), false);
   release();
-  assert.doesNotMatch(f.render(), /class="chat-input-btn send rp" disabled=""/);
+  assert.doesNotMatch(f.render(), /class="chat-input-btn ck-icon-button send rp" disabled=""/);
 });
 
 test('ordinary contributions do not hide the default attachment removal list', async t => {

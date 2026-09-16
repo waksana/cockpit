@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { Icon } from './Icon';
 
 export function StateNotice({ children, kind = 'info', placement = 'inline', className = '' }: {
   children: ReactNode; kind?: 'loading' | 'error' | 'empty' | 'info';
@@ -6,7 +7,7 @@ export function StateNotice({ children, kind = 'info', placement = 'inline', cla
 }) {
   return <div className={`state-notice ${className}`.trim()} data-kind={kind} data-placement={placement}
     role={kind === 'error' ? 'alert' : 'status'}>
-    {kind === 'loading' && <span className="spinner" aria-hidden="true" />}
+    {kind === 'loading' && <Icon name="loading" className="spinner" size={16} />}
     <div className="state-notice-content">{children}</div>
   </div>;
 }

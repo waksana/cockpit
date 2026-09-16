@@ -27,6 +27,29 @@ test('native Markdown links retain the existing unsafe-URL protection', () => {
   assert.doesNotMatch(html, /href="javascript:/);
 });
 
+test('a linked image keeps one link action instead of nesting an enhanced preview button inside it', t => {
+  const observed: RenderNode[] = [];
+  t.mock.method(moduleRuntime, 'renderer', (node: RenderNode) => {
+    observed.push(node);
+    return node.kind === 'image' ? {
+      module: {
+        asset: { id: 'fixture', name: 'Fixture', version: '1.0.0', digest: 'a'.repeat(64),
+          apiBase: '/fixture/api', entry: '/fixture/entry.js', styles: [], config: {} },
+        frontend: {}, signal: new AbortController().signal, bindings: new Map(), stop() {},
+      },
+      renderer: { id: 'image', matches: () => true, component: () => createElement('button', { type: 'button' }, 'Preview') },
+    } : undefined;
+  });
+  const html = renderToStaticMarkup(createElement(MessageBody, {
+    body: '[![Picture](./image.png)](https://example.invalid/destination)\n\n![Standalone](./other.png)',
+    origin: { sessionId: 'fixture', messageId: 'linked-image' },
+  }));
+  assert.deepEqual(observed.map(node => [node.kind, node.label]), [['link', 'Picture'], ['image', 'Standalone']]);
+  assert.match(html, /<a[^>]*href="https:\/\/example.invalid\/destination"[^>]*><span>!\[Picture\]/);
+  assert.doesNotMatch(html, /<a[^>]*><button/);
+  assert.equal((html.match(/<button/g) ?? []).length, 1, 'standalone media remains module-enhanceable');
+});
+
 test('attachment-only messages remain visible without a module, network fetch or legacy marker conversion', () => {
   const message: ChatMessage = {
     id: 'user-native', role: 'user', content: ' \n ', timestamp: 1,

@@ -12,6 +12,11 @@
   --chat-accent-ink: color-mix(in srgb, var(--primary-color) 20%, var(--primary-text-color));
   --chat-link-ink: color-mix(in srgb, var(--link-color) 20%, var(--primary-text-color));
   --chat-danger-ink: color-mix(in srgb, var(--danger-color) 60%, var(--primary-text-color));
+  --ck-color-text: var(--primary-text-color);
+  --ck-color-muted: var(--secondary-text-color);
+  --ck-color-accent: var(--chat-accent-ink);
+  --ck-color-danger: var(--chat-danger-ink);
+  --ck-color-on-accent: var(--surface-color);
   color: var(--primary-text-color);
   min-width: 0;
   position: relative;
@@ -280,6 +285,7 @@
   grid-template-columns: 1rem minmax(0, 1fr);
   align-items: center; gap: 6px;
   width: 100%; min-width: 0; height: 28px;
+  min-block-size: 28px;
   padding: 0; border: 0; border-radius: 0;
   background: transparent;
   color: var(--primary-text-color);
@@ -456,7 +462,10 @@ button.activity-head {
   li > ul, li > ol { margin: 0.15em 0; }
   .contains-task-list { list-style: none; padding-inline-start: 0.2rem; }
   .task-list-item input { margin: 0 0.45rem 0 0; accent-color: var(--primary-color); }
-  a { color: var(--chat-link-ink, var(--link-color)); text-decoration: underline; text-underline-offset: 3px; }
+  a:not(.ck-button, .ck-icon-button) {
+    color: var(--chat-link-ink, var(--link-color));
+    text-decoration: underline; text-underline-offset: 3px;
+  }
   pre {
     margin: var(--chat-gap-prose-section, 0.75rem) 0; padding: var(--chat-inset-panel, 0.85rem 1rem);
     background: color-mix(in srgb, var(--primary-text-color) 8%, transparent);
@@ -508,12 +517,12 @@ button.activity-head {
 }
 .chat-copy { display: inline-flex; align-items: center; gap: 0.4rem; max-width: 100%; }
 .chat-copy-button {
-  display: inline-flex; align-items: center; justify-content: center; gap: 0.3rem;
-  min-height: 32px; padding: 0.25rem 0.5rem; border: none; border-radius: 6px;
-  background: transparent; color: var(--secondary-text-color); font: inherit;
+  gap: 0.3rem;
+  min-block-size: 32px;
+  padding: 0.25rem 0.5rem;
+  color: var(--secondary-text-color);
   font-size: var(--chat-text-meta, var(--font-size-12)); line-height: var(--chat-leading-ui, 1.5);
-  cursor: pointer; white-space: nowrap;
-  &:hover { background: var(--ripple-color); color: var(--primary-text-color); }
+  white-space: nowrap;
 }
 .chat-copy-label { display: grid; text-align: start; }
 .chat-copy-label > span { grid-area: 1 / 1; }
@@ -675,19 +684,11 @@ button.activity-head {
   outline: none;
 }
 .chat-input-btn {
-  flex: none;
-  width: 2.5rem; height: 2.5rem;
-  border: none; border-radius: 50%;
-  display: grid; place-items: center;
-  cursor: pointer;
+  width: var(--ck-control-size); height: var(--ck-control-size);
   position: relative; overflow: hidden;     // ripple host
-  &:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--border-color); }
-  &:disabled { opacity: 0.45; }
 }
 .chat-input-btn.send {
-  background-color: transparent;
-  color: var(--chat-accent-ink);
-  &:disabled { color: var(--secondary-text-color); }
+  color: var(--ck-color-accent);
 }
 .chat .chat-input-btn:focus-visible { outline-offset: -3px; }
 // Explicit native submission feedback; no extra outer frame.
@@ -699,7 +700,7 @@ button.activity-head {
   background: color-mix(in srgb, var(--danger-color) 12%, transparent);
   color: var(--chat-danger-ink); font-size: var(--chat-text-label); line-height: var(--chat-leading-ui);
   > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  > button { flex: none; display: grid; place-items: center; width: 32px; height: 32px; border: none; background: transparent; color: inherit; cursor: pointer; }
+  > button { color: inherit; }
 }
 
 // ── ask_user / queue / permission surfaces ──────────────────────────────────
@@ -720,6 +721,7 @@ button.activity-head {
 .chat-ask-choices { flex: none; display: flex; flex-wrap: wrap; gap: var(--chat-gap-control); }
 .chat-ask-choice {
   appearance: none; cursor: pointer; font: inherit; font-size: var(--chat-text-secondary);
+  justify-content: flex-start;
   min-height: 40px; padding: var(--chat-inset-field); border-radius: 8px; line-height: var(--chat-leading-ui); text-align: start;
   border: 1px solid var(--border-color); background: transparent; color: var(--primary-text-color);
   position: relative; overflow: hidden;
@@ -730,7 +732,6 @@ button.activity-head {
     color: var(--surface-color);
     @media (hover: hover) { &:hover { background: var(--chat-accent-ink); } }
   }
-  &:disabled { opacity: 0.55; cursor: default; }
 }
 // Pending card variants (plan / elicitation) reuse the ask card shell.
 .chat-pending-head { flex: none; display: flex; align-items: center; gap: var(--chat-gap-control); font-size: var(--chat-text-label); line-height: var(--chat-leading-ui); font-weight: 600; margin: 0; color: var(--chat-accent-ink); }
@@ -776,6 +777,8 @@ button.activity-head {
   &::-webkit-details-marker { display: none; }
 }
 .chat-queue-entry[open] .chat-queue-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.queue-chevron { margin-inline-end: var(--chat-gap-meta); }
+.chat-queue-entry[open] .queue-chevron { transform: rotate(90deg); }
 .chat-queue-copy {
   display: flex; flex: none; max-width: 5rem;
   .chat-copy { flex-direction: column; align-items: flex-start; }
@@ -819,7 +822,12 @@ button.activity-head {
   flex: none; margin: 0; font-size: var(--chat-text-label); line-height: var(--chat-leading-ui); overflow-wrap: anywhere;
   &[role='alert'] { color: var(--chat-danger-ink); }
 }
-.chat-queue-remove { flex: none; width: 32px; height: 32px; display: grid; place-items: center; border: none; border-radius: 50%; background: transparent; cursor: pointer; color: var(--secondary-text-color); &:hover { background: var(--ripple-color); } }
+.chat-queue-remove { align-self: flex-start; }
+@media (pointer: coarse) {
+  .activity-head.ck-button, .chat-copy-button.ck-button, .process-summary.ck-button {
+    min-block-size: var(--ck-control-size);
+  }
+}
 @container chat-process (max-width: 36rem) {
   .tool-label { max-width: min(12ch, 45%); }
   .process-summary { gap: 6px; }

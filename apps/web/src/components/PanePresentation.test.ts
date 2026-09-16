@@ -9,20 +9,19 @@ import { StateNotice } from './StateNotice';
 import { ResourceStatus, PanelPageShell } from './SessionPanelKit';
 import { ManagementShell } from './ManagementShell';
 import { Icon } from './Icon';
-import { readFileSync } from 'node:fs';
 
 test('shared state presentation distinguishes actual loading, errors, offline and empty', () => {
   const render = (props: Parameters<typeof ResourceStatus>[0]) => renderToStaticMarkup(createElement(ResourceStatus, props));
   const loading = render({ status: '加载中…', pending: true });
   assert.match(loading, /data-kind="loading"/);
-  assert.match(loading, /class="spinner" aria-hidden="true"/);
+  assert.match(loading, /class="ck-icon spinner" data-icon="loading" aria-hidden="true" style="width:16px;height:16px"><svg/);
   assert.match(loading, /role="status"/);
   const failed = render({ status: '加载失败：offline', failed: true });
   assert.match(failed, /role="alert"/);
-  assert.doesNotMatch(failed, /class="spinner"/);
+  assert.doesNotMatch(failed, /data-icon="loading"/);
   const waiting = render({ status: '等待连接…' });
   assert.match(waiting, /data-kind="info"/);
-  assert.doesNotMatch(waiting, /class="spinner"/);
+  assert.doesNotMatch(waiting, /data-icon="loading"/);
   assert.equal(render({ status: null }), '');
   assert.match(renderToStaticMarkup(createElement(StateNotice, { kind: 'empty', placement: 'pane', children: '没有记录' })), /data-placement="pane"/);
 });
@@ -51,7 +50,7 @@ test('lazy management and panel loads retain their navigation shell and announce
   assert.match(html, /skill-one/);
   assert.match(html, /aria-label="返回"/);
   assert.match(html, /aria-label="刷新" disabled=""/);
-  assert.equal((html.match(/class="spinner"/g) ?? []).length, 2);
+  assert.equal((html.match(/data-icon="loading"/g) ?? []).length, 2);
   const panel = renderToStaticMarkup(createElement(PanelPageShell, { title: 'Session settings', onClose() {}, loading: true }));
   assert.match(panel, /Session settings/);
   assert.match(panel, /role="status"/);
@@ -75,16 +74,15 @@ test('activity headers retain one first-line baseline and icon slot across expan
 });
 test('refresh uses one circular arrow everywhere, with no font glyph or square overlay', () => {
   const html = renderToStaticMarkup(createElement(Icon, { name: 'reload', size: 20 }));
-  assert.match(html, /class="refresh-icon" data-icon="reload" aria-hidden="true"/);
+  assert.match(html, /class="ck-icon" data-icon="reload" aria-hidden="true"/);
   assert.match(html, /width:20px;height:20px/);
   assert.match(html, /viewBox="0 0 24 24"/);
   assert.match(html, /stroke="currentColor"/);
-  assert.equal((html.match(/<path /g) ?? []).length, 1);
-  assert.doesNotMatch(html, /class="tgico"|<rect/);
-  const icons = readFileSync(new URL('../styles/tgico.scss', import.meta.url), 'utf8');
-  assert.doesNotMatch(icons, /\.tgico\[data-icon='reload'\]/);
+  assert.ok((html.match(/<path /g) ?? []).length > 0);
+  assert.match(html, /<svg[^>]*aria-hidden="true"[^>]*focusable="false"/);
+  assert.doesNotMatch(html, /<use|<image|<rect/);
   for (const name of ['search', 'back', 'file'] as const) {
-    assert.match(renderToStaticMarkup(createElement(Icon, { name })), /class="tgico"/);
+    assert.match(renderToStaticMarkup(createElement(Icon, { name })), /class="ck-icon"[^>]*><svg/);
   }
 });
 test('resume groups its message and centered action in a single notice; copying preserves value geometry', () => {

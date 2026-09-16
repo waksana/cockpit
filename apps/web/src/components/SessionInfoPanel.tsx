@@ -158,7 +158,7 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
         <CurrentModel session={session} />
         <label className="info-control">
           <span className="info-control-label">模型</span>
-          <select className="info-select" disabled={disabled} value={current}
+          <select className="info-select ck-input" disabled={disabled} value={current}
             onChange={(e) => edit({ modelId: e.target.value })} aria-label="选择模型">
             {current === '' && <option value="" disabled>选择模型…</option>}
             {current !== '' && !currentModel && <option value={current} disabled>{current}（当前值，列表未提供）</option>}
@@ -169,7 +169,7 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
         {efforts.length > 0 && (
           <label className="info-control">
             <span className="info-control-label">思考力度</span>
-            <select className="info-select" disabled={disabled} value={curEffort}
+            <select className="info-select ck-input" disabled={disabled} value={curEffort}
               onChange={(e) => edit({ ...selection, reasoningEffort: e.target.value || undefined })} aria-label="思考力度">
               <option value="">未指定</option>
               {curEffort !== '' && !efforts.includes(curEffort) && <option value={curEffort} disabled>{curEffort}（当前值，列表未提供）</option>}
@@ -181,7 +181,7 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
         {supportsLong && (
           <label className="info-control">
             <span className="info-control-label">上下文长度</span>
-            <select className="info-select" disabled={disabled} value={curTier}
+            <select className="info-select ck-input" disabled={disabled} value={curTier}
               onChange={(e) => edit({ ...selection, contextTier: e.target.value ? e.target.value as ContextTier : undefined })} aria-label="上下文长度">
               <option value="">未指定</option>
               <option value="default">标准上下文</option>
@@ -190,11 +190,11 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
           </label>
         )}
         <div className="info-model-actions">
-          <button type="button" className="dialog-btn primary rp"
+          <button type="button" className="dialog-btn ck-button ck-primary primary rp"
             disabled={disabled || invalid || action.busy || submission?.revision === revision}
             aria-busy={action.busy}
             onClick={apply}>{action.busy ? '正在提交…' : '应用配置'}</button>
-          <button type="button" className="dialog-btn rp" aria-label="使用当前原生值"
+          <button type="button" className="dialog-btn ck-button rp" aria-label="使用当前原生值"
             disabled={disabled || !draft} onClick={() => edit(selectionFrom(session))}>重置</button>
         </div>
         {resultView}

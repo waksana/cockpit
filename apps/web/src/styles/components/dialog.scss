@@ -38,13 +38,7 @@
   width: 100%;
   margin: 0.2rem 0 0.9rem;
   padding: 0.5rem 0.7rem;
-  border: 1px solid color-mix(in srgb, var(--primary-text-color) 16%, transparent);
-  border-radius: var(--border-radius-medium);
-  background: var(--background-color-true);
-  color: var(--primary-text-color);
   font-size: var(--font-size-15, 0.9375rem);
-  font-family: inherit;
-  &:focus { outline: none; border-color: var(--primary-color); }
 }
 
 .dialog-actions {
@@ -56,17 +50,8 @@
 
 .dialog-btn {
   padding: 0.4rem 0.95rem;
-  border: none;
-  border-radius: var(--border-radius-medium);
-  background: transparent;
-  color: var(--primary-color);
   font-size: var(--font-size-15, 0.9375rem);
   font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  &.primary { background: var(--primary-color); color: #fff; }
-  &.primary.danger { background: var(--danger-color); }
-  &:disabled { opacity: 0.5; cursor: not-allowed; }
 }
 
 // ── Folder picker (new-session working directory chooser) ───────────────────
@@ -87,7 +72,6 @@
   gap: 0.3rem;
   margin: 0.2rem 0 0.6rem;
   .dialog-input { margin: 0; flex: 1 1 auto; font-size: var(--font-size-13); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-  .btn-icon { flex: none; color: var(--secondary-text-color); }
 }
 .dirpicker-list {
   flex: 1 1 auto;
@@ -114,7 +98,7 @@
   overflow: hidden;
   .dirpicker-ico { flex: none; display: inline-flex; color: var(--secondary-text-color); &.folder { color: var(--primary-color); } }
   .dirpicker-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .dirpicker-enter { flex: none; color: var(--tertiary-text-color); transform: rotate(-90deg); }
+  .dirpicker-enter { flex: none; color: var(--tertiary-text-color); }
   &.up { color: var(--secondary-text-color); }
 }
 .dirpicker-empty {

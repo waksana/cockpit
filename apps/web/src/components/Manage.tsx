@@ -8,12 +8,13 @@ import { useSessionResource } from '../lib/useSessionResource';
 import { McpStatusPill } from './McpStatus';
 import { PanelCloseButton, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
 import { PaneHeader } from './PaneHeader';
+import { Icon } from './Icon';
 
 export function Toggle({ on, onChange, disabled, label, busy }: {
   on: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string; busy?: boolean;
 }) {
   return <button type="button" role="switch" aria-label={label} aria-checked={on}
-    aria-busy={busy || undefined} disabled={disabled} className={`switch${on ? ' is-on' : ''}`}
+    aria-busy={busy || undefined} disabled={disabled} className={`switch ck-button${on ? ' is-on' : ''}`}
     onClick={() => onChange(!on)}><span className="switch-knob" /></button>;
 }
 
@@ -24,7 +25,7 @@ function SessionToggleRow({ identity, name, description, badge, status, enabled,
   const action = useKeyedAction(identity);
   const [desired, setDesired] = useState(enabled);
   const error = action.error ?? nativeError;
-  const progress = <><span className="spinner" aria-hidden="true" />{desired ? '正在开启…' : '正在关闭…'}</>;
+  const progress = <><Icon name="loading" className="spinner" size={status ? 10 : 12} />{desired ? '正在开启…' : '正在关闭…'}</>;
   return <div className="manage-row manage-session-row" data-resource-name={name} title={disabled ? disabledReason : undefined}>
     <div className="manage-row-main">
       <div className="manage-row-name">{name}{badge}

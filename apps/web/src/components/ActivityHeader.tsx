@@ -14,7 +14,7 @@ export function ActivityHeader({ icon, title, status, accessibleStatus = status,
     {status && <span className="activity-status">{status}</span>}
   </>;
   return disclosure
-    ? <button type="button" className={`activity-head ${className}`} aria-expanded={disclosure.open}
+    ? <button type="button" className={`activity-head ck-button ${className}`} aria-expanded={disclosure.open}
         aria-label={`${disclosure.open ? '收起' : '展开'}细节：${title}${accessibleStatus ? ` · ${accessibleStatus}` : ''}`}
         onClick={disclosure.onToggle}>{content}</button>
     : <div className={`activity-head ${className}`}>{content}</div>;

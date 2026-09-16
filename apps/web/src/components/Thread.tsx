@@ -26,6 +26,7 @@ import { PlanCard, ElicitationCard } from './PendingDecision';
 import { StateNotice } from './StateNotice';
 import { useClippedText } from '../lib/useClippedText';
 import { hasNewTranscriptContent } from '../lib/transcriptActivity';
+import { useRemovedControlFocus } from '../lib/useRemovedControlFocus';
 import type { NativeAttachment } from '@cockpit/protocol';
 
 function Thought({ message, latest, sessionId }: { message: ChatMessage; latest: boolean; sessionId: string }) {
@@ -72,10 +73,10 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
   const timestamp = items[0].message.timestamp;
   const time = clock(timestamp);
   return <section className="message-process" data-failed={states[0][0] > 0 || undefined}>
-    <div data-message-id={JSON.stringify([sessionId, identity])}><button type="button" className="process-summary" aria-expanded={open} aria-controls={contentId}
+    <div data-message-id={JSON.stringify([sessionId, identity])}><button type="button" className="process-summary ck-button" aria-expanded={open} aria-controls={contentId}
       aria-label={`${open ? '收起' : '展开'}过程：${description} · ${time}`} title={description}
       onClick={toggle}>
-      <span className="process-summary-chevron"><Icon name="down" size={14} /></span>
+      <span className="process-summary-chevron"><Icon name="down" size={16} /></span>
       <span ref={titleRef} className="process-summary-title">{title}</span>
       <span className="process-summary-states">
         {states.filter(([count]) => count > 0).map(([count, status]) => <span key={status ?? 'unknown'}
@@ -137,13 +138,13 @@ function SubagentCard({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
   return (
     <div className="subagent-card" data-status={sa.status}>
       <div className="subagent-overview">
-        <button type="button" className="subagent-head rp" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          <span className="subagent-ico"><Icon name="newchat" size={18} /></span>
+        <button type="button" className="subagent-head ck-button rp" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          <span className="subagent-ico"><Icon name="newchat" size={20} /></span>
           <span className="subagent-name">{sa.displayName}</span>
           <span className="subagent-status" title="根据已加载的子代理事件记录，不代表当前仍在运行或任务目标已完成。">
             记录：{status}{!connected && ' · 待同步'}
           </span>
-          <span className="subagent-chevron"><Icon name={open ? 'up' : 'down'} size={14} /></span>
+          <span className="subagent-chevron"><Icon name={open ? 'up' : 'down'} size={16} /></span>
         </button>
         {sa.description && !open && <div className="subagent-desc">{sa.description}</div>}
       </div>
@@ -222,7 +223,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
     const level = m.level ?? 'info';
     return (
       <div className="message is-system" data-message-id={anchorId} data-level={level}>
-        {level === 'error' && <span className="sys-ico" aria-hidden="true"><Icon name="error" size={14} /></span>}
+        {level === 'error' && <span className="sys-ico" aria-hidden="true"><Icon name="error" size={16} /></span>}
         {m.content}
       </div>
     );
@@ -332,8 +333,9 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     && session.nativeProcessing !== false;
   const queueCount = session.queue?.length ?? 0;
   const showStop = !readOnly && session.status === 'running' && !session.compacting;
+  const stopPending = !!session.cancelling;
   const stopDisabled = !connected || !session.loaded || session.loading || session.closing
-    || session.cancelling || !!session.activeOperations || interruptAction.busy || !onCancel;
+    || (!stopPending && (!!session.activeOperations || interruptAction.busy)) || !onCancel;
   const showInterrupt = !readOnly && queueCount > 0 && canInterrupt;
   const interruptResult = readOnly ? null : interruptAction.error
     ? `打断未确认：${interruptAction.error}。请核对会话状态，不要直接重试。`
@@ -428,6 +430,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     // Native disclosure survives ordinary updates; a new request or idle input opens afresh.
     if (inputCardRef.current) inputCardRef.current.open = true;
   }, [session.sessionId, ask?.requestId, planRequest?.requestId, session.elicitation?.requestId, hasInputHeader]);
+  const executionControlRef = useRemovedControlFocus(session.sessionId, inputCardRef);
   const operation = ask ? 'ask' : planRequest ? 'plan' : 'prompt';
   const runInView = useCallback((send: () => Promise<boolean>): Promise<boolean> => (
     acknowledgeInView(actionScopeRef.current, send, {
@@ -465,7 +468,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
                 {session.loadingHistory ? null : session.historyStale || !session.materialized ? (
                   <StateNotice className="chat-loading-older" kind={session.historyError ? 'error' : 'info'}>
                     {session.historyError ? `历史加载失败：${session.historyError}` : '对话历史尚未同步。'}
-                    {onRetryHistory && <button type="button" className="dialog-btn rp" onClick={() => {
+                    {onRetryHistory && <button type="button" className="dialog-btn ck-button rp" onClick={() => {
                       scrollOwnerRef.current?.follow();
                       onRetryHistory();
                     }}>
@@ -474,7 +477,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
                   </StateNotice>
                 ) : session.historyError ? <StateNotice className="chat-loading-older" kind="error">
                   历史加载失败：{session.historyError}
-                  <button type="button" className="dialog-btn rp" onClick={onRetryHistory}>重试加载历史</button>
+                  {onRetryHistory && <button type="button" className="dialog-btn ck-button rp" onClick={onRetryHistory}>重试加载历史</button>}
                 </StateNotice> : null}
               </div>
               {session.partialHistory && <p className="chat-history-note" role="status">
@@ -498,7 +501,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
         </div>
 
         {awayFromBottom && (
-          <button className="new-msg-badge" type="button" onClick={jumpToBottom}>
+          <button className="new-msg-badge ck-button" type="button" onClick={jumpToBottom}>
             {hasNewContent ? '有新内容 · 回到最新' : '回到最新'}
           </button>
         )}
@@ -508,7 +511,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
         <div className="chat-input-notices">
           {session.error && <p className="chat-error" role="alert">错误: {session.error}
             {onRetryHistory && session.materialized && !session.historyStale && <button type="button"
-              className="dialog-btn rp" onClick={onRetryHistory}>重试同步</button>}
+              className="dialog-btn ck-button rp" onClick={onRetryHistory}>重试同步</button>}
           </p>}
           {interruptResult && <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
             {interruptResult}
@@ -523,7 +526,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
             {!readOnly && (!!draftText.trim() || attachments.length > 0) && <span className="chat-folded-draft">有草稿</span>}
             {(showStop || showInterrupt) && <span className="chat-execution-actions" role="group" aria-label="执行操作"
               onClick={event => event.stopPropagation()}>
-              {showInterrupt && <button type="button" className="chat-interrupt"
+              {showInterrupt && <button ref={executionControlRef} type="button" className="chat-interrupt ck-button"
                 disabled={!interruptAction.connected || (!!session.activeOperations && !interruptAction.busy)}
                 aria-disabled={interruptAction.busy || undefined}
                 onClick={() => {
@@ -535,8 +538,10 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
                     ? '已请求打断；队列由 Copilot 接着处理。'
                     : '当前没有可打断的主回合；队列未改动。' }));
                 }}>{interruptAction.busy ? '正在请求…' : '打断并处理队列'}</button>}
-              {showStop && <button type="button" className="chat-typing-stop" disabled={stopDisabled}
-                onClick={() => { if (!stopDisabled) onCancel?.(); }}>
+              {showStop && <button ref={executionControlRef} type="button" className="chat-typing-stop ck-button" disabled={stopDisabled}
+                aria-disabled={stopPending || undefined} aria-busy={stopPending || undefined}
+                onClick={() => { if (!stopDisabled && !stopPending) onCancel?.(); }}>
+                <Icon name="stop" size={16} />
                 {session.cancelling ? '正在停止…' : queueCount > 0 ? '停止并清空队列' : '停止'}
               </button>}
             </span>}
@@ -546,17 +551,20 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
               {session.queue?.map((q) => (
                 <div key={q.id} className="chat-queue-item">
                   <details className="chat-queue-entry">
-                    <summary className="chat-queue-text" aria-label={`查看排队消息：${q.text}`}>{q.text}</summary>
+                    <summary className="chat-queue-text" aria-label={`查看排队消息：${q.text}`}>
+                      <Icon className="queue-chevron" name="chevron_right" size={16} />{q.text}
+                    </summary>
                   </details>
                   <div className="chat-queue-copy"><CopyButton text={q.text} label="复制排队消息" /></div>
-                  <button type="button" className="chat-queue-remove" aria-label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)}><Icon name="close" size={16} /></button>
+                  <button ref={executionControlRef} type="button" className="chat-queue-remove ck-icon-button" disabled={!connected || !onRemoveQueued}
+                    aria-label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)}><Icon name="close" size={16} /></button>
                 </div>
               ))}
             </div>}
             {hasPendingDecision && <div className="chat-decisions">
-              {planRequest && <PlanCard request={planRequest} pending={actionPending}
+              {planRequest && <PlanCard request={planRequest} pending={actionPending} disabled={!connected || !onRespondPlan}
                 onSelect={action => { void runAction(() => onRespondPlan?.(planRequest.requestId, action)); }} />}
-              {session.elicitation && <ElicitationCard request={session.elicitation} pending={actionPending}
+              {session.elicitation && <ElicitationCard request={session.elicitation} pending={actionPending} disabled={!connected || !onRespondElicitation}
                 onSelect={action => { void runAction(() => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
             </div>}
             {readOnly ? (
@@ -570,10 +578,10 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
                 placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : session.status === 'running' ? '加入队列' : '输入消息…'))}
                 draft={draft}
                 statusInHeader={hasInputHeader}
-                ask={ask ? { request: ask, onChoice: choice => { void handleChoice(choice); } } : undefined}
+                ask={ask ? { request: ask, disabled: !connected || !onRespondAsk, onChoice: choice => { void handleChoice(choice); } } : undefined}
                 operation={operation}
                 onSend={handleSend}
-                sendBlocked={ask?.allowFreeform === false}
+                sendBlocked={!connected || ask?.allowFreeform === false || !(ask ? onRespondAsk : planRequest ? onPlanSupersede : onSend)}
               />
             )}
           </div>

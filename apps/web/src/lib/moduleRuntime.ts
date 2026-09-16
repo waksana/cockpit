@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import type { ChatRenderer, ComposerContext, FrontendContribution, ModuleAsset, ModuleFrontend, ModuleFrontendContext, RenderNode } from '@cockpit/module-api';
 import type { SessionDraft } from './textDraft';
 import { describeReason, reportUxError } from './errorReporter';
@@ -175,7 +176,7 @@ export class ModuleRuntime {
     };
     parentSignal.addEventListener('abort', stop, { once: true });
     const context: ModuleFrontendContext = {
-      apiVersion: 1, moduleId: asset.id, react: React, apiBase: asset.apiBase,
+      apiVersion: 1, uiVersion: 1, moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
       config: asset.config, signal: controller.signal, report: this.report,
       request: async (path, init = {}) => {
         controller.signal.throwIfAborted();

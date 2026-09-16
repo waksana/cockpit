@@ -29,7 +29,7 @@ export function UxErrorNotifications() {
           </div>
           <button
             type="button"
-            className="btn ux-error-notification-dismiss"
+            className="ck-button ux-error-notification-dismiss"
             aria-label="关闭错误通知"
             onClick={(event) => dismiss(error.id, event.currentTarget)}
             onKeyDown={(event) => {

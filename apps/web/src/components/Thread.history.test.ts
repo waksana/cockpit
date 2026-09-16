@@ -204,7 +204,7 @@ test('history-start hint has one visibility rule and no per-request status varia
       const html = render({ ...more, ...patch });
       assert.equal((html.match(/class="state-notice chat-history-loading"/g) ?? []).length, 1);
       assert.ok(html.includes(text));
-      assert.doesNotMatch(html, /class="spinner"/);
+      assert.doesNotMatch(html, /class="ck-icon spinner"/);
     }
     assert.doesNotMatch(render({ ...more, hasMore: false }), /chat-history-loading/);
     assert.match(render({ ...more, materialized: false, hasMore: false }), /chat-history-loading/,

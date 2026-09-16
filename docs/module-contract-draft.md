@@ -153,12 +153,21 @@ GET/HEAD 可不带此 header，以支持 img/video 等，但 URL 已绑定版本
 
 ## 6. 前端注册与草稿
 
-浏览器入口同样导出 `activate(context)`。context 提供宿主现有 React、
+浏览器入口同样导出 `activate(context)`。context 提供宿主现有 React、ReactDOM `createPortal`、
 apiBase、公开配置、request、signal 和 report。模块不得自建 root 或依赖私有 DOM/store。
 宿主并行初始化不同前端模块；单个超时/错误不阻塞其他模块，晚结果不能重新发布已撤销贡献。
 
+当前宿主另提供 `context.uiVersion: 1`，声明已实现的公共语义 CSS 与图标规范。
+精确类名、变量、兼容条件、两仓交付顺序与可运行示例统一维护在
+[模块 UI 开发指南](module-ui-guide.md)。这是前端 additive 能力，不是新的 manifest 字段；
+旧宿主没有该字段，依赖 UI v1 的模块必须明确拒绝不兼容激活，不能只看同为 0.2.0。
+
 模块 UI 与本体共同遵循[交互语义与结构正确性要求](DEVELOPMENT.md#interaction-semantics-and-structural-correctness)。
-这是一项开发要求，不表示当前插口已提供通用浮层 API，也不授权模块绕过公共契约操作宿主私有 DOM。
+`context.createPortal(children, container)` 是宿主现有 ReactDOM 的原函数，
+返回 `ReactPortal`；container 为 `Element | DocumentFragment`。
+它只提供通用 React 挂载，不管理弹窗业务、焦点或状态，也不是模块页面注册机制。
+模块可将自己拥有的原生 dialog 挂到标准 `document.body`，避免置于 Markdown 行内节点；
+组件卸载/作用域撤销时必须关闭并卸载，保留原生焦点返回。不得操作宿主私有 DOM。
 
 当前返回字段：
 

@@ -25,11 +25,11 @@ export function MenuItemButton({ item, onClose }: { item: MenuItem; onClose: () 
       <button
         type="button"
         role="menuitem"
-        className={`btn-menu-item rp${item.destructive ? ' danger' : ''}`}
+        className={`btn-menu-item ck-button rp${item.destructive ? ' ck-danger' : ''}`}
         disabled={item.disabled}
         onClick={() => { item.onClick(); onClose(); }}
       >
-        {item.icon && <span className="btn-menu-item-icon"><Icon name={item.icon} size={22} /></span>}
+        {item.icon && <span className="btn-menu-item-icon"><Icon name={item.icon} size={24} /></span>}
         <span className="btn-menu-item-text">{item.label}</span>
       </button>
     </>
@@ -37,7 +37,7 @@ export function MenuItemButton({ item, onClose }: { item: MenuItem; onClose: () 
 }
 
 export function ContextMenu({ x, y, items, onClose, label }: {
-  x: number; y: number; items: MenuItem[]; onClose: () => void; label?: string;
+  x: number; y: number; items: MenuItem[]; onClose: (restoreFocus?: boolean) => void; label?: string;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [pos, setPos] = useState({ left: x, top: y });

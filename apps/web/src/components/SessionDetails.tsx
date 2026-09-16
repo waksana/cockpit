@@ -23,7 +23,7 @@ export function SessionDetails({ sessionId, panel }: { sessionId: string; panel:
   }, [panel]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || document.querySelector(':modal')) return;
       if (event.key === 'Escape') onClose();
       if (event.key !== 'Tab' || window.matchMedia('(min-width: 1200px)').matches) return;
       const controls = Array.from(frame.current?.querySelectorAll<HTMLElement>(

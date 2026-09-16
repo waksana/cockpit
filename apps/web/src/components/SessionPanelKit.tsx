@@ -13,7 +13,7 @@ import { StateNotice } from './StateNotice';
 export function PanelCloseButton({ onClose }: { onClose: () => void }) {
   const phone = useMediaQuery('(max-width: 599px)');
   return (
-    <button className="btn-icon rp" type="button" aria-label={phone ? '返回对话' : '关闭'} onClick={onClose}>
+    <button className="ck-icon-button rp" type="button" aria-label={phone ? '返回对话' : '关闭'} onClick={onClose}>
       <Icon name={phone ? 'back' : 'close'} size={24} />
     </button>
   );
@@ -48,9 +48,9 @@ export function ResourceStatus({ status, failed, pending, placement = 'inline' }
 export function RefreshButton({ onClick, disabled, pending }: {
   onClick: () => void; disabled?: boolean; pending: boolean;
 }) {
-  return <button className="btn-icon rp manage-action" type="button" aria-label="刷新"
+  return <button className="ck-icon-button rp manage-action" type="button" aria-label="刷新"
     onClick={onClick} disabled={disabled} aria-busy={pending}>
-    {pending ? <span className="spinner" aria-hidden="true" /> : <Icon name="reload" size={20} />}
+    {pending ? <Icon name="loading" className="spinner" size={16} /> : <Icon name="reload" size={20} />}
   </button>;
 }
 
@@ -70,7 +70,7 @@ export function SessionResume({ sessionId, required, onResumed }: {
   return (
     <div className="session-resume" role="group" aria-label="会话未加载">
       <p id={descriptionId} className="session-resume-message" role="status">会话未加载。恢复后可查看这些设置；聊天历史仍可直接查看。</p>
-      <button type="button" className="dialog-btn rp"
+      <button type="button" className="dialog-btn ck-button rp"
         disabled={!action.connected || !session || session.closing || session.status === 'running' || session.compacting || action.busy}
         aria-busy={action.busy}
         aria-describedby={descriptionId}
