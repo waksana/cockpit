@@ -1,6 +1,6 @@
 // Folded-message validators for tests and diagnostics, separate from the native wire.
 import { z } from 'zod';
-import { NativeAttachment } from './index.ts';
+import { NativeAttachmentDescriptor } from './index.ts';
 
 export const MessageOrigin = z.object({
   sessionId: z.string().min(1), messageId: z.string().min(1), agentId: z.string().min(1).optional(),
@@ -8,7 +8,7 @@ export const MessageOrigin = z.object({
 
 // Native output descriptors include internal metadata that is not valid send input.
 // Project only supported public fields; an omitted blob is not an empty blob.
-export function projectNativeAttachments(input: unknown): NativeAttachment[] {
+export function projectNativeAttachments(input: unknown): NativeAttachmentDescriptor[] {
   if (!Array.isArray(input)) return [];
   return input.flatMap(value => {
     if (!value || typeof value !== 'object') return [];
@@ -18,11 +18,12 @@ export function projectNativeAttachments(input: unknown): NativeAttachment[] {
     else if (type === 'selection') descriptor = {
       type, filePath: value.filePath, displayName, selection: value.selection, text: value.text,
     };
-    else if (type === 'blob' && value.omittedReason == null) descriptor = {
+    else if (type === 'blob') descriptor = {
       type, data: value.data, mimeType: value.mimeType, displayName,
+      ...(value.omittedReason == null ? {} : { omittedReason: value.omittedReason }),
     };
     else return [];
-    const parsed = NativeAttachment.safeParse(descriptor);
+    const parsed = NativeAttachmentDescriptor.safeParse(descriptor);
     return parsed.success ? [parsed.data] : [];
   });
 }
@@ -66,7 +67,7 @@ export type SubagentInfo = z.infer<typeof SubagentInfo>;
 export interface ChatMessage {
   id: string;
   readonly origin?: Readonly<z.infer<typeof MessageOrigin>>;
-  attachments?: NativeAttachment[];
+  attachments?: NativeAttachmentDescriptor[];
   role: ChatRole;
   content: string;
   thought?: string;
@@ -88,7 +89,7 @@ export interface ChatMessage {
 export const ChatMessage: z.ZodType<ChatMessage> = z.lazy(() => z.object({
   id: z.string(),
   origin: MessageOrigin.optional(),
-  attachments: z.lazy(() => z.array(NativeAttachment)).optional(),
+  attachments: z.lazy(() => z.array(NativeAttachmentDescriptor)).optional(),
   role: ChatRole,
   content: z.string(),
   thought: z.string().optional(),

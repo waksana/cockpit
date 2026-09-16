@@ -1,8 +1,8 @@
 import type * as React from 'react';
 import type { Readable } from 'node:stream';
-import type { NativeAttachment, NativeChatEvent } from '@cockpit/protocol';
+import type { NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent } from '@cockpit/protocol';
 
-export type { NativeAttachment, NativeChatEvent };
+export type { NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent };
 
 export interface ModuleManifest {
   apiVersion: 1;
@@ -112,7 +112,7 @@ export interface RenderNode {
   origin: MessageOrigin;
   target?: string;
   label: string;
-  attachment?: NativeAttachment;
+  attachment?: NativeAttachmentDescriptor;
 }
 
 export interface ModuleFrontendContext {

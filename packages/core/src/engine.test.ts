@@ -622,6 +622,28 @@ test('readonly native observer retains a context change that races loading metad
   assert.equal(observations.at(-1)?.cwd, currentCwd);
 });
 
+test('readonly native observer retains a newer cwd when concurrent initial metadata arrives late', async t => {
+  const h = harness(t);
+  const session = await h.seed();
+  const stale = structuredClone(h.rows.find(row => row.sessionId === session.id)!);
+  const pendingMetadata = deferred<SessionMetadata | undefined>();
+  h.runtime.getSessionMetadata.mock.mockImplementationOnce(() => pendingMetadata.promise);
+  const observations: import('./engine.ts').NativeObservation[] = [];
+  h.engine.onNativeEvent(value => { observations.push(value); });
+  const pendingLoad = h.engine.load(session.id);
+  await nextTurn();
+  await h.engine.load(session.id);
+  const currentCwd = join(h.cwd, 'newer-native-context');
+  session.emit(event('session.context_changed', { cwd: currentCwd }));
+  assert.equal(observations.at(-1)?.cwd, currentCwd);
+  pendingMetadata.resolve(stale);
+  await pendingLoad;
+  session.emit(event('assistant.message_delta', { messageId: 'context', deltaContent: 'after concurrent initial metadata' }));
+  assert.equal(observations.at(-1)?.cwd, currentCwd);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
+  assert.equal(session.sdk.send.mock.callCount(), 0);
+});
+
 test('native creation returns the actual ID without product roles or a hidden first message', async t => {
   const h = harness(t);
   const id = await h.engine.newSession(h.cwd);

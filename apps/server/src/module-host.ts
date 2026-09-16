@@ -225,6 +225,13 @@ export class ModuleHost {
       const finish = () => { scope.responseFinished = true; cleanup(); };
       reply.raw.once('finish', finish);
       reply.raw.once('close', cleanup);
+      if ((request.routeOptions.config as { moduleBody?: string }).moduleBody === 'stream'
+        && request.mediaType !== 'application/octet-stream') {
+        // Reject before buffered parsers can use the much larger upload limit.
+        reply.header('Connection', 'close');
+        scope.releaseUpload = () => { request.raw.destroy(); };
+        throw moduleError('MODULE_CONTENT_TYPE', 'Expected application/octet-stream', 415);
+      }
     });
     router.addContentTypeParser('application/octet-stream', (request, payload, done) => {
       const scope = scopes.get(request)!;

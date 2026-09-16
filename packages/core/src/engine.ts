@@ -444,9 +444,12 @@ export class Engine {
       if (this.stopped || this.lifecycle || this.removing.has(id)) {
         throw new Error('Session lifecycle transition is in progress');
       }
-      st = this.sessions.get(id) ?? stateFor(id);
-      st.observedCwd = metadata.context?.workingDirectory || null;
-      this.sessions.set(id, st);
+      st = this.sessions.get(id);
+      if (!st) {
+        st = stateFor(id);
+        st.observedCwd = metadata.context?.workingDirectory || null;
+        this.sessions.set(id, st);
+      }
     }
     if (st.closing) throw new Error('Session transition is in progress');
     return st;

@@ -262,12 +262,18 @@ export class ModuleRuntime {
     const chosen = handlers[0];
     if (!chosen) { this.rejectFiles(draft, files, '没有可用的文件模块'); return false; }
     const context = this.context(chosen.module, draft, operation, disabled);
+    const failed = (error: unknown) => {
+      this.report(error);
+      if (chosen.module.signal.aborted) return;
+      this.unregister(chosen.module);
+      this.rejectFiles(draft, files, '文件模块处理失败');
+    };
     try {
       // The bound context is captured now, not looked up after asynchronous work/session switches.
       const outcome = chosen.handler.receive(files, context);
-      Promise.resolve(outcome).catch(error => { this.report(error); this.rejectFiles(draft, files, '文件模块处理失败'); });
+      Promise.resolve(outcome).catch(failed);
       return true;
-    } catch (error) { this.report(error); this.rejectFiles(draft, files, '文件模块处理失败'); return false; }
+    } catch (error) { failed(error); return false; }
   }
   private rejectFiles(draft: SessionDraft, files: readonly File[], reason: string) {
     const binding = draft.bindModule('host-rejected-input', ['attachments']);

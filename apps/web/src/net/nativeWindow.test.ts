@@ -51,7 +51,7 @@ test('user attachment-only events retain validated native descriptors without bi
     { type: 'selection', filePath: '/fixture/code', displayName: 'Code', text: 'line', selection: {
       start: { line: 0, character: 0 }, end: { line: 0, character: 4 },
     } },
-    { type: 'blob', mimeType: 'image/png', displayName: 'Omitted image', omittedReason: 'unavailable' },
+    { type: 'blob', mimeType: 'image/png', displayName: 'Omitted image', omittedReason: 'asset_unavailable' },
     { type: 'blob', mimeType: 'text/plain', data: 'eA==', displayName: 'Inline' },
     { type: 'file', path: 12 }, { kind: 'file', url: '/uploads/retired' },
     { type: 'github_reference', url: 'https://example.invalid' },
@@ -60,11 +60,23 @@ test('user attachment-only events retain validated native descriptors without bi
   assert.equal(message.id, 'user-event');
   assert.equal(message.content, '');
   assert.deepEqual(message.origin, { sessionId: 'fixture', messageId: 'user-event' });
-  assert.equal(message.attachments?.length, 3);
+  assert.equal(message.attachments?.length, 4);
   assert.deepEqual(message.attachments?.[0], { type: 'file', path: '/fixture/one.txt', displayName: 'One' });
-  assert.doesNotMatch(JSON.stringify(message.attachments), /internal|byteLength|Omitted|uploads|github_reference/);
+  assert.equal(message.attachments?.[2].type, 'blob');
+  assert.match(JSON.stringify(message.attachments?.[2]), /asset_unavailable/);
+  assert.doesNotMatch(JSON.stringify(message.attachments), /internal|byteLength|uploads|github_reference/);
 });
 
+test('an omitted blob alone remains a user message with its native origin', () => {
+  const window = new NativeWindow();
+  accept(window, [event('omitted-only', 'user.message', { content: '', attachments: [
+    { type: 'blob', mimeType: 'image/png', displayName: 'Large image', omittedReason: 'too_large' },
+  ] })]);
+  const message = window.snapshot().messages[0];
+  assert.equal(message.id, 'omitted-only');
+  assert.equal(message.attachments?.length, 1);
+  assert.deepEqual(message.origin, { sessionId: 'fixture', messageId: 'omitted-only' });
+});
 test('assistant origins use native message identity across deltas, finalization and nested subagents', () => {
   const window = new NativeWindow(undefined, true);
   accept(window, [task('task-message', 'tool'), spawn('tool', 'child')], all);

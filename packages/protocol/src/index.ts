@@ -73,6 +73,18 @@ export const NativeAttachment = z.discriminatedUnion('type', [
 ]);
 export type NativeAttachment = z.infer<typeof NativeAttachment>;
 
+// History can omit blob bytes; this does not relax native send input.
+export const NativeAttachmentDescriptor = z.discriminatedUnion('type', [
+  NativeAttachment.options[0],
+  NativeAttachment.options[1],
+  NativeAttachment.options[2],
+  NativeAttachment.options[3].extend({
+    data: z.string().optional(),
+    omittedReason: z.string().min(1).optional(),
+  }),
+]);
+export type NativeAttachmentDescriptor = z.infer<typeof NativeAttachmentDescriptor>;
+
 export function summarizeMessage(message: ChatMessage): ChatMessage {
   if (message.subtype !== 'subagent' || !message.subagent) return message;
   const { subMessages: _messages, subagent, ...summary } = message;

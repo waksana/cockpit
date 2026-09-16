@@ -175,6 +175,61 @@ test('renderer selection never fetches and a throwing matcher falls back to the 
   f.runtime.stop();
 });
 
+test('file-input exceptions revoke original blocks and leave only explicitly dismissible module notices', async () => {
+  for (const asynchronous of [false, true]) {
+    let captured: ComposerContext | undefined;
+    const f = fixture([asset()], {
+      writes: ['attachments'],
+      fileInput: [{
+        id: 'fail-after-block', accepts: () => true,
+        receive: (_files, context) => {
+          captured = context;
+          context.draft.block('Original upload');
+          context.draft.appendAttachments([{ id: 'ready', value: { type: 'file', path: '/fixture/ready' } }]);
+          if (asynchronous) return Promise.reject(new Error('Async upload handler failed'));
+          throw new Error('Sync upload handler failed');
+        },
+      }],
+    });
+    await f.runtime.start();
+    const draft = createSessionDrafts()('failed-file');
+    const releaseOther = draft.bindModule('other', ['attachments']).draft.block('Other module');
+    assert.equal(f.runtime.receive([new File(['x'], 'selected.txt')], draft, 'prompt', false), asynchronous);
+    await Promise.resolve();
+    assert.equal(f.runtime.getSnapshot().length, 0);
+    assert.equal(f.contexts[0].signal.aborted, true);
+    assert.equal(draft.getSnapshot().blocks.filter(block => block.orphaned).length, 2);
+    for (const block of draft.getSnapshot().blocks) draft.dismissOrphanedBlock(block.id);
+    assert.equal(draft.getSnapshot().blocks.length, 1, 'unrelated module retains its block');
+    assert.throws(() => captured!.draft.appendAttachments([]), /cannot write/);
+    assert.equal(draft.getSnapshot().attachments.length, 1);
+    releaseOther();
+    assert.equal(await draft.send(async () => true), true);
+    f.runtime.stop();
+  }
+});
+
+test('late file-input rejection after revocation cannot recreate dismissed blockers', async () => {
+  let reject!: (error: Error) => void;
+  const f = fixture([asset()], {
+    writes: ['attachments'],
+    fileInput: [{
+      id: 'late', accepts: () => true, receive: (_files, context) => {
+        context.draft.block('Uploading');
+        return new Promise<void>((_resolve, failure) => { reject = failure; });
+      },
+    }],
+  });
+  await f.runtime.start();
+  const draft = createSessionDrafts()('late');
+  f.runtime.receive([new File(['x'], 'file')], draft, 'prompt', false);
+  f.runtime.stop();
+  for (const block of draft.getSnapshot().blocks) draft.dismissOrphanedBlock(block.id);
+  reject(new Error('Stopped operation'));
+  await Promise.resolve();
+  assert.equal(draft.getSnapshot().blocks.length, 0);
+});
+
 test('absolute advertised URLs must remain within the configured backend origin and prefix', () => {
   const backend = new URL('https://backend.invalid/prefix/');
   assert.throws(() => validateModuleAsset(asset('fixture_id'), backend), /Invalid module asset manifest/);

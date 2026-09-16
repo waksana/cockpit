@@ -162,6 +162,71 @@ test('module routes support streaming GET/HEAD, isolated JSON/octet parsers, err
   assert.deepEqual(unknown.json(), { code: 'MODULE_ERROR', error: 'Module request failed' });
 });
 
+test('stream routes reject unsupported types before parsing and close incomplete uploads', { timeout: 5000 }, async t => {
+  const f = await moduleFixture(t);
+  const backend = `export function activate() { return { routes: [{
+    method: 'POST', path: '/upload', body: 'stream', bodyLimit: 1073741824,
+    handler: async request => {
+      let bytes = 0;
+      for await (const chunk of request.body) bytes += chunk.length;
+      return { status: 201, body: { bytes } };
+    }
+  }] }; }`;
+  const installed = await installLocalModule(await f.package(moduleEntries('fixture', backend)), { trustLocalCode: true, enable: true });
+  const app = Fastify({ forceCloseConnections: true });
+  t.after(() => app.close());
+  let parsing = 0;
+  const sources: Readable[] = [];
+  app.addHook('onRequest', async request => { sources.push(request.raw); });
+  app.addHook('preParsing', async (_request, _reply, payload) => { parsing++; return payload; });
+  const host = new ModuleHost({ observer: f.observer });
+  await host.register(app);
+  const url = `${host.bootstrap().modules[0]!.apiBase}/upload`;
+  const headers = { 'x-cockpit-module-digest': installed.digest };
+  const payload = Buffer.from('{"unterminated":"' + 'x'.repeat(1024 * 1024 + 1));
+  for (const contentType of ['application/json', 'text/plain', 'application/octet-stream+json', 'application/octet-stream/invalid', undefined]) {
+    const response = await app.inject({
+      method: 'POST', url, payload,
+      headers: { ...headers, ...(contentType ? { 'content-type': contentType } : {}) },
+    });
+    assert.equal(response.statusCode, 415, contentType);
+    assert.equal(response.json().code, 'MODULE_CONTENT_TYPE');
+    assert.equal(parsing, 0, 'Unsupported uploads must not reach preParsing or buffered JSON/text parsers');
+  }
+  const address = await app.listen({ host: '127.0.0.1', port: 0 });
+  for (const contentType of ['application/json', 'text/plain']) {
+    const response = await new Promise<{ status?: number; body: string; connection?: string }>((resolve, reject) => {
+      const request = httpRequest(`${address}${url}`, {
+        method: 'POST',
+        headers: { ...headers, 'content-type': contentType, 'content-length': String(128 * 1024 * 1024), connection: 'keep-alive' },
+      }, result => {
+        let body = '';
+        result.on('error', reject);
+        result.on('data', chunk => { body += chunk; });
+        result.on('end', () => resolve({ status: result.statusCode, body, connection: result.headers.connection }));
+      });
+      request.on('error', reject);
+      t.after(() => request.destroy());
+      request.write('{"incomplete":');
+    });
+    assert.equal(response.status, 415, 'Reject without waiting for the declared upload body');
+    assert.equal(JSON.parse(response.body).code, 'MODULE_CONTENT_TYPE');
+    assert.equal(response.connection, 'close');
+    assert.equal(parsing, 0);
+  }
+  await waitUntil(() => sources.every(source => source.destroyed), 'Rejected upload sources were not closed');
+  for (const contentType of ['application/octet-stream', 'Application/Octet-Stream', 'application/octet-stream; charset=binary', 'APPLICATION/OCTET-STREAM ; filename="fixture;bytes.bin"']) {
+    const response = await app.inject({
+      method: 'POST', url, payload: Buffer.from('1234'), headers: { ...headers, 'content-type': contentType },
+    });
+    assert.equal(response.statusCode, 201, contentType);
+    assert.deepEqual(response.json(), { bytes: 4 });
+  }
+  assert.equal(parsing, 4);
+  await waitUntil(() => (Reflect.get(host, 'loaded') as Array<{ streams: Set<Readable>; replies: Set<unknown> }>)
+    .every(module => module.streams.size === 0 && module.replies.size === 0), 'Upload request resources were retained');
+});
+
 test('activation timeouts abort and dispose late results once while other modules still load', async t => {
   const f = await moduleFixture(t);
   const slow = `
