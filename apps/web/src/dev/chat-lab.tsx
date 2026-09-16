@@ -153,9 +153,13 @@ export function Lab() {
         })}
         onRespondElicitation={(id, answer) => action(`${id} / ${answer}`, () => setSession(value => ({ ...value, elicitation: null })))}
         onRemoveQueued={id => { setReceipt(`移除队列项：${id}`); setSession(value => ({ ...value, queue: value.queue?.filter(q => q.id !== id) })); }}
-        onCancel={() => { setReceipt('停止回调：清空队列；没有中断任何真实工作。'); setSession(value => ({ ...value, status: 'idle', queue: [] })); append('本次执行已取消（合成记录）。', 'system'); }}
+        onCancel={() => { setReceipt('停止回调：清空队列；没有中断任何真实工作。'); setSession(value => ({
+          ...value, status: 'idle', queue: [], ask: null, planRequest: null, elicitation: null,
+        })); append('本次执行已取消（合成记录）。', 'system'); }}
         onInterrupt={async () => {
-          await action('打断并保留队列', () => setSession(value => ({ ...value, status: 'idle' })));
+          await action('打断并保留队列', () => setSession(value => ({
+            ...value, status: 'idle', ask: null, planRequest: null, elicitation: null,
+          })));
           return { ok: true, interrupted: true };
         }}
       />

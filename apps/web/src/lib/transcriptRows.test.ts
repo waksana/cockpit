@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ChatMessage } from '@cockpit/protocol';
-import { groupTranscript } from './transcriptRows';
+import { groupTranscript, transcriptGap } from './transcriptRows';
 
 const thought = (id: string): ChatMessage => ({ id, role: 'assistant', content: '', thought: id, timestamp: 0 });
 const speech = (id: string): ChatMessage => ({ id, role: 'assistant', content: id, timestamp: 0 });
@@ -75,4 +75,21 @@ test('thought-first response adoption preserves its overview and thought disclos
   assert.equal(first[0].kind === 'process' && first[0].items[0].key,
     completed[0].kind === 'process' && completed[0].items[0].key);
   assert.equal(completed[1].key, 'native-message');
+});
+test('spacing is derived once per visible boundary, not native message or event count', () => {
+  const rows = groupTranscript([
+    speech('answer'), { ...speech('user-1'), role: 'user' }, { ...speech('user-2'), role: 'user' },
+    thought('thinking'), { ...speech('empty'), content: '' }, thought('more-thinking'),
+    speech('reply'), speech('reply-continued'),
+  ]);
+  assert.deepEqual(rows.map((row, i) => transcriptGap(rows[i - 1], row)),
+    ['none', 'speaker', 'related', 'speaker', 'section', 'related']);
+  const snapshot = structuredClone(rows);
+  const next = groupTranscript([
+    speech('answer'), { ...speech('user-1'), role: 'user' }, { ...speech('user-2'), role: 'user' },
+    thought('thinking'), thought('more-thinking'), speech('reply'), speech('reply-continued'),
+  ], rows);
+  assert.deepEqual(rows, snapshot, 'spacing never mutates a prior render projection');
+  assert.deepEqual(next.map((row, i) => transcriptGap(next[i - 1], row)),
+    rows.map((row, i) => transcriptGap(rows[i - 1], row)));
 });

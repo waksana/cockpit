@@ -159,9 +159,12 @@ A subsequent tool, assistant body or user message closes its automatic selection
 Explicit user choices take priority, including closing the latest item. These
 choices are local to the mounted session view; older-page extension preserves
 the group's mounted identity. They are not a second native state or history store.
-The transcript uses no group divider lines or extra inter-group gaps. It retains
-internal text/button spacing, original timestamps, keyboard focus and local
-code/tool copying.
+Transcript spacing is derived once per visible boundary: 8px between related
+speech rows, 12px between process and speech, and 16px when the speaker changes.
+User timestamps sit 4px below their bubble. Empty events create no spacing;
+date separators own their boundary. Markdown and tool-row internal spacing
+remains separate. There are no group divider lines, timestamp changes or
+additional scroll-position writers.
 Activity disclosure keeps its header height and icon slots fixed. Long tool
 titles do not wrap on expansion; clipped fields wrap only in the details below.
 Process items share one text column without accumulated nesting indents or
@@ -170,12 +173,19 @@ outside the measured rows; older-page refresh status stays inline.
 Right-clicking chat content uses the browser's native context menu, not a custom
 message-copy menu. Code and tool-detail copy buttons remain available.
 
-Pending questions, plans and tool confirmations share the execution area above
-the composer. A pending decision replaces the generic execution label, not the
-other native requests or the queue. Composer hints identify whether text answers
-a question, supersedes a pending plan, or joins the queue. Queue items can be
-expanded to read their full text independently of their remove action; this does
-not add editing, reordering or a new steering mode.
+Pending questions, plans and tool confirmations occupy their own framed cards
+above a separate compact execution/queue panel. Both share a bounded dock above
+the composer, with 8px between regions. Long decisions and queue contents remain
+scrollable rather than overlapping the input. Execution status and available
+actions use the same panel with or without a decision; a pending question does
+not hide Stop. Stop retains its native queue-clearing behavior and stays disabled
+while disconnected, closing, cancelling or another protected operation is active.
+There is no queue-count heading or repeated composer explanation. The input
+placeholder and submit label identify the active operation; muted placeholder
+text remains distinct from entered text, including on focus. Existing attachment
+and unconfirmed-send notices remain explicit. Queue items can be expanded to read
+their full text independently of removal; there is no editing, reordering or new
+steering mode.
 
 Persisted question replies show the original question above the answer in the
 user bubble, without an emoji or a duplicate option list. Association uses

@@ -328,6 +328,48 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), null);
   });
 
+  await t.test('pending decisions retain the same input and independent queue controls across updates', async () => {
+    const value: ChatSession = { ...session('dock-transition'), hasMore: false, status: 'running',
+      queue: [{ id: 'next', text: 'Keep this queue' }], ask: { requestId: 'ask', question: 'Choose', choices: ['A', 'B'] } };
+    const localDraft = getSessionDraft(value.sessionId);
+    localDraft.edit('Keep typing');
+    let stops = 0;
+    const show = async (patch: Partial<ChatSession> = {}) => {
+      await act(() => root.render(createElement(Thread, {
+        key: value.sessionId, session: { ...value, ...patch }, onLoadMore,
+        onCancel: () => { stops++; },
+      })));
+      await flush();
+    };
+    const click = async (target: HostNode) => {
+      const event = new Event('click', { bubbles: true });
+      Object.defineProperty(event, 'target', { value: target });
+      await act(() => container.dispatchEvent(event));
+    };
+    await show();
+    const input = container.querySelector('.chat-input-message')!;
+    const execution = container.querySelector('.chat-execution')!;
+    const queue = container.querySelector('.chat-queue-item')!;
+    const decision = container.querySelector('.chat-decisions')!;
+    assert.equal(decision.parentNode, execution.parentNode);
+    assert.equal(container.querySelector('.chat-typing-stop')?.textContent, '停止并清空队列');
+    await show({ ask: null });
+    assert.equal(container.querySelector('.chat-input-message'), input);
+    assert.equal(container.querySelector('.chat-execution'), execution);
+    assert.equal(container.querySelector('.chat-queue-item'), queue);
+    assert.equal(localDraft.getSnapshot().text, 'Keep typing');
+    await show();
+    assert.equal(container.querySelector('.chat-execution'), execution);
+    await click(container.querySelector('.chat-typing-stop')!);
+    assert.equal(stops, 1);
+    await show({ cancelling: true });
+    assert.equal(container.querySelector('.chat-typing-stop')?.attributes.has('disabled'), true);
+    await click(container.querySelector('.chat-typing-stop')!);
+    assert.equal(stops, 1);
+    assert.equal(localDraft.getSnapshot().text, 'Keep typing');
+    assert.equal(container.querySelector('.chat-composer-hint'), null);
+  });
+
   for (const hasMore of [false, true]) {
     await t.test(`continuous streaming cannot starve readiness or pending viewport fill (hasMore=${hasMore})`, async () => {
       const live = { ...session(`continuous-${hasMore}`), hasMore, materialized: false,

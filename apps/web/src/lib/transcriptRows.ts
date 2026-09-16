@@ -10,6 +10,15 @@ export type TranscriptRow =
   | { kind: 'message'; key: string; message: ChatMessage }
   | { kind: 'process'; key: string; anchorId: string; items: ProcessItem[] };
 
+export function transcriptGap(previous: TranscriptRow | undefined, next: TranscriptRow): 'none' | 'related' | 'section' | 'speaker' {
+  if (!previous) return 'none';
+  const wasUser = previous.kind === 'message' && previous.message.role === 'user';
+  const isUser = next.kind === 'message' && next.message.role === 'user';
+  if (wasUser !== isUser) return 'speaker';
+  if (previous.kind === 'process' || next.kind === 'process') return 'section';
+  return 'related';
+}
+
 export function groupTranscript(messages: ChatMessage[], previous: TranscriptRow[] = []): TranscriptRow[] {
   const previousGroups = previous.filter(row => row.kind === 'process');
   const previousAnchors = new Map(previousGroups.map(row => [row.anchorId, row]));

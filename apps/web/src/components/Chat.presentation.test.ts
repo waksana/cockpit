@@ -78,15 +78,38 @@ test('latest tool overview exposes explicit recorded failure and unknown states'
 
 test('Chat dark theme targets the mounted chat, not an impossible nested chat', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*\.chat \{\s*--primary-text-color:/);
+  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*\.chat \{[^}]*--primary-text-color:/);
   assert.doesNotMatch(css, /\.chat \.chat \{/);
 });
 
 test('the transcript does not make long decisions compete with its scroll-content intrinsic height', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.chat-transcript \{[^}]*flex: 1 1 0;[^}]*min-height: min\(6rem, 20%\)/);
-  assert.match(css, /\.chat-ask \{[^}]*flex: 0 1 auto;/);
-  assert.match(css, /\.chat-execution \{[^}]*flex: 0 1 auto;[^}]*min-height: 40px/);
+  assert.match(css, /\.chat-dock \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*max-height: 70%/);
+  assert.match(css, /\.chat-decisions \{[^}]*min-height: 0;[^}]*overflow-y: auto/);
+  assert.match(css, /\.chat-queue \{[^}]*min-height: 0;[^}]*overflow-y: auto/);
+  assert.doesNotMatch(css, /\.chat-execution \.chat-ask/);
+});
+test('dock regions stay framed while only execution/queue typography becomes compact', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.chat-ask \{[^}]*border: 1px solid/);
+  assert.match(css, /\.chat-execution \{[^}]*border: 1px solid/);
+  assert.match(css, /\.chat-pending-body \{[^}]*min-height: 0;[^}]*overflow-y: auto/);
+  assert.match(css, /\.chat-execution-actions button \{[^}]*min-height: 32px;[^}]*font-size: var\(--font-size-12\)/);
+  assert.match(css, /\.chat-queue-item \{[^}]*font-size: var\(--font-size-12\)/);
+  assert.match(css, /\.chat-ask-choice \{[^}]*font-size: var\(--font-size-14\)/);
+  assert.doesNotMatch(css, /\.chat-queue-label|\.chat-composer-hint/);
+});
+
+test('spacing tokens own visible boundaries and placeholder stays distinct on focus in both themes', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  for (const [name, pixels] of [['tight',4],['related',8],['section',12],['speaker',16]]) {
+    assert.ok(css.includes(`--chat-space-${name}: ${pixels}px;`));
+  }
+  assert.match(css, /\.msg-group\[data-gap=speaker\] \{[^}]*padding-block-start: var\(--chat-space-speaker\)/);
+  assert.match(css, /\.chat-input-message::placeholder \{[^}]*color: var\(--chat-placeholder-color\);[^}]*opacity: 1;/);
+  assert.doesNotMatch(css, /:focus(?:::placeholder|[^{}]*\{[^}]*--chat-placeholder-color)/);
+  assert.equal((css.match(/--chat-placeholder-color:/g) ?? []).length, 2);
 });
 
 test('the composer is a full-width bottom bar without a floating outer frame', () => {
@@ -137,8 +160,9 @@ test('decision send semantics stay visible without inflating an empty textarea p
   for (const [scene, placeholder] of [['ask', '输入回答…'], ['plan', '输入新指令…'], ['compacting', '正在压缩…']] as const) {
     const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession(scene), onLoadMore() {} }));
     assert.ok(html.includes(`placeholder="${placeholder}"`), html);
-    if (scene === 'plan') assert.match(html, /发送新指令将替代当前待确认计划/);
-    if (scene === 'ask') assert.match(html, /输入内容将回答当前问题/);
+    if (scene === 'plan') assert.match(html, /aria-label="发送新指令"/);
+    if (scene === 'ask') assert.match(html, /aria-label="提交回答"/);
+    assert.doesNotMatch(html, /chat-composer-hint|aria-describedby=/);
   }
 });
 
@@ -209,7 +233,7 @@ test('an adjacent elicitation does not change the composer ordinary prompt into 
   const send = html.match(/<button[^>]*class="chat-input-btn send rp"[^>]*>/)?.[0];
   assert.ok(send);
   assert.doesNotMatch(send, /disabled/);
-  assert.match(html, /普通消息不会代替确认/);
+  assert.doesNotMatch(html, /普通消息不会代替确认|chat-composer-hint/);
 });
 
 test('chat leaves right-click and text selection to the browser instead of mounting a copy menu', () => {
