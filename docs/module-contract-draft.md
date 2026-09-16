@@ -198,6 +198,15 @@ blob 的 data 缺失或带 omittedReason 时仍保留名称、MIME 和不可用�
 工作目录随经过验证的 root context-change 更新，不增加逐事件 metadata RPC。
 观察返回值不替换原生事件，错误不污染原生控制状态。
 
+`NativeObservation` 是冻结的只读快照；`cwd` 与可选的
+`readonly workspacePath?: string | null` 相互独立。后者直接读取当前归属该会话的
+SDK `CopilotSession.workspacePath`：字符串是 SDK 提供的原生 workspace 绝对路径；
+已有 handle 但 SDK 未关联 workspace（getter 返回 `undefined`）时为 `null`。
+创建或恢复期间、SDK handle 尚未返回的早期通知省略此字段，表示未知，不表示没有 workspace。
+路径格式无效或 getter 抛错时报告观察失败，该通知仍以省略字段的未知状态交付，不回退到 `cwd`。
+宿主不缓存、推导或管理原生 workspace 路径，不为此增加 RPC、加载其他会话或缓冲通知；
+模块自行处理上下文不可用，宿主不承担文件解析业务。
+
 它是已加载 session 的既有 SDK 通知，不是新的后台 eventLog reader。
 文件模块仅处理实际启用后的新实时输出；历史读取保持原样，不因浏览而捕获文件。
 原生消息、上下文、队列和配置开关仍只有 Copilot 一个权威。

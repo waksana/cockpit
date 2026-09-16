@@ -16,6 +16,7 @@ export interface ModuleManifest {
 export interface NativeObservation {
   sessionId: string;
   cwd: string | null;
+  readonly workspacePath?: string | null;
   event: NativeChatEvent;
 }
 

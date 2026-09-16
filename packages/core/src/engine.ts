@@ -30,6 +30,7 @@ export type EngineRuntime = Pick<OfficialRuntime,
 export interface NativeObservation {
   readonly sessionId: string;
   readonly cwd: string | null;
+  readonly workspacePath?: string | null;
   readonly event: NativeChatEvent;
 }
 
@@ -251,6 +252,15 @@ export class Engine {
       try { this.log('native observer failed', { sessionId: st.id, error: messageOf(error) }); }
       catch { /* Observers and their reporters cannot affect native control state. */ }
     };
+    let workspacePath: string | null | undefined;
+    try {
+      if (st.sdk) {
+        const path = st.sdk.workspacePath;
+        if (path == null || (typeof path === 'string' && isAbsolute(path) && !path.includes('\0'))) {
+          workspacePath = path ?? null;
+        } else report(new Error('Invalid native workspace path'));
+      }
+    } catch (error) { report(error); }
     try {
       const clean = (value: unknown): unknown => {
         if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return undefined;
@@ -261,7 +271,10 @@ export class Engine {
         return value;
       };
       const event = clean(normalizeEvent(native)) as NativeChatEvent;
-      const observation = Object.freeze({ sessionId: st.id, cwd: st.observedCwd ?? null, event });
+      const observation = Object.freeze({
+        sessionId: st.id, cwd: st.observedCwd ?? null,
+        ...(workspacePath !== undefined ? { workspacePath } : {}), event,
+      });
       for (const [observer, types] of this.nativeObservers) {
         if (types && !types.has(native.type)) continue;
         try { void Promise.resolve(observer(observation)).catch(report); }
