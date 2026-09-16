@@ -143,7 +143,7 @@ test('spacing tokens own visible boundaries and placeholder stays distinct on fo
 
 test('the composer is a full-width bottom bar without a floating outer frame', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  const bar = css.match(/\.chat-input \{([^}]+)\}/)![1];
+  const bar = css.match(/(?:^|\n)\.chat-input \{([^}]+)\}/)![1];
   assert.match(bar, /width: 100%;\s*margin: 0;/);
   assert.match(bar, /padding: 0 .*calc\(var\(--chat-inset-bottom\) \+ env\(safe-area-inset-bottom, 0px\)\)/);
   assert.doesNotMatch(bar, /border:|border-radius:|max-width:/);
@@ -164,7 +164,8 @@ test('Chat regions and optional composer context each have a single spacing owne
   assert.match(css, /\.chat \{[^}]*row-gap: var\(--chat-gap-region\)/);
   assert.match(css, /\.chat-dock \{[^}]*margin-block: 0;/);
   assert.match(css, /\.chat-messages \{[^}]*scrollbar-gutter: stable both-edges;[^}]*padding: var\(--chat-inset-transcript\) var\(--chat-gutter\) 0;/);
-  assert.match(css, /\.chat-composer \{[^}]*gap: var\(--chat-gap-region\);[^}]*flex: none;/);
+  assert.match(css, /\.chat-composer \{[^}]*flex: none;/);
+  assert.match(css, /\.chat-composer-body \{[^}]*gap: var\(--chat-gap-region\);/);
   assert.match(css, /\.chat-composer-context \{[^}]*display: none;[^}]*gap: var\(--chat-gap-region\);[^}]*min-height: 0;[^}]*overflow-y: auto;/);
   assert.match(css, /\.chat-composer-context:has\(> :not\(:empty\)\) \{\s*display: flex;/);
   assert.match(css, /\.module-composer-above,\s*\.module-draft-attachments \{[^}]*margin: 0;/);
@@ -178,6 +179,27 @@ test('Chat regions and optional composer context each have a single spacing owne
   assert.match(css, /\.message-attachment \{[^}]*max-width: 100%;[^}]*overflow-wrap: anywhere;/);
   assert.match(css, /\.chat-history-actions:empty \{\s*display: none;/);
   assert.doesNotMatch(css, /--chat-space-/);
+});
+
+test('the answer composer uses native disclosure without a second editor or a nested question frame', () => {
+  const html = renderToStaticMarkup(createElement(Thread, {
+    session: fixtureSession('ask-queued'), onLoadMore() {},
+  }));
+  assert.equal((html.match(/<textarea/g) ?? []).length, 1);
+  assert.match(html, /<details class="chat-composer" open="" data-question="true"><summary class="chat-answer-toggle">/);
+  assert.match(html, /class="chat-pending-body chat-answer-question" role="group" aria-label="需要你的选择"/);
+  assert.ok(html.indexOf('class="chat-execution"') < html.indexOf('class="chat-composer"'));
+  assert.doesNotMatch(html, /class="chat-decisions"|class="chat-ask chat-pending/);
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.chat-answer-toggle \{[^}]*min-height: 38px;/);
+  assert.match(css, /\.chat-answer-toggle\[hidden\] \{[^}]*display: none;/);
+  assert.match(css, /\.chat-composer\[data-question\] \{[^}]*border: 1px solid/);
+  assert.match(css, /\.chat-composer\[data-question\] \.chat-composer-context \{[^}]*max-height: min\(18rem, 30dvh\)/);
+  assert.match(css, /\.chat-composer\[data-question\] \.chat-composer-body \{[^}]*max-height: min\(28rem, max\(2\.5rem, 60dvh - 6rem\)\)/);
+  assert.match(css, /\.chat-composer\[data-question\] \.chat-input \{[^}]*padding: 0;/);
+  assert.match(css, /\.chat-composer\[data-question\] \.chat-ask-q \{[^}]*user-select: text/);
+  const source = readFileSync(new URL('./Composer.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /onToggle|scrollHeight|clientHeight|getBoundingClientRect|ResizeObserver|requestAnimationFrame/);
 });
 
 test('CSS owns the shell again, with no replacement global JS viewport controller', () => {

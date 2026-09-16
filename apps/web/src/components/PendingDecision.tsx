@@ -23,17 +23,17 @@ function PendingDecision({ label, title, icon, pending, children, hint, classNam
   </div>;
 }
 
-export function AskCard({ request, pending, onChoice }: {
+export function AskContent({ request, pending, onChoice }: {
   request: NonNullable<ChatSession['ask']>; pending: boolean; onChoice: (choice: string) => void;
 }) {
-  return <PendingDecision label="需要你的选择" title="等待你的回答" icon={<Icon name="newchat" size={16} />}
-    pending={pending} hint={pending ? '正在提交回答…' : undefined}>
+  return <div className="chat-pending-body chat-answer-question" role="group" aria-label="需要你的选择" aria-busy={pending}>
     <div className="chat-ask-q">{request.question}</div>
     {!!request.choices?.length && <div className="chat-ask-choices">
       {request.choices.map(choice => <button key={choice} type="button" className="chat-ask-choice"
         disabled={pending} onClick={() => onChoice(choice)}>{choice}</button>)}
     </div>}
-  </PendingDecision>;
+    {pending && <div className="chat-pending-hint" role="status">正在提交回答…</div>}
+  </div>;
 }
 
 export function PlanCard({ request, pending, onSelect }: {

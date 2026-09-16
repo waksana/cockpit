@@ -181,10 +181,28 @@ notifies the existing scroll owner, including an empty terminal page.
 Right-clicking chat content uses the browser's native context menu, not a custom
 message-copy menu. Code and tool-detail copy buttons remain available.
 
-Pending questions, plans and tool confirmations occupy their own framed cards
-above a separate compact execution/queue panel. Both share a bounded dock above
-the composer, with 8px between regions. Long decisions and queue contents remain
-scrollable rather than overlapping the input. Execution status and available
+Pending questions wrap the existing composer in one answer card: the retained
+icon and "waiting for your answer" header, question, choices and the original
+input/send row. Its header is a native `details`/`summary` disclosure; closed,
+only the 40px header remains. Text/choices/notices scroll above the input instead
+of moving it off screen. Question text remains selectable independently of the
+header. Selecting a choice still submits directly; freeform text uses the existing
+send action, and choice-only questions still block freeform submission.
+
+The same editor and module contribution instances stay mounted while the card
+opens/closes, changes questions or returns to normal composition. Collapse does
+not discard a draft or answer the request. A new native request ID opens the card;
+ordinary updates to the same request preserve the browser's disclosure state.
+Completion also opens the ordinary composer if the question was collapsed.
+No JavaScript height measurement, collapse state machine or layout animation
+is introduced.
+
+Execution/queue remains a separate compact panel above the answer composer;
+its waiting label and available controls stay visible independently of collapse.
+Plans and tool confirmations keep their existing separate cards and native
+callbacks, including when more than one decision kind is present. The bounded
+dock can scroll when these simultaneous surfaces cannot all fit. Regions are
+separated by 8px, and long content does not overlay the input. Execution status and available
 actions use the same panel with or without a decision; a pending question does
 not hide Stop. Stop retains its native queue-clearing behavior and stays disabled
 while disconnected, closing, cancelling or another protected operation is active.
@@ -261,8 +279,8 @@ A boundary has one owner:
 | Message interior | User bubbles retain 0.65rem by 0.85rem padding. Paragraphs/lists use 0.65em rhythm; code, tables and quotes use 0.85em. Headings retain their typographic margins. First/last blocks have no outside margin. Text-to-attachment separation is 12px, absent for attachment-only messages. |
 | Expanded process details | Shared 24px inset, 4px after the header and 8px after details. Header dimensions and behavior do not change. |
 | Cards | Ordinary panel inset and content separation are 12px; compact execution panels use 8px inset and 4px row spacing. Controls use an 8px gap. Decision body typography is unchanged. |
-| Composer context | Notices, module-above contributions and native attachment fallback share one bounded, scrollable stack with 8px gaps. Children have no outside margins. An empty stack is hidden without unmounting module contributions. |
-| Input and safe area | Field inset is 8px by 12px; the send target remains 40px square. Only the bottom bar adds 4px plus the safe-area inset. The read-only footer owns the equivalent inset when there is no composer. |
+| Composer context | Notices, module-above contributions and native attachment fallback share one bounded, scrollable stack with 8px gaps. During a question it also contains the question and choices. Children have no outside margins. An empty stack is hidden without unmounting module contributions. |
+| Input and safe area | Field inset is 8px by 12px; the send target remains 40px square. The ordinary bottom bar adds 4px plus safe area; in answer mode its single outer card owns that bottom spacing and the input row has no extra outer padding. The read-only footer owns the equivalent inset without a composer. |
 
 The host controls contribution placement, not a module's internal visual design.
 Active upload feedback stays with the module's attachment item; only revoked

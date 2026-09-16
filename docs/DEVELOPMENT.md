@@ -87,6 +87,10 @@ background work, open native sessions or publish user screenshots.
 Add `&pane=narrow` to constrain the actual Chat pane to 456px while keeping a
 desktop viewport. This reproduces the space available beside docked settings:
 decisions and process rows must adapt to their own width, not the window width.
+In `ask` / `ask-queued`, the waiting header folds the answer composer with native
+disclosure. The `下一问题` control replaces the synthetic request ID without
+remounting the thread, so draft/editor identity and new-question opening can be
+reviewed separately from ordinary streaming updates.
 Use `history-loading` and its page-request toggle to inspect the persistent
 history-start hint. The request can start/finish without changing the hint;
 the existing history insertion/completion control reaches the beginning and
@@ -131,6 +135,7 @@ No optimistic enablement, client mutation queue or native-state mirror is added.
 Pending actions report submission without claiming native application.
 Consumers must use the existing session resource's availability, including
 closing and resume-required states, rather than infer readiness from old metadata.
-`PendingDecision` shares the ask/plan/elicitation card frame while their callbacks
-and native action lists remain distinct. Chat read ownership and scrolling still
+`PendingDecision` shares plan/elicitation framing and question content; questions
+use the existing composer as their foldable outer card. Callbacks and native
+action lists remain distinct. Chat read ownership and scrolling still
 belong to the existing route/window and single scroll owner.

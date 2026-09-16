@@ -2,6 +2,10 @@
 
 Unreleased development version. No tag or Release has been created for these changes.
 
+- Pending questions share one foldable answer card with the existing input and
+  send row. The waiting header/icon remain; native disclosure collapses to one
+  row without losing the draft or remounting the editor. Execution/queue remains
+  above it, while plan and tool-confirmation actions keep their distinct cards.
 - A plain history-start hint stays at the beginning of the scrolling content
   until the earliest history is reached. It no longer appears/disappears around
   individual requests. No overlay, height measurement or hidden spacer is used.

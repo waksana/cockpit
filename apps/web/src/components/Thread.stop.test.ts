@@ -101,12 +101,16 @@ test('idle queues show their messages without inventing a running operation, and
   assert.doesNotMatch(readonly, /chat-typing-stop|chat-interrupt"|chat-execution-actions/);
 });
 
-test('a pending question is a sibling card and does not hide stop or execution state', () => {
+test('a pending question shares the composer below the independent execution state', () => {
   const html = render({ intent: 'Generic running intent', ask: {
     requestId: 'question', question: 'Which option?', choices: ['A', 'B'], allowFreeform: true,
   } });
   const region = html.match(/<section class="chat-execution"[\s\S]+?<\/section>/)![0];
-  assert.match(html, /class="chat-dock" data-pending="true"/);
+  assert.match(html, /<details class="chat-composer" open="" data-question="true"/);
+  assert.doesNotMatch(html, /class="chat-decisions"/);
+  assert.ok(html.indexOf('class="chat-execution"') < html.indexOf('class="chat-composer"'));
+  assert.ok(html.indexOf('Which option?') < html.indexOf('class="chat-input"'));
+  assert.match(html, /<summary class="chat-answer-toggle"><span[^>]*data-icon="newchat"[\s\S]*等待你的回答/);
   assert.match(html, /Which option\?/);
   assert.doesNotMatch(region, /Which option\?|class="chat-ask/);
   assert.match(region, /chat-execution-label[^>]*>等待你的回答<\/span>/);
@@ -146,7 +150,7 @@ test('each decision keeps queue-clearing controls outside its answer options', (
     { elicitation: { requestId: 'elicit', message: 'Confirm' } },
   ]) {
     const html = render({ queue, ...patch });
-    const execution = html.slice(html.indexOf('<section class="chat-execution"'));
+    const execution = html.match(/<section class="chat-execution"[\s\S]+?<\/section>/)![0];
     assert.match(execution, /停止并清空队列/);
     assert.match(execution, /打断并处理队列/);
     assert.match(execution, /Queued text/);
@@ -157,7 +161,8 @@ test('each decision keeps queue-clearing controls outside its answer options', (
 test('idle and read-only views do not reserve empty dock regions', () => {
   assert.doesNotMatch(render({ status: 'idle' }), /class="chat-dock"|class="chat-execution"/);
   const idleQuestion = render({ status: 'idle', ask: { requestId: 'ask', question: 'Question' } });
-  assert.match(idleQuestion, /class="chat-decisions"/);
+  assert.match(idleQuestion, /class="chat-composer" open="" data-question="true"/);
+  assert.doesNotMatch(idleQuestion, /class="chat-decisions"/);
   assert.doesNotMatch(idleQuestion, /class="chat-execution"/);
 });
 

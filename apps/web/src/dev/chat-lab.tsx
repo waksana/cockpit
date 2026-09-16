@@ -122,6 +122,10 @@ export function Lab() {
         ...value, loadingHistory: !value.loadingHistory,
       }))}>切换分页请求状态</button>}
       <button onClick={() => choose(scenario)}>重置场景</button>
+      {session.ask && <button onClick={() => setSession(value => ({
+        ...value, ask: value.ask ? { ...value.ask, requestId: `lab-question-${++counter.current}`,
+          question: '这是下一个原生问题的合成输入；新问题应展开，原输入框和草稿保持不变。' } : null,
+      }))}>下一问题</button>}
       {scenario === 'ordered-events' && <>
         <button onClick={() => orderedAction('thought')}>追加思考事件</button>
         <button onClick={() => orderedAction('body')}>追加正文事件</button>

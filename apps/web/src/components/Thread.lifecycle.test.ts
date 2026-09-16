@@ -55,6 +55,8 @@ class HostNode extends EventTarget {
   }
   get dataset() { return { messageId: this.getAttribute('data-message-id') }; }
   get options(): HostNode[] { return this.childNodes; }
+  get open() { return this.attributes.has('open'); }
+  set open(value: boolean) { if (value) this.setAttribute('open', ''); else this.removeAttribute('open'); }
   get value(): string {
     if (this.tagName === 'OPTION') return this.getAttribute('value') ?? this.textContent;
     if (this.tagName === 'SELECT') return this.options.find(option => option.selected)?.value ?? '';
@@ -384,10 +386,22 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await click(queueCopy);
     assert.equal(queueEntry.attributes.has('open'), true, 'expanded copying does not collapse the entry');
     assert.deepEqual(copied, [value.queue![0].text, value.queue![0].text]);
-    const decision = container.querySelector('.chat-decisions')!;
-    assert.equal(decision.parentNode, execution.parentNode);
+    const decision = container.querySelector('.chat-composer')!;
+    assert.equal(decision.getAttribute('data-question'), 'true');
+    assert.equal(decision.parentNode === execution.parentNode?.parentNode, true,
+      'the answer composer follows the independent execution dock');
     assert.equal(container.querySelector('.chat-typing-stop')?.textContent, '停止并清空队列');
+    decision.open = false;
+    await show({ title: 'Updated background metadata' });
+    assert.equal(decision.open, false, 'ordinary updates preserve native question collapse');
+    assert.equal(container.querySelector('.chat-input-message'), input);
+    await show({ ask: { ...value.ask!, requestId: 'next-question' } });
+    assert.equal(decision.open, true, 'a different native question opens without replacing the editor');
+    assert.equal(container.querySelector('.chat-input-message'), input);
+    decision.open = false;
     await show({ ask: null });
+    assert.equal(decision.open, true, 'ordinary input is restored after a collapsed question resolves');
+    assert.equal(decision.getAttribute('data-question'), null);
     assert.equal(container.querySelector('.chat-input-message'), input);
     assert.equal(container.querySelector('.chat-execution'), execution);
     assert.equal(container.querySelector('.chat-queue-item'), queue);
@@ -756,7 +770,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     let sends = 0;
     const onSend = () => draft.send(async () => { sends++; return true; });
     const renderComposer = async (operation: ComposerContext['operation'] = 'prompt', disabled = false) => {
-      await act(() => root.render(createElement(Composer, { draft, runtime, onSend, operation, disabled })));
+      await act(() => root.render(createElement(Composer, { draft, runtime, onSend, operation, disabled,
+        ask: operation === 'ask' ? { request: { requestId: 'module-question', question: 'Choose', choices: ['A'] }, onChoice() {} } : undefined,
+      })));
     };
     const dispatch = async (selector: string, type: string, properties: Record<string, unknown> = {}) => {
       const target = container.querySelector(selector);
@@ -800,6 +816,13 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.ok(context.querySelector('.module-draft-attachments'));
     assert.ok(context.querySelector('.fixture-attachment-panel'));
     assert.equal(aboveMounts, 1, 'empty/nonempty module content and notices must not remount contributions');
+    assert.equal(container.querySelector('.chat-input-message'), editor);
+    assert.equal(container.querySelector('[aria-label="Module action"]'), action);
+    const answerCard = container.querySelector('.chat-composer')!;
+    answerCard.open = false;
+    await act(() => draft.edit('Draft updated while folded'));
+    assert.equal(answerCard.open, false);
+    assert.equal(aboveMounts, 1);
     assert.equal(container.querySelector('.chat-input-message'), editor);
     assert.equal(container.querySelector('[aria-label="Module action"]'), action);
     await dispatch('.chat-input-message', 'keydown', { key: 'Enter', ctrlKey: true });

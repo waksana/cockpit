@@ -22,7 +22,7 @@ import { ActivityHeader } from './ActivityHeader';
 import { DisclosureChoices } from './DisclosureChoices';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
 import { groupTranscript, transcriptGap, type TranscriptRow, type ProcessItem } from '../lib/transcriptRows';
-import { AskCard, PlanCard, ElicitationCard } from './PendingDecision';
+import { PlanCard, ElicitationCard } from './PendingDecision';
 import { StateNotice } from './StateNotice';
 import { useClippedText } from '../lib/useClippedText';
 import { hasNewTranscriptContent } from '../lib/transcriptActivity';
@@ -437,7 +437,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   // a pending plan (planSupersede), or otherwise sends a normal prompt.
   const ask = session.ask;
   const planRequest = session.planRequest;
-  const hasPendingDecision = !readOnly && !!(ask || planRequest || session.elicitation);
+  const hasPendingDecision = !readOnly && !!(planRequest || session.elicitation);
   const hasExecution = session.compacting || session.status === 'running' || (!readOnly && (queueCount > 0 || !!interruptResult));
   const runInView = useCallback((send: () => Promise<boolean>): Promise<boolean> => (
     acknowledgeInView(actionScopeRef.current, send, {
@@ -522,7 +522,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
       {(hasPendingDecision || hasExecution) && (
         <div className="chat-dock" data-pending={hasPendingDecision || undefined}>
           {hasPendingDecision && <div className="chat-decisions">
-            {ask && <AskCard request={ask} pending={actionPending} onChoice={choice => { void handleChoice(choice); }} />}
             {planRequest && <PlanCard request={planRequest} pending={actionPending}
               onSelect={action => { void runAction(() => onRespondPlan?.(planRequest.requestId, action)); }} />}
             {session.elicitation && <ElicitationCard request={session.elicitation} pending={actionPending}
@@ -579,6 +578,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
           disabled={!!session.compacting && session.status !== 'running'}
           placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : session.status === 'running' ? '加入队列' : '输入消息…'))}
           draft={draft}
+          ask={ask ? { request: ask, onChoice: choice => { void handleChoice(choice); } } : undefined}
           operation={ask ? 'ask' : planRequest ? 'plan' : 'prompt'}
           onSend={handleSend}
           sendBlocked={ask?.allowFreeform === false}
