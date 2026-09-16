@@ -717,6 +717,27 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   await renderBody();
   assert.notEqual(container.querySelector('[data-chat-table]'), table, 'a real unmount releases native render nodes');
 
+  await t.test('streamed thinking keeps the same Markdown nodes through updates and completion', async () => {
+    const thought = { id: 'thinking-markdown', role: 'assistant' as const, content: '', timestamp: 1,
+      thought: '## Thinking\n\n| A | B |\n| --- | --- |\n| one | two |\n\n```ts\nconst exact = 1;\n```\n\nWorking' };
+    const current = { ...session('thinking-renderer'), hasMore: false, status: 'running' as const, messages: [thought] };
+    await render(current);
+    const detail = container.querySelector('.msg-thought')!;
+    const markdown = detail.querySelector('.message-body');
+    const table = detail.querySelector('[data-chat-table]');
+    const code = detail.querySelector('.chat-code-block');
+    assert.ok(markdown && table && code);
+    await render({ ...current, messages: [{ ...thought, thought: `${thought.thought} **incrementally**.` }] });
+    assert.equal(container.querySelector('.msg-thought'), detail);
+    assert.equal(detail.querySelector('.message-body'), markdown);
+    assert.equal(detail.querySelector('[data-chat-table]'), table);
+    assert.equal(detail.querySelector('.chat-code-block'), code);
+    await render({ ...current, status: 'idle' });
+    assert.equal(detail.querySelector('.message-body'), markdown);
+    assert.equal(detail.querySelector('[data-chat-table]'), table);
+    assert.equal(detail.querySelector('.chat-code-block'), code);
+  });
+
   await t.test('attachment-only native rows contribute to measured initial history fill', async () => {
     const current = session('attachment-fill');
     const attachments = Array.from({ length: 6 }, (_, i) => ({

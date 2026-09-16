@@ -101,6 +101,10 @@ Its controls feed synthetic historical/live/reconnect pages through the producti
 browser projection. The [native chat guide](native-chat.md#ordered-presentation)
 owns the current grouping and update contract.
 
+Choose `thought-markdown` for formatted thinking, code copying and incremental
+thought updates through the production renderer; its append and end-turn controls
+keep the same native-text fixture identity.
+
 For the README screenshot, open `/chat-lab.html?scene=workspace` at a desktop
 viewport of 1600 x 1000. This scene mounts the real App, session list, Chat and
 session settings with a synthetic store whose transport initialization is disabled.

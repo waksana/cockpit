@@ -147,6 +147,7 @@ export const scenarios = [
   ['user-time', '用户时间 / 短长文本'],
   ['native-attachments', '原生附件 / 混合正文 / 仅附件'],
   ['process', '思考 / 工具 / 子代理'],
+  ['thought-markdown', '思考 Markdown / 流式 / 代码复制'],
   ['process-history', '连续过程 / 无正文 / 最新展开'],
   ['ordered-events', '原生事件 / 连续概览 / 重连补全'],
   ['streaming', '流式 / 队列 / 停止'],
@@ -194,6 +195,17 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   };
   if (scenario === 'all') session.messages = [...readingMessages, ...processMessages];
   if (scenario === 'process') session.messages = [...processMessages];
+  if (scenario === 'thought-markdown') {
+    session.status = 'running';
+    session.messages = [message('markdown-thought', 'assistant', '', {
+      thought: '## 检查思路\n\n先确认 **实际内容**，再检查 `src/components/Thread.tsx`。\n保留普通软换行。\n\n'
+        + '- 保持同一渲染器\n- 不改变原生事件归属\n\n> 思考内容支持 Markdown，不代表新增业务能力。\n\n'
+        + '[阅读说明](https://example.com/reference)\n\n'
+        + '| 状态 | 展示 |\n| --- | --- |\n| 进行中 | 保持增量 |\n| 完成 | 保留内容 |\n\n'
+        + '```ts\nconst answer = "<exact>";\n```\n\n'
+        + `长行：${'unbroken_thought_identifier_'.repeat(8)}`,
+    })];
+  }
   if (scenario === 'process-history') session.messages = [...processHistoryMessages];
   if (scenario === 'user-time') session.messages = [
     message('time-short', 'user', '收到。'),

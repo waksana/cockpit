@@ -62,7 +62,24 @@ test('reasoning opens by default only when it is the latest visible item, not th
   }
   session.messages = [items[1], items[0]];
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
-  assert.match(html, /class="activity-detail msg-thought">Recorded reasoning/);
+  assert.match(html, /class="activity-detail msg-thought"><div class="message-body"><div class="markdown-paragraph">Recorded reasoning/);
+});
+
+test('thought content uses the shared Markdown renderer without changing its original text', () => {
+  const session = fixtureSession('thought-markdown');
+  const original = session.messages[0].thought;
+  const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
+  assert.match(html, /class="activity-detail msg-thought"><div class="message-body">/);
+  assert.match(html, /<h2>检查思路<\/h2>/);
+  assert.match(html, /<strong>实际内容<\/strong>/);
+  assert.match(html, /<code>src\/components\/Thread\.tsx<\/code>/);
+  assert.match(html, /<ul>/);
+  assert.match(html, /<blockquote>/);
+  assert.match(html, /data-chat-table="true"/);
+  assert.match(html, /href="https:\/\/example.com\/reference"/);
+  assert.match(html, /aria-label="复制代码"/);
+  assert.match(html, /const answer = &quot;&lt;exact&gt;&quot;;/);
+  assert.equal(session.messages[0].thought, original);
 });
 
 test('response reasoning is placed before its body without a provisional region or repeated content', () => {
@@ -109,7 +126,7 @@ test('consecutive process items share an overview and blank bodies do not create
   assert.equal((html.match(/class="process-summary"/g) ?? []).length, 1);
   assert.equal((html.match(/data-message-frame=/g) ?? []).length, 1);
   assert.match(html, /3 次工具调用 · 2 次思考/);
-  assert.doesNotMatch(html, /class="message-body"|class="message-actions"|复制消息|doc-byline|data-message-id="empty"/);
+  assert.doesNotMatch(html, /<article class="message is-doc"|class="message-actions"|复制消息|doc-byline|data-message-id="empty"/);
 });
 
 test('formal text stays visible outside the process without a whole-message copy footer', () => {

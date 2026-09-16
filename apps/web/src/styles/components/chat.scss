@@ -329,9 +329,6 @@ button.activity-head {
   font-size: var(--chat-text-body); line-height: var(--chat-leading-prose); overflow-wrap: anywhere;
 }
 .msg-thought-block { margin: 0; }
-.msg-thought {
-  white-space: pre-wrap;
-}
 .thought-incomplete {
   margin: 0 0 var(--chat-gap-meta);
   color: var(--secondary-text-color);

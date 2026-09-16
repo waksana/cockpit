@@ -35,7 +35,7 @@ function Thought({ message, latest, sessionId }: { message: ChatMessage; latest:
       <ActivityHeader className="thought-toggle" icon={<Icon name="skills" size={16} />}
         title="思考过程" disclosure={{ open, onToggle: toggle }} />
       {message.incomplete && <div className="thought-incomplete" role="status">{message.incomplete}</div>}
-      {open && <div className="activity-detail msg-thought">{message.thought}</div>}
+      {open && <div className="activity-detail msg-thought"><MessageBody body={message.thought ?? ''} /></div>}
     </div>
   );
 }

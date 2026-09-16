@@ -169,7 +169,11 @@ Activity disclosure keeps its header height and icon slots fixed. Long tool
 titles do not wrap on expansion; clipped fields wrap only in the details below.
 Process headers share one text column. Expanded tool and thought details share
 a single 24px inset, without accumulated nesting indents or progressively smaller
-text. Markdown's first/last blocks have no outside margins, including class-based
+text. Thinking uses the same Markdown renderer as message prose: native reasoning
+is text that can contain Markdown, not a separately guaranteed format. Plain
+text remains readable; headings, lists, links and code use the existing safe
+rendering/copy behavior. Reasoning does not gain module file-preview resolution.
+Markdown's first/last blocks have no outside margins, including class-based
 paragraphs used by module renderers; the bubble's own padding is unchanged.
 The history-start hint is a plain, constant notice at the beginning of the
 scrolling content. It stays mounted while the initial history is unread or

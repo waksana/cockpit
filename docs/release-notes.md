@@ -2,6 +2,9 @@
 
 Unreleased development version. No tag or Release has been created for these changes.
 
+- Expanded thinking renders Markdown with the shared message renderer, including
+  headings, lists, links and copyable code, without changing the native text or
+  reasoning ownership.
 - Pending questions share one foldable answer card with the existing input and
   send row. The waiting header/icon remain; native disclosure collapses to one
   row without losing the draft or remounting the editor. Execution/queue remains

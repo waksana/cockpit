@@ -117,6 +117,9 @@ export function Lab() {
       <button onClick={() => setSession(value => ({ ...value, messages: value.messages.map((m, i) => i === value.messages.length - 1
         ? { ...m, content: `${m.content}更加清楚。流式增量也不应打断上翻阅读。` } : m) }))}>流式一步</button>
       <button onClick={() => setSession(value => ({ ...value, status: 'idle', compacting: false, intent: null }))}>结束回合</button>
+      {scenario === 'thought-markdown' && <button onClick={() => setSession(value => ({
+        ...value, messages: value.messages.map(message => ({ ...message, thought: `${message.thought ?? ''}\n\n新增 **思考片段**。` })),
+      }))}>追加思考片段</button>}
       <button onClick={loadMore}>插入历史 / 完成加载</button>
       {scenario === 'history-loading' && <button onClick={() => setSession(value => ({
         ...value, loadingHistory: !value.loadingHistory,
