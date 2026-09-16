@@ -2,12 +2,13 @@
 
 本页维护构建产物和包身份。
 Cockpit 只产生包含前后端与必要依赖的包，由使用者决定放在哪里、何时运行。
-当前源码为未发布的 0.2.0；已有 v0.1.0 包应使用对应 tag 的文档和数据根约定。
+本页对应 0.2.0 发行；运行包以该版本 Release workflow 成功发布的资产为准。
+已有 v0.1.0 包应使用对应 tag 的文档和数据根约定。
 
 ## 获取运行包
 
-普通使用者从 [最新 Cockpit Release](https://github.com/waksana/cockpit/releases/latest)
-下载 `runtime.tar.gz` 和 `runtime.tar.gz.sha256`；不必安装 pnpm 或克隆开发工作树。
+普通使用者在 [Cockpit v0.2.0 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.0)
+发布完成后下载 `runtime.tar.gz` 和 `runtime.tar.gz.sha256`；不必安装 pnpm 或克隆开发工作树。
 在下载目录验证摘要，再解压到新目录：
 
 ```sh
@@ -114,12 +115,12 @@ COCKPIT_RUNTIME_ARCHIVE="$PWD/runtime-output/runtime.tar.gz" \
 4. `Release` workflow 在 tag 的固定 SHA 上重新使用同一 CI；成功后下载该次 CI 的
    原始 artifact，核对 tag/workspace 版本、源 SHA、Node/平台及 checksum，再发布。
 
-例如首次当前服务发行：
+例如本次服务发行：
 
 ```sh
 git fetch origin
-git tag -a v0.1.0 VERIFIED_MAIN_SHA -m "Cockpit v0.1.0"
-git push origin v0.1.0
+git tag -a v0.2.0 VERIFIED_MAIN_SHA -m "Cockpit v0.2.0"
+git push origin v0.2.0
 ```
 
 将 `VERIFIED_MAIN_SHA` 替换成已通过检查的完整 main 提交。
