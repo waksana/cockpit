@@ -57,7 +57,7 @@ test('desktop master and narrow detail return one level without duplicate visibl
 
 test('global skill toggles render only authoritative booleans and never assume unknown means enabled', () => {
   assert.match(source,
-    /typeof data.enabled === 'boolean' \? <SkillGlobalToggle name=\{data.name\} enabled=\{data.enabled\} disabled=\{!valid\} onChanged=\{onChanged\} \/>/);
+    /typeof data.enabled === 'boolean' \? <SkillGlobalToggle name=\{data.name\} enabled=\{data.enabled\} disabled=\{!valid\} onChange=\{onChange\} \/>/);
   assert.match(source, /Copilot 未提供全局启用状态/);
   assert.match(source,
     /<Toggle label="全局默认启用" on=\{enabled\} disabled=\{disabled \|\| !action.connected \|\| action.busy\}/);
@@ -65,12 +65,12 @@ test('global skill toggles render only authoritative booleans and never assume u
 });
 
 test('both global toggles refresh authoritative detail and list after success or failure', () => {
-  assert.match(source, /run\(\(\) => mcpSetDefault\(name, !on\), undefined, onChanged\)/);
-  assert.match(source, /action.run\(\(\) => skillsSetGlobal\(name, next\), undefined, onChanged\)/);
+  assert.match(source, /run\(\(\) => onChange\(name, !on\)\)/);
+  assert.match(source, /action.run\(\(\) => onChange\(name, next\)\)/);
   assert.match(source, /<McpList catalog=\{mcpCatalog\}/);
   assert.match(source, /<SkillsList revision=\{refreshNonce\}/);
-  assert.match(source, /<McpDetail catalog=\{mcpCatalog\} name=\{item\} onChanged=\{refresh\}/);
-  assert.match(source, /<SkillDetail revision=\{refreshNonce\} name=\{item\} onChanged=\{refresh\}/);
+  assert.match(source, /<McpDetail catalog=\{mcpCatalog\} name=\{item\} onChange=\{onChange\}/);
+  assert.match(source, /<SkillDetail revision=\{refreshNonce\} name=\{item\} onChange=\{onChange\}/);
   assert.match(source, /role="alert">设置失败：\{action.error\}/);
 });
 

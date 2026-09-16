@@ -1,5 +1,5 @@
 // URL-driven master-detail management; Shell keeps list/detail navigation responsive.
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { McpServerGlobal } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
@@ -12,6 +12,7 @@ import { Toggle } from './Manage';
 
 type ListProps = { selected: string | null; onSelect: (name: string) => void; revision: number };
 type McpCatalog = ReturnType<typeof useKeyedResource<McpServerGlobal[]>>;
+type GlobalToggle = (name: string, enabled: boolean) => Promise<void>;
 
 function NavRow({ name, sub, badge, active, onClick }: {
   name: string; sub?: string; badge?: ReactNode; active: boolean; onClick: () => void;
@@ -53,15 +54,14 @@ function McpList({ selected, onSelect, catalog }: Omit<ListProps, 'revision'> & 
   );
 }
 
-function McpDefault({ name, on, onChanged, disabled }: { name: string; on: boolean; onChanged: () => void; disabled: boolean }) {
-  const mcpSetDefault = useCockpit((s) => s.mcpSetDefault);
+function McpDefault({ name, on, onChange, disabled }: { name: string; on: boolean; onChange: GlobalToggle; disabled: boolean }) {
   const connState = useCockpit((s) => s.connState);
   const { run, busy, error } = useKeyedAction(`global:mcp:${name}`);
   return (
     <div className="manage-detail-line">
       <button type="button" className={`switch ck-button${on ? ' is-on' : ''}`} role="switch"
         aria-label="新会话默认开启" aria-checked={on} aria-busy={busy} disabled={disabled || connState !== 'open' || busy}
-        onClick={() => { void run(() => mcpSetDefault(name, !on), undefined, onChanged); }}>
+        onClick={() => { void run(() => onChange(name, !on)); }}>
         <span className="switch-knob" />
       </button>{' '}新会话默认开启
       {busy && <StateNotice kind="loading">正在提交…</StateNotice>}
@@ -71,7 +71,7 @@ function McpDefault({ name, on, onChanged, disabled }: { name: string; on: boole
   );
 }
 
-function McpDetail({ name, onChanged, catalog }: { name: string; onChanged: () => void; catalog: McpCatalog }) {
+function McpDetail({ name, onChange, catalog }: { name: string; onChange: GlobalToggle; catalog: McpCatalog }) {
   const { data: rows, status, failed, valid, pending } = catalog;
   const row = rows?.find((server) => server.name === name);
   if (!row) return status ? <ResourceStatus status={status} failed={failed} pending={pending} placement="pane" />
@@ -81,7 +81,7 @@ function McpDetail({ name, onChanged, catalog }: { name: string; onChanged: () =
       <ResourceStatus status={status} failed={failed} pending={pending} />
       <h2 className="manage-detail-title">{row.name}</h2>
       <div className="manage-detail-line">{row.detail}</div>
-      <McpDefault name={row.name} on={row.defaultOn} disabled={!valid} onChanged={onChanged} />
+      <McpDefault name={row.name} on={row.defaultOn} disabled={!valid} onChange={onChange} />
       {row.config && <pre className="manage-config">{JSON.stringify(row.config, null, 2)}</pre>}
     </div>
   );
@@ -102,15 +102,14 @@ function SkillsList({ selected, onSelect, revision }: ListProps) {
   );
 }
 
-function SkillGlobalToggle({ name, enabled, disabled, onChanged }: {
-  name: string; enabled: boolean; disabled: boolean; onChanged: () => void;
+function SkillGlobalToggle({ name, enabled, disabled, onChange }: {
+  name: string; enabled: boolean; disabled: boolean; onChange: GlobalToggle;
 }) {
-  const skillsSetGlobal = useCockpit((s) => s.skillsSetGlobal);
   const action = useKeyedAction(`global:skill-toggle:${name}`);
   return (
     <div className="manage-detail-line">
       <Toggle label="全局默认启用" on={enabled} disabled={disabled || !action.connected || action.busy}
-        onChange={(next) => { void action.run(() => skillsSetGlobal(name, next), undefined, onChanged); }} />{' '}全局默认启用
+        onChange={(next) => { void action.run(() => onChange(name, next)); }} />{' '}全局默认启用
       {!disabled && <p className="manage-note">用于新建或卸载后重新加载的会话，不改变当前已加载会话。</p>}
       {action.busy && <StateNotice kind="loading">正在提交…</StateNotice>}
       {action.error && <div className="manage-note" role="alert">设置失败：{action.error}</div>}
@@ -118,7 +117,7 @@ function SkillGlobalToggle({ name, enabled, disabled, onChanged }: {
   );
 }
 
-function SkillDetail({ name, revision, onChanged }: { name: string; revision: number; onChanged: () => void }) {
+function SkillDetail({ name, revision, onChange }: { name: string; revision: number; onChange: GlobalToggle }) {
   const skillsRead = useCockpit((s) => s.skillsRead);
   const load = useCallback(() => skillsRead(name), [skillsRead, name]);
   const { data, status, failed, valid, pending } = useKeyedResource(`global:skill:${name}`, load, revision);
@@ -131,7 +130,7 @@ function SkillDetail({ name, revision, onChanged }: { name: string; revision: nu
       <h2 className="manage-detail-title">{data.name}</h2>
       {meta && <div className="manage-detail-meta">{meta}</div>}
       {typeof data.enabled === 'boolean'
-        ? <SkillGlobalToggle name={data.name} enabled={data.enabled} disabled={!valid} onChanged={onChanged} />
+        ? <SkillGlobalToggle name={data.name} enabled={data.enabled} disabled={!valid} onChange={onChange} />
         : <div className="manage-detail-meta">Copilot 未提供全局启用状态</div>}
       {data.description && <p className="manage-detail-line">{data.description}</p>}
       {data.body ? <div className="manage-detail-body"><MessageBody body={data.body} /></div>
@@ -155,8 +154,26 @@ function ManagementContent({ section, item }: {
   const navigate = useNavigate();
   const [refreshNonce, setRefreshNonce] = useState(0);
   const mcpGlobal = useCockpit((s) => s.mcpGlobal);
+  const mutate = useCockpit((s) => section === 'mcp' ? s.mcpSetDefault : s.skillsSetGlobal);
+  const connected = useCockpit((s) => s.connState === 'open');
+  const generation = useCockpit((s) => s.connectionGeneration);
+  const owner = useRef({ active: false });
+  useLayoutEffect(() => {
+    const current = { active: true };
+    owner.current = current;
+    return () => { current.active = false; };
+  }, [connected, generation]);
   const mcpCatalog = useKeyedResource('global:mcp', mcpGlobal, refreshNonce, section === 'mcp');
   const refresh = () => setRefreshNonce((n) => n + 1);
+  // Detail tasks own their feedback; the mounted catalog owns mutation readback.
+  const onChange: GlobalToggle = async (name, enabled) => {
+    const current = owner.current;
+    try { await mutate(name, enabled); }
+    finally {
+      const state = useCockpit.getState();
+      if (current.active && state.connState === 'open' && state.connectionGeneration === generation) refresh();
+    }
+  };
   const select = (name: string) => { void navigate(`/${section}/${encodeURIComponent(name)}`, { replace: item !== null }); };
   return (
     <ManagementShell section={section} item={item} onRefresh={refresh}
@@ -164,7 +181,7 @@ function ManagementContent({ section, item }: {
         : <SkillsList revision={refreshNonce} selected={item} onSelect={select} />}
       detail={item === null ? (
           <div className="detail-empty manage-selection-hint"><p>选择左侧的一项查看详情。</p></div>
-        ) : section === 'mcp' ? <McpDetail catalog={mcpCatalog} name={item} onChanged={refresh} />
-          : <SkillDetail revision={refreshNonce} name={item} onChanged={refresh} />} />
+        ) : section === 'mcp' ? <McpDetail catalog={mcpCatalog} name={item} onChange={onChange} />
+          : <SkillDetail revision={refreshNonce} name={item} onChange={onChange} />} />
   );
 }
