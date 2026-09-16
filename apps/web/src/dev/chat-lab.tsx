@@ -121,6 +121,19 @@ export function Lab() {
       <button onClick={() => setSession(value => ({ ...value, messages: value.messages.map((m, i) => i === value.messages.length - 1
         ? { ...m, content: `${m.content}更加清楚。流式增量也不应打断上翻阅读。` } : m) }))}>流式一步</button>
       <button onClick={() => setSession(value => ({ ...value, status: 'idle', compacting: false, intent: null }))}>结束回合</button>
+      {scenario === 'input-states' && <label>输入状态 <select aria-label="输入状态" defaultValue="reading" onChange={event => {
+        const target = scenarios.find(([id]) => id === event.target.value);
+        if (!target) throw new Error('Unknown synthetic input state');
+        setSession(value => ({ ...fixtureSession(target[0]), sessionId: value.sessionId, messages: value.messages }));
+      }}>
+        <option value="reading">空闲</option>
+        <option value="streaming">执行与队列</option>
+        <option value="ask">问题</option>
+        <option value="ask-queued">长问题与队列</option>
+        <option value="plan-queued">计划</option>
+        <option value="elicitation-queued">工具确认</option>
+        <option value="compacting">压缩与禁用</option>
+      </select></label>}
       {scenario === 'thought-markdown' && <button onClick={() => setSession(value => ({
         ...value, messages: value.messages.map(message => ({ ...message, thought: `${message.thought ?? ''}\n\n新增 **思考片段**。` })),
       }))}>追加思考片段</button>}

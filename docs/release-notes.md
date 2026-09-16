@@ -2,6 +2,10 @@
 
 Unreleased development version. No tag or Release has been created for these changes.
 
+- Idle, executing and decision input now use the same card frame and editor
+  geometry, without a nested answer-field border or focus fill. Multiline growth
+  remains content-driven; stable scrollbar gutters prevent width changes during
+  long forms. Module action-to-text spacing is tighter without reducing hit targets.
 - Chat execution, queue, decisions and the existing editor share one default-open
   card with an unmarked, keyboard-operable folding header. Long content scrolls
   together within a CSS height budget; submission progress stays in an existing
