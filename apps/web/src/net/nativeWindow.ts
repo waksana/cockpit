@@ -3,7 +3,8 @@ import { CHAT_EVENT_TYPES, summarizeMessage, type ChatMessage, type NativeChatEv
 import { displayEvent, type DisplayEvent } from './displayEvent';
 import { HistoryFoldIndex, mergeHistoryFold, ownersOf, states, type MessageOrders, type OrderedEvent } from './historyFold';
 
-export const NATIVE_PAGE = 32;
+// Match the installed Copilot eventLog/readPersistedEvents default (runtime 1.0.83).
+export const NATIVE_PAGE = 200;
 const displayTypes = new Set(CHAT_EVENT_TYPES);
 export type ChatPosition = Pick<NativeChatRead, 'source' | 'cursor' | 'agentScope' | 'agentIds' | 'types'>;
 

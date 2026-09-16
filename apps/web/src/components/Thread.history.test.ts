@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createElement } from 'react';
+import { createElement, Fragment } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatSession } from '../net/types';
 import { createSessionDrafts } from '../lib/textDraft';
-import { Composer } from './Composer';
+import { Composer, ComposerNotices } from './Composer';
 import { Thread } from './Thread';
 
 const base: ChatSession = {
@@ -50,9 +50,9 @@ test('composer keeps the input without a persistent draft-storage explanation', 
 
 test('composer displays a dismissible notice only for unconfirmed outcomes, not normal editing or sending', async () => {
   const draft = createSessionDrafts()('composer-notice');
-  const renderComposer = () => renderToStaticMarkup(createElement(Composer, {
-    draft, onSend: async () => assert.fail('render must not send'),
-  }));
+  const renderComposer = () => renderToStaticMarkup(createElement(Fragment, {},
+    createElement(ComposerNotices, { draft, operation: 'prompt' }),
+    createElement(Composer, { draft, onSend: async () => assert.fail('render must not send') })));
   draft.edit('Retained input');
   assert.doesNotMatch(renderComposer(), /chat-input-notice/);
   let finish!: (accepted: boolean) => void;
@@ -157,15 +157,16 @@ test('all loaded message content remains mounted behind stable outer geometry ma
   for (const message of messages) assert.ok(html.includes(message.content));
 });
 
-test('initial history has a measurement-only body while its complete initial batch is prepared', () => {
+test('initial history displays received content even before the initial window is filled', () => {
   const html = render({
     historyStale: false, materialized: false, loadingHistory: true,
-    messages: [{ id: 'partial-page', role: 'assistant', content: 'Not yet a complete initial viewport', timestamp: 1 }],
+    messages: [{ id: 'partial-page', role: 'assistant', content: 'Already received, ready to read', timestamp: 1 }],
   });
   assert.match(html, /chat-history-controls/);
   assert.match(html, /加载更早的消息/);
-  assert.match(html, /class="chat-message-rows" data-preparing="true" aria-hidden="true" inert=""/);
-  assert.match(html, /Not yet a complete initial viewport/);
+  assert.match(html, /class="chat-message-rows"><div/);
+  assert.doesNotMatch(html, /data-preparing|aria-hidden="true" inert/);
+  assert.match(html, /Already received, ready to read/);
 });
 
 test('loading more history never hides an already materialized reading window', () => {

@@ -11,6 +11,18 @@ import { AskContent } from './PendingDecision';
 function shouldSubmitOnEnter(): boolean {
   return window.matchMedia?.('(hover: hover) and (pointer: fine)').matches ?? true;
 }
+export function ComposerNotices({ draft, operation }: { draft: SessionDraft; operation: ComposerContext['operation'] }) {
+  const { unconfirmed, attachments } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
+  return <>
+    {unconfirmed && <div className="chat-input-notice" role="alert" tabIndex={0}>
+      <span>发送失败或结果尚未确认，草稿已保留；重发前请先检查会话。</span>
+      <button type="button" onClick={draft.dismissNotice} aria-label="关闭发送提示"><Icon name="close" size={18} /></button>
+    </div>}
+    {attachments.length > 0 && operation !== 'prompt' && <div className="chat-input-notice" role="alert">
+      当前回答或确认操作不接受附件，请先移除附件；草稿已保留。
+    </div>}
+  </>;
+}
 interface ComposerProps {
   disabled?: boolean;
   busy?: boolean;
@@ -22,16 +34,12 @@ interface ComposerProps {
   operation?: ComposerContext['operation'];
   runtime?: ModuleRuntime;
   ask?: Omit<ComponentProps<typeof AskContent>, 'pending'>;
+  statusInHeader?: boolean;
 }
-export function Composer({ disabled, busy, placeholder, submitLabel, draft, onSend, sendBlocked, operation = 'prompt', runtime = moduleRuntime, ask }: ComposerProps) {
-  const { text, attachments, blocks, pending, unconfirmed } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
+export function Composer({ disabled, busy, placeholder, submitLabel, draft, onSend, sendBlocked, operation = 'prompt', runtime = moduleRuntime, ask, statusInHeader }: ComposerProps) {
+  const { text, attachments, blocks, pending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const modules = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
   const active = useRef(false);
-  const disclosure = useRef<HTMLDetailsElement | null>(null);
-  useLayoutEffect(() => {
-    // A different native question opens afresh; ordinary updates retain native disclosure state.
-    if (disclosure.current) disclosure.current.open = true;
-  }, [draft, ask?.request.requestId]);
   useLayoutEffect(() => {
     active.current = true;
     return () => { active.current = false; };
@@ -48,19 +56,10 @@ export function Composer({ disabled, busy, placeholder, submitLabel, draft, onSe
     if (!active.current || !canSend || draft.getSnapshot().pending || draft.getSnapshot().blocks.length) return;
     void onSend();
   };
-  return <details className="chat-composer" ref={disclosure} open data-question={!!ask || undefined}>
-    <summary className="chat-answer-toggle" hidden={!ask}>
-      <Icon name="newchat" size={16} /><span>等待你的回答</span>
-      <span className="chat-answer-chevron"><Icon name="down" size={14} /></span>
-    </summary>
+  return <div className="chat-composer" data-question={!!ask || undefined}>
     <div className="chat-composer-body">
       <div className="chat-composer-context">
         {ask && <AskContent {...ask} pending={pending} />}
-        {unconfirmed && <div className="chat-input-notice" role="alert" tabIndex={0}>
-          <span>发送失败或结果尚未确认，草稿已保留；重发前请先检查会话。</span>
-          <button type="button" onClick={draft.dismissNotice} aria-label="关闭发送提示"><Icon name="close" size={18} /></button>
-        </div>}
-        {attachmentRouteBlocked && <div className="chat-input-notice" role="alert">当前回答或确认操作不接受附件，请先移除附件；草稿已保留。</div>}
         {blocks.filter(block => block.orphaned).map(block => <div className="module-draft-recovery" role="status" key={block.id}>
           <span>{block.reason}</span>
           {block.orphaned && <button className="module-block-remove" type="button" onClick={() => draft.dismissOrphanedBlock(block.id)}>移除未完成的选择</button>}
@@ -103,9 +102,9 @@ export function Composer({ disabled, busy, placeholder, submitLabel, draft, onSe
         <button type="button" className="chat-input-btn send rp" disabled={!canSend} onClick={submit}
           aria-label={pending ? '正在提交' : submitLabel ?? (busy ? '排队发送' : '发送')} aria-busy={pending}
           title={pending ? '正在提交，草稿仍可编辑' : blockedReason || (submitLabel ?? (busy ? '加入队列' : '发送'))}>
-          <Icon name={pending ? 'sending' : 'arrow_up'} size={22} />
+          <Icon name={pending && !statusInHeader ? 'sending' : 'arrow_up'} size={22} />
         </button>
       </div>
     </div>
-  </details>;
+  </div>;
 }

@@ -10,15 +10,14 @@ const PLAN_ACTION_LABEL: Record<ExitPlanModeAction, string> = {
   exit_only: '仅退出计划',
 };
 
-function PendingDecision({ label, title, icon, pending, children, hint, className = '' }: {
+function PendingDecision({ label, title, icon, pending, children, className = '' }: {
   label: string; title: string; icon: ReactNode; pending: boolean;
-  children: ReactNode; hint?: string; className?: string;
+  children: ReactNode; className?: string;
 }) {
   return <div className={`chat-ask chat-pending ${className}`.trim()} role="group" aria-label={label} aria-busy={pending}>
     <div className="chat-pending-head">{icon}{title}</div>
     <div className="chat-pending-body">
       {children}
-      {hint && <div className="chat-pending-hint" role="status">{hint}</div>}
     </div>
   </div>;
 }
@@ -32,7 +31,6 @@ export function AskContent({ request, pending, onChoice }: {
       {request.choices.map(choice => <button key={choice} type="button" className="chat-ask-choice"
         disabled={pending} onClick={() => onChoice(choice)}>{choice}</button>)}
     </div>}
-    {pending && <div className="chat-pending-hint" role="status">正在提交回答…</div>}
   </div>;
 }
 
@@ -40,7 +38,7 @@ export function PlanCard({ request, pending, onSelect }: {
   request: NonNullable<ChatSession['planRequest']>; pending: boolean; onSelect: (action: ExitPlanModeAction) => void;
 }) {
   return <PendingDecision label="计划待确认" title="计划已就绪" icon={<Icon name="mode_plan" size={16} />}
-    className="chat-plan" pending={pending} hint={pending ? '正在提交选择…' : undefined}>
+    className="chat-plan" pending={pending}>
     <div className="chat-pending-content" role="region" tabIndex={0} aria-label="计划内容">
       <div className="chat-pending-summary"><MessageBody body={request.summary} /></div>
       {request.planContent && <details className="chat-pending-detail">
@@ -64,7 +62,7 @@ export function ElicitationCard({ request, pending, onSelect }: {
   onSelect: (action: 'accept' | 'decline' | 'cancel') => void;
 }) {
   return <PendingDecision label="需要你的输入" title="工具请求确认" icon={<Icon name="mcp" size={16} />}
-    className="chat-tool-confirm" pending={pending} hint={pending ? '正在提交选择…' : undefined}>
+    className="chat-tool-confirm" pending={pending}>
     <div className="chat-ask-q">{request.message}</div>
     <div className="chat-ask-choices">
       {(request.actions ?? ['accept', 'decline', 'cancel']).map(action => <button key={action} type="button"

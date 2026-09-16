@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatSession } from '../net/types';
 import { Thread } from './Thread';
 import { useCockpit } from '../net/store';
+import { getSessionDraft } from '../lib/textDraft';
 
 const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
 const initialState = useCockpit.getInitialState();
@@ -78,9 +79,9 @@ test('interrupt action keeps its context without the removed persistent hint or 
 
 test('stop and interrupt share one execution action group outside the scrolling transcript', () => {
   const html = render({ intent: 'Working on the response', queue: [{ id: 'q', text: 'Next request' }] });
-  const section = html.match(/<section class="chat-execution"[\s\S]+?<\/section>/)?.[0];
+  const section = html.slice(html.indexOf('<details class="chat-input-card"'));
   assert.ok(section);
-  const actions = section.match(/class="chat-execution-actions"[^>]*>([\s\S]+?)<\/div>/)?.[1];
+  const actions = section.match(/class="chat-execution-actions"[^>]*>([\s\S]+?)<\/span>/)?.[1];
   assert.ok(actions);
   assert.match(actions, /打断并处理队列/);
   assert.match(actions, /停止并清空队列/);
@@ -88,7 +89,7 @@ test('stop and interrupt share one execution action group outside the scrolling 
   assert.match(section, /aria-label="排队中的消息"/);
   assert.doesNotMatch(section, /chat-queue-label|排队消息 · 1/);
   assert.ok(section.indexOf('chat-execution-actions') < section.indexOf('chat-queue-item'));
-  assert.doesNotMatch(html.slice(0, html.indexOf('<section class="chat-execution"')), /chat-typing-stop|class="chat-interrupt"/);
+  assert.doesNotMatch(html.slice(0, html.indexOf('<details class="chat-input-card"')), /chat-typing-stop|class="chat-interrupt"/);
 });
 
 test('idle queues show their messages without inventing a running operation, and read-only views have no controls', () => {
@@ -101,16 +102,16 @@ test('idle queues show their messages without inventing a running operation, and
   assert.doesNotMatch(readonly, /chat-typing-stop|chat-interrupt"|chat-execution-actions/);
 });
 
-test('a pending question shares the composer below the independent execution state', () => {
+test('a pending question shares the card below its only status and action header', () => {
   const html = render({ intent: 'Generic running intent', ask: {
     requestId: 'question', question: 'Which option?', choices: ['A', 'B'], allowFreeform: true,
   } });
-  const region = html.match(/<section class="chat-execution"[\s\S]+?<\/section>/)![0];
-  assert.match(html, /<details class="chat-composer" open="" data-question="true"/);
+  const region = html.match(/<summary class="chat-execution-head"[\s\S]+?<\/summary>/)![0];
+  assert.match(html, /<div class="chat-composer" data-question="true"/);
   assert.doesNotMatch(html, /class="chat-decisions"/);
-  assert.ok(html.indexOf('class="chat-execution"') < html.indexOf('class="chat-composer"'));
+  assert.ok(html.indexOf('class="chat-execution-head"') < html.indexOf('class="chat-composer"'));
   assert.ok(html.indexOf('Which option?') < html.indexOf('class="chat-input"'));
-  assert.match(html, /<summary class="chat-answer-toggle"><span[^>]*data-icon="newchat"[\s\S]*等待你的回答/);
+  assert.doesNotMatch(html, /chat-answer-toggle|chat-answer-chevron/);
   assert.match(html, /Which option\?/);
   assert.doesNotMatch(region, /Which option\?|class="chat-ask/);
   assert.match(region, /chat-execution-label[^>]*>等待你的回答<\/span>/);
@@ -128,7 +129,7 @@ test('multiple native decisions stay separate from one execution/queue area', ()
   assert.match(html, /Question\?/);
   assert.match(html, /Proposed plan/);
   assert.match(html, /Tool confirmation/);
-  assert.equal((html.match(/class="chat-execution"/g) ?? []).length, 1);
+  assert.equal((html.match(/class="chat-execution-head"/g) ?? []).length, 1);
   assert.equal((html.match(/class="chat-typing-stop"/g) ?? []).length, 1);
 });
 
@@ -150,10 +151,10 @@ test('each decision keeps queue-clearing controls outside its answer options', (
     { elicitation: { requestId: 'elicit', message: 'Confirm' } },
   ]) {
     const html = render({ queue, ...patch });
-    const execution = html.match(/<section class="chat-execution"[\s\S]+?<\/section>/)![0];
+    const execution = html.match(/<summary class="chat-execution-head"[\s\S]+?<\/summary>/)![0];
     assert.match(execution, /停止并清空队列/);
     assert.match(execution, /打断并处理队列/);
-    assert.match(execution, /Queued text/);
+    assert.match(html, /Queued text/);
     assert.doesNotMatch(execution, /class="chat-ask-choice"/);
   }
 });
@@ -161,7 +162,8 @@ test('each decision keeps queue-clearing controls outside its answer options', (
 test('idle and read-only views do not reserve empty dock regions', () => {
   assert.doesNotMatch(render({ status: 'idle' }), /class="chat-dock"|class="chat-execution"/);
   const idleQuestion = render({ status: 'idle', ask: { requestId: 'ask', question: 'Question' } });
-  assert.match(idleQuestion, /class="chat-composer" open="" data-question="true"/);
+  assert.match(idleQuestion, /class="chat-composer" data-question="true"/);
+  assert.match(render({ status: 'idle' }), /<summary class="chat-execution-head" hidden=""/);
   assert.doesNotMatch(idleQuestion, /class="chat-decisions"/);
   assert.doesNotMatch(idleQuestion, /class="chat-execution"/);
 });
@@ -182,4 +184,35 @@ test('running composer uses only a queue placeholder while idle and questions ke
   assert.doesNotMatch(render(), /发送后加入队列|chat-composer-hint/);
   assert.match(render({ status: 'idle' }), /placeholder="输入消息…"/);
   assert.match(render({ ask: { requestId: 'ask', question: 'Question?' } }), /placeholder="输入回答…"/);
+});
+
+test('submitting uses an existing header without adding an idle header or duplicate progress', async () => {
+  const draft = getSessionDraft(session.sessionId);
+  draft.edit('Retained answer');
+  let finish!: (accepted: boolean) => void;
+  const pending = draft.runAction(() => new Promise(resolve => { finish = resolve; }));
+  try {
+    for (const patch of [
+      { ask: { requestId: 'ask', question: 'Question', choices: ['A'] } },
+      { planRequest: { requestId: 'plan', summary: 'Plan', actions: ['exit_only' as const] } },
+      { elicitation: { requestId: 'confirm', message: 'Confirm' } },
+      {},
+    ]) {
+      const html = render(patch);
+      assert.match(html, /chat-execution-label[^>]*>正在提交(?:回答)?…<\/span>/);
+      assert.doesNotMatch(html, /chat-pending-hint[^>]*>正在提交|data-icon="sending"/);
+      assert.match(html, /class="chat-input-btn send rp" disabled="" aria-label="正在提交" aria-busy="true"/);
+    }
+    const idle = render({ status: 'idle' });
+    assert.match(idle, /<summary class="chat-execution-head" hidden=""/);
+    assert.match(idle, /data-icon="sending"/);
+    assert.doesNotMatch(idle, /data-header="true"/);
+  } finally {
+    finish(false);
+    await pending;
+  }
+  const failure = render({ ask: { requestId: 'ask', question: 'Question' } });
+  assert.ok(failure.indexOf('chat-input-notice" role="alert"') < failure.indexOf('<details class="chat-input-card"'));
+  assert.match(failure, /Retained answer<\/textarea>/);
+  draft.dismissNotice(); draft.edit('');
 });

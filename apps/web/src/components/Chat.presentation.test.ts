@@ -105,25 +105,27 @@ test('Chat dark theme targets the mounted chat, not an impossible nested chat', 
   assert.doesNotMatch(css, /\.chat \.chat \{/);
 });
 
-test('the transcript does not make long decisions compete with its scroll-content intrinsic height', () => {
+test('one CSS height budget contains notices and the native card without nested decision scrollers', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.chat-transcript \{[^}]*flex: 1 1 0;[^}]*min-height: min\(6rem, 20%\)/);
-  assert.match(css, /\.chat-dock \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*max-height: 70%/);
-  assert.match(css, /\.chat-decisions \{[^}]*min-height: 88px;[^}]*overflow-y: auto/);
-  assert.match(css, /\.chat-queue \{[^}]*min-height: 0;[^}]*overflow-y: auto/);
-  assert.doesNotMatch(css, /\.chat-execution \.chat-ask/);
+  assert.match(css, /\.chat-input-area \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*max-height: 70%/);
+  assert.match(css, /\.chat-input-card::details-content \{[^}]*display: flex;[^}]*min-height: 0;/);
+  assert.match(css, /\.chat-input-card-body \{[^}]*min-height: 0;[^}]*overflow-y: auto/);
+  assert.match(css, /\.chat-input-notices \{[^}]*flex: none;[^}]*max-height: min\(12rem, 30dvh\)/);
+  for (const selector of ['chat-decisions', 'chat-queue', 'chat-composer-context', 'chat-pending-body']) {
+    assert.doesNotMatch(css.match(new RegExp(`\\.${selector} \\{([^}]+)\\}`))?.[1] ?? '', /overflow-y: auto|max-height:/);
+  }
+  assert.doesNotMatch(css, /\.chat-dock \{|\.chat-execution \{/);
 });
-test('dock regions stay framed while only execution/queue typography becomes compact', () => {
+test('one card frame retains compact execution/queue typography and independent actions', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.chat-ask \{[^}]*border: 1px solid/);
-  assert.match(css, /\.chat-execution \{[^}]*border: 1px solid/);
-  assert.match(css, /\.chat-pending-body \{[^}]*min-height: 0;[^}]*overflow-y: auto/);
+  assert.match(css, /\.chat-input-card\[data-header\] \{[^}]*border: 1px solid/);
+  assert.doesNotMatch(css.match(/\.chat-ask \{([^}]+)\}/)?.[1] ?? '', /border:|background:/);
   assert.match(css, /\.chat-execution-actions button \{[^}]*min-height: 32px;[^}]*font-size: var\(--chat-text-meta\)/);
   assert.match(css, /\.chat-queue-item \{[^}]*font-size: var\(--chat-text-meta\)/);
   assert.match(css, /\.chat-ask-choice \{[^}]*font-size: var\(--chat-text-secondary\)/);
   assert.doesNotMatch(css, /\.chat-queue-label|\.chat-composer-hint/);
   assert.match(css, /\.chat-queue-copy \{[^}]*display: flex;/);
-  assert.match(css, /\.chat-queue:has\(\.chat-queue-entry\[open\]\) \{\s*max-height: 12rem;/);
   assert.doesNotMatch(css, /\.chat-queue-entry\[open\] \+ \.chat-queue-copy/);
   assert.match(css, /\.chat-execution-label\[data-running\]::before \{[^}]*width: 5px;[^}]*height: 5px;/);
   assert.match(css, /\.chat-execution-label \{[^}]*flex: 1 1 0;[^}]*min-width: 4em;[^}]*text-overflow: ellipsis;/);
@@ -145,7 +147,8 @@ test('the composer is a full-width bottom bar without a floating outer frame', (
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   const bar = css.match(/(?:^|\n)\.chat-input \{([^}]+)\}/)![1];
   assert.match(bar, /width: 100%;\s*margin: 0;/);
-  assert.match(bar, /padding: 0 .*calc\(var\(--chat-inset-bottom\) \+ env\(safe-area-inset-bottom, 0px\)\)/);
+  assert.match(bar, /padding: 0;/);
+  assert.match(css, /\.chat-input-area \{[^}]*margin-block-end: calc\(var\(--chat-inset-bottom\) \+ env\(safe-area-inset-bottom, 0px\)\)/);
   assert.doesNotMatch(bar, /border:|border-radius:|max-width:/);
   assert.match(css, /--chat-inset-field: 8px 12px;/);
   assert.match(css, /\.chat-input-message \{[^}]*min-height: 2\.5rem;[^}]*padding: var\(--chat-inset-field\);/);
@@ -162,11 +165,10 @@ test('the composer is a full-width bottom bar without a floating outer frame', (
 test('Chat regions and optional composer context each have a single spacing owner', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.chat \{[^}]*row-gap: var\(--chat-gap-region\)/);
-  assert.match(css, /\.chat-dock \{[^}]*margin-block: 0;/);
   assert.match(css, /\.chat-messages \{[^}]*scrollbar-gutter: stable both-edges;[^}]*padding: var\(--chat-inset-transcript\) var\(--chat-gutter\) 0;/);
   assert.match(css, /\.chat-composer \{[^}]*flex: none;/);
   assert.match(css, /\.chat-composer-body \{[^}]*gap: var\(--chat-gap-region\);/);
-  assert.match(css, /\.chat-composer-context \{[^}]*display: none;[^}]*gap: var\(--chat-gap-region\);[^}]*min-height: 0;[^}]*overflow-y: auto;/);
+  assert.match(css, /\.chat-composer-context \{[^}]*display: none;[^}]*gap: var\(--chat-gap-region\);[^}]*min-height: 0;/);
   assert.match(css, /\.chat-composer-context:has\(> :not\(:empty\)\) \{\s*display: flex;/);
   assert.match(css, /\.module-composer-above,\s*\.module-draft-attachments \{[^}]*margin: 0;/);
   assert.match(css, /\.chat-input-notice \{[^}]*margin: 0;/);
@@ -179,25 +181,28 @@ test('Chat regions and optional composer context each have a single spacing owne
   assert.match(css, /\.message-attachment \{[^}]*max-width: 100%;[^}]*overflow-wrap: anywhere;/);
   assert.match(css, /\.chat-history-actions:empty \{\s*display: none;/);
   assert.doesNotMatch(css, /--chat-space-/);
+  assert.doesNotMatch(css, /data-preparing/);
+  const thread = readFileSync(new URL('./Thread.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(thread, /readySession|preparingHistory|data-preparing/);
 });
 
-test('the answer composer uses native disclosure without a second editor or a nested question frame', () => {
+test('the entire input card uses one default-open disclosure without an arrow or nested question frame', () => {
   const html = renderToStaticMarkup(createElement(Thread, {
     session: fixtureSession('ask-queued'), onLoadMore() {},
   }));
   assert.equal((html.match(/<textarea/g) ?? []).length, 1);
-  assert.match(html, /<details class="chat-composer" open="" data-question="true"><summary class="chat-answer-toggle">/);
+  assert.match(html, /<details class="chat-input-card" open="" data-header="true" data-decision="true"><summary class="chat-execution-head"/);
+  assert.match(html, /aria-label="等待你的回答，展开或收起输入卡片"/);
   assert.match(html, /class="chat-pending-body chat-answer-question" role="group" aria-label="需要你的选择"/);
-  assert.ok(html.indexOf('class="chat-execution"') < html.indexOf('class="chat-composer"'));
+  assert.ok(html.indexOf('class="chat-queue"') < html.indexOf('class="chat-composer"'));
   assert.doesNotMatch(html, /class="chat-decisions"|class="chat-ask chat-pending/);
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.chat-answer-toggle \{[^}]*min-height: 38px;/);
-  assert.match(css, /\.chat-answer-toggle\[hidden\] \{[^}]*display: none;/);
-  assert.match(css, /\.chat-composer\[data-question\] \{[^}]*border: 1px solid/);
-  assert.match(css, /\.chat-composer\[data-question\] \.chat-composer-context \{[^}]*max-height: min\(18rem, 30dvh\)/);
-  assert.match(css, /\.chat-composer\[data-question\] \.chat-composer-body \{[^}]*max-height: min\(28rem, max\(2\.5rem, 60dvh - 6rem\)\)/);
-  assert.match(css, /\.chat-composer\[data-question\] \.chat-input \{[^}]*padding: 0;/);
-  assert.match(css, /\.chat-composer\[data-question\] \.chat-ask-q \{[^}]*user-select: text/);
+  assert.match(css, /\.chat-input-card:not\(\[open\]\) \.chat-execution-head \{[^}]*min-height: 38px;/);
+  assert.match(css, /\.chat-execution-head \{[^}]*cursor: pointer;[^}]*list-style: none;/);
+  assert.match(css, /\.chat-execution-head\[hidden\] \{[^}]*display: none;/);
+  assert.match(css, /\.chat-execution-head::-webkit-details-marker \{[^}]*display: none;/);
+  assert.match(css, /\.chat-ask-q \{[^}]*user-select: text/);
+  assert.doesNotMatch(html, /chat-answer-toggle|chat-answer-chevron/);
   const source = readFileSync(new URL('./Composer.tsx', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /onToggle|scrollHeight|clientHeight|getBoundingClientRect|ResizeObserver|requestAnimationFrame/);
 });
@@ -226,7 +231,7 @@ test('Chat typography is role-based and narrow layouts follow their own availabl
   assert.match(css, /\.message-time, \.doc-time \{[^}]*font-size: var\(--chat-text-meta\);[^}]*line-height: var\(--chat-leading-ui\);[^}]*font-variant-numeric: tabular-nums/);
   assert.match(css, /\.message\.is-doc \.doc-byline \{[^}]*margin: 0 0 var\(--chat-gap-meta\)/);
   assert.doesNotMatch(css, /\.doc-mark/);
-  assert.match(css, /\.chat-dock \{[^}]*container: chat-dock\/inline-size/);
+  assert.match(css, /\.chat-input-area \{[^}]*container: chat-dock\/inline-size/);
   assert.match(css, /@container chat-dock \(max-width: 36rem\)/);
   assert.match(css, /@container chat-process \(max-width: 36rem\)/);
   assert.match(css, /@container chat-agent \(max-width: 36rem\)/);

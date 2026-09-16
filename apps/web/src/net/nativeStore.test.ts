@@ -137,7 +137,7 @@ test('native chat starts only after selection, open and snapshot, then keeps one
   assert.equal(h.requests.length, 0);
   h.snapshot();
   assert.deepEqual(h.requests[0].body, {
-    sessionId: 'a', source: 'live', direction: 'backward', max: 32, waitMs: 0, bootstrap: true, agentScope: 'all',
+    sessionId: 'a', source: 'live', direction: 'backward', max: 200, waitMs: 0, bootstrap: true, agentScope: 'all',
   });
 
   await h.reply(0, [message('A')], { hasMore: true });
@@ -162,11 +162,39 @@ test('older reads coalesce repeated triggers, and exhaustion suppresses all late
   await h.start();
   for (let i = 0; i < 20; i++) h.store.getState().loadMore('a');
   assert.equal(h.requests.length, 3);
+  assert.equal(h.requests[2].body.max, 200);
   await h.reply(2, [message('older')], { hasMore: false });
   for (let i = 0; i < 20; i++) h.store.getState().loadMore('a');
   assert.equal(h.requests.length, 3);
   assert.deepEqual(h.ids(), ['older', 'A']);
 });
+
+for (const loaded of [false, true]) {
+  test(`native-sized history pages preserve cursor continuation and publication (loaded=${loaded})`, async t => {
+    const h = setup(t);
+    h.source.open(); h.snapshot([meta('a', loaded)]);
+    h.store.getState().setActiveId('a');
+    assert.equal(h.requests[0].body.max, 200);
+    assert.equal(h.requests[0].body.source, loaded ? 'live' : 'persisted');
+    const latest = Array.from({ length: 200 }, (_, i) => message(`m${100 + i}`));
+    await h.reply(0, latest, { cursor: 'opaque-native-older-boundary', hasMore: true });
+    assert.deepEqual(h.ids(), latest.map(e => e.data.messageId), 'publish the native page without splitting into smaller UI batches');
+    if (loaded) {
+      assert.equal(h.requests[1].body.max, 64, 'live SSE batching is unchanged');
+      await h.reply(1, []);
+    }
+    const next = h.requests.length;
+    for (let i = 0; i < 10; i++) h.store.getState().loadMore('a');
+    assert.equal(h.requests.length, next + 1);
+    assert.equal(h.requests[next].body.max, 200);
+    assert.equal(h.requests[next].body.cursor, 'opaque-native-older-boundary');
+    const older = Array.from({ length: 100 }, (_, i) => message(`m${i}`));
+    await h.reply(next, older, { cursor: 'native-beginning', hasMore: false });
+    assert.deepEqual(h.ids(), Array.from({ length: 300 }, (_, i) => `m${i}`));
+    h.store.getState().loadMore('a');
+    assert.equal(h.requests.length, next + 1, 'native exhaustion stops subsequent paging');
+  });
+}
 
 test('child execution labels use only existing initial, older and reconnect pages without extra requests', async t => {
   const h = setup(t);

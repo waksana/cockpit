@@ -5,7 +5,7 @@ import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, 
 import { MessageBody } from './MessageBody';
 import { MessageContent } from './MessageContent';
 import { hasMessageContent } from '../lib/messageContent';
-import { Composer } from './Composer';
+import { Composer, ComposerNotices } from './Composer';
 import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
 import type { ChatMessage, ChatSession, ExitPlanModeAction } from '../net/types';
@@ -338,23 +338,22 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   const interruptResult = readOnly ? null : interruptAction.error
     ? `打断未确认：${interruptAction.error}。请核对会话状态，不要直接重试。`
     : interruptNotice?.sessionId === session.sessionId ? interruptNotice.text : null;
+  const draft = useMemo(() => getSessionDraft(session.sessionId), [session.sessionId]);
+  const { pending: actionPending, text: draftText, attachments } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const executionLabel = session.cancelling ? '正在停止…' : session.compacting ? '正在压缩上下文…'
+    : actionPending && !readOnly ? session.ask ? '正在提交回答…' : '正在提交…'
     : session.ask ? '等待你的回答' : session.planRequest ? '等待确认计划'
       : session.elicitation ? '等待工具确认' : session.status === 'running'
         ? session.intent || '执行中…' : queueCount > 0 ? '等待处理' : '执行结果';
-  const draft = useMemo(() => getSessionDraft(session.sessionId), [session.sessionId]);
-  const { pending: actionPending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const scrollOwnerRef = useRef<ThreadScroll | null>(null);
-  const [readySession, setReadySession] = useState(session.materialized ? session.sessionId : null);
   const [pageVisible, setPageVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
   useEffect(() => {
     const visible = () => setPageVisible(document.visibilityState === 'visible');
     document.addEventListener('visibilitychange', visible);
     return () => document.removeEventListener('visibilitychange', visible);
   }, []);
-  const preparingHistory = readySession !== session.sessionId && !session.error && !session.historyError && !session.historyStale;
   const [heldHead, setHeldHead] = useState<{ sessionId: string; id: string } | null>(null);
   // Keep the existing DOM prefix under an active gesture. Only newly received
   // older rows wait for settle; tail updates and already mounted history stay live.
@@ -390,17 +389,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     };
   }, [session.sessionId]);
 
-  useLayoutEffect(() => {
-    if (readySession === session.sessionId || !connected || !snapshotReady || !pageVisible
-      || !session.materialized || session.loadingHistory || session.historyStale || prependHeld) return;
-    const el = scrollRef.current;
-    if (!session.hasMore || session.incompleteBoundary
-      || (el && el.clientHeight > 0 && el.scrollHeight >= el.clientHeight * 2)) {
-      setReadySession(session.sessionId);
-    }
-  }, [readySession, connected, snapshotReady, pageVisible, session.sessionId, session.materialized,
-    session.loadingHistory, session.historyStale, session.hasMore, session.incompleteBoundary, messages, prependHeld]);
-
   // Every mounted viewport owns its measured fill and near-head prefetch. A
   // retained native page proves neither two screens nor this viewport's size.
   // Existing rows stay visible; the separate scroll owner preserves the reader.
@@ -410,16 +398,11 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     if (!connected || !snapshotReady || !pageVisible || !el || !content || !session.materialized
       || session.loadingHistory || session.historyError || session.error || session.historyStale || prependHeld) return;
     const needsFill = () => el.clientHeight > 0 && el.scrollHeight < el.clientHeight * 2;
-    return observeHistoryPrefetch(el, content, () => {
-      if (!session.hasMore || session.incompleteBoundary || (el.clientHeight > 0 && !needsFill())) {
-        setReadySession(session.sessionId);
-      }
-      return session.hasMore && !session.incompleteBoundary
-        && (needsFill() || (!preparingHistory && !scrollOwnerRef.current?.following));
-    }, onLoadMore, () => el.scrollTop, needsFill);
+    return observeHistoryPrefetch(el, content, () => session.hasMore && !session.incompleteBoundary
+      && (needsFill() || !scrollOwnerRef.current?.following), onLoadMore, () => el.scrollTop, needsFill);
   }, [session.sessionId, session.hasMore, session.materialized, session.loadingHistory, session.historyError,
     session.error, session.historyStale, session.incompleteBoundary, onLoadMore,
-    prependHeld, preparingHistory, pageVisible, connected, snapshotReady]);
+    prependHeld, pageVisible, connected, snapshotReady]);
 
   useLayoutEffect(() => {
     if (!scrollOwnerRef.current?.following && hasNewTranscriptContent(previousMessages.current, session.messages)) {
@@ -438,7 +421,14 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   const ask = session.ask;
   const planRequest = session.planRequest;
   const hasPendingDecision = !readOnly && !!(planRequest || session.elicitation);
-  const hasExecution = session.compacting || session.status === 'running' || (!readOnly && (queueCount > 0 || !!interruptResult));
+  const hasExecution = session.compacting || session.status === 'running' || (!readOnly && queueCount > 0);
+  const hasInputHeader = !!(hasExecution || hasPendingDecision || (!readOnly && ask));
+  const inputCardRef = useRef<HTMLDetailsElement | null>(null);
+  useLayoutEffect(() => {
+    // Native disclosure survives ordinary updates; a new request or idle input opens afresh.
+    if (inputCardRef.current) inputCardRef.current.open = true;
+  }, [session.sessionId, ask?.requestId, planRequest?.requestId, session.elicitation?.requestId, hasInputHeader]);
+  const operation = ask ? 'ask' : planRequest ? 'plan' : 'prompt';
   const runInView = useCallback((send: () => Promise<boolean>): Promise<boolean> => (
     acknowledgeInView(actionScopeRef.current, send, {
       scrollRevision: () => scrollOwnerRef.current?.revision ?? 0,
@@ -465,14 +455,14 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   return (
     <DisclosureChoices key={session.sessionId}><main className="chat">
       <div className="chat-transcript">
-        <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-label="对话消息" aria-busy={preparingHistory || session.loadingHistory}>
+        <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-label="对话消息" aria-busy={session.loadingHistory}>
           <div ref={contentRef} className="chat-message-content">
             <div className="chat-history-controls">
               {(!session.materialized || session.hasMore) && <StateNotice className="chat-history-loading">
                 加载更早的消息…
               </StateNotice>}
               <div className="chat-history-actions">
-                {preparingHistory || session.loadingHistory ? null : session.historyStale || !session.materialized ? (
+                {session.loadingHistory ? null : session.historyStale || !session.materialized ? (
                   <StateNotice className="chat-loading-older" kind={session.historyError ? 'error' : 'info'}>
                     {session.historyError ? `历史加载失败：${session.historyError}` : '对话历史尚未同步。'}
                     {onRetryHistory && <button type="button" className="dialog-btn rp" onClick={() => {
@@ -494,8 +484,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
                 部分工具记录缺少对应的发起消息，现有历史无法补齐。
               </p>}
             </div>
-            <div className="chat-message-rows" data-preparing={preparingHistory || undefined}
-              aria-hidden={preparingHistory || undefined} inert={preparingHistory || undefined}>
+            <div className="chat-message-rows">
               {session.messages.length === 0 && session.materialized && !session.historyStale && !session.loadingHistory && !session.hasMore && (
                 <div className="chat-empty-hint"><Icon name="newchat" size={28} />
                   <strong>开始对话</strong><span>输入消息开始讨论。</span><code>{session.cwd}</code></div>
@@ -504,10 +493,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
                 liveId={session.status === 'running' ? session.messages.at(-1)?.id : undefined}
                 today={new Date().setHours(0, 0, 0, 0)} />
 
-              {session.error && <p className="chat-error" role="alert">错误: {session.error}
-                {onRetryHistory && session.materialized && !session.historyStale && <button type="button"
-                  className="dialog-btn rp" onClick={onRetryHistory}>重试同步</button>}
-              </p>}
             </div>
           </div>
         </div>
@@ -519,40 +504,44 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
         )}
       </div>
 
-      {(hasPendingDecision || hasExecution) && (
-        <div className="chat-dock" data-pending={hasPendingDecision || undefined}>
-          {hasPendingDecision && <div className="chat-decisions">
-            {planRequest && <PlanCard request={planRequest} pending={actionPending}
-              onSelect={action => { void runAction(() => onRespondPlan?.(planRequest.requestId, action)); }} />}
-            {session.elicitation && <ElicitationCard request={session.elicitation} pending={actionPending}
-              onSelect={action => { void runAction(() => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
-          </div>}
-          {hasExecution && <section className="chat-execution" aria-label="执行与排队">
-            <div className="chat-execution-head">
-              <span className="chat-execution-label" role="status" title={executionLabel}
-                data-running={session.status === 'running' || undefined}>{executionLabel}</span>
-              {(showStop || showInterrupt) && <div className="chat-execution-actions" role="group" aria-label="执行操作">
-                {showInterrupt && <button type="button" className="chat-interrupt"
-                  disabled={!interruptAction.connected || (!!session.activeOperations && !interruptAction.busy)}
-                  aria-disabled={interruptAction.busy || undefined}
-                  onClick={() => {
-                    let interrupted = false;
-                    void interruptAction.run(async () => {
-                      const result = await onInterrupt!();
-                      interrupted = result.interrupted;
-                    }, () => setInterruptNotice({ sessionId: session.sessionId, text: interrupted
-                      ? '已请求打断；队列由 Copilot 接着处理。'
-                      : '当前没有可打断的主回合；队列未改动。' }));
-                  }}>{interruptAction.busy ? '正在请求…' : '打断并处理队列'}</button>}
-                {showStop && <button type="button" className="chat-typing-stop" disabled={stopDisabled}
-                  onClick={() => { if (!stopDisabled) onCancel?.(); }}>
-                  {session.cancelling ? '正在停止…' : queueCount > 0 ? '停止并清空队列' : '停止'}
-                </button>}
-              </div>}
-            </div>
-            {interruptResult && <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
-              {interruptResult}
-            </p>}
+      <div className="chat-input-area">
+        <div className="chat-input-notices">
+          {session.error && <p className="chat-error" role="alert">错误: {session.error}
+            {onRetryHistory && session.materialized && !session.historyStale && <button type="button"
+              className="dialog-btn rp" onClick={onRetryHistory}>重试同步</button>}
+          </p>}
+          {interruptResult && <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
+            {interruptResult}
+          </p>}
+          {!readOnly && <ComposerNotices draft={draft} operation={operation} />}
+        </div>
+        <details className="chat-input-card" ref={inputCardRef} open
+          data-header={hasInputHeader || undefined} data-decision={!!(!readOnly && (ask || hasPendingDecision)) || undefined}>
+          <summary className="chat-execution-head" hidden={!hasInputHeader} aria-label={`${executionLabel}，展开或收起输入卡片`}>
+            <span className="chat-execution-label" role="status" title={executionLabel}
+              data-running={session.status === 'running' || undefined}>{executionLabel}</span>
+            {!readOnly && (!!draftText.trim() || attachments.length > 0) && <span className="chat-folded-draft">有草稿</span>}
+            {(showStop || showInterrupt) && <span className="chat-execution-actions" role="group" aria-label="执行操作"
+              onClick={event => event.stopPropagation()}>
+              {showInterrupt && <button type="button" className="chat-interrupt"
+                disabled={!interruptAction.connected || (!!session.activeOperations && !interruptAction.busy)}
+                aria-disabled={interruptAction.busy || undefined}
+                onClick={() => {
+                  let interrupted = false;
+                  void interruptAction.run(async () => {
+                    const result = await onInterrupt!();
+                    interrupted = result.interrupted;
+                  }, () => setInterruptNotice({ sessionId: session.sessionId, text: interrupted
+                    ? '已请求打断；队列由 Copilot 接着处理。'
+                    : '当前没有可打断的主回合；队列未改动。' }));
+                }}>{interruptAction.busy ? '正在请求…' : '打断并处理队列'}</button>}
+              {showStop && <button type="button" className="chat-typing-stop" disabled={stopDisabled}
+                onClick={() => { if (!stopDisabled) onCancel?.(); }}>
+                {session.cancelling ? '正在停止…' : queueCount > 0 ? '停止并清空队列' : '停止'}
+              </button>}
+            </span>}
+          </summary>
+          <div className="chat-input-card-body">
             {!readOnly && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
               {session.queue?.map((q) => (
                 <div key={q.id} className="chat-queue-item">
@@ -564,26 +553,32 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
                 </div>
               ))}
             </div>}
-          </section>}
-        </div>
-      )}
-
-      {readOnly ? (
-        <div className="chat-readonly-note" aria-label="只读会话">只读会话</div>
-      ) : (
-        <Composer
-          key={session.sessionId}
-          busy={session.status === 'running' && !ask && !planRequest}
-          submitLabel={ask ? '提交回答' : planRequest ? '发送新指令' : undefined}
-          disabled={!!session.compacting && session.status !== 'running'}
-          placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : session.status === 'running' ? '加入队列' : '输入消息…'))}
-          draft={draft}
-          ask={ask ? { request: ask, onChoice: choice => { void handleChoice(choice); } } : undefined}
-          operation={ask ? 'ask' : planRequest ? 'plan' : 'prompt'}
-          onSend={handleSend}
-          sendBlocked={ask?.allowFreeform === false}
-        />
-      )}
+            {hasPendingDecision && <div className="chat-decisions">
+              {planRequest && <PlanCard request={planRequest} pending={actionPending}
+                onSelect={action => { void runAction(() => onRespondPlan?.(planRequest.requestId, action)); }} />}
+              {session.elicitation && <ElicitationCard request={session.elicitation} pending={actionPending}
+                onSelect={action => { void runAction(() => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
+            </div>}
+            {readOnly ? (
+              <div className="chat-readonly-note" aria-label="只读会话">只读会话</div>
+            ) : (
+              <Composer
+                key={session.sessionId}
+                busy={session.status === 'running' && !ask && !planRequest}
+                submitLabel={ask ? '提交回答' : planRequest ? '发送新指令' : undefined}
+                disabled={!!session.compacting && session.status !== 'running'}
+                placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : session.status === 'running' ? '加入队列' : '输入消息…'))}
+                draft={draft}
+                statusInHeader={hasInputHeader}
+                ask={ask ? { request: ask, onChoice: choice => { void handleChoice(choice); } } : undefined}
+                operation={operation}
+                onSend={handleSend}
+                sendBlocked={ask?.allowFreeform === false}
+              />
+            )}
+          </div>
+        </details>
+      </div>
     </main></DisclosureChoices>
   );
 }
