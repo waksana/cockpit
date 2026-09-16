@@ -157,6 +157,9 @@ GET/HEAD 可不带此 header，以支持 img/video 等，但 URL 已绑定版本
 apiBase、公开配置、request、signal 和 report。模块不得自建 root 或依赖私有 DOM/store。
 宿主并行初始化不同前端模块；单个超时/错误不阻塞其他模块，晚结果不能重新发布已撤销贡献。
 
+模块 UI 与本体共同遵循[交互语义与结构正确性要求](DEVELOPMENT.md#interaction-semantics-and-structural-correctness)。
+这是一项开发要求，不表示当前插口已提供通用浮层 API，也不授权模块绕过公共契约操作宿主私有 DOM。
+
 当前返回字段：
 
 | 字段 | 用途 |
