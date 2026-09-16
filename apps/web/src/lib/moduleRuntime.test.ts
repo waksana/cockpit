@@ -268,6 +268,25 @@ test('draft attachment rendering is an explicit declaration backed by a componen
   f.runtime.stop();
 });
 
+test('a pending submission rejects stale paste and drop handlers without invoking the file module', async () => {
+  let received = 0;
+  const f = fixture([asset()], {
+    fileInput: [{ id: 'files', accepts: () => true, receive: () => { received++; } }],
+  });
+  await f.runtime.start();
+  const draft = createSessionDrafts()('pending-input');
+  draft.edit('Sending');
+  let finish!: (sent: boolean) => void;
+  const sending = draft.send(() => new Promise<boolean>(resolve => { finish = resolve; }));
+  assert.equal(f.runtime.receive([new File(['x'], 'late.txt')], draft, 'prompt', false), false);
+  assert.equal(received, 0);
+  assert.equal(draft.getSnapshot().blocks.length, 0);
+  finish(false);
+  await sending;
+  assert.equal(f.runtime.receive([new File(['x'], 'next.txt')], draft, 'prompt', false), true);
+  assert.equal(received, 1);
+  f.runtime.stop();
+});
 test('a stalled initializer does not block another module and cannot publish its late result', async () => {
   let finish: (value: ModuleFrontend) => void = () => {};
   let disposed = 0;

@@ -259,7 +259,7 @@ export class ModuleRuntime {
     return selected;
   }
   receive(files: readonly File[], draft: SessionDraft, operation: ComposerContext['operation'], disabled: boolean): boolean {
-    if (!files.length || disabled) return false;
+    if (!files.length || disabled || draft.getSnapshot().pending) return false;
     const handlers = this.snapshot.flatMap(module => (module.frontend.fileInput ?? []).flatMap(handler => {
       try { return handler.accepts(files) ? [{ module, handler }] : []; }
       catch (error) { this.report(error); return []; }

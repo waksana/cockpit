@@ -65,6 +65,7 @@ test('module revocation keeps ready attachments and a dismissible inline blocker
     writes: ['attachments'], rendersDraftAttachments: true,
     composerAbove: [{ id: 'cards', component: () => null }],
   });
+
   t.after(() => f.runtime.stop());
   f.context.draft.appendAttachments([{ id: 'file', value: { type: 'file', path: '/fixture/file' } }]);
   f.context.draft.block('Interrupted selection');
@@ -76,4 +77,28 @@ test('module revocation keeps ready attachments and a dismissible inline blocker
   assert.doesNotMatch(html, /chat-input-notice|原生附件|<details/);
   f.draft.dismissOrphanedBlock(f.draft.getSnapshot().blocks[0].id);
   assert.equal(await f.draft.send(async () => true), true);
+});
+
+test('submission disables module actions and fallback removal but preserves text editing until its receipt', async t => {
+  const f = await fixture({
+    writes: ['attachments'],
+    composerActions: [{ id: 'upload', component: ({ disabled }) => createElement('button', { disabled, 'aria-label': 'fixture upload' }, 'Upload') }],
+    composerAbove: [{ id: 'remove', component: ({ disabled }) => createElement('button', { disabled, 'aria-label': 'fixture remove' }, 'Remove') }],
+  });
+  t.after(() => f.runtime.stop());
+  f.context.draft.appendAttachments([{ id: 'ready', value: { type: 'file', path: '/fixture/ready' } }]);
+  let finish!: (sent: boolean) => void;
+  const sending = f.draft.send(() => new Promise<boolean>(resolve => { finish = resolve; }));
+  const html = f.render();
+  for (const label of ['fixture upload', 'fixture remove', '移除附件']) {
+    const button = html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0];
+    assert.match(button ?? '', /disabled=""/, label);
+  }
+  assert.doesNotMatch(html.match(/<textarea[^>]*>/)?.[0] ?? '', /disabled/);
+  finish(false);
+  await sending;
+  const restored = f.render();
+  for (const label of ['fixture upload', 'fixture remove', '移除附件']) {
+    assert.doesNotMatch(restored.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? '', /disabled/);
+  }
 });
