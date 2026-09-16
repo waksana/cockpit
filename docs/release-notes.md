@@ -6,6 +6,8 @@ Unreleased development version. No tag or Release has been created for these cha
   panel, keeps Stop available while awaiting a decision, and applies consistent
   spacing between visible message groups. Queue headings and repeated composer
   hints are removed; placeholders remain visibly distinct from entered text.
+- Expanded tool details align with thought details. Markdown paragraph wrappers
+  no longer add extra top/bottom whitespace inside user message bubbles.
 - Local trusted module packages can be installed and selected for cold loading.
   Remote signed-URL installation remains deferred.
 - Module API v1 provides scoped backend HTTP routes, versioned assets and

@@ -53,6 +53,27 @@ test('Markdown keeps semantic headings and exact code text in a labeled copyable
   assert.equal((html.match(/class="chat-code-block"/g) ?? []).length, 1, 'inline code remains text, not an extra copy block');
 });
 
+test('Markdown edge rules follow class-based paragraphs without changing bubble padding or paragraph rhythm', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  const paragraph = css.indexOf('.message-body .markdown-paragraph {');
+  assert.ok(paragraph >= 0);
+  assert.ok(css.indexOf('.message-body > :first-child {') > paragraph);
+  assert.ok(css.indexOf('.message-body > :last-child {') > paragraph);
+  assert.match(css, /\.message-body > :first-child \{\s*margin-top: 0;/);
+  assert.match(css, /\.message-body > :last-child \{\s*margin-bottom: 0;/);
+  assert.match(css, /\.message-body \.markdown-paragraph \{[^}]*margin: 0\.65em 0;/);
+  assert.match(css, /\.message\.is-out \{[^}]*padding: 0\.65rem 0\.85rem;/);
+});
+
+test('tool and thought details inherit the same indentation without moving their header', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.activity-detail \{[^}]*padding-inline-start: 24px;/);
+  const tool = css.match(/\.activity-detail\.tool-detail \{([^}]+)\}/)?.[1];
+  assert.ok(tool);
+  assert.match(tool, /padding-block: 2px 6px;/);
+  assert.doesNotMatch(tool, /padding:|padding-inline|margin-inline/);
+});
+
 test('clipboard failure is propagated, never reported as success', async t => {
   const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { clipboard: {

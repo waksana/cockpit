@@ -334,7 +334,7 @@ button.activity-head {
 .activity-status { grid-column: 3; font-size: var(--font-size-12); white-space: nowrap; }
 .activity-chevron { grid-column: 4; display: inline-flex; height: 20px; align-items: center; justify-content: center; }
 .activity-detail {
-  margin: 4px 0 8px; padding: 0 0 0 24px;
+  margin: 4px 0 8px; padding: 0; padding-inline-start: 24px;
   min-width: 0; color: var(--primary-text-color);
   font-size: var(--messages-text-size); line-height: 1.65; overflow-wrap: anywhere;
 }
@@ -382,7 +382,7 @@ button.activity-head {
 }
 .activity-detail.tool-detail {
   margin: 0;
-  padding: 2px 0 6px;
+  padding-block: 2px 6px;
   border-inline-start: 0;
   display: flex; flex-direction: column; gap: 4px;
   font-size: var(--font-size-13); line-height: 1.45;
@@ -463,8 +463,6 @@ button.activity-head {
   word-break: break-word;
   font-size: var(--messages-text-size);
   line-height: 1.7;
-  & > :first-child { margin-top: 0; }
-  & > :last-child { margin-bottom: 0; }
   p, .markdown-paragraph { margin: 0.65em 0; white-space: pre-wrap; }
   ul, ol { margin: 0.65em 0; padding-inline-start: 1.5rem; white-space: normal; }
   li { margin: 0.2em 0; }
@@ -501,6 +499,9 @@ button.activity-head {
   h4 { font-size: 1em; }
   h5, h6 { font-size: 0.9em; color: var(--secondary-text-color); }
   hr { border: 0; border-top: 1px solid var(--border-color); margin: 1.25rem 0; }
+  // Class-based paragraphs have the same specificity, so edge rules come last.
+  & > :first-child { margin-top: 0; }
+  & > :last-child { margin-bottom: 0; }
 }
 .chat-table-scroll { margin: 0.85rem 0; max-width: 100%; }
 .chat-code-block {

@@ -167,8 +167,11 @@ remains separate. There are no group divider lines, timestamp changes or
 additional scroll-position writers.
 Activity disclosure keeps its header height and icon slots fixed. Long tool
 titles do not wrap on expansion; clipped fields wrap only in the details below.
-Process items share one text column without accumulated nesting indents or
-progressively smaller text. Initial history loading is a pane-level status
+Process headers share one text column. Expanded tool and thought details share
+a single 24px inset, without accumulated nesting indents or progressively smaller
+text. Markdown's first/last blocks have no outside margins, including class-based
+paragraphs used by module renderers; the bubble's own padding is unchanged.
+Initial history loading is a pane-level status
 outside the measured rows; older-page refresh status stays inline.
 Right-clicking chat content uses the browser's native context menu, not a custom
 message-copy menu. Code and tool-detail copy buttons remain available.
