@@ -171,8 +171,11 @@ Process headers share one text column. Expanded tool and thought details share
 a single 24px inset, without accumulated nesting indents or progressively smaller
 text. Markdown's first/last blocks have no outside margins, including class-based
 paragraphs used by module renderers; the bubble's own padding is unchanged.
-Initial history loading is a pane-level status
-outside the measured rows; older-page refresh status stays inline.
+Initial and older-page history loading share a CSS-positioned notice at the top
+of the transcript viewport, outside its measured/scrolling content. The notice
+does not reserve space, change padding or intercept pointer gestures. Loading
+visibility therefore requires no scroll correction or JavaScript height control.
+Errors and their explicit recovery actions remain in the normal history controls.
 Right-clicking chat content uses the browser's native context menu, not a custom
 message-copy menu. Code and tool-detail copy buttons remain available.
 
@@ -375,10 +378,10 @@ for a complete display message.
 Initial viewport filling measures the incoming rows without exposing each
 intermediate page, then reveals the accumulated initial content together.
 Existing reading windows remain visible during older-page loads. The normal
-loading indicator sits in a reserved-height slot at the beginning of the
-scrolling transcript, not a fixed or sticky viewport toolbar. There is no normal
-load-more button; explicit failure retry and rebase remain available. The
-reserved slot prevents loading visibility from shifting rows. Child cards
+loading indicator is the non-interactive top overlay described above, not an
+inline row or a JavaScript-sized spacer. There is no normal load-more button;
+explicit failure retry and rebase remain available. Recorded incomplete-history
+notes do not disappear during loading. Child cards
 render the shared nested projection. Expanding a card makes no request, needs
 no refresh button, and automatically shows new messages and lifecycle changes.
 Collapsed children also travel over the all-agent stream; this is the user's

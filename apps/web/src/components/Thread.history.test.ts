@@ -76,6 +76,8 @@ test('cold history loading is not presented as an empty conversation', () => {
   const html = render({});
   assert.match(html, /正在同步对话历史/);
   assert.doesNotMatch(html, /开始对话|重新读取最新历史/);
+  assert.equal((html.match(/class="state-notice chat-history-loading"/g) ?? []).length, 1);
+  assert.match(html, /aria-label="对话消息" aria-busy="true"/);
 });
 
 test('failed history remains visibly unsynchronized and offers an explicit read retry', () => {
@@ -182,4 +184,13 @@ test('loading more history never hides an already materialized reading window', 
   assert.match(html, /加载更早的消息/);
   assert.match(html, /Keep this reading position/);
   assert.doesNotMatch(html, /data-preparing|aria-hidden="true" inert/);
+  assert.equal((html.match(/class="state-notice chat-history-loading"/g) ?? []).length, 1);
+  assert.match(html, /aria-label="对话消息" aria-busy="true"/);
+});
+
+test('recorded incomplete history notices do not toggle with the loading indicator', () => {
+  const ready = { materialized: true, historyStale: false, incompleteBoundary: true, hasMore: false };
+  for (const loadingHistory of [false, true]) {
+    assert.match(render({ ...ready, loadingHistory }), /现有历史无法补齐/);
+  }
 });

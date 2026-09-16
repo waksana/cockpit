@@ -2,6 +2,9 @@
 
 Unreleased development version. No tag or Release has been created for these changes.
 
+- History loading uses a CSS-only top overlay outside the measured transcript,
+  avoiding the content shift when the loading indicator appears or disappears.
+  No height measurement, spacer or additional scroll controller is introduced.
 - Return-to-latest appears after moving at least one transcript viewport away
   from the bottom, without changing automatic following or reading anchors.
 - The execution label includes a quiet running-status dot. Expanded queued

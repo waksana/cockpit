@@ -465,15 +465,11 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   return (
     <DisclosureChoices key={session.sessionId}><main className="chat">
       <div className="chat-transcript">
-        <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-label="对话消息" aria-busy={preparingHistory}>
+        <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-label="对话消息" aria-busy={preparingHistory || session.loadingHistory}>
           <div ref={contentRef} className="chat-message-content">
             <div className="chat-history-controls">
               <div className="chat-history-actions">
-                {preparingHistory ? null : session.loadingHistory ? (
-                  <StateNotice className="chat-loading-older" kind="loading">
-                    {session.historyStale || !session.materialized ? '正在同步对话历史…' : '加载更早的消息…'}
-                  </StateNotice>
-                ) : session.historyStale || !session.materialized ? (
+                {preparingHistory || session.loadingHistory ? null : session.historyStale || !session.materialized ? (
                   <StateNotice className="chat-loading-older" kind={session.historyError ? 'error' : 'info'}>
                     {session.historyError ? `历史加载失败：${session.historyError}` : '对话历史尚未同步。'}
                     {onRetryHistory && <button type="button" className="dialog-btn rp" onClick={() => {
@@ -491,7 +487,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
               {session.partialHistory && <p className="chat-history-note" role="status">
                 断线期间的临时片段可能不完整；已保留现有文字，以原生保存后的完整消息为准。
               </p>}
-              {session.incompleteBoundary && !session.hasMore && !session.loadingHistory && <p className="chat-history-note">
+              {session.incompleteBoundary && !session.hasMore && <p className="chat-history-note">
                 部分工具记录缺少对应的发起消息，现有历史无法补齐。
               </p>}
             </div>
@@ -513,8 +509,8 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
           </div>
         </div>
 
-        {preparingHistory && <StateNotice className="chat-initial-loading" kind="loading" placement="pane">
-          正在同步对话历史…
+        {(preparingHistory || session.loadingHistory) && <StateNotice className="chat-history-loading" kind="loading">
+          {preparingHistory || session.historyStale || !session.materialized ? '正在同步对话历史…' : '加载更早的消息…'}
         </StateNotice>}
         {awayFromBottom && (
           <button className="new-msg-badge" type="button" onClick={jumpToBottom}>

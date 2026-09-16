@@ -87,6 +87,9 @@ background work, open native sessions or publish user screenshots.
 Add `&pane=narrow` to constrain the actual Chat pane to 456px while keeping a
 desktop viewport. This reproduces the space available beside docked settings:
 decisions and process rows must adapt to their own width, not the window width.
+Use `history-loading` and its loading-toggle control to inspect a fixed reading
+position while the top loading overlay appears/disappears. The existing history
+insertion control separately exercises an actual synthetic prefix update.
 
 For current event ordering and process disclosure behavior, choose `ordered-events`.
 Its controls feed synthetic historical/live/reconnect pages through the production

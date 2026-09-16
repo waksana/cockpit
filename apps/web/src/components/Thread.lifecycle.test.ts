@@ -225,6 +225,18 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   await readAt(225);
   const reading = anchor();
   assert.ok(prefetches > 0, 'a mounted reader near the top prefetches older history');
+  const measuredContent = container.querySelector('.chat-message-content')!;
+  for (const loadingHistory of [true, false, true, false]) {
+    await render({ ...a, loadingHistory });
+    assert.equal(container.querySelector('.chat-message-content'), measuredContent);
+    assert.equal(measuredContent.querySelector('.chat-history-loading'), null);
+    const indicator = container.querySelector('.chat-history-loading');
+    assert.equal(!!indicator, loadingHistory);
+    if (indicator) assert.equal(indicator.parentNode, viewport().parentNode);
+    assert.equal(viewport().getAttribute('aria-busy'), String(loadingHistory));
+    assert.deepEqual(anchor(), reading);
+    assert.equal(viewport().scrollTop, 225);
+  }
   for (const change of [
     { title: 'Metadata update' },
     { loadingHistory: true },

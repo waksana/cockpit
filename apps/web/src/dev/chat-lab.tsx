@@ -118,6 +118,9 @@ export function Lab() {
         ? { ...m, content: `${m.content}更加清楚。流式增量也不应打断上翻阅读。` } : m) }))}>流式一步</button>
       <button onClick={() => setSession(value => ({ ...value, status: 'idle', compacting: false, intent: null }))}>结束回合</button>
       <button onClick={loadMore}>插入历史 / 完成加载</button>
+      {scenario === 'history-loading' && <button onClick={() => setSession(value => ({
+        ...value, loadingHistory: !value.loadingHistory,
+      }))}>切换历史加载提示</button>}
       <button onClick={() => choose(scenario)}>重置场景</button>
       {scenario === 'ordered-events' && <>
         <button onClick={() => orderedAction('thought')}>追加思考事件</button>

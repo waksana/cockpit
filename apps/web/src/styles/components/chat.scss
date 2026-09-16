@@ -99,9 +99,13 @@
   min-width: 0;
   min-height: min(6rem, 20%);
 }
-.chat-initial-loading {
-  position: absolute; inset: 0;
-  pointer-events: none;
+.chat-history-loading {
+  position: absolute; inset-block-start: var(--chat-gap-meta);
+  inset-inline: var(--chat-gutter); margin-inline: auto; width: fit-content;
+  max-width: calc(100% - 2 * var(--chat-gutter));
+  padding: var(--chat-gap-meta) var(--chat-inset-panel);
+  border: 1px solid var(--border-color); border-radius: var(--border-radius);
+  background: var(--surface-color); pointer-events: none;
 }
 .chat-history-controls {
   flex: none;
