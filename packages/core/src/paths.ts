@@ -9,5 +9,3 @@ export function cockpitHome(): string {
   }
   return normalize(configured);
 }
-
-export function nativeHome(): string { return join(cockpitHome(), 'copilot'); }

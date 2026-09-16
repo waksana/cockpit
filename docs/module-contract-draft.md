@@ -80,19 +80,19 @@ node --import ./apps/server/node_modules/tsx/dist/loader.mjs \
 
 ## 3. 代码、数据与配置
 
-`COCKPIT_HOME` 是非空绝对宿主根，默认 `~/.cockpit`：
+`COCKPIT_HOME` 是非空绝对宿主根，默认 `~/.cockpit`，只保存本体及模块内容：
 
 ```text
 .cockpit/
-  copilot/                         Copilot 自己管理
   modules/
     config.json                    下次启动选择及每模块配置
     installed/<id>/<version>/<digest>/package/
     data/<id>/                     模块业务数据
 ```
 
-没有旧 home 回退或自动迁移。认证与服务必须使用一致的 native root，
-见[安装指南](DEPLOY-PORTABLE.md)。
+Copilot 原生数据不在上面的宿主管理范围内。本体不覆盖其 baseDirectory/configDirectory，
+默认 `~/.copilot` 及原生配置继续由 Copilot 决定，无需迁移或链接目录。
+认证与服务使用一致的原生配置，见[安装指南](DEPLOY-PORTABLE.md)。
 
 安装 CLI 写入 `config.json` 的 version/digest/enabled。模块参数位于对应选择的
 `config` 对象；需要修改时保留 CLI 生成的身份，只更改模块文档支持的配置字段。

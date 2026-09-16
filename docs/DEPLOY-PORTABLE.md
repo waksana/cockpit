@@ -5,7 +5,7 @@ Cockpit 提供普通前后端服务包。使用者准备运行环境、配置原
 
 > 本页对应 **0.2.0 开发源码，尚未发布运行包**。
 > 安装已发布 v0.1.0 时，请使用[该版本的安装指南](https://github.com/waksana/cockpit/blob/v0.1.0/docs/DEPLOY-PORTABLE.md)，
-> 不要混用本页的数据根、认证脚本和模块命令。需要本地模块功能时，按下方源码步骤使用对应的 0.2.0 提交。
+> 不要混用本页的宿主配置和模块命令。需要本地模块功能时，按下方源码步骤使用对应的 0.2.0 提交。
 
 本指南也供 Agent 执行安装时使用。先核对运行前提，再下载、认证、启动并完成首次聊天。
 如果机器上已有安装或运行中的服务，先与用户确认再替换、停止或变更配置；
@@ -103,9 +103,11 @@ pnpm start
 ## 原生认证：与远程网页登录分开
 
 Cockpit 没有自己的 GitHub 登录页面。当前
-[`OfficialRuntime`](../packages/core/src/runtime.ts)使用 `mode:"copilot-cli"`、
-`baseDirectory:<COCKPIT_HOME>/copilot` 和 `useLoggedInUser:true`，由安装版 SDK 启动配套 runtime，
-读取该操作系统用户可用的原生凭据。已有可用原生登录的用户不必重新保存凭据。
+[`OfficialRuntime`](../packages/core/src/runtime.ts)使用 `mode:"copilot-cli"` 和
+`useLoggedInUser:true`，由安装版 SDK 启动配套 runtime，读取该操作系统用户可用的原生凭据。
+本体不指定 `baseDirectory` 或 session 的 `configDirectory`，原生目录遵循 Copilot 自己的
+默认值和配置（默认 `~/.copilot`）；`COCKPIT_HOME` 不影响它。
+已有可用原生登录的用户不必重新保存凭据。
 
 **不要安装“全局最新版 CLI”来替换此运行包的依赖。**
 `COPILOT_CLI_PATH` 会覆盖 SDK 自带 runtime；正常安装应不设置它。
@@ -123,8 +125,8 @@ GitHub Copilot 凭据，不需要启动另一版本的交互式 CLI。
 这会验证并持久化登录，不创建会话或发送模型请求。
 
 以下是 **Bash** 示例，在包根或已安装依赖的源码根执行。只在自己的可信机器上运行，
-且此时不要运行另一个使用相同原生目录的 Cockpit/SDK 宿主。若自定义 `COCKPIT_HOME`，
-请在准备凭据和以后启动服务时始终传入同一个绝对路径，且不要放在可替换的安装目录里。
+且此时不要运行另一个使用相同原生目录的 Cockpit/SDK 宿主。若使用 Copilot 原生目录配置，
+认证与服务需使用一致的原生配置，且不要将数据放在可替换的安装目录里。
 独立数据目录不等于独立系统用户或钥匙串隔离。
 
 ```bash
@@ -134,19 +136,14 @@ read -r -s -p "GitHub Copilot token: " COCKPIT_SETUP_TOKEN
 printf '\n'
 export COCKPIT_SETUP_TOKEN
 node --input-type=module <<'NODE'
-import { homedir } from 'node:os';
-import { isAbsolute, join } from 'node:path';
 import { CopilotClient, RuntimeConnection } from './packages/core/node_modules/@github/copilot-sdk/dist/index.js';
 
 const token = process.env.COCKPIT_SETUP_TOKEN;
 delete process.env.COCKPIT_SETUP_TOKEN;
 if (!token) throw new Error('A token is required.');
-const hostRoot = process.env.COCKPIT_HOME ?? join(homedir(), '.cockpit');
-if (!hostRoot.trim() || !isAbsolute(hostRoot)) throw new Error('COCKPIT_HOME must be a nonempty absolute path.');
 const client = new CopilotClient({
   connection: RuntimeConnection.forStdio(),
   mode: 'copilot-cli',
-  baseDirectory: join(hostRoot, 'copilot'),
   useLoggedInUser: false,
 });
 try {
@@ -212,11 +209,12 @@ HTTP/MCP 的 SDK 原生附件路径属于运行侧文件系统，不是从浏览
 
 ## 数据根与本地模块
 
-当前源码将 `COCKPIT_HOME` 定义为宿主数据根，默认 `~/.cockpit`；
-原生数据位于其中的 `copilot/`，仍由 Copilot 管理。
+`COCKPIT_HOME` 只定义 Cockpit 自身数据根，默认 `~/.cockpit`；
+Copilot 的原生数据和认证继续使用其自己的默认目录和配置，不由 Cockpit 迁移或覆盖。
 模块安装选择、不可变代码和数据分别位于 `modules/config.json`、
 `modules/installed/` 与 `modules/data/`。浏览器草稿和操作系统钥匙串不搬进这个目录。
-不自动迁移或回读旧 `~/.copilot`，已有部署切换目录需要单独确认和备份。
+旧部署若将 `COCKPIT_HOME` 指向 `~/.copilot`，应移除该宿主覆盖或改为独立的 Cockpit 数据目录；
+这只决定模块数据的位置，不移动原生数据。不要复制、链接或搬迁 Copilot 目录来适配本体。
 
 在包根使用实际的 Node 入口管理本地可信模块：
 
@@ -237,7 +235,7 @@ node --import ./apps/server/node_modules/tsx/dist/loader.mjs \
 | 变量 | 默认/含义 |
 | --- | --- |
 | `COCKPIT_PORT` | `8771`，只监听 loopback。 |
-| `COCKPIT_HOME` | `~/.cockpit`，非空绝对路径的宿主数据根；原生 runtime 使用其 `copilot/` 子目录。 |
+| `COCKPIT_HOME` | `~/.cockpit`，非空绝对路径；仅用于 Cockpit 自身及模块数据，不控制 Copilot 原生目录。 |
 | `COCKPIT_SERVE_WEB` | 默认开启；`0`/`false` 明确关闭。 |
 | `COCKPIT_WEB_DIR` | 默认使用包/源码相对位置的 `apps/web/dist`，可显式指定。 |
 | `COCKPIT_ALLOWED_ORIGINS` | 可追加允许的请求来源，用于来源保护。 |

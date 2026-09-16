@@ -8,7 +8,6 @@ import type { ChildProcess } from 'node:child_process';
 import { channel } from 'node:diagnostics_channel';
 import { EventEmitter } from 'node:events';
 import type { ModelOption } from '@cockpit/protocol';
-import { nativeHome } from './paths.ts';
 
 export type RuntimeSession = CopilotSession;
 export type RuntimeClient = Pick<CopilotClient,
@@ -75,7 +74,7 @@ export class OfficialRuntime {
     const connection = config.clientOptions?.connection ?? RuntimeConnection.forStdio();
     if (connection.kind === 'inprocess') throw new Error('Cockpit requires an out-of-process runtime, not FFI');
     this.options = {
-      mode: 'copilot-cli', baseDirectory: nativeHome(), useLoggedInUser: true,
+      mode: 'copilot-cli', useLoggedInUser: true,
       ...config.clientOptions, connection,
       sessionIdleTimeoutSeconds: config.clientOptions?.sessionIdleTimeoutSeconds ?? 1800,
     };
@@ -213,7 +212,6 @@ export class OfficialRuntime {
 
   private sessionOptions(config: SessionConfig | ResumeSessionConfig): SessionConfig {
     return {
-      configDirectory: this.options.baseDirectory,
       streaming: true, includeSubAgentStreamingEvents: true,
       enableFileChangeTracking: true, manageScheduleEnabled: true,
       ...this.config.sessionConfig, ...config,
