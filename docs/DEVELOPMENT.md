@@ -59,6 +59,52 @@ deploying or restarting the application. Maintain the current installation
 contract rather than compatibility aliases, archived pages or migration inventories.
 Generated reviews and build artifacts do not belong in the product source tree.
 
+## Interaction semantics and structural correctness
+
+This is a confirmed development requirement for both the host Web UI and module
+UI: invisible structure and behavior must make sense, not merely produce the
+right appearance or respond to a mouse click. Visible affordances, HTML semantics,
+accessible names, focus, event handling and state transitions must describe the
+same interaction. This is ordinary engineering correctness, not a separate
+accessibility feature request or a claim of full accessibility conformance.
+Existing implementations are subject to review; this requirement does not certify them.
+
+- Prefer native elements whose behavior matches the action: buttons for actions,
+  links for navigation/downloads and native disclosure/dialog behavior where it
+  fits. Keep independent actions separate; do not nest interactive controls or
+  reconstruct native keyboard behavior without a concrete need.
+- Keep DOM content models valid, including controls rendered inside Markdown or
+  module slots. Give dialogs and overlays an appropriate mount location and clear
+  ownership. ARIA cannot repair invalid nesting or contradictory interaction
+  structure.
+- Make the visible label, accessible name and actual result agree. Prefer a direct
+  relationship between the control and its visible content; do not announce
+  decoration as another action or add needless focus stops and repeated labels.
+  ARIA remains appropriate where native/visible content cannot convey the needed
+  name, description or state.
+- Preserve logical focus entry, order and return across open/close, disclosure,
+  submission and resource replacement. Do not hide a layout or focus defect by
+  indiscriminate `blur()`, suppressed focus indicators or unexpected focus moves.
+  Keep keyboard, pointer and touch paths consistent in meaning.
+- Check event ownership and the full state cycle, including loading, disabled,
+  pending, error, retry, unmount and late results. Secondary actions must not
+  accidentally invoke the primary action; displayed availability must match
+  actual execution guards. Do not invent a second state authority to make the UI
+  look consistent.
+
+Transparent hit-area overlays, `pointer-events`, event propagation control and
+ARIA are not automatically defects. Use them for a concrete requirement, not to
+patch an avoidably contradictory structure; explain necessary tradeoffs.
+Prefer the simplest coherent composition over accumulating special cases.
+Do not introduce a new UI framework, runtime service or module-specific host API
+just to satisfy this principle.
+
+Review rendered DOM and relevant interaction paths, not screenshots or static
+selectors alone. Reuse the existing component fixtures and isolated review
+harnesses; record evidence and uncovered boundaries. Separate reproducible defects,
+structural simplifications and accepted tradeoffs, and keep audit findings in
+issues rather than turning this guide into a stale component inventory.
+
 ## Isolated Chat component review
 
 `COCKPIT_CHAT_LAB=1 pnpm --filter @cockpit/web dev --host 127.0.0.1 --port 47831 --strictPort`
