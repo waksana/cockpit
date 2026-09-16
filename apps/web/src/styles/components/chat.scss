@@ -593,9 +593,14 @@ button.activity-head {
   display: flex; align-items: center; gap: var(--chat-gap-control); padding: var(--chat-gap-meta) 0;
   > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 }
-.chat-input-notice > .module-block-remove { width: auto; height: auto; min-height: 32px; padding: 0.25rem; }
+.module-draft-recovery {
+  display: flex; flex: none; align-items: center; gap: var(--chat-gap-control); min-width: 0;
+  margin: 0; color: var(--secondary-text-color); font-size: var(--font-size-13);
+  > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  > button { flex: none; min-height: 32px; padding: var(--chat-gap-meta); background: transparent; border: none; color: var(--link-color); cursor: pointer; font: inherit; }
+}
 .message-attachments {
-  display: flex; flex-wrap: wrap; gap: var(--chat-gap-control); min-width: 0;
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--chat-gap-control); min-width: 0;
   > * { min-width: 0; max-width: 100%; }
 }
 .message-body + .message-attachments { margin-block-start: var(--chat-gap-content); }

@@ -248,6 +248,45 @@ test('unknown frontend contributions fail explicitly and still dispose their ini
   assert.equal(disposed, 1);
 });
 
+test('draft attachment rendering is an explicit declaration backed by a component', async () => {
+  for (const frontend of [
+    { rendersDraftAttachments: 'yes' },
+    { rendersDraftAttachments: true },
+    { rendersDraftAttachments: true, composerAbove: [] },
+  ]) {
+    const f = fixture([asset()], frontend as unknown as ModuleFrontend);
+    await f.runtime.start();
+    assert.equal(f.runtime.getSnapshot().length, 0);
+    assert.equal(f.reports.length, 1);
+    f.runtime.stop();
+  }
+  const f = fixture([asset()], {
+    rendersDraftAttachments: true, composerAbove: [{ id: 'attachments', component: () => null }],
+  });
+  await f.runtime.start();
+  assert.equal(f.runtime.getSnapshot()[0].frontend.rendersDraftAttachments, true);
+  f.runtime.stop();
+});
+
+test('a pending submission rejects stale paste and drop handlers without invoking the file module', async () => {
+  let received = 0;
+  const f = fixture([asset()], {
+    fileInput: [{ id: 'files', accepts: () => true, receive: () => { received++; } }],
+  });
+  await f.runtime.start();
+  const draft = createSessionDrafts()('pending-input');
+  draft.edit('Sending');
+  let finish!: (sent: boolean) => void;
+  const sending = draft.send(() => new Promise<boolean>(resolve => { finish = resolve; }));
+  assert.equal(f.runtime.receive([new File(['x'], 'late.txt')], draft, 'prompt', false), false);
+  assert.equal(received, 0);
+  assert.equal(draft.getSnapshot().blocks.length, 0);
+  finish(false);
+  await sending;
+  assert.equal(f.runtime.receive([new File(['x'], 'next.txt')], draft, 'prompt', false), true);
+  assert.equal(received, 1);
+  f.runtime.stop();
+});
 test('a stalled initializer does not block another module and cannot publish its late result', async () => {
   let finish: (value: ModuleFrontend) => void = () => {};
   let disposed = 0;

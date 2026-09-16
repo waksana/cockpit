@@ -163,10 +163,12 @@ test('Chat regions and optional composer context each have a single spacing owne
   assert.match(css, /\.chat-composer-context:has\(> :not\(:empty\)\) \{\s*display: flex;/);
   assert.match(css, /\.module-composer-above,\s*\.module-draft-attachments \{[^}]*margin: 0;/);
   assert.match(css, /\.chat-input-notice \{[^}]*margin: 0;/);
+  assert.match(css, /\.module-draft-recovery \{[^}]*margin: 0;/);
   assert.match(css, /\.chat-pending-head \{[^}]*margin: 0;/);
   assert.match(css, /\.chat-pending-body > \* \+ \* \{\s*margin-block-start: var\(--chat-gap-content\);/);
   assert.match(css, /\.message-body \+ \.message-attachments \{[^}]*margin-block-start: var\(--chat-gap-content\);/);
   assert.match(css, /\.message-attachments > \* \{[^}]*min-width: 0;[^}]*max-width: 100%;/);
+  assert.match(css, /\.message-attachments \{[^}]*flex-direction: column;[^}]*align-items: flex-start;/);
   assert.match(css, /\.message-attachment \{[^}]*max-width: 100%;[^}]*overflow-wrap: anywhere;/);
   assert.match(css, /\.chat-history-actions:empty \{\s*display: none;/);
   assert.doesNotMatch(css, /--chat-space-/);

@@ -742,7 +742,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(scoped!.draft, scope);
     let release!: () => void;
     await act(() => { release = scope.block('Upload still pending'); });
-    assert.ok(context.querySelector('.chat-input-notice'), 'the composer owns module block placement');
+    assert.equal(context.querySelector('.chat-input-notice'), null, 'active module upload feedback stays with its item');
+    assert.equal(container.querySelector('.send')?.getAttribute('title'), 'Upload still pending');
     assert.equal(container.querySelector('.chat-input-message'), editor);
     for (const keys of [{ key: 'Enter' }, { key: 'Enter', ctrlKey: true }, { key: 'Enter', metaKey: true }]) {
       await dispatch('.chat-input-message', 'keydown', keys);
@@ -798,6 +799,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(draft.getSnapshot().attachments.length, 2, 'ready native attachments remain usable');
       assert.equal(draft.getSnapshot().blocks[0].orphaned, true);
       assert.match(container.textContent, /移除未完成的选择/);
+      assert.ok(container.querySelector('.chat-composer-context')?.querySelector('.module-draft-recovery'),
+        'revoked module recovery remains in the composer context');
     } finally {
       restoreConsole.mock.restore();
       await act(() => root.render(null));

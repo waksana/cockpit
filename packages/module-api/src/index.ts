@@ -146,6 +146,7 @@ export interface ChatRenderer {
 
 export interface ModuleFrontend {
   writes?: readonly ('text' | 'attachments')[];
+  rendersDraftAttachments?: boolean;
   composerActions?: readonly FrontendContribution[];
   composerAbove?: readonly FrontendContribution[];
   fileInput?: readonly FileInputHandler[];

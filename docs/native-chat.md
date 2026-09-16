@@ -207,6 +207,10 @@ tokens, not a global numeric scale. A boundary has one owner:
 | Input and safe area | Field inset is 8px by 12px; the send target remains 40px square. Only the bottom bar adds 4px plus the safe-area inset. The read-only footer owns the equivalent inset when there is no composer. |
 
 The host controls contribution placement, not a module's internal visual design.
+Active upload feedback stays with the module's attachment item; only revoked
+module recovery joins the host stack. The native fallback is omitted when an
+active module explicitly renders draft attachments, and attachment controls
+remain disabled during native submission.
 Adding/removing notices or attachments does not replace the editor or scoped
 module instances. No viewport-measurement controller, history reads or scrolling
 compensation is introduced by the spacing system.
