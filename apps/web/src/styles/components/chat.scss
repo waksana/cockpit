@@ -150,7 +150,6 @@
   display: flex;
   flex-direction: column;
   flex: none;
-  &[data-preparing] { visibility: hidden; }
 }
 
 .msg-group { display: flex; flex-direction: column; min-width: 0; }

@@ -36,6 +36,7 @@ export function Lab() {
   const counter = useRef(0);
   const ordered = useRef<ReturnType<typeof orderedFixture> | null>(null);
   const historyBusy = useRef(false);
+  const historyPage = useRef(0);
   const moreRef = useRef<HTMLButtonElement | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const draft = getSessionDraft(session.sessionId);
@@ -48,6 +49,7 @@ export function Lab() {
     generation.current++;
     pending.current.splice(0).forEach(resolve => resolve());
     historyBusy.current = false;
+    historyPage.current = 0;
     setMoreOpen(false);
     setScenario(value);
     ordered.current = null;
@@ -79,20 +81,22 @@ export function Lab() {
     if (historyBusy.current) return;
     historyBusy.current = true;
     const owner = generation.current;
+    const page = ++historyPage.current;
+    const progressive = scenario === 'history-progressive';
     setSession(value => ({ ...value, loadingHistory: true }));
     window.setTimeout(() => {
       if (generation.current !== owner) return;
-      setSession(value => ({ ...value, loadingHistory: false, materialized: true, hasMore: false,
-        messages: [...Array.from({ length: 6 }, (_, i): ChatMessage => ({
-          id: `older-${i}`, role: i % 2 ? 'assistant' : 'user',
+      setSession(value => ({ ...value, loadingHistory: false, materialized: true, hasMore: progressive && page < 8,
+        messages: [...Array.from({ length: progressive ? 2 : 6 }, (_, i): ChatMessage => ({
+          id: `older-${page}-${i}`, role: i % 2 ? 'assistant' : 'user',
           content: `更早的消息 ${i + 1}。保留当前可见消息的位置。\n\n这是用于历史插入的合成内容。`,
-          timestamp: new Date('2026-09-10T09:30:00').getTime() + i * 60_000,
+          timestamp: new Date('2026-09-10T09:30:00').getTime() - page * 6 * 60_000 + i * 60_000,
         })), ...value.messages],
       }));
       setReceipt('一次有界合成历史插入；未读取真实历史。');
       historyBusy.current = false;
     }, 900);
-  }, [setSession, setReceipt]);
+  }, [scenario, setSession, setReceipt]);
   return <div className="cockpit-shell chat-lab" data-compact={compact || undefined}>
     <details className="lab-controls" open={!compact}>
       <summary>合成场景控制</summary>

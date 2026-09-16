@@ -157,15 +157,16 @@ test('all loaded message content remains mounted behind stable outer geometry ma
   for (const message of messages) assert.ok(html.includes(message.content));
 });
 
-test('initial history has a measurement-only body while its complete initial batch is prepared', () => {
+test('initial history displays received content even before the initial window is filled', () => {
   const html = render({
     historyStale: false, materialized: false, loadingHistory: true,
-    messages: [{ id: 'partial-page', role: 'assistant', content: 'Not yet a complete initial viewport', timestamp: 1 }],
+    messages: [{ id: 'partial-page', role: 'assistant', content: 'Already received, ready to read', timestamp: 1 }],
   });
   assert.match(html, /chat-history-controls/);
   assert.match(html, /加载更早的消息/);
-  assert.match(html, /class="chat-message-rows" data-preparing="true" aria-hidden="true" inert=""/);
-  assert.match(html, /Not yet a complete initial viewport/);
+  assert.match(html, /class="chat-message-rows"><div/);
+  assert.doesNotMatch(html, /data-preparing|aria-hidden="true" inert/);
+  assert.match(html, /Already received, ready to read/);
 });
 
 test('loading more history never hides an already materialized reading window', () => {

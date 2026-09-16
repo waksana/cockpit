@@ -347,14 +347,12 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const scrollOwnerRef = useRef<ThreadScroll | null>(null);
-  const [readySession, setReadySession] = useState(session.materialized ? session.sessionId : null);
   const [pageVisible, setPageVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
   useEffect(() => {
     const visible = () => setPageVisible(document.visibilityState === 'visible');
     document.addEventListener('visibilitychange', visible);
     return () => document.removeEventListener('visibilitychange', visible);
   }, []);
-  const preparingHistory = readySession !== session.sessionId && !session.error && !session.historyError && !session.historyStale;
   const [heldHead, setHeldHead] = useState<{ sessionId: string; id: string } | null>(null);
   // Keep the existing DOM prefix under an active gesture. Only newly received
   // older rows wait for settle; tail updates and already mounted history stay live.
@@ -390,17 +388,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     };
   }, [session.sessionId]);
 
-  useLayoutEffect(() => {
-    if (readySession === session.sessionId || !connected || !snapshotReady || !pageVisible
-      || !session.materialized || session.loadingHistory || session.historyStale || prependHeld) return;
-    const el = scrollRef.current;
-    if (!session.hasMore || session.incompleteBoundary
-      || (el && el.clientHeight > 0 && el.scrollHeight >= el.clientHeight * 2)) {
-      setReadySession(session.sessionId);
-    }
-  }, [readySession, connected, snapshotReady, pageVisible, session.sessionId, session.materialized,
-    session.loadingHistory, session.historyStale, session.hasMore, session.incompleteBoundary, messages, prependHeld]);
-
   // Every mounted viewport owns its measured fill and near-head prefetch. A
   // retained native page proves neither two screens nor this viewport's size.
   // Existing rows stay visible; the separate scroll owner preserves the reader.
@@ -410,16 +397,11 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     if (!connected || !snapshotReady || !pageVisible || !el || !content || !session.materialized
       || session.loadingHistory || session.historyError || session.error || session.historyStale || prependHeld) return;
     const needsFill = () => el.clientHeight > 0 && el.scrollHeight < el.clientHeight * 2;
-    return observeHistoryPrefetch(el, content, () => {
-      if (!session.hasMore || session.incompleteBoundary || (el.clientHeight > 0 && !needsFill())) {
-        setReadySession(session.sessionId);
-      }
-      return session.hasMore && !session.incompleteBoundary
-        && (needsFill() || (!preparingHistory && !scrollOwnerRef.current?.following));
-    }, onLoadMore, () => el.scrollTop, needsFill);
+    return observeHistoryPrefetch(el, content, () => session.hasMore && !session.incompleteBoundary
+      && (needsFill() || !scrollOwnerRef.current?.following), onLoadMore, () => el.scrollTop, needsFill);
   }, [session.sessionId, session.hasMore, session.materialized, session.loadingHistory, session.historyError,
     session.error, session.historyStale, session.incompleteBoundary, onLoadMore,
-    prependHeld, preparingHistory, pageVisible, connected, snapshotReady]);
+    prependHeld, pageVisible, connected, snapshotReady]);
 
   useLayoutEffect(() => {
     if (!scrollOwnerRef.current?.following && hasNewTranscriptContent(previousMessages.current, session.messages)) {
@@ -465,14 +447,14 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   return (
     <DisclosureChoices key={session.sessionId}><main className="chat">
       <div className="chat-transcript">
-        <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-label="对话消息" aria-busy={preparingHistory || session.loadingHistory}>
+        <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-label="对话消息" aria-busy={session.loadingHistory}>
           <div ref={contentRef} className="chat-message-content">
             <div className="chat-history-controls">
               {(!session.materialized || session.hasMore) && <StateNotice className="chat-history-loading">
                 加载更早的消息…
               </StateNotice>}
               <div className="chat-history-actions">
-                {preparingHistory || session.loadingHistory ? null : session.historyStale || !session.materialized ? (
+                {session.loadingHistory ? null : session.historyStale || !session.materialized ? (
                   <StateNotice className="chat-loading-older" kind={session.historyError ? 'error' : 'info'}>
                     {session.historyError ? `历史加载失败：${session.historyError}` : '对话历史尚未同步。'}
                     {onRetryHistory && <button type="button" className="dialog-btn rp" onClick={() => {
@@ -494,8 +476,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
                 部分工具记录缺少对应的发起消息，现有历史无法补齐。
               </p>}
             </div>
-            <div className="chat-message-rows" data-preparing={preparingHistory || undefined}
-              aria-hidden={preparingHistory || undefined} inert={preparingHistory || undefined}>
+            <div className="chat-message-rows">
               {session.messages.length === 0 && session.materialized && !session.historyStale && !session.loadingHistory && !session.hasMore && (
                 <div className="chat-empty-hint"><Icon name="newchat" size={28} />
                   <strong>开始对话</strong><span>输入消息开始讨论。</span><code>{session.cwd}</code></div>

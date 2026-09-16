@@ -338,7 +338,10 @@ new message ID; unchanged pages and older history prefixes do not count as new
 messages. The existing scroll owner remains the only writer of scroll position.
 
 Initial loading fills at least two viewport heights when sufficient history is
-available, not a fixed number of messages.
+available, not a fixed number of messages. This is a prefetch policy, not a
+visibility gate: every received display row is immediately readable and
+interactive, including the first short page of a cold entry. The browser does
+not hide mounted rows or wait for two screens before showing them.
 Having a materialized page does not mean the current viewport is filled. Re-entering
 with a short retained window continues from its existing cursor when more history
 is available, while keeping that retained content visible.
@@ -404,8 +407,9 @@ reported as missing source history, not a promise that another page exists.
 Forward streaming still drains up to 64 events per request and is not delayed
 for a complete display message.
 
-Initial viewport filling measures the incoming rows without exposing each
-intermediate page, then reveals the accumulated initial content together.
+Initial viewport filling displays incoming rows progressively while the existing
+scroll owner maintains bottom-follow or the reader's chosen anchor. There is
+no separate initial reveal state or invisible measurement-only transcript.
 Existing reading windows remain visible during older-page loads. The normal
 history-start hint remains in normal flow until the earliest history is reached,
 rather than being inserted and removed around every request. There is no normal load-more button;

@@ -2,6 +2,9 @@
 
 Unreleased development version. No tag or Release has been created for these changes.
 
+- Cold Chat history displays each received page immediately instead of hiding
+  mounted rows until two viewport heights have accumulated. Two-screen prefetch,
+  the existing scroll owner and the history-start hint remain unchanged.
 - Expanded thinking renders Markdown with the shared message renderer, including
   headings, lists, links and copyable code, without changing the native text or
   reasoning ownership.

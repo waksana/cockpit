@@ -165,6 +165,7 @@ export const scenarios = [
   ['empty', '空对话'],
   ['loading', '首次加载'],
   ['history', '历史分页 / 阅读锚点'],
+  ['history-progressive', '逐页显示 / 首屏补读'],
   ['history-loading', '历史起点提示 / 保留阅读位置'],
   ['history-error', '历史失败 / 不完整片段'],
   ['stale', '历史过期 / 显式重读'],
@@ -249,8 +250,8 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   if (scenario === 'ask-queued' || scenario === 'decision-stack') session.ask!.question =
     '安装包已准备好。是否允许在当前会话结束后继续完成后续操作，并记录结果？' +
     '这里保留完整条件说明，以检查问题内容和独立队列在窄屏及键盘弹出后的可达性。'.repeat(5);
-  if (scenario === 'empty' || scenario === 'loading') session.messages = [];
-  if (scenario === 'loading') Object.assign(session, { materialized: false, loadingHistory: true, hasMore: true });
+  if (scenario === 'empty' || scenario === 'loading' || scenario === 'history-progressive') session.messages = [];
+  if (scenario === 'loading' || scenario === 'history-progressive') Object.assign(session, { materialized: false, loadingHistory: true, hasMore: true });
   if (scenario === 'history') session.hasMore = true;
   if (scenario === 'history-loading') Object.assign(session, { loadingHistory: true, hasMore: true });
   if (scenario === 'history-error') Object.assign(session, { historyError: '合成读取失败：连接已断开', partialHistory: true, incompleteBoundary: true });

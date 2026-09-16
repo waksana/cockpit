@@ -179,6 +179,9 @@ test('Chat regions and optional composer context each have a single spacing owne
   assert.match(css, /\.message-attachment \{[^}]*max-width: 100%;[^}]*overflow-wrap: anywhere;/);
   assert.match(css, /\.chat-history-actions:empty \{\s*display: none;/);
   assert.doesNotMatch(css, /--chat-space-/);
+  assert.doesNotMatch(css, /data-preparing/);
+  const thread = readFileSync(new URL('./Thread.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(thread, /readySession|preparingHistory|data-preparing/);
 });
 
 test('the answer composer uses native disclosure without a second editor or a nested question frame', () => {

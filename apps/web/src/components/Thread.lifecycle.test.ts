@@ -335,12 +335,41 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await render({ ...sparse, loadingHistory: true });
       await render(sparse);
       assert.equal(prefetches, before + page + 1, 'no fixed low-density page budget');
-      assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), 'true');
+      assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), null,
+        'even sparse initial history has no hidden measurement stage');
     }
     await render({ ...sparse, loadingHistory: true });
     await render({ ...sparse, messages: session(sparse.sessionId).messages.slice(0, 6) });
     assert.equal(prefetches, before + 40);
     assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), null);
+  });
+
+  await t.test('cold entry displays each received page while further viewport filling continues', async () => {
+    const cold = { ...session('progressive-fill'), materialized: false, loadingHistory: true, messages: [] as ChatSession['messages'] };
+    await render(cold);
+    const before = prefetches;
+    const first = session(cold.sessionId).messages.slice(0, 1);
+    await render({ ...cold, messages: first });
+    const rows = container.querySelector('.chat-message-rows')!;
+    const received = rows.querySelector(`[data-message-id="${first[0].id}"]`);
+    assert.ok(received);
+    for (const name of ['data-preparing', 'aria-hidden', 'inert']) assert.equal(rows.getAttribute(name), null);
+    assert.equal(prefetches, before, 'an in-flight page is not duplicated');
+    await render({ ...cold, messages: first, materialized: true, loadingHistory: false });
+    assert.equal(prefetches, before + 1, 'displaying a short page does not stop two-screen fill');
+    await render({ ...cold, messages: first, materialized: true });
+    assert.equal(rows.querySelector(`[data-message-id="${first[0].id}"]`), received);
+    const second = [{ id: 'progressive-older', role: 'assistant' as const, content: 'Older page', timestamp: 0 }, ...first];
+    await render({ ...cold, messages: second, materialized: true, loadingHistory: false });
+    assert.equal(prefetches, before + 2);
+    assert.ok(rows.querySelector('[data-message-id="progressive-older"]'));
+    assert.equal(rows.querySelector(`[data-message-id="${first[0].id}"]`), received);
+    await readAt(25);
+    const reader = anchor();
+    await render({ ...cold, messages: second, materialized: true, loadingHistory: false, historyError: 'Read interrupted' });
+    assert.deepEqual(anchor(), reader);
+    assert.equal(prefetches, before + 2, 'failed fill retains partial content without retrying');
+    assert.equal(rows.getAttribute('inert'), null);
   });
 
   await t.test('pending decisions retain the same input and independent queue controls across updates', async subtest => {
@@ -424,7 +453,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   });
 
   for (const hasMore of [false, true]) {
-    await t.test(`continuous streaming cannot starve readiness or pending viewport fill (hasMore=${hasMore})`, async () => {
+    await t.test(`continuous streaming remains visible without starving pending viewport fill (hasMore=${hasMore})`, async () => {
       const live = { ...session(`continuous-${hasMore}`), hasMore, materialized: false,
         messages: [] as ChatSession['messages'] };
       await render(live);
@@ -440,7 +469,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
           frames.clear();
           for (const callback of pending) callback(frame);
         });
-        if (!hasMore) assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), null);
+        assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), null);
+        assert.match(container.querySelector('.chat-message-rows')!.textContent, new RegExp(`Stream ${frame}`));
       }
       assert.equal(prefetches, before + (hasMore ? 1 : 0), 'stream frames cannot postpone or duplicate the bounded older read');
       await render(null);

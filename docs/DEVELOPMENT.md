@@ -95,6 +95,10 @@ Use `history-loading` and its page-request toggle to inspect the persistent
 history-start hint. The request can start/finish without changing the hint;
 the existing history insertion/completion control reaches the beginning and
 removes it. Neither control reads native history.
+Use `history-progressive` and click `插入历史 / 完成加载` to deliver a small first
+page. The same bounded synthetic loader then supplies further pages as normal
+viewport prefetch requests them. Each received page must already be visible
+while the next one is pending; scroll upward to exercise retained reading anchors.
 
 For current event ordering and process disclosure behavior, choose `ordered-events`.
 Its controls feed synthetic historical/live/reconnect pages through the production
