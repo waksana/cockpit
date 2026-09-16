@@ -84,6 +84,9 @@ single opt-in entry. Neither the Lab nor its fixtures are runtime-package inputs
 For focused input-bar review, open `/chat-lab.html?scene=ask&compact=1`
 or choose `plan` / `user-time`. Stop temporary previews after review; do not leave resident
 background work, open native sessions or publish user screenshots.
+Add `&pane=narrow` to constrain the actual Chat pane to 456px while keeping a
+desktop viewport. This reproduces the space available beside docked settings:
+decisions and process rows must adapt to their own width, not the window width.
 
 For current event ordering and process disclosure behavior, choose `ordered-events`.
 Its controls feed synthetic historical/live/reconnect pages through the production

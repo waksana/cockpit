@@ -328,6 +328,48 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), null);
   });
 
+  await t.test('pending decisions retain the same input and independent queue controls across updates', async () => {
+    const value: ChatSession = { ...session('dock-transition'), hasMore: false, status: 'running',
+      queue: [{ id: 'next', text: 'Keep this queue' }], ask: { requestId: 'ask', question: 'Choose', choices: ['A', 'B'] } };
+    const localDraft = getSessionDraft(value.sessionId);
+    localDraft.edit('Keep typing');
+    let stops = 0;
+    const show = async (patch: Partial<ChatSession> = {}) => {
+      await act(() => root.render(createElement(Thread, {
+        key: value.sessionId, session: { ...value, ...patch }, onLoadMore,
+        onCancel: () => { stops++; },
+      })));
+      await flush();
+    };
+    const click = async (target: HostNode) => {
+      const event = new Event('click', { bubbles: true });
+      Object.defineProperty(event, 'target', { value: target });
+      await act(() => container.dispatchEvent(event));
+    };
+    await show();
+    const input = container.querySelector('.chat-input-message')!;
+    const execution = container.querySelector('.chat-execution')!;
+    const queue = container.querySelector('.chat-queue-item')!;
+    const decision = container.querySelector('.chat-decisions')!;
+    assert.equal(decision.parentNode, execution.parentNode);
+    assert.equal(container.querySelector('.chat-typing-stop')?.textContent, '停止并清空队列');
+    await show({ ask: null });
+    assert.equal(container.querySelector('.chat-input-message'), input);
+    assert.equal(container.querySelector('.chat-execution'), execution);
+    assert.equal(container.querySelector('.chat-queue-item'), queue);
+    assert.equal(localDraft.getSnapshot().text, 'Keep typing');
+    await show();
+    assert.equal(container.querySelector('.chat-execution'), execution);
+    await click(container.querySelector('.chat-typing-stop')!);
+    assert.equal(stops, 1);
+    await show({ cancelling: true });
+    assert.equal(container.querySelector('.chat-typing-stop')?.attributes.has('disabled'), true);
+    await click(container.querySelector('.chat-typing-stop')!);
+    assert.equal(stops, 1);
+    assert.equal(localDraft.getSnapshot().text, 'Keep typing');
+    assert.equal(container.querySelector('.chat-composer-hint'), null);
+  });
+
   for (const hasMore of [false, true]) {
     await t.test(`continuous streaming cannot starve readiness or pending viewport fill (hasMore=${hasMore})`, async () => {
       const live = { ...session(`continuous-${hasMore}`), hasMore, materialized: false,
@@ -639,6 +681,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
 
   await t.test('module components retain type and scoped drafts; send keys, IME, paste and drop share host guards', async () => {
     let mounts = 0;
+    let aboveMounts = 0;
     let received = 0;
     let scoped: ComposerContext | undefined;
     const reports: unknown[] = [];
@@ -649,6 +692,11 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       if (state.text === 'Crash module action') throw new Error('Fixture action failed');
       return createElement('button', { type: 'button', 'aria-label': 'Module action' }, state.text || 'Files');
     }
+    function Above(context: ComposerContext) {
+      const state = useSyncExternalStore(context.draft.subscribe, context.draft.getSnapshot, context.draft.getSnapshot);
+      useLayoutEffect(() => { aboveMounts++; }, []);
+      return state.attachments.length ? createElement('div', { className: 'fixture-attachment-panel' }, 'Selected file') : null;
+    }
     const digest = 'a'.repeat(64);
     const runtime = new ModuleRuntime({
       pageUrl: 'https://fixture.invalid',
@@ -658,6 +706,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       }], errors: [] }),
       load: async () => ({ activate: (_context: ModuleFrontendContext) => ({
         writes: ['attachments'], composerActions: [{ id: 'action', component: Action }],
+        composerAbove: [{ id: 'above', component: Above }],
         fileInput: [{ id: 'files', accepts: () => true, receive: (_files: readonly File[], context: ComposerContext) => { received++; scoped = context; } }],
         chatRenderers: [{ id: 'broken', matches: () => true, component: () => { throw new Error('Fixture renderer failed'); } }],
       }) }),
@@ -682,6 +731,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await renderComposer();
     await dispatch('.chat-input-message', 'focusin');
     const action = container.querySelector('[aria-label="Module action"]');
+    const editor = container.querySelector('.chat-input-message');
+    const context = container.querySelector('.chat-composer-context');
+    assert.ok(context);
+    assert.equal(context.querySelector('.module-composer-above')?.textContent, '');
     const scope = scoped!.draft;
     await act(() => draft.edit('Draft update'));
     assert.equal(container.querySelector('[aria-label="Module action"]'), action);
@@ -689,6 +742,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(scoped!.draft, scope);
     let release!: () => void;
     await act(() => { release = scope.block('Upload still pending'); });
+    assert.equal(context.querySelector('.chat-input-notice'), null, 'active module upload feedback stays with its item');
+    assert.equal(container.querySelector('.send')?.getAttribute('title'), 'Upload still pending');
+    assert.equal(container.querySelector('.chat-input-message'), editor);
     for (const keys of [{ key: 'Enter' }, { key: 'Enter', ctrlKey: true }, { key: 'Enter', metaKey: true }]) {
       await dispatch('.chat-input-message', 'keydown', keys);
     }
@@ -702,6 +758,11 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await act(() => scope.appendAttachments([{ id: 'native', value: { type: 'file', path: '/fixture/native' } }]));
     await renderComposer('ask');
     assert.match(container.textContent, /不接受附件/);
+    assert.ok(context.querySelector('.module-draft-attachments'));
+    assert.ok(context.querySelector('.fixture-attachment-panel'));
+    assert.equal(aboveMounts, 1, 'empty/nonempty module content and notices must not remount contributions');
+    assert.equal(container.querySelector('.chat-input-message'), editor);
+    assert.equal(container.querySelector('[aria-label="Module action"]'), action);
     await dispatch('.chat-input-message', 'keydown', { key: 'Enter', ctrlKey: true });
     assert.equal(sends, 1);
     await renderComposer('prompt', true);
@@ -738,6 +799,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(draft.getSnapshot().attachments.length, 2, 'ready native attachments remain usable');
       assert.equal(draft.getSnapshot().blocks[0].orphaned, true);
       assert.match(container.textContent, /移除未完成的选择/);
+      assert.ok(container.querySelector('.chat-composer-context')?.querySelector('.module-draft-recovery'),
+        'revoked module recovery remains in the composer context');
     } finally {
       restoreConsole.mock.restore();
       await act(() => root.render(null));

@@ -4,10 +4,17 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatSession } from '../net/types';
 import { Thread } from './Thread';
+import { useCockpit } from '../net/store';
 
 const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
-before(() => { Object.defineProperty(globalThis, 'window', { configurable: true, value: {} }); });
+const initialState = useCockpit.getInitialState();
+const previousConnection = initialState.connState;
+before(() => {
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
+  initialState.connState = 'open';
+});
 after(() => {
+  initialState.connState = previousConnection;
   if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
   else Reflect.deleteProperty(globalThis, 'window');
 });
@@ -69,14 +76,15 @@ test('stop and interrupt share one execution action group outside the scrolling 
   assert.match(actions, /打断并处理队列/);
   assert.match(actions, /停止并清空队列/);
   assert.match(section, /Working on the response/);
-  assert.match(section, /排队消息 · 1/);
+  assert.match(section, /aria-label="排队中的消息"/);
+  assert.doesNotMatch(section, /chat-queue-label|排队消息 · 1/);
   assert.ok(section.indexOf('chat-execution-actions') < section.indexOf('chat-queue-item'));
   assert.doesNotMatch(html.slice(0, html.indexOf('<section class="chat-execution"')), /chat-typing-stop|class="chat-interrupt"/);
 });
 
 test('idle queues show their messages without inventing a running operation, and read-only views have no controls', () => {
   const html = render({ status: 'idle', queue: [{ id: 'q', text: 'Next request' }] });
-  assert.match(html, /chat-execution-label[^>]*>排队中的消息/);
+  assert.match(html, /chat-execution-label[^>]*>等待处理/);
   assert.doesNotMatch(html, /chat-execution-actions/);
   const readonly = renderToStaticMarkup(createElement(Thread, {
     session, readOnly: true, onLoadMore() {}, onCancel() {}, async onInterrupt() { return { ok: true, interrupted: true }; },
@@ -84,20 +92,21 @@ test('idle queues show their messages without inventing a running operation, and
   assert.doesNotMatch(readonly, /chat-typing-stop|chat-interrupt"|chat-execution-actions/);
 });
 
-test('a pending question replaces generic execution status in the same region', () => {
+test('a pending question is a sibling card and does not hide stop or execution state', () => {
   const html = render({ intent: 'Generic running intent', ask: {
     requestId: 'question', question: 'Which option?', choices: ['A', 'B'], allowFreeform: true,
   } });
   const region = html.match(/<section class="chat-execution"[\s\S]+?<\/section>/)![0];
-  assert.match(region, /data-pending="true"/);
-  assert.match(region, /Which option\?/);
-  assert.equal((region.match(/等待你的回答/g) ?? []).length, 1);
-  assert.doesNotMatch(region, /Generic running intent|chat-execution-label/);
-  assert.match(html, /输入内容将回答当前问题/);
-  assert.doesNotMatch(html, /发送后加入队列/);
+  assert.match(html, /class="chat-dock" data-pending="true"/);
+  assert.match(html, /Which option\?/);
+  assert.doesNotMatch(region, /Which option\?|class="chat-ask/);
+  assert.match(region, /chat-execution-label[^>]*>等待你的回答<\/span>/);
+  assert.doesNotMatch(region, /Generic running intent/);
+  assert.match(region, /class="chat-typing-stop">停止/);
+  assert.doesNotMatch(html, /输入内容将回答当前问题|chat-composer-hint/);
 });
 
-test('multiple native decisions remain reachable without a second generic status line', () => {
+test('multiple native decisions stay separate from one execution/queue area', () => {
   const html = render({
     ask: { requestId: 'ask', question: 'Question?' },
     planRequest: { requestId: 'plan', summary: 'Proposed plan', actions: ['exit_only'] },
@@ -106,7 +115,41 @@ test('multiple native decisions remain reachable without a second generic status
   assert.match(html, /Question\?/);
   assert.match(html, /Proposed plan/);
   assert.match(html, /Tool confirmation/);
-  assert.doesNotMatch(html, /chat-execution-label/);
+  assert.equal((html.match(/class="chat-execution"/g) ?? []).length, 1);
+  assert.equal((html.match(/class="chat-typing-stop"/g) ?? []).length, 1);
+});
+
+test('stop remains visible but disabled for actual unavailable or in-flight conditions', () => {
+  for (const patch of [{ cancelling: true }, { loaded: false }, { loading: true }, { closing: true }, { activeOperations: 1 }]) {
+    assert.match(render({ ...patch, ask: { requestId: 'ask', question: 'Choose' } }),
+      /class="chat-typing-stop" disabled=""/);
+  }
+  initialState.connState = 'connecting';
+  try { assert.match(render(), /class="chat-typing-stop" disabled=""/); }
+  finally { initialState.connState = 'open'; }
+});
+
+test('each decision keeps queue-clearing controls outside its answer options', () => {
+  const queue = [{ id: 'q', text: 'Queued text' }];
+  for (const patch of [
+    { ask: { requestId: 'ask', question: 'Choose', choices: ['A'] } },
+    { planRequest: { requestId: 'plan', summary: 'Plan' } },
+    { elicitation: { requestId: 'elicit', message: 'Confirm' } },
+  ]) {
+    const html = render({ queue, ...patch });
+    const execution = html.slice(html.indexOf('<section class="chat-execution"'));
+    assert.match(execution, /停止并清空队列/);
+    assert.match(execution, /打断并处理队列/);
+    assert.match(execution, /Queued text/);
+    assert.doesNotMatch(execution, /class="chat-ask-choice"/);
+  }
+});
+
+test('idle and read-only views do not reserve empty dock regions', () => {
+  assert.doesNotMatch(render({ status: 'idle' }), /class="chat-dock"|class="chat-execution"/);
+  const idleQuestion = render({ status: 'idle', ask: { requestId: 'ask', question: 'Question' } });
+  assert.match(idleQuestion, /class="chat-decisions"/);
+  assert.doesNotMatch(idleQuestion, /class="chat-execution"/);
 });
 
 test('queue text has a keyboard-readable expansion separate from its removal action', () => {

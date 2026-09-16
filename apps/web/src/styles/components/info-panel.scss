@@ -150,7 +150,7 @@
 }
 .copy-value-text, .copy-value-feedback { grid-area: 1 / 1; }
 .copy-value-text[aria-hidden='true'] { visibility: hidden; }
-.copy-value-feedback { align-self: center; font-family: var(--font-family, inherit); }
+.copy-value-feedback { align-self: center; justify-self: center; font-family: var(--font-family, inherit); }
 .session-resume {
   display: flex; flex-direction: column; align-items: center; gap: 0.8rem;
   margin: 0.75rem 0; padding: 1.25rem 1rem;

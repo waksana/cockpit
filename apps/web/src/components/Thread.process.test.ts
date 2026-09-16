@@ -29,7 +29,7 @@ test('older overview summarizes consecutive items and retains failures without m
   assert.match(html, /3 次工具调用 · 1 次思考/);
   assert.match(html, /1 项失败/);
   assert.match(html, /1 项状态未知/);
-  assert.match(html, /<time dateTime="1970-01-01T00:00:01.000Z">/);
+  assert.match(html, /<time dateTime="1970-01-01T00:00:01.000Z" title="[^"]+" aria-label="[^"]+">/);
   assert.match(html, /class="message-process-content" hidden=""/);
   assert.doesNotMatch(html, /Native output|Exact error output|Recorded reasoning|tool-toggle|耗时/);
   const contentId = html.match(/aria-controls="([^"]+)"/)?.[1];

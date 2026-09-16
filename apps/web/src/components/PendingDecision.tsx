@@ -16,8 +16,10 @@ function PendingDecision({ label, title, icon, pending, children, hint, classNam
 }) {
   return <div className={`chat-ask chat-pending ${className}`.trim()} role="group" aria-label={label} aria-busy={pending}>
     <div className="chat-pending-head">{icon}{title}</div>
-    {children}
-    {hint && <div className="chat-pending-hint" role="status">{hint}</div>}
+    <div className="chat-pending-body">
+      {children}
+      {hint && <div className="chat-pending-hint" role="status">{hint}</div>}
+    </div>
   </div>;
 }
 

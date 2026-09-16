@@ -40,6 +40,7 @@ export function Lab() {
   const [moreOpen, setMoreOpen] = useState(false);
   const draft = getSessionDraft(session.sessionId);
   const compact = query.get('compact') === '1';
+  const narrow = query.get('pane') === 'narrow';
 
   useEffect(() => () => { generation.current++; pending.current.splice(0).forEach(resolve => resolve()); }, []);
 
@@ -51,7 +52,7 @@ export function Lab() {
     setScenario(value);
     ordered.current = null;
     setSession(fixtureSession(value));
-    history.replaceState(null, '', `/chat-lab.html?scene=${value}${compact ? '&compact=1' : ''}`);
+    history.replaceState(null, '', `/chat-lab.html?scene=${value}${compact ? '&compact=1' : ''}${narrow ? '&pane=narrow' : ''}`);
     setReceipt(`场景：${value}。操作不会发送到后端。`);
   }
   function orderedAction(action: 'thought' | 'body' | 'tool' | 'older' | 'duplicate' | 'reconnect' | 'cold' | 'streamStep') {
@@ -131,7 +132,7 @@ export function Lab() {
     </header>
     <output className="lab-receipt" aria-live="polite">{receipt}</output>
     </details>
-    <div className="lab-stage">
+    <div className="lab-stage" data-narrow={narrow || undefined}>
       <ChatHeader title={`${session.title} · 长标题与会话入口边界`} modelLabel="Synthetic model · no native connection"
         moreRef={moreRef} moreOpen={moreOpen}
         onBack={() => setReceipt('返回入口回调（导航不在此场景内执行）。')}
@@ -153,9 +154,13 @@ export function Lab() {
         })}
         onRespondElicitation={(id, answer) => action(`${id} / ${answer}`, () => setSession(value => ({ ...value, elicitation: null })))}
         onRemoveQueued={id => { setReceipt(`移除队列项：${id}`); setSession(value => ({ ...value, queue: value.queue?.filter(q => q.id !== id) })); }}
-        onCancel={() => { setReceipt('停止回调：清空队列；没有中断任何真实工作。'); setSession(value => ({ ...value, status: 'idle', queue: [] })); append('本次执行已取消（合成记录）。', 'system'); }}
+        onCancel={() => { setReceipt('停止回调：清空队列；没有中断任何真实工作。'); setSession(value => ({
+          ...value, status: 'idle', queue: [], ask: null, planRequest: null, elicitation: null,
+        })); append('本次执行已取消（合成记录）。', 'system'); }}
         onInterrupt={async () => {
-          await action('打断并保留队列', () => setSession(value => ({ ...value, status: 'idle' })));
+          await action('打断并保留队列', () => setSession(value => ({
+            ...value, status: 'idle', ask: null, planRequest: null, elicitation: null,
+          })));
           return { ok: true, interrupted: true };
         }}
       />

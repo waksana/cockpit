@@ -93,4 +93,5 @@ test('resume groups its message and centered action in a single notice; copying 
   assert.match(css, /\.session-resume-message \{[^}]*margin: 0;/);
   assert.match(css, /\.copy-value-text, \.copy-value-feedback \{[^}]*grid-area: 1\/1;/);
   assert.match(css, /\.copy-value-text\[aria-hidden=true\] \{[^}]*visibility: hidden;/);
+  assert.match(css, /\.copy-value-feedback \{[^}]*align-self: center;[^}]*justify-self: center;/);
 });

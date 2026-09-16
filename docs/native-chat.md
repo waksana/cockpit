@@ -159,23 +159,101 @@ A subsequent tool, assistant body or user message closes its automatic selection
 Explicit user choices take priority, including closing the latest item. These
 choices are local to the mounted session view; older-page extension preserves
 the group's mounted identity. They are not a second native state or history store.
-The transcript uses no group divider lines or extra inter-group gaps. It retains
-internal text/button spacing, original timestamps, keyboard focus and local
-code/tool copying.
+Transcript spacing is derived once per visible boundary: 8px between related
+speech rows, 12px between process and speech, and 16px when the speaker changes.
+User timestamps sit 4px below their bubble. Empty events create no spacing;
+date separators own their boundary. Prose rhythm and compact process-header
+geometry remain distinct from those boundaries. There are no group divider lines, timestamp-source changes or
+additional scroll-position writers.
 Activity disclosure keeps its header height and icon slots fixed. Long tool
 titles do not wrap on expansion; clipped fields wrap only in the details below.
-Process items share one text column without accumulated nesting indents or
-progressively smaller text. Initial history loading is a pane-level status
+Process headers share one text column. Expanded tool and thought details share
+a single 24px inset, without accumulated nesting indents or progressively smaller
+text. Markdown's first/last blocks have no outside margins, including class-based
+paragraphs used by module renderers; the bubble's own padding is unchanged.
+Initial history loading is a pane-level status
 outside the measured rows; older-page refresh status stays inline.
 Right-clicking chat content uses the browser's native context menu, not a custom
 message-copy menu. Code and tool-detail copy buttons remain available.
 
-Pending questions, plans and tool confirmations share the execution area above
-the composer. A pending decision replaces the generic execution label, not the
-other native requests or the queue. Composer hints identify whether text answers
-a question, supersedes a pending plan, or joins the queue. Queue items can be
-expanded to read their full text independently of their remove action; this does
-not add editing, reordering or a new steering mode.
+Pending questions, plans and tool confirmations occupy their own framed cards
+above a separate compact execution/queue panel. Both share a bounded dock above
+the composer, with 8px between regions. Long decisions and queue contents remain
+scrollable rather than overlapping the input. Execution status and available
+actions use the same panel with or without a decision; a pending question does
+not hide Stop. Stop retains its native queue-clearing behavior and stays disabled
+while disconnected, closing, cancelling or another protected operation is active.
+There is no queue-count heading or repeated composer explanation. The input
+placeholder and submit label identify the active operation; muted placeholder
+text remains distinct from entered text, including on focus. Existing attachment
+and unconfirmed-send notices remain explicit. Queue items can be expanded to read
+their full text independently of removal; there is no editing, reordering or new
+steering mode.
+
+### Chat layout and typography
+
+`styles/components/chat-design.scss` defines Chat-local layout, typography,
+relationship and inset roles, without changing the global theme or font ladder.
+Type expresses importance rather than shrinking everything to fit:
+
+| Role | Treatment |
+| --- | --- |
+| Main content | 16px message prose, reasoning, questions and input. Prose uses 1.7 line height; decision text uses 1.6 and editable controls 1.5. |
+| Secondary content | 14px choices, plan summaries and the task prompt inside an agent card. The agent's actual response remains main content. |
+| Process and labels | 13px labels/code; native tool headers retain 28px rows and 20px line height. Code uses the existing system monospace stack. |
+| Metadata and compact queue | 12px; timestamps use an 18px line box and tabular numerals. Queue hit targets and density remain independent of the type size. |
+| Markdown hierarchy | At the main 16px size, headings use 24 / 20 / 18 / 16 / 14px; they scale with the local prose context rather than forcing page-sized headings into small cards. |
+
+User time stays 4px below the bubble, right-aligned. Assistant time stays at the
+start of its document group, left-aligned with the text and separated by 4px;
+it has no decorative badge. These use the same compact metadata treatment.
+Semantic `time` elements retain the native timestamp, with a full local
+date/time/timezone in their title and accessible label. Grouping and timestamp
+selection are unchanged; streaming does not create a separate moving time row.
+
+The decision dock, process groups and agent overviews use their own inline-size containers.
+A narrow Chat beside desktop settings therefore gets the same stacked choices
+and compact process/agent metadata as a phone, without reducing reading text.
+Neither agent message bodies, the composer nor module contributions gain containment, so their
+viewport-positioned UI and native ownership are not changed.
+
+Copy controls reserve their intrinsic confirmation-label width. Pending writes
+keep the current visible label instead of flashing through a progress label;
+busy state is exposed accessibly. Repeated copies retain the prior confirmation
+until the new outcome, and failures remain explicit. The native code renderer,
+copied text and focus target are not replaced. Session-ID confirmation is centered
+in the original value's space and remains visible without a restoration timer,
+matching code/tool copy feedback. A new value or fresh mount starts unconfirmed;
+old-value results cannot label new content copied.
+
+The role-based approach follows the published
+[Primer typography](https://primer.style/product/primitives/typography/) and
+[Fluent typography](https://fluent2.microsoft.design/typography) guidance;
+it does not import their fonts, palettes or product layouts.
+
+### Spacing ownership
+
+A boundary has one owner:
+
+| Relationship | Owner and rule |
+| --- | --- |
+| Reading column | 52rem maximum, responsive outer gutter (12px on narrow screens). Transcript scrollbar gutters are symmetric so the column stays centered with the dock and composer; classic scrollbars reserve extra space on both sides at constrained widths. |
+| Transcript / dock / composer | The Chat parent owns an 8px region gap. The transcript has a 16px top inset and no bottom padding; neither the dock nor input adds another outside gap. Missing regions reserve no space. |
+| Messages / process / speaker change | Visible row frames own 8 / 12 / 16px respectively. Metadata is separated by 4px. Empty history controls reserve no height. |
+| Message interior | User bubbles retain 0.65rem by 0.85rem padding. Paragraphs/lists use 0.65em rhythm; code, tables and quotes use 0.85em. Headings retain their typographic margins. First/last blocks have no outside margin. Text-to-attachment separation is 12px, absent for attachment-only messages. |
+| Expanded process details | Shared 24px inset, 4px after the header and 8px after details. Header dimensions and behavior do not change. |
+| Cards | Ordinary panel inset and content separation are 12px; compact execution panels use 8px inset and 4px row spacing. Controls use an 8px gap. Decision body typography is unchanged. |
+| Composer context | Notices, module-above contributions and native attachment fallback share one bounded, scrollable stack with 8px gaps. Children have no outside margins. An empty stack is hidden without unmounting module contributions. |
+| Input and safe area | Field inset is 8px by 12px; the send target remains 40px square. Only the bottom bar adds 4px plus the safe-area inset. The read-only footer owns the equivalent inset when there is no composer. |
+
+The host controls contribution placement, not a module's internal visual design.
+Active upload feedback stays with the module's attachment item; only revoked
+module recovery joins the host stack. The native fallback is omitted when an
+active module explicitly renders draft attachments, and attachment controls
+remain disabled during native submission.
+Adding/removing notices or attachments does not replace the editor or scoped
+module instances. No viewport-measurement controller, history reads or scrolling
+compensation is introduced by the spacing system.
 
 Persisted question replies show the original question above the answer in the
 user bubble, without an emoji or a duplicate option list. Association uses

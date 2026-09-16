@@ -20,7 +20,7 @@ import { toolStatusLabel } from '../lib/toolStatus';
 import { ActivityHeader } from './ActivityHeader';
 import { DisclosureChoices } from './DisclosureChoices';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
-import { groupTranscript, type TranscriptRow, type ProcessItem } from '../lib/transcriptRows';
+import { groupTranscript, transcriptGap, type TranscriptRow, type ProcessItem } from '../lib/transcriptRows';
 import { AskCard, PlanCard, ElicitationCard } from './PendingDecision';
 import { StateNotice } from './StateNotice';
 import { useClippedText } from '../lib/useClippedText';
@@ -83,7 +83,7 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
         </span>)}
         {thoughts.some(item => item.message.incomplete) && <span title="思考归属未确认"><Icon name="error" size={16} /></span>}
       </span>
-      <time dateTime={new Date(timestamp).toISOString()}>{time}</time>
+      <MessageTimestamp timestamp={timestamp} />
     </button></div>
     <div id={contentId} className="message-process-content" hidden={!open} data-child-history>
       {open && titleClipped && <div className="process-expanded-summary">{title}</div>}
@@ -102,6 +102,11 @@ function clock(ts: number): string {
   const d = new Date(ts);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
+const MessageTimestamp = memo(function MessageTimestamp({ timestamp, className }: { timestamp: number; className?: string }) {
+  const date = new Date(timestamp);
+  const full = date.toLocaleString('zh-CN', { hour12: false, timeZoneName: 'short' });
+  return <time className={className} dateTime={date.toISOString()} title={full} aria-label={full}>{clock(timestamp)}</time>;
+});
 function sameDay(a: number, b: number): boolean {
   const x = new Date(a), y = new Date(b);
   return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
@@ -130,15 +135,17 @@ function SubagentCard({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
   }[sa.status] ?? '未知';
   return (
     <div className="subagent-card" data-status={sa.status}>
-      <button type="button" className="subagent-head rp" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span className="subagent-ico"><Icon name="newchat" size={18} /></span>
-        <span className="subagent-name">{sa.displayName}</span>
-        <span className="subagent-status" title="根据已加载的子代理事件记录，不代表当前仍在运行或任务目标已完成。">
-          记录：{status}{!connected && ' · 待同步'}
-        </span>
-        <span className="subagent-chevron"><Icon name={open ? 'up' : 'down'} size={14} /></span>
-      </button>
-      {sa.description && !open && <div className="subagent-desc">{sa.description}</div>}
+      <div className="subagent-overview">
+        <button type="button" className="subagent-head rp" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          <span className="subagent-ico"><Icon name="newchat" size={18} /></span>
+          <span className="subagent-name">{sa.displayName}</span>
+          <span className="subagent-status" title="根据已加载的子代理事件记录，不代表当前仍在运行或任务目标已完成。">
+            记录：{status}{!connected && ' · 待同步'}
+          </span>
+          <span className="subagent-chevron"><Icon name={open ? 'up' : 'down'} size={14} /></span>
+        </button>
+        {sa.description && !open && <div className="subagent-desc">{sa.description}</div>}
+      </div>
       {open && <SubagentDetails key={JSON.stringify([sessionId, sa.toolCallId])} m={m} sessionId={sessionId} />}
     </div>
   );
@@ -184,7 +191,7 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
 // One rendered message. Per @waksana's doctrine:
 //  - user messages are right-aligned bubbles, time just outside, no label;
 //  - assistant replies are NOT bubbles — they read as a full-width document,
-//    with a light byline (icon + time) shown once per assistant group;
+//    with a quiet timestamp shown once per assistant group;
 //  - system messages are a quiet centered note.
 const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }: { m: ChatMessage; sessionId: string; showByline: boolean; nested?: boolean }) {
   const anchorId = nested ? JSON.stringify([sessionId, m.id]) : m.id;
@@ -205,7 +212,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
           <MessageContent message={m} />
         </div>
         <div className="user-message-meta">
-          <span className="message-time">{clock(m.timestamp)}</span>
+          <MessageTimestamp className="message-time" timestamp={m.timestamp} />
         </div>
       </div>
     );
@@ -223,8 +230,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
     <article className="message is-doc">
       {showByline && hasMessageContent(m) && (
         <header className="doc-byline">
-          <span className="doc-mark" aria-hidden="true"><Icon name="compose" size={15} /></span>
-          <span className="doc-time">{clock(m.timestamp)}</span>
+          <MessageTimestamp className="doc-time" timestamp={m.timestamp} />
         </header>
       )}
       {/* Date/byline removal on prepend must not move the reading anchor. */}
@@ -235,9 +241,10 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
   );
 });
 
-const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline, live, layout, nested }: {
+const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline, live, layout, nested, gap }: {
   m: ChatMessage; sessionId: string; date?: string; showByline: boolean; live: boolean;
   layout: ReturnType<typeof createMessageLayout>; nested?: boolean;
+  gap: ReturnType<typeof transcriptGap>;
 }) {
   const frame = useRef<HTMLDivElement | null>(null);
   const skippable = canSkipMessageLayout(m, live);
@@ -250,6 +257,7 @@ const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline
   return (
     <div ref={frame} className="msg-group" data-message-frame={nested ? undefined : m.id} data-child-message-frame={nested ? m.id : undefined}
       data-window-item-id={m.id}
+      data-gap={gap}
       data-assistant-message={plainAssistant && !empty || undefined} data-empty={empty || undefined}>
       {date && !empty && <div className="date-separator" aria-hidden="true">{date}</div>}
       <MessageRow m={m} sessionId={sessionId} showByline={showByline} nested={nested} />
@@ -277,8 +285,10 @@ const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionI
     const previous = rows[i - 1] && firstItem(rows[i - 1]);
     const newDay = !nested && (!previous || !sameDay(previous.timestamp, m.timestamp));
     const date = newDay ? dateLabel(m.timestamp, today) : undefined;
+    const gap = newDay ? 'none' : transcriptGap(rows[i - 1], row);
     if (row.kind === 'process') return <div key={row.key} className="msg-group"
       data-window-item-id={m.id}
+      data-gap={gap}
       data-message-frame={nested ? undefined : row.key} data-child-message-frame={nested ? row.key : undefined}>
       {date && <div className="date-separator" aria-hidden="true">{date}</div>}
       <MessageProcess items={row.items} identity={row.key} sessionId={sessionId}
@@ -286,7 +296,7 @@ const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionI
     </div>;
     return (
       <MessageGroup key={m.id} m={m} sessionId={sessionId}
-        date={date} nested={nested}
+        date={date} nested={nested} gap={gap}
         showByline={m.role === 'assistant' && (newDay || previous?.role !== 'assistant')}
         live={m.role === 'assistant' && m.id === liveId} layout={layout} />
     );
@@ -320,15 +330,17 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     && !session.loading && !session.closing && !session.cancelling && !session.compacting
     && session.nativeProcessing !== false;
   const queueCount = session.queue?.length ?? 0;
-  const showStop = !readOnly && session.status === 'running' && !session.compacting && !session.ask;
+  const showStop = !readOnly && session.status === 'running' && !session.compacting;
+  const stopDisabled = !connected || !session.loaded || session.loading || session.closing
+    || session.cancelling || !!session.activeOperations || interruptAction.busy || !onCancel;
   const showInterrupt = !readOnly && queueCount > 0 && canInterrupt;
   const interruptResult = readOnly ? null : interruptAction.error
     ? `打断未确认：${interruptAction.error}。请核对会话状态，不要直接重试。`
     : interruptNotice?.sessionId === session.sessionId ? interruptNotice.text : null;
-  const executionLabel = session.compacting ? '正在压缩上下文…'
+  const executionLabel = session.cancelling ? '正在停止…' : session.compacting ? '正在压缩上下文…'
     : session.ask ? '等待你的回答' : session.planRequest ? '等待确认计划'
       : session.elicitation ? '等待工具确认' : session.status === 'running'
-        ? session.cancelling ? '正在停止…' : session.intent || '执行中…' : queueCount > 0 ? '排队中的消息' : '执行结果';
+        ? session.intent || '执行中…' : queueCount > 0 ? '等待处理' : '执行结果';
   const draft = useMemo(() => getSessionDraft(session.sessionId), [session.sessionId]);
   const { pending: actionPending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -425,11 +437,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   const ask = session.ask;
   const planRequest = session.planRequest;
   const hasPendingDecision = !readOnly && !!(ask || planRequest || session.elicitation);
-  const composerHint = ask ? ask.allowFreeform === false ? '请选择上方选项，当前问题不接受自由输入。'
-    : ask.choices?.length ? '输入内容将回答当前问题，也可以选择上方选项。' : '输入内容将回答当前问题。'
-    : planRequest ? '发送新指令将替代当前待确认计划，先执行新指令，再返回计划模式。'
-      : session.elicitation ? '请使用上方按钮回应工具确认，普通消息不会代替确认。'
-        : undefined;
+  const hasExecution = session.compacting || session.status === 'running' || (!readOnly && (queueCount > 0 || !!interruptResult));
   const runInView = useCallback((send: () => Promise<boolean>): Promise<boolean> => (
     acknowledgeInView(actionScopeRef.current, send, {
       scrollRevision: () => scrollOwnerRef.current?.revision ?? 0,
@@ -514,8 +522,8 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
         )}
       </div>
 
-      {(hasPendingDecision || session.compacting || session.status === 'running' || (!readOnly && (queueCount > 0 || interruptResult))) && (
-        <section className="chat-execution" aria-label="当前交互与排队" data-pending={hasPendingDecision || undefined}>
+      {(hasPendingDecision || hasExecution) && (
+        <div className="chat-dock" data-pending={hasPendingDecision || undefined}>
           {hasPendingDecision && <div className="chat-decisions">
             {ask && <AskCard request={ask} pending={actionPending} onChoice={choice => { void handleChoice(choice); }} />}
             {planRequest && <PlanCard request={planRequest} pending={actionPending}
@@ -523,32 +531,32 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
             {session.elicitation && <ElicitationCard request={session.elicitation} pending={actionPending}
               onSelect={action => { void runAction(() => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
           </div>}
-          {(!hasPendingDecision || showStop || showInterrupt) && <div className="chat-execution-head">
-            {!hasPendingDecision && <span className="chat-execution-label" role="status" title={executionLabel}>{executionLabel}</span>}
-            {(showStop || showInterrupt) && <div className="chat-execution-actions" role="group" aria-label="执行操作">
-              {showInterrupt && <button type="button" className="chat-interrupt"
-                disabled={!interruptAction.connected || (!!session.activeOperations && !interruptAction.busy)}
-                aria-disabled={interruptAction.busy || undefined}
-                onClick={() => {
-                  let interrupted = false;
-                  void interruptAction.run(async () => {
-                    const result = await onInterrupt!();
-                    interrupted = result.interrupted;
-                  }, () => setInterruptNotice({ sessionId: session.sessionId, text: interrupted
-                    ? '已请求打断；队列由 Copilot 接着处理。'
-                    : '当前没有可打断的主回合；队列未改动。' }));
-                }}>{interruptAction.busy ? '正在请求…' : '打断并处理队列'}</button>}
-              {showStop && <button type="button" className="chat-typing-stop" disabled={session.cancelling || !onCancel} onClick={() => onCancel?.()}>
-                {session.cancelling ? '正在停止…' : queueCount > 0 ? '停止并清空队列' : '停止'}
-              </button>}
-            </div>}
-          </div>}
-          {interruptResult && <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
-            {interruptResult}
-          </p>}
-          {!readOnly && queueCount > 0 && <>
-            <div className="chat-queue-label">排队消息 · {queueCount}</div>
-            <div className="chat-queue" aria-label="排队中的消息">
+          {hasExecution && <section className="chat-execution" aria-label="执行与排队">
+            <div className="chat-execution-head">
+              <span className="chat-execution-label" role="status" title={executionLabel}>{executionLabel}</span>
+              {(showStop || showInterrupt) && <div className="chat-execution-actions" role="group" aria-label="执行操作">
+                {showInterrupt && <button type="button" className="chat-interrupt"
+                  disabled={!interruptAction.connected || (!!session.activeOperations && !interruptAction.busy)}
+                  aria-disabled={interruptAction.busy || undefined}
+                  onClick={() => {
+                    let interrupted = false;
+                    void interruptAction.run(async () => {
+                      const result = await onInterrupt!();
+                      interrupted = result.interrupted;
+                    }, () => setInterruptNotice({ sessionId: session.sessionId, text: interrupted
+                      ? '已请求打断；队列由 Copilot 接着处理。'
+                      : '当前没有可打断的主回合；队列未改动。' }));
+                  }}>{interruptAction.busy ? '正在请求…' : '打断并处理队列'}</button>}
+                {showStop && <button type="button" className="chat-typing-stop" disabled={stopDisabled}
+                  onClick={() => { if (!stopDisabled) onCancel?.(); }}>
+                  {session.cancelling ? '正在停止…' : queueCount > 0 ? '停止并清空队列' : '停止'}
+                </button>}
+              </div>}
+            </div>
+            {interruptResult && <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
+              {interruptResult}
+            </p>}
+            {!readOnly && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
               {session.queue?.map((q) => (
                 <div key={q.id} className="chat-queue-item">
                   <details className="chat-queue-entry">
@@ -557,9 +565,9 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
                   <button type="button" className="chat-queue-remove" aria-label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)}><Icon name="close" size={16} /></button>
                 </div>
               ))}
-            </div>
-          </>}
-        </section>
+            </div>}
+          </section>}
+        </div>
       )}
 
       {readOnly ? (
@@ -568,7 +576,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
         <Composer
           key={session.sessionId}
           busy={session.status === 'running' && !ask && !planRequest}
-          hint={composerHint}
           submitLabel={ask ? '提交回答' : planRequest ? '发送新指令' : undefined}
           disabled={!!session.compacting && session.status !== 'running'}
           placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : session.status === 'running' ? '加入队列' : '输入消息…'))}
