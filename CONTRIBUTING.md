@@ -14,6 +14,9 @@ substantial behavior or architecture changes in an issue before implementing the
 - The [development guide](docs/DEVELOPMENT.md) owns engineering commands and
   workflow details. The [testing guide](docs/cockpit-testing.md) owns test selection
   and isolation. Link to these guides rather than duplicating their contracts.
+- Host and module UI changes must follow the
+  [interaction semantics and structural correctness requirement](docs/DEVELOPMENT.md#interaction-semantics-and-structural-correctness):
+  behavior and underlying structure must be coherent, not just visually correct.
 
 ## A small pull request
 
