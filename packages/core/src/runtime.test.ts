@@ -100,16 +100,31 @@ test('explicit stdio and official approveAll are enforced at both create and res
   assert.ok(f.trace.indexOf(`close:${a.sessionId}`) < f.trace.indexOf(`detach:${a.sessionId}`));
 });
 
-test('native runtime state is confined to copilot/ beneath the configured host root', async t => {
+test('COCKPIT_HOME never overrides native client or session directories', async t => {
   const previous = process.env.COCKPIT_HOME;
   process.env.COCKPIT_HOME = `${process.cwd()}/.synthetic-runtime-host`;
   t.after(() => { if (previous === undefined) delete process.env.COCKPIT_HOME; else process.env.COCKPIT_HOME = previous; });
   const f = fixture();
   await f.runtime.start();
-  assert.equal(f.connections[0]?.baseDirectory, `${process.cwd()}/.synthetic-runtime-host/copilot`);
-  const sdk = await f.runtime.createSession({ sessionId: 'synthetic-root-session' });
-  assert.equal(f.configs[0]?.configDirectory, `${process.cwd()}/.synthetic-runtime-host/copilot`);
-  await f.runtime.closeSession(sdk);
+  assert.equal(Object.hasOwn(f.connections[0]!, 'baseDirectory'), false);
+  const created = await f.runtime.createSession({ sessionId: 'synthetic-root-session' });
+  const resumed = await f.runtime.resumeSession('synthetic-existing', {});
+  for (const config of f.configs) assert.equal(Object.hasOwn(config, 'configDirectory'), false);
+  await f.runtime.closeSession(created);
+  await f.runtime.closeSession(resumed);
+  await f.runtime.stop();
+});
+
+test('explicit SDK directory options remain available for isolated native fixtures', async () => {
+  const baseDirectory = `${process.cwd()}/.synthetic-native-home`;
+  const configDirectory = `${process.cwd()}/.synthetic-native-config`;
+  const f = fixture({ clientOptions: { baseDirectory }, sessionConfig: { configDirectory } });
+  const created = await f.runtime.createSession({});
+  const resumed = await f.runtime.resumeSession('isolated', {});
+  assert.equal(f.connections[0]?.baseDirectory, baseDirectory);
+  for (const config of f.configs) assert.equal(config.configDirectory, configDirectory);
+  await f.runtime.closeSession(created);
+  await f.runtime.closeSession(resumed);
   await f.runtime.stop();
 });
 
