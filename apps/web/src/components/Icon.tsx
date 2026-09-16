@@ -1,6 +1,10 @@
-// Shared icon vocabulary; refresh uses a plain circular arrow.
-
 import type { HTMLAttributes } from 'react';
+import {
+  ArrowLeft, ArrowUp, Check, ChevronDown, ChevronRight, ChevronUp, Circle,
+  CircleAlert, CircleCheck, CircleHelp, ClipboardList, Clock, Copy, File,
+  Folder, Lightbulb, Link, LoaderCircle, Menu, MessageSquare, MoreVertical, Play, RotateCw,
+  Search, Square, SquarePen, Trash2, X,
+} from 'lucide-react';
 
 export type IconName =
   | 'search'
@@ -23,28 +27,37 @@ export type IconName =
   | 'file'
   | 'folder'
   | 'mode_plan'
-  | 'radiooff';
+  | 'radiooff'
+  | 'copy'
+  | 'stop'
+  | 'clock'
+  | 'unknown'
+  | 'chevron_right'
+  | 'play'
+  | 'success'
+  | 'loading';
+
+const icons = {
+  search: Search, compose: SquarePen, newchat: MessageSquare, delete: Trash2,
+  back: ArrowLeft, close: X, check: Check, arrow_up: ArrowUp, more: MoreVertical,
+  down: ChevronDown, up: ChevronUp, reload: RotateCw, sending: Clock,
+  error: CircleAlert, menu: Menu, skills: Lightbulb, mcp: Link, file: File,
+  folder: Folder, mode_plan: ClipboardList, radiooff: Circle, copy: Copy,
+  stop: Square, clock: Clock, unknown: CircleHelp, chevron_right: ChevronRight,
+  play: Play, success: CircleCheck, loading: LoaderCircle,
+} satisfies Record<IconName, typeof Search>;
 
 interface IconProps extends HTMLAttributes<HTMLSpanElement> {
   name: IconName;
   size?: number;
 }
 
-export function Icon({ name, size = 24, style, ...rest }: IconProps) {
-  if (name === 'reload') return <span className="refresh-icon" data-icon={name} aria-hidden="true"
-    style={{ width: size, height: size, ...style }} {...rest}>
-    <svg width="100%" height="100%" viewBox="0 0 24 24" fill="none" focusable="false">
-      <path d="M20 10a8 8 0 1 0-2.35 7.65M20 4v6h-6"
-        stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  </span>;
+export function Icon({ name, size = 24, className = '', style, ...rest }: IconProps) {
+  const Glyph = icons[name];
   return (
-    <span
-      className="tgico"
-      data-icon={name}
-      aria-hidden="true"
-      style={{ fontSize: size, ...style }}
-      {...rest}
-    />
+    <span {...rest} className={`ck-icon ${className}`.trim()} data-icon={name}
+      aria-hidden="true" style={{ width: size, height: size, ...style }}>
+      <Glyph width="100%" height="100%" aria-hidden="true" focusable="false" />
+    </span>
   );
 }

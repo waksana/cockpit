@@ -50,7 +50,7 @@ for (const section of ['mcp', 'skills']) {
 
 test('desktop master and narrow detail return one level without duplicate visible controls', () => {
   assert.match(shell, /up\(item === null \? '\/' : `\/\$\{section\}`\)/);
-  assert.match(shell, /className="chat-back btn-icon rp lg:hidden".*onClick=\{\(\) => up\(\)\}/);
+  assert.match(shell, /className="chat-back ck-icon-button rp lg:hidden".*onClick=\{\(\) => up\(\)\}/);
   assert.match(shell, /if \(item === null\) backRef.current\?\.focus\(\)/);
   assert.match(shell, /useLayoutEffect\(\(\) => \{ titleRef.current\?\.focus\(\); \}, \[item\]\)/);
 });
@@ -65,8 +65,8 @@ test('global skill toggles render only authoritative booleans and never assume u
 });
 
 test('both global toggles refresh authoritative detail and list after success or failure', () => {
-  assert.match(source, /try \{ await mcpSetDefault\(name, !on\); \} finally \{ onChanged\(\); \}/);
-  assert.match(source, /try \{ await skillsSetGlobal\(name, next\); \} finally \{ onChanged\(\); \}/);
+  assert.match(source, /run\(\(\) => mcpSetDefault\(name, !on\), undefined, onChanged\)/);
+  assert.match(source, /action.run\(\(\) => skillsSetGlobal\(name, next\), undefined, onChanged\)/);
   assert.match(source, /<McpList catalog=\{mcpCatalog\}/);
   assert.match(source, /<SkillsList revision=\{refreshNonce\}/);
   assert.match(source, /<McpDetail catalog=\{mcpCatalog\} name=\{item\} onChanged=\{refresh\}/);

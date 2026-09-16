@@ -7,26 +7,33 @@ import type { MessageOrigin } from '@cockpit/module-api';
 import { ORIGINAL_MARKDOWN_TARGET, originalMarkdownTarget, remarkOriginalMarkdownTargets } from '../lib/messageContent';
 
 const OriginContext = createContext<MessageOrigin | undefined>(undefined);
+const LinkContext = createContext(false);
 function labelOf(children: ReactNode): string {
   if (typeof children === 'string' || typeof children === 'number') return String(children);
   if (Array.isArray(children)) return children.map(labelOf).join('');
-  if (children && typeof children === 'object' && 'props' in children) return labelOf((children.props as { children?: ReactNode }).children);
+  if (children && typeof children === 'object' && 'props' in children) {
+    const props = children.props as { children?: ReactNode; alt?: string };
+    return props.alt ?? labelOf(props.children);
+  }
   return '';
 }
 const MarkdownLink: Components['a'] = ({ node, href, children, ...props }) => {
   const origin = useContext(OriginContext);
   const { [ORIGINAL_MARKDOWN_TARGET]: _original, ...linkProps } = props as typeof props & { [ORIGINAL_MARKDOWN_TARGET]?: string };
-  const fallback = <a {...linkProps} href={href ? defaultUrlTransform(href) : undefined} target="_blank" rel="noopener noreferrer">{children}</a>;
+  const fallback = <LinkContext.Provider value={true}>
+    <a {...linkProps} href={href ? defaultUrlTransform(href) : undefined} target="_blank" rel="noopener noreferrer">{children}</a>
+  </LinkContext.Provider>;
   return origin ? <ModuleRenderNode node={{ kind: 'link', origin, target: originalMarkdownTarget(node, href), label: labelOf(children) }} fallback={fallback} /> : fallback;
 };
 // Preserve unsupported Markdown media as text; fetching and previewing it is
 // not part of the native text renderer.
 const MarkdownMedia: Components['img'] = ({ node, src, alt }) => {
   const origin = useContext(OriginContext);
+  const insideLink = useContext(LinkContext);
   const source = typeof src === 'string' ? src : undefined;
   const target = originalMarkdownTarget(node, source);
   const fallback = <span>{`![${alt ?? ''}](${source ?? ''})`}</span>;
-  return origin ? <ModuleRenderNode node={{ kind: 'image', origin, target, label: alt ?? '' }} fallback={fallback} /> : fallback;
+  return origin && !insideLink ? <ModuleRenderNode node={{ kind: 'image', origin, target, label: alt ?? '' }} fallback={fallback} /> : fallback;
 };
 // Module cards may be block elements, including inside ordinary Markdown paragraphs.
 const MarkdownParagraph: Components['p'] = ({ node: _node, ...props }) => <div className="markdown-paragraph" {...props} />;
@@ -46,6 +53,7 @@ const MarkdownTable: Components['table'] = ({ node: _node, ...props }) => {
   const table = useRef<HTMLTableElement | null>(null);
   return <div className="chat-table-scroll" role="region" aria-label="表格（可横向滚动）" tabIndex={0}
     onKeyDown={event => {
+      if (event.target !== event.currentTarget) return;
       if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
       const element = table.current;
       if (element && element.scrollWidth > element.clientWidth) {

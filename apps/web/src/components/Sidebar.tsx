@@ -52,18 +52,17 @@ function SessionRow({ s, active, actions }: {
   const { mono, hue } = cwdChip(s.cwd);
 
   return (
-    <li
-      className={`chatlist-chat${active ? ' active' : ''}${s.loaded ? '' : ' is-unloaded'}`}
-      role="button"
+    <li><button
+      type="button"
+      className={`chatlist-chat ck-button${active ? ' active' : ''}${s.loaded ? '' : ' is-unloaded'}`}
       data-session-id={s.sessionId}
       tabIndex={0}
       aria-current={active ? true : undefined}
       aria-haspopup="menu"
       onClick={(e) => { if (e.detail === 0 || !firedRef.current) actions.onSelect(); }}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
+        if ((e.key === 'Enter' || e.key === ' ') && e.repeat) {
           e.preventDefault();
-          if (!e.repeat) actions.onSelect();
         } else if (e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) {
           e.preventDefault();
           const rect = e.currentTarget.getBoundingClientRect();
@@ -84,7 +83,7 @@ function SessionRow({ s, active, actions }: {
         {statusText && <span className="dialog-status" data-tone={s.status}>{statusText}</span>}
         {(s.ask || s.planRequest || s.elicitation) && <span className="dialog-status" title="需要选择" aria-label="需要选择">选</span>}
       </span>
-    </li>
+    </button></li>
   );
 }
 
@@ -130,8 +129,9 @@ export function Sidebar(props: SidebarProps) {
     focusInitialized.current = true;
   }, [menu, menuItems]);
 
-  const closeMenu = () => {
+  const closeMenu = (restoreFocus = true) => {
     setMenu(null);
+    if (!restoreFocus) return;
     const trigger = menu?.trigger;
     const row = trigger?.isConnected ? trigger : Array.from(
       listRef.current?.querySelectorAll<HTMLElement>('[data-session-id]') ?? [],

@@ -17,7 +17,7 @@
 
 // ── Input-search (pill, leading icon ↔ spinner on loading, clear) ───────────
 .input-search {
-  --height: 2.5rem;
+  --height: var(--ck-control-size);
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
@@ -43,6 +43,7 @@
     width: 100%;
     height: var(--height);
     padding: 0 2.5rem;
+    padding-inline-end: calc(var(--ck-control-size) + 4px);
     border: none;
     border-radius: calc(var(--height) / 2);
     background-color: var(--input-search-background-color);
@@ -56,14 +57,8 @@
   }
   &-clear {
     position: absolute;
-    inset-inline-end: 0.45rem;
-    width: 1.75rem; height: 1.75rem;
-    border: none; background: transparent; cursor: pointer;
-    color: var(--secondary-text-color);
-    border-radius: 50%;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 1.1rem;
-    @media (hover: hover) { &:hover { background-color: var(--ripple-color); } }
+    inset-inline-end: 0;
+    width: var(--ck-control-size); height: var(--ck-control-size);
   }
 }
 
@@ -80,6 +75,8 @@
 // One session row — tweb .row 3-col grid (avatar | title/subtitle | time/meta).
 .chatlist-chat {
   position: relative;
+  width: 100%;
+  text-align: start;
   display: grid;
   grid-template-columns: 3.375rem 1fr auto;
   grid-template-rows: auto auto;

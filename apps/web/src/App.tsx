@@ -134,11 +134,14 @@ function Workspace() {
         {connState === 'open' ? (
           <span className="input-search-icon"><Icon name="search" size={20} /></span>
         ) : (
-          <span className="spinner" aria-label="连接中" />
+          <>
+            <Icon name="loading" className="spinner" size={16} />
+            <span className="chat-sr-only" role="status">连接中</span>
+          </>
         )}
         <input
           type="search"
-          className="input-search-input"
+          className="input-search-input ck-input"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={connState === 'open' ? '搜索会话或目录…' : '正在连接服务器…'}
@@ -148,8 +151,8 @@ function Workspace() {
           aria-label="搜索会话"
         />
         {query && (
-          <button type="button" className="input-search-clear" aria-label="清除" onClick={() => setQuery('')}>
-            <Icon name="close" size={18} />
+          <button type="button" className="input-search-clear ck-icon-button" aria-label="清除" onClick={() => setQuery('')}>
+            <Icon name="close" size={20} />
           </button>
         )}
       </div>
@@ -217,7 +220,7 @@ function Workspace() {
           <div className="detail-empty">
             <div>
               <p>这个会话不存在,或已被删除。</p>
-              <button type="button" className="dialog-btn primary rp" onClick={() => navigate('/')}>返回列表</button>
+              <button type="button" className="dialog-btn ck-button ck-primary primary rp" onClick={() => navigate('/')}>返回列表</button>
             </div>
           </div>
         ) : (
@@ -240,7 +243,7 @@ function Workspace() {
         <Suspense fallback={
           <DirectoryModal onCancel={() => setDirPicker(false)}>
               <StateNotice kind="loading" placement="pane">加载目录选择器…</StateNotice>
-              <button type="button" className="dialog-btn rp" onClick={() => setDirPicker(false)}>取消</button>
+              <button type="button" className="dialog-btn ck-button rp" onClick={() => setDirPicker(false)}>取消</button>
           </DirectoryModal>
         }>
           <DirPicker key={location.key} onCreate={newSession}
@@ -287,7 +290,7 @@ export default function App() {
         <Route key={panel} path={`/session/:sessionId/${panel}`} element={<Workspace />} />
       ))}
       <Route path="*" element={<div className="detail-empty">
-        <div><p>页面不存在。</p><Link className="dialog-btn primary rp" to="/">返回列表</Link></div>
+        <div><p>页面不存在。</p><Link className="dialog-btn ck-button ck-primary primary rp" to="/">返回列表</Link></div>
       </div>} />
       </Routes>
   );

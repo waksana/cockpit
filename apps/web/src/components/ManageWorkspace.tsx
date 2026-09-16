@@ -17,11 +17,12 @@ function NavRow({ name, sub, badge, active, onClick }: {
   name: string; sub?: string; badge?: ReactNode; active: boolean; onClick: () => void;
 }) {
   return (
-    <button type="button" className={`manage-row is-clickable rp${active ? ' is-active' : ''}`} onClick={onClick}>
-      <div className="manage-row-main">
-        <div className="manage-row-name">{name}{badge}</div>
-        {sub && <div className="manage-row-sub">{sub}</div>}
-      </div>
+    <button type="button" className={`manage-row ck-button is-clickable rp${active ? ' is-active' : ''}`}
+      aria-current={active ? 'page' : undefined} onClick={onClick}>
+      <span className="manage-row-main">
+        <span className="manage-row-name">{name}{badge}</span>
+        {sub && <span className="manage-row-sub ck-text-secondary">{sub}</span>}
+      </span>
     </button>
   );
 }
@@ -58,12 +59,9 @@ function McpDefault({ name, on, onChanged, disabled }: { name: string; on: boole
   const { run, busy, error } = useKeyedAction(`global:mcp:${name}`);
   return (
     <div className="manage-detail-line">
-      <button type="button" className={`switch${on ? ' is-on' : ''}`} role="switch"
+      <button type="button" className={`switch ck-button${on ? ' is-on' : ''}`} role="switch"
         aria-label="新会话默认开启" aria-checked={on} aria-busy={busy} disabled={disabled || connState !== 'open' || busy}
-        onClick={() => { void run(async () => {
-          try { await mcpSetDefault(name, !on); }
-          finally { onChanged(); }
-        }); }}>
+        onClick={() => { void run(() => mcpSetDefault(name, !on), undefined, onChanged); }}>
         <span className="switch-knob" />
       </button>{' '}新会话默认开启
       {busy && <StateNotice kind="loading">正在提交…</StateNotice>}
@@ -112,10 +110,7 @@ function SkillGlobalToggle({ name, enabled, disabled, onChanged }: {
   return (
     <div className="manage-detail-line">
       <Toggle label="全局默认启用" on={enabled} disabled={disabled || !action.connected || action.busy}
-        onChange={(next) => { void action.run(async () => {
-          try { await skillsSetGlobal(name, next); }
-          finally { onChanged(); }
-        }); }} />{' '}全局默认启用
+        onChange={(next) => { void action.run(() => skillsSetGlobal(name, next), undefined, onChanged); }} />{' '}全局默认启用
       {!disabled && <p className="manage-note">用于新建或卸载后重新加载的会话，不改变当前已加载会话。</p>}
       {action.busy && <StateNotice kind="loading">正在提交…</StateNotice>}
       {action.error && <div className="manage-note" role="alert">设置失败：{action.error}</div>}

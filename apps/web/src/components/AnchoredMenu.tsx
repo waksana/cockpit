@@ -52,9 +52,9 @@ export function AnchoredMenu({ triggerRef, items, onClose, align = 'right', labe
     }
   }, [visible, items]);
 
-  const close = () => {
+  const close = (restoreFocus = true) => {
     onClose();
-    triggerRef.current?.focus();
+    if (restoreFocus) triggerRef.current?.focus();
   };
   useMenuDismiss(close);
 

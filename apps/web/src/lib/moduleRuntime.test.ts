@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as React from 'react';
+import { createPortal } from 'react-dom';
 import type { ComposerContext, ModuleAsset, ModuleFrontend, ModuleFrontendContext, RenderNode } from '@cockpit/module-api';
 import { ModuleRuntime, validateModuleAsset } from './moduleRuntime';
 import { createSessionDrafts } from './textDraft';
@@ -46,6 +47,8 @@ test('bootstrap injects the actual React namespace and binds all requests to bac
   assert.equal(f.runtime.getSnapshot().length, 1);
   assert.equal(f.contexts[0].react, React);
   assert.equal(f.contexts[0].apiVersion, 1);
+  assert.equal(f.contexts[0].uiVersion, 1);
+  assert.equal(f.contexts[0].createPortal, createPortal);
   assert.deepEqual(f.imports, [`https://backend.invalid/prefix/_modules/assets/fixture/${digest}/entry.js`]);
   assert.equal(f.styles.length, 1);
   await f.contexts[0].request('/files?q=one', {

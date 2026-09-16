@@ -72,7 +72,8 @@ export function createKeyedAsync<T>(getConnection: () => ResourceConnection) {
       });
       return refresh.promise;
     },
-    async run(load: (signal: AbortSignal) => T | Promise<T>, onSuccess?: (data: T) => void, exclusive = false): Promise<boolean> {
+    async run(load: (signal: AbortSignal) => T | Promise<T>, onSuccess?: (data: T) => void, exclusive = false,
+      onSettled?: () => void): Promise<boolean> {
       const connection = getConnection();
       if (!active || connection.connState !== 'open') return false;
       if (exclusive && snapshot.pending && snapshot.generation === connection.connectionGeneration) return false;
@@ -96,6 +97,8 @@ export function createKeyedAsync<T>(getConnection: () => ResourceConnection) {
         if (!owns()) return false;
         publish({ ...snapshot, pending: false, error: resourceError(error), errorCause: error, generation });
         return false;
+      } finally {
+        if (owns()) onSettled?.();
       }
     },
   };

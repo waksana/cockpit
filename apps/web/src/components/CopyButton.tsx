@@ -33,13 +33,13 @@ export function CopyButton({ text, label = '复制', variant = 'button' }: {
   const result = pending ? '正在复制…' : state === 'copied' ? '已复制' : state === 'failed' ? '复制失败，请选择文字后复制' : '';
   const valueFeedback = state === 'copied' ? '已复制' : null;
   return <span className={variant === 'value' ? 'chat-copy copy-value' : 'chat-copy'}>
-    <button type="button" className={variant === 'value' ? 'copy-value-button' : 'chat-copy-button'} aria-label={label} title={label}
+    <button type="button" className={variant === 'value' ? 'copy-value-button ck-button' : 'chat-copy-button ck-button'} aria-label={label} title={label}
       aria-disabled={pending || undefined} aria-busy={pending || undefined} onClick={() => void copy()}>
       {variant === 'value' ? <>
         <span className="copy-value-text" aria-hidden={!!valueFeedback || undefined}>{text}</span>
         {valueFeedback && <span className="copy-value-feedback">{valueFeedback}</span>}
       </> : <>
-        <Icon name={state === 'copied' ? 'check' : 'file'} size={14} />
+        <Icon name={state === 'copied' ? 'check' : 'copy'} size={16} />
         <span className="chat-copy-label">
           <span className="chat-copy-label-size" aria-hidden="true">已复制</span>
           <span className="chat-copy-label-text">{state === 'copied' ? '已复制' : '复制'}</span>

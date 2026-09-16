@@ -82,7 +82,8 @@ test('sidebar is a single list and keeps unloaded rows focusable and selectable'
   ];
   const html = render(rows, { activeId: 'unloaded' });
   assert.deepEqual(titles(html), ['Session unloaded', 'Session older']);
-  assert.match(html, /class="chatlist-chat active is-unloaded" role="button" data-session-id="unloaded" tabindex="0" aria-current="true" aria-haspopup="menu"/);
+  assert.match(html, /<li><button type="button" class="chatlist-chat ck-button active is-unloaded" data-session-id="unloaded" tabindex="0" aria-current="true" aria-haspopup="menu"/);
+  assert.doesNotMatch(html, /<li[^>]*role="button"/);
   assert.equal((html.match(/aria-current="true"/g) ?? []).length, 1);
   assert.doesNotMatch(html, /chatlist-group-title|dialog-pinned|dialog-unread/);
 });

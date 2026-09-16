@@ -12,8 +12,8 @@ export function GlobalNavigation() {
     if (pathname === '/') triggerRef.current?.focus();
   }, [pathname]);
   return <>
-    <button ref={triggerRef} type="button" className="btn-icon rp sidebar-hamburger"
-      aria-label="全局导航" aria-expanded={open} onClick={() => setOpen(value => !value)}>
+    <button ref={triggerRef} type="button" className="ck-icon-button rp sidebar-hamburger"
+      aria-label="全局导航" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}>
       <Icon name="menu" size={24} />
     </button>
     {open && <AnchoredMenu triggerRef={triggerRef} align="left" items={[

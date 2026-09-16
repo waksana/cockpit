@@ -647,7 +647,7 @@ test('session ID copies its exact value and retains confirmation without a resto
   const copy = h.container.querySelector('[aria-label="复制 session ID"]');
   assert.ok(copy);
   assert.equal(copy.textContent, session.sessionId);
-  assert.equal(copy.querySelector('.tgico'), null, 'the ID itself is the target, not an extra copy glyph');
+  assert.equal(copy.querySelector('.ck-icon'), null, 'the ID itself is the target, not an extra copy icon');
   await h.event(copy, 'click');
   assert.deepEqual(copied, [session.sessionId]);
   assert.match(copy.textContent, /已复制/);

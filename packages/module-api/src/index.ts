@@ -118,8 +118,10 @@ export interface RenderNode {
 
 export interface ModuleFrontendContext {
   apiVersion: 1;
+  uiVersion: 1;
   moduleId: string;
   react: typeof React;
+  createPortal(children: React.ReactNode, container: Element | DocumentFragment): React.ReactPortal;
   apiBase: string;
   config: Readonly<Record<string, unknown>>;
   signal: AbortSignal;

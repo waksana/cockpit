@@ -116,6 +116,7 @@ export const marker = [Fixture.READY, typeof CopilotClient, protocolMarker];
     'consumer-runtime.json', 'service-delivery.json']) track(path, 'Must not ship');
   put(source, 'apps/server/src/untracked.ts', 'Must not ship untracked source');
   put(source, 'apps/web/dist/index.html', '<!doctype html><title>Synthetic Web</title>');
+  put(source, 'apps/web/dist/licenses/lucide.txt', 'Synthetic bundled icon license');
   put(source, 'apps/web/dist/assets/app.js', 'console.log("synthetic Web");');
   put(source, 'apps/web/dist/assets/app.test.mjs', 'Must not ship a first-party test');
   put(source, 'apps/mcp/dist/index.js', `
@@ -320,6 +321,7 @@ test('synthetic packaging inventories its complete closure and preserves depende
   }
   assert.ok(manifest.files.some(file => file.path.endsWith(wrapper) && file.mode === '0755'));
   assert.ok(paths.includes('apps/web/dist/assets/app.js'));
+  assert.ok(paths.includes('apps/web/dist/licenses/lucide.txt'));
   assert.ok(paths.includes('NOTICE.md'));
   assert.equal(paths.some(path => path.includes('untracked.ts') || path.endsWith('.modules.yaml') || path.endsWith('/lock.yaml')
     || path.endsWith('/.bin/build-shim')), false);
@@ -353,11 +355,12 @@ test('packaging rejects dirty source, the wrong commit, and unsafe or existing o
 });
 
 test('packaging fails explicitly on missing inputs and dependency failures without retaining partial output', async t => {
-  for (const failure of ['tracked', 'web', 'mcp', 'loader', 'native', 'sdk-version', 'deploy', 'dirty-during-deploy']) {
+  for (const failure of ['tracked', 'web', 'icon-license', 'mcp', 'loader', 'native', 'sdk-version', 'deploy', 'dirty-during-deploy']) {
     await t.test(failure, async t => {
       const f = await fixture(t);
       if (failure === 'tracked') f.tracked.delete('LICENSE');
       if (failure === 'web') await rm(join(f.source, 'apps/web/dist/index.html'));
+      if (failure === 'icon-license') await rm(join(f.source, 'apps/web/dist/licenses/lucide.txt'));
       if (failure === 'mcp') await writeFile(join(f.source, 'apps/mcp/dist/index.js'), '');
       if (failure === 'loader') f.state.missingLoader = true;
       if (failure === 'native') f.state.missingNative = true;

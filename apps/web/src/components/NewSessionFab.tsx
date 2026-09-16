@@ -11,12 +11,12 @@ export function NewSessionFab({ disabled, onOpen }: {
     <div className="fab-wrap">
       <button
         type="button"
-        className="btn-corner rp is-visible"
+        className="btn-corner ck-icon-button ck-primary rp is-visible"
         aria-label="新建会话"
         disabled={disabled}
         onClick={onOpen}
       >
-        <Icon name="compose" size={26} />
+        <Icon name="compose" size={24} />
       </button>
     </div>
   );

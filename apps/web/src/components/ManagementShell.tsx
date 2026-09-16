@@ -23,18 +23,18 @@ function MasterHeader({ section, item, onRefresh }: {
   }, [item]);
   return <>
     <PaneHeader
-      leading={<button ref={backRef} className="btn-icon rp" type="button"
+      leading={<button ref={backRef} className="ck-icon-button rp" type="button"
         aria-label={item === null ? '返回会话列表' : `返回${SECTION_TITLE[section]}列表`}
         onClick={() => up(item === null ? '/' : `/${section}`)}>
         <Icon name="back" size={24} />
       </button>}
-      title={<span className="manage-title">{SECTION_TITLE[section]}</span>}
-      actions={<button className="btn-icon rp manage-action" type="button"
+      title={<span className="manage-title ck-text-primary">{SECTION_TITLE[section]}</span>}
+      actions={<button className="ck-icon-button rp manage-action" type="button"
         aria-label={section === 'mcp' ? '刷新 Copilot MCP 配置缓存' : '刷新'}
         disabled={!onRefresh || connState !== 'open' || busy} aria-busy={busy} onClick={() => {
           void run(async () => { if (section === 'mcp') await mcpRefresh(); }, onRefresh);
         }}>
-        {busy ? <span className="spinner" aria-hidden="true" /> : <Icon name="reload" size={20} />}
+        {busy ? <Icon name="loading" className="spinner" size={16} /> : <Icon name="reload" size={20} />}
       </button>} />
     {error && <StateNotice kind="error">刷新失败：{error}</StateNotice>}
   </>;
@@ -45,7 +45,7 @@ function DetailHeader({ item }: { item: string }) {
   const titleRef = useRef<HTMLSpanElement | null>(null);
   useLayoutEffect(() => { titleRef.current?.focus(); }, [item]);
   return <PaneHeader className="chat-topbar"
-    leading={<button className="chat-back btn-icon rp lg:hidden" type="button" aria-label="返回" onClick={() => up()}>
+    leading={<button className="chat-back ck-icon-button rp lg:hidden" type="button" aria-label="返回" onClick={() => up()}>
       <Icon name="back" size={24} />
     </button>}
     title={<span ref={titleRef} tabIndex={-1} className="manage-title manage-detail-headtitle">{item}</span>} />;

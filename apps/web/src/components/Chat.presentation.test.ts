@@ -13,6 +13,7 @@ import { getSessionDraft } from '../lib/textDraft';
 import { existsSync, readFileSync } from 'node:fs';
 import { ActivityHeader } from './ActivityHeader';
 import { ChatHeader } from './ChatHeader';
+import { useCockpit } from '../net/store';
 
 test('chat header keeps session and model details without any mode display or switch', () => {
   const html = renderToStaticMarkup(createElement(ChatHeader, {
@@ -21,7 +22,7 @@ test('chat header keeps session and model details without any mode display or sw
   }));
   assert.match(html, /Session title/);
   assert.match(html, /Native model/);
-  assert.match(html, /aria-label="查看会话信息"/);
+  assert.match(html, /aria-label="查看会话信息：Session title"/);
   assert.match(html, /aria-label="更多操作"/);
   assert.equal((html.match(/aria-haspopup="menu"/g) ?? []).length, 1);
   assert.doesNotMatch(html, /data-mode=|模式|mode-menu|chat-topbar-mode(?:\s|")/);
@@ -93,8 +94,8 @@ test('latest tool overview exposes explicit recorded failure and unknown states'
   }));
   assert.match(html, /1 项状态未知/);
   assert.match(html, /1 项失败/);
-  assert.match(html, /class="process-summary"/);
-  assert.match(html, /class="activity-head tool-head tool-toggle"/);
+  assert.match(html, /class="process-summary ck-button"/);
+  assert.match(html, /class="activity-head tool-head tool-toggle ck-button"/);
   assert.match(html, /记录：本次执行已结束/);
   assert.doesNotMatch(html, /任务目标已完成<\/span>|🤖/);
 });
@@ -163,8 +164,9 @@ test('all input states share one full-width unframed editor row inside the same 
   assert.match(css, /max-height: min\(9rem, \(100dvh - var\(--ux-error-height, 0px\)\) \/ 5\)/);
   const controls = [...css.matchAll(/\.chat-input-btn \{([^}]+)\}/g)];
   assert.equal(controls.length, 1, 'narrow screens must not override the square button dimensions');
-  assert.match(controls[0][1], /width: 2\.5rem;\s*height: 2\.5rem;/);
-  assert.match(controls[0][1], /border-radius: 50%/);
+  assert.match(controls[0][1], /width: var\(--ck-control-size\);\s*height: var\(--ck-control-size\);/);
+  const primitives = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
+  assert.match(primitives, /:where\(\.ck-icon-button\) \{[^}]*border-radius: 50%/);
   assert.match(css, /\.chat \.chat-input-message:focus-visible \{\s*outline: none;/);
   assert.match(css, /\.chat \.chat-input-btn:focus-visible \{\s*outline-offset: -3px;/);
   assert.doesNotMatch(css, /\.chat-input:focus-within/);
@@ -252,15 +254,16 @@ test('Chat typography is role-based and narrow layouts follow their own availabl
 
 test('the native composer keeps a compact send action without parked file or voice controls', t => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.chat-input-btn\.send \{[^}]*background-color: transparent;/);
+  const primitives = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
+  assert.match(primitives, /:where\(\.ck-button, \.ck-icon-button\) \{[^}]*background: transparent;/);
   assert.doesNotMatch(css, /\.chat-input-btn\.(?:attach|mic)/);
-  assert.match(css, /\.chat-input-btn\.send \{[^}]*color: var\(--chat-accent-ink\)/);
-  assert.match(css, /\.chat-input-btn\.send:disabled \{[^}]*color: var\(--secondary-text-color\)/);
+  assert.match(css, /\.chat-input-btn\.send \{[^}]*color: var\(--ck-color-accent\)/);
+  assert.match(primitives, /:is\(\.ck-button, \.ck-icon-button, \.ck-input\):is\(:disabled, \[aria-disabled=true\]\) \{[^}]*opacity: var\(--ck-disabled-opacity\)/);
   const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
   t.after(() => original ? Object.defineProperty(globalThis, 'window', original) : Reflect.deleteProperty(globalThis, 'window'));
   const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession('empty'), onLoadMore() {} }));
-  assert.match(html, /data-icon="arrow_up" aria-hidden="true" style="font-size:22px"/);
+  assert.match(html, /data-icon="arrow_up" aria-hidden="true" style="width:24px;height:24px"/);
   assert.doesNotMatch(html, /data-icon="attach"|data-icon="microphone"|type="file"/);
   assert.doesNotMatch(html, /添加文件一起讨论/);
 });
@@ -285,7 +288,7 @@ test('a choice-only request keeps the draft editable but does not offer a freefo
   const session = fixtureSession('choice-only');
   getSessionDraft(session.sessionId).edit('Retained draft');
   const html = renderToStaticMarkup(createElement(Thread, { session, onLoadMore() {} }));
-  assert.match(html, /class="chat-input-btn send rp" disabled="" aria-label="提交回答"/);
+  assert.match(html, /class="chat-input-btn ck-icon-button send rp" disabled="" aria-label="提交回答"/);
   assert.match(html, /<textarea[^>]*aria-label="消息输入"[^>]*>Retained draft<\/textarea>/);
   assert.doesNotMatch(html, /<textarea[^>]*disabled/);
 });
@@ -294,11 +297,15 @@ test('a native cancelling flag disables duplicate stop clicks without claiming c
   const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
   t.after(() => original ? Object.defineProperty(globalThis, 'window', original) : Reflect.deleteProperty(globalThis, 'window'));
+  const state = useCockpit.getInitialState();
+  const previousConnection = state.connState;
+  state.connState = 'open';
+  t.after(() => { state.connState = previousConnection; });
   const html = renderToStaticMarkup(createElement(Thread, {
     session: fixtureSession('cancelling'), onLoadMore() {}, onCancel() {},
   }));
-  assert.match(html, /class="chat-typing-stop" disabled="">正在停止…/);
-  assert.doesNotMatch(html, /class="chat-typing-stop"[^>]*>已取消/);
+  assert.match(html, /class="chat-typing-stop ck-button" aria-disabled="true" aria-busy="true">[\s\S]*?正在停止…<\/button>/);
+  assert.doesNotMatch(html, /class="chat-typing-stop ck-button"[^>]*>已取消/);
 });
 
 test('user time stays outside its bubble without external copy controls on either message role', () => {
@@ -337,6 +344,10 @@ test('question replies retain the original question without an emoji or repeated
 });
 
 test('an adjacent elicitation does not change the composer ordinary prompt into an attachment-less answer', t => {
+  const state = useCockpit.getInitialState();
+  const previousConnection = state.connState;
+  state.connState = 'open';
+  t.after(() => { state.connState = previousConnection; });
   const session = { ...fixtureSession('elicitation'), sessionId: 'elicitation-with-native-file' };
   const draft = getSessionDraft(session.sessionId);
   const binding = draft.bindModule('fixture-file', ['attachments']);
@@ -344,7 +355,7 @@ test('an adjacent elicitation does not change the composer ordinary prompt into 
   t.after(() => { draft.removeAttachment('fixture-attachment'); binding.dispose(); });
   const html = renderToStaticMarkup(createElement(Thread, { session, onLoadMore() {}, onSend: async () => true }));
   assert.doesNotMatch(html, /当前回答或确认操作不接受附件/);
-  const send = html.match(/<button[^>]*class="chat-input-btn send rp"[^>]*>/)?.[0];
+  const send = html.match(/<button[^>]*class="chat-input-btn ck-icon-button send rp"[^>]*>/)?.[0];
   assert.ok(send);
   assert.doesNotMatch(send, /disabled/);
   assert.doesNotMatch(html, /普通消息不会代替确认|chat-composer-hint/);
@@ -366,9 +377,9 @@ test('tool and thought rows stay single-line while expanded skill records can sh
   assert.doesNotMatch(css, /\.tool-name|\.skill-label|\.tool-title/);
   assert.match(css, /\.message-process-content\[hidden\] \{[^}]*display: none/);
   const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession('process'), readOnly: true, onLoadMore() {} }));
-  assert.match(html, /class="process-summary"/);
-  assert.doesNotMatch(html, /class="activity-head thought-toggle"/);
-  assert.match(html, /class="activity-head tool-head tool-toggle"/);
+  assert.match(html, /class="process-summary ck-button"/);
+  assert.doesNotMatch(html, /class="activity-head ck-button thought-toggle"/);
+  assert.match(html, /class="activity-head tool-head tool-toggle ck-button"/);
   assert.doesNotMatch(html, /class="tool-detail-name"|class="msg-thought"/);
   const skillSession = fixtureSession('empty');
   skillSession.messages = [{ id: 'skill', role: 'system', subtype: 'skill', content: 'example', timestamp: 1 }];
@@ -431,7 +442,8 @@ test('message and activity hover do not add fill while keyboard focus and local 
     assert.doesNotMatch(rule[1], /\.(?:message-body|process-summary|activity-head|subagent-head|msg-group|msg-tool)\b/);
   }
   assert.match(css, /\.chat :is\(button, a, textarea, summary, \[tabindex\]\):focus-visible \{[^}]*outline: 2px/);
-  assert.match(css, /\.chat-copy-button:hover/);
+  const primitives = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
+  assert.match(primitives, /:where\(\.ck-button, \.ck-icon-button\):hover:not\(:disabled, \[aria-disabled=true\]\)/);
 });
 
 test('code copying inside user and assistant Markdown quotes survives removal of external message copying', () => {

@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { Icon } from '../components/Icon';
 import type { SessionMeta } from '../net/types';
 import { sessionActionItems, type SessionActionHandlers } from './sessionActions';
 
@@ -47,9 +50,10 @@ test('every session action has a mapped glyph and keeps its identity across live
   assert.equal(new Set(initial.map(item => item.id)).size, 4);
   assert.ok(initial.every(item => item.id && item.icon));
   assert.deepEqual(initial.map(item => item.id), updated.map(item => item.id));
-  const css = readFileSync(new URL('../styles/tgico.scss', import.meta.url), 'utf8');
   for (const item of [...initial, ...updated]) {
-    assert.ok(css.includes(`[data-icon='${item.icon}']::before`), `${item.label} must use a mapped glyph`);
+    const html = renderToStaticMarkup(createElement(Icon, { name: item.icon! }));
+    assert.ok(html.includes(`data-icon="${item.icon}"`), `${item.label} must use a mapped icon`);
+    assert.match(html, /<svg[^>]*viewBox="0 0 24 24"/);
   }
   assert.notEqual(initial[3].disabled, updated[3].disabled);
 });

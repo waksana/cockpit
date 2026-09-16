@@ -37,6 +37,7 @@
   color: var(--primary-text-color);
 }
 .manage-row-sub {
+  display: block;
   margin-top: 0.15rem;
   font-size: var(--font-size-12);
   color: var(--secondary-text-color);
@@ -93,19 +94,24 @@
 .switch {
   flex: none;
   position: relative;
-  width: 2.4rem;
-  height: 1.4rem;
-  border: none;
+  width: max(2.4rem, var(--ck-control-size));
+  height: var(--ck-control-size);
+  padding: 0;
   border-radius: 1rem;
-  cursor: pointer;
-  background: color-mix(in srgb, var(--primary-text-color) 22%, transparent);
-  &.is-on { background: var(--primary-color); }
-  &:disabled { opacity: var(--disabled-opacity); pointer-events: none; }
+  &::before {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 2.4rem; height: 1.4rem;
+    border-radius: 1rem;
+    background: color-mix(in srgb, var(--primary-text-color) 22%, transparent);
+  }
+  &.is-on::before { background: var(--primary-color); }
 }
 .switch-knob {
   position: absolute;
-  top: 0.15rem;
-  left: 0.15rem;
+  top: calc(50% - 0.55rem);
+  left: calc(50% - 1.05rem);
   width: 1.1rem;
   height: 1.1rem;
   border-radius: 50%;

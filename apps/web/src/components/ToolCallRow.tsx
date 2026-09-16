@@ -4,17 +4,12 @@ import { useDisclosureChoice } from '../lib/disclosureChoice';
 import { CopyButton } from './CopyButton';
 import { useClippedText } from '../lib/useClippedText';
 import { toolStatusLabel } from '../lib/toolStatus';
+import { Icon } from './Icon';
 
 export function ToolStatusIcon({ status }: { status: ToolCall['status'] }) {
-  return <svg className="tool-state-icon" data-status={status ?? 'unknown'} width="16" height="16"
-    viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6"
-    strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-    {status === 'completed' ? <path d="m4 10 4 4 8-9" />
-      : status === 'failed' ? <><circle cx="10" cy="10" r="7.5" /><path d="M10 5.5v5M10 14h.01" /></>
-        : status === 'in_progress' ? <path d="M10 2.5a7.5 7.5 0 1 1-7.5 7.5" />
-          : status === 'pending' ? <><circle cx="10" cy="10" r="7.5" /><path d="M10 5v5l3 2" /></>
-            : <><circle cx="10" cy="10" r="7.5" /><path d="M7.5 7a2.5 2.5 0 0 1 5 0c0 2-2.5 2-2.5 4M10 14h.01" /></>}
-  </svg>;
+  return <Icon className="tool-state-icon" data-status={status ?? 'unknown'} size={16}
+    name={status === 'completed' ? 'success' : status === 'failed' ? 'error'
+      : status === 'in_progress' ? 'loading' : status === 'pending' ? 'clock' : 'unknown'} />;
 }
 
 export function ToolCallRow({ tc, sessionId }: { tc: ToolCall; sessionId: string }) {
@@ -27,7 +22,7 @@ export function ToolCallRow({ tc, sessionId }: { tc: ToolCall; sessionId: string
   const status = toolStatusLabel(tc.status);
   const label = [name, description, status].filter(Boolean).join(' · ');
   return <div className="msg-tool" data-status={tc.status ?? 'unknown'} data-open={open || undefined}>
-    <button type="button" className="activity-head tool-head tool-toggle" aria-expanded={open}
+    <button type="button" className="activity-head tool-head tool-toggle ck-button" aria-expanded={open}
       aria-controls={contentId} aria-label={`${open ? '收起' : '展开'}细节：${label}`} title={label} onClick={toggle}>
       <span className="activity-icon"><ToolStatusIcon status={tc.status} /></span>
       <span className="tool-heading-content">

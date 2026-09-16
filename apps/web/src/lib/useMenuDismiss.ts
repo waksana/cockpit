@@ -3,9 +3,10 @@
 // opening click doesn't immediately dismiss the menu.
 import { useEffect } from 'react';
 
-export function useMenuDismiss(onClose: () => void) {
+export function useMenuDismiss(onClose: (restoreFocus?: boolean) => void) {
   useEffect(() => {
-    const close = () => onClose();
+    const close = () => onClose(false);
+    const restore = () => onClose();
     const onScrollIntent = (e: Event) => {
       if (!(e.target instanceof Element) || !e.target.closest('.btn-menu')) onClose();
     };
@@ -26,7 +27,7 @@ export function useMenuDismiss(onClose: () => void) {
       window.addEventListener('pointerdown', close);
       window.addEventListener('wheel', onWheel, { capture: true, passive: true });
       window.addEventListener('touchmove', onScrollIntent, { capture: true, passive: true });
-      window.addEventListener('resize', close);
+      window.addEventListener('resize', restore);
       window.addEventListener('keydown', onKey, true);
     }, 0);
     return () => {
@@ -34,7 +35,7 @@ export function useMenuDismiss(onClose: () => void) {
       window.removeEventListener('pointerdown', close);
       window.removeEventListener('wheel', onWheel, true);
       window.removeEventListener('touchmove', onScrollIntent, true);
-      window.removeEventListener('resize', close);
+      window.removeEventListener('resize', restore);
       window.removeEventListener('keydown', onKey, true);
     };
   }, [onClose]);

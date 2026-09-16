@@ -238,7 +238,7 @@ test('directory picker without an initial path has no hardcoded home and cannot 
   }));
   assert.match(html, /aria-label="选择工作目录"/);
   assert.doesNotMatch(html, /\/home\/honglai|没有子文件夹/);
-  assert.match(html, /class="dialog-btn primary rp" disabled=""[^>]*>创建会话/);
+  assert.match(html, /class="dialog-btn ck-button ck-primary primary rp" disabled=""[^>]*>创建会话/);
   assert.match(html, /等待连接/);
 });
 
@@ -249,7 +249,7 @@ test('a supplied but unvalidated directory cannot enable session creation', t =>
     onCreated: noop, onCancel: noop,
   }));
   assert.match(html, /value="\/unvalidated"/);
-  assert.match(html, /class="dialog-btn primary rp" disabled=""[^>]*>创建会话/);
+  assert.match(html, /class="dialog-btn ck-button ck-primary primary rp" disabled=""[^>]*>创建会话/);
   assert.doesNotMatch(html, /没有子文件夹/);
 });
 
@@ -299,7 +299,7 @@ for (const page of nativePages) {
     const html = renderToStaticMarkup(page.render());
     assert.match(html, /会话未加载。恢复后可查看这些设置/);
     assert.match(html, /聊天历史仍可直接查看/);
-    assert.match(html, /class="dialog-btn rp" aria-busy="false" aria-describedby="[^"]+">恢复会话<\/button>/);
+    assert.match(html, /class="dialog-btn ck-button rp" aria-busy="false" aria-describedby="[^"]+">恢复会话<\/button>/);
     assert.match(html, /class="session-resume" role="group" aria-label="会话未加载"/);
     assert.doesNotMatch(html, /没有可用的 skill|本会话没有可用的 MCP|没有配置 MCP/);
     assert.match(html, /aria-label="刷新" disabled=""/);

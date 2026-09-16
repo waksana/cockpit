@@ -15,6 +15,8 @@ import { groupTranscript } from '../lib/transcriptRows';
 import { ModuleRuntime } from '../lib/moduleRuntime';
 import { ModuleRenderNode } from './ModuleContributions';
 import { Composer, ComposerNotices } from './Composer';
+import { useLongPress } from '../lib/longpress';
+import { useMenuDismiss } from '../lib/useMenuDismiss';
 import type { ComposerContext, ModuleFrontendContext } from '@cockpit/module-api';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
@@ -47,6 +49,16 @@ class HostNode extends EventTarget {
   }
 
   get firstChild() { return this.childNodes[0] ?? null; }
+  get isConnected(): boolean { return this === this.ownerDocument.body || (this.parentNode?.isConnected ?? false); }
+  focus() { this.ownerDocument.activeElement = this; }
+  getClientRects() {
+    if (!this.isConnected || this.closest('[hidden]') || this.closest('[inert]')) return [];
+    for (let parent = this.parentNode; parent; parent = parent.parentNode) {
+      if (parent.tagName === 'DETAILS' && !parent.open
+        && !parent.childNodes.find(node => node.tagName === 'SUMMARY')?.contains(this)) return [];
+    }
+    return [this.getBoundingClientRect()];
+  }
   get textContent(): string { return this.text + this.childNodes.map(node => node.textContent).join(''); }
   set textContent(text: string) {
     this.text = text;
@@ -76,14 +88,19 @@ class HostNode extends EventTarget {
     return node;
   }
   removeChild(node: HostNode) {
+    if (node.contains(this.ownerDocument.activeElement)) this.ownerDocument.activeElement = this.ownerDocument.body;
     this.childNodes.splice(this.childNodes.indexOf(node), 1);
     node.parentNode = null;
     return node;
   }
-  setAttribute(name: string, value: string) { this.attributes.set(name, String(value)); }
+  setAttribute(name: string, value: string) {
+    this.attributes.set(name, String(value));
+    if (name === 'disabled' && this.ownerDocument.activeElement === this) this.ownerDocument.activeElement = this.ownerDocument.body;
+  }
   removeAttribute(name: string) { this.attributes.delete(name); }
   getAttribute(name: string) { return this.attributes.get(name) ?? null; }
   matches(selector: string): boolean {
+    if (selector === ':disabled') return this.attributes.has('disabled');
     if (selector.startsWith('.')) return (this.getAttribute('class') ?? '').split(' ').includes(selector.slice(1));
     const match = /^\[([^=\]]+)(?:="([^"]*)")?\]$/.exec(selector);
     return !!match && this.attributes.has(match[1])
@@ -159,11 +176,92 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   const previousSnapshotReady = useCockpit.getState().snapshotReady;
   useCockpit.setState({ connState: 'open', snapshotReady: true });
   const container = document.createElement('div');
+  document.body.appendChild(container);
   const root = createRoot(container as unknown as HTMLElement);
   t.after(async () => {
     await act(() => root.unmount());
     useCockpit.setState({ connState: previousConnection, snapshotReady: previousSnapshotReady });
     for (const restore of restoreGlobals) restore();
+  });
+  await t.test('long-press timers belong to mounted primary gestures and native contextmenu cannot double-open', async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout'] });
+    let opens = 0;
+    function Gesture() {
+      return createElement('button', { ...useLongPress(() => { opens++; }), className: 'gesture' });
+    }
+    const pointer = async (type: string, fields: Record<string, unknown> = {}) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      for (const [key, value] of Object.entries({
+        target: container.querySelector('.gesture'), pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 20, ...fields,
+      })) Object.defineProperty(event, key, { value });
+      await act(() => container.dispatchEvent(event));
+    };
+    const tick = () => act(() => subtest.mock.timers.tick(500));
+    await act(() => root.render(createElement(Gesture)));
+    await pointer('pointerdown', { isPrimary: false });
+    await tick();
+    assert.equal(opens, 0);
+    await pointer('pointerdown');
+    await pointer('pointermove', { clientY: 40 });
+    await tick();
+    assert.equal(opens, 0, 'scroll cancels the pending gesture');
+    await pointer('pointerdown');
+    await pointer('contextmenu');
+    await tick();
+    assert.equal(opens, 1, 'native long-press contextmenu cancels the timer');
+    await pointer('pointerdown');
+    await tick();
+    await pointer('contextmenu');
+    assert.equal(opens, 2, 'timer-first long press ignores the duplicate native menu');
+    await pointer('pointerdown', { pointerType: 'mouse', button: 2 });
+    await pointer('contextmenu');
+    assert.equal(opens, 3, 'a new right-click remains available');
+    await pointer('pointerdown');
+    await act(() => root.render(null));
+    await tick();
+    assert.equal(opens, 3, 'removed rows cannot open a late menu');
+  });
+  await t.test('outside pointer menu dismissal does not steal focus while Escape and Tab return it', async subtest => {
+    subtest.mock.timers.enable({ apis: ['setTimeout'] });
+    const requests: (boolean | undefined)[] = [];
+    function Menu() {
+      useMenuDismiss(restore => { requests.push(restore); });
+      return null;
+    }
+    await act(() => root.render(createElement(Menu)));
+    await act(() => subtest.mock.timers.tick(1));
+    window.dispatchEvent(new Event('pointerdown'));
+    const key = (value: string) => {
+      const event = new Event('keydown', { cancelable: true });
+      Object.defineProperty(event, 'key', { value });
+      window.dispatchEvent(event);
+      return event;
+    };
+    assert.equal(key('Escape').defaultPrevented, true);
+    assert.equal(key('Tab').defaultPrevented, false, 'native Tab navigation remains in charge');
+    assert.deepEqual(requests, [false, undefined, undefined]);
+    await act(() => root.render(null));
+    window.dispatchEvent(new Event('pointerdown'));
+    assert.equal(requests.length, 3, 'dismiss listeners are removed with the menu');
+  });
+  await t.test('Markdown table arrow keys belong to the focused scroll region, not its child links', async () => {
+    await act(() => root.render(createElement(MessageBody, {
+      body: '| Link | Value |\n| --- | --- |\n| [Child](https://example.invalid) | Wide |',
+    })));
+    const region = container.querySelector('.chat-table-scroll')!;
+    const table = container.querySelector('[data-chat-table]')!;
+    const link = table.querySelector('[href="https://example.invalid"]')!;
+    Object.assign(table, { scrollWidth: 1000, scrollLeft: 0 });
+    const key = async (target: HostNode) => {
+      const event = new Event('keydown', { bubbles: true, cancelable: true });
+      Object.defineProperties(event, { target: { value: target }, key: { value: 'ArrowRight' } });
+      await act(() => container.dispatchEvent(event));
+      return event;
+    };
+    assert.equal((await key(link)).defaultPrevented, false);
+    assert.equal((await key(region)).defaultPrevented, true);
+    assert.equal((table as HostNode & { scrollLeft: number }).scrollLeft, 80);
+    await act(() => root.render(null));
   });
   let prefetches = 0;
   const onLoadMore = () => { prefetches++; };
@@ -372,6 +470,135 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(rows.getAttribute('inert'), null);
   });
 
+  await t.test('removed execution and queue controls restore focus locally without stealing it across views', async () => {
+    let value: ChatSession = { ...session('removed-control'), hasMore: false, status: 'running',
+      queue: [{ id: 'first', text: 'First queued' }, { id: 'second', text: 'Second queued' }],
+      planRequest: { requestId: 'plan', summary: 'Plan', actions: ['exit_only'] } };
+    const show = () => root.render(createElement(Thread, {
+      session: value, onLoadMore, onSend: async () => true,
+      onCancel: () => {
+        value = { ...value, status: 'idle', queue: [], planRequest: null };
+        show();
+      },
+      onRemoveQueued: id => {
+        value = { ...value, queue: value.queue?.filter(item => item.id !== id) };
+        show();
+      },
+    }));
+    const node = (selector: string) => {
+      const element = container.querySelector(selector);
+      assert.ok(element, selector);
+      return element;
+    };
+    const click = async (target: HostNode) => {
+      target.focus();
+      const event = new Event('click', { bubbles: true });
+      Object.defineProperty(event, 'target', { value: target });
+      await act(() => container.dispatchEvent(event));
+    };
+    await act(show);
+    const editor = node('.chat-input-message');
+    await click(node('.chat-typing-stop'));
+    assert.equal(document.activeElement, editor, 'stopping into idle focuses the surviving editor');
+    assert.equal(node('.chat-input-card').open, true);
+
+    value = { ...value, queue: [{ id: 'first', text: 'First queued' }, { id: 'second', text: 'Second queued' }] };
+    await act(show);
+    const second = node('[aria-label="移除排队消息：Second queued"]');
+    await click(node('[aria-label="移除排队消息：First queued"]'));
+    assert.equal(document.activeElement, second, 'queue deletion moves to the next surviving remove action');
+    await click(second);
+    assert.equal(document.activeElement, editor, 'removing the last item restores the editor');
+
+    value = { ...value, status: 'running', compacting: false };
+    await act(show);
+    node('.chat-typing-stop').focus();
+    node('.chat-input-card').open = false;
+    value = { ...value, compacting: true };
+    await act(show);
+    assert.equal(document.activeElement, node('.chat-execution-head'), 'hidden or disabled editor falls back to the visible summary');
+
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    value = { ...value, compacting: false };
+    await act(show);
+    node('.chat-typing-stop').focus();
+    outside.focus();
+    value = { ...value, status: 'idle' };
+    await act(show);
+    assert.equal(document.activeElement, outside, 'a late result cannot override a focus move outside the controls');
+
+    value = { ...value, status: 'running' };
+    await act(show);
+    node('.chat-typing-stop').focus();
+    value = { ...value, sessionId: 'different-focus-owner', status: 'idle' };
+    await act(show);
+    assert.equal(document.activeElement, document.body, 'a changed session does not focus its editor from an old control');
+    value = { ...value, status: 'running' };
+    await act(show);
+    node('.chat-typing-stop').focus();
+    await act(() => root.render(null));
+    assert.equal(document.activeElement, document.body, 'unmounting does not schedule focus into a different view');
+    document.body.removeChild(outside);
+  });
+
+  await t.test('Stop retains focus across native pending cancellation before removal without stealing a later focus move', async () => {
+    let value: ChatSession = { ...session('pending-stop-focus'), hasMore: false, status: 'running',
+      queue: [{ id: 'queued', text: 'Queued request' }] };
+    let requests = 0;
+    const show = () => root.render(createElement(Thread, {
+      session: value, onLoadMore, onSend: async () => true,
+      onCancel: () => {
+        requests++;
+        value = { ...value, cancelling: true, activeOperations: 1 };
+        show();
+      },
+    }));
+    const click = async (target: HostNode) => {
+      const event = new Event('click', { bubbles: true });
+      Object.defineProperty(event, 'target', { value: target });
+      await act(() => container.dispatchEvent(event));
+    };
+    await act(show);
+    const editor = container.querySelector('.chat-input-message')!;
+    const stop = container.querySelector('.chat-typing-stop')!;
+    stop.focus();
+    await click(stop);
+    assert.equal(stop.attributes.has('disabled'), false);
+    assert.equal(stop.getAttribute('aria-disabled'), 'true');
+    assert.equal(stop.getAttribute('aria-busy'), 'true');
+    assert.equal(document.activeElement, stop, 'pending native cancellation must not force focus to BODY');
+    await click(stop);
+    assert.equal(requests, 1, 'focusable pending Stop still blocks duplicate activation');
+    value = { ...value, cancelling: false, activeOperations: 0, status: 'idle', queue: [] };
+    await act(show);
+    assert.equal(document.activeElement, editor, 'pending → removed restores the surviving editor');
+
+    value = { ...value, status: 'running' };
+    await act(show);
+    const nextStop = container.querySelector('.chat-typing-stop')!;
+    nextStop.focus();
+    await click(nextStop);
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    outside.focus();
+    value = { ...value, cancelling: false, activeOperations: 0, status: 'idle' };
+    await act(show);
+    assert.equal(document.activeElement, outside, 'finishing an async Stop must respect focus moved outside');
+    document.body.removeChild(outside);
+
+    value = { ...value, status: 'running' };
+    await act(show);
+    const retry = container.querySelector('.chat-typing-stop')!;
+    retry.focus();
+    await click(retry);
+    value = { ...value, cancelling: false, activeOperations: 0 };
+    await act(show);
+    assert.equal(document.activeElement, retry, 'an unconfirmed cancellation that leaves the turn running retains the same control');
+    assert.equal(retry.getAttribute('aria-disabled'), null);
+    await act(() => root.render(null));
+  });
+
   await t.test('pending decisions retain the same input and independent queue controls across updates', async subtest => {
     const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
     const copied: string[] = [];
@@ -459,7 +686,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await click(container.querySelector('.chat-typing-stop')!);
     assert.equal(stops, 1);
     await show({ cancelling: true });
-    assert.equal(container.querySelector('.chat-typing-stop')?.attributes.has('disabled'), true);
+    assert.equal(container.querySelector('.chat-typing-stop')?.attributes.has('disabled'), false);
+    assert.equal(container.querySelector('.chat-typing-stop')?.getAttribute('aria-disabled'), 'true');
     await click(container.querySelector('.chat-typing-stop')!);
     assert.equal(stops, 1);
     assert.equal(localDraft.getSnapshot().text, 'Keep typing');
@@ -816,7 +1044,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       const state = useSyncExternalStore(context.draft.subscribe, context.draft.getSnapshot, context.draft.getSnapshot);
       useLayoutEffect(() => { mounts++; }, []);
       if (state.text === 'Crash module action') throw new Error('Fixture action failed');
-      return createElement('button', { type: 'button', 'aria-label': 'Module action' }, state.text || 'Files');
+      return createElement('button', { type: 'button', 'aria-label': 'Module action',
+        onPaste: event => event.preventDefault(), onDrop: event => event.preventDefault(),
+      }, state.text || 'Files');
     }
     function Above(context: ComposerContext) {
       const state = useSyncExternalStore(context.draft.subscribe, context.draft.getSnapshot, context.draft.getSnapshot);
@@ -916,6 +1146,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const dropped = await dispatch('.chat-input-message', 'drop', { dataTransfer: { files: [new File(['x'], 'drop.txt')] } });
     assert.equal(dropped.defaultPrevented, true);
     assert.equal(received, 3);
+    await dispatch('[aria-label="Module action"]', 'paste', { clipboardData: clipboard('') });
+    await dispatch('[aria-label="Module action"]', 'drop', { dataTransfer: { files: [new File(['x'], 'owned.txt')] } });
+    assert.equal(received, 3, 'events handled by a module control do not start a second host receive');
     await act(() => root.render(null));
     await act(() => scope.appendAttachments([{ id: 'after-unmount', value: { type: 'file', path: '/fixture/later' } }]));
     await renderComposer();
