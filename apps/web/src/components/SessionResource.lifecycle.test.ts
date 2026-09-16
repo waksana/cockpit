@@ -631,7 +631,7 @@ test('model Apply has a pending label and busy state while preserving native res
   assert.equal(disabled(button(h.container, '应用配置')), true, 'the same revision is not resubmitted');
 });
 
-test('session ID copies its exact value without invoking a native operation', async t => {
+test('session ID copies its exact value and retains confirmation without a restoration timer', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const h = mount(t);
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
@@ -652,14 +652,16 @@ test('session ID copies its exact value without invoking a native operation', as
   assert.deepEqual(copied, [session.sessionId]);
   assert.match(copy.textContent, /已复制/);
   assert.equal(copy.querySelector('.copy-value-text')?.getAttribute('aria-hidden'), 'true');
-  await act(async () => t.mock.timers.tick(2000));
-  assert.equal(copy.textContent, session.sessionId);
-  assert.equal(copy.querySelector('.copy-value-text')?.getAttribute('aria-hidden'), null);
-  assert.equal(h.container.querySelector('.chat-sr-only')?.textContent, '');
+  await act(async () => t.mock.timers.tick(10_000));
+  assert.equal(copy.querySelector('.copy-value-feedback')?.textContent, '已复制');
+  assert.equal(copy.querySelector('.copy-value-text')?.getAttribute('aria-hidden'), 'true');
+  assert.equal(h.container.querySelector('.chat-sr-only')?.textContent, '已复制');
+  await h.event(copy, 'click');
+  assert.deepEqual(copied, [session.sessionId, session.sessionId], 'the confirmation still copies the original ID');
   assert.doesNotMatch(h.container.textContent, /工具权限|allow-all|交由原生处理/);
 });
 
-test('copy feedback is scoped to the value and unmount cancels its restoration timer', async t => {
+test('copy feedback is scoped to the value and fresh mounts start unconfirmed', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const h = mount(t);
   const previous = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
@@ -678,6 +680,9 @@ test('copy feedback is scoped to the value and unmount cancels its restoration t
   assert.equal(h.container.querySelector('button')?.textContent, 'second', 'old content cannot show a new value as copied');
   await h.event(h.container.querySelector('button')!, 'click');
   assert.match(h.container.textContent, /已复制/);
+  await render('replacement');
+  assert.equal(h.container.querySelector('button')?.textContent, 'replacement');
+  assert.equal(h.container.querySelector('.copy-value-feedback'), null);
   await h.render(null);
   await render('third');
   await act(async () => t.mock.timers.tick(2000));

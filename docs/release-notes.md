@@ -17,8 +17,8 @@ Unreleased development version. No tag or Release has been created for these cha
   Timestamps share a compact treatment without a decorative assistant badge;
   decisions and process rows adapt to the actual Chat width beside settings.
 - Copy feedback keeps a stable target width and does not flash an intermediate
-  label, including repeated copies. Clipboard failures and session-ID restoration
-  remain explicit.
+  label, including repeated copies. Session-ID confirmation is centered and stays
+  visible without a timer; clipboard failures remain explicit.
 - Local trusted module packages can be installed and selected for cold loading.
   Remote signed-URL installation remains deferred.
 - Module API v1 provides scoped backend HTTP routes, versioned assets and

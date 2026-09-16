@@ -221,8 +221,10 @@ Copy controls reserve their intrinsic confirmation-label width. Pending writes
 keep the current visible label instead of flashing through a progress label;
 busy state is exposed accessibly. Repeated copies retain the prior confirmation
 until the new outcome, and failures remain explicit. The native code renderer,
-copied text and focus target are not replaced. Session-ID copying still restores
-the value after two seconds, and old-value results cannot label new content copied.
+copied text and focus target are not replaced. Session-ID confirmation is centered
+in the original value's space and remains visible without a restoration timer,
+matching code/tool copy feedback. A new value or fresh mount starts unconfirmed;
+old-value results cannot label new content copied.
 
 The role-based approach follows the published
 [Primer typography](https://primer.style/product/primitives/typography/) and

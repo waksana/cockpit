@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { copyText } from '../lib/copyText';
 import { Icon } from './Icon';
 
@@ -14,11 +14,6 @@ export function CopyButton({ text, label = '复制', variant = 'button' }: {
     return () => { owner.current = null; };
   }, []);
   const state = feedback?.text === text ? feedback.state : null;
-  useEffect(() => {
-    if (variant !== 'value' || state !== 'copied' || pending) return;
-    const timer = setTimeout(() => setFeedback(null), 2000);
-    return () => clearTimeout(timer);
-  }, [variant, state, feedback, pending]);
   async function copy() {
     if (inFlight.current) return;
     const scope = owner.current;
