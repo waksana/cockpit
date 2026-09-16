@@ -186,6 +186,10 @@ scrollable rather than overlapping the input. Execution status and available
 actions use the same panel with or without a decision; a pending question does
 not hide Stop. Stop retains its native queue-clearing behavior and stays disabled
 while disconnected, closing, cancelling or another protected operation is active.
+The execution label takes the space remaining beside its actions rather than
+reserving a large minimum column. At normal phone widths the status and both
+queue actions share one line; long status text truncates, while very narrow
+containers can still wrap naturally without JavaScript width calculations.
 There is no queue-count heading or repeated composer explanation. The input
 placeholder and submit label identify the active operation; muted placeholder
 text remains distinct from entered text, including on focus. Existing attachment

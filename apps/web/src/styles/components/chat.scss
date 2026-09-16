@@ -774,7 +774,7 @@ button.activity-head {
   flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--chat-gap-meta) var(--chat-gap-control);
 }
 .chat-execution-label {
-  flex: 1 1 10rem; min-width: 0;
+  flex: 1 1 0; min-width: 4em;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--chat-text-meta); line-height: var(--chat-leading-ui);
   &[data-running]::before {

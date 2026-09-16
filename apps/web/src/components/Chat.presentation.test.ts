@@ -126,6 +126,7 @@ test('dock regions stay framed while only execution/queue typography becomes com
   assert.match(css, /\.chat-queue:has\(\.chat-queue-entry\[open\]\) \{\s*max-height: 12rem;/);
   assert.doesNotMatch(css, /\.chat-queue-entry\[open\] \+ \.chat-queue-copy/);
   assert.match(css, /\.chat-execution-label\[data-running\]::before \{[^}]*width: 5px;[^}]*height: 5px;/);
+  assert.match(css, /\.chat-execution-label \{[^}]*flex: 1 1 0;[^}]*min-width: 4em;[^}]*text-overflow: ellipsis;/);
   assert.doesNotMatch(css.match(/\.chat-execution-label\[data-running\]::before \{([^}]+)\}/)?.[1] ?? '', /animation|transition/);
 });
 
