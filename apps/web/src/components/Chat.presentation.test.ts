@@ -122,9 +122,9 @@ test('dock regions stay framed while only execution/queue typography becomes com
   assert.match(css, /\.chat-queue-item \{[^}]*font-size: var\(--chat-text-meta\)/);
   assert.match(css, /\.chat-ask-choice \{[^}]*font-size: var\(--chat-text-secondary\)/);
   assert.doesNotMatch(css, /\.chat-queue-label|\.chat-composer-hint/);
-  assert.match(css, /\.chat-queue-copy \{[^}]*display: none;/);
+  assert.match(css, /\.chat-queue-copy \{[^}]*display: flex;/);
   assert.match(css, /\.chat-queue:has\(\.chat-queue-entry\[open\]\) \{\s*max-height: 12rem;/);
-  assert.match(css, /\.chat-queue-entry\[open\] \+ \.chat-queue-copy \{\s*display: flex;/);
+  assert.doesNotMatch(css, /\.chat-queue-entry\[open\] \+ \.chat-queue-copy/);
   assert.match(css, /\.chat-execution-label\[data-running\]::before \{[^}]*width: 5px;[^}]*height: 5px;/);
   assert.doesNotMatch(css.match(/\.chat-execution-label\[data-running\]::before \{([^}]+)\}/)?.[1] ?? '', /animation|transition/);
 });

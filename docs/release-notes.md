@@ -7,8 +7,8 @@ Unreleased development version. No tag or Release has been created for these cha
   No height measurement, spacer or additional scroll controller is introduced.
 - Return-to-latest appears after moving at least one transcript viewport away
   from the bottom, without changing automatic following or reading anchors.
-- The execution label includes a quiet running-status dot. Expanded queued
-  messages expose the shared small copy control with stable confirmation and
+- The execution label includes a quiet running-status dot. Queued messages
+  always expose the shared small copy control with stable confirmation and
   explicit clipboard errors, independently of queue removal or submission.
 - Chat separates pending decision cards from a compact framed execution/queue
   panel, keeps Stop available while awaiting a decision, and applies consistent

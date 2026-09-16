@@ -373,13 +373,16 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const queue = container.querySelector('.chat-queue-item')!;
     const queueCopy = queue.querySelector('[aria-label="复制排队消息"]')!;
     const queueEntry = queue.querySelector('.chat-queue-entry')!;
-    queueEntry.setAttribute('open', '');
     await click(queueCopy);
     assert.deepEqual(copied, [value.queue![0].text]);
     assert.deepEqual(removed, []);
     assert.equal(stops, 0);
-    assert.equal(queueEntry.attributes.has('open'), true);
+    assert.equal(queueEntry.attributes.has('open'), false, 'copying does not require or trigger expansion');
     assert.equal(queueCopy.querySelector('.chat-copy-label-text')?.textContent, '已复制');
+    queueEntry.setAttribute('open', '');
+    await click(queueCopy);
+    assert.equal(queueEntry.attributes.has('open'), true, 'expanded copying does not collapse the entry');
+    assert.deepEqual(copied, [value.queue![0].text, value.queue![0].text]);
     const decision = container.querySelector('.chat-decisions')!;
     assert.equal(decision.parentNode, execution.parentNode);
     assert.equal(container.querySelector('.chat-typing-stop')?.textContent, '停止并清空队列');
@@ -402,7 +405,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(container.querySelector('.chat-composer-hint'), null);
     await click(container.querySelector('.chat-queue-remove')!);
     assert.deepEqual(removed, ['next']);
-    assert.deepEqual(copied, [value.queue![0].text]);
+    assert.deepEqual(copied, [value.queue![0].text, value.queue![0].text]);
   });
 
   for (const hasMore of [false, true]) {

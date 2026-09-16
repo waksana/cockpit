@@ -745,11 +745,10 @@ button.activity-head {
 }
 .chat-queue-entry[open] .chat-queue-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-queue-copy {
-  display: none; flex: none; max-width: 5rem;
+  display: flex; flex: none; max-width: 5rem;
   .chat-copy { flex-direction: column; align-items: flex-start; }
   .chat-copy-error { overflow-wrap: anywhere; }
 }
-.chat-queue-entry[open] + .chat-queue-copy { display: flex; }
 .chat-dock {
   @include chat-design.column;
   container: chat-dock / inline-size;

@@ -194,10 +194,11 @@ their full text independently of removal; there is no editing, reordering or new
 steering mode.
 The native running status has a quiet leading dot, without an additional
 animation. An idle queue does not gain a running indicator.
-Expanded queue entries expose a small copy button beside removal. It copies
+Queue entries always expose a small copy button beside removal, including
+single-line and collapsed messages. It copies
 the complete original text through the same control used by code/tool details,
-without submitting, removing or collapsing the queued entry. Collapsed entries
-hide the copy action, including from keyboard navigation.
+without submitting, removing, expanding or collapsing the queued entry.
+Copying is keyboard-accessible without first expanding the text.
 Expansion can use more of the execution panel's existing bounded height;
 collapsing restores its compact queue height, including the short-screen limit.
 
