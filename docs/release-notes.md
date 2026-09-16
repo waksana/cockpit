@@ -2,6 +2,9 @@
 
 Unreleased development version. No tag or Release has been created for these changes.
 
+- The execution label includes a quiet running-status dot. Expanded queued
+  messages expose the shared small copy control with stable confirmation and
+  explicit clipboard errors, independently of queue removal or submission.
 - Chat separates pending decision cards from a compact framed execution/queue
   panel, keeps Stop available while awaiting a decision, and applies consistent
   spacing between visible message groups. Queue headings and repeated composer

@@ -189,6 +189,14 @@ text remains distinct from entered text, including on focus. Existing attachment
 and unconfirmed-send notices remain explicit. Queue items can be expanded to read
 their full text independently of removal; there is no editing, reordering or new
 steering mode.
+The native running status has a quiet leading dot, without an additional
+animation. An idle queue does not gain a running indicator.
+Expanded queue entries expose a small copy button beside removal. It copies
+the complete original text through the same control used by code/tool details,
+without submitting, removing or collapsing the queued entry. Collapsed entries
+hide the copy action, including from keyboard navigation.
+Expansion can use more of the execution panel's existing bounded height;
+collapsing restores its compact queue height, including the short-screen limit.
 
 ### Chat layout and typography
 
