@@ -6,6 +6,7 @@ import { MessageBody } from './MessageBody';
 import { MessageContent } from './MessageContent';
 import { hasMessageContent } from '../lib/messageContent';
 import { Composer } from './Composer';
+import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
 import type { ChatMessage, ChatSession, ExitPlanModeAction } from '../net/types';
 import { acknowledgeInView, sendThreadDraft } from '../lib/draft';
@@ -533,7 +534,8 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
           </div>}
           {hasExecution && <section className="chat-execution" aria-label="执行与排队">
             <div className="chat-execution-head">
-              <span className="chat-execution-label" role="status" title={executionLabel}>{executionLabel}</span>
+              <span className="chat-execution-label" role="status" title={executionLabel}
+                data-running={session.status === 'running' || undefined}>{executionLabel}</span>
               {(showStop || showInterrupt) && <div className="chat-execution-actions" role="group" aria-label="执行操作">
                 {showInterrupt && <button type="button" className="chat-interrupt"
                   disabled={!interruptAction.connected || (!!session.activeOperations && !interruptAction.busy)}
@@ -562,6 +564,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
                   <details className="chat-queue-entry">
                     <summary className="chat-queue-text" aria-label={`查看排队消息：${q.text}`}>{q.text}</summary>
                   </details>
+                  <div className="chat-queue-copy"><CopyButton text={q.text} label="复制排队消息" /></div>
                   <button type="button" className="chat-queue-remove" aria-label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)}><Icon name="close" size={16} /></button>
                 </div>
               ))}

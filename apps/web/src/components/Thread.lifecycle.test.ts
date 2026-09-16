@@ -328,16 +328,25 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), null);
   });
 
-  await t.test('pending decisions retain the same input and independent queue controls across updates', async () => {
+  await t.test('pending decisions retain the same input and independent queue controls across updates', async subtest => {
+    const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+    const copied: string[] = [];
+    Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {
+      clipboard: { writeText: async (text: string) => { copied.push(text); } },
+    } });
+    subtest.after(() => previousNavigator
+      ? Object.defineProperty(globalThis, 'navigator', previousNavigator) : Reflect.deleteProperty(globalThis, 'navigator'));
     const value: ChatSession = { ...session('dock-transition'), hasMore: false, status: 'running',
-      queue: [{ id: 'next', text: 'Keep this queue' }], ask: { requestId: 'ask', question: 'Choose', choices: ['A', 'B'] } };
+      queue: [{ id: 'next', text: '  Keep this queue\nwith original whitespace  ' }], ask: { requestId: 'ask', question: 'Choose', choices: ['A', 'B'] } };
     const localDraft = getSessionDraft(value.sessionId);
     localDraft.edit('Keep typing');
     let stops = 0;
+    const removed: string[] = [];
     const show = async (patch: Partial<ChatSession> = {}) => {
       await act(() => root.render(createElement(Thread, {
         key: value.sessionId, session: { ...value, ...patch }, onLoadMore,
         onCancel: () => { stops++; },
+        onRemoveQueued: id => { removed.push(id); },
       })));
       await flush();
     };
@@ -350,6 +359,15 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const input = container.querySelector('.chat-input-message')!;
     const execution = container.querySelector('.chat-execution')!;
     const queue = container.querySelector('.chat-queue-item')!;
+    const queueCopy = queue.querySelector('[aria-label="复制排队消息"]')!;
+    const queueEntry = queue.querySelector('.chat-queue-entry')!;
+    queueEntry.setAttribute('open', '');
+    await click(queueCopy);
+    assert.deepEqual(copied, [value.queue![0].text]);
+    assert.deepEqual(removed, []);
+    assert.equal(stops, 0);
+    assert.equal(queueEntry.attributes.has('open'), true);
+    assert.equal(queueCopy.querySelector('.chat-copy-label-text')?.textContent, '已复制');
     const decision = container.querySelector('.chat-decisions')!;
     assert.equal(decision.parentNode, execution.parentNode);
     assert.equal(container.querySelector('.chat-typing-stop')?.textContent, '停止并清空队列');
@@ -357,6 +375,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(container.querySelector('.chat-input-message'), input);
     assert.equal(container.querySelector('.chat-execution'), execution);
     assert.equal(container.querySelector('.chat-queue-item'), queue);
+    assert.equal(container.querySelector('[aria-label="复制排队消息"]'), queueCopy);
+    assert.equal(queueCopy.querySelector('.chat-copy-label-text')?.textContent, '已复制');
     assert.equal(localDraft.getSnapshot().text, 'Keep typing');
     await show();
     assert.equal(container.querySelector('.chat-execution'), execution);
@@ -368,6 +388,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(stops, 1);
     assert.equal(localDraft.getSnapshot().text, 'Keep typing');
     assert.equal(container.querySelector('.chat-composer-hint'), null);
+    await click(container.querySelector('.chat-queue-remove')!);
+    assert.deepEqual(removed, ['next']);
+    assert.deepEqual(copied, [value.queue![0].text]);
   });
 
   for (const hasMore of [false, true]) {

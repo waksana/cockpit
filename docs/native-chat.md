@@ -189,6 +189,14 @@ text remains distinct from entered text, including on focus. Existing attachment
 and unconfirmed-send notices remain explicit. Queue items can be expanded to read
 their full text independently of removal; there is no editing, reordering or new
 steering mode.
+The native running status has a quiet leading dot, without an additional
+animation. An idle queue does not gain a running indicator.
+Expanded queue entries expose a small copy button beside removal. It copies
+the complete original text through the same control used by code/tool details,
+without submitting, removing or collapsing the queued entry. Collapsed entries
+hide the copy action, including from keyboard navigation.
+Expansion can use more of the execution panel's existing bounded height;
+collapsing restores its compact queue height, including the short-screen limit.
 
 ### Chat layout and typography
 
@@ -288,7 +296,11 @@ does not restore the previous cross-view reading position; retained history and
 native cursors still avoid a fresh history read. Within the same mounted view,
 rerenders, live updates and older-page insertion preserve the active reading
 anchor and gestures rather than forcing the reader to the bottom.
-An away-from-bottom viewport always offers a return-to-latest action. Text
+The return-to-latest action appears only when the distance from the bottom is
+at least one current transcript viewport; small upward movements remain quiet.
+This display threshold does not change the existing bottom-follow or anchor
+rules. It reuses the scroll owner's scroll/resize notifications, without another
+listener, timer or position writer. Text
 increments and recorded tool updates can mark new content without requiring a
 new message ID; unchanged pages and older history prefixes do not count as new
 messages. The existing scroll owner remains the only writer of scroll position.

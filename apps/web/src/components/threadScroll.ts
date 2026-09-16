@@ -218,7 +218,8 @@ export function observeThreadScroll(el: HTMLDivElement, content: HTMLDivElement,
   const top = () => el.getBoundingClientRect().top + el.clientTop;
   let away = false;
   const reportDistance = () => {
-    const next = el.scrollHeight - el.clientHeight - el.scrollTop > 2;
+    const viewport = el.clientHeight;
+    const next = viewport > 0 && el.scrollHeight - viewport - el.scrollTop >= viewport;
     if (away !== next) { away = next; onAwayChange?.(next); }
   };
   const scroll = new ThreadScroll({

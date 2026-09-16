@@ -45,6 +45,15 @@ test('Stop stays concise when the authoritative queue is empty', () => {
   assert.doesNotMatch(render(), /停止并清空队列/);
 });
 
+test('the execution indicator follows native running status, not queued message count', () => {
+  assert.match(render(), /chat-execution-label[^>]*data-running="true"[^>]*>执行中…/);
+  assert.match(render({ intent: 'Reading source' }), /chat-execution-label[^>]*data-running="true"[^>]*>Reading source/);
+  assert.match(render({ cancelling: true }), /chat-execution-label[^>]*data-running="true"[^>]*>正在停止…/);
+  for (const status of ['idle', 'unloaded', 'error'] as const) {
+    assert.doesNotMatch(render({ status, queue: [{ id: 'q', text: 'Waiting' }] }), /data-running=/);
+  }
+});
+
 test('queue contents do not change the existing running and compacting visibility guards', () => {
   const queue = [{ id: 'queued', text: 'Next request' }];
   for (const status of ['idle', 'unloaded', 'error'] as const) {
@@ -152,10 +161,12 @@ test('idle and read-only views do not reserve empty dock regions', () => {
   assert.doesNotMatch(idleQuestion, /class="chat-execution"/);
 });
 
-test('queue text has a keyboard-readable expansion separate from its removal action', () => {
+test('queue text has a keyboard-readable expansion with separate copy and removal actions', () => {
   const html = render({ queue: [{ id: 'q', text: 'A long queued request' }] });
   assert.match(html, /<details class="chat-queue-entry"><summary class="chat-queue-text"/);
-  assert.match(html, /<\/details><button type="button" class="chat-queue-remove"/);
+  assert.match(html, /<\/details><div class="chat-queue-copy"><span class="chat-copy"><button type="button" class="chat-copy-button" aria-label="复制排队消息"/);
+  assert.match(html, /<\/div><button type="button" class="chat-queue-remove"/);
+  assert.equal((html.match(/aria-label="复制排队消息"/g) ?? []).length, 1);
   assert.match(html, /placeholder="加入队列"/);
   assert.doesNotMatch(html, /发送后加入队列|chat-composer-hint/);
   assert.doesNotMatch(html, /重排|编辑排队/);
