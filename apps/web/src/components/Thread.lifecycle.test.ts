@@ -55,6 +55,8 @@ class HostNode extends EventTarget {
   }
   get dataset() { return { messageId: this.getAttribute('data-message-id') }; }
   get options(): HostNode[] { return this.childNodes; }
+  get open() { return this.attributes.has('open'); }
+  set open(value: boolean) { if (value) this.setAttribute('open', ''); else this.removeAttribute('open'); }
   get value(): string {
     if (this.tagName === 'OPTION') return this.getAttribute('value') ?? this.textContent;
     if (this.tagName === 'SELECT') return this.options.find(option => option.selected)?.value ?? '';
@@ -225,6 +227,19 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   await readAt(225);
   const reading = anchor();
   assert.ok(prefetches > 0, 'a mounted reader near the top prefetches older history');
+  const measuredContent = container.querySelector('.chat-message-content')!;
+  const historyHint = measuredContent.querySelector('.chat-history-loading')!;
+  assert.ok(historyHint);
+  for (const loadingHistory of [true, false, true, false]) {
+    await render({ ...a, loadingHistory });
+    assert.equal(container.querySelector('.chat-message-content'), measuredContent);
+    const indicator = container.querySelector('.chat-history-loading');
+    assert.equal(indicator, historyHint);
+    assert.equal(indicator.parentNode, measuredContent.querySelector('.chat-history-controls'));
+    assert.equal(viewport().getAttribute('aria-busy'), String(loadingHistory));
+    assert.deepEqual(anchor(), reading);
+    assert.equal(viewport().scrollTop, 225);
+  }
   for (const change of [
     { title: 'Metadata update' },
     { loadingHistory: true },
@@ -361,17 +376,32 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const queue = container.querySelector('.chat-queue-item')!;
     const queueCopy = queue.querySelector('[aria-label="复制排队消息"]')!;
     const queueEntry = queue.querySelector('.chat-queue-entry')!;
-    queueEntry.setAttribute('open', '');
     await click(queueCopy);
     assert.deepEqual(copied, [value.queue![0].text]);
     assert.deepEqual(removed, []);
     assert.equal(stops, 0);
-    assert.equal(queueEntry.attributes.has('open'), true);
+    assert.equal(queueEntry.attributes.has('open'), false, 'copying does not require or trigger expansion');
     assert.equal(queueCopy.querySelector('.chat-copy-label-text')?.textContent, '已复制');
-    const decision = container.querySelector('.chat-decisions')!;
-    assert.equal(decision.parentNode, execution.parentNode);
+    queueEntry.setAttribute('open', '');
+    await click(queueCopy);
+    assert.equal(queueEntry.attributes.has('open'), true, 'expanded copying does not collapse the entry');
+    assert.deepEqual(copied, [value.queue![0].text, value.queue![0].text]);
+    const decision = container.querySelector('.chat-composer')!;
+    assert.equal(decision.getAttribute('data-question'), 'true');
+    assert.equal(decision.parentNode === execution.parentNode?.parentNode, true,
+      'the answer composer follows the independent execution dock');
     assert.equal(container.querySelector('.chat-typing-stop')?.textContent, '停止并清空队列');
+    decision.open = false;
+    await show({ title: 'Updated background metadata' });
+    assert.equal(decision.open, false, 'ordinary updates preserve native question collapse');
+    assert.equal(container.querySelector('.chat-input-message'), input);
+    await show({ ask: { ...value.ask!, requestId: 'next-question' } });
+    assert.equal(decision.open, true, 'a different native question opens without replacing the editor');
+    assert.equal(container.querySelector('.chat-input-message'), input);
+    decision.open = false;
     await show({ ask: null });
+    assert.equal(decision.open, true, 'ordinary input is restored after a collapsed question resolves');
+    assert.equal(decision.getAttribute('data-question'), null);
     assert.equal(container.querySelector('.chat-input-message'), input);
     assert.equal(container.querySelector('.chat-execution'), execution);
     assert.equal(container.querySelector('.chat-queue-item'), queue);
@@ -390,7 +420,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(container.querySelector('.chat-composer-hint'), null);
     await click(container.querySelector('.chat-queue-remove')!);
     assert.deepEqual(removed, ['next']);
-    assert.deepEqual(copied, [value.queue![0].text]);
+    assert.deepEqual(copied, [value.queue![0].text, value.queue![0].text]);
   });
 
   for (const hasMore of [false, true]) {
@@ -687,6 +717,27 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   await renderBody();
   assert.notEqual(container.querySelector('[data-chat-table]'), table, 'a real unmount releases native render nodes');
 
+  await t.test('streamed thinking keeps the same Markdown nodes through updates and completion', async () => {
+    const thought = { id: 'thinking-markdown', role: 'assistant' as const, content: '', timestamp: 1,
+      thought: '## Thinking\n\n| A | B |\n| --- | --- |\n| one | two |\n\n```ts\nconst exact = 1;\n```\n\nWorking' };
+    const current = { ...session('thinking-renderer'), hasMore: false, status: 'running' as const, messages: [thought] };
+    await render(current);
+    const detail = container.querySelector('.msg-thought')!;
+    const markdown = detail.querySelector('.message-body');
+    const table = detail.querySelector('[data-chat-table]');
+    const code = detail.querySelector('.chat-code-block');
+    assert.ok(markdown && table && code);
+    await render({ ...current, messages: [{ ...thought, thought: `${thought.thought} **incrementally**.` }] });
+    assert.equal(container.querySelector('.msg-thought'), detail);
+    assert.equal(detail.querySelector('.message-body'), markdown);
+    assert.equal(detail.querySelector('[data-chat-table]'), table);
+    assert.equal(detail.querySelector('.chat-code-block'), code);
+    await render({ ...current, status: 'idle' });
+    assert.equal(detail.querySelector('.message-body'), markdown);
+    assert.equal(detail.querySelector('[data-chat-table]'), table);
+    assert.equal(detail.querySelector('.chat-code-block'), code);
+  });
+
   await t.test('attachment-only native rows contribute to measured initial history fill', async () => {
     const current = session('attachment-fill');
     const attachments = Array.from({ length: 6 }, (_, i) => ({
@@ -740,7 +791,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     let sends = 0;
     const onSend = () => draft.send(async () => { sends++; return true; });
     const renderComposer = async (operation: ComposerContext['operation'] = 'prompt', disabled = false) => {
-      await act(() => root.render(createElement(Composer, { draft, runtime, onSend, operation, disabled })));
+      await act(() => root.render(createElement(Composer, { draft, runtime, onSend, operation, disabled,
+        ask: operation === 'ask' ? { request: { requestId: 'module-question', question: 'Choose', choices: ['A'] }, onChoice() {} } : undefined,
+      })));
     };
     const dispatch = async (selector: string, type: string, properties: Record<string, unknown> = {}) => {
       const target = container.querySelector(selector);
@@ -784,6 +837,13 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.ok(context.querySelector('.module-draft-attachments'));
     assert.ok(context.querySelector('.fixture-attachment-panel'));
     assert.equal(aboveMounts, 1, 'empty/nonempty module content and notices must not remount contributions');
+    assert.equal(container.querySelector('.chat-input-message'), editor);
+    assert.equal(container.querySelector('[aria-label="Module action"]'), action);
+    const answerCard = container.querySelector('.chat-composer')!;
+    answerCard.open = false;
+    await act(() => draft.edit('Draft updated while folded'));
+    assert.equal(answerCard.open, false);
+    assert.equal(aboveMounts, 1);
     assert.equal(container.querySelector('.chat-input-message'), editor);
     assert.equal(container.querySelector('[aria-label="Module action"]'), action);
     await dispatch('.chat-input-message', 'keydown', { key: 'Enter', ctrlKey: true });

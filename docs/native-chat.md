@@ -169,20 +169,51 @@ Activity disclosure keeps its header height and icon slots fixed. Long tool
 titles do not wrap on expansion; clipped fields wrap only in the details below.
 Process headers share one text column. Expanded tool and thought details share
 a single 24px inset, without accumulated nesting indents or progressively smaller
-text. Markdown's first/last blocks have no outside margins, including class-based
+text. Thinking uses the same Markdown renderer as message prose: native reasoning
+is text that can contain Markdown, not a separately guaranteed format. Plain
+text remains readable; headings, lists, links and code use the existing safe
+rendering/copy behavior. Reasoning does not gain module file-preview resolution.
+Markdown's first/last blocks have no outside margins, including class-based
 paragraphs used by module renderers; the bubble's own padding is unchanged.
-Initial history loading is a pane-level status
-outside the measured rows; older-page refresh status stays inline.
+The history-start hint is a plain, constant notice at the beginning of the
+scrolling content. It stays mounted while the initial history is unread or
+native reports more history; only authoritative exhaustion removes it.
+Individual page requests do not change its text, appearance or height. It is not
+a per-request spinner, an overlay or a hidden spacer. Errors and explicit retry
+remain separate. No JavaScript height control is involved; final removal
+notifies the existing scroll owner, including an empty terminal page.
 Right-clicking chat content uses the browser's native context menu, not a custom
 message-copy menu. Code and tool-detail copy buttons remain available.
 
-Pending questions, plans and tool confirmations occupy their own framed cards
-above a separate compact execution/queue panel. Both share a bounded dock above
-the composer, with 8px between regions. Long decisions and queue contents remain
-scrollable rather than overlapping the input. Execution status and available
+Pending questions wrap the existing composer in one answer card: the retained
+icon and "waiting for your answer" header, question, choices and the original
+input/send row. Its header is a native `details`/`summary` disclosure; closed,
+only the 40px header remains. Text/choices/notices scroll above the input instead
+of moving it off screen. Question text remains selectable independently of the
+header. Selecting a choice still submits directly; freeform text uses the existing
+send action, and choice-only questions still block freeform submission.
+
+The same editor and module contribution instances stay mounted while the card
+opens/closes, changes questions or returns to normal composition. Collapse does
+not discard a draft or answer the request. A new native request ID opens the card;
+ordinary updates to the same request preserve the browser's disclosure state.
+Completion also opens the ordinary composer if the question was collapsed.
+No JavaScript height measurement, collapse state machine or layout animation
+is introduced.
+
+Execution/queue remains a separate compact panel above the answer composer;
+its waiting label and available controls stay visible independently of collapse.
+Plans and tool confirmations keep their existing separate cards and native
+callbacks, including when more than one decision kind is present. The bounded
+dock can scroll when these simultaneous surfaces cannot all fit. Regions are
+separated by 8px, and long content does not overlay the input. Execution status and available
 actions use the same panel with or without a decision; a pending question does
 not hide Stop. Stop retains its native queue-clearing behavior and stays disabled
 while disconnected, closing, cancelling or another protected operation is active.
+The execution label takes the space remaining beside its actions rather than
+reserving a large minimum column. At normal phone widths the status and both
+queue actions share one line; long status text truncates, while very narrow
+containers can still wrap naturally without JavaScript width calculations.
 There is no queue-count heading or repeated composer explanation. The input
 placeholder and submit label identify the active operation; muted placeholder
 text remains distinct from entered text, including on focus. Existing attachment
@@ -191,10 +222,11 @@ their full text independently of removal; there is no editing, reordering or new
 steering mode.
 The native running status has a quiet leading dot, without an additional
 animation. An idle queue does not gain a running indicator.
-Expanded queue entries expose a small copy button beside removal. It copies
+Queue entries always expose a small copy button beside removal, including
+single-line and collapsed messages. It copies
 the complete original text through the same control used by code/tool details,
-without submitting, removing or collapsing the queued entry. Collapsed entries
-hide the copy action, including from keyboard navigation.
+without submitting, removing, expanding or collapsing the queued entry.
+Copying is keyboard-accessible without first expanding the text.
 Expansion can use more of the execution panel's existing bounded height;
 collapsing restores its compact queue height, including the short-screen limit.
 
@@ -251,8 +283,8 @@ A boundary has one owner:
 | Message interior | User bubbles retain 0.65rem by 0.85rem padding. Paragraphs/lists use 0.65em rhythm; code, tables and quotes use 0.85em. Headings retain their typographic margins. First/last blocks have no outside margin. Text-to-attachment separation is 12px, absent for attachment-only messages. |
 | Expanded process details | Shared 24px inset, 4px after the header and 8px after details. Header dimensions and behavior do not change. |
 | Cards | Ordinary panel inset and content separation are 12px; compact execution panels use 8px inset and 4px row spacing. Controls use an 8px gap. Decision body typography is unchanged. |
-| Composer context | Notices, module-above contributions and native attachment fallback share one bounded, scrollable stack with 8px gaps. Children have no outside margins. An empty stack is hidden without unmounting module contributions. |
-| Input and safe area | Field inset is 8px by 12px; the send target remains 40px square. Only the bottom bar adds 4px plus the safe-area inset. The read-only footer owns the equivalent inset when there is no composer. |
+| Composer context | Notices, module-above contributions and native attachment fallback share one bounded, scrollable stack with 8px gaps. During a question it also contains the question and choices. Children have no outside margins. An empty stack is hidden without unmounting module contributions. |
+| Input and safe area | Field inset is 8px by 12px; the send target remains 40px square. The ordinary bottom bar adds 4px plus safe area; in answer mode its single outer card owns that bottom spacing and the input row has no extra outer padding. The read-only footer owns the equivalent inset without a composer. |
 
 The host controls contribution placement, not a module's internal visual design.
 Active upload feedback stays with the module's attachment item; only revoked
@@ -375,10 +407,10 @@ for a complete display message.
 Initial viewport filling measures the incoming rows without exposing each
 intermediate page, then reveals the accumulated initial content together.
 Existing reading windows remain visible during older-page loads. The normal
-loading indicator sits in a reserved-height slot at the beginning of the
-scrolling transcript, not a fixed or sticky viewport toolbar. There is no normal
-load-more button; explicit failure retry and rebase remain available. The
-reserved slot prevents loading visibility from shifting rows. Child cards
+history-start hint remains in normal flow until the earliest history is reached,
+rather than being inserted and removed around every request. There is no normal load-more button;
+explicit failure retry and rebase remain available. Recorded incomplete-history
+notes do not disappear during loading. Child cards
 render the shared nested projection. Expanding a card makes no request, needs
 no refresh button, and automatically shows new messages and lifecycle changes.
 Collapsed children also travel over the all-agent stream; this is the user's

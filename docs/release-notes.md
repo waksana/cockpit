@@ -2,11 +2,23 @@
 
 Unreleased development version. No tag or Release has been created for these changes.
 
+- Expanded thinking renders Markdown with the shared message renderer, including
+  headings, lists, links and copyable code, without changing the native text or
+  reasoning ownership.
+- Pending questions share one foldable answer card with the existing input and
+  send row. The waiting header/icon remain; native disclosure collapses to one
+  row without losing the draft or remounting the editor. Execution/queue remains
+  above it, while plan and tool-confirmation actions keep their distinct cards.
+- A plain history-start hint stays at the beginning of the scrolling content
+  until the earliest history is reached. It no longer appears/disappears around
+  individual requests. No overlay, height measurement or hidden spacer is used.
 - Return-to-latest appears after moving at least one transcript viewport away
   from the bottom, without changing automatic following or reading anchors.
-- The execution label includes a quiet running-status dot. Expanded queued
-  messages expose the shared small copy control with stable confirmation and
+- The execution label includes a quiet running-status dot. Queued messages
+  always expose the shared small copy control with stable confirmation and
   explicit clipboard errors, independently of queue removal or submission.
+- Execution status and queue actions share a compact row at normal phone widths,
+  with long status text truncated instead of pushing both buttons to a new row.
 - Chat separates pending decision cards from a compact framed execution/queue
   panel, keeps Stop available while awaiting a decision, and applies consistent
   spacing between visible message groups. Queue headings and repeated composer

@@ -99,9 +99,9 @@
   min-width: 0;
   min-height: min(6rem, 20%);
 }
-.chat-initial-loading {
-  position: absolute; inset: 0;
-  pointer-events: none;
+.chat-history-loading {
+  flex: none;
+  padding: var(--chat-gap-control) var(--chat-inset-panel);
 }
 .chat-history-controls {
   flex: none;
@@ -329,9 +329,6 @@ button.activity-head {
   font-size: var(--chat-text-body); line-height: var(--chat-leading-prose); overflow-wrap: anywhere;
 }
 .msg-thought-block { margin: 0; }
-.msg-thought {
-  white-space: pre-wrap;
-}
 .thought-incomplete {
   margin: 0 0 var(--chat-gap-meta);
   color: var(--secondary-text-color);
@@ -564,8 +561,44 @@ button.activity-head {
 
 // ── Composer ────────────────────────────────────────────────────────────────
 .chat-composer {
-  display: flex; flex-direction: column; gap: var(--chat-gap-region);
+  display: block;
   flex: none; min-width: 0; min-height: 0;
+}
+.chat-composer-body { display: flex; flex-direction: column; gap: var(--chat-gap-region); }
+.chat:has(.chat-composer[data-question]) {
+  .chat-dock:has(.chat-execution) { min-height: 50px; }
+  .chat-execution { flex-shrink: 1; min-height: 50px; }
+}
+.chat-answer-toggle {
+  display: flex; align-items: center; gap: var(--chat-gap-control);
+  min-height: 38px; padding: var(--chat-inset-compact) var(--chat-inset-panel);
+  font-size: var(--chat-text-label); font-weight: 600; line-height: var(--chat-leading-ui);
+  color: var(--chat-accent-ink); cursor: pointer; list-style: none;
+  &[hidden] { display: none; }
+  &::-webkit-details-marker { display: none; }
+  &:focus-visible { outline-offset: -3px; }
+}
+.chat-answer-chevron { display: inline-flex; margin-inline-start: auto; }
+.chat-composer:not([open]) .chat-answer-chevron { transform: rotate(-90deg); }
+.chat-composer[data-question] {
+  @include chat-design.column;
+  margin-block-end: calc(var(--chat-inset-bottom) + env(safe-area-inset-bottom, 0px));
+  border: 1px solid color-mix(in srgb, var(--primary-color) 35%, var(--border-color));
+  border-radius: var(--border-radius);
+  background: color-mix(in srgb, var(--primary-color) 4%, var(--surface-color));
+  .chat-composer-body {
+    // Budget the question and a growing draft together, not as independent viewport caps.
+    max-height: min(28rem, max(2.5rem, calc(60dvh - 6rem)));
+  }
+  .chat-composer-context {
+    width: 100%; max-height: min(18rem, 30dvh); margin: 0;
+    padding-inline: var(--chat-inset-panel);
+  }
+  .chat-answer-question { flex: none; overflow: visible; }
+  .chat-input { padding: 0; background: transparent; }
+  .chat-input-message { background: transparent; }
+  .chat-ask-q { user-select: text; -webkit-user-select: text; }
+  .chat-ask-choices { flex-direction: column; }
 }
 .chat-composer-context {
   @include chat-design.column;
@@ -741,11 +774,10 @@ button.activity-head {
 }
 .chat-queue-entry[open] .chat-queue-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-queue-copy {
-  display: none; flex: none; max-width: 5rem;
+  display: flex; flex: none; max-width: 5rem;
   .chat-copy { flex-direction: column; align-items: flex-start; }
   .chat-copy-error { overflow-wrap: anywhere; }
 }
-.chat-queue-entry[open] + .chat-queue-copy { display: flex; }
 .chat-dock {
   @include chat-design.column;
   container: chat-dock / inline-size;
@@ -771,7 +803,7 @@ button.activity-head {
   flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--chat-gap-meta) var(--chat-gap-control);
 }
 .chat-execution-label {
-  flex: 1 1 10rem; min-width: 0;
+  flex: 1 1 0; min-width: 4em;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--chat-text-meta); line-height: var(--chat-leading-ui);
   &[data-running]::before {

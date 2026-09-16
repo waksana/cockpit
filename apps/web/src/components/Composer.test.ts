@@ -38,7 +38,7 @@ test('active draft blocking only disables sending without a global warning or du
   const release = f.context.draft.block('Wait for file');
   const html = f.render();
   assert.match(html, /fixture-card/);
-  assert.doesNotMatch(html, /chat-input-notice|module-draft-recovery|module-draft-attachments|<details|原生附件/);
+  assert.doesNotMatch(html, /chat-input-notice|module-draft-recovery|module-draft-attachments|<details class="module|原生附件/);
   assert.match(html, /class="chat-input-btn send rp" disabled=""/);
   assert.match(html, /title="Wait for file"/);
   assert.equal(await f.draft.send(async () => assert.fail('Blocked draft must not send')), false);
@@ -57,7 +57,7 @@ test('ordinary contributions do not hide the default attachment removal list', a
   assert.match(html, /module-draft-attachments/);
   assert.match(html, /Ready/);
   assert.match(html, /aria-label="移除附件"/);
-  assert.doesNotMatch(html, /<details|原生附件/);
+  assert.doesNotMatch(html, /<details class="module|原生附件/);
 });
 
 test('module revocation keeps ready attachments and a dismissible inline blocker without an error box', async t => {
@@ -74,7 +74,7 @@ test('module revocation keeps ready attachments and a dismissible inline blocker
   assert.match(html, /module-draft-recovery/);
   assert.match(html, /移除未完成的选择/);
   assert.match(html, /module-draft-attachments/);
-  assert.doesNotMatch(html, /chat-input-notice|原生附件|<details/);
+  assert.doesNotMatch(html, /chat-input-notice|原生附件|<details class="module/);
   f.draft.dismissOrphanedBlock(f.draft.getSnapshot().blocks[0].id);
   assert.equal(await f.draft.send(async () => true), true);
 });

@@ -22,7 +22,7 @@ import { ActivityHeader } from './ActivityHeader';
 import { DisclosureChoices } from './DisclosureChoices';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
 import { groupTranscript, transcriptGap, type TranscriptRow, type ProcessItem } from '../lib/transcriptRows';
-import { AskCard, PlanCard, ElicitationCard } from './PendingDecision';
+import { PlanCard, ElicitationCard } from './PendingDecision';
 import { StateNotice } from './StateNotice';
 import { useClippedText } from '../lib/useClippedText';
 import { hasNewTranscriptContent } from '../lib/transcriptActivity';
@@ -35,7 +35,7 @@ function Thought({ message, latest, sessionId }: { message: ChatMessage; latest:
       <ActivityHeader className="thought-toggle" icon={<Icon name="skills" size={16} />}
         title="思考过程" disclosure={{ open, onToggle: toggle }} />
       {message.incomplete && <div className="thought-incomplete" role="status">{message.incomplete}</div>}
-      {open && <div className="activity-detail msg-thought">{message.thought}</div>}
+      {open && <div className="activity-detail msg-thought"><MessageBody body={message.thought ?? ''} /></div>}
     </div>
   );
 }
@@ -427,7 +427,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     }
     previousMessages.current = session.messages;
     scrollOwnerRef.current?.changed();
-  }, [messages, session.messages, session.status, session.compacting, session.error]);
+  }, [messages, session.messages, session.status, session.compacting, session.error, session.materialized, session.hasMore]);
 
   const jumpToBottom = useCallback(() => { scrollOwnerRef.current?.follow(); }, []);
 
@@ -437,7 +437,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   // a pending plan (planSupersede), or otherwise sends a normal prompt.
   const ask = session.ask;
   const planRequest = session.planRequest;
-  const hasPendingDecision = !readOnly && !!(ask || planRequest || session.elicitation);
+  const hasPendingDecision = !readOnly && !!(planRequest || session.elicitation);
   const hasExecution = session.compacting || session.status === 'running' || (!readOnly && (queueCount > 0 || !!interruptResult));
   const runInView = useCallback((send: () => Promise<boolean>): Promise<boolean> => (
     acknowledgeInView(actionScopeRef.current, send, {
@@ -465,15 +465,14 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   return (
     <DisclosureChoices key={session.sessionId}><main className="chat">
       <div className="chat-transcript">
-        <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-label="对话消息" aria-busy={preparingHistory}>
+        <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-label="对话消息" aria-busy={preparingHistory || session.loadingHistory}>
           <div ref={contentRef} className="chat-message-content">
             <div className="chat-history-controls">
+              {(!session.materialized || session.hasMore) && <StateNotice className="chat-history-loading">
+                加载更早的消息…
+              </StateNotice>}
               <div className="chat-history-actions">
-                {preparingHistory ? null : session.loadingHistory ? (
-                  <StateNotice className="chat-loading-older" kind="loading">
-                    {session.historyStale || !session.materialized ? '正在同步对话历史…' : '加载更早的消息…'}
-                  </StateNotice>
-                ) : session.historyStale || !session.materialized ? (
+                {preparingHistory || session.loadingHistory ? null : session.historyStale || !session.materialized ? (
                   <StateNotice className="chat-loading-older" kind={session.historyError ? 'error' : 'info'}>
                     {session.historyError ? `历史加载失败：${session.historyError}` : '对话历史尚未同步。'}
                     {onRetryHistory && <button type="button" className="dialog-btn rp" onClick={() => {
@@ -491,7 +490,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
               {session.partialHistory && <p className="chat-history-note" role="status">
                 断线期间的临时片段可能不完整；已保留现有文字，以原生保存后的完整消息为准。
               </p>}
-              {session.incompleteBoundary && !session.hasMore && !session.loadingHistory && <p className="chat-history-note">
+              {session.incompleteBoundary && !session.hasMore && <p className="chat-history-note">
                 部分工具记录缺少对应的发起消息，现有历史无法补齐。
               </p>}
             </div>
@@ -513,9 +512,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
           </div>
         </div>
 
-        {preparingHistory && <StateNotice className="chat-initial-loading" kind="loading" placement="pane">
-          正在同步对话历史…
-        </StateNotice>}
         {awayFromBottom && (
           <button className="new-msg-badge" type="button" onClick={jumpToBottom}>
             {hasNewContent ? '有新内容 · 回到最新' : '回到最新'}
@@ -526,7 +522,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
       {(hasPendingDecision || hasExecution) && (
         <div className="chat-dock" data-pending={hasPendingDecision || undefined}>
           {hasPendingDecision && <div className="chat-decisions">
-            {ask && <AskCard request={ask} pending={actionPending} onChoice={choice => { void handleChoice(choice); }} />}
             {planRequest && <PlanCard request={planRequest} pending={actionPending}
               onSelect={action => { void runAction(() => onRespondPlan?.(planRequest.requestId, action)); }} />}
             {session.elicitation && <ElicitationCard request={session.elicitation} pending={actionPending}
@@ -583,6 +578,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
           disabled={!!session.compacting && session.status !== 'running'}
           placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : session.status === 'running' ? '加入队列' : '输入消息…'))}
           draft={draft}
+          ask={ask ? { request: ask, onChoice: choice => { void handleChoice(choice); } } : undefined}
           operation={ask ? 'ask' : planRequest ? 'plan' : 'prompt'}
           onSend={handleSend}
           sendBlocked={ask?.allowFreeform === false}

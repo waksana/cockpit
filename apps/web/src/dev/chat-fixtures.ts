@@ -147,6 +147,7 @@ export const scenarios = [
   ['user-time', '用户时间 / 短长文本'],
   ['native-attachments', '原生附件 / 混合正文 / 仅附件'],
   ['process', '思考 / 工具 / 子代理'],
+  ['thought-markdown', '思考 Markdown / 流式 / 代码复制'],
   ['process-history', '连续过程 / 无正文 / 最新展开'],
   ['ordered-events', '原生事件 / 连续概览 / 重连补全'],
   ['streaming', '流式 / 队列 / 停止'],
@@ -164,6 +165,7 @@ export const scenarios = [
   ['empty', '空对话'],
   ['loading', '首次加载'],
   ['history', '历史分页 / 阅读锚点'],
+  ['history-loading', '历史起点提示 / 保留阅读位置'],
   ['history-error', '历史失败 / 不完整片段'],
   ['stale', '历史过期 / 显式重读'],
   ['error', '会话错误'],
@@ -193,6 +195,17 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   };
   if (scenario === 'all') session.messages = [...readingMessages, ...processMessages];
   if (scenario === 'process') session.messages = [...processMessages];
+  if (scenario === 'thought-markdown') {
+    session.status = 'running';
+    session.messages = [message('markdown-thought', 'assistant', '', {
+      thought: '## 检查思路\n\n先确认 **实际内容**，再检查 `src/components/Thread.tsx`。\n保留普通软换行。\n\n'
+        + '- 保持同一渲染器\n- 不改变原生事件归属\n\n> 思考内容支持 Markdown，不代表新增业务能力。\n\n'
+        + '[阅读说明](https://example.com/reference)\n\n'
+        + '| 状态 | 展示 |\n| --- | --- |\n| 进行中 | 保持增量 |\n| 完成 | 保留内容 |\n\n'
+        + '```ts\nconst answer = "<exact>";\n```\n\n'
+        + `长行：${'unbroken_thought_identifier_'.repeat(8)}`,
+    })];
+  }
   if (scenario === 'process-history') session.messages = [...processHistoryMessages];
   if (scenario === 'user-time') session.messages = [
     message('time-short', 'user', '收到。'),
@@ -239,6 +252,7 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   if (scenario === 'empty' || scenario === 'loading') session.messages = [];
   if (scenario === 'loading') Object.assign(session, { materialized: false, loadingHistory: true, hasMore: true });
   if (scenario === 'history') session.hasMore = true;
+  if (scenario === 'history-loading') Object.assign(session, { loadingHistory: true, hasMore: true });
   if (scenario === 'history-error') Object.assign(session, { historyError: '合成读取失败：连接已断开', partialHistory: true, incompleteBoundary: true });
   if (scenario === 'stale') Object.assign(session, { historyStale: true, historyError: '游标已过期，请显式重新同步。' });
   if (scenario === 'error') Object.assign(session, { status: 'error', error: '发送结果尚未确认；请先核对会话，不要直接重发。' });

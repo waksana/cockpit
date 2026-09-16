@@ -117,8 +117,18 @@ export function Lab() {
       <button onClick={() => setSession(value => ({ ...value, messages: value.messages.map((m, i) => i === value.messages.length - 1
         ? { ...m, content: `${m.content}更加清楚。流式增量也不应打断上翻阅读。` } : m) }))}>流式一步</button>
       <button onClick={() => setSession(value => ({ ...value, status: 'idle', compacting: false, intent: null }))}>结束回合</button>
+      {scenario === 'thought-markdown' && <button onClick={() => setSession(value => ({
+        ...value, messages: value.messages.map(message => ({ ...message, thought: `${message.thought ?? ''}\n\n新增 **思考片段**。` })),
+      }))}>追加思考片段</button>}
       <button onClick={loadMore}>插入历史 / 完成加载</button>
+      {scenario === 'history-loading' && <button onClick={() => setSession(value => ({
+        ...value, loadingHistory: !value.loadingHistory,
+      }))}>切换分页请求状态</button>}
       <button onClick={() => choose(scenario)}>重置场景</button>
+      {session.ask && <button onClick={() => setSession(value => ({
+        ...value, ask: value.ask ? { ...value.ask, requestId: `lab-question-${++counter.current}`,
+          question: '这是下一个原生问题的合成输入；新问题应展开，原输入框和草稿保持不变。' } : null,
+      }))}>下一问题</button>}
       {scenario === 'ordered-events' && <>
         <button onClick={() => orderedAction('thought')}>追加思考事件</button>
         <button onClick={() => orderedAction('body')}>追加正文事件</button>

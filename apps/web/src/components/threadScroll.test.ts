@@ -363,7 +363,7 @@ test('repeated fractional geometry, scroll, and visible-anchor jitter below 1px 
   }
 });
 
-test('loading on/off reserves its leading flow slot without changing message rows', () => {
+test('history-start hint stays in flow until native history is exhausted, independently of loading', () => {
   const session: ChatSession = {
     sessionId: 'scroll-loading', title: 'History', cwd: '/project', lastActivity: 0,
     status: 'idle', loaded: true, error: null, queue: [], ask: null,
@@ -381,17 +381,20 @@ test('loading on/off reserves its leading flow slot without changing message row
   assert.equal(messages, divContents(render(false), 'chat-message-rows'));
   assert.match(messages, /Stable transcript/);
   assert.match(messages, /class="message is-out" data-message-id="visible"/);
-  assert.doesNotMatch(messages, /chat-loading-older|new-msg-badge/);
-  assert.match(divContents(divContents(loading, 'chat-message-content'), 'chat-history-controls'), /chat-loading-older/);
-  assert.doesNotMatch(idle, /chat-loading-older/);
+  assert.doesNotMatch(messages, /chat-loading-older|chat-history-loading|new-msg-badge/);
+  assert.equal(divContents(loading, 'chat-message-content'), divContents(idle, 'chat-message-content'),
+    'loading must not add height anywhere inside the measured content');
+  assert.match(loading, /class="state-notice chat-history-loading"[^>]*data-kind="info"/);
+  assert.match(idle, /chat-history-loading/);
   const css = readFileSync(new URL('../styles/components/chat.scss', import.meta.url), 'utf8');
   assert.match(css, /\.chat-transcript\s*\{[^}]*flex-direction:\s*column/);
   assert.match(css, /\.chat-history-controls\s*\{[^}]*flex:\s*none[^}]*width:\s*100%/);
   assert.match(css, /\.chat-history-actions\s*\{[^}]*min-height:\s*2\.5rem/);
   assert.doesNotMatch(css, /\.chat-loading-older\s*\{[^}]*position:\s*absolute/);
   assert.match(css, /\.new-msg-badge\s*\{[^}]*position:\s*absolute/);
-  assert.match(divContents(loading, 'chat-history-controls'), /chat-loading-older/);
-  assert.doesNotMatch(divContents(idle, 'chat-history-controls'), /button|加载更早/);
+  assert.match(divContents(loading, 'chat-history-controls'), /chat-history-loading/);
+  assert.doesNotMatch(css, /\.chat-history-loading\s*\{[^}]*(position:|height:|visibility:)/);
+  assert.doesNotMatch(divContents(idle, 'chat-history-controls'), /button|spinner/);
 
   const h = fixture();
   const anchor = readAt(h, 275);

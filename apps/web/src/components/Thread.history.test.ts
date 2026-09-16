@@ -74,8 +74,10 @@ test('composer displays a dismissible notice only for unconfirmed outcomes, not 
 
 test('cold history loading is not presented as an empty conversation', () => {
   const html = render({});
-  assert.match(html, /正在同步对话历史/);
+  assert.match(html, /加载更早的消息/);
   assert.doesNotMatch(html, /开始对话|重新读取最新历史/);
+  assert.equal((html.match(/class="state-notice chat-history-loading"/g) ?? []).length, 1);
+  assert.match(html, /aria-label="对话消息" aria-busy="true"/);
 });
 
 test('failed history remains visibly unsynchronized and offers an explicit read retry', () => {
@@ -161,7 +163,7 @@ test('initial history has a measurement-only body while its complete initial bat
     messages: [{ id: 'partial-page', role: 'assistant', content: 'Not yet a complete initial viewport', timestamp: 1 }],
   });
   assert.match(html, /chat-history-controls/);
-  assert.match(html, /正在同步对话历史/);
+  assert.match(html, /加载更早的消息/);
   assert.match(html, /class="chat-message-rows" data-preparing="true" aria-hidden="true" inert=""/);
   assert.match(html, /Not yet a complete initial viewport/);
 });
@@ -182,4 +184,29 @@ test('loading more history never hides an already materialized reading window', 
   assert.match(html, /加载更早的消息/);
   assert.match(html, /Keep this reading position/);
   assert.doesNotMatch(html, /data-preparing|aria-hidden="true" inert/);
+  assert.equal((html.match(/class="state-notice chat-history-loading"/g) ?? []).length, 1);
+  assert.match(html, /aria-label="对话消息" aria-busy="true"/);
+});
+
+test('recorded incomplete history notices do not toggle with the loading indicator', () => {
+  const ready = { materialized: true, historyStale: false, incompleteBoundary: true, hasMore: false };
+  for (const loadingHistory of [false, true]) {
+    assert.match(render({ ...ready, loadingHistory }), /现有历史无法补齐/);
+  }
+});
+
+test('history-start hint has one visibility rule and no per-request status variants', () => {
+  const text = '加载更早的消息…';
+  for (const loadingHistory of [false, true]) {
+    const more = { materialized: true, historyStale: false, hasMore: true, loadingHistory };
+    for (const patch of [{}, { historyError: 'offline' }, { incompleteBoundary: true }]) {
+      const html = render({ ...more, ...patch });
+      assert.equal((html.match(/class="state-notice chat-history-loading"/g) ?? []).length, 1);
+      assert.ok(html.includes(text));
+      assert.doesNotMatch(html, /class="spinner"/);
+    }
+    assert.doesNotMatch(render({ ...more, hasMore: false }), /chat-history-loading/);
+    assert.match(render({ ...more, materialized: false, hasMore: false }), /chat-history-loading/,
+      'an unread initial window is not authoritative history exhaustion');
+  }
 });
