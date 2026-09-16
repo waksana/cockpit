@@ -2,6 +2,9 @@
 
 Unreleased development version. No tag or Release has been created for these changes.
 
+- Browser history pages use the native runtime's 200-event default size, retaining
+  native cursor continuation, bounded single-page reads and existing viewport
+  prefetch; live SSE batching is unchanged.
 - Cold Chat history displays each received page immediately instead of hiding
   mounted rows until two viewport heights have accumulated. Two-screen prefetch,
   the existing scroll owner and the history-start hint remain unchanged.

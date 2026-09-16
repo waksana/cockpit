@@ -350,7 +350,21 @@ the viewport falls to about one current viewport. After insertion, the reading
 anchor is restored before deciding whether another bounded batch is needed.
 There is at most one older read in flight per window; exhausted, failed, expired,
 or unresolved-boundary windows do not automatically continue.
-Browser backward reads use 32-event pages and stop initial filling once the
+Browser backward reads explicitly request 200 events, matching the installed
+runtime 1.0.83 default for both `eventLog.read` and `sessions.readPersistedEvents`.
+Native supports 1–1000 events; Cockpit's existing public per-page bound remains
+256. The browser's 200-event history request needs no new API, local cursor,
+adaptive batch controller or larger live SSE batch. The native cursor is passed
+back unchanged and `hasMore`/`cursorStatus` remain authoritative.
+
+This is a native **event** limit, not a visible-message, byte or height limit.
+Collapsed process groups still carry their full native payloads. One API page
+delegates to one native read (plus the existing one-time live-tail bootstrap);
+it does not prefetch the full journal. The native bundle also has a 32-event
+recent-event helper and a 1000-event forward initialization iterator; neither
+is the policy for this tail-first, viewport-driven Chat.
+
+Initial filling stops once the
 accumulated content reaches two screen heights (a complete batch can exceed
 that minimum). One history action continues across native pages
 until it adds visible content and resolves missing child/task ownership.
