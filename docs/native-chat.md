@@ -296,7 +296,11 @@ does not restore the previous cross-view reading position; retained history and
 native cursors still avoid a fresh history read. Within the same mounted view,
 rerenders, live updates and older-page insertion preserve the active reading
 anchor and gestures rather than forcing the reader to the bottom.
-An away-from-bottom viewport always offers a return-to-latest action. Text
+The return-to-latest action appears only when the distance from the bottom is
+at least one current transcript viewport; small upward movements remain quiet.
+This display threshold does not change the existing bottom-follow or anchor
+rules. It reuses the scroll owner's scroll/resize notifications, without another
+listener, timer or position writer. Text
 increments and recorded tool updates can mark new content without requiring a
 new message ID; unchanged pages and older history prefixes do not count as new
 messages. The existing scroll owner remains the only writer of scroll position.
