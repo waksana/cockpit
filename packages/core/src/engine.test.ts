@@ -226,6 +226,7 @@ function fakeSession(t: TestContext, sessionId: string) {
   } satisfies PortRpc;
   const sdk = {
     sessionId, rpc,
+    workspacePath: undefined as CopilotSession['workspacePath'],
     on: t.mock.fn((handler: (event: SessionEvent) => void) => {
       assert.equal(typeof handler, 'function', 'subscribe through the public on(handler) overload');
       listeners.add(handler);
@@ -483,6 +484,11 @@ test('readonly native observer sees live deltas without web/history reads and is
 test('readonly native observer filters before payload traversal and shares one immutable clone', async t => {
   const h = harness(t);
   const session = await h.load();
+  const workspacePath = '/synthetic-native-workspaces/filtered';
+  let workspaceReads = 0;
+  Object.defineProperty(session.sdk, 'workspacePath', {
+    get() { workspaceReads++; return workspacePath; },
+  });
   const first: import('./engine.ts').NativeObservation[] = [];
   const second: import('./engine.ts').NativeObservation[] = [];
   const types = ['assistant.message_delta'];
@@ -503,23 +509,28 @@ test('readonly native observer filters before payload traversal and shares one i
   const notify = h.configs.get(session.id)!.onEvent!;
   notify(unused);
   assert.equal(payloadReads, 0, 'Uninterested observers must not traverse unused tool results');
+  assert.equal(workspaceReads, 0, 'Uninterested observers must not read workspace metadata');
   assert.equal(first.length, 0);
   assert.equal(second.length, 0);
   const cwd = join(h.cwd, 'filtered-native-context');
   notify(event('session.context_changed', { cwd }));
   assert.equal(first.length, 0, 'Filtered context events still update cwd without delivery');
+  assert.equal(workspaceReads, 0);
   const delta = event('assistant.message_delta', { messageId: 'filtered-message', deltaContent: 'synthetic delta' });
   Object.assign(delta.data, { payload });
   notify(delta);
   assert.equal(payloadReads, 1, 'Only one payload clone is built for multiple interested observers');
+  assert.equal(workspaceReads, 1, 'Only one workspace read is needed for multiple interested observers');
   assert.equal(first[0], second[0]);
   assert.equal(first[0]?.cwd, cwd);
+  assert.equal(first[0]?.workspacePath, workspacePath);
   assert.ok(Object.isFrozen(first[0]));
   assert.ok(Object.isFrozen(first[0]!.event.data.payload));
   offFirst();
   offSecond();
   notify(delta);
   assert.equal(payloadReads, 1, 'An empty filter alone does not justify cloning');
+  assert.equal(workspaceReads, 1);
   assert.equal(session.rpc.eventLog.read.mock.callCount(), 0);
   assert.equal(h.runtime.rpc.sessions.readPersistedEvents.mock.callCount(), 0);
 });
@@ -567,9 +578,100 @@ test('readonly native observer derives cwd from native create/resume metadata, n
   assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
 });
 
+test('readonly native observer reads current SDK workspace independently of HOME, cwd and metadata', async t => {
+  const h = harness(t);
+  const session = await h.load();
+  const observations: import('./engine.ts').NativeObservation[] = [];
+  h.engine.onNativeEvent(value => { observations.push(value); });
+  const calls = nativeCalls(session);
+  for (const workspacePath of ['/synthetic-native-workspaces/custom-root', '/different-sdk-root/session', undefined]) {
+    session.sdk.workspacePath = workspacePath;
+    session.emit(event('assistant.message_delta', { messageId: 'workspace', deltaContent: 'current context' }));
+    const observation = observations.at(-1)!;
+    assert.equal(observation.cwd, h.cwd);
+    assert.equal(observation.workspacePath, workspacePath ?? null);
+    assert.equal(Object.hasOwn(observation, 'workspacePath'), true);
+    assert.ok(Object.isFrozen(observation));
+  }
+  assert.equal(observations[0]!.workspacePath, '/synthetic-native-workspaces/custom-root', 'Earlier snapshots cannot change');
+  assert.deepEqual(nativeCalls(session), calls, 'Workspace context reads only the public SDK property, not an RPC');
+  assert.equal(h.runtime.rpc.sessions.readPersistedEvents.mock.callCount(), 0);
+});
+
+test('readonly native observer reports invalid or throwing SDK workspace as unknown without affecting native control', async t => {
+  const h = harness(t);
+  const session = await h.load();
+  const observations: import('./engine.ts').NativeObservation[] = [];
+  const reports: Array<{ message: string; data?: Record<string, unknown> }> = [];
+  h.engine.onNativeEvent(value => { observations.push(value); });
+  h.engine.log = (message, data) => { reports.push({ message, data }); };
+  const calls = nativeCalls(session);
+  const invalid = ['', 'relative/path', '/invalid\0path', 123, {}];
+  for (const workspacePath of invalid) {
+    Object.defineProperty(session.sdk, 'workspacePath', { configurable: true, value: workspacePath });
+    session.emit(event('assistant.message_delta', { messageId: 'invalid-workspace', deltaContent: 'still observed' }));
+    const observation = observations.at(-1)!;
+    assert.equal(observation.cwd, h.cwd);
+    assert.equal(observation.workspacePath, undefined);
+    assert.equal(Object.hasOwn(observation, 'workspacePath'), false);
+  }
+  assert.deepEqual(reports, invalid.map(() => ({
+    message: 'native observer failed', data: { sessionId: session.id, error: 'Invalid native workspace path' },
+  })));
+  Object.defineProperty(session.sdk, 'workspacePath', {
+    get() { throw new Error('Synthetic workspace getter failure'); },
+  });
+  h.engine.log = (message, data) => {
+    reports.push({ message, data });
+    throw new Error('Synthetic observer reporter failure');
+  };
+  const epoch = activeState(h, session.id).turnEpoch as number;
+  assert.doesNotThrow(() => session.emit(event('assistant.turn_start', { turnId: 'workspace-failure' })));
+  assert.equal(activeState(h, session.id).turnEpoch, epoch + 1, 'Observer metadata failure cannot prevent native control delivery');
+  assert.equal(observations.length, invalid.length + 1);
+  assert.equal(Object.hasOwn(observations.at(-1)!, 'workspacePath'), false);
+  assert.deepEqual(reports.at(-1), {
+    message: 'native observer failed', data: { sessionId: session.id, error: 'Synthetic workspace getter failure' },
+  });
+  assert.deepEqual(nativeCalls(session), calls);
+});
+
+test('readonly native observer uses the new resumed SDK workspace and never a stale handle', async t => {
+  const h = harness(t);
+  const session = await h.load();
+  session.sdk.workspacePath = '/synthetic-native-workspaces/old-handle';
+  const observations: import('./engine.ts').NativeObservation[] = [];
+  h.engine.onNativeEvent(value => { observations.push(value); });
+  const delta = () => event('assistant.message_delta', { messageId: 'workspace-owner', deltaContent: 'context' });
+  session.emit(delta());
+  const previous = h.configs.get(session.id)!.onEvent!;
+  const resumed = fakeSession(t, session.id);
+  resumed.state.cwd = h.cwd;
+  resumed.sdk.workspacePath = '/different-sdk-root/resumed-handle';
+  const resume = h.runtime.resumeSession;
+  t.mock.method(h.runtime, 'resumeSession', async (id, config) => {
+    h.natives.set(id, resumed);
+    h.journals.set(id, resumed.state.events);
+    previous(delta());
+    config.onEvent!(delta());
+    return resume(id, config);
+  });
+  await h.engine.reload(session.id);
+  assert.equal(observations.length, 2, 'An old callback cannot observe during a new allocation');
+  assert.equal(observations[0]!.workspacePath, '/synthetic-native-workspaces/old-handle');
+  assert.equal(Object.hasOwn(observations[1]!, 'workspacePath'), false, 'Early resume must not borrow the prior workspace');
+  previous(delta());
+  assert.equal(observations.length, 2, 'An old callback cannot observe a newly bound handle');
+  resumed.emit(delta());
+  assert.equal(observations.at(-1)?.workspacePath, resumed.sdk.workspacePath);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
+  assert.equal(h.runtime.createSession.mock.callCount(), 0);
+});
+
 test('readonly native observer updates cwd before root context delivery without child contamination or RPC', async t => {
   const h = harness(t);
   const session = await h.load();
+  session.sdk.workspacePath = '/synthetic-native-workspaces/context-independent';
   const firstCwd = join(h.cwd, 'first-native-context');
   session.emit(event('session.context_changed', { cwd: firstCwd }));
   const observations: import('./engine.ts').NativeObservation[] = [];
@@ -599,6 +701,7 @@ test('readonly native observer updates cwd before root context delivery without 
   assert.equal(reports.length, 4);
   session.emit(event('assistant.message_delta', { messageId: 'context', deltaContent: 'after root change' }));
   assert.equal(observations.at(-1)?.cwd, nextCwd);
+  assert.ok(observations.every(value => value.workspacePath === session.sdk.workspacePath), 'Root and child cwd changes cannot alter the SDK workspace');
   assert.equal(session.rpc.metadata.snapshot.mock.callCount(), metadataReads);
   assert.equal(h.runtime.rpc.sessions.readPersistedEvents.mock.callCount(), persistedReads);
   assert.equal(session.rpc.eventLog.read.mock.callCount(), liveReads);
@@ -2824,6 +2927,9 @@ for (const operation of ['create', 'resume'] as const) {
   test(`native early onEvent captures ${operation} work before returning its handle`, async t => {
     const h = harness(t);
     const s = await h.seed();
+    s.sdk.workspacePath = `/synthetic-native-workspaces/early-${operation}`;
+    const observations: import('./engine.ts').NativeObservation[] = [];
+    h.engine.onNativeEvent(value => { observations.push(value); }, { types: ['assistant.message_delta'] });
     const opened = deferred<CopilotSession>();
     const allocate = async (config: SessionConfig) => {
       assert.ok(config.onEvent);
@@ -2847,10 +2953,14 @@ for (const operation of ['create', 'resume'] as const) {
     s.emit({ ...event('assistant.message_delta', { messageId: 'early-answer', deltaContent: 'final once' }), ephemeral: true });
     s.emit(assistant('early-final', 'early-answer', 'final once'));
     s.emit(event('assistant.turn_end', { turnId: 'early-turn' }, 'early-end'));
+    assert.equal(observations.length, 1, 'Early observations are delivered immediately, not buffered');
+    assert.equal(Object.hasOwn(observations[0]!, 'workspacePath'), false);
     const lateCallback = [...s.listeners][0]!;
     opened.resolve(s.sdk as unknown as CopilotSession);
     await loading;
     await nextTurn();
+    s.emit(event('assistant.message_delta', { messageId: 'bound-answer', deltaContent: 'after SDK return' }));
+    assert.equal(observations.at(-1)?.workspacePath, s.sdk.workspacePath);
     assert.equal(s.sdk.on.mock.callCount(), 1, 'Engine must not add a second late subscription');
     assert.equal(s.sdk.getEvents.mock.callCount(), 0);
     assert.equal((await chat(h, s.id, { source: 'live' })).events.find(event => event.id === 'early-final')?.data.content, 'final once');
