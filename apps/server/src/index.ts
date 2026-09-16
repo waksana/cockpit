@@ -24,6 +24,7 @@ import { isIntentName, registerCapabilities } from './capabilities.ts';
 import { GracefulShutdown } from './shutdown.ts';
 import { registerChatStream } from './chat-stream.ts';
 import { serviceIdentity } from './identity.ts';
+import { ModuleHost } from './module-host.ts';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.COCKPIT_PORT ?? 8771);
@@ -53,6 +54,7 @@ export type ServerEngine = Pick<Engine,
   | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
 >;
 let engine: ServerEngine;
+let moduleHost: ModuleHost | undefined;
 
 // No SDK construction, preferences, listeners, or production dependency override.
 export function setTestDependencies(deps: { engine: ServerEngine; shutdown?: GracefulShutdown }): void {
@@ -109,6 +111,7 @@ function sseSend(reply: FastifyReply, ev: ServerEvent): boolean {
 }
 
 async function closeTransport(): Promise<void> {
+  moduleHost?.close();
   for (const client of clients) client.raw.destroy();
   clients.clear();
   for (const reply of openingClients.keys()) reply.raw.destroy();
@@ -518,6 +521,11 @@ app.post('/intent/*', async (req, reply) => {
 });
 
 async function main(runtime: Engine): Promise<void> {
+  moduleHost = new ModuleHost({
+    observer: runtime,
+    report: (id, error) => app.log.error({ moduleId: id, err: error }, 'local module failed'),
+  });
+  await moduleHost.register(app);
   await registerStaticWeb();
   await runtime.start();
   app.log.info(`engine up (login=${await runtime.login()})`);

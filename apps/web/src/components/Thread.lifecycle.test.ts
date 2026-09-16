@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { act, createElement, useLayoutEffect } from 'react';
+import { act, createElement, useLayoutEffect, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import { getSessionDraft } from '../lib/textDraft';
 import { useCockpit } from '../net/store';
@@ -12,6 +12,10 @@ import { MessageBody } from './MessageBody';
 import { DisclosureChoices } from './DisclosureChoices';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
 import { groupTranscript } from '../lib/transcriptRows';
+import { ModuleRuntime } from '../lib/moduleRuntime';
+import { ModuleRenderNode } from './ModuleContributions';
+import { Composer } from './Composer';
+import type { ComposerContext, ModuleFrontendContext } from '@cockpit/module-api';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
 // scroll owner. Each rendered message occupies 100px in a 300px viewport.
@@ -25,6 +29,9 @@ class HostNode extends EventTarget {
   childNodes: HostNode[] = [];
   attributes = new Map<string, string>();
   style = { setProperty() {}, removeProperty() {} };
+  // React's input-event fallback is selected before this fixture installs a DOM.
+  attachEvent() {}
+  detachEvent() {}
   scrollTop = 0;
   clientTop = 0;
   clientHeight = 300;
@@ -614,4 +621,127 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   await act(async () => root.render(null));
   await renderBody();
   assert.notEqual(container.querySelector('[data-chat-table]'), table, 'a real unmount releases native render nodes');
+
+  await t.test('attachment-only native rows contribute to measured initial history fill', async () => {
+    const current = session('attachment-fill');
+    const attachments = Array.from({ length: 6 }, (_, i) => ({
+      id: `attachment-${i}`, role: 'user' as const, content: '', timestamp: i,
+      attachments: [{ type: 'file' as const, path: `/fixture/${i}`, displayName: `Native attachment ${i}` }],
+      origin: { sessionId: current.sessionId, messageId: `attachment-${i}` },
+    }));
+    const before = prefetches;
+    await render({ ...current, messages: attachments });
+    assert.equal(container.querySelectorAll('[data-message-frame]').length, 6);
+    assert.match(container.textContent, /Native attachment 5/);
+    assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), null);
+    assert.equal(prefetches, before, 'six attachment-only rows satisfy two screens');
+  });
+
+  await t.test('module components retain type and scoped drafts; send keys, IME, paste and drop share host guards', async () => {
+    let mounts = 0;
+    let received = 0;
+    let scoped: ComposerContext | undefined;
+    const reports: unknown[] = [];
+    function Action(context: ComposerContext) {
+      scoped = context;
+      const state = useSyncExternalStore(context.draft.subscribe, context.draft.getSnapshot, context.draft.getSnapshot);
+      useLayoutEffect(() => { mounts++; }, []);
+      if (state.text === 'Crash module action') throw new Error('Fixture action failed');
+      return createElement('button', { type: 'button', 'aria-label': 'Module action' }, state.text || 'Files');
+    }
+    const digest = 'a'.repeat(64);
+    const runtime = new ModuleRuntime({
+      pageUrl: 'https://fixture.invalid',
+      fetch: async () => Response.json({ modules: [{
+        id: 'fixture', name: 'Fixture', version: '1.0.0', digest, apiBase: `/_modules/fixture/${digest}/api`,
+        entry: `/_modules/assets/fixture/${digest}/entry.js`, styles: [], config: {},
+      }], errors: [] }),
+      load: async () => ({ activate: (_context: ModuleFrontendContext) => ({
+        writes: ['attachments'], composerActions: [{ id: 'action', component: Action }],
+        fileInput: [{ id: 'files', accepts: () => true, receive: (_files: readonly File[], context: ComposerContext) => { received++; scoped = context; } }],
+        chatRenderers: [{ id: 'broken', matches: () => true, component: () => { throw new Error('Fixture renderer failed'); } }],
+      }) }),
+      report: error => { reports.push(error); },
+    });
+    await runtime.start();
+    const draft = getSessionDraft('module-lifecycle');
+    let sends = 0;
+    const onSend = () => draft.send(async () => { sends++; return true; });
+    const renderComposer = async (operation: ComposerContext['operation'] = 'prompt', disabled = false) => {
+      await act(() => root.render(createElement(Composer, { draft, runtime, onSend, operation, disabled })));
+    };
+    const dispatch = async (selector: string, type: string, properties: Record<string, unknown> = {}) => {
+      const target = container.querySelector(selector);
+      assert.ok(target, selector);
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'target', { value: target });
+      for (const [key, value] of Object.entries(properties)) Object.defineProperty(event, key, { value });
+      await act(async () => { container.dispatchEvent(event); });
+      return event;
+    };
+    await renderComposer();
+    await dispatch('.chat-input-message', 'focusin');
+    const action = container.querySelector('[aria-label="Module action"]');
+    const scope = scoped!.draft;
+    await act(() => draft.edit('Draft update'));
+    assert.equal(container.querySelector('[aria-label="Module action"]'), action);
+    assert.equal(mounts, 1, 'a draft update must not remount module components');
+    assert.equal(scoped!.draft, scope);
+    let release!: () => void;
+    await act(() => { release = scope.block('Upload still pending'); });
+    for (const keys of [{ key: 'Enter' }, { key: 'Enter', ctrlKey: true }, { key: 'Enter', metaKey: true }]) {
+      await dispatch('.chat-input-message', 'keydown', keys);
+    }
+    await dispatch('.send', 'click');
+    assert.equal(sends, 0);
+    await act(() => release());
+    await dispatch('.chat-input-message', 'keydown', { key: 'Enter', isComposing: true });
+    assert.equal(sends, 0, 'IME composition never submits');
+    await dispatch('.chat-input-message', 'keydown', { key: 'Enter', ctrlKey: true });
+    assert.equal(sends, 1);
+    await act(() => scope.appendAttachments([{ id: 'native', value: { type: 'file', path: '/fixture/native' } }]));
+    await renderComposer('ask');
+    assert.match(container.textContent, /不接受附件/);
+    await dispatch('.chat-input-message', 'keydown', { key: 'Enter', ctrlKey: true });
+    assert.equal(sends, 1);
+    await renderComposer('prompt', true);
+    await dispatch('.chat-input-message', 'keydown', { key: 'Enter', ctrlKey: true });
+    assert.equal(sends, 1);
+    await renderComposer();
+    const clipboard = (text: string) => ({ files: [new File(['x'], 'paste.txt')], getData: () => text });
+    const mixed = await dispatch('.chat-input-message', 'paste', { clipboardData: clipboard('plain text') });
+    assert.equal(mixed.defaultPrevented, false, 'mixed clipboard text remains native textarea input');
+    const filesOnly = await dispatch('.chat-input-message', 'paste', { clipboardData: clipboard('') });
+    assert.equal(filesOnly.defaultPrevented, true);
+    const textOnly = await dispatch('.chat-input-message', 'paste', { clipboardData: { files: [], getData: () => 'plain' } });
+    assert.equal(textOnly.defaultPrevented, false);
+    const dropped = await dispatch('.chat-input-message', 'drop', { dataTransfer: { files: [new File(['x'], 'drop.txt')] } });
+    assert.equal(dropped.defaultPrevented, true);
+    assert.equal(received, 3);
+    await act(() => root.render(null));
+    await act(() => scope.appendAttachments([{ id: 'after-unmount', value: { type: 'file', path: '/fixture/later' } }]));
+    await renderComposer();
+    assert.equal(scoped!.draft, scope);
+    assert.equal(draft.getSnapshot().attachments.length, 2);
+    const restoreConsole = t.mock.method(console, 'error', () => {});
+    try {
+      await act(() => root.render(createElement(ModuleRenderNode, {
+        runtime, node: { kind: 'link', target: '/fixture/file', label: 'Native fallback', origin: { sessionId: 'root', messageId: 'native' } },
+        fallback: createElement('a', { href: '/fixture/file' }, 'Native fallback'),
+      })));
+      assert.match(container.textContent, /Native fallback/);
+      assert.equal(reports.length, 1, 'a broken renderer reports locally instead of replacing core');
+      await renderComposer();
+      await act(() => { scope.block('Selected file not finished'); draft.edit('Crash module action'); });
+      assert.equal(runtime.getSnapshot().length, 0, 'failed composer plugins are unregistered locally');
+      assert.ok(container.querySelector('.chat-input-message'), 'native input survives the plugin render error');
+      assert.equal(draft.getSnapshot().attachments.length, 2, 'ready native attachments remain usable');
+      assert.equal(draft.getSnapshot().blocks[0].orphaned, true);
+      assert.match(container.textContent, /移除未完成的选择/);
+    } finally {
+      restoreConsole.mock.restore();
+      await act(() => root.render(null));
+      runtime.stop();
+    }
+  });
 });

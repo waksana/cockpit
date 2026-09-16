@@ -12,7 +12,7 @@ export const ConnectedThread = memo(function ConnectedThread({ sessionId }: { se
     removeQueued: s.removeQueued, cancel: s.cancel, interrupt: s.interrupt, loadMore: s.loadMore, retryHistory: s.retryHistory,
   })));
   const callbacks = useMemo<Omit<ComponentProps<typeof Thread>, 'session'>>(() => ({
-    onSend: (text) => actions.sendPrompt(sessionId, text),
+    onSend: (text, attachments) => actions.sendPrompt(sessionId, text, attachments),
     onRespondAsk: (rid, answer, freeform) => actions.respondAsk(sessionId, rid, answer, freeform),
     onRespondPlan: (rid, action) => actions.respondPlan(sessionId, rid, action),
     onPlanSupersede: (rid, message) => actions.planSupersede(sessionId, rid, message),

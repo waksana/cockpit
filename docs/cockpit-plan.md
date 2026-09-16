@@ -12,8 +12,9 @@ Cockpit 是一个直接启动的 Web/API 服务，通过官方 SDK 控制原生 
 后端公开选定的原生能力，Web 使用其中的子集实现聊天；两者不要求功能一一对应。
 后端未接入的 SDK 方法或 Web 未提供的 API 入口，不自动构成实现缺口。
 
-当前没有新模块加载器、逐模块 HTTP MCP 端点或启动接续消息模块。
-这些仍按[模块协议](module-contract-draft.md)另行实现。
+当前源码提供本地可信模块包的冷加载、命名空间 HTTP/静态资源及输入/聊天渲染贡献，
+接口为 Module API v1。远程安装、逐模块 HTTP MCP 和启动接续消息仍未实现，
+具体已实现范围见[模块协议](module-contract-draft.md)。
 原生 `assistant` 消息、`task` 子代理、MCP/skill 和定时提示由 SDK 提供。
 
 <a id="target-gap"></a>
@@ -22,9 +23,9 @@ Cockpit 是一个直接启动的 Web/API 服务，通过官方 SDK 控制原生 
 | 能力 | 当前实现 | 已确认目标 |
 | --- | --- | --- |
 | 前后端运行包 | 包含服务、Web 与必要依赖；Node 由宿主提供。 | 按[普通产包契约](packaging.md)维护。 |
-| 关闭 | `system/shutdown` 等待原生活动和受保护在途调用，再关闭 SDK/连接并退出。 | 等待只关注原生 session；模块业务和关闭回执不参与。当前尚无模块。 |
+| 关闭 | `system/shutdown` 等待原生活动和受保护在途调用，再关闭 SDK/连接并退出。 | 等待只关注原生 session；模块业务和关闭回执不参与。 |
 | 原生确认 | API/MCP 不增加 compact、rewind、delete 的确认字段；Web 删除对话框仍做防误触确认。精确输入见[客户端说明](../apps/mcp/README.md#confirmation-boundaries)。 | 原生条件与决策跟随安装版 SDK；宿主 shutdown 的确认独立保留。 |
-| 模块 | 尚未提供加载器。 | 冷加载、前后端同包、独立 MCP path、失败模块局部禁用；执行进程模型待定。 |
+| 模块 | 本地可信包、主进程 import、冷加载；HTTP/静态资源和输入/渲染贡献已接入。 | 远程签名安装、独立 MCP path、其他 UI/内容能力仍待实现。 |
 | 启动消息 | 尚未提供。 | 可选模块保存下一次启动 prompt，并处理一次发送尝试。 |
 
 ## 代码与进程
@@ -42,6 +43,7 @@ MCP 客户端 ── 同一后端 API ─────┘                        
 | --- | --- |
 | `packages/protocol` | 输入/结果 schema、typed intents、原生事件及共享 Web 折叠。 |
 | `packages/core` | 本宿主的 SDK handle、真实回调、在途操作和原生适配/安全保护。 |
+| `packages/module-api` | 宿主与模块的公共 TypeScript 接口，不保存业务或原生状态。 |
 | `apps/server` | HTTP/SSE、Web 静态文件、普通实例信息和 graceful 关闭。 |
 | `apps/web` | 当前事件窗口、草稿、阅读位置、原生控件和本地错误反馈。 |
 | `apps/mcp` | stdio 到 HTTP 的通用客户端，不读取 native DB，也不是新的逐模块 MCP 宿主。 |
@@ -123,7 +125,7 @@ API 当前严格要求 `confirm:true`，提供 graceful 退出语义。
 
 模块接入后的等待边界遵循 [R7](product-requirements.md#r7--安全和生命周期如实表达)：
 只关注原生 session 空闲，模块活动、业务发送和关闭回执不阻止退出。
-当前实现尚无模块，但仍保护原生 API 的在途操作和响应；不能将本节理解为现有
+当前实现仍保护原生 API 的在途操作和响应；不能将本节理解为现有
 HTTP 请求保护已经删除，也不能以后把模块请求加入等待条件。
 
 ## 版本与原生权威
@@ -181,4 +183,4 @@ Web 不再提供计划与任务、上下文资料/用量、定时任务、运行
 `/events` 用于控制/失效，`/chat/stream` 用于共享 all-agent 事件窗口。
 历史、完整消息、重连和媒体边界由[原生聊天](native-chat.md)维护，
 输出分页见 [MCP](../apps/mcp/README.md)，特殊继承和前检见[原生 fork](session-fork.md)。
-前端扩展的组合方式由[模块协议](module-contract-draft.md#5-前后端共同组成一个-app)定义。
+前端扩展的组合方式由[模块协议](module-contract-draft.md#6-前端注册与草稿)定义。

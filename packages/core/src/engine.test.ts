@@ -450,6 +450,178 @@ function harness(t: TestContext, options: {
 }
 type Harness = ReturnType<typeof harness>;
 
+test('readonly native observer sees live deltas without web/history reads and isolates failures', async t => {
+  const h = harness(t);
+  const session = await h.load();
+  const observations: import('./engine.ts').NativeObservation[] = [];
+  const logs: string[] = [];
+  h.engine.log = message => { logs.push(message); };
+  const beforeEvents = h.events.length;
+  const off = h.engine.onNativeEvent(value => { observations.push(value); });
+  h.engine.onNativeEvent(() => { throw new Error('synthetic observer failure'); });
+  h.engine.onNativeEvent(async () => { throw new Error('synthetic asynchronous observer failure'); });
+  h.engine.onNativeEvent(() => new Promise(() => {}));
+  const reads = session.rpc.eventLog.read.mock.callCount();
+  const passive = h.runtime.rpc.sessions.readPersistedEvents.mock.callCount();
+  session.emit(event('assistant.message_start', { messageId: 'observed-message' }));
+  session.emit(event('assistant.message_delta', { messageId: 'observed-message', deltaContent: 'synthetic delta' }));
+  await nextTurn();
+  assert.deepEqual(observations.map(value => value.event.type), ['assistant.message_start', 'assistant.message_delta']);
+  assert.ok(observations.every(value => value.sessionId === session.id && value.cwd === h.cwd));
+  assert.ok(Object.isFrozen(observations[0]));
+  assert.ok(Object.isFrozen(observations[0]!.event.data));
+  assert.equal(h.events.length, beforeEvents, 'Deltas and observer failures cannot patch native control metadata');
+  assert.equal(logs.length, 4);
+  assert.equal(session.rpc.eventLog.read.mock.callCount(), reads);
+  assert.equal(h.runtime.rpc.sessions.readPersistedEvents.mock.callCount(), passive);
+  assert.equal(await h.engine.busyCount(), 0, 'Unsettled observers must never retain native work');
+  off();
+  session.emit(event('assistant.message_delta', { messageId: 'observed-message', deltaContent: 'later' }));
+  assert.equal(observations.length, 2);
+});
+
+test('readonly native observer filters before payload traversal and shares one immutable clone', async t => {
+  const h = harness(t);
+  const session = await h.load();
+  const first: import('./engine.ts').NativeObservation[] = [];
+  const second: import('./engine.ts').NativeObservation[] = [];
+  const types = ['assistant.message_delta'];
+  const offFirst = h.engine.onNativeEvent(value => { first.push(value); }, { types });
+  const offSecond = h.engine.onNativeEvent(value => { second.push(value); }, { types });
+  h.engine.onNativeEvent(() => assert.fail('Empty event filter must never receive an event'), { types: [] });
+  types.push('tool.execution_complete');
+  let payloadReads = 0;
+  const payload = Object.defineProperty({}, 'largeResult', {
+    enumerable: true, get() { payloadReads++; return { text: 'synthetic payload' }; },
+  });
+  const unused = event('tool.execution_complete', {
+    toolCallId: 'synthetic-tool', success: true, result: { content: 'unused tool result' },
+  });
+  Object.assign(unused.data.result!, { payload });
+  // Invoke the captured SDK callback directly: the fixture's journal helper
+  // intentionally clones events itself and would traverse this getter first.
+  const notify = h.configs.get(session.id)!.onEvent!;
+  notify(unused);
+  assert.equal(payloadReads, 0, 'Uninterested observers must not traverse unused tool results');
+  assert.equal(first.length, 0);
+  assert.equal(second.length, 0);
+  const cwd = join(h.cwd, 'filtered-native-context');
+  notify(event('session.context_changed', { cwd }));
+  assert.equal(first.length, 0, 'Filtered context events still update cwd without delivery');
+  const delta = event('assistant.message_delta', { messageId: 'filtered-message', deltaContent: 'synthetic delta' });
+  Object.assign(delta.data, { payload });
+  notify(delta);
+  assert.equal(payloadReads, 1, 'Only one payload clone is built for multiple interested observers');
+  assert.equal(first[0], second[0]);
+  assert.equal(first[0]?.cwd, cwd);
+  assert.ok(Object.isFrozen(first[0]));
+  assert.ok(Object.isFrozen(first[0]!.event.data.payload));
+  offFirst();
+  offSecond();
+  notify(delta);
+  assert.equal(payloadReads, 1, 'An empty filter alone does not justify cloning');
+  assert.equal(session.rpc.eventLog.read.mock.callCount(), 0);
+  assert.equal(h.runtime.rpc.sessions.readPersistedEvents.mock.callCount(), 0);
+});
+
+test('readonly native observer redacts internal binary, preserves native payload and rejects stale owners', async t => {
+  const h = harness(t);
+  const session = await h.load();
+  const observations: import('./engine.ts').NativeObservation[] = [];
+  h.engine.onNativeEvent(value => { observations.push(value); });
+  const native = {
+    ...event('tool.execution_complete', { toolCallId: 'tool-id', success: true }),
+    data: {
+      toolCallId: 'tool-id', success: true,
+      result: { content: 'text retained', binaryResultsForLlm: [{ data: 'do-not-observe-image-bytes' }], buffer: Buffer.from('binary') },
+    },
+  } as unknown as SessionEvent;
+  session.emit(native);
+  const result = observations[0]!.event.data.result as Record<string, unknown>;
+  assert.equal(result.content, 'text retained');
+  assert.equal(Object.hasOwn(result, 'binaryResultsForLlm'), false);
+  assert.equal(result.buffer, undefined);
+  assert.ok((native.data as { result: Record<string, unknown> }).result.binaryResultsForLlm, 'Native event must not be mutated');
+  const previous = h.configs.get(session.id)!.onEvent!;
+  await h.engine.unload(session.id);
+  const before = observations.length;
+  previous(event('assistant.message_delta', { messageId: 'old-owner', deltaContent: 'stale' }));
+  assert.equal(observations.length, before);
+  assert.equal(await h.engine.busyCount(), 0);
+});
+
+test('readonly native observer derives cwd from native create/resume metadata, never HOME', async t => {
+  const h = harness(t);
+  const observations: import('./engine.ts').NativeObservation[] = [];
+  h.engine.onNativeEvent(value => { observations.push(value); });
+  const id = await h.engine.newSession(h.cwd);
+  h.natives.get(id)!.emit(event('assistant.message_delta', { messageId: 'created', deltaContent: 'created' }));
+  assert.equal(observations.at(-1)?.cwd, h.cwd);
+  const seeded = await h.seed();
+  seeded.state.cwd = '';
+  h.rows.find(row => row.sessionId === seeded.id)!.context = undefined;
+  await h.engine.load(seeded.id);
+  seeded.emit(event('assistant.message_delta', { messageId: 'resumed', deltaContent: 'no known directory' }));
+  assert.equal(observations.at(-1)?.cwd, null);
+  assert.equal(h.runtime.createSession.mock.callCount(), 1);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
+});
+
+test('readonly native observer updates cwd before root context delivery without child contamination or RPC', async t => {
+  const h = harness(t);
+  const session = await h.load();
+  const firstCwd = join(h.cwd, 'first-native-context');
+  session.emit(event('session.context_changed', { cwd: firstCwd }));
+  const observations: import('./engine.ts').NativeObservation[] = [];
+  h.engine.onNativeEvent(value => { observations.push(value); });
+  const metadataReads = session.rpc.metadata.snapshot.mock.callCount();
+  const persistedReads = h.runtime.rpc.sessions.readPersistedEvents.mock.callCount();
+  const liveReads = session.rpc.eventLog.read.mock.callCount();
+  session.emit(event('assistant.message_delta', { messageId: 'context', deltaContent: 'after unobserved change' }));
+  assert.equal(observations.at(-1)?.cwd, firstCwd);
+  const nextCwd = join(h.cwd, 'next-native-context');
+  session.emit(event('session.context_changed', { cwd: nextCwd }));
+  assert.equal(observations.at(-1)?.event.type, 'session.context_changed');
+  assert.equal(observations.at(-1)?.cwd, nextCwd, 'The context-change observation itself must see the new native cwd');
+  for (const childFields of [
+    { agentId: 'child' }, { parentToolCallId: 'parent-tool' },
+  ]) {
+    session.emit({ ...event('session.context_changed', { cwd: join(h.cwd, 'child') }), ...childFields } as SessionEvent);
+    session.emit(event('session.context_changed', { cwd: join(h.cwd, 'child'), ...childFields }));
+    assert.equal(observations.at(-1)?.cwd, nextCwd);
+  }
+  const reports: string[] = [];
+  h.engine.log = message => { reports.push(message); };
+  for (const cwd of ['', 'relative/path', '/invalid\0path', 123]) {
+    session.emit(event('session.context_changed', { cwd } as { cwd: string }));
+    assert.equal(observations.at(-1)?.cwd, nextCwd);
+  }
+  assert.equal(reports.length, 4);
+  session.emit(event('assistant.message_delta', { messageId: 'context', deltaContent: 'after root change' }));
+  assert.equal(observations.at(-1)?.cwd, nextCwd);
+  assert.equal(session.rpc.metadata.snapshot.mock.callCount(), metadataReads);
+  assert.equal(h.runtime.rpc.sessions.readPersistedEvents.mock.callCount(), persistedReads);
+  assert.equal(session.rpc.eventLog.read.mock.callCount(), liveReads);
+});
+
+test('readonly native observer retains a context change that races loading metadata', async t => {
+  const h = harness(t);
+  const session = await h.seed();
+  const stale = await session.rpc.metadata.snapshot();
+  const pendingMetadata = deferred<typeof stale>();
+  t.mock.method(session.rpc.metadata, 'snapshot', () => pendingMetadata.promise);
+  const observations: import('./engine.ts').NativeObservation[] = [];
+  h.engine.onNativeEvent(value => { observations.push(value); });
+  const loading = h.engine.load(session.id);
+  await nextTurn();
+  const currentCwd = join(h.cwd, 'current-native-context');
+  session.emit(event('session.context_changed', { cwd: currentCwd }));
+  pendingMetadata.resolve(stale);
+  await loading;
+  session.emit(event('assistant.message_delta', { messageId: 'context', deltaContent: 'after loading metadata' }));
+  assert.equal(observations.at(-1)?.cwd, currentCwd);
+});
+
 test('native creation returns the actual ID without product roles or a hidden first message', async t => {
   const h = harness(t);
   const id = await h.engine.newSession(h.cwd);

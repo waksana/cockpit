@@ -1,8 +1,12 @@
 import { acknowledge } from './draft';
 import { describeReason, reportUxError } from './errorReporter';
+import { NativeAttachment } from '@cockpit/protocol';
+import type { DraftAttachment, ModuleDraft, ModuleDraftSnapshot } from '@cockpit/module-api';
 
 interface SessionDraftSnapshot {
   text: string;
+  attachments: readonly DraftAttachment[];
+  blocks: readonly { id: string; reason: string; orphaned?: boolean }[];
   revision: number;
   pending: boolean;
   unconfirmed: boolean;
@@ -19,12 +23,17 @@ function browserStorage(): DraftStorage | undefined {
 }
 
 export class SessionDraft {
-  private snapshot: SessionDraftSnapshot = { text: '', revision: 0, pending: false, unconfirmed: false };
+  private snapshot: SessionDraftSnapshot = { text: '', attachments: Object.freeze([]), blocks: [], revision: 0, pending: false, unconfirmed: false };
+  private readonly attachmentOwners = new Map<string, string>();
+  private readonly blockOwners = new Map<string, string>();
+  private sequence = 0;
+  readonly sessionId: string;
   private readonly listeners = new Set<() => void>();
   private readonly key: string;
   private readonly storage?: DraftStorage;
 
   constructor(sessionId: string, storage?: DraftStorage) {
+    this.sessionId = sessionId;
     this.storage = storage;
     this.key = `cockpit:chat-draft:${sessionId}`;
     try {
@@ -36,7 +45,8 @@ export class SessionDraft {
         || !('unconfirmed' in value) || typeof value.unconfirmed !== 'boolean') {
         throw new Error('Invalid draft record');
       }
-      this.snapshot = { ...this.snapshot, text: value.text, unconfirmed: value.unconfirmed };
+      const attachments = 'attachments' in value ? this.validateAttachments(value.attachments) : [];
+      this.snapshot = { ...this.snapshot, text: value.text, attachments, unconfirmed: value.unconfirmed };
     } catch (error) {
       reportUxError(`无法读取标签页草稿，存储内容未修改：${describeReason(error, false)}`);
     }
@@ -48,12 +58,14 @@ export class SessionDraft {
     return () => { this.listeners.delete(listener); };
   };
   private update(change: Partial<SessionDraftSnapshot>): void {
-    this.snapshot = { ...this.snapshot, ...change };
-    const { text, pending, unconfirmed } = this.snapshot;
+    this.snapshot = { ...this.snapshot, ...change,
+      ...(change.attachments ? { attachments: Object.freeze(change.attachments) } : {}),
+    };
+    const { text, attachments, pending, unconfirmed } = this.snapshot;
     try {
       // An interrupted request is unknown after reload, never still in flight.
-      if (text || pending || unconfirmed) {
-        this.storage?.setItem(this.key, JSON.stringify({ text, unconfirmed: pending || unconfirmed }));
+      if (text || attachments.length || pending || unconfirmed) {
+        this.storage?.setItem(this.key, JSON.stringify({ text, ...(attachments.length ? { attachments } : {}), unconfirmed: pending || unconfirmed }));
       } else this.storage?.removeItem(this.key);
     } catch (error) {
       reportUxError(`无法保存标签页草稿，刷新后可能丢失最新状态；当前文字仍在页面内：${describeReason(error, false)}`);
@@ -61,6 +73,103 @@ export class SessionDraft {
     for (const listener of this.listeners) listener();
   }
   edit = (text: string): void => { this.update({ text, revision: this.snapshot.revision + 1 }); };
+  private validateAttachments(values: unknown): readonly DraftAttachment[] {
+    if (!Array.isArray(values) || values.length > 20) throw new Error('Invalid draft attachments');
+    const ids = new Set<string>();
+    return Object.freeze(values.map(item => {
+      if (!item || typeof item.id !== 'string' || !item.id || ids.has(item.id)) throw new Error('Invalid attachment ID');
+      ids.add(item.id);
+      const value = NativeAttachment.parse(item.value);
+      // No caller may mutate a captured attachment while its native send is settling.
+      if (value.type === 'selection' && value.selection) {
+        Object.freeze(value.selection.start); Object.freeze(value.selection.end); Object.freeze(value.selection);
+      }
+      return Object.freeze({ id: item.id, value: Object.freeze(value) });
+    }));
+  }
+  removeAttachment = (id: string): void => {
+    this.attachmentOwners.delete(id);
+    this.update({ attachments: this.snapshot.attachments.filter(item => item.id !== id) });
+  };
+  dismissOrphanedBlock = (id: string): void => {
+    if (this.snapshot.blocks.some(block => block.id === id && block.orphaned)) {
+      this.update({ blocks: this.snapshot.blocks.filter(block => block.id !== id) });
+    }
+  };
+  bindModule(owner: string, writes: readonly ('attachments' | 'text')[]): { draft: ModuleDraft; dispose(): void } {
+    const permissions = new Set(writes);
+    const subscriptions = new Set<() => void>();
+    let active = true;
+    let source: SessionDraftSnapshot | undefined;
+    let snapshot: ModuleDraftSnapshot;
+    const getSnapshot = () => {
+      if (source !== this.snapshot) {
+        source = this.snapshot;
+        snapshot = Object.freeze({ text: source.text, attachments: source.attachments, pending: source.pending });
+      }
+      return snapshot;
+    };
+    const assertWrite = (field: 'attachments' | 'text') => {
+      if (!active || !permissions.has(field)) throw new Error(`Module ${owner} cannot write ${field}`);
+    };
+    const draft: ModuleDraft = Object.freeze({
+      sessionId: this.sessionId,
+      getSnapshot,
+      subscribe: (listener: () => void) => {
+        if (!active) return () => {};
+        const unsubscribe = this.subscribe(listener);
+        subscriptions.add(unsubscribe);
+        return () => { subscriptions.delete(unsubscribe); unsubscribe(); };
+      },
+      appendAttachments: (values: readonly DraftAttachment[]) => {
+        assertWrite('attachments');
+        const incoming = this.validateAttachments(values);
+        for (const item of incoming) {
+          const previousOwner = this.attachmentOwners.get(item.id);
+          if (previousOwner && previousOwner !== owner) throw new Error('Attachment belongs to another module');
+        }
+        const replaced = new Set(incoming.map(item => item.id));
+        const attachments = [...this.snapshot.attachments.filter(item => !replaced.has(item.id)), ...incoming];
+        if (attachments.length > 20) throw new Error('最多可发送 20 个附件，请先移除多余附件。');
+        for (const item of incoming) this.attachmentOwners.set(item.id, owner);
+        this.update({ attachments: Object.freeze(attachments) });
+      },
+      removeAttachment: (id: string) => {
+        assertWrite('attachments');
+        const previousOwner = this.attachmentOwners.get(id);
+        if (previousOwner && previousOwner !== owner) throw new Error('Attachment belongs to another module');
+        this.removeAttachment(id);
+      },
+      editText: (text: string) => { assertWrite('text'); this.edit(text); },
+      block: (reason: string) => {
+        if (!active || !permissions.size) throw new Error('Module cannot block this draft');
+        if (typeof reason !== 'string' || !reason.trim()) throw new Error('A draft block needs a reason');
+        const id = `block-${++this.sequence}`;
+        this.blockOwners.set(id, owner);
+        this.update({ blocks: [...this.snapshot.blocks, Object.freeze({ id, reason })] });
+        let released = false;
+        return () => {
+          if (released) return;
+          released = true;
+          // Revocation transfers unresolved selections to a visible host-owned notice.
+          if (this.blockOwners.get(id) !== owner) return;
+          this.blockOwners.delete(id);
+          this.update({ blocks: this.snapshot.blocks.filter(block => block.id !== id) });
+        };
+      },
+    });
+    return { draft, dispose: () => {
+      if (!active) return;
+      active = false;
+      for (const unsubscribe of subscriptions) unsubscribe();
+      subscriptions.clear();
+      this.update({ blocks: this.snapshot.blocks.map(block => {
+        if (this.blockOwners.get(block.id) !== owner) return block;
+        this.blockOwners.delete(block.id);
+        return Object.freeze({ ...block, orphaned: true, reason: `模块已停止，未完成的附件未发送：${block.reason}` });
+      }) });
+    } };
+  }
   dismissNotice = (): void => { this.update({ unconfirmed: false }); };
   runAction = async (send: () => Promise<boolean> | undefined): Promise<boolean> => {
     if (this.snapshot.pending) return false;
@@ -69,13 +178,17 @@ export class SessionDraft {
     this.update({ pending: false, unconfirmed: !sent });
     return sent;
   };
-  send = (send: (text: string) => Promise<boolean>): Promise<boolean> => {
-    const { text, revision, pending } = this.snapshot;
-    if (pending || !text.trim()) return Promise.resolve(false);
+  send = (send: (text: string, attachments?: NativeAttachment[]) => Promise<boolean>): Promise<boolean> => {
+    const { text, attachments, revision, pending, blocks } = this.snapshot;
+    if (pending || blocks.length || (!text.trim() && !attachments.length)) return Promise.resolve(false);
     return this.runAction(async () => {
-      const sent = await send(text.trim());
-      if (sent === true && this.snapshot.revision === revision) {
-        this.update({ text: '', revision: revision + 1 });
+      const sent = await send(text.trim(), attachments.length ? attachments.map(item => item.value) : undefined);
+      if (sent === true) {
+        const captured = new Set(attachments);
+        const remaining = this.snapshot.attachments.filter(item => !captured.has(item));
+        for (const item of attachments) if (!remaining.some(value => value.id === item.id)) this.attachmentOwners.delete(item.id);
+        this.update({ attachments: remaining,
+          ...(this.snapshot.revision === revision ? { text: '', revision: revision + 1 } : {}) });
       }
       return sent;
     });

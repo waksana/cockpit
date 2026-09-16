@@ -44,6 +44,46 @@ test('backward pages preserve append order, duplicates and immutable untouched i
   assert.equal(window.live?.cursor,'advanced');
 });
 
+test('user attachment-only events retain validated native descriptors without binary or unsupported history reconstruction', () => {
+  const window = new NativeWindow();
+  accept(window, [event('user-event', 'user.message', { content: '', attachments: [
+    { type: 'file', path: '/fixture/one.txt', displayName: 'One', assetId: 'internal', byteLength: 12, omittedReason: 'unavailable' },
+    { type: 'selection', filePath: '/fixture/code', displayName: 'Code', text: 'line', selection: {
+      start: { line: 0, character: 0 }, end: { line: 0, character: 4 },
+    } },
+    { type: 'blob', mimeType: 'image/png', displayName: 'Omitted image', omittedReason: 'unavailable' },
+    { type: 'blob', mimeType: 'text/plain', data: 'eA==', displayName: 'Inline' },
+    { type: 'file', path: 12 }, { kind: 'file', url: '/uploads/retired' },
+    { type: 'github_reference', url: 'https://example.invalid' },
+  ] })]);
+  const message = window.snapshot().messages[0];
+  assert.equal(message.id, 'user-event');
+  assert.equal(message.content, '');
+  assert.deepEqual(message.origin, { sessionId: 'fixture', messageId: 'user-event' });
+  assert.equal(message.attachments?.length, 3);
+  assert.deepEqual(message.attachments?.[0], { type: 'file', path: '/fixture/one.txt', displayName: 'One' });
+  assert.doesNotMatch(JSON.stringify(message.attachments), /internal|byteLength|Omitted|uploads|github_reference/);
+});
+
+test('assistant origins use native message identity across deltas, finalization and nested subagents', () => {
+  const window = new NativeWindow(undefined, true);
+  accept(window, [task('task-message', 'tool'), spawn('tool', 'child')], all);
+  accept(window, [], liveAll);
+  accept(window, [
+    owned('child', ephemeral('start-event', 'assistant.message_start', { messageId: 'native-response' })),
+    owned('child', ephemeral('delta-one', 'assistant.message_delta', { messageId: 'native-response', deltaContent: 'One' })),
+    owned('child', ephemeral('delta-two', 'assistant.message_delta', { messageId: 'native-response', deltaContent: ' two' })),
+  ], liveAll);
+  const child = () => window.snapshot().messages.find(message => message.subtype === 'subagent')!.subMessages![0];
+  const origin = { sessionId: 'fixture', messageId: 'native-response', agentId: 'child' };
+  assert.deepEqual(child().origin, origin);
+  accept(window, [owned('child', event('final-event', 'assistant.message', { messageId: 'native-response', content: 'Final' }))], liveAll);
+  assert.deepEqual(child().origin, origin);
+  const isolated = new NativeWindow(['child']);
+  accept(isolated, [owned('child', event('final-event', 'assistant.message', { messageId: 'native-response', content: 'Final' }))], { agentIds: ['child'] });
+  assert.deepEqual(isolated.snapshot().messages[0].origin, origin);
+});
+
 test('bootstrap overlap survives disconnect and bounded catchup without old pages appended at the end', () => {
   const window = new NativeWindow();
   accept(window,[event('c'),event('d')],{bootstrap:true},{liveCursor:'tail',hasMore:true});

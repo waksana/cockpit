@@ -25,6 +25,7 @@ import { AskCard, PlanCard, ElicitationCard } from './PendingDecision';
 import { StateNotice } from './StateNotice';
 import { useClippedText } from '../lib/useClippedText';
 import { hasNewTranscriptContent } from '../lib/transcriptActivity';
+import type { NativeAttachment } from '@cockpit/protocol';
 
 function Thought({ message, latest, sessionId }: { message: ChatMessage; latest: boolean; sessionId: string }) {
   const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'thought', message.thoughtKey ?? message.id]), latest);
@@ -294,7 +295,7 @@ const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionI
 
 interface ThreadProps {
   session: ChatSession;
-  onSend?: (text: string) => Promise<boolean>;
+  onSend?: (text: string, attachments?: NativeAttachment[]) => Promise<boolean>;
   onRespondAsk?: (requestId: string, answer: string, wasFreeform: boolean) => Promise<boolean>;
   onRespondPlan?: (requestId: string, action: ExitPlanModeAction) => Promise<boolean>;
   onPlanSupersede?: (requestId: string, message: string) => Promise<boolean>;
@@ -440,13 +441,13 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     runInView(() => draft.runAction(send))
   ), [draft, runInView]);
 
-  const handleSend = useCallback((): Promise<boolean> => runInView(() => draft.send((text) => sendThreadDraft(text, {
+  const handleSend = useCallback((): Promise<boolean> => runInView(() => draft.send((text, attachments) => sendThreadDraft(text, {
     askRequestId: ask?.requestId,
     planRequestId: planRequest?.requestId,
     onSend,
     onRespondAsk,
     onPlanSupersede,
-  }))), [draft, ask, planRequest, onSend, onRespondAsk, onPlanSupersede, runInView]);
+  }, attachments))), [draft, ask, planRequest, onSend, onRespondAsk, onPlanSupersede, runInView]);
 
   const handleChoice = useCallback((choice: string): Promise<boolean> => runAction(
     () => ask ? onRespondAsk?.(ask.requestId, choice, false) : undefined,
@@ -572,6 +573,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
           disabled={!!session.compacting && session.status !== 'running'}
           placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : session.status === 'running' ? '加入队列' : '输入消息…'))}
           draft={draft}
+          operation={ask ? 'ask' : planRequest ? 'plan' : 'prompt'}
           onSend={handleSend}
           sendBlocked={ask?.allowFreeform === false}
         />

@@ -3,6 +3,7 @@
 // history or control state depends on this projection.
 
 import type { ChatMessage, ToolCall, HistoryDetails } from './index.ts';
+import { projectNativeAttachments } from './validation.ts';
 
 export interface SdkEvent {
   type: string;
@@ -13,6 +14,7 @@ export interface SdkEvent {
   agentId?: string;
   parentToolCallId?: string;
   ephemeral?: boolean;
+  nativeOriginAgentId?: string;
 }
 
 export interface FoldState {
@@ -59,6 +61,7 @@ export interface FoldResult {
 }
 
 export interface FoldProjection {
+  nativeSessionId?: string;
   eventOrder?: number;
   toolOutput?: string;
   toolArgs?: string;
@@ -312,7 +315,7 @@ function rememberTask(state: FoldState, request: ToolRequest, scope?: FoldHistor
 
 function isExecutionActivity(ev: SdkEvent): boolean {
   if (ev.ephemeral) return false;
-  if (ev.type === 'user.message') return !!ev.data.content
+  if (ev.type === 'user.message') return (!!ev.data.content || !!projectNativeAttachments(ev.data.attachments).length)
     && !(typeof ev.data.source === 'string' && ev.data.source.startsWith('skill-'));
   return ['assistant.turn_start', 'assistant.turn_end', 'assistant.message', 'assistant.reasoning',
     'tool.execution_start', 'tool.execution_complete'].includes(ev.type);
@@ -369,6 +372,11 @@ export function foldEvent(state: FoldState, ev: SdkEvent, projection?: FoldProje
 function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProjection): FoldResult {
   const empty: FoldResult = { changed: [], metaChanged: false };
   const d = ev.data ?? {};
+  const nativeMessageId = ev.type === 'user.message' ? ev.id : stringOf(d.messageId);
+  const agentId = ev.nativeOriginAgentId ?? stringOf(ev.agentId) ?? stringOf(d.agentId);
+  const origin = projection?.nativeSessionId && nativeMessageId ? Object.freeze({
+    sessionId: projection.nativeSessionId, messageId: nativeMessageId, ...(agentId ? { agentId } : {}),
+  }) : undefined;
   if (['assistant.turn_start', 'assistant.turn_end', 'assistant.idle', 'session.idle',
     'abort', 'user.message', 'assistant.message_start', 'assistant.message'].includes(ev.type)) {
     state.responseOrder = projection?.eventOrder;
@@ -444,7 +452,8 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
 
     case 'user.message': {
       const content = typeof d.content === 'string' ? d.content : '';
-      if (!content) return empty;
+      const attachments = projectNativeAttachments(d.attachments);
+      if (!content && !attachments.length) return empty;
       // Skill-context injections arrive as a `user.message` whose `source` is
       // `skill-<name>` and whose body is the entire SKILL.md wrapped in
       // <skill-context>. That's machinery, not a user turn — rendering it as a
@@ -454,7 +463,8 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       if (source.startsWith('skill-')) return empty;
       endTurn(state);
       const id = ev.id ?? `u-${state.messages.length}`;
-      upsert(state, { id, role: 'user', content, timestamp: tsOf(ev) });
+      upsert(state, { id, role: 'user', content, timestamp: tsOf(ev),
+        ...(origin ? { origin } : {}), ...(attachments.length ? { attachments } : {}) });
       return { changed: [id], metaChanged: false };
     }
 
@@ -512,7 +522,9 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       const mid = (typeof d.messageId === 'string' && d.messageId) || ev.id || `a-${state.messages.length}`;
       if (state.completed.has(mid)) return empty;
       const removed = bindResponse(state, ev, mid);
-      return { changed: removed.length ? [mid] : [], removed, metaChanged: false };
+      const message = state.messages[state.byId.get(mid) ?? -1];
+      if (message && origin) Object.assign(message, { origin });
+      return { changed: removed.length || (message && origin) ? [mid] : [], removed, metaChanged: false };
     }
 
     case 'assistant.message_delta': {
@@ -522,6 +534,7 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       const removed = bindResponse(state, ev, mid);
       const m = ensureStreaming(state, mid, tsOf(ev));
       m.content += delta;
+      if (origin) Object.assign(m, { origin });
       return { changed: [m.id], removed, metaChanged: false };
     }
 
@@ -539,6 +552,7 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
         ?? (thought !== undefined && parentId && state.responses.get(`turn:${parentId}`) === id ? parentId : undefined);
       if (content || thought) {
         upsert(state, { id, role: 'assistant', content, ...(thought !== undefined ? { thought } : {}),
+          ...(origin ? { origin } : {}),
           ...(thoughtKey ? { thoughtKey } : {}), timestamp: tsOf(ev) });
         changed.push(id);
       } else if (previous) {

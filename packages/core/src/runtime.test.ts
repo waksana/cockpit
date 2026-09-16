@@ -100,6 +100,19 @@ test('explicit stdio and official approveAll are enforced at both create and res
   assert.ok(f.trace.indexOf(`close:${a.sessionId}`) < f.trace.indexOf(`detach:${a.sessionId}`));
 });
 
+test('native runtime state is confined to copilot/ beneath the configured host root', async t => {
+  const previous = process.env.COCKPIT_HOME;
+  process.env.COCKPIT_HOME = `${process.cwd()}/.synthetic-runtime-host`;
+  t.after(() => { if (previous === undefined) delete process.env.COCKPIT_HOME; else process.env.COCKPIT_HOME = previous; });
+  const f = fixture();
+  await f.runtime.start();
+  assert.equal(f.connections[0]?.baseDirectory, `${process.cwd()}/.synthetic-runtime-host/copilot`);
+  const sdk = await f.runtime.createSession({ sessionId: 'synthetic-root-session' });
+  assert.equal(f.configs[0]?.configDirectory, `${process.cwd()}/.synthetic-runtime-host/copilot`);
+  await f.runtime.closeSession(sdk);
+  await f.runtime.stop();
+});
+
 test('request-local catalog enrichment preserves membership and explicit capability restrictions', () => {
   const rich = [{ modelId: 'reasoner', name: 'Global', supportedReasoningEfforts: ['low', 'high'],
     defaultReasoningEffort: 'high', supportsLongContext: true }];

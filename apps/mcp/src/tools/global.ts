@@ -22,7 +22,7 @@ export function registerGlobalTools(server: McpServer): void {
     {
       title: 'List globally-configured MCP servers',
       description:
-        'List every MCP server defined globally in ~/.copilot/mcp-config.json, with its command/url ' +
+        'List every MCP server defined in the backend selected native configuration root, with its command/url ' +
         'summary and whether it is default-on for new sessions. This is the catalog; per-session ' +
         'enablement is separate (cockpit_list_session_mcp / cockpit_set_session_mcp).',
       inputSchema: { response_format: ResponseFormat.describe("'markdown' (human) or 'json' (machine)") },

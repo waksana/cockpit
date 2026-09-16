@@ -57,6 +57,7 @@ export class NativeWindow {
 
   private readonly agentIds?: readonly string[];
   private readonly includeChildren: boolean;
+  private nativeSessionId?: string;
   constructor(agentIds?: readonly string[], includeChildren = false) {
     this.agentIds = agentIds;
     this.includeChildren = includeChildren;
@@ -115,13 +116,15 @@ export class NativeWindow {
   invalidate() { this.disconnect(); this.invalid = true; }
 
   private display(event: NativeChatEvent): DisplayEvent | undefined {
+    const nativeOriginAgentId = event.agentId ?? (typeof event.data.agentId === 'string' ? event.data.agentId : undefined);
     if (this.agentIds) {
       if (event.type.startsWith('subagent.') && typeof event.data.toolCallId === 'string'
         && this.agentIds.includes(event.data.toolCallId)) return undefined;
       const { agentId: _agent, parentToolCallId: _parent, ...data } = event.data;
       event = { ...event, agentId: undefined, parentToolCallId: undefined, data };
     }
-    return displayEvent(event);
+    const displayed = { ...displayEvent(event), nativeOriginAgentId };
+    return displayed;
   }
 
   private project(event: DisplayEvent, order: number): string[] {
@@ -168,6 +171,7 @@ export class NativeWindow {
       }
     }
     const result = foldEvent(this.state, event, {
+      nativeSessionId: this.nativeSessionId,
       eventOrder: order,
       ...event.display,
       scope: { details: this.includeChildren ? 'full' : 'summary' }, strictOwnership: true,
@@ -252,6 +256,8 @@ export class NativeWindow {
     if (page.sessionId !== request.sessionId || page.source !== request.source || page.direction !== request.direction) {
       throw new Error('原生历史响应与当前请求不匹配。');
     }
+    if (this.nativeSessionId && this.nativeSessionId !== request.sessionId) throw new Error('原生历史窗口不能跨会话复用。');
+    this.nativeSessionId = request.sessionId;
     if (page.cursorStatus === 'expired') {
       this.invalidate();
       throw new Error('原生历史定位已失效。已保留当前内容，请明确重新同步。');

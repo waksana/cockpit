@@ -1,7 +1,7 @@
 {
   "name": "cockpit",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "license": "GPL-3.0-only",
   "type": "module",
   "packageManager": "pnpm@10.34.5",
@@ -14,6 +14,7 @@
     "build": "pnpm -r build",
     "start": "node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/index.ts",
     "start:mcp": "node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js",
+    "module": "node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/module-cli.ts",
     "package:runtime": "node scripts/package-runtime.mjs",
     "test": "pnpm -r --if-present test && node --test scripts/*.test.mjs",
     "lint": "pnpm --filter @cockpit/web lint",

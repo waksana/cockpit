@@ -36,6 +36,9 @@ importers:
       '@cockpit/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@cockpit/module-api':
+        specifier: workspace:*
+        version: link:../../packages/module-api
       '@cockpit/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -57,6 +60,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@cockpit/module-api':
+        specifier: workspace:*
+        version: link:../../packages/module-api
       '@cockpit/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -131,6 +137,22 @@ importers:
       tsx:
         specifier: ^4.23.13
         version: 4.23.13
+
+  packages/module-api:
+    dependencies:
+      '@cockpit/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+    devDependencies:
+      '@types/node':
+        specifier: ^25.9.5
+        version: 25.9.5
+      '@types/react':
+        specifier: ^19.2.18
+        version: 19.2.18
+      typescript:
+        specifier: ^5.9.3
+        version: 5.9.3
 
   packages/protocol:
     dependencies:

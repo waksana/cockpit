@@ -12,7 +12,7 @@ The client does not read or write local files on behalf of attachment inputs.
 This documents the checked-in source. See
 [source status](../../docs/cockpit-plan.md#source-status) and the
 [documentation index](../../docs/README.md).
-The agreed [module target](../../docs/module-contract-draft.md#4-同端口独立-mcp-path)
+The agreed [module target](../../docs/module-contract-draft.md#8-后续目标)
 will give modules separate HTTP MCP paths on the host's one port. That is not
 implemented by this current stdio API client. Module cold-loading and native
 per-session MCP switches are different operations; this document only describes
@@ -417,7 +417,7 @@ not prove that bytes were read or that the selected runtime/model supports
 every media format. Existing request size and timeout limits still apply.
 
 Chat reads omit internal image bytes. Binary transfer, file management and
-enhanced rendering belong to the planned file module; this client forwards
+enhanced rendering belong to the separate file module; this client forwards
 native attachment inputs to the runtime.
 
 ## Configuration

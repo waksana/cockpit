@@ -1,14 +1,35 @@
-import { memo, useRef } from 'react';
-import ReactMarkdown, { type Components } from 'react-markdown';
+import { createContext, memo, useContext, useRef, type ReactNode } from 'react';
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CopyButton } from './CopyButton';
+import { ModuleRenderNode } from './ModuleContributions';
+import type { MessageOrigin } from '@cockpit/module-api';
+import { ORIGINAL_MARKDOWN_TARGET, originalMarkdownTarget, remarkOriginalMarkdownTargets } from '../lib/messageContent';
 
-const MarkdownLink: Components['a'] = ({ node: _node, ...props }) => (
-  <a {...props} target="_blank" rel="noopener noreferrer" />
-);
+const OriginContext = createContext<MessageOrigin | undefined>(undefined);
+function labelOf(children: ReactNode): string {
+  if (typeof children === 'string' || typeof children === 'number') return String(children);
+  if (Array.isArray(children)) return children.map(labelOf).join('');
+  if (children && typeof children === 'object' && 'props' in children) return labelOf((children.props as { children?: ReactNode }).children);
+  return '';
+}
+const MarkdownLink: Components['a'] = ({ node, href, children, ...props }) => {
+  const origin = useContext(OriginContext);
+  const { [ORIGINAL_MARKDOWN_TARGET]: _original, ...linkProps } = props as typeof props & { [ORIGINAL_MARKDOWN_TARGET]?: string };
+  const fallback = <a {...linkProps} href={href ? defaultUrlTransform(href) : undefined} target="_blank" rel="noopener noreferrer">{children}</a>;
+  return origin ? <ModuleRenderNode node={{ kind: 'link', origin, target: originalMarkdownTarget(node, href), label: labelOf(children) }} fallback={fallback} /> : fallback;
+};
 // Preserve unsupported Markdown media as text; fetching and previewing it is
 // not part of the native text renderer.
-const MarkdownMedia: Components['img'] = ({ src, alt }) => <span>{`![${alt ?? ''}](${src ?? ''})`}</span>;
+const MarkdownMedia: Components['img'] = ({ node, src, alt }) => {
+  const origin = useContext(OriginContext);
+  const source = typeof src === 'string' ? src : undefined;
+  const target = originalMarkdownTarget(node, source);
+  const fallback = <span>{`![${alt ?? ''}](${source ?? ''})`}</span>;
+  return origin ? <ModuleRenderNode node={{ kind: 'image', origin, target, label: alt ?? '' }} fallback={fallback} /> : fallback;
+};
+// Module cards may be block elements, including inside ordinary Markdown paragraphs.
+const MarkdownParagraph: Components['p'] = ({ node: _node, ...props }) => <div className="markdown-paragraph" {...props} />;
 
 const MarkdownCodeBlock: Components['pre'] = ({ node, children }) => {
   const code = node?.children.find(child => child.type === 'element' && child.tagName === 'code');
@@ -34,10 +55,10 @@ const MarkdownTable: Components['table'] = ({ node: _node, ...props }) => {
     }}><table ref={table} data-chat-table {...props} /></div>;
 };
 const components: Components = {
-  a: MarkdownLink, img: MarkdownMedia, pre: MarkdownCodeBlock, table: MarkdownTable,
+  a: MarkdownLink, img: MarkdownMedia, p: MarkdownParagraph, pre: MarkdownCodeBlock, table: MarkdownTable,
 };
-export const MessageBody = memo(function MessageBody({ body }: { body: string }) {
-  return <div className="message-body">
-    <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{body}</ReactMarkdown>
-  </div>;
+export const MessageBody = memo(function MessageBody({ body, origin }: { body: string; origin?: MessageOrigin }) {
+  return <OriginContext.Provider value={origin}><div className="message-body">
+    <ReactMarkdown remarkPlugins={[remarkGfm, remarkOriginalMarkdownTargets]} components={components} urlTransform={url => url}>{body}</ReactMarkdown>
+  </div></OriginContext.Provider>;
 });
