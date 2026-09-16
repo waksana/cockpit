@@ -681,6 +681,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
 
   await t.test('module components retain type and scoped drafts; send keys, IME, paste and drop share host guards', async () => {
     let mounts = 0;
+    let aboveMounts = 0;
     let received = 0;
     let scoped: ComposerContext | undefined;
     const reports: unknown[] = [];
@@ -691,6 +692,11 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       if (state.text === 'Crash module action') throw new Error('Fixture action failed');
       return createElement('button', { type: 'button', 'aria-label': 'Module action' }, state.text || 'Files');
     }
+    function Above(context: ComposerContext) {
+      const state = useSyncExternalStore(context.draft.subscribe, context.draft.getSnapshot, context.draft.getSnapshot);
+      useLayoutEffect(() => { aboveMounts++; }, []);
+      return state.attachments.length ? createElement('div', { className: 'fixture-attachment-panel' }, 'Selected file') : null;
+    }
     const digest = 'a'.repeat(64);
     const runtime = new ModuleRuntime({
       pageUrl: 'https://fixture.invalid',
@@ -700,6 +706,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       }], errors: [] }),
       load: async () => ({ activate: (_context: ModuleFrontendContext) => ({
         writes: ['attachments'], composerActions: [{ id: 'action', component: Action }],
+        composerAbove: [{ id: 'above', component: Above }],
         fileInput: [{ id: 'files', accepts: () => true, receive: (_files: readonly File[], context: ComposerContext) => { received++; scoped = context; } }],
         chatRenderers: [{ id: 'broken', matches: () => true, component: () => { throw new Error('Fixture renderer failed'); } }],
       }) }),
@@ -724,6 +731,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await renderComposer();
     await dispatch('.chat-input-message', 'focusin');
     const action = container.querySelector('[aria-label="Module action"]');
+    const editor = container.querySelector('.chat-input-message');
+    const context = container.querySelector('.chat-composer-context');
+    assert.ok(context);
+    assert.equal(context.querySelector('.module-composer-above')?.textContent, '');
     const scope = scoped!.draft;
     await act(() => draft.edit('Draft update'));
     assert.equal(container.querySelector('[aria-label="Module action"]'), action);
@@ -731,6 +742,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(scoped!.draft, scope);
     let release!: () => void;
     await act(() => { release = scope.block('Upload still pending'); });
+    assert.ok(context.querySelector('.chat-input-notice'), 'the composer owns module block placement');
+    assert.equal(container.querySelector('.chat-input-message'), editor);
     for (const keys of [{ key: 'Enter' }, { key: 'Enter', ctrlKey: true }, { key: 'Enter', metaKey: true }]) {
       await dispatch('.chat-input-message', 'keydown', keys);
     }
@@ -744,6 +757,11 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await act(() => scope.appendAttachments([{ id: 'native', value: { type: 'file', path: '/fixture/native' } }]));
     await renderComposer('ask');
     assert.match(container.textContent, /不接受附件/);
+    assert.ok(context.querySelector('.module-draft-attachments'));
+    assert.ok(context.querySelector('.fixture-attachment-panel'));
+    assert.equal(aboveMounts, 1, 'empty/nonempty module content and notices must not remount contributions');
+    assert.equal(container.querySelector('.chat-input-message'), editor);
+    assert.equal(container.querySelector('[aria-label="Module action"]'), action);
     await dispatch('.chat-input-message', 'keydown', { key: 'Enter', ctrlKey: true });
     assert.equal(sends, 1);
     await renderComposer('prompt', true);

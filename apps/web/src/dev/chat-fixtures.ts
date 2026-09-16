@@ -145,6 +145,7 @@ export const scenarios = [
   ['all', '完整组件对话'],
   ['reading', '正文 / Markdown / 代码'],
   ['user-time', '用户时间 / 短长文本'],
+  ['native-attachments', '原生附件 / 混合正文 / 仅附件'],
   ['process', '思考 / 工具 / 子代理'],
   ['process-history', '连续过程 / 无正文 / 最新展开'],
   ['ordered-events', '原生事件 / 连续概览 / 重连补全'],
@@ -198,6 +199,16 @@ export function fixtureSession(scenario: Scenario): ChatSession {
     message('time-long', 'user', '这是一段合成的多行用户消息。\n请把时间放在气泡外，并紧贴对应气泡。\n保留文字、代码复制和时间的自然归属。'),
     message('time-reply', 'user', '选择已确认。', { subtype: 'ask-reply', replyQuestion: '是否保留当前选择？' }),
     message('time-assistant', 'assistant', '助手的时间来源与展示分组保持不变。'),
+  ];
+  if (scenario === 'native-attachments') session.messages = [
+    message('attachment-only', 'user', '', { attachments: [
+      { type: 'file', path: '/synthetic/review.txt', displayName: '组件评审记录.txt' },
+    ] }),
+    message('attachment-mixed', 'user', '请结合这两个附件继续检查。\n\n这里保留正文的段落节奏，附件另占一个内容区。', { attachments: [
+      { type: 'file', path: '/synthetic/layout.txt', displayName: '布局说明.txt' },
+      { type: 'file', path: '/synthetic/long-name.txt', displayName: `${'long_attachment_name_'.repeat(8)}.txt` },
+    ] }),
+    message('attachment-response', 'assistant', '附件与正文分开，只有附件时不预留一段不存在的正文间距。'),
   ];
   if (scenario === 'streaming' || scenario === 'cancelling') Object.assign(session, {
     status: 'running', nativeProcessing: true, intent: '正在整理组件观察…',

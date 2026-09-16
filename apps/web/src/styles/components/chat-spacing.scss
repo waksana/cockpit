@@ -1,0 +1,31 @@
+// Chat owns its reading column and region boundaries. Components own only
+// their internal spacing; prose remains relative to its local text size.
+.chat {
+  --chat-reading-width: 52rem;
+  --chat-gutter: clamp(1rem, 4vw, 1.5rem);
+  --chat-gap-message: 8px;
+  --chat-gap-speaker: 16px;
+  --chat-gap-process: 12px;
+  --chat-gap-meta: 4px;
+  --chat-gap-region: 8px;
+  --chat-gap-content: 12px;
+  --chat-gap-control: 8px;
+  --chat-inset-transcript: 16px;
+  --chat-inset-panel: 12px;
+  --chat-inset-compact: 8px;
+  --chat-inset-detail: 24px;
+  --chat-inset-bubble: 0.65rem 0.85rem;
+  --chat-inset-field: 8px 12px;
+  --chat-gap-prose: 0.65em;
+  --chat-gap-prose-section: 0.85em;
+  --chat-inset-bottom: 4px;
+
+  row-gap: var(--chat-gap-region);
+  @media (max-width: 599px) { --chat-gutter: 12px; }
+}
+
+@mixin column {
+  width: calc(100% - 2 * var(--chat-gutter));
+  max-width: var(--chat-reading-width);
+  margin-inline: auto;
+}

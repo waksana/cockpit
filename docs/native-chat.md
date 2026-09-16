@@ -162,8 +162,8 @@ the group's mounted identity. They are not a second native state or history stor
 Transcript spacing is derived once per visible boundary: 8px between related
 speech rows, 12px between process and speech, and 16px when the speaker changes.
 User timestamps sit 4px below their bubble. Empty events create no spacing;
-date separators own their boundary. Markdown and tool-row internal spacing
-remains separate. There are no group divider lines, timestamp changes or
+date separators own their boundary. Prose rhythm and compact process-header
+geometry remain distinct from those boundaries. There are no group divider lines, timestamp changes or
 additional scroll-position writers.
 Activity disclosure keeps its header height and icon slots fixed. Long tool
 titles do not wrap on expansion; clipped fields wrap only in the details below.
@@ -189,6 +189,27 @@ text remains distinct from entered text, including on focus. Existing attachment
 and unconfirmed-send notices remain explicit. Queue items can be expanded to read
 their full text independently of removal; there is no editing, reordering or new
 steering mode.
+
+### Chat spacing ownership
+
+`styles/components/chat-spacing.scss` defines Chat-local relationship and inset
+tokens, not a global numeric scale. A boundary has one owner:
+
+| Relationship | Owner and rule |
+| --- | --- |
+| Reading column | 52rem maximum, responsive outer gutter (12px on narrow screens). Transcript scrollbar gutters are symmetric so the column stays centered with the dock and composer; classic scrollbars reserve extra space on both sides at constrained widths. |
+| Transcript / dock / composer | The Chat parent owns an 8px region gap. The transcript has a 16px top inset and no bottom padding; neither the dock nor input adds another outside gap. Missing regions reserve no space. |
+| Messages / process / speaker change | Visible row frames own 8 / 12 / 16px respectively. Metadata is separated by 4px. Empty history controls reserve no height. |
+| Message interior | User bubbles retain 0.65rem by 0.85rem padding. Paragraphs/lists use 0.65em rhythm; code, tables and quotes use 0.85em. Headings retain their typographic margins. First/last blocks have no outside margin. Text-to-attachment separation is 12px, absent for attachment-only messages. |
+| Expanded process details | Shared 24px inset, 4px after the header and 8px after details. Header dimensions and behavior do not change. |
+| Cards | Ordinary panel inset and content separation are 12px; compact execution panels use 8px inset and 4px row spacing. Controls use an 8px gap. Decision body typography is unchanged. |
+| Composer context | Notices, module-above contributions and native attachment fallback share one bounded, scrollable stack with 8px gaps. Children have no outside margins. An empty stack is hidden without unmounting module contributions. |
+| Input and safe area | Field inset is 8px by 12px; the send target remains 40px square. Only the bottom bar adds 4px plus the safe-area inset. The read-only footer owns the equivalent inset when there is no composer. |
+
+The host controls contribution placement, not a module's internal visual design.
+Adding/removing notices or attachments does not replace the editor or scoped
+module instances. No viewport-measurement controller, history reads or scrolling
+compensation is introduced by the spacing system.
 
 Persisted question replies show the original question above the answer in the
 user bubble, without an emoji or a duplicate option list. Association uses

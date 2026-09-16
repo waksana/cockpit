@@ -38,24 +38,26 @@ export function Composer({ disabled, busy, placeholder, submitLabel, draft, onSe
     if (!active.current || !canSend || draft.getSnapshot().pending || draft.getSnapshot().blocks.length) return;
     void onSend();
   };
-  return <>
-    {unconfirmed && <div className="chat-input-notice" role="alert" tabIndex={0}>
-      <span>发送失败或结果尚未确认，草稿已保留；重发前请先检查会话。</span>
-      <button type="button" onClick={draft.dismissNotice} aria-label="关闭发送提示"><Icon name="close" size={18} /></button>
-    </div>}
-    {attachmentRouteBlocked && <div className="chat-input-notice" role="alert">当前回答或确认操作不接受附件，请先移除附件；草稿已保留。</div>}
-    {blocks.map(block => <div className="chat-input-notice" role="status" key={block.id}>
-      <span>{block.reason}</span>
-      {block.orphaned && <button className="module-block-remove" type="button" onClick={() => draft.dismissOrphanedBlock(block.id)}>移除未完成的选择</button>}
-    </div>)}
-    <ModuleContributions slot="composerAbove" draft={draft} operation={operation} disabled={!!disabled} runtime={runtime} />
-    {!!attachments.length && <details className="module-draft-attachments" open={!modules.some(module => module.frontend.composerAbove?.length)}>
-      <summary>{attachments.length} 个原生附件</summary>
-      {attachments.map(item => <div key={item.id}>
-        <span>{item.value.displayName || ('path' in item.value ? item.value.path : item.value.type === 'selection' ? item.value.filePath : '附件')}</span>
-        <button type="button" disabled={disabled} onClick={() => draft.removeAttachment(item.id)} aria-label="移除附件">移除</button>
+  return <div className="chat-composer">
+    <div className="chat-composer-context">
+      {unconfirmed && <div className="chat-input-notice" role="alert" tabIndex={0}>
+        <span>发送失败或结果尚未确认，草稿已保留；重发前请先检查会话。</span>
+        <button type="button" onClick={draft.dismissNotice} aria-label="关闭发送提示"><Icon name="close" size={18} /></button>
+      </div>}
+      {attachmentRouteBlocked && <div className="chat-input-notice" role="alert">当前回答或确认操作不接受附件，请先移除附件；草稿已保留。</div>}
+      {blocks.map(block => <div className="chat-input-notice" role="status" key={block.id}>
+        <span>{block.reason}</span>
+        {block.orphaned && <button className="module-block-remove" type="button" onClick={() => draft.dismissOrphanedBlock(block.id)}>移除未完成的选择</button>}
       </div>)}
-    </details>}
+      <ModuleContributions slot="composerAbove" draft={draft} operation={operation} disabled={!!disabled} runtime={runtime} />
+      {!!attachments.length && <details className="module-draft-attachments" open={!modules.some(module => module.frontend.composerAbove?.length)}>
+        <summary>{attachments.length} 个原生附件</summary>
+        {attachments.map(item => <div key={item.id}>
+          <span>{item.value.displayName || ('path' in item.value ? item.value.path : item.value.type === 'selection' ? item.value.filePath : '附件')}</span>
+          <button type="button" disabled={disabled} onClick={() => draft.removeAttachment(item.id)} aria-label="移除附件">移除</button>
+        </div>)}
+      </details>}
+    </div>
     <div className="chat-input"
       onDragOver={event => {
         if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = disabled ? 'none' : 'copy'; }
@@ -87,5 +89,5 @@ export function Composer({ disabled, busy, placeholder, submitLabel, draft, onSe
         <Icon name={pending ? 'sending' : 'arrow_up'} size={22} />
       </button>
     </div>
-  </>;
+  </div>;
 }

@@ -8,6 +8,11 @@ Unreleased development version. No tag or Release has been created for these cha
   hints are removed; placeholders remain visibly distinct from entered text.
 - Expanded tool details align with thought details. Markdown paragraph wrappers
   no longer add extra top/bottom whitespace inside user message bubbles.
+- Chat spacing now has explicit owners across the reading column, message
+  interiors, floating panels and composer. Notices, module contributions and
+  native attachments share a bounded input-context stack; absent content leaves
+  no extra gap. User bubbles retain their original padding; the compact bottom
+  bar keeps its circular send target and is not compressed by taller panels.
 - Local trusted module packages can be installed and selected for cold loading.
   Remote signed-URL installation remains deferred.
 - Module API v1 provides scoped backend HTTP routes, versioned assets and
