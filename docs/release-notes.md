@@ -13,6 +13,12 @@ Unreleased development version. No tag or Release has been created for these cha
   native attachments share a bounded input-context stack; absent content leaves
   no extra gap. User bubbles retain their original padding; the compact bottom
   bar keeps its circular send target and is not compressed by taller panels.
+- Chat typography now uses explicit body, secondary, label and metadata roles.
+  Timestamps share a compact treatment without a decorative assistant badge;
+  decisions and process rows adapt to the actual Chat width beside settings.
+- Copy feedback keeps a stable target width and does not flash an intermediate
+  label, including repeated copies. Clipboard failures and session-ID restoration
+  remain explicit.
 - Local trusted module packages can be installed and selected for cold loading.
   Remote signed-URL installation remains deferred.
 - Module API v1 provides scoped backend HTTP routes, versioned assets and

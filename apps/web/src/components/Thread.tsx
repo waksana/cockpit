@@ -83,7 +83,7 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
         </span>)}
         {thoughts.some(item => item.message.incomplete) && <span title="思考归属未确认"><Icon name="error" size={16} /></span>}
       </span>
-      <time dateTime={new Date(timestamp).toISOString()}>{time}</time>
+      <MessageTimestamp timestamp={timestamp} />
     </button></div>
     <div id={contentId} className="message-process-content" hidden={!open} data-child-history>
       {open && titleClipped && <div className="process-expanded-summary">{title}</div>}
@@ -102,6 +102,11 @@ function clock(ts: number): string {
   const d = new Date(ts);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
+const MessageTimestamp = memo(function MessageTimestamp({ timestamp, className }: { timestamp: number; className?: string }) {
+  const date = new Date(timestamp);
+  const full = date.toLocaleString('zh-CN', { hour12: false, timeZoneName: 'short' });
+  return <time className={className} dateTime={date.toISOString()} title={full} aria-label={full}>{clock(timestamp)}</time>;
+});
 function sameDay(a: number, b: number): boolean {
   const x = new Date(a), y = new Date(b);
   return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
@@ -130,15 +135,17 @@ function SubagentCard({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
   }[sa.status] ?? '未知';
   return (
     <div className="subagent-card" data-status={sa.status}>
-      <button type="button" className="subagent-head rp" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-        <span className="subagent-ico"><Icon name="newchat" size={18} /></span>
-        <span className="subagent-name">{sa.displayName}</span>
-        <span className="subagent-status" title="根据已加载的子代理事件记录，不代表当前仍在运行或任务目标已完成。">
-          记录：{status}{!connected && ' · 待同步'}
-        </span>
-        <span className="subagent-chevron"><Icon name={open ? 'up' : 'down'} size={14} /></span>
-      </button>
-      {sa.description && !open && <div className="subagent-desc">{sa.description}</div>}
+      <div className="subagent-overview">
+        <button type="button" className="subagent-head rp" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+          <span className="subagent-ico"><Icon name="newchat" size={18} /></span>
+          <span className="subagent-name">{sa.displayName}</span>
+          <span className="subagent-status" title="根据已加载的子代理事件记录，不代表当前仍在运行或任务目标已完成。">
+            记录：{status}{!connected && ' · 待同步'}
+          </span>
+          <span className="subagent-chevron"><Icon name={open ? 'up' : 'down'} size={14} /></span>
+        </button>
+        {sa.description && !open && <div className="subagent-desc">{sa.description}</div>}
+      </div>
       {open && <SubagentDetails key={JSON.stringify([sessionId, sa.toolCallId])} m={m} sessionId={sessionId} />}
     </div>
   );
@@ -184,7 +191,7 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
 // One rendered message. Per @waksana's doctrine:
 //  - user messages are right-aligned bubbles, time just outside, no label;
 //  - assistant replies are NOT bubbles — they read as a full-width document,
-//    with a light byline (icon + time) shown once per assistant group;
+//    with a quiet timestamp shown once per assistant group;
 //  - system messages are a quiet centered note.
 const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }: { m: ChatMessage; sessionId: string; showByline: boolean; nested?: boolean }) {
   const anchorId = nested ? JSON.stringify([sessionId, m.id]) : m.id;
@@ -205,7 +212,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
           <MessageContent message={m} />
         </div>
         <div className="user-message-meta">
-          <span className="message-time">{clock(m.timestamp)}</span>
+          <MessageTimestamp className="message-time" timestamp={m.timestamp} />
         </div>
       </div>
     );
@@ -223,8 +230,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
     <article className="message is-doc">
       {showByline && hasMessageContent(m) && (
         <header className="doc-byline">
-          <span className="doc-mark" aria-hidden="true"><Icon name="compose" size={15} /></span>
-          <span className="doc-time">{clock(m.timestamp)}</span>
+          <MessageTimestamp className="doc-time" timestamp={m.timestamp} />
         </header>
       )}
       {/* Date/byline removal on prepend must not move the reading anchor. */}

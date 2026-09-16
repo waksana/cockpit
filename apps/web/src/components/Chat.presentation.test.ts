@@ -118,9 +118,9 @@ test('dock regions stay framed while only execution/queue typography becomes com
   assert.match(css, /\.chat-ask \{[^}]*border: 1px solid/);
   assert.match(css, /\.chat-execution \{[^}]*border: 1px solid/);
   assert.match(css, /\.chat-pending-body \{[^}]*min-height: 0;[^}]*overflow-y: auto/);
-  assert.match(css, /\.chat-execution-actions button \{[^}]*min-height: 32px;[^}]*font-size: var\(--font-size-12\)/);
-  assert.match(css, /\.chat-queue-item \{[^}]*font-size: var\(--font-size-12\)/);
-  assert.match(css, /\.chat-ask-choice \{[^}]*font-size: var\(--font-size-14\)/);
+  assert.match(css, /\.chat-execution-actions button \{[^}]*min-height: 32px;[^}]*font-size: var\(--chat-text-meta\)/);
+  assert.match(css, /\.chat-queue-item \{[^}]*font-size: var\(--chat-text-meta\)/);
+  assert.match(css, /\.chat-ask-choice \{[^}]*font-size: var\(--chat-text-secondary\)/);
   assert.doesNotMatch(css, /\.chat-queue-label|\.chat-composer-hint/);
 });
 
@@ -182,6 +182,31 @@ test('CSS owns the shell again, with no replacement global JS viewport controlle
   for (const file of ['../lib/visualViewport.ts', '../lib/useVisualViewport.ts', '../dev/viewport-fixture.ts']) {
     assert.equal(existsSync(new URL(file, import.meta.url)), false);
   }
+});
+
+test('Chat typography is role-based and narrow layouts follow their own available width', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  const tokens = compile(new URL('../styles/components/chat-design.scss', import.meta.url).pathname).css;
+  assert.doesNotMatch(tokens, /:root|body \{/);
+  assert.match(tokens, /--chat-text-body: var\(--messages-text-size\)/);
+  for (const [role, size] of [['secondary',14],['label',13],['meta',12]]) {
+    assert.ok(tokens.includes(`--chat-text-${role}: var(--font-size-${size})`));
+  }
+  assert.match(css, /\.chat-input-message \{[^}]*font-size: var\(--chat-text-body\)/);
+  assert.match(css, /\.chat-ask-q \{[^}]*font-size: var\(--chat-text-body\)/);
+  assert.match(css, /\.subagent-prompt \.message-body \{[^}]*font-size: var\(--chat-text-secondary\)/);
+  assert.match(css, /\.message-time, \.doc-time \{[^}]*font-size: var\(--chat-text-meta\);[^}]*line-height: var\(--chat-leading-ui\);[^}]*font-variant-numeric: tabular-nums/);
+  assert.match(css, /\.message\.is-doc \.doc-byline \{[^}]*margin: 0 0 var\(--chat-gap-meta\)/);
+  assert.doesNotMatch(css, /\.doc-mark/);
+  assert.match(css, /\.chat-dock \{[^}]*container: chat-dock\/inline-size/);
+  assert.match(css, /@container chat-dock \(max-width: 36rem\)/);
+  assert.match(css, /@container chat-process \(max-width: 36rem\)/);
+  assert.match(css, /@container chat-agent \(max-width: 36rem\)/);
+  assert.match(css, /\.subagent-overview \{[^}]*container: chat-agent\/inline-size/);
+  assert.doesNotMatch(css, /\.subagent-card \{[^}]*container:/);
+  assert.match(css, /\.chat-copy-label \{[^}]*display: grid/);
+  assert.match(css, /\.chat-copy-label > span \{[^}]*grid-area: 1\/1/);
+  assert.match(css, /\.chat-copy-label-size \{[^}]*visibility: hidden/);
 });
 
 test('the native composer keeps a compact send action without parked file or voice controls', t => {
@@ -246,10 +271,12 @@ test('user time stays outside its bubble without external copy controls on eithe
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
   assert.equal((html.match(/class="user-message"/g) ?? []).length, 3);
   assert.equal((html.match(/class="message-time"/g) ?? []).length, 3);
-  assert.equal((html.match(/class="user-message-meta"><span class="message-time">\d{2}:\d{2}<\/span><\/div>/g) ?? []).length, 3);
+  assert.equal((html.match(/class="user-message-meta"><time class="message-time"[^>]*>\d{2}:\d{2}<\/time><\/div>/g) ?? []).length, 3);
+  assert.match(html, /class="message-time" dateTime="1970-01-01T00:00:01\.000Z" title="[^"]+" aria-label="[^"]+"/);
   assert.doesNotMatch(html, /class="message-actions"|aria-label="复制消息"|class="chat-copy"/);
   for (const id of ['short', 'long', 'third']) assert.match(html, new RegExp(`class="message is-out[^"]*" data-message-id="${id}"`));
   assert.match(html, /class="doc-time"/);
+  assert.doesNotMatch(html, /doc-mark|data-icon="compose"/);
 });
 
 test('question replies retain the original question without an emoji or repeated options', () => {
@@ -337,11 +364,11 @@ test('expanded tools keep their header geometry and show full metadata only when
 
 test('process rows use compact typography with leading status and a trailing name tag', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.process-summary \{[^}]*min-height: 28px;[^}]*font-family: ui-monospace[^}]*font-size: var\(--font-size-13\)/);
+  assert.match(css, /\.process-summary \{[^}]*min-height: 28px;[^}]*font-family: var\(--chat-font-mono\)[^}]*font-size: var\(--chat-text-label\)/);
   assert.match(css, /\.activity-head \{[^}]*grid-template-columns: 1rem minmax\(0, 1fr\)/);
   assert.match(css, /\.activity-icon \{[^}]*grid-column: 1/);
   assert.match(css, /\.tool-label \{[^}]*margin-inline-start: auto/);
-  assert.match(css, /\.tool-label \{[^}]*border-radius: 3px;[^}]*font-size: var\(--font-size-12\)/);
+  assert.match(css, /\.tool-label \{[^}]*border-radius: 3px;[^}]*font-size: var\(--chat-text-meta\)/);
   assert.match(css, /\.tool-state-icon\[data-status=in_progress\] \{[^}]*animation: spinner-rotate 0\.7s linear infinite/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.tool-state-icon\[data-status=in_progress\] \{[^}]*animation-duration: 1\.6s/);
 });

@@ -672,6 +672,7 @@ test('copy feedback is scoped to the value and unmount cancels its restoration t
     h.render(createElement(CopyButton, { text, variant, label: 'Copy value' }));
   await render('first');
   await h.event(h.container.querySelector('button')!, 'click');
+  assert.equal(h.container.querySelector('button')?.textContent, 'first', 'value copying does not flash an intermediate progress label');
   await render('second');
   await act(async () => request.resolve());
   assert.equal(h.container.querySelector('button')?.textContent, 'second', 'old content cannot show a new value as copied');
@@ -685,5 +686,49 @@ test('copy feedback is scoped to the value and unmount cancels its restoration t
   await render('code', 'button');
   await h.event(h.container.querySelector('button')!, 'click');
   await act(async () => t.mock.timers.tick(2000));
-  assert.match(h.container.textContent, /已复制/, 'existing code/tool copy behavior stays unchanged');
+  assert.equal(h.container.querySelector('.chat-copy-label-text')?.textContent, '已复制', 'existing code/tool copy behavior stays unchanged');
+});
+
+test('copy retains its visible label while pending, prevents duplicate writes and reports failures explicitly', async t => {
+  const h = mount(t);
+  const previous = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const requests: ReturnType<typeof deferred<void>>[] = [];
+  const texts: string[] = [];
+  Object.defineProperty(globalThis, 'navigator', { configurable: true, value: {
+    clipboard: { writeText: (text: string) => {
+      const request = deferred<void>();
+      requests.push(request); texts.push(text);
+      return request.promise;
+    } },
+  } });
+  t.after(() => previous ? Object.defineProperty(globalThis, 'navigator', previous) : Reflect.deleteProperty(globalThis, 'navigator'));
+  await h.render(createElement(CopyButton, { text: '  exact code\n', label: 'Copy code' }));
+  const target = h.container.querySelector('button')!;
+  const label = h.container.querySelector('.chat-copy-label-text')!;
+  assert.equal(label.textContent, '复制');
+  assert.equal(h.container.querySelector('.chat-copy-label-size')?.getAttribute('aria-hidden'), 'true');
+  await h.event(target, 'click');
+  await h.event(target, 'click');
+  assert.equal(requests.length, 1);
+  assert.equal(label.textContent, '复制', 'fast writes never flash an intermediate progress label');
+  assert.equal(target.getAttribute('aria-busy'), 'true');
+  assert.equal(target.getAttribute('aria-disabled'), 'true');
+  await act(async () => requests[0].resolve());
+  assert.equal(label.textContent, '已复制');
+  assert.equal(target.getAttribute('aria-busy'), null);
+  await h.event(target, 'click');
+  assert.equal(label.textContent, '已复制', 'repeated copies retain the previous confirmation');
+  await act(async () => requests[1].resolve());
+  assert.equal(label.textContent, '已复制');
+  await h.event(target, 'click');
+  await act(async () => requests[2].reject(new Error('Clipboard denied')));
+  assert.equal(label.textContent, '复制');
+  assert.match(h.container.querySelector('.chat-copy-error')!.textContent, /复制失败/);
+  await h.event(target, 'click');
+  assert.equal(h.container.querySelector('.chat-copy-error'), null);
+  await act(async () => requests[3].resolve());
+  assert.equal(label.textContent, '已复制');
+  assert.deepEqual(texts, Array(4).fill('  exact code\n'));
+  assert.equal(h.container.querySelector('button'), target);
+  assert.equal(h.container.querySelector('.chat-copy-label-text'), label);
 });

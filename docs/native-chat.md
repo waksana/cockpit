@@ -163,7 +163,7 @@ Transcript spacing is derived once per visible boundary: 8px between related
 speech rows, 12px between process and speech, and 16px when the speaker changes.
 User timestamps sit 4px below their bubble. Empty events create no spacing;
 date separators own their boundary. Prose rhythm and compact process-header
-geometry remain distinct from those boundaries. There are no group divider lines, timestamp changes or
+geometry remain distinct from those boundaries. There are no group divider lines, timestamp-source changes or
 additional scroll-position writers.
 Activity disclosure keeps its header height and icon slots fixed. Long tool
 titles do not wrap on expansion; clipped fields wrap only in the details below.
@@ -190,10 +190,48 @@ and unconfirmed-send notices remain explicit. Queue items can be expanded to rea
 their full text independently of removal; there is no editing, reordering or new
 steering mode.
 
-### Chat spacing ownership
+### Chat layout and typography
 
-`styles/components/chat-spacing.scss` defines Chat-local relationship and inset
-tokens, not a global numeric scale. A boundary has one owner:
+`styles/components/chat-design.scss` defines Chat-local layout, typography,
+relationship and inset roles, without changing the global theme or font ladder.
+Type expresses importance rather than shrinking everything to fit:
+
+| Role | Treatment |
+| --- | --- |
+| Main content | 16px message prose, reasoning, questions and input. Prose uses 1.7 line height; decision text uses 1.6 and editable controls 1.5. |
+| Secondary content | 14px choices, plan summaries and the task prompt inside an agent card. The agent's actual response remains main content. |
+| Process and labels | 13px labels/code; native tool headers retain 28px rows and 20px line height. Code uses the existing system monospace stack. |
+| Metadata and compact queue | 12px; timestamps use an 18px line box and tabular numerals. Queue hit targets and density remain independent of the type size. |
+| Markdown hierarchy | At the main 16px size, headings use 24 / 20 / 18 / 16 / 14px; they scale with the local prose context rather than forcing page-sized headings into small cards. |
+
+User time stays 4px below the bubble, right-aligned. Assistant time stays at the
+start of its document group, left-aligned with the text and separated by 4px;
+it has no decorative badge. These use the same compact metadata treatment.
+Semantic `time` elements retain the native timestamp, with a full local
+date/time/timezone in their title and accessible label. Grouping and timestamp
+selection are unchanged; streaming does not create a separate moving time row.
+
+The decision dock, process groups and agent overviews use their own inline-size containers.
+A narrow Chat beside desktop settings therefore gets the same stacked choices
+and compact process/agent metadata as a phone, without reducing reading text.
+Neither agent message bodies, the composer nor module contributions gain containment, so their
+viewport-positioned UI and native ownership are not changed.
+
+Copy controls reserve their intrinsic confirmation-label width. Pending writes
+keep the current visible label instead of flashing through a progress label;
+busy state is exposed accessibly. Repeated copies retain the prior confirmation
+until the new outcome, and failures remain explicit. The native code renderer,
+copied text and focus target are not replaced. Session-ID copying still restores
+the value after two seconds, and old-value results cannot label new content copied.
+
+The role-based approach follows the published
+[Primer typography](https://primer.style/product/primitives/typography/) and
+[Fluent typography](https://fluent2.microsoft.design/typography) guidance;
+it does not import their fonts, palettes or product layouts.
+
+### Spacing ownership
+
+A boundary has one owner:
 
 | Relationship | Owner and rule |
 | --- | --- |

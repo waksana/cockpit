@@ -1,5 +1,18 @@
-// Chat owns its reading column and region boundaries. Components own only
-// their internal spacing; prose remains relative to its local text size.
+// Chat-local design roles. Shared Markdown keeps its existing defaults outside
+// Chat; component geometry is independent of the surrounding window width.
+.chat, .chat-topbar {
+  --chat-text-body: var(--messages-text-size);
+  --chat-text-secondary: var(--font-size-14);
+  --chat-text-label: var(--font-size-13);
+  --chat-text-meta: var(--font-size-12);
+  --chat-leading-prose: 1.7;
+  --chat-leading-decision: 1.6;
+  --chat-leading-ui: 1.5;
+  --chat-leading-heading: 1.4;
+  --chat-leading-code: 1.65;
+  --chat-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
 .chat {
   --chat-reading-width: 52rem;
   --chat-gutter: clamp(1rem, 4vw, 1.5rem);
