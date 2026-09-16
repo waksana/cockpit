@@ -24,7 +24,7 @@ export function checkRelease(tag, sourceSha, archive, repository = resolve(fileU
   assert.match(tag, /^v\d+\.\d+\.\d+$/, 'Release tags use vMAJOR.MINOR.PATCH');
   assert.match(sourceSha, /^[a-f0-9]{40}$/, 'Release source must be an exact commit');
   const version = tag.slice(1);
-  for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol']) {
+  for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol', 'packages/module-api']) {
     const metadata = JSON.parse(readFileSync(resolve(repository, name, 'package.json'), 'utf8'));
     assert.equal(metadata.version, version, `${name || 'root'} version does not match ${tag}`);
   }

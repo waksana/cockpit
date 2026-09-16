@@ -11,9 +11,9 @@
 | [贡献指南](../CONTRIBUTING.md) | 协作政策 | 问题报告、短期分支/PR、review、贡献范围和许可。 |
 | [安全政策](../SECURITY.md) | 报告与支持政策 | 私密漏洞报告、支持版本、脱敏要求和部署信任边界摘要。 |
 | [产品要求 R1–R8](product-requirements.md) | 已确认要求 | 定位、原生权威、单服务包、模块冷加载、graceful 退出与已接受成本。 |
-| [架构与运行边界](cockpit-plan.md) | 当前实现 / 目标差距 | 直接服务、原生权威、认证、普通身份、graceful 关闭及尚未实现的模块宿主。 |
+| [架构与运行边界](cockpit-plan.md) | 当前实现 / 目标差距 | 直接服务、原生权威、认证、身份、graceful 和模块接入的完成边界。 |
 | [模块目录](module-catalog.md) | 后续能力 | 各模块的用户能力和与本体的协作边界。 |
-| [基础模块协议](module-contract-draft.md) | 待实现设计 | 冷加载、前后端同包、分 path MCP、启动消息、版本/信任边界与待选进程模型。 |
+| [模块接入协议](module-contract-draft.md) | 当前接口 / 后续目标 | Module API v1、本地包、主进程 import、输入/渲染插口，以及未实现的远程安装和 HTTP MCP。 |
 | [原生聊天](native-chat.md) | 当前协议说明 | 原生事件、cursor、Web 阅读窗口、历史/实时/重连和媒体边界。 |
 | [原生 fork](session-fork.md) | 当前协议说明 | 分叉前检、排他边界、实际继承与非幂等结果。 |
 | [MCP 客户端](../apps/mcp/README.md) | 当前客户端说明 | 工具映射、客户端参数、附件输入、输出分页与 MCP 配置。 |
@@ -24,7 +24,8 @@
 | [验证指南](cockpit-testing.md) | 工程流程 | 现有命令、隔离条件、证据层次及清理要求。不是安全认证或运行证明。 |
 
 文件名 `cockpit-plan.md` 为保留既有链接沿用；它现在是**当前架构说明**，
-不是另一份待办计划。`module-contract-draft.md` 仍是设计，示例不能直接安装。
+不是另一份待办计划。`module-contract-draft.md` 区分已实现 API v1 与后续目标；
+示意清单不能代替实际包含代码的模块包。
 已确认的后续目标从[这里](product-requirements.md#single-service-target)进入；
 实际缺口从[架构对照](cockpit-plan.md#target-gap)进入。
 

@@ -48,6 +48,8 @@ function fakeDeploy(source, target, app, state) {
   put(protocol.peers, 'zod/index.js', 'module.exports = {};');
   put(protocol.peers, 'zod/LICENSE', 'Synthetic dependency license');
   if (app === 'server') {
+    const moduleApi = workspace('module-api');
+    link(protocol.path, join(moduleApi.peers, '@cockpit/protocol'));
     const core = workspace('core');
     link(protocol.path, join(core.peers, '@cockpit/protocol'));
     put(core.peers, '.bin/build-shim', 'Must not retain a package-manager shim with a build-machine path');
@@ -83,7 +85,8 @@ async function fixture(t, { realDeploy = false } = {}) {
     tracked.set(path, mode);
   };
   for (const path of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/web/package.json',
-    'apps/server/package.json', 'apps/mcp/package.json', 'packages/core/package.json', 'packages/protocol/package.json']) {
+    'apps/server/package.json', 'apps/mcp/package.json', 'packages/core/package.json', 'packages/protocol/package.json',
+    'packages/module-api/package.json', 'scripts/export-module-api.mjs']) {
     track(path, readFileSync(join(repository, path), 'utf8'));
   }
   track('LICENSE', 'Synthetic first-party license');
@@ -101,6 +104,8 @@ enum Fixture { READY = 7 }
 export const marker = [Fixture.READY, typeof CopilotClient, protocolMarker];
 `);
   track('packages/protocol/src/index.ts', 'export const protocolMarker: string = "synthetic";');
+  track('packages/module-api/src/index.ts', 'export interface ModuleFixture { apiVersion: 1 }');
+  track('apps/server/src/module-cli.ts', 'console.log("Synthetic local module CLI");');
   for (const path of ['apps/server/src/example.test.ts', 'apps/server/src/example.test.mjs',
     'apps/server/src/fixtures/payload.ts', 'apps/server/src/__tests__/unit.ts',
     'packages/core/test-support/regress.mts', 'packages/core/src/test-support/helper.ts', 'packages/core/src/consumer/cli.ts',

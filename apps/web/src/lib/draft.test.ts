@@ -93,3 +93,18 @@ test('rejected ask and plan POSTs propagate failure without automatic retries', 
   assert.equal(await sendThreadDraft('text', { planRequestId: 'plan', onPlanSupersede: fail }), false);
   assert.equal(calls, 2);
 });
+
+test('native attachments reach only prompt and never silently become ask answers or plan feedback', async () => {
+  const attachments = [{ type: 'file' as const, path: '/fixture/native' }];
+  const calls: unknown[][] = [];
+  const onSend = async (...args: unknown[]) => { calls.push(args); return true; };
+  assert.equal(await sendThreadDraft('', { onSend }, attachments), true);
+  assert.deepEqual(calls, [['', attachments]]);
+  for (const request of [{ askRequestId: 'ask' }, { planRequestId: 'plan' }]) {
+    assert.equal(await sendThreadDraft('keep', { ...request, onSend,
+      onRespondAsk: async () => assert.fail('No attachment route'),
+      onPlanSupersede: async () => assert.fail('No attachment route'),
+    }, attachments), false);
+  }
+  assert.equal(calls.length, 1);
+});

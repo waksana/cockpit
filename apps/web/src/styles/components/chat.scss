@@ -456,10 +456,10 @@ button.activity-head {
   line-height: 1.7;
   & > :first-child { margin-top: 0; }
   & > :last-child { margin-bottom: 0; }
-  p { margin: 0.65em 0; white-space: pre-wrap; }
+  p, .markdown-paragraph { margin: 0.65em 0; white-space: pre-wrap; }
   ul, ol { margin: 0.65em 0; padding-inline-start: 1.5rem; white-space: normal; }
   li { margin: 0.2em 0; }
-  li > p { margin: 0; }
+  li > p, li > .markdown-paragraph { margin: 0; }
   li > ul, li > ol { margin: 0.15em 0; }
   .contains-task-list { list-style: none; padding-inline-start: 0.2rem; }
   .task-list-item input { margin: 0 0.45rem 0 0; accent-color: var(--primary-color); }
@@ -566,6 +566,23 @@ button.activity-head {
   padding: 0.25rem max(var(--chat-gutter), calc((100% - var(--chat-reading-width)) / 2)) calc(0.25rem + env(safe-area-inset-bottom, 0px));
   background-color: var(--surface-color);
 }
+.module-composer-actions {
+  display: flex; flex: none; align-items: center; gap: 0.25rem;
+  &:empty { display: none; }
+}
+.module-composer-above, .module-draft-attachments {
+  flex: 0 1 auto; min-height: 0; max-height: min(12rem, 25vh); overflow: auto;
+  width: calc(100% - 2 * var(--chat-gutter)); max-width: var(--chat-reading-width);
+  margin: 0.25rem auto; font-size: var(--font-size-13);
+  &:empty { display: none; }
+}
+.module-draft-attachments > div {
+  display: flex; align-items: center; gap: 0.5rem; padding: 0.25rem 0;
+  > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+}
+.chat-input-notice > .module-block-remove { width: auto; height: auto; min-height: 32px; padding: 0.25rem; }
+.message-attachments { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.message-attachment { display: inline-block; padding: 0.35rem 0.6rem; border: 1px solid var(--border-color); border-radius: var(--border-radius); }
 .chat-input-message {
   flex: 1 1 auto;
   min-width: 0;

@@ -194,7 +194,22 @@ test('question replies retain the original question without an emoji or repeated
   assert.match(html, /原问题记录不可用/);
   assert.match(html, /Unlinked answer/);
   assert.doesNotMatch(html, /↩|ask-reply-tag/);
-  assert.ok(html.indexOf('Keep this setting?') < html.indexOf('<p>Yes</p>'));
+  assert.match(html, />Yes</);
+  assert.ok(html.indexOf('Keep this setting?') < html.indexOf('>Yes<'));
+});
+
+test('an adjacent elicitation does not change the composer ordinary prompt into an attachment-less answer', t => {
+  const session = { ...fixtureSession('elicitation'), sessionId: 'elicitation-with-native-file' };
+  const draft = getSessionDraft(session.sessionId);
+  const binding = draft.bindModule('fixture-file', ['attachments']);
+  binding.draft.appendAttachments([{ id: 'fixture-attachment', value: { type: 'file', path: '/synthetic/file.txt' } }]);
+  t.after(() => { draft.removeAttachment('fixture-attachment'); binding.dispose(); });
+  const html = renderToStaticMarkup(createElement(Thread, { session, onLoadMore() {}, onSend: async () => true }));
+  assert.doesNotMatch(html, /当前回答或确认操作不接受附件/);
+  const send = html.match(/<button[^>]*class="chat-input-btn send rp"[^>]*>/)?.[0];
+  assert.ok(send);
+  assert.doesNotMatch(send, /disabled/);
+  assert.match(html, /普通消息不会代替确认/);
 });
 
 test('chat leaves right-click and text selection to the browser instead of mounting a copy menu', () => {

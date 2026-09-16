@@ -3,6 +3,10 @@
 Cockpit 提供普通前后端服务包。使用者准备运行环境、配置原生登录与远程认证入口，
 并选择如何启动服务。
 
+> 本页对应 **0.2.0 开发源码，尚未发布运行包**。
+> 安装已发布 v0.1.0 时，请使用[该版本的安装指南](https://github.com/waksana/cockpit/blob/v0.1.0/docs/DEPLOY-PORTABLE.md)，
+> 不要混用本页的数据根、认证脚本和模块命令。需要本地模块功能时，按下方源码步骤使用对应的 0.2.0 提交。
+
 本指南也供 Agent 执行安装时使用。先核对运行前提，再下载、认证、启动并完成首次聊天。
 如果机器上已有安装或运行中的服务，先与用户确认再替换、停止或变更配置；
 不要把安装请求当成删除旧会话或迁移用户数据的授权。
@@ -12,7 +16,7 @@ Cockpit 提供普通前后端服务包。使用者准备运行环境、配置原
 
 | 项目 | 当前要求 |
 | --- | --- |
-| 发行 | 当前 Cockpit 服务从 **v0.1.0** 开始；[Releases](https://github.com/waksana/cockpit/releases/latest) 是运行包下载入口。 |
+| 发行 | 本页为未发布的 **0.2.0**；正式运行包只从 [Releases](https://github.com/waksana/cockpit/releases) 获取，不把开发源码视为已发布包。 |
 | 平台 | Linux x64 / glibc；未承诺 musl、arm64、macOS 或 Windows 运行包。 |
 | Node | **24.20.0**，由安装者单独准备；运行包 manifest 校验完整版本号，其他 patch 也会被拒绝。 |
 | 原生配对 | 已包含 SDK **1.0.13**、bundled runtime **1.0.83** / protocol **3**。 |
@@ -31,9 +35,8 @@ Web 与 API 在一个 Node 服务内；SDK 自己的进程外 runtime、原生 M
 
 ## 安装运行包
 
-从 [Latest Release](https://github.com/waksana/cockpit/releases/latest)下载
-`runtime.tar.gz` 与 `runtime.tar.gz.sha256`；需要重现固定版本时选择
-[v0.1.0](https://github.com/waksana/cockpit/releases/tag/v0.1.0)等明确 tag。
+0.2.0 发布后，从对应 Release 下载 `runtime.tar.gz` 与 `runtime.tar.gz.sha256`。
+**目前该版本未发布，以下下载命令应等待发行后使用；当前模块开发请走源码安装。**
 GitHub 自动生成的 Source code ZIP/tar 不包含安装好的依赖，不能替代 `runtime.tar.gz`。
 
 确认已准备上面的 Node 版本后，在新的下载目录执行：
@@ -41,8 +44,8 @@ GitHub 自动生成的 Source code ZIP/tar 不包含安装好的依赖，不能�
 ```sh
 mkdir cockpit-download &&
 cd cockpit-download &&
-curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/latest/download/runtime.tar.gz &&
-curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/latest/download/runtime.tar.gz.sha256 &&
+curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/download/v0.2.0/runtime.tar.gz &&
+curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/download/v0.2.0/runtime.tar.gz.sha256 &&
 sha256sum -c runtime.tar.gz.sha256 &&
 mkdir cockpit &&
 tar -xzf runtime.tar.gz -C cockpit &&
@@ -50,8 +53,7 @@ cd cockpit
 ```
 
 任一步失败都会停止后续步骤；不要忽略下载或摘要错误继续安装。
-两个文件必须来自同一版本；固定版本时，将上述两个 URL 的 `latest/download`
-一并替换为 `download/v0.1.0` 等所选 tag。
+两个文件必须来自同一版本；不要分别跟随可能变化的 latest 地址。
 checksum 用于校验文件完整性，不是独立发布者签名。
 
 包内包含 built Web、MCP 客户端、server/core TypeScript、必要 loaders、
@@ -71,18 +73,22 @@ node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/ind
 <a id="from-source"></a>
 ## 从源码安装
 
-普通使用者选择固定发行 tag；贡献者按[贡献指南](../CONTRIBUTING.md)从当前 main 开短期分支。
+普通使用者选择固定发行 tag；0.2.0 发布前，需使用明确包含本功能的源码提交，
+不是旧 v0.1.0 tag。贡献者按[贡献指南](../CONTRIBUTING.md)工作。
 在新目录中执行：
 
 ```sh
-git clone --branch v0.1.0 --depth 1 https://github.com/waksana/cockpit.git cockpit
-cd cockpit
-node --version
-pnpm --version
-pnpm install --frozen-lockfile
+git clone https://github.com/waksana/cockpit.git cockpit &&
+cd cockpit &&
+git switch --detach VERIFIED_0_2_0_COMMIT &&
+node --version &&
+pnpm --version &&
+pnpm install --frozen-lockfile &&
 pnpm build
 ```
 
+将 `VERIFIED_0_2_0_COMMIT` 替换为选定的完整 0.2.0 源码提交；
+该功能尚未合入时不要假定 main 已包含它。
 确认 Node 为 `v24.20.0`、pnpm 为 `10.34.5`。不要升级锁文件来绕过安装错误。
 先按下一节准备原生认证，然后在同一终端启动：
 
@@ -98,7 +104,7 @@ pnpm start
 
 Cockpit 没有自己的 GitHub 登录页面。当前
 [`OfficialRuntime`](../packages/core/src/runtime.ts)使用 `mode:"copilot-cli"`、
-`baseDirectory:COCKPIT_HOME` 和 `useLoggedInUser:true`，由安装版 SDK 启动配套 runtime，
+`baseDirectory:<COCKPIT_HOME>/copilot` 和 `useLoggedInUser:true`，由安装版 SDK 启动配套 runtime，
 读取该操作系统用户可用的原生凭据。已有可用原生登录的用户不必重新保存凭据。
 
 **不要安装“全局最新版 CLI”来替换此运行包的依赖。**
@@ -129,16 +135,18 @@ printf '\n'
 export COCKPIT_SETUP_TOKEN
 node --input-type=module <<'NODE'
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { CopilotClient, RuntimeConnection } from './packages/core/node_modules/@github/copilot-sdk/dist/index.js';
 
 const token = process.env.COCKPIT_SETUP_TOKEN;
 delete process.env.COCKPIT_SETUP_TOKEN;
 if (!token) throw new Error('A token is required.');
+const hostRoot = process.env.COCKPIT_HOME ?? join(homedir(), '.cockpit');
+if (!hostRoot.trim() || !isAbsolute(hostRoot)) throw new Error('COCKPIT_HOME must be a nonempty absolute path.');
 const client = new CopilotClient({
   connection: RuntimeConnection.forStdio(),
   mode: 'copilot-cli',
-  baseDirectory: process.env.COCKPIT_HOME ?? join(homedir(), '.copilot'),
+  baseDirectory: join(hostRoot, 'copilot'),
   useLoggedInUser: false,
 });
 try {
@@ -199,15 +207,37 @@ curl --fail http://127.0.0.1:8771/version
 默认同时提供 built Web 与 API。如果没有 Web 的 `index.html`，启动明确失败，
 不会在健康的名义下悄悄变成没有界面的服务。
 仅在确实需要 API-only 时设置 `COCKPIT_SERVE_WEB=0`。
-当前没有托管上传、媒体预览或模块加载器；HTTP/MCP 的 SDK 原生附件路径属于运行侧文件系统，
-不是从浏览器自动上传的文件。
+本体仍不内置文件业务。上传和媒体预览由显式安装的文件模块提供；
+HTTP/MCP 的 SDK 原生附件路径属于运行侧文件系统，不是从浏览器自动上传的文件。
+
+## 数据根与本地模块
+
+当前源码将 `COCKPIT_HOME` 定义为宿主数据根，默认 `~/.cockpit`；
+原生数据位于其中的 `copilot/`，仍由 Copilot 管理。
+模块安装选择、不可变代码和数据分别位于 `modules/config.json`、
+`modules/installed/` 与 `modules/data/`。浏览器草稿和操作系统钥匙串不搬进这个目录。
+不自动迁移或回读旧 `~/.copilot`，已有部署切换目录需要单独确认和备份。
+
+在包根使用实际的 Node 入口管理本地可信模块：
+
+```sh
+node --import ./apps/server/node_modules/tsx/dist/loader.mjs \
+  apps/server/src/module-cli.ts install /absolute/path/module.tgz --trust-local-code --enable
+```
+
+`--trust-local-code` 明确授权包代码在宿主进程执行，不是签名验证或安全沙箱。
+安装器只接收本地 `.tgz`，不执行安装脚本或自动安装依赖。
+安装、启用或停用只改变下次启动选择，不会热改正在运行的服务；
+是否关闭已有服务仍需遵循其正常 graceful 流程。
+详细格式、状态查询和公共接口见[模块契约](module-contract-draft.md)。
+此能力尚未随已有 `v0.1.0` Release 发布，不能在不支持模块的旧包上执行上述命令。
 
 ## 环境配置
 
 | 变量 | 默认/含义 |
 | --- | --- |
 | `COCKPIT_PORT` | `8771`，只监听 loopback。 |
-| `COCKPIT_HOME` | `~/.copilot`，原生 runtime 的数据与配置目录。 |
+| `COCKPIT_HOME` | `~/.cockpit`，非空绝对路径的宿主数据根；原生 runtime 使用其 `copilot/` 子目录。 |
 | `COCKPIT_SERVE_WEB` | 默认开启；`0`/`false` 明确关闭。 |
 | `COCKPIT_WEB_DIR` | 默认使用包/源码相对位置的 `apps/web/dist`，可显式指定。 |
 | `COCKPIT_ALLOWED_ORIGINS` | 可追加允许的请求来源，用于来源保护。 |

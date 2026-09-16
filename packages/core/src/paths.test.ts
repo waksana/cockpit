@@ -1,15 +1,18 @@
 // Unit tests for paths.ts — the COCKPIT_HOME state-root resolver.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
-import { cockpitHome } from './paths.ts';
+import { resolve } from 'node:path';
+import { cockpitHome, nativeHome } from './paths.ts';
 
-test('cockpitHome defaults to ~/.copilot when COCKPIT_HOME is unset', () => {
+test('host and native roots default to synthetic HOME/.cockpit and copilot/', t => {
+  const home = process.env.HOME;
+  process.env.HOME = resolve('.test-home-paths');
+  t.after(() => { if (home === undefined) delete process.env.HOME; else process.env.HOME = home; });
   const prev = process.env.COCKPIT_HOME;
   delete process.env.COCKPIT_HOME;
   try {
-    assert.equal(cockpitHome(), join(homedir(), '.copilot'));
+    assert.equal(cockpitHome(), resolve('.test-home-paths/.cockpit'));
+    assert.equal(nativeHome(), resolve('.test-home-paths/.cockpit/copilot'));
   } finally {
     if (prev === undefined) delete process.env.COCKPIT_HOME; else process.env.COCKPIT_HOME = prev;
   }
@@ -20,8 +23,18 @@ test('COCKPIT_HOME relocates the whole state root', () => {
   process.env.COCKPIT_HOME = '/data/cockpit-home';
   try {
     assert.equal(cockpitHome(), '/data/cockpit-home');
+    assert.equal(nativeHome(), '/data/cockpit-home/copilot');
   } finally {
     if (prev === undefined) delete process.env.COCKPIT_HOME; else process.env.COCKPIT_HOME = prev;
+  }
+});
+
+test('COCKPIT_HOME rejects empty and relative values instead of falling back', t => {
+  const previous = process.env.COCKPIT_HOME;
+  t.after(() => { if (previous === undefined) delete process.env.COCKPIT_HOME; else process.env.COCKPIT_HOME = previous; });
+  for (const value of ['', ' ', 'relative', '~/cockpit']) {
+    process.env.COCKPIT_HOME = value;
+    assert.throws(cockpitHome, /nonempty absolute/);
   }
 });
 

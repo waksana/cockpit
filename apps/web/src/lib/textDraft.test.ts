@@ -32,7 +32,7 @@ test('each session has one in-memory draft and one compact tab-storage record', 
   b.edit('Separate text');
   assert.deepEqual(JSON.parse(values.get(key('A'))!), { text: '  Native text\n', unconfirmed: false });
   assert.deepEqual(createSessionDrafts(storage)('A').getSnapshot(), {
-    text: '  Native text\n', revision: 0, pending: false, unconfirmed: false,
+    text: '  Native text\n', attachments: [], blocks: [], revision: 0, pending: false, unconfirmed: false,
   });
   a.edit('');
   assert.equal(values.has(key('A')), false);
@@ -71,7 +71,7 @@ test('accepted sends clear only their original draft and remove its storage reco
   assert.equal(await draft.runAction(async () => assert.fail('Concurrent decision')), false);
   finish(true);
   assert.equal(await sending, true);
-  assert.deepEqual(draft.getSnapshot(), { text: '', revision: 2, pending: false, unconfirmed: false });
+  assert.deepEqual(draft.getSnapshot(), { text: '', attachments: [], blocks: [], revision: 2, pending: false, unconfirmed: false });
   assert.equal(values.has(key('A')), false);
 });
 
@@ -127,7 +127,7 @@ test('reload converts an outstanding request to unknown without locking or repla
   draft.edit('New unsent text');
   const restored = createSessionDrafts(storage)('A');
   assert.deepEqual(restored.getSnapshot(), {
-    text: 'New unsent text', revision: 0, pending: false, unconfirmed: true,
+    text: 'New unsent text', attachments: [], blocks: [], revision: 0, pending: false, unconfirmed: true,
   });
   finish(false);
   await sending;
@@ -142,7 +142,7 @@ test('a rejected text send retains the draft and releases the pending lock witho
   assert.equal(await draft.send(async () => { calls++; throw new Error('Connection lost'); }), false);
   assert.equal(calls, 1);
   assert.deepEqual(createSessionDrafts(storage)('A').getSnapshot(), {
-    text: 'Uncertain text', revision: 0, pending: false, unconfirmed: true,
+    text: 'Uncertain text', attachments: [], blocks: [], revision: 0, pending: false, unconfirmed: true,
   });
   assert.equal(await draft.send(async () => true), true);
   assert.equal(draft.getSnapshot().text, '');
@@ -233,4 +233,82 @@ test('browser drafts use only the current sessionStorage key, with no other stor
   assert.deepEqual(JSON.parse(values.get(key('browser'))!), { text: 'Tab-only text', unconfirmed: false });
   assert.equal(await draft.send(async () => true), true);
   assert.equal(values.size, 0);
+});
+
+test('module draft scopes enforce fields and ownership, expose cached readonly snapshots and revoke writes', () => {
+  const draft = createSessionDrafts()('scoped');
+  const a = draft.bindModule('A', ['attachments']);
+  const b = draft.bindModule('B', ['text', 'attachments']);
+  assert.equal(a.draft.sessionId, 'scoped');
+  assert.equal(a.draft.getSnapshot(), a.draft.getSnapshot());
+  assert.deepEqual(Object.keys(a.draft.getSnapshot()).sort(), ['attachments', 'pending', 'text']);
+  assert.throws(() => a.draft.editText('Denied'), /cannot write text/);
+  a.draft.appendAttachments([{ id: 'one', value: { type: 'file', path: '/fixture/one' } }]);
+  const snapshot = a.draft.getSnapshot();
+  assert.ok(Object.isFrozen(snapshot));
+  assert.ok(Object.isFrozen(snapshot.attachments[0].value));
+  assert.throws(() => b.draft.removeAttachment('one'), /another module/);
+  assert.throws(() => b.draft.appendAttachments([{ id: 'one', value: { type: 'file', path: '/fixture/two' } }]), /another module/);
+  assert.throws(() => a.draft.appendAttachments([{ id: 'bad', value: new File(['x'], 'x') as never }]));
+  assert.equal(a.draft.getSnapshot(), snapshot, 'failed writes are atomic');
+  const release1 = a.draft.block('Uploading one');
+  const release2 = a.draft.block('Uploading two');
+  assert.equal(draft.getSnapshot().blocks.length, 2);
+  release1(); release1();
+  assert.equal(draft.getSnapshot().blocks.length, 1);
+  a.dispose();
+  release2();
+  assert.throws(() => a.draft.removeAttachment('one'), /cannot write/);
+  assert.equal(draft.getSnapshot().blocks[0].orphaned, true);
+  draft.dismissOrphanedBlock(draft.getSnapshot().blocks[0].id);
+  assert.equal(draft.getSnapshot().blocks.length, 0);
+  draft.removeAttachment('one');
+  b.draft.editText('Allowed');
+  assert.equal(draft.getSnapshot().text, 'Allowed');
+});
+
+test('attachment-only ACK clears captured unchanged IDs but preserves replacement IDs, new files and text edits', async () => {
+  const { drafts, storage } = fixture();
+  const draft = drafts('files');
+  const scope = draft.bindModule('files', ['attachments']);
+  const attachment = (id: string, path = id) => ({ id, value: { type: 'file' as const, path: `/fixture/${path}` } });
+  scope.draft.appendAttachments([attachment('same'), attachment('unchanged')]);
+  let finish!: (sent: boolean) => void;
+  const sending = draft.send((text, attachments) => {
+    assert.equal(text, '');
+    assert.equal(attachments?.length, 2);
+    return new Promise(resolve => { finish = resolve; });
+  });
+  scope.draft.appendAttachments([attachment('same', 'replacement'), attachment('new')]);
+  draft.edit('Typed during upload');
+  const reloaded = createSessionDrafts(storage)('files');
+  assert.equal(reloaded.getSnapshot().pending, false);
+  assert.equal(reloaded.getSnapshot().unconfirmed, true);
+  assert.equal(reloaded.getSnapshot().attachments.length, 3);
+  finish(true);
+  assert.equal(await sending, true);
+  assert.deepEqual(draft.getSnapshot().attachments.map(item => item.id), ['same', 'new']);
+  assert.equal(draft.getSnapshot().text, 'Typed during upload');
+  assert.equal(await draft.send(async () => false), false);
+  assert.equal(draft.getSnapshot().attachments.length, 2);
+  assert.equal(await draft.send(async () => true), true);
+  assert.equal(draft.getSnapshot().attachments.length, 0);
+});
+
+test('multiple per-session blocks gate native send and never serialize pending file objects', async () => {
+  const { drafts, storage, values } = fixture();
+  const a = drafts('A'), b = drafts('B');
+  a.edit('Waiting');
+  b.edit('Independent');
+  const scope = a.bindModule('file-module', ['attachments']);
+  const first = scope.draft.block('First upload');
+  const second = scope.draft.block('Second upload failed; remove it to proceed');
+  assert.equal(await a.send(async () => assert.fail('blocked')), false);
+  first();
+  assert.equal(await a.send(async () => assert.fail('still blocked')), false);
+  assert.equal(await b.send(async () => true), true);
+  assert.doesNotMatch(values.get(key('A'))!, /upload|blocks|File/);
+  assert.equal(createSessionDrafts(storage)('A').getSnapshot().pending, false);
+  second(); second();
+  assert.equal(await a.send(async () => true), true);
 });

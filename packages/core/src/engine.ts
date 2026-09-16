@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
 import { accessSync, constants, readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type {
   CopilotSession, SessionConfig, SessionMetadata, SessionEvent,
@@ -12,7 +12,7 @@ import type {
   McpServerGlobal, McpServerSession, McpToggleOperation, McpToggleResult,
   ModelOption, ScheduleEntry, ServerEvent, SessionMeta, SessionPanels,
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
-  MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem,
+  MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem, NativeChatEvent,
 } from '@cockpit/protocol';
 import { NativeChatRead, SessionUsage, MetaResource as MetaResources, cleanSessionTitle } from '@cockpit/protocol';
 import { NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult } from '@cockpit/protocol';
@@ -26,6 +26,12 @@ export type EngineRuntime = Pick<OfficialRuntime,
   'start' | 'models' | 'listSessions' | 'createSession' | 'resumeSession' |
   'closeSession' | 'deleteSession' | 'getAuthStatus' | 'stop' | 'rpc' |
   'isSessionLive' | 'onSessionClosed' | 'onFatal' | 'failure' | 'getSessionMetadata'>;
+
+export interface NativeObservation {
+  readonly sessionId: string;
+  readonly cwd: string | null;
+  readonly event: NativeChatEvent;
+}
 
 // Parent transports can expose these limits without inventing runtime support.
 export const coreCapabilities = {
@@ -71,6 +77,7 @@ function completeMeta(meta: SessionProjection): SessionMeta {
 }
 interface State {
   id: string;
+  observedCwd?: string | null;
   sdk: CopilotSession | null;
   load?: Promise<void>;
   closing: boolean;
@@ -85,7 +92,7 @@ interface State {
   sends: number;
   accepted: Set<string>;
   decisions: Map<string, Decision>;
-  eventOwner?: { closed?: WeakSet<CopilotSession> };
+  eventOwner?: { closed?: WeakSet<CopilotSession>; contextChanged?: boolean };
   sendReceipts: Set<string>;
   revision: number;
   scheduleGate: Promise<void>;
@@ -139,6 +146,7 @@ export class Engine {
   private readonly creating = new Set<string>();
   private readonly removing = new Set<string>();
   private readonly bus = new EventEmitter().setMaxListeners(0);
+  private readonly nativeObservers = new Map<(event: NativeObservation) => void | Promise<void>, ReadonlySet<string> | undefined>();
   private agentStatus: AgentStatus = 'starting';
   private birthGate: Promise<void> = Promise.resolve();
   private births = 0;
@@ -212,6 +220,54 @@ export class Engine {
   onEvent(handler: (event: ServerEvent) => void): () => void {
     this.bus.on('event', handler);
     return () => this.bus.off('event', handler);
+  }
+
+  /** Live notifications only; optional types are matched before copying event payloads. */
+  onNativeEvent(handler: (event: NativeObservation) => void | Promise<void>, options?: { types: readonly string[] }): () => void {
+    this.nativeObservers.set(handler, options ? new Set(options.types) : undefined);
+    return () => { this.nativeObservers.delete(handler); };
+  }
+
+  private observeNative(st: State, native: SessionEvent): void {
+    if (native.type === 'session.context_changed') {
+      const { data, agentId, parentToolCallId } = normalizeEvent(native);
+      if (!agentId && !parentToolCallId && !data.agentId && !data.parentToolCallId) {
+        if (typeof data.cwd === 'string' && isAbsolute(data.cwd) && !data.cwd.includes('\0')) {
+          st.observedCwd = data.cwd;
+          if (st.eventOwner) st.eventOwner.contextChanged = true;
+        }
+        else {
+          try { this.log('native observer ignored invalid working directory', { sessionId: st.id }); }
+          catch { /* Observer diagnostics cannot affect native control state. */ }
+        }
+      }
+    }
+    let interested = false;
+    for (const types of this.nativeObservers.values()) {
+      if (!types || types.has(native.type)) { interested = true; break; }
+    }
+    if (!interested) return;
+    const report = (error: unknown) => {
+      try { this.log('native observer failed', { sessionId: st.id, error: messageOf(error) }); }
+      catch { /* Observers and their reporters cannot affect native control state. */ }
+    };
+    try {
+      const clean = (value: unknown): unknown => {
+        if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return undefined;
+        if (Array.isArray(value)) return Object.freeze(value.map(clean));
+        if (value && typeof value === 'object') return Object.freeze(Object.fromEntries(
+          Object.entries(value).filter(([key]) => key !== 'binaryResultsForLlm').map(([key, item]) => [key, clean(item)]),
+        ));
+        return value;
+      };
+      const event = clean(normalizeEvent(native)) as NativeChatEvent;
+      const observation = Object.freeze({ sessionId: st.id, cwd: st.observedCwd ?? null, event });
+      for (const [observer, types] of this.nativeObservers) {
+        if (types && !types.has(native.type)) continue;
+        try { void Promise.resolve(observer(observation)).catch(report); }
+        catch (error) { report(error); }
+      }
+    } catch (error) { report(error); }
   }
 
   onActivitySettled(handler: () => void): () => void {
@@ -382,13 +438,18 @@ export class Engine {
     if (this.removing.has(id)) throw new Error('Session removal is in progress');
     let st = this.sessions.get(id);
     if (!st) {
-      if (!await this.untilFatal(() => this.runtime.getSessionMetadata(id))) throw new Error('Unknown session');
+      const metadata = await this.untilFatal(() => this.runtime.getSessionMetadata(id));
+      if (!metadata) throw new Error('Unknown session');
       this.assertAvailable();
       if (this.stopped || this.lifecycle || this.removing.has(id)) {
         throw new Error('Session lifecycle transition is in progress');
       }
-      st = this.sessions.get(id) ?? stateFor(id);
-      this.sessions.set(id, st);
+      st = this.sessions.get(id);
+      if (!st) {
+        st = stateFor(id);
+        st.observedCwd = metadata.context?.workingDirectory || null;
+        this.sessions.set(id, st);
+      }
     }
     if (st.closing) throw new Error('Session transition is in progress');
     return st;
@@ -558,8 +619,10 @@ export class Engine {
       this.assertAvailable();
       const owner: NonNullable<State['eventOwner']> = {};
       st.eventOwner = owner;
+      if (create) st.observedCwd = cwd ?? null;
       const config: SessionConfig = { ...await this.config(st, cwd), onEvent: event => {
         if (st.eventOwner !== owner || this.failure) return;
+        this.observeNative(st, event);
         try { this.onLive(st, event); }
         catch (error) {
           this.patch(st, { error: `Native control event could not be applied: ${messageOf(error)}` });
@@ -584,6 +647,7 @@ export class Engine {
       delete owner.closed;
       const meta = await this.getResources(st.id, summaryResources);
       if (!meta) throw new Error('Native session metadata is unavailable after loading');
+      if (!owner.contextChanged) st.observedCwd = meta.cwd || null;
       this.emit({ type: 'session/added', session: completeMeta({ ...meta, error: null }) });
     })).catch(error => {
       if (!st.sdk) {

@@ -8,7 +8,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import type { CopilotClient, CopilotSession, GetAuthStatusResponse, SessionConfig, SessionEvent, SessionMetadata } from '@github/copilot-sdk';
 import { NativeChatRead } from '@cockpit/protocol';
-import type { Engine, EngineRuntime } from './engine.ts';
+import type { Engine, EngineRuntime, NativeObservation } from './engine.ts';
 import { CHAT_EVENT_TYPES } from './native-chat.ts';
 
 type PersistedPage = Awaited<ReturnType<CopilotClient['rpc']['sessions']['readPersistedEvents']>>;
@@ -1129,6 +1129,11 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       adapter.onFatal(error => runtimeFatals.push(error));
       host.onFatal(error => engineFatals.push(error));
       await bounded(host.start());
+      const observedNative: NativeObservation[] = [];
+      const stopObserving = host.onNativeEvent(event => { observedNative.push(event); }, {
+        types: ['assistant.message_start', 'assistant.message_delta', 'assistant.message'],
+      });
+      t.after(stopObserving);
       const passiveRead = t.mock.method(adapter.rpc.sessions, 'readPersistedEvents');
       const save = t.mock.method(adapter.rpc.sessions, 'save', async () => {
         assert.fail('Draft recovery must never force native persistence');
@@ -1144,6 +1149,14 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       assert.equal((await bounded(host.prompt(id, 'SMOKE_ENGINE'))).ok, true);
       await eventually(async () => (await host.getMeta(id))?.status === 'idle',
         'Engine synthetic native turn must complete');
+      assert.ok(observedNative.some(value => value.event.type === 'assistant.message_start'));
+      assert.ok(observedNative.some(value => value.event.type === 'assistant.message_delta'
+        && value.event.ephemeral === true && typeof value.event.data.deltaContent === 'string'));
+      assert.ok(observedNative.some(value => value.event.type === 'assistant.message'
+        && value.event.data.content === 'deterministic SMOKE_ENGINE done'));
+      assert.ok(observedNative.every(value => value.sessionId === id && value.cwd === dirs.work));
+      assert.equal(displayReads.length, 0, 'Native module observations must not start a chat reader');
+      stopObserving();
       assert.equal((await host.getMeta(id))?.loaded, true);
       const emptyId = await bounded(host.newSession(dirs.work!));
       const emptyOriginal = watched.get(emptyId)!;

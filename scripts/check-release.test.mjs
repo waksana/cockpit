@@ -10,7 +10,7 @@ import { checkRelease, checkTagTarget } from './check-release.mjs';
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'cockpit-release-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol']) {
+  for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol', 'packages/module-api']) {
     mkdirSync(join(root, name), { recursive: true });
     writeFileSync(join(root, name, 'package.json'), JSON.stringify({ version: '0.1.0' }));
   }

@@ -17,12 +17,16 @@ export async function acknowledgeInView(
 export interface DraftSendHandlers {
   askRequestId?: string;
   planRequestId?: string;
-  onSend?: (text: string) => Promise<boolean>;
+  onSend?: (text: string, attachments?: NativeAttachment[]) => Promise<boolean>;
   onRespondAsk?: (requestId: string, answer: string, wasFreeform: boolean) => Promise<boolean>;
   onPlanSupersede?: (requestId: string, message: string) => Promise<boolean>;
 }
 
-export function sendThreadDraft(text: string, handlers: DraftSendHandlers): Promise<boolean> {
+export function sendThreadDraft(text: string, handlers: DraftSendHandlers, attachments?: NativeAttachment[]): Promise<boolean> {
+  if (attachments?.length && (handlers.askRequestId !== undefined || handlers.planRequestId !== undefined)) {
+    reportUxError('当前回答或计划反馈不接受附件，请先移除附件；草稿已保留。');
+    return Promise.resolve(false);
+  }
   return acknowledge(() => {
     if (handlers.askRequestId !== undefined) {
       return handlers.onRespondAsk?.(handlers.askRequestId, text, true);
@@ -30,6 +34,8 @@ export function sendThreadDraft(text: string, handlers: DraftSendHandlers): Prom
     if (handlers.planRequestId !== undefined) {
       return handlers.onPlanSupersede?.(handlers.planRequestId, text);
     }
-    return handlers.onSend?.(text);
+    return attachments?.length ? handlers.onSend?.(text, attachments) : handlers.onSend?.(text);
   });
 }
+import type { NativeAttachment } from '@cockpit/protocol';
+import { reportUxError } from './errorReporter';

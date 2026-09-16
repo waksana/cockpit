@@ -10,20 +10,25 @@ import { fileURLToPath } from 'node:url';
 
 export const START_COMMAND = 'node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/index.ts';
 export const MCP_START_COMMAND = 'node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js';
+export const MODULE_COMMAND = 'node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/module-cli.ts';
 export const REQUIRED_FILES = [
   'LICENSE', 'NOTICE.md', 'package.json',
   'apps/server/package.json', 'apps/server/src/index.ts',
+  'apps/server/src/module-cli.ts',
   'apps/server/node_modules/tsx/dist/loader.mjs',
   'apps/web/dist/index.html', 'apps/mcp/package.json', 'apps/mcp/dist/index.js',
   'apps/mcp/node_modules/tsx/dist/loader.mjs',
   'packages/core/package.json', 'packages/core/src/index.ts',
   'packages/protocol/package.json', 'packages/protocol/src/index.ts',
+  'packages/module-api/package.json', 'packages/module-api/src/index.ts',
+  'scripts/export-module-api.mjs',
 ];
-const packagePaths = ['apps/server', 'apps/mcp', 'packages/core', 'packages/protocol'];
+const packagePaths = ['apps/server', 'apps/mcp', 'packages/core', 'packages/protocol', 'packages/module-api'];
 const sourceRoots = [
   'LICENSE', 'NOTICE.md', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/web/package.json',
   ...packagePaths.map(path => `${path}/package.json`),
-  'apps/server/src', 'packages/core/src', 'packages/protocol/src',
+  'apps/server/src', 'packages/core/src', 'packages/protocol/src', 'packages/module-api/src',
+  'scripts/export-module-api.mjs',
 ];
 const omittedDirectories = new Set([
   '.git', '.github', '.delivery', 'module-staging', 'modules', 'consumer', 'deploy',
@@ -298,14 +303,18 @@ export async function packageRuntime({ repository, sourceSha, output = 'runtime-
     }
     await relocateWorkspace(runtime, 'apps/server', '@cockpit/core', 'packages/core');
     await relocateWorkspace(runtime, 'apps/server', '@cockpit/protocol', 'packages/protocol');
+    await relocateWorkspace(runtime, 'apps/server', '@cockpit/module-api', 'packages/module-api');
     await relocateWorkspace(runtime, 'apps/mcp', '@cockpit/protocol', 'packages/protocol', true);
     for (const path of packagePaths) await runtimePackageJson(join(runtime, path, 'package.json'));
     await copyBuiltTree(join(repository, 'apps/web/dist'), join(runtime, 'apps/web/dist'));
     await copyFile(join(source, 'LICENSE'), join(runtime, 'LICENSE'));
     await copyFile(join(source, 'NOTICE.md'), join(runtime, 'NOTICE.md'));
+    await mkdir(join(runtime, 'scripts'));
+    await copyFile(join(source, 'scripts/export-module-api.mjs'), join(runtime, 'scripts/export-module-api.mjs'));
     await writeFile(join(runtime, 'package.json'), `${JSON.stringify({
       name: 'cockpit', private: true, version: serverPackage.version, type: 'module',
-      license: rootPackage.license, engines: rootPackage.engines, scripts: { start: START_COMMAND, 'start:mcp': MCP_START_COMMAND },
+      license: rootPackage.license, engines: rootPackage.engines,
+      scripts: { start: START_COMMAND, 'start:mcp': MCP_START_COMMAND, module: MODULE_COMMAND },
     }, null, 2)}\n`);
     const sdk = await validateRuntime(runtime, sdkVersion);
     const files = await inventoryTree(runtime, { normalizeModes: true });

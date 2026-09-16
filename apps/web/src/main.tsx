@@ -7,6 +7,12 @@ import App from './App.tsx'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { UxErrorNotifications } from './components/UxErrorNotifications'
 import { reportUxError, describeReason } from './lib/errorReporter'
+import { moduleRuntime } from './lib/moduleRuntime'
+import { BASE_URL } from './lib/config'
+
+if (!(import.meta.env.DEV && import.meta.env.COCKPIT_CHAT_LAB === true)) {
+  void moduleRuntime.start(BASE_URL)
+}
 
 // Uncaught script errors (skip resource-load errors, which have no message).
 function onError(e: ErrorEvent) {
@@ -30,6 +36,7 @@ window.addEventListener('unhandledrejection', onUnhandledRejection)
 
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
+    moduleRuntime.stop()
     window.removeEventListener('error', onError)
     window.removeEventListener('unhandledrejection', onUnhandledRejection)
   })

@@ -2,6 +2,7 @@
 
 本页维护构建产物和包身份。
 Cockpit 只产生包含前后端与必要依赖的包，由使用者决定放在哪里、何时运行。
+当前源码为未发布的 0.2.0；已有 v0.1.0 包应使用对应 tag 的文档和数据根约定。
 
 ## 获取运行包
 
@@ -52,10 +53,14 @@ node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js
 ```
 
 这两个入口都直接进入对应 Node 进程；MCP 客户端通过 HTTP 调用后端。
+0.2.0 还包含本地模块 CLI 和公共 module-api/protocol 类型，
+可以在包根运行 `apps/server/src/module-cli.ts` 或 `scripts/export-module-api.mjs`，
+具体命令见[模块契约](module-contract-draft.md)。
 
 ## 闭包与身份
 
 包保留工作区相对布局：server 入口、built Web、compiled MCP 客户端及它们的运行依赖。
+包含 `packages/module-api` 与类型导出脚本；不包含用户安装的模块、`.cockpit` 数据或文件原件。
 SDK 的平台原生资产和依赖许可必须完整，不借开发 worktree 的 symlink 才能运行。
 Node 可执行文件没有合包；具体 Node、平台、架构以产物 manifest 和验证范围为准。
 

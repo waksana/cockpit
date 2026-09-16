@@ -743,7 +743,7 @@ test('a late failed send survives cached reentry and an obsolete response for an
   assert.match(diagnostic ?? '', /草稿已保留/);
   await h.history(2, { sessionId: 'b', messages: [message('obsolete')], hasMore: false });
   assert.equal(session().error, diagnostic);
-  assert.deepEqual(session().messages, [message('old')]);
+  assert.deepEqual(session().messages, [{ ...message('old'), origin: { sessionId: 'a', messageId: 'old' } }]);
   assert.deepEqual(session('b').messages, []);
 });
 
@@ -1250,7 +1250,7 @@ test('unloaded history stays passive and MCP is gated without runtime loading', 
   h.assertPost(2, 'session/refresh', {}).resolve(Response.json({ ok: true }));
   await refresh;
   assert.equal(useCockpit.getState().activeId, 'a');
-  assert.deepEqual(session().messages, [message('a-history')]);
+  assert.deepEqual(session().messages, [{ ...message('a-history'), origin: { sessionId: 'a', messageId: 'a-history' } }]);
   assert.ok(useCockpit.getState().sessions.every((row) => row.loaded === false));
   assert.equal(h.requests.length, 3);
   assert.deepEqual(getUxErrors(), []);

@@ -1,5 +1,32 @@
 // Folded-message validators for tests and diagnostics, separate from the native wire.
 import { z } from 'zod';
+import { NativeAttachmentDescriptor } from './index.ts';
+
+export const MessageOrigin = z.object({
+  sessionId: z.string().min(1), messageId: z.string().min(1), agentId: z.string().min(1).optional(),
+}).readonly();
+
+// Native output descriptors include internal metadata that is not valid send input.
+// Project only supported public fields; an omitted blob is not an empty blob.
+export function projectNativeAttachments(input: unknown): NativeAttachmentDescriptor[] {
+  if (!Array.isArray(input)) return [];
+  return input.flatMap(value => {
+    if (!value || typeof value !== 'object') return [];
+    const { type, displayName } = value;
+    let descriptor: unknown;
+    if (type === 'file' || type === 'directory') descriptor = { type, path: value.path, displayName };
+    else if (type === 'selection') descriptor = {
+      type, filePath: value.filePath, displayName, selection: value.selection, text: value.text,
+    };
+    else if (type === 'blob') descriptor = {
+      type, data: value.data, mimeType: value.mimeType, displayName,
+      ...(value.omittedReason == null ? {} : { omittedReason: value.omittedReason }),
+    };
+    else return [];
+    const parsed = NativeAttachmentDescriptor.safeParse(descriptor);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
 
 export const ToolCall = z.object({
   toolCallId: z.string(),
@@ -39,6 +66,8 @@ export type SubagentInfo = z.infer<typeof SubagentInfo>;
 // `subMessages` (each itself a ChatMessage, possibly with its own sub-agents).
 export interface ChatMessage {
   id: string;
+  readonly origin?: Readonly<z.infer<typeof MessageOrigin>>;
+  attachments?: NativeAttachmentDescriptor[];
   role: ChatRole;
   content: string;
   thought?: string;
@@ -59,6 +88,8 @@ export interface ChatMessage {
 }
 export const ChatMessage: z.ZodType<ChatMessage> = z.lazy(() => z.object({
   id: z.string(),
+  origin: MessageOrigin.optional(),
+  attachments: z.lazy(() => z.array(NativeAttachmentDescriptor)).optional(),
   role: ChatRole,
   content: z.string(),
   thought: z.string().optional(),
