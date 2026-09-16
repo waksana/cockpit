@@ -87,10 +87,16 @@ background work, open native sessions or publish user screenshots.
 Add `&pane=narrow` to constrain the actual Chat pane to 456px while keeping a
 desktop viewport. This reproduces the space available beside docked settings:
 decisions and process rows must adapt to their own width, not the window width.
-In `ask` / `ask-queued`, the waiting header folds the answer composer with native
-disclosure. The `下一问题` control replaces the synthetic request ID without
-remounting the thread, so draft/editor identity and new-question opening can be
-reviewed separately from ordinary streaming updates.
+In `ask` / `ask-queued`, clicking the status header folds the entire input card
+with native disclosure, without a visible folding arrow. Its queue, question,
+choices and original editor share one content scroller; ordinary content fits
+without scrolling. `更新当前问题` retains the request ID and manual fold state;
+`下一问题` changes the ID and opens the same mounted card/editor afresh.
+Use the existing hold/failure controls to observe submission in the header,
+retained drafts and errors outside the collapsed card. `streaming` / `idle-queued`
+exercise folding without a question; Stop from the folded header restores ordinary
+input when no execution, queue or decision remains. Empty idle input has no header,
+including during its short-lived send. Include short-height and narrow-pane views.
 Use `history-loading` and its page-request toggle to inspect the persistent
 history-start hint. The request can start/finish without changing the hint;
 the existing history insertion/completion control reaches the beginning and
@@ -143,7 +149,7 @@ No optimistic enablement, client mutation queue or native-state mirror is added.
 Pending actions report submission without claiming native application.
 Consumers must use the existing session resource's availability, including
 closing and resume-required states, rather than infer readiness from old metadata.
-`PendingDecision` shares plan/elicitation framing and question content; questions
-use the existing composer as their foldable outer card. Callbacks and native
+`PendingDecision` shares plan/elicitation and question content inside the unified
+input card; questions reuse the existing composer. Callbacks and native
 action lists remain distinct. Chat read ownership and scrolling still
 belong to the existing route/window and single scroll owner.

@@ -185,12 +185,20 @@ notifies the existing scroll owner, including an empty terminal page.
 Right-clicking chat content uses the browser's native context menu, not a custom
 message-copy menu. Code and tool-detail copy buttons remain available.
 
-Pending questions wrap the existing composer in one answer card: the retained
-icon and "waiting for your answer" header, question, choices and the original
-input/send row. Its header is a native `details`/`summary` disclosure; closed,
-only the 40px header remains. Text/choices/notices scroll above the input instead
-of moving it off screen. Question text remains selectable independently of the
-header. Selecting a choice still submits directly; freeform text uses the existing
+Execution status/actions, the queue, native decisions and the original composer
+share one default-open input card. Its status header is a keyboard-operable native
+`details`/`summary`, with hover/focus feedback but no visible folding arrow.
+Clicking the non-action header area folds everything below it; only a 40px status
+row and any available Stop/interrupt controls remain. Ordinary idle input has no
+header. Neither long content nor streaming updates automatically fold the card.
+
+The input stays at the bottom through normal flow, not a fixed overlay. A single
+CSS flex budget caps the input area, including external notices, at 70% of the
+available Chat height. Native `::details-content` participates in that flex layout;
+the queue, question, choices, plan/confirmation and original input share one content
+scroller only when they cannot fit. The editor is not separately pinned while a
+long question scrolls. Question text remains selectable independently of the
+header. Choice selection still submits directly; freeform text uses the existing
 send action, and choice-only questions still block freeform submission.
 
 The same editor and module contribution instances stay mounted while the card
@@ -201,19 +209,21 @@ Completion also opens the ordinary composer if the question was collapsed.
 No JavaScript height measurement, collapse state machine or layout animation
 is introduced.
 
-Execution/queue remains a separate compact panel above the answer composer;
-its waiting label and available controls stay visible independently of collapse.
-Plans and tool confirmations keep their existing separate cards and native
-callbacks, including when more than one decision kind is present. The bounded
-dock can scroll when these simultaneous surfaces cannot all fit. Regions are
-separated by 8px, and long content does not overlay the input. Execution status and available
-actions use the same panel with or without a decision; a pending question does
-not hide Stop. Stop retains its native queue-clearing behavior and stays disabled
+Submission progress replaces the status label when a header already exists; it
+does not add a second progress line in a decision or create an idle header. Idle
+sends retain the button's busy indicator. A busy label reports local submission,
+not native execution success. Session errors, uncertain-send/answer outcomes,
+attachment-route notices and interrupt results stay above and outside disclosure.
+Module upload/recovery and per-item copy feedback remain with their own items.
+Folding preserves the original editor, module instances, draft and attachments.
+Plans and tool confirmations keep distinct native callbacks, including when more
+than one kind is present. A pending decision does not hide Stop.
+Stop retains its native queue-clearing behavior and stays disabled
 while disconnected, closing, cancelling or another protected operation is active.
 The execution label takes the space remaining beside its actions rather than
 reserving a large minimum column. At normal phone widths the status and both
-queue actions share one line; long status text truncates, while very narrow
-containers can still wrap naturally without JavaScript width calculations.
+queue actions share one line; long status text truncates. Narrow containers use
+smaller horizontal action padding, not smaller text or JavaScript width calculations.
 There is no queue-count heading or repeated composer explanation. The input
 placeholder and submit label identify the active operation; muted placeholder
 text remains distinct from entered text, including on focus. Existing attachment
@@ -227,8 +237,8 @@ single-line and collapsed messages. It copies
 the complete original text through the same control used by code/tool details,
 without submitting, removing, expanding or collapsing the queued entry.
 Copying is keyboard-accessible without first expanding the text.
-Expansion can use more of the execution panel's existing bounded height;
-collapsing restores its compact queue height, including the short-screen limit.
+Expanded queue text uses the shared card scroller rather than another independently
+capped queue region.
 
 ### Chat layout and typography
 

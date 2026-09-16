@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createElement } from 'react';
+import { createElement, Fragment } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatSession } from '../net/types';
 import { createSessionDrafts } from '../lib/textDraft';
-import { Composer } from './Composer';
+import { Composer, ComposerNotices } from './Composer';
 import { Thread } from './Thread';
 
 const base: ChatSession = {
@@ -50,9 +50,9 @@ test('composer keeps the input without a persistent draft-storage explanation', 
 
 test('composer displays a dismissible notice only for unconfirmed outcomes, not normal editing or sending', async () => {
   const draft = createSessionDrafts()('composer-notice');
-  const renderComposer = () => renderToStaticMarkup(createElement(Composer, {
-    draft, onSend: async () => assert.fail('render must not send'),
-  }));
+  const renderComposer = () => renderToStaticMarkup(createElement(Fragment, {},
+    createElement(ComposerNotices, { draft, operation: 'prompt' }),
+    createElement(Composer, { draft, onSend: async () => assert.fail('render must not send') })));
   draft.edit('Retained input');
   assert.doesNotMatch(renderComposer(), /chat-input-notice/);
   let finish!: (accepted: boolean) => void;

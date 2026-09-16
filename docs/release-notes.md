@@ -2,6 +2,11 @@
 
 Unreleased development version. No tag or Release has been created for these changes.
 
+- Chat execution, queue, decisions and the existing editor share one default-open
+  card with an unmarked, keyboard-operable folding header. Long content scrolls
+  together within a CSS height budget; submission progress stays in an existing
+  header and operation errors stay outside disclosure. Ordinary idle input remains
+  a compact bottom bar with no new header.
 - Browser history pages use the native runtime's 200-event default size, retaining
   native cursor continuation, bounded single-page reads and existing viewport
   prefetch; live SSE batching is unchanged.
@@ -11,10 +16,6 @@ Unreleased development version. No tag or Release has been created for these cha
 - Expanded thinking renders Markdown with the shared message renderer, including
   headings, lists, links and copyable code, without changing the native text or
   reasoning ownership.
-- Pending questions share one foldable answer card with the existing input and
-  send row. The waiting header/icon remain; native disclosure collapses to one
-  row without losing the draft or remounting the editor. Execution/queue remains
-  above it, while plan and tool-confirmation actions keep their distinct cards.
 - A plain history-start hint stays at the beginning of the scrolling content
   until the earliest history is reached. It no longer appears/disappears around
   individual requests. No overlay, height measurement or hidden spacer is used.
@@ -25,15 +26,14 @@ Unreleased development version. No tag or Release has been created for these cha
   explicit clipboard errors, independently of queue removal or submission.
 - Execution status and queue actions share a compact row at normal phone widths,
   with long status text truncated instead of pushing both buttons to a new row.
-- Chat separates pending decision cards from a compact framed execution/queue
-  panel, keeps Stop available while awaiting a decision, and applies consistent
+- Chat keeps Stop available while awaiting a decision and applies consistent
   spacing between visible message groups. Queue headings and repeated composer
   hints are removed; placeholders remain visibly distinct from entered text.
 - Expanded tool details align with thought details. Markdown paragraph wrappers
   no longer add extra top/bottom whitespace inside user message bubbles.
 - Chat spacing now has explicit owners across the reading column, message
   interiors, floating panels and composer. Notices, module contributions and
-  native attachments share a bounded input-context stack; absent content leaves
+  native attachments share the input card's bounded content area; absent content leaves
   no extra gap. User bubbles retain their original padding; the compact bottom
   bar keeps its circular send target and is not compressed by taller panels.
 - Chat typography now uses explicit body, secondary, label and metadata roles.
