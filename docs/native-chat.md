@@ -191,6 +191,16 @@ share one default-open input card. Its status header is a keyboard-operable nati
 Clicking the non-action header area folds everything below it; only a 40px status
 row and any available Stop/interrupt controls remain. Ordinary idle input has no
 header. Neither long content nor streaming updates automatically fold the card.
+The outer frame, fill and original input row are identical in idle, running and
+decision states. A question does not add another editor frame or lateral inset.
+With the same draft, viewport and module controls, the editor keeps the same width
+and height across state changes, focus and submission; height still grows with
+multiline content. Stable symmetric scrollbar gutters prevent classic scrollbars
+from narrowing the editor when a long question starts scrolling. Module actions
+retain their own hit targets; the host uses a 4px row gap plus a 4px text inset on
+both icon-facing sides, instead of stacking an 8px gap and 12px inset. Text has
+the same 8px clearance from the module and send button hit areas; a composer
+without module controls retains its normal leading inset.
 
 The input stays at the bottom through normal flow, not a fixed overlay. A single
 CSS flex budget caps the input area, including external notices, at 70% of the

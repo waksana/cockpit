@@ -576,25 +576,19 @@ button.activity-head {
 .chat-input-card {
   display: flex; flex-direction: column;
   flex: 0 1 auto; min-height: 0; min-width: 0;
+  border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden;
+  background: color-mix(in srgb, var(--primary-text-color) 2%, var(--surface-color));
   // Native disclosure keeps the editor mounted; flex shares the available height with notices.
   &::details-content { display: flex; flex-direction: column; min-height: 0; }
-  &[data-header] {
-    border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden;
-    background: color-mix(in srgb, var(--primary-text-color) 2%, var(--surface-color));
-    .chat-input-card-body { border-top: 1px solid var(--border-color); }
-    .chat-input { padding: var(--chat-gap-meta); background: transparent; }
-    .chat-input-message { background: transparent; }
-  }
+  &[data-header] .chat-input-card-body { border-top: 1px solid var(--border-color); }
+  &:not([data-header]):has(.chat-readonly-note) { border: 0; background: transparent; }
   &:not([open]) .chat-execution-head { min-height: 38px; }
-  &[data-decision] .chat-input {
-    width: calc(100% - 2 * var(--chat-inset-panel));
-    margin: var(--chat-gap-meta) var(--chat-inset-panel) var(--chat-inset-panel); padding: 0;
-    border: 1px solid var(--border-color); border-radius: 8px; background: var(--surface-color);
-  }
 }
 .chat-input-card-body {
   flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
   scrollbar-width: thin;
+  // Classic scrollbars must not resize the editor when long decision content arrives.
+  scrollbar-gutter: stable both-edges;
 }
 .chat-folded-draft {
   display: none; flex: none; font-size: var(--chat-text-meta); color: var(--secondary-text-color);
@@ -620,11 +614,11 @@ button.activity-head {
   flex: 0 0 auto;
   display: flex;
   align-items: flex-end;
-  gap: var(--chat-gap-control);
+  gap: var(--chat-gap-meta);
   width: 100%;
   margin: 0;
-  padding: 0;
-  background-color: var(--surface-color);
+  padding: var(--chat-gap-meta);
+  background: transparent;
 }
 .module-composer-actions {
   display: flex; flex: none; align-items: center; gap: var(--chat-gap-meta);
@@ -660,9 +654,10 @@ button.activity-head {
   min-height: 2.5rem;
   max-height: min(9rem, calc((100dvh - var(--ux-error-height, 0px)) / 5));
   padding: var(--chat-inset-field);
+  padding-inline-end: var(--chat-gap-meta);
   border: none;
   border-radius: var(--border-radius);
-  background-color: var(--input-search-background-color);
+  background: transparent;
   color: var(--primary-text-color);
   font: inherit;
   font-size: var(--chat-text-body);
@@ -673,9 +668,9 @@ button.activity-head {
   overflow-y: auto;
   touch-action: pan-y;
   &::placeholder { color: var(--chat-placeholder-color); opacity: 1; }
-  &:focus { background-color: color-mix(in srgb, var(--primary-text-color) 10%, var(--surface-color)); }
 }
-// Typing focus is a subtle field fill, not an extra nested frame.
+.module-composer-actions:not(:empty) + .chat-input-message { padding-inline-start: var(--chat-gap-meta); }
+// The caret marks text focus inside the single shared input-card frame.
 .chat .chat-input-message:focus-visible {
   outline: none;
 }

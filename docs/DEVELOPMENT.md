@@ -143,6 +143,11 @@ retained drafts and errors outside the collapsed card. `streaming` / `idle-queue
 exercise folding without a question; Stop from the folded header restores ordinary
 input when no execution, queue or decision remains. Empty idle input has no header,
 including during its short-lived send. Include short-height and narrow-pane views.
+Use `input-states` and its `输入状态` selector to transition between idle, execution,
+short/long questions, plans, tool confirmations and disabled input without changing
+the session, draft or mounted editor. Compare the same multiline draft before and
+after each transition, including the classic-scrollbar case; its dimensions must
+not depend on execution/decision state.
 Use `history-loading` and its page-request toggle to inspect the persistent
 history-start hint. The request can start/finish without changing the hint;
 the existing history insertion/completion control reaches the beginning and

@@ -119,7 +119,7 @@ test('one CSS height budget contains notices and the native card without nested 
 });
 test('one card frame retains compact execution/queue typography and independent actions', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.chat-input-card\[data-header\] \{[^}]*border: 1px solid/);
+  assert.match(css, /\.chat-input-card \{[^}]*border: 1px solid/);
   assert.doesNotMatch(css.match(/\.chat-ask \{([^}]+)\}/)?.[1] ?? '', /border:|background:/);
   assert.match(css, /\.chat-execution-actions button \{[^}]*min-height: 32px;[^}]*font-size: var\(--chat-text-meta\)/);
   assert.match(css, /\.chat-queue-item \{[^}]*font-size: var\(--chat-text-meta\)/);
@@ -143,11 +143,19 @@ test('spacing tokens own visible boundaries and placeholder stays distinct on fo
   assert.equal((css.match(/--chat-placeholder-color:/g) ?? []).length, 2);
 });
 
-test('the composer is a full-width bottom bar without a floating outer frame', () => {
+test('all input states share one full-width unframed editor row inside the same card', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   const bar = css.match(/(?:^|\n)\.chat-input \{([^}]+)\}/)![1];
   assert.match(bar, /width: 100%;\s*margin: 0;/);
-  assert.match(bar, /padding: 0;/);
+  assert.match(bar, /padding: var\(--chat-gap-meta\);/);
+  assert.match(bar, /gap: var\(--chat-gap-meta\);/);
+  assert.match(css, /\.chat-input-card-body \{[^}]*scrollbar-gutter: stable both-edges;/);
+  assert.doesNotMatch(css, /\.chat-input-card\[data-decision\] \.chat-input/);
+  assert.doesNotMatch(css, /\.chat-input-card\[data-header\] \.chat-input(?:-message)? \{/);
+  assert.doesNotMatch(css, /\.chat-input-message:focus \{/);
+  assert.match(css, /\.chat-input-message \{[^}]*background: transparent;/);
+  assert.match(css, /\.chat-input-message \{[^}]*padding-inline-end: var\(--chat-gap-meta\);/);
+  assert.match(css, /\.module-composer-actions:not\(:empty\) \+ \.chat-input-message \{[^}]*padding-inline-start: var\(--chat-gap-meta\);/);
   assert.match(css, /\.chat-input-area \{[^}]*margin-block-end: calc\(var\(--chat-inset-bottom\) \+ env\(safe-area-inset-bottom, 0px\)\)/);
   assert.doesNotMatch(bar, /border:|border-radius:|max-width:/);
   assert.match(css, /--chat-inset-field: 8px 12px;/);

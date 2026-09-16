@@ -151,6 +151,7 @@ export const scenarios = [
   ['process-history', '连续过程 / 无正文 / 最新展开'],
   ['ordered-events', '原生事件 / 连续概览 / 重连补全'],
   ['streaming', '流式 / 队列 / 停止'],
+  ['input-states', '同一输入框 / 状态切换 / 尺寸稳定'],
   ['cancelling', '停止请求中'],
   ['ask', '选择 / 自由回答'],
   ['ask-queued', '长问题 / 队列 / 停止'],
