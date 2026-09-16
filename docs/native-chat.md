@@ -171,11 +171,13 @@ Process headers share one text column. Expanded tool and thought details share
 a single 24px inset, without accumulated nesting indents or progressively smaller
 text. Markdown's first/last blocks have no outside margins, including class-based
 paragraphs used by module renderers; the bubble's own padding is unchanged.
-Initial and older-page history loading share a CSS-positioned notice at the top
-of the transcript viewport, outside its measured/scrolling content. The notice
-does not reserve space, change padding or intercept pointer gestures. Loading
-visibility therefore requires no scroll correction or JavaScript height control.
-Errors and their explicit recovery actions remain in the normal history controls.
+The history-start hint is a plain, constant notice at the beginning of the
+scrolling content. It stays mounted while the initial history is unread or
+native reports more history; only authoritative exhaustion removes it.
+Individual page requests do not change its text, appearance or height. It is not
+a per-request spinner, an overlay or a hidden spacer. Errors and explicit retry
+remain separate. No JavaScript height control is involved; final removal
+notifies the existing scroll owner, including an empty terminal page.
 Right-clicking chat content uses the browser's native context menu, not a custom
 message-copy menu. Code and tool-detail copy buttons remain available.
 
@@ -383,8 +385,8 @@ for a complete display message.
 Initial viewport filling measures the incoming rows without exposing each
 intermediate page, then reveals the accumulated initial content together.
 Existing reading windows remain visible during older-page loads. The normal
-loading indicator is the non-interactive top overlay described above, not an
-inline row or a JavaScript-sized spacer. There is no normal load-more button;
+history-start hint remains in normal flow until the earliest history is reached,
+rather than being inserted and removed around every request. There is no normal load-more button;
 explicit failure retry and rebase remain available. Recorded incomplete-history
 notes do not disappear during loading. Child cards
 render the shared nested projection. Expanding a card makes no request, needs

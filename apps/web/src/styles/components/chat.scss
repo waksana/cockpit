@@ -100,12 +100,8 @@
   min-height: min(6rem, 20%);
 }
 .chat-history-loading {
-  position: absolute; inset-block-start: var(--chat-gap-meta);
-  inset-inline: var(--chat-gutter); margin-inline: auto; width: fit-content;
-  max-width: calc(100% - 2 * var(--chat-gutter));
-  padding: var(--chat-gap-meta) var(--chat-inset-panel);
-  border: 1px solid var(--border-color); border-radius: var(--border-radius);
-  background: var(--surface-color); pointer-events: none;
+  flex: none;
+  padding: var(--chat-gap-control) var(--chat-inset-panel);
 }
 .chat-history-controls {
   flex: none;

@@ -164,7 +164,7 @@ export const scenarios = [
   ['empty', '空对话'],
   ['loading', '首次加载'],
   ['history', '历史分页 / 阅读锚点'],
-  ['history-loading', '顶部加载提示 / 保留阅读位置'],
+  ['history-loading', '历史起点提示 / 保留阅读位置'],
   ['history-error', '历史失败 / 不完整片段'],
   ['stale', '历史过期 / 显式重读'],
   ['error', '会话错误'],
@@ -240,7 +240,7 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   if (scenario === 'empty' || scenario === 'loading') session.messages = [];
   if (scenario === 'loading') Object.assign(session, { materialized: false, loadingHistory: true, hasMore: true });
   if (scenario === 'history') session.hasMore = true;
-  if (scenario === 'history-loading') session.loadingHistory = true;
+  if (scenario === 'history-loading') Object.assign(session, { loadingHistory: true, hasMore: true });
   if (scenario === 'history-error') Object.assign(session, { historyError: '合成读取失败：连接已断开', partialHistory: true, incompleteBoundary: true });
   if (scenario === 'stale') Object.assign(session, { historyStale: true, historyError: '游标已过期，请显式重新同步。' });
   if (scenario === 'error') Object.assign(session, { status: 'error', error: '发送结果尚未确认；请先核对会话，不要直接重发。' });

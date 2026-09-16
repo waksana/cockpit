@@ -427,7 +427,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     }
     previousMessages.current = session.messages;
     scrollOwnerRef.current?.changed();
-  }, [messages, session.messages, session.status, session.compacting, session.error]);
+  }, [messages, session.messages, session.status, session.compacting, session.error, session.materialized, session.hasMore]);
 
   const jumpToBottom = useCallback(() => { scrollOwnerRef.current?.follow(); }, []);
 
@@ -468,6 +468,9 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
         <div ref={scrollRef} className="chat-messages" tabIndex={0} aria-label="对话消息" aria-busy={preparingHistory || session.loadingHistory}>
           <div ref={contentRef} className="chat-message-content">
             <div className="chat-history-controls">
+              {(!session.materialized || session.hasMore) && <StateNotice className="chat-history-loading">
+                加载更早的消息…
+              </StateNotice>}
               <div className="chat-history-actions">
                 {preparingHistory || session.loadingHistory ? null : session.historyStale || !session.materialized ? (
                   <StateNotice className="chat-loading-older" kind={session.historyError ? 'error' : 'info'}>
@@ -509,9 +512,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
           </div>
         </div>
 
-        {(preparingHistory || session.loadingHistory) && <StateNotice className="chat-history-loading" kind="loading">
-          {preparingHistory || session.historyStale || !session.materialized ? '正在同步对话历史…' : '加载更早的消息…'}
-        </StateNotice>}
         {awayFromBottom && (
           <button className="new-msg-badge" type="button" onClick={jumpToBottom}>
             {hasNewContent ? '有新内容 · 回到最新' : '回到最新'}

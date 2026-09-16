@@ -120,7 +120,7 @@ export function Lab() {
       <button onClick={loadMore}>插入历史 / 完成加载</button>
       {scenario === 'history-loading' && <button onClick={() => setSession(value => ({
         ...value, loadingHistory: !value.loadingHistory,
-      }))}>切换历史加载提示</button>}
+      }))}>切换分页请求状态</button>}
       <button onClick={() => choose(scenario)}>重置场景</button>
       {scenario === 'ordered-events' && <>
         <button onClick={() => orderedAction('thought')}>追加思考事件</button>
