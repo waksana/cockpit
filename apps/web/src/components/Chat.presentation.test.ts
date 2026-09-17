@@ -160,7 +160,9 @@ test('all input states share one full-width unframed editor row inside the same 
   assert.match(css, /\.chat-input-area \{[^}]*margin-block-end: calc\(var\(--chat-inset-bottom\) \+ env\(safe-area-inset-bottom, 0px\)\)/);
   assert.doesNotMatch(bar, /border:|border-radius:|max-width:/);
   assert.match(css, /--chat-inset-field: 8px 12px;/);
-  assert.match(css, /\.chat-input-message \{[^}]*min-height: 2\.5rem;[^}]*padding: var\(--chat-inset-field\);/);
+  assert.match(css, /\.chat-input-message \{[^}]*min-height: var\(--ck-control-size\);[^}]*padding: var\(--chat-inset-field\);/);
+  assert.match(css, /\.chat-input-message \{[^}]*padding-block: max\(var\(--chat-gap-control\), \(var\(--ck-control-size\) - 1lh\) \/ 2\);/);
+  assert.match(bar, /align-items: flex-end;/, 'multiline drafts keep actions at the last line rather than midway up the editor');
   assert.match(css, /max-height: min\(9rem, \(100dvh - var\(--ux-error-height, 0px\)\) \/ 5\)/);
   const controls = [...css.matchAll(/\.chat-input-btn \{([^}]+)\}/g)];
   assert.equal(controls.length, 1, 'narrow screens must not override the square button dimensions');
@@ -170,6 +172,15 @@ test('all input states share one full-width unframed editor row inside the same 
   assert.match(css, /\.chat \.chat-input-message:focus-visible \{\s*outline: none;/);
   assert.match(css, /\.chat \.chat-input-btn:focus-visible \{\s*outline-offset: -3px;/);
   assert.doesNotMatch(css, /\.chat-input:focus-within/);
+});
+
+test('queue rows align their first line and controls without vertically centering expanded messages', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.chat-queue-item \{[^}]*align-items: flex-start;/);
+  assert.match(css, /\.chat-queue-text \{[^}]*min-block-size: var\(--ck-control-size\);[^}]*line-height: 20px;[^}]*padding-block: calc\(\(var\(--ck-control-size\) - 1lh\) \/ 2\);/);
+  assert.match(css, /\.chat-queue-copy \.chat-copy-button \{[^}]*min-block-size: var\(--ck-control-size\);/);
+  assert.match(css, /\.chat-queue-remove \{[^}]*align-self: flex-start;/);
+  assert.match(css, /@media \(pointer: coarse\) \{[^{}]*\.chat-execution-actions \.ck-button, \.chat-ask-choice \{\s*min-block-size: var\(--ck-control-size\);/);
 });
 
 test('Chat regions and optional composer context each have a single spacing owner', () => {

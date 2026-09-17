@@ -660,9 +660,11 @@ button.activity-head {
 .chat-input-message {
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 2.5rem;
+  min-height: var(--ck-control-size);
   max-height: min(9rem, calc((100dvh - var(--ux-error-height, 0px)) / 5));
   padding: var(--chat-inset-field);
+  // Match the adjacent control while keeping each text line's inset symmetric.
+  padding-block: max(var(--chat-gap-control), calc((var(--ck-control-size) - 1lh) / 2));
   padding-inline-end: var(--chat-gap-meta);
   border: none;
   border-radius: var(--border-radius);
@@ -772,7 +774,9 @@ button.activity-head {
 .chat-queue-entry { flex: 1; min-width: 0; }
 .chat-queue-text {
   display: block; min-width: 0; cursor: pointer; list-style: none;
-  padding-block: 6px; line-height: 20px;
+  min-block-size: var(--ck-control-size);
+  line-height: 20px;
+  padding-block: calc((var(--ck-control-size) - 1lh) / 2);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--secondary-text-color);
   &::-webkit-details-marker { display: none; }
 }
@@ -782,6 +786,7 @@ button.activity-head {
 .chat-queue-copy {
   display: flex; flex: none; max-width: 5rem;
   .chat-copy { flex-direction: column; align-items: flex-start; }
+  .chat-copy-button { min-block-size: var(--ck-control-size); }
   .chat-copy-error { overflow-wrap: anywhere; }
 }
 .chat-decisions {
@@ -824,7 +829,8 @@ button.activity-head {
 }
 .chat-queue-remove { align-self: flex-start; }
 @media (pointer: coarse) {
-  .activity-head.ck-button, .chat-copy-button.ck-button, .process-summary.ck-button {
+  .activity-head.ck-button, .chat-copy-button.ck-button, .process-summary.ck-button,
+  .chat-execution-actions .ck-button, .chat-ask-choice {
     min-block-size: var(--ck-control-size);
   }
 }
