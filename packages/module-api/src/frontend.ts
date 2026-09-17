@@ -1,5 +1,5 @@
 import type * as React from 'react';
-import type { NativeAttachment, NativeAttachmentDescriptor, SessionStatus } from '@cockpit/protocol';
+import type { NativeAttachmentDescriptor, SessionStatus } from '@cockpit/protocol';
 
 type ReadonlyData<T> = { readonly [Key in keyof T]: ReadonlyData<T[Key]> };
 
@@ -15,21 +15,20 @@ export interface HostSnapshot {
   readonly connected: boolean;
 }
 
-export interface DraftAttachment {
-  readonly id: string;
-  readonly value: ReadonlyData<NativeAttachment>;
-}
+export type DraftPurpose =
+  | { readonly kind: 'prompt' }
+  | { readonly kind: 'ask' | 'plan' | 'elicitation'; readonly requestId: string };
 
 export interface DraftBlock {
   readonly id: string;
   readonly reason: string;
-  readonly orphaned: boolean;
 }
 
 export interface ModuleDraftSnapshot {
   readonly text: string;
-  readonly attachments: readonly DraftAttachment[];
   readonly blocks: readonly DraftBlock[];
+  /** Nonblank text or content declared by an active applicable schema, not schema presence. */
+  readonly hasContent: boolean;
   /** Text edit revision; an acknowledged send clears only its captured revision. */
   readonly revision: number;
   readonly pending: boolean;
@@ -39,31 +38,41 @@ export interface ModuleDraftSnapshot {
 
 /**
  * A host-issued, stable reference to one captured draft, not a native store.
- * id identifies the draft lifetime, not just its session. Switching the active
- * session never retargets this reference. Snapshots include no mutable internals.
+ * id identifies its lifetime, not just its session/request. The ordinary prompt
+ * and each native decision have distinct identities and independent storage.
+ *
+ * A pending decision selects a fresh request-keyed draft without copying,
+ * clearing or borrowing prompt data. The prompt remains cached and writable by
+ * its captured services while inactive. Switch only on actual decision state;
+ * restore the prompt when no blocking decision remains. Failed/unknown answers
+ * remain in their own draft. Replacements never inherit old answers, including
+ * a request ID reused after retirement.
+ * A late completion may settle only its original in-flight draft/token, never
+ * reactivate it or modify the current prompt/another decision. Retired decision
+ * references cannot authorize new edits or sends. Saved answers are restored
+ * only for the same live request occurrence, never a retired/reused request ID.
  */
 export interface DraftReference extends ReadonlyState<ModuleDraftSnapshot> {
   readonly id: string;
   readonly sessionId: string;
+  readonly purpose: DraftPurpose;
 }
 
-export type DraftWrite = 'text' | 'attachments';
+export type DraftWrite = 'text';
 
 /**
- * Module-scoped actions, authorized by ModuleFrontend.writes. Attachment writes
- * validate native values, preserve ownership, and reject while pending; text
- * edits may continue during a send and advance revision. No submit/ack/reset or
- * raw patch action is exposed. Removal/replacement cannot take another module's
- * attachment. Unowned restored attachments remain removable.
+ * Base capabilities only. Text edits require ModuleFrontend.writes and may
+ * continue during a send, advancing revision. Schema data/actions belong to the
+ * schema's own handle, never this base draft. No native store patch, attachment
+ * model, submit, ACK, or reset action is exposed.
  */
 export interface ModuleDraft extends DraftReference {
-  appendAttachments(values: readonly DraftAttachment[]): void;
-  removeAttachment(id: string): void;
   editText(text: string): void;
   /**
-   * Requires a declared draft write. The idempotent release applies only to this
-   * module's lease. On module failure/disposal, unresolved leases first become
-   * visible host recovery blocks; late cleanup cannot release those blocks.
+   * Requires a text write or an active schema applicable to this draft. Leases
+   * belong to this module/draft and release idempotently. Module/schema loss
+   * releases its leases, never creating orphan notices or missing-file UI;
+   * other active modules' leases are unaffected.
    */
   block(reason: string): () => void;
 }
@@ -82,6 +91,114 @@ export interface ModuleStateRegistration<Service extends object> {
   dispose(service: Service): void;
 }
 
+/** Immutable field data for one schema generation and exact draft lifetime. */
+export interface DraftSchemaScope<State extends object> extends ReadonlyState<State> {
+  readonly draft: DraftReference;
+  /**
+   * Synchronous, validated replacement of ONLY this schema's data. Modules build
+   * their domain actions/selectors around this operation. Concurrent edits are
+   * allowed; the module decides its own pending/ownership/ordering/limit rules.
+   * Throws on validation, persistence failure, retirement or revoked generation;
+   * failed updates retain the previous snapshot and serialized namespace.
+   */
+  update(change: (current: Readonly<State>) => State): Readonly<State>;
+}
+
+export interface DraftSchemaHandle<State extends object> {
+  readonly id: string;
+  /**
+   * Stable scoped store, or undefined for an inapplicable purpose. This is a
+   * lookup, never an initializer/hook. Foreign or revoked references/handles
+   * throw. An inactive cached prompt is still valid; retirement is distinct.
+   */
+  forDraft(reference: DraftReference): DraftSchemaScope<State> | undefined;
+}
+
+export interface DraftRestoreInput {
+  /** This module/schema namespace only; absence is distinct from invalid data. */
+  readonly stored:
+    | { readonly present: false }
+    | { readonly present: true; readonly value: unknown };
+  /**
+   * Read-only original parsed record for THIS draft, or undefined when none exists.
+   * Modules may migrate their old unnamespaced fields here. The host neither
+   * interprets nor consumes those fields, and never supplies a prompt's legacy
+   * record to a decision draft or another session.
+   */
+  readonly legacyRecord: unknown;
+}
+
+export interface DraftSchemaPersistence<State extends object> {
+  /**
+   * Opaque module-owned encoding (e.g. JSON text), not a native send payload.
+   * Must return a string or throw. Persist an explicit empty value/tombstone
+   * after ACK so legacy fields cannot be imported again on a later restore.
+   * Live File objects/uploads/resources belong in services, not this encoding.
+   */
+  serialize(state: Readonly<State>): string;
+  /**
+   * Called instead of create when this draft has a saved record. It owns format
+   * checks, versioning and legacy migration; the result passes validate.
+   * Failure is reported, not silently replaced with create/empty data.
+   */
+  restore(input: DraftRestoreInput, draft: DraftReference): State & { readonly then?: never };
+}
+
+/**
+ * Captured host transaction identity; never itself forwarded to the backend.
+ * The host also binds each participating field to its exact schema generation.
+ */
+export interface DraftSubmission {
+  readonly id: string;
+  readonly draft: DraftReference;
+  readonly base: Readonly<ModuleDraftSnapshot>;
+}
+
+type CoreDraftField = 'sessionId' | 'text' | 'mode' | 'requestId' | 'answer' | 'message' | 'wasFreeform' | 'action';
+
+/** Explicit additions to the selected EXISTING native route, not arbitrary slice serialization. */
+export type DraftNativeFields = Readonly<Record<string, unknown>> & { readonly [Field in CoreDraftField]?: never };
+
+/**
+ * A draft-data extension in the state registry, not another component registry.
+ * Factories/hooks are synchronous; snapshots are immutable data. Keep keyed
+ * resources/HTTP (UploadStore, FileProbes, etc.) in registered state services.
+ *
+ * Before dispatch, the host captures text revision, applicable schema snapshots
+ * and a unique pending token, publishing pending before native transport. It
+ * merges only explicit project results, validates against the existing native
+ * route, and rejects ALL peer-field collisions and
+ * core-owned keys (sessionId, text, mode, requestId, answer, message, wasFreeform,
+ * action). Unknown route fields are errors, not silently stripped. Empty text
+ * additionally requires schema-declared content with an actual projection.
+ *
+ * False/unknown native results preserve captured data without retry. Confirmed
+ * success clears text only at its captured revision and calls acknowledge only
+ * for participating projections, with current AND captured field data. Native
+ * choice actions never implicitly submit another draft's fields.
+ *
+ * ACK checks the original draft/submission/schema-generation tokens before any
+ * write. Stale callbacks cannot clean a replacement scope. A stale/failed ACK
+ * is reported and its field retained, not represented as successful cleanup;
+ * independently valid fields can still ACK. It never retries an acknowledged
+ * native request. Projection/serialization/storage failures are explicit, never
+ * fallback success or empty payloads. Failed persistence keeps prior bytes.
+ */
+export interface DraftSchemaRegistration<State extends object> {
+  readonly id: string;
+  readonly purposes: readonly DraftPurpose['kind'][];
+  create(draft: DraftReference): State & { readonly then?: never };
+  /** Owns data shape, validation and normalization; no file rules exist in core. */
+  validate(value: unknown): State & { readonly then?: never };
+  /** Pure content test for the base snapshot's aggregate hasContent. */
+  hasContent(state: Readonly<State>): boolean;
+  /** Pure projection of captured data; undefined/{} contributes no native fields. */
+  project(state: Readonly<State>, submission: DraftSubmission): DraftNativeFields | undefined;
+  /** Pure cleanup of captured items only, preserving concurrent additions/replacements. */
+  acknowledge(current: Readonly<State>, captured: Readonly<State>, submission: DraftSubmission): State & { readonly then?: never };
+  readonly persistence?: DraftSchemaPersistence<State>;
+}
+
 export interface ModuleStateRegistry {
   readonly host: ReadonlyState<HostSnapshot>;
   /**
@@ -92,6 +209,19 @@ export interface ModuleStateRegistry {
    */
   register<Service extends object>(registration: ModuleStateRegistration<Service>): ModuleStateHandle<Service>;
   /**
+   * Activation-only, staged with services/components. IDs share this module's
+   * registration namespace. The host prepares applicable scopes synchronously
+   * when registering a schema/creating a draft, before exposing them to render.
+   * No render-time factory, cross-module lookup, or arbitrary host store write.
+   *
+   * Storage is namespaced by module/schema and exact draft scope, not digest.
+   * Inactive/unregistered serialized namespaces and legacy records stay opaque
+   * and untouched: they are not projected, deleted, restored, or shown as file
+   * fallback UI. Losing a schema drops its live contribution/blockers only;
+   * ordinary text and other active schemas remain usable.
+   */
+  registerDraft<State extends object>(registration: DraftSchemaRegistration<State>): DraftSchemaHandle<State>;
+  /**
    * Stable per-module binding for this exact host reference; rejects foreign or
    * revoked references. Binding does not create a module service or subscribe.
    * May be called by a stable middleware component without rebuilding its HOC.
@@ -99,9 +229,9 @@ export interface ModuleStateRegistry {
   bindDraft(reference: DraftReference): ModuleDraft;
 }
 
-export type ComposerOperation = 'prompt' | 'ask' | 'plan' | 'elicitation';
+export type ComposerOperation = DraftPurpose['kind'];
 
-/** A captured input target. Recheck draft.pending before attachment mutation. */
+/** A captured input target. operation must agree with draft.purpose.kind. */
 export interface ComposerTarget {
   readonly draft: DraftReference;
   readonly operation: ComposerOperation;
@@ -122,8 +252,9 @@ export interface ComposerFileSelection {
 
 /**
  * Synchronous ownership handoff, not upload completion. Return true only after
- * EVERY selected file is retained in module state with a draft block
- * (or attached result); failures stay visible/blocking until explicitly removed.
+ * EVERY selected file is retained by the applicable module schema/service, with
+ * module-owned UI/blocking for unfinished work. Only that module interprets file
+ * data, errors and pending uploads. It releases its leases on deactivation.
  * Return false to decline. A middleware handles OR calls the inherited callback,
  * never both. Promises are not accepted; asynchronous uploads live in the service.
  */
@@ -133,8 +264,9 @@ export interface ComposerInteractions {
   /**
    * Opens one multi-file native picker. The host captures the draft, operation and composed
    * onFiles callback now, dispatches once on change, and retains them through
-   * session switches/unmounts. Cancellation dispatches nothing. Late results for
-   * unavailable modules become visible recovery blocks on the captured draft.
+   * session/decision switches and unmounts. Cancellation dispatches nothing.
+   * Late results cannot retarget a new draft or schema generation. If the module
+   * is gone there is no host file processing, persistence, fallback UI or lease.
    */
   pickFiles(): void;
 }
@@ -145,24 +277,30 @@ export interface ComposerProps extends ComposerTarget {
   readonly submitLabel?: string;
   readonly sendBlocked: boolean;
   readonly statusInHeader?: boolean;
-  /** Existing context/notices, followed by middleware content, before the input. */
+  /**
+   * Existing context followed by real module content directly above the editor.
+   * A file module owns its ENTIRE ready+pending list here, or renders null.
+   * The host supplies no draft attachment group or schema-presence placeholder.
+   */
   readonly children?: React.ReactNode;
-  /** Existing draft attachment nodes. Compose rather than silently suppress them. */
-  readonly attachments?: React.ReactNode;
   /** Ordinary render prop for controls inside the existing input row, without a container. */
   readonly actions?: (interactions: ComposerInteractions) => React.ReactNode;
   /** Host editor action; preserves captured-draft text revision semantics. */
   onTextChange(text: string): void;
-  /** Host rechecks current pending/blocks/operation/disabled gates, even if invoked directly. */
+  /**
+   * Rechecks active draft/purpose/request, pending token, hasContent, blocks and
+   * disabled gates, even when called directly. Uses captured native routing, not
+   * a stale SDK callback. A decision without a free-text route cannot fall
+   * through to prompt. Schema projections, not serialized fields, enter the send.
+   */
   onSubmit(): void;
   /**
    * The base extracts picker/paste/drop files through this ONE callback chain.
    * It never consumes mixed clipboard text, changes IME behavior, or duplicates
-   * keyboard submission. Each selection has a host guard until handoff; false,
-   * throw, invalid result, or missing handler retains a named, visible recovery
-   * block, never silently dropping files. A true result releases the host guard
-   * only when backed by a module-owned block or newly attached results.
-   * Async upload failure is module state.
+   * keyboard submission. It does not synthesize file state, guards or recovery
+   * notices on false/missing handlers. Callback errors are reported, never a
+   * successful handoff; module loss removes its schema/UI/blockers. Without an
+   * applicable schema, files contribute nothing and core text remains usable.
    */
   readonly onFiles?: ComposerFileCallback;
 }
@@ -211,30 +349,18 @@ export interface SessionStatusProps {
   readonly children?: React.ReactNode;
 }
 
-export type AttachmentSource =
-  | { readonly kind: 'draft'; readonly draft: DraftReference; readonly id: string }
-  | { readonly kind: 'message'; readonly origin?: MessageOrigin; readonly index: number };
-
 /**
- * One native/draft attachment, never a Markdown reference. The host owns the
- * surrounding list/layout. Replacement forwards core actions (especially remove)
- * and disabled state; unsupported values call Base with the original props.
+ * One historical native message attachment, never draft data or Markdown.
+ * The host owns its surrounding transcript layout. Unsupported values call
+ * Base with original props; replacement preserves any additional host actions.
  * A replacement may occupy the row itself without an intermediate HTML wrapper.
  */
 export interface AttachmentProps {
-  readonly source: AttachmentSource;
+  readonly origin?: MessageOrigin;
+  readonly index: number;
   readonly attachment: ReadonlyData<NativeAttachmentDescriptor>;
   readonly label: string;
-  readonly disabled: boolean;
-  readonly pending: boolean;
   readonly children: React.ReactNode;
-  /**
-   * Controlled removal for a draft attachment. Rechecks current draft gates and
-   * returns true only when this attachment was removed; never submits or deletes
-   * a server file. Middleware may compose its own state action around this.
-   */
-  readonly onRemove?: () => boolean;
-  /** Additional actions, excluding onRemove's default control. Preserve when replacing the view. */
   readonly actions?: React.ReactNode;
 }
 
@@ -312,8 +438,8 @@ export interface ModuleFrontendContext {
 }
 
 /**
- * All IDs are nonempty and unique within this module across state, middleware
- * and Markdown registrations. The host stages/validates the entire activation
+ * All IDs are nonempty and unique within this module across state services,
+ * draft schemas, middleware and Markdown. The host stages the entire activation
  * before publishing; old slot fields and frontend versions are rejected.
  *
  * Middleware sorts by (order ?? 0, moduleId, id), lowest first/outermost, and is
@@ -321,9 +447,11 @@ export interface ModuleFrontendContext {
  * and error boundaries add no HTML. Preserve inherited children, refs, actions,
  * native a11y and scroll anchors; a fault restores Base and revokes that module.
  *
- * Stopping revokes draft bindings and preserves unresolved input blocks before
- * aborting the signal or running cleanup. dispose and service disposers run once
- * (services in reverse registration order), including activation rollback;
+ * Stopping revokes draft/schema bindings and removes only this module's live
+ * fields/projections/blockers before aborting the signal or running cleanup.
+ * Serialized namespaces remain opaque; no orphan file UI is manufactured.
+ * dispose and service disposers run once (services in reverse registration
+ * order), including activation rollback;
  * cleanup failure is reported without preventing remaining disposers.
  */
 export interface ModuleFrontend {
