@@ -829,8 +829,7 @@ button.activity-head {
 }
 .chat-queue-remove { align-self: flex-start; }
 @media (pointer: coarse) {
-  .activity-head.ck-button, .chat-copy-button.ck-button, .process-summary.ck-button,
-  .chat-execution-actions .ck-button, .chat-ask-choice {
+  .chat-copy-button.ck-button, .chat-execution-actions .ck-button, .chat-ask-choice {
     min-block-size: var(--ck-control-size);
   }
 }

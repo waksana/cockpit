@@ -174,6 +174,16 @@ test('all input states share one full-width unframed editor row inside the same 
   assert.doesNotMatch(css, /\.chat-input:focus-within/);
 });
 
+test('dense process rows stay compact on touch without shrinking standalone controls', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.activity-head \{[^}]*height: 28px;[^}]*min-block-size: 28px;/);
+  assert.match(css, /\.process-summary \{[^}]*min-height: 28px;/);
+  const coarseRules = [...css.matchAll(/@media \(pointer: coarse\) \{([\s\S]*?)\n\}/g)].map(match => match[1]).join('\n');
+  assert.doesNotMatch(coarseRules, /\.activity-head|\.process-summary/);
+  assert.match(coarseRules, /\.chat-copy-button\.ck-button[^}]*min-block-size: var\(--ck-control-size\)/);
+  assert.match(coarseRules, /\.chat-execution-actions \.ck-button[^}]*min-block-size: var\(--ck-control-size\)/);
+});
+
 test('queue rows align their first line and controls without vertically centering expanded messages', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.chat-queue-item \{[^}]*align-items: flex-start;/);

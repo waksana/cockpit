@@ -63,9 +63,14 @@ not replace disabling mutations. Keep failures visible and preserve retry input.
 
 The default click target is 40px, at least 44px for coarse pointers; it is separate
 from the 16/20/24px drawing. Business CSS may control layout and geometry but
-must not shrink the target to the SVG size. Existing dense host disclosure/copy
-rows retain their 28/32px desktop geometry and expand to 44px for coarse pointers;
-that private layout is not another public button appearance.
+must not shrink the target to the SVG size. Dense host tool/thought disclosure
+and process-summary rows are an explicit reading-density exception: their
+single-line height stays 28px for all pointer types, with the whole row clickable.
+Their hit areas do not overlap adjacent rows; this trades touch target height
+for compact process reading. Multiline content can still grow. Copy controls
+retain 32px desktop geometry and expand to 44px for coarse pointers.
+This private layout is not another public button appearance or a blanket
+exception for send, stop, delete, or other standalone actions.
 Public selectors do not depend on a
 host ancestor. Avoid changing border/padding or swapping differently sized icons
 on hover, pending or confirmation.
