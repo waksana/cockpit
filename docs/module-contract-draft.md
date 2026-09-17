@@ -213,6 +213,7 @@ apiBase、公开配置、request、signal 和 report。模块不得自建 root �
 ask 使用宿主当前 AskRequest.requestId，与 controlEvents 中同一字段对应，不冒充原生 requestId。
 element 仅供观察该内容，不授权修改正文、移动节点、查询宿主私有 DOM 或写入滚动位置。
 装饰挂在现有内容外侧留白，不参与布局，出现/消失不能改变内容宽度、换行、行高或输入框对齐。
+装饰必须是非交互内容，但可提供状态的可访问文字；宿主不以 aria-hidden 隐藏模块的语义说明。
 模块自己决定是否呈现标记及何时提交阅读确认；宿主不持有已读/未读数据库。
 各插口按 order/module/id 稳定排列，模块异常只撤销其贡献，不影响普通聊天。
 

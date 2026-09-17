@@ -44,7 +44,7 @@ export function ModuleMessageDecorations({ context, runtime = moduleRuntime }: {
   useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
   const contributions = runtime.contributions('messageDecorations');
   if (!contributions.length) return null;
-  return <div className="module-message-decorations" aria-hidden="true" inert>
+  return <div className="module-message-decorations">
     {contributions.map(({ module, contribution }) => {
       const Decoration = contribution.component;
       return <ModuleBoundary key={`${module.asset.id}:${module.asset.digest}:${contribution.id}`}
