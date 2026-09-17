@@ -20,6 +20,15 @@ async function fixture() {
         onClick: () => field.update(value => ({ items: value.items.filter(row => row !== item) })),
       }, 'Remove'))));
   }
+  function AddItem({ draft, field, disabled }: { draft: ModuleDraft; field: DraftSchemaScope<FixtureData>; disabled: boolean }) {
+    const state = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
+    return h('button', {
+      type: 'button', 'aria-label': 'Add item', disabled: disabled || state.pending,
+      onClick: () => {
+        if (!disabled && !draft.getSnapshot().pending) appendFixture(field, fixtureItem('Added item'));
+      },
+    }, 'Add item');
+  }
   const runtime = new ModuleRuntime({
     pageUrl: 'https://fixture.invalid',
     fetch: async () => Response.json({ modules: [{
@@ -29,16 +38,24 @@ async function fixture() {
     load: async () => ({ activate: (value: ModuleFrontendContext): ModuleFrontend => {
       context = value;
       handle = context.state.registerDraft(fixtureSchema());
-      return { apiVersion: 2, components: [{ id: 'files', boundary: 'composer',
+      return { apiVersion: 2, components: [{ id: 'list', boundary: 'composer',
         wrap: Base => props => {
             const field = handle.forDraft(props.draft);
             const base = context.state.bindDraft(props.draft);
             return h(Base, { ...props,
-              actions: interactions => h(Fragment, null, props.actions?.(interactions),
-                field && h('button', { 'aria-label': 'Upload', disabled: props.disabled || base.getSnapshot().pending }, 'Upload')),
               children: h(Fragment, null, props.children, field && h(List, { draft: base, field })),
             });
           },
+      }, {
+        id: 'editor', boundary: 'composerEditor',
+        wrap: Base => props => {
+          const field = handle.forDraft(props.draft);
+          return h(Base, { ...props,
+            children: h(Fragment, null, props.children, field && h(AddItem, {
+              draft: context.state.bindDraft(props.draft), field, disabled: props.disabled,
+            })),
+          });
+        },
       }] };
     } }),
     report: assert.fail,
@@ -69,6 +86,10 @@ test('the module owns the full draft list directly above the editor without a ho
   assert.equal((html.match(/fixture-row/g) ?? []).length, 1);
   assert.doesNotMatch(html, /draft-attachments|draft-attachment"|module-draft-recovery|module-composer|chat-input-notice/);
   assert.match(html, /<\/section><\/div><div class="chat-input">/);
+  assert.match(html, /<div class="chat-input"><button type="button" aria-label="Add item">Add item<\/button><textarea/);
+  assert.equal((html.match(/<textarea\b/g) ?? []).length, 1);
+  assert.equal((html.match(/class="chat-input-btn ck-icon-button send rp"/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /<button\b[^>]*>(?:(?!<\/button>)[\s\S])*<button\b/);
   assert.match(html, /class="chat-input-btn ck-icon-button send rp" disabled=""/);
   assert.match(html, /title="Module work pending"/);
   assert.equal(await f.draft.send(async () => assert.fail('Active module blocker')), false);
@@ -84,7 +105,9 @@ test('module loss removes field UI/blockers and sends core text without hidden s
   f.context.state.bindDraft(f.draft.reference).block('Interrupted work');
   f.runtime.unregister(f.runtime.getSnapshot()[0]);
   const html = f.render();
-  assert.doesNotMatch(html, /Ready|Upload|fixture-list|draft-attachments|module-draft-recovery|移除未完成|不接受附件/);
+  assert.doesNotMatch(html, /Ready|Add item|fixture-list|draft-attachments|module-draft-recovery|移除未完成|不接受附件/);
+  assert.match(html, /<textarea[^>]*>Ordinary text<\/textarea>/);
+  assert.match(html, /class="chat-input-btn ck-icon-button send rp" aria-label="发送"/);
   assert.equal(f.draft.getSnapshot().blocks.length, 0);
   assert.equal(await f.draft.send(async request => {
     assert.deepEqual(request.body, { sessionId: 'fixture', text: 'Ordinary text' });
@@ -92,20 +115,20 @@ test('module loss removes field UI/blockers and sends core text without hidden s
   }), true);
 });
 
-test('a request-scoped answer hides the prompt file schema without moving or clearing prompt state', async t => {
+test('a request-scoped answer hides the prompt schema without moving or clearing prompt state', async t => {
   const f = await fixture();
   t.after(() => f.runtime.stop());
-  appendFixture(f.field, fixtureItem('Cached file'));
+  appendFixture(f.field, fixtureItem('Cached item'));
   f.draft.edit('Cached prompt');
   const answer = new SessionDraft(f.draft.sessionId, undefined, { kind: 'ask', requestId: 'request' });
   const html = f.render(answer);
   assert.equal(f.handle.forDraft(answer.reference), undefined);
   assert.match(html, /Question/);
-  assert.doesNotMatch(html, /Cached file|Cached prompt|Upload|fixture-list|不接受附件/);
+  assert.doesNotMatch(html, /Cached item|Cached prompt|Add item|fixture-list|不接受附件/);
   assert.match(html, /<textarea[^>]*><\/textarea>/);
   assert.equal(f.draft.getSnapshot().text, 'Cached prompt');
   assert.equal(f.field.getSnapshot().items.length, 1);
-  assert.match(f.render(), /Cached file/);
+  assert.match(f.render(), /Cached item/);
 });
 
 test('pending native submission disables module controls but keeps the core editor editable until receipt', async t => {
@@ -115,13 +138,13 @@ test('pending native submission disables module controls but keeps the core edit
   let finish!: (sent: boolean) => void;
   const sending = f.draft.send(() => new Promise(resolve => { finish = resolve; }));
   const html = f.render();
-  for (const label of ['Upload', 'Remove Ready']) {
+  for (const label of ['Add item', 'Remove Ready']) {
     assert.match(html.match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? '', /disabled=""/);
   }
   assert.doesNotMatch(html.match(/<textarea[^>]*>/)?.[0] ?? '', /disabled/);
   finish(false);
   await sending;
-  for (const label of ['Upload', 'Remove Ready']) {
+  for (const label of ['Add item', 'Remove Ready']) {
     assert.doesNotMatch(f.render().match(new RegExp(`<button[^>]*aria-label="${label}"[^>]*>`))?.[0] ?? '', /disabled/);
   }
 });

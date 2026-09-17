@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { createPortal } from 'react-dom';
 import type {
-  ComponentMiddleware, ComposerFileCallback, ComposerFileSelection, ComposerProps, ComposerTarget,
+  ComponentMiddleware,
   HostSnapshot, MarkdownNode, MarkdownRenderer, ModuleAsset, ModuleComponentProps,
   DraftSchemaRegistration, ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
 } from '@cockpit/module-api';
@@ -28,9 +28,9 @@ export interface LoadedModule {
 }
 export interface RegisteredRenderer { module: LoadedModule; renderer: MarkdownRenderer }
 type Boundary = keyof ModuleComponentProps;
-const BOUNDARIES = new Set<Boundary>(['message', 'sessionStatus', 'composer', 'attachment', 'globalActions']);
+const BOUNDARIES = new Set<Boundary>(['message', 'sessionStatus', 'composer', 'composerEditor', 'attachment',
+  'globalNavigation', 'managementHeader', 'managementDetailHeader']);
 const EMPTY_VIEW: HostSnapshot = Object.freeze({ sessionId: null, visible: false, connected: false });
-class ModuleCallbackError extends Error {}
 let moduleSequence = 0;
 
 export class ModuleErrorBoundary extends React.Component<{
@@ -154,9 +154,7 @@ export class ModuleRuntime {
   private controller?: AbortController;
   private readonly reports = new Set<string>();
   private readonly componentCache = new Map<object, { boundary: Boundary; entries: readonly object[]; component: unknown }>();
-  private readonly fileCallbacks = new WeakSet<ComposerFileCallback>();
   private readonly knownDrafts = new Set<SessionDraft>();
-  private selectionSequence = 0;
   constructor(options: RuntimeOptions = {}) {
     if (options.activationTimeoutMs !== undefined
       && (!Number.isFinite(options.activationTimeoutMs) || options.activationTimeoutMs <= 0)) throw new Error('Invalid module activation timeout');
@@ -418,37 +416,8 @@ export class ModuleRuntime {
     let Composed = Base;
     for (const { module, entry } of entries.toReversed()) {
       const Next = Composed;
-      const callbacks = new WeakMap<ComposerFileCallback, ComposerFileCallback>();
-      const GuardedBase = boundary === 'composer' ? (props: ModuleComponentProps[Key]) => {
-        const composer = props as ComposerProps;
-        let onFiles = composer.onFiles;
-        if (onFiles && !this.fileCallbacks.has(onFiles)) {
-          const original = onFiles;
-          onFiles = callbacks.get(original);
-          if (!onFiles) {
-            onFiles = selection => {
-              if (module.signal.aborted) return false;
-              try {
-                const result = original(selection);
-                if (typeof result !== 'boolean') {
-                  void Promise.resolve(result).catch(this.report);
-                  throw new Error('File handoff must synchronously return a boolean');
-                }
-                return result;
-              } catch (error) {
-                if (error instanceof ModuleCallbackError) throw error;
-                this.fail(module, error);
-                throw new ModuleCallbackError('文件模块处理失败', { cause: error });
-              }
-            };
-            callbacks.set(original, onFiles);
-            this.fileCallbacks.add(onFiles);
-          }
-        }
-        return React.createElement(Next, { ...props, onFiles } as React.Attributes & ModuleComponentProps[Key]);
-      } : Next;
       try {
-        const Enhanced = (entry.wrap as ComponentMiddleware<ModuleComponentProps[Key]>)(GuardedBase);
+        const Enhanced = (entry.wrap as ComponentMiddleware<ModuleComponentProps[Key]>)(Next);
         if (!component(Enhanced)) throw new Error('Middleware must return a React component');
         Composed = (props: ModuleComponentProps[Key]) => {
           const fallback = React.createElement(Next, props);
@@ -480,26 +449,6 @@ export class ModuleRuntime {
       return;
     }
     return failed ? undefined : selected;
-  }
-  receiveFiles(files: readonly File[], target: ComposerTarget, source: ComposerFileSelection['source'], onFiles?: ComposerFileCallback): boolean {
-    if (!files.length || !onFiles) return false;
-    try {
-      const draft = resolveDraft(target.draft);
-      if (target.disabled || draft.isRetired() || draft.getSnapshot().pending) return false;
-      if (target.operation !== draft.reference.purpose.kind) throw new Error('File selection draft purpose has changed');
-      const result = onFiles(Object.freeze({
-        id: `selection-${++this.selectionSequence}`, files: Object.freeze([...files]), source,
-        target: Object.freeze({ ...target, draft: draft.reference }),
-      }));
-      if (typeof result !== 'boolean') {
-        void Promise.resolve(result).catch(this.report);
-        throw new Error('File handoff must synchronously return a boolean');
-      }
-      return result;
-    } catch (error) {
-      this.report(error);
-      return false;
-    }
   }
 }
 

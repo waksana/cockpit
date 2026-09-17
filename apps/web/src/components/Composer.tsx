@@ -3,11 +3,11 @@
 import { useCallback, useLayoutEffect, useRef, useSyncExternalStore, type ComponentProps } from 'react';
 import type { SessionDraft } from '../lib/textDraft';
 import { Icon } from './Icon';
-import type { ComposerProps as PublicComposerProps } from '@cockpit/module-api';
+import type { ComposerProps as PublicComposerProps, ComposerEditorProps } from '@cockpit/module-api';
 import { ModuleRuntimeProvider, useModuleElement, useModuleRuntime } from './ModuleComponents';
 import type { ModuleRuntime } from '../lib/moduleRuntime';
 import { AskContent } from './PendingDecision';
-import { pickComposerFiles } from '../lib/composerFiles';
+import { resolveDraft } from '../lib/textDraft';
 
 function shouldSubmitOnEnter(): boolean {
   return window.matchMedia?.('(hover: hover) and (pointer: fine)').matches ?? true;
@@ -73,43 +73,36 @@ function ComposerPresentation(props: PublicComposerProps) {
   return useModuleElement('composer', ComposerBase, props);
 }
 
-function ComposerBase({ draft, operation, disabled, busy, placeholder, submitLabel, sendBlocked, statusInHeader, editorRef,
-  onTextChange, onSubmit, onFiles, actions, children }: PublicComposerProps) {
-  const { text, hasContent, blocks, pending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
+function ComposerBase({ children, ...props }: PublicComposerProps) {
+  return <div className="chat-composer" data-question={props.operation === 'ask' || undefined}>
+    <div className="chat-composer-body">
+      <div className="chat-composer-context">{children}</div>
+      <ComposerEditor {...props} />
+    </div>
+  </div>;
+}
+
+function ComposerEditor(props: ComposerEditorProps) {
   const runtime = useModuleRuntime();
-  const inputDisabled = disabled || pending || !onFiles;
+  const draft = resolveDraft(props.draft);
+  const prepared = useSyncExternalStore(runtime.subscribe,
+    () => runtime.isDraftPrepared(draft), () => runtime.isDraftPrepared(draft));
+  return prepared ? <EnhancedComposerEditor {...props} /> : <ComposerEditorBase {...props} />;
+}
+function EnhancedComposerEditor(props: ComposerEditorProps) {
+  return useModuleElement('composerEditor', ComposerEditorBase, props);
+}
+
+function ComposerEditorBase({ draft, operation: _operation, disabled, busy, placeholder, submitLabel, sendBlocked, statusInHeader, editorRef,
+  onTextChange, onSubmit, children, className, ...domProps }: ComposerEditorProps) {
+  const { text, hasContent, blocks, pending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const blockedReason = blocks.map(block => block.reason).join('；');
   const canSend = hasContent && !disabled && !sendBlocked && !pending && !blocks.length;
   const submit = () => {
     if (canSend) onSubmit();
   };
-  const target = { draft, operation, disabled };
-  return <div className="chat-composer" data-question={operation === 'ask' || undefined}>
-    <div className="chat-composer-body">
-      <div className="chat-composer-context">
+  return <div {...domProps} className={['chat-input', className].filter(Boolean).join(' ')}>
         {children}
-      </div>
-      <div className="chat-input"
-        onDragOver={event => {
-          if (event.defaultPrevented) return;
-          if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = inputDisabled ? 'none' : 'copy'; }
-        }}
-        onDrop={event => {
-          if (event.defaultPrevented) return;
-          const files = Array.from(event.dataTransfer.files);
-          if (!files.length) return;
-          event.preventDefault();
-          runtime.receiveFiles(files, target, 'drop', onFiles);
-        }}
-        onPaste={event => {
-          if (event.defaultPrevented) return;
-          const files = Array.from(event.clipboardData.files);
-          if (!files.length) return;
-          // Keep mixed clipboard text and the textarea's native insertion/IME behavior.
-          if (!event.clipboardData.getData('text/plain')) event.preventDefault();
-          runtime.receiveFiles(files, target, 'paste', onFiles);
-        }}>
-        {actions?.({ pickFiles: () => pickComposerFiles(runtime, target, onFiles) })}
         <textarea ref={editorRef} className="chat-input-message ck-input" aria-label="消息输入" value={text}
           disabled={disabled} onChange={event => onTextChange(event.target.value)} placeholder={placeholder ?? '输入消息…'} rows={1}
           onKeyDown={event => {
@@ -122,7 +115,5 @@ function ComposerBase({ draft, operation, disabled, busy, placeholder, submitLab
           title={pending ? '正在提交，草稿仍可编辑' : blockedReason || (submitLabel ?? (busy ? '加入队列' : '发送'))}>
           <Icon name={pending && !statusInHeader ? 'sending' : 'arrow_up'} size={24} />
         </button>
-      </div>
-    </div>
   </div>;
 }

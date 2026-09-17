@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { act, createElement, Fragment, useCallback, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { getSessionDraft } from '../lib/textDraft';
 import { getDraftSession } from '../lib/draftSelection';
 import type { NativeDraftRequest } from '../lib/draft';
@@ -18,6 +19,8 @@ import { groupTranscript } from '../lib/transcriptRows';
 import { ModuleRuntime, moduleRuntime } from '../lib/moduleRuntime';
 import { MarkdownReplacement, ModuleRuntimeProvider } from './ModuleComponents';
 import { Composer, ComposerNotices } from './Composer';
+import { GlobalNavigation } from './GlobalNavigation';
+import { ManagementShell } from './ManagementShell';
 import { useLongPress } from '../lib/longpress';
 import { useMenuDismiss } from '../lib/useMenuDismiss';
 import type { ActivateFrontend, ComposerContext, ComponentMiddleware, DraftSchemaHandle, DraftSchemaScope, MessageIdentity, MessageProps, ModuleFrontendContext } from '@cockpit/module-api';
@@ -55,6 +58,7 @@ class HostNode extends EventTarget {
   get firstChild() { return this.childNodes[0] ?? null; }
   get isConnected(): boolean { return this === this.ownerDocument.body || (this.parentNode?.isConnected ?? false); }
   focus() { this.ownerDocument.activeElement = this; }
+  scrollIntoView() {}
   getClientRects() {
     if (!this.isConnected || this.closest('[hidden]') || this.closest('[inert]')) return [];
     for (let parent = this.parentNode; parent; parent = parent.parentNode) {
@@ -104,7 +108,9 @@ class HostNode extends EventTarget {
   removeAttribute(name: string) { this.attributes.delete(name); }
   getAttribute(name: string) { return this.attributes.get(name) ?? null; }
   matches(selector: string): boolean {
+    if (selector.endsWith(':not(:disabled)')) return !this.attributes.has('disabled') && this.matches(selector.slice(0, -':not(:disabled)'.length));
     if (selector === ':disabled') return this.attributes.has('disabled');
+    if (/^[a-z]+$/i.test(selector)) return this.tagName === selector.toUpperCase();
     if (selector.startsWith('.')) return (this.getAttribute('class') ?? '').split(' ').includes(selector.slice(1));
     const match = /^\[([^=\]]+)(?:="([^"]*)")?\]$/.exec(selector);
     return !!match && this.attributes.has(match[1])
@@ -122,13 +128,13 @@ class HostNode extends EventTarget {
   contains(node: HostNode | null): boolean {
     return node === this || this.childNodes.some(child => child.contains(node));
   }
-  getBoundingClientRect(): { top: number; bottom: number } {
+  getBoundingClientRect(): { top: number; bottom: number; left: number; right: number } {
     const viewport = this.closest('.chat-messages');
-    if (!viewport || this === viewport) return { top: 0, bottom: 300 };
+    if (!viewport || this === viewport) return { top: 0, bottom: 300, left: 0, right: this.clientWidth };
     const frame = this.closest('[data-message-frame]');
     const top = frame ? viewport.querySelectorAll('[data-message-frame]').indexOf(frame) * 100 - viewport.scrollTop
       : -viewport.scrollTop;
-    return { top, bottom: top + (frame ? 100 : viewport.scrollHeight) };
+    return { top, bottom: top + (frame ? 100 : viewport.scrollHeight), left: 0, right: this.clientWidth };
   }
 }
 
@@ -149,6 +155,13 @@ class HostDocument extends EventTarget {
   getSelection() { return null; }
 }
 
+class HostWindow extends EventTarget {
+  override removeEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: EventListenerOptions | boolean) {
+    // Node's EventTarget does not normalize boolean capture options on removal.
+    super.removeEventListener(type, callback, typeof options === 'boolean' ? { capture: options } : options);
+  }
+}
+
 test('Thread lifecycle: re-entry follows latest while mounted updates preserve the reader and resources', async t => {
   const document = new HostDocument();
   const frames = new Map<number, FrameRequestCallback>();
@@ -156,8 +169,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   let frameId = 0;
   const globals: Record<string, unknown> = {
     document,
-    window: Object.assign(new EventTarget(), { document, HTMLIFrameElement: class {} }),
-    Element: HostNode, HTMLElement: HostNode,
+    window: Object.assign(new HostWindow(), { document, HTMLIFrameElement: class {}, innerWidth: 1000, innerHeight: 800,
+      history: { state: null } }),
+    Element: HostNode, HTMLElement: HostNode, HTMLButtonElement: HostNode,
     CSS: { escape: (id: string) => id, supports: () => false },
     IS_REACT_ACT_ENVIRONMENT: true,
     requestAnimationFrame: (callback: FrameRequestCallback) => { frames.set(++frameId, callback); return frameId; },
@@ -268,7 +282,11 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(ask.complete, true);
     assert.equal(ask.element?.textContent, 'Exact pending question');
     assert.equal((ask.element as unknown as HostNode).getAttribute('class'), 'chat-ask-q');
-    assert.equal(contexts.size, 3, 'closed children, thoughts, system and user text have no speech surface');
+    assert.equal(contexts.size, 4, 'closed children, thoughts and unattributed system text have no message boundary');
+    const user = contexts.get(JSON.stringify(['message', 'user', undefined]))!;
+    assert.equal(user.kind, 'message');
+    assert.equal(user.kind === 'message' && user.role, 'user');
+    assert.equal(user.element.textContent, 'User text', 'the generic message boundary preserves attributed native roles');
     assert.equal(contexts.get(JSON.stringify(['message', 'fragment-native', undefined]))?.complete, false,
       'a loaded history fragment is not treated as a completed assistant reply');
     const clickChild = async () => {
@@ -306,6 +324,128 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     runtime.invalidate('fixture');
     assert.equal(notified, 0);
     await act(() => root.render(null));
+  });
+  await t.test('real navigation and management boundaries retain menu, routing and focus behavior with or without middleware', async subtest => {
+    const digest = 'c'.repeat(64);
+    let moduleActions = 0, refreshes = 0;
+    const runtime = new ModuleRuntime({
+      pageUrl: 'https://fixture.invalid',
+      fetch: async () => Response.json({ modules: [{
+        id: 'navigation', name: 'Navigation', version: '1.0.0', digest, config: {}, styles: [],
+        apiBase: `/_modules/navigation/${digest}/api`, entry: `/_modules/assets/navigation/${digest}/entry.js`,
+      }], errors: [] }),
+      load: async () => ({ activate: (() => ({
+        apiVersion: 2, components: [
+          { id: 'navigation', boundary: 'globalNavigation', wrap: Base => props => createElement(Base, {
+            ...props, children: createElement(Fragment, null, props.children,
+              createElement('button', { type: 'button', 'aria-label': 'Module navigation', onClick: () => { moduleActions++; } }, 'Module')),
+          }) },
+          { id: 'management', boundary: 'managementHeader', wrap: Base => props => createElement(Base, {
+            ...props, actions: createElement(Fragment, null, props.actions,
+              createElement('button', { type: 'button', 'aria-label': 'Module list action', onClick: () => { moduleActions++; } }, props.section)),
+          }) },
+          { id: 'detail', boundary: 'managementDetailHeader', wrap: Base => props => createElement(Base, {
+            ...props, actions: createElement(Fragment, null, props.actions,
+              createElement('button', { type: 'button', 'aria-label': 'Module detail action', onClick: () => { moduleActions++; } }, props.item)),
+          }) },
+        ],
+      })) satisfies ActivateFrontend }),
+      report: assert.fail,
+    });
+    subtest.after(async () => {
+      await act(() => root.render(null));
+      runtime.stop();
+    });
+    const node = (selector: string) => {
+      const result = container.querySelector(selector);
+      assert.ok(result, selector);
+      return result;
+    };
+    const click = async (target: HostNode) => {
+      target.focus();
+      const event = new Event('click', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'target', { value: target });
+      await act(async () => { container.dispatchEvent(event); });
+    };
+    function Location() { return createElement('output', { className: 'fixture-route' }, useLocation().pathname); }
+    function Management() {
+      const location = useLocation();
+      return createElement(ManagementShell, {
+        section: 'skills', item: location.pathname === '/skills/resource' ? 'resource' : null,
+        master: null, detail: null, onRefresh: () => { refreshes++; },
+      });
+    }
+    const mount = async (management: boolean, pathname: string) => {
+      await act(() => root.render(null));
+      await act(() => root.render(createElement(ModuleRuntimeProvider, { runtime,
+        children: createElement(MemoryRouter, { initialEntries: [pathname] },
+          createElement(management ? Management : GlobalNavigation), createElement(Location)),
+      })));
+    };
+    const noNestedButtons = () => {
+      for (const button of container.querySelectorAll('button')) assert.equal(button.querySelector('button'), null);
+    };
+    for (const enhanced of [false, true]) {
+      if (enhanced) await act(async () => { await runtime.start(); });
+      await mount(false, '/');
+      const trigger = node('[aria-label="全局导航"]');
+      assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+      assert.equal(container.querySelector('[role="menu"]'), null);
+      if (enhanced) {
+        const action = node('[aria-label="Module navigation"]');
+        assert.equal(action.parentNode, trigger.parentNode, 'the added control is a sibling, not a wrapped button');
+        await click(action);
+        assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+      }
+      await click(trigger);
+      assert.equal(trigger.getAttribute('aria-expanded'), 'true');
+      const items = container.querySelectorAll('[role="menuitem"]');
+      assert.deepEqual(items.map(item => item.textContent), ['全局 MCP', '全局 Skills']);
+      assert.equal(document.activeElement, items[0], 'opening focuses the first native menu command');
+      const end = new Event('keydown', { bubbles: true, cancelable: true });
+      Object.defineProperties(end, { target: { value: items[0] }, key: { value: 'End' } });
+      await act(() => container.dispatchEvent(end));
+      assert.equal(document.activeElement, items[1]);
+      noNestedButtons();
+      await act(() => new Promise(resolve => setTimeout(resolve, 1)));
+      const escape = new Event('keydown', { cancelable: true });
+      Object.defineProperty(escape, 'key', { value: 'Escape' });
+      await act(() => window.dispatchEvent(escape));
+      assert.equal(escape.defaultPrevented, true);
+      assert.equal(trigger.getAttribute('aria-expanded'), 'false');
+      assert.equal(container.querySelector('[role="menu"]'), null);
+      assert.equal(document.activeElement, trigger);
+      await click(trigger);
+      await click(container.querySelectorAll('[role="menuitem"]')[1]);
+      assert.equal(node('.fixture-route').textContent, '/skills');
+      assert.equal(container.querySelector('[role="menu"]'), null);
+      assert.equal(document.activeElement, trigger);
+      assert.equal(node('[aria-label="全局导航"]'), trigger, 'menu changes keep the actual native trigger mounted');
+
+      await mount(true, '/skills');
+      assert.equal(document.activeElement, node('[aria-label="返回会话列表"]'));
+      assert.equal(node('.manage-title').textContent, '全局 Skills');
+      const refresh = node('[aria-label="刷新"]');
+      assert.equal(refresh.attributes.has('disabled'), false);
+      await click(refresh);
+      assert.equal(refreshes, enhanced ? 2 : 1);
+      if (enhanced) await click(node('[aria-label="Module list action"]'));
+      noNestedButtons();
+      await click(node('[aria-label="返回会话列表"]'));
+      assert.equal(node('.fixture-route').textContent, '/');
+
+      await mount(true, '/skills/resource');
+      assert.equal(node('.manage-detail-headtitle').textContent, 'resource');
+      assert.equal(document.activeElement, node('.manage-detail-headtitle'));
+      if (enhanced) await click(node('[aria-label="Module detail action"]'));
+      noNestedButtons();
+      await click(node('[aria-label="返回"]'));
+      assert.equal(node('.fixture-route').textContent, '/skills');
+      assert.equal(container.querySelector('.manage-detail-headtitle'), null);
+      assert.equal(document.activeElement, node('[aria-label="返回会话列表"]'));
+      await act(() => root.render(null));
+    }
+    assert.equal(moduleActions, 3);
   });
   await t.test('long-press timers belong to mounted primary gestures and native contextmenu cannot double-open', async subtest => {
     subtest.mock.timers.enable({ apis: ['setTimeout'] });
@@ -1252,10 +1392,38 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(prefetches, before, 'six attachment-only rows satisfy two screens');
   });
 
-  await t.test('module components retain type and scoped drafts; send keys, IME, paste and drop share host guards', async () => {
+  await t.test('the native editor leaves ordinary paste and drop events untouched without module middleware', async subtest => {
+    const runtime = new ModuleRuntime();
+    const draft = getSessionDraft('native-dom-events');
+    draft.edit('Native text');
+    subtest.after(async () => {
+      await act(() => root.render(null));
+      runtime.stop();
+    });
+    await act(() => root.render(createElement(Composer, {
+      runtime, draft, onSend: async () => assert.fail('DOM passthrough does not submit'),
+    })));
+    const editor = container.querySelector('.chat-input-message')!;
+    const row = container.querySelector('.chat-input')!;
+    assert.equal(editor.parentNode, row);
+    assert.equal(container.querySelector('.send')?.parentNode, row);
+    assert.deepEqual(row.childNodes.map(node => node.tagName), ['TEXTAREA', 'BUTTON']);
+    const snapshot = draft.getSnapshot();
+    for (const type of ['paste', 'drop']) {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'target', { value: editor });
+      await act(() => container.dispatchEvent(event));
+      assert.equal(event.defaultPrevented, false);
+    }
+    assert.equal(draft.getSnapshot(), snapshot);
+    assert.equal(container.querySelector('.chat-input-message'), editor);
+  });
+
+  await t.test('module components retain scoped drafts and native send guards while DOM handlers compose on the real editor', async subtest => {
     let mounts = 0;
     let aboveMounts = 0;
-    let received = 0;
+    let disposed = 0;
+    const events: { type: string; target: EventTarget; currentTarget: EventTarget; prevented: boolean }[] = [];
     let scoped: ComposerContext | undefined;
     let handle!: DraftSchemaHandle<FixtureData>;
     const reports: unknown[] = [];
@@ -1266,12 +1434,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       if (state.text === 'Crash module action') throw new Error('Fixture action failed');
       return createElement('button', { type: 'button', 'aria-label': 'Module action',
         onPaste: event => event.preventDefault(), onDrop: event => event.preventDefault(),
-      }, state.text || 'Files');
+      }, state.text || 'Module action');
     }
     function Above({ field }: { field: DraftSchemaScope<FixtureData> }) {
       const state = useSyncExternalStore(field.subscribe, field.getSnapshot, field.getSnapshot);
       useLayoutEffect(() => { aboveMounts++; }, []);
-      return state.items.length ? createElement('div', { className: 'fixture-attachment-panel' }, 'Selected file') : null;
+      return state.items.length ? createElement('div', { className: 'fixture-state-panel' }, 'Registered item') : null;
     }
     const digest = 'a'.repeat(64);
     const runtime = new ModuleRuntime({
@@ -1282,30 +1450,43 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       }], errors: [] }),
       load: async () => ({ activate: ((context => {
         handle = context.state.registerDraft(fixtureSchema());
-        const pending = context.state.register({
-          id: 'pending', create: () => ({ files: [] as File[], releases: [] as (() => void)[] }),
-          dispose: state => { state.releases.forEach(release => release()); state.files = []; },
+        const observations = context.state.register({
+          id: 'observations', create: () => ({ events }),
+          dispose: () => { disposed++; },
         });
         return { apiVersion: 2,
         components: [{ id: 'composer', boundary: 'composer', wrap: Base => props => {
           const field = handle.forDraft(props.draft);
           if (!field) return createElement(Base, props);
+          return createElement(Base, { ...props,
+            children: createElement(Fragment, null, props.children, createElement(Above, { field })),
+          });
+        } }, { id: 'editor', boundary: 'composerEditor', wrap: Base => props => {
           const bound = { ...props, draft: context.state.bindDraft(props.draft) };
           return createElement(Base, { ...props,
-            actions: interactions => createElement(Fragment, null, props.actions?.(interactions), createElement(Action, bound)),
-            children: createElement(Fragment, null, props.children, createElement(Above, { field })),
-            onFiles: selection => {
-              received++;
-              scoped = { ...selection.target, draft: context.state.bindDraft(selection.target.draft) };
-              pending.get().files.push(...selection.files);
-              pending.get().releases.push(scoped.draft.block(`Selected ${selection.files.map(file => file.name).join(', ')}`));
-              return true;
+            className: 'fixture-editor',
+            children: createElement(Fragment, null, props.children, createElement(Action, bound)),
+            onPaste: event => {
+              observations.get().events.push({
+                type: event.type, target: event.target, currentTarget: event.currentTarget, prevented: event.defaultPrevented,
+              });
+              props.onPaste?.(event);
+            },
+            onDrop: event => {
+              observations.get().events.push({
+                type: event.type, target: event.target, currentTarget: event.currentTarget, prevented: event.defaultPrevented,
+              });
+              props.onDrop?.(event);
             },
           });
         } }],
         markdown: [{ id: 'broken', matches: () => true, component: () => { throw new Error('Fixture renderer failed'); } }],
       }; })) satisfies ActivateFrontend }),
       report: error => { reports.push(error); },
+    });
+    subtest.after(async () => {
+      await act(() => root.render(null));
+      runtime.stop();
     });
     await runtime.start();
     const draft = getSessionDraft('module-lifecycle');
@@ -1333,18 +1514,23 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const editor = container.querySelector('.chat-input-message');
     const context = container.querySelector('.chat-composer-context');
     assert.ok(context);
-    assert.equal(context.querySelector('.fixture-attachment-panel'), null);
+    assert.equal(context.querySelector('.fixture-state-panel'), null);
     assert.equal(container.querySelector('.module-composer-above'), null);
     assert.equal(container.querySelector('.module-composer-actions'), null);
+    const row = container.querySelector('.fixture-editor')!;
+    assert.equal(row, container.querySelector('.chat-input'), 'middleware extends the existing input DIV');
+    assert.equal(action?.parentNode, row);
+    assert.equal(editor?.parentNode, row);
+    assert.equal(container.querySelector('.send')?.parentNode, row);
     const scope = scoped!.draft;
     await act(() => draft.edit('Draft update'));
     assert.equal(container.querySelector('[aria-label="Module action"]'), action);
     assert.equal(mounts, 1, 'a draft update must not remount module components');
     assert.equal(scoped!.draft, scope);
     let release!: () => void;
-    await act(() => { release = scope.block('Upload still pending'); });
-    assert.equal(context.querySelector('.chat-input-notice'), null, 'active module upload feedback stays with its item');
-    assert.equal(container.querySelector('.send')?.getAttribute('title'), 'Upload still pending');
+    await act(() => { release = scope.block('Module work pending'); });
+    assert.equal(context.querySelector('.chat-input-notice'), null, 'module feedback stays with its own content');
+    assert.equal(container.querySelector('.send')?.getAttribute('title'), 'Module work pending');
     assert.equal(container.querySelector('.chat-input-message'), editor);
     for (const keys of [{ key: 'Enter' }, { key: 'Enter', ctrlKey: true }, { key: 'Enter', metaKey: true }]) {
       await dispatch('.chat-input-message', 'keydown', keys);
@@ -1358,7 +1544,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(sends, 1);
     await act(() => appendFixture(field, fixtureItem('native')));
     assert.equal(context.querySelector('.draft-attachments'), null);
-    assert.ok(context.querySelector('.fixture-attachment-panel'));
+    assert.ok(context.querySelector('.fixture-state-panel'));
     assert.equal(aboveMounts, 1, 'empty/nonempty module content and notices must not remount contributions');
     assert.equal(container.querySelector('.chat-input-message'), editor);
     assert.equal(container.querySelector('[aria-label="Module action"]'), action);
@@ -1377,19 +1563,23 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(sends, 1);
     await act(() => releaseFold());
     await renderComposer();
-    const clipboard = (text: string) => ({ files: [new File(['x'], 'paste.txt')], getData: () => text });
-    const mixed = await dispatch('.chat-input-message', 'paste', { clipboardData: clipboard('plain text') });
-    assert.equal(mixed.defaultPrevented, false, 'mixed clipboard text remains native textarea input');
-    const filesOnly = await dispatch('.chat-input-message', 'paste', { clipboardData: clipboard('') });
-    assert.equal(filesOnly.defaultPrevented, true);
-    const textOnly = await dispatch('.chat-input-message', 'paste', { clipboardData: { files: [], getData: () => 'plain' } });
-    assert.equal(textOnly.defaultPrevented, false);
-    const dropped = await dispatch('.chat-input-message', 'drop', { dataTransfer: { files: [new File(['x'], 'drop.txt')] } });
-    assert.equal(dropped.defaultPrevented, true);
-    assert.equal(received, 3);
-    await dispatch('[aria-label="Module action"]', 'paste', { clipboardData: clipboard('') });
-    await dispatch('[aria-label="Module action"]', 'drop', { dataTransfer: { files: [new File(['x'], 'owned.txt')] } });
-    assert.equal(received, 3, 'events handled by a module control do not start a second host receive');
+    const beforeEvents = draft.getSnapshot();
+    const beforeField = field.getSnapshot();
+    for (const type of ['paste', 'drop']) {
+      const event = await dispatch('.chat-input-message', type);
+      assert.equal(event.defaultPrevented, false, 'the host leaves ordinary DOM events untouched');
+      const handled = await dispatch('[aria-label="Module action"]', type);
+      assert.equal(handled.defaultPrevented, true, 'module children may handle their own DOM events');
+    }
+    assert.deepEqual(events, [
+      { type: 'paste', target: editor, currentTarget: row, prevented: false },
+      { type: 'paste', target: action, currentTarget: row, prevented: true },
+      { type: 'drop', target: editor, currentTarget: row, prevented: false },
+      { type: 'drop', target: action, currentTarget: row, prevented: true },
+    ], 'ordinary React bubbling reaches the actual enhanced row once per event');
+    assert.equal(draft.getSnapshot(), beforeEvents, 'DOM passthrough does not mutate draft state');
+    assert.equal(field.getSnapshot(), beforeField);
+    assert.equal(sends, 1);
     await act(() => root.render(null));
     await act(() => appendFixture(field, fixtureItem('after-unmount', 'later')));
     await renderComposer();
@@ -1404,17 +1594,19 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.match(container.textContent, /Native fallback/);
       assert.equal(reports.length, 1, 'a broken renderer reports locally instead of replacing core');
       assert.equal(runtime.getSnapshot().length, 0, 'a broken renderer also releases its module');
+      assert.equal(disposed, 1);
       assert.throws(() => scope.block('stale'), /Module cannot block/);
       await act(() => root.render(null));
       await act(async () => { runtime.stop(); await runtime.start(); });
       await renderComposer();
       field = handle.forDraft(draft.reference)!;
-      await act(() => { scoped!.draft.block('Selected file not finished'); draft.edit('Crash module action'); });
+      await act(() => { scoped!.draft.block('Unfinished module work'); draft.edit('Crash module action'); });
       assert.equal(runtime.getSnapshot().length, 0, 'failed composer plugins are unregistered locally');
       assert.ok(container.querySelector('.chat-input-message'), 'native input survives the plugin render error');
       assert.equal(field.getSnapshot().items.length, 2, 'the last immutable schema snapshot is retained, not submitted');
       assert.equal(draft.getSnapshot().blocks.length, 0);
-      assert.doesNotMatch(container.textContent, /移除未完成的选择|Selected file/);
+      assert.equal(disposed, 2);
+      assert.doesNotMatch(container.textContent, /移除未完成的选择|Registered item/);
       assert.equal(container.querySelector('.module-draft-recovery'), null);
       await dispatch('.chat-input-message', 'keydown', { key: 'Enter', ctrlKey: true });
       await dispatch('.send', 'click');

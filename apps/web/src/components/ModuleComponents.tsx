@@ -1,6 +1,6 @@
 import { createContext, createElement, useContext, useSyncExternalStore, type Attributes, type ComponentType, type ReactNode } from 'react';
 import type {
-  AttachmentProps, GlobalActionsProps, MarkdownNode, MessageProps, ModuleComponentProps, SessionStatusProps,
+  AttachmentProps, MarkdownNode, MessageProps, ModuleComponentProps, SessionStatusProps,
 } from '@cockpit/module-api';
 import { ModuleErrorBoundary, moduleRuntime, type ModuleRuntime } from '../lib/moduleRuntime';
 
@@ -43,11 +43,6 @@ export function SessionStatus(props: SessionStatusProps) {
 function AttachmentBase({ children, actions }: AttachmentProps) { return <>{children}{actions}</>; }
 export function Attachment(props: AttachmentProps) {
   return useModuleElement('attachment', AttachmentBase, props);
-}
-
-function GlobalActionsBase({ children }: GlobalActionsProps) { return <>{children}</>; }
-export function GlobalActions(props: GlobalActionsProps) {
-  return useModuleElement('globalActions', GlobalActionsBase, props);
 }
 
 export function MarkdownReplacement({ node, fallback }: { node: MarkdownNode; fallback: ReactNode }) {

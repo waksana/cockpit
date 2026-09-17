@@ -6,7 +6,7 @@ import { MessageBody } from './MessageBody';
 import { MessageContent } from './MessageContent';
 import { hasMessageContent } from '../lib/messageContent';
 import type { ChatMessage } from '@cockpit/protocol';
-import type { ActivateFrontend, MarkdownNode } from '@cockpit/module-api';
+import type { ActivateFrontend, MarkdownNode, MessageIdentity } from '@cockpit/module-api';
 import { ModuleRuntime, moduleRuntime } from '../lib/moduleRuntime';
 import { ModuleRuntimeProvider } from './ModuleComponents';
 
@@ -63,6 +63,36 @@ test('attachment-only messages remain visible without a module, network fetch or
   assert.match(html, /Native file/);
   assert.match(html, /Native image/);
   assert.doesNotMatch(html, /<img|data:|Zml4dHVyZQ|<video|fetch|message-body/);
+});
+
+test('message middleware receives attributed user and assistant bodies without a notification role filter', async () => {
+  const seen: MessageIdentity[] = [];
+  const digest = 'b'.repeat(64);
+  const runtime = new ModuleRuntime({
+    pageUrl: 'https://fixture.invalid',
+    fetch: async () => Response.json({ modules: [{
+      id: 'observer', name: 'Observer', version: '1.0.0', digest, config: {}, styles: [],
+      apiBase: `/_modules/observer/${digest}/api`, entry: `/_modules/assets/observer/${digest}/entry.js`,
+    }], errors: [] }),
+    load: async () => ({ activate: (() => ({ apiVersion: 2, components: [{
+      id: 'observe', boundary: 'message', wrap: Base => props => {
+        seen.push(props.identity);
+        return createElement(Base, props);
+      },
+    }] })) satisfies ActivateFrontend }),
+  });
+  await runtime.start();
+  try {
+    for (const role of ['user', 'assistant'] as const) {
+      const message: ChatMessage = { id: role, role, content: 'Native body', timestamp: 1,
+        origin: { sessionId: 'root', messageId: role } };
+      const html = renderToStaticMarkup(createElement(ModuleRuntimeProvider, {
+        runtime, children: createElement(MessageContent, { message }),
+      }));
+      assert.match(html, /Native body/);
+    }
+    assert.deepEqual(seen.map(value => value.kind === 'message' && value.role), ['user', 'assistant']);
+  } finally { runtime.stop(); }
 });
 
 test('Markdown keeps semantic paragraphs for truly inline enhancements and safe native fallbacks', () => {

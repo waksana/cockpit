@@ -6,14 +6,16 @@ import { Shell, MasterPane, DetailPane } from './Shell';
 import { PaneHeader } from './PaneHeader';
 import { StateNotice } from './StateNotice';
 import { Icon } from './Icon';
-import { GlobalActions } from './ModuleComponents';
+import type { ManagementHeaderProps, ManagementDetailHeaderProps } from '@cockpit/module-api';
+import { useModuleElement } from './ModuleComponents';
 
 export type ManageSection = 'mcp' | 'skills';
 const SECTION_TITLE: Record<ManageSection, string> = { mcp: '全局 MCP', skills: '全局 Skills' };
 
-function MasterHeader({ section, item, onRefresh }: {
-  section: ManageSection; item: string | null; onRefresh?: () => void;
-}) {
+function MasterHeader(props: ManagementHeaderProps) {
+  return useModuleElement('managementHeader', MasterHeaderBase, props);
+}
+function MasterHeaderBase({ section, item, onRefresh, actions }: ManagementHeaderProps) {
   const up = useUp();
   const backRef = useRef<HTMLButtonElement | null>(null);
   const connState = useCockpit((s) => s.connState);
@@ -30,7 +32,7 @@ function MasterHeader({ section, item, onRefresh }: {
         <Icon name="back" size={24} />
       </button>}
       title={<span className="manage-title ck-text-primary">{SECTION_TITLE[section]}</span>}
-      actions={<><GlobalActions /><button className="ck-icon-button rp manage-action" type="button"
+      actions={<>{actions}<button className="ck-icon-button rp manage-action" type="button"
         aria-label={section === 'mcp' ? '刷新 Copilot MCP 配置缓存' : '刷新'}
         disabled={!onRefresh || connState !== 'open' || busy} aria-busy={busy} onClick={() => {
           void run(async () => { if (section === 'mcp') await mcpRefresh(); }, onRefresh);
@@ -41,7 +43,10 @@ function MasterHeader({ section, item, onRefresh }: {
   </>;
 }
 
-function DetailHeader({ item }: { item: string }) {
+function DetailHeader(props: ManagementDetailHeaderProps) {
+  return useModuleElement('managementDetailHeader', DetailHeaderBase, props);
+}
+function DetailHeaderBase({ item, actions }: ManagementDetailHeaderProps) {
   const up = useUp();
   const titleRef = useRef<HTMLSpanElement | null>(null);
   useLayoutEffect(() => { titleRef.current?.focus(); }, [item]);
@@ -50,7 +55,7 @@ function DetailHeader({ item }: { item: string }) {
       <Icon name="back" size={24} />
     </button>}
     title={<span ref={titleRef} tabIndex={-1} className="manage-title manage-detail-headtitle">{item}</span>}
-    actions={<GlobalActions />} />;
+    actions={actions} />;
 }
 
 export function ManagementShell({ section, item, master, detail, onRefresh }: {

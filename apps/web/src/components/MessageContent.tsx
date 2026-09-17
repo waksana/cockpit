@@ -7,7 +7,7 @@ import type { MessageIdentity } from '@cockpit/module-api';
 
 export function MessageContent({ message, elementRef }: { message: ChatMessage; elementRef?: Ref<HTMLDivElement> }) {
   if (!hasMessageContent(message)) return null;
-  const identity: MessageIdentity | undefined = message.role === 'assistant' && message.origin ? {
+  const identity: MessageIdentity | undefined = message.origin ? {
     kind: 'message', role: message.role, sessionId: message.origin.sessionId, id: message.origin.messageId,
     ...(message.origin.agentId ? { agentId: message.origin.agentId } : {}),
   } : undefined;

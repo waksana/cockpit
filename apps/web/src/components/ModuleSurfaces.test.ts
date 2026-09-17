@@ -1,18 +1,19 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { createElement } from 'react';
+import { createElement, Fragment, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { compile } from 'sass';
-import { ModuleRuntime, moduleRuntime } from '../lib/moduleRuntime';
+import { ModuleRuntime } from '../lib/moduleRuntime';
+import { ModuleRuntimeProvider } from './ModuleComponents';
 import { GlobalNavigation } from './GlobalNavigation';
 import { ManagementShell } from './ManagementShell';
 import { Sidebar } from './Sidebar';
 import { fixtureSession } from '../dev/chat-fixtures';
 import type { ActivateFrontend } from '@cockpit/module-api';
 
-test('session badges are noninteractive row metadata and global actions are sibling controls across navigation shells', async t => {
+test('semantic middleware preserves real navigation and management controls without nested buttons or placeholders', async t => {
   const digest = 'a'.repeat(64);
   const runtime = new ModuleRuntime({
     pageUrl: 'https://fixture.invalid',
@@ -26,40 +27,71 @@ test('session badges are noninteractive row metadata and global actions are sibl
         { id: 'badge', boundary: 'sessionStatus', wrap: Base => props => createElement(Base, {
           ...props, children: createElement('span', { 'data-fixture-session': props.sessionId }, '7', props.children),
         }) },
-        { id: 'action', boundary: 'globalActions', wrap: Base => props => createElement(Base, {
-          ...props, children: createElement('button', { type: 'button' }, 'Fixture settings', props.children),
+        { id: 'navigation', boundary: 'globalNavigation', wrap: Base => props => createElement(Base, {
+          ...props, children: createElement(Fragment, null, props.children,
+            createElement('button', { type: 'button' }, 'Fixture navigation')),
+        }) },
+        { id: 'management', boundary: 'managementHeader', wrap: Base => props => createElement(Base, {
+          ...props, actions: createElement(Fragment, null, props.actions,
+            createElement('button', { type: 'button' }, `Fixture list: ${props.section}`)),
+        }) },
+        { id: 'detail', boundary: 'managementDetailHeader', wrap: Base => props => createElement(Base, {
+          ...props, actions: createElement(Fragment, null, props.actions,
+            createElement('button', { type: 'button' }, `Fixture detail: ${props.item}`)),
         }) },
       ],
     })) satisfies ActivateFrontend }),
   });
-  await runtime.start();
   t.after(() => runtime.stop());
-  t.mock.method(moduleRuntime, 'compose', runtime.compose.bind(runtime));
-  t.mock.method(moduleRuntime, 'subscribe', runtime.subscribe);
-  t.mock.method(moduleRuntime, 'getSnapshot', runtime.getSnapshot);
-  const session = fixtureSession('ask');
-  const sidebar = renderToStaticMarkup(createElement(Sidebar, {
-    sessions: [session], activeId: session.sessionId, query: '', snapshotReady: true, connected: true,
-    onSelect() {}, getMenuItems: () => [],
+  const render = (children: ReactNode) => renderToStaticMarkup(createElement(ModuleRuntimeProvider, {
+    runtime, children: createElement(MemoryRouter, null, children),
   }));
-  assert.match(sidebar, /class="dialog-meta"><span data-fixture-session="/);
-  assert.equal((sidebar.match(/<button\b/g) ?? []).length, 1, 'badge contributes no nested control');
-  assert.doesNotMatch(sidebar, /module-session-badges|module-global-actions/);
-  assert.match(sidebar, /class="dialog-status" title="需要选择" aria-label="需要选择">选/);
-  const navigation = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(GlobalNavigation)));
-  assert.match(navigation, /<\/button><button type="button">Fixture settings<\/button>/);
-  for (const section of ['mcp', 'skills'] as const) {
-    const management = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ManagementShell, {
-      section, item: null, master: null, detail: null,
-    })));
-    assert.match(management, /<button type="button">Fixture settings<\/button>/);
-    assert.doesNotMatch(management, /module-global-actions/);
+  const controls = (html: string, count: number) => {
+    assert.equal((html.match(/<button\b/g) ?? []).length, count);
+    assert.doesNotMatch(html, /<button\b[^>]*>(?:(?!<\/button>)[\s\S])*<button\b/);
+    assert.doesNotMatch(html, /module-session-badges|module-global-actions|module-management|module-navigation/);
+  };
+  const session = fixtureSession('ask');
+  for (const enhanced of [false, true]) {
+    if (enhanced) await runtime.start();
+    const sidebar = render(createElement(Sidebar, {
+      sessions: [session], activeId: session.sessionId, query: '', snapshotReady: true, connected: true,
+      onSelect() {}, getMenuItems: () => [],
+    }));
+    controls(sidebar, 1);
+    assert.match(sidebar, /class="dialog-status" title="需要选择" aria-label="需要选择">选/);
+    if (enhanced) assert.match(sidebar, /class="dialog-meta"><span data-fixture-session="/);
+    else assert.doesNotMatch(sidebar, /data-fixture-session/);
+    const navigation = render(createElement(GlobalNavigation));
+    controls(navigation, enhanced ? 2 : 1);
+    assert.match(navigation, /<button[^>]*aria-label="全局导航"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"/);
+    if (enhanced) assert.match(navigation, /<\/button><button type="button">Fixture navigation<\/button>/);
+    else assert.doesNotMatch(navigation, /Fixture navigation/);
+    for (const section of ['mcp', 'skills'] as const) {
+      const title = section === 'mcp' ? '全局 MCP' : '全局 Skills';
+      const refresh = section === 'mcp' ? '刷新 Copilot MCP 配置缓存' : '刷新';
+      const management = render(createElement(ManagementShell, {
+        section, item: null, master: null, detail: null,
+      }));
+      controls(management, enhanced ? 3 : 2);
+      assert.match(management, /<button[^>]*aria-label="返回会话列表"/);
+      assert.match(management, new RegExp(`<span class="manage-title ck-text-primary">${title}</span>`));
+      assert.match(management, new RegExp(`<button[^>]*aria-label="${refresh}"[^>]*disabled=""`));
+      if (enhanced) assert.match(management, new RegExp(`</div><button type="button">Fixture list: ${section}</button><button`));
+      else assert.doesNotMatch(management, /Fixture list:/);
+
+      const detail = render(createElement(ManagementShell, {
+        section, item: 'fixture-resource', master: null, detail: null,
+      }));
+      controls(detail, enhanced ? 5 : 3);
+      assert.match(detail, new RegExp(`<button[^>]*aria-label="返回${title}列表"`));
+      assert.match(detail, /<button[^>]*class="chat-back ck-icon-button rp lg:hidden"[^>]*aria-label="返回"/);
+      assert.match(detail, /<span tabindex="-1" class="manage-title manage-detail-headtitle">fixture-resource<\/span>/);
+      if (enhanced) assert.match(detail, /<\/div><button type="button">Fixture detail: fixture-resource<\/button><\/header>/);
+      else assert.doesNotMatch(detail, /Fixture detail:/);
+      assert.doesNotMatch(detail, /<div class="lg:hidden"/);
+    }
   }
-  const detail = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ManagementShell, {
-    section: 'mcp', item: 'fixture', master: null, detail: null,
-  })));
-  assert.match(detail, /<\/div><button type="button">Fixture settings<\/button><\/header>/);
-  assert.doesNotMatch(detail, /<div class="lg:hidden"/);
 });
 
 test('middleware introduces no contribution-placeholder DOM or CSS and leaves scroll ownership in core', () => {

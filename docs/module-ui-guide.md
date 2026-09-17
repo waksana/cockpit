@@ -172,7 +172,7 @@ structural styles or change Cockpit's GPL-3.0-only license.
 maintained example, typechecked by the existing Web build and exercised through
 the real module runtime by
 [`module-ui-example.test.ts`](../apps/web/src/dev/module-ui-example.test.ts).
-It declares `writes: ['text']`, registers composer middleware, renders the
+It declares `writes: ['text']`, enhances the actual composer editor row, renders the
 fixed Lucide SquarePen nodes with the host React, and subscribes to the actual
 scoped draft state. Its real `disabled` includes host availability, pending and
 operation; clicking appends text through the scoped draft, never sends a message.
@@ -220,6 +220,11 @@ original node structure and public styling; do not introduce module-placeholder
 containers, nested interactive controls, or visual indentation. Real controls
 and adornments compose through the base component's ordinary props/children.
 Markdown link/image replacements use their separate inline renderer contract.
+An empty component inserted only to receive module children is still a slot,
+not enhancement of an existing semantic component. Navigation/header middleware
+must wrap the actual controls and preserve their original navigation and focus.
+Ordinary DOM event props are public component behavior; file selection and its
+picker/dispatch lifecycle belong entirely to the file module's state services.
 
 Markdown renderers may occur inside paragraphs, emphasis, lists or headings.
 Returning a `span` does not legalize flow-only children such as `dialog`. Modal

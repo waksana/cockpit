@@ -189,6 +189,9 @@ apiBase、公开配置、request、signal、onInvalidate 和 report。
 旧宿主没有该字段，依赖 UI v1 的模块必须明确拒绝不兼容激活，不能只看同为 0.2.0。
 
 模块 UI 与本体共同遵循[交互语义与结构正确性要求](DEVELOPMENT.md#interaction-semantics-and-structural-correctness)。
+Web 模块集成只使用 state 扩展、公开实际语义组件的 middleware，以及独立 Markdown/内容渲染器。
+不得把业务 dispatcher、旧 slot 或空组件改名后当作通用机制；基础设施不能承担模块业务。
+文件选择/上传和通知/已读/push 策略均由模块拥有。本体只提供通用状态生命周期、组件契约和原生操作适配。
 `context.createPortal(children, container)` 是宿主现有 ReactDOM 的原函数，
 返回 `ReactPortal`；container 为 `Element | DocumentFragment`。
 它只提供通用 React 挂载，不管理弹窗业务、焦点或状态，也不是模块页面注册机制。
@@ -251,15 +254,20 @@ scope 提供只读快照、订阅和仅修改自己字段的验证型 update；�
 | --- | --- |
 | message | 原生消息/宿主当前 ask 身份、完成事实、实际正文 bodyRef、children 与真实 adornment 节点 |
 | sessionStatus | 原生回复中/错误/待选择状态和非交互 children，不嵌套按钮 |
-| composer | 捕获的草稿、原生操作、children/actions 与文件输入回调；不预建附件组 |
+| composer | 实际输入卡片及其原生问题内容，组合 children；不预建附件组 |
+| composerEditor | 实际输入行、文字编辑器和发送控件；普通 DOM props/children/ref，不解释文件事件 |
 | attachment | 一项原生历史附件、消息归属、基础显示及附加动作；不承担草稿附件列表 |
-| globalActions | 组合全局操作 children，不建立另一个 SPA |
+| globalNavigation | 实际全局导航按钮及其菜单，增强时保留已有按钮和导航行为 |
+| managementHeader | 实际管理列表标题栏，包含返回、标题和刷新控件 |
+| managementDetailHeader | 实际管理详情标题栏，包含返回和标题焦点行为 |
 
 Middleware 按 `(order, moduleId, id)` 排列，较小者在外层。
 组合只在注册或基础组件变化时创建，不在每次消息、草稿或未读更新时生成新的组件类型。
 增强器必须保留继承的 children、refs、actions、原生身份与滚动锚点。
 React 增强链和错误边界不产生 HTML；不为注册项增加空 div/span 占位。
 新增业务节点通过原组件的正常 props/children 组合，不能产生视觉嵌套或改变原有布局。
+每个 boundary 的默认实现必须承担真实现有界面职责。禁止专门插入一个只返回 children、
+生产环境无基础内容的“全局动作”空边界；有 HOC 包装不等于不是 slot。
 
 message 的 bodyRef 指向实际正文或当前 ask 的问题，不含 byline、滚动外框或选择按钮。
 ask 使用宿主当前 AskRequest.requestId，不冒充 SDK requestId。
@@ -287,14 +295,14 @@ ask/plan/elicitation 使用 kind 与当前宿主 requestId；不是复制、清�
 pending 期间文件操作规则由模块执行；本体的文字编辑和原生提交门槛仍有效。
 模块/schema 不可用时释放其通用阻止，不转为 orphan 文件提示，其他模块状态不受影响。
 
-Composer 的 `actions` 接收 `pickFiles()`。本体在真实用户手势中打开一个选择器，
-在打开时捕获规范的宿主草稿引用、操作和已组合的 `onFiles`，
-草稿身份不依赖之后可能撤销的模块绑定，不把迟到选择改投到当前会话或回答草稿。
-选择、粘贴和拖放汇入同一个同步回调；返回 true 是接纳全部文件的所有权交接，
-不是上传已经成功。模块必须先留下受阻止保护的选择或就绪附件，再启动异步工作；
-不能同时处理并调用下一处理器。模块拥有有效选择的状态、错误与阻止；
-模块/schema 缺失时本体不处理或保存文件，不新增恢复 UI，也不影响普通文字发送。
-混合剪贴板文字、IME 和原生提交快捷键不被改写。
+文件模块通过 composerEditor middleware 的普通 onPaste/onDrop/onDragOver 和 children
+增强实际输入行；自己的 state/service 创建选择器、捕获草稿、接纳文件、上传并清理监听。
+本体没有 onFiles/pickFiles、文件回调身份表、选择事务或 receiveFiles dispatcher。
+模块在打开选择器时捕获自己的稳定草稿引用，迟到结果不改投到当前会话或回答草稿；
+取消或模块释放时由模块撤销回调。普通 DOM 事件链遵循 defaultPrevented，
+业务异常由模块报告，不能依赖本体的文件专用回调包装。
+混合剪贴板文字、IME、原生提交快捷键和基于真实状态的发送门槛保持不变。
+模块/schema 缺失时本体不处理或保存文件、不新增恢复 UI，普通文字仍可发送。
 
 ### 6.4 Markdown 注册与资源生命周期
 

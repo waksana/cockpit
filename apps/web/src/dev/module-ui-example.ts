@@ -24,10 +24,10 @@ export const activate: ActivateFrontend = context => {
   return {
     apiVersion: 2, writes: ['text'],
     components: [{
-      id: 'example-text', boundary: 'composer',
+      id: 'example-text', boundary: 'composerEditor',
       wrap: Base => props => h(Base, {
         ...props,
-        actions: interactions => h(context.react.Fragment, null, props.actions?.(interactions),
+        children: h(context.react.Fragment, null, props.children,
           h(AddExample, { draft: context.state.bindDraft(props.draft), disabled: props.disabled, operation: props.operation })),
       }),
     }],
