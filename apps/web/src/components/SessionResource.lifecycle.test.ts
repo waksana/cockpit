@@ -240,7 +240,8 @@ test('model drafts survive queued results and newer native values; reset and app
   select.value = 'draft';
   await h.event(select, 'change');
   assert.deepEqual(calls, []);
-  assert.match(h.container.textContent, /编辑草稿/);
+  assert.equal(select.value, 'draft');
+  assert.equal(h.container.querySelector('.info-model-hint'), null);
   await h.event(button(h.container, '应用配置'), 'click');
   select.value = 'metadata-model';
   await h.event(select, 'change');
@@ -541,13 +542,13 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.ok(notice);
     assert.equal(notice.getAttribute('data-placement'), 'pane');
     assert.match(notice.textContent, /加载中/);
-    assert.doesNotMatch(h.container.textContent, /本会话没有可用的 MCP|当前会话未发现技能/);
+    assert.doesNotMatch(h.container.textContent, /本会话没有可用的 MCP|未发现技能/);
     await act(async () => request.resolve());
     assert.equal(h.container.querySelector('[data-kind="loading"]'), null);
-    assert.match(h.container.textContent, /本会话没有可用的 MCP|当前会话未发现技能/);
+    assert.match(h.container.textContent, /本会话没有可用的 MCP|未发现技能/);
     if (Component === SessionSkills) {
-      assert.equal(h.container.querySelector('.manage-global-link')?.getAttribute('href'), '/skills');
-      assert.match(h.container.textContent, /不改变全局默认/);
+      assert.equal(h.container.querySelector('.manage-empty')?.textContent, '未发现技能');
+      assert.equal(h.container.querySelector('a'), null);
     }
   });
 
@@ -573,7 +574,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.equal(h.container.querySelector(Component === SessionMcp ? '.mcp-operation-status' : '.manage-row-pending')?.textContent, '正在关闭…');
     if (Component === SessionMcp) {
       assert.equal(notice.querySelector('.manage-row-pending'), null);
-      assert.equal(notice.querySelector('.manage-row-status')?.getAttribute('aria-hidden'), null);
+      assert.equal(h.container.querySelector('.manage-row-status')?.getAttribute('aria-hidden'), null);
     }
     assert.equal(h.container.querySelectorAll('.spinner').length, 1);
     const refresh = h.container.querySelector('[aria-label="刷新"]');
@@ -665,8 +666,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
       useCockpit.setState({ resourceRevisions: { [session.sessionId]: { mcp: 1, skills: 1 } } });
     });
     assert.equal(h.container.querySelectorAll('.spinner').length, 1, 'only the target row owns loading during a mutation');
-    assert.match(h.container.querySelector('.manage-note')!.textContent,
-      Component === SessionMcp ? /全局默认不在本页修改/ : /不改变全局默认/);
+    assert.equal(h.container.querySelector('.manage-note'), null);
     assert.match(row.textContent, /正在关闭/);
     if (Component === SessionMcp) {
       assert.equal(source!.textContent, 'native');
@@ -674,7 +674,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
       assert.equal(row.querySelector('.mcp-operation-status')?.textContent, '正在关闭…');
       assert.doesNotMatch(row.querySelector('.manage-row-name')!.textContent, /已连接/);
     }
-    assert.doesNotMatch(other.textContent, /正在关闭|未确认/);
+    assert.doesNotMatch(other.textContent, /正在关闭|未确认|请等待|正在切换/);
     assert.equal(first.getAttribute('aria-checked'), 'true', 'never use optimistic native state');
     assert.equal(disabled(second), Component === SessionMcp);
     await act(async () => mutation.resolve());
@@ -757,6 +757,8 @@ for (const initiallyEnabled of [false, true]) {
     await h.render(createElement(SessionMcp, { session, onClose: noop }));
     const row = h.container.querySelector('[data-resource-name="native-server"]')!;
     const source = row.querySelector('.manage-row-source')!;
+    assert.equal(source.parentNode, row, 'MCP source belongs to the left column, not a separate full-width block');
+    assert.equal(row.querySelector('.manage-row-status')!.parentNode, row, 'MCP connection status shares the switch column');
     await h.event(row.querySelector('[role="switch"]')!, 'click');
     assert.equal(source.textContent, 'builtin');
     assert.equal(source.getAttribute('aria-hidden'), null);

@@ -44,6 +44,14 @@ Skills remain separate pages with flat sections; they share visual roles, not
 navigation or mutation policy. **`--host-*` and `--chat-*` are not module APIs**;
 modules continue to use only the public `--ck-*` variables below.
 
+Session MCP rows pair name/source on the left with switch/connection status on
+the right. Only the operated row shows switching progress; other switches remain
+disabled during native serialization without repeated explanatory notices.
+The three session pages omit static instructional text, and an empty Skills
+page only reports that no skills were found. Actual failures, native results and
+unavailable-session recovery remain visible. Reconnecting an individual MCP uses
+its existing off/on switch, not an additional reload-all action.
+
 The host loads its base stylesheet; a module declares its business stylesheet in
 `frontend.styles`. Both live in the **same document**, without Shadow DOM or a
 style sandbox. Modules keep a unique prefix, such as `cf-` or `example-`, for their

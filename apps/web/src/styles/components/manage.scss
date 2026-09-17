@@ -20,7 +20,6 @@
   font-size: var(--host-text-body);
   p { margin: 0 0 var(--host-space-md); }
 }
-.manage-global-link { color: var(--link-color); }
 
 // Row: name + sub on the left, a toggle/badge on the right.
 .manage-row {
@@ -57,11 +56,17 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   column-gap: var(--host-space-md); row-gap: var(--host-space-xs);
-  .manage-row-main { grid-column: 1 / -1; }
+  .manage-row-main { grid-column: 1 / -1; &:empty { display: none; } }
   .manage-row-name { font-weight: 500; }
   > .switch { align-self: start; }
   .mcp-status[data-tone] { padding: 0; background: none; font-size: var(--host-text-meta); border-radius: 0; }
   .mcp-status[data-tone='off'] { color: var(--secondary-text-color); }
+  &[data-mcp] {
+    > .manage-row-name { grid-column: 1; grid-row: 1; min-height: var(--ck-control-size); }
+    > .switch { grid-column: 2; grid-row: 1; justify-self: end; }
+    > .manage-row-source { grid-column: 1; grid-row: 2; margin: 0; align-self: start; }
+    > .manage-row-status { grid-column: 2; grid-row: 2; justify-content: flex-end; align-self: start; }
+  }
 }
 .manage-row-feedback {
   min-height: 1.5em; margin-top: var(--host-space-xs);

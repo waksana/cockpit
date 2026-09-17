@@ -1,7 +1,6 @@
 // Per-session MCP and Skills use the same row presentation, not the same
 // mutation policy: MCP writes are serialized by the native host.
 import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
 import type { ChatSession } from '../net/types';
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
@@ -27,7 +26,8 @@ function SessionToggleRow({ identity, name, description, source, status, enabled
   const [desired, setDesired] = useState(enabled);
   const error = action.error ?? nativeError;
   const progress = <><Icon name="loading" className="spinner" size={status ? 10 : 12} />{desired ? '正在开启…' : '正在关闭…'}</>;
-  return <div className="manage-row manage-session-row" data-resource-name={name} title={disabled ? disabledReason : undefined}>
+  return <div className="manage-row manage-session-row" data-mcp={status ? true : undefined}
+    data-resource-name={name} title={disabled ? disabledReason : undefined}>
     <div className="manage-row-name">{name}</div>
     <Toggle label={`启用 ${name}`} disabled={disabled || action.busy} busy={action.busy} on={enabled}
       onChange={next => {
@@ -35,17 +35,19 @@ function SessionToggleRow({ identity, name, description, source, status, enabled
         setDesired(next);
         void action.run(() => onChange(name, next));
       }} />
-    <div className="manage-row-main">
-      {status && <div className="manage-row-status">
-        {action.busy ? <span className="mcp-status mcp-operation-status" data-tone="pending" role="status">{progress}</span> : status}
-      </div>}
-      {description && <ExpandableText className="manage-row-description" text={description} label={`${name}说明`} />}
+    {status && <>
       {source && <div className="manage-row-source">{source}</div>}
+      <div className="manage-row-status">
+        {action.busy ? <span className="mcp-status mcp-operation-status" data-tone="pending" role="status">{progress}</span> : status}
+      </div>
+    </>}
+    <div className="manage-row-main">
+      {description && <ExpandableText className="manage-row-description" text={description} label={`${name}说明`} />}
+      {!status && source && <div className="manage-row-source">{source}</div>}
       {action.busy && !status && <div className="manage-row-feedback manage-row-pending" role="status">{progress}</div>}
       {error && <div className="manage-row-feedback" role="alert" data-error>
         <ExpandableText text={`未确认：${error}`} label={`${name}错误详情`} />
       </div>}
-      {disabled && disabledReason && <div className="manage-row-source">{disabledReason}</div>}
     </div>
   </div>;
 }
@@ -127,7 +129,6 @@ export function SessionMcp({ session, onClose }: SessionManageProps) {
     pending={resource.pending} hasData={resource.data !== undefined} working={action.pending}
     blocked={resource.closing || resource.requiresResume || !resource.connected}
     empty={resource.valid && resource.data?.length === 0 ? '本会话没有可用的 MCP 服务器' : undefined}>
-    <p className="manage-note">启用选择与连接状态分开显示；全局默认不在本页修改。</p>
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
     {resource.data?.map(server => <SessionToggleRow key={server.name}
       identity={JSON.stringify(['mcp', sessionId, server.name])} name={server.name}
@@ -148,11 +149,7 @@ export function SessionSkills({ session, onClose }: SessionManageProps) {
     refresh={() => { void resource.refresh(); }} status={resource.status} failed={resource.failed}
     pending={resource.pending} hasData={resource.data !== undefined} working={action.pending}
     blocked={resource.closing || resource.requiresResume || !resource.connected}
-    empty={resource.valid && resource.data?.length === 0 ? <>
-      <p>当前会话未发现技能。</p>
-      <Link className="ck-button manage-global-link" to="/skills">管理全局 Skills</Link>
-    </> : undefined}>
-    <p className="manage-note">本页选择只作用于本会话，不改变全局默认。</p>
+    empty={resource.valid && resource.data?.length === 0 ? '未发现技能' : undefined}>
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
     {resource.data?.map(skill => <SessionToggleRow key={skill.name}
       identity={JSON.stringify(['skills', sessionId, skill.name])} name={skill.name}

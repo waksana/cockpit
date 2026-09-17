@@ -125,7 +125,6 @@
   display: flex; flex-wrap: wrap; align-items: center; gap: var(--host-space-xs) var(--host-space-sm);
   > span + span { border-inline-start: 1px solid var(--border-color); padding-inline-start: var(--host-space-sm); }
 }
-.info-model-hint { margin: 0; font-size: var(--host-text-meta); color: var(--secondary-text-color); }
 .info-session-id {
   margin-top: var(--host-space-md); min-width: 0;
   .chat-copy-error { color: var(--danger-color); }
