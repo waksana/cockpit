@@ -410,7 +410,7 @@ test('history-start hint stays in flow until native history is exhausted, indepe
     session: { ...session, messages: [{ ...session.messages[0], role: 'assistant' }] },
     readOnly: true, onLoadMore() {},
   }));
-  assert.match(assistant, /class="doc-byline"[\s\S]*<\/header><div data-message-id="visible">/);
+  assert.match(assistant, /class="doc-byline"[\s\S]*<\/header><div class="message-speech" data-message-id="visible">/);
 });
 
 test('prepend preserves the latest visible message while a request waits and tail/media grow', () => {

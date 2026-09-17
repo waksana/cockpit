@@ -60,8 +60,10 @@ export function ModuleSessionBadges({ sessionId, runtime = moduleRuntime }: {
   sessionId: string; runtime?: ModuleRuntime;
 }) {
   useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
+  const contributions = runtime.contributions('sessionBadges');
+  if (!contributions.length) return null;
   return <span className="module-session-badges">
-    {runtime.contributions('sessionBadges').map(({ module, contribution }) => {
+    {contributions.map(({ module, contribution }) => {
       const Badge = contribution.component;
       return <ModuleBoundary key={`${module.asset.id}:${module.asset.digest}:${contribution.id}`}
         runtime={runtime} onFailure={() => runtime.unregister(module)} fallback={null}>
@@ -73,8 +75,10 @@ export function ModuleSessionBadges({ sessionId, runtime = moduleRuntime }: {
 
 export function ModuleGlobalActions({ runtime = moduleRuntime }: { runtime?: ModuleRuntime }) {
   useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
+  const contributions = runtime.contributions('globalActions');
+  if (!contributions.length) return null;
   return <div className="module-global-actions">
-    {runtime.contributions('globalActions').map(({ module, contribution }) => {
+    {contributions.map(({ module, contribution }) => {
       const Action = contribution.component;
       return <ModuleBoundary key={`${module.asset.id}:${module.asset.digest}:${contribution.id}`}
         runtime={runtime} onFailure={() => runtime.unregister(module)} fallback={null}>
