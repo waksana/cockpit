@@ -21,7 +21,7 @@ test('only the main workspace owns a global menu and section navigation pushes d
   assert.doesNotMatch(source, /showSessionListEntry|label: '会话列表'|replace:/);
   assert.match(source, /navigate\('\/mcp'\)/);
   assert.match(source, /navigate\('\/skills'\)/);
-  assert.match(source, /pathname === '\/'.*triggerRef.current\?\.focus/);
+  assert.doesNotMatch(source, /\.focus\(|autoFocus/);
   for (const label of ['全局 MCP', '全局 Skills']) assert.ok(source.includes(label));
   assert.doesNotMatch(source, /文件|通知设置|SystemVersions|垃圾桶|trash/);
 });
