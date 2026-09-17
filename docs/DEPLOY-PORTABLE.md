@@ -3,9 +3,9 @@
 Cockpit 提供普通前后端服务包。使用者准备运行环境、配置原生登录与远程认证入口，
 并选择如何启动服务。
 
-> 本页对应 **0.2.0 开发源码，尚未发布运行包**。
+> 本页对应 **0.2.0 发行**；下载前确认该版本 Release workflow 已成功发布运行包。
 > 安装已发布 v0.1.0 时，请使用[该版本的安装指南](https://github.com/waksana/cockpit/blob/v0.1.0/docs/DEPLOY-PORTABLE.md)，
-> 不要混用本页的宿主配置和模块命令。需要本地模块功能时，按下方源码步骤使用对应的 0.2.0 提交。
+> 不要混用本页的宿主配置和模块命令。需要本地模块功能时，使用对应的 0.2.0 运行包或固定源码。
 
 本指南也供 Agent 执行安装时使用。先核对运行前提，再下载、认证、启动并完成首次聊天。
 如果机器上已有安装或运行中的服务，先与用户确认再替换、停止或变更配置；
@@ -16,7 +16,7 @@ Cockpit 提供普通前后端服务包。使用者准备运行环境、配置原
 
 | 项目 | 当前要求 |
 | --- | --- |
-| 发行 | 本页为未发布的 **0.2.0**；正式运行包只从 [Releases](https://github.com/waksana/cockpit/releases) 获取，不把开发源码视为已发布包。 |
+| 发行 | **v0.2.0**；正式运行包只从[对应 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.0) 获取，以 workflow 成功发布的资产为准。 |
 | 平台 | Linux x64 / glibc；未承诺 musl、arm64、macOS 或 Windows 运行包。 |
 | Node | **24.20.0**，由安装者单独准备；运行包 manifest 校验完整版本号，其他 patch 也会被拒绝。 |
 | 原生配对 | 已包含 SDK **1.0.13**、bundled runtime **1.0.83** / protocol **3**。 |
@@ -35,8 +35,8 @@ Web 与 API 在一个 Node 服务内；SDK 自己的进程外 runtime、原生 M
 
 ## 安装运行包
 
-0.2.0 发布后，从对应 Release 下载 `runtime.tar.gz` 与 `runtime.tar.gz.sha256`。
-**目前该版本未发布，以下下载命令应等待发行后使用；当前模块开发请走源码安装。**
+从 v0.2.0 Release 下载 `runtime.tar.gz` 与 `runtime.tar.gz.sha256`。
+若该版本尚未生成这两项资产，请等待 Release workflow 成功，不使用旧版或开发 artifact 替代。
 GitHub 自动生成的 Source code ZIP/tar 不包含安装好的依赖，不能替代 `runtime.tar.gz`。
 
 确认已准备上面的 Node 版本后，在新的下载目录执行：
@@ -73,22 +73,22 @@ node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/ind
 <a id="from-source"></a>
 ## 从源码安装
 
-普通使用者选择固定发行 tag；0.2.0 发布前，需使用明确包含本功能的源码提交，
-不是旧 v0.1.0 tag。贡献者按[贡献指南](../CONTRIBUTING.md)工作。
+普通使用者选择固定发行 tag `v0.2.0`，不是旧 v0.1.0 tag。
+tag 尚未发布时应等待发行，或由开发者明确选择已验证的完整源码 SHA。
+贡献者按[贡献指南](../CONTRIBUTING.md)工作。
 在新目录中执行：
 
 ```sh
 git clone https://github.com/waksana/cockpit.git cockpit &&
 cd cockpit &&
-git switch --detach VERIFIED_0_2_0_COMMIT &&
+git switch --detach v0.2.0 &&
 node --version &&
 pnpm --version &&
 pnpm install --frozen-lockfile &&
 pnpm build
 ```
 
-将 `VERIFIED_0_2_0_COMMIT` 替换为选定的完整 0.2.0 源码提交；
-该功能尚未合入时不要假定 main 已包含它。
+不要以持续变化的 main 代替所选 tag 的固定来源。
 确认 Node 为 `v24.20.0`、pnpm 为 `10.34.5`。不要升级锁文件来绕过安装错误。
 先按下一节准备原生认证，然后在同一终端启动：
 
@@ -228,7 +228,7 @@ node --import ./apps/server/node_modules/tsx/dist/loader.mjs \
 安装、启用或停用只改变下次启动选择，不会热改正在运行的服务；
 是否关闭已有服务仍需遵循其正常 graceful 流程。
 详细格式、状态查询和公共接口见[模块契约](module-contract-draft.md)。
-此能力尚未随已有 `v0.1.0` Release 发布，不能在不支持模块的旧包上执行上述命令。
+此能力从 `v0.2.0` 提供；`v0.1.0` 不支持模块，不能在旧包上执行上述命令。
 
 ## 环境配置
 

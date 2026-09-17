@@ -1,6 +1,22 @@
 # Cockpit 0.2.0
 
-Unreleased development version. No tag or Release has been created for these changes.
+Release summary for v0.2.0. The checked runtime archive and checksum are published
+only after the immutable tag's Release workflow succeeds.
+
+- [#12](https://github.com/waksana/cockpit/issues/12): replace host icon glyphs
+  with local, pinned Lucide 1.46.0 SVGs, retaining ISC and Feather/MIT attribution.
+  The [public Module UI guide](https://github.com/waksana/cockpit/blob/v0.2.0/docs/module-ui-guide.md) defines shared classes, theme
+  tokens, accessible controls and the Module UI v1 compatibility contract.
+- [#17](https://github.com/waksana/cockpit/issues/17): align action semantics with
+  native buttons, links and disclosure controls; preserve keyboard focus and
+  disabled/pending behavior. Management mutations retain pending state until
+  authoritative readback completes, with explicit failures. Native dialogs own
+  Escape/Enter instead of leaking those keys to background host interactions.
+- Module frontends receive `context.uiVersion: 1` and the host's
+  `context.createPortal`, allowing dialogs outside inline Markdown/card markup
+  without bundling another ReactDOM. Existing modules remain loadable; modules
+  requiring these capabilities must reject older hosts explicitly. Earlier
+  0.2.0 development builds are not proof of UI v1 support.
 
 - Idle, executing and decision input now use the same card frame and editor
   geometry, without a nested answer-field border or focus fill. Multiline growth
@@ -64,6 +80,11 @@ Unreleased development version. No tag or Release has been created for these cha
   `~/.copilot`; do not move or copy native data.
 - The supported service package baseline remains Node 24.20.0, Linux x64/glibc,
   SDK 1.0.13 and runtime 1.0.83 / protocol 3.
+- **Release compatibility:** use Web, backend and MCP from this same release.
+  The 0.x baseline is a fresh installation, with no old API aliases or automatic
+  migration. Cockpit v0.1.0 does not support these module contracts. Publish and
+  install the compatible host before Cockpit File 0.1.5; the module is a separate
+  trusted package and loads only on an explicit cold start.
 
 Publishing still requires the same fixed-commit CI and immutable tag process.
 These source changes do not authorize deployment, service restart or user-data migration.
