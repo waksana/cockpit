@@ -51,6 +51,15 @@ The three session pages omit static instructional text, and an empty Skills
 page only reports that no skills were found. Actual failures, native results and
 unavailable-session recovery remain visible. Reconnecting an individual MCP uses
 its existing off/on switch, not an additional reload-all action.
+MCP and Skills reuse their status slot for connection/disconnection or
+enable/disable progress and a discoverable, underlined failure action. No progress
+line or error box opens automatically. Names and sources occupy one line; Skills
+reserve two description lines even before descriptions arrive. Overflowing text
+itself is a keyboard-accessible disclosure, without an extra arrow or button row.
+Only explicit activation expands full text or error details inline; replacement
+text/errors start collapsed. These dense reading/status disclosures keep their
+line-height targets and visible focus, while switches retain 40px/44px targets.
+Expanded content has no fixed height or clipping.
 
 The host loads its base stylesheet; a module declares its business stylesheet in
 `frontend.styles`. Both live in the **same document**, without Shadow DOM or a
