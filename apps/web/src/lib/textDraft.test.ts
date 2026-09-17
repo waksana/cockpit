@@ -59,6 +59,20 @@ test('stable readonly references identify a draft lifetime and subscriptions rel
   assert.equal(changes, 1);
 });
 
+test('a replaced saved root rejects stale idle edits without changing newer bytes', async () => {
+  const { drafts, storage, values } = fixture();
+  const old = drafts('A');
+  old.edit('Original');
+  const replacement = createSessionDrafts(storage)('A');
+  replacement.edit('Newer writer');
+  const bytes = values.get(key('A'));
+  old.edit('Keep this stale edit in memory only');
+  assert.equal(old.getSnapshot().text, 'Keep this stale edit in memory only');
+  assert.equal(values.get(key('A')), bytes);
+  assert.equal(await old.send(async () => assert.fail('Stale draft must not dispatch')), false);
+  assert.equal(values.get(key('A')), bytes);
+});
+
 test('native ACK clears only the captured text revision and removes an otherwise empty record', async () => {
   const { drafts, values } = fixture();
   const draft = drafts('A');

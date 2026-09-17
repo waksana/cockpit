@@ -62,6 +62,37 @@ test('field-only native sends use explicit projection and ACK only captured unch
   schema.dispose();
 });
 
+test('stale field and text updates cannot restore an obsolete pending token over a replacement draft', async () => {
+  const { storage, values } = memoryDraftStorage();
+  const errors: unknown[] = [];
+  const old = new SessionDraft('A', storage, undefined, undefined, error => errors.push(error));
+  const first = install(old, fixtureSchema(), 'files', errors);
+  old.edit('Old text');
+  appendFixture(first.scope, fixtureItem('old'));
+  let finish!: (acknowledged: boolean) => void;
+  const sending = old.send(() => new Promise(resolve => { finish = resolve; }));
+  const replacement = new SessionDraft('A', storage, undefined, undefined, error => errors.push(error));
+  const next = install(replacement);
+  replacement.edit('Replacement text');
+  next.scope.update(() => ({ items: [fixtureItem('replacement')] }));
+  const bytes = values.get(recordKey);
+  const before = first.scope.getSnapshot();
+  assert.throws(() => appendFixture(first.scope, fixtureItem('late')), /Saved draft root has changed/);
+  assert.equal(first.scope.getSnapshot(), before);
+  old.edit('Late keystroke');
+  old.dismissNotice();
+  assert.equal(values.get(recordKey), bytes);
+  finish(true);
+  assert.equal(await sending, false);
+  assert.equal(values.get(recordKey), bytes);
+  assert.equal(replacement.getSnapshot().text, 'Replacement text');
+  assert.deepEqual(next.scope.getSnapshot().items.map(item => item.id), ['replacement']);
+  assert.equal(old.getSnapshot().pending, false);
+  assert.ok(errors.length > 0);
+  first.schema.dispose();
+  next.schema.dispose();
+});
+
 for (const outcome of ['false', 'throw', 'undefined'] as const) {
   test(`native ${outcome} never ACKs schema data or automatically retries`, async () => {
     const draft = new SessionDraft('A', undefined, undefined, undefined, () => {});

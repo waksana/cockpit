@@ -189,6 +189,12 @@ export class ModuleRuntime {
     if (this.options.report) this.options.report(error);
     else reportUxError(`模块反馈：${message}。原生聊天仍可使用。`);
   };
+  private batchDraftChanges(change: () => void, additional: Iterable<SessionDraft> = []): void {
+    const drafts = new Set([...this.knownDrafts, ...additional,
+      ...this.snapshot.flatMap(module => [...module.bindings.keys()])]);
+    const releases = [...drafts].map(draft => draft.deferNotifications());
+    try { change(); } finally { for (const release of releases) release(); }
+  }
   async start(baseUrl = this.options.baseUrl ?? ''): Promise<void> {
     if (this.controller) return;
     const controller = new AbortController();
@@ -230,7 +236,7 @@ export class ModuleRuntime {
     let registrationError: unknown;
     let frontend: ModuleFrontend | undefined;
     let disposeFrontend: (() => unknown) | undefined;
-    const stop = () => {
+    const stop = () => this.batchDraftChanges(() => {
       registering = false;
       for (const schema of schemas) schema.dispose();
       for (const binding of bindings.values()) binding.dispose();
@@ -248,7 +254,7 @@ export class ModuleRuntime {
       }
       frontend = undefined;
       parentSignal.removeEventListener('abort', stop);
-    };
+    }, bindings.keys());
     const subscribe = (listeners: Set<() => void>, listener: () => void, onEmpty?: () => void): (() => void) => {
       if (controller.signal.aborted) return () => {};
       const notify = () => { try { listener(); } catch (error) { this.report(error); } };
@@ -370,14 +376,18 @@ export class ModuleRuntime {
     finally { clearTimeout(timer); parentSignal.removeEventListener('abort', cancelled); }
   }
   stop(): void {
-    this.controller?.abort();
-    this.controller = undefined;
-    this.publish([]);
+    this.batchDraftChanges(() => {
+      this.controller?.abort();
+      this.controller = undefined;
+      this.publish([]);
+    });
   }
   unregister(module: LoadedModule): void {
     if (!this.snapshot.includes(module)) return;
-    module.stop();
-    this.publish(this.snapshot.filter(loaded => loaded !== module));
+    this.batchDraftChanges(() => {
+      module.stop();
+      this.publish(this.snapshot.filter(loaded => loaded !== module));
+    });
   }
   fail(module: LoadedModule, error: unknown): void {
     this.report(error);

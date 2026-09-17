@@ -505,6 +505,44 @@ test('state registration creates concrete services once, stages publication and 
   assert.equal(f.reports.length, 1);
 });
 
+test('teardown revokes schema state before cleanup but notifies canonical draft readers only afterward', async () => {
+  for (const operation of ['stop', 'unregister'] as const) {
+    const order: string[] = [];
+    const draft = createSessionDrafts()(`cleanup-${operation}`);
+    const f = fixture([asset()], context => {
+      const schema = context.state.registerDraft(fixtureSchema());
+      context.state.register({
+        id: 'reader',
+        create: () => draft.reference.subscribe(() => {
+          order.push('service-read');
+          schema.forDraft(draft.reference)!.getSnapshot();
+        }),
+        dispose: unsubscribe => {
+          assert.throws(() => schema.forDraft(draft.reference), /stopped/);
+          order.push('service-dispose');
+          unsubscribe();
+        },
+      });
+      return { apiVersion: 2 };
+    });
+    f.runtime.prepareDraft(draft);
+    await f.runtime.start();
+    f.contexts[0].state.bindDraft(draft.reference).block('Pending registered work');
+    order.length = 0;
+    const unsubscribe = draft.subscribe(() => {
+      assert.equal(f.runtime.getSnapshot().length, 0);
+      assert.equal(draft.getSnapshot().blocks.length, 0);
+      order.push('host-read');
+    });
+    if (operation === 'stop') f.runtime.stop();
+    else f.runtime.unregister(f.runtime.getSnapshot()[0]);
+    assert.deepEqual(order, ['service-dispose', 'host-read']);
+    assert.deepEqual(f.reports, []);
+    unsubscribe();
+    f.runtime.stop();
+  }
+});
+
 test('state rollback covers cross-registry IDs, synchronous/async factories and invalid frontend results', async () => {
   for (const failure of ['duplicate', 'schema-duplicate', 'factory', 'async', 'frontend'] as const) {
     let disposed = 0;

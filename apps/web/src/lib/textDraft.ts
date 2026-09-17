@@ -71,9 +71,12 @@ export class SessionDraft {
   private readonly blockOwners = new Map<string, string>();
   private readonly fields = new Map<string, DraftField>();
   private record?: Record<string, unknown>;
+  private storedBytes: string | null = null;
   private readError?: unknown;
   private pendingToken?: string;
   private retired = false;
+  private notificationDepth = 0;
+  private notificationPending = false;
   readonly reference: DraftReference;
   readonly sessionId: string;
   private readonly storage?: DraftStorage;
@@ -99,6 +102,7 @@ export class SessionDraft {
     references.set(this.reference, this);
     try {
       const stored = storage?.getItem(key);
+      this.storedBytes = stored ?? null;
       if (stored === null || stored === undefined) return;
       const value: unknown = JSON.parse(stored);
       if (!draftRecord(value) || typeof value.text !== 'string' || typeof value.unconfirmed !== 'boolean') {
@@ -132,9 +136,30 @@ export class SessionDraft {
       blocks: Object.freeze(next.blocks),
       hasContent: !!next.text.trim() || [...this.fields.values()].some(field => field.active && field.hasContent),
     });
+    if (this.notificationDepth) {
+      this.notificationPending = true;
+      return;
+    }
+    this.notify();
+  }
+  private notify(): void {
     for (const listener of [...this.listeners]) if (this.listeners.has(listener)) {
       try { listener(); } catch (error) { this.report(error); }
     }
+  }
+  // Teardown can revoke fields immediately and notify only after services unsubscribe.
+  deferNotifications(): () => void {
+    this.notificationDepth++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.notificationDepth--;
+      if (!this.notificationDepth && this.notificationPending) {
+        this.notificationPending = false;
+        this.notify();
+      }
+    };
   }
   private metadata(): Record<string, unknown> {
     const meta = this.record?.[META];
@@ -152,6 +177,9 @@ export class SessionDraft {
     encoded: ReadonlyMap<string, string> = new Map(),
   ): void {
     if (this.readError) throw this.readError;
+    if (this.storage && this.storage.getItem(this.key) !== this.storedBytes) {
+      throw new Error('Saved draft root has changed in another instance');
+    }
     const previous = this.metadata();
     const schemas = { ...(previous.schemas as Record<string, unknown> | undefined) };
     for (const [namespace, value] of encoded) Object.defineProperty(schemas, namespace, { value, enumerable: true, configurable: true, writable: true });
@@ -167,10 +195,12 @@ export class SessionDraft {
     if (!snapshot.text && !snapshot.unconfirmed && !token && !hasOpaque) {
       this.storage?.removeItem(this.key);
       this.record = undefined;
+      this.storedBytes = null;
     } else {
       const bytes = JSON.stringify(next);
       this.storage?.setItem(this.key, bytes);
       this.record = immutableDraftData(next);
+      this.storedBytes = bytes;
     }
   }
   restoreInput(namespace: string): DraftRestoreInput | undefined {
@@ -265,6 +295,7 @@ export class SessionDraft {
       if (!draftRecord(current) || !draftRecord(current[META]) || current[META].pendingToken !== token) {
         throw new Error('Saved draft submission token has changed');
       }
+      if (bytes !== this.storedBytes) throw new Error('Saved draft root has changed in another instance');
     }
   }
   private begin(token: string, encoded: ReadonlyMap<string, string>): void {
