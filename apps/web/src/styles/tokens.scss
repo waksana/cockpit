@@ -1,15 +1,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Token layer — the single source of truth for cockpit's look.
 //
-// INHERITANCE MODEL (rev26): structural tokens carry Telegram Web K's REAL
-// values (from tweb src/scss/variables.scss + base.scss), so spacing / radius /
-// font-ladder match tweb exactly. Only the COLOR tokens are overridden
-// with the Solarized palette. Ported tweb component CSS references tweb's own
+// The tweb structural namespace preserves Telegram Web K's original values
+// (src/scss/variables.scss + base.scss). Host-owned semantic roles below share
+// these foundations across chat and settings without changing the vendor scale.
+// Ported tweb component CSS references tweb's own
 // custom-property NAMES (--primary-color, --surface-color, --secondary-text-
 // color, …); we define those names here pointing at Solarized values, so the
 // vendored component rules resolve to our palette for free.
 //
-// Do NOT hand-tune structural numbers — change them here only to match tweb.
+// Keep tweb scalars faithful to their source. Evolve host roles here, not in
+// individual pages. --host-* is internal CSS, not the public Module UI API.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // ── tweb structural scalars (variables.scss, real values) ───────────────────
@@ -55,6 +56,20 @@ $sol-green:  #859900;  // ok
   --line-height: 1.3125;
 
   --messages-text-size: 16px;
+
+  // Internal host foundations; public-ui.scss maps its stable API onto these.
+  --host-space-xs: 4px;
+  --host-space-sm: 8px;
+  --host-space-md: 12px;
+  --host-space-lg: 16px;
+  --host-space-xl: 24px;
+  --host-text-title: var(--font-size-16);
+  --host-text-body: var(--font-size-14);
+  --host-text-meta: var(--font-size-12);
+  --host-leading-ui: 1.5;
+  --host-radius-control: var(--border-radius);
+  --host-radius-dialog: var(--border-radius-medium);
+  --host-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 
   // Motion is limited to functional loading feedback (.spinner in preloader.scss).
   --disabled-opacity: 0.3;

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createElement, type ComponentProps } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { compile } from 'sass';
 import type { ChatSession } from '../net/types';
 import { Sidebar } from '../components/Sidebar';
 import { filterSessions } from './session-list';
@@ -109,6 +110,15 @@ test('sidebar preserves its basic grid, native cwd label and empty-state distinc
   assert.match(render([]), /服务器上没有 session/);
   assert.match(render([session('one')], { query: 'missing' }), /没有匹配的会话/);
 });
+
+test('session rows own their spacing rather than inheriting the shared button gap', () => {
+  const css = compile(new URL('../styles/components/sidebar.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.chatlist-chat \{[^}]*column-gap: 0\.6rem;/);
+  assert.match(css, /\.chatlist-chat \{[^}]*row-gap: 0;/);
+  assert.match(css, /\.chatlist-chat \{[^}]*min-height: 4\.25rem;/);
+  assert.match(css, /\.chatlist-chat \.dialog-subtitle \{[^}]*margin-top: 0\.1rem;/);
+});
+
 test('an empty list is not authoritative before the first connection snapshot', () => {
   for (const connected of [true, false]) {
     const html = render([], { snapshotReady: false, connected });

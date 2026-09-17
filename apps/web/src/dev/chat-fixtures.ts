@@ -154,6 +154,7 @@ export const scenarios = [
   ['input-states', '同一输入框 / 状态切换 / 尺寸稳定'],
   ['cancelling', '停止请求中'],
   ['ask', '选择 / 自由回答'],
+  ['ask-unbroken', '连续长问句 / 长选项换行'],
   ['ask-queued', '长问题 / 队列 / 停止'],
   ['plan-queued', '计划 / 队列 / 停止'],
   ['elicitation-queued', '工具确认 / 队列 / 停止'],
@@ -231,10 +232,14 @@ export function fixtureSession(scenario: Scenario): ChatSession {
     queue: [{ id: 'queue-1', text: '然后检查窄屏布局。' }, { id: 'queue-2', text: '保留这条长的排队消息，不要因为主回合打断而把它丢弃。'.repeat(5) }],
   });
   if (scenario === 'cancelling') session.cancelling = true;
-  if (['ask', 'ask-queued', 'decision-stack', 'choice-only', 'freeform'].includes(scenario)) session.ask = {
+  if (['ask', 'ask-unbroken', 'ask-queued', 'decision-stack', 'choice-only', 'freeform'].includes(scenario)) session.ask = {
     requestId: 'lab-ask', question: '这次精修先聚焦哪一组组件？所有操作只影响当前隔离场景。',
     allowFreeform: scenario !== 'choice-only',
     ...(scenario !== 'freeform' ? { choices: ['阅读层级与代码（推荐）', '思考、工具与子代理', '输入反馈：覆盖长文字、发送失败和未确认结果'] } : {}),
+  };
+  if (scenario === 'ask-unbroken') session.ask = {
+    requestId: 'lab-ask-unbroken', question: 'UnbrokenQuestion'.repeat(60), allowFreeform: true,
+    choices: ['UnbrokenChoice'.repeat(60), '保留完整条件，并继续检查。'],
   };
   if (['plan', 'plan-queued', 'decision-stack'].includes(scenario)) session.planRequest = {
     requestId: 'lab-plan', summary: '## 组件精修计划\n\n保留薄原生适配，优先调整展示层。\n\n1. 统一阅读节奏。\n2. 明确工具与子代理状态。\n3. 覆盖草稿与输入的完整反馈。\n\n> 按钮只呈现原生提供的操作；推荐不代表自动执行。',

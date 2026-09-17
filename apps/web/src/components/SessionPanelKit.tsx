@@ -1,12 +1,28 @@
 // Shared layout and resource controls for session settings, MCP and Skills.
 
-import { useId, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import { Icon } from './Icon';
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { useMediaQuery } from '../lib/useMediaQuery';
 import { PaneHeader } from './PaneHeader';
 import { StateNotice } from './StateNotice';
+import { useClippedText } from '../lib/useClippedText';
+
+export function ExpandableText({ text, label, className = '' }: {
+  text: string; label: string; className?: string;
+}) {
+  const id = useId();
+  const { ref, clipped } = useClippedText(text, 2);
+  const [expandedText, setExpandedText] = useState<string | null>(null);
+  const expanded = expandedText === text;
+  return <div className={`panel-expandable ${className}`.trim()}>
+    <span ref={ref} id={id} className="panel-expandable-text" data-expanded={expanded || undefined}>{text}</span>
+    {clipped && <button type="button" className="panel-expandable-toggle ck-button"
+      aria-label={`${expanded ? '收起' : '展开'}${label}`} aria-expanded={expanded} aria-controls={id}
+      onClick={() => setExpandedText(expanded ? null : text)}>{expanded ? '收起' : '展开全文'}</button>}
+  </div>;
+}
 
 // The shell for a per-session detail sub-page rendered in the info-panel slot:
 // the same header (close + title) and scrollable body as SessionInfoPanel.

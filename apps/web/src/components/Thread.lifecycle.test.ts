@@ -158,6 +158,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     IS_REACT_ACT_ENVIRONMENT: true,
     requestAnimationFrame: (callback: FrameRequestCallback) => { frames.set(++frameId, callback); return frameId; },
     cancelAnimationFrame: (id: number) => { frames.delete(id); },
+    getComputedStyle: () => ({ lineHeight: '21px' }),
     ResizeObserver: class {
       private callback: () => void;
       constructor(callback: () => void) { this.callback = callback; resizes.add(callback); }

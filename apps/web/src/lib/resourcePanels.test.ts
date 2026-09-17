@@ -259,10 +259,11 @@ for (const Component of [SessionMcp, SessionSkills]) {
       session, onClose: noop,
     }));
     assert.match(html, /等待连接/);
-    assert.match(html, /Resource test/);
+    assert.match(html, Component === SessionMcp ? /title="本会话 MCP"/ : /title="本会话 Skills"/);
+    assert.doesNotMatch(html, /Resource test/, 'the standalone header does not append the session title');
     assert.doesNotMatch(html, /<nav|info-panel-more|role="tab"/);
     assert.match(html, /aria-label="刷新" disabled=""/);
-    assert.doesNotMatch(html, /没有配置 MCP|本会话没有可用的 MCP|没有可用的 skill/);
+    assert.doesNotMatch(html, /没有配置 MCP|本会话没有可用的 MCP|当前会话未发现技能/);
   });
 }
 

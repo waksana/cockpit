@@ -9,11 +9,12 @@ import { IntentHttpError } from '../net/client';
 import type { ChatSession } from '../net/types';
 import { useSessionResource } from '../lib/useSessionResource';
 import { useKeyedResource } from '../lib/useKeyedResource';
-import { SessionInfoPanel } from './SessionInfoPanel';
+import { ModelControls, SessionInfoPanel } from './SessionInfoPanel';
 import { SessionMcp, SessionSkills } from './Manage';
 import { CopyButton } from './CopyButton';
 import { ManageWorkspace } from './ManageWorkspace';
 import { SessionDetails } from './SessionDetails';
+import { ExpandableText } from './SessionPanelKit';
 import { GlobalNavigation } from './GlobalNavigation';
 
 // The same deterministic React DOM host as Thread.lifecycle, limited to the
@@ -28,7 +29,17 @@ class HostNode extends EventTarget {
   childNodes: HostNode[] = [];
   attributes = new Map<string, string>();
   style = { setProperty() {}, removeProperty() {} };
-  selected = false;
+  private selectedValue = false;
+  get selected() { return this.selectedValue; }
+  set selected(value: boolean) {
+    if (value && this.tagName === 'OPTION') {
+      for (const sibling of this.parentNode?.childNodes ?? []) sibling.selectedValue = false;
+    }
+    this.selectedValue = value;
+  }
+  scrollHeight = 21;
+  scrollWidth = 100;
+  clientWidth = 100;
   private text = '';
   constructor(tag: string, ownerDocument: HostDocument) {
     super();
@@ -106,12 +117,20 @@ class HostDocument extends EventTarget {
 
 function mount(t: TestContext) {
   const document = new HostDocument();
+  const observers = new Set<() => void>();
   const globals = {
     document, window: Object.assign(new EventTarget(), {
       document, HTMLIFrameElement: class {}, history: { state: null },
       matchMedia: () => Object.assign(new EventTarget(), { matches: false }),
     }),
     Element: HostNode, HTMLElement: HostNode, IS_REACT_ACT_ENVIRONMENT: true,
+    getComputedStyle: () => ({ lineHeight: '21px' }),
+    ResizeObserver: class {
+      private callback: () => void;
+      constructor(callback: () => void) { this.callback = callback; }
+      observe() { observers.add(this.callback); }
+      disconnect() { observers.delete(this.callback); }
+    },
   };
   const restore: (() => void)[] = [];
   for (const [key, value] of Object.entries(globals)) {
@@ -131,6 +150,7 @@ function mount(t: TestContext) {
   });
   return {
     container, document,
+    resize: () => act(async () => { observers.forEach(callback => callback()); }),
     render: (children: ReactNode) => act(async () => root.render(children)),
     event: (node: HostNode, type: string) => act(async () => {
       const event = new Event(type, { bubbles: true });
@@ -171,6 +191,68 @@ function button(container: HostNode, text: string) {
   return result;
 }
 function disabled(node: HostNode) { return node.attributes.has('disabled'); }
+
+test('two-line disclosure measures overflow, keeps collapse while expanded, and remeasures resize and late text', async t => {
+  const h = mount(t);
+  const render = (text: string) => h.render(createElement(ExpandableText, { text, label: '说明' }));
+  await render('short');
+  const text = h.container.querySelector('.panel-expandable-text')!;
+  assert.equal(h.container.querySelector('button'), null);
+  text.scrollHeight = 63;
+  await render('late content with three lines');
+  const expand = button(h.container, '展开全文');
+  assert.equal(expand.getAttribute('aria-expanded'), 'false');
+  assert.equal(expand.getAttribute('aria-controls'), text.getAttribute('id'));
+  await h.event(expand, 'click');
+  assert.equal(text.getAttribute('data-expanded'), 'true');
+  await h.resize();
+  assert.equal(button(h.container, '收起').getAttribute('aria-expanded'), 'true');
+  await h.event(button(h.container, '收起'), 'click');
+  assert.equal(text.getAttribute('data-expanded'), null);
+  text.scrollHeight = 42;
+  await h.resize();
+  assert.equal(h.container.querySelector('button'), null, 'exactly two lines has no unnecessary disclosure');
+  text.scrollHeight = 84;
+  await h.resize();
+  await h.event(button(h.container, '展开全文'), 'click');
+  await render('replacement content starts collapsed');
+  assert.equal(text.getAttribute('data-expanded'), null);
+  text.scrollHeight = 21;
+  await render('short again');
+  assert.equal(h.container.querySelector('button'), null);
+  await h.render(null);
+  await h.resize();
+});
+
+test('model drafts survive queued results and newer native values; reset and apply stay manual', async t => {
+  const h = mount(t);
+  const response = deferred<IntentResult<'setModel'>>();
+  const calls: string[] = [];
+  const onSetModel = async (id: string) => { calls.push(id); return response.promise; };
+  const value = { ...session, availableModels: [
+    { modelId: 'metadata-model', name: 'Metadata model' }, { modelId: 'draft', name: 'Draft model' },
+  ] };
+  const render = (currentModelId: string) => h.render(createElement(ModelControls, {
+    session: { ...value, currentModelId }, disabled: false, onSetModel,
+  }));
+  await render('metadata-model');
+  const select = h.container.querySelector('select')!;
+  select.value = 'draft';
+  await h.event(select, 'change');
+  assert.deepEqual(calls, []);
+  assert.match(h.container.textContent, /编辑草稿/);
+  await h.event(button(h.container, '应用配置'), 'click');
+  select.value = 'metadata-model';
+  await h.event(select, 'change');
+  await render('draft');
+  await act(async () => response.resolve({ ok: true, result: { status: 'queued' } }));
+  assert.equal(select.value, 'metadata-model', 'late native results do not overwrite the draft');
+  assert.match(h.container.textContent, /等待原生应用/);
+  assert.deepEqual(calls, ['draft']);
+  await h.event(button(h.container, '重置'), 'click');
+  assert.equal(select.value, 'draft', 'reset uses the latest authoritative value');
+  assert.deepEqual(calls, ['draft'], 'reset is never a write');
+});
 
 test('global navigation does not take focus on entry or route remount', async t => {
   const h = mount(t);
@@ -454,15 +536,19 @@ for (const Component of [SessionMcp, SessionSkills]) {
       mcpSession: async () => { await request.promise; return []; },
       skillsSession: async () => { await request.promise; return []; },
     });
-    await h.render(createElement(Component, { session, onClose: noop }));
+    await h.render(createElement(MemoryRouter, null, createElement(Component, { session, onClose: noop })));
     const notice = h.container.querySelector('[data-kind="loading"]');
     assert.ok(notice);
     assert.equal(notice.getAttribute('data-placement'), 'pane');
     assert.match(notice.textContent, /加载中/);
-    assert.doesNotMatch(h.container.textContent, /本会话没有可用的 MCP|没有可用的 skill/);
+    assert.doesNotMatch(h.container.textContent, /本会话没有可用的 MCP|当前会话未发现技能/);
     await act(async () => request.resolve());
     assert.equal(h.container.querySelector('[data-kind="loading"]'), null);
-    assert.match(h.container.textContent, /本会话没有可用的 MCP|没有可用的 skill/);
+    assert.match(h.container.textContent, /本会话没有可用的 MCP|当前会话未发现技能/);
+    if (Component === SessionSkills) {
+      assert.equal(h.container.querySelector('.manage-global-link')?.getAttribute('href'), '/skills');
+      assert.match(h.container.textContent, /不改变全局默认/);
+    }
   });
 
   test(`${Component.name}: toggles show pending without optimistic values or a false refresh spinner`, async t => {
@@ -482,12 +568,12 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.equal(calls, 1);
     assert.equal(disabled(control), true);
     assert.equal(control.getAttribute('aria-checked'), 'true', 'no optimistic native value');
-    const notice = h.container.querySelector('.manage-row-feedback');
+    const notice = h.container.querySelector('.manage-row-main');
     assert.ok(notice);
     assert.equal(h.container.querySelector(Component === SessionMcp ? '.mcp-operation-status' : '.manage-row-pending')?.textContent, '正在关闭…');
     if (Component === SessionMcp) {
       assert.equal(notice.querySelector('.manage-row-pending'), null);
-      assert.equal(notice.querySelector('.manage-row-description')?.getAttribute('aria-hidden'), null);
+      assert.equal(notice.querySelector('.manage-row-status')?.getAttribute('aria-hidden'), null);
     }
     assert.equal(h.container.querySelectorAll('.spinner').length, 1);
     const refresh = h.container.querySelector('[aria-label="刷新"]');
@@ -570,7 +656,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
     const [first, second] = h.container.querySelectorAll('[role="switch"]');
     const row = h.container.querySelector('[data-resource-name="one"]')!;
     const other = h.container.querySelector('[data-resource-name="two"]')!;
-    const source = row.querySelector('.manage-row-description')!;
+    const source = row.querySelector('.manage-row-source');
     await h.event(first, 'click');
     assert.equal(disabled(first), true);
     assert.equal(disabled(second), Component === SessionMcp, 'MCP is serial; Skills operations are per item');
@@ -579,11 +665,12 @@ for (const Component of [SessionMcp, SessionSkills]) {
       useCockpit.setState({ resourceRevisions: { [session.sessionId]: { mcp: 1, skills: 1 } } });
     });
     assert.equal(h.container.querySelectorAll('.spinner').length, 1, 'only the target row owns loading during a mutation');
-    assert.equal(h.container.querySelector('.manage-scope'), null, 'no persistent scope explanation');
+    assert.match(h.container.querySelector('.manage-note')!.textContent,
+      Component === SessionMcp ? /全局默认不在本页修改/ : /不改变全局默认/);
     assert.match(row.textContent, /正在关闭/);
     if (Component === SessionMcp) {
-      assert.equal(source.textContent, 'native');
-      assert.equal(source.getAttribute('aria-hidden'), null);
+      assert.equal(source!.textContent, 'native');
+      assert.equal(source!.getAttribute('aria-hidden'), null);
       assert.equal(row.querySelector('.mcp-operation-status')?.textContent, '正在关闭…');
       assert.doesNotMatch(row.querySelector('.manage-row-name')!.textContent, /已连接/);
     }
@@ -598,7 +685,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.ok(!disabled(first) && !disabled(second));
     assert.equal(h.container.querySelector('.spinner'), null);
     if (Component === SessionMcp) {
-      assert.equal(source.textContent, 'native');
+      assert.equal(source!.textContent, 'native');
       assert.match(row.querySelector('.manage-row-status')!.textContent, /已连接/);
     }
     assert.deepEqual(calls, ['one']);
@@ -669,7 +756,7 @@ for (const initiallyEnabled of [false, true]) {
     });
     await h.render(createElement(SessionMcp, { session, onClose: noop }));
     const row = h.container.querySelector('[data-resource-name="native-server"]')!;
-    const source = row.querySelector('.manage-row-description')!;
+    const source = row.querySelector('.manage-row-source')!;
     await h.event(row.querySelector('[role="switch"]')!, 'click');
     assert.equal(source.textContent, 'builtin');
     assert.equal(source.getAttribute('aria-hidden'), null);
@@ -678,7 +765,7 @@ for (const initiallyEnabled of [false, true]) {
     assert.equal(h.container.querySelectorAll('.spinner').length, 1);
     await act(async () => mutation.resolve());
     assert.equal(row.querySelector('.manage-row-status')?.textContent, initiallyEnabled ? '已关闭' : '已连接');
-    assert.equal(row.querySelector('.manage-row-description'), source);
+    assert.equal(row.querySelector('.manage-row-source'), source);
     assert.equal(source.textContent, 'builtin');
   });
 }
@@ -805,15 +892,21 @@ test('session ID copies its exact value and retains confirmation without a resto
   }));
   const copy = h.container.querySelector('[aria-label="复制 session ID"]');
   assert.ok(copy);
-  assert.equal(copy.textContent, session.sessionId);
-  assert.equal(copy.querySelector('.ck-icon'), null, 'the ID itself is the target, not an extra copy icon');
+  const value = h.container.querySelector('.info-session-id-value')!;
+  assert.equal(value.textContent, session.sessionId);
+  assert.equal(value.getAttribute('aria-hidden'), null);
+  assert.equal(copy.querySelector('.ck-icon')?.getAttribute('data-icon'), 'copy', 'copy has its own obvious action');
+  assert.equal(copy.querySelector('.chat-copy-label-text')?.textContent, '复制');
   await h.event(copy, 'click');
   assert.deepEqual(copied, [session.sessionId]);
   assert.match(copy.textContent, /已复制/);
-  assert.equal(copy.querySelector('.copy-value-text')?.getAttribute('aria-hidden'), 'true');
+  assert.equal(h.container.querySelector('.info-session-id-value'), value);
+  assert.equal(value.textContent, session.sessionId);
+  assert.equal(value.getAttribute('aria-hidden'), null);
   await act(async () => t.mock.timers.tick(10_000));
-  assert.equal(copy.querySelector('.copy-value-feedback')?.textContent, '已复制');
-  assert.equal(copy.querySelector('.copy-value-text')?.getAttribute('aria-hidden'), 'true');
+  assert.equal(copy.querySelector('.chat-copy-label-text')?.textContent, '已复制');
+  assert.equal(value.textContent, session.sessionId);
+  assert.equal(value.getAttribute('aria-hidden'), null);
   assert.equal(h.container.querySelector('.chat-sr-only')?.textContent, '已复制');
   await h.event(copy, 'click');
   assert.deepEqual(copied, [session.sessionId, session.sessionId], 'the confirmation still copies the original ID');

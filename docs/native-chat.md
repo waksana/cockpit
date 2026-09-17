@@ -188,8 +188,10 @@ message-copy menu. Code and tool-detail copy buttons remain available.
 Execution status/actions, the queue, native decisions and the original composer
 share one default-open input card. Its status header is a keyboard-operable native
 `details`/`summary`, with hover/focus feedback but no visible folding arrow.
-Clicking the non-action header area folds everything below it; only a 40px status
-row and any available Stop/interrupt controls remain. Ordinary idle input has no
+Clicking the non-action header area folds everything below it; only the status
+and any available Stop/interrupt controls remain. The header has the same 32px
+desktop minimum in both states, expanding to 44px for coarse pointers and growing
+when its actions need another line. Ordinary idle input has no
 header. Neither long content nor streaming updates automatically fold the card.
 The outer frame, fill and original input row are identical in idle, running and
 decision states. A question does not add another editor frame or lateral inset.
@@ -208,7 +210,9 @@ available Chat height. Native `::details-content` participates in that flex layo
 the queue, question, choices, plan/confirmation and original input share one content
 scroller only when they cannot fit. The editor is not separately pinned while a
 long question scrolls. Question text remains selectable independently of the
-header. Choice selection still submits directly; freeform text uses the existing
+header. Questions and choices wrap even continuous identifiers at their own
+component boundary, without clipping the option or widening the card.
+Choice selection still submits the complete original value directly; freeform text uses the existing
 send action, and choice-only questions still block freeform submission.
 
 The same editor and module contribution instances stay mounted while the card
@@ -231,9 +235,11 @@ than one kind is present. A pending decision does not hide Stop.
 Stop retains its native queue-clearing behavior and stays disabled
 while disconnected, closing, cancelling or another protected operation is active.
 The execution label takes the space remaining beside its actions rather than
-reserving a large minimum column. At normal phone widths the status and both
-queue actions share one line; long status text truncates. Narrow containers use
-smaller horizontal action padding, not smaller text or JavaScript width calculations.
+reserving a large minimum column. Where space permits, the status and both
+queue actions share one line; long status text truncates. When they cannot fit,
+the actions flow onto another line with the same spacing and font size. The
+action group can also wrap its buttons; it never clips Stop or relies on
+JavaScript width calculations. Long action text remains readable when enlarged.
 There is no queue-count heading or repeated composer explanation. The input
 placeholder and submit label identify the active operation; muted placeholder
 text remains distinct from entered text, including on focus. Existing attachment
@@ -248,19 +254,28 @@ the complete original text through the same control used by code/tool details,
 without submitting, removing, expanding or collapsing the queued entry.
 Copying is keyboard-accessible without first expanding the text.
 Expanded queue text uses the shared card scroller rather than another independently
-capped queue region.
+capped queue region. The summary, copy and remove targets retain the explicit
+32px queue density on every pointer type, without a leading expansion arrow.
+Summary text and copy feedback share the metadata line-height role; padding
+adapts to that line box rather than becoming negative with larger text.
+The copy area follows its content instead of imposing a fixed text-width cap.
+The input header, complete-plan disclosure and unfinished-module recovery action
+are not queue/process density exceptions: each has at least a 44px target for
+coarse pointers.
 
 ### Chat layout and typography
 
-`styles/components/chat-design.scss` defines Chat-local layout, typography,
-relationship and inset roles, without changing the global theme or font ladder.
+`styles/components/chat-design.scss` maps Chat-local layout, typography,
+relationship and inset roles to the shared host foundations used by the three
+independent session panels. Buttons and inputs use the public control radius;
+flat process/queue rows do not gain separate rounded cards.
 Type expresses importance rather than shrinking everything to fit:
 
 | Role | Treatment |
 | --- | --- |
 | Main content | 16px message prose, reasoning, questions and input. Prose uses 1.7 line height; decision text uses 1.6 and editable controls 1.5. |
 | Secondary content | 14px choices, plan summaries and the task prompt inside an agent card. The agent's actual response remains main content. |
-| Process and labels | 13px labels/code; native tool headers retain 28px rows and 20px line height. Code uses the existing system monospace stack. |
+| Process and labels | 13px labels/code; native tool headers retain 28px rows with the shared 1.5 UI line height. Code uses the existing system monospace stack. |
 | Metadata and compact queue | 12px; timestamps use an 18px line box and tabular numerals. Queue hit targets and density remain independent of the type size. |
 | Markdown hierarchy | At the main 16px size, headings use 24 / 20 / 18 / 16 / 14px; they scale with the local prose context rather than forcing page-sized headings into small cards. |
 

@@ -552,7 +552,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
                 <div key={q.id} className="chat-queue-item">
                   <details className="chat-queue-entry">
                     <summary className="chat-queue-text" aria-label={`查看排队消息：${q.text}`}>
-                      <Icon className="queue-chevron" name="chevron_right" size={16} />{q.text}
+                      {q.text}
                     </summary>
                   </details>
                   <div className="chat-queue-copy"><CopyButton text={q.text} label="复制排队消息" /></div>

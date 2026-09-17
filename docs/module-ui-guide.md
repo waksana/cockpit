@@ -34,6 +34,16 @@ version and a documented paired migration. Internal stylesheet refactors cannot
 silently break these names. Modules should not infer support from a private
 selector or duplicate a fallback copy of the host stylesheet.
 
+The host's internal visual foundations live in `styles/tokens.scss`: the
+`--host-*` roles own shared spacing (4/8/12/16/24px), UI typography
+(16px title / 14px body / 12px metadata, 1.5 leading), and control/dialog radii.
+They preserve the original tweb structural namespace and Solarized palette.
+Chat aliases these foundations while retaining its 16px / 1.7 prose role and
+explicit dense-control exceptions. Session settings, session MCP and session
+Skills remain separate pages with flat sections; they share visual roles, not
+navigation or mutation policy. **`--host-*` and `--chat-*` are not module APIs**;
+modules continue to use only the public `--ck-*` variables below.
+
 The host loads its base stylesheet; a module declares its business stylesheet in
 `frontend.styles`. Both live in the **same document**, without Shadow DOM or a
 style sandbox. Modules keep a unique prefix, such as `cf-` or `example-`, for their
@@ -63,9 +73,21 @@ not replace disabling mutations. Keep failures visible and preserve retry input.
 
 The default click target is 40px, at least 44px for coarse pointers; it is separate
 from the 16/20/24px drawing. Business CSS may control layout and geometry but
-must not shrink the target to the SVG size. Existing dense host disclosure/copy
-rows retain their 28/32px desktop geometry and expand to 44px for coarse pointers;
-that private layout is not another public button appearance.
+must not shrink the target to the SVG size. Dense host tool/thought disclosure
+and process-summary rows are an explicit reading-density exception: their
+single-line height stays 28px for all pointer types, with the whole row clickable.
+Their hit areas do not overlap adjacent rows; this trades touch target height
+for compact process reading. Multiline content can still grow. Dense queue rows
+are another explicit exception: a queue-local `--ck-control-size` resolving to 32px keeps
+message summaries and their copy/remove controls aligned at 32px on all pointers.
+The text remains clickable to expand without an extra arrow. Copy controls
+outside the queue retain 32px desktop geometry and expand to 44px for coarse pointers.
+The input-card header, full-plan disclosure and unfinished-module recovery action
+also expand to 44px for coarse pointers. They do not inherit the dense queue
+exception. Narrow execution rows wrap their actions instead of changing their
+font, radius or spacing scale.
+This private layout is not another public button appearance or a blanket
+exception for send, stop, session deletion, or other standalone actions.
 Public selectors do not depend on a
 host ancestor. Avoid changing border/padding or swapping differently sized icons
 on hover, pending or confirmation.

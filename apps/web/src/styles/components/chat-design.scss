@@ -2,39 +2,42 @@
 // Chat; component geometry is independent of the surrounding window width.
 .chat, .chat-topbar {
   --chat-text-body: var(--messages-text-size);
-  --chat-text-secondary: var(--font-size-14);
+  --chat-text-secondary: var(--host-text-body);
   --chat-text-label: var(--font-size-13);
-  --chat-text-meta: var(--font-size-12);
+  --chat-text-meta: var(--host-text-meta);
   --chat-leading-prose: 1.7;
   --chat-leading-decision: 1.6;
-  --chat-leading-ui: 1.5;
+  --chat-leading-ui: var(--host-leading-ui);
   --chat-leading-heading: 1.4;
   --chat-leading-code: 1.65;
-  --chat-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+  --chat-font-mono: var(--host-font-mono);
 }
 
 .chat {
+  // Explicit dense-reading exceptions; standalone touch actions still use --ck-control-size.
+  --chat-row-process: 28px;
+  --chat-control-compact: 32px;
   --chat-reading-width: 52rem;
   --chat-gutter: clamp(1rem, 4vw, 1.5rem);
-  --chat-gap-message: 8px;
-  --chat-gap-speaker: 16px;
-  --chat-gap-process: 12px;
-  --chat-gap-meta: 4px;
-  --chat-gap-region: 8px;
-  --chat-gap-content: 12px;
-  --chat-gap-control: 8px;
-  --chat-inset-transcript: 16px;
-  --chat-inset-panel: 12px;
-  --chat-inset-compact: 8px;
-  --chat-inset-detail: 24px;
+  --chat-gap-message: var(--host-space-sm);
+  --chat-gap-speaker: var(--host-space-lg);
+  --chat-gap-process: var(--host-space-md);
+  --chat-gap-meta: var(--host-space-xs);
+  --chat-gap-region: var(--host-space-sm);
+  --chat-gap-content: var(--host-space-md);
+  --chat-gap-control: var(--host-space-sm);
+  --chat-inset-transcript: var(--host-space-lg);
+  --chat-inset-panel: var(--host-space-md);
+  --chat-inset-compact: var(--host-space-sm);
+  --chat-inset-detail: var(--host-space-xl);
   --chat-inset-bubble: 0.65rem 0.85rem;
-  --chat-inset-field: 8px 12px;
+  --chat-inset-field: var(--host-space-sm) var(--host-space-md);
   --chat-gap-prose: 0.65em;
   --chat-gap-prose-section: 0.85em;
-  --chat-inset-bottom: 4px;
+  --chat-inset-bottom: var(--host-space-xs);
 
   row-gap: var(--chat-gap-region);
-  @media (max-width: 599px) { --chat-gutter: 12px; }
+  @media (max-width: 599px) { --chat-gutter: var(--host-space-md); }
 }
 
 @mixin column {

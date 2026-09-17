@@ -12,8 +12,8 @@
   --ck-icon-size: 24px;
   --ck-icon-stroke: 2;
   --ck-control-size: 40px;
-  --ck-space: 8px;
-  --ck-radius: 12px;
+  --ck-space: var(--host-space-sm);
+  --ck-radius: var(--host-radius-control);
   --ck-disabled-opacity: var(--disabled-opacity);
 }
 
@@ -35,7 +35,7 @@
   background: transparent;
   color: var(--ck-color-text);
   font: inherit;
-  line-height: 1.5;
+  line-height: var(--host-leading-ui);
   text-decoration: none;
   cursor: pointer;
 }
@@ -59,7 +59,7 @@
   background: var(--ck-color-surface);
   color: var(--ck-color-text);
   font: inherit;
-  line-height: 1.5;
+  line-height: var(--host-leading-ui);
   accent-color: var(--ck-color-accent);
 }
 
