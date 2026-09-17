@@ -67,10 +67,13 @@ must not shrink the target to the SVG size. Dense host tool/thought disclosure
 and process-summary rows are an explicit reading-density exception: their
 single-line height stays 28px for all pointer types, with the whole row clickable.
 Their hit areas do not overlap adjacent rows; this trades touch target height
-for compact process reading. Multiline content can still grow. Copy controls
-retain 32px desktop geometry and expand to 44px for coarse pointers.
+for compact process reading. Multiline content can still grow. Dense queue rows
+are another explicit exception: a queue-local `--ck-control-size: 32px` keeps
+message summaries and their copy/remove controls aligned at 32px on all pointers.
+The text remains clickable to expand without an extra arrow. Copy controls
+outside the queue retain 32px desktop geometry and expand to 44px for coarse pointers.
 This private layout is not another public button appearance or a blanket
-exception for send, stop, delete, or other standalone actions.
+exception for send, stop, session deletion, or other standalone actions.
 Public selectors do not depend on a
 host ancestor. Avoid changing border/padding or swapping differently sized icons
 on hover, pending or confirmation.

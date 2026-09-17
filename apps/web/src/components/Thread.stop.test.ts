@@ -94,6 +94,8 @@ test('stop and interrupt share one execution action group outside the scrolling 
 
 test('idle queues show their messages without inventing a running operation, and read-only views have no controls', () => {
   const html = render({ status: 'idle', queue: [{ id: 'q', text: 'Next request' }] });
+  assert.match(html, /<summary class="chat-queue-text" aria-label="查看排队消息：Next request">Next request<\/summary>/);
+  assert.doesNotMatch(html, /queue-chevron/);
   assert.match(html, /chat-execution-label[^>]*>等待处理/);
   assert.doesNotMatch(html, /chat-execution-actions/);
   const readonly = renderToStaticMarkup(createElement(Thread, {

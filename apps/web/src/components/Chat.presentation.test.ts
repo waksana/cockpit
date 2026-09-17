@@ -186,6 +186,7 @@ test('dense process rows stay compact on touch without shrinking standalone cont
 
 test('queue rows align their first line and controls without vertically centering expanded messages', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.chat-queue \{[^}]*--ck-control-size: 32px;/);
   assert.match(css, /\.chat-queue-item \{[^}]*align-items: flex-start;/);
   assert.match(css, /\.chat-queue-text \{[^}]*min-block-size: var\(--ck-control-size\);[^}]*line-height: 20px;[^}]*padding-block: calc\(\(var\(--ck-control-size\) - 1lh\) \/ 2\);/);
   assert.match(css, /\.chat-queue-copy \.chat-copy-button \{[^}]*min-block-size: var\(--ck-control-size\);/);

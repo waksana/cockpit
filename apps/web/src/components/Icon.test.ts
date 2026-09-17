@@ -35,7 +35,7 @@ test('Module UI v1 publishes common primitives without private ancestors or icon
   const chat = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(chat, /\.chat-ask-choice \{[^}]*justify-content: flex-start;/,
     'shared flex buttons must preserve the existing left-aligned answer choices');
-  assert.match(chat, /\.chat-queue-entry\[open\] \.queue-chevron \{[^}]*rotate\(90deg\)/);
+  assert.doesNotMatch(chat, /queue-chevron/);
   const management = compile(new URL('../styles/components/manage.scss', import.meta.url).pathname).css;
   assert.match(management, /\.manage-row-sub \{[^}]*display: block;/);
   assert.match(management, /\.switch \{[^}]*height: var\(--ck-control-size\)/);

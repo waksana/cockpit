@@ -762,6 +762,7 @@ button.activity-head {
   flex: none; font-size: var(--chat-text-meta); line-height: var(--chat-leading-ui); color: var(--secondary-text-color);
 }
 .chat-queue {
+  --ck-control-size: 32px;
   display: flex; flex-direction: column;
   min-width: 0; margin: 0; padding: var(--chat-gap-meta) var(--chat-inset-compact);
   border-bottom: 1px solid var(--border-color);
@@ -781,8 +782,6 @@ button.activity-head {
   &::-webkit-details-marker { display: none; }
 }
 .chat-queue-entry[open] .chat-queue-text { white-space: pre-wrap; overflow-wrap: anywhere; }
-.queue-chevron { margin-inline-end: var(--chat-gap-meta); }
-.chat-queue-entry[open] .queue-chevron { transform: rotate(90deg); }
 .chat-queue-copy {
   display: flex; flex: none; max-width: 5rem;
   .chat-copy { flex-direction: column; align-items: flex-start; }
