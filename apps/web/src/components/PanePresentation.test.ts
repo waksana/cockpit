@@ -61,7 +61,7 @@ test('activity headers retain one first-line baseline and icon slot across expan
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   const header = css.match(/\.activity-head \{([^}]*)\}/)?.[1];
   assert.ok(header);
-  for (const declaration of [/align-items: center;/, /height: 28px;/, /padding: 0;/]) {
+  for (const declaration of [/align-items: center;/, /height: var\(--chat-row-process\);/, /padding: 0;/]) {
     assert.match(header, declaration);
   }
   assert.match(css, /\.activity-icon \{[^}]*height: 20px;/);

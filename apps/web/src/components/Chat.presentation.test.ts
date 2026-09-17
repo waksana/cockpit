@@ -122,7 +122,7 @@ test('one card frame retains compact execution/queue typography and independent 
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.chat-input-card \{[^}]*border: 1px solid/);
   assert.doesNotMatch(css.match(/\.chat-ask \{([^}]+)\}/)?.[1] ?? '', /border:|background:/);
-  assert.match(css, /\.chat-execution-actions button \{[^}]*min-height: 32px;[^}]*font-size: var\(--chat-text-meta\)/);
+  assert.match(css, /\.chat-execution-actions button \{[^}]*min-block-size: var\(--chat-control-compact\);[^}]*font-size: var\(--chat-text-meta\)/);
   assert.match(css, /\.chat-queue-item \{[^}]*font-size: var\(--chat-text-meta\)/);
   assert.match(css, /\.chat-ask-choice \{[^}]*font-size: var\(--chat-text-secondary\)/);
   assert.doesNotMatch(css, /\.chat-queue-label|\.chat-composer-hint/);
@@ -178,8 +178,9 @@ test('all input states share one full-width unframed editor row inside the same 
 
 test('dense process rows stay compact on touch without shrinking standalone controls', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.activity-head \{[^}]*height: 28px;[^}]*min-block-size: 28px;/);
-  assert.match(css, /\.process-summary \{[^}]*min-height: 28px;/);
+  assert.match(css, /--chat-row-process: 28px;/);
+  assert.match(css, /\.activity-head \{[^}]*height: var\(--chat-row-process\);[^}]*min-block-size: var\(--chat-row-process\);/);
+  assert.match(css, /\.process-summary \{[^}]*min-height: var\(--chat-row-process\);/);
   const coarseRules = [...css.matchAll(/@media \(pointer: coarse\) \{([\s\S]*?)\n\}/g)].map(match => match[1]).join('\n');
   assert.doesNotMatch(coarseRules, /\.activity-head|\.process-summary/);
   assert.match(coarseRules, /\.chat-copy-button\.ck-button[^}]*min-block-size: var\(--ck-control-size\)/);
@@ -188,12 +189,47 @@ test('dense process rows stay compact on touch without shrinking standalone cont
 
 test('queue rows align their first line and controls without vertically centering expanded messages', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.chat-queue \{[^}]*--ck-control-size: 32px;/);
+  assert.match(css, /--chat-control-compact: 32px;/);
+  assert.match(css, /\.chat-queue \{[^}]*--ck-control-size: var\(--chat-control-compact\);/);
   assert.match(css, /\.chat-queue-item \{[^}]*align-items: flex-start;/);
-  assert.match(css, /\.chat-queue-text \{[^}]*min-block-size: var\(--ck-control-size\);[^}]*line-height: 20px;[^}]*padding-block: calc\(\(var\(--ck-control-size\) - 1lh\) \/ 2\);/);
+  assert.match(css, /\.chat-queue-text \{[^}]*min-block-size: var\(--ck-control-size\);[^}]*line-height: var\(--chat-leading-ui\);[^}]*padding-block: max\(0px, \(var\(--ck-control-size\) - 1lh\) \/ 2\);/);
   assert.match(css, /\.chat-queue-copy \.chat-copy-button \{[^}]*min-block-size: var\(--ck-control-size\);/);
   assert.match(css, /\.chat-queue-remove \{[^}]*align-self: flex-start;/);
-  assert.match(css, /@media \(pointer: coarse\) \{[^{}]*\.chat-execution-actions \.ck-button, \.chat-ask-choice \{\s*min-block-size: var\(--ck-control-size\);/);
+  assert.doesNotMatch(css.match(/\.chat-queue-copy \{([^}]+)\}/)?.[1] ?? '', /max-width: 5rem/);
+  assert.match(css, /\.chat-queue-copy \{[^}]*inline-size: min-content;/, 'copy feedback wraps to the intrinsic button width instead of consuming the message and Remove columns');
+});
+
+test('decision text wraps at its actual component boundary without clipping long choices', () => {
+  const session = fixtureSession('ask-unbroken');
+  const html = renderToStaticMarkup(createElement(Thread, { session, onLoadMore() {} }));
+  assert.ok(html.includes(session.ask!.question));
+  assert.ok(html.includes(session.ask!.choices![0]));
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.chat-pending-body \{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;/);
+  assert.match(css, /\.chat-ask-q \{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/);
+  assert.match(css, /\.chat-ask-choice \{[^}]*min-width: 0;[^}]*max-width: 100%;[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/);
+});
+
+test('execution actions wrap within the card rather than shrinking text or clipping Stop', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.chat-execution-head \{[^}]*flex-wrap: wrap;[^}]*gap: var\(--chat-gap-meta\);/);
+  assert.match(css, /\.chat-execution-actions \{[^}]*flex-wrap: wrap;[^}]*max-width: 100%;[^}]*gap: var\(--chat-gap-meta\);/);
+  assert.match(css, /\.chat-execution-actions button \{[^}]*max-width: 100%;[^}]*white-space: normal;[^}]*overflow-wrap: anywhere;/);
+  assert.doesNotMatch(css, /@container chat-dock \(max-width: 21rem\)/, 'narrow cards use flow, not a smaller spacing scale');
+});
+
+test('standalone disclosures and recovery share touch targets and public control geometry', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  const coarse = [...css.matchAll(/@media \(pointer: coarse\) \{([\s\S]*?)\n\}/g)].map(match => match[1]).join('\n');
+  for (const selector of ['.chat-execution-head', '.chat-pending-detail > summary', '.module-draft-recovery > button']) {
+    assert.ok(coarse.includes(selector), `${selector} follows the coarse target`);
+  }
+  assert.match(coarse, /min-block-size: var\(--ck-control-size\);/);
+  assert.match(css, /\.chat-pending-detail summary \{[^}]*align-content: center;/);
+  assert.match(css, /\.chat-ask-choice \{[^}]*min-block-size: var\(--ck-control-size\);[^}]*border-radius: var\(--ck-radius\);/);
+  assert.match(css, /\.chat-execution-actions button \{[^}]*padding: var\(--chat-gap-meta\) var\(--chat-inset-compact\);[^}]*border-radius: var\(--ck-radius\);/);
+  assert.match(css, /\.chat-input-card \{[^}]*border-radius: var\(--host-radius-control\);/);
+  assert.match(css, /\.module-draft-recovery \{[^}]*font-size: var\(--chat-text-secondary\);[^}]*line-height: var\(--chat-leading-ui\);/);
 });
 
 test('Chat regions and optional composer context each have a single spacing owner', () => {
@@ -231,7 +267,8 @@ test('the entire input card uses one default-open disclosure without an arrow or
   assert.ok(html.indexOf('class="chat-queue"') < html.indexOf('class="chat-composer"'));
   assert.doesNotMatch(html, /class="chat-decisions"|class="chat-ask chat-pending/);
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.chat-input-card:not\(\[open\]\) \.chat-execution-head \{[^}]*min-height: 38px;/);
+  assert.match(css, /\.chat-execution-head \{[^}]*min-block-size: var\(--chat-control-compact\);/);
+  assert.doesNotMatch(css, /\.chat-input-card:not\(\[open\]\) \.chat-execution-head/, 'folding does not introduce a different control size');
   assert.match(css, /\.chat-execution-head \{[^}]*cursor: pointer;[^}]*list-style: none;/);
   assert.match(css, /\.chat-execution-head\[hidden\] \{[^}]*display: none;/);
   assert.match(css, /\.chat-execution-head::-webkit-details-marker \{[^}]*display: none;/);
@@ -399,7 +436,7 @@ test('chat leaves right-click and text selection to the browser instead of mount
 
 test('tool and thought rows stay single-line while expanded skill records can show their full name', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.activity-head \{[^}]*height: 28px/);
+  assert.match(css, /\.activity-head \{[^}]*height: var\(--chat-row-process\)/);
   assert.match(css, /\.activity-title \{[^}]*overflow: hidden;[^}]*white-space: nowrap;[^}]*text-overflow: ellipsis/);
   assert.doesNotMatch(css, /\.tool-name|\.skill-label|\.tool-title/);
   assert.match(css, /\.message-process-content\[hidden\] \{[^}]*display: none/);
@@ -443,11 +480,11 @@ test('expanded tools keep their header geometry and show full metadata only when
 
 test('process rows use compact typography with leading status and a trailing name tag', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.process-summary \{[^}]*min-height: 28px;[^}]*font-family: var\(--chat-font-mono\)[^}]*font-size: var\(--chat-text-label\)/);
+  assert.match(css, /\.process-summary \{[^}]*min-height: var\(--chat-row-process\);[^}]*font-family: var\(--chat-font-mono\)[^}]*font-size: var\(--chat-text-label\)/);
   assert.match(css, /\.activity-head \{[^}]*grid-template-columns: 1rem minmax\(0, 1fr\)/);
   assert.match(css, /\.activity-icon \{[^}]*grid-column: 1/);
   assert.match(css, /\.tool-label \{[^}]*margin-inline-start: auto/);
-  assert.match(css, /\.tool-label \{[^}]*border-radius: 3px;[^}]*font-size: var\(--chat-text-meta\)/);
+  assert.match(css, /\.tool-label \{[^}]*border-radius: var\(--ck-radius\);[^}]*font-size: var\(--chat-text-meta\)/);
   assert.match(css, /\.tool-state-icon\[data-status=in_progress\] \{[^}]*animation: spinner-rotate 0\.7s linear infinite/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.tool-state-icon\[data-status=in_progress\] \{[^}]*animation-duration: 1\.6s/);
 });

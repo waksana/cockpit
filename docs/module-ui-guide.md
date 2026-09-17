@@ -78,10 +78,14 @@ and process-summary rows are an explicit reading-density exception: their
 single-line height stays 28px for all pointer types, with the whole row clickable.
 Their hit areas do not overlap adjacent rows; this trades touch target height
 for compact process reading. Multiline content can still grow. Dense queue rows
-are another explicit exception: a queue-local `--ck-control-size: 32px` keeps
+are another explicit exception: a queue-local `--ck-control-size` resolving to 32px keeps
 message summaries and their copy/remove controls aligned at 32px on all pointers.
 The text remains clickable to expand without an extra arrow. Copy controls
 outside the queue retain 32px desktop geometry and expand to 44px for coarse pointers.
+The input-card header, full-plan disclosure and unfinished-module recovery action
+also expand to 44px for coarse pointers. They do not inherit the dense queue
+exception. Narrow execution rows wrap their actions instead of changing their
+font, radius or spacing scale.
 This private layout is not another public button appearance or a blanket
 exception for send, stop, session deletion, or other standalone actions.
 Public selectors do not depend on a
