@@ -1,16 +1,12 @@
-import { useLayoutEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AnchoredMenu } from './AnchoredMenu';
 import { Icon } from './Icon';
 
 export function GlobalNavigation() {
-  const { pathname } = useLocation();
   const navigate = useNavigate();
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
-  useLayoutEffect(() => {
-    if (pathname === '/') triggerRef.current?.focus();
-  }, [pathname]);
   return <>
     <button ref={triggerRef} type="button" className="ck-icon-button rp sidebar-hamburger"
       aria-label="全局导航" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(value => !value)}>
