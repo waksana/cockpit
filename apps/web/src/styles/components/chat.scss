@@ -71,7 +71,6 @@
   color: inherit;
   overflow: hidden;
 }
-.chat-topbar-content:hover .chat-topbar-title { color: inherit; }
 .chat-topbar-title {
   max-width: 100%;
   font-size: var(--font-size-16);
@@ -728,12 +727,10 @@ button.activity-head {
   white-space: pre-wrap; overflow-wrap: anywhere;
   border: 1px solid var(--border-color); background: transparent; color: var(--primary-text-color);
   position: relative; overflow: hidden;
-  @media (hover: hover) { &:hover { background: var(--light-primary-color); } }
   // The SDK's recommended plan-exit action — filled accent so it reads as primary.
   &.is-recommended {
     background: var(--chat-accent-ink);
     color: var(--surface-color);
-    @media (hover: hover) { &:hover { background: var(--chat-accent-ink); } }
   }
 }
 // Pending card variants (plan / elicitation) reuse the ask card shell.
@@ -799,7 +796,6 @@ button.activity-head {
   cursor: pointer; list-style: none;
   &[hidden] { display: none; }
   &::-webkit-details-marker { display: none; }
-  &:hover { background: var(--ripple-color); }
   &:focus-visible { outline-offset: -3px; }
 }
 .chat-execution-label {
@@ -820,7 +816,6 @@ button.activity-head {
     border-radius: var(--ck-radius); background: transparent; color: var(--primary-text-color);
     font: inherit; font-size: var(--chat-text-meta); line-height: var(--chat-leading-ui);
     white-space: normal; overflow-wrap: anywhere; cursor: pointer;
-    &:hover:not(:disabled) { background: var(--ripple-color); }
     &:disabled, &[aria-disabled='true'] { opacity: 0.5; cursor: default; }
   }
   .chat-typing-stop { color: var(--chat-danger-ink); }

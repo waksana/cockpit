@@ -187,7 +187,7 @@ message-copy menu. Code and tool-detail copy buttons remain available.
 
 Execution status/actions, the queue, native decisions and the original composer
 share one default-open input card. Its status header is a keyboard-operable native
-`details`/`summary`, with hover/focus feedback but no visible folding arrow.
+`details`/`summary`, with keyboard focus feedback but no hover fill or visible folding arrow.
 Clicking the non-action header area folds everything below it; only the status
 and any available Stop/interrupt controls remain. The header has the same 32px
 desktop minimum in both states, expanding to 44px for coarse pointers and growing

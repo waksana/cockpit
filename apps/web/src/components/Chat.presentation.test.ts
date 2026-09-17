@@ -499,15 +499,17 @@ test('message process spacing does not retain old document or copy toolbar gaps'
   assert.doesNotMatch(css, /\.message-process \+ \.message-body/);
 });
 
-test('message and activity hover do not add fill while keyboard focus and local copy remain visible', () => {
+test('host controls do not add decorative hover while selection and keyboard focus remain visible', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  for (const rule of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    if (!rule[1].includes(':hover')) continue;
-    assert.doesNotMatch(rule[1], /\.(?:message-body|process-summary|activity-head|subagent-head|msg-group|msg-tool)\b/);
-  }
+  const all = compile(new URL('../styles/index.scss', import.meta.url).pathname).css;
+  assert.doesNotMatch(all, /:hover/);
   assert.match(css, /\.chat :is\(button, a, textarea, summary, \[tabindex\]\):focus-visible \{[^}]*outline: 2px/);
   const primitives = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
-  assert.match(primitives, /:where\(\.ck-button, \.ck-icon-button\):hover:not\(:disabled, \[aria-disabled=true\]\)/);
+  assert.match(primitives, /--ck-color-hover: var\(--ripple-color\)/, 'retain the public token for module compatibility');
+  assert.match(primitives, /:is\(\.ck-button, \.ck-icon-button, \.ck-input\):focus-visible \{[^}]*outline: 2px/);
+  assert.match(all, /\.chatlist-chat\.active \{[^}]*background-color: var\(--selected-fill\)/);
+  assert.match(all, /\.manage-row\.is-clickable\.is-active \{[^}]*background: color-mix/);
+  assert.match(primitives, /\.ck-primary \{[^}]*background: var\(--ck-color-accent\)/);
 });
 
 test('code copying inside user and assistant Markdown quotes survives removal of external message copying', () => {

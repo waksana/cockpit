@@ -72,7 +72,7 @@ order is not a theme API.
 
 | Class | Supported element / meaning |
 | --- | --- |
-| `ck-button` | Native `button`, or `a[href]` for navigation; text/action baseline, aligned children, padding, hover and focus. |
+| `ck-button` | Native `button`, or `a[href]` for navigation; text/action baseline, aligned children, padding and keyboard focus. |
 | `ck-icon-button` | Native `button` or `a[href]`; centered icon, round target, muted default ink. Provide an accessible name and tooltip. |
 | `ck-input` | Text-like `input`, `textarea`, `select`; shared field appearance and focus. Not a checkbox/radio/file input reset. Keep native labels and types. |
 | `ck-icon` | Decorative `svg`, or a `span` containing one SVG. Shared dimensions, currentColor, stroke and alignment. |
@@ -108,6 +108,12 @@ exception for send, stop, session deletion, or other standalone actions.
 Public selectors do not depend on a
 host ancestor. Avoid changing border/padding or swapping differently sized icons
 on hover, pending or confirmation.
+
+Host controls do not add decorative hover fills or recolor text on pointer entry.
+Selected rows, primary/destructive action colors, disabled/busy feedback and
+keyboard `:focus-visible` remain distinct. The public `--ck-color-hover` token
+is retained for module compatibility, but the shared controls do not apply it
+automatically.
 
 ## Public variables
 

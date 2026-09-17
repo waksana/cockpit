@@ -156,7 +156,6 @@
   color: var(--secondary-text-color); text-align: start; cursor: pointer;
   font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
-  &:hover { color: var(--primary-text-color); }
 }
 .copy-value-text, .copy-value-feedback { grid-area: 1 / 1; }
 .copy-value-text[aria-hidden='true'] { visibility: hidden; }
