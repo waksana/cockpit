@@ -56,16 +56,19 @@ function SessionToggleRow({ identity, name, description, source = '', status, en
   const error = action.error ?? nativeError;
   const progress = <><Icon name="loading" className="spinner" size={10} />
     {status ? desired ? '连接中' : '断开中' : desired ? '启用中' : '停用中'}</>;
+  const identityText = <>
+    <div className="manage-row-name"><RowText key={name} text={name} label={`${name}名称`} /></div>
+    <div className="manage-row-source"><RowText key={source} text={source} label={`${name}来源`} /></div>
+  </>;
   return <div className="manage-row manage-session-row" data-mcp={status ? true : undefined}
     data-resource-name={name} title={disabled ? disabledReason : undefined}>
-    <div className="manage-row-name"><RowText key={name} text={name} label={`${name}名称`} /></div>
+    {status ? <div className="manage-mcp-identity">{identityText}</div> : identityText}
     <Toggle label={`启用 ${name}`} disabled={disabled || action.busy} busy={action.busy} on={enabled}
       onChange={next => {
         if (disabled || action.busy) return;
         setDesired(next);
         void action.run(() => onChange(name, next));
       }} />
-    <div className="manage-row-source"><RowText key={source} text={source} label={`${name}来源`} /></div>
     {error && !action.busy
       ? <RowError key={JSON.stringify([identity, error])} error={error} name={name} />
       : <div className="manage-row-status" role="status">

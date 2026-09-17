@@ -871,7 +871,8 @@ for (const initiallyEnabled of [false, true]) {
     await h.render(createElement(SessionMcp, { session, onClose: noop }));
     const row = h.container.querySelector('[data-resource-name="native-server"]')!;
     const source = row.querySelector('.manage-row-source')!;
-    assert.equal(source.parentNode, row, 'MCP source belongs to the left column, not a separate full-width block');
+    assert.equal(source.parentNode, row.querySelector('.manage-mcp-identity'), 'MCP name and source form an independent compact left column');
+    assert.equal(row.querySelector('.manage-row-name')!.parentNode, source.parentNode);
     assert.equal(row.querySelector('.manage-row-status')!.parentNode, row, 'MCP connection status shares the switch column');
     await h.event(row.querySelector('[role="switch"]')!, 'click');
     assert.equal(source.textContent, 'builtin');

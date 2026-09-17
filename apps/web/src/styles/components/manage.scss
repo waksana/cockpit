@@ -63,6 +63,14 @@
   > .manage-row-status { grid-column: 2; grid-row: 2; justify-content: flex-end; align-self: start; }
   .mcp-status[data-tone] { padding: 0; background: none; font-size: var(--host-text-meta); border-radius: 0; }
   .mcp-status[data-tone='off'] { color: var(--secondary-text-color); }
+  &[data-mcp] { padding-block: var(--host-space-sm); }
+}
+.manage-mcp-identity {
+  grid-column: 1; grid-row: 1 / 3;
+  display: flex; flex-direction: column; justify-content: center;
+  min-width: 0; gap: var(--host-space-xs);
+  .manage-row-name { font-weight: 500; }
+  .manage-row-source { margin: 0; }
 }
 .manage-row-text {
   display: -webkit-box;
