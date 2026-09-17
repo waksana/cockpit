@@ -3,9 +3,10 @@ import { createPortal } from 'react-dom';
 import type {
   ComponentMiddleware, ComposerFileCallback, ComposerFileSelection, ComposerProps, ComposerTarget,
   HostSnapshot, MarkdownNode, MarkdownRenderer, ModuleAsset, ModuleComponentProps,
-  ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
+  DraftSchemaRegistration, ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
 } from '@cockpit/module-api';
 import { resolveDraft, type SessionDraft } from './textDraft';
+import { RegisteredDraftSchema, type RuntimeDraftSchema } from './draftSchemas';
 import { describeReason, reportUxError } from './errorReporter';
 
 interface RuntimeOptions {
@@ -22,6 +23,7 @@ export interface LoadedModule {
   readonly frontend: ModuleFrontend;
   readonly signal: AbortSignal;
   readonly bindings: Map<SessionDraft, ReturnType<SessionDraft['bindModule']>>;
+  readonly schemas: readonly RuntimeDraftSchema[];
   stop(): void;
 }
 export interface RegisteredRenderer { module: LoadedModule; renderer: MarkdownRenderer }
@@ -29,6 +31,7 @@ type Boundary = keyof ModuleComponentProps;
 const BOUNDARIES = new Set<Boundary>(['message', 'sessionStatus', 'composer', 'attachment', 'globalActions']);
 const EMPTY_VIEW: HostSnapshot = Object.freeze({ sessionId: null, visible: false, connected: false });
 class ModuleCallbackError extends Error {}
+let moduleSequence = 0;
 
 export class ModuleErrorBoundary extends React.Component<{
   children: React.ReactNode; fallback: React.ReactNode; onFailure(error: unknown): void;
@@ -106,7 +109,7 @@ function validateFrontend(input: unknown, ids: Set<string>): ModuleFrontend {
   const allowed = new Set(['apiVersion', 'writes', 'components', 'markdown', 'dispose']);
   for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`Unsupported module frontend field: ${key}`);
   if (input.writes !== undefined && (!Array.isArray(input.writes)
-    || input.writes.some(value => value !== 'text' && value !== 'attachments'))) throw new Error('Invalid module writes declaration');
+    || input.writes.some(value => value !== 'text'))) throw new Error('Invalid module writes declaration');
   for (const key of ['components', 'markdown'] as const) {
     const entries = input[key];
     if (entries === undefined) continue;
@@ -152,6 +155,7 @@ export class ModuleRuntime {
   private readonly reports = new Set<string>();
   private readonly componentCache = new Map<object, { boundary: Boundary; entries: readonly object[]; component: unknown }>();
   private readonly fileCallbacks = new WeakSet<ComposerFileCallback>();
+  private readonly knownDrafts = new Set<SessionDraft>();
   private selectionSequence = 0;
   constructor(options: RuntimeOptions = {}) {
     if (options.activationTimeoutMs !== undefined
@@ -215,18 +219,20 @@ export class ModuleRuntime {
   }
   private async activate(asset: ModuleAsset, fetcher: typeof fetch, parentSignal: AbortSignal) {
     const controller = new AbortController();
+    const owner = `${asset.id}@${asset.digest}:${++moduleSequence}`;
     const bindings: LoadedModule['bindings'] = new Map();
     const styles: (() => void)[] = [];
     const subscriptions = new Set<() => void>();
     const ids = new Set<string>();
     const services: (() => void)[] = [];
+    const schemas: RuntimeDraftSchema[] = [];
     let registering = true;
     let registrationError: unknown;
     let frontend: ModuleFrontend | undefined;
     let disposeFrontend: (() => unknown) | undefined;
     const stop = () => {
       registering = false;
-      // Capture unresolved selections before plugin abort listeners release their leases.
+      for (const schema of schemas) schema.dispose();
       for (const binding of bindings.values()) binding.dispose();
       bindings.clear();
       for (const unsubscribe of subscriptions) unsubscribe();
@@ -285,12 +291,26 @@ export class ModuleRuntime {
             throw error;
           }
         },
+        registerDraft: <State extends object>(registration: DraftSchemaRegistration<State>) => {
+          if (!registering || controller.signal.aborted) throw new Error('Draft schema registration is activation-only');
+          try {
+            claimId(ids, registration?.id);
+            const schema = new RegisteredDraftSchema(owner, asset.id, registration, this.report);
+            schemas.push(schema);
+            for (const draft of this.knownDrafts) schema.prepare(draft);
+            return schema.handle;
+          } catch (error) {
+            registrationError = error;
+            throw error;
+          }
+        },
         bindDraft: reference => {
           if (controller.signal.aborted || !frontend) throw new Error('Module draft binding is not active');
           const source = resolveDraft(reference);
           let binding = bindings.get(source);
           if (!binding) {
-            binding = source.bindModule(`${asset.id}@${asset.digest}`, frontend.writes ?? [], this.report);
+            binding = source.bindModule(owner, frontend.writes ?? [], this.report,
+              () => schemas.some(schema => schema.applies(source) && schema.ready(source)));
             bindings.set(source, binding);
           }
           return binding.draft;
@@ -329,7 +349,9 @@ export class ModuleRuntime {
       if (registrationError) throw registrationError;
       frontend = validateFrontend(activated, ids);
       for (const style of asset.styles) styles.push((this.options.style ?? installStyle)(style));
-      const loaded: LoadedModule = { asset, frontend, bindings, signal: controller.signal, stop };
+      for (const schema of schemas) for (const draft of this.knownDrafts) schema.prepare(draft);
+      for (const schema of schemas) schema.activate();
+      const loaded: LoadedModule = { asset, frontend, bindings, schemas: Object.freeze(schemas), signal: controller.signal, stop };
       this.publish([...this.snapshot, loaded].sort((a, b) => a.asset.id.localeCompare(b.asset.id)));
     };
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -361,6 +383,18 @@ export class ModuleRuntime {
     this.report(error);
     this.unregister(module);
   }
+  isDraftPrepared(draft: SessionDraft): boolean {
+    return !draft.isRetired() && this.snapshot.every(module => module.schemas.every(schema => schema.ready(draft)));
+  }
+  prepareDraft(draft: SessionDraft): void {
+    if (draft.isRetired()) return;
+    this.knownDrafts.add(draft);
+    for (const module of [...this.snapshot]) {
+      try { for (const schema of module.schemas) schema.prepare(draft); }
+      catch (error) { this.fail(module, error); }
+    }
+    for (const listener of this.listeners) listener();
+  }
   compose<Key extends Boundary>(boundary: Key, Base: React.ComponentType<ModuleComponentProps[Key]>): React.ComponentType<ModuleComponentProps[Key]> {
     const entries = this.snapshot.flatMap(module => (module.frontend.components ?? [])
       .filter(entry => entry.boundary === boundary).map(entry => ({ module, entry })))
@@ -383,7 +417,7 @@ export class ModuleRuntime {
           onFiles = callbacks.get(original);
           if (!onFiles) {
             onFiles = selection => {
-              if (module.signal.aborted) throw new ModuleCallbackError('文件模块已停止');
+              if (module.signal.aborted) return false;
               try {
                 const result = original(selection);
                 if (typeof result !== 'boolean') {
@@ -438,26 +472,24 @@ export class ModuleRuntime {
     return failed ? undefined : selected;
   }
   receiveFiles(files: readonly File[], target: ComposerTarget, source: ComposerFileSelection['source'], onFiles?: ComposerFileCallback): boolean {
-    if (!files.length) return false;
-    const draft = resolveDraft(target.draft);
-    const before = draft.getSnapshot().attachments;
-    const release = draft.holdFiles();
+    if (!files.length || !onFiles) return false;
     try {
-      if (target.disabled || target.operation !== 'prompt' || draft.getSnapshot().pending) throw new Error('当前草稿不能接收附件');
-      if (!onFiles) throw new Error('没有可用的文件模块');
+      const draft = resolveDraft(target.draft);
+      if (target.disabled || draft.isRetired() || draft.getSnapshot().pending) return false;
+      if (target.operation !== draft.reference.purpose.kind) throw new Error('File selection draft purpose has changed');
       const result = onFiles(Object.freeze({
         id: `selection-${++this.selectionSequence}`, files: Object.freeze([...files]), source,
-        target: Object.freeze({ ...target }),
+        target: Object.freeze({ ...target, draft: draft.reference }),
       }));
-      if (typeof result !== 'boolean') void Promise.resolve(result).catch(this.report);
-      const added = draft.getSnapshot().attachments.filter(item => !before.includes(item)).length;
-      if (result !== true || (!draft.hasModuleBlock() && added < files.length)) throw new Error('文件选择未被模块完整接收');
-      return true;
+      if (typeof result !== 'boolean') {
+        void Promise.resolve(result).catch(this.report);
+        throw new Error('File handoff must synchronously return a boolean');
+      }
+      return result;
     } catch (error) {
       this.report(error);
-      draft.recoverFiles(files, describeReason(error, false));
       return false;
-    } finally { release(); }
+    }
   }
 }
 

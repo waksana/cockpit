@@ -363,7 +363,7 @@ for (const currentMode of [undefined, null, 'interactive', 'plan', 'autopilot'] 
     await setImmediate();
     assert.equal(h.requests.length, 1, 'hidden mode changes require no dedicated resource read');
     assert.equal(session('a', store).currentMode, currentMode);
-    const sending = store.getState().sendPrompt('a', 'Continue this session');
+    const sending = store.getState().sendDraft({ intent: 'prompt', body: { sessionId: 'a', text: 'Continue this session' } });
     h.assertPost(1, 'prompt', { sessionId: 'a', text: 'Continue this session' });
     await h.reply(1, { ok: true });
     assert.equal(await sending, true);
@@ -654,7 +654,7 @@ const submissions: {
 }[] = [
   {
     name: 'prompt', body: { sessionId: 'a', text: 'keep this draft' },
-    send: () => useCockpit.getState().sendPrompt('a', 'keep this draft'),
+    send: () => useCockpit.getState().sendDraft({ intent: 'prompt', body: { sessionId: 'a', text: 'keep this draft' } }),
   },
   {
     name: 'respondAsk', body: { sessionId: 'a', requestId: 'ask', answer: 'custom answer', wasFreeform: true },
@@ -751,7 +751,7 @@ test('a late failed send survives cached reentry and an obsolete response for an
   h.source.open();
   h.snapshot(['a', 'b']);
   await h.load('a', [message('old')]);
-  const pending = useCockpit.getState().sendPrompt('a', 'keep caption');
+  const pending = useCockpit.getState().sendDraft({ intent: 'prompt', body: { sessionId: 'a', text: 'keep caption' } });
   useCockpit.getState().setActiveId('b');
   useCockpit.getState().setActiveId('a');
   await h.reply(1, { ok: false });
@@ -1393,7 +1393,7 @@ test('attached prompt failures keep the original false acknowledgement and local
   const attachments: NativeAttachment[] = [{ type: 'file', path: '/native/fixture.txt' }];
   const before = session();
   const other = session('b');
-  const pending = useCockpit.getState().sendPrompt('a', 'keep draft', attachments);
+  const pending = useCockpit.getState().sendDraft({ intent: 'prompt', body: { sessionId: 'a', text: 'keep draft', attachments } });
   h.assertPost(0, 'prompt', { sessionId: 'a', text: 'keep draft', attachments }).reject(new Error('attachment denied'));
   assert.equal(await pending, false);
   assert.match(session().error ?? '', /未确认发送/);

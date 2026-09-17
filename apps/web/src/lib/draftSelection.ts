@@ -1,0 +1,147 @@
+import type { DraftPurpose } from '@cockpit/module-api';
+import { browserDraftStorage, createSessionDrafts, draftIdentity, draftRecord, SessionDraft, type DraftStorage } from './textDraft';
+import { describeReason, reportUxError } from './errorReporter';
+
+export interface NativeDraftDecisions {
+  ask?: { requestId: string } | null;
+  planRequest?: { requestId: string } | null;
+  elicitation?: { requestId: string } | null;
+}
+type DecisionPurpose = Exclude<DraftPurpose, { kind: 'prompt' }>;
+interface Occurrence { id: string; retired: boolean }
+const decisionKey = (purpose: DecisionPurpose) => JSON.stringify([purpose.kind, purpose.requestId]);
+export function draftPurposes(decisions: NativeDraftDecisions): DecisionPurpose[] {
+  return [
+    ...(decisions.ask ? [{ kind: 'ask' as const, requestId: decisions.ask.requestId }] : []),
+    ...(decisions.planRequest ? [{ kind: 'plan' as const, requestId: decisions.planRequest.requestId }] : []),
+    ...(decisions.elicitation ? [{ kind: 'elicitation' as const, requestId: decisions.elicitation.requestId }] : []),
+  ];
+}
+
+export class DraftSession {
+  private readonly requests = new Map<string, { occurrence: string; draft: SessionDraft }>();
+  private readonly listeners = new Set<() => void>();
+  private live = new Set<string>();
+  private selected: SessionDraft;
+  private revision = 0;
+  private occurrences: Record<string, Occurrence> = {};
+  private error?: unknown;
+  private readonly key: string;
+  readonly prompt: SessionDraft;
+  private readonly storage?: DraftStorage;
+  observedNative = false;
+  constructor(prompt: SessionDraft, storage?: DraftStorage) {
+    this.prompt = prompt;
+    this.storage = storage;
+    this.selected = prompt;
+    this.key = `cockpit:draft-requests:${prompt.sessionId}`;
+    prompt.subscribe(this.notify);
+    try {
+      const bytes = storage?.getItem(this.key);
+      if (bytes === null || bytes === undefined) return;
+      const parsed: unknown = JSON.parse(bytes);
+      if (!draftRecord(parsed) || Object.values(parsed).some(value => !draftRecord(value)
+        || typeof value.id !== 'string' || !value.id || typeof value.retired !== 'boolean')) {
+        throw new Error('Invalid native decision draft index');
+      }
+      this.occurrences = parsed as Record<string, Occurrence>;
+    } catch (error) { this.error = error; this.report(error); }
+  }
+  private report(error: unknown): void { reportUxError(`请求草稿未确认：${describeReason(error, false)}`); }
+  private notify = (): void => {
+    this.revision++;
+    for (const listener of [...this.listeners]) if (this.listeners.has(listener)) listener();
+  };
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  };
+  getSnapshot = (): number => this.revision;
+  candidate(purpose: DraftPurpose): SessionDraft {
+    if (purpose.kind === 'prompt') return this.prompt;
+    const key = decisionKey(purpose);
+    const existing = this.requests.get(key);
+    if (existing && !existing.draft.isRetired()) return existing.draft;
+    const previous = this.occurrences[key];
+    const occurrence = previous && !previous.retired && !this.error ? previous.id : draftIdentity();
+    const storageKey = `cockpit:decision-draft:${JSON.stringify([this.prompt.sessionId, purpose.kind, purpose.requestId, occurrence])}`;
+    const draft = new SessionDraft(this.prompt.sessionId, this.storage, purpose, storageKey);
+    this.requests.set(key, { occurrence, draft });
+    draft.subscribe(this.notify);
+    return draft;
+  }
+  current(decisions: NativeDraftDecisions, authoritative = true): SessionDraft {
+    if (!authoritative && this.selected.reference.purpose.kind !== 'prompt') return this.selected;
+    return this.candidate(draftPurposes(decisions)[0] ?? { kind: 'prompt' });
+  }
+  synchronize(decisions: NativeDraftDecisions, authoritative = true): void {
+    if (!authoritative) return;
+    const purposes = draftPurposes(decisions);
+    const live = new Set(purposes.map(decisionKey));
+    const selected = this.candidate(purposes[0] ?? { kind: 'prompt' });
+    const next = { ...this.occurrences };
+    for (const [key, value] of Object.entries(next)) if (!live.has(key) && !value.retired) next[key] = { ...value, retired: true };
+    for (const purpose of purposes) {
+      const draft = this.candidate(purpose);
+      const key = decisionKey(purpose);
+      next[key] = { id: this.requests.get(key)!.occurrence, retired: draft.isRetired() };
+    }
+    const changed = JSON.stringify(next) !== JSON.stringify(this.occurrences);
+    if (changed && !this.error) {
+      try { this.storage?.setItem(this.key, JSON.stringify(next)); }
+      catch (error) { this.error = error; this.report(error); }
+    }
+    this.occurrences = next;
+    for (const [key, value] of this.requests) if (!live.has(key)) value.draft.retire();
+    const selectionChanged = this.selected !== selected || [...this.live].join() !== [...live].join();
+    this.live = live;
+    this.selected = selected;
+    if (changed || selectionChanged) this.notify();
+  }
+  // The storage index governs restoration, not authority over the current native request.
+  isCurrent(draft: SessionDraft): boolean {
+    return !draft.isRetired() && this.selected === draft;
+  }
+  isLive(draft: SessionDraft): boolean {
+    const purpose = draft.reference.purpose;
+    return !draft.isRetired() && (purpose.kind === 'prompt'
+      ? this.selected === draft : this.live.has(decisionKey(purpose)) && this.requests.get(decisionKey(purpose))?.draft === draft);
+  }
+}
+
+export class DraftCache {
+  private readonly prompts: ReturnType<typeof createSessionDrafts>;
+  private readonly sessions = new Map<string, DraftSession>();
+  private readonly storage?: DraftStorage;
+  constructor(storage?: DraftStorage) {
+    this.storage = storage;
+    this.prompts = createSessionDrafts(storage);
+  }
+  prompt(sessionId: string): SessionDraft { return this.session(sessionId).prompt; }
+  session(sessionId: string): DraftSession {
+    let session = this.sessions.get(sessionId);
+    if (!session) {
+      session = new DraftSession(this.prompts(sessionId), this.storage);
+      this.sessions.set(sessionId, session);
+    }
+    return session;
+  }
+  observe(sessions: readonly (NativeDraftDecisions & { sessionId: string })[], authoritative: boolean): void {
+    if (!authoritative) return;
+    for (const [id, cached] of this.sessions) {
+      const session = sessions.find(value => value.sessionId === id);
+      if (session) {
+        cached.observedNative = true;
+        cached.synchronize(session);
+      } else if (cached.observedNative) cached.synchronize({});
+    }
+  }
+}
+
+let browserCache: DraftCache | undefined;
+function cache() { return browserCache ??= new DraftCache(browserDraftStorage()); }
+export const getSessionDraft = (sessionId: string): SessionDraft => cache().prompt(sessionId);
+export const getDraftSession = (sessionId: string): DraftSession => cache().session(sessionId);
+export function observeDraftDecisions(sessions: readonly (NativeDraftDecisions & { sessionId: string })[], authoritative: boolean): void {
+  browserCache?.observe(sessions, authoritative);
+}

@@ -208,10 +208,32 @@ apiBase、公开配置、request、signal、onInvalidate 和 report。
 模块扩展消息/session 的组合视图，不覆盖原生数据或派生另一份原生权威；
 未加载和读取失败不能伪造成 false/零。
 
-草稿也是本体基础 state。`DraftReference` 是带稳定生命周期 id 的只读引用；
-`context.state.bindDraft(reference)` 返回当前模块、当前草稿的稳定 actions 句柄，
-授权仍由 `writes` 声明。绑定不随当前会话切换而改变，不暴露私有 SessionDraft/store，
-没有通用 patch、submit、ACK 或 reset 动作。
+草稿也是本体基础 state，但基础快照不内建附件或其他模块字段。
+它只包含文字、文字修订、pending/unconfirmed、通用阻止和聚合 hasContent。
+`DraftReference` 带稳定生命周期 id、sessionId 和 purpose；
+`context.state.bindDraft(reference)` 提供文字编辑及通用阻止，不暴露私有 store、
+附件方法或通用 native patch/submit/ACK/reset。
+
+模块通过同一个 state 注册体系的 `registerDraft` 扩展自己的草稿 schema：
+
+| 成员 | 责任 |
+| --- | --- |
+| id / purposes | 模块内唯一身份及适用草稿类型，不按当前路由重定向已有引用 |
+| create / validate | 同步初值、数据形状与规范化；失败不替换成空值 |
+| hasContent | 声明该字段是否提供内容，不把 schema 存在当成有内容 |
+| project | 将捕获值显式映射到当前既有原生接口的附加参数 |
+| acknowledge | 结合当前值与捕获值，只清理确认提交的部分，保留并发修改 |
+| persistence | 可选的模块自有字符串编码、恢复和旧记录迁移 |
+
+handle 的 `forDraft(reference)` 返回稳定的字段 scope，或因 purpose 不适用返回 undefined。
+scope 提供只读快照、订阅和仅修改自己字段的验证型 update；不是任意改写本体 state。
+文件模块在这里定义附件、校验、上限、顺序、持久化与原生 attachments 投影。
+本体只负责通用事务，拒绝覆盖文字/session/request 等保留参数和同次提交中的字段冲突，
+并按既有原生接口验证投影，不静默丢弃未知参数。
+
+未注册 schema 的序列化 namespace 和原始记录保持不透明，不参与当前 hasContent、
+展示或发送，也不制造文件兜底 UI、阻止或清空操作。普通文字仍可发送。
+恢复、旧字段迁移和提交后空值标记由模块 schema 完成，防止旧记录重新导入。
 
 ### 6.2 Component middleware
 
@@ -220,7 +242,7 @@ apiBase、公开配置、request、signal、onInvalidate 和 report。
 | 字段 | 用途 |
 | --- | --- |
 | apiVersion | 必须为 2；旧 Web 声明明确拒绝 |
-| writes | 声明可写的 text/attachments；是接口协作约束，不是安全隔离 |
+| writes | 当前仅声明基础 text 编辑；模块字段经自己注册的 schema 修改，不是安全隔离 |
 | components | `{ id, boundary, order?, wrap }`，wrap 接收基础组件并返回增强组件 |
 | markdown | 已解析 link/image 节点的排他渲染规则；不处理附件 |
 | dispose | 释放前端自己持有的资源；注册 state 的 disposer 由宿主单独执行 |
@@ -229,8 +251,8 @@ apiBase、公开配置、request、signal、onInvalidate 和 report。
 | --- | --- |
 | message | 原生消息/宿主当前 ask 身份、完成事实、实际正文 bodyRef、children 与真实 adornment 节点 |
 | sessionStatus | 原生回复中/错误/待选择状态和非交互 children，不嵌套按钮 |
-| composer | 捕获的草稿、原生操作、children/attachments/actions 与文件输入回调 |
-| attachment | 一项原生或草稿附件、来源、基础显示、受控 onRemove 与其他 actions，保留禁用状态 |
+| composer | 捕获的草稿、原生操作、children/actions 与文件输入回调；不预建附件组 |
+| attachment | 一项原生历史附件、消息归属、基础显示及附加动作；不承担草稿附件列表 |
 | globalActions | 组合全局操作 children，不建立另一个 SPA |
 
 Middleware 按 `(order, moduleId, id)` 排列，较小者在外层。
@@ -247,30 +269,30 @@ ask 使用宿主当前 AskRequest.requestId，不冒充 SDK requestId。
 
 ### 6.3 草稿与文件输入
 
-本体提供绑定 session 的草稿句柄：快照、订阅、追加/移除附件、编辑文字、登记发送阻止。
-模块不操作发送按钮的实现，不发隐式消息。提交快照和原生 ACK 清理由本体统一完成，
-新增加的文字/附件不会被旧 ACK 清掉。
-原生提交 pending 期间，组件 props 传入 disabled，上传、移除和重试须置灰；
-拖放/粘贴文件也不接纳。文字仍可编辑，收到回执后恢复附件操作，不等待 Agent 整个回合结束。
-当前页面内，模块负责在文件项内展示上传/失败状态，本体发送阻止只使发送按钮置灰，
-不额外弹出正常上传提示。处理器异常会撤销该前端模块，
-遗留发送阻止转为宿主可明确移除的行内提示，避免永久锁住草稿。
-附件 middleware 处理就绪原生/草稿附件；无增强或模块失效时，本体保留简单的附件移除列表。
-不通过全局布尔声明隐藏全部附件，不显示重复的“原生附件”折叠区。
-草稿附件的 `onRemove()` 是原始受控 action，重新检查当前草稿条件，
-只有确实移除该项才返回 true；本体不据此删除服务器文件。
-文件模块可组合此 action，并在成功后按自己的原有资格规则丢弃未使用上传。
-不能检查不透明 React 按钮内部结构、拦截私有 DOM 点击或通过附件消失猜测删除。
-刷新只恢复文字和已写入草稿的成功附件，不保留未完成文件选择、上传任务或相关阻止。
-成功附件不能为等待同批其他文件而延迟写入草稿。原生发送回执未确认的提醒仍保留，
-与未完成上传的刷新规则分开。
+本体按 session 保留普通 prompt 草稿，并为每个实际原生决策请求选择独立草稿。
+ask/plan/elicitation 使用 kind 与当前宿主 requestId；不是复制、清空再覆盖同一份 prompt。
+请求结束后恢复普通草稿，替换请求使用新的草稿身份；失败/未知回答保留自己的输入。
+选择操作和迟到回执不能提交或清理普通草稿的字段。
+
+文件 schema 仅适用于 prompt。文件模块从自己的字段和上传服务渲染完整就绪/上传中列表，
+作为 Composer 的真实 children 放在输入框上方；切换到回答草稿后自然不再显示，
+不需要附件隐藏标志、不兼容附件警告、预先生成的附件组或新的列表插口。
+后台上传仍绑定原 prompt 草稿，返回后可见其结果。
+
+本体捕获一次文字修订、适用字段与提交 token。只有实际确认成功才清理匹配的文字修订，
+并调用参与字段的 acknowledge；旧草稿、旧 schema generation 或失败的清理不能冒充成功。
+网络未知/失败保留数据，不自动重试。模块拥有附件操作与持久化，本体不删除服务器原件。
+pending 期间文件操作规则由模块执行；本体的文字编辑和原生提交门槛仍有效。
+模块/schema 不可用时释放其通用阻止，不转为 orphan 文件提示，其他模块状态不受影响。
 
 Composer 的 `actions` 接收 `pickFiles()`。本体在真实用户手势中打开一个选择器，
-捕获当时草稿、操作和已组合的 `onFiles`，不把迟到选择改投到当前会话。
+在打开时捕获规范的宿主草稿引用、操作和已组合的 `onFiles`，
+草稿身份不依赖之后可能撤销的模块绑定，不把迟到选择改投到当前会话或回答草稿。
 选择、粘贴和拖放汇入同一个同步回调；返回 true 是接纳全部文件的所有权交接，
 不是上传已经成功。模块必须先留下受阻止保护的选择或就绪附件，再启动异步工作；
-不能同时处理并调用下一处理器。未接纳、异常或缺少处理器保留可明确移除的恢复阻止，
-不能静默丢掉文件后允许发送。混合剪贴板文字、IME 和原生提交快捷键不被改写。
+不能同时处理并调用下一处理器。模块拥有有效选择的状态、错误与阻止；
+模块/schema 缺失时本体不处理或保存文件，不新增恢复 UI，也不影响普通文字发送。
+混合剪贴板文字、IME 和原生提交快捷键不被改写。
 
 ### 6.4 Markdown 注册与资源生命周期
 
@@ -282,13 +304,14 @@ Markdown 渲染上下文保留原生消息身份和原始解析目标，不使�
 blob 的 data 缺失或带 omittedReason 时仍保留名称、MIME 和不可用原因，
 没有模块渲染器时显示基本文字占位，不伪造空 blob，也不补抓字节。
 
-Markdown 注册只接收 link/image，原生和草稿附件走 attachment middleware。
+Markdown 注册只接收 link/image，原生历史附件走 attachment middleware；
+草稿附件的完整列表和单项操作属于文件模块自己的 Composer 增强。
 模块不重新解析完整 Markdown；替代输出保持行内 phrasing 结构，
 dialog 使用 body portal，不嵌入链接或段落。相同目标的资源请求可在模块 state 中复用。
 
 同模块所有 state、middleware 和 Markdown 注册 ID 必须唯一。
 激活先暂存注册，整体校验后才发布；失败/超时回滚已经创建的 state。
-停止时先撤销草稿绑定并保留未解决输入，再 abort 和清理服务/监听；
+停止时撤销草稿绑定、活动 schema 及其阻止，再 abort 和清理服务/监听；
 state disposer 逆注册顺序执行一次，某个清理失败不能阻止其他清理。
 state 作用域不等于组件挂载范围：切换会话不能取消仍属于原草稿的上传。
 页面 state 清理也不等于注销设备推送订阅或关闭后端模块。

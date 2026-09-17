@@ -40,23 +40,7 @@ export function SessionStatus(props: SessionStatusProps) {
   return useModuleElement('sessionStatus', SessionStatusBase, props);
 }
 
-function AttachmentBase({ source, children, actions, disabled, pending, onRemove }: AttachmentProps) {
-  const runtime = useModuleRuntime();
-  return source.kind === 'draft' ? <div className="draft-attachment">
-    {children}
-    {onRemove && <button type="button" className="ck-button" disabled={disabled || pending}
-      onClick={() => {
-        try {
-          const removed = onRemove();
-          if (typeof removed !== 'boolean') {
-            void Promise.resolve(removed).catch(runtime.report);
-            throw new Error('Attachment removal must synchronously return a boolean');
-          }
-        } catch (error) { runtime.report(error); }
-      }} aria-label="移除附件">移除</button>}
-    {actions}
-  </div> : <>{children}{actions}</>;
-}
+function AttachmentBase({ children, actions }: AttachmentProps) { return <>{children}{actions}</>; }
 export function Attachment(props: AttachmentProps) {
   return useModuleElement('attachment', AttachmentBase, props);
 }

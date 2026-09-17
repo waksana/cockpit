@@ -39,7 +39,7 @@ test('workspace App lifecycle, settings and sends use only local synthetic state
   await store.getState().setModel(workspaceSessionId, 'gpt-5.4-mini', { reasoningEffort: 'medium' });
   const active = () => store.getState().sessions.find(session => session.sessionId === workspaceSessionId)!;
   assert.equal(active().currentModelId, 'gpt-5.4-mini');
-  await store.getState().sendPrompt(workspaceSessionId, 'Synthetic user input');
+  await store.getState().sendDraft({ intent: 'prompt', body: { sessionId: workspaceSessionId, text: 'Synthetic user input' } });
   assert.equal(active().messages.at(-1)?.content, 'Synthetic user input');
   await store.getState().cancel(workspaceSessionId);
   assert.equal(active().status, 'idle');

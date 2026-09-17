@@ -14,28 +14,34 @@ export async function acknowledgeInView(
   return sent;
 }
 
-export interface DraftSendHandlers {
-  askRequestId?: string;
-  planRequestId?: string;
-  onSend?: (text: string, attachments?: NativeAttachment[]) => Promise<boolean>;
-  onRespondAsk?: (requestId: string, answer: string, wasFreeform: boolean) => Promise<boolean>;
-  onPlanSupersede?: (requestId: string, message: string) => Promise<boolean>;
-}
+import { Intents, type IntentBody } from '@cockpit/protocol';
+import type { DraftNativeFields, DraftReference } from '@cockpit/module-api';
 
-export function sendThreadDraft(text: string, handlers: DraftSendHandlers, attachments?: NativeAttachment[]): Promise<boolean> {
-  if (attachments?.length && (handlers.askRequestId !== undefined || handlers.planRequestId !== undefined)) {
-    reportUxError('当前回答或计划反馈不接受附件，请先移除附件；草稿已保留。');
-    return Promise.resolve(false);
+type DraftIntent = 'prompt' | 'respondAsk' | 'planSupersede';
+export type NativeDraftRequest = {
+  [Name in DraftIntent]: { readonly intent: Name; readonly body: IntentBody<Name> };
+}[DraftIntent];
+export const CORE_DRAFT_FIELDS = new Set([
+  'sessionId', 'text', 'mode', 'requestId', 'answer', 'message', 'wasFreeform', 'action',
+]);
+
+export function nativeDraftRequest(draft: DraftReference, text: string, fields: DraftNativeFields): NativeDraftRequest {
+  for (const key of Object.keys(fields)) {
+    if (CORE_DRAFT_FIELDS.has(key)) throw new Error(`Draft schema cannot overwrite native field ${key}`);
   }
-  return acknowledge(() => {
-    if (handlers.askRequestId !== undefined) {
-      return handlers.onRespondAsk?.(handlers.askRequestId, text, true);
-    }
-    if (handlers.planRequestId !== undefined) {
-      return handlers.onPlanSupersede?.(handlers.planRequestId, text);
-    }
-    return attachments?.length ? handlers.onSend?.(text, attachments) : handlers.onSend?.(text);
-  });
+  const { sessionId, purpose } = draft;
+  switch (purpose.kind) {
+    case 'prompt':
+      return { intent: 'prompt', body: Intents.prompt.body.strict().parse({ ...fields, sessionId, text }) };
+    case 'ask':
+      return { intent: 'respondAsk', body: Intents.respondAsk.body.strict().parse({
+        ...fields, sessionId, requestId: purpose.requestId, answer: text, wasFreeform: true,
+      }) };
+    case 'plan':
+      return { intent: 'planSupersede', body: Intents.planSupersede.body.strict().parse({
+        ...fields, sessionId, requestId: purpose.requestId, message: text,
+      }) };
+    case 'elicitation':
+      throw new Error('This native decision does not accept a text submission');
+  }
 }
-import type { NativeAttachment } from '@cockpit/protocol';
-import { reportUxError } from './errorReporter';

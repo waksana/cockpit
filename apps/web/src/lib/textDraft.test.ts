@@ -1,19 +1,15 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, mock, test } from 'node:test';
-import { createSessionDrafts, getSessionDraft } from './textDraft';
+import { createSessionDrafts, getSessionDraft, resolveDraft } from './textDraft';
 import { dismissUxError, getUxErrors } from './errorReporter';
+import { memoryDraftStorage } from '../test/draftFixture';
 
 const key = (id: string) => `cockpit:chat-draft:${id}`;
 function fixture() {
-  const values = new Map<string, string>();
-  const storage = {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => { values.set(key, value); },
-    removeItem: (key: string) => { values.delete(key); },
-  };
-  return { values, storage, drafts: createSessionDrafts(storage) };
+  const memory = memoryDraftStorage();
+  return { ...memory, drafts: createSessionDrafts(memory.storage) };
 }
-
+function saved(values: Map<string, string>, id: string) { return JSON.parse(values.get(key(id))!); }
 beforeEach(() => {
   mock.method(console, 'error', () => {});
   for (const error of getUxErrors()) dismissUxError(error.id);
@@ -23,60 +19,69 @@ afterEach(() => {
   for (const error of getUxErrors()) dismissUxError(error.id);
 });
 
-test('each session has one in-memory draft and one compact tab-storage record', () => {
+test('base drafts contain only text, generic content/leases and native submission state', () => {
   const { drafts, values, storage } = fixture();
   const a = drafts('A'), b = drafts('B');
   assert.equal(drafts('A'), a);
-  assert.equal(values.size, 0, 'opening an empty draft must not write a record');
-  a.edit('  Native text\n');
-  b.edit('Separate text');
-  assert.deepEqual(JSON.parse(values.get(key('A'))!), { text: '  Native text\n', unconfirmed: false });
+  assert.equal(values.size, 0);
+  a.edit(' Native text\n');
+  b.edit('Separate');
+  assert.equal(saved(values, 'A').text, ' Native text\n');
+  assert.equal(saved(values, 'A').unconfirmed, false);
+  assert.deepEqual(saved(values, 'A').__cockpitDraft, { version: 1, purpose: { kind: 'prompt' } });
   assert.deepEqual(createSessionDrafts(storage)('A').getSnapshot(), {
-    text: '  Native text\n', attachments: [], blocks: [], revision: 0, pending: false, unconfirmed: false,
+    text: ' Native text\n', hasContent: true, blocks: [], revision: 0, pending: false, unconfirmed: false,
   });
+  assert.equal('attachments' in a.getSnapshot(), false);
+  assert.equal('appendAttachments' in a, false);
+  assert.equal('removeAttachment' in a, false);
   a.edit('');
   assert.equal(values.has(key('A')), false);
-  assert.equal(b.getSnapshot().text, 'Separate text');
-  assert.equal(values.size, 1);
+  assert.equal(b.getSnapshot().text, 'Separate');
 });
 
-test('subscribers receive stable snapshots until an edit and can unsubscribe', () => {
-  const draft = createSessionDrafts()('A');
-  const before = draft.getSnapshot();
-  assert.equal(draft.getSnapshot(), before);
+test('stable readonly references identify a draft lifetime and subscriptions release correctly', () => {
+  const a = createSessionDrafts()('same'), b = createSessionDrafts()('same');
+  assert.notEqual(a.reference.id, b.reference.id);
+  assert.deepEqual(a.reference.purpose, { kind: 'prompt' });
+  assert.equal(resolveDraft(a.reference), a);
+  assert.throws(() => resolveDraft({ ...a.reference }), /reference/);
+  const before = a.getSnapshot();
+  assert.equal(a.getSnapshot(), before);
+  assert.ok(Object.isFrozen(before));
   let changes = 0;
-  const unsubscribe = draft.subscribe(() => { changes++; });
-  draft.edit('Edited');
-  assert.notEqual(draft.getSnapshot(), before);
-  assert.equal(before.text, '');
+  const unsubscribe = a.subscribe(() => { changes++; });
+  a.edit('Next');
   assert.equal(changes, 1);
+  assert.equal(before.text, '');
   unsubscribe();
-  draft.edit('Later');
+  a.edit('Later');
   assert.equal(changes, 1);
 });
 
-test('accepted sends clear only their original draft and remove its storage record', async () => {
+test('native ACK clears only the captured text revision and removes an otherwise empty record', async () => {
   const { drafts, values } = fixture();
   const draft = drafts('A');
   draft.edit('  Send once  ');
   let finish!: (value: boolean) => void;
-  const sending = draft.send(text => {
-    assert.equal(text, 'Send once');
+  const sending = draft.send(request => {
+    assert.deepEqual(request, { intent: 'prompt', body: { sessionId: 'A', text: 'Send once' } });
+    assert.ok(Object.isFrozen(request.body));
     return new Promise(resolve => { finish = resolve; });
   });
-  assert.equal(draft.getSnapshot().text, '  Send once  ');
   assert.equal(draft.getSnapshot().pending, true);
-  assert.deepEqual(JSON.parse(values.get(key('A'))!), { text: '  Send once  ', unconfirmed: true });
+  assert.equal(saved(values, 'A').unconfirmed, true);
+  assert.match(saved(values, 'A').__cockpitDraft.pendingToken, /^send-/);
   assert.equal(await draft.send(async () => assert.fail('Concurrent send')), false);
-  assert.equal(await draft.runAction(async () => assert.fail('Concurrent decision')), false);
+  assert.equal(await draft.runAction(async () => assert.fail('Concurrent action')), false);
   finish(true);
   assert.equal(await sending, true);
-  assert.deepEqual(draft.getSnapshot(), { text: '', attachments: [], blocks: [], revision: 2, pending: false, unconfirmed: false });
+  assert.deepEqual(draft.getSnapshot(), { text: '', blocks: [], hasContent: false, revision: 2, pending: false, unconfirmed: false });
   assert.equal(values.has(key('A')), false);
 });
 
 for (const edited of ['New text', 'Original']) {
-  test(`late ACK cannot erase a newer revision even if the text is ${edited}`, async () => {
+  test(`late ACK preserves a newer revision even if its text is ${edited}`, async () => {
     const { drafts, storage } = fixture();
     const a = drafts('A'), b = drafts('B');
     a.edit('Original');
@@ -88,230 +93,159 @@ for (const edited of ['New text', 'Original']) {
     finish(true);
     assert.equal(await sending, true);
     assert.equal(a.getSnapshot().text, edited);
-    assert.equal(b.getSnapshot().text, 'Other session');
     assert.equal(createSessionDrafts(storage)('A').getSnapshot().text, edited);
+    assert.equal(b.getSnapshot().text, 'Other session');
   });
 }
 
-for (const failure of ['false', 'throw', 'undefined'] as const) {
-  test(`an unconfirmed ${failure} outcome keeps edits, survives reload and never resends`, async () => {
-    const { drafts, storage } = fixture();
+for (const outcome of ['false', 'throw', 'undefined'] as const) {
+  test(`unconfirmed ${outcome} retains text and never retries`, async () => {
+    const { drafts, storage, values } = fixture();
     const draft = drafts('A');
-    draft.edit('Keep this');
+    draft.edit('Keep');
     let calls = 0;
-    const sent = await draft.runAction(() => {
+    assert.equal(await draft.runAction(() => {
       calls++;
-      if (failure === 'throw') throw new Error('Unknown outcome');
-      return failure === 'undefined' ? undefined : Promise.resolve(false);
-    });
-    assert.equal(sent, false);
+      if (outcome === 'throw') throw new Error('Unknown native result');
+      return outcome === 'undefined' ? undefined : Promise.resolve(false);
+    }), false);
     assert.equal(calls, 1);
-    assert.equal(draft.getSnapshot().text, 'Keep this');
+    assert.equal(draft.getSnapshot().text, 'Keep');
     assert.equal(draft.getSnapshot().pending, false);
-    assert.equal(draft.getSnapshot().unconfirmed, true);
-    for (let reload = 0; reload < 2; reload++) {
-      assert.equal(createSessionDrafts(storage)('A').getSnapshot().unconfirmed, true);
-    }
+    assert.equal(createSessionDrafts(storage)('A').getSnapshot().unconfirmed, true);
+    assert.equal(saved(values, 'A').__cockpitDraft.pendingToken, undefined);
     draft.dismissNotice();
     assert.equal(createSessionDrafts(storage)('A').getSnapshot().unconfirmed, false);
     assert.equal(calls, 1);
   });
 }
 
-test('reload converts an outstanding request to unknown without locking or replaying input', async () => {
+test('reload converts an outstanding checkpoint to unknown, never an in-flight request or automatic resend', async () => {
   const { drafts, storage } = fixture();
   const draft = drafts('A');
-  draft.edit('Submitting');
+  draft.edit('Original');
   let finish!: (value: boolean) => void;
   const sending = draft.send(() => new Promise(resolve => { finish = resolve; }));
-  draft.edit('New unsent text');
+  draft.edit('Unsent revision');
   const restored = createSessionDrafts(storage)('A');
-  assert.deepEqual(restored.getSnapshot(), {
-    text: 'New unsent text', attachments: [], blocks: [], revision: 0, pending: false, unconfirmed: true,
-  });
+  assert.equal(restored.getSnapshot().text, 'Unsent revision');
+  assert.equal(restored.getSnapshot().pending, false);
+  assert.equal(restored.getSnapshot().unconfirmed, true);
   finish(false);
-  await sending;
-  assert.equal(draft.getSnapshot().text, 'New unsent text');
+  assert.equal(await sending, false);
 });
 
-test('a rejected text send retains the draft and releases the pending lock without retrying', async () => {
-  const { drafts, storage } = fixture();
-  const draft = drafts('A');
-  draft.edit('Uncertain text');
-  let calls = 0;
-  assert.equal(await draft.send(async () => { calls++; throw new Error('Connection lost'); }), false);
-  assert.equal(calls, 1);
-  assert.deepEqual(createSessionDrafts(storage)('A').getSnapshot(), {
-    text: 'Uncertain text', attachments: [], blocks: [], revision: 0, pending: false, unconfirmed: true,
-  });
-  assert.equal(await draft.send(async () => true), true);
-  assert.equal(draft.getSnapshot().text, '');
-  assert.equal(draft.getSnapshot().unconfirmed, false);
-});
-
-for (const accepted of [true, false]) {
-  test(`separate and duplicated tabs cannot overwrite each other after ACK=${accepted}`, async () => {
-    const a = fixture(), b = fixture(), fresh = fixture();
-    a.drafts('same').edit('Tab A');
-    let finish!: (value: boolean) => void;
-    const sending = a.drafts('same').send(() => new Promise(resolve => { finish = resolve; }));
-    // Duplicate Tab copies sessionStorage once; subsequent writes are independent.
-    for (const [name, value] of a.values) b.values.set(name, value);
-    const copied = b.drafts('same');
-    assert.equal(copied.getSnapshot().unconfirmed, true);
-    assert.equal(copied.getSnapshot().pending, false);
-    copied.edit('Tab B newer');
-    const storedB = b.values.get(key('same'));
-    finish(accepted);
-    assert.equal(await sending, accepted);
-    assert.equal(b.values.get(key('same')), storedB);
-    assert.equal(createSessionDrafts(b.storage)('same').getSnapshot().text, 'Tab B newer');
-    assert.equal(createSessionDrafts(a.storage)('same').getSnapshot().text, accepted ? '' : 'Tab A');
-    assert.equal(fresh.drafts('same').getSnapshot().text, '');
-  });
-}
-
-test('blank sends do nothing, and decision ACKs never clear unrelated typed text', async () => {
-  const { drafts, values } = fixture();
-  const draft = drafts('A');
-  assert.equal(await draft.send(async () => assert.fail('Empty send')), false);
-  assert.equal(values.size, 0);
+test('blank drafts do not send, while choice ACKs preserve unrelated typed text', async () => {
+  const draft = createSessionDrafts()('A');
+  assert.equal(await draft.send(async () => assert.fail('Empty')), false);
   draft.edit(' \n ');
-  assert.equal(await draft.send(async () => assert.fail('Whitespace send')), false);
-  draft.edit('Keep for later');
+  assert.equal(draft.getSnapshot().hasContent, false);
+  assert.equal(await draft.send(async () => assert.fail('Blank')), false);
+  draft.edit('Retained');
   assert.equal(await draft.runAction(async () => true), true);
-  assert.equal(draft.getSnapshot().text, 'Keep for later');
-  draft.edit('');
-  assert.equal(await draft.runAction(async () => false), false);
-  assert.deepEqual(JSON.parse(values.get(key('A'))!), { text: '', unconfirmed: true });
-  draft.dismissNotice();
-  assert.equal(values.has(key('A')), false);
+  assert.equal(draft.getSnapshot().text, 'Retained');
 });
 
-test('malformed tab records stay untouched and report read failures', () => {
-  for (const stored of ['', 'null', '[]', '{}', '{"text":1,"unconfirmed":false}', '{"text":"a","unconfirmed":"yes"}']) {
+test('unregistered legacy values and opaque schema namespaces survive text edits and sends but are never payloads', async () => {
+  const { values, drafts } = fixture();
+  const unknown = { attachments: Array.from({ length: 25 }, (_, index) => ({ opaque: index })),
+    extra: { vendor: ['keep'] }, text: 'Old', unconfirmed: false,
+    __cockpitDraft: { version: 1, purpose: { kind: 'prompt' }, schemas: { unknown: { future: true } } },
+  };
+  values.set(key('A'), JSON.stringify(unknown));
+  const draft = drafts('A');
+  draft.edit('New');
+  assert.equal(await draft.send(async request => {
+    assert.deepEqual(request.body, { sessionId: 'A', text: 'New' });
+    return true;
+  }), true);
+  const record = saved(values, 'A');
+  assert.deepEqual(record.attachments, unknown.attachments);
+  assert.deepEqual(record.extra, unknown.extra);
+  assert.deepEqual(record.__cockpitDraft.schemas, unknown.__cockpitDraft.schemas);
+  assert.equal(draft.getSnapshot().hasContent, false);
+  assert.equal(draft.getSnapshot().blocks.length, 0);
+});
+
+test('malformed base records/checkpoints stay untouched and fail explicitly rather than dispatching', async () => {
+  for (const bytes of ['', 'null', '[]', '{}', '{"text":1,"unconfirmed":false}',
+    '{"text":"a","unconfirmed":"yes"}', '{"text":"a","unconfirmed":false,"__cockpitDraft":{"version":99}}']) {
     const { values, drafts } = fixture();
-    values.set(key('A'), stored);
-    assert.equal(drafts('A').getSnapshot().text, '');
-    assert.equal(values.get(key('A')), stored);
-    assert.ok(getUxErrors().some(error => error.message.includes('无法读取标签页草稿')));
+    values.set(key('A'), bytes);
+    const draft = drafts('A');
+    draft.edit('Retained in memory');
+    assert.equal(await draft.send(async () => assert.fail('Invalid checkpoint')), false);
+    assert.equal(values.get(key('A')), bytes);
+    assert.ok(getUxErrors().length > 0);
   }
 });
 
-test('storage errors are visible without disabling in-memory editing or sending', async () => {
+test('persistence errors preserve memory edits and cannot claim a native send or ACK cleanup succeeded', async () => {
+  const { storage, values } = memoryDraftStorage();
+  let fail = true, calls = 0;
   const draft = createSessionDrafts({
-    getItem() { throw new Error('Read blocked'); },
-    setItem() { throw new Error('Write blocked'); },
-    removeItem() { throw new Error('Remove blocked'); },
-  })('blocked');
-  assert.ok(getUxErrors().some(error => error.message.includes('Read blocked')));
-  draft.edit('Still usable');
-  assert.equal(draft.getSnapshot().text, 'Still usable');
-  assert.ok(getUxErrors().some(error => error.message.includes('Write blocked')));
-  assert.equal(await draft.send(async () => true), true);
-  assert.equal(draft.getSnapshot().text, '');
-  assert.ok(getUxErrors().some(error => error.message.includes('Remove blocked')));
+    getItem: storage.getItem,
+    setItem: (key, value) => { if (fail) throw new Error('Write blocked'); storage.setItem(key, value); },
+    removeItem: key => { if (fail) throw new Error('Remove blocked'); storage.removeItem(key); },
+  })('A');
+  draft.edit('Usable memory');
+  assert.equal(draft.getSnapshot().text, 'Usable memory');
+  assert.equal(await draft.send(async () => { calls++; return true; }), false);
+  assert.equal(calls, 0);
+  fail = false;
+  assert.equal(await draft.send(async () => { calls++; fail = true; return true; }), false);
+  assert.equal(calls, 1);
+  assert.equal(draft.getSnapshot().pending, false);
+  assert.equal(draft.getSnapshot().unconfirmed, true);
+  assert.equal(draft.getSnapshot().text, 'Usable memory');
+  assert.ok(saved(values, 'A').__cockpitDraft.pendingToken);
 });
 
-test('browser drafts use only the current sessionStorage key, with no other storage or identity access', async t => {
-  const { storage, values } = fixture();
+test('module base bindings authorize only text/generic leases and dispose independently', () => {
+  const draft = createSessionDrafts()('scoped');
+  const a = draft.bindModule('A', []);
+  const b = draft.bindModule('B', ['text']);
+  assert.throws(() => a.draft.editText('Denied'), /cannot write/);
+  assert.throws(() => a.draft.block('Denied'), /cannot block/);
+  b.draft.editText('Allowed');
+  const release = b.draft.block('Owned work');
+  const other = draft.bindModule('C', ['text']);
+  other.draft.block('Other work');
+  b.dispose();
+  release();
+  assert.deepEqual(draft.getSnapshot().blocks.map(block => block.reason), ['Other work']);
+  assert.throws(() => resolveDraft(b.draft), /revoked/);
+  assert.throws(() => b.draft.editText('Late'), /cannot write/);
+  other.dispose();
+  assert.equal(draft.getSnapshot().blocks.length, 0);
+});
+
+test('generic leases gate only their captured draft and never serialize into native records', async () => {
+  const { drafts, values } = fixture();
+  const a = drafts('A'), b = drafts('B');
+  a.edit('Waiting'); b.edit('Independent');
+  const binding = a.bindModule('schema-module', [], undefined, () => true);
+  const release = binding.draft.block('Module-owned work');
+  assert.equal(await a.send(async () => assert.fail('Blocked')), false);
+  assert.equal(await b.send(async () => true), true);
+  assert.doesNotMatch(values.get(key('A'))!, /Module-owned|blocks/);
+  binding.dispose();
+  release();
+  assert.equal(await a.send(async () => true), true);
+});
+
+test('browser draft creation has no persistent-storage or generated-device-identity dependency', async t => {
+  const { storage } = fixture();
   const reads: string[] = [];
   const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: {
-    sessionStorage: {
-      ...storage,
-      getItem(name: string) { reads.push(name); return storage.getItem(name); },
-    },
-    get localStorage() { return assert.fail('Drafts must not access persistent or historical storage'); },
-    get crypto() { return assert.fail('Drafts need no generated owner identity'); },
+    sessionStorage: { ...storage, getItem(name: string) { reads.push(name); return storage.getItem(name); } },
+    get localStorage() { return assert.fail('No persistent device store'); },
+    get crypto() { return assert.fail('No generated device identity'); },
   } });
   t.after(() => original ? Object.defineProperty(globalThis, 'window', original) : Reflect.deleteProperty(globalThis, 'window'));
   const draft = getSessionDraft('browser');
-  assert.deepEqual(reads, [key('browser')]);
-  assert.equal(values.size, 0);
-  draft.edit('Tab-only text');
-  assert.deepEqual(JSON.parse(values.get(key('browser'))!), { text: 'Tab-only text', unconfirmed: false });
+  assert.deepEqual(reads, [key('browser'), 'cockpit:draft-requests:browser']);
+  draft.edit('Tab text');
   assert.equal(await draft.send(async () => true), true);
-  assert.equal(values.size, 0);
-});
-
-test('module draft scopes enforce fields and ownership, expose cached readonly snapshots and revoke writes', () => {
-  const draft = createSessionDrafts()('scoped');
-  const a = draft.bindModule('A', ['attachments']);
-  const b = draft.bindModule('B', ['text', 'attachments']);
-  assert.equal(a.draft.sessionId, 'scoped');
-  assert.equal(a.draft.getSnapshot(), a.draft.getSnapshot());
-  assert.deepEqual(Object.keys(a.draft.getSnapshot()).sort(), ['attachments', 'blocks', 'pending', 'revision', 'text', 'unconfirmed']);
-  assert.equal(a.draft.id, draft.reference.id);
-  assert.throws(() => a.draft.editText('Denied'), /cannot write text/);
-  a.draft.appendAttachments([{ id: 'one', value: { type: 'file', path: '/fixture/one' } }]);
-  const snapshot = a.draft.getSnapshot();
-  assert.ok(Object.isFrozen(snapshot));
-  assert.ok(Object.isFrozen(snapshot.attachments[0].value));
-  assert.throws(() => b.draft.removeAttachment('one'), /another module/);
-  assert.throws(() => b.draft.appendAttachments([{ id: 'one', value: { type: 'file', path: '/fixture/two' } }]), /another module/);
-  assert.throws(() => a.draft.appendAttachments([{ id: 'bad', value: new File(['x'], 'x') as never }]));
-  assert.equal(a.draft.getSnapshot(), snapshot, 'failed writes are atomic');
-  const release1 = a.draft.block('Uploading one');
-  const release2 = a.draft.block('Uploading two');
-  assert.equal(draft.getSnapshot().blocks.length, 2);
-  release1(); release1();
-  assert.equal(draft.getSnapshot().blocks.length, 1);
-  a.dispose();
-  release2();
-  assert.throws(() => a.draft.removeAttachment('one'), /cannot write/);
-  assert.equal(draft.getSnapshot().blocks[0].orphaned, true);
-  draft.dismissOrphanedBlock(draft.getSnapshot().blocks[0].id);
-  assert.equal(draft.getSnapshot().blocks.length, 0);
-  draft.removeAttachment('one');
-  b.draft.editText('Allowed');
-  assert.equal(draft.getSnapshot().text, 'Allowed');
-});
-
-test('attachment-only ACK preserves text revisions while scoped attachments remain immutable during native submission', async () => {
-  const { drafts, storage } = fixture();
-  const draft = drafts('files');
-  const scope = draft.bindModule('files', ['attachments']);
-  const attachment = (id: string, path = id) => ({ id, value: { type: 'file' as const, path: `/fixture/${path}` } });
-  scope.draft.appendAttachments([attachment('same'), attachment('unchanged')]);
-  let finish!: (sent: boolean) => void;
-  const sending = draft.send((text, attachments) => {
-    assert.equal(text, '');
-    assert.equal(attachments?.length, 2);
-    return new Promise(resolve => { finish = resolve; });
-  });
-  assert.throws(() => scope.draft.appendAttachments([attachment('same', 'replacement'), attachment('new')]), /pending native submission/);
-  assert.throws(() => scope.draft.removeAttachment('unchanged'), /pending native submission/);
-  draft.edit('Typed during upload');
-  const reloaded = createSessionDrafts(storage)('files');
-  assert.equal(reloaded.getSnapshot().pending, false);
-  assert.equal(reloaded.getSnapshot().unconfirmed, true);
-  assert.equal(reloaded.getSnapshot().attachments.length, 2);
-  finish(true);
-  assert.equal(await sending, true);
-  assert.deepEqual(draft.getSnapshot().attachments.map(item => item.id), []);
-  assert.equal(draft.getSnapshot().text, 'Typed during upload');
-  scope.draft.appendAttachments([attachment('same', 'replacement'), attachment('new')]);
-  assert.equal(await draft.send(async () => false), false);
-  assert.equal(draft.getSnapshot().attachments.length, 2);
-  assert.equal(await draft.send(async () => true), true);
-  assert.equal(draft.getSnapshot().attachments.length, 0);
-});
-
-test('multiple per-session blocks gate native send and never serialize pending file objects', async () => {
-  const { drafts, storage, values } = fixture();
-  const a = drafts('A'), b = drafts('B');
-  a.edit('Waiting');
-  b.edit('Independent');
-  const scope = a.bindModule('file-module', ['attachments']);
-  const first = scope.draft.block('First upload');
-  const second = scope.draft.block('Second upload failed; remove it to proceed');
-  assert.equal(await a.send(async () => assert.fail('blocked')), false);
-  first();
-  assert.equal(await a.send(async () => assert.fail('still blocked')), false);
-  assert.equal(await b.send(async () => true), true);
-  assert.doesNotMatch(values.get(key('A'))!, /upload|blocks|File/);
-  assert.equal(createSessionDrafts(storage)('A').getSnapshot().pending, false);
-  second(); second();
-  assert.equal(await a.send(async () => true), true);
 });

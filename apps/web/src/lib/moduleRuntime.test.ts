@@ -3,9 +3,10 @@ import { test } from 'node:test';
 import * as React from 'react';
 import { createPortal } from 'react-dom';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { ActivateFrontend, ComposerContext, ComposerFileSelection, ComposerProps, ModuleAsset, ModuleFrontend, ModuleFrontendContext, MarkdownNode } from '@cockpit/module-api';
+import type { ActivateFrontend, ComposerContext, ComposerFileSelection, ComposerProps, DraftSchemaScope, ModuleAsset, ModuleFrontend, ModuleFrontendContext, MarkdownNode } from '@cockpit/module-api';
 import { ModuleRuntime, validateModuleAsset } from './moduleRuntime';
 import { createSessionDrafts, type SessionDraft } from './textDraft';
+import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';
 
 const digest = 'a'.repeat(64);
 const asset = (id = 'fixture'): ModuleAsset => ({
@@ -32,8 +33,9 @@ function fixture(modules: unknown[] = [asset()], frontend: ModuleFrontend | Acti
   });
   return { runtime, requests, imports, styles, reports, contexts, removed: () => removed };
 }
-const target = (draft: SessionDraft) => ({ draft: draft.reference, operation: 'prompt' as const, disabled: false });
+const target = (draft: SessionDraft) => ({ draft: draft.reference, operation: draft.reference.purpose.kind, disabled: false });
 function captureComposer(runtime: ModuleRuntime, draft: SessionDraft): ComposerProps {
+  runtime.prepareDraft(draft);
   let captured!: ComposerProps;
   const Component = runtime.compose('composer', (props: ComposerProps) => { captured = props; return null; });
   renderToStaticMarkup(React.createElement(Component, {
@@ -41,13 +43,19 @@ function captureComposer(runtime: ModuleRuntime, draft: SessionDraft): ComposerP
   }));
   return captured;
 }
-function withFiles(receive: (selection: ComposerFileSelection, context: ComposerContext) => boolean): ActivateFrontend {
-  return context => ({
-    apiVersion: 2, writes: ['attachments'],
-    components: [{ id: 'files', boundary: 'composer', wrap: Base => props => React.createElement(Base, {
-      ...props, onFiles: selection => receive(selection, { ...selection.target, draft: context.state.bindDraft(selection.target.draft) }),
-    }) }],
-  });
+function withFiles(receive: (selection: ComposerFileSelection, context: ComposerContext, field: DraftSchemaScope<FixtureData>) => boolean): ActivateFrontend {
+  return context => {
+    const schema = context.state.registerDraft(fixtureSchema());
+    return { apiVersion: 2,
+      components: [{ id: 'files', boundary: 'composer', wrap: Base => props => React.createElement(Base, {
+        ...props, onFiles: selection => {
+          const field = schema.forDraft(selection.target.draft);
+          return field ? receive(selection, { ...selection.target, draft: context.state.bindDraft(selection.target.draft) }, field)
+            : props.onFiles?.(selection) ?? false;
+        },
+      }) }],
+    };
+  };
 }
 
 test('constructing/rendering the module store has no bootstrap or backend access', () => {
@@ -141,7 +149,9 @@ test('one invalid plugin is local and bootstrap failures leave an empty usable n
 
 test('scoped file contexts survive session switching and one callback owns each selection', async () => {
   const received: ComposerContext[] = [];
-  const f = fixture([asset('z-last'), asset('a-first')], withFiles((_selection, context) => {
+  let field!: DraftSchemaScope<FixtureData>;
+  const f = fixture([asset('z-last'), asset('a-first')], withFiles((_selection, context, value) => {
+    field = value;
     received.push(context); context.draft.block('Selected file'); return true;
   }));
   await f.runtime.start();
@@ -152,30 +162,32 @@ test('scoped file contexts survive session switching and one callback owns each 
   assert.equal(received.length, 1);
   const captured = received[0];
   captureComposer(f.runtime, b);
-  captured.draft.appendAttachments([{ id: 'ready', value: { type: 'file', path: '/fixture/A' } }]);
-  assert.equal(a.getSnapshot().attachments.length, 1);
-  assert.equal(b.getSnapshot().attachments.length, 0);
+  appendFixture(field, fixtureItem('ready', 'A'));
+  assert.equal(a.getSnapshot().hasContent, true);
+  assert.equal(b.getSnapshot().hasContent, false);
   assert.deepEqual(f.reports, []);
   assert.equal(f.contexts.find(context => context.moduleId === 'z-last')!.state.bindDraft(a.reference), captured.draft);
   captured.draft.block('Unfinished file');
   f.runtime.stop();
-  assert.equal(a.getSnapshot().attachments.length, 1, 'ready native attachments survive teardown');
-  assert.equal(a.getSnapshot().blocks[0].orphaned, true, 'unfinished choices require explicit removal');
+  assert.equal(field.getSnapshot().items.length, 1, 'the last immutable field snapshot remains readable');
+  assert.equal(a.getSnapshot().hasContent, false, 'unregistered schema data contributes nothing');
+  assert.equal(a.getSnapshot().blocks.length, 0, 'module loss releases its own blockers without fallback UI');
+  assert.throws(() => field.update(value => value), /stopped/);
   assert.throws(() => captured.draft.editText('stale'), /cannot write/);
 });
 
-test('unhandled or failed selected files leave a visible removable block, not a silent send', async () => {
+test('unhandled or failed file callbacks do not manufacture host data, blockers or fallback payloads', async () => {
   for (const frontend of [{ apiVersion: 2 } as const, withFiles(() => { throw new Error('Fixture failure'); })]) {
     const f = fixture([asset()], frontend);
     await f.runtime.start();
     const draft = createSessionDrafts()('failed-file');
     draft.edit('Keep text');
     assert.equal(f.runtime.receiveFiles([new File(['x'], 'selected.txt')], target(draft), 'paste', captureComposer(f.runtime, draft).onFiles), false);
-    assert.equal(draft.getSnapshot().blocks.length, 1);
-    assert.match(draft.getSnapshot().blocks[0].reason, /selected.txt/);
-    assert.equal(await draft.send(async () => assert.fail('blocked')), false);
-    draft.dismissOrphanedBlock(draft.getSnapshot().blocks[0].id);
-    assert.equal(await draft.send(async () => true), true);
+    assert.equal(draft.getSnapshot().blocks.length, 0);
+    assert.equal(await draft.send(async request => {
+      assert.deepEqual(request, { intent: 'prompt', body: { sessionId: 'failed-file', text: 'Keep text' } });
+      return true;
+    }), true);
     f.runtime.stop();
   }
 });
@@ -195,35 +207,34 @@ test('renderer selection never fetches and a throwing matcher keeps the safe hos
   f.runtime.stop();
 });
 
-test('file callback exceptions and invalid promises revoke original blocks without losing ready content', async () => {
+test('file callback faults release only their module blockers and omit revoked schema fields', async () => {
   for (const asynchronous of [false, true]) {
     let captured: ComposerContext | undefined;
-    const f = fixture([asset()], withFiles((_selection, context) => {
+    const f = fixture([asset()], withFiles((_selection, context, field) => {
           captured = context;
           context.draft.block('Original upload');
-          context.draft.appendAttachments([{ id: 'ready', value: { type: 'file', path: '/fixture/ready' } }]);
+          appendFixture(field, fixtureItem('ready'));
           if (asynchronous) return Promise.reject(new Error('Async upload handler failed')) as unknown as boolean;
           throw new Error('Sync upload handler failed');
     }));
     await f.runtime.start();
     const draft = createSessionDrafts()('failed-file');
-    const releaseOther = draft.bindModule('other', ['attachments']).draft.block('Other module');
+    draft.edit('Retained text');
+    const releaseOther = draft.bindModule('other', ['text']).draft.block('Other module');
     assert.equal(f.runtime.receiveFiles([new File(['x'], 'selected.txt')], target(draft), 'drop', captureComposer(f.runtime, draft).onFiles), false);
     await Promise.resolve();
     assert.equal(f.runtime.getSnapshot().length, 0);
     assert.equal(f.contexts[0].signal.aborted, true);
-    assert.equal(draft.getSnapshot().blocks.filter(block => block.orphaned).length, 2);
-    for (const block of draft.getSnapshot().blocks) draft.dismissOrphanedBlock(block.id);
     assert.equal(draft.getSnapshot().blocks.length, 1, 'unrelated module retains its block');
-    assert.throws(() => captured!.draft.appendAttachments([]), /cannot write/);
-    assert.equal(draft.getSnapshot().attachments.length, 1);
+    assert.equal(draft.getSnapshot().blocks[0].reason, 'Other module');
+    assert.throws(() => captured!.draft.block('stale'), /cannot block/);
     releaseOther();
     assert.equal(await draft.send(async () => true), true);
     f.runtime.stop();
   }
 });
 
-test('late file-input rejection after revocation cannot recreate dismissed blockers', async () => {
+test('late file-input rejection after revocation cannot recreate blockers', async () => {
   let reject!: (error: Error) => void;
   const f = fixture([asset()], withFiles((_selection, context) => {
         context.draft.block('Uploading');
@@ -233,7 +244,6 @@ test('late file-input rejection after revocation cannot recreate dismissed block
   const draft = createSessionDrafts()('late');
   f.runtime.receiveFiles([new File(['x'], 'file')], target(draft), 'drop', captureComposer(f.runtime, draft).onFiles);
   f.runtime.stop();
-  for (const block of draft.getSnapshot().blocks) draft.dismissOrphanedBlock(block.id);
   reject(new Error('Stopped operation'));
   await Promise.resolve();
   assert.equal(draft.getSnapshot().blocks.length, 0);
@@ -281,7 +291,7 @@ test('a pending submission rejects stale paste and drop handlers without invokin
   const onFiles = captureComposer(f.runtime, draft).onFiles;
   assert.equal(f.runtime.receiveFiles([new File(['x'], 'late.txt')], target(draft), 'paste', onFiles), false);
   assert.equal(received, 0);
-  assert.equal(draft.getSnapshot().blocks.length, 1, 'late selections remain explicit recovery work, not lost input');
+  assert.equal(draft.getSnapshot().blocks.length, 0, 'core never manufactures file recovery work');
   finish(false);
   await sending;
   assert.equal(f.runtime.receiveFiles([new File(['x'], 'next.txt')], target(draft), 'drop', onFiles), true);
@@ -458,100 +468,6 @@ test('failed activation removes subscriptions even when a module never returns c
       report: () => {},
     });
 
-    test('state registration creates concrete services once, stages publication and disposes in reverse order', async () => {
-      const disposed: string[] = [];
-      let creates = 0, handle!: ReturnType<ModuleFrontendContext['state']['register']>, observedEmpty = false;
-      const f = fixture([asset()], context => {
-        observedEmpty = f.runtime.getSnapshot().length === 0;
-        const typed = context.state.register({
-          id: 'uploads',
-          create: () => { creates++; return { perDraft: new Map<string, number>(), increment(id: string) { this.perDraft.set(id, 1); } }; },
-          dispose: service => { assert.equal(service.perDraft.get('A'), 1); disposed.push('uploads'); },
-        });
-        typed.get().increment('A');
-        handle = typed;
-        context.state.register({ id: 'probes', create: () => new Map(), dispose: () => { disposed.push('probes'); throw new Error('Disposer failed'); } });
-        return { apiVersion: 2, dispose: () => { disposed.push('frontend'); } };
-      });
-      await f.runtime.start();
-      assert.equal(observedEmpty, true);
-      assert.equal(creates, 1);
-      assert.equal(handle.get(), handle.get());
-      assert.throws(() => f.contexts[0].state.register({ id: 'late', create: () => ({}), dispose() {} }), /activation-only/);
-      f.runtime.stop();
-      f.runtime.stop();
-      assert.deepEqual(disposed, ['frontend', 'probes', 'uploads']);
-      assert.throws(() => handle.get(), /stopped/);
-      assert.equal(f.reports.length, 1);
-    });
-
-    test('state rollback covers duplicate cross-registry IDs, synchronous factory errors, invalid async factories and timeouts', async () => {
-      for (const failure of ['duplicate', 'factory', 'async', 'frontend'] as const) {
-        let disposed = 0;
-        const f = fixture([asset()], context => {
-          context.state.register({ id: 'owned', create: () => ({}), dispose: () => { disposed++; } });
-          try {
-            if (failure === 'factory') context.state.register({ id: 'failed', create: () => { throw new Error('Factory failed'); }, dispose() {} });
-            if (failure === 'async') context.state.register({ id: 'async', create: (() => Promise.resolve({})) as never, dispose() {} });
-          } catch { /* A swallowed registration error still invalidates activation. */ }
-          return failure === 'frontend' ? { apiVersion: 1 } as unknown as ModuleFrontend : {
-            apiVersion: 2,
-            components: failure === 'duplicate' ? [{ id: 'owned', boundary: 'globalActions', wrap: Base => Base }] : [],
-          };
-        });
-        await f.runtime.start();
-        assert.equal(f.runtime.getSnapshot().length, 0, failure);
-        assert.equal(disposed, 1, failure);
-        assert.equal(f.contexts[0].signal.aborted, true);
-        f.runtime.stop();
-        assert.equal(disposed, 1);
-      }
-    });
-
-    test('bound drafts reject lookalike references and preserve captured identity after active-session changes', async () => {
-      const f = fixture([asset()], { apiVersion: 2, writes: ['text', 'attachments'] });
-      await f.runtime.start();
-      const context = f.contexts[0];
-      const a = createSessionDrafts()('A'), b = createSessionDrafts()('A');
-      assert.notEqual(a.reference.id, b.reference.id, 'same session does not mean same draft lifetime');
-      assert.throws(() => context.state.bindDraft({ ...a.reference }), /Unknown host draft/);
-      const bound = context.state.bindDraft(a.reference);
-      assert.equal(context.state.bindDraft(a.reference), bound);
-      f.runtime.updateView({ sessionId: 'B', visible: true, connected: true });
-      bound.editText('A only');
-      assert.equal(b.getSnapshot().text, '');
-      const release = bound.block('Outstanding selection');
-      context.signal.addEventListener('abort', release);
-      f.runtime.stop();
-      assert.equal(a.getSnapshot().blocks[0].orphaned, true, 'revoke precedes abort cleanup');
-      assert.throws(() => context.state.bindDraft(a.reference), /not active/);
-    });
-
-    test('file handoff cannot acknowledge unowned selections or re-enter native send while dispatching', async () => {
-      for (const result of [false, true, undefined]) {
-        const f = fixture([asset()], withFiles(() => result as boolean));
-        await f.runtime.start();
-        const draft = createSessionDrafts()('selection');
-        draft.edit('Keep text');
-        const props = captureComposer(f.runtime, draft);
-        assert.equal(f.runtime.receiveFiles([new File(['one'], 'one.txt'), new File(['two'], 'two.txt')], target(draft), 'drop', props.onFiles), false);
-        assert.match(draft.getSnapshot().blocks[0].reason, /one.txt、two.txt/);
-        assert.equal(await draft.send(async () => assert.fail('Selection remains blocked')), false);
-        f.runtime.stop();
-      }
-      const f = fixture([asset()], withFiles((_selection, context) => {
-        void resolveSend();
-        context.draft.appendAttachments([{ id: 'one', value: { type: 'file', path: '/fixture/one' } }]);
-        return true;
-      }));
-      const draft = createSessionDrafts()('attached');
-      const resolveSend = () => draft.send(async () => assert.fail('Dispatch guard prevents reentrant sends'));
-      await f.runtime.start();
-      assert.equal(f.runtime.receiveFiles([new File(['one'], 'one')], target(draft), 'paste', captureComposer(f.runtime, draft).onFiles), true);
-      assert.equal(draft.getSnapshot().blocks.length, 0);
-      assert.equal(draft.getSnapshot().attachments.length, 1);
-      f.runtime.stop();
-    });
     await runtime.start();
     assert.equal(context.signal.aborted, true);
     runtime.updateView({ sessionId: 'new', visible: true, connected: true });
@@ -560,4 +476,129 @@ test('failed activation removes subscriptions even when a module never returns c
     assert.equal(disposed, 1);
     runtime.stop();
   }
+});
+
+test('state registration creates concrete services once, stages publication and disposes in reverse order', async () => {
+  const disposed: string[] = [];
+  let creates = 0, handle!: ReturnType<ModuleFrontendContext['state']['register']>, observedEmpty = false;
+  const f = fixture([asset()], context => {
+    observedEmpty = f.runtime.getSnapshot().length === 0;
+    const typed = context.state.register({
+      id: 'uploads',
+      create: () => { creates++; return { perDraft: new Map<string, number>(), increment(id: string) { this.perDraft.set(id, 1); } }; },
+      dispose: service => { assert.equal(service.perDraft.get('A'), 1); disposed.push('uploads'); },
+    });
+    typed.get().increment('A');
+    handle = typed;
+    context.state.register({ id: 'probes', create: () => new Map(), dispose: () => { disposed.push('probes'); throw new Error('Disposer failed'); } });
+    return { apiVersion: 2, dispose: () => { disposed.push('frontend'); } };
+  });
+  await f.runtime.start();
+  assert.equal(observedEmpty, true);
+  assert.equal(creates, 1);
+  assert.equal(handle.get(), handle.get());
+  assert.throws(() => f.contexts[0].state.register({ id: 'late', create: () => ({}), dispose() {} }), /activation-only/);
+  f.runtime.stop();
+  f.runtime.stop();
+  assert.deepEqual(disposed, ['frontend', 'probes', 'uploads']);
+  assert.throws(() => handle.get(), /stopped/);
+  assert.equal(f.reports.length, 1);
+});
+
+test('state rollback covers cross-registry IDs, synchronous/async factories and invalid frontend results', async () => {
+  for (const failure of ['duplicate', 'schema-duplicate', 'factory', 'async', 'frontend'] as const) {
+    let disposed = 0;
+    const f = fixture([asset()], context => {
+      context.state.register({ id: 'owned', create: () => ({}), dispose: () => { disposed++; } });
+      try {
+        if (failure === 'schema-duplicate') context.state.registerDraft(fixtureSchema({ id: 'owned' }));
+        if (failure === 'factory') context.state.register({ id: 'failed', create: () => { throw new Error('Factory failed'); }, dispose() {} });
+        if (failure === 'async') context.state.register({ id: 'async', create: (() => Promise.resolve({})) as never, dispose() {} });
+      } catch { /* A swallowed registration error still invalidates activation. */ }
+      return failure === 'frontend' ? { apiVersion: 1 } as unknown as ModuleFrontend : {
+        apiVersion: 2, components: failure === 'duplicate' ? [{ id: 'owned', boundary: 'globalActions', wrap: Base => Base }] : [],
+      };
+    });
+    await f.runtime.start();
+    assert.equal(f.runtime.getSnapshot().length, 0, failure);
+    assert.equal(disposed, 1, failure);
+    assert.equal(f.contexts[0].signal.aborted, true);
+    f.runtime.stop();
+    assert.equal(disposed, 1);
+  }
+});
+
+test('bound base drafts reject lookalike references and release only their own leases on stop', async () => {
+  const f = fixture([asset()], { apiVersion: 2, writes: ['text'] });
+  await f.runtime.start();
+  const context = f.contexts[0];
+  const a = createSessionDrafts()('A'), b = createSessionDrafts()('A');
+  assert.notEqual(a.reference.id, b.reference.id);
+  assert.throws(() => context.state.bindDraft({ ...a.reference }), /host draft reference/);
+  const bound = context.state.bindDraft(a.reference);
+  assert.equal(context.state.bindDraft(a.reference), bound);
+  f.runtime.updateView({ sessionId: 'B', visible: true, connected: true });
+  bound.editText('A only');
+  assert.equal(b.getSnapshot().text, '');
+  const release = bound.block('Outstanding module work');
+  const other = a.bindModule('other', ['text']);
+  other.draft.block('Other work');
+  context.signal.addEventListener('abort', release);
+  f.runtime.stop();
+  assert.deepEqual(a.getSnapshot().blocks.map(block => block.reason), ['Other work']);
+  assert.throws(() => context.state.bindDraft(a.reference), /not active/);
+  other.dispose();
+});
+
+test('file handoff is an explicit module acknowledgment, never host attachment-retention proof', async () => {
+  for (const result of [false, true, undefined]) {
+    const f = fixture([asset()], withFiles(() => result as boolean));
+    await f.runtime.start();
+    const draft = createSessionDrafts()('selection');
+    draft.edit('Keep text');
+    const props = captureComposer(f.runtime, draft);
+    assert.equal(f.runtime.receiveFiles([new File(['one'], 'one.txt')], target(draft), 'drop', props.onFiles), result === true);
+    assert.equal(draft.getSnapshot().blocks.length, 0);
+    assert.equal(await draft.send(async request => {
+      assert.deepEqual(request.body, { sessionId: 'selection', text: 'Keep text' });
+      return true;
+    }), true);
+    f.runtime.stop();
+  }
+});
+
+test('draft schemas stage initialization and prepare drafts discovered during asynchronous activation before publication', async () => {
+  const a = createSessionDrafts()('A'), b = createSessionDrafts()('B');
+  let created = 0, finish!: () => void, entered!: () => void;
+  const ready = new Promise<void>(resolve => { entered = resolve; });
+  const waiting = new Promise<void>(resolve => { finish = resolve; });
+  let handle!: import('@cockpit/module-api').DraftSchemaHandle<FixtureData>;
+  const f = fixture([asset()], async context => {
+    handle = context.state.registerDraft(fixtureSchema({ create: () => {
+      created++;
+      return { items: [fixtureItem('initial')] };
+    } }));
+    assert.equal(a.getSnapshot().hasContent, false, 'staged state is not a live contribution');
+    entered();
+    await waiting;
+    return { apiVersion: 2 };
+  });
+  f.runtime.prepareDraft(a);
+  const starting = f.runtime.start();
+  await ready;
+  f.runtime.prepareDraft(b);
+  assert.equal(f.runtime.getSnapshot().length, 0);
+  finish();
+  await starting;
+  assert.equal(created, 2);
+  assert.equal(f.runtime.isDraftPrepared(a), true);
+  assert.equal(f.runtime.isDraftPrepared(b), true);
+  assert.equal(handle.forDraft(a.reference), handle.forDraft(a.reference));
+  assert.equal(created, 2, 'lookup never instantiates state');
+  assert.equal(a.getSnapshot().hasContent, true);
+  assert.equal(b.getSnapshot().hasContent, true);
+  assert.throws(() => f.contexts[0].state.registerDraft(fixtureSchema({ id: 'late' })), /activation-only/);
+  f.runtime.stop();
+  assert.equal(a.getSnapshot().hasContent, false);
+  assert.equal(b.getSnapshot().hasContent, false);
 });

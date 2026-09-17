@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import type { ComposerFileSelection, ComposerOperation } from '@cockpit/module-api';
 import { pickComposerFiles } from './composerFiles';
 import { ModuleRuntime } from './moduleRuntime';
-import { createSessionDrafts } from './textDraft';
+import { createSessionDrafts, SessionDraft } from './textDraft';
 
 class Picker extends EventTarget {
   type = '';
@@ -29,7 +29,7 @@ function fixture() {
 test('native picker captures draft, operation and callback before session changes and dispatches once', () => {
   const f = fixture();
   const drafts = createSessionDrafts(), a = drafts('A'), b = drafts('B');
-  const owned = a.bindModule('files', ['attachments']);
+  const owned = a.bindModule('files', ['text']);
   const target = { draft: a.reference, operation: 'prompt' as ComposerOperation, disabled: false };
   const selections: ComposerFileSelection[] = [];
   pickComposerFiles(f.runtime, target, selection => {
@@ -70,7 +70,8 @@ test('cancelled/empty pickers do not submit selections and unavailable controls 
   pickComposerFiles(f.runtime, target, receive, f.page);
   f.inputs[1].dispatchEvent(new Event('change'));
   pickComposerFiles(f.runtime, { ...target, disabled: true }, receive, f.page);
-  pickComposerFiles(f.runtime, { ...target, operation: 'ask' }, receive, f.page);
+  const answer = new SessionDraft('A', undefined, { kind: 'ask', requestId: 'ask' });
+  pickComposerFiles(f.runtime, { draft: answer.reference, operation: 'ask', disabled: true }, receive, f.page);
   draft.edit('Sending');
   let finish!: (value: boolean) => void;
   const sending = draft.send(() => new Promise(resolve => { finish = resolve; }));
@@ -82,7 +83,7 @@ test('cancelled/empty pickers do not submit selections and unavailable controls 
 });
 
 for (const acknowledged of [true, false]) {
-  test(`picker completion during native send retains selected files as recovery after ACK=${acknowledged}`, async () => {
+  test(`picker completion during native send adds no hidden state or recovery guard after ACK=${acknowledged}`, async () => {
     const f = fixture();
     const draft = createSessionDrafts()('race');
     draft.edit('Original');
@@ -97,27 +98,35 @@ for (const acknowledged of [true, false]) {
     assert.equal(await sending, acknowledged);
     assert.equal(draft.getSnapshot().text, 'New revision');
     assert.equal(draft.getSnapshot().unconfirmed, !acknowledged);
-    assert.equal(draft.getSnapshot().blocks[0].orphaned, true);
-    assert.match(draft.getSnapshot().blocks[0].reason, /not-lost.txt/);
-    assert.equal(await draft.send(async () => assert.fail('Recovery blocks the next submitted draft')), false);
-    draft.dismissOrphanedBlock(draft.getSnapshot().blocks[0].id);
-    assert.equal(await draft.send(async () => true), true);
+    assert.equal(draft.getSnapshot().blocks.length, 0);
+    assert.equal(await draft.send(async request => {
+      assert.deepEqual(request.body, { sessionId: 'race', text: 'New revision' });
+      return true;
+    }), true);
   });
 }
 
-test('a picker outliving module disposal retains its selected filename and cannot mutate the revoked draft scope', async () => {
+test('a picker canonicalizes a revocable module-bound reference at open and safely omits a vanished handler', async () => {
   const f = fixture();
   const draft = createSessionDrafts()('revoked');
-  const binding = draft.bindModule('files', ['attachments']);
-  pickComposerFiles(f.runtime, { draft: draft.reference, operation: 'prompt', disabled: false }, () => {
+  const binding = draft.bindModule('files', ['text']);
+  let available = true;
+  pickComposerFiles(f.runtime, { draft: binding.draft, operation: 'prompt', disabled: false }, selection => {
+    assert.equal(selection.target.draft, draft.reference);
+    if (!available) return false;
     binding.draft.block('Upload');
     return true;
   }, f.page);
   binding.dispose();
+  available = false;
   f.inputs[0].files = [new File(['x'], 'after-stop.txt')];
   f.inputs[0].dispatchEvent(new Event('change'));
-  assert.equal(draft.getSnapshot().attachments.length, 0);
-  assert.match(draft.getSnapshot().blocks[0].reason, /after-stop.txt/);
-  assert.equal(draft.getSnapshot().blocks[0].orphaned, true);
-  assert.equal(await draft.send(async () => assert.fail('Stopped upload cannot disappear')), false);
+  assert.equal('attachments' in draft.getSnapshot(), false);
+  assert.equal(draft.getSnapshot().blocks.length, 0);
+  assert.deepEqual(f.reports, []);
+  draft.edit('Plain text');
+  assert.equal(await draft.send(async request => {
+    assert.deepEqual(request.body, { sessionId: 'revoked', text: 'Plain text' });
+    return true;
+  }), true);
 });

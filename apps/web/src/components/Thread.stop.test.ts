@@ -6,16 +6,20 @@ import type { ChatSession } from '../net/types';
 import { Thread } from './Thread';
 import { useCockpit } from '../net/store';
 import { getSessionDraft } from '../lib/textDraft';
+import { getDraftSession } from '../lib/draftSelection';
 
 const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
 const initialState = useCockpit.getInitialState();
 const previousConnection = initialState.connState;
+const previousReady = initialState.snapshotReady;
 before(() => {
   Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
   initialState.connState = 'open';
+  initialState.snapshotReady = true;
 });
 after(() => {
   initialState.connState = previousConnection;
+  initialState.snapshotReady = previousReady;
   if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
   else Reflect.deleteProperty(globalThis, 'window');
 });
@@ -159,7 +163,9 @@ test('native cancellation keeps its Stop target focusable while blocking repeate
 });
 
 test('offline decisions, sending and queue removal are disabled without locking editable drafts or inventing pending work', () => {
-  const draft = getSessionDraft(session.sessionId);
+  const prompt = getSessionDraft(session.sessionId);
+  prompt.edit('Cached prompt is not the answer');
+  const draft = getDraftSession(session.sessionId).candidate({ kind: 'ask', requestId: 'ask' });
   draft.edit('Offline draft remains editable');
   const props = {
     session: { ...session, queue: [{ id: 'q', text: 'Queued message' }],
@@ -179,6 +185,7 @@ test('offline decisions, sending and queue removal are disabled without locking 
     }
     assert.doesNotMatch(offline.match(/<textarea[^>]*>/)![0], /disabled/);
     assert.match(offline, /Offline draft remains editable<\/textarea>/);
+    assert.doesNotMatch(offline, /Cached prompt is not the answer/);
     assert.doesNotMatch(offline, /aria-busy="true"/);
     initialState.connState = 'open';
     const online = renderState();
@@ -188,6 +195,7 @@ test('offline decisions, sending and queue removal are disabled without locking 
   } finally {
     initialState.connState = 'open';
     draft.edit('');
+    prompt.edit('');
   }
 });
 
@@ -235,32 +243,35 @@ test('running composer uses only a queue placeholder while idle and questions ke
 });
 
 test('submitting uses an existing header without adding an idle header or duplicate progress', async () => {
-  const draft = getSessionDraft(session.sessionId);
-  draft.edit('Retained answer');
-  let finish!: (accepted: boolean) => void;
-  const pending = draft.runAction(() => new Promise(resolve => { finish = resolve; }));
-  try {
-    for (const patch of [
-      { ask: { requestId: 'ask', question: 'Question', choices: ['A'] } },
-      { planRequest: { requestId: 'plan', summary: 'Plan', actions: ['exit_only' as const] } },
-      { elicitation: { requestId: 'confirm', message: 'Confirm' } },
-      {},
-    ]) {
+  for (const patch of [
+    { ask: { requestId: 'ask', question: 'Question', choices: ['A'] } },
+    { planRequest: { requestId: 'plan', summary: 'Plan', actions: ['exit_only' as const] } },
+    { elicitation: { requestId: 'confirm', message: 'Confirm' } },
+    {},
+  ]) {
+    const draft = getDraftSession(session.sessionId).current({ ...session, ...patch });
+    draft.edit('Retained answer');
+    let finish!: (accepted: boolean) => void;
+    const pending = draft.runAction(() => new Promise(resolve => { finish = resolve; }));
+    try {
       const html = render(patch);
       assert.match(html, /chat-execution-label[^>]*>正在提交(?:回答)?…<\/span>/);
       assert.doesNotMatch(html, /chat-pending-hint[^>]*>正在提交|data-icon="sending"/);
       assert.match(html, /class="chat-input-btn ck-icon-button send rp" disabled="" aria-label="正在提交" aria-busy="true"/);
+      if (draft.reference.purpose.kind === 'prompt') {
+        const idle = render({ status: 'idle' });
+        assert.match(idle, /<summary class="chat-execution-head" hidden=""/);
+        assert.match(idle, /data-icon="sending"/);
+        assert.doesNotMatch(idle, /data-header="true"/);
+      }
+    } finally {
+      finish(false);
+      await pending;
     }
-    const idle = render({ status: 'idle' });
-    assert.match(idle, /<summary class="chat-execution-head" hidden=""/);
-    assert.match(idle, /data-icon="sending"/);
-    assert.doesNotMatch(idle, /data-header="true"/);
-  } finally {
-    finish(false);
-    await pending;
+    const failure = render(patch);
+    assert.ok(failure.indexOf('chat-input-notice" role="alert"') >= 0);
+    assert.ok(failure.indexOf('chat-input-notice" role="alert"') < failure.indexOf('<details class="chat-input-card"'));
+    assert.match(failure, /Retained answer<\/textarea>/);
+    draft.dismissNotice(); draft.edit('');
   }
-  const failure = render({ ask: { requestId: 'ask', question: 'Question' } });
-  assert.ok(failure.indexOf('chat-input-notice" role="alert"') < failure.indexOf('<details class="chat-input-card"'));
-  assert.match(failure, /Retained answer<\/textarea>/);
-  draft.dismissNotice(); draft.edit('');
 });

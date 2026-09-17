@@ -101,7 +101,9 @@ export function installWorkspaceFixture(store: ReturnType<typeof createCockpitSt
           currentContextTier: options?.contextTier } : item) }));
       return { ok: true, result: { modelId, status: 'applied' } };
     },
-    sendPrompt: async (id, text) => {
+    sendDraft: async request => {
+      if (request.intent !== 'prompt') throw new Error('Unsupported synthetic draft route');
+      const { sessionId: id, text } = request.body;
       find(id);
       store.setState(state => ({ sessions: state.sessions.map(item => item.sessionId === id
         ? { ...item, messages: [...item.messages, {

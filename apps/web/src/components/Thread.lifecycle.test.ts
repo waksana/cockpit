@@ -3,6 +3,9 @@ import { test } from 'node:test';
 import { act, createElement, Fragment, useCallback, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import { getSessionDraft } from '../lib/textDraft';
+import { getDraftSession } from '../lib/draftSelection';
+import type { NativeDraftRequest } from '../lib/draft';
+import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';
 import { useCockpit } from '../net/store';
 import type { ChatSession } from '../net/types';
 import type { IntentResult, SessionProjection } from '@cockpit/protocol';
@@ -17,7 +20,7 @@ import { MarkdownReplacement, ModuleRuntimeProvider } from './ModuleComponents';
 import { Composer, ComposerNotices } from './Composer';
 import { useLongPress } from '../lib/longpress';
 import { useMenuDismiss } from '../lib/useMenuDismiss';
-import type { ActivateFrontend, ComposerContext, ComponentMiddleware, MessageIdentity, MessageProps, ModuleFrontendContext } from '@cockpit/module-api';
+import type { ActivateFrontend, ComposerContext, ComponentMiddleware, DraftSchemaHandle, DraftSchemaScope, MessageIdentity, MessageProps, ModuleFrontendContext } from '@cockpit/module-api';
 import { fixtureSession } from '../dev/chat-fixtures';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
@@ -283,7 +286,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       messages: value.messages.map(message => message.id === 'projected-root' ? { ...message, streaming: false, content: 'Final root speech' } : message) };
     await act(show);
     assert.equal(contexts.has(JSON.stringify(['ask', 'host-request', undefined])), false);
-    assert.equal(contexts.get(JSON.stringify(['ask', 'next-host-request', undefined]))?.element, ask.element);
+    assert.notEqual(contexts.get(JSON.stringify(['ask', 'next-host-request', undefined]))?.element, ask.element,
+      'a new request owns a fresh answer composer');
     assert.equal(contexts.get(JSON.stringify(['message', 'native-shared', undefined]))?.element, speech.element);
     assert.equal(contexts.get(JSON.stringify(['message', 'native-shared', undefined]))?.complete, true);
     await clickChild();
@@ -341,87 +345,86 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await tick();
     assert.equal(opens, 3, 'removed rows cannot open a late menu');
   });
-  await t.test('attachment middleware keeps controlled removal, native pending gates and a safe fault fallback', async subtest => {
-    let activation!: ModuleFrontendContext;
-    let remove!: () => boolean;
-    let crash = false, failRemove = false, requests = 0;
-    const reports: unknown[] = [];
+  await t.test('native decisions select fresh drafts without moving cached prompt fields or invoking stale choice callbacks', async subtest => {
+    let handle!: DraftSchemaHandle<FixtureData>;
+    function Rows({ field }: { field: DraftSchemaScope<FixtureData> }) {
+      const data = useSyncExternalStore(field.subscribe, field.getSnapshot, field.getSnapshot);
+      return data.items.length ? createElement('section', { className: 'fixture-prompt-files' }, data.items.map(item =>
+        createElement('span', { key: item.id }, item.id))) : null;
+    }
     const digest = 'b'.repeat(64);
     const runtime = new ModuleRuntime({
       pageUrl: 'https://fixture.invalid',
-      fetch: async () => { requests++; return Response.json({ modules: [{
+      fetch: async () => Response.json({ modules: [{
         id: 'attachment', name: 'Attachment', version: '1.0.0', digest, config: {}, styles: [],
         apiBase: `/_modules/attachment/${digest}/api`, entry: `/_modules/assets/attachment/${digest}/entry.js`,
-      }], errors: [] }); },
+      }], errors: [] }),
       load: async () => ({ activate: ((context => {
-        activation = context;
-        return { apiVersion: 2, writes: ['attachments'], components: [{
-          id: 'attachment', boundary: 'attachment', wrap: Base => props => {
-            if (props.onRemove) remove = props.onRemove;
-            if (crash) throw new Error('Attachment view failed');
+        handle = context.state.registerDraft(fixtureSchema());
+        return { apiVersion: 2, components: [{
+          id: 'files', boundary: 'composer', wrap: Base => props => {
+            const field = handle.forDraft(props.draft);
             return createElement(Base, { ...props,
-              onRemove: props.onRemove ? () => {
-                if (failRemove) throw new Error('Composed remove failed');
-                return props.onRemove!();
-              } : undefined,
-              actions: createElement('span', { className: 'extra-action' }, 'Extra action', props.actions),
+              children: createElement(Fragment, null, props.children, field && createElement(Rows, { field })),
             });
           },
         }] };
       })) satisfies ActivateFrontend }),
-      report: error => { reports.push(error); },
+      report: assert.fail,
     });
     subtest.mock.method(console, 'error', () => {});
     await runtime.start();
-    const draft = getSessionDraft('controlled-attachment');
-    const scope = activation.state.bindDraft(draft.reference);
-    const attachment = (name: string) => ({ id: 'one', value: { type: 'file' as const, path: `/fixture/${name}`, displayName: name } });
-    scope.appendAttachments([attachment('Original')]);
-    const show = (disabled = false) => root.render(createElement(Composer, { draft, runtime, disabled, onSend: () => draft.send(async () => true) }));
-    await act(() => show());
-    assert.match(container.textContent, /Original.*移除.*Extra action/);
-    const stale = remove;
-    await act(() => scope.appendAttachments([attachment('Replacement')]));
-    assert.equal(stale(), false, 'a captured callback cannot remove a replacement with the same id');
-    const beforeSend = remove;
-    let finish!: (acknowledged: boolean) => void;
-    let sending!: Promise<boolean>;
-    await act(() => { sending = draft.send(() => new Promise(resolve => { finish = resolve; })); });
-    assert.equal(beforeSend(), false, 'native pending is rechecked even for a previously enabled callback');
-    await act(async () => { finish(false); await sending; });
-    await act(() => show(true));
-    assert.equal(remove(), false, 'current disabled state cannot be bypassed');
-    await act(() => show());
-    const failedRemoval = subtest.mock.method(draft, 'removeAttachment', () => { throw new Error('Core remove failed'); });
-    await act(() => { assert.equal(remove(), false, 'failed removal must not authorize module server discard'); });
-    assert.match(String(reports.at(-1)), /Core remove failed/);
-    assert.equal(draft.getSnapshot().attachments.length, 1);
-    failedRemoval.mock.restore();
-    failRemove = true;
-    const failedClick = new Event('click', { bubbles: true });
-    Object.defineProperty(failedClick, 'target', { value: container.querySelector('[aria-label="移除附件"]') });
-    await act(() => container.dispatchEvent(failedClick));
-    assert.match(String(reports.at(-1)), /Composed remove failed/);
-    assert.equal(draft.getSnapshot().attachments.length, 1);
-    failRemove = false;
-    await act(() => { assert.equal(remove(), true); });
-    assert.equal(remove(), false, 'removal acknowledges only an actual removal');
-    assert.equal(requests, 1, 'controlled removal performs no server deletion or submission');
-    await act(() => {
-      scope.appendAttachments([attachment('Survives fault')]);
-      scope.block('Unfinished upload');
-      crash = true;
-      draft.edit('Force view update');
-    });
-    assert.equal(runtime.getSnapshot().length, 0);
-    assert.match(container.textContent, /Survives fault.*移除/);
-    assert.equal(container.querySelector('.extra-action'), null);
-    assert.equal(draft.getSnapshot().blocks[0].orphaned, true);
-    assert.equal(await draft.send(async () => assert.fail('Attachment fault must not unlock sending')), false);
-    const click = new Event('click', { bubbles: true });
-    Object.defineProperty(click, 'target', { value: container.querySelector('[aria-label="移除附件"]') });
-    await act(() => container.dispatchEvent(click));
-    assert.equal(draft.getSnapshot().attachments.length, 0, 'core removal survives the failed replacement');
+    let value = { ...fixtureSession('reading'), sessionId: 'decision-fields' };
+    const group = getDraftSession(value.sessionId), prompt = group.prompt;
+    prompt.edit('Cached ordinary prompt');
+    runtime.prepareDraft(prompt);
+    const field = handle.forDraft(prompt.reference)!;
+    appendFixture(field, fixtureItem('Prompt file'));
+    let finish!: (value: boolean) => void;
+    let choices = 0;
+    const sent: NativeDraftRequest[] = [];
+    const show = () => root.render(createElement(ModuleRuntimeProvider, { runtime, children: createElement(Thread, {
+      session: value, onLoadMore() {}, onSend: request => { sent.push(request); return new Promise(resolve => { finish = resolve; }); },
+      onRespondAsk: async () => { choices++; return true; },
+    }) }));
+    await act(show);
+    assert.ok(container.querySelector('.fixture-prompt-files'));
+    value = { ...value, ask: { requestId: 'first', question: 'Question one', choices: ['Choice'] } };
+    await act(show);
+    const answer = group.current(value);
+    assert.notEqual(answer.reference.id, prompt.reference.id);
+    assert.equal(answer.getSnapshot().text, '');
+    assert.equal(container.querySelector('.fixture-prompt-files'), null);
+    assert.doesNotMatch(container.textContent, /Cached ordinary prompt|Prompt file|不接受附件/);
+    const choice = container.querySelector('.chat-ask-choice')!;
+    const key = Object.keys(choice).find(name => name.startsWith('__reactProps$'))!;
+    const staleChoice = (choice as unknown as Record<string, { onClick(): void }>)[key].onClick;
+    await act(() => answer.edit('Retained answer'));
+    const enter = new Event('click', { bubbles: true, cancelable: true });
+    Object.defineProperties(enter, { target: { value: container.querySelector('.send') } });
+    await act(() => container.dispatchEvent(enter));
+    assert.equal(sent.length, 1);
+    assert.deepEqual(sent[0], { intent: 'respondAsk', body: { sessionId: value.sessionId, requestId: 'first', answer: 'Retained answer', wasFreeform: true } });
+    assert.equal(prompt.getSnapshot().pending, false);
+    await act(() => appendFixture(field, fixtureItem('Background upload')));
+    await act(() => finish(false));
+    assert.equal(group.current(value), answer, 'failure does not restore the prompt before native retirement');
+    assert.equal(answer.getSnapshot().text, 'Retained answer');
+    assert.equal(prompt.getSnapshot().text, 'Cached ordinary prompt');
+    assert.equal(field.getSnapshot().items.length, 2);
+    value = { ...value, ask: { requestId: 'second', question: 'Replacement question', choices: ['Choice'] } };
+    await act(show);
+    assert.equal(group.current(value).getSnapshot().text, '');
+    value = { ...value, ask: { requestId: 'first', question: 'Reused request ID', choices: ['Choice'] } };
+    await act(show);
+    assert.notEqual(group.current(value), answer);
+    await act(() => staleChoice());
+    assert.equal(choices, 0, 'a saved callback cannot answer a reused request occurrence');
+    value = { ...value, ask: null };
+    await act(show);
+    assert.equal(group.current(value), prompt);
+    assert.match(container.textContent, /Prompt fileBackground upload/);
+    assert.equal(prompt.getSnapshot().text, 'Cached ordinary prompt');
     await act(() => root.render(null));
     runtime.stop();
   });
@@ -701,9 +704,11 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await act(() => container.dispatchEvent(event));
     };
     await act(show);
-    const editor = node('.chat-input-message');
+    let editor = node('.chat-input-message');
     await click(node('.chat-typing-stop'));
-    assert.equal(document.activeElement, editor, 'stopping into idle focuses the surviving editor');
+    assert.notEqual(node('.chat-input-message'), editor, 'ending the plan restores a distinct prompt composer');
+    editor = node('.chat-input-message');
+    assert.equal(document.activeElement, editor, 'stopping into idle focuses the current prompt editor');
     assert.equal(node('.chat-input-card').open, true);
 
     value = { ...value, queue: [{ id: 'first', text: 'First queued' }, { id: 'second', text: 'Second queued' }] };
@@ -813,8 +818,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       ? Object.defineProperty(globalThis, 'navigator', previousNavigator) : Reflect.deleteProperty(globalThis, 'navigator'));
     const value: ChatSession = { ...session('dock-transition'), hasMore: false, status: 'running',
       queue: [{ id: 'next', text: '  Keep this queue\nwith original whitespace  ' }], ask: { requestId: 'ask', question: 'Choose', choices: ['A', 'B'] } };
-    const localDraft = getSessionDraft(value.sessionId);
-    localDraft.edit('Keep typing');
+    const promptDraft = getSessionDraft(value.sessionId);
+    promptDraft.edit('Cached ordinary prompt');
     let stops = 0;
     const removed: string[] = [];
     const show = async (patch: Partial<ChatSession> = {}) => {
@@ -831,6 +836,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await act(() => container.dispatchEvent(event));
     };
     await show();
+    const localDraft = getDraftSession(value.sessionId).current(value);
+    await act(() => localDraft.edit('Keep typing'));
     const input = container.querySelector('.chat-input-message')!;
     const execution = container.querySelector('.chat-execution-head')!;
     const queue = container.querySelector('.chat-queue-item')!;
@@ -873,13 +880,17 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(localDraft.getSnapshot().text, 'Keep typing');
     await act(() => localDraft.dismissNotice());
     await show({ ask: { ...value.ask!, requestId: 'next-question' } });
-    assert.equal(decision.open, true, 'a different native question opens without replacing the editor');
-    assert.equal(container.querySelector('.chat-input-message'), input);
+    assert.equal(decision.open, true, 'a different native question opens its own answer composer');
+    const nextInput = container.querySelector('.chat-input-message');
+    assert.notEqual(nextInput, input);
+    assert.equal(getDraftSession(value.sessionId).current({ ask: { requestId: 'next-question' } }).getSnapshot().text, '');
     decision.open = false;
     await show({ ask: null });
     assert.equal(decision.open, true, 'ordinary input is restored after a collapsed question resolves');
     assert.equal(decision.getAttribute('data-decision'), null);
-    assert.equal(container.querySelector('.chat-input-message'), input);
+    assert.notEqual(container.querySelector('.chat-input-message'), nextInput);
+    assert.equal(getDraftSession(value.sessionId).current({}), promptDraft);
+    assert.equal(promptDraft.getSnapshot().text, 'Cached ordinary prompt');
     assert.equal(container.querySelector('.chat-execution-head'), execution);
     assert.equal(container.querySelector('.chat-queue-item'), queue);
     assert.equal(container.querySelector('[aria-label="复制排队消息"]'), queueCopy);
@@ -903,7 +914,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await show({ status: 'idle', ask: null, queue: [] });
     assert.equal(decision.open, true);
     assert.equal(execution.attributes.has('hidden'), true, 'idle input has no folding control or extra status row');
-    assert.equal(container.querySelector('.chat-input-message'), input);
+    assert.equal(getDraftSession(value.sessionId).current({}), promptDraft);
+    assert.equal(container.querySelector('.chat-input-message')?.value, 'Cached ordinary prompt');
   });
 
   for (const hasMore of [false, true]) {
@@ -1242,6 +1254,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     let aboveMounts = 0;
     let received = 0;
     let scoped: ComposerContext | undefined;
+    let handle!: DraftSchemaHandle<FixtureData>;
     const reports: unknown[] = [];
     function Action(context: ComposerContext) {
       scoped = context;
@@ -1252,10 +1265,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
         onPaste: event => event.preventDefault(), onDrop: event => event.preventDefault(),
       }, state.text || 'Files');
     }
-    function Above(context: ComposerContext) {
-      const state = useSyncExternalStore(context.draft.subscribe, context.draft.getSnapshot, context.draft.getSnapshot);
+    function Above({ field }: { field: DraftSchemaScope<FixtureData> }) {
+      const state = useSyncExternalStore(field.subscribe, field.getSnapshot, field.getSnapshot);
       useLayoutEffect(() => { aboveMounts++; }, []);
-      return state.attachments.length ? createElement('div', { className: 'fixture-attachment-panel' }, 'Selected file') : null;
+      return state.items.length ? createElement('div', { className: 'fixture-attachment-panel' }, 'Selected file') : null;
     }
     const digest = 'a'.repeat(64);
     const runtime = new ModuleRuntime({
@@ -1264,35 +1277,42 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
         id: 'fixture', name: 'Fixture', version: '1.0.0', digest, apiBase: `/_modules/fixture/${digest}/api`,
         entry: `/_modules/assets/fixture/${digest}/entry.js`, styles: [], config: {},
       }], errors: [] }),
-      load: async () => ({ activate: ((context => ({
-        apiVersion: 2, writes: ['attachments'],
+      load: async () => ({ activate: ((context => {
+        handle = context.state.registerDraft(fixtureSchema());
+        const pending = context.state.register({
+          id: 'pending', create: () => ({ files: [] as File[], releases: [] as (() => void)[] }),
+          dispose: state => { state.releases.forEach(release => release()); state.files = []; },
+        });
+        return { apiVersion: 2,
         components: [{ id: 'composer', boundary: 'composer', wrap: Base => props => {
+          const field = handle.forDraft(props.draft);
+          if (!field) return createElement(Base, props);
           const bound = { ...props, draft: context.state.bindDraft(props.draft) };
           return createElement(Base, { ...props,
             actions: interactions => createElement(Fragment, null, props.actions?.(interactions), createElement(Action, bound)),
-            children: createElement(Fragment, null, props.children, createElement(Above, bound)),
+            children: createElement(Fragment, null, props.children, createElement(Above, { field })),
             onFiles: selection => {
               received++;
               scoped = { ...selection.target, draft: context.state.bindDraft(selection.target.draft) };
-              scoped.draft.block(`Selected ${selection.files.map(file => file.name).join(', ')}`);
+              pending.get().files.push(...selection.files);
+              pending.get().releases.push(scoped.draft.block(`Selected ${selection.files.map(file => file.name).join(', ')}`));
               return true;
             },
           });
         } }],
         markdown: [{ id: 'broken', matches: () => true, component: () => { throw new Error('Fixture renderer failed'); } }],
-      }))) satisfies ActivateFrontend }),
+      }; })) satisfies ActivateFrontend }),
       report: error => { reports.push(error); },
     });
     await runtime.start();
     const draft = getSessionDraft('module-lifecycle');
     let sends = 0;
-    const onSend = () => draft.send(async () => { sends++; return true; });
-    const renderComposer = async (operation: ComposerContext['operation'] = 'prompt', disabled = false) => {
+    const requests: NativeDraftRequest[] = [];
+    const onSend = () => draft.send(async request => { sends++; requests.push(request); return true; });
+    const renderComposer = async (disabled = false) => {
       await act(() => root.render(createElement('details', { className: 'fixture-input-card', open: true },
-        createElement(ComposerNotices, { draft, operation }),
-        createElement(Composer, { draft, runtime, onSend, operation, disabled,
-        ask: operation === 'ask' ? { request: { requestId: 'module-question', question: 'Choose', choices: ['A'] }, onChoice() {} } : undefined,
-      }))));
+        createElement(ComposerNotices, { draft }),
+        createElement(Composer, { draft, runtime, onSend, disabled }))));
     };
     const dispatch = async (selector: string, type: string, properties: Record<string, unknown> = {}) => {
       const target = container.querySelector(selector);
@@ -1304,6 +1324,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       return event;
     };
     await renderComposer();
+    let field = handle.forDraft(draft.reference)!;
     await dispatch('.chat-input-message', 'focusin');
     const action = container.querySelector('[aria-label="Module action"]');
     const editor = container.querySelector('.chat-input-message');
@@ -1332,26 +1353,26 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(sends, 0, 'IME composition never submits');
     await dispatch('.chat-input-message', 'keydown', { key: 'Enter', ctrlKey: true });
     assert.equal(sends, 1);
-    await act(() => scope.appendAttachments([{ id: 'native', value: { type: 'file', path: '/fixture/native' } }]));
-    await renderComposer('ask');
-    assert.match(container.textContent, /不接受附件/);
-    assert.ok(context.querySelector('.draft-attachments'));
+    await act(() => appendFixture(field, fixtureItem('native')));
+    assert.equal(context.querySelector('.draft-attachments'), null);
     assert.ok(context.querySelector('.fixture-attachment-panel'));
     assert.equal(aboveMounts, 1, 'empty/nonempty module content and notices must not remount contributions');
     assert.equal(container.querySelector('.chat-input-message'), editor);
     assert.equal(container.querySelector('[aria-label="Module action"]'), action);
     const answerCard = container.querySelector('.fixture-input-card')!;
     answerCard.open = false;
-    await act(() => draft.edit('Draft updated while folded'));
+    let releaseFold!: () => void;
+    await act(() => { releaseFold = scope.block('Folded module work'); draft.edit('Draft updated while folded'); });
     assert.equal(answerCard.open, false);
     assert.equal(aboveMounts, 1);
     assert.equal(container.querySelector('.chat-input-message'), editor);
     assert.equal(container.querySelector('[aria-label="Module action"]'), action);
     await dispatch('.chat-input-message', 'keydown', { key: 'Enter', ctrlKey: true });
     assert.equal(sends, 1);
-    await renderComposer('prompt', true);
+    await renderComposer(true);
     await dispatch('.chat-input-message', 'keydown', { key: 'Enter', ctrlKey: true });
     assert.equal(sends, 1);
+    await act(() => releaseFold());
     await renderComposer();
     const clipboard = (text: string) => ({ files: [new File(['x'], 'paste.txt')], getData: () => text });
     const mixed = await dispatch('.chat-input-message', 'paste', { clipboardData: clipboard('plain text') });
@@ -1367,10 +1388,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await dispatch('[aria-label="Module action"]', 'drop', { dataTransfer: { files: [new File(['x'], 'owned.txt')] } });
     assert.equal(received, 3, 'events handled by a module control do not start a second host receive');
     await act(() => root.render(null));
-    await act(() => scope.appendAttachments([{ id: 'after-unmount', value: { type: 'file', path: '/fixture/later' } }]));
+    await act(() => appendFixture(field, fixtureItem('after-unmount', 'later')));
     await renderComposer();
     assert.equal(scoped!.draft, scope);
-    assert.equal(draft.getSnapshot().attachments.length, 2);
+    assert.equal(field.getSnapshot().items.length, 2);
     const restoreConsole = t.mock.method(console, 'error', () => {});
     try {
       await act(() => root.render(createElement(ModuleRuntimeProvider, { runtime, children: createElement(MarkdownReplacement, {
@@ -1384,17 +1405,18 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await act(() => root.render(null));
       await act(async () => { runtime.stop(); await runtime.start(); });
       await renderComposer();
+      field = handle.forDraft(draft.reference)!;
       await act(() => { scoped!.draft.block('Selected file not finished'); draft.edit('Crash module action'); });
       assert.equal(runtime.getSnapshot().length, 0, 'failed composer plugins are unregistered locally');
       assert.ok(container.querySelector('.chat-input-message'), 'native input survives the plugin render error');
-      assert.equal(draft.getSnapshot().attachments.length, 2, 'ready native attachments remain usable');
-      assert.equal(draft.getSnapshot().blocks[0].orphaned, true);
-      assert.match(container.textContent, /移除未完成的选择/);
-      assert.ok(container.querySelector('.chat-composer-context')?.querySelector('.module-draft-recovery'),
-        'revoked module recovery remains in the composer context');
+      assert.equal(field.getSnapshot().items.length, 2, 'the last immutable schema snapshot is retained, not submitted');
+      assert.equal(draft.getSnapshot().blocks.length, 0);
+      assert.doesNotMatch(container.textContent, /移除未完成的选择|Selected file/);
+      assert.equal(container.querySelector('.module-draft-recovery'), null);
       await dispatch('.chat-input-message', 'keydown', { key: 'Enter', ctrlKey: true });
       await dispatch('.send', 'click');
-      assert.equal(sends, 1, 'render fault cannot bypass retained draft guards');
+      assert.equal(sends, 2, 'module loss leaves ordinary core text usable');
+      assert.deepEqual(requests.at(-1)?.body, { sessionId: draft.sessionId, text: 'Crash module action' });
     } finally {
       restoreConsole.mock.restore();
       await act(() => root.render(null));

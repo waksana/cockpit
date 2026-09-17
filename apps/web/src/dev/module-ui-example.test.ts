@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { createSessionDrafts } from '../lib/textDraft';
+import { createSessionDrafts, SessionDraft } from '../lib/textDraft';
 import { ModuleRuntime } from '../lib/moduleRuntime';
 import { activate } from './module-ui-example';
 import { Composer } from '../components/Composer';
@@ -23,8 +23,9 @@ test('the documented module example activates through the real host and renders 
   assert.deepEqual(reports, []);
   assert.equal(runtime.getSnapshot()[0].frontend.components?.[0].boundary, 'composer');
   const draft = createSessionDrafts()('example');
+  const answer = new SessionDraft('example', undefined, { kind: 'ask', requestId: 'example-ask' });
   const render = (disabled: boolean, operation: 'prompt' | 'ask' = 'prompt') =>
-    renderToStaticMarkup(React.createElement(Composer, { draft, runtime, disabled, operation, onSend: async () => true }));
+    renderToStaticMarkup(React.createElement(Composer, { draft: operation === 'prompt' ? draft : answer, runtime, disabled, onSend: async () => true }));
   assert.match(render(false), /class="ck-icon-button example-draft-action"/);
   assert.match(render(false), /aria-label="Append example text"/);
   assert.match(render(false), /viewBox="0 0 24 24" aria-hidden="true" focusable="false"/);

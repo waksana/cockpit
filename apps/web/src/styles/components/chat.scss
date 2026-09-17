@@ -629,20 +629,6 @@ button.activity-head {
   padding: var(--chat-gap-meta);
   background: transparent;
 }
-.draft-attachments {
-  display: flex; flex-direction: column; gap: var(--chat-gap-control);
-  flex: none; min-width: 0; margin: 0; font-size: var(--chat-text-label);
-}
-.draft-attachment {
-  display: flex; align-items: center; gap: var(--chat-gap-control); padding: var(--chat-gap-meta) 0;
-  > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-}
-.module-draft-recovery {
-  display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: var(--chat-gap-control); min-width: 0;
-  margin: 0; color: var(--secondary-text-color); font-size: var(--chat-text-secondary); line-height: var(--chat-leading-ui);
-  > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  > button { flex: 0 1 auto; min-width: 0; max-width: 100%; min-block-size: var(--chat-control-compact); padding: var(--chat-gap-meta) var(--chat-inset-compact); background: transparent; border: none; color: var(--link-color); cursor: pointer; font: inherit; overflow-wrap: anywhere; }
-}
 .message-attachments {
   display: flex; flex-direction: column; align-items: flex-start; gap: var(--chat-gap-control); min-width: 0;
   > * { min-width: 0; max-width: 100%; }
@@ -824,7 +810,7 @@ button.activity-head {
 .chat-queue-remove { align-self: flex-start; }
 @media (pointer: coarse) {
   .chat-copy-button.ck-button, .chat-execution-actions .ck-button,
-  .chat-execution-head, .chat-pending-detail > summary, .module-draft-recovery > button {
+  .chat-execution-head, .chat-pending-detail > summary {
     min-block-size: var(--ck-control-size);
   }
 }
