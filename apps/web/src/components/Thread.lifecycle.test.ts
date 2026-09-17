@@ -389,8 +389,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     }) }));
     await act(show);
     assert.ok(container.querySelector('.fixture-prompt-files'));
+    container.querySelector('.chat-input-message')!.focus();
     value = { ...value, ask: { requestId: 'first', question: 'Question one', choices: ['Choice'] } };
     await act(show);
+    assert.equal(document.activeElement, container.querySelector('.chat-input-message'), 'a focused editor follows the isolated answer draft');
     const answer = group.current(value);
     assert.notEqual(answer.reference.id, prompt.reference.id);
     assert.equal(answer.getSnapshot().text, '');
@@ -422,6 +424,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(choices, 0, 'a saved callback cannot answer a reused request occurrence');
     value = { ...value, ask: null };
     await act(show);
+    assert.equal(document.activeElement, container.querySelector('.chat-input-message'), 'a focused answer editor follows the restored prompt draft');
     assert.equal(group.current(value), prompt);
     assert.match(container.textContent, /Prompt fileBackground upload/);
     assert.equal(prompt.getSnapshot().text, 'Cached ordinary prompt');

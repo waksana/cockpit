@@ -603,6 +603,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                 disabled={!!session.compacting && session.status !== 'running'}
                 placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : operation === 'elicitation' ? '请选择上方操作' : session.status === 'running' ? '加入队列' : '输入消息…'))}
                 draft={draft}
+                editorRef={executionControlRef}
                 statusInHeader={hasInputHeader}
                 ask={ask ? { request: ask, disabled: !authoritative || !onRespondAsk, onChoice: choice => { void handleChoice(choice); } } : undefined}
                 onSend={handleSend}

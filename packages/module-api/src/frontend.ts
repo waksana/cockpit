@@ -277,6 +277,8 @@ export interface ComposerProps extends ComposerTarget {
   readonly submitLabel?: string;
   readonly sendBlocked: boolean;
   readonly statusInHeader?: boolean;
+  /** Ref to the existing text editor; preserve it when composing a replacement view. */
+  readonly editorRef?: React.Ref<HTMLTextAreaElement>;
   /**
    * Existing context followed by real module content directly above the editor.
    * A file module owns its ENTIRE ready+pending list here, or renders null.

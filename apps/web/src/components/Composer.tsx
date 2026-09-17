@@ -32,12 +32,13 @@ interface ComposerProps {
   runtime?: ModuleRuntime;
   ask?: Omit<ComponentProps<typeof AskContent>, 'pending' | 'sessionId' | 'runtime'>;
   statusInHeader?: boolean;
+  editorRef?: PublicComposerProps['editorRef'];
 }
 export function Composer({ runtime, ...props }: ComposerProps) {
   const inherited = useModuleRuntime();
   return <ModuleRuntimeProvider runtime={runtime ?? inherited}><ComposerController {...props} /></ModuleRuntimeProvider>;
 }
-function ComposerController({ disabled = false, busy = false, placeholder, submitLabel, draft, onSend, sendBlocked = false, ask, statusInHeader }: ComposerProps) {
+function ComposerController({ disabled = false, busy = false, placeholder, submitLabel, draft, onSend, sendBlocked = false, ask, statusInHeader, editorRef }: ComposerProps) {
   const { pending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const runtime = useModuleRuntime();
   const prepared = useSyncExternalStore(runtime.subscribe,
@@ -62,7 +63,7 @@ function ComposerController({ disabled = false, busy = false, placeholder, submi
     void options.onSend();
   }, [draft]);
   const props: PublicComposerProps = { draft: draft.reference, disabled, busy, placeholder, submitLabel,
-    sendBlocked, operation, statusInHeader, onTextChange: update, onSubmit: submit,
+    sendBlocked, operation, statusInHeader, editorRef, onTextChange: update, onSubmit: submit,
     children: ask && draft.reference.purpose.kind === 'ask' && draft.reference.purpose.requestId === ask.request.requestId
       ? <AskContent {...ask} sessionId={draft.sessionId} pending={pending} /> : undefined,
   };
@@ -72,7 +73,7 @@ function ComposerPresentation(props: PublicComposerProps) {
   return useModuleElement('composer', ComposerBase, props);
 }
 
-function ComposerBase({ draft, operation, disabled, busy, placeholder, submitLabel, sendBlocked, statusInHeader,
+function ComposerBase({ draft, operation, disabled, busy, placeholder, submitLabel, sendBlocked, statusInHeader, editorRef,
   onTextChange, onSubmit, onFiles, actions, children }: PublicComposerProps) {
   const { text, hasContent, blocks, pending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const runtime = useModuleRuntime();
@@ -109,7 +110,7 @@ function ComposerBase({ draft, operation, disabled, busy, placeholder, submitLab
           runtime.receiveFiles(files, target, 'paste', onFiles);
         }}>
         {actions?.({ pickFiles: () => pickComposerFiles(runtime, target, onFiles) })}
-        <textarea className="chat-input-message ck-input" aria-label="消息输入" value={text}
+        <textarea ref={editorRef} className="chat-input-message ck-input" aria-label="消息输入" value={text}
           disabled={disabled} onChange={event => onTextChange(event.target.value)} placeholder={placeholder ?? '输入消息…'} rows={1}
           onKeyDown={event => {
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
