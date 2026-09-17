@@ -122,7 +122,7 @@ export interface ComposerFileSelection {
 
 /**
  * Synchronous ownership handoff, not upload completion. Return true only after
- * EVERY selected file is durably represented in module state with a draft block
+ * EVERY selected file is retained in module state with a draft block
  * (or attached result); failures stay visible/blocking until explicitly removed.
  * Return false to decline. A middleware handles OR calls the inherited callback,
  * never both. Promises are not accepted; asynchronous uploads live in the service.
@@ -175,7 +175,7 @@ export interface MessageOrigin {
 
 export type MessageIdentity = {
   readonly sessionId: string;
-  /** Native message id for message; native requestId for ask. Never a DOM/row id. */
+  /** Native message id, or the host's current AskRequest.requestId. Never a DOM/row id. */
   readonly id: string;
   /** Native attribution, never a synthesized nested-session identifier. */
   readonly agentId?: string;
