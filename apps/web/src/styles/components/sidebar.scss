@@ -83,6 +83,7 @@
   grid-template-areas: 'avatar title  time' 'avatar subtitle meta';
   align-items: center;
   column-gap: 0.6rem;
+  row-gap: 0;
   min-height: 4.25rem;
   padding: 0.25rem 0.6rem;
   border-radius: var(--border-radius-medium);
