@@ -15,6 +15,7 @@ import { CopyButton } from './CopyButton';
 import { ManageWorkspace } from './ManageWorkspace';
 import { SessionDetails } from './SessionDetails';
 import { ExpandableText } from './SessionPanelKit';
+import { GlobalNavigation } from './GlobalNavigation';
 
 // The same deterministic React DOM host as Thread.lifecycle, limited to the
 // controls these panels use. Reads and mutations stay in fixture-owned stores.
@@ -251,6 +252,26 @@ test('model drafts survive queued results and newer native values; reset and app
   await h.event(button(h.container, '重置'), 'click');
   assert.equal(select.value, 'draft', 'reset uses the latest authoritative value');
   assert.deepEqual(calls, ['draft'], 'reset is never a write');
+});
+
+test('global navigation does not take focus on entry or route remount', async t => {
+  const h = mount(t);
+  const initialFocus = h.document.activeElement;
+  await h.render(createElement(MemoryRouter, { initialEntries: ['/'] },
+    createElement(GlobalNavigation, { key: 'entry' })));
+  assert.equal(h.document.activeElement, initialFocus);
+  const trigger = h.container.querySelector('button');
+  assert.ok(trigger);
+  assert.equal(trigger.getAttribute('aria-label'), '全局导航');
+  assert.equal(trigger.getAttribute('tabindex'), null);
+  assert.equal(disabled(trigger), false);
+
+  const input = h.document.createElement('input');
+  h.document.body.appendChild(input);
+  input.focus();
+  await h.render(createElement(MemoryRouter, { initialEntries: ['/'] },
+    createElement(GlobalNavigation, { key: 'return' })));
+  assert.equal(h.document.activeElement, input);
 });
 
 for (const section of ['mcp', 'skills'] as const) {
