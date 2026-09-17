@@ -1,7 +1,11 @@
 import * as React from 'react';
 import { createPortal } from 'react-dom';
-import type { ChatRenderer, ComposerContext, ModuleAsset, ModuleFrontend, ModuleFrontendContext, ModuleView, RenderNode } from '@cockpit/module-api';
-import type { SessionDraft } from './textDraft';
+import type {
+  ComponentMiddleware, ComposerFileCallback, ComposerFileSelection, ComposerProps, ComposerTarget,
+  HostSnapshot, MarkdownNode, MarkdownRenderer, ModuleAsset, ModuleComponentProps,
+  ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
+} from '@cockpit/module-api';
+import { resolveDraft, type SessionDraft } from './textDraft';
 import { describeReason, reportUxError } from './errorReporter';
 
 interface RuntimeOptions {
@@ -20,9 +24,20 @@ export interface LoadedModule {
   readonly bindings: Map<SessionDraft, ReturnType<SessionDraft['bindModule']>>;
   stop(): void;
 }
-export interface RegisteredRenderer { module: LoadedModule; renderer: ChatRenderer }
-type ContributionSlot = 'composerActions' | 'composerAbove' | 'messageDecorations' | 'sessionBadges' | 'globalActions';
-const EMPTY_VIEW: ModuleView = Object.freeze({ sessionId: null, visible: false, connected: false });
+export interface RegisteredRenderer { module: LoadedModule; renderer: MarkdownRenderer }
+type Boundary = keyof ModuleComponentProps;
+const BOUNDARIES = new Set<Boundary>(['message', 'sessionStatus', 'composer', 'attachment', 'globalActions']);
+const EMPTY_VIEW: HostSnapshot = Object.freeze({ sessionId: null, visible: false, connected: false });
+class ModuleCallbackError extends Error {}
+
+export class ModuleErrorBoundary extends React.Component<{
+  children: React.ReactNode; fallback: React.ReactNode; onFailure(error: unknown): void;
+}, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error: unknown) { this.props.onFailure(error); }
+  render() { return this.state.failed ? this.props.fallback : this.props.children; }
+}
 
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -79,37 +94,43 @@ export function validateModuleAsset(value: unknown, backend: URL): ModuleAsset {
   });
 }
 
-function validateFrontend(input: unknown): ModuleFrontend {
-  if (!record(input)) throw new Error('Module activate must return contributions');
-  const allowed = new Set(['writes', 'rendersDraftAttachments', 'composerActions', 'composerAbove', 'fileInput', 'chatRenderers', 'messageDecorations', 'sessionBadges', 'globalActions', 'dispose']);
-  for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`Unsupported module contribution: ${key}`);
+function component(value: unknown): boolean {
+  return typeof value === 'function' || (record(value) && '$$typeof' in value);
+}
+function claimId(ids: Set<string>, id: unknown): void {
+  if (!nonempty(id) || ids.has(id)) throw new Error(`Invalid or duplicate module registration ID: ${String(id)}`);
+  ids.add(id);
+}
+function validateFrontend(input: unknown, ids: Set<string>): ModuleFrontend {
+  if (!record(input) || input.apiVersion !== 2) throw new Error('Module frontend API v2 is required');
+  const allowed = new Set(['apiVersion', 'writes', 'components', 'markdown', 'dispose']);
+  for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`Unsupported module frontend field: ${key}`);
   if (input.writes !== undefined && (!Array.isArray(input.writes)
     || input.writes.some(value => value !== 'text' && value !== 'attachments'))) throw new Error('Invalid module writes declaration');
-  for (const key of ['composerActions', 'composerAbove', 'fileInput', 'chatRenderers', 'messageDecorations', 'sessionBadges', 'globalActions'] as const) {
+  for (const key of ['components', 'markdown'] as const) {
     const entries = input[key];
     if (entries === undefined) continue;
     if (!Array.isArray(entries)) throw new Error(`Invalid module ${key}`);
-    const ids = new Set<string>();
     for (const entry of entries) {
-      if (!record(entry) || !nonempty(entry.id) || ids.has(entry.id)) throw new Error(`Invalid module ${key} ID`);
-      ids.add(entry.id);
-      if (key === 'fileInput') {
-        if (typeof entry.accepts !== 'function' || typeof entry.receive !== 'function') throw new Error('Invalid file input handler');
-      } else {
-        if (typeof entry.component !== 'function' && !(record(entry.component) && '$$typeof' in entry.component)) throw new Error('Invalid module component');
-        if (key === 'chatRenderers' && typeof entry.matches !== 'function') throw new Error('Invalid chat renderer');
+      if (!record(entry)) throw new Error(`Invalid module ${key} registration`);
+      claimId(ids, entry.id);
+      const fields = key === 'components' ? ['id', 'boundary', 'order', 'wrap'] : ['id', 'matches', 'component'];
+      if (Object.keys(entry).some(field => !fields.includes(field))) throw new Error(`Unsupported module ${key} registration field`);
+      if (key === 'components') {
+        if (!BOUNDARIES.has(entry.boundary as Boundary) || typeof entry.wrap !== 'function') throw new Error('Invalid component middleware');
         if (entry.order !== undefined && (typeof entry.order !== 'number' || !Number.isFinite(entry.order))) throw new Error('Invalid module order');
+      } else {
+        if (!component(entry.component) || typeof entry.matches !== 'function') throw new Error('Invalid Markdown renderer');
       }
     }
   }
   if (input.dispose !== undefined && typeof input.dispose !== 'function') throw new Error('Invalid module dispose');
-  if (input.rendersDraftAttachments !== undefined && typeof input.rendersDraftAttachments !== 'boolean') {
-    throw new Error('Invalid draft attachment rendering declaration');
-  }
-  if (input.rendersDraftAttachments && (!Array.isArray(input.composerAbove) || !input.composerAbove.length)) {
-    throw new Error('Draft attachment rendering requires a composerAbove contribution');
-  }
-  return input as ModuleFrontend;
+  return Object.freeze({
+    ...input,
+    ...(input.writes ? { writes: Object.freeze([...input.writes as string[]]) } : {}),
+    components: Object.freeze((input.components as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
+    markdown: Object.freeze((input.markdown as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
+  }) as unknown as ModuleFrontend;
 }
 
 function installStyle(url: string): () => void {
@@ -124,19 +145,22 @@ export class ModuleRuntime {
   private readonly options: RuntimeOptions;
   private snapshot: readonly LoadedModule[] = [];
   private readonly listeners = new Set<() => void>();
-  private view: ModuleView = EMPTY_VIEW;
+  private view: HostSnapshot = EMPTY_VIEW;
   private readonly viewListeners = new Set<() => void>();
   private readonly invalidationListeners = new Map<string, Set<() => void>>();
   private controller?: AbortController;
   private readonly reports = new Set<string>();
+  private readonly componentCache = new Map<object, { boundary: Boundary; entries: readonly object[]; component: unknown }>();
+  private readonly fileCallbacks = new WeakSet<ComposerFileCallback>();
+  private selectionSequence = 0;
   constructor(options: RuntimeOptions = {}) {
     if (options.activationTimeoutMs !== undefined
       && (!Number.isFinite(options.activationTimeoutMs) || options.activationTimeoutMs <= 0)) throw new Error('Invalid module activation timeout');
     this.options = options;
   }
   getSnapshot = (): readonly LoadedModule[] => this.snapshot;
-  getViewSnapshot = (): ModuleView => this.view;
-  updateView(view: ModuleView): void {
+  getViewSnapshot = (): HostSnapshot => this.view;
+  updateView(view: HostSnapshot): void {
     if (view.sessionId === this.view.sessionId && view.visible === this.view.visible && view.connected === this.view.connected) return;
     this.view = Object.freeze({ ...view });
     for (const listener of [...this.viewListeners]) if (this.viewListeners.has(listener)) listener();
@@ -148,6 +172,10 @@ export class ModuleRuntime {
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private publish(modules: readonly LoadedModule[]) {
     this.snapshot = modules;
+    const registrations = new Set(modules.flatMap(module => module.frontend.components ?? []));
+    for (const [base, cached] of this.componentCache) {
+      if (cached.entries.some(entry => !registrations.has(entry as NonNullable<ModuleFrontend['components']>[number]))) this.componentCache.delete(base);
+    }
     for (const listener of this.listeners) listener();
   }
   report = (error: unknown): void => {
@@ -190,18 +218,28 @@ export class ModuleRuntime {
     const bindings: LoadedModule['bindings'] = new Map();
     const styles: (() => void)[] = [];
     const subscriptions = new Set<() => void>();
+    const ids = new Set<string>();
+    const services: (() => void)[] = [];
+    let registering = true;
+    let registrationError: unknown;
     let frontend: ModuleFrontend | undefined;
     let disposeFrontend: (() => unknown) | undefined;
     const stop = () => {
+      registering = false;
       // Capture unresolved selections before plugin abort listeners release their leases.
       for (const binding of bindings.values()) binding.dispose();
       bindings.clear();
       for (const unsubscribe of subscriptions) unsubscribe();
       controller.abort();
-      for (const remove of styles.splice(0)) remove();
+      for (const remove of styles.splice(0)) {
+        try { remove(); } catch (error) { this.report(error); }
+      }
       const cleanup = disposeFrontend;
       disposeFrontend = undefined;
       try { if (cleanup) void Promise.resolve(cleanup()).catch(this.report); } catch (error) { this.report(error); }
+      for (const dispose of services.splice(0).reverse()) {
+        try { void Promise.resolve(dispose()).catch(this.report); } catch (error) { this.report(error); }
+      }
       frontend = undefined;
       parentSignal.removeEventListener('abort', stop);
     };
@@ -220,10 +258,44 @@ export class ModuleRuntime {
     };
     parentSignal.addEventListener('abort', stop, { once: true });
     const context: ModuleFrontendContext = {
-      apiVersion: 1, uiVersion: 1, moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
+      apiVersion: 2, uiVersion: 1, moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
       config: asset.config, signal: controller.signal, report: this.report,
-      surfaceVersion: 1,
-      view: { getSnapshot: this.getViewSnapshot, subscribe: listener => subscribe(this.viewListeners, listener) },
+      state: Object.freeze({
+        host: Object.freeze({ getSnapshot: this.getViewSnapshot, subscribe: (listener: () => void) => subscribe(this.viewListeners, listener) }),
+        register: <Service extends object>(registration: ModuleStateRegistration<Service>) => {
+          if (!registering || controller.signal.aborted) throw new Error('Module state registration is activation-only');
+          try {
+            if (!record(registration) || typeof registration.create !== 'function' || typeof registration.dispose !== 'function'
+              || Object.keys(registration).some(key => !['id', 'create', 'dispose'].includes(key))) throw new Error('Invalid module state registration');
+            claimId(ids, registration.id);
+            const service = registration.create();
+            if (!service || (typeof service !== 'object' && typeof service !== 'function')
+              || 'then' in service) {
+              if (service && 'then' in Object(service)) void Promise.resolve(service).catch(this.report);
+              throw new Error('Module state must be created synchronously');
+            }
+            const dispose = registration.dispose;
+            services.push(() => dispose.call(registration, service));
+            return Object.freeze({ id: registration.id, get: () => {
+              if (controller.signal.aborted) throw new Error('Module state has stopped');
+              return service;
+            } });
+          } catch (error) {
+            registrationError = error;
+            throw error;
+          }
+        },
+        bindDraft: reference => {
+          if (controller.signal.aborted || !frontend) throw new Error('Module draft binding is not active');
+          const source = resolveDraft(reference);
+          let binding = bindings.get(source);
+          if (!binding) {
+            binding = source.bindModule(`${asset.id}@${asset.digest}`, frontend.writes ?? [], this.report);
+            bindings.set(source, binding);
+          }
+          return binding.draft;
+        },
+      }),
       onInvalidate: listener => {
         if (controller.signal.aborted) return () => {};
         let listeners = this.invalidationListeners.get(asset.id);
@@ -253,7 +325,9 @@ export class ModuleRuntime {
         disposeFrontend = () => dispose.call(activated);
       }
       if (controller.signal.aborted || parentSignal.aborted) { stop(); return; }
-      frontend = validateFrontend(activated);
+      registering = false;
+      if (registrationError) throw registrationError;
+      frontend = validateFrontend(activated, ids);
       for (const style of asset.styles) styles.push((this.options.style ?? installStyle)(style));
       const loaded: LoadedModule = { asset, frontend, bindings, signal: controller.signal, stop };
       this.publish([...this.snapshot, loaded].sort((a, b) => a.asset.id.localeCompare(b.asset.id)));
@@ -283,64 +357,107 @@ export class ModuleRuntime {
     module.stop();
     this.publish(this.snapshot.filter(loaded => loaded !== module));
   }
-  context(module: LoadedModule, draft: SessionDraft, operation: ComposerContext['operation'], disabled: boolean): ComposerContext {
-    let binding = module.bindings.get(draft);
-    if (!binding) {
-      if (module.signal.aborted) throw new Error('Module has stopped');
-      binding = draft.bindModule(`${module.asset.id}@${module.asset.digest}`, module.frontend.writes ?? []);
-      module.bindings.set(draft, binding);
+  fail(module: LoadedModule, error: unknown): void {
+    this.report(error);
+    this.unregister(module);
+  }
+  compose<Key extends Boundary>(boundary: Key, Base: React.ComponentType<ModuleComponentProps[Key]>): React.ComponentType<ModuleComponentProps[Key]> {
+    const entries = this.snapshot.flatMap(module => (module.frontend.components ?? [])
+      .filter(entry => entry.boundary === boundary).map(entry => ({ module, entry })))
+      .sort((a, b) => (a.entry.order ?? 0) - (b.entry.order ?? 0)
+        || a.module.asset.id.localeCompare(b.module.asset.id) || a.entry.id.localeCompare(b.entry.id));
+    const cached = this.componentCache.get(Base);
+    if (cached?.boundary === boundary && cached.entries.length === entries.length
+      && entries.every(({ entry }, index) => cached.entries[index] === entry)) {
+      return cached.component as React.ComponentType<ModuleComponentProps[Key]>;
     }
-    return { draft: binding.draft, operation, disabled };
+    let Composed = Base;
+    for (const { module, entry } of entries.toReversed()) {
+      const Next = Composed;
+      const callbacks = new WeakMap<ComposerFileCallback, ComposerFileCallback>();
+      const GuardedBase = boundary === 'composer' ? (props: ModuleComponentProps[Key]) => {
+        const composer = props as ComposerProps;
+        let onFiles = composer.onFiles;
+        if (onFiles && !this.fileCallbacks.has(onFiles)) {
+          const original = onFiles;
+          onFiles = callbacks.get(original);
+          if (!onFiles) {
+            onFiles = selection => {
+              if (module.signal.aborted) throw new ModuleCallbackError('文件模块已停止');
+              try {
+                const result = original(selection);
+                if (typeof result !== 'boolean') {
+                  void Promise.resolve(result).catch(this.report);
+                  throw new Error('File handoff must synchronously return a boolean');
+                }
+                return result;
+              } catch (error) {
+                if (error instanceof ModuleCallbackError) throw error;
+                this.fail(module, error);
+                throw new ModuleCallbackError('文件模块处理失败', { cause: error });
+              }
+            };
+            callbacks.set(original, onFiles);
+            this.fileCallbacks.add(onFiles);
+          }
+        }
+        return React.createElement(Next, { ...props, onFiles } as React.Attributes & ModuleComponentProps[Key]);
+      } : Next;
+      try {
+        const Enhanced = (entry.wrap as ComponentMiddleware<ModuleComponentProps[Key]>)(GuardedBase);
+        if (!component(Enhanced)) throw new Error('Middleware must return a React component');
+        Composed = (props: ModuleComponentProps[Key]) => {
+          const fallback = React.createElement(Next, props);
+          return module.signal.aborted ? fallback : React.createElement(ModuleErrorBoundary, {
+            fallback, onFailure: (error: unknown) => this.fail(module, error),
+            children: React.createElement(Enhanced, props),
+          });
+        };
+      } catch (error) {
+        this.fail(module, error);
+      }
+    }
+    this.componentCache.set(Base, { boundary, entries: entries.map(({ entry }) => entry), component: Composed });
+    return Composed;
   }
-  contributions<Slot extends ContributionSlot>(slot: Slot): { module: LoadedModule; contribution: NonNullable<ModuleFrontend[Slot]>[number] }[] {
-    return this.snapshot.flatMap(module => (module.frontend[slot] ?? []).map(contribution => ({
-      module, contribution: contribution as NonNullable<ModuleFrontend[Slot]>[number],
-    })))
-      .sort((a, b) => (a.contribution.order ?? 0) - (b.contribution.order ?? 0)
-        || a.module.asset.id.localeCompare(b.module.asset.id) || a.contribution.id.localeCompare(b.contribution.id));
-  }
-  renderer(node: RenderNode): RegisteredRenderer | undefined {
+  renderer(node: MarkdownNode): RegisteredRenderer | undefined {
     let selected: RegisteredRenderer | undefined;
-    for (const module of this.snapshot) for (const renderer of module.frontend.chatRenderers ?? []) {
+    let failed = false, claims = 0;
+    for (const module of this.snapshot) for (const renderer of module.frontend.markdown ?? []) {
       try {
         if (!renderer.matches(node)) continue;
-        if (selected) {
-          this.report(`多个模块渲染规则同时匹配 ${node.kind}，已保留默认显示。`);
-          return;
-        }
+        claims++;
         selected = { module, renderer };
       }
-      catch (error) { this.report(error); }
+      catch (error) { this.report(error); failed = true; }
     }
-    return selected;
+    if (claims > 1) {
+      this.report(`多个模块渲染规则同时匹配 ${node.kind}，已保留默认显示。`);
+      return;
+    }
+    return failed ? undefined : selected;
   }
-  receive(files: readonly File[], draft: SessionDraft, operation: ComposerContext['operation'], disabled: boolean): boolean {
-    if (!files.length || disabled || draft.getSnapshot().pending) return false;
-    const handlers = this.snapshot.flatMap(module => (module.frontend.fileInput ?? []).flatMap(handler => {
-      try { return handler.accepts(files) ? [{ module, handler }] : []; }
-      catch (error) { this.report(error); return []; }
-    }));
-    if (handlers.length > 1) this.report('多个模块接受相同文件，已使用排序最先的处理器。');
-    const chosen = handlers[0];
-    if (!chosen) { this.rejectFiles(draft, files, '没有可用的文件模块'); return false; }
-    const context = this.context(chosen.module, draft, operation, disabled);
-    const failed = (error: unknown) => {
-      this.report(error);
-      if (chosen.module.signal.aborted) return;
-      this.unregister(chosen.module);
-      this.rejectFiles(draft, files, '文件模块处理失败');
-    };
+  receiveFiles(files: readonly File[], target: ComposerTarget, source: ComposerFileSelection['source'], onFiles?: ComposerFileCallback): boolean {
+    if (!files.length) return false;
+    const draft = resolveDraft(target.draft);
+    const before = draft.getSnapshot().attachments;
+    const release = draft.holdFiles();
     try {
-      // The bound context is captured now, not looked up after asynchronous work/session switches.
-      const outcome = chosen.handler.receive(files, context);
-      Promise.resolve(outcome).catch(failed);
+      if (target.disabled || target.operation !== 'prompt' || draft.getSnapshot().pending) throw new Error('当前草稿不能接收附件');
+      if (!onFiles) throw new Error('没有可用的文件模块');
+      const result = onFiles(Object.freeze({
+        id: `selection-${++this.selectionSequence}`, files: Object.freeze([...files]), source,
+        target: Object.freeze({ ...target }),
+      }));
+      if (typeof result !== 'boolean') void Promise.resolve(result).catch(this.report);
+      const added = draft.getSnapshot().attachments.filter(item => !before.includes(item)).length;
+      if (result !== true || (!draft.hasModuleBlock() && added < files.length)) throw new Error('文件选择未被模块完整接收');
       return true;
-    } catch (error) { failed(error); return false; }
-  }
-  private rejectFiles(draft: SessionDraft, files: readonly File[], reason: string) {
-    const binding = draft.bindModule('host-rejected-input', ['attachments']);
-    binding.draft.block(`${reason}：${files.map(file => file.name).join('、')}。请移除本次选择后重试。`);
-    binding.dispose();
+    } catch (error) {
+      this.report(error);
+      draft.recoverFiles(files, describeReason(error, false));
+      return false;
+    } finally { release(); }
   }
 }
 

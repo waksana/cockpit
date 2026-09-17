@@ -157,15 +157,6 @@
 }
 
 .message-speech, .chat-answer-question { position: relative; }
-.module-message-decorations {
-  position: absolute;
-  inset-block: 0;
-  left: -8px;
-  width: 4px;
-  overflow: clip;
-  pointer-events: none;
-}
-.chat-pending-body > .module-message-decorations { margin: 0; }
 
 .msg-group { display: flex; flex-direction: column; min-width: 0; }
 .msg-group[data-gap='related'] { padding-block-start: var(--chat-gap-message); }
@@ -638,16 +629,11 @@ button.activity-head {
   padding: var(--chat-gap-meta);
   background: transparent;
 }
-.module-composer-actions {
-  display: flex; flex: none; align-items: center; gap: var(--chat-gap-meta);
-  &:empty { display: none; }
-}
-.module-composer-above, .module-draft-attachments {
+.draft-attachments {
+  display: flex; flex-direction: column; gap: var(--chat-gap-control);
   flex: none; min-width: 0; margin: 0; font-size: var(--chat-text-label);
-  &:empty { display: none; }
 }
-.module-composer-above { display: flex; flex-direction: column; gap: var(--chat-gap-region); }
-.module-draft-attachments > div {
+.draft-attachment {
   display: flex; align-items: center; gap: var(--chat-gap-control); padding: var(--chat-gap-meta) 0;
   > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 }
@@ -689,7 +675,7 @@ button.activity-head {
   touch-action: pan-y;
   &::placeholder { color: var(--chat-placeholder-color); opacity: 1; }
 }
-.module-composer-actions:not(:empty) + .chat-input-message { padding-inline-start: var(--chat-gap-meta); }
+.chat-input-message:not(:first-child) { padding-inline-start: var(--chat-gap-meta); }
 // The caret marks text focus inside the single shared input-card frame.
 .chat .chat-input-message:focus-visible {
   outline: none;

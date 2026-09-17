@@ -1,8 +1,8 @@
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import type { ChatSession, ExitPlanModeAction } from '../net/types';
 import { Icon } from './Icon';
 import { MessageBody } from './MessageBody';
-import { ModuleMessageDecorations } from './ModuleContributions';
+import { MessagePresentation, ModuleRuntimeProvider } from './ModuleComponents';
 import type { ModuleRuntime } from '../lib/moduleRuntime';
 
 const PLAN_ACTION_LABEL: Record<ExitPlanModeAction, string> = {
@@ -28,17 +28,14 @@ export function AskContent({ request, sessionId, pending, disabled = false, onCh
   sessionId: string; runtime?: ModuleRuntime;
   request: NonNullable<ChatSession['ask']>; pending: boolean; disabled?: boolean; onChoice: (choice: string) => void;
 }) {
-  const [element, setElement] = useState<HTMLDivElement | null>(null);
-  return <div className="chat-pending-body chat-answer-question" role="group" aria-label="需要你的选择" aria-busy={pending}>
-    <div className="chat-ask-q" ref={setElement}>{request.question}</div>
+  const body = <div className="chat-pending-body chat-answer-question" role="group" aria-label="需要你的选择" aria-busy={pending}>
+    <MessagePresentation className="chat-ask-q" identity={{ sessionId, kind: 'ask', id: request.requestId }} complete>{request.question}</MessagePresentation>
     {!!request.choices?.length && <div className="chat-ask-choices">
       {request.choices.map(choice => <button key={choice} type="button" className="chat-ask-choice ck-button"
         disabled={pending || disabled} onClick={() => onChoice(choice)}>{choice}</button>)}
     </div>}
-    <ModuleMessageDecorations runtime={runtime} context={{
-      sessionId, kind: 'ask', id: request.requestId, complete: true, element,
-    }} />
   </div>;
+  return runtime ? <ModuleRuntimeProvider runtime={runtime}>{body}</ModuleRuntimeProvider> : body;
 }
 
 export function PlanCard({ request, pending, disabled = false, onSelect }: {

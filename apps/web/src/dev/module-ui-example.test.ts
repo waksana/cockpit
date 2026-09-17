@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createSessionDrafts } from '../lib/textDraft';
 import { ModuleRuntime } from '../lib/moduleRuntime';
 import { activate } from './module-ui-example';
+import { Composer } from '../components/Composer';
 
 test('the documented module example activates through the real host and renders named, disabled native controls', async () => {
   const digest = 'a'.repeat(64);
@@ -20,17 +21,14 @@ test('the documented module example activates through the real host and renders 
   });
   await runtime.start();
   assert.deepEqual(reports, []);
-  const registered = runtime.contributions('composerActions')[0];
-  assert.ok(registered);
+  assert.equal(runtime.getSnapshot()[0].frontend.components?.[0].boundary, 'composer');
   const draft = createSessionDrafts()('example');
-  const Component = registered.contribution.component;
   const render = (disabled: boolean, operation: 'prompt' | 'ask' = 'prompt') =>
-    renderToStaticMarkup(React.createElement(Component,
-      runtime.context(registered.module, draft, operation, disabled)));
+    renderToStaticMarkup(React.createElement(Composer, { draft, runtime, disabled, operation, onSend: async () => true }));
   assert.match(render(false), /class="ck-icon-button example-draft-action"/);
   assert.match(render(false), /aria-label="Append example text"/);
   assert.match(render(false), /viewBox="0 0 24 24" aria-hidden="true" focusable="false"/);
-  assert.doesNotMatch(render(false), /disabled=""/);
+  assert.doesNotMatch(render(false).match(/<button[^>]+example-draft-action[^>]+>/)?.[0] ?? '', /disabled=""/);
   assert.match(render(true), /disabled=""/);
   assert.match(render(false, 'ask'), /disabled=""/);
   runtime.stop();

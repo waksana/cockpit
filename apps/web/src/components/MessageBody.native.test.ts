@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createElement } from 'react';
+import { createElement, Fragment } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MessageBody } from './MessageBody';
 import { MessageContent } from './MessageContent';
 import { hasMessageContent } from '../lib/messageContent';
 import type { ChatMessage } from '@cockpit/protocol';
-import type { RenderNode } from '@cockpit/module-api';
-import { moduleRuntime } from '../lib/moduleRuntime';
+import type { ActivateFrontend, MarkdownNode } from '@cockpit/module-api';
+import { ModuleRuntime, moduleRuntime } from '../lib/moduleRuntime';
+import { ModuleRuntimeProvider } from './ModuleComponents';
 
 test('native text rendering does not fetch or preview media without an enhancement', () => {
   const html = renderToStaticMarkup(createElement(MessageBody, {
@@ -28,14 +29,14 @@ test('native Markdown links retain the existing unsafe-URL protection', () => {
 });
 
 test('a linked image keeps one link action instead of nesting an enhanced preview button inside it', t => {
-  const observed: RenderNode[] = [];
-  t.mock.method(moduleRuntime, 'renderer', (node: RenderNode) => {
+  const observed: MarkdownNode[] = [];
+  t.mock.method(moduleRuntime, 'renderer', (node: MarkdownNode) => {
     observed.push(node);
     return node.kind === 'image' ? {
       module: {
         asset: { id: 'fixture', name: 'Fixture', version: '1.0.0', digest: 'a'.repeat(64),
           apiBase: '/fixture/api', entry: '/fixture/entry.js', styles: [], config: {} },
-        frontend: {}, signal: new AbortController().signal, bindings: new Map(), stop() {},
+        frontend: { apiVersion: 2 }, signal: new AbortController().signal, bindings: new Map(), stop() {},
       },
       renderer: { id: 'image', matches: () => true, component: () => createElement('button', { type: 'button' }, 'Preview') },
     } : undefined;
@@ -64,20 +65,21 @@ test('attachment-only messages remain visible without a module, network fetch or
   assert.doesNotMatch(html, /<img|data:|Zml4dHVyZQ|<video|fetch|message-body/);
 });
 
-test('Markdown uses flow-content paragraphs for inline and block enhancement locations, with safe native fallbacks', () => {
+test('Markdown keeps semantic paragraphs for truly inline enhancements and safe native fallbacks', () => {
   const html = renderToStaticMarkup(createElement(MessageBody, {
     body: 'Inline [file](/fixture/file.txt) and ![image](/fixture/image.png).\n\n[file](/fixture/file.txt)',
     origin: { sessionId: 'root', messageId: 'native', agentId: 'child' },
   }));
-  assert.doesNotMatch(html, /<p(?:>| )/);
+  assert.match(html, /<p class="markdown-paragraph"/);
+  assert.doesNotMatch(html, /<div class="markdown-paragraph"/);
   assert.match(html, /class="markdown-paragraph"/);
   assert.match(html, /href="\/fixture\/file.txt"/);
   assert.doesNotMatch(html, /<img/);
 });
 
 test('module renderer descriptors retain mdast spaces, Unicode and literal percent escapes before URI normalization', t => {
-  const observed: RenderNode[] = [];
-  t.mock.method(moduleRuntime, 'renderer', (node: RenderNode) => { observed.push(node); return undefined; });
+  const observed: MarkdownNode[] = [];
+  t.mock.method(moduleRuntime, 'renderer', (node: MarkdownNode) => { observed.push(node); return undefined; });
   const html = renderToStaticMarkup(createElement(MessageBody, {
     body: '[space](<./a b.png>) ![space](<./a b.png>)\n\n'
       + '[percent](./a%20b.png) ![percent](./a%20b.png)\n\n'
@@ -96,4 +98,53 @@ test('module renderer descriptors retain mdast spaces, Unicode and literal perce
   assert.match(html, /href="\.\/a%20b.png"/);
   assert.match(html, /href="\.\/%E5%9B%BE%E5%83%8F.png"/);
   assert.doesNotMatch(html, /href="javascript:|data-module-markdown-target|<img/);
+});
+
+test('the existing parser retains native block elements without extra prose wrappers or edge metadata', () => {
+  for (const [body, expected] of [
+    ['Before\n\nAfter', /<p class="markdown-paragraph">After<\/p>/],
+    ['Before\n\n# Heading', /<h1>Heading<\/h1>/],
+    ['Before\n\n```ts\ncode\n```', /<div class="chat-code-block">/],
+    ['Before\n\n| A |\n| --- |\n| B |', /<div class="chat-table-scroll"/],
+    ['Before\n\n- Item', /<ul>/],
+    ['Before\n\n> Quote', /<blockquote>/],
+    ['Before\n\n---', /<hr\/>/],
+    ['Before\n\n[unused]: ./file.txt', /<p class="markdown-paragraph">Before<\/p>/],
+    ['Before\n\n<div>escaped HTML</div>', /<p class="markdown-paragraph">Before<\/p>/],
+  ] as const) {
+    const html = renderToStaticMarkup(createElement(MessageBody, { body }));
+    assert.match(html, expected, body);
+    assert.doesNotMatch(html, /data-markdown-body-end|module-message-decorations/, body);
+  }
+});
+
+test('real adornments share the existing presentation parent without changing native body markup', async t => {
+  const digest = 'a'.repeat(64);
+  const runtime = new ModuleRuntime({
+    pageUrl: 'https://fixture.invalid',
+    fetch: async () => Response.json({ modules: ['first', 'second'].map(id => ({
+      id, name: id, version: '1.0.0', digest, config: {}, styles: [],
+      apiBase: `/_modules/${id}/${digest}/api`, entry: `/_modules/assets/${id}/${digest}/entry.js`,
+    })), errors: [] }),
+    load: async () => ({ activate: ((context => ({
+      apiVersion: 2, components: [{ id: 'marker', boundary: 'message', wrap: Base => props => createElement(Base, {
+        ...props, adornment: createElement(Fragment, null, props.adornment,
+          createElement('span', { 'data-marker': context.moduleId, style: { position: 'absolute' } })),
+      }) }],
+    }))) satisfies ActivateFrontend }),
+    report: assert.fail,
+  });
+  await runtime.start();
+  t.after(() => runtime.stop());
+  const body = createElement(MessageBody, {
+    body: 'First paragraph\n\nFinal paragraph',
+    identity: { kind: 'message', role: 'assistant', sessionId: 'session', id: 'native-message' }, complete: true,
+  });
+  const parent = createElement('div', { className: 'message-speech' }, body);
+  const baseline = renderToStaticMarkup(parent);
+  const html = renderToStaticMarkup(createElement(ModuleRuntimeProvider, { runtime, children: parent }));
+  assert.match(html, /^<div class="message-speech"><div class="message-body">/);
+  assert.match(html, /<p class="markdown-paragraph">Final paragraph<\/p><\/div><span data-marker="first"[^>]*><\/span><span data-marker="second"[^>]*><\/span><\/div>$/);
+  assert.equal((html.match(/<div\b/g) ?? []).length, 2, 'only the existing parent and actual body');
+  assert.equal(html.replace(/<span data-marker="(?:first|second)"[^>]*><\/span>/g, ''), baseline);
 });

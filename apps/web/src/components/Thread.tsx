@@ -28,7 +28,6 @@ import { useClippedText } from '../lib/useClippedText';
 import { hasNewTranscriptContent } from '../lib/transcriptActivity';
 import { useRemovedControlFocus } from '../lib/useRemovedControlFocus';
 import type { NativeAttachment } from '@cockpit/protocol';
-import { ModuleMessageDecorations } from './ModuleContributions';
 
 function Thought({ message, latest, sessionId }: { message: ChatMessage; latest: boolean; sessionId: string }) {
   const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'thought', message.thoughtKey ?? message.id]), latest);
@@ -197,7 +196,6 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
 //    with a quiet timestamp shown once per assistant group;
 //  - system messages are a quiet centered note.
 const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }: { m: ChatMessage; sessionId: string; showByline: boolean; nested?: boolean }) {
-  const [element, setElement] = useState<HTMLDivElement | null>(null);
   const anchorId = nested ? JSON.stringify([sessionId, m.id]) : m.id;
   if (m.subtype === 'subagent' && m.subagent) {
     return <div className="message is-doc" data-message-id={anchorId}><SubagentCard key={m.subagent.toolCallId ?? m.id} m={m} sessionId={sessionId} /></div>;
@@ -239,12 +237,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
       )}
       {/* Date/byline removal on prepend must not move the reading anchor. */}
       <div className="message-speech" data-message-id={anchorId}>
-        <MessageContent message={m} elementRef={setElement} />
-        {m.role === 'assistant' && m.origin && !!m.content.trim() && <ModuleMessageDecorations context={{
-          sessionId: m.origin.sessionId, kind: 'message', id: m.origin.messageId,
-          role: m.role, ...(m.origin.agentId ? { agentId: m.origin.agentId } : {}),
-          complete: !m.streaming, element,
-        }} />}
+        <MessageContent message={m} />
       </div>
     </article>
   );

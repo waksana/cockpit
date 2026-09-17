@@ -1,17 +1,18 @@
 import { acknowledge } from './draft';
 import { describeReason, reportUxError } from './errorReporter';
 import { NativeAttachment } from '@cockpit/protocol';
-import type { DraftAttachment, ModuleDraft, ModuleDraftSnapshot } from '@cockpit/module-api';
+import type { DraftAttachment, DraftReference, DraftWrite, ModuleDraft, ModuleDraftSnapshot } from '@cockpit/module-api';
 
-interface SessionDraftSnapshot {
-  text: string;
-  attachments: readonly DraftAttachment[];
-  blocks: readonly { id: string; reason: string; orphaned?: boolean }[];
-  revision: number;
-  pending: boolean;
-  unconfirmed: boolean;
-}
+type SessionDraftSnapshot = ModuleDraftSnapshot;
 type DraftStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+const references = new WeakMap<DraftReference, SessionDraft>();
+let draftSequence = 0;
+
+export function resolveDraft(reference: DraftReference): SessionDraft {
+  const draft = references.get(reference);
+  if (!draft) throw new Error('Unknown host draft reference');
+  return draft;
+}
 
 function browserStorage(): DraftStorage | undefined {
   if (typeof window === 'undefined') return undefined;
@@ -23,17 +24,23 @@ function browserStorage(): DraftStorage | undefined {
 }
 
 export class SessionDraft {
-  private snapshot: SessionDraftSnapshot = { text: '', attachments: Object.freeze([]), blocks: [], revision: 0, pending: false, unconfirmed: false };
+  private snapshot: SessionDraftSnapshot = Object.freeze({ text: '', attachments: Object.freeze([]), blocks: Object.freeze([]), revision: 0, pending: false, unconfirmed: false });
   private readonly attachmentOwners = new Map<string, string>();
   private readonly blockOwners = new Map<string, string>();
   private sequence = 0;
   readonly sessionId: string;
+  readonly reference: DraftReference;
   private readonly listeners = new Set<() => void>();
   private readonly key: string;
   private readonly storage?: DraftStorage;
 
   constructor(sessionId: string, storage?: DraftStorage) {
     this.sessionId = sessionId;
+    this.reference = Object.freeze({
+      id: `draft-${++draftSequence}`, sessionId,
+      getSnapshot: this.getSnapshot, subscribe: this.subscribe,
+    });
+    references.set(this.reference, this);
     this.storage = storage;
     this.key = `cockpit:chat-draft:${sessionId}`;
     try {
@@ -46,7 +53,7 @@ export class SessionDraft {
         throw new Error('Invalid draft record');
       }
       const attachments = 'attachments' in value ? this.validateAttachments(value.attachments) : [];
-      this.snapshot = { ...this.snapshot, text: value.text, attachments, unconfirmed: value.unconfirmed };
+      this.snapshot = Object.freeze({ ...this.snapshot, text: value.text, attachments, unconfirmed: value.unconfirmed });
     } catch (error) {
       reportUxError(`无法读取标签页草稿，存储内容未修改：${describeReason(error, false)}`);
     }
@@ -58,9 +65,10 @@ export class SessionDraft {
     return () => { this.listeners.delete(listener); };
   };
   private update(change: Partial<SessionDraftSnapshot>): void {
-    this.snapshot = { ...this.snapshot, ...change,
+    this.snapshot = Object.freeze({ ...this.snapshot, ...change,
       ...(change.attachments ? { attachments: Object.freeze(change.attachments) } : {}),
-    };
+      ...(change.blocks ? { blocks: Object.freeze(change.blocks) } : {}),
+    });
     const { text, attachments, pending, unconfirmed } = this.snapshot;
     try {
       // An interrupted request is unknown after reload, never still in flight.
@@ -70,7 +78,10 @@ export class SessionDraft {
     } catch (error) {
       reportUxError(`无法保存标签页草稿，刷新后可能丢失最新状态；当前文字仍在页面内：${describeReason(error, false)}`);
     }
-    for (const listener of this.listeners) listener();
+    for (const listener of [...this.listeners]) {
+      if (!this.listeners.has(listener)) continue;
+      try { listener(); } catch (error) { reportUxError(`草稿订阅失败：${describeReason(error, false)}`); }
+    }
   }
   edit = (text: string): void => { this.update({ text, revision: this.snapshot.revision + 1 }); };
   private validateAttachments(values: unknown): readonly DraftAttachment[] {
@@ -96,28 +107,35 @@ export class SessionDraft {
       this.update({ blocks: this.snapshot.blocks.filter(block => block.id !== id) });
     }
   };
-  bindModule(owner: string, writes: readonly ('attachments' | 'text')[]): { draft: ModuleDraft; dispose(): void } {
+  hasModuleBlock(): boolean {
+    return this.snapshot.blocks.some(block => this.blockOwners.has(block.id));
+  }
+  recoverFiles(files: readonly File[], reason: string): void {
+    this.update({ blocks: [...this.snapshot.blocks, Object.freeze({
+      id: `block-${++this.sequence}`, orphaned: true,
+      reason: `${reason}：${files.map(file => file.name || '文件').join('、')}。请移除本次选择后重试。`,
+    })] });
+  }
+  holdFiles(): () => void {
+    const id = `block-${++this.sequence}`;
+    this.update({ blocks: [...this.snapshot.blocks, Object.freeze({ id, reason: '正在接收文件选择', orphaned: false })] });
+    return () => this.update({ blocks: this.snapshot.blocks.filter(block => block.id !== id) });
+  }
+  bindModule(owner: string, writes: readonly DraftWrite[], report: (error: unknown) => void = error => reportUxError(describeReason(error, false))): { draft: ModuleDraft; dispose(): void } {
     const permissions = new Set(writes);
     const subscriptions = new Set<() => void>();
     let active = true;
-    let source: SessionDraftSnapshot | undefined;
-    let snapshot: ModuleDraftSnapshot;
-    const getSnapshot = () => {
-      if (source !== this.snapshot) {
-        source = this.snapshot;
-        snapshot = Object.freeze({ text: source.text, attachments: source.attachments, pending: source.pending });
-      }
-      return snapshot;
-    };
     const assertWrite = (field: 'attachments' | 'text') => {
       if (!active || !permissions.has(field)) throw new Error(`Module ${owner} cannot write ${field}`);
+      if (field === 'attachments' && this.snapshot.pending) throw new Error('Draft attachments are pending native submission');
     };
     const draft: ModuleDraft = Object.freeze({
+      id: this.reference.id,
       sessionId: this.sessionId,
-      getSnapshot,
+      getSnapshot: this.getSnapshot,
       subscribe: (listener: () => void) => {
         if (!active) return () => {};
-        const unsubscribe = this.subscribe(listener);
+        const unsubscribe = this.subscribe(() => { try { listener(); } catch (error) { report(error); } });
         subscriptions.add(unsubscribe);
         return () => { subscriptions.delete(unsubscribe); unsubscribe(); };
       },
@@ -146,7 +164,7 @@ export class SessionDraft {
         if (typeof reason !== 'string' || !reason.trim()) throw new Error('A draft block needs a reason');
         const id = `block-${++this.sequence}`;
         this.blockOwners.set(id, owner);
-        this.update({ blocks: [...this.snapshot.blocks, Object.freeze({ id, reason })] });
+        this.update({ blocks: [...this.snapshot.blocks, Object.freeze({ id, reason, orphaned: false })] });
         let released = false;
         return () => {
           if (released) return;
@@ -158,9 +176,11 @@ export class SessionDraft {
         };
       },
     });
+    references.set(draft, this);
     return { draft, dispose: () => {
       if (!active) return;
       active = false;
+      references.delete(draft);
       for (const unsubscribe of subscriptions) unsubscribe();
       subscriptions.clear();
       this.update({ blocks: this.snapshot.blocks.map(block => {

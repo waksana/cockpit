@@ -158,7 +158,7 @@ test('all input states share one full-width unframed editor row inside the same 
   assert.doesNotMatch(css, /\.chat-input-message:focus \{/);
   assert.match(css, /\.chat-input-message \{[^}]*background: transparent;/);
   assert.match(css, /\.chat-input-message \{[^}]*padding-inline-end: var\(--chat-gap-meta\);/);
-  assert.match(css, /\.module-composer-actions:not\(:empty\) \+ \.chat-input-message \{[^}]*padding-inline-start: var\(--chat-gap-meta\);/);
+  assert.match(css, /\.chat-input-message:not\(:first-child\) \{[^}]*padding-inline-start: var\(--chat-gap-meta\);/);
   assert.match(css, /\.chat-input-area \{[^}]*margin-block-end: calc\(var\(--chat-inset-bottom\) \+ env\(safe-area-inset-bottom, 0px\)\)/);
   assert.doesNotMatch(bar, /border:|border-radius:|max-width:/);
   assert.match(css, /--chat-inset-field: var\(--host-space-sm\) var\(--host-space-md\);/);
@@ -240,7 +240,7 @@ test('Chat regions and optional composer context each have a single spacing owne
   assert.match(css, /\.chat-composer-body \{[^}]*gap: var\(--chat-gap-region\);/);
   assert.match(css, /\.chat-composer-context \{[^}]*display: none;[^}]*gap: var\(--chat-gap-region\);[^}]*min-height: 0;/);
   assert.match(css, /\.chat-composer-context:has\(> :not\(:empty\)\) \{\s*display: flex;/);
-  assert.match(css, /\.module-composer-above,\s*\.module-draft-attachments \{[^}]*margin: 0;/);
+  assert.match(css, /\.draft-attachments \{[^}]*margin: 0;/);
   assert.match(css, /\.chat-input-notice \{[^}]*margin: 0;/);
   assert.match(css, /\.module-draft-recovery \{[^}]*margin: 0;/);
   assert.match(css, /\.chat-pending-head \{[^}]*margin: 0;/);

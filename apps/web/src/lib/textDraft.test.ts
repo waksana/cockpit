@@ -241,7 +241,8 @@ test('module draft scopes enforce fields and ownership, expose cached readonly s
   const b = draft.bindModule('B', ['text', 'attachments']);
   assert.equal(a.draft.sessionId, 'scoped');
   assert.equal(a.draft.getSnapshot(), a.draft.getSnapshot());
-  assert.deepEqual(Object.keys(a.draft.getSnapshot()).sort(), ['attachments', 'pending', 'text']);
+  assert.deepEqual(Object.keys(a.draft.getSnapshot()).sort(), ['attachments', 'blocks', 'pending', 'revision', 'text', 'unconfirmed']);
+  assert.equal(a.draft.id, draft.reference.id);
   assert.throws(() => a.draft.editText('Denied'), /cannot write text/);
   a.draft.appendAttachments([{ id: 'one', value: { type: 'file', path: '/fixture/one' } }]);
   const snapshot = a.draft.getSnapshot();
@@ -267,7 +268,7 @@ test('module draft scopes enforce fields and ownership, expose cached readonly s
   assert.equal(draft.getSnapshot().text, 'Allowed');
 });
 
-test('attachment-only ACK clears captured unchanged IDs but preserves replacement IDs, new files and text edits', async () => {
+test('attachment-only ACK preserves text revisions while scoped attachments remain immutable during native submission', async () => {
   const { drafts, storage } = fixture();
   const draft = drafts('files');
   const scope = draft.bindModule('files', ['attachments']);
@@ -279,16 +280,18 @@ test('attachment-only ACK clears captured unchanged IDs but preserves replacemen
     assert.equal(attachments?.length, 2);
     return new Promise(resolve => { finish = resolve; });
   });
-  scope.draft.appendAttachments([attachment('same', 'replacement'), attachment('new')]);
+  assert.throws(() => scope.draft.appendAttachments([attachment('same', 'replacement'), attachment('new')]), /pending native submission/);
+  assert.throws(() => scope.draft.removeAttachment('unchanged'), /pending native submission/);
   draft.edit('Typed during upload');
   const reloaded = createSessionDrafts(storage)('files');
   assert.equal(reloaded.getSnapshot().pending, false);
   assert.equal(reloaded.getSnapshot().unconfirmed, true);
-  assert.equal(reloaded.getSnapshot().attachments.length, 3);
+  assert.equal(reloaded.getSnapshot().attachments.length, 2);
   finish(true);
   assert.equal(await sending, true);
-  assert.deepEqual(draft.getSnapshot().attachments.map(item => item.id), ['same', 'new']);
+  assert.deepEqual(draft.getSnapshot().attachments.map(item => item.id), []);
   assert.equal(draft.getSnapshot().text, 'Typed during upload');
+  scope.draft.appendAttachments([attachment('same', 'replacement'), attachment('new')]);
   assert.equal(await draft.send(async () => false), false);
   assert.equal(draft.getSnapshot().attachments.length, 2);
   assert.equal(await draft.send(async () => true), true);

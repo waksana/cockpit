@@ -1,8 +1,9 @@
 # 模块接入协议
 
-**当前源码：Module API v1，本地可信包、主进程 import、冷加载。**
-这是 Cockpit 0.2.1 的模块契约（与 0.2.0 保持不变），运行包以该版本 Release workflow 成功发布的资产为准；
-不适用于 v0.1.0 运行包。
+**当前开发源码：模块包/后端 API v1，Web API v2，公共 UI v1。**
+本地可信包、主进程 import、冷加载不变。Web v2 是需要宿主与模块配套升级的不兼容变更；
+旧 Web 插口不保留兼容层，不能把同一个宿主包版本号视为能力证明。
+运行包以实际发行资产为准；开发分支的接口不表示已经发布或安装。
 远程签名 URL 安装、模块 HTTP MCP、角色/skill 包和通用页面贡献仍未实现。
 
 产品边界见 [R1–R8](product-requirements.md)，文件模块的业务契约由
@@ -18,8 +19,8 @@
 | 前端 | 同包 ESM/CSS，共用宿主 React 和主题，不新建 SPA |
 | HTTP | 统一端口、模块命名空间、版本绑定的 API 与静态资源 |
 | 原生观察 | 按声明类型接收已加载会话的 SDK 通知，不开启额外历史读取 |
-| Web 贡献 | 输入栏操作、输入栏上方组件、文件输入事件、聊天节点渲染；新增消息装饰、会话标记与全局操作插口 |
-| 草稿 | 声明写 text/attachments，经作用域句柄修改，发送与 ACK 仍归本体 |
+| Web 贡献 | 模块 state 服务、命名组件 middleware、独立 Markdown link/image 渲染注册 |
+| 草稿 | 本体基础 state；模块经声明、作用域绑定的 actions 扩展，发送与 ACK 仍归本体 |
 | 启用/停用 | 修改下次启动选择，当前进程不热加载或热卸载 |
 
 首个消费者是文件模块。全局文件库和汉堡菜单页面已移至其 roadmap；
@@ -106,8 +107,10 @@ Copilot 原生数据不在上面的宿主管理范围内。本体不覆盖其 ba
 
 ## 4. 公共 TypeScript 契约
 
-唯一代码定义是
-[`packages/module-api/src/index.ts`](../packages/module-api/src/index.ts)。
+唯一代码定义由
+[`packages/module-api/src/index.ts`](../packages/module-api/src/index.ts) 导出；
+后端契约在该文件，Web v2 契约在
+[`frontend.ts`](../packages/module-api/src/frontend.ts)。
 模块构建时可以导出真实的公共类型，避免复制一份声明：
 
 ```sh
@@ -173,8 +176,11 @@ worker 使用稳定的模块专属 URL 和相同目录 scope，`Service-Worker-A
 
 ## 6. 前端注册与草稿
 
-浏览器入口同样导出 `activate(context)`。context 提供宿主现有 React、ReactDOM `createPortal`、
-apiBase、公开配置、request、signal 和 report。模块不得自建 root 或依赖私有 DOM/store。
+浏览器入口同样导出 `activate(context)`，但前端 context 和返回声明都要求 `apiVersion: 2`。
+这不改变 manifest、后端 context 或 HTTP API 的 v1。
+context 提供宿主现有 React、ReactDOM `createPortal`、state、
+apiBase、公开配置、request、signal、onInvalidate 和 report。
+模块不得自建 root 或依赖私有 DOM/store。
 宿主并行初始化不同前端模块；单个超时/错误不阻塞其他模块，晚结果不能重新发布已撤销贡献。
 
 当前宿主另提供 `context.uiVersion: 1`，声明已实现的公共语义 CSS 与图标规范。
@@ -189,47 +195,84 @@ apiBase、公开配置、request、signal 和 report。模块不得自建 root �
 模块可将自己拥有的原生 dialog 挂到标准 `document.body`，避免置于 Markdown 行内节点；
 组件卸载/作用域撤销时必须关闭并卸载，保留原生焦点返回。不得操作宿主私有 DOM。
 
-当前返回字段：
+### 6.1 State 扩展
+
+`context.state.register({ id, create, dispose })` 在前端激活阶段同步创建一次服务，
+返回保留具体类型的 handle；`handle.get()` 取得该实例，撤销后明确失败。
+服务可以复用已有 store，或持有按草稿/资源键分组的多个 store，不要求复制一份全局消息数据库。
+快照、选择器、订阅、HTTP actions 和异步资源由服务自己管理；框架不自动持久化或重试。
+创建函数不能返回 Promise，初始网络读取由已创建服务执行，不阻塞普通聊天渲染。
+
+`context.state.host` 提供当前 session、页面可见性和连接状态的只读基础快照。
+`onInvalidate` 仍是本模块的既有 SSE 变化提示，不携带完整业务 state。
+模块扩展消息/session 的组合视图，不覆盖原生数据或派生另一份原生权威；
+未加载和读取失败不能伪造成 false/零。
+
+草稿也是本体基础 state。`DraftReference` 是带稳定生命周期 id 的只读引用；
+`context.state.bindDraft(reference)` 返回当前模块、当前草稿的稳定 actions 句柄，
+授权仍由 `writes` 声明。绑定不随当前会话切换而改变，不暴露私有 SessionDraft/store，
+没有通用 patch、submit、ACK 或 reset 动作。
+
+### 6.2 Component middleware
+
+当前前端返回字段：
 
 | 字段 | 用途 |
 | --- | --- |
+| apiVersion | 必须为 2；旧 Web 声明明确拒绝 |
 | writes | 声明可写的 text/attachments；是接口协作约束，不是安全隔离 |
-| rendersDraftAttachments | 声明 composerAbove 已完整展示草稿附件，本体不再重复展示附件列表；必须同时提供 composerAbove |
-| composerActions | 输入栏操作组件 |
-| composerAbove | 输入栏上方组件 |
-| fileInput | 文件选择结果、粘贴/拖放文件的接受与处理 |
-| chatRenderers | 原生附件、Markdown link/image 节点的匹配和组件 |
-| messageDecorations | 已有消息或当前 ask 的非交互边缘装饰；提供身份及该内容的 element |
-| sessionBadges | 会话卡片内部的非交互附加标记，不能嵌套按钮或改变原生会话状态 |
-| globalActions | 全局导航旁的模块操作，适用于权限和模块设置，不注册第二个 SPA |
-| dispose | 释放本模块的浏览器资源 |
+| components | `{ id, boundary, order?, wrap }`，wrap 接收基础组件并返回增强组件 |
+| markdown | 已解析 link/image 节点的排他渲染规则；不处理附件 |
+| dispose | 释放前端自己持有的资源；注册 state 的 disposer 由宿主单独执行 |
 
-新增插口由 `context.surfaceVersion: 1` 明确声明，旧模块不需要采用。
-`context.view` 提供当前 session、页面可见性和连接状态的可订阅快照；
-`context.onInvalidate` 订阅本模块的状态变化提示，`context.worker` 给出已验证的绝对 worker URL/scope。
-它们不提供未读计数、阅读阈值或模块业务权威。
+| boundary | 基础组件契约 |
+| --- | --- |
+| message | 原生消息/宿主当前 ask 身份、完成事实、实际正文 bodyRef、children 与真实 adornment 节点 |
+| sessionStatus | 原生回复中/错误/待选择状态和非交互 children，不嵌套按钮 |
+| composer | 捕获的草稿、原生操作、children/attachments/actions 与文件输入回调 |
+| attachment | 一项原生或草稿附件、来源、基础显示、受控 onRemove 与其他 actions，保留禁用状态 |
+| globalActions | 组合全局操作 children，不建立另一个 SPA |
 
-消息装饰接收原生消息身份、角色、完成状态和直接所属 element；
-ask 使用宿主当前 AskRequest.requestId，与 controlEvents 中同一字段对应，不冒充原生 requestId。
-element 仅供观察该内容，不授权修改正文、移动节点、查询宿主私有 DOM 或写入滚动位置。
-装饰挂在现有内容外侧留白，不参与布局，出现/消失不能改变内容宽度、换行、行高或输入框对齐。
-装饰必须是非交互内容，但可提供状态的可访问文字；宿主不以 aria-hidden 隐藏模块的语义说明。
-模块自己决定是否呈现标记及何时提交阅读确认；宿主不持有已读/未读数据库。
-各插口按 order/module/id 稳定排列，模块异常只撤销其贡献，不影响普通聊天。
+Middleware 按 `(order, moduleId, id)` 排列，较小者在外层。
+组合只在注册或基础组件变化时创建，不在每次消息、草稿或未读更新时生成新的组件类型。
+增强器必须保留继承的 children、refs、actions、原生身份与滚动锚点。
+React 增强链和错误边界不产生 HTML；不为注册项增加空 div/span 占位。
+新增业务节点通过原组件的正常 props/children 组合，不能产生视觉嵌套或改变原有布局。
+
+message 的 bodyRef 指向实际正文或当前 ask 的问题，不含 byline、滚动外框或选择按钮。
+ask 使用宿主当前 AskRequest.requestId，不冒充 SDK requestId。
+模块可观察该元素，但不能查询私有 DOM、移动正文或写入滚动位置。
+边缘标记使用现有内容外侧留白，出现/消失不能改变宽度、换行、行高或输入框对齐；
+标记非交互但可以提供可访问说明。阅读阈值与未读数据仍属于模块。
+
+### 6.3 草稿与文件输入
 
 本体提供绑定 session 的草稿句柄：快照、订阅、追加/移除附件、编辑文字、登记发送阻止。
 模块不操作发送按钮的实现，不发隐式消息。提交快照和原生 ACK 清理由本体统一完成，
 新增加的文字/附件不会被旧 ACK 清掉。
-原生提交 pending 期间，本体向输入区贡献传入 disabled，上传、移除和重试须置灰；
+原生提交 pending 期间，组件 props 传入 disabled，上传、移除和重试须置灰；
 拖放/粘贴文件也不接纳。文字仍可编辑，收到回执后恢复附件操作，不等待 Agent 整个回合结束。
 当前页面内，模块负责在文件项内展示上传/失败状态，本体发送阻止只使发送按钮置灰，
 不额外弹出正常上传提示。处理器异常会撤销该前端模块，
 遗留发送阻止转为宿主可明确移除的行内提示，避免永久锁住草稿。
-没有声明附件展示的模块或模块失效时，本体保留简单的附件移除列表；
-不显示重复的“原生附件”折叠区，声明草稿写权限本身不等于承担附件展示。
+附件 middleware 处理就绪原生/草稿附件；无增强或模块失效时，本体保留简单的附件移除列表。
+不通过全局布尔声明隐藏全部附件，不显示重复的“原生附件”折叠区。
+草稿附件的 `onRemove()` 是原始受控 action，重新检查当前草稿条件，
+只有确实移除该项才返回 true；本体不据此删除服务器文件。
+文件模块可组合此 action，并在成功后按自己的原有资格规则丢弃未使用上传。
+不能检查不透明 React 按钮内部结构、拦截私有 DOM 点击或通过附件消失猜测删除。
 刷新只恢复文字和已写入草稿的成功附件，不保留未完成文件选择、上传任务或相关阻止。
 成功附件不能为等待同批其他文件而延迟写入草稿。原生发送回执未确认的提醒仍保留，
 与未完成上传的刷新规则分开。
+
+Composer 的 `actions` 接收 `pickFiles()`。本体在真实用户手势中打开一个选择器，
+捕获当时草稿、操作和已组合的 `onFiles`，不把迟到选择改投到当前会话。
+选择、粘贴和拖放汇入同一个同步回调；返回 true 是接纳全部文件的所有权交接，
+不是上传已经成功。模块必须先留下受阻止保护的选择或就绪附件，再启动异步工作；
+不能同时处理并调用下一处理器。未接纳、异常或缺少处理器保留可明确移除的恢复阻止，
+不能静默丢掉文件后允许发送。混合剪贴板文字、IME 和原生提交快捷键不被改写。
+
+### 6.4 Markdown 注册与资源生命周期
 
 Markdown 渲染上下文保留原生消息身份和原始解析目标，不使用 HAST 规范化后的 URL
 代替模块引用键。主/子 Agent 保留真实根 session 身份。
@@ -238,6 +281,17 @@ Markdown 渲染上下文保留原生消息身份和原始解析目标，不使�
 历史展示使用 `NativeAttachmentDescriptor`，与严格的发送参数 `NativeAttachment` 分开：
 blob 的 data 缺失或带 omittedReason 时仍保留名称、MIME 和不可用原因，
 没有模块渲染器时显示基本文字占位，不伪造空 blob，也不补抓字节。
+
+Markdown 注册只接收 link/image，原生和草稿附件走 attachment middleware。
+模块不重新解析完整 Markdown；替代输出保持行内 phrasing 结构，
+dialog 使用 body portal，不嵌入链接或段落。相同目标的资源请求可在模块 state 中复用。
+
+同模块所有 state、middleware 和 Markdown 注册 ID 必须唯一。
+激活先暂存注册，整体校验后才发布；失败/超时回滚已经创建的 state。
+停止时先撤销草稿绑定并保留未解决输入，再 abort 和清理服务/监听；
+state disposer 逆注册顺序执行一次，某个清理失败不能阻止其他清理。
+state 作用域不等于组件挂载范围：切换会话不能取消仍属于原草稿的上传。
+页面 state 清理也不等于注销设备推送订阅或关闭后端模块。
 
 ## 7. 原生观察和退出
 

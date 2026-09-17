@@ -198,7 +198,7 @@ export interface MessageProps extends React.HTMLAttributes<HTMLDivElement> {
    * refs. No selector lookup, decoration placeholder, or extra measuring element.
    */
   readonly bodyRef?: React.Ref<HTMLDivElement>;
-  /** Actual nodes inside the existing body, alongside children (e.g. an absolute redline). */
+  /** Actual nodes beside the body in its existing presentation parent (e.g. an absolute redline). */
   readonly adornment?: React.ReactNode;
 }
 
@@ -228,6 +228,13 @@ export interface AttachmentProps {
   readonly disabled: boolean;
   readonly pending: boolean;
   readonly children: React.ReactNode;
+  /**
+   * Controlled removal for a draft attachment. Rechecks current draft gates and
+   * returns true only when this attachment was removed; never submits or deletes
+   * a server file. Middleware may compose its own state action around this.
+   */
+  readonly onRemove?: () => boolean;
+  /** Additional actions, excluding onRemove's default control. Preserve when replacing the view. */
   readonly actions?: React.ReactNode;
 }
 

@@ -6,17 +6,13 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import type { SessionMeta, SessionStatus } from '../net/types';
+import type { SessionMeta } from '../net/types';
 import { ContextMenu, type MenuItem } from './ContextMenu';
 import { useLongPress } from '../lib/longpress';
 import { filterSessions } from '../pages/session-list';
 import { menuFocusTarget } from '../lib/menuFocus';
 import { StateNotice } from './StateNotice';
-import { ModuleSessionBadges } from './ModuleContributions';
-
-const STATUS_TEXT: Record<SessionStatus, string> = {
-  unloaded: '', idle: '', running: '回复中', error: '出错',
-};
+import { SessionStatus } from './ModuleComponents';
 
 function cwdBasename(cwd: string): string {
   return cwd.split('/').filter(Boolean).pop() ?? cwd;
@@ -49,7 +45,6 @@ function SessionRow({ s, active, actions }: {
   const firedRef = useRef(false);
   const lp = useLongPress(actions.onMenu, firedRef);
 
-  const statusText = STATUS_TEXT[s.status] ?? '';
   const { mono, hue } = cwdChip(s.cwd);
 
   return (
@@ -80,11 +75,7 @@ function SessionRow({ s, active, actions }: {
       <span className="dialog-title">{s.title}</span>
       <span className="dialog-time">{relTime(s.lastActivity)}</span>
       <span className="dialog-subtitle">{cwdBasename(s.cwd)}</span>
-      <span className="dialog-meta">
-        <ModuleSessionBadges sessionId={s.sessionId} />
-        {statusText && <span className="dialog-status" data-tone={s.status}>{statusText}</span>}
-        {(s.ask || s.planRequest || s.elicitation) && <span className="dialog-status" title="需要选择" aria-label="需要选择">选</span>}
-      </span>
+      <SessionStatus sessionId={s.sessionId} status={s.status} needsDecision={!!(s.ask || s.planRequest || s.elicitation)} />
     </button></li>
   );
 }
