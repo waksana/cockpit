@@ -15,7 +15,10 @@ test('module API export contains its canonical types and local protocol dependen
   assert.equal(api.devDependencies, undefined);
   assert.equal(api.scripts, undefined);
   const types = await readFile(join(target, 'module-api/src/index.ts'), 'utf8');
-  assert.match(types, /interface ModuleFrontendContext/);
+  assert.match(types, /export type \* from '\.\/frontend\.ts'/);
+  const frontend = await readFile(join(target, 'module-api/src/frontend.ts'), 'utf8');
+  assert.match(frontend, /interface ModuleFrontendContext/);
+  assert.match(frontend, /interface DraftSchemaRegistration/);
   assert.match(types, /interface ModuleBackendContext/);
   for (const entry of await readdir(join(target, 'protocol/src'))) assert.doesNotMatch(entry, /\.test\./);
   assert.match(await readFile(join(target, 'LICENSE'), 'utf8'), /GNU GENERAL PUBLIC LICENSE/);
