@@ -263,7 +263,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.doesNotMatch(html, /Resource test/, 'the standalone header does not append the session title');
     assert.doesNotMatch(html, /<nav|info-panel-more|role="tab"/);
     assert.match(html, /aria-label="刷新" disabled=""/);
-    assert.doesNotMatch(html, /没有配置 MCP|本会话没有可用的 MCP|当前会话未发现技能/);
+    assert.doesNotMatch(html, /没有配置 MCP|本会话没有可用的 MCP|未发现技能/);
   });
 }
 

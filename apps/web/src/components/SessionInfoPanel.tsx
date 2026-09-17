@@ -157,7 +157,6 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
       {heading}
       <div className="info-section-content info-controls">
         <CurrentModel session={session} />
-        <p className="info-model-hint">{draft ? '编辑草稿；手动应用后，请核对结果与当前原生值。' : '修改后手动应用；重置将使用当前原生值。'}</p>
         <label className="info-control">
           <span className="info-control-label">模型</span>
           <span className="info-select-wrap">

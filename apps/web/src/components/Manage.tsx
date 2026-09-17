@@ -1,13 +1,13 @@
 // Per-session MCP and Skills use the same row presentation, not the same
 // mutation policy: MCP writes are serialized by the native host.
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { ChatSession } from '../net/types';
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { useSessionResource } from '../lib/useSessionResource';
 import { McpStatusPill } from './McpStatus';
-import { ExpandableText, PanelCloseButton, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
+import { PanelCloseButton, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
+import { useClippedText } from '../lib/useClippedText';
 import { PaneHeader } from './PaneHeader';
 import { Icon } from './Icon';
 
@@ -19,33 +19,62 @@ export function Toggle({ on, onChange, disabled, label, busy }: {
     onClick={() => onChange(!on)}><span className="switch-knob" /></button>;
 }
 
-function SessionToggleRow({ identity, name, description, source, status, enabled, disabled, disabledReason, nativeError, onChange }: {
+// The text itself is the disclosure target: discovering overflow never adds a row.
+function RowText({ text, label, lines = 1 }: { text: string; label: string; lines?: 1 | 2 }) {
+  const id = useId();
+  const { ref, clipped } = useClippedText(text, lines);
+  const [expanded, setExpanded] = useState(false);
+  const content = <span ref={ref} id={id} className="manage-row-text" data-lines={lines}
+    data-expanded={expanded || undefined}>{text}</span>;
+  return clipped || expanded
+    ? <button type="button" className="manage-text-disclosure ck-button"
+      aria-label={`${expanded ? '收起' : '展开'}${label}`} aria-expanded={expanded} aria-controls={id}
+      onClick={() => setExpanded(!expanded)}>{content}</button>
+    : content;
+}
+
+function RowError({ error, name }: { error: string; name: string }) {
+  const id = useId();
+  const [expanded, setExpanded] = useState(false);
+  return <>
+    <div className="manage-row-status" role="status">
+      <button type="button" className="manage-error-disclosure ck-button"
+        aria-label={`${expanded ? '收起' : '展开'}${name}错误详情`} aria-expanded={expanded} aria-controls={id}
+        title={expanded ? '收起错误详情' : '查看错误详情'}
+        onClick={() => setExpanded(!expanded)}>{expanded ? '收起' : '失败'}</button>
+    </div>
+    <div id={id} className="manage-row-error" hidden={!expanded}>未确认：{error}</div>
+  </>;
+}
+
+function SessionToggleRow({ identity, name, description, source = '', status, enabled, disabled, disabledReason, nativeError, onChange }: {
   identity: string; name: string; description?: string; source?: string; status?: ReactNode; enabled: boolean;
   disabled: boolean; disabledReason?: string; nativeError?: string; onChange: (name: string, enabled: boolean) => Promise<void>;
 }) {
   const action = useKeyedAction(identity);
   const [desired, setDesired] = useState(enabled);
   const error = action.error ?? nativeError;
-  const progress = <><Icon name="loading" className="spinner" size={status ? 10 : 12} />{desired ? '正在开启…' : '正在关闭…'}</>;
-  return <div className="manage-row manage-session-row" data-resource-name={name} title={disabled ? disabledReason : undefined}>
-    <div className="manage-row-name">{name}</div>
+  const progress = <><Icon name="loading" className="spinner" size={10} />
+    {status ? desired ? '连接中' : '断开中' : desired ? '启用中' : '停用中'}</>;
+  return <div className="manage-row manage-session-row" data-mcp={status ? true : undefined}
+    data-resource-name={name} title={disabled ? disabledReason : undefined}>
+    <div className="manage-row-name"><RowText key={name} text={name} label={`${name}名称`} /></div>
     <Toggle label={`启用 ${name}`} disabled={disabled || action.busy} busy={action.busy} on={enabled}
       onChange={next => {
         if (disabled || action.busy) return;
         setDesired(next);
         void action.run(() => onChange(name, next));
       }} />
+    <div className="manage-row-source"><RowText key={source} text={source} label={`${name}来源`} /></div>
+    {error && !action.busy
+      ? <RowError key={JSON.stringify([identity, error])} error={error} name={name} />
+      : <div className="manage-row-status" role="status">
+        {action.busy ? <span className="mcp-status mcp-operation-status" data-tone="pending">{progress}</span>
+          : status ?? <span className="mcp-status" data-tone="off">{enabled ? '已启用' : '已关闭'}</span>}
+      </div>}
     <div className="manage-row-main">
-      {status && <div className="manage-row-status">
-        {action.busy ? <span className="mcp-status mcp-operation-status" data-tone="pending" role="status">{progress}</span> : status}
-      </div>}
-      {description && <ExpandableText className="manage-row-description" text={description} label={`${name}说明`} />}
-      {source && <div className="manage-row-source">{source}</div>}
-      {action.busy && !status && <div className="manage-row-feedback manage-row-pending" role="status">{progress}</div>}
-      {error && <div className="manage-row-feedback" role="alert" data-error>
-        <ExpandableText text={`未确认：${error}`} label={`${name}错误详情`} />
-      </div>}
-      {disabled && disabledReason && <div className="manage-row-source">{disabledReason}</div>}
+      {!status && <div className="manage-row-description"><RowText key={description ?? ''} text={description ?? ''}
+        lines={2} label={`${name}说明`} /></div>}
     </div>
   </div>;
 }
@@ -127,9 +156,8 @@ export function SessionMcp({ session, onClose }: SessionManageProps) {
     pending={resource.pending} hasData={resource.data !== undefined} working={action.pending}
     blocked={resource.closing || resource.requiresResume || !resource.connected}
     empty={resource.valid && resource.data?.length === 0 ? '本会话没有可用的 MCP 服务器' : undefined}>
-    <p className="manage-note">启用选择与连接状态分开显示；全局默认不在本页修改。</p>
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
-    {resource.data?.map(server => <SessionToggleRow key={server.name}
+    {resource.data?.map(server => <SessionToggleRow key={JSON.stringify([sessionId, server.name])}
       identity={JSON.stringify(['mcp', sessionId, server.name])} name={server.name}
       source={server.detail} nativeError={server.error} status={<McpStatusPill status={server.status} />}
       enabled={server.enabled} disabled={!resource.usable || busy}
@@ -148,13 +176,9 @@ export function SessionSkills({ session, onClose }: SessionManageProps) {
     refresh={() => { void resource.refresh(); }} status={resource.status} failed={resource.failed}
     pending={resource.pending} hasData={resource.data !== undefined} working={action.pending}
     blocked={resource.closing || resource.requiresResume || !resource.connected}
-    empty={resource.valid && resource.data?.length === 0 ? <>
-      <p>当前会话未发现技能。</p>
-      <Link className="ck-button manage-global-link" to="/skills">管理全局 Skills</Link>
-    </> : undefined}>
-    <p className="manage-note">本页选择只作用于本会话，不改变全局默认。</p>
+    empty={resource.valid && resource.data?.length === 0 ? '未发现技能' : undefined}>
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
-    {resource.data?.map(skill => <SessionToggleRow key={skill.name}
+    {resource.data?.map(skill => <SessionToggleRow key={JSON.stringify([sessionId, skill.name])}
       identity={JSON.stringify(['skills', sessionId, skill.name])} name={skill.name}
       description={skill.description} source={skill.source}
       enabled={skill.enabled} disabled={!resource.usable} onChange={action.run} />)}

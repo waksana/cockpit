@@ -91,9 +91,6 @@
   color: var(--primary-text-color);
   overflow: hidden;             // clip content to the rounded row
 
-  @media (hover: hover) {
-    &:hover:not(.active) { background-color: var(--ripple-color); }
-  }
   &.active { background-color: var(--selected-fill); }
 
   // Unloaded = not resident in memory. Dim the row's identity/content so

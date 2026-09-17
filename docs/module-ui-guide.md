@@ -44,6 +44,23 @@ Skills remain separate pages with flat sections; they share visual roles, not
 navigation or mutation policy. **`--host-*` and `--chat-*` are not module APIs**;
 modules continue to use only the public `--ck-*` variables below.
 
+Session MCP rows pair name/source on the left with switch/connection status on
+the right. Only the operated row shows switching progress; other switches remain
+disabled during native serialization without repeated explanatory notices.
+The three session pages omit static instructional text, and an empty Skills
+page only reports that no skills were found. Actual failures, native results and
+unavailable-session recovery remain visible. Reconnecting an individual MCP uses
+its existing off/on switch, not an additional reload-all action.
+MCP and Skills reuse their status slot for connection/disconnection or
+enable/disable progress and a discoverable, underlined failure action. No progress
+line or error box opens automatically. Names and sources occupy one line; Skills
+reserve two description lines even before descriptions arrive. Overflowing text
+itself is a keyboard-accessible disclosure, without an extra arrow or button row.
+Only explicit activation expands full text or error details inline; replacement
+text/errors start collapsed. These dense reading/status disclosures keep their
+line-height targets and visible focus, while switches retain 40px/44px targets.
+Expanded content has no fixed height or clipping.
+
 The host loads its base stylesheet; a module declares its business stylesheet in
 `frontend.styles`. Both live in the **same document**, without Shadow DOM or a
 style sandbox. Modules keep a unique prefix, such as `cf-` or `example-`, for their
@@ -55,7 +72,7 @@ order is not a theme API.
 
 | Class | Supported element / meaning |
 | --- | --- |
-| `ck-button` | Native `button`, or `a[href]` for navigation; text/action baseline, aligned children, padding, hover and focus. |
+| `ck-button` | Native `button`, or `a[href]` for navigation; text/action baseline, aligned children, padding and keyboard focus. |
 | `ck-icon-button` | Native `button` or `a[href]`; centered icon, round target, muted default ink. Provide an accessible name and tooltip. |
 | `ck-input` | Text-like `input`, `textarea`, `select`; shared field appearance and focus. Not a checkbox/radio/file input reset. Keep native labels and types. |
 | `ck-icon` | Decorative `svg`, or a `span` containing one SVG. Shared dimensions, currentColor, stroke and alignment. |
@@ -91,6 +108,12 @@ exception for send, stop, session deletion, or other standalone actions.
 Public selectors do not depend on a
 host ancestor. Avoid changing border/padding or swapping differently sized icons
 on hover, pending or confirmation.
+
+Host controls do not add decorative hover fills or recolor text on pointer entry.
+Selected rows, primary/destructive action colors, disabled/busy feedback and
+keyboard `:focus-visible` remain distinct. The public `--ck-color-hover` token
+is retained for module compatibility, but the shared controls do not apply it
+automatically.
 
 ## Public variables
 

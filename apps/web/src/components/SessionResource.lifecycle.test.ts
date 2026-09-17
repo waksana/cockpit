@@ -37,7 +37,9 @@ class HostNode extends EventTarget {
     }
     this.selectedValue = value;
   }
-  scrollHeight = 21;
+  private measuredHeight = 21;
+  get scrollHeight() { return this.ownerDocument.textHeights.get(this.textContent) ?? this.measuredHeight; }
+  set scrollHeight(value: number) { this.measuredHeight = value; }
   scrollWidth = 100;
   clientWidth = 100;
   private text = '';
@@ -99,6 +101,7 @@ class HostNode extends EventTarget {
 
 class HostDocument extends EventTarget {
   nodeType = 9;
+  textHeights = new Map<string, number>();
   documentElement = new HostNode('html', this);
   body = new HostNode('body', this);
   activeElement = this.body;
@@ -240,7 +243,8 @@ test('model drafts survive queued results and newer native values; reset and app
   select.value = 'draft';
   await h.event(select, 'change');
   assert.deepEqual(calls, []);
-  assert.match(h.container.textContent, /编辑草稿/);
+  assert.equal(select.value, 'draft');
+  assert.equal(h.container.querySelector('.info-model-hint'), null);
   await h.event(button(h.container, '应用配置'), 'click');
   select.value = 'metadata-model';
   await h.event(select, 'change');
@@ -541,13 +545,13 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.ok(notice);
     assert.equal(notice.getAttribute('data-placement'), 'pane');
     assert.match(notice.textContent, /加载中/);
-    assert.doesNotMatch(h.container.textContent, /本会话没有可用的 MCP|当前会话未发现技能/);
+    assert.doesNotMatch(h.container.textContent, /本会话没有可用的 MCP|未发现技能/);
     await act(async () => request.resolve());
     assert.equal(h.container.querySelector('[data-kind="loading"]'), null);
-    assert.match(h.container.textContent, /本会话没有可用的 MCP|当前会话未发现技能/);
+    assert.match(h.container.textContent, /本会话没有可用的 MCP|未发现技能/);
     if (Component === SessionSkills) {
-      assert.equal(h.container.querySelector('.manage-global-link')?.getAttribute('href'), '/skills');
-      assert.match(h.container.textContent, /不改变全局默认/);
+      assert.equal(h.container.querySelector('.manage-empty')?.textContent, '未发现技能');
+      assert.equal(h.container.querySelector('a'), null);
     }
   });
 
@@ -570,10 +574,10 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.equal(control.getAttribute('aria-checked'), 'true', 'no optimistic native value');
     const notice = h.container.querySelector('.manage-row-main');
     assert.ok(notice);
-    assert.equal(h.container.querySelector(Component === SessionMcp ? '.mcp-operation-status' : '.manage-row-pending')?.textContent, '正在关闭…');
+    assert.equal(h.container.querySelector('.mcp-operation-status')?.textContent, Component === SessionMcp ? '断开中' : '停用中');
     if (Component === SessionMcp) {
       assert.equal(notice.querySelector('.manage-row-pending'), null);
-      assert.equal(notice.querySelector('.manage-row-status')?.getAttribute('aria-hidden'), null);
+      assert.equal(h.container.querySelector('.manage-row-status')?.getAttribute('aria-hidden'), null);
     }
     assert.equal(h.container.querySelectorAll('.spinner').length, 1);
     const refresh = h.container.querySelector('[aria-label="刷新"]');
@@ -585,7 +589,17 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.equal(calls, 1);
     await act(async () => mutation.reject(new Error('Native toggle rejected')));
     assert.equal(h.container.querySelector('.spinner'), null);
-    assert.match(notice.textContent, /未确认：Native toggle rejected/);
+    const error = h.container.querySelector('.manage-row-error')!;
+    assert.match(error.textContent, /未确认：Native toggle rejected/);
+    assert.equal(error.getAttribute('hidden'), '');
+    const disclosure = button(h.container, '失败');
+    assert.equal(disclosure.getAttribute('aria-expanded'), 'false');
+    assert.equal(disclosure.parentNode?.getAttribute('class'), 'manage-row-status');
+    await h.event(disclosure, 'click');
+    assert.equal(error.getAttribute('hidden'), null);
+    await h.event(button(h.container, '收起'), 'click');
+    assert.equal(error.getAttribute('hidden'), '');
+    assert.equal(h.container.querySelector('[role="alert"]'), null, 'no duplicate automatic error box');
     assert.equal(control.getAttribute('aria-checked'), 'true');
     assert.equal(disabled(control), false);
     assert.equal(calls, 1, 'native rejection does not trigger an automatic retry');
@@ -665,16 +679,15 @@ for (const Component of [SessionMcp, SessionSkills]) {
       useCockpit.setState({ resourceRevisions: { [session.sessionId]: { mcp: 1, skills: 1 } } });
     });
     assert.equal(h.container.querySelectorAll('.spinner').length, 1, 'only the target row owns loading during a mutation');
-    assert.match(h.container.querySelector('.manage-note')!.textContent,
-      Component === SessionMcp ? /全局默认不在本页修改/ : /不改变全局默认/);
-    assert.match(row.textContent, /正在关闭/);
+    assert.equal(h.container.querySelector('.manage-note'), null);
+    assert.match(row.textContent, /断开中|停用中/);
     if (Component === SessionMcp) {
       assert.equal(source!.textContent, 'native');
       assert.equal(source!.getAttribute('aria-hidden'), null);
-      assert.equal(row.querySelector('.mcp-operation-status')?.textContent, '正在关闭…');
+      assert.equal(row.querySelector('.mcp-operation-status')?.textContent, '断开中');
       assert.doesNotMatch(row.querySelector('.manage-row-name')!.textContent, /已连接/);
     }
-    assert.doesNotMatch(other.textContent, /正在关闭|未确认/);
+    assert.doesNotMatch(other.textContent, /断开中|停用中|未确认|请等待|正在切换/);
     assert.equal(first.getAttribute('aria-checked'), 'true', 'never use optimistic native state');
     assert.equal(disabled(second), Component === SessionMcp);
     await act(async () => mutation.resolve());
@@ -713,7 +726,7 @@ test('Skills supports independent pending rows and keeps an error with its own r
   assert.deepEqual(calls, ['one', 'two']);
   await act(async () => two.reject(new Error('Second skill was rejected')));
   assert.match(h.container.querySelector('[data-resource-name="two"]')!.textContent, /未确认：Second skill was rejected/);
-  assert.match(h.container.querySelector('[data-resource-name="one"]')!.textContent, /正在关闭/);
+  assert.match(h.container.querySelector('[data-resource-name="one"]')!.textContent, /停用中/);
   assert.equal(disabled(first), true);
   assert.equal(disabled(second), false);
   await act(async () => one.resolve());
@@ -744,6 +757,107 @@ test('MCP honors native busy or settling states after remount, without a local a
   assert.equal(h.container.querySelector('.spinner'), null, 'native settling is not a local request');
 });
 
+for (const Component of [SessionMcp, SessionSkills]) {
+  test(`${Component.name}: disclosures stay manual through late text, failed writes and repeated errors`, async t => {
+    const h = mount(t);
+    const name = 'a-long-native-resource-name';
+    const long = 'Late native content that exceeds the collapsed line budget. '.repeat(8);
+    h.document.textHeights.set(name, 63);
+    h.document.textHeights.set(long, 210);
+    let source = '', description = '', revision = 0;
+    let mutation = deferred<void>();
+    const read = async () => [
+      { name, source, detail: source, description, enabled: true, status: 'connected' as const },
+      { name: 'other', enabled: true, status: 'connected' as const, detail: 'builtin' },
+    ];
+    useCockpit.setState({
+      mcpSession: read, skillsSession: read,
+      mcpToggleSession: async () => mutation.promise, skillsToggleSession: async () => mutation.promise,
+    });
+    await h.render(createElement(Component, { session, onClose: noop }));
+    const row = h.container.querySelector(`[data-resource-name="${name}"]`)!;
+    const other = h.container.querySelector('[data-resource-name="other"]')!;
+    const otherText = other.textContent;
+    const sourceSlot = row.querySelector('.manage-row-source')!;
+    const descriptionSlot = row.querySelector('.manage-row-description');
+    assert.equal(sourceSlot.querySelector('.manage-row-text')!.getAttribute('data-lines'), '1');
+    if (Component === SessionSkills) {
+      assert.equal(descriptionSlot?.querySelector('.manage-row-text')?.getAttribute('data-lines'), '2');
+      assert.equal(row.querySelector('.manage-row-status')?.textContent, '已启用');
+    }
+    const revise = () => act(async () => {
+      useCockpit.setState({ resourceRevisions: { [session.sessionId]: { mcp: ++revision, skills: revision } } });
+    });
+    const disclosure = (label: string) => row.querySelector(`[aria-label="${label}"]`)!;
+    const open = async (field: string) => {
+      const control = disclosure(`展开${name}${field}`);
+      assert.ok(control);
+      assert.equal(control.getAttribute('aria-expanded'), 'false');
+      await h.event(control, 'click');
+      assert.equal(disclosure(`收起${name}${field}`).getAttribute('aria-expanded'), 'true');
+    };
+    source = description = long;
+    await revise();
+    assert.equal(row.querySelector('.manage-row-source'), sourceSlot);
+    assert.equal(row.querySelector('.manage-row-description'), descriptionSlot);
+    assert.equal(row.querySelector('[data-expanded]'), null, 'late text never opens itself');
+    for (const field of ['名称', '来源', ...(Component === SessionSkills ? ['说明'] : [])]) {
+      await open(field);
+      await h.resize();
+      await h.event(disclosure(`收起${name}${field}`), 'click');
+      assert.equal(disclosure(`展开${name}${field}`).getAttribute('aria-expanded'), 'false');
+    }
+    await open('来源');
+    source = 'replacement source';
+    await revise();
+    source = long;
+    await revise();
+    assert.equal(disclosure(`展开${name}来源`).getAttribute('aria-expanded'), 'false',
+      'an earlier expanded value cannot reopen when it returns');
+    if (Component === SessionSkills) await open('说明');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await h.event(row.querySelector('[role="switch"]')!, 'click');
+      assert.equal(row.querySelector('.manage-row-error'), null);
+      assert.equal(row.querySelector('.manage-row-pending'), null);
+      assert.equal(row.querySelector('[role="switch"]')!.getAttribute('aria-checked'), 'true');
+      await act(async () => mutation.reject(new Error(long)));
+      const error = row.querySelector('.manage-row-error')!;
+      assert.equal(error.getAttribute('hidden'), '', 'even the same subsequent error starts collapsed');
+      assert.equal(disclosure(`展开${name}错误详情`).getAttribute('aria-controls'), error.getAttribute('id'));
+      await open('错误详情');
+      assert.equal(error.getAttribute('hidden'), null);
+      assert.equal(error.textContent, `未确认：${long}`);
+      if (Component === SessionSkills) {
+        assert.equal(disclosure(`收起${name}说明`).getAttribute('aria-expanded'), 'true',
+          'pending and errors must not discard an explicitly expanded description');
+      }
+      assert.equal(other.textContent, otherText);
+      mutation = deferred<void>();
+    }
+  });
+}
+
+test('native MCP error revisions are discoverable but never inherit another error disclosure', async t => {
+  const h = mount(t);
+  let error: string | undefined = 'Native failure A';
+  let revision = 0;
+  useCockpit.setState({
+    mcpSession: async () => [{ name: 'one', enabled: true, status: 'failed', detail: 'native', error }],
+  });
+  await h.render(createElement(SessionMcp, { session, onClose: noop }));
+  for (const replacement of ['Native failure B', 'Native failure A', undefined, 'Native failure A']) {
+    if (error) {
+      assert.equal(button(h.container, '失败').getAttribute('aria-expanded'), 'false');
+      assert.equal(h.container.querySelector('.manage-row-error')?.getAttribute('hidden'), '');
+      await h.event(button(h.container, '失败'), 'click');
+      assert.equal(h.container.querySelector('.manage-row-error')?.getAttribute('hidden'), null);
+    }
+    error = replacement;
+    await act(async () => useCockpit.setState({ resourceRevisions: { [session.sessionId]: { mcp: ++revision } } }));
+  }
+  assert.equal(button(h.container, '失败').getAttribute('aria-expanded'), 'false');
+});
+
 for (const initiallyEnabled of [false, true]) {
   test(`MCP ${initiallyEnabled ? 'disable' : 'enable'} replaces connection status, never its source`, async t => {
     const h = mount(t);
@@ -757,10 +871,12 @@ for (const initiallyEnabled of [false, true]) {
     await h.render(createElement(SessionMcp, { session, onClose: noop }));
     const row = h.container.querySelector('[data-resource-name="native-server"]')!;
     const source = row.querySelector('.manage-row-source')!;
+    assert.equal(source.parentNode, row, 'MCP source belongs to the left column, not a separate full-width block');
+    assert.equal(row.querySelector('.manage-row-status')!.parentNode, row, 'MCP connection status shares the switch column');
     await h.event(row.querySelector('[role="switch"]')!, 'click');
     assert.equal(source.textContent, 'builtin');
     assert.equal(source.getAttribute('aria-hidden'), null);
-    assert.equal(row.querySelector('.mcp-operation-status')?.textContent, initiallyEnabled ? '正在关闭…' : '正在开启…');
+    assert.equal(row.querySelector('.mcp-operation-status')?.textContent, initiallyEnabled ? '断开中' : '连接中');
     assert.equal(row.querySelector('.manage-row-pending'), null);
     assert.equal(h.container.querySelectorAll('.spinner').length, 1);
     await act(async () => mutation.resolve());
@@ -785,7 +901,7 @@ test('late toggles cannot trigger readback or feedback in a replaced page', asyn
   assert.equal(reads, 2);
   await act(async () => mutation.resolve());
   assert.equal(reads, 2, 'old owner must not start a fresh read');
-  assert.doesNotMatch(h.container.textContent, /正在关闭|未确认/);
+  assert.doesNotMatch(h.container.textContent, /停用中|未确认/);
 });
 
 test('unavailable and reconnecting resources cannot reuse accepted values as usable', async t => {
@@ -845,7 +961,7 @@ test('failed old-generation writes never refresh or overwrite a reconnected page
   assert.equal(reads, 2);
   await act(async () => mutation.reject(new Error('Obsolete failure')));
   assert.equal(reads, 2);
-  assert.doesNotMatch(h.container.textContent, /Obsolete failure|正在关闭/);
+  assert.doesNotMatch(h.container.textContent, /Obsolete failure|停用中/);
   assert.equal(disabled(h.container.querySelector('[role="switch"]')!), false);
 });
 

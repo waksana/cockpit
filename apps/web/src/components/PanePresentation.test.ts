@@ -107,9 +107,23 @@ test('session pages share flat density and multiline settings without changing c
   assert.match(manage, /\.manage-row \{[^}]*background: transparent;[^}]*border-radius: 0;[^}]*border-bottom: 1px solid/);
   assert.match(manage, /\.manage-session-row \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto;/);
   assert.match(manage, /\.manage-row-status \{[^}]*min-height: calc/);
+  assert.match(manage, /\.manage-session-row > \.manage-row-source \{[^}]*grid-column: 1;[^}]*grid-row: 2;/);
+  assert.match(manage, /\.manage-session-row > \.manage-row-status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[^}]*justify-content: flex-end;/);
+  assert.match(manage, /\.manage-session-row \.manage-row-main:empty \{[^}]*display: none;/);
   assert.match(info, /\.info-session-id-value \{[^}]*overflow-wrap: anywhere;[^}]*user-select: text;/);
   assert.doesNotMatch(info.match(/\.info-session-id-value \{([^}]*)\}/)![1], /ellipsis|hidden|sticky|line-clamp/);
   assert.match(info, /\.info-control \{[^}]*flex-direction: column;/);
   assert.match(info, /\.info-select \{[^}]*width: 100%;/);
   assert.match(info, /\.panel-expandable-text \{[^}]*-webkit-line-clamp: 2;/);
+});
+
+test('resource rows reserve collapsed text budgets and only user disclosures can grow inline', () => {
+  const css = compile(new URL('../styles/components/manage.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.manage-row-text \{[^}]*-webkit-line-clamp: 1;[^}]*min-height: 1lh;/);
+  assert.match(css, /\.manage-row-text\[data-lines="2"\] \{[^}]*-webkit-line-clamp: 2;[^}]*min-height: 2lh;/);
+  assert.match(css, /\.manage-row-text\[data-expanded\] \{[^}]*display: block;[^}]*overflow: visible;/);
+  assert.match(css, /\.manage-text-disclosure, \.manage-error-disclosure \{[^}]*min-block-size: 1lh;[^}]*padding: 0;/);
+  assert.match(css, /\.manage-error-disclosure \{[^}]*text-decoration: underline;/);
+  assert.doesNotMatch(css, /\.manage-row-(?:feedback|pending)\b/);
+  assert.doesNotMatch(css.match(/\.manage-row-error \{([^}]*)\}/)![1], /max-height|overflow: hidden/);
 });

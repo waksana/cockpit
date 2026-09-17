@@ -90,17 +90,6 @@ svg.ck-icon, .ck-icon > svg {
 .ck-primary { background: var(--ck-color-accent); color: var(--ck-color-on-accent); }
 .ck-primary.ck-danger { background: var(--ck-color-danger); color: var(--ck-color-on-accent); }
 
-@media (hover: hover) {
-  :where(.ck-button, .ck-icon-button):hover:not(:disabled, [aria-disabled='true']) {
-    background-color: var(--ck-color-hover);
-  }
-  .ck-primary:hover:not(:disabled, [aria-disabled='true']) {
-    background-color: color-mix(in srgb, var(--ck-color-accent), var(--ck-color-text) 12%);
-  }
-  .ck-primary.ck-danger:hover:not(:disabled, [aria-disabled='true']) {
-    background-color: color-mix(in srgb, var(--ck-color-danger), var(--ck-color-text) 12%);
-  }
-}
 :is(.ck-button, .ck-icon-button, .ck-input):focus-visible {
   outline: 2px solid var(--ck-color-accent);
   outline-offset: 2px;

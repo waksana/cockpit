@@ -20,7 +20,6 @@
   font-size: var(--host-text-body);
   p { margin: 0 0 var(--host-space-md); }
 }
-.manage-global-link { color: var(--link-color); }
 
 // Row: name + sub on the left, a toggle/badge on the right.
 .manage-row {
@@ -57,22 +56,41 @@
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   column-gap: var(--host-space-md); row-gap: var(--host-space-xs);
-  .manage-row-main { grid-column: 1 / -1; }
-  .manage-row-name { font-weight: 500; }
-  > .switch { align-self: start; }
+  .manage-row-main { grid-column: 1 / -1; grid-row: 3; &:empty { display: none; } }
+  > .manage-row-name { grid-column: 1; grid-row: 1; min-height: var(--ck-control-size); font-weight: 500; }
+  > .switch { grid-column: 2; grid-row: 1; justify-self: end; align-self: start; }
+  > .manage-row-source { grid-column: 1; grid-row: 2; margin: 0; align-self: start; }
+  > .manage-row-status { grid-column: 2; grid-row: 2; justify-content: flex-end; align-self: start; }
   .mcp-status[data-tone] { padding: 0; background: none; font-size: var(--host-text-meta); border-radius: 0; }
   .mcp-status[data-tone='off'] { color: var(--secondary-text-color); }
 }
-.manage-row-feedback {
-  min-height: 1.5em; margin-top: var(--host-space-xs);
-  font-size: var(--host-text-body); line-height: var(--host-leading-ui); color: var(--secondary-text-color);
+.manage-row-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  min-width: 0;
+  min-height: 1lh;
+  overflow: hidden;
   overflow-wrap: anywhere;
-  &[data-error] { color: var(--danger-color); }
-  .spinner { flex: none; width: 12px; height: 12px; }
+  white-space: pre-wrap;
+  &[data-lines='2'] { -webkit-line-clamp: 2; min-height: 2lh; }
+  &[data-expanded] { display: block; overflow: visible; }
+}
+.manage-text-disclosure, .manage-error-disclosure {
+  min-block-size: 1lh;
+  padding: 0;
+  color: inherit;
+  text-align: left;
+}
+.manage-text-disclosure { display: block; width: 100%; min-width: 0; }
+.manage-error-disclosure { color: var(--danger-color); text-decoration: underline; text-underline-offset: 0.2em; }
+.manage-row-error {
+  grid-column: 1 / -1; grid-row: 4;
+  color: var(--danger-color); overflow-wrap: anywhere; white-space: pre-wrap;
+  .manage-session-row[data-mcp] > & { grid-row: 3; }
 }
 .manage-row-description { font-size: var(--host-text-body); color: var(--secondary-text-color); }
 .manage-row-source { margin-top: var(--host-space-xs); font-size: var(--host-text-meta); color: var(--secondary-text-color); overflow-wrap: anywhere; }
-.manage-row-pending { display: flex; align-items: center; gap: var(--host-space-xs); }
 // The existing list owns loading/empty state; no duplicate resource for the placeholder.
 .cockpit-shell:not(:has(.manage-list .manage-row)) .manage-selection-hint { visibility: hidden; }
 .manage-tag {
@@ -147,7 +165,7 @@
 .manage-list { padding: 0 var(--host-space-lg); }
 
 // A list row that navigates to its detail. Reuses .manage-row but is a <button>,
-// so reset the native control and add hover/active affordances.
+// so reset the native control and retain its active selection.
 .manage-row.is-clickable {
   width: 100%;
   border: 0;
@@ -156,7 +174,6 @@
   text-align: left;
   font-family: inherit;
   color: inherit;
-  &:hover { background: color-mix(in srgb, var(--primary-text-color) 6%, var(--surface-color)); }
   &.is-active { background: color-mix(in srgb, var(--primary-color) 16%, var(--surface-color)); }
 }
 
