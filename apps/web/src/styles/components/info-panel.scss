@@ -3,7 +3,7 @@
 //   • narrowest (<600px): full page (covers the chat)
 //   • medium (600–1199px): floating overlay over the chat + scrim
 //   • wide (≥1200px): docked — the chat compresses to make room, no scrim
-// Rounded section cards inside.
+// Flat host-owned sections inside; geometry above retains the responsive shell.
 
 .info-panel-scrim {
   position: fixed;
@@ -46,7 +46,7 @@
 
 .info-panel-title {
   flex: 1 1 auto;
-  font-size: var(--font-size-16);
+  font-size: var(--host-text-title);
   font-weight: 500;
   min-width: 0;
   overflow: hidden;
@@ -60,24 +60,24 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: 0.75rem;
-  background: color-mix(in srgb, var(--primary-text-color) 4%, var(--background-color));
+  padding: var(--host-space-lg);
+  background: var(--surface-color);
+  font-size: var(--host-text-body);
+  line-height: var(--host-leading-ui);
 }
 
-// Rounded section card (tweb .sidebar-left-section).
 .info-section {
-  background: var(--surface-color);
-  border-radius: var(--border-radius-big);
-  margin-bottom: 0.75rem;
-  overflow: hidden;
+  min-width: 0;
+  margin-bottom: var(--host-space-xl);
+  & + & { padding-top: var(--host-space-xl); border-top: 1px solid var(--border-color); }
 }
 .info-section-name {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0.7rem 1rem 0.4rem;
-  color: var(--primary-color);
-  font-size: var(--font-size-15);
+  margin-bottom: var(--host-space-md);
+  color: var(--primary-text-color);
+  font-size: var(--host-text-title);
   font-weight: 600;
   width: 100%;
   background: transparent;
@@ -85,57 +85,68 @@
   text-align: start;
   overflow-wrap: anywhere;
 }
-.info-section-content { padding: 0 1rem 0.7rem; }
+.info-summary-title { font-size: var(--host-text-title); font-weight: 600; }
 .info-meta-cwd {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: var(--font-size-13);
+  margin-top: var(--host-space-sm);
+  font-family: var(--host-font-mono);
+  font-size: var(--host-text-meta);
   color: var(--secondary-text-color);
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 .info-meta-id-label {
-  display: inline-block;
-  margin-inline-end: 0.4rem;
-  font-size: var(--font-size-12);
-  color: var(--tertiary-text-color);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: var(--host-text-meta);
+  color: var(--secondary-text-color);
 }
 .info-model-details {
   color: var(--secondary-text-color);
-  font-size: var(--font-size-13);
+  font-size: var(--host-text-meta);
   min-width: 0;
-  summary { cursor: pointer; }
-  &[open] > summary { margin-bottom: 0.5rem; }
+  summary { cursor: pointer; min-height: var(--ck-control-size); align-content: center; }
+  &[open] > summary { margin-bottom: var(--host-space-sm); }
 }
 
 .info-empty {
-  display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.5rem 0;
-  font-size: var(--font-size-14);
+  display: flex; align-items: center; gap: var(--host-space-sm);
+  padding: var(--host-space-sm) 0;
+  font-size: var(--host-text-body);
   color: var(--secondary-text-color);
 }
 
 // Model controls (model / effort / context) — labeled rows in the info panel.
-.info-controls { display: flex; flex-direction: column; gap: 0.5rem; padding-top: 0.2rem; }
+.info-controls { display: flex; flex-direction: column; gap: var(--host-space-md); }
 .info-controls .info-empty { min-width: 0; overflow-wrap: anywhere; }
 .info-model-current {
-  display: flex; flex-direction: column; gap: 0.4rem;
   color: var(--secondary-text-color);
-  font-size: var(--font-size-13);
+  font-size: var(--host-text-meta);
   overflow-wrap: anywhere;
-  padding-block: 0.25rem 1rem;
 }
-.info-model-eyebrow { font-size: var(--font-size-12); }
-.info-model-name { color: var(--primary-text-color); font-size: var(--font-size-20); font-weight: 600; line-height: 1.4; }
+.info-model-name { color: var(--primary-text-color); }
 .info-model-specs {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.75rem;
-  > span + span { border-inline-start: 1px solid var(--border-color); padding-inline-start: 0.75rem; }
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--host-space-xs) var(--host-space-sm);
+  > span + span { border-inline-start: 1px solid var(--border-color); padding-inline-start: var(--host-space-sm); }
 }
+.info-model-hint { margin: 0; font-size: var(--host-text-meta); color: var(--secondary-text-color); }
 .info-session-id {
-  display: flex; align-items: baseline; gap: 0.5rem; min-width: 0;
-  .info-meta-id-label { flex: none; margin: 0; }
-  .copy-value { flex: 1; min-width: 0; }
+  margin-top: var(--host-space-md); min-width: 0;
   .chat-copy-error { color: var(--danger-color); }
+}
+.info-session-id-heading {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--host-space-sm);
+  .chat-copy { min-width: 0; }
+}
+.info-session-id-value {
+  display: block; overflow-wrap: anywhere; user-select: text;
+  font-family: var(--host-font-mono); font-size: var(--host-text-body);
+}
+.panel-expandable { min-width: 0; overflow-wrap: anywhere; }
+.panel-expandable-text {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden; line-height: var(--host-leading-ui);
+  &[data-expanded='true'] { display: block; -webkit-line-clamp: unset; }
+}
+.panel-expandable-toggle {
+  padding-inline: 0; color: var(--link-color);
+  font-size: var(--host-text-meta); font-weight: 400;
 }
 .copy-value {
   display: flex; flex-direction: column; align-items: flex-start;
@@ -152,27 +163,21 @@
 .copy-value-text[aria-hidden='true'] { visibility: hidden; }
 .copy-value-feedback { align-self: center; justify-self: center; font-family: var(--font-family, inherit); }
 .session-resume {
-  display: flex; flex-direction: column; align-items: center; gap: 0.8rem;
-  margin: 0.75rem 0; padding: 1.25rem 1rem;
-  border: 1px solid var(--border-color); border-radius: 12px;
+  display: flex; flex-direction: column; align-items: center; gap: var(--host-space-md);
+  margin: var(--host-space-lg) 0; padding: var(--host-space-lg);
+  border: 1px solid var(--border-color); border-radius: var(--host-radius-control);
   background: color-mix(in srgb, var(--primary-color) 4%, var(--surface-color));
   text-align: center;
   > .dialog-btn { min-width: 7rem; }
 }
 .session-resume-message {
   margin: 0; max-width: 28rem;
-  font-size: var(--font-size-14); line-height: 1.6; color: var(--secondary-text-color);
+  font-size: var(--host-text-body); line-height: var(--host-leading-ui); color: var(--secondary-text-color);
 }
 .session-settings {
-  background: var(--surface-color);
-  .info-section { background: transparent; border-radius: 0; overflow: visible; margin-bottom: 1rem; }
-  .info-section + .info-section { border-top: 1px solid var(--border-color); }
-  .info-section-name { color: var(--primary-text-color); padding-inline: 0.5rem; }
-  .info-section-content { padding-inline: 0.5rem; }
-  .info-controls { gap: 0.8rem; }
   :is(button, summary, select):focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
 }
-.info-model-actions { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.info-model-actions { display: flex; flex-wrap: wrap; gap: var(--host-space-sm); }
 .info-model-status {
   color: var(--secondary-text-color);
   &[role='alert'] { color: var(--danger-color); }
@@ -180,41 +185,45 @@
 .info-model-result {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: var(--host-space-sm);
 }
 .info-model-result,
 .info-model-status,
 .info-model-details {
   min-width: 0;
-  font-size: var(--font-size-13);
+  font-size: var(--host-text-body);
   overflow-wrap: anywhere;
   pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 }
 .info-control {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.75rem;
+  flex-direction: column;
+  gap: var(--host-space-sm);
 }
 .info-control-label {
   flex: none;
-  font-size: var(--font-size-14);
+  font-size: var(--host-text-body);
   color: var(--secondary-text-color);
 }
+.info-select-wrap {
+  display: flex; position: relative; min-width: 0;
+  > .ck-icon {
+    position: absolute; inset-inline-end: var(--host-space-md); top: 50%; transform: translateY(-50%);
+    pointer-events: none; color: var(--secondary-text-color);
+  }
+}
 .info-select {
-  flex: 1 1 auto;
-  min-width: 0;
-  max-width: 60%;
+  width: 100%; min-width: 0;
   appearance: none; -webkit-appearance: none;
-  border: none;
-  border-radius: var(--border-radius);
-  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border-color);
+  border-radius: var(--host-radius-control);
+  padding: var(--host-space-sm) calc(var(--host-space-lg) + 2 * var(--host-space-md)) var(--host-space-sm) var(--host-space-md);
   background: var(--input-search-background-color);
   color: var(--primary-text-color);
   font: inherit;
-  font-size: var(--font-size-14);
+  font-size: var(--host-text-body);
   cursor: pointer;
-  text-align: end;
+  text-align: start;
   text-overflow: ellipsis;
   &:focus { outline: none; background: color-mix(in srgb, var(--primary-color) 12%, transparent); }
   option { color: var(--primary-text-color); background: var(--surface-color); text-align: start; }

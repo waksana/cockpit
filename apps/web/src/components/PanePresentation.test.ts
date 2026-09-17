@@ -93,3 +93,23 @@ test('resume groups its message and centered action in a single notice; copying 
   assert.match(css, /\.copy-value-text\[aria-hidden=true\] \{[^}]*visibility: hidden;/);
   assert.match(css, /\.copy-value-feedback \{[^}]*align-self: center;[^}]*justify-self: center;/);
 });
+
+test('session pages share flat density and multiline settings without changing chat exceptions', () => {
+  const info = compile(new URL('../styles/components/info-panel.scss', import.meta.url).pathname).css;
+  const manage = compile(new URL('../styles/components/manage.scss', import.meta.url).pathname).css;
+  const tokens = compile(new URL('../styles/tokens.scss', import.meta.url).pathname).css;
+  const publicUi = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
+  assert.match(info, /\.info-panel-body \{[^}]*padding: var\(--host-space-lg\);[^}]*font-size: var\(--host-text-body\);[^}]*line-height: var\(--host-leading-ui\)/);
+  assert.match(manage, /\.manage-body \{[^}]*padding: var\(--host-space-lg\);[^}]*font-size: var\(--host-text-body\)/);
+  assert.match(tokens, /--host-space-lg: 16px;[^}]*--host-space-xl: 24px;/);
+  assert.match(tokens, /--host-text-title: var\(--font-size-16\);[^}]*--host-text-body: var\(--font-size-14\);[^}]*--host-text-meta: var\(--font-size-12\)/);
+  assert.match(publicUi, /--ck-radius: var\(--host-radius-control\)/);
+  assert.match(manage, /\.manage-row \{[^}]*background: transparent;[^}]*border-radius: 0;[^}]*border-bottom: 1px solid/);
+  assert.match(manage, /\.manage-session-row \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto;/);
+  assert.match(manage, /\.manage-row-status \{[^}]*min-height: calc/);
+  assert.match(info, /\.info-session-id-value \{[^}]*overflow-wrap: anywhere;[^}]*user-select: text;/);
+  assert.doesNotMatch(info.match(/\.info-session-id-value \{([^}]*)\}/)![1], /ellipsis|hidden|sticky|line-clamp/);
+  assert.match(info, /\.info-control \{[^}]*flex-direction: column;/);
+  assert.match(info, /\.info-select \{[^}]*width: 100%;/);
+  assert.match(info, /\.panel-expandable-text \{[^}]*-webkit-line-clamp: 2;/);
+});

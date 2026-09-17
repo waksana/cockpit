@@ -34,6 +34,16 @@ version and a documented paired migration. Internal stylesheet refactors cannot
 silently break these names. Modules should not infer support from a private
 selector or duplicate a fallback copy of the host stylesheet.
 
+The host's internal visual foundations live in `styles/tokens.scss`: the
+`--host-*` roles own shared spacing (4/8/12/16/24px), UI typography
+(16px title / 14px body / 12px metadata, 1.5 leading), and control/dialog radii.
+They preserve the original tweb structural namespace and Solarized palette.
+Chat aliases these foundations while retaining its 16px / 1.7 prose role and
+explicit dense-control exceptions. Session settings, session MCP and session
+Skills remain separate pages with flat sections; they share visual roles, not
+navigation or mutation policy. **`--host-*` and `--chat-*` are not module APIs**;
+modules continue to use only the public `--ck-*` variables below.
+
 The host loads its base stylesheet; a module declares its business stylesheet in
 `frontend.styles`. Both live in the **same document**, without Shadow DOM or a
 style sandbox. Modules keep a unique prefix, such as `cf-` or `example-`, for their

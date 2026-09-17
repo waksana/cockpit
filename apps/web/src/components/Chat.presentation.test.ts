@@ -70,7 +70,7 @@ test('Markdown edge rules follow class-based paragraphs without changing bubble 
 
 test('tool and thought details inherit the same indentation without moving their header', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /--chat-inset-detail: 24px;/);
+  assert.match(css, /--chat-inset-detail: var\(--host-space-xl\);/);
   assert.match(css, /\.activity-detail \{[^}]*margin: var\(--chat-gap-meta\) 0 var\(--chat-gap-message\);[^}]*padding-inline-start: var\(--chat-inset-detail\);/);
   const tool = css.match(/\.activity-detail\.tool-detail \{([^}]+)\}/)?.[1];
   assert.ok(tool);
@@ -135,8 +135,10 @@ test('one card frame retains compact execution/queue typography and independent 
 
 test('spacing tokens own visible boundaries and placeholder stays distinct on focus in both themes', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  for (const [name, pixels] of [['meta',4],['message',8],['process',12],['speaker',16],['region',8],['content',12],['control',8]]) {
-    assert.ok(css.includes(`--chat-gap-${name}: ${pixels}px;`));
+  const foundations = compile(new URL('../styles/tokens.scss', import.meta.url).pathname).css;
+  for (const [name, role, pixels] of [['meta','xs',4],['message','sm',8],['process','md',12],['speaker','lg',16],['region','sm',8],['content','md',12],['control','sm',8]]) {
+    assert.ok(css.includes(`--chat-gap-${name}: var(--host-space-${role});`));
+    assert.ok(foundations.includes(`--host-space-${role}: ${pixels}px;`));
   }
   assert.match(css, /\.msg-group\[data-gap=speaker\] \{[^}]*padding-block-start: var\(--chat-gap-speaker\)/);
   assert.match(css, /\.chat-input-message::placeholder \{[^}]*color: var\(--chat-placeholder-color\);[^}]*opacity: 1;/);
@@ -159,7 +161,7 @@ test('all input states share one full-width unframed editor row inside the same 
   assert.match(css, /\.module-composer-actions:not\(:empty\) \+ \.chat-input-message \{[^}]*padding-inline-start: var\(--chat-gap-meta\);/);
   assert.match(css, /\.chat-input-area \{[^}]*margin-block-end: calc\(var\(--chat-inset-bottom\) \+ env\(safe-area-inset-bottom, 0px\)\)/);
   assert.doesNotMatch(bar, /border:|border-radius:|max-width:/);
-  assert.match(css, /--chat-inset-field: 8px 12px;/);
+  assert.match(css, /--chat-inset-field: var\(--host-space-sm\) var\(--host-space-md\);/);
   assert.match(css, /\.chat-input-message \{[^}]*min-height: var\(--ck-control-size\);[^}]*padding: var\(--chat-inset-field\);/);
   assert.match(css, /\.chat-input-message \{[^}]*padding-block: max\(var\(--chat-gap-control\), \(var\(--ck-control-size\) - 1lh\) \/ 2\);/);
   assert.match(bar, /align-items: flex-end;/, 'multiline drafts keep actions at the last line rather than midway up the editor');
@@ -254,8 +256,11 @@ test('Chat typography is role-based and narrow layouts follow their own availabl
   const tokens = compile(new URL('../styles/components/chat-design.scss', import.meta.url).pathname).css;
   assert.doesNotMatch(tokens, /:root|body \{/);
   assert.match(tokens, /--chat-text-body: var\(--messages-text-size\)/);
-  for (const [role, size] of [['secondary',14],['label',13],['meta',12]]) {
-    assert.ok(tokens.includes(`--chat-text-${role}: var(--font-size-${size})`));
+  const foundations = compile(new URL('../styles/tokens.scss', import.meta.url).pathname).css;
+  assert.match(tokens, /--chat-text-label: var\(--font-size-13\)/);
+  for (const [role, hostRole, size] of [['secondary','body',14],['meta','meta',12]]) {
+    assert.ok(tokens.includes(`--chat-text-${role}: var(--host-text-${hostRole})`));
+    assert.ok(foundations.includes(`--host-text-${hostRole}: var(--font-size-${size})`));
   }
   assert.match(css, /\.chat-input-message \{[^}]*font-size: var\(--chat-text-body\)/);
   assert.match(css, /\.chat-ask-q \{[^}]*font-size: var\(--chat-text-body\)/);

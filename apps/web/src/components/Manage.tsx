@@ -1,12 +1,13 @@
 // Per-session MCP and Skills use the same row presentation, not the same
 // mutation policy: MCP writes are serialized by the native host.
 import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import type { ChatSession } from '../net/types';
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { useSessionResource } from '../lib/useSessionResource';
 import { McpStatusPill } from './McpStatus';
-import { PanelCloseButton, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
+import { ExpandableText, PanelCloseButton, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
 import { PaneHeader } from './PaneHeader';
 import { Icon } from './Icon';
 
@@ -18,8 +19,8 @@ export function Toggle({ on, onChange, disabled, label, busy }: {
     onClick={() => onChange(!on)}><span className="switch-knob" /></button>;
 }
 
-function SessionToggleRow({ identity, name, description, badge, status, enabled, disabled, disabledReason, nativeError, onChange }: {
-  identity: string; name: string; description?: string; badge?: ReactNode; status?: ReactNode; enabled: boolean;
+function SessionToggleRow({ identity, name, description, source, status, enabled, disabled, disabledReason, nativeError, onChange }: {
+  identity: string; name: string; description?: string; source?: string; status?: ReactNode; enabled: boolean;
   disabled: boolean; disabledReason?: string; nativeError?: string; onChange: (name: string, enabled: boolean) => Promise<void>;
 }) {
   const action = useKeyedAction(identity);
@@ -27,25 +28,25 @@ function SessionToggleRow({ identity, name, description, badge, status, enabled,
   const error = action.error ?? nativeError;
   const progress = <><Icon name="loading" className="spinner" size={status ? 10 : 12} />{desired ? '正在开启…' : '正在关闭…'}</>;
   return <div className="manage-row manage-session-row" data-resource-name={name} title={disabled ? disabledReason : undefined}>
-    <div className="manage-row-main">
-      <div className="manage-row-name">{name}{badge}
-        {status && <span className="manage-row-status">
-          {action.busy ? <span className="mcp-status mcp-operation-status" data-tone="pending" role="status">{progress}</span> : status}
-        </span>}
-      </div>
-      <div className="manage-row-feedback" role={error ? 'alert' : 'status'} data-error={!!error || undefined}>
-        <span className="manage-row-description" aria-hidden={action.busy && !status || undefined}>
-          {error ? `未确认：${error}` : description}
-        </span>
-        {action.busy && !status && <span className="manage-row-pending">{progress}</span>}
-      </div>
-    </div>
+    <div className="manage-row-name">{name}</div>
     <Toggle label={`启用 ${name}`} disabled={disabled || action.busy} busy={action.busy} on={enabled}
       onChange={next => {
         if (disabled || action.busy) return;
         setDesired(next);
         void action.run(() => onChange(name, next));
       }} />
+    <div className="manage-row-main">
+      {status && <div className="manage-row-status">
+        {action.busy ? <span className="mcp-status mcp-operation-status" data-tone="pending" role="status">{progress}</span> : status}
+      </div>}
+      {description && <ExpandableText className="manage-row-description" text={description} label={`${name}说明`} />}
+      {source && <div className="manage-row-source">{source}</div>}
+      {action.busy && !status && <div className="manage-row-feedback manage-row-pending" role="status">{progress}</div>}
+      {error && <div className="manage-row-feedback" role="alert" data-error>
+        <ExpandableText text={`未确认：${error}`} label={`${name}错误详情`} />
+      </div>}
+      {disabled && disabledReason && <div className="manage-row-source">{disabledReason}</div>}
+    </div>
   </div>;
 }
 
@@ -93,7 +94,7 @@ function useToggleRequests(
 function ManageShell({ title, onClose, refresh, status, failed, pending, hasData, working, blocked, empty, children }: {
   title: string; onClose: () => void; refresh: () => void; status: string | null;
   failed: boolean; pending: boolean; hasData: boolean; working: boolean; blocked: boolean;
-  empty?: string; children: ReactNode;
+  empty?: ReactNode; children: ReactNode;
 }) {
   return <>
     <PaneHeader leading={<PanelCloseButton onClose={onClose} />}
@@ -121,15 +122,16 @@ export function SessionMcp({ session, onClose }: SessionManageProps) {
   const action = useToggleRequests(sessionId, mutate, resource.refresh, true);
   const settling = resource.data?.some(server => server.status === 'pending') ?? false;
   const busy = action.pending || nativeBusy || settling;
-  return <ManageShell title={`本会话 MCP · ${session.title}`} onClose={onClose}
+  return <ManageShell title="本会话 MCP" onClose={onClose}
     refresh={() => { void resource.refresh(); }} status={resource.status} failed={resource.failed}
     pending={resource.pending} hasData={resource.data !== undefined} working={action.pending}
     blocked={resource.closing || resource.requiresResume || !resource.connected}
     empty={resource.valid && resource.data?.length === 0 ? '本会话没有可用的 MCP 服务器' : undefined}>
+    <p className="manage-note">启用选择与连接状态分开显示；全局默认不在本页修改。</p>
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
     {resource.data?.map(server => <SessionToggleRow key={server.name}
       identity={JSON.stringify(['mcp', sessionId, server.name])} name={server.name}
-      description={server.detail} nativeError={server.error} status={<McpStatusPill status={server.status} />}
+      source={server.detail} nativeError={server.error} status={<McpStatusPill status={server.status} />}
       enabled={server.enabled} disabled={!resource.usable || busy}
       disabledReason={busy ? 'MCP 正在切换或连接，请等待完成后再修改。' : undefined} onChange={action.run} />)}
   </ManageShell>;
@@ -142,15 +144,19 @@ export function SessionSkills({ session, onClose }: SessionManageProps) {
   const load = useCallback(() => skillsSession(sessionId), [skillsSession, sessionId]);
   const resource = useSessionResource(sessionId, `skills:${sessionId}`, load, 0, ['skills']);
   const action = useToggleRequests(sessionId, mutate, resource.refresh, false);
-  return <ManageShell title={`本会话 Skills · ${session.title}`} onClose={onClose}
+  return <ManageShell title="本会话 Skills" onClose={onClose}
     refresh={() => { void resource.refresh(); }} status={resource.status} failed={resource.failed}
     pending={resource.pending} hasData={resource.data !== undefined} working={action.pending}
     blocked={resource.closing || resource.requiresResume || !resource.connected}
-    empty={resource.valid && resource.data?.length === 0 ? '没有可用的 skill' : undefined}>
+    empty={resource.valid && resource.data?.length === 0 ? <>
+      <p>当前会话未发现技能。</p>
+      <Link className="ck-button manage-global-link" to="/skills">管理全局 Skills</Link>
+    </> : undefined}>
+    <p className="manage-note">本页选择只作用于本会话，不改变全局默认。</p>
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
     {resource.data?.map(skill => <SessionToggleRow key={skill.name}
       identity={JSON.stringify(['skills', sessionId, skill.name])} name={skill.name}
-      description={skill.description} badge={skill.source ? <span className="manage-tag">{skill.source}</span> : undefined}
+      description={skill.description} source={skill.source}
       enabled={skill.enabled} disabled={!resource.usable} onChange={action.run} />)}
   </ManageShell>;
 }

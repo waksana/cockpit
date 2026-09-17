@@ -47,7 +47,7 @@ export function SessionDetails({ sessionId, panel }: { sessionId: string; panel:
     <>
       <div className="info-panel-scrim" data-open="true" onClick={onClose} aria-hidden="true" />
       <aside ref={frame} tabIndex={-1} className="info-panel" data-open="true" aria-label={title}>
-        <Suspense fallback={<PanelPageShell title={title} onClose={onClose} loading />}>
+        <Suspense fallback={<PanelPageShell title={panel === 'info' ? '会话设置' : `本会话 ${SESSION_PANEL_LABELS[panel]}`} onClose={onClose} loading />}>
           {panel === 'info'
             ? <SessionInfoPanel session={session} open onClose={onClose}
                 onSetModel={onSetModel} />

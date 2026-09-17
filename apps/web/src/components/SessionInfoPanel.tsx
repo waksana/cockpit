@@ -8,8 +8,9 @@ import type { IntentResult, NativeModelSwitchResult } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
 import { useSessionResource } from '../lib/useSessionResource';
 import { useKeyedAction } from '../lib/useKeyedResource';
-import { PanelPageShell, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
+import { ExpandableText, PanelPageShell, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
 import { CopyButton } from './CopyButton';
+import { Icon } from './Icon';
 import type { ChatSession } from '../net/types';
 
 type ContextTier = 'default' | 'long_context';
@@ -38,8 +39,8 @@ function CurrentModel({ session }: { session: ChatSession }) {
   const effort = currentReasoningEffort ? EFFORT_LABEL[currentReasoningEffort] ?? currentReasoningEffort : null;
   const context = currentContextTier ? CONTEXT_LABEL[currentContextTier] ?? currentContextTier : null;
   return <div className="info-model-current" aria-label="当前模型">
-    <span className="info-model-eyebrow">当前模型</span>
-    <strong className="info-model-name" title={currentModelId ?? undefined}>{name}</strong>
+    <span className="info-model-eyebrow">当前原生值：</span>
+    <span className="info-model-name" title={currentModelId ?? undefined}>{name}</span>
     {(effort || context) && <div className="info-model-specs">
       {effort && <span aria-label={`思考力度：${effort}`}>{effort}</span>}
       {context && <span aria-label={`上下文：${context}`}>{context}</span>}
@@ -102,7 +103,7 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
   const revision = draft?.revision ?? 0;
   const edit = (next: ModelSelection) => setDraft({ selection: next, revision: revision + 1 });
   const heading = <>
-    <div className="info-section-name">模型
+    <div className="info-section-name">模型配置
       {resource && <RefreshButton onClick={resource.onRefresh}
         disabled={resource.refreshDisabled || resource.pending || action.busy}
         pending={resource.pending && resource.usable && !action.busy} />}
@@ -156,37 +157,47 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
       {heading}
       <div className="info-section-content info-controls">
         <CurrentModel session={session} />
+        <p className="info-model-hint">{draft ? '编辑草稿；手动应用后，请核对结果与当前原生值。' : '修改后手动应用；重置将使用当前原生值。'}</p>
         <label className="info-control">
           <span className="info-control-label">模型</span>
-          <select className="info-select ck-input" disabled={disabled} value={current}
-            onChange={(e) => edit({ modelId: e.target.value })} aria-label="选择模型">
-            {current === '' && <option value="" disabled>选择模型…</option>}
-            {current !== '' && !currentModel && <option value={current} disabled>{current}（当前值，列表未提供）</option>}
-            {list.map((m) => <option key={m.modelId} value={m.modelId}>{m.name}</option>)}
-          </select>
+          <span className="info-select-wrap">
+            <select className="info-select ck-input" disabled={disabled} value={current}
+              onChange={(e) => edit({ modelId: e.target.value })} aria-label="选择模型">
+              {current === '' && <option value="" disabled>选择模型…</option>}
+              {current !== '' && !currentModel && <option value={current} disabled>{current}（当前值，列表未提供）</option>}
+              {list.map((m) => <option key={m.modelId} value={m.modelId}>{m.name}</option>)}
+            </select>
+            <Icon name="down" size={16} />
+          </span>
         </label>
 
         {efforts.length > 0 && (
           <label className="info-control">
             <span className="info-control-label">思考力度</span>
-            <select className="info-select ck-input" disabled={disabled} value={curEffort}
-              onChange={(e) => edit({ ...selection, reasoningEffort: e.target.value || undefined })} aria-label="思考力度">
-              <option value="">未指定</option>
-              {curEffort !== '' && !efforts.includes(curEffort) && <option value={curEffort} disabled>{curEffort}（当前值，列表未提供）</option>}
-              {efforts.map((e) => <option key={e} value={e}>{EFFORT_LABEL[e] ?? e}</option>)}
-            </select>
+            <span className="info-select-wrap">
+              <select className="info-select ck-input" disabled={disabled} value={curEffort}
+                onChange={(e) => edit({ ...selection, reasoningEffort: e.target.value || undefined })} aria-label="思考力度">
+                <option value="">未指定</option>
+                {curEffort !== '' && !efforts.includes(curEffort) && <option value={curEffort} disabled>{curEffort}（当前值，列表未提供）</option>}
+                {efforts.map((e) => <option key={e} value={e}>{EFFORT_LABEL[e] ?? e}</option>)}
+              </select>
+              <Icon name="down" size={16} />
+            </span>
           </label>
         )}
 
         {supportsLong && (
           <label className="info-control">
             <span className="info-control-label">上下文长度</span>
-            <select className="info-select ck-input" disabled={disabled} value={curTier}
-              onChange={(e) => edit({ ...selection, contextTier: e.target.value ? e.target.value as ContextTier : undefined })} aria-label="上下文长度">
-              <option value="">未指定</option>
-              <option value="default">标准上下文</option>
-              <option value="long_context">长上下文</option>
-            </select>
+            <span className="info-select-wrap">
+              <select className="info-select ck-input" disabled={disabled} value={curTier}
+                onChange={(e) => edit({ ...selection, contextTier: e.target.value ? e.target.value as ContextTier : undefined })} aria-label="上下文长度">
+                <option value="">未指定</option>
+                <option value="default">标准上下文</option>
+                <option value="long_context">长上下文</option>
+              </select>
+              <Icon name="down" size={16} />
+            </span>
           </label>
         )}
         <div className="info-model-actions">
@@ -224,11 +235,14 @@ function InfoDetails({ session, onClose, onSetModel }: SessionInfoPanelProps) {
   return (
     <PanelPageShell title="会话设置" onClose={onClose} bodyClassName="session-settings">
       <section className="info-section">
-        <div className="info-section-name">{session.title}</div>
+        <ExpandableText className="info-summary-title" text={session.title} label="会话标题" />
         <div className="info-section-content info-meta-cwd">{session.cwd || '工作目录：原生未提供'}</div>
         <div className="info-section-content info-session-id">
-          <span className="info-meta-id-label">ID</span>
-          <CopyButton text={session.sessionId} label="复制 session ID" variant="value" />
+          <div className="info-session-id-heading">
+            <span className="info-meta-id-label">Session ID</span>
+            <CopyButton text={session.sessionId} label="复制 session ID" />
+          </div>
+          <span className="info-session-id-value">{session.sessionId}</span>
         </div>
       </section>
 
