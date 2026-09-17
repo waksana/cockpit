@@ -1,12 +1,13 @@
 import type { ChatMessage } from '@cockpit/protocol';
+import type { Ref } from 'react';
 import { MessageBody } from './MessageBody';
 import { hasMessageContent } from '../lib/messageContent';
 import { ModuleRenderNode } from './ModuleContributions';
 
-export function MessageContent({ message }: { message: ChatMessage }) {
+export function MessageContent({ message, elementRef }: { message: ChatMessage; elementRef?: Ref<HTMLDivElement> }) {
   if (!hasMessageContent(message)) return null;
   return <>
-    {!!message.content.trim() && <MessageBody body={message.content} origin={message.origin} />}
+    {!!message.content.trim() && <MessageBody body={message.content} origin={message.origin} elementRef={elementRef} />}
     {!!message.attachments?.length && <div className="message-attachments">
       {message.attachments.map((attachment, index) => {
         const target = 'path' in attachment ? attachment.path : attachment.type === 'selection' ? attachment.filePath : undefined;

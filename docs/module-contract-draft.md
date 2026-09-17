@@ -18,7 +18,7 @@
 | 前端 | 同包 ESM/CSS，共用宿主 React 和主题，不新建 SPA |
 | HTTP | 统一端口、模块命名空间、版本绑定的 API 与静态资源 |
 | 原生观察 | 按声明类型接收已加载会话的 SDK 通知，不开启额外历史读取 |
-| Web 贡献 | 输入栏操作、输入栏上方组件、文件输入事件、聊天节点渲染 |
+| Web 贡献 | 输入栏操作、输入栏上方组件、文件输入事件、聊天节点渲染；新增消息装饰、会话标记与全局操作插口 |
 | 草稿 | 声明写 text/attachments，经作用域句柄修改，发送与 ACK 仍归本体 |
 | 启用/停用 | 修改下次启动选择，当前进程不热加载或热卸载 |
 
@@ -48,6 +48,10 @@
 当前 id 使用小写字母开头的小写字母、数字和连字符，最长 64 字符，不是官方名称枚举。
 后端入口为必需；前端可选。纯内容/纯前端包尚不在此版本支持范围。
 包必须包含实际运行依赖，不能指望宿主自动安装 npm 包。
+
+可选 `frontend.worker` 指向包内、已声明 assets 根下的独立 `.js` 文件，最大 1 MiB，
+安装与读取使用同一上限。
+依赖该字段的模块需要包含 worker 能力的宿主，旧运行包不会自动得到支持。
 
 安装器接受普通 tar 文件/目录，支持统一的 npm `package/` 前缀；
 拒绝符号链接、硬链接、特殊文件、路径逃逸、重复条目和扩展 tar header。
@@ -117,10 +121,11 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 
 | 输入/贡献 | 内容 |
 | --- | --- |
-| context | apiVersion、moduleId、dataRoot、apiBase、config、AbortSignal、report |
+| context | apiVersion、moduleId、dataRoot、apiBase、config、AbortSignal、report、invalidate |
 | routes | method/path、json 或 stream body、bodyLimit、handler |
 | publicConfig | 明确允许浏览器读取的少量配置，不默认公开整个 config |
 | events | 事件类型列表与只读处理器 |
+| controlEvents | 按 ServerEvent 类型选择宿主已有原生控制投影；不是重新读取原生会话 |
 | dispose | 非阻塞的资源释放入口，不进入宿主 graceful 等待链 |
 
 模块返回声明，不取得根 Fastify、Engine 私有状态或原生 session handle。
@@ -135,6 +140,7 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 GET /_modules
 /_modules/<id>/<digest>/api/...
 /_modules/assets/<id>/<digest>/<declared-path>
+/_modules/workers/<id>/worker.js
 ```
 
 bootstrap 返回实际成功的前端模块、backend-only 的 active 状态及错误/诊断。
@@ -151,6 +157,19 @@ GET/HEAD 可不带此 header，以支持 img/video 等，但 URL 已绑定版本
 不为此增加全局 JSON 上限。
 模块返回 Node Readable 时，宿主负责响应归属、取消和销毁，包括断开后才返回的流。
 所有模块 HTTP 请求不自动成为原生 busy 或 graceful 等待项。
+
+`context.invalidate()` 在已成功加载、仍活跃的模块中向既有 `/events` 发送
+`module/invalidated { moduleId }`。它只是重新读取模块状态的提示，不承载业务数据或原生消息，
+不存储/重放模块状态，不增加每模块 SSE 连接，也不影响 graceful 的忙闲条件。
+消费者重连应自行重新读取模块状态，不能将提示当作可靠事件日志。
+
+worker 使用稳定的模块专属 URL 和相同目录 scope，`Service-Worker-Allowed: ./`，
+不能控制 Chat 或根页面。宿主不自动注册、不申请通知权限、不实现 push/角标业务。
+只有当前成功加载且声明 worker 的包能被服务，每次读取核对包内大小和摘要，响应不缓存。
+脚本前置 `self.__cockpitModuleWorker`，仅含 moduleId、digest 和相对于 worker 的 apiBase；
+部署前缀保留，不包含模块秘密。模块 worker 必须独立打包，沿标准注册 API 管理自己的生命周期。
+停用模块后该入口不可用；已有浏览器注册和订阅不会因服务端停止而神奇消失，
+模块须提供明确取消订阅入口并说明浏览器离线清理边界。
 
 ## 6. 前端注册与草稿
 
@@ -180,7 +199,22 @@ apiBase、公开配置、request、signal 和 report。模块不得自建 root �
 | composerAbove | 输入栏上方组件 |
 | fileInput | 文件选择结果、粘贴/拖放文件的接受与处理 |
 | chatRenderers | 原生附件、Markdown link/image 节点的匹配和组件 |
+| messageDecorations | 已有消息或当前 ask 的非交互边缘装饰；提供身份及该内容的 element |
+| sessionBadges | 会话卡片内部的非交互附加标记，不能嵌套按钮或改变原生会话状态 |
+| globalActions | 全局导航旁的模块操作，适用于权限和模块设置，不注册第二个 SPA |
 | dispose | 释放本模块的浏览器资源 |
+
+新增插口由 `context.surfaceVersion: 1` 明确声明，旧模块不需要采用。
+`context.view` 提供当前 session、页面可见性和连接状态的可订阅快照；
+`context.onInvalidate` 订阅本模块的状态变化提示，`context.worker` 给出已验证的绝对 worker URL/scope。
+它们不提供未读计数、阅读阈值或模块业务权威。
+
+消息装饰接收原生消息身份、角色、完成状态和直接所属 element；
+ask 使用宿主当前 AskRequest.requestId，与 controlEvents 中同一字段对应，不冒充原生 requestId。
+element 仅供观察该内容，不授权修改正文、移动节点、查询宿主私有 DOM 或写入滚动位置。
+装饰挂在现有内容外侧留白，不参与布局，出现/消失不能改变内容宽度、换行、行高或输入框对齐。
+模块自己决定是否呈现标记及何时提交阅读确认；宿主不持有已读/未读数据库。
+各插口按 order/module/id 稳定排列，模块异常只撤销其贡献，不影响普通聊天。
 
 本体提供绑定 session 的草稿句柄：快照、订阅、追加/移除附件、编辑文字、登记发送阻止。
 模块不操作发送按钮的实现，不发隐式消息。提交快照和原生 ACK 清理由本体统一完成，
@@ -210,6 +244,10 @@ blob 的 data 缺失或带 omittedReason 时仍保留名称、MIME 和不可用�
 没有感兴趣观察者的事件不额外遍历大 payload。
 工作目录随经过验证的 root context-change 更新，不增加逐事件 metadata RPC。
 观察返回值不替换原生事件，错误不污染原生控制状态。
+
+`controlEvents` 接收类型过滤后的已有 ServerEvent 副本，可观察当前 ask 出现/消失、
+会话删除和历史失效等原生控制事实；不额外获取 snapshot 或加载会话。
+订阅和失效通知随模块 scope 关闭一起撤销。副作用和持久化仍属于模块。
 
 `NativeObservation` 是冻结的只读快照；`cwd` 与可选的
 `readonly workspacePath?: string | null` 相互独立。后者直接读取当前归属该会话的

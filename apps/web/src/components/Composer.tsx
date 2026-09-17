@@ -33,7 +33,7 @@ interface ComposerProps {
   sendBlocked?: boolean;
   operation?: ComposerContext['operation'];
   runtime?: ModuleRuntime;
-  ask?: Omit<ComponentProps<typeof AskContent>, 'pending'>;
+  ask?: Omit<ComponentProps<typeof AskContent>, 'pending' | 'sessionId' | 'runtime'>;
   statusInHeader?: boolean;
 }
 export function Composer({ disabled, busy, placeholder, submitLabel, draft, onSend, sendBlocked, operation = 'prompt', runtime = moduleRuntime, ask, statusInHeader }: ComposerProps) {
@@ -59,7 +59,7 @@ export function Composer({ disabled, busy, placeholder, submitLabel, draft, onSe
   return <div className="chat-composer" data-question={!!ask || undefined}>
     <div className="chat-composer-body">
       <div className="chat-composer-context">
-        {ask && <AskContent {...ask} pending={pending} />}
+        {ask && <AskContent {...ask} sessionId={draft.sessionId} pending={pending} runtime={runtime} />}
         {blocks.filter(block => block.orphaned).map(block => <div className="module-draft-recovery" role="status" key={block.id}>
           <span>{block.reason}</span>
           {block.orphaned && <button className="module-block-remove ck-button" type="button" onClick={() => draft.dismissOrphanedBlock(block.id)}>移除未完成的选择</button>}

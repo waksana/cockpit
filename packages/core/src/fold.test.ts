@@ -44,6 +44,17 @@ const userMsg = (content: string, id: string): Ev => ({ type: 'user.message', da
 const asstMsg = (messageId: string, content: string, extra: Record<string, unknown> = {}): Ev =>
   ({ type: 'assistant.message', data: { messageId, content, ...extra }, id: messageId, parentId: 'ts-0' });
 
+test('partial text stays explicitly incomplete until its full assistant message replaces it', () => {
+  const state = newFoldState();
+  foldEvent(state, { type: 'assistant.message_delta', data: { messageId: 'response', deltaContent: 'partial' } });
+  assert.equal(state.messages[0]!.streaming, true);
+  resetTurn(state);
+  assert.equal(state.messages[0]!.streaming, true, 'disconnection/idle is not a complete message');
+  foldEvent(state, { type: 'assistant.message', data: { messageId: 'response', content: 'complete' } });
+  assert.equal(state.messages[0]!.streaming, undefined);
+  assert.equal(state.messages[0]!.content, 'complete');
+});
+
 test('child execution evidence distinguishes cancellation and later activity without inferring a task outcome', () => {
   const state = newFoldState();
   const apply = (type: string, data: Record<string, unknown> = {}, agentId?: string) =>

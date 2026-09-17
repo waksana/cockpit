@@ -182,8 +182,12 @@ session screenshots or add a second demo application.
 
 `public/manifest.webmanifest` and the HTML install metadata describe the current
 application and icons. The service serves them as ordinary static files.
-There is no service worker, offline cache, push handler or old-registration
-migration. Production builds have one HTML entry: `index.html`.
+The host does not register a global service worker, cache offline pages or own
+push subscriptions. A trusted module may declare a packaged worker served at a
+stable module-specific URL with a narrow scope; registration, notification and
+badge behavior belong to that module. Existing browser registrations do not
+vanish on server shutdown. See the [module contract](module-contract-draft.md).
+Production builds have one HTML entry: `index.html`.
 
 ## Web presentation boundaries
 

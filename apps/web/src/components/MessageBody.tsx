@@ -1,4 +1,4 @@
-import { createContext, memo, useContext, useRef, type ReactNode } from 'react';
+import { createContext, memo, useContext, useRef, type ReactNode, type Ref } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CopyButton } from './CopyButton';
@@ -65,8 +65,10 @@ const MarkdownTable: Components['table'] = ({ node: _node, ...props }) => {
 const components: Components = {
   a: MarkdownLink, img: MarkdownMedia, p: MarkdownParagraph, pre: MarkdownCodeBlock, table: MarkdownTable,
 };
-export const MessageBody = memo(function MessageBody({ body, origin }: { body: string; origin?: MessageOrigin }) {
-  return <OriginContext.Provider value={origin}><div className="message-body">
+export const MessageBody = memo(function MessageBody({ body, origin, elementRef }: {
+  body: string; origin?: MessageOrigin; elementRef?: Ref<HTMLDivElement>;
+}) {
+  return <OriginContext.Provider value={origin}><div className="message-body" ref={elementRef}>
     <ReactMarkdown remarkPlugins={[remarkGfm, remarkOriginalMarkdownTargets]} components={components} urlTransform={url => url}>{body}</ReactMarkdown>
   </div></OriginContext.Provider>;
 });

@@ -1,8 +1,8 @@
 import type * as React from 'react';
 import type { Readable } from 'node:stream';
-import type { NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent } from '@cockpit/protocol';
+import type { NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent, ServerEvent } from '@cockpit/protocol';
 
-export type { NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent };
+export type { NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent, ServerEvent };
 
 export interface ModuleManifest {
   apiVersion: 1;
@@ -10,7 +10,7 @@ export interface ModuleManifest {
   name: string;
   version: string;
   backend: string;
-  frontend?: { entry: string; styles?: string[]; assets: string[] };
+  frontend?: { entry: string; styles?: string[]; assets: string[]; worker?: string };
 }
 
 export interface NativeObservation {
@@ -50,6 +50,7 @@ export interface ModuleBackendContext {
   config: Readonly<Record<string, unknown>>;
   signal: AbortSignal;
   report(error: unknown): void;
+  invalidate(): void;
 }
 
 export interface ModuleBackend {
@@ -58,6 +59,10 @@ export interface ModuleBackend {
   events?: {
     types: readonly string[];
     handle(observation: NativeObservation): void | Promise<void>;
+  };
+  controlEvents?: {
+    types: readonly ServerEvent['type'][];
+    handle(event: ServerEvent): void | Promise<void>;
   };
   dispose?(): void;
 }
@@ -73,6 +78,7 @@ export interface ModuleAsset {
   entry: string;
   styles: string[];
   config: Readonly<Record<string, unknown>>;
+  worker?: { entry: string; scope: string };
 }
 
 export interface DraftAttachment {
@@ -127,6 +133,35 @@ export interface ModuleFrontendContext {
   signal: AbortSignal;
   request(path: string, init?: RequestInit): Promise<Response>;
   report(error: unknown): void;
+  surfaceVersion?: 1;
+  view?: {
+    getSnapshot(): ModuleView;
+    subscribe(listener: () => void): () => void;
+  };
+  onInvalidate?(listener: () => void): () => void;
+  worker?: { entry: string; scope: string };
+}
+
+export interface ModuleView {
+  sessionId: string | null;
+  visible: boolean;
+  connected: boolean;
+}
+
+export interface MessageDecorationContext {
+  sessionId: string;
+  kind: 'message' | 'ask';
+  id: string;
+  role?: 'user' | 'assistant' | 'system' | 'tool';
+  agentId?: string;
+  complete: boolean;
+  element: HTMLElement | null;
+}
+
+export interface ModuleSurfaceContribution<Props> {
+  id: string;
+  order?: number;
+  component: React.ComponentType<Props>;
 }
 
 export interface FrontendContribution {
@@ -154,6 +189,9 @@ export interface ModuleFrontend {
   composerAbove?: readonly FrontendContribution[];
   fileInput?: readonly FileInputHandler[];
   chatRenderers?: readonly ChatRenderer[];
+  messageDecorations?: readonly ModuleSurfaceContribution<MessageDecorationContext>[];
+  sessionBadges?: readonly ModuleSurfaceContribution<{ sessionId: string }>[];
+  globalActions?: readonly ModuleSurfaceContribution<Record<string, never>>[];
   dispose?(): void;
 }
 

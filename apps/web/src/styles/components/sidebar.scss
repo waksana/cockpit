@@ -14,6 +14,13 @@
   border-bottom: 1px solid var(--border-color);
 }
 .sidebar-hamburger { flex: none; }
+.module-global-actions, .module-session-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  &:empty { display: none; }
+}
+.module-global-actions { flex: none; }
 
 // ── Input-search (pill, leading icon ↔ spinner on loading, clear) ───────────
 .input-search {

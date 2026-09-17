@@ -29,6 +29,7 @@ interface CockpitState {
   resourceRevisions: Record<string, Partial<Record<SessionResource, number>>>;
   // lifecycle
   init: () => () => void;
+  onModuleInvalidated: (listener: (moduleId: string) => void) => () => void;
   // intents
   setActiveId: (id: string | null) => void;
   newSession: (cwd: string) => Promise<string>;
@@ -63,6 +64,7 @@ interface CockpitState {
 
 export const createCockpitStore = () => create<CockpitState>((set, get) => {
   let client: NetClient | null = null;
+  const moduleListeners = new Set<(moduleId: string) => void>();
   const summaryResources: MetaResource[] = ['identity', 'control', 'model'];
   const metaRequests = new Map<string, {
     dirty: Set<MetaResource>; stale: Set<MetaResource>; controller: AbortController; patches: Partial<SessionMeta>;
@@ -406,6 +408,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       }
       case 'agent/status':
         return;
+      case 'module/invalidated':
+        for (const listener of [...moduleListeners]) if (moduleListeners.has(listener)) listener(ev.moduleId);
+        return;
       case 'session/invalidated': {
         // Late invalidations cannot recreate resources for an absent session.
         if (!get().sessions.some(session => session.sessionId === ev.sessionId)) return;
@@ -515,6 +520,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     activeId: null,
     globalModels: [],
     resourceRevisions: {},
+    onModuleInvalidated(listener) {
+      moduleListeners.add(listener);
+      return () => { moduleListeners.delete(listener); };
+    },
 
     init() {
       client?.disconnect();

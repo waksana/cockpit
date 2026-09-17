@@ -12,12 +12,13 @@ import { MessageBody } from './MessageBody';
 import { DisclosureChoices } from './DisclosureChoices';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
 import { groupTranscript } from '../lib/transcriptRows';
-import { ModuleRuntime } from '../lib/moduleRuntime';
+import { ModuleRuntime, moduleRuntime } from '../lib/moduleRuntime';
 import { ModuleRenderNode } from './ModuleContributions';
 import { Composer, ComposerNotices } from './Composer';
 import { useLongPress } from '../lib/longpress';
 import { useMenuDismiss } from '../lib/useMenuDismiss';
-import type { ComposerContext, ModuleFrontendContext } from '@cockpit/module-api';
+import type { ComposerContext, MessageDecorationContext, ModuleFrontendContext } from '@cockpit/module-api';
+import { fixtureSession } from '../dev/chat-fixtures';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
 // scroll owner. Each rendered message occupies 100px in a 300px viewport.
@@ -183,6 +184,113 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await act(() => root.unmount());
     useCockpit.setState({ connState: previousConnection, snapshotReady: previousSnapshotReady });
     for (const restore of restoreGlobals) restore();
+  });
+  await t.test('module decorations receive exact speech and host ask identities, and failed modules release their resources', async subtest => {
+    const contexts = new Map<string, MessageDecorationContext>();
+    const key = (context: MessageDecorationContext) => JSON.stringify([context.kind, context.id, context.agentId]);
+    let crash = false, disposed = 0, stylesRemoved = 0, notified = 0;
+    let activation!: ModuleFrontendContext;
+    function Decoration(context: MessageDecorationContext) {
+      useLayoutEffect(() => {
+        if (!context.element) return;
+        contexts.set(key(context), context);
+        return () => { contexts.delete(key(context)); };
+      }, [context]);
+      if (crash) throw new Error('Fixture decoration failed');
+      return createElement('span', { className: 'fixture-decoration' }, 'line');
+    }
+    const digest = 'a'.repeat(64);
+    const runtime = new ModuleRuntime({
+      pageUrl: 'https://fixture.invalid',
+      fetch: async () => Response.json({ modules: [{
+        id: 'fixture', name: 'Fixture', version: '1.0.0', digest, config: {},
+        styles: [`/_modules/assets/fixture/${digest}/style.css`],
+        apiBase: `/_modules/fixture/${digest}/api`, entry: `/_modules/assets/fixture/${digest}/entry.js`,
+      }], errors: [] }),
+      load: async () => ({ activate: (context: ModuleFrontendContext) => {
+        activation = context;
+        context.view!.subscribe(() => { notified++; });
+        context.onInvalidate!(() => { notified++; });
+        return { messageDecorations: [{ id: 'line', component: Decoration }], dispose: () => { disposed++; } };
+      } }),
+      style: () => () => { stylesRemoved++; }, report: () => {},
+    });
+    await runtime.start();
+    subtest.after(() => runtime.stop());
+    subtest.mock.method(moduleRuntime, 'contributions', runtime.contributions.bind(runtime));
+    subtest.mock.method(moduleRuntime, 'getSnapshot', runtime.getSnapshot);
+    subtest.mock.method(moduleRuntime, 'subscribe', runtime.subscribe);
+    subtest.mock.method(moduleRuntime, 'unregister', runtime.unregister.bind(runtime));
+    subtest.mock.method(moduleRuntime, 'report', runtime.report);
+    subtest.mock.method(console, 'error', () => {});
+    const timestamp = 1;
+    let value: ChatSession = { ...fixtureSession('ask'), sessionId: 'host-route',
+      ask: { requestId: 'host-request', question: 'Exact pending question', choices: ['Answer'] },
+      messages: [
+        { id: 'projected-root', role: 'assistant', content: 'Exact root speech', timestamp, streaming: true,
+          origin: { sessionId: 'native-session', messageId: 'native-shared' } },
+        { id: 'card', role: 'assistant', content: '', timestamp, subtype: 'subagent',
+          subagent: { toolCallId: 'host-tool', name: 'child', displayName: 'Child', status: 'completed', agentId: 'native-child' },
+          subMessages: [{ id: 'projected-child', role: 'assistant', content: 'Exact child speech', timestamp,
+            origin: { sessionId: 'native-session', messageId: 'native-shared', agentId: 'native-child' } }] },
+        { id: 'thought', role: 'assistant', content: '', thought: 'Not speech', timestamp,
+          origin: { sessionId: 'native-session', messageId: 'thought' } },
+        { id: 'user', role: 'user', content: 'User text', timestamp,
+          origin: { sessionId: 'native-session', messageId: 'user' } },
+        { id: 'system', role: 'system', content: 'System text', timestamp },
+      ], hasMore: false };
+    const show = () => root.render(createElement(Thread, {
+      session: value, onLoadMore() {}, onSend: async () => true, onRespondAsk: async () => true,
+    }));
+    await act(show);
+    const speech = contexts.get(JSON.stringify(['message', 'native-shared', undefined]))!;
+    assert.ok(speech);
+    assert.equal(speech.sessionId, 'native-session');
+    assert.equal(Object.hasOwn(speech, 'agentId'), false, 'root does not invent an agent identifier');
+    assert.equal(speech.complete, false);
+    assert.equal(speech.element?.textContent, 'Exact root speech');
+    assert.equal((speech.element as unknown as HostNode).parentNode?.querySelector('.module-message-decorations')?.parentNode,
+      (speech.element as unknown as HostNode).parentNode, 'decoration is outside the measured speech body');
+    const ask = contexts.get(JSON.stringify(['ask', 'host-request', undefined]))!;
+    assert.equal(ask.sessionId, 'host-route');
+    assert.equal(ask.complete, true);
+    assert.equal(ask.element?.textContent, 'Exact pending question');
+    assert.equal((ask.element as unknown as HostNode).getAttribute('class'), 'chat-ask-q');
+    assert.equal(contexts.size, 2, 'closed children, thoughts, system and user text have no speech surface');
+    const clickChild = async () => {
+      const event = new Event('click', { bubbles: true });
+      Object.defineProperty(event, 'target', { value: container.querySelector('.subagent-head') });
+      await act(() => container.dispatchEvent(event));
+    };
+    await clickChild();
+    const child = contexts.get(JSON.stringify(['message', 'native-shared', 'native-child']))!;
+    assert.equal(child.sessionId, 'native-session', 'child uses native provenance, not the serialized host nesting key');
+    assert.equal(child.complete, true);
+    assert.equal(child.element?.textContent, 'Exact child speech');
+    assert.equal(container.querySelectorAll('.chat-messages').length, 1);
+    value = { ...value, ask: { ...value.ask!, requestId: 'next-host-request', question: 'Replacement question' },
+      messages: value.messages.map(message => message.id === 'projected-root' ? { ...message, streaming: false, content: 'Final root speech' } : message) };
+    await act(show);
+    assert.equal(contexts.has(JSON.stringify(['ask', 'host-request', undefined])), false);
+    assert.equal(contexts.get(JSON.stringify(['ask', 'next-host-request', undefined]))?.element, ask.element);
+    assert.equal(contexts.get(JSON.stringify(['message', 'native-shared', undefined]))?.element, speech.element);
+    assert.equal(contexts.get(JSON.stringify(['message', 'native-shared', undefined]))?.complete, true);
+    await clickChild();
+    assert.equal(contexts.has(JSON.stringify(['message', 'native-shared', 'native-child'])), false);
+    await act(() => root.render(null));
+    assert.equal(contexts.size, 0);
+    crash = true;
+    await act(show);
+    assert.equal(activation.signal.aborted, true);
+    assert.equal(runtime.getSnapshot().length, 0);
+    assert.equal(disposed, 1);
+    assert.equal(stylesRemoved, 1);
+    assert.match(container.textContent, /Final root speech/);
+    assert.equal(container.querySelector('.module-message-decorations'), null);
+    runtime.updateView({ sessionId: 'other', visible: true, connected: true });
+    runtime.invalidate('fixture');
+    assert.equal(notified, 0);
+    await act(() => root.render(null));
   });
   await t.test('long-press timers belong to mounted primary gestures and native contextmenu cannot double-open', async subtest => {
     subtest.mock.timers.enable({ apis: ['setTimeout'] });
@@ -1163,8 +1271,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       })));
       assert.match(container.textContent, /Native fallback/);
       assert.equal(reports.length, 1, 'a broken renderer reports locally instead of replacing core');
+      assert.equal(runtime.getSnapshot().length, 0, 'a broken renderer also releases its module');
+      assert.throws(() => scope.block('stale'), /Module cannot block/);
+      await act(() => root.render(null));
+      await act(async () => { runtime.stop(); await runtime.start(); });
       await renderComposer();
-      await act(() => { scope.block('Selected file not finished'); draft.edit('Crash module action'); });
+      await act(() => { scoped!.draft.block('Selected file not finished'); draft.edit('Crash module action'); });
       assert.equal(runtime.getSnapshot().length, 0, 'failed composer plugins are unregistered locally');
       assert.ok(container.querySelector('.chat-input-message'), 'native input survives the plugin render error');
       assert.equal(draft.getSnapshot().attachments.length, 2, 'ready native attachments remain usable');

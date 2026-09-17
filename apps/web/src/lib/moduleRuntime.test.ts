@@ -322,3 +322,128 @@ test('conflicting renderers report their conflict and preserve default content',
   assert.match(String(f.reports[0]), /多个模块渲染规则/);
   f.runtime.stop();
 });
+
+test('stable worker URLs stay in the backend prefix and are exposed without registration', async () => {
+  const worker = { entry: '/_modules/workers/fixture/worker.js', scope: '/_modules/workers/fixture/' };
+  const f = fixture([{ ...asset(), worker }]);
+  await f.runtime.start();
+  assert.deepEqual(f.contexts[0].worker, {
+    entry: 'https://backend.invalid/prefix/_modules/workers/fixture/worker.js',
+    scope: 'https://backend.invalid/prefix/_modules/workers/fixture/',
+  });
+  assert.equal(f.requests.length, 1);
+  assert.equal(f.imports.length, 1);
+  assert.ok(Object.isFrozen(f.contexts[0].worker));
+  f.runtime.stop();
+  const old = fixture();
+  await old.runtime.start();
+  assert.equal(old.contexts[0].worker, undefined);
+  old.runtime.stop();
+  for (const malformed of [
+    null, {}, { ...worker, extra: true },
+    { ...worker, entry: 'https://evil.invalid/_modules/workers/fixture/worker.js' },
+    { ...worker, entry: '/_modules/workers/other/worker.js' },
+    { ...worker, entry: `/_modules/assets/fixture/${digest}/worker.js` },
+    { ...worker, entry: '/_modules/workers/fixture/%2e/worker.js' },
+    { ...worker, entry: '/_modules/workers/fixture/../fixture/worker.js' },
+    { ...worker, entry: '/_modules/workers/fixture/worker.js?version=1' },
+    { ...worker, entry: '/_modules/workers/fixture/worker.js#hash' },
+    { ...worker, entry: 'https://backend.invalid/_modules/workers/fixture/worker.js' },
+    { ...worker, scope: '/_modules/workers/' },
+    { ...worker, scope: '/_modules/workers/fixture' },
+    { ...worker, scope: '/_modules/workers/fixture/%2f' },
+    { ...worker, scope: '/_modules/workers/fixture/?scope=wide' },
+  ]) {
+    const bad = fixture([{ ...asset(), worker: malformed }]);
+    await bad.runtime.start();
+    assert.equal(bad.imports.length, 0, JSON.stringify(malformed));
+    assert.equal(bad.reports.length, 1);
+    bad.runtime.stop();
+  }
+});
+
+test('surface contributions validate IDs, components and order and sort deterministically', async () => {
+  for (const slot of ['messageDecorations', 'sessionBadges', 'globalActions'] as const) {
+    for (const entries of [
+      {}, [{}], [{ id: 'one', component: 'span' }], [{ id: 'one', component: () => null, order: Infinity }],
+      [{ id: 'one', component: () => null }, { id: 'one', component: () => null }],
+    ]) {
+      const f = fixture([asset()], { [slot]: entries } as unknown as ModuleFrontend);
+      await f.runtime.start();
+      assert.equal(f.runtime.getSnapshot().length, 0);
+      assert.equal(f.reports.length, 1);
+      f.runtime.stop();
+    }
+    const f = fixture([asset('z'), asset('a')], {
+      [slot]: [{ id: 'last', order: 2, component: () => null }, { id: 'first', component: () => null }],
+    });
+    await f.runtime.start();
+    assert.deepEqual(f.runtime.contributions(slot).map(item => `${item.module.asset.id}:${item.contribution.id}`),
+      ['a:first', 'z:first', 'a:last', 'z:last']);
+    f.runtime.stop();
+  }
+});
+
+test('view snapshots and invalidation subscriptions are scoped, stable and revoked with the module', async () => {
+  const f = fixture([asset('a'), asset('b')]);
+  await f.runtime.start();
+  const [a, b] = f.contexts;
+  assert.equal(a.surfaceVersion, 1);
+  assert.deepEqual(a.view!.getSnapshot(), { sessionId: null, visible: false, connected: false });
+  const original = a.view!.getSnapshot();
+  let views = 0, invalidations = 0, otherInvalidations = 0;
+  const unsubscribe = a.view!.subscribe(() => { views++; });
+  a.onInvalidate!(() => { invalidations++; });
+  b.onInvalidate!(() => { otherInvalidations++; });
+  a.view!.subscribe(() => { throw new Error('Listener failure'); });
+  f.runtime.updateView({ ...original });
+  assert.equal(a.view!.getSnapshot(), original);
+  assert.equal(views, 0);
+  f.runtime.updateView({ sessionId: 'root', visible: true, connected: true });
+  assert.equal(views, 1);
+  assert.equal(f.reports.length, 1, 'listener failure remains local');
+  assert.ok(Object.isFrozen(a.view!.getSnapshot()));
+  f.runtime.invalidate('a');
+  f.runtime.invalidate('unknown');
+  assert.equal(invalidations, 1);
+  assert.equal(otherInvalidations, 0);
+  unsubscribe();
+  unsubscribe();
+  f.runtime.unregister(f.runtime.getSnapshot().find(module => module.asset.id === 'a')!);
+  a.view!.subscribe(() => assert.fail('Stopped view subscription'));
+  a.onInvalidate!(() => assert.fail('Stopped invalidation subscription'));
+  f.runtime.updateView({ sessionId: null, visible: false, connected: false });
+  f.runtime.invalidate('a');
+  f.runtime.invalidate('b');
+  assert.equal(views, 1);
+  assert.equal(invalidations, 1);
+  assert.equal(otherInvalidations, 1);
+  f.runtime.stop();
+  f.runtime.invalidate('b');
+  assert.equal(otherInvalidations, 1);
+});
+
+test('failed activation removes subscriptions even when a module never returns contributions', async () => {
+  for (const timeout of [false, true]) {
+    let context!: ModuleFrontendContext;
+    let notified = 0;
+    const runtime = new ModuleRuntime({
+      pageUrl: 'https://fixture.invalid', activationTimeoutMs: 10,
+      fetch: async () => Response.json({ modules: [asset()], errors: [] }),
+      load: async () => ({ activate: (value: ModuleFrontendContext) => {
+        context = value;
+        value.view!.subscribe(() => { notified++; });
+        value.onInvalidate!(() => { notified++; });
+        if (timeout) return new Promise(() => {});
+        throw new Error('Initializer failed');
+      } }),
+      report: () => {},
+    });
+    await runtime.start();
+    assert.equal(context.signal.aborted, true);
+    runtime.updateView({ sessionId: 'new', visible: true, connected: true });
+    runtime.invalidate('fixture');
+    assert.equal(notified, 0);
+    runtime.stop();
+  }
+});

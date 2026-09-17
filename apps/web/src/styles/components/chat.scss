@@ -156,6 +156,17 @@
   flex: none;
 }
 
+.message-speech, .chat-answer-question { position: relative; }
+.module-message-decorations {
+  position: absolute;
+  inset-block: 0;
+  left: -8px;
+  width: 4px;
+  overflow: clip;
+  pointer-events: none;
+}
+.chat-pending-body > .module-message-decorations { margin: 0; }
+
 .msg-group { display: flex; flex-direction: column; min-width: 0; }
 .msg-group[data-gap='related'] { padding-block-start: var(--chat-gap-message); }
 .msg-group[data-gap='section'] { padding-block-start: var(--chat-gap-process); }

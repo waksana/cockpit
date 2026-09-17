@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { createPortal } from 'react-dom';
-import type { ChatRenderer, ComposerContext, FrontendContribution, ModuleAsset, ModuleFrontend, ModuleFrontendContext, RenderNode } from '@cockpit/module-api';
+import type { ChatRenderer, ComposerContext, ModuleAsset, ModuleFrontend, ModuleFrontendContext, ModuleView, RenderNode } from '@cockpit/module-api';
 import type { SessionDraft } from './textDraft';
 import { describeReason, reportUxError } from './errorReporter';
 
@@ -21,6 +21,8 @@ export interface LoadedModule {
   stop(): void;
 }
 export interface RegisteredRenderer { module: LoadedModule; renderer: ChatRenderer }
+type ContributionSlot = 'composerActions' | 'composerAbove' | 'messageDecorations' | 'sessionBadges' | 'globalActions';
+const EMPTY_VIEW: ModuleView = Object.freeze({ sessionId: null, visible: false, connected: false });
 
 function record(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -47,29 +49,43 @@ export function validateModuleAsset(value: unknown, backend: URL): ModuleAsset {
     || ('apiVersion' in value && value.apiVersion !== 1)) throw new Error('Invalid module asset manifest');
   const root = new URL(`_modules/${value.id}/${value.digest}/`, backend);
   const assets = new URL(`_modules/assets/${value.id}/${value.digest}/`, backend);
-  const resolve = (input: unknown, asset: boolean): string => {
+  const resolveUrl = (input: unknown): URL => {
     if (!nonempty(input) || !safePath(input)) throw new Error('Unsafe module URL');
     // Server manifests are deployment-relative; the configured backend owns their prefix.
     const url = input.startsWith('/_modules/') ? new URL(input.slice(1), backend) : new URL(input, backend);
     if (url.origin !== backend.origin || url.username || url.password || url.search || url.hash) throw new Error('Module URL escaped its backend scope');
+    return url;
+  };
+  const resolve = (input: unknown, asset: boolean): string => {
+    const url = resolveUrl(input);
     if (asset ? !url.pathname.startsWith(assets.pathname) || url.pathname === assets.pathname
       : url.pathname !== `${root.pathname}api`) throw new Error('Module URL is not bound to its manifest');
     return url.href;
   };
+  let worker: ModuleAsset['worker'];
+  if (value.worker !== undefined) {
+    if (!record(value.worker) || Object.keys(value.worker).some(key => key !== 'entry' && key !== 'scope')) throw new Error('Invalid module worker');
+    const scope = new URL(`_modules/workers/${value.id}/`, backend);
+    const entry = resolveUrl(value.worker.entry);
+    const advertisedScope = resolveUrl(value.worker.scope);
+    if (entry.href !== `${scope.href}worker.js` || advertisedScope.href !== scope.href) throw new Error('Module worker URL is not bound to its manifest');
+    worker = Object.freeze({ entry: entry.href, scope: scope.href });
+  }
   return Object.freeze({
     id: value.id, name: value.name, version: value.version, digest: value.digest,
     apiBase: resolve(value.apiBase, false), entry: resolve(value.entry, true),
     styles: value.styles.map(style => resolve(style, true)), config: Object.freeze({ ...value.config }),
+    ...(worker ? { worker } : {}),
   });
 }
 
 function validateFrontend(input: unknown): ModuleFrontend {
   if (!record(input)) throw new Error('Module activate must return contributions');
-  const allowed = new Set(['writes', 'rendersDraftAttachments', 'composerActions', 'composerAbove', 'fileInput', 'chatRenderers', 'dispose']);
+  const allowed = new Set(['writes', 'rendersDraftAttachments', 'composerActions', 'composerAbove', 'fileInput', 'chatRenderers', 'messageDecorations', 'sessionBadges', 'globalActions', 'dispose']);
   for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`Unsupported module contribution: ${key}`);
   if (input.writes !== undefined && (!Array.isArray(input.writes)
     || input.writes.some(value => value !== 'text' && value !== 'attachments'))) throw new Error('Invalid module writes declaration');
-  for (const key of ['composerActions', 'composerAbove', 'fileInput', 'chatRenderers'] as const) {
+  for (const key of ['composerActions', 'composerAbove', 'fileInput', 'chatRenderers', 'messageDecorations', 'sessionBadges', 'globalActions'] as const) {
     const entries = input[key];
     if (entries === undefined) continue;
     if (!Array.isArray(entries)) throw new Error(`Invalid module ${key}`);
@@ -108,6 +124,9 @@ export class ModuleRuntime {
   private readonly options: RuntimeOptions;
   private snapshot: readonly LoadedModule[] = [];
   private readonly listeners = new Set<() => void>();
+  private view: ModuleView = EMPTY_VIEW;
+  private readonly viewListeners = new Set<() => void>();
+  private readonly invalidationListeners = new Map<string, Set<() => void>>();
   private controller?: AbortController;
   private readonly reports = new Set<string>();
   constructor(options: RuntimeOptions = {}) {
@@ -116,6 +135,16 @@ export class ModuleRuntime {
     this.options = options;
   }
   getSnapshot = (): readonly LoadedModule[] => this.snapshot;
+  getViewSnapshot = (): ModuleView => this.view;
+  updateView(view: ModuleView): void {
+    if (view.sessionId === this.view.sessionId && view.visible === this.view.visible && view.connected === this.view.connected) return;
+    this.view = Object.freeze({ ...view });
+    for (const listener of [...this.viewListeners]) if (this.viewListeners.has(listener)) listener();
+  }
+  invalidate(moduleId: string): void {
+    const listeners = this.invalidationListeners.get(moduleId);
+    if (listeners) for (const listener of [...listeners]) if (listeners.has(listener)) listener();
+  }
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private publish(modules: readonly LoadedModule[]) {
     this.snapshot = modules;
@@ -160,12 +189,14 @@ export class ModuleRuntime {
     const controller = new AbortController();
     const bindings: LoadedModule['bindings'] = new Map();
     const styles: (() => void)[] = [];
+    const subscriptions = new Set<() => void>();
     let frontend: ModuleFrontend | undefined;
     let disposeFrontend: (() => unknown) | undefined;
     const stop = () => {
       // Capture unresolved selections before plugin abort listeners release their leases.
       for (const binding of bindings.values()) binding.dispose();
       bindings.clear();
+      for (const unsubscribe of subscriptions) unsubscribe();
       controller.abort();
       for (const remove of styles.splice(0)) remove();
       const cleanup = disposeFrontend;
@@ -174,10 +205,32 @@ export class ModuleRuntime {
       frontend = undefined;
       parentSignal.removeEventListener('abort', stop);
     };
+    const subscribe = (listeners: Set<() => void>, listener: () => void, onEmpty?: () => void): (() => void) => {
+      if (controller.signal.aborted) return () => {};
+      const notify = () => { try { listener(); } catch (error) { this.report(error); } };
+      const unsubscribe = () => {
+        if (!subscriptions.has(unsubscribe)) return;
+        listeners.delete(notify);
+        subscriptions.delete(unsubscribe);
+        if (!listeners.size) onEmpty?.();
+      };
+      listeners.add(notify);
+      subscriptions.add(unsubscribe);
+      return unsubscribe;
+    };
     parentSignal.addEventListener('abort', stop, { once: true });
     const context: ModuleFrontendContext = {
       apiVersion: 1, uiVersion: 1, moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
       config: asset.config, signal: controller.signal, report: this.report,
+      surfaceVersion: 1,
+      view: { getSnapshot: this.getViewSnapshot, subscribe: listener => subscribe(this.viewListeners, listener) },
+      onInvalidate: listener => {
+        if (controller.signal.aborted) return () => {};
+        let listeners = this.invalidationListeners.get(asset.id);
+        if (!listeners) this.invalidationListeners.set(asset.id, listeners = new Set());
+        return subscribe(listeners, listener, () => { this.invalidationListeners.delete(asset.id); });
+      },
+      ...(asset.worker ? { worker: asset.worker } : {}),
       request: async (path, init = {}) => {
         controller.signal.throwIfAborted();
         if (!safePath(path)) throw new Error('Unsafe module request path');
@@ -239,8 +292,10 @@ export class ModuleRuntime {
     }
     return { draft: binding.draft, operation, disabled };
   }
-  contributions(slot: 'composerActions' | 'composerAbove'): { module: LoadedModule; contribution: FrontendContribution }[] {
-    return this.snapshot.flatMap(module => (module.frontend[slot] ?? []).map(contribution => ({ module, contribution })))
+  contributions<Slot extends ContributionSlot>(slot: Slot): { module: LoadedModule; contribution: NonNullable<ModuleFrontend[Slot]>[number] }[] {
+    return this.snapshot.flatMap(module => (module.frontend[slot] ?? []).map(contribution => ({
+      module, contribution: contribution as NonNullable<ModuleFrontend[Slot]>[number],
+    })))
       .sort((a, b) => (a.contribution.order ?? 0) - (b.contribution.order ?? 0)
         || a.module.asset.id.localeCompare(b.module.asset.id) || a.contribution.id.localeCompare(b.contribution.id));
   }

@@ -6,6 +6,7 @@ import { Shell, MasterPane, DetailPane } from './Shell';
 import { PaneHeader } from './PaneHeader';
 import { StateNotice } from './StateNotice';
 import { Icon } from './Icon';
+import { ModuleGlobalActions } from './ModuleContributions';
 
 export type ManageSection = 'mcp' | 'skills';
 const SECTION_TITLE: Record<ManageSection, string> = { mcp: '全局 MCP', skills: '全局 Skills' };
@@ -29,13 +30,13 @@ function MasterHeader({ section, item, onRefresh }: {
         <Icon name="back" size={24} />
       </button>}
       title={<span className="manage-title ck-text-primary">{SECTION_TITLE[section]}</span>}
-      actions={<button className="ck-icon-button rp manage-action" type="button"
+      actions={<><ModuleGlobalActions /><button className="ck-icon-button rp manage-action" type="button"
         aria-label={section === 'mcp' ? '刷新 Copilot MCP 配置缓存' : '刷新'}
         disabled={!onRefresh || connState !== 'open' || busy} aria-busy={busy} onClick={() => {
           void run(async () => { if (section === 'mcp') await mcpRefresh(); }, onRefresh);
         }}>
         {busy ? <Icon name="loading" className="spinner" size={16} /> : <Icon name="reload" size={20} />}
-      </button>} />
+      </button></>} />
     {error && <StateNotice kind="error">刷新失败：{error}</StateNotice>}
   </>;
 }
@@ -48,7 +49,8 @@ function DetailHeader({ item }: { item: string }) {
     leading={<button className="chat-back ck-icon-button rp lg:hidden" type="button" aria-label="返回" onClick={() => up()}>
       <Icon name="back" size={24} />
     </button>}
-    title={<span ref={titleRef} tabIndex={-1} className="manage-title manage-detail-headtitle">{item}</span>} />;
+    title={<span ref={titleRef} tabIndex={-1} className="manage-title manage-detail-headtitle">{item}</span>}
+    actions={<div className="lg:hidden"><ModuleGlobalActions /></div>} />;
 }
 
 export function ManagementShell({ section, item, master, detail, onRefresh }: {

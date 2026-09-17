@@ -47,6 +47,21 @@ test('manifest and archive identities validate before copying or executing code'
   assert.throws(() => inspectModuleArchive(archive([...prefixed, { path: 'outside', content: 'bad' }])), /Mixed package roots/);
 });
 
+test('worker entries must be packaged JavaScript under declared asset roots', () => {
+  for (const worker of ['missing.js', 'backend.mjs', 'web/style.css']) {
+    assert.throws(() => inspectModuleArchive(archive(moduleEntries('worker', undefined, {
+      frontend: { entry: 'web/index.js', assets: ['web'], worker },
+    }))), /declared asset|JavaScript/);
+  }
+  const files = moduleEntries('worker', undefined, {
+    frontend: { entry: 'web/index.js', assets: ['web'], worker: 'web/worker.js' },
+  });
+  files.push({ path: 'web/worker.js', content: 'self.addEventListener("push", () => {});' });
+  assert.equal(inspectModuleArchive(archive(files)).manifest.frontend?.worker, 'web/worker.js');
+  const large = [...files.slice(0, -1), { path: 'web/worker.js', content: ' '.repeat(1024 * 1024 + 1) }];
+  assert.throws(() => inspectModuleArchive(archive(large)), /worker exceeds/);
+});
+
 test('installation copies immutable files, never runs scripts/imports, and selects only verified identities', async t => {
   const f = await moduleFixture(t);
   const path = await f.package([

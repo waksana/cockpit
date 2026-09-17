@@ -211,6 +211,23 @@ function observe<T>(promise: Promise<T>): Promise<T> {
   return promise;
 }
 
+test('module invalidations reuse control SSE without persistent state or extra reads', t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot([]);
+  const state = h.store.getState();
+  const received: string[] = [];
+  const unsubscribe = state.onModuleInvalidated(id => { received.push(id); });
+  h.source.emit({ type: 'module/invalidated', moduleId: 'fixture' });
+  assert.deepEqual(received, ['fixture']);
+  assert.equal(h.store.getState(), state);
+  assert.equal(h.sources.length, 1);
+  assert.equal(h.requests.length, 0);
+  unsubscribe();
+  h.source.emit({ type: 'module/invalidated', moduleId: 'fixture' });
+  assert.deepEqual(received, ['fixture']);
+});
+
 test('validated native status events need no unused browser state or additional requests', t => {
   const h = setup(t);
   h.source.open();

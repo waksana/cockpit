@@ -1,5 +1,5 @@
 import { Component, useSyncExternalStore, type ReactNode } from 'react';
-import type { ComposerContext, RenderNode } from '@cockpit/module-api';
+import type { ComposerContext, MessageDecorationContext, RenderNode } from '@cockpit/module-api';
 import { moduleRuntime, type ModuleRuntime } from '../lib/moduleRuntime';
 import type { SessionDraft } from '../lib/textDraft';
 
@@ -35,5 +35,51 @@ export function ModuleRenderNode({ node, fallback, runtime = moduleRuntime }: {
   if (!selected) return fallback;
   const Renderer = selected.renderer.component;
   return <ModuleBoundary key={`${selected.module.asset.id}:${selected.module.asset.digest}:${selected.renderer.id}:${node.origin.messageId}:${node.target ?? node.label}`}
-    runtime={runtime} fallback={fallback}><Renderer node={node} /></ModuleBoundary>;
+    runtime={runtime} onFailure={() => runtime.unregister(selected.module)} fallback={fallback}><Renderer node={node} /></ModuleBoundary>;
+}
+
+export function ModuleMessageDecorations({ context, runtime = moduleRuntime }: {
+  context: MessageDecorationContext; runtime?: ModuleRuntime;
+}) {
+  useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
+  const contributions = runtime.contributions('messageDecorations');
+  if (!contributions.length) return null;
+  return <div className="module-message-decorations" aria-hidden="true" inert>
+    {contributions.map(({ module, contribution }) => {
+      const Decoration = contribution.component;
+      return <ModuleBoundary key={`${module.asset.id}:${module.asset.digest}:${contribution.id}`}
+        runtime={runtime} onFailure={() => runtime.unregister(module)} fallback={null}>
+        <Decoration {...context} />
+      </ModuleBoundary>;
+    })}
+  </div>;
+}
+
+// Badges are phrasing-only, noninteractive content within the session's button.
+export function ModuleSessionBadges({ sessionId, runtime = moduleRuntime }: {
+  sessionId: string; runtime?: ModuleRuntime;
+}) {
+  useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
+  return <span className="module-session-badges">
+    {runtime.contributions('sessionBadges').map(({ module, contribution }) => {
+      const Badge = contribution.component;
+      return <ModuleBoundary key={`${module.asset.id}:${module.asset.digest}:${contribution.id}`}
+        runtime={runtime} onFailure={() => runtime.unregister(module)} fallback={null}>
+        <Badge sessionId={sessionId} />
+      </ModuleBoundary>;
+    })}
+  </span>;
+}
+
+export function ModuleGlobalActions({ runtime = moduleRuntime }: { runtime?: ModuleRuntime }) {
+  useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
+  return <div className="module-global-actions">
+    {runtime.contributions('globalActions').map(({ module, contribution }) => {
+      const Action = contribution.component;
+      return <ModuleBoundary key={`${module.asset.id}:${module.asset.digest}:${contribution.id}`}
+        runtime={runtime} onFailure={() => runtime.unregister(module)} fallback={null}>
+        <Action />
+      </ModuleBoundary>;
+    })}
+  </div>;
 }
