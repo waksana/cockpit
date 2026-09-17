@@ -243,34 +243,6 @@ export interface ComposerContext extends ComposerTarget {
   readonly draft: ModuleDraft;
 }
 
-export interface ComposerFileSelection {
-  readonly id: string;
-  readonly files: readonly File[];
-  readonly source: 'picker' | 'paste' | 'drop';
-  readonly target: ComposerTarget;
-}
-
-/**
- * Synchronous ownership handoff, not upload completion. Return true only after
- * EVERY selected file is retained by the applicable module schema/service, with
- * module-owned UI/blocking for unfinished work. Only that module interprets file
- * data, errors and pending uploads. It releases its leases on deactivation.
- * Return false to decline. A middleware handles OR calls the inherited callback,
- * never both. Promises are not accepted; asynchronous uploads live in the service.
- */
-export type ComposerFileCallback = (selection: ComposerFileSelection) => boolean;
-
-export interface ComposerInteractions {
-  /**
-   * Opens one multi-file native picker. The host captures the draft, operation and composed
-   * onFiles callback now, dispatches once on change, and retains them through
-   * session/decision switches and unmounts. Cancellation dispatches nothing.
-   * Late results cannot retarget a new draft or schema generation. If the module
-   * is gone there is no host file processing, persistence, fallback UI or lease.
-   */
-  pickFiles(): void;
-}
-
 export interface ComposerProps extends ComposerTarget {
   readonly busy: boolean;
   readonly placeholder?: string;
@@ -285,8 +257,6 @@ export interface ComposerProps extends ComposerTarget {
    * The host supplies no draft attachment group or schema-presence placeholder.
    */
   readonly children?: React.ReactNode;
-  /** Ordinary render prop for controls inside the existing input row, without a container. */
-  readonly actions?: (interactions: ComposerInteractions) => React.ReactNode;
   /** Host editor action; preserves captured-draft text revision semantics. */
   onTextChange(text: string): void;
   /**
@@ -296,15 +266,29 @@ export interface ComposerProps extends ComposerTarget {
    * through to prompt. Schema projections, not serialized fields, enter the send.
    */
   onSubmit(): void;
-  /**
-   * The base extracts picker/paste/drop files through this ONE callback chain.
-   * It never consumes mixed clipboard text, changes IME behavior, or duplicates
-   * keyboard submission. It does not synthesize file state, guards or recovery
-   * notices on false/missing handlers. Callback errors are reported, never a
-   * successful handoff; module loss removes its schema/UI/blockers. Without an
-   * applicable schema, files contribute nothing and core text remains usable.
-   */
-  readonly onFiles?: ComposerFileCallback;
+}
+
+/** The actual input row: the existing text editor and submit control, not an empty slot. */
+export interface ComposerEditorProps extends ComposerProps,
+  Omit<React.HTMLAttributes<HTMLDivElement>, keyof ComposerProps> {}
+
+/** The existing global navigation button and its menu; children extend that component. */
+export interface GlobalNavigationProps {
+  readonly children?: React.ReactNode;
+}
+
+/** Existing global resource-list header, including back/title/refresh controls. */
+export interface ManagementHeaderProps {
+  readonly section: 'mcp' | 'skills';
+  readonly item: string | null;
+  readonly onRefresh?: () => void;
+  readonly actions?: React.ReactNode;
+}
+
+/** Existing resource-detail header with back navigation and its focused title. */
+export interface ManagementDetailHeaderProps {
+  readonly item: string;
+  readonly actions?: React.ReactNode;
 }
 
 export interface MessageOrigin {
@@ -366,17 +350,15 @@ export interface AttachmentProps {
   readonly actions?: React.ReactNode;
 }
 
-/** Base renders its children without introducing a module-placeholder container. */
-export interface GlobalActionsProps {
-  readonly children?: React.ReactNode;
-}
-
 export interface ModuleComponentProps {
   message: MessageProps;
   sessionStatus: SessionStatusProps;
   composer: ComposerProps;
+  composerEditor: ComposerEditorProps;
   attachment: AttachmentProps;
-  globalActions: GlobalActionsProps;
+  globalNavigation: GlobalNavigationProps;
+  managementHeader: ManagementHeaderProps;
+  managementDetailHeader: ManagementDetailHeaderProps;
 }
 
 export type ComponentMiddleware<Props> =
