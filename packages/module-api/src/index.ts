@@ -1,8 +1,8 @@
-import type * as React from 'react';
 import type { Readable } from 'node:stream';
 import type { NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent, ServerEvent } from '@cockpit/protocol';
 
 export type { NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent, ServerEvent };
+export type * from './frontend.ts';
 
 export interface ModuleManifest {
   apiVersion: 1;
@@ -80,119 +80,3 @@ export interface ModuleAsset {
   config: Readonly<Record<string, unknown>>;
   worker?: { entry: string; scope: string };
 }
-
-export interface DraftAttachment {
-  id: string;
-  value: NativeAttachment;
-}
-
-export interface ModuleDraftSnapshot {
-  text: string;
-  attachments: readonly DraftAttachment[];
-  pending: boolean;
-}
-
-export interface ModuleDraft {
-  readonly sessionId: string;
-  getSnapshot(): ModuleDraftSnapshot;
-  subscribe(listener: () => void): () => void;
-  appendAttachments(values: readonly DraftAttachment[]): void;
-  removeAttachment(id: string): void;
-  editText(text: string): void;
-  block(reason: string): () => void;
-}
-
-export interface ComposerContext {
-  draft: ModuleDraft;
-  operation: 'prompt' | 'ask' | 'plan' | 'elicitation';
-  disabled: boolean;
-}
-
-export interface MessageOrigin {
-  sessionId: string;
-  messageId: string;
-  agentId?: string;
-}
-
-export interface RenderNode {
-  kind: 'link' | 'image' | 'attachment';
-  origin: MessageOrigin;
-  target?: string;
-  label: string;
-  attachment?: NativeAttachmentDescriptor;
-}
-
-export interface ModuleFrontendContext {
-  apiVersion: 1;
-  uiVersion: 1;
-  moduleId: string;
-  react: typeof React;
-  createPortal(children: React.ReactNode, container: Element | DocumentFragment): React.ReactPortal;
-  apiBase: string;
-  config: Readonly<Record<string, unknown>>;
-  signal: AbortSignal;
-  request(path: string, init?: RequestInit): Promise<Response>;
-  report(error: unknown): void;
-  surfaceVersion?: 1;
-  view?: {
-    getSnapshot(): ModuleView;
-    subscribe(listener: () => void): () => void;
-  };
-  onInvalidate?(listener: () => void): () => void;
-  worker?: { entry: string; scope: string };
-}
-
-export interface ModuleView {
-  sessionId: string | null;
-  visible: boolean;
-  connected: boolean;
-}
-
-export interface MessageDecorationContext {
-  sessionId: string;
-  kind: 'message' | 'ask';
-  id: string;
-  role?: 'user' | 'assistant' | 'system' | 'tool';
-  agentId?: string;
-  complete: boolean;
-  element: HTMLElement | null;
-}
-
-export interface ModuleSurfaceContribution<Props> {
-  id: string;
-  order?: number;
-  component: React.ComponentType<Props>;
-}
-
-export interface FrontendContribution {
-  id: string;
-  order?: number;
-  component: React.ComponentType<ComposerContext>;
-}
-
-export interface FileInputHandler {
-  id: string;
-  accepts(files: readonly File[]): boolean;
-  receive(files: readonly File[], context: ComposerContext): void;
-}
-
-export interface ChatRenderer {
-  id: string;
-  matches(node: RenderNode): boolean;
-  component: React.ComponentType<{ node: RenderNode }>;
-}
-
-export interface ModuleFrontend {
-  writes?: readonly ('text' | 'attachments')[];
-  rendersDraftAttachments?: boolean;
-  composerActions?: readonly FrontendContribution[];
-  composerAbove?: readonly FrontendContribution[];
-  fileInput?: readonly FileInputHandler[];
-  chatRenderers?: readonly ChatRenderer[];
-  messageDecorations?: readonly ModuleSurfaceContribution<MessageDecorationContext>[];
-  sessionBadges?: readonly ModuleSurfaceContribution<{ sessionId: string }>[];
-  globalActions?: readonly ModuleSurfaceContribution<Record<string, never>>[];
-  dispose?(): void;
-}
-
-export type ActivateFrontend = (context: ModuleFrontendContext) => ModuleFrontend | Promise<ModuleFrontend>;
