@@ -1,7 +1,7 @@
 # 模块接入协议
 
 **当前源码：Module API v1，本地可信包、主进程 import、冷加载。**
-这是 Cockpit 0.2.0 的模块契约，运行包以该版本 Release workflow 成功发布的资产为准；
+这是 Cockpit 0.2.1 的模块契约（与 0.2.0 保持不变），运行包以该版本 Release workflow 成功发布的资产为准；
 不适用于 v0.1.0 运行包。
 远程签名 URL 安装、模块 HTTP MCP、角色/skill 包和通用页面贡献仍未实现。
 

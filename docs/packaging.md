@@ -2,12 +2,12 @@
 
 本页维护构建产物和包身份。
 Cockpit 只产生包含前后端与必要依赖的包，由使用者决定放在哪里、何时运行。
-本页对应 0.2.0 发行；运行包以该版本 Release workflow 成功发布的资产为准。
+本页对应 0.2.1 发行；运行包以该版本 Release workflow 成功发布的资产为准。
 已有 v0.1.0 包应使用对应 tag 的文档和数据根约定。
 
 ## 获取运行包
 
-普通使用者在 [Cockpit v0.2.0 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.0)
+普通使用者在 [Cockpit v0.2.1 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.1)
 发布完成后下载 `runtime.tar.gz` 和 `runtime.tar.gz.sha256`；不必安装 pnpm 或克隆开发工作树。
 在下载目录验证摘要，再解压到新目录：
 
@@ -54,7 +54,7 @@ node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js
 ```
 
 这两个入口都直接进入对应 Node 进程；MCP 客户端通过 HTTP 调用后端。
-0.2.0 还包含本地模块 CLI 和公共 module-api/protocol 类型，
+0.2.1 继续包含本地模块 CLI 和公共 module-api/protocol 类型，
 可以在包根运行 `apps/server/src/module-cli.ts` 或 `scripts/export-module-api.mjs`，
 具体命令见[模块契约](module-contract-draft.md)。
 
@@ -119,8 +119,8 @@ COCKPIT_RUNTIME_ARCHIVE="$PWD/runtime-output/runtime.tar.gz" \
 
 ```sh
 git fetch origin
-git tag -a v0.2.0 VERIFIED_MAIN_SHA -m "Cockpit v0.2.0"
-git push origin v0.2.0
+git tag -a v0.2.1 VERIFIED_MAIN_SHA -m "Cockpit v0.2.1"
+git push origin v0.2.1
 ```
 
 将 `VERIFIED_MAIN_SHA` 替换成已通过检查的完整 main 提交。
