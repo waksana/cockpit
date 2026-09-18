@@ -1652,31 +1652,51 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   }, async subtest => {
     const { activate } = await import(pathToFileURL(process.env.COCKPIT_TEST_SPEECH_ENTRY!).href);
     assert.equal(typeof activate, 'function');
-    let finish!: (response: Response) => void;
+    let finish!: (text: string) => void;
     let requests = 0;
     const audioGlobals = {
       isSecureContext: true,
       navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop() {}, onended: null }] }) } },
       AudioContext: class {
-        sampleRate = 16000;
+        currentTime = 0;
         state = 'running';
-        destination = {};
-        audioWorklet = { addModule: async () => {} };
         resume = async () => {};
         close = async () => {};
         createMediaStreamSource = () => ({ connect() {}, disconnect() {} });
+        createGain = () => ({ connect() {}, disconnect() {}, gain: { setValueAtTime() {} } });
+        createMediaStreamDestination = () => ({
+          stream: { getTracks: () => [{ stop() {} }] }, disconnect() {},
+        });
       },
-      AudioWorkletNode: class {
-        port = {
-          onmessage: null as ((event: { data: object }) => void) | null,
+      RTCPeerConnection: class {
+        connectionState = 'connected';
+        channel = {
+          onopen: null as (() => void) | null,
+          onmessage: null as ((event: { data: string }) => void) | null,
           close() {},
-          postMessage: () => {
-            this.port.onmessage?.({ data: { type: 'chunk', samples: new Float32Array(160) } });
-            this.port.onmessage?.({ data: { type: 'done' } });
+          send: (message: string) => {
+            const { type } = JSON.parse(message);
+            if (type === 'input_audio_buffer.clear') {
+              this.channel.onmessage?.({ data: JSON.stringify({ type: 'input_audio_buffer.cleared' }) });
+            } else if (type === 'input_audio_buffer.commit') {
+              this.channel.onmessage?.({ data: JSON.stringify({ type: 'input_audio_buffer.committed', item_id: 'fixture-item' }) });
+              finish = text => this.channel.onmessage?.({ data: JSON.stringify({
+                type: 'conversation.item.input_audio_transcription.completed', item_id: 'fixture-item', content_index: 0, transcript: text,
+              }) });
+            } else assert.fail(`unexpected speech event ${type}`);
           },
         };
-        connect() {}
-        disconnect() {}
+        addTrack() {}
+        createDataChannel = () => this.channel;
+        createOffer = async () => ({ type: 'offer', sdp: 'v=0\r\nfixture' });
+        setLocalDescription = async () => {};
+        setRemoteDescription = async () => { this.channel.onopen?.(); };
+        close() {}
+      },
+      fetch: async (url: string, init?: RequestInit) => {
+        assert.equal(url, 'https://synthetic.openai.azure.com/openai/v1/realtime/calls');
+        assert.equal(init?.body, 'v=0\r\nfixture');
+        return new Response('v=0\r\nfixture-answer', { status: 201 });
       },
     };
     for (const [key, value] of Object.entries(audioGlobals)) {
@@ -1693,10 +1713,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
           id: 'cockpit-speech', name: 'Speech fixture', version: '0.1.1', digest, styles: [], config: {},
           apiBase: `/_modules/cockpit-speech/${digest}/api`, entry: `/_modules/assets/cockpit-speech/${digest}/entry.js`,
         }], errors: [] });
-        if (path.endsWith('/config-ready')) return Response.json({ ready: true });
-        assert.ok(path.endsWith('/transcribe'), 'no native or external HTTP');
+        assert.ok(path.endsWith('/session'), 'module backend only mints a credential');
         requests++;
-        return new Promise<Response>(resolve => { finish = resolve; });
+        return Response.json({
+          clientSecret: 'synthetic-ephemeral', expiresAt: Math.floor(Date.now() / 1000) + 60,
+          callsUrl: 'https://synthetic.openai.azure.com/openai/v1/realtime/calls',
+        });
       },
       load: async () => ({ activate }), report: assert.fail,
     });
@@ -1729,7 +1751,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(panel.parentNode, container.querySelector('.chat-composer')!.parentNode);
     await click('.cockpit-speech-mic');
     assert.equal(requests, 1);
-    await act(async () => { finish(Response.json({ text: 'speech' })); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); finish('speech'); });
     assert.equal(editor.value, 'hello speech');
     assert.equal(document.activeElement, editor);
     assert.equal(editor.selectionStart, 12);
@@ -1740,7 +1762,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await click('.cockpit-speech-mic');
     await act(() => draft.edit('manual text'));
     await click('.cockpit-speech-mic');
-    await act(async () => { finish(Response.json({ text: 'recovery' })); });
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); finish('recovery'); });
     assert.equal(editor.value, 'manual text');
     assert.equal(container.querySelectorAll('textarea').length, 2, 'one editor and one read-only recovery field');
     assert.match(container.querySelector('.cockpit-speech-panel')!.textContent, /识别结果/);

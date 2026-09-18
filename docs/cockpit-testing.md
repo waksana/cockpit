@@ -54,7 +54,7 @@ COCKPIT_TEST_SPEECH_ENTRY=/absolute/cockpit-speech/dist/web/index.js \
 ```
 
 该 opt-in 用例将真实语音 middleware 挂到真实 Composer，使用合成 AudioContext、
-AudioWorklet、权限与 HTTP 响应，覆盖 ref cleanup、选区/焦点返回、面板结构、租约
+WebRTC/data channel、权限与 HTTP 响应，覆盖 ref cleanup、选区/焦点返回、面板结构、租约
 及手动修改恢复。未设置入口时明确跳过；不读取语音配置或调用 Azure/真实麦克风。
 
 ## 真正的 SDK 与包
