@@ -10,8 +10,11 @@ The [module contract](module-contract-draft.md) describes the implemented local,
 trusted, cold-loaded package model: backend API v1, Web API v2 and public UI v1.
 Backends run in the host Node process; `publish`/`onEvent` data events are implemented.
 Unimplemented capabilities are listed separately at the end of that contract.
-Controlled hot enable/disable/update is a confirmed future goal in
-[#5](https://github.com/waksana/cockpit/issues/5), not part of the menu-registry change.
+Modules remain cold-loaded: installation and version selection take effect on
+the next host start. Hot loading, enable/disable and updates are not product goals.
+Do not reserve a hot-switching framework or change the trusted main-process model
+for that purpose. The separate planned native system page is not part of the
+menu-registry change and does not introduce arbitrary module page registration.
 
 Use a short-lived branch and a pull request against `main`; an independent
 worktree is optional. Keep other contributors' unfinished trees and runtime data

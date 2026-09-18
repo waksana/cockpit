@@ -17,8 +17,10 @@ Cockpit 是一个直接启动的 Web/API 服务，通过官方 SDK 控制原生 
 前端扩展分为菜单声明（独立 `menuVersion: 1`）、真实语义组件 middleware、
 state/service/draft 和 Markdown，不提供任意页面/router 注册。
 菜单能力属于未发布开发源码，不代表仍标 0.2.3 的包与历史 0.2.3 Release 功能相同。
-远程安装、逐模块 HTTP MCP、受控热启用/停用/更新和启动接续消息仍未实现，
+远程安装、逐模块 HTTP MCP 和启动接续消息仍未实现，
 具体已实现范围见[模块协议](module-contract-draft.md)。
+模块安装与版本选择只在下次冷启动生效；不做热加载、热启停或热更新，
+也不为热切换预留框架或改变可信主进程 import 模型。
 原生 `assistant` 消息、`task` 子代理、MCP/skill 和定时提示由 SDK 提供。
 
 <a id="target-gap"></a>
@@ -30,7 +32,8 @@ state/service/draft 和 Markdown，不提供任意页面/router 注册。
 | 关闭 | `system/shutdown` 等待原生活动和受保护在途调用，再关闭 SDK/连接并退出。 | 等待只关注原生 session；模块业务和关闭回执不参与。 |
 | 原生确认 | API/MCP 不增加 compact、rewind、delete 的确认字段；Web 删除对话框仍做防误触确认。精确输入见[客户端说明](../apps/mcp/README.md#confirmation-boundaries)。 | 原生条件与决策跟随安装版 SDK；宿主 shutdown 的确认独立保留。 |
 | 模块接入 | 本地可信包、主进程 import、冷加载；HTTP/静态资源、数据事件及四类前端扩展已接入。 | 远程签名安装、独立 MCP path 和内容包仍待实现。 |
-| 模块生命周期 | 安装/启用/停用/更新只改变下次启动选择，当前实际加载不变。 | [#5](https://github.com/waksana/cockpit/issues/5) 的模块管理及受控热启用/停用/更新已确认，尚未实现；菜单注册不实现该目标。 |
+| 模块生命周期 | 安装/启用/停用/更新只改变下次启动选择，当前实际加载不变。 | 保持冷启动生效；不做热加载/热启停/热更新。 |
+| 系统页面 | 尚未提供。 | 独立的本体完整页面，只读版本及全部已安装模块/实际加载状态，页底安全退出；具体范围见 [R6](product-requirements.md#r6--自然交互产品取舍明确)，不纳入菜单注册实现。 |
 | 启动消息 | 尚未提供。 | 可选模块保存下一次启动 prompt，并处理一次发送尝试。 |
 
 ## 代码与进程

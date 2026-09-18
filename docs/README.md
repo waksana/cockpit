@@ -52,7 +52,7 @@ React 与公开接口，不需要另建聊天应用。
 | [API 发现与调用](../apps/mcp/README.md#discover-and-invoke-the-api) | `/capabilities`、HTTP intent、MCP 工具和错误语义。 |
 | [原生聊天](native-chat.md) | 原生事件、分页 cursor、历史/实时/重连、Web 阅读窗口和媒体边界。 |
 | [原生 fork](session-fork.md) | HTTP/MCP 分叉入口、前检与继承；不是 Web 界面功能。 |
-| [产品要求 R1–R8](product-requirements.md) | 已确认的定位、边界、目标及接受的成本，包括当前冷加载与后续受控热生命周期；不代表每项目标已实现。 |
+| [产品要求 R1–R8](product-requirements.md) | 已确认的定位、边界、目标及接受的成本，包括模块冷加载和独立系统页面范围；不代表每项目标已实现。 |
 
 接口文档描述当前源码，安装文档对应指定发行；使用旧运行包时应阅读相同 tag 下的文档。
 对正在运行的服务，以 `/version` 和 `/capabilities` 为准。
@@ -63,8 +63,9 @@ React 与公开接口，不需要另建聊天应用。
 为保留外部链接，`cockpit-plan.md` 和 `module-contract-draft.md` 沿用原文件名：
 前者是当前架构说明，后者是已实现的模块协议，并在末节单列[后续目标](module-contract-draft.md#8-后续目标)。
 已确认要求与实现的差距见[架构对照](cockpit-plan.md#target-gap)。
-受控热启用/停用/更新属于[已确认的后续目标](product-requirements.md#single-service-target)，
-不是本次菜单能力或当前冷加载已实现的功能。
+[已确认要求](product-requirements.md#single-service-target)明确不做模块热加载、热启停或热更新；
+安装和版本选择由下次冷启动生效。系统页面是独立需求，不属于菜单注册实现，
+也不是模块任意页面注册机制。
 
 ## 参与开发
 
