@@ -10,8 +10,8 @@ and native attachment delivery. All UI follows the
 ## Compatibility and ownership
 
 Hosts implementing this style contract pass **`context.uiVersion === 1`**
-to frontend activation. Earlier 0.2.0 source builds did not expose this field;
-the package version alone is not sufficient evidence. A module requiring these
+to frontend activation. The package version alone is not sufficient evidence.
+A module requiring these
 styles must reject activation explicitly when the field is missing or unsupported:
 
 ```ts
@@ -27,8 +27,9 @@ UI v1 is separate from the frontend activation API. Cockpit **0.2.3** uses
 both 2), while module manifests and backend API remain v1. Old Web contribution
 slots are not accepted. When using file or notification modules, pair the host
 with **Cockpit File 0.1.7 / Cockpit Notification 0.1.0**; the UI version alone
-does not prove frontend compatibility. Release assets are available only after
-their respective Release workflows succeed. Use the existing explicit cold-start
+does not prove frontend compatibility. These paired releases are published;
+see the [module catalog](module-catalog.md) for downloads and version-specific
+instructions. Use the existing explicit cold-start
 procedure. Building or merging any repository does not authorize installation,
 deployment or restart.
 

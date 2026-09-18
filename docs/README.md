@@ -1,34 +1,73 @@
-# Cockpit 文档索引
+# Cockpit 文档
 
-这是文档的唯一导航和维护约定。先区分**当前实现、已确认要求和待实现设计**，
-再按主题阅读；“唯一”指每个主题只有一个权威维护位置，不是把全部内容塞进一个文件。
+Cockpit 本体提供 Copilot 的浏览器界面与 API，模块扩展文件、通知等功能。
+第一次使用从安装指南开始；选择模块看模块目录；开发模块看接入协议。
 
-## 当前文档
+## 开始使用
 
-| 文档 | 性质 | 唯一负责的主题 |
+| 文档 | 内容 |
+| --- | --- |
+| [项目介绍与界面预览](../README.md) | 本体功能、前后端扩展方式和现有模块。 |
+| [安装与运行](DEPLOY-PORTABLE.md) | 运行包/源码安装、Copilot 登录、首次聊天、远程访问、排错与关闭。 |
+| [模块目录](module-catalog.md) | 已发布模块、各自用途和版本配套；与待接入项目、后续方向分开列出。 |
+| [MCP 客户端](../apps/mcp/README.md#configuration) | 让其他 Agent 通过 stdio MCP 使用同一 Cockpit 后端。 |
+| [发行说明](https://github.com/waksana/cockpit/releases) | 已发布版本的下载与变更；仓库中的[发行摘要](release-notes.md)是对应版本的发行输入。 |
+| [安全政策](../SECURITY.md) | 单操作者信任边界、远程认证要求和私密漏洞报告。 |
+
+## 现有模块与扩展项目
+
+| 项目 | 简介 | 当前状态 |
 | --- | --- | --- |
-| [项目入口](../README.md) | 产品介绍 | 使用场景、界面预览、交给 Agent 的安装提示词和文档/社区入口；不承载工程细节。 |
-| [贡献指南](../CONTRIBUTING.md) | 协作政策 | 问题报告、短期分支/PR、review、贡献范围和许可。 |
-| [安全政策](../SECURITY.md) | 报告与支持政策 | 私密漏洞报告、支持版本、脱敏要求和部署信任边界摘要。 |
-| [产品要求 R1–R8](product-requirements.md) | 已确认要求 | 定位、原生权威、单服务包、模块冷加载、graceful 退出与已接受成本。 |
-| [架构与运行边界](cockpit-plan.md) | 当前实现 / 目标差距 | 直接服务、原生权威、认证、身份、graceful 和模块接入的完成边界。 |
-| [模块目录](module-catalog.md) | 后续能力 | 各模块的用户能力和与本体的协作边界。 |
-| [模块接入协议](module-contract-draft.md) | 当前接口 / 后续目标 | 包/后端 API v1、Web v2 state/middleware/Markdown 注册、本地包，以及未实现的远程安装和 HTTP MCP。 |
-| [模块 UI 开发指南](module-ui-guide.md) | 当前公共保证 | Module UI v1、Lucide、公共类/变量、模块样式协作和可运行前端示例。 |
-| [原生聊天](native-chat.md) | 当前协议说明 | 原生事件、cursor、Web 阅读窗口、历史/实时/重连和媒体边界。 |
-| [原生 fork](session-fork.md) | 当前协议说明 | 分叉前检、排他边界、实际继承与非幂等结果。 |
-| [MCP 客户端](../apps/mcp/README.md) | 当前客户端说明 | 工具映射、客户端参数、附件输入、输出分页与 MCP 配置。 |
-| [安装指南](DEPLOY-PORTABLE.md) | 当前使用指南 | 支持基线、运行包下载与校验、源码/运行包启动、原生认证、首次聊天、环境配置、远程入口、排错与关闭。 |
-| [普通产包](packaging.md) | 构建与发行契约 | 完整包、来源 manifest、依赖闭包、CI 门禁、版本政策和 tag 发行。 |
-| [本次发行摘要](release-notes.md) | 发行输入 | 本次版本的范围、运行条件与限制；已发布说明在 GitHub Releases 维护。 |
-| [开发与集成](DEVELOPMENT.md) | 工程流程 / 已确认开发要求 | 隔离工作区、源码集成、文档维护、交互语义与结构正确性、组件 lab。 |
-| [验证指南](cockpit-testing.md) | 工程流程 | 现有命令、隔离条件、证据层次及清理要求。不是安全认证或运行证明。 |
+| [Cockpit File](module-catalog.md#文件) | 在聊天中选择、粘贴或拖入附件，预览和下载文件、图片与媒体。 | 可配套安装。 |
+| [Cockpit Notification](module-catalog.md#通知) | 新回复和待回答问题的未读标记、会话计数，以及浏览器推送与应用角标。 | 可配套安装；推送与角标需要设备支持和用户授权。 |
+| [Cockpit Task](https://github.com/waksana/cockpit-task) | 记录结构化任务、授权派单、执行者报告与协作结果。 | 已有独立发布包，待适配当前模块体系。 |
+| [Cockpit WeChat Connector](https://github.com/waksana/cockpit-wechat-connector) | 将授权微信私信用户连接到指定会话，收发文本及支持的媒体。 | 已有独立发布包，待适配当前模块体系。 |
 
-文件名 `cockpit-plan.md` 为保留既有链接沿用；它现在是**当前架构说明**，
-不是另一份待办计划。`module-contract-draft.md` 区分已实现 API v1 与后续目标；
-示意清单不能代替实际包含代码的模块包。
-已确认的后续目标从[这里](product-requirements.md#single-service-target)进入；
-实际缺口从[架构对照](cockpit-plan.md#target-gap)进入。
+配套版本、下载入口和详细限制统一见[模块目录](module-catalog.md)。
+模块均为可选项；交给 Agent 安装时，使用 [README 中的安装提示词](../README.md#安装与运行)，
+让它逐个介绍模块并询问是否安装，不默认全部启用。
+
+## 开发扩展
+
+模块包可以同时包含后端 JavaScript 和前端 ESM/CSS。它们使用本体的服务端口、
+React 与公开接口，不需要另建聊天应用。
+
+| 文档 | 内容 |
+| --- | --- |
+| [模块接入协议](module-contract-draft.md) | 包格式、本地安装与冷加载、后端路由和事件、Web state/middleware/Markdown 注册、草稿生命周期。 |
+| [模块 UI 开发指南](module-ui-guide.md) | 公共样式、主题变量、图标、组件组合及可运行的最小前端示例。 |
+| [公共 TypeScript 类型](../packages/module-api/src/index.ts) | 后端 API v1；[frontend.ts](../packages/module-api/src/frontend.ts) 定义 Web API v2。 |
+
+建议按“[导出类型](module-contract-draft.md#4-公共-typescript-契约) →
+[最小前端示例](module-ui-guide.md#executable-minimal-frontend) →
+[打包与安装](module-contract-draft.md#2-包格式与本地安装)”阅读。
+公共 UI 版本目前为 v1，与包/后端及 Web API 的版本分别维护。
+
+## 接口与架构
+
+| 文档 | 内容 |
+| --- | --- |
+| [架构与运行边界](cockpit-plan.md) | 本体、SDK 和模块的职责，原生数据归属、认证、graceful 退出与当前实现差距。 |
+| [API 发现与调用](../apps/mcp/README.md#discover-and-invoke-the-api) | `/capabilities`、HTTP intent、MCP 工具和错误语义。 |
+| [原生聊天](native-chat.md) | 原生事件、分页 cursor、历史/实时/重连、Web 阅读窗口和媒体边界。 |
+| [原生 fork](session-fork.md) | HTTP/MCP 分叉入口、前检与继承；不是 Web 界面功能。 |
+| [产品要求 R1–R8](product-requirements.md) | 已确认的定位、边界、目标及接受的成本，不代表每项目标已实现。 |
+
+接口文档描述当前源码，安装文档对应指定发行；使用旧运行包时应阅读相同 tag 下的文档。
+对正在运行的服务，以 `/version` 和 `/capabilities` 为准。
+
+为保留外部链接，`cockpit-plan.md` 和 `module-contract-draft.md` 沿用原文件名：
+前者是当前架构说明，后者是已实现的模块协议，并在末节单列[后续目标](module-contract-draft.md#8-后续目标)。
+已确认要求与实现的差距见[架构对照](cockpit-plan.md#target-gap)。
+
+## 参与开发
+
+| 文档 | 内容 |
+| --- | --- |
+| [贡献指南](../CONTRIBUTING.md) | 问题报告、分支、PR、review 和许可。 |
+| [开发与集成](DEVELOPMENT.md) | 工程流程、交互语义、隔离 Chat Lab 和文档截图的更新方式。 |
+| [验证指南](cockpit-testing.md) | 按改动选择现有命令、隔离条件和清理要求。 |
+| [构建与发行](packaging.md) | 运行包内容、来源 manifest、依赖闭包、CI、版本政策和 tag 发行。 |
 
 ## 真相来源与冲突处理
 
