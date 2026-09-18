@@ -594,10 +594,20 @@ button.activity-head {
   &:not([data-header]):has(.chat-readonly-note) { border: 0; background: transparent; }
 }
 .chat-input-card-body {
-  flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column;
+  flex: 0 1 auto; min-height: 0; overflow: hidden; overscroll-behavior: contain;
   scrollbar-width: thin;
   // Classic scrollbars must not resize the editor when long decision content arrives.
   scrollbar-gutter: stable both-edges;
+}
+.chat-input-context {
+  flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin;
+  &:empty { display: none; }
+}
+.chat-input-card[data-question] {
+  .chat-input-card-body { display: block; overflow-y: auto; }
+  .chat-input-context { overflow: visible; }
 }
 .chat-folded-draft {
   display: none; flex: none; font-size: var(--chat-text-meta); color: var(--secondary-text-color);
