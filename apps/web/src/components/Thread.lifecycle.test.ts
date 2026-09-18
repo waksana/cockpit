@@ -1118,9 +1118,13 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.deepEqual(copied, [value.queue![0].text, value.queue![0].text]);
     const decision = container.querySelector('.chat-input-card')!;
     assert.equal(decision.getAttribute('data-decision'), 'true');
+    assert.equal(decision.getAttribute('data-question'), 'true');
     assert.equal(execution.parentNode, decision);
-    assert.equal(queue.parentNode?.parentNode, container.querySelector('.chat-input-card-body'));
-    assert.equal(container.querySelector('.chat-composer')?.parentNode, queue.parentNode?.parentNode);
+    const inputContext = container.querySelector('.chat-input-context')!;
+    const cardBody = container.querySelector('.chat-input-card-body')!;
+    assert.equal(queue.parentNode?.parentNode, inputContext);
+    assert.equal(inputContext.parentNode, cardBody);
+    assert.equal(container.querySelector('.chat-composer')?.parentNode, cardBody);
     assert.equal(container.querySelector('.chat-typing-stop')?.textContent, '停止并清空队列');
     decision.open = false;
     await show({ title: 'Updated background metadata' });
@@ -1151,6 +1155,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await show({ ask: null });
     assert.equal(decision.open, true, 'ordinary input is restored after a collapsed question resolves');
     assert.equal(decision.getAttribute('data-decision'), null);
+    assert.equal(decision.getAttribute('data-question'), null);
+    assert.equal(container.querySelector('.chat-input-context'), inputContext);
+    assert.equal(container.querySelector('.chat-composer')?.parentNode, cardBody);
+    assert.equal(inputContext.contains(container.querySelector('.chat-input-message')!), false);
     assert.notEqual(container.querySelector('.chat-input-message'), nextInput);
     assert.equal(getDraftSession(value.sessionId).current({}), promptDraft);
     assert.equal(promptDraft.getSnapshot().text, 'Cached ordinary prompt');

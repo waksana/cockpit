@@ -207,9 +207,12 @@ without module controls retains its normal leading inset.
 The input stays at the bottom through normal flow, not a fixed overlay. A single
 CSS flex budget caps the input area, including external notices, at 70% of the
 available Chat height. Native `::details-content` participates in that flex layout;
-the queue, question, choices, plan/confirmation and original input share one content
-scroller only when they cannot fit. The editor is not separately pinned while a
-long question scrolls. Question text remains selectable independently of the
+ordinary input stays at the card bottom outside the shared queue and
+plan/confirmation scroller. During a question, the queue, question, choices and
+answer input instead share one content scroller only when they cannot fit:
+the answer editor is part of the question, not separately pinned. Both modes
+retain the textarea's own height limit and internal scrolling for long drafts.
+Question text remains selectable independently of the
 header. Questions and choices wrap even continuous identifiers at their own
 component boundary, without clipping the option or widening the card.
 Choice selection still submits the complete original value directly; freeform text uses the existing
@@ -253,8 +256,9 @@ single-line and collapsed messages. It copies
 the complete original text through the same control used by code/tool details,
 without submitting, removing, expanding or collapsing the queued entry.
 Copying is keyboard-accessible without first expanding the text.
-Expanded queue text uses the shared card scroller rather than another independently
-capped queue region. The summary, copy and remove targets retain the explicit
+Expanded queue text uses the content scroller above ordinary input, or the shared
+card scroller during a question, without an independent queue height cap.
+The summary, copy and remove targets retain the explicit
 32px queue density on every pointer type, without a leading expansion arrow.
 Summary text and copy feedback share the metadata line-height role; padding
 adapts to that line box rather than becoming negative with larger text.
