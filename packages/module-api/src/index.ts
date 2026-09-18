@@ -1,7 +1,9 @@
 import type { Readable } from 'node:stream';
-import type { NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent, ServerEvent } from '@cockpit/protocol';
+import type { ModuleEventPayload, NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent, ServerEvent } from '@cockpit/protocol';
 
 export type { NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent, ServerEvent };
+export { MAX_MODULE_EVENT_BYTES } from '@cockpit/protocol';
+export type { ModuleEventPayload } from '@cockpit/protocol';
 export type * from './frontend.ts';
 
 export interface ModuleManifest {
@@ -51,6 +53,16 @@ export interface ModuleBackendContext {
   signal: AbortSignal;
   report(error: unknown): void;
   invalidate(): void;
+  /**
+   * Best-effort delivery through the existing SSE, scoped to this module.
+   * Inactive before activation/after stop, like invalidate(). Active calls throw
+   * and report invalid/oversized data or an unavailable/failed transport.
+   * Validation codes: MODULE_EVENT_INVALID / MODULE_EVENT_TOO_LARGE.
+   * Missing transport: MODULE_EVENT_UNAVAILABLE. No implicit fallback is sent.
+   * Only finite, dense, plain JSON data up to 64 nested levels is supported.
+   * The host captures an immutable snapshot; no delivery ACK or replay is implied.
+   */
+  publish(payload: ModuleEventPayload): void;
 }
 
 export interface ModuleBackend {

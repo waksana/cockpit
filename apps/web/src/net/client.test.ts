@@ -807,6 +807,28 @@ test('SSE validates native policy and agent status while preserving lifecycle me
   assert.deepEqual(getUxErrors(), []);
 });
 
+test('SSE parses generic module payloads and rejects malformed envelopes or oversized data', t => {
+  const { instances } = mockEventSource(t);
+  const { client, fetch, events } = setup(t, async () => assert.fail('Module events must not POST'));
+  const warn = t.mock.method(console, 'warn', () => {});
+  client.connect();
+  const source = instances[0];
+  const event = { type: 'module/event', moduleId: 'fixture', payload: { nested: ['界', null] } };
+  source.emit(event);
+  source.emit({ ...event, payload: undefined });
+  source.emit({ ...event, moduleId: '../fixture' });
+  source.emit({ ...event, sessionId: 'spoofed' });
+  source.emit({ ...event, payload: 'x'.repeat(65_536) });
+  assert.deepEqual(events, [event]);
+  assert.equal(warn.mock.callCount(), 4);
+  assert.equal(fetch.mock.callCount(), 0);
+  assert.equal(instances.length, 1);
+  const parsed = events[0];
+  if (parsed.type !== 'module/event') assert.fail();
+  assert.ok(Object.isFrozen(parsed.payload));
+  assert.throws(() => ((parsed.payload as Record<string, unknown>).nested as unknown[]).push('changed'), TypeError);
+});
+
 for (const action of ['replace', 'disconnect', 'disconnect-and-connect'] as const) {
   test(`obsolete EventSource callbacks cannot affect state or events after ${action}`, (t) => {
     const { instances, FakeEventSource } = mockEventSource(t);

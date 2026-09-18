@@ -20,6 +20,12 @@ test('module API export contains its canonical types and local protocol dependen
   assert.match(frontend, /interface ModuleFrontendContext/);
   assert.match(frontend, /interface DraftSchemaRegistration/);
   assert.match(types, /interface ModuleBackendContext/);
+  assert.match(types, /publish\(payload: ModuleEventPayload\): void/);
+  assert.match(types, /export \{ MAX_MODULE_EVENT_BYTES \}/);
+  assert.match(frontend, /onEvent\(listener: \(payload: ModuleEventPayload\) => void\): \(\) => void/);
+  const payload = await readFile(join(target, 'protocol/src/module-event.ts'), 'utf8');
+  assert.match(payload, /export type ModuleEventPayload/);
+  assert.match(payload, /MAX_MODULE_EVENT_BYTES = 64 \* 1024/);
   for (const entry of await readdir(join(target, 'protocol/src'))) assert.doesNotMatch(entry, /\.test\./);
   assert.match(await readFile(join(target, 'LICENSE'), 'utf8'), /GNU GENERAL PUBLIC LICENSE/);
   await assert.rejects(exportModuleApi(target), { code: 'EEXIST' });

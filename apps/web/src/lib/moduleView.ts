@@ -1,10 +1,12 @@
 import type { ModuleRuntime } from './moduleRuntime';
+import type { ModuleEventPayload } from '@cockpit/module-api';
 
 interface ViewStore {
   getState(): {
     activeId: string | null;
     connState: string;
     onModuleInvalidated(listener: (moduleId: string) => void): () => void;
+    onModuleEvent(listener: (moduleId: string, payload: ModuleEventPayload) => void): () => void;
   };
   subscribe(listener: () => void): () => void;
 }
@@ -23,6 +25,7 @@ export function observeModuleView(runtime: ModuleRuntime, store: ViewStore,
   };
   const unsubscribe = store.subscribe(update);
   const invalidate = store.getState().onModuleInvalidated(id => runtime.invalidate(id));
+  const events = store.getState().onModuleEvent((id, payload) => runtime.receiveEvent(id, payload));
   document.addEventListener('visibilitychange', update);
   update();
   return () => {
@@ -30,6 +33,7 @@ export function observeModuleView(runtime: ModuleRuntime, store: ViewStore,
     active = false;
     unsubscribe();
     invalidate();
+    events();
     document.removeEventListener('visibilitychange', update);
     runtime.updateView({ sessionId: null, visible: false, connected: false });
   };

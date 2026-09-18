@@ -6,10 +6,11 @@ import { validateHeaderName, validateHeaderValue } from 'node:http';
 import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pathToFileURL } from 'node:url';
+import { types } from 'node:util';
 import { z } from 'zod';
 import { cockpitHome, type Engine } from '@cockpit/core';
-import { ServerEvent } from '@cockpit/protocol';
-import type { ModuleAsset, ModuleBackend, ModuleBackendContext, ModuleRoute, NativeObservation } from '@cockpit/module-api';
+import { ServerEvent, snapshotModuleEventPayload } from '@cockpit/protocol';
+import type { ModuleAsset, ModuleBackend, ModuleBackendContext, ModuleEventPayload, ModuleRoute, NativeObservation } from '@cockpit/module-api';
 import { isDeclaredAsset, moduleDataRoot, MODULE_WORKER_LIMIT, readModuleInstallation, readModuleSettings, safeModulePath, type ModuleInstallation } from './module-install.ts';
 
 const DEFAULT_BODY_LIMIT = 1024 * 1024;
@@ -91,6 +92,7 @@ export class ModuleHost {
     hostRoot?: string;
     observer: Pick<Engine, 'onNativeEvent'> & Partial<Pick<Engine, 'onEvent'>>;
     onInvalidate?: (id: string) => void;
+    onEvent?: (id: string, payload: ModuleEventPayload) => void;
     report?: (id: string, error: unknown) => void;
     activationTimeoutMs?: number;
   }) {}
@@ -154,6 +156,17 @@ export class ModuleHost {
             if (controller.signal.aborted || this.closed || !this.loaded.some(module => module.controller === controller)) return;
             try { this.options.onInvalidate?.(id); }
             catch (error) { this.report(id, error); }
+          },
+          publish: (payload: ModuleEventPayload) => {
+            if (controller.signal.aborted || this.closed || !this.loaded.some(module => module.controller === controller)) return;
+            try {
+              if (!this.options.onEvent) throw moduleError('MODULE_EVENT_UNAVAILABLE', 'Module event transport is unavailable', 503);
+              const snapshot = snapshotModuleEventPayload(payload, types.isProxy);
+              this.options.onEvent(id, snapshot);
+            } catch (error) {
+              this.report(id, error);
+              throw error;
+            }
           },
         });
         const preparation = (async () => {

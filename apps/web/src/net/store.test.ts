@@ -228,6 +228,32 @@ test('module invalidations reuse control SSE without persistent state or extra r
   assert.deepEqual(received, ['fixture']);
 });
 
+test('module event SSE is immutable, transient and never mutates native metadata or starts reads', t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a']);
+  const state = h.store.getState();
+  const received: unknown[] = [];
+  const bad = state.onModuleEvent((_id, payload) => { (payload as { values: unknown[] }).values.push('changed'); });
+  const unsubscribe = state.onModuleEvent((id, payload) => { received.push({ id, payload }); });
+  const payload = { type: 'session/removed', sessionId: 'a', values: [1] };
+  h.source.emit({ type: 'module/event', moduleId: 'fixture', payload });
+  assert.deepEqual(received, [{ id: 'fixture', payload }]);
+  assert.equal(getUxErrors().length, 1, 'listener failure does not block another consumer');
+  assert.equal(h.store.getState(), state);
+  assert.equal(h.store.getState().sessions, state.sessions);
+  assert.equal(h.store.getState().resourceRevisions, state.resourceRevisions);
+  assert.equal(h.sources.length, 1);
+  assert.equal(h.requests.length, 0);
+  bad();
+  unsubscribe();
+  unsubscribe();
+  h.source.emit({ type: 'module/event', moduleId: 'fixture', payload: null });
+  assert.equal(received.length, 1);
+  const late = state.onModuleEvent(() => assert.fail('No event replay'));
+  late();
+});
+
 test('validated native status events need no unused browser state or additional requests', t => {
   const h = setup(t);
   h.source.open();

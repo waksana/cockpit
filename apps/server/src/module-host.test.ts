@@ -5,6 +5,7 @@ import { chmod, readFile, unlink, symlink } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import { MAX_MODULE_EVENT_BYTES, type ModuleEventPayload } from '@cockpit/module-api';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { installLocalModule, selectModule } from './module-install.ts';
@@ -35,6 +36,121 @@ async function waitUntil(predicate: () => boolean, message: string | (() => stri
   }
   assert.fail(typeof message === 'function' ? message() : message);
 }
+
+const publishingBackend = `
+let context;
+export function activate(ctx) {
+  context = ctx;
+  ctx.publish({ during: 'activation' });
+  return { routes: [] };
+}
+export function publish(value) { context.publish(value); }
+`;
+
+test('module publish captures immutable data with host-owned routing and stops with its activation', async t => {
+  const f = await moduleFixture(t);
+  const installed = await installLocalModule(await f.package(moduleEntries('publisher', publishingBackend)), { trustLocalCode: true, enable: true });
+  const app = Fastify();
+  t.after(() => app.close());
+  const events: { id: string; payload: ModuleEventPayload }[] = [];
+  const host = new ModuleHost({ observer: f.observer, onEvent: (id, payload) => { events.push({ id, payload }); } });
+  await host.register(app);
+  assert.deepEqual(events, [], 'publishing during activation is inactive, like invalidate');
+  const { publish } = await import(pathToFileURL(join(installed.root, 'backend.mjs')).href);
+  const payload = { moduleId: 'another-module', type: 'session/removed', nested: [{ value: 1 }] };
+  publish(payload);
+  payload.nested[0]!.value = 2;
+  payload.nested.push({ value: 3 });
+  assert.deepEqual(events, [{ id: 'publisher', payload: {
+    moduleId: 'another-module', type: 'session/removed', nested: [{ value: 1 }],
+  } }]);
+  assert.ok(Object.isFrozen(events[0]!.payload));
+  const snapshot = events[0]!.payload as typeof payload;
+  assert.ok(Object.isFrozen(snapshot.nested[0]));
+  assert.throws(() => { snapshot.nested[0]!.value = 3; }, TypeError);
+  assert.equal(f.listeners.size, 0, 'publication never subscribes to native history');
+  host.close();
+  publish({ after: 'stop' });
+  publish(undefined);
+  assert.equal(events.length, 1);
+});
+
+test('module publish rejects malformed, nonfinite, resource and oversized payloads and reports errors', async t => {
+  const f = await moduleFixture(t);
+  const installed = await installLocalModule(await f.package(moduleEntries('publisher', publishingBackend)), { trustLocalCode: true, enable: true });
+  const app = Fastify();
+  t.after(() => app.close());
+  const reports: unknown[] = [];
+  const events: ModuleEventPayload[] = [];
+  const host = new ModuleHost({ observer: f.observer,
+    onEvent: (_id, payload) => { events.push(payload); }, report: (_id, error) => { reports.push(error); },
+  });
+  await host.register(app);
+  const { publish } = await import(pathToFileURL(join(installed.root, 'backend.mjs')).href);
+  const cycle: unknown[] = [];
+  cycle.push(cycle);
+  let deep: unknown = null;
+  for (let i = 0; i < 65; i++) deep = { next: deep };
+  let touched = 0;
+  const accessor = Object.defineProperty({}, 'value', { enumerable: true, get() { touched++; return 'unsafe'; } });
+  const proxy = new Proxy({}, { ownKeys() { touched++; return []; } });
+  const resource = Readable.from(['data']);
+  t.after(() => resource.destroy());
+  const invalid = [
+    undefined, { value: undefined }, () => {}, Symbol(), 1n, NaN, Infinity, -Infinity,
+    cycle, deep, accessor, proxy, new Date(), new Map(), Buffer.from('data'), resource,
+    { toJSON() { touched++; return null; } }, new Array(4), { [Symbol()]: 1 },
+  ];
+  for (const payload of invalid) assert.throws(() => publish(payload), { code: 'MODULE_EVENT_INVALID' });
+  assert.equal(touched, 0);
+  assert.deepEqual(events, []);
+  assert.equal(reports.length, invalid.length);
+  assert.throws(() => publish('界'.repeat(MAX_MODULE_EVENT_BYTES / 2)), { code: 'MODULE_EVENT_TOO_LARGE' });
+  assert.equal(host.bootstrap().errors[0]!.code, 'MODULE_EVENT_TOO_LARGE');
+  const maximum = 'x'.repeat(MAX_MODULE_EVENT_BYTES - 2);
+  publish(maximum);
+  publish({ kind: 'sync-hint' });
+  assert.deepEqual(events, [maximum, { kind: 'sync-hint' }], 'rejection does not stop the module or invent a fallback');
+});
+
+test('module publish honestly reports and throws unavailable or failing transports', async t => {
+  const f = await moduleFixture(t);
+  const installed = await installLocalModule(await f.package(moduleEntries('publisher', publishingBackend)), { trustLocalCode: true, enable: true });
+  const { publish } = await import(pathToFileURL(join(installed.root, 'backend.mjs')).href);
+  for (const onEvent of [undefined, () => { throw new Error('transport failed'); }]) {
+    const app = Fastify();
+    t.after(() => app.close());
+    const reports: unknown[] = [];
+    const host = new ModuleHost({ observer: f.observer, onEvent, report: (_id, error) => { reports.push(error); } });
+    await host.register(app);
+    assert.throws(() => publish(null), onEvent ? /transport failed/ : { code: 'MODULE_EVENT_UNAVAILABLE' });
+    assert.equal(reports.length, 1);
+    host.close();
+    publish(null);
+    assert.equal(reports.length, 1);
+  }
+});
+
+test('failed and timed-out backend activations cannot publish using retained contexts', async t => {
+  const f = await moduleFixture(t);
+  const events: ModuleEventPayload[] = [];
+  const installed = [];
+  for (const [id, result] of [
+    ['failed-publisher', 'throw new Error("activation failed")'],
+    ['timed-publisher', 'return new Promise(() => {})'],
+  ]) installed.push(await installLocalModule(await f.package(moduleEntries(id, `
+    let context;
+    export function activate(ctx) { context=ctx; ctx.publish(null); ${result}; }
+    export function publish() { context.publish({ late: true }); }
+  `)), { trustLocalCode: true, enable: true }));
+  const app = Fastify();
+  t.after(() => app.close());
+  const host = new ModuleHost({ observer: f.observer, activationTimeoutMs: 30, onEvent: (_id, payload) => { events.push(payload); } });
+  await host.register(app);
+  assert.equal(host.bootstrap().errors.length, 2);
+  for (const module of installed) (await import(pathToFileURL(join(module.root, 'backend.mjs')).href)).publish();
+  assert.deepEqual(events, []);
+});
 
 test('cold-loaded modules expose only successful bootstrap assets and scoped digest-bound APIs', async t => {
   const f = await moduleFixture(t);

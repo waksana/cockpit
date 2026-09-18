@@ -237,6 +237,7 @@ test('E19: every ServerEvent variant parses a representative sample', () => {
   const samples = {
     snapshot,
     'module/invalidated': { type: 'module/invalidated', moduleId: 'synthetic-module' },
+    'module/event': { type: 'module/event', moduleId: 'synthetic-module', payload: { kind: 'delta', items: [1, null, true] } },
     'agent/status': { type: 'agent/status', status: 'up' },
     'session/added': { type: 'session/added', session: fullMeta },
     'session/invalidated': { type: 'session/invalidated', sessionId: 's1' },
