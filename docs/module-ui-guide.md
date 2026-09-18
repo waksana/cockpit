@@ -32,16 +32,18 @@ implies menu support, and no legacy navigation fallback is provided:
 if (context.menuVersion !== 1) throw new Error('This module requires Cockpit menu v1');
 ```
 
-These are current, unreleased source guarantees, not additions to the historical
-**Cockpit 0.2.3** GitHub Release. That release remains paired with
-**Cockpit File 0.1.7 / Cockpit Notification 0.1.0**.
-Those paired releases are published; see the [module catalog](module-catalog.md)
-for downloads and version-specific instructions.
-Current source pairs with **Cockpit Notification 0.1.5**; its
-`tooling/host-sdk.json` pins the exact host SDK SHA. This is a new immutable module
-version, not a published release. The development host package
-still says 0.2.3, so package versions alone cannot prove these capabilities.
-See the [module contract](module-contract-draft.md) for the authoritative pairing.
+These capabilities are included in the **Cockpit 0.2.4** release preparation;
+**0.2.4 配套 / 发布资产以对应 Release 为准**, not a claim that publication is
+complete. Its pairing is **Cockpit File 0.1.7 / Cockpit Notification 0.1.5**.
+File 0.1.7 does not consume the removed `globalNavigation` HOC, remains compatible
+and is not being rereleased. Historical **0.2.3 / Notification 0.1.0** assets
+are unchanged. See the [module catalog](module-catalog.md) for release-specific downloads.
+Notification's `tooling/host-sdk.json` records its exact compatible SDK source pin.
+That export comes from development source still numbered 0.2.3
+(0.2.3-development); the host's 0.2.4 patch-version change
+does not change those exported API types or retroactively add capabilities to the
+0.2.3 Release. The [module contract](module-contract-draft.md) owns the full SHA
+and authoritative pairing; package labels alone cannot establish capabilities.
 Use the existing explicit cold-start procedure. Building or merging any repository
 does not authorize installation, deployment or restart.
 

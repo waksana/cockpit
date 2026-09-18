@@ -11,7 +11,7 @@ Cockpit 本体提供 Copilot 的浏览器界面与 API，模块扩展文件、�
 | [安装与运行](DEPLOY-PORTABLE.md) | 运行包/源码安装、Copilot 登录、首次聊天、远程访问、排错与关闭。 |
 | [模块目录](module-catalog.md) | 已发布模块、各自用途和版本配套；与待接入项目、后续方向分开列出。 |
 | [MCP 客户端](../apps/mcp/README.md#configuration) | 让其他 Agent 通过 stdio MCP 使用同一 Cockpit 后端。 |
-| [发行说明](https://github.com/waksana/cockpit/releases) | 已发布版本的下载与变更；仓库中的[0.2.3 发行摘要](release-notes.md)记录该历史版本，不代表未发布源码能力。 |
+| [发行说明](https://github.com/waksana/cockpit/releases) | 已发布版本的下载与变更；仓库中的[0.2.4 发行摘要](release-notes.md)描述相对 0.2.3 的变化，配套 / 发布资产以对应 Release 为准。 |
 | [安全政策](../SECURITY.md) | 单操作者信任边界、远程认证要求和私密漏洞报告。 |
 
 ## 现有模块与扩展项目
@@ -56,9 +56,11 @@ React 与公开接口，不需要另建聊天应用。
 
 接口文档描述当前源码，安装文档对应指定发行；使用旧运行包时应阅读相同 tag 下的文档。
 对正在运行的服务，以 `/version` 和 `/capabilities` 为准。
-当前菜单能力属于未发布源码；开发包仍标 0.2.3 不能证明 GitHub Release 0.2.3 含有该能力。
-历史发行配套 Notification 0.1.0 与当前源码配套 Notification 0.1.5 分开核对，
-精确宿主 SDK SHA 以通知仓库 `tooling/host-sdk.json` 为准。
+0.2.4 包含独立菜单注册及模块 payload 事件，配套 Notification 0.1.5；
+**0.2.4 配套 / 发布资产以对应 Release 为准**，文档不表示发布已完成。
+File 0.1.7 继续兼容且不重新发行；历史 0.2.3 → Notification 0.1.0 配套保持不变。
+通知仓库 `tooling/host-sdk.json` 记录精确兼容 SDK 源码 pin；
+完整 SHA、0.2.3-development 导出来源与 0.2.4 的关系见[模块协议](module-contract-draft.md)。
 
 为保留外部链接，`cockpit-plan.md` 和 `module-contract-draft.md` 沿用原文件名：
 前者是当前架构说明，后者是已实现的模块协议，并在末节单列[后续目标](module-contract-draft.md#8-后续目标)。
