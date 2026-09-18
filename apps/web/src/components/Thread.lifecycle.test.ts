@@ -1656,7 +1656,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     let requests = 0;
     const audioGlobals = {
       isSecureContext: true,
-      navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop() {}, onended: null }] }) } },
+      navigator: { mediaDevices: { getUserMedia: async () => {
+        const track = { kind: 'audio', readyState: 'live', enabled: true, stop() { this.readyState = 'ended'; }, onended: null };
+        return { getTracks: () => [track] };
+      } } },
       AudioContext: class {
         currentTime = 0;
         state = 'running';
@@ -1746,10 +1749,11 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await click('.cockpit-speech-mic');
     assert.equal(draft.getSnapshot().blocks.length, 1);
     assert.equal(container.querySelector('.send')!.attributes.has('disabled'), true);
-    const panel = container.querySelector('.cockpit-speech-panel')!;
-    assert.equal(row.contains(panel), false);
-    assert.equal(panel.parentNode, container.querySelector('.chat-composer')!.parentNode);
+    assert.equal(container.querySelector('.cockpit-speech-panel'), null, 'recording is expressed by the button, not a phase panel');
+    assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.get('aria-label'), '停止录音并转写');
     await click('.cockpit-speech-mic');
+    assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.has('disabled'), true);
+    assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.get('aria-busy'), 'true');
     assert.equal(requests, 1);
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); finish('speech'); });
     assert.equal(editor.value, 'hello speech');
@@ -1757,6 +1761,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(editor.selectionStart, 12);
     assert.equal(editor.selectionEnd, 12);
     assert.equal(draft.getSnapshot().blocks.length, 0);
+    assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.has('disabled'), false);
+    const panel = container.querySelector('.cockpit-speech-panel')!;
+    assert.equal(row.contains(panel), false);
+    assert.equal(panel.parentNode, container.querySelector('.chat-composer')!.parentNode);
     assert.equal(container.querySelector('.chat-input-message'), editor);
 
     await click('.cockpit-speech-mic');
