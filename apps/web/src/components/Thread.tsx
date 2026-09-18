@@ -539,7 +539,8 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           {!readOnly && <ComposerNotices draft={draft} />}
         </div>
         <details className="chat-input-card" ref={inputCardRef} open
-          data-header={hasInputHeader || undefined} data-decision={!!(!readOnly && (ask || hasPendingDecision)) || undefined}>
+          data-header={hasInputHeader || undefined} data-decision={!!(!readOnly && (ask || hasPendingDecision)) || undefined}
+          data-question={(!readOnly && operation === 'ask') || undefined}>
           <summary className="chat-execution-head" hidden={!hasInputHeader} aria-label={`${executionLabel}，展开或收起输入卡片`}>
             <span className="chat-execution-label" role="status" title={executionLabel}
               data-running={session.status === 'running' || undefined}>{executionLabel}</span>
@@ -567,32 +568,34 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
             </span>}
           </summary>
           <div className="chat-input-card-body">
-            {!readOnly && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
-              {session.queue?.map((q) => (
-                <div key={q.id} className="chat-queue-item">
-                  <details className="chat-queue-entry">
-                    <summary className="chat-queue-text" aria-label={`查看排队消息：${q.text}`}>
-                      {q.text}
-                    </summary>
-                  </details>
-                  <div className="chat-queue-copy"><CopyButton text={q.text} label="复制排队消息" /></div>
-                  <button ref={executionControlRef} type="button" className="chat-queue-remove ck-icon-button" disabled={!connected || !onRemoveQueued}
-                    aria-label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)}><Icon name="close" size={16} /></button>
-                </div>
-              ))}
-            </div>}
-            {hasPendingDecision && <div className="chat-decisions">
-              {planRequest && planDraft && <PlanCard request={planRequest}
-                pending={planDraft.getSnapshot().pending}
-                disabled={!authoritative || !onRespondPlan}
-                onSelect={action => { void runAction(planDraft,
-                  () => onRespondPlan?.(planRequest.requestId, action)); }} />}
-              {session.elicitation && elicitationDraft && <ElicitationCard request={session.elicitation}
-                pending={elicitationDraft.getSnapshot().pending}
-                disabled={!authoritative || !onRespondElicitation}
-                onSelect={action => { void runAction(elicitationDraft,
-                  () => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
-            </div>}
+            <div className="chat-input-context">
+              {!readOnly && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
+                {session.queue?.map((q) => (
+                  <div key={q.id} className="chat-queue-item">
+                    <details className="chat-queue-entry">
+                      <summary className="chat-queue-text" aria-label={`查看排队消息：${q.text}`}>
+                        {q.text}
+                      </summary>
+                    </details>
+                    <div className="chat-queue-copy"><CopyButton text={q.text} label="复制排队消息" /></div>
+                    <button ref={executionControlRef} type="button" className="chat-queue-remove ck-icon-button" disabled={!connected || !onRemoveQueued}
+                      aria-label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)}><Icon name="close" size={16} /></button>
+                  </div>
+                ))}
+              </div>}
+              {hasPendingDecision && <div className="chat-decisions">
+                {planRequest && planDraft && <PlanCard request={planRequest}
+                  pending={planDraft.getSnapshot().pending}
+                  disabled={!authoritative || !onRespondPlan}
+                  onSelect={action => { void runAction(planDraft,
+                    () => onRespondPlan?.(planRequest.requestId, action)); }} />}
+                {session.elicitation && elicitationDraft && <ElicitationCard request={session.elicitation}
+                  pending={elicitationDraft.getSnapshot().pending}
+                  disabled={!authoritative || !onRespondElicitation}
+                  onSelect={action => { void runAction(elicitationDraft,
+                    () => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
+              </div>}
+            </div>
             {readOnly ? (
               <div className="chat-readonly-note" aria-label="只读会话">只读会话</div>
             ) : (

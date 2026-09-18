@@ -107,12 +107,16 @@ test('Chat dark theme targets the mounted chat, not an impossible nested chat', 
   assert.doesNotMatch(css, /\.chat \.chat \{/);
 });
 
-test('one CSS height budget contains notices and the native card without nested decision scrollers', () => {
+test('one CSS height budget pins ordinary input but scrolls answer input with its question', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.chat-transcript \{[^}]*flex: 1 1 0;[^}]*min-height: min\(6rem, 20%\)/);
   assert.match(css, /\.chat-input-area \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*max-height: 70%/);
   assert.match(css, /\.chat-input-card::details-content \{[^}]*display: flex;[^}]*min-height: 0;/);
-  assert.match(css, /\.chat-input-card-body \{[^}]*min-height: 0;[^}]*overflow-y: auto/);
+  assert.match(css, /\.chat-input-card-body \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0;[^}]*overflow: hidden/);
+  assert.match(css, /\.chat-input-context \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto/);
+  assert.match(css, /\.chat-input-context:empty \{\s*display: none;/);
+  assert.match(css, /\.chat-input-card\[data-question\] \.chat-input-card-body \{\s*display: block;\s*overflow-y: auto;/);
+  assert.match(css, /\.chat-input-card\[data-question\] \.chat-input-context \{\s*overflow: visible;/);
   assert.match(css, /\.chat-input-notices \{[^}]*flex: none;[^}]*max-height: min\(12rem, 30dvh\)/);
   for (const selector of ['chat-decisions', 'chat-queue', 'chat-composer-context', 'chat-pending-body']) {
     assert.doesNotMatch(css.match(new RegExp(`\\.${selector} \\{([^}]+)\\}`))?.[1] ?? '', /overflow-y: auto|max-height:/);
@@ -132,6 +136,22 @@ test('one card frame retains compact execution/queue typography and independent 
   assert.match(css, /\.chat-execution-label\[data-running\]::before \{[^}]*width: 5px;[^}]*height: 5px;/);
   assert.match(css, /\.chat-execution-label \{[^}]*flex: 1 1 0;[^}]*min-width: 4em;[^}]*text-overflow: ellipsis;/);
   assert.doesNotMatch(css.match(/\.chat-execution-label\[data-running\]::before \{([^}]+)\}/)?.[1] ?? '', /animation|transition/);
+});
+
+test('only answer drafts opt into the shared question scroller', () => {
+  for (const scene of ['reading', 'idle-queued', 'plan-queued', 'elicitation-queued', 'ask-queued', 'choice-only', 'freeform', 'decision-stack'] as const) {
+    const session = fixtureSession(scene);
+    const html = renderToStaticMarkup(createElement(Thread, { session, onLoadMore() {} }));
+    const card = html.match(/<details class="chat-input-card"[^>]*>/)?.[0];
+    assert.ok(card, scene);
+    assert.equal(card.includes('data-question="true"'), !!session.ask, scene);
+    assert.ok(html.includes('class="chat-input-context"'), scene);
+    assert.equal((html.match(/<textarea/g) ?? []).length, 1, scene);
+  }
+  const readOnly = renderToStaticMarkup(createElement(Thread, {
+    session: fixtureSession('ask-queued'), readOnly: true, onLoadMore() {},
+  }));
+  assert.doesNotMatch(readOnly, /data-question="true"|<textarea/);
 });
 
 test('spacing tokens own visible boundaries and placeholder stays distinct on focus in both themes', () => {
@@ -261,7 +281,7 @@ test('the entire input card uses one default-open disclosure without an arrow or
     session: fixtureSession('ask-queued'), onLoadMore() {},
   }));
   assert.equal((html.match(/<textarea/g) ?? []).length, 1);
-  assert.match(html, /<details class="chat-input-card" open="" data-header="true" data-decision="true"><summary class="chat-execution-head"/);
+  assert.match(html, /<details class="chat-input-card" open="" data-header="true" data-decision="true" data-question="true"><summary class="chat-execution-head"/);
   assert.match(html, /aria-label="等待你的回答，展开或收起输入卡片"/);
   assert.match(html, /class="chat-pending-body chat-answer-question" role="group" aria-label="需要你的选择"/);
   assert.ok(html.indexOf('class="chat-queue"') < html.indexOf('class="chat-composer"'));
