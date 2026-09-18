@@ -104,7 +104,7 @@ const processMessages: ChatMessage[] = [
   ...(['running', 'activity', 'completed', 'failed', 'cancelled', 'unknown'] as const).map((status, index) => message(`agent-${status}`, 'assistant', '', {
     subtype: 'subagent',
     subagent: {
-      toolCallId: `task-${status}`, name: 'explore', displayName: index === 1 ? '窄屏与极端长名称的子代理组件审视' : `组件研究 · ${status}`,
+      toolCallId: `task-${status}`, agentId: `fixture-agent-${status}`, name: 'explore', displayName: index === 1 ? '窄屏与极端长名称的子代理组件审视' : `组件研究 · ${status}`,
       status, description: '查看折叠摘要与详细过程；此处状态只表示已加载事件。',
       prompt: '检查真实组件的布局、可读性与操作反馈。**不要修改业务语义。**',
       ...(status === 'failed' ? { error: '读取失败：合成资源不存在。结果没有被静默替换。' } : {}),
@@ -180,10 +180,15 @@ export const scenarios = [
 export type Scenario = typeof scenarios[number][0];
 
 // Keep response thought/body together; tool execution fixtures are independent.
-function fixtureItems(messages: ChatMessage[]): ChatMessage[] {
+function fixtureItems(messages: ChatMessage[], sessionId: string, agentId?: string): ChatMessage[] {
   return messages.flatMap(({ toolCalls, subMessages, ...message }) => [
     ...(message.thought?.trim() || message.content.trim() || message.subtype === 'subagent' || message.role !== 'assistant'
-      ? [{ ...message, ...(subMessages ? { subMessages: fixtureItems(subMessages) } : {}) }] : []),
+      ? [{ ...message,
+        ...(message.content.trim() && (message.role === 'user' || message.role === 'assistant') ? {
+          origin: { sessionId, messageId: message.id, ...(agentId ? { agentId } : {}) },
+        } : {}),
+        ...(subMessages ? { subMessages: fixtureItems(subMessages, sessionId, message.subagent?.agentId) } : {}),
+      }] : []),
     ...(toolCalls ?? []).map(tool => ({ id: `fixture-tool-${tool.toolCallId}`, role: 'assistant' as const,
       timestamp: message.timestamp, content: '', toolCalls: [tool] })),
   ]);
@@ -228,7 +233,7 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   ];
   if (scenario === 'streaming' || scenario === 'cancelling') Object.assign(session, {
     status: 'running', nativeProcessing: true, intent: '正在整理组件观察…',
-    messages: [...processMessages, message('stream', 'assistant', '## 正在形成答案\n\n先让内容', { thought: '流式思考默认展开；结束后回归折叠。' })],
+    messages: [...processMessages, message('stream', 'assistant', '## 正在形成答案\n\n先让内容', { streaming: true, thought: '流式思考默认展开；结束后回归折叠。' })],
     queue: [{ id: 'queue-1', text: '然后检查窄屏布局。' }, { id: 'queue-2', text: '保留这条长的排队消息，不要因为主回合打断而把它丢弃。'.repeat(5) }],
   });
   if (scenario === 'cancelling') session.cancelling = true;
@@ -266,7 +271,7 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   if (scenario === 'compacting') session.compacting = true;
   if (scenario === 'auto-compacting') Object.assign(session, { compacting: true, status: 'running' });
   if (scenario === 'unloaded') Object.assign(session, { status: 'unloaded', loaded: false });
-  session.messages = fixtureItems(session.messages);
+  session.messages = fixtureItems(session.messages, session.sessionId);
   if (scenario === 'ordered-events') Object.assign(session, orderedFixture().snapshot());
   return session;
 }

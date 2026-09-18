@@ -9,8 +9,9 @@ import { Composer, ComposerNotices } from './Composer';
 import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
 import type { ChatMessage, ChatSession, ExitPlanModeAction } from '../net/types';
-import { acknowledgeInView, sendThreadDraft } from '../lib/draft';
-import { getSessionDraft } from '../lib/textDraft';
+import { acknowledgeInView, type NativeDraftRequest } from '../lib/draft';
+import { getDraftSession } from '../lib/draftSelection';
+import type { SessionDraft } from '../lib/textDraft';
 import { observeThreadScroll, READING_ACTIVITY_EVENT, type ThreadScroll } from './threadScroll';
 import { observeHistoryPrefetch } from './historyPrefetch';
 import { canSkipMessageLayout, createMessageLayout } from './messageLayout';
@@ -24,10 +25,10 @@ import { useDisclosureChoice } from '../lib/disclosureChoice';
 import { groupTranscript, transcriptGap, type TranscriptRow, type ProcessItem } from '../lib/transcriptRows';
 import { PlanCard, ElicitationCard } from './PendingDecision';
 import { StateNotice } from './StateNotice';
+import { useModuleRuntime } from './ModuleComponents';
 import { useClippedText } from '../lib/useClippedText';
 import { hasNewTranscriptContent } from '../lib/transcriptActivity';
 import { useRemovedControlFocus } from '../lib/useRemovedControlFocus';
-import type { NativeAttachment } from '@cockpit/protocol';
 
 function Thought({ message, latest, sessionId }: { message: ChatMessage; latest: boolean; sessionId: string }) {
   const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'thought', message.thoughtKey ?? message.id]), latest);
@@ -236,7 +237,7 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
         </header>
       )}
       {/* Date/byline removal on prepend must not move the reading anchor. */}
-      <div data-message-id={anchorId}>
+      <div className="message-speech" data-message-id={anchorId}>
         <MessageContent message={m} />
       </div>
     </article>
@@ -307,10 +308,9 @@ const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionI
 
 interface ThreadProps {
   session: ChatSession;
-  onSend?: (text: string, attachments?: NativeAttachment[]) => Promise<boolean>;
+  onSend?: (request: NativeDraftRequest) => Promise<boolean>;
   onRespondAsk?: (requestId: string, answer: string, wasFreeform: boolean) => Promise<boolean>;
   onRespondPlan?: (requestId: string, action: ExitPlanModeAction) => Promise<boolean>;
-  onPlanSupersede?: (requestId: string, message: string) => Promise<boolean>;
   onRespondElicitation?: (requestId: string, action: 'accept' | 'decline' | 'cancel') => Promise<boolean>;
   onRemoveQueued?: (itemId: string) => void;
   onCancel?: () => void;
@@ -323,7 +323,7 @@ interface ThreadProps {
   readOnly?: boolean;
 }
 
-export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSupersede, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, readOnly = false }: ThreadProps) {
+export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, readOnly = false }: ThreadProps) {
   const connected = useCockpit((s) => s.connState === 'open');
   const snapshotReady = useCockpit((s) => s.snapshotReady);
   const interruptAction = useKeyedAction(`interrupt:${session.sessionId}`);
@@ -340,8 +340,31 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
   const interruptResult = readOnly ? null : interruptAction.error
     ? `打断未确认：${interruptAction.error}。请核对会话状态，不要直接重试。`
     : interruptNotice?.sessionId === session.sessionId ? interruptNotice.text : null;
-  const draft = useMemo(() => getSessionDraft(session.sessionId), [session.sessionId]);
-  const { pending: actionPending, text: draftText, attachments } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
+  const drafts = useMemo(() => getDraftSession(session.sessionId), [session.sessionId]);
+  const runtime = useModuleRuntime();
+  useLayoutEffect(() => { runtime.prepareDraft(drafts.prompt); }, [runtime, drafts]);
+  const draftRevision = useSyncExternalStore(drafts.subscribe, drafts.getSnapshot, drafts.getSnapshot);
+  const askId = session.ask?.requestId, planId = session.planRequest?.requestId, elicitationId = session.elicitation?.requestId;
+  const decisions = useMemo(() => ({
+    ask: askId !== undefined ? { requestId: askId } : null,
+    planRequest: planId !== undefined ? { requestId: planId } : null,
+    elicitation: elicitationId !== undefined ? { requestId: elicitationId } : null,
+  }), [askId, planId, elicitationId]);
+  const authoritative = connected && snapshotReady;
+  const draft = useMemo(() => {
+    void draftRevision;
+    return drafts.current(decisions, authoritative);
+  }, [drafts, decisions, authoritative, draftRevision]);
+  useLayoutEffect(() => { drafts.synchronize(decisions, authoritative); }, [drafts, decisions, authoritative]);
+  const askDraft = askId !== undefined ? drafts.candidate({ kind: 'ask', requestId: askId }) : undefined;
+  const planDraft = planId !== undefined ? drafts.candidate({ kind: 'plan', requestId: planId }) : undefined;
+  const elicitationDraft = elicitationId !== undefined ? drafts.candidate({ kind: 'elicitation', requestId: elicitationId }) : undefined;
+  const canAct = useRef(false);
+  useLayoutEffect(() => {
+    canAct.current = authoritative && !readOnly;
+    return () => { canAct.current = false; };
+  }, [authoritative, readOnly]);
+  const { pending: actionPending, hasContent } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const executionLabel = session.cancelling ? '正在停止…' : session.compacting ? '正在压缩上下文…'
     : actionPending && !readOnly ? session.ask ? '正在提交回答…' : '正在提交…'
     : session.ask ? '等待你的回答' : session.planRequest ? '等待确认计划'
@@ -372,7 +395,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     const scope = { active: true };
     actionScopeRef.current = scope;
     return () => { scope.active = false; };
-  }, [session.sessionId]);
+  }, [session.sessionId, draft]);
   const previousMessages = useRef<ChatMessage[]>([]);
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -431,7 +454,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     if (inputCardRef.current) inputCardRef.current.open = true;
   }, [session.sessionId, ask?.requestId, planRequest?.requestId, session.elicitation?.requestId, hasInputHeader]);
   const executionControlRef = useRemovedControlFocus(session.sessionId, inputCardRef);
-  const operation = ask ? 'ask' : planRequest ? 'plan' : 'prompt';
+  const operation = draft.reference.purpose.kind;
   const runInView = useCallback((send: () => Promise<boolean>): Promise<boolean> => (
     acknowledgeInView(actionScopeRef.current, send, {
       scrollRevision: () => scrollOwnerRef.current?.revision ?? 0,
@@ -439,21 +462,18 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
     })
   ), []);
 
-  const runAction = useCallback((send: () => Promise<boolean> | undefined): Promise<boolean> => (
-    runInView(() => draft.runAction(send))
-  ), [draft, runInView]);
+  const runAction = useCallback((target: SessionDraft, send: () => Promise<boolean> | undefined): Promise<boolean> => (
+    runInView(() => target.runAction(send, () => canAct.current && drafts.isLive(target)))
+  ), [drafts, runInView]);
 
-  const handleSend = useCallback((): Promise<boolean> => runInView(() => draft.send((text, attachments) => sendThreadDraft(text, {
-    askRequestId: ask?.requestId,
-    planRequestId: planRequest?.requestId,
-    onSend,
-    onRespondAsk,
-    onPlanSupersede,
-  }, attachments))), [draft, ask, planRequest, onSend, onRespondAsk, onPlanSupersede, runInView]);
+  const handleSend = useCallback((): Promise<boolean> => runInView(() => draft.send(
+    request => onSend?.(request) ?? Promise.resolve(false), () => canAct.current && drafts.isCurrent(draft),
+  )), [draft, drafts, onSend, runInView]);
 
-  const handleChoice = useCallback((choice: string): Promise<boolean> => runAction(
-    () => ask ? onRespondAsk?.(ask.requestId, choice, false) : undefined,
-  ), [ask, onRespondAsk, runAction]);
+  const handleChoice = useCallback((choice: string): Promise<boolean> => {
+    if (!ask || !askDraft) return Promise.resolve(false);
+    return runAction(askDraft, () => onRespondAsk?.(ask.requestId, choice, false));
+  }, [ask, askDraft, onRespondAsk, runAction]);
 
   return (
     <DisclosureChoices key={session.sessionId}><main className="chat">
@@ -516,14 +536,14 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
           {interruptResult && <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
             {interruptResult}
           </p>}
-          {!readOnly && <ComposerNotices draft={draft} operation={operation} />}
+          {!readOnly && <ComposerNotices draft={draft} />}
         </div>
         <details className="chat-input-card" ref={inputCardRef} open
           data-header={hasInputHeader || undefined} data-decision={!!(!readOnly && (ask || hasPendingDecision)) || undefined}>
           <summary className="chat-execution-head" hidden={!hasInputHeader} aria-label={`${executionLabel}，展开或收起输入卡片`}>
             <span className="chat-execution-label" role="status" title={executionLabel}
               data-running={session.status === 'running' || undefined}>{executionLabel}</span>
-            {!readOnly && (!!draftText.trim() || attachments.length > 0) && <span className="chat-folded-draft">有草稿</span>}
+            {!readOnly && hasContent && <span className="chat-folded-draft">有草稿</span>}
             {(showStop || showInterrupt) && <span className="chat-execution-actions" role="group" aria-label="执行操作"
               onClick={event => event.stopPropagation()}>
               {showInterrupt && <button ref={executionControlRef} type="button" className="chat-interrupt ck-button"
@@ -562,26 +582,32 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onPlanSup
               ))}
             </div>}
             {hasPendingDecision && <div className="chat-decisions">
-              {planRequest && <PlanCard request={planRequest} pending={actionPending} disabled={!connected || !onRespondPlan}
-                onSelect={action => { void runAction(() => onRespondPlan?.(planRequest.requestId, action)); }} />}
-              {session.elicitation && <ElicitationCard request={session.elicitation} pending={actionPending} disabled={!connected || !onRespondElicitation}
-                onSelect={action => { void runAction(() => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
+              {planRequest && planDraft && <PlanCard request={planRequest}
+                pending={planDraft.getSnapshot().pending}
+                disabled={!authoritative || !onRespondPlan}
+                onSelect={action => { void runAction(planDraft,
+                  () => onRespondPlan?.(planRequest.requestId, action)); }} />}
+              {session.elicitation && elicitationDraft && <ElicitationCard request={session.elicitation}
+                pending={elicitationDraft.getSnapshot().pending}
+                disabled={!authoritative || !onRespondElicitation}
+                onSelect={action => { void runAction(elicitationDraft,
+                  () => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
             </div>}
             {readOnly ? (
               <div className="chat-readonly-note" aria-label="只读会话">只读会话</div>
             ) : (
               <Composer
-                key={session.sessionId}
+                key={draft.reference.id}
                 busy={session.status === 'running' && !ask && !planRequest}
                 submitLabel={ask ? '提交回答' : planRequest ? '发送新指令' : undefined}
                 disabled={!!session.compacting && session.status !== 'running'}
-                placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : session.status === 'running' ? '加入队列' : '输入消息…'))}
+                placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : operation === 'elicitation' ? '请选择上方操作' : session.status === 'running' ? '加入队列' : '输入消息…'))}
                 draft={draft}
+                editorRef={executionControlRef}
                 statusInHeader={hasInputHeader}
-                ask={ask ? { request: ask, disabled: !connected || !onRespondAsk, onChoice: choice => { void handleChoice(choice); } } : undefined}
-                operation={operation}
+                ask={ask ? { request: ask, disabled: !authoritative || !onRespondAsk, onChoice: choice => { void handleChoice(choice); } } : undefined}
                 onSend={handleSend}
-                sendBlocked={!connected || ask?.allowFreeform === false || !(ask ? onRespondAsk : planRequest ? onPlanSupersede : onSend)}
+                sendBlocked={!connected || !snapshotReady || ask?.allowFreeform === false || operation === 'elicitation' || !onSend}
               />
             )}
           </div>

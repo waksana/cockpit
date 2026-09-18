@@ -7,7 +7,7 @@ import { ChatHeader } from '../components/ChatHeader';
 import { AnchoredMenu } from '../components/AnchoredMenu';
 import { sessionActionItems } from '../lib/sessionActions';
 import { UxErrorNotifications } from '../components/UxErrorNotifications';
-import { getSessionDraft } from '../lib/textDraft';
+import { getDraftSession, getSessionDraft } from '../lib/draftSelection';
 import { useCockpit } from '../net/store';
 import { fixtureSession, scenarios, type Scenario } from './chat-fixtures';
 import { orderedFixture } from './ordered-fixtures';
@@ -39,7 +39,7 @@ export function Lab() {
   const historyPage = useRef(0);
   const moreRef = useRef<HTMLButtonElement | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
-  const draft = getSessionDraft(session.sessionId);
+  const draft = getDraftSession(session.sessionId).current(session);
   const compact = query.get('compact') === '1';
   const narrow = query.get('pane') === 'narrow';
 
@@ -146,7 +146,7 @@ export function Lab() {
         ...value, ask: value.ask ? { ...value.ask, question: `${value.ask.question}\n补充说明：更新同一问题不会自动展开卡片。` } : null,
       }))}>更新当前问题</button><button type="button" className="ck-button" onClick={() => setSession(value => ({
         ...value, ask: value.ask ? { ...value.ask, requestId: `lab-question-${++counter.current}`,
-          question: '这是下一个原生问题的合成输入；新问题应展开，原输入框和草稿保持不变。' } : null,
+          question: '这是下一个原生问题的合成输入；新问题应使用独立的空白回答草稿。' } : null,
       }))}>下一问题</button></>}
       {scenario === 'ordered-events' && <>
         <button type="button" className="ck-button" onClick={() => orderedAction('thought')}>追加思考事件</button>
@@ -173,14 +173,21 @@ export function Lab() {
           setReceipt('显式重读回调；未发出网络请求。');
           setSession(value => ({ ...value, historyError: undefined, error: null, historyStale: false, partialHistory: false, incompleteBoundary: false, materialized: true }));
         }}
-        onSend={(text) => action('发送', () => append(text, 'user'))}
+        onSend={request => action(request.intent, () => {
+          if (request.intent === 'prompt') append(request.body.text, 'user');
+          if (request.intent === 'respondAsk') {
+            setSession(value => ({ ...value, ask: null }));
+            append(request.body.answer, 'user', 'ask-reply', session.ask?.question);
+          }
+          if (request.intent === 'planSupersede') {
+            setSession(value => ({ ...value, planRequest: null }));
+            append(request.body.message, 'user');
+          }
+        })}
         onRespondAsk={(id, answer, freeform) => action(`${id} / ${answer} / freeform=${freeform}`, () => {
           setSession(value => ({ ...value, ask: null })); append(answer, 'user', 'ask-reply', session.ask?.question);
         })}
         onRespondPlan={(id, answer) => action(`${id} / ${answer}`, () => setSession(value => ({ ...value, planRequest: null })))}
-        onPlanSupersede={(id, text) => action(`${id} / 新指令`, () => {
-          setSession(value => ({ ...value, planRequest: null })); append(text, 'user');
-        })}
         onRespondElicitation={(id, answer) => action(`${id} / ${answer}`, () => setSession(value => ({ ...value, elicitation: null })))}
         onRemoveQueued={id => { setReceipt(`移除队列项：${id}`); setSession(value => ({ ...value, queue: value.queue?.filter(q => q.id !== id) })); }}
         onCancel={() => {

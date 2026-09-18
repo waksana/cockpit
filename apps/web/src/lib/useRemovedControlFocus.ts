@@ -3,12 +3,12 @@ import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react';
 // Ref cleanup runs before removal; the layout effect waits until replacement
 // controls exist. Unmounting the owner never schedules a later focus operation.
 export function useRemovedControlFocus(ownerKey: string, containerRef: RefObject<HTMLElement | null>) {
-  const pending = useRef<{ ownerKey: string; element: HTMLButtonElement; nearby: HTMLButtonElement[] } | null>(null);
-  const controlRef = useCallback((element: HTMLButtonElement | null) => {
+  const pending = useRef<{ ownerKey: string; element: HTMLElement; nearby: HTMLElement[] } | null>(null);
+  const controlRef = useCallback((element: HTMLElement | null) => {
     if (!element) return;
     return () => {
       if (element.ownerDocument.activeElement !== element) return;
-      const controls = Array.from(containerRef.current?.querySelectorAll<HTMLButtonElement>('.chat-queue-remove') ?? []);
+      const controls = Array.from(containerRef.current?.querySelectorAll<HTMLElement>('.chat-queue-remove') ?? []);
       const index = controls.indexOf(element);
       pending.current = { ownerKey, element,
         nearby: index < 0 ? [] : [...controls.slice(index + 1), ...controls.slice(0, index).reverse()] };

@@ -439,6 +439,7 @@ export type Snapshot = z.infer<typeof Snapshot>;
 
 export const ServerEvent = z.discriminatedUnion('type', [
   Snapshot,
+  z.object({ type: z.literal('module/invalidated'), moduleId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/) }),
   z.object({ type: z.literal('agent/status'), status: AgentStatus }),
   z.object({ type: z.literal('session/added'), session: SessionMeta }),
   z.object({

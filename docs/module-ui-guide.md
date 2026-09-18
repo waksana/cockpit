@@ -9,7 +9,7 @@ and native attachment delivery. All UI follows the
 
 ## Compatibility and ownership
 
-Module API v1 hosts implementing this contract pass **`context.uiVersion === 1`**
+Hosts implementing this style contract pass **`context.uiVersion === 1`**
 to frontend activation. Earlier 0.2.0 source builds did not expose this field;
 the package version alone is not sufficient evidence. A module requiring these
 styles must reject activation explicitly when the field is missing or unsupported:
@@ -22,11 +22,13 @@ This host also exposes `context.createPortal(children, container)` from its
 existing ReactDOM. Modules using it must check that it is a function before
 registering their contributions. Do not bundle a separate ReactDOM implementation.
 
-This is an additive frontend capability, not a new manifest field or backend API.
-Existing modules remain loadable by the new host. A newly migrated module is
-paired with a UI-v1 host: deliver the host first, then the module, using the
-existing explicit cold-start procedure. Building or merging either repository
-does not authorize installation, deployment or restart.
+UI v1 is separate from the frontend activation API. The current development
+source uses **Web API v2** (`context.apiVersion` and the returned declaration are
+both 2), while module manifests and backend API remain v1. Old Web contribution
+slots are not accepted. Pair the host and migrated modules; the UI version alone
+does not prove frontend compatibility. Use the existing explicit cold-start
+procedure. Building or merging either repository does not authorize installation,
+deployment or restart.
 
 Public classes and variables below are compatibility commitments. Additions may
 extend v1; removal, changed meaning or incompatible structure requires a new UI
@@ -172,9 +174,9 @@ structural styles or change Cockpit's GPL-3.0-only license.
 maintained example, typechecked by the existing Web build and exercised through
 the real module runtime by
 [`module-ui-example.test.ts`](../apps/web/src/dev/module-ui-example.test.ts).
-It declares `writes: ['text']`, registers a `composerActions` button, renders the
+It declares `writes: ['text']`, enhances the actual composer editor row, renders the
 fixed Lucide SquarePen nodes with the host React, and subscribes to the actual
-draft snapshot. Its real `disabled` includes host availability, pending and
+scoped draft state. Its real `disabled` includes host availability, pending and
 operation; clicking appends text through the scoped draft, never sends a message.
 
 Use that file as your module frontend source and compile it with your normal
@@ -203,17 +205,28 @@ Business classes can add placement, not another copy of baseline button CSS:
 
 The paired file migration replaces its bespoke action SVGs and generic button
 appearance with pinned Lucide nodes and `ck-icon-button`. File-owned `.cf-*`
-rules retain card width/height, columns, thumbnails, long-name truncation, upload
-progress and message/draft placement. The module still owns upload/resolve/
+rules retain compact row width/height, columns, inline references, long-name truncation,
+upload progress and message/draft placement. The module still owns upload/resolve/
 download/remove/retry; public CSS does not own file IDs, storage or native ACK.
 The same public variables govern disabled/pending feedback and theme appearance.
 
-A card's preview button can contain its visible thumbnail, name and status.
+A row's preview button contains its file icon, name and status.
 Download/remove/retry controls remain **siblings**, never nested interactive
 children. Keep the entire main area clickable without making the secondary
 actions trigger preview. A transparent overlay button is not inherently invalid,
 but should not be retained when direct semantic ownership gives equivalent
 geometry and behavior.
+
+Component middleware wraps React components, not their HTML. Preserve the
+original node structure and public styling; do not introduce module-placeholder
+containers, nested interactive controls, or visual indentation. Real controls
+and adornments compose through the base component's ordinary props/children.
+Markdown link/image replacements use their separate inline renderer contract.
+An empty component inserted only to receive module children is still a slot,
+not enhancement of an existing semantic component. Navigation/header middleware
+must wrap the actual controls and preserve their original navigation and focus.
+Ordinary DOM event props are public component behavior; file selection and its
+picker/dispatch lifecycle belong entirely to the file module's state services.
 
 Markdown renderers may occur inside paragraphs, emphasis, lists or headings.
 Returning a `span` does not legalize flow-only children such as `dialog`. Modal

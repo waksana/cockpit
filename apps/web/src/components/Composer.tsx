@@ -3,23 +3,21 @@
 import { useCallback, useLayoutEffect, useRef, useSyncExternalStore, type ComponentProps } from 'react';
 import type { SessionDraft } from '../lib/textDraft';
 import { Icon } from './Icon';
-import type { ComposerContext } from '@cockpit/module-api';
-import { ModuleContributions } from './ModuleContributions';
-import { moduleRuntime, type ModuleRuntime } from '../lib/moduleRuntime';
+import type { ComposerProps as PublicComposerProps, ComposerEditorProps } from '@cockpit/module-api';
+import { ModuleRuntimeProvider, useModuleElement, useModuleRuntime } from './ModuleComponents';
+import type { ModuleRuntime } from '../lib/moduleRuntime';
 import { AskContent } from './PendingDecision';
+import { resolveDraft } from '../lib/textDraft';
 
 function shouldSubmitOnEnter(): boolean {
   return window.matchMedia?.('(hover: hover) and (pointer: fine)').matches ?? true;
 }
-export function ComposerNotices({ draft, operation }: { draft: SessionDraft; operation: ComposerContext['operation'] }) {
-  const { unconfirmed, attachments } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
+export function ComposerNotices({ draft }: { draft: SessionDraft }) {
+  const { unconfirmed } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   return <>
     {unconfirmed && <div className="chat-input-notice" role="alert" tabIndex={0}>
-      <span>发送失败或结果尚未确认，草稿已保留；重发前请先检查会话。</span>
+      <span>发送或草稿确认尚未完整完成，重发前请先检查会话。</span>
       <button type="button" className="ck-icon-button" onClick={draft.dismissNotice} aria-label="关闭发送提示"><Icon name="close" size={20} /></button>
-    </div>}
-    {attachments.length > 0 && operation !== 'prompt' && <div className="chat-input-notice" role="alert">
-      当前回答或确认操作不接受附件，请先移除附件；草稿已保留。
     </div>}
   </>;
 }
@@ -31,72 +29,82 @@ interface ComposerProps {
   draft: SessionDraft;
   onSend: () => Promise<boolean>;
   sendBlocked?: boolean;
-  operation?: ComposerContext['operation'];
   runtime?: ModuleRuntime;
-  ask?: Omit<ComponentProps<typeof AskContent>, 'pending'>;
+  ask?: Omit<ComponentProps<typeof AskContent>, 'pending' | 'sessionId' | 'runtime'>;
   statusInHeader?: boolean;
+  editorRef?: PublicComposerProps['editorRef'];
 }
-export function Composer({ disabled, busy, placeholder, submitLabel, draft, onSend, sendBlocked, operation = 'prompt', runtime = moduleRuntime, ask, statusInHeader }: ComposerProps) {
-  const { text, attachments, blocks, pending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
-  const modules = useSyncExternalStore(runtime.subscribe, runtime.getSnapshot, runtime.getSnapshot);
-  const active = useRef(false);
+export function Composer({ runtime, ...props }: ComposerProps) {
+  const inherited = useModuleRuntime();
+  return <ModuleRuntimeProvider runtime={runtime ?? inherited}><ComposerController {...props} /></ModuleRuntimeProvider>;
+}
+function ComposerController({ disabled = false, busy = false, placeholder, submitLabel, draft, onSend, sendBlocked = false, ask, statusInHeader, editorRef }: ComposerProps) {
+  const { pending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
+  const runtime = useModuleRuntime();
+  const prepared = useSyncExternalStore(runtime.subscribe,
+    () => runtime.isDraftPrepared(draft), () => runtime.isDraftPrepared(draft));
+  useLayoutEffect(() => { runtime.prepareDraft(draft); }, [runtime, draft]);
+  const operation = draft.reference.purpose.kind;
+  const active = useRef<SessionDraft | null>(null);
+  const current = useRef({ disabled, sendBlocked, operation, onSend });
   useLayoutEffect(() => {
-    active.current = true;
-    return () => { active.current = false; };
+    active.current = draft;
+    return () => { active.current = null; };
   }, [draft]);
+  useLayoutEffect(() => { current.current = { disabled, sendBlocked, operation, onSend }; });
   const update = useCallback((next: string) => {
-    if (active.current) draft.edit(next);
+    if (active.current === draft && !current.current.disabled) draft.edit(next);
   }, [draft]);
-  const attachmentRouteBlocked = attachments.length > 0 && operation !== 'prompt';
-  const attachmentsDisabled = !!disabled || pending;
-  const hasAttachmentRenderer = modules.some(module => module.frontend.rendersDraftAttachments);
-  const blockedReason = blocks.map(block => block.reason).join('；');
-  const canSend = (!!text.trim() || !!attachments.length) && !disabled && !sendBlocked && !pending && !blocks.length && !attachmentRouteBlocked;
-  const submit = () => {
-    if (!active.current || !canSend || draft.getSnapshot().pending || draft.getSnapshot().blocks.length) return;
-    void onSend();
+  const submit = useCallback(() => {
+    const options = current.current;
+    const state = draft.getSnapshot();
+    if (active.current !== draft || options.disabled || options.sendBlocked || state.pending || state.blocks.length
+      || draft.isRetired() || !state.hasContent) return;
+    void options.onSend();
+  }, [draft]);
+  const props: PublicComposerProps = { draft: draft.reference, disabled, busy, placeholder, submitLabel,
+    sendBlocked, operation, statusInHeader, editorRef, onTextChange: update, onSubmit: submit,
+    children: ask && draft.reference.purpose.kind === 'ask' && draft.reference.purpose.requestId === ask.request.requestId
+      ? <AskContent {...ask} sessionId={draft.sessionId} pending={pending} /> : undefined,
   };
-  return <div className="chat-composer" data-question={!!ask || undefined}>
+  return prepared ? <ComposerPresentation {...props} /> : <ComposerBase {...props} />;
+}
+function ComposerPresentation(props: PublicComposerProps) {
+  return useModuleElement('composer', ComposerBase, props);
+}
+
+function ComposerBase({ children, ...props }: PublicComposerProps) {
+  return <div className="chat-composer" data-question={props.operation === 'ask' || undefined}>
     <div className="chat-composer-body">
-      <div className="chat-composer-context">
-        {ask && <AskContent {...ask} pending={pending} />}
-        {blocks.filter(block => block.orphaned).map(block => <div className="module-draft-recovery" role="status" key={block.id}>
-          <span>{block.reason}</span>
-          {block.orphaned && <button className="module-block-remove ck-button" type="button" onClick={() => draft.dismissOrphanedBlock(block.id)}>移除未完成的选择</button>}
-        </div>)}
-        <ModuleContributions slot="composerAbove" draft={draft} operation={operation} disabled={attachmentsDisabled} runtime={runtime} />
-        {!!attachments.length && !hasAttachmentRenderer && <div className="module-draft-attachments" role="group" aria-label="附件">
-          {attachments.map(item => <div key={item.id}>
-            <span>{item.value.displayName || ('path' in item.value ? item.value.path : item.value.type === 'selection' ? item.value.filePath : '附件')}</span>
-            <button type="button" className="ck-button" disabled={attachmentsDisabled} onClick={() => {
-              if (!draft.getSnapshot().pending) draft.removeAttachment(item.id);
-            }} aria-label="移除附件">移除</button>
-          </div>)}
-        </div>}
-      </div>
-      <div className="chat-input"
-        onDragOver={event => {
-          if (event.defaultPrevented) return;
-          if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = attachmentsDisabled ? 'none' : 'copy'; }
-        }}
-        onDrop={event => {
-          if (event.defaultPrevented) return;
-          const files = Array.from(event.dataTransfer.files);
-          if (!files.length) return;
-          event.preventDefault();
-          if (active.current) runtime.receive(files, draft, operation, attachmentsDisabled);
-        }}
-        onPaste={event => {
-          if (event.defaultPrevented) return;
-          const files = Array.from(event.clipboardData.files);
-          if (!files.length) return;
-          // Keep mixed clipboard text and the textarea's native insertion/IME behavior.
-          if (!event.clipboardData.getData('text/plain')) event.preventDefault();
-          if (active.current) runtime.receive(files, draft, operation, attachmentsDisabled);
-        }}>
-        <ModuleContributions slot="composerActions" draft={draft} operation={operation} disabled={attachmentsDisabled} runtime={runtime} />
-        <textarea className="chat-input-message ck-input" aria-label="消息输入" value={text}
-          disabled={disabled} onChange={event => update(event.target.value)} placeholder={placeholder ?? '输入消息…'} rows={1}
+      <div className="chat-composer-context">{children}</div>
+      <ComposerEditor {...props} />
+    </div>
+  </div>;
+}
+
+function ComposerEditor(props: ComposerEditorProps) {
+  const runtime = useModuleRuntime();
+  const draft = resolveDraft(props.draft);
+  const prepared = useSyncExternalStore(runtime.subscribe,
+    () => runtime.isDraftPrepared(draft), () => runtime.isDraftPrepared(draft));
+  return prepared ? <EnhancedComposerEditor {...props} /> : <ComposerEditorBase {...props} />;
+}
+function EnhancedComposerEditor(props: ComposerEditorProps) {
+  return useModuleElement('composerEditor', ComposerEditorBase, props);
+}
+
+function ComposerEditorBase({ draft, operation: _operation, disabled, busy, placeholder, submitLabel, sendBlocked, statusInHeader, editorRef,
+  onTextChange, onSubmit, children, className, ...domProps }: ComposerEditorProps) {
+  const { text, hasContent, blocks, pending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
+  const blockedReason = blocks.map(block => block.reason).join('；');
+  const canSend = hasContent && !disabled && !sendBlocked && !pending && !blocks.length;
+  const submit = () => {
+    if (canSend) onSubmit();
+  };
+  return <div {...domProps} className={['chat-input', className].filter(Boolean).join(' ')}>
+        {children}
+        <textarea ref={editorRef} className="chat-input-message ck-input" aria-label="消息输入" value={text}
+          disabled={disabled} onChange={event => onTextChange(event.target.value)} placeholder={placeholder ?? '输入消息…'} rows={1}
           onKeyDown={event => {
             if (event.nativeEvent.isComposing || event.keyCode === 229) return;
             if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); submit(); return; }
@@ -107,7 +115,5 @@ export function Composer({ disabled, busy, placeholder, submitLabel, draft, onSe
           title={pending ? '正在提交，草稿仍可编辑' : blockedReason || (submitLabel ?? (busy ? '加入队列' : '发送'))}>
           <Icon name={pending && !statusInHeader ? 'sending' : 'arrow_up'} size={24} />
         </button>
-      </div>
-    </div>
   </div>;
 }

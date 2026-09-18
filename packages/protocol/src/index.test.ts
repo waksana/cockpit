@@ -236,6 +236,7 @@ test('C11–C13: schedule/add enforces exactly one of interval/at', () => {
 test('E19: every ServerEvent variant parses a representative sample', () => {
   const samples = {
     snapshot,
+    'module/invalidated': { type: 'module/invalidated', moduleId: 'synthetic-module' },
     'agent/status': { type: 'agent/status', status: 'up' },
     'session/added': { type: 'session/added', session: fullMeta },
     'session/invalidated': { type: 'session/invalidated', sessionId: 's1' },

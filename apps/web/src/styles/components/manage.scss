@@ -211,6 +211,9 @@
   color: var(--primary-text-color);
 }
 .manage-detail-body { margin-top: 0.9rem; }
+@media (min-width: 925px) {
+  .manage-detail-header > .pane-header-content ~ * { display: none; }
+}
 .manage-detail code {
   padding: 0.05rem 0.3rem;
   border-radius: calc(var(--border-radius) / 2);

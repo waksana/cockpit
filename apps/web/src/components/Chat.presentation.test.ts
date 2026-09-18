@@ -10,6 +10,7 @@ import { fixtureSession, scenarios } from '../dev/chat-fixtures';
 import { copyText } from '../lib/copyText';
 import { compile } from 'sass';
 import { getSessionDraft } from '../lib/textDraft';
+import { getDraftSession } from '../lib/draftSelection';
 import { existsSync, readFileSync } from 'node:fs';
 import { ActivityHeader } from './ActivityHeader';
 import { ChatHeader } from './ChatHeader';
@@ -158,7 +159,7 @@ test('all input states share one full-width unframed editor row inside the same 
   assert.doesNotMatch(css, /\.chat-input-message:focus \{/);
   assert.match(css, /\.chat-input-message \{[^}]*background: transparent;/);
   assert.match(css, /\.chat-input-message \{[^}]*padding-inline-end: var\(--chat-gap-meta\);/);
-  assert.match(css, /\.module-composer-actions:not\(:empty\) \+ \.chat-input-message \{[^}]*padding-inline-start: var\(--chat-gap-meta\);/);
+  assert.match(css, /\.chat-input-message:not\(:first-child\) \{[^}]*padding-inline-start: var\(--chat-gap-meta\);/);
   assert.match(css, /\.chat-input-area \{[^}]*margin-block-end: calc\(var\(--chat-inset-bottom\) \+ env\(safe-area-inset-bottom, 0px\)\)/);
   assert.doesNotMatch(bar, /border:|border-radius:|max-width:/);
   assert.match(css, /--chat-inset-field: var\(--host-space-sm\) var\(--host-space-md\);/);
@@ -218,10 +219,10 @@ test('execution actions wrap within the card rather than shrinking text or clipp
   assert.doesNotMatch(css, /@container chat-dock \(max-width: 21rem\)/, 'narrow cards use flow, not a smaller spacing scale');
 });
 
-test('standalone disclosures and recovery share touch targets and public control geometry', () => {
+test('standalone native disclosures share touch targets and public control geometry', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   const coarse = [...css.matchAll(/@media \(pointer: coarse\) \{([\s\S]*?)\n\}/g)].map(match => match[1]).join('\n');
-  for (const selector of ['.chat-execution-head', '.chat-pending-detail > summary', '.module-draft-recovery > button']) {
+  for (const selector of ['.chat-execution-head', '.chat-pending-detail > summary']) {
     assert.ok(coarse.includes(selector), `${selector} follows the coarse target`);
   }
   assert.match(coarse, /min-block-size: var\(--ck-control-size\);/);
@@ -229,7 +230,7 @@ test('standalone disclosures and recovery share touch targets and public control
   assert.match(css, /\.chat-ask-choice \{[^}]*min-block-size: var\(--ck-control-size\);[^}]*border-radius: var\(--ck-radius\);/);
   assert.match(css, /\.chat-execution-actions button \{[^}]*padding: var\(--chat-gap-meta\) var\(--chat-inset-compact\);[^}]*border-radius: var\(--ck-radius\);/);
   assert.match(css, /\.chat-input-card \{[^}]*border-radius: var\(--host-radius-control\);/);
-  assert.match(css, /\.module-draft-recovery \{[^}]*font-size: var\(--chat-text-secondary\);[^}]*line-height: var\(--chat-leading-ui\);/);
+  assert.doesNotMatch(css, /\.module-draft-recovery/);
 });
 
 test('Chat regions and optional composer context each have a single spacing owner', () => {
@@ -240,9 +241,8 @@ test('Chat regions and optional composer context each have a single spacing owne
   assert.match(css, /\.chat-composer-body \{[^}]*gap: var\(--chat-gap-region\);/);
   assert.match(css, /\.chat-composer-context \{[^}]*display: none;[^}]*gap: var\(--chat-gap-region\);[^}]*min-height: 0;/);
   assert.match(css, /\.chat-composer-context:has\(> :not\(:empty\)\) \{\s*display: flex;/);
-  assert.match(css, /\.module-composer-above,\s*\.module-draft-attachments \{[^}]*margin: 0;/);
   assert.match(css, /\.chat-input-notice \{[^}]*margin: 0;/);
-  assert.match(css, /\.module-draft-recovery \{[^}]*margin: 0;/);
+  assert.doesNotMatch(css, /\.draft-attachments|\.module-draft-recovery/);
   assert.match(css, /\.chat-pending-head \{[^}]*margin: 0;/);
   assert.match(css, /\.chat-pending-body > \* \+ \* \{\s*margin-block-start: var\(--chat-gap-content\);/);
   assert.match(css, /\.message-body \+ \.message-attachments \{[^}]*margin-block-start: var\(--chat-gap-content\);/);
@@ -350,11 +350,14 @@ test('a choice-only request keeps the draft editable but does not offer a freefo
   Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
   t.after(() => original ? Object.defineProperty(globalThis, 'window', original) : Reflect.deleteProperty(globalThis, 'window'));
   const session = fixtureSession('choice-only');
-  getSessionDraft(session.sessionId).edit('Retained draft');
+  const prompt = getSessionDraft(session.sessionId);
+  prompt.edit('Cached prompt not an answer');
+  getDraftSession(session.sessionId).candidate({ kind: 'ask', requestId: session.ask!.requestId }).edit('Retained draft');
   const html = renderToStaticMarkup(createElement(Thread, { session, onLoadMore() {} }));
   assert.match(html, /class="chat-input-btn ck-icon-button send rp" disabled="" aria-label="提交回答"/);
   assert.match(html, /<textarea[^>]*aria-label="消息输入"[^>]*>Retained draft<\/textarea>/);
   assert.doesNotMatch(html, /<textarea[^>]*disabled/);
+  assert.doesNotMatch(html, /Cached prompt not an answer/);
 });
 
 test('a native cancelling flag disables duplicate stop clicks without claiming cancellation is complete', t => {
@@ -407,21 +410,24 @@ test('question replies retain the original question without an emoji or repeated
   assert.ok(html.indexOf('Keep this setting?') < html.indexOf('>Yes<'));
 });
 
-test('an adjacent elicitation does not change the composer ordinary prompt into an attachment-less answer', t => {
+test('elicitation selects a separate draft and cannot send its text as an ordinary prompt', t => {
   const state = useCockpit.getInitialState();
   const previousConnection = state.connState;
+  const previousReady = state.snapshotReady;
   state.connState = 'open';
-  t.after(() => { state.connState = previousConnection; });
+  state.snapshotReady = true;
+  t.after(() => { state.connState = previousConnection; state.snapshotReady = previousReady; });
   const session = { ...fixtureSession('elicitation'), sessionId: 'elicitation-with-native-file' };
   const draft = getSessionDraft(session.sessionId);
-  const binding = draft.bindModule('fixture-file', ['attachments']);
-  binding.draft.appendAttachments([{ id: 'fixture-attachment', value: { type: 'file', path: '/synthetic/file.txt' } }]);
-  t.after(() => { draft.removeAttachment('fixture-attachment'); binding.dispose(); });
+  draft.edit('CACHED_PROMPT_NOT_AN_ANSWER');
+  t.after(() => draft.edit(''));
   const html = renderToStaticMarkup(createElement(Thread, { session, onLoadMore() {}, onSend: async () => true }));
   assert.doesNotMatch(html, /当前回答或确认操作不接受附件/);
+  assert.doesNotMatch(html, /CACHED_PROMPT_NOT_AN_ANSWER/);
+  assert.equal(draft.getSnapshot().text, 'CACHED_PROMPT_NOT_AN_ANSWER');
   const send = html.match(/<button[^>]*class="chat-input-btn ck-icon-button send rp"[^>]*>/)?.[0];
   assert.ok(send);
-  assert.doesNotMatch(send, /disabled/);
+  assert.match(send, /disabled/);
   assert.doesNotMatch(html, /普通消息不会代替确认|chat-composer-hint/);
 });
 

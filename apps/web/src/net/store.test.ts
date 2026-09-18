@@ -211,6 +211,23 @@ function observe<T>(promise: Promise<T>): Promise<T> {
   return promise;
 }
 
+test('module invalidations reuse control SSE without persistent state or extra reads', t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot([]);
+  const state = h.store.getState();
+  const received: string[] = [];
+  const unsubscribe = state.onModuleInvalidated(id => { received.push(id); });
+  h.source.emit({ type: 'module/invalidated', moduleId: 'fixture' });
+  assert.deepEqual(received, ['fixture']);
+  assert.equal(h.store.getState(), state);
+  assert.equal(h.sources.length, 1);
+  assert.equal(h.requests.length, 0);
+  unsubscribe();
+  h.source.emit({ type: 'module/invalidated', moduleId: 'fixture' });
+  assert.deepEqual(received, ['fixture']);
+});
+
 test('validated native status events need no unused browser state or additional requests', t => {
   const h = setup(t);
   h.source.open();
@@ -346,7 +363,7 @@ for (const currentMode of [undefined, null, 'interactive', 'plan', 'autopilot'] 
     await setImmediate();
     assert.equal(h.requests.length, 1, 'hidden mode changes require no dedicated resource read');
     assert.equal(session('a', store).currentMode, currentMode);
-    const sending = store.getState().sendPrompt('a', 'Continue this session');
+    const sending = store.getState().sendDraft({ intent: 'prompt', body: { sessionId: 'a', text: 'Continue this session' } });
     h.assertPost(1, 'prompt', { sessionId: 'a', text: 'Continue this session' });
     await h.reply(1, { ok: true });
     assert.equal(await sending, true);
@@ -637,7 +654,7 @@ const submissions: {
 }[] = [
   {
     name: 'prompt', body: { sessionId: 'a', text: 'keep this draft' },
-    send: () => useCockpit.getState().sendPrompt('a', 'keep this draft'),
+    send: () => useCockpit.getState().sendDraft({ intent: 'prompt', body: { sessionId: 'a', text: 'keep this draft' } }),
   },
   {
     name: 'respondAsk', body: { sessionId: 'a', requestId: 'ask', answer: 'custom answer', wasFreeform: true },
@@ -734,7 +751,7 @@ test('a late failed send survives cached reentry and an obsolete response for an
   h.source.open();
   h.snapshot(['a', 'b']);
   await h.load('a', [message('old')]);
-  const pending = useCockpit.getState().sendPrompt('a', 'keep caption');
+  const pending = useCockpit.getState().sendDraft({ intent: 'prompt', body: { sessionId: 'a', text: 'keep caption' } });
   useCockpit.getState().setActiveId('b');
   useCockpit.getState().setActiveId('a');
   await h.reply(1, { ok: false });
@@ -1376,7 +1393,7 @@ test('attached prompt failures keep the original false acknowledgement and local
   const attachments: NativeAttachment[] = [{ type: 'file', path: '/native/fixture.txt' }];
   const before = session();
   const other = session('b');
-  const pending = useCockpit.getState().sendPrompt('a', 'keep draft', attachments);
+  const pending = useCockpit.getState().sendDraft({ intent: 'prompt', body: { sessionId: 'a', text: 'keep draft', attachments } });
   h.assertPost(0, 'prompt', { sessionId: 'a', text: 'keep draft', attachments }).reject(new Error('attachment denied'));
   assert.equal(await pending, false);
   assert.match(session().error ?? '', /未确认发送/);

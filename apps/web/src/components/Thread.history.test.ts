@@ -24,7 +24,7 @@ test('plan cards render only native actions in offered order, including no actio
       session: { ...base, planRequest: { requestId: 'plan', summary: 'Native plan', actions } },
       onLoadMore() { assert.fail('render must not read'); },
       onRespondPlan() { assert.fail('render must not respond'); },
-      onPlanSupersede() { assert.fail('render must not supersede'); },
+      onSend() { assert.fail('render must not supersede'); },
     }));
   for (const actions of [undefined, []]) {
     const html = plan(actions);
@@ -51,7 +51,7 @@ test('composer keeps the input without a persistent draft-storage explanation', 
 test('composer displays a dismissible notice only for unconfirmed outcomes, not normal editing or sending', async () => {
   const draft = createSessionDrafts()('composer-notice');
   const renderComposer = () => renderToStaticMarkup(createElement(Fragment, {},
-    createElement(ComposerNotices, { draft, operation: 'prompt' }),
+    createElement(ComposerNotices, { draft }),
     createElement(Composer, { draft, onSend: async () => assert.fail('render must not send') })));
   draft.edit('Retained input');
   assert.doesNotMatch(renderComposer(), /chat-input-notice/);

@@ -62,7 +62,7 @@ test('reasoning opens by default only when it is the latest visible item, not th
   }
   session.messages = [items[1], items[0]];
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
-  assert.match(html, /class="activity-detail msg-thought"><div class="message-body"><div class="markdown-paragraph">Recorded reasoning/);
+  assert.match(html, /class="activity-detail msg-thought"><div class="message-body"><p class="markdown-paragraph">Recorded reasoning/);
 });
 
 test('thought content uses the shared Markdown renderer without changing its original text', () => {

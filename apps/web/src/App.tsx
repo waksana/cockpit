@@ -25,6 +25,8 @@ import { SessionDetails } from './components/SessionDetails';
 import { SessionDeleteDialog } from './components/SessionDeleteDialog';
 import { StateNotice } from './components/StateNotice';
 import { ManagementShell } from './components/ManagementShell';
+import { moduleRuntime } from './lib/moduleRuntime';
+import { observeModuleView } from './lib/moduleView';
 
 const ManageWorkspace = lazy(() => import('./components/ManageWorkspace').then((m) => ({ default: m.ManageWorkspace })));
 const DirPicker = lazy(() => import('./components/DirPicker').then((m) => ({ default: m.DirPicker })));
@@ -268,6 +270,7 @@ export default function App() {
   useLayoutEffect(() => {
     if (activeId !== focusedId) setActiveId(focusedId);
   }, [activeId, focusedId, setActiveId]);
+  useLayoutEffect(() => observeModuleView(moduleRuntime, useCockpit, document), []);
   useEffect(() => { document.title = 'cockpit'; }, []);
   // Single client lifecycle: connect the SSE stream once on mount.
   useEffect(() => useCockpit.getState().init(), []);

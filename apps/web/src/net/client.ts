@@ -6,6 +6,7 @@ import type { NativeAttachment, IntentName, IntentBody, IntentResult, ExitPlanMo
 import { EVENTS_URL, CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { reportUxError, describeReason } from '../lib/errorReporter';
 import { consumeChatStream } from './chatStream';
+import type { NativeDraftRequest } from '../lib/draft';
 
 // The client always actively (re)connects, so externally there are only two
 // states the UI cares about: actively connecting/reconnecting, or connected.
@@ -237,6 +238,14 @@ export class NetClient {
   prompt(sessionId: string, text: string, attachments?: NativeAttachment[], mode?: 'enqueue' | 'immediate') {
     return this.intent('prompt', { sessionId, text,
       ...(attachments?.length ? { attachments } : {}), ...(mode ? { mode } : {}) });
+  }
+  sendDraft(request: NativeDraftRequest) {
+    switch (request.intent) {
+      case 'prompt': return this.intent('prompt', Intents.prompt.body.strict().parse(request.body));
+      case 'respondAsk': return this.intent('respondAsk', Intents.respondAsk.body.strict().parse(request.body));
+      case 'planSupersede': return this.intent('planSupersede', Intents.planSupersede.body.strict().parse(request.body));
+      default: throw new Error('Unsupported native draft route');
+    }
   }
   cancel(sessionId: string) { return this.intent('cancel', { sessionId }); }
   interrupt(sessionId: string) { return this.intent('session/interrupt', { sessionId }); }
