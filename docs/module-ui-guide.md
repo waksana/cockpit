@@ -6,6 +6,11 @@ The source of truth is
 [module contract](module-contract-draft.md) owns loading, contributions, drafts
 and native attachment delivery. All UI follows the
 [interaction semantics requirement](DEVELOPMENT.md#interaction-semantics-and-structural-correctness).
+For available methods and exactly which host data they expose, use the
+[public API map](module-contract-draft.md#public-api-map) and
+[data boundaries](module-contract-draft.md#public-data-boundaries).
+Registering module state does not grant access to a transcript or the private host store;
+the proposed current-window context reader is not implemented.
 
 ## Compatibility and ownership
 
