@@ -390,7 +390,7 @@ test('component middleware validates IDs, boundaries and order and composes stab
   assert.equal(f.runtime.compose('globalNavigation', Base), first);
   f.runtime.updateView({ sessionId: 'new', visible: true, connected: true });
   assert.equal(f.runtime.compose('globalNavigation', Base), first);
-  assert.equal(renderToStaticMarkup(React.createElement(first)), '<button>Core</button>', 'the complete middleware stack adds no DOM');
+  assert.equal(renderToStaticMarkup(React.createElement(first, { items: [] })), '<button>Core</button>', 'the complete middleware stack adds no DOM');
   assert.equal(wraps.length, 4);
   f.runtime.stop();
   assert.equal(f.runtime.compose('globalNavigation', Base), Base);

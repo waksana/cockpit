@@ -146,8 +146,9 @@
   }
   .dialog-status {
     font-size: var(--font-size-12);
+    white-space: nowrap;
     color: var(--secondary-text-color);
-    &[data-tone='running'] { color: var(--primary-color); }
+    &[data-tone='running'], &[data-tone='waiting'] { color: var(--primary-color); }
     &[data-tone='error'] { color: var(--danger-color); }
   }
 }

@@ -4,7 +4,7 @@
 // use AnchoredMenu instead — it pins to the trigger's live rect so it can never
 // drift off-screen.
 
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon, type IconName } from './Icon';
 import { useMenuDismiss } from '../lib/useMenuDismiss';
 
@@ -12,6 +12,7 @@ export interface MenuItem {
   id?: string;
   label: string;
   icon?: IconName;
+  iconContent?: ReactNode;
   onClick: () => void;
   destructive?: boolean;
   disabled?: boolean;
@@ -29,7 +30,9 @@ export function MenuItemButton({ item, onClose }: { item: MenuItem; onClose: () 
         disabled={item.disabled}
         onClick={() => { item.onClick(); onClose(); }}
       >
-        {item.icon && <span className="btn-menu-item-icon"><Icon name={item.icon} size={24} /></span>}
+        {(item.icon || item.iconContent) && <span className="btn-menu-item-icon">
+          {item.icon ? <Icon name={item.icon} size={24} /> : item.iconContent}
+        </span>}
         <span className="btn-menu-item-text">{item.label}</span>
       </button>
     </>

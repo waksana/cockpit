@@ -30,10 +30,11 @@ export function MessagePresentation(props: MessageProps) {
 
 const STATUS_TEXT = { unloaded: '', idle: '', running: '回复中', error: '出错' };
 function SessionStatusBase({ status, needsDecision, children }: SessionStatusProps) {
+  const tone = status === 'error' ? 'error' : needsDecision ? 'waiting' : status;
+  const label = tone === 'waiting' ? '待回答' : STATUS_TEXT[status];
   return <span className="dialog-meta">
+    {label && <span className="dialog-status" data-tone={tone}>{label}</span>}
     {children}
-    {STATUS_TEXT[status] && <span className="dialog-status" data-tone={status}>{STATUS_TEXT[status]}</span>}
-    {needsDecision && <span className="dialog-status" title="需要选择" aria-label="需要选择">选</span>}
   </span>;
 }
 export function SessionStatus(props: SessionStatusProps) {

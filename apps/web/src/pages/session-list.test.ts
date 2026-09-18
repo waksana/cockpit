@@ -99,7 +99,8 @@ test('running state and pending decisions remain without schedule indicators or 
   ]);
   assert.doesNotMatch(html, /dialog-schedule|定时任务/);
   assert.match(html, /data-tone="running">回复中/);
-  assert.equal((html.match(/aria-label="需要选择"/g) ?? []).length, 3);
+  assert.equal((html.match(/data-tone="waiting">待回答/g) ?? []).length, 3);
+  assert.doesNotMatch(html, />选</);
   assert.doesNotMatch(html, /未读|已读|dialog-unread|dialog-pinned/);
 });
 

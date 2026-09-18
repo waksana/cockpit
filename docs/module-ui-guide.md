@@ -227,6 +227,11 @@ Markdown link/image replacements use their separate inline renderer contract.
 An empty component inserted only to receive module children is still a slot,
 not enhancement of an existing semantic component. Navigation/header middleware
 must wrap the actual controls and preserve their original navigation and focus.
+`globalNavigation` receives the complete `items` list, including native MCP/Skills
+commands. Middleware can append ordinary menu actions while preserving existing
+items; the actual menu retains keyboard navigation, disabled behavior, closing
+and trigger focus restoration. This is not an empty module-only menu slot, and
+the host does not interpret action labels or notification state.
 Ordinary DOM event props are public component behavior; file selection and its
 picker/dispatch lifecycle belong entirely to the file module's state services.
 
