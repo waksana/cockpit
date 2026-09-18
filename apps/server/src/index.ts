@@ -46,7 +46,7 @@ export type ServerEngine = Pick<Engine,
   | 'login' | 'snapshot' | 'status' | 'busyCount' | 'newSession' | 'forkSession' | 'chat' | 'stop'
   | 'prompt' | 'cancel' | 'interrupt' | 'setModel' | 'rename' | 'compact' | 'rewind' | 'setMode'
   | 'deleteSession' | 'unload' | 'load'
-  | 'reload' | 'getPlan' | 'getUsage' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
+  | 'reload' | 'getPlan' | 'getUsage' | 'getActivity' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
   | 'planSupersede' | 'respondElicitation' | 'removeQueued' | 'refreshList'
   | 'listLive' | 'getMeta' | 'listGlobalMcp' | 'setMcpDefault'
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
@@ -383,6 +383,7 @@ const handlers: IntentHandlers = {
   'session/list': async () => ({ sessions: await engine.listLive() }),
   'session/get': async (b) => ({ meta: await engine.getMeta(b.sessionId) }),
   'session/resources': async (b) => ({ meta: await engine.getResources(b.sessionId, b.resources) }),
+  'session/activity': async (b) => engine.getActivity(b.sessionId),
   'mcp/global': async () => ({ servers: await engine.listGlobalMcp() }),
   'mcp/global-default': async (b) => {
     await engine.setMcpDefault(b.name, b.on);
@@ -449,7 +450,7 @@ function errorStatus(error: unknown): number {
 
 const readIntents = new Set<IntentName>([
   'system/status', 'runtime/snapshot', 'session/chat', 'session/list', 'session/get', 'session/refresh',
-  'session/resources', 'session/usage', 'session/plan', 'session/panels', 'session/panel',
+  'session/resources', 'session/usage', 'session/activity', 'session/plan', 'session/panels', 'session/panel',
   'mcp/global', 'mcp/session', 'skills/global', 'skills/read', 'skills/session',
   'schedule/list', 'fs/listDir',
 ]);

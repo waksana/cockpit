@@ -15,6 +15,39 @@ Native SDK callbacks still handle control/resource events; registering no
 chat handler does not promise that the SDK transport stops receiving all native
 notifications.
 
+## `POST /intent/session/activity`
+
+Send `{ "sessionId": "session-id" }` to read the native activity details for an
+already loaded session. The result contains `sessionId`, `sampledAt` (read
+completion time), the native `processing`, `hasActiveWork` and `abortable` flags,
+`tasks` (ID, agent/shell type, description and native status),
+`queue: { pendingCount, steeringCount, inFlightSteeringCount }`, and
+`mcp: { pendingConnections }` (connecting server names).
+
+The read reuses the five control RPCs: `metadata.isProcessing`,
+`metadata.activity`, `tasks.list`, `queue.pendingItems` and `mcp.list`. Their
+results are not an atomic snapshot. No chat scanning, persistent activity cache,
+inference or implicit session loading is involved. Unknown/unloaded handles
+return `409 SESSION_UNLOADED`; unavailable or malformed native reads fail rather
+than returning false/zero/empty placeholders.
+
+`processing` means a turn or background continuation, not necessarily model
+generation. `hasActiveWork` can be true without a more specific explanation.
+Tasks are those currently tracked by the runtime, possibly including retained
+finished tasks, not a complete historical registry. In-flight steering messages
+are a subset of the steering queue, not an extra count. Task prompts/results,
+shell commands and queue message bodies are not included in this activity read.
+
+Existing `status` and `nativeProcessing` retain their legacy aggregate-busy
+semantics; the new `processing` field is the actual native flag. Safety gates
+still independently read current state. This endpoint neither changes the Web
+display nor adds a new SSE payload. Consumers can reread after
+`session/invalidated` for `control`, `tasks`, `queue` or `mcp` (or an unscoped
+invalidation), relevant `session/patch` changes such as turn start or lifecycle
+changes, and reconnection. Do not reread on the `activeOperations`-only lease
+patches emitted by reads themselves. Initial SSE snapshots/`session/added` and
+existing metadata reads still supply the old summary, not these new details.
+
 ## `POST /intent/session/chat`
 
 The published capability schema is authoritative:

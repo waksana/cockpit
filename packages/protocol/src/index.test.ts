@@ -65,6 +65,27 @@ test('native runtime busy state survives the shared wire projection', () => {
   }).success, false);
 });
 
+test('session/activity requires real flags and counts without idle defaults', () => {
+  const schema = Intents['session/activity'];
+  const result = {
+    sessionId: 's', sampledAt: 1, processing: false, hasActiveWork: true, abortable: false,
+    tasks: [{ id: 'task', type: 'agent', description: 'Inspect', status: 'future-native-status' }],
+    queue: { pendingCount: 0, steeringCount: 2, inFlightSteeringCount: 1 },
+    mcp: { pendingConnections: ['tools'] },
+  };
+  roundTrip(schema.result, result);
+  for (const key of ['processing', 'hasActiveWork', 'abortable', 'tasks', 'queue', 'mcp'] as const) {
+    const incomplete = { ...result };
+    Reflect.deleteProperty(incomplete, key);
+    assert.equal(schema.result.safeParse(incomplete).success, false, key);
+  }
+  for (const count of [-1, 0.5, undefined]) {
+    assert.equal(schema.result.safeParse({ ...result, queue: { ...result.queue, pendingCount: count } }).success, false);
+  }
+  assert.equal(schema.body.safeParse({ sessionId: '' }).success, false);
+  assert.equal(schema.body.safeParse({ sessionId: 's', load: true }).success, false);
+});
+
 function roundTrip(schema: z.ZodTypeAny, value: unknown, label?: string) {
   assert.deepEqual(schema.parse(JSON.parse(JSON.stringify(value))), value, label);
 }
@@ -441,6 +462,8 @@ const intentFixtures = {
   'session/panels': { body: sid, result: panels },
   'session/panel': { body: { ...sid, section: 'tasks' }, result: { items: panels.tasks } },
   'session/resources': { body: { ...sid, resources: ['schedule'] }, result: { meta: { ...sid, loaded: true, scheduleCount: 2 } } },
+  'session/activity': { body: sid, result: { ...sid, sampledAt: 1, processing: false, hasActiveWork: false, abortable: false,
+    tasks: [], queue: { pendingCount: 0, steeringCount: 0, inFlightSteeringCount: 0 }, mcp: { pendingConnections: ['tools'] } } },
   respondAsk: { body: { ...sid, requestId: 'r1', answer: 'yes', wasFreeform: false }, result: ok },
   respondPlan: { body: { ...sid, requestId: 'r1', action: 'autopilot_fleet' }, result: ok },
   planSupersede: { body: { ...sid, requestId: 'r1', message: 'Do this instead' }, result: ok },

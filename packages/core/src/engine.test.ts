@@ -1282,6 +1282,119 @@ function installUsage(s: ReturnType<typeof fakeSession>, context: unknown = { co
   return () => calls;
 }
 
+test('native activity exposes separate facts using exactly the existing five control reads', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  s.state.mcp.host!.pendingConnections = ['tools'];
+  const before = nativeCalls(s);
+  h.events.length = 0;
+  const first = await h.engine.getActivity(s.id);
+  assert.deepEqual(first, {
+    sessionId: s.id, sampledAt: first.sampledAt, processing: false, hasActiveWork: false, abortable: false,
+    tasks: [], queue: { pendingCount: 0, steeringCount: 0, inFlightSteeringCount: 0 },
+    mcp: { pendingConnections: ['tools'] },
+  });
+  assert.ok(first.sampledAt > 0 && first.sampledAt <= Date.now());
+  assert.deepEqual(nativeCallDelta(s, before), {
+    'metadata.isProcessing': 1, 'metadata.activity': 1, 'queue.pendingItems': 1, 'tasks.list': 1, 'mcp.list': 1,
+  });
+  assert.ok(h.events.every(e => e.type === 'session/patch'
+    && Object.keys(e).every(key => ['type', 'sessionId', 'activeOperations'].includes(key))));
+  const legacy = (await h.engine.getMeta(s.id))!;
+  assert.equal(legacy.status, 'running');
+  assert.equal(legacy.nativeProcessing, true, 'existing compatibility semantics are unchanged');
+
+  s.state.processing = true;
+  s.state.tasks = [
+    task('idle'),
+    { type: 'shell', id: 'shell', description: 'Build', status: 'running', command: 'private-command',
+      attachmentMode: 'attached', startedAt: timestamp },
+  ];
+  s.state.queue = { items: [queued('q', 'private-message')], steeringMessages: ['private-steering'], inFlightSteeringCount: 1 };
+  const current = await h.engine.getActivity(s.id);
+  assert.equal(current.processing, true);
+  assert.equal(current.hasActiveWork, true);
+  assert.equal(current.abortable, true);
+  assert.deepEqual(current.tasks, [
+    { id: 'task-registry-id', type: 'agent', description: 'background inspection', status: 'idle' },
+    { id: 'shell', type: 'shell', description: 'Build', status: 'running' },
+  ]);
+  assert.deepEqual(current.queue, { pendingCount: 1, steeringCount: 1, inFlightSteeringCount: 1 });
+  assert.doesNotMatch(JSON.stringify(current), /private-|inspect fixture|startedAt|toolCallId/);
+  assert.equal(s.sdk.send.mock.callCount(), 0);
+});
+
+test('native activity preserves unexplained native work without claiming a running turn', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  s.state.activeWork = true;
+  s.rpc.metadata.activity.mock.mockImplementation(async () => ({ hasActiveWork: true, abortable: false }));
+  const result = await h.engine.getActivity(s.id);
+  assert.equal(result.processing, false);
+  assert.equal(result.hasActiveWork, true);
+  assert.equal(result.abortable, false);
+  assert.deepEqual(result.tasks, []);
+  assert.deepEqual(result.mcp.pendingConnections, []);
+});
+
+test('native activity unloaded/unknown reads do not resume, create or register sessions', async t => {
+  const h = harness(t);
+  const s = await h.seed();
+  const before = nativeCalls(s);
+  for (const id of [s.id, 'unknown']) {
+    await assert.rejects(h.engine.getActivity(id), { code: 'SESSION_UNLOADED', statusCode: 409 });
+  }
+  assert.deepEqual(nativeCallDelta(s, before), {});
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+  assert.equal(h.runtime.createSession.mock.callCount(), 0);
+  assert.equal(await h.engine.getMeta('unknown'), null);
+});
+
+test('native activity malformed or failed reads fail explicitly and release the read lease', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  s.rpc.metadata.activity.mock.mockImplementationOnce(async () => {
+    const invalid = { hasActiveWork: false, abortable: false };
+    Reflect.deleteProperty(invalid, 'abortable');
+    return invalid;
+  });
+  await assert.rejects(h.engine.getActivity(s.id), /abortable/);
+  s.rpc.tasks.list.mock.mockImplementationOnce(async () => { throw new Error('native task read failed'); });
+  await assert.rejects(h.engine.getActivity(s.id), /native task read failed/);
+  assert.equal((await h.engine.getMeta(s.id))?.activeOperations, 0);
+  assert.equal(s.sdk.send.mock.callCount(), 0);
+});
+
+test('native activity reserves its read before a liveness probe and cannot race unload', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const alive = deferred<boolean>();
+  h.runtime.isSessionLive.mock.mockImplementationOnce(() => alive.promise);
+  const reading = h.engine.getActivity(s.id);
+  await nextTurn();
+  const rejected = assert.rejects(h.engine.unload(s.id), /operation.*progress|protected/i);
+  alive.resolve(true);
+  await rejected;
+  await reading;
+  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+  assert.equal((await h.engine.getMeta(s.id))?.activeOperations, 0);
+});
+
+test('native activity rejects a response from a detached session', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const held = deferred<{ tasks: NativeTask[] }>();
+  s.rpc.tasks.list.mock.mockImplementationOnce(() => held.promise);
+  const rejected = assert.rejects(h.engine.getActivity(s.id), /closed/);
+  await nextTurn();
+  h.attached.delete(s.id);
+  s.emit(connectionEvent('disconnected'));
+  await rejected;
+  held.resolve({ tasks: [] });
+  await nextTurn();
+  assert.equal((await h.engine.getMeta(s.id))?.loaded, false);
+});
+
 test('native usage reads exactly two native snapshots, preserves scope, strips sources and never invokes inference', async t => {
   const h = harness(t);
   const s = await h.load();

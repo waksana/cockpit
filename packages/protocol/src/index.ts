@@ -389,9 +389,27 @@ export const SessionMeta = z.object({
   // represented as a still-settling operation.
   activeMcpOperations: z.number().int().nonnegative().optional(),
   activeOperations: z.number().int().nonnegative().optional(),
-  nativeProcessing: z.boolean().optional(),
+  nativeProcessing: z.boolean().optional().describe('Legacy aggregate busy flag, not the raw native isProcessing result. Use session/activity.processing for the native flag.'),
 });
 export type SessionMeta = z.infer<typeof SessionMeta>;
+
+export const SessionActivity = z.object({
+  sessionId: z.string(),
+  sampledAt: z.number().int().nonnegative().describe('Read completion time in epoch milliseconds; the native reads are not an atomic snapshot.'),
+  processing: z.boolean().describe('Native isProcessing: a turn or background continuation, not necessarily model generation.'),
+  hasActiveWork: z.boolean().describe('Native activity flag; may be true without a more specific reason in this response.'),
+  abortable: z.boolean().describe('Native activity flag, not authorization or a guarantee that a later abort will succeed.'),
+  tasks: z.array(z.object({
+    id: z.string(), type: z.enum(['agent', 'shell']), description: z.string(), status: z.string(),
+  })).describe('Currently tracked native tasks, including idle/finished tasks if retained; not a complete historical registry.'),
+  queue: z.object({
+    pendingCount: z.number().int().nonnegative(),
+    steeringCount: z.number().int().nonnegative(),
+    inFlightSteeringCount: z.number().int().nonnegative().describe('Leading steering messages already folded into the running turn; a subset, not an additional queue.'),
+  }),
+  mcp: z.object({ pendingConnections: z.array(z.string()) }),
+});
+export type SessionActivity = z.infer<typeof SessionActivity>;
 
 // Resource names describe read dependencies, not cached native state. Omission
 // in a projection means "not requested", never an empty/default value.
@@ -646,6 +664,11 @@ export const Intents = {
     description: 'Read only requested metadata resources, without loading a session. Omitted fields were not requested, not cleared. loaded:false invalidates all previous native fields; meta:null means unknown session. Control display is not permission to delete, unload or restart; mutations independently confirm fresh safety.',
     body: z.object({ sessionId: z.string(), resources: z.array(MetaResource).min(1).max(MetaResource.options.length) }),
     result: z.object({ meta: SessionProjection.nullable() }),
+  },
+  'session/activity': {
+    description: 'Read native processing/activity flags, tracked task summaries, queue counts and connecting MCP names for a loaded session. Does not load sessions, scan chat, infer exclusive busy reasons or change legacy status/nativeProcessing. Refresh after control/tasks/queue/mcp invalidations or relevant session patches and after reconnect. Unloaded/unknown native handles fail explicitly.',
+    body: z.object({ sessionId: z.string().min(1) }).strict(),
+    result: SessionActivity,
   },
   'mcp/global': {
     description: 'Read Copilot native user MCP configuration and defaults without activating a session.',
