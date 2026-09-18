@@ -7,8 +7,9 @@ substantial behavior or architecture changes in an issue before implementing the
 ## Before you start
 
 - Read the [current architecture and scope](docs/cockpit-plan.md) and
-  [product requirements](docs/product-requirements.md). Planned modules are not
-  currently installable features.
+  [product requirements](docs/product-requirements.md). The
+  [module catalog](docs/module-catalog.md) distinguishes installable modules
+  from independent projects awaiting integration and future capabilities.
 - For setup, use the [source installation guide](docs/DEPLOY-PORTABLE.md#from-source):
   Node **24.20.0**, pnpm **10.34.5**, and the frozen lockfile.
 - The [development guide](docs/DEVELOPMENT.md) owns engineering commands and

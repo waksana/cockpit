@@ -4,16 +4,22 @@
 本地可信包、主进程 import、冷加载已实现。本文描述未发布开发源码，不反写历史发行：
 GitHub Release **Cockpit 0.2.3** 的配套模块仍为 **Cockpit File 0.1.7 /
 Cockpit Notification 0.1.0**，以对应 tag 的文档和资产为准。
+[v0.2.3 运行包](https://github.com/waksana/cockpit/releases/tag/v0.2.3)及上述配套模块均已发布；
+下载和使用入口见[模块目录](module-catalog.md)。
 本轮源码的通知模块配套版本为 **Cockpit Notification 0.1.5**，是新的不可变模块版本，尚未发行；
 精确宿主 SDK SHA 固定在通知仓库的 `tooling/host-sdk.json`，不能只凭包版本判断兼容。
 宿主开发包版本仍为 0.2.3，不代表该历史 Release 已获得新菜单能力。
 Web v2、UI v1 和菜单能力分别检查；不保留旧 Web 插口或导航 middleware 的兼容别名。
-源码和文档不表示已经发布、安装或重启。
+源码更新不表示已经发布、安装或重启，也不代表已安装的服务或模块已经升级。
 远程签名 URL 安装、模块 HTTP MCP、角色/skill 包和通用页面贡献仍未实现。
 
 产品边界见 [R1–R8](product-requirements.md)，文件模块的业务契约由
 [cockpit-file](https://github.com/waksana/cockpit-file) 维护。
 本文维护宿主当前接口与未实现目标，不复制文件业务。
+
+**按任务阅读：**[安装模块](#2-包格式与本地安装) · [配置与数据](#3-代码数据与配置) ·
+[后端接口](#4-公共-typescript-契约) · [HTTP 与资源](#5-http资产与版本) ·
+[前端扩展](#6-前端注册与草稿) · [事件与退出](#7-原生观察和退出) · [后续目标](#8-后续目标)。
 
 ## 1. 当前支持范围
 
@@ -28,7 +34,7 @@ Web v2、UI v1 和菜单能力分别检查；不保留旧 Web 插口或导航 mi
 | 草稿 | 本体基础 state；模块经声明、作用域绑定的 actions 扩展，发送与 ACK 仍归本体 |
 | 启用/停用 | 修改下次启动选择，当前进程不热加载或热卸载 |
 
-首个消费者是文件模块。全局文件库仍属于该模块的 roadmap；
+文件和通知模块已经使用公开模块接口。全局文件库和文件管理页面仍在文件模块的 roadmap 中；
 当前 Web 菜单注册只声明已有全局/会话菜单中的动作，不注册任意页面或 router。
 manifest/后端 API v1 也不提供页面注册字段，未知字段明确拒绝。
 不为尚未用到的插口预造通用组件反射或业务工作流系统。
@@ -204,7 +210,7 @@ apiBase、公开配置、request、signal、onInvalidate、onEvent 和 report。
 当前宿主另提供 `context.uiVersion: 1`，声明已实现的公共语义 CSS 与图标规范。
 精确类名、变量、兼容条件、两仓交付顺序与可运行示例统一维护在
 [模块 UI 开发指南](module-ui-guide.md)。这是前端 additive 能力，不是新的 manifest 字段；
-旧宿主没有该字段，依赖 UI v1 的模块必须明确拒绝不兼容激活，不能只看包版本。
+依赖 UI v1 的模块必须检查该字段并明确拒绝不兼容激活，不能只看宿主 package 版本。
 
 菜单注册另由 **`context.menuVersion: 1`** 声明；使用菜单的模块必须独立检查此能力。
 它不是 `apiVersion` 或 `uiVersion` 的别名，也不是兼容旧导航接口的开关；

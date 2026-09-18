@@ -10,8 +10,8 @@ and native attachment delivery. All UI follows the
 ## Compatibility and ownership
 
 Hosts implementing this style contract pass **`context.uiVersion === 1`**
-to frontend activation. Earlier 0.2.0 source builds did not expose this field;
-the package version alone is not sufficient evidence. A module requiring these
+to frontend activation. The package version alone is not sufficient evidence.
+A module requiring these
 styles must reject activation explicitly when the field is missing or unsupported:
 
 ```ts
@@ -35,6 +35,8 @@ if (context.menuVersion !== 1) throw new Error('This module requires Cockpit men
 These are current, unreleased source guarantees, not additions to the historical
 **Cockpit 0.2.3** GitHub Release. That release remains paired with
 **Cockpit File 0.1.7 / Cockpit Notification 0.1.0**.
+Those paired releases are published; see the [module catalog](module-catalog.md)
+for downloads and version-specific instructions.
 Current source pairs with **Cockpit Notification 0.1.5**; its
 `tooling/host-sdk.json` pins the exact host SDK SHA. This is a new immutable module
 version, not a published release. The development host package

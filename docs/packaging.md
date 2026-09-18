@@ -2,13 +2,12 @@
 
 本页维护构建产物和包身份。
 Cockpit 只产生包含前后端与必要依赖的包，由使用者决定放在哪里、何时运行。
-本页对应 0.2.3 发行；运行包以该版本 Release workflow 成功发布的资产为准。
-已有 v0.1.0 包应使用对应 tag 的文档和数据根约定。
+本页对应已发布的 0.2.3 发行；其他版本应使用对应 tag 的文档。
 
 ## 获取运行包
 
 普通使用者在 [Cockpit v0.2.3 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.3)
-发布完成后下载 `runtime.tar.gz` 和 `runtime.tar.gz.sha256`；不必安装 pnpm 或克隆开发工作树。
+下载 `runtime.tar.gz` 和 `runtime.tar.gz.sha256`；不必安装 pnpm 或克隆开发工作树。
 在下载目录验证摘要，再解压到新目录：
 
 ```sh
