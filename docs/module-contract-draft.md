@@ -1,9 +1,11 @@
 # 模块接入协议
 
-**当前开发源码：模块包/后端 API v1，Web API v2，公共 UI v1。**
+**Cockpit 0.2.3：模块包/后端 API v1，Web API v2，公共 UI v1。**
 本地可信包、主进程 import、冷加载不变。Web v2 是需要宿主与模块配套升级的不兼容变更；
-旧 Web 插口不保留兼容层，不能把同一个宿主包版本号视为能力证明。
-运行包以实际发行资产为准；开发分支的接口不表示已经发布或安装。
+旧 Web 插口不保留兼容层。使用文件或通知模块时，必须分别配套
+Cockpit File 0.1.7 / Cockpit Notification 0.1.0；manifest/后端 API 和公共 UI 版本未变，
+不能只凭它们判断 Web 兼容性。
+运行包只在 v0.2.3 Release workflow 成功后可用；源码和文档不表示已经发布、安装或重启。
 远程签名 URL 安装、模块 HTTP MCP、角色/skill 包和通用页面贡献仍未实现。
 
 产品边界见 [R1–R8](product-requirements.md)，文件模块的业务契约由

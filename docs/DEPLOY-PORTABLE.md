@@ -3,9 +3,11 @@
 Cockpit 提供普通前后端服务包。使用者准备运行环境、配置原生登录与远程认证入口，
 并选择如何启动服务。
 
-> 本页对应 **0.2.1 发行**；下载前确认该版本 Release workflow 已成功发布运行包。
+> 本页对应 **0.2.3 发行**；下载前确认该版本 Release workflow 已成功发布运行包。
 > 安装已发布 v0.1.0 时，请使用[该版本的安装指南](https://github.com/waksana/cockpit/blob/v0.1.0/docs/DEPLOY-PORTABLE.md)，
-> 不要混用本页的宿主配置和模块命令。需要本地模块功能时，使用对应的 0.2.1 运行包或固定源码。
+> 不要混用本页的宿主配置和模块命令。需要本地模块功能时，使用对应的 0.2.3 运行包或固定源码。
+> 本次 Web API v2 不兼容旧前端模块；使用文件或通知模块时，必须分别配套
+> **Cockpit File 0.1.7 / Cockpit Notification 0.1.0**，见[发行说明](release-notes.md)。
 
 本指南也供 Agent 执行安装时使用。先核对运行前提，再下载、认证、启动并完成首次聊天。
 如果机器上已有安装或运行中的服务，先与用户确认再替换、停止或变更配置；
@@ -16,7 +18,7 @@ Cockpit 提供普通前后端服务包。使用者准备运行环境、配置原
 
 | 项目 | 当前要求 |
 | --- | --- |
-| 发行 | **v0.2.1**；正式运行包只从[对应 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.1) 获取，以 workflow 成功发布的资产为准。 |
+| 发行 | **v0.2.3**；正式运行包只从[对应 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.3) 获取，以 workflow 成功发布的资产为准。 |
 | 平台 | Linux x64 / glibc；未承诺 musl、arm64、macOS 或 Windows 运行包。 |
 | Node | **24.20.0**，由安装者单独准备；运行包 manifest 校验完整版本号，其他 patch 也会被拒绝。 |
 | 原生配对 | 已包含 SDK **1.0.13**、bundled runtime **1.0.83** / protocol **3**。 |
@@ -35,7 +37,7 @@ Web 与 API 在一个 Node 服务内；SDK 自己的进程外 runtime、原生 M
 
 ## 安装运行包
 
-从 v0.2.1 Release 下载 `runtime.tar.gz` 与 `runtime.tar.gz.sha256`。
+从 v0.2.3 Release 下载 `runtime.tar.gz` 与 `runtime.tar.gz.sha256`。
 若该版本尚未生成这两项资产，请等待 Release workflow 成功，不使用旧版或开发 artifact 替代。
 GitHub 自动生成的 Source code ZIP/tar 不包含安装好的依赖，不能替代 `runtime.tar.gz`。
 
@@ -44,8 +46,8 @@ GitHub 自动生成的 Source code ZIP/tar 不包含安装好的依赖，不能�
 ```sh
 mkdir cockpit-download &&
 cd cockpit-download &&
-curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/download/v0.2.1/runtime.tar.gz &&
-curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/download/v0.2.1/runtime.tar.gz.sha256 &&
+curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/download/v0.2.3/runtime.tar.gz &&
+curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/download/v0.2.3/runtime.tar.gz.sha256 &&
 sha256sum -c runtime.tar.gz.sha256 &&
 mkdir cockpit &&
 tar -xzf runtime.tar.gz -C cockpit &&
@@ -73,7 +75,7 @@ node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/ind
 <a id="from-source"></a>
 ## 从源码安装
 
-普通使用者选择固定发行 tag `v0.2.1`，不是旧 v0.1.0 tag。
+普通使用者选择固定发行 tag `v0.2.3`，不是旧 v0.1.0 tag。
 tag 尚未发布时应等待发行，或由开发者明确选择已验证的完整源码 SHA。
 贡献者按[贡献指南](../CONTRIBUTING.md)工作。
 在新目录中执行：
@@ -81,7 +83,7 @@ tag 尚未发布时应等待发行，或由开发者明确选择已验证的完�
 ```sh
 git clone https://github.com/waksana/cockpit.git cockpit &&
 cd cockpit &&
-git switch --detach v0.2.1 &&
+git switch --detach v0.2.3 &&
 node --version &&
 pnpm --version &&
 pnpm install --frozen-lockfile &&

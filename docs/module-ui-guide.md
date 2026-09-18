@@ -22,12 +22,14 @@ This host also exposes `context.createPortal(children, container)` from its
 existing ReactDOM. Modules using it must check that it is a function before
 registering their contributions. Do not bundle a separate ReactDOM implementation.
 
-UI v1 is separate from the frontend activation API. The current development
-source uses **Web API v2** (`context.apiVersion` and the returned declaration are
+UI v1 is separate from the frontend activation API. Cockpit **0.2.3** uses
+**Web API v2** (`context.apiVersion` and the returned declaration are
 both 2), while module manifests and backend API remain v1. Old Web contribution
-slots are not accepted. Pair the host and migrated modules; the UI version alone
-does not prove frontend compatibility. Use the existing explicit cold-start
-procedure. Building or merging either repository does not authorize installation,
+slots are not accepted. When using file or notification modules, pair the host
+with **Cockpit File 0.1.7 / Cockpit Notification 0.1.0**; the UI version alone
+does not prove frontend compatibility. Release assets are available only after
+their respective Release workflows succeed. Use the existing explicit cold-start
+procedure. Building or merging any repository does not authorize installation,
 deployment or restart.
 
 Public classes and variables below are compatibility commitments. Additions may
