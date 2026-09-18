@@ -75,6 +75,13 @@ the host's patch-version change does not alter those types. See the
 [module contract](module-contract-draft.md) for the full SHA and independent
 Web/UI/menu capability checks, not package-label inference.
 
+The 0.2.5 input-component change pairs with Speech 0.1.1. It removes the old
+Composer position slot without an alias; the real textarea is now wrapped through
+`composerInput`. Preserve native controlled events, React 19 ref cleanup, and
+separate editing/submission gates. The speech repository's exact SDK pin must be
+reachable and exported from a clean host commit before consumer packaging.
+See [release notes](release-notes.md); no tag, publication or deployment is implied.
+
 ## Interaction semantics and structural correctness
 
 This is a confirmed development requirement for both the host Web UI and module
@@ -162,6 +169,8 @@ background work, open native sessions or publish user screenshots.
 Add `&pane=narrow` to constrain the actual Chat pane to 456px while keeping a
 desktop viewport. This reproduces the space available beside docked settings:
 decisions and process rows must adapt to their own width, not the window width.
+`input-states` also includes `问题（不允许自由回答）`: its native textarea remains
+editable as before, while submission and input-enhancement recording stay blocked.
 In `ask` / `ask-queued`, clicking the status header folds the entire input card
 with native disclosure, without a visible folding arrow. Its queue, question,
 choices and original editor share one content scroller; ordinary content fits

@@ -254,13 +254,20 @@ The other real component boundaries remain session status, composer/editor
 Ordinary DOM event props are public component behavior; file selection and its
 picker/dispatch lifecycle belong entirely to the file module's state services.
 
-Development source additionally exposes `composerActionsVersion: 1`.
-On the actual composer editor, `children` remains before the textarea and
-`actions` composes directly after it, before the existing native send button.
-Preserve inherited actions, refs and send guards; no placeholder container or
-voice-specific host field is involved. Keep DOM and keyboard order aligned with
-the rendered controls. This capability is not present in the historical 0.2.4
-release. Data consumers separately check `chatWindowVersion: 1` and use the
+Cockpit 0.2.5 source exposes `composerInputVersion: 1`. The `composerInput`
+middleware wraps the actual controlled textarea, whose Base owns editing and
+IME/Enter handling. Return Base followed by a microphone sibling; do not duplicate
+the editor, native send, or keyboard implementation. Preserve value/onChange,
+native events, captured draft and editorRef (including React 19 ref cleanup).
+File's existing `composerEditor.children` stays on the left, independently of
+input enhancement. Full-width status/recovery content wraps the existing
+`composer` Base and follows the entire input row, never inside the textarea or
+an interactive control. No placeholder or position slot is provided.
+Keep DOM, keyboard and visual order identical. `disabled` gates editing;
+`sendBlocked`, draft pending and blocks gate submission without disabling typing.
+Speech must also honor native free-text restrictions. This is the breaking
+Speech 0.1.1 pairing, not a capability of the historical 0.2.4 release.
+Data consumers separately check `chatWindowVersion: 1` and use the
 [read-only window state](module-contract-draft.md#chat-window-state), not private
 DOM, React children traversal or a second history reader.
 

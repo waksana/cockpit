@@ -21,6 +21,11 @@ test('module API export contains its canonical types and local protocol dependen
   assert.match(frontend, /interface DraftSchemaRegistration/);
   assert.match(frontend, /interface ModuleMenuRegistration/);
   assert.match(frontend, /readonly menuVersion: 1/);
+  assert.match(frontend, /readonly composerInputVersion: 1/);
+  assert.match(frontend, /composerInput: ComposerInputProps/);
+  assert.match(frontend, /readonly chatWindowVersion: 1/);
+  assert.doesNotMatch(frontend, /composerActionsVersion/);
+  assert.doesNotMatch(frontend.match(/interface ComposerEditorProps[\s\S]*?\{\}/)?.[0] ?? assert.fail('Missing input row type'), /actions/);
   assert.doesNotMatch(frontend, /GlobalNavigationProps|globalNavigation:/);
   assert.match(types, /interface ModuleBackendContext/);
   assert.match(types, /publish\(payload: ModuleEventPayload\): void/);

@@ -8,7 +8,7 @@ import { ModuleRuntime } from '../lib/moduleRuntime';
 import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';
 import { Composer } from './Composer';
 
-async function fixture(withActions = false) {
+async function fixture(withInput = false) {
   const digest = 'a'.repeat(64);
   let context!: ModuleFrontendContext, handle!: DraftSchemaHandle<FixtureData>;
   function List({ draft, field }: { draft: ModuleDraft; field: DraftSchemaScope<FixtureData> }) {
@@ -51,14 +51,16 @@ async function fixture(withActions = false) {
         wrap: Base => props => {
           const field = handle.forDraft(props.draft);
           return h(Base, { ...props,
-            actions: h(Fragment, null, props.actions, withActions && h('button', {
-              type: 'button', 'aria-label': 'Trailing action', disabled: props.disabled,
-            }, 'Trailing action')),
             children: h(Fragment, null, props.children, field && h(AddItem, {
               draft: context.state.bindDraft(props.draft), field, disabled: props.disabled,
             })),
           });
         },
+      }, {
+        id: 'input', boundary: 'composerInput',
+        wrap: Base => props => h(Fragment, null, h(Base, props), withInput && h('button', {
+          type: 'button', 'aria-label': 'Microphone', disabled: props.disabled || props.sendBlocked,
+        }, 'Microphone')),
       }] };
     } }),
     report: assert.fail,
@@ -77,19 +79,19 @@ async function fixture(withActions = false) {
   return { runtime, draft, context, handle, field: handle.forDraft(draft.reference)!, render };
 }
 
-test('left contributions, editor, trailing actions and native send retain their DOM order for prompt and answers', async t => {
+test('left contributions, enhanced input and native send retain their DOM order for prompt and answers', async t => {
   const f = await fixture(true);
   t.after(() => f.runtime.stop());
   const prompt = f.render();
   assert.ok(prompt.indexOf('aria-label="Add item"') < prompt.indexOf('<textarea'));
-  assert.ok(prompt.indexOf('</textarea>') < prompt.indexOf('aria-label="Trailing action"'));
-  assert.ok(prompt.indexOf('aria-label="Trailing action"') < prompt.indexOf('class="chat-input-btn'));
+  assert.ok(prompt.indexOf('</textarea>') < prompt.indexOf('aria-label="Microphone"'));
+  assert.ok(prompt.indexOf('aria-label="Microphone"') < prompt.indexOf('class="chat-input-btn'));
   for (const kind of ['ask', 'plan', 'elicitation'] as const) {
     const answer = new SessionDraft('fixture', undefined, { kind, requestId: `${kind}-request` });
     const html = f.render(answer);
     assert.doesNotMatch(html, /aria-label="Add item"/);
-    assert.ok(html.indexOf('</textarea>') < html.indexOf('aria-label="Trailing action"'));
-    assert.ok(html.indexOf('aria-label="Trailing action"') < html.indexOf('class="chat-input-btn'));
+    assert.ok(html.indexOf('</textarea>') < html.indexOf('aria-label="Microphone"'));
+    assert.ok(html.indexOf('aria-label="Microphone"') < html.indexOf('class="chat-input-btn'));
     assert.equal((html.match(/<textarea\b/g) ?? []).length, 1);
     assert.doesNotMatch(html, /actions=|<button\b[^>]*>(?:(?!<\/button>)[\s\S])*<button\b/);
   }

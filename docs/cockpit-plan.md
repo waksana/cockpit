@@ -19,6 +19,9 @@ state/service/draft 和 Markdown，不提供任意页面/router 注册。
 菜单及 payload 能力纳入 0.2.4，**0.2.4 配套 / 发布资产以对应 Release 为准**；
 不表示发布已完成，也不反写历史 0.2.3 Release 的能力或 Notification 0.1.0 配套。
 精确模块配对与 SDK 源码 pin 见[模块协议](module-contract-draft.md)。
+当前 0.2.5 源码以真实 `composerInput` textarea middleware 提供输入增强，
+与 Speech 0.1.1 配套；只读 chatWindow 保持独立。公开破坏性变化见[发行摘要](release-notes.md)，
+源码准备不表示发行或部署。
 远程安装、逐模块 HTTP MCP 和启动接续消息仍未实现，
 具体已实现范围见[模块协议](module-contract-draft.md)。
 模块安装与版本选择只在下次冷启动生效；不做热加载、热启停或热更新，

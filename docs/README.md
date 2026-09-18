@@ -11,7 +11,7 @@ Cockpit 本体提供 Copilot 的浏览器界面与 API，模块扩展文件、�
 | [安装与运行](DEPLOY-PORTABLE.md) | 运行包/源码安装、Copilot 登录、首次聊天、远程访问、排错与关闭。 |
 | [模块目录](module-catalog.md) | 已发布模块、各自用途和版本配套；与待接入项目、后续方向分开列出。 |
 | [MCP 客户端](../apps/mcp/README.md#configuration) | 让其他 Agent 通过 stdio MCP 使用同一 Cockpit 后端。 |
-| [发行说明](https://github.com/waksana/cockpit/releases) | 已发布版本的下载与变更；仓库中的[0.2.4 发行摘要](release-notes.md)描述相对 0.2.3 的变化，配套 / 发布资产以对应 Release 为准。 |
+| [发行说明](https://github.com/waksana/cockpit/releases) | 已发布版本的下载与变更；仓库中的[0.2.5 发行摘要](release-notes.md)描述待发行变更，配套 / 发布资产以对应 Release 为准。 |
 | [安全政策](../SECURITY.md) | 单操作者信任边界、远程认证要求和私密漏洞报告。 |
 
 ## 现有模块与扩展项目
@@ -45,7 +45,7 @@ React 与公开接口，不需要另建聊天应用。
 菜单能力另检查 `context.menuVersion: 1`，不是旧接口的兼容别名。
 注册模块 state 不等于自动取得聊天数据：当前宿主基础快照只含会话 ID、可见性和连接状态。
 开发源码新增的 `chatWindowVersion: 1` 提供[只读当前窗口](module-contract-draft.md#chat-window-state)，
-模块自行选择和裁剪文字；`composerActionsVersion: 1` 提供编辑器与原生发送按钮之间的动作组合。
+模块自行选择和裁剪文字；`composerInputVersion: 1` 提供真实受控 textarea 的组件增强。
 这两项尚不属于历史 0.2.4 Release，不新增本体后端能力或语音业务。
 
 ## 接口与架构

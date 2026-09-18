@@ -292,11 +292,25 @@ export interface ComposerProps extends ComposerTarget {
   onSubmit(): void;
 }
 
-/** The actual input row: the existing text editor and submit control, not an empty slot. */
+/** The actual input row: leading children, the text input and the native submit control. */
 export interface ComposerEditorProps extends ComposerProps,
-  Omit<React.HTMLAttributes<HTMLDivElement>, keyof ComposerProps> {
-  /** Real input-row actions after the textarea and before native send; preserve inherited actions. */
-  readonly actions?: React.ReactNode;
+  Omit<React.HTMLAttributes<HTMLDivElement>, keyof ComposerProps> {}
+
+/**
+ * The controlled textarea itself. Base owns native editing and IME/Enter handling,
+ * even without middleware. Preserve native props/events and compose editorRef,
+ * including React 19 callback cleanup. Sibling enhancements render after Base;
+ * full-width feedback belongs around the existing composer, not inside this row.
+ */
+export interface ComposerInputProps extends ComposerTarget,
+  Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, keyof ComposerTarget | 'value' | 'onChange' | 'onSubmit' | 'children' | 'defaultValue'> {
+  readonly value: string;
+  readonly onChange: React.ChangeEventHandler<HTMLTextAreaElement>;
+  readonly editorRef?: React.Ref<HTMLTextAreaElement>;
+  /** Submission gate, not textarea disabled: pending/blocks also gate onSubmit. */
+  readonly sendBlocked: boolean;
+  /** Same captured, rechecked host submit action as ComposerProps.onSubmit. */
+  onSubmit(): void;
 }
 
 export type ModuleMenuTarget =
@@ -409,6 +423,7 @@ export interface ModuleComponentProps {
   sessionStatus: SessionStatusProps;
   composer: ComposerProps;
   composerEditor: ComposerEditorProps;
+  composerInput: ComposerInputProps;
   attachment: AttachmentProps;
   managementHeader: ManagementHeaderProps;
   managementDetailHeader: ManagementDetailHeaderProps;
@@ -462,8 +477,8 @@ export interface ModuleFrontendContext {
   readonly menuVersion: 1;
   /** Read-only current-window text projection. Check independently of Web API v2. */
   readonly chatWindowVersion: 1;
-  /** ComposerEditor actions compose between the editor and the existing native send control. */
-  readonly composerActionsVersion: 1;
+  /** Middleware around the actual controlled textarea, independently of the input row. */
+  readonly composerInputVersion: 1;
   readonly moduleId: string;
   readonly react: typeof React;
   createPortal(children: React.ReactNode, container: Element | DocumentFragment): React.ReactPortal;

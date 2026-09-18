@@ -129,6 +129,7 @@ export function Lab() {
         <option value="reading">空闲</option>
         <option value="streaming">执行与队列</option>
         <option value="ask">问题</option>
+        <option value="choice-only">问题（不允许自由回答）</option>
         <option value="ask-queued">长问题与队列</option>
         <option value="plan-queued">计划</option>
         <option value="elicitation-queued">工具确认</option>
