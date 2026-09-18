@@ -15,6 +15,28 @@ export interface HostSnapshot {
   readonly connected: boolean;
 }
 
+/** Text projection of an already-loaded window; each array retains its native display order. */
+export interface ChatWindowMessage {
+  /** Presentation identity; use origin for native identity and attribution. */
+  readonly id: string;
+  readonly origin: Readonly<MessageOrigin> | null;
+  readonly role: 'user' | 'assistant' | 'system' | 'tool';
+  readonly text: string;
+  readonly complete: boolean;
+  readonly subtype?: 'ask-reply' | 'subagent' | 'skill';
+  readonly children: readonly ChatWindowMessage[];
+}
+
+export interface ChatWindowSnapshot {
+  readonly sessionId: string | null;
+  readonly status: 'unavailable' | 'loading' | 'ready' | 'stale' | 'error';
+  readonly hasMore: boolean;
+  readonly partial: boolean;
+  readonly error?: string;
+  /** Root messages; nested agents stay in children, not a synthetic global ordering. */
+  readonly messages: readonly ChatWindowMessage[];
+}
+
 export type DraftPurpose =
   | { readonly kind: 'prompt' }
   | { readonly kind: 'ask' | 'plan' | 'elicitation'; readonly requestId: string };
@@ -201,6 +223,8 @@ export interface DraftSchemaRegistration<State extends object> {
 
 export interface ModuleStateRegistry {
   readonly host: ReadonlyState<HostSnapshot>;
+  /** Read-only current loaded window, never a history reader or native state mutation API. */
+  readonly chatWindow: ReadonlyState<ChatWindowSnapshot>;
   /**
    * Activation-only registration, staged until the whole frontend validates.
    * No required global snapshot shape, hooks, persistence, or automatic retries.
@@ -270,7 +294,10 @@ export interface ComposerProps extends ComposerTarget {
 
 /** The actual input row: the existing text editor and submit control, not an empty slot. */
 export interface ComposerEditorProps extends ComposerProps,
-  Omit<React.HTMLAttributes<HTMLDivElement>, keyof ComposerProps> {}
+  Omit<React.HTMLAttributes<HTMLDivElement>, keyof ComposerProps> {
+  /** Real input-row actions after the textarea and before native send; preserve inherited actions. */
+  readonly actions?: React.ReactNode;
+}
 
 export type ModuleMenuTarget =
   | { readonly menu: 'global' }
@@ -433,6 +460,10 @@ export interface ModuleFrontendContext {
   readonly uiVersion: 1;
   /** Declarative global/session menu capability; not a component boundary. */
   readonly menuVersion: 1;
+  /** Read-only current-window text projection. Check independently of Web API v2. */
+  readonly chatWindowVersion: 1;
+  /** ComposerEditor actions compose between the editor and the existing native send control. */
+  readonly composerActionsVersion: 1;
   readonly moduleId: string;
   readonly react: typeof React;
   createPortal(children: React.ReactNode, container: Element | DocumentFragment): React.ReactPortal;
