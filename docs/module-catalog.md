@@ -50,10 +50,10 @@ Web Push 和角标取决于浏览器、设备及用户授权，不保证必达�
 
 | 模块 | 当前实现 | 配套边界 |
 | --- | --- | --- |
-| [Cockpit Speech](https://github.com/waksana/cockpit-speech) | Azure LLM Speech 听写；输入框右侧、发送按钮左侧录音，停止后把文字写入捕获的草稿，不自动发送。 | 源码 0.1.0，尚无配套 Release；需要 `chatWindowVersion: 1` 和 `composerActionsVersion: 1`，历史 Cockpit 0.2.4 Release 不具备这两项能力。 |
+| [Cockpit Speech](https://github.com/waksana/cockpit-speech) | Azure LLM Speech 听写；包装真实输入框，在原生发送前录音，停止后把文字写入捕获的草稿，不自动发送。 | 源码 0.1.1 配套 Cockpit 0.2.5，尚无配套 Release；需要 `chatWindowVersion: 1` 和 `composerInputVersion: 1`，历史 Cockpit 0.2.4 Release 不具备这两项能力。精确宿主 SDK pin 见语音仓库 `tooling/host-sdk.json`。 |
 
 语音按钮随普通 prompt 和回答输入存在，原生不允许自由文本时保持可见但禁用。
-上下文选择、录音、识别、错误和草稿冲突恢复均由模块负责；本体只提供通用只读窗口与输入行动作组合，
+上下文选择、录音、识别、错误和草稿冲突恢复均由模块负责；本体只提供通用只读窗口与真实输入组件增强，
 不新增语音后端能力或另一套原生历史。
 模块不提供 Key 初始化/设置页面，只读取自己数据目录内的配置文件，缺少配置明确报错。
 配置字段、录音上限、数据外发范围和浏览器要求由模块

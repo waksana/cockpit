@@ -3,7 +3,7 @@
 import { useCallback, useLayoutEffect, useRef, useSyncExternalStore, type ComponentProps } from 'react';
 import type { SessionDraft } from '../lib/textDraft';
 import { Icon } from './Icon';
-import type { ComposerProps as PublicComposerProps, ComposerEditorProps } from '@cockpit/module-api';
+import type { ComposerProps as PublicComposerProps, ComposerEditorProps, ComposerInputProps } from '@cockpit/module-api';
 import { ModuleRuntimeProvider, useModuleElement, useModuleRuntime } from './ModuleComponents';
 import type { ModuleRuntime } from '../lib/moduleRuntime';
 import { AskContent } from './PendingDecision';
@@ -93,8 +93,8 @@ function EnhancedComposerEditor(props: ComposerEditorProps) {
   return useModuleElement('composerEditor', ComposerEditorBase, props);
 }
 
-function ComposerEditorBase({ draft, operation: _operation, disabled, busy, placeholder, submitLabel, sendBlocked, statusInHeader, editorRef,
-  onTextChange, onSubmit, children, actions, className, ...domProps }: ComposerEditorProps) {
+function ComposerEditorBase({ draft, operation, disabled, busy, placeholder, submitLabel, sendBlocked, statusInHeader, editorRef,
+  onTextChange, onSubmit, children, className, ...domProps }: ComposerEditorProps) {
   const { text, hasContent, blocks, pending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const blockedReason = blocks.map(block => block.reason).join('；');
   const canSend = hasContent && !disabled && !sendBlocked && !pending && !blocks.length;
@@ -103,18 +103,34 @@ function ComposerEditorBase({ draft, operation: _operation, disabled, busy, plac
   };
   return <div {...domProps} className={['chat-input', className].filter(Boolean).join(' ')}>
         {children}
-        <textarea ref={editorRef} className="chat-input-message ck-input" aria-label="消息输入" value={text}
+        <ComposerInput draft={draft} operation={operation} sendBlocked={sendBlocked} onSubmit={submit}
+          editorRef={editorRef} className="chat-input-message ck-input" aria-label="消息输入" value={text}
           disabled={disabled} onChange={event => onTextChange(event.target.value)} placeholder={placeholder ?? '输入消息…'} rows={1}
-          onKeyDown={event => {
-            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-            if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); submit(); return; }
-            if (event.key === 'Enter' && !event.shiftKey && shouldSubmitOnEnter()) { event.preventDefault(); submit(); }
-          }} />
-        {actions}
+        />
         <button type="button" className="chat-input-btn ck-icon-button send rp" disabled={!canSend} onClick={submit}
           aria-label={pending ? '正在提交' : submitLabel ?? (busy ? '排队发送' : '发送')} aria-busy={pending}
           title={pending ? '正在提交，草稿仍可编辑' : blockedReason || (submitLabel ?? (busy ? '加入队列' : '发送'))}>
           <Icon name={pending && !statusInHeader ? 'sending' : 'arrow_up'} size={24} />
         </button>
   </div>;
+}
+
+function ComposerInput(props: ComposerInputProps) {
+  const runtime = useModuleRuntime();
+  const draft = resolveDraft(props.draft);
+  const prepared = useSyncExternalStore(runtime.subscribe,
+    () => runtime.isDraftPrepared(draft), () => runtime.isDraftPrepared(draft));
+  return prepared ? <EnhancedComposerInput {...props} /> : <ComposerInputBase {...props} />;
+}
+function EnhancedComposerInput(props: ComposerInputProps) {
+  return useModuleElement('composerInput', ComposerInputBase, props);
+}
+function ComposerInputBase({ draft: _draft, operation: _operation, sendBlocked: _sendBlocked,
+  editorRef, onSubmit, onKeyDown, ...props }: ComposerInputProps) {
+  return <textarea {...props} ref={editorRef} onKeyDown={event => {
+    onKeyDown?.(event);
+    if (event.defaultPrevented || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); onSubmit(); return; }
+    if (event.key === 'Enter' && !event.shiftKey && shouldSubmitOnEnter()) { event.preventDefault(); onSubmit(); }
+  }} />;
 }

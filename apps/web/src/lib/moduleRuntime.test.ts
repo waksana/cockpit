@@ -61,7 +61,7 @@ test('chat-window capability is read-only, scoped, and revoked with its module',
   await f.runtime.start();
   const context = f.contexts[0];
   assert.equal(context.chatWindowVersion, 1);
-  assert.equal(context.composerActionsVersion, 1);
+  assert.equal(context.composerInputVersion, 1);
   const state = context.state.chatWindow;
   assert.ok(Object.isFrozen(state));
   assert.equal(state.getSnapshot().status, 'unavailable');
@@ -575,7 +575,7 @@ test('stable worker URLs stay in the backend prefix and are exposed without regi
 });
 
 test('component middleware validates IDs, boundaries and order and composes stable types deterministically', async () => {
-  for (const boundary of ['message', 'sessionStatus', 'composer', 'composerEditor', 'attachment',
+  for (const boundary of ['message', 'sessionStatus', 'composer', 'composerEditor', 'composerInput', 'attachment',
     'managementHeader', 'managementDetailHeader'] as const) {
     const supported = fixture([asset()], {
       apiVersion: 2, components: [{ id: 'supported', boundary, wrap: Base => Base }],

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 import { act, createElement, Fragment, useCallback, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -23,7 +24,7 @@ import { GlobalNavigation } from './GlobalNavigation';
 import { ManagementShell } from './ManagementShell';
 import { useLongPress } from '../lib/longpress';
 import { useMenuDismiss } from '../lib/useMenuDismiss';
-import type { ActivateFrontend, ComposerContext, ComponentMiddleware, DraftSchemaHandle, DraftSchemaScope, MessageIdentity, MessageProps, ModuleFrontendContext } from '@cockpit/module-api';
+import type { ActivateFrontend, ComposerContext, ComposerInputProps, ComposerProps, ComponentMiddleware, DraftSchemaHandle, DraftSchemaScope, MessageIdentity, MessageProps, ModuleFrontendContext } from '@cockpit/module-api';
 import { fixtureSession } from '../dev/chat-fixtures';
 import App from '../App';
 
@@ -49,6 +50,9 @@ class HostNode extends EventTarget {
   private text = '';
   selected = false;
   private controlValue = '';
+  selectionStart = 0;
+  selectionEnd = 0;
+  setSelectionRange(start: number, end: number) { this.selectionStart = start; this.selectionEnd = end; }
 
   constructor(tag: string, document: HostDocument) {
     super();
@@ -1545,6 +1549,214 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     }
     assert.equal(draft.getSnapshot(), snapshot);
     assert.equal(container.querySelector('.chat-input-message'), editor);
+  });
+
+  await t.test('real input middleware preserves controlled events, refs, IME and captured submit gates', async subtest => {
+    let input!: ComposerInputProps;
+    let preventKey = false;
+    const events: string[] = [];
+    const digest = 'b'.repeat(64);
+    const runtime = new ModuleRuntime({
+      pageUrl: 'https://fixture.invalid',
+      fetch: async () => Response.json({ modules: [{
+        id: 'input-fixture', name: 'Input fixture', version: '1.0.0', digest, config: {}, styles: [],
+        apiBase: `/_modules/input-fixture/${digest}/api`, entry: `/_modules/assets/input-fixture/${digest}/entry.js`,
+      }], errors: [] }),
+      load: async () => ({ activate: (() => ({ apiVersion: 2, components: [{
+        id: 'input', boundary: 'composerInput', wrap: Base => props => {
+          input = props;
+          return createElement(Fragment, null, createElement(Base, { ...props,
+            onChange: event => { events.push('change'); props.onChange(event); },
+            onPaste: event => { events.push(event.currentTarget.tagName); props.onPaste?.(event); },
+            onKeyDown: event => { if (preventKey) event.preventDefault(); props.onKeyDown?.(event); },
+          }), createElement('button', { type: 'button', 'aria-label': 'Microphone', disabled: props.disabled || props.sendBlocked }, 'Microphone'));
+        },
+      }] })) satisfies ActivateFrontend }),
+      report: assert.fail,
+    });
+    subtest.after(async () => { await act(() => root.render(null)); runtime.stop(); });
+    await runtime.start();
+    let draft = getSessionDraft('input-contract');
+    let sends = 0;
+    let finish!: (value: boolean) => void;
+    let sending: Promise<boolean> | undefined;
+    const objectRef = { current: null as HTMLTextAreaElement | null };
+    const renderInput = (options: Partial<Pick<ComposerProps, 'disabled' | 'sendBlocked' | 'editorRef'>> = {}) => act(() => root.render(createElement(Composer, {
+      runtime, draft, onSend: () => { sends++; sending = draft.send(() => new Promise(resolve => { finish = resolve; })); return sending; },
+      editorRef: objectRef, ...options,
+    })));
+    const dispatch = async (type: string, properties: Record<string, unknown> = {}) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'target', { value: container.querySelector('.chat-input-message') });
+      for (const [key, value] of Object.entries(properties)) Object.defineProperty(event, key, { value });
+      await act(() => container.dispatchEvent(event));
+      return event;
+    };
+    await renderInput();
+    const editor = container.querySelector('.chat-input-message')!;
+    assert.equal(objectRef.current, editor);
+    assert.equal(input.draft, draft.reference);
+    await dispatch('focusin');
+    Object.getOwnPropertyDescriptor(HostNode.prototype, 'value')!.set!.call(editor, 'Native edit');
+    await dispatch('keyup', { key: 't' });
+    assert.equal(draft.getSnapshot().text, 'Native edit');
+    assert.deepEqual(events, ['change']);
+    await dispatch('paste');
+    assert.deepEqual(events, ['change', 'TEXTAREA']);
+    for (const keys of [
+      { key: 'Enter', isComposing: true }, { key: 'Enter', keyCode: 229 }, { key: 'Enter', shiftKey: true },
+    ]) assert.equal((await dispatch('keydown', keys)).defaultPrevented, false);
+    preventKey = true;
+    await dispatch('keydown', { key: 'Enter', ctrlKey: true });
+    preventKey = false;
+    assert.equal(sends, 0);
+    await renderInput({ sendBlocked: true });
+    assert.equal(editor.attributes.has('disabled'), false);
+    await dispatch('keydown', { key: 'Enter', metaKey: true });
+    input.onSubmit();
+    assert.equal(sends, 0);
+    await renderInput();
+    await dispatch('keydown', { key: 'Enter', ctrlKey: true });
+    assert.equal(sends, 1);
+    assert.equal(editor.attributes.has('disabled'), false, 'pending submit must not disable native editing');
+    await act(() => draft.edit('Newer edit'));
+    await dispatch('keydown', { key: 'Enter' });
+    assert.equal(sends, 1);
+    await act(async () => { finish(true); await sending; });
+    assert.equal(editor.value, 'Newer edit', 'ACK retains a newer controlled revision');
+    assert.equal(container.querySelector('.chat-input-message'), editor);
+
+    const legacyCalls: (HTMLTextAreaElement | null)[] = [];
+    const legacyRef = (node: HTMLTextAreaElement | null) => { legacyCalls.push(node); };
+    await renderInput({ editorRef: legacyRef });
+    assert.equal(objectRef.current, null);
+    assert.deepEqual(legacyCalls, [editor]);
+    let cleaned = 0;
+    const modernCalls: (HTMLTextAreaElement | null)[] = [];
+    const modernRef = (node: HTMLTextAreaElement | null) => { modernCalls.push(node); return () => { cleaned++; }; };
+    await renderInput({ editorRef: modernRef });
+    assert.deepEqual(legacyCalls, [editor, null]);
+    assert.deepEqual(modernCalls, [editor]);
+    const oldSubmit = input.onSubmit;
+    await act(() => { draft = getSessionDraft('replacement-input'); });
+    await renderInput({ editorRef: modernRef, disabled: true });
+    await act(() => oldSubmit());
+    assert.equal(sends, 1, 'a captured action never submits a replacement draft');
+    await act(() => root.render(null));
+    assert.equal(cleaned, 1);
+    assert.deepEqual(modernCalls, [editor], 'React 19 invokes cleanup instead of callback(null)');
+  });
+
+  await t.test('paired speech consumer mounts the real input and keeps feedback, leases, refs and focus scoped', {
+    skip: !process.env.COCKPIT_TEST_SPEECH_ENTRY,
+  }, async subtest => {
+    const { activate } = await import(pathToFileURL(process.env.COCKPIT_TEST_SPEECH_ENTRY!).href);
+    assert.equal(typeof activate, 'function');
+    let finish!: (response: Response) => void;
+    let requests = 0;
+    const audioGlobals = {
+      isSecureContext: true,
+      navigator: { mediaDevices: { getUserMedia: async () => ({ getTracks: () => [{ stop() {}, onended: null }] }) } },
+      AudioContext: class {
+        sampleRate = 16000;
+        state = 'running';
+        destination = {};
+        audioWorklet = { addModule: async () => {} };
+        resume = async () => {};
+        close = async () => {};
+        createMediaStreamSource = () => ({ connect() {}, disconnect() {} });
+      },
+      AudioWorkletNode: class {
+        port = {
+          onmessage: null as ((event: { data: object }) => void) | null,
+          close() {},
+          postMessage: () => {
+            this.port.onmessage?.({ data: { type: 'chunk', samples: new Float32Array(160) } });
+            this.port.onmessage?.({ data: { type: 'done' } });
+          },
+        };
+        connect() {}
+        disconnect() {}
+      },
+    };
+    for (const [key, value] of Object.entries(audioGlobals)) {
+      const original = Object.getOwnPropertyDescriptor(globalThis, key);
+      Object.defineProperty(globalThis, key, { configurable: true, value });
+      subtest.after(() => original ? Object.defineProperty(globalThis, key, original) : Reflect.deleteProperty(globalThis, key));
+    }
+    const digest = 'c'.repeat(64);
+    const runtime = new ModuleRuntime({
+      pageUrl: 'https://fixture.invalid',
+      fetch: async url => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/_modules') return Response.json({ modules: [{
+          id: 'cockpit-speech', name: 'Speech fixture', version: '0.1.1', digest, styles: [], config: {},
+          apiBase: `/_modules/cockpit-speech/${digest}/api`, entry: `/_modules/assets/cockpit-speech/${digest}/entry.js`,
+        }], errors: [] });
+        if (path.endsWith('/config-ready')) return Response.json({ ready: true });
+        assert.ok(path.endsWith('/transcribe'), 'no native or external HTTP');
+        requests++;
+        return new Promise<Response>(resolve => { finish = resolve; });
+      },
+      load: async () => ({ activate }), report: assert.fail,
+    });
+    subtest.after(async () => { await act(() => root.render(null)); runtime.stop(); });
+    await runtime.start();
+    runtime.updateView({ sessionId: 'paired-speech', connected: true, visible: true });
+    const draft = getSessionDraft('paired-speech');
+    draft.edit('hello world');
+    let cleaned = 0;
+    const refCalls: (HTMLTextAreaElement | null)[] = [];
+    const editorRef = (node: HTMLTextAreaElement | null) => { refCalls.push(node); return () => { cleaned++; }; };
+    await act(() => root.render(createElement(Composer, { runtime, draft, editorRef, onSend: async () => assert.fail('speech never sends') })));
+    const editor = container.querySelector('.chat-input-message')!;
+    assert.deepEqual(refCalls, [editor]);
+    const row = editor.parentNode!;
+    assert.deepEqual(row.childNodes.map(node => node.tagName), ['TEXTAREA', 'BUTTON', 'BUTTON']);
+    const click = async (selector: string) => {
+      const target = container.querySelector(selector);
+      assert.ok(target, selector);
+      const event = new Event('click', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'target', { value: target });
+      await act(async () => { container.dispatchEvent(event); });
+    };
+    editor.setSelectionRange(6, 11);
+    await click('.cockpit-speech-mic');
+    assert.equal(draft.getSnapshot().blocks.length, 1);
+    assert.equal(container.querySelector('.send')!.attributes.has('disabled'), true);
+    const panel = container.querySelector('.cockpit-speech-panel')!;
+    assert.equal(row.contains(panel), false);
+    assert.equal(panel.parentNode, container.querySelector('.chat-composer')!.parentNode);
+    await click('.cockpit-speech-mic');
+    assert.equal(requests, 1);
+    await act(async () => { finish(Response.json({ text: 'speech' })); });
+    assert.equal(editor.value, 'hello speech');
+    assert.equal(document.activeElement, editor);
+    assert.equal(editor.selectionStart, 12);
+    assert.equal(editor.selectionEnd, 12);
+    assert.equal(draft.getSnapshot().blocks.length, 0);
+    assert.equal(container.querySelector('.chat-input-message'), editor);
+
+    await click('.cockpit-speech-mic');
+    await act(() => draft.edit('manual text'));
+    await click('.cockpit-speech-mic');
+    await act(async () => { finish(Response.json({ text: 'recovery' })); });
+    assert.equal(editor.value, 'manual text');
+    assert.equal(container.querySelectorAll('textarea').length, 2, 'one editor and one read-only recovery field');
+    assert.match(container.querySelector('.cockpit-speech-panel')!.textContent, /识别结果/);
+    assert.equal(container.querySelector('.cockpit-speech-panel')!.contains(editor), false);
+    const recoveryButton = container.querySelectorAll('button').find(node => node.textContent === '插入原输入框光标处')!;
+    assert.equal(recoveryButton.attributes.has('disabled'), false);
+    editor.setSelectionRange(3, 7);
+    const recoveryClick = new Event('click', { bubbles: true });
+    Object.defineProperty(recoveryClick, 'target', { value: recoveryButton });
+    await act(() => container.dispatchEvent(recoveryClick));
+    assert.equal(editor.value, 'manrecoveryual text');
+    assert.equal(editor.selectionStart, 11);
+    assert.equal(document.activeElement, editor);
+    await act(() => root.render(null));
+    assert.equal(cleaned, 1);
+    assert.deepEqual(refCalls, [editor], 'composed React 19 ref cleans up without a synthetic null call');
   });
 
   await t.test('module components retain scoped drafts and native send guards while DOM handlers compose on the real editor', async subtest => {

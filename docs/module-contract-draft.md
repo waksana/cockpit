@@ -1,12 +1,14 @@
 # 模块接入协议
 
-**Cockpit 0.2.4：模块包/后端 API v1，Web API v2，公共 UI v1，菜单能力 menuVersion 1。**
+**Cockpit 0.2.5：模块包/后端 API v1，Web API v2，公共 UI v1，菜单能力 menuVersion 1。**
 本地可信包、主进程 import、冷加载、模块 payload 事件及独立菜单注册已实现。
-当前开发源码另提供 `chatWindowVersion: 1` 与 `composerActionsVersion: 1`：
-只读当前聊天窗口与真实输入行的后置动作组合。它们不是历史 0.2.4 Release 的能力；
+当前开发源码另提供 `chatWindowVersion: 1` 与 `composerInputVersion: 1`：
+只读当前聊天窗口与真实受控 textarea 的组件增强。它们不是历史 0.2.4 Release 的能力；
 消费者须独立检查能力并使用配套源码导出的类型，不能仅凭 package 版本判断。
-**0.2.4 配套 / 发布资产以对应 Release 为准**，本文不表示发布已完成。
-配套模块为 **Cockpit File 0.1.7 / Cockpit Notification 0.1.5**，
+**0.2.5 尚待发行**，本文不表示发布已完成。语音配套源码为 **Cockpit Speech 0.1.1**，
+精确 SDK 提交由语音仓库 `tooling/host-sdk.json` 记录，必须先导出该干净提交再构建。
+旧语音消费者不能与本次真实输入组件契约混用，没有兼容别名。
+现有配套模块 **Cockpit File 0.1.7 / Cockpit Notification 0.1.5** 不受此次输入边界变更影响，
 下载和使用入口见[模块目录](module-catalog.md)。File 0.1.7 不使用已移除的
 `globalNavigation` HOC，继续兼容，本轮不重新发行文件模块。
 
@@ -14,7 +16,7 @@ Notification 0.1.5 的精确宿主 SDK 源码 pin 为
 **`e6b0b8d7c4ba7b21a0b627dc21fd61c0c53f6ac0`**，权威记录位于通知仓库
 [`tooling/host-sdk.json`](https://github.com/waksana/cockpit-notification/blob/v0.1.5/tooling/host-sdk.json)。
 该导出来自当时包版本仍为 **0.2.3** 的开发源码（0.2.3-development），
-已经包含与本次等价、兼容的公开 API，并非历史 0.2.3 Release 的导出；
+已经包含通知所消费的等价、兼容公开 API，并非历史 0.2.3 Release 的导出；
 宿主升为 0.2.4 的 patch 版本变更不改变这些类型，不需要仅为版本标签改写该源码 pin。
 这不等于历史 [Cockpit v0.2.3 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.3)
 具备新菜单/payload 能力；其 **File 0.1.7 / Notification 0.1.0** 配套及资产仍以历史 tag/Release 为准。
@@ -178,7 +180,7 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 | 草稿字段扩展 | `context.state.registerDraft(...)`，`forDraft(reference)`、字段 `getSnapshot()` / `subscribe()` / `update()` | 模块拥有 schema、校验、内容判定、投影、ACK 和可选持久化；不能修改别的模块字段 |
 | 菜单声明 | 返回 `menus`：`getState(target)`、可选 `subscribe`、`onSelect(target, { signal })` | 全局与指定 session 命令；本体保留原生项、渲染及焦点，不提供任意页面/router 注册 |
 | 组件增强 | 返回 `components`：按 boundary 提供 `wrap(Base)` | 只增强公开的真实组件，保留 props/children/ref；具体边界见 [6.2](#62-component-middleware) |
-| 输入行后置动作 | `ComposerEditorProps.actions`，检查 `composerActionsVersion: 1` | 编辑器之后、原生发送之前的真实兄弟节点；保留继承动作、ref 和发送门槛 |
+| 真实文字输入 | `ComposerInputProps`，检查 `composerInputVersion: 1` | 包装承担受控编辑与 IME/键盘行为的 textarea Base；保留原生 props/events/ref，不能替换宿主发送 |
 | Markdown 渲染 | 返回 `markdown`：`matches(node)`、`component` | 已解析 link/image 的目标、标签和消息归属；不是整份正文、附件或完整聊天解析接口 |
 | 模块 worker | 可选 `context.worker: { entry, scope }` | 宿主提供同包窄作用域资源地址，模块自行注册；不自动控制 Chat、申请权限或订阅 push |
 | 后端基础 context | `apiVersion: 1`、`moduleId`、`dataRoot`、`apiBase`、只读 `config`、`signal`、`report` | 模块私有数据与资源生命周期；不取得 Engine、根 Fastify 或 SDK session handle |
@@ -400,7 +402,8 @@ scope 提供只读快照、订阅和仅修改自己字段的验证型 update；�
 | message | 原生消息/宿主当前 ask 身份、完成事实、实际正文 bodyRef、children 与真实 adornment 节点 |
 | sessionStatus | 原生回复中/错误/待选择状态和非交互 children，不嵌套按钮 |
 | composer | 实际输入卡片及其原生问题内容，组合 children；不预建附件组 |
-| composerEditor | 实际输入行、文字编辑器和发送控件；普通 DOM props/children/ref 及 actions，不解释文件或语音事件 |
+| composerEditor | 实际输入行、文字编辑器和发送控件；普通 DOM props 与前置 children，不解释文件或语音事件 |
+| composerInput | 实际受控 textarea；value/onChange、原生事件、editorRef、draft/operation/disabled/sendBlocked 和受保护 onSubmit |
 | attachment | 一项原生历史附件、消息归属、基础显示及附加动作；不承担草稿附件列表 |
 | managementHeader | 实际管理列表标题栏，包含返回、标题和刷新控件 |
 | managementDetailHeader | 实际管理详情标题栏，包含返回和标题焦点行为 |
@@ -413,12 +416,23 @@ React 增强链和错误边界不产生 HTML；不为注册项增加空 div/span
 每个 boundary 的默认实现必须承担真实现有界面职责。禁止专门插入一个只返回 children、
 生产环境无基础内容的“全局动作”空边界；有 HOC 包装不等于不是 slot。
 
-输入行动作须检查 `context.composerActionsVersion === 1`：
-`ComposerEditorProps.children` 仍在文字编辑器前，`actions` 在编辑器后、既有发送按钮前。
-增强器保留并组合继承的 actions，不替换原生发送按钮、编辑器或其门槛。
-两者直接作为真实输入行的兄弟节点，不增加空容器或新的空组件边界；
-DOM/键盘顺序与视觉顺序一致，不用私有 CSS 把前置节点搬到后面。
-模块根据具体草稿/原生输入门槛决定自己的动作是否可用，不自动继承文件模块的 prompt-only 策略。
+输入增强须检查 `context.composerInputVersion === 1`。`composerInput` 的 Base
+本身就是 textarea，无模块时仍处理受控编辑、IME、桌面 Enter 与 Ctrl/Meta+Enter；
+原生 onKeyDown 先执行，defaultPrevented 和组合输入不会触发提交。
+增强器透传 value/onChange 与其余原生 props，组合 editorRef，包括对象 ref、
+callback(null) 和 React 19 callback cleanup；不查询或移动私有 DOM。
+`ComposerEditorProps.children` 仍在文字编辑器前；输入增强器可直接返回
+`<><Base {...props} /><Microphone /></>`，没有按钮注册器或位置插口。
+宿主发送独立保留，DOM、键盘和视觉顺序都是 File → textarea → 麦克风 → 原生发送。
+完整状态/错误/恢复面板通过既有 composer middleware 放在整个 Base 之后，
+不是输入行的子项，也不需要新 slot、portal 或占位容器。
+
+`disabled` 只表示原生编辑禁用；`sendBlocked` 是提交路由/连接门槛，不把它或 pending
+变成 textarea disabled。pending 和草稿 blocks 也会阻止提交，但仍允许手动编辑。
+无自由文本路由的 ask/elicitation 保留原编辑行为，增强器必须保持麦克风可见但禁用；
+它不能绕过 sendBlocked。输入增强独立于 File 的 prompt-only schema。
+所有异步输入仍捕获精确 draft.id、revision 与租约，旧输入或复用 request ID
+不授权写入新生命周期。选区/焦点恢复也必须核对原草稿身份和写入后的修订。
 
 message 的 bodyRef 指向实际正文或当前 ask 的问题，不含 byline、滚动外框或选择按钮。
 ask 使用宿主当前 AskRequest.requestId，不冒充 SDK requestId。

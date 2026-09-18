@@ -30,7 +30,7 @@ export interface LoadedModule {
 }
 export interface RegisteredRenderer { module: LoadedModule; renderer: MarkdownRenderer }
 type Boundary = keyof ModuleComponentProps;
-const BOUNDARIES = new Set<Boundary>(['message', 'sessionStatus', 'composer', 'composerEditor', 'attachment',
+const BOUNDARIES = new Set<Boundary>(['message', 'sessionStatus', 'composer', 'composerEditor', 'composerInput', 'attachment',
   'managementHeader', 'managementDetailHeader']);
 const EMPTY_VIEW: HostSnapshot = Object.freeze({ sessionId: null, visible: false, connected: false });
 let moduleSequence = 0;
@@ -322,7 +322,7 @@ export class ModuleRuntime {
     };
     parentSignal.addEventListener('abort', stop, { once: true });
     const context: ModuleFrontendContext = {
-      apiVersion: 2, uiVersion: 1, menuVersion: 1, chatWindowVersion: 1, composerActionsVersion: 1,
+      apiVersion: 2, uiVersion: 1, menuVersion: 1, chatWindowVersion: 1, composerInputVersion: 1,
       moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
       config: asset.config, signal: controller.signal, report: this.report,
       state: Object.freeze({

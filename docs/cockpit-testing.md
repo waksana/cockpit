@@ -39,11 +39,23 @@ server/core/MCP 的构建排除其测试文件；protocol 及 Web 的 tsconfig �
 `node --test scripts/export-module-api.test.mjs`；模块还需从干净配套 SHA 导出并自行构建，
 不能以宿主用例代替真实模块包与消费者接入。
 
-当前窗口公共读取与输入行动作组合使用同一 Web runner，合并运行
+当前窗口公共读取与真实输入组件增强使用同一 Web runner，合并运行
 `src/lib/moduleChatWindow.test.ts`、`src/lib/moduleView.test.ts`、
 `src/lib/moduleRuntime.test.ts`、`src/components/Composer.test.ts` 和
 `src/components/Thread.lifecycle.test.ts`，覆盖窗口状态/归属/撤销、原生输入门槛和节点顺序。
 模块本身的麦克风、凭据、外部识别与费用不是这些宿主用例的证明范围。
+
+配套 Speech 已按其精确宿主 SDK pin 构建后，可以在同一组件 runner 上运行真实消费者：
+
+```sh
+COCKPIT_TEST_SPEECH_ENTRY=/absolute/cockpit-speech/dist/web/index.js \
+  pnpm --filter @cockpit/web exec tsx --tsconfig tsconfig.app.json --test \
+  src/components/Thread.lifecycle.test.ts
+```
+
+该 opt-in 用例将真实语音 middleware 挂到真实 Composer，使用合成 AudioContext、
+AudioWorklet、权限与 HTTP 响应，覆盖 ref cleanup、选区/焦点返回、面板结构、租约
+及手动修改恢复。未设置入口时明确跳过；不读取语音配置或调用 Azure/真实麦克风。
 
 ## 真正的 SDK 与包
 
