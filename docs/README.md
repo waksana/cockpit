@@ -34,7 +34,7 @@ React 与公开接口，不需要另建聊天应用。
 
 | 文档 | 内容 |
 | --- | --- |
-| [模块接入协议](module-contract-draft.md) | 包格式、本地安装与冷加载、后端路由和数据事件；Web 的菜单声明、语义组件 middleware、state/service/draft 和 Markdown 四类扩展。 |
+| [模块接入协议](module-contract-draft.md) | [公共接口速查](module-contract-draft.md#public-api-map)、[数据可见范围](module-contract-draft.md#public-data-boundaries)、包格式、冷加载和 Web 四类扩展。 |
 | [模块 UI 开发指南](module-ui-guide.md) | 公共样式、独立菜单能力检查、主题变量、图标、组件组合及可运行的最小前端示例。 |
 | [公共 TypeScript 类型](../packages/module-api/src/index.ts) | 后端 API v1；[frontend.ts](../packages/module-api/src/frontend.ts) 定义 Web API v2。 |
 
@@ -43,6 +43,7 @@ React 与公开接口，不需要另建聊天应用。
 [打包与安装](module-contract-draft.md#2-包格式与本地安装)”阅读。
 公共 UI 版本目前为 v1，与包/后端及 Web API 的版本分别维护；
 菜单能力另检查 `context.menuVersion: 1`，不是旧接口的兼容别名。
+注册模块 state 不等于自动取得聊天数据：当前宿主基础快照只含会话 ID、可见性和连接状态。
 开发源码新增的 `chatWindowVersion: 1` 提供[只读当前窗口](module-contract-draft.md#chat-window-state)，
 模块自行选择和裁剪文字；`composerActionsVersion: 1` 提供编辑器与原生发送按钮之间的动作组合。
 这两项尚不属于历史 0.2.4 Release，不新增本体后端能力或语音业务。
