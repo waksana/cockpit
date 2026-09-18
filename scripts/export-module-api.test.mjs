@@ -19,6 +19,9 @@ test('module API export contains its canonical types and local protocol dependen
   const frontend = await readFile(join(target, 'module-api/src/frontend.ts'), 'utf8');
   assert.match(frontend, /interface ModuleFrontendContext/);
   assert.match(frontend, /interface DraftSchemaRegistration/);
+  assert.match(frontend, /interface ModuleMenuRegistration/);
+  assert.match(frontend, /readonly menuVersion: 1/);
+  assert.doesNotMatch(frontend, /GlobalNavigationProps|globalNavigation:/);
   assert.match(types, /interface ModuleBackendContext/);
   assert.match(types, /publish\(payload: ModuleEventPayload\): void/);
   assert.match(types, /export \{ MAX_MODULE_EVENT_BYTES \}/);

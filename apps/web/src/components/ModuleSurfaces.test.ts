@@ -27,10 +27,6 @@ test('semantic middleware preserves real navigation and management controls with
         { id: 'badge', boundary: 'sessionStatus', wrap: Base => props => createElement(Base, {
           ...props, children: createElement('span', { 'data-fixture-session': props.sessionId }, '7', props.children),
         }) },
-        { id: 'navigation', boundary: 'globalNavigation', wrap: Base => props => createElement(Base, {
-          ...props, children: createElement(Fragment, null, props.children,
-            createElement('button', { type: 'button' }, 'Fixture navigation')),
-        }) },
         { id: 'management', boundary: 'managementHeader', wrap: Base => props => createElement(Base, {
           ...props, actions: createElement(Fragment, null, props.actions,
             createElement('button', { type: 'button' }, `Fixture list: ${props.section}`)),
@@ -64,10 +60,9 @@ test('semantic middleware preserves real navigation and management controls with
     if (enhanced) assert.match(sidebar, /待回答<\/span><span data-fixture-session="[^"]+">7<\/span><\/span>/);
     else assert.doesNotMatch(sidebar, /data-fixture-session/);
     const navigation = render(createElement(GlobalNavigation));
-    controls(navigation, enhanced ? 2 : 1);
+    controls(navigation, 1);
     assert.match(navigation, /<button[^>]*aria-label="全局导航"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"/);
-    if (enhanced) assert.match(navigation, /<\/button><button type="button">Fixture navigation<\/button>/);
-    else assert.doesNotMatch(navigation, /Fixture navigation/);
+    assert.doesNotMatch(navigation, /Fixture navigation/);
     for (const section of ['mcp', 'skills'] as const) {
       const title = section === 'mcp' ? '全局 MCP' : '全局 Skills';
       const refresh = section === 'mcp' ? '刷新 Copilot MCP 配置缓存' : '刷新';

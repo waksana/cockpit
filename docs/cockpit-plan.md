@@ -12,8 +12,12 @@ Cockpit 是一个直接启动的 Web/API 服务，通过官方 SDK 控制原生 
 后端公开选定的原生能力，Web 使用其中的子集实现聊天；两者不要求功能一一对应。
 后端未接入的 SDK 方法或 Web 未提供的 API 入口，不自动构成实现缺口。
 
-当前源码提供本地可信模块包的冷加载、命名空间 HTTP/静态资源及输入/聊天渲染贡献，
-接口为 Module API v1。远程安装、逐模块 HTTP MCP 和启动接续消息仍未实现，
+当前源码已提供本地可信模块包的主进程 import/冷加载、命名空间 HTTP/静态资源和
+`publish`/`onEvent` 数据事件。包/后端 API 为 v1，Web 为 v2、公共 UI 为 v1；
+前端扩展分为菜单声明（独立 `menuVersion: 1`）、真实语义组件 middleware、
+state/service/draft 和 Markdown，不提供任意页面/router 注册。
+菜单能力属于未发布开发源码，不代表仍标 0.2.3 的包与历史 0.2.3 Release 功能相同。
+远程安装、逐模块 HTTP MCP、受控热启用/停用/更新和启动接续消息仍未实现，
 具体已实现范围见[模块协议](module-contract-draft.md)。
 原生 `assistant` 消息、`task` 子代理、MCP/skill 和定时提示由 SDK 提供。
 
@@ -25,7 +29,8 @@ Cockpit 是一个直接启动的 Web/API 服务，通过官方 SDK 控制原生 
 | 前后端运行包 | 包含服务、Web 与必要依赖；Node 由宿主提供。 | 按[普通产包契约](packaging.md)维护。 |
 | 关闭 | `system/shutdown` 等待原生活动和受保护在途调用，再关闭 SDK/连接并退出。 | 等待只关注原生 session；模块业务和关闭回执不参与。 |
 | 原生确认 | API/MCP 不增加 compact、rewind、delete 的确认字段；Web 删除对话框仍做防误触确认。精确输入见[客户端说明](../apps/mcp/README.md#confirmation-boundaries)。 | 原生条件与决策跟随安装版 SDK；宿主 shutdown 的确认独立保留。 |
-| 模块 | 本地可信包、主进程 import、冷加载；HTTP/静态资源和输入/渲染贡献已接入。 | 远程签名安装、独立 MCP path、其他 UI/内容能力仍待实现。 |
+| 模块接入 | 本地可信包、主进程 import、冷加载；HTTP/静态资源、数据事件及四类前端扩展已接入。 | 远程签名安装、独立 MCP path 和内容包仍待实现。 |
+| 模块生命周期 | 安装/启用/停用/更新只改变下次启动选择，当前实际加载不变。 | [#5](https://github.com/waksana/cockpit/issues/5) 的模块管理及受控热启用/停用/更新已确认，尚未实现；菜单注册不实现该目标。 |
 | 启动消息 | 尚未提供。 | 可选模块保存下一次启动 prompt，并处理一次发送尝试。 |
 
 ## 代码与进程

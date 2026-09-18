@@ -107,7 +107,7 @@ test('long menus keep internal scroll open and dismiss before panel Escape; Tab 
   for (const file of ['./AnchoredMenu.tsx', './ContextMenu.tsx']) {
     assert.match(source(file), /key=\{it.id \?\? it.label\}/);
   }
-  for (const file of ['./AnchoredMenu.tsx', './Sidebar.tsx']) {
+  for (const file of ['./AnchoredMenu.tsx', './ContextMenu.tsx']) {
     assert.match(source(file), /scrollIntoView\(\{ block: 'nearest' \}\)/);
   }
   assert.match(source('./ContextMenu.tsx'), /maxHeight: 'calc\(100dvh - 16px\)', overflowY: 'auto'/);
@@ -154,10 +154,11 @@ test('sidebar menu stores target identity, derives current actions, and dismisse
 
 test('sidebar live updates share the existing valid-focus preservation and fallback policy', () => {
   const sidebar = source('./Sidebar.tsx');
-  assert.match(sidebar, /menuFocusTarget\(focusInitialized.current, focusedItem.current, enabled\)/);
-  assert.match(sidebar, /if \(target !== undefined\) \(target \?\? menuRef.current\).focus\(\)/);
-  assert.match(sidebar, /focusedItem.current = e.target/);
-  assert.match(sidebar, /focusInitialized.current = false; focusedItem.current = null;/);
+  const menu = source('./ContextMenu.tsx');
+  assert.match(menu, /menuFocusTarget\(focusInitialized.current, focusedItem.current, enabled\)/);
+  assert.match(menu, /\(target \?\? menu\).focus\(\)/);
+  assert.match(menu, /focusedItem.current = event.target/);
+  assert.match(sidebar, /<ContextMenu key=\{menu.sessionId\}/);
   assert.match(sidebar, /trigger\?\.isConnected \? trigger : Array.from/);
   assert.match(sidebar, /element.dataset.sessionId === menu\?\.sessionId/);
 });

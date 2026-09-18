@@ -272,20 +272,36 @@ export interface ComposerProps extends ComposerTarget {
 export interface ComposerEditorProps extends ComposerProps,
   Omit<React.HTMLAttributes<HTMLDivElement>, keyof ComposerProps> {}
 
-export interface GlobalNavigationItem {
-  readonly id: string;
+export type ModuleMenuTarget =
+  | { readonly menu: 'global' }
+  | { readonly menu: 'session'; readonly sessionId: string };
+
+/** Pure presentation derived from the module's existing state/service. */
+export interface ModuleMenuState {
   readonly label: string;
   readonly icon?: React.ReactNode;
+  readonly visible?: boolean;
   readonly disabled?: boolean;
   readonly destructive?: boolean;
   readonly separatorBefore?: boolean;
-  readonly onClick: () => void;
 }
 
-/** The existing global navigation button and its complete menu action list. */
-export interface GlobalNavigationProps {
-  readonly items: readonly GlobalNavigationItem[];
-  readonly children?: React.ReactNode;
+export interface ModuleMenuRegistration {
+  readonly id: string;
+  readonly menu: ModuleMenuTarget['menu'];
+  readonly order?: number;
+  /** Synchronous and side-effect-free; never a hook or a native-store replica. */
+  getState(target: ModuleMenuTarget): ModuleMenuState;
+  /** Notify when presentation changes. Owned and revoked by the module scope. */
+  subscribe?(listener: () => void): () => void;
+  /**
+   * Invoked synchronously in the user gesture, after availability is rechecked.
+   * The immutable target never follows navigation. Normal menu close does not
+   * cancel accepted work; module/target loss aborts signal. Check it after awaits.
+   * Returned promises carry no host mutation or navigation instruction. API
+   * conditions/authorization remain authoritative, regardless of disabled UI.
+   */
+  onSelect(target: ModuleMenuTarget, context: { readonly signal: AbortSignal }): void | Promise<void>;
 }
 
 /** Existing global resource-list header, including back/title/refresh controls. */
@@ -367,7 +383,6 @@ export interface ModuleComponentProps {
   composer: ComposerProps;
   composerEditor: ComposerEditorProps;
   attachment: AttachmentProps;
-  globalNavigation: GlobalNavigationProps;
   managementHeader: ManagementHeaderProps;
   managementDetailHeader: ManagementDetailHeaderProps;
 }
@@ -416,6 +431,8 @@ export interface ModuleFrontendContext {
   /** Web contract only. Module manifest, backend context and route API remain v1. */
   readonly apiVersion: 2;
   readonly uiVersion: 1;
+  /** Declarative global/session menu capability; not a component boundary. */
+  readonly menuVersion: 1;
   readonly moduleId: string;
   readonly react: typeof React;
   createPortal(children: React.ReactNode, container: Element | DocumentFragment): React.ReactPortal;
@@ -436,7 +453,7 @@ export interface ModuleFrontendContext {
 
 /**
  * All IDs are nonempty and unique within this module across state services,
- * draft schemas, middleware and Markdown. The host stages the entire activation
+ * draft schemas, menus, middleware and Markdown. The host stages the entire activation
  * before publishing; old slot fields and frontend versions are rejected.
  *
  * Middleware sorts by (order ?? 0, moduleId, id), lowest first/outermost, and is
@@ -454,6 +471,8 @@ export interface ModuleFrontendContext {
 export interface ModuleFrontend {
   readonly apiVersion: 2;
   readonly writes?: readonly DraftWrite[];
+  /** Native commands remain first; additions sort by (order ?? 0, moduleId, id). */
+  readonly menus?: readonly ModuleMenuRegistration[];
   readonly components?: readonly ModuleComponentMiddleware[];
   readonly markdown?: readonly MarkdownRenderer[];
   dispose?(): void;

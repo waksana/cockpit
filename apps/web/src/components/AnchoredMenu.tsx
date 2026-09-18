@@ -10,14 +10,18 @@ import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { MenuItemButton, type MenuItem } from './ContextMenu';
 import { useMenuDismiss } from '../lib/useMenuDismiss';
 import { menuFocusTarget } from '../lib/menuFocus';
+import type { ModuleMenuTarget } from '@cockpit/module-api';
+import { useRegisteredMenu } from './useRegisteredMenu';
 
-export function AnchoredMenu({ triggerRef, items, onClose, align = 'right', label }: {
+export function AnchoredMenu({ triggerRef, items: nativeItems, onClose, align = 'right', label, moduleTarget }: {
   triggerRef: RefObject<HTMLElement | null>;
   items: MenuItem[];
   onClose: () => void;
   align?: 'left' | 'right';
   label?: string;
+  moduleTarget?: ModuleMenuTarget;
 }) {
+  const items = useRegisteredMenu(nativeItems, moduleTarget);
   const ref = useRef<HTMLDivElement | null>(null);
   const focusInitialized = useRef(false);
   const focusedItem = useRef<HTMLButtonElement | null>(null);
@@ -36,8 +40,10 @@ export function AnchoredMenu({ triggerRef, items, onClose, align = 'right', labe
     const pad = 8;
     const top = r.bottom + gap;
     const maxHeight = window.innerHeight - r.bottom - gap - pad;
-    if (align === 'left') setStyle({ left: Math.max(pad, r.left), top, maxHeight });
-    else setStyle({ right: Math.max(pad, window.innerWidth - r.right), top, maxHeight });
+    const next = align === 'left' ? { left: Math.max(pad, r.left), top, maxHeight }
+      : { right: Math.max(pad, window.innerWidth - r.right), top, maxHeight };
+    setStyle(previous => previous?.left === next.left && previous?.right === next.right
+      && previous?.top === next.top && previous?.maxHeight === next.maxHeight ? previous : next);
   }, [triggerRef, items, align]);
   const visible = style !== null;
   useLayoutEffect(() => {

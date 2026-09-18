@@ -22,15 +22,26 @@ This host also exposes `context.createPortal(children, container)` from its
 existing ReactDOM. Modules using it must check that it is a function before
 registering their contributions. Do not bundle a separate ReactDOM implementation.
 
-UI v1 is separate from the frontend activation API. Cockpit **0.2.3** uses
-**Web API v2** (`context.apiVersion` and the returned declaration are
-both 2), while module manifests and backend API remain v1. Old Web contribution
-slots are not accepted. When using file or notification modules, pair the host
-with **Cockpit File 0.1.7 / Cockpit Notification 0.1.0**; the UI version alone
-does not prove frontend compatibility. Release assets are available only after
-their respective Release workflows succeed. Use the existing explicit cold-start
-procedure. Building or merging any repository does not authorize installation,
-deployment or restart.
+UI v1 is separate from **Web API v2** (`context.apiVersion` and the returned
+declaration are both 2); module manifests and backend API remain v1.
+Menus add the independent **`context.menuVersion === 1`** capability.
+Modules declaring menus must check it explicitly; neither Web v2 nor UI v1
+implies menu support, and no legacy navigation fallback is provided:
+
+```ts
+if (context.menuVersion !== 1) throw new Error('This module requires Cockpit menu v1');
+```
+
+These are current, unreleased source guarantees, not additions to the historical
+**Cockpit 0.2.3** GitHub Release. That release remains paired with
+**Cockpit File 0.1.7 / Cockpit Notification 0.1.0**.
+Current source pairs with **Cockpit Notification 0.1.5**; its
+`tooling/host-sdk.json` pins the exact host SDK SHA. This is a new immutable module
+version, not a published release. The development host package
+still says 0.2.3, so package versions alone cannot prove these capabilities.
+See the [module contract](module-contract-draft.md) for the authoritative pairing.
+Use the existing explicit cold-start procedure. Building or merging any repository
+does not authorize installation, deployment or restart.
 
 Public classes and variables below are compatibility commitments. Additions may
 extend v1; removal, changed meaning or incompatible structure requires a new UI
@@ -225,15 +236,49 @@ containers, nested interactive controls, or visual indentation. Real controls
 and adornments compose through the base component's ordinary props/children.
 Markdown link/image replacements use their separate inline renderer contract.
 An empty component inserted only to receive module children is still a slot,
-not enhancement of an existing semantic component. Navigation/header middleware
+not enhancement of an existing semantic component. Management-header middleware
 must wrap the actual controls and preserve their original navigation and focus.
-`globalNavigation` receives the complete `items` list, including native MCP/Skills
-commands. Middleware can append ordinary menu actions while preserving existing
-items; the actual menu retains keyboard navigation, disabled behavior, closing
-and trigger focus restoration. This is not an empty module-only menu slot, and
-the host does not interpret action labels or notification state.
+Message middleware retains the real `bodyRef`, including the current ask body;
+reading thresholds, unread marks and red-line policy remain module-owned.
+The other real component boundaries remain session status, composer/editor
+(including ordinary paste/drop events), native attachments and management headers.
 Ordinary DOM event props are public component behavior; file selection and its
 picker/dispatch lifecycle belong entirely to the file module's state services.
+
+## Menu declarations
+
+Menu declarations, semantic component middleware, state/service/draft and
+Markdown rendering are four distinct extension mechanisms. Global/session menu
+actions belong in the returned `ModuleFrontend.menus` array, not in a navigation
+HOC, an empty component boundary or an arbitrary page/router registration.
+The [menu contract](module-contract-draft.md#65-菜单注册) owns exact types,
+ordering, target availability and lifecycle rules.
+
+Use `getState(target)` for pure synchronous display state, and subscribe to the
+module's existing service rather than copying native state. Subscriptions belong
+to activation, not each menu opening. The host renders
+labels and decorative icons, retains native actions first, normalizes separators
+and owns keyboard navigation, disabled behavior, closing and trigger focus return.
+Do not put another button, link or menu inside the icon. Menu availability is a
+current frontend-view check, not API authorization. Session module actions require
+an applied current snapshot, an open connection and a target present in that view;
+native navigation keeps its existing offline behavior.
+
+Actions receive the frozen original global/session target and an abort signal.
+Recheck that signal after each `await` before applying module-owned results;
+never redirect an action to whichever session is now active. The host rechecks
+availability and disabled state at selection, rejects stale menu callbacks, and
+aborts accepted work when the module stops, the target disappears or the connection
+becomes unknown. Normal menu closing and route changes do not cancel accepted work.
+Each registration/target pair is busy-guarded. Aborting frees host tracking
+immediately without waiting for the Promise; returned data is not applied by the host.
+
+A failed/malformed state read omits and reports only that command; an icon render
+failure keeps the command without its icon. Ordinary action errors are reported
+without revoking healthy contributions. Subscription setup failure instead rolls
+back activation; unsubscribe errors must not prevent remaining cleanup.
+
+## Markdown and modal composition
 
 Markdown renderers may occur inside paragraphs, emphasis, lists or headings.
 Returning a `span` does not legalize flow-only children such as `dialog`. Modal

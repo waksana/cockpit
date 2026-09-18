@@ -4,6 +4,7 @@ import type {
   ComponentMiddleware,
   HostSnapshot, MarkdownNode, MarkdownRenderer, ModuleAsset, ModuleComponentProps,
   DraftSchemaRegistration, ModuleEventPayload, ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
+  ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget,
 } from '@cockpit/module-api';
 import { resolveDraft, type SessionDraft } from './textDraft';
 import { RegisteredDraftSchema, type RuntimeDraftSchema } from './draftSchemas';
@@ -29,7 +30,7 @@ export interface LoadedModule {
 export interface RegisteredRenderer { module: LoadedModule; renderer: MarkdownRenderer }
 type Boundary = keyof ModuleComponentProps;
 const BOUNDARIES = new Set<Boundary>(['message', 'sessionStatus', 'composer', 'composerEditor', 'attachment',
-  'globalNavigation', 'managementHeader', 'managementDetailHeader']);
+  'managementHeader', 'managementDetailHeader']);
 const EMPTY_VIEW: HostSnapshot = Object.freeze({ sessionId: null, visible: false, connected: false });
 let moduleSequence = 0;
 
@@ -106,21 +107,28 @@ function claimId(ids: Set<string>, id: unknown): void {
 }
 function validateFrontend(input: unknown, ids: Set<string>): ModuleFrontend {
   if (!record(input) || input.apiVersion !== 2) throw new Error('Module frontend API v2 is required');
-  const allowed = new Set(['apiVersion', 'writes', 'components', 'markdown', 'dispose']);
+  const allowed = new Set(['apiVersion', 'writes', 'components', 'markdown', 'menus', 'dispose']);
   for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`Unsupported module frontend field: ${key}`);
   if (input.writes !== undefined && (!Array.isArray(input.writes)
     || input.writes.some(value => value !== 'text'))) throw new Error('Invalid module writes declaration');
-  for (const key of ['components', 'markdown'] as const) {
+  for (const key of ['components', 'markdown', 'menus'] as const) {
     const entries = input[key];
     if (entries === undefined) continue;
     if (!Array.isArray(entries)) throw new Error(`Invalid module ${key}`);
     for (const entry of entries) {
       if (!record(entry)) throw new Error(`Invalid module ${key} registration`);
       claimId(ids, entry.id);
-      const fields = key === 'components' ? ['id', 'boundary', 'order', 'wrap'] : ['id', 'matches', 'component'];
+      const fields = key === 'components' ? ['id', 'boundary', 'order', 'wrap']
+        : key === 'menus' ? ['id', 'menu', 'order', 'getState', 'subscribe', 'onSelect'] : ['id', 'matches', 'component'];
       if (Object.keys(entry).some(field => !fields.includes(field))) throw new Error(`Unsupported module ${key} registration field`);
       if (key === 'components') {
         if (!BOUNDARIES.has(entry.boundary as Boundary) || typeof entry.wrap !== 'function') throw new Error('Invalid component middleware');
+        if (entry.order !== undefined && (typeof entry.order !== 'number' || !Number.isFinite(entry.order))) throw new Error('Invalid module order');
+      } else if (key === 'menus') {
+        if ((entry.menu !== 'global' && entry.menu !== 'session') || typeof entry.getState !== 'function'
+          || typeof entry.onSelect !== 'function' || (entry.subscribe !== undefined && typeof entry.subscribe !== 'function')) {
+          throw new Error('Invalid module menu registration');
+        }
         if (entry.order !== undefined && (typeof entry.order !== 'number' || !Number.isFinite(entry.order))) throw new Error('Invalid module order');
       } else {
         if (!component(entry.component) || typeof entry.matches !== 'function') throw new Error('Invalid Markdown renderer');
@@ -133,7 +141,27 @@ function validateFrontend(input: unknown, ids: Set<string>): ModuleFrontend {
     ...(input.writes ? { writes: Object.freeze([...input.writes as string[]]) } : {}),
     components: Object.freeze((input.components as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
     markdown: Object.freeze((input.markdown as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
+    menus: Object.freeze((input.menus as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
   }) as unknown as ModuleFrontend;
+}
+
+export interface MenuTargetSource {
+  isCurrent(): boolean;
+  subscribe(listener: () => void): () => void;
+}
+export interface RegisteredMenuItem extends ModuleMenuState {
+  readonly id: string;
+  onClick(): void;
+}
+
+function menuState(entry: ModuleMenuRegistration, target: ModuleMenuTarget): ModuleMenuState {
+  const state = entry.getState(target);
+  if (!record(state) || !nonempty(state.label)
+    || Object.keys(state).some(key => !['label', 'icon', 'visible', 'disabled', 'destructive', 'separatorBefore'].includes(key))
+    || ['visible', 'disabled', 'destructive', 'separatorBefore'].some(key => state[key] !== undefined && typeof state[key] !== 'boolean')) {
+    throw new Error(`Invalid menu state: ${entry.id}`);
+  }
+  return state;
 }
 
 function installStyle(url: string): () => void {
@@ -156,6 +184,9 @@ export class ModuleRuntime {
   private readonly reports = new Set<string>();
   private readonly componentCache = new Map<object, { boundary: Boundary; entries: readonly object[]; component: unknown }>();
   private readonly knownDrafts = new Set<SessionDraft>();
+  private menuRevision = 0;
+  private readonly menuListeners = new Set<() => void>();
+  private readonly menuFlights = new Map<ModuleMenuRegistration, Set<string>>();
   constructor(options: RuntimeOptions = {}) {
     if (options.activationTimeoutMs !== undefined
       && (!Number.isFinite(options.activationTimeoutMs) || options.activationTimeoutMs <= 0)) throw new Error('Invalid module activation timeout');
@@ -177,6 +208,15 @@ export class ModuleRuntime {
     if (listeners) for (const listener of [...listeners]) if (listeners.has(listener)) listener(payload);
   }
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  getMenuRevision = (): number => this.menuRevision;
+  subscribeMenus = (listener: () => void): (() => void) => {
+    this.menuListeners.add(listener);
+    return () => { this.menuListeners.delete(listener); };
+  };
+  private menusChanged = (): void => {
+    this.menuRevision++;
+    for (const listener of this.menuListeners) listener();
+  };
   private publish(modules: readonly LoadedModule[]) {
     this.snapshot = modules;
     const registrations = new Set(modules.flatMap(module => module.frontend.components ?? []));
@@ -184,6 +224,7 @@ export class ModuleRuntime {
       if (cached.entries.some(entry => !registrations.has(entry as NonNullable<ModuleFrontend['components']>[number]))) this.componentCache.delete(base);
     }
     for (const listener of this.listeners) listener();
+    this.menusChanged();
   }
   report = (error: unknown): void => {
     const message = describeReason(error, false);
@@ -273,7 +314,7 @@ export class ModuleRuntime {
     };
     parentSignal.addEventListener('abort', stop, { once: true });
     const context: ModuleFrontendContext = {
-      apiVersion: 2, uiVersion: 1, moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
+      apiVersion: 2, uiVersion: 1, menuVersion: 1, moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
       config: asset.config, signal: controller.signal, report: this.report,
       state: Object.freeze({
         host: Object.freeze({ getSnapshot: this.getViewSnapshot, subscribe: (listener: () => void) => subscribe(this.viewListeners, listener) }),
@@ -363,6 +404,20 @@ export class ModuleRuntime {
       registering = false;
       if (registrationError) throw registrationError;
       frontend = validateFrontend(activated, ids);
+      for (const entry of frontend.menus ?? []) {
+        if (!entry.subscribe) continue;
+        let active = true;
+        const unsubscribe = entry.subscribe(() => {
+          if (active && !controller.signal.aborted) this.menusChanged();
+        });
+        if (typeof unsubscribe !== 'function') throw new Error(`Invalid menu unsubscribe: ${entry.id}`);
+        const release = () => {
+          active = false;
+          subscriptions.delete(release);
+          try { unsubscribe(); } catch (error) { this.report(error); }
+        };
+        subscriptions.add(release);
+      }
       for (const style of asset.styles) styles.push((this.options.style ?? installStyle)(style));
       for (const schema of schemas) for (const draft of this.knownDrafts) schema.prepare(draft);
       for (const schema of schemas) schema.activate();
@@ -401,6 +456,79 @@ export class ModuleRuntime {
   fail(module: LoadedModule, error: unknown): void {
     this.report(error);
     this.unregister(module);
+  }
+  menuItems(target: ModuleMenuTarget, source: MenuTargetSource, isOpen: () => boolean): RegisteredMenuItem[] {
+    const captured = Object.freeze({ ...target });
+    const key = JSON.stringify(captured);
+    const entries = this.snapshot.filter(module => !module.signal.aborted).flatMap(module => (module.frontend.menus ?? [])
+      .filter(entry => entry.menu === captured.menu).map(entry => ({ module, entry })))
+      .sort((a, b) => (a.entry.order ?? 0) - (b.entry.order ?? 0)
+        || a.module.asset.id.localeCompare(b.module.asset.id) || a.entry.id.localeCompare(b.entry.id));
+    return entries.flatMap(({ module, entry }) => {
+      try {
+        const state = menuState(entry, captured);
+        if (state.visible === false) return [];
+        return [{
+          ...state, id: JSON.stringify(['module', module.asset.id, entry.id]),
+          disabled: !!state.disabled || !source.isCurrent() || !!this.menuFlights.get(entry)?.has(key),
+          onClick: () => {
+            try {
+              if (!isOpen() || module.signal.aborted || !this.snapshot.includes(module) || !source.isCurrent()) {
+                throw new Error(`Menu target is no longer available: ${module.asset.id}/${entry.id}`);
+              }
+              const latest = menuState(entry, captured);
+              if (latest.visible === false || latest.disabled || this.menuFlights.get(entry)?.has(key)) {
+                throw new Error(`Menu action is unavailable: ${module.asset.id}/${entry.id}`);
+              }
+              this.runMenuAction(module, entry, captured, source, key);
+            } catch (error) { this.reportMenu(module, entry, error); }
+          },
+        }];
+      } catch (error) { this.reportMenu(module, entry, error); return []; }
+    });
+  }
+  private reportMenu(module: LoadedModule, entry: ModuleMenuRegistration, error: unknown): void {
+    this.report(new Error(`Menu ${module.asset.id}/${entry.id}: ${describeReason(error, false)}`, { cause: error }));
+  }
+  private runMenuAction(module: LoadedModule, entry: ModuleMenuRegistration, target: ModuleMenuTarget,
+    source: MenuTargetSource, key: string): void {
+    const controller = new AbortController();
+    let unsubscribe: (() => void) | undefined;
+    let finished = false;
+    const abort = () => controller.abort();
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      module.signal.removeEventListener('abort', abort);
+      try { unsubscribe?.(); } catch (error) { this.report(error); }
+      unsubscribe = undefined;
+      const flights = this.menuFlights.get(entry);
+      flights?.delete(key);
+      if (!flights?.size) this.menuFlights.delete(entry);
+      this.menusChanged();
+    };
+    let flights = this.menuFlights.get(entry);
+    if (!flights) this.menuFlights.set(entry, flights = new Set());
+    flights.add(key);
+    module.signal.addEventListener('abort', abort, { once: true });
+    controller.signal.addEventListener('abort', finish, { once: true });
+    try {
+      unsubscribe = source.subscribe(() => { if (!source.isCurrent()) abort(); });
+      if (finished) { unsubscribe(); unsubscribe = undefined; }
+      if (module.signal.aborted || !source.isCurrent()) abort();
+      controller.signal.throwIfAborted();
+      this.menusChanged();
+      // No await before invocation: browser permission APIs require the gesture.
+      const result = entry.onSelect(target, { signal: controller.signal });
+      void Promise.resolve(result).catch(error => this.reportMenu(module, entry, error)).finally(() => {
+        controller.signal.removeEventListener('abort', finish);
+        finish();
+      });
+    } catch (error) {
+      controller.signal.removeEventListener('abort', finish);
+      finish();
+      this.reportMenu(module, entry, error);
+    }
   }
   isDraftPrepared(draft: SessionDraft): boolean {
     return !draft.isRetired() && this.snapshot.every(module => module.schemas.every(schema => schema.ready(draft)));

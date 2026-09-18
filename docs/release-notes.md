@@ -2,6 +2,10 @@
 
 Release summary for v0.2.3, relative to v0.2.2. The checked runtime archive and
 checksum are published only after the immutable tag's Release workflow succeeds.
+This is the historical release summary, not the unreleased source feature list.
+The new menu registry and Notification 0.1.5 source pairing are documented in the
+[current module contract](module-contract-draft.md); they do not change this
+release's Notification 0.1.0 pairing or add functionality to its assets.
 
 ## BREAKING: Module Web API v2
 

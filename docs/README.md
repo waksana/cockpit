@@ -10,23 +10,26 @@
 | [项目入口](../README.md) | 产品介绍 | 使用场景、界面预览、交给 Agent 的安装提示词和文档/社区入口；不承载工程细节。 |
 | [贡献指南](../CONTRIBUTING.md) | 协作政策 | 问题报告、短期分支/PR、review、贡献范围和许可。 |
 | [安全政策](../SECURITY.md) | 报告与支持政策 | 私密漏洞报告、支持版本、脱敏要求和部署信任边界摘要。 |
-| [产品要求 R1–R8](product-requirements.md) | 已确认要求 | 定位、原生权威、单服务包、模块冷加载、graceful 退出与已接受成本。 |
+| [产品要求 R1–R8](product-requirements.md) | 已确认要求 | 定位、原生权威、单服务包、当前模块冷加载与后续受控热生命周期目标、graceful 退出及已接受成本。 |
 | [架构与运行边界](cockpit-plan.md) | 当前实现 / 目标差距 | 直接服务、原生权威、认证、身份、graceful 和模块接入的完成边界。 |
 | [模块目录](module-catalog.md) | 后续能力 | 各模块的用户能力和与本体的协作边界。 |
-| [模块接入协议](module-contract-draft.md) | 当前接口 / 后续目标 | 包/后端 API v1、Web v2 state/middleware/Markdown 注册、本地包，以及未实现的远程安装和 HTTP MCP。 |
-| [模块 UI 开发指南](module-ui-guide.md) | 当前公共保证 | Module UI v1、Lucide、公共类/变量、模块样式协作和可运行前端示例。 |
+| [模块接入协议](module-contract-draft.md) | 当前源码接口 / 后续目标 | 包/后端 API v1、Web v2 的菜单声明（menuVersion 1）、语义组件 middleware、state/service/draft 和 Markdown 四类扩展；已实现的数据事件与冷加载，以及后续生命周期目标。 |
+| [模块 UI 开发指南](module-ui-guide.md) | 当前公共保证 | Module UI v1、独立菜单能力检查、Lucide、公共类/变量、模块样式协作和可运行前端示例。 |
 | [原生聊天](native-chat.md) | 当前协议说明 | 原生事件、cursor、Web 阅读窗口、历史/实时/重连和媒体边界。 |
 | [原生 fork](session-fork.md) | 当前协议说明 | 分叉前检、排他边界、实际继承与非幂等结果。 |
 | [MCP 客户端](../apps/mcp/README.md) | 当前客户端说明 | 工具映射、客户端参数、附件输入、输出分页与 MCP 配置。 |
 | [安装指南](DEPLOY-PORTABLE.md) | 当前使用指南 | 支持基线、运行包下载与校验、源码/运行包启动、原生认证、首次聊天、环境配置、远程入口、排错与关闭。 |
 | [普通产包](packaging.md) | 构建与发行契约 | 完整包、来源 manifest、依赖闭包、CI 门禁、版本政策和 tag 发行。 |
-| [本次发行摘要](release-notes.md) | 发行输入 | 本次版本的范围、运行条件与限制；已发布说明在 GitHub Releases 维护。 |
+| [0.2.3 发行摘要](release-notes.md) | 历史发行 | 该版本的范围、运行条件与配套模块；不代表未发布源码能力，正式说明在 GitHub Releases 维护。 |
 | [开发与集成](DEVELOPMENT.md) | 工程流程 / 已确认开发要求 | 隔离工作区、源码集成、文档维护、交互语义与结构正确性、组件 lab。 |
 | [验证指南](cockpit-testing.md) | 工程流程 | 现有命令、隔离条件、证据层次及清理要求。不是安全认证或运行证明。 |
 
 文件名 `cockpit-plan.md` 为保留既有链接沿用；它现在是**当前架构说明**，
-不是另一份待办计划。`module-contract-draft.md` 区分已实现 API v1 与后续目标；
+不是另一份待办计划。`module-contract-draft.md` 区分当前包/后端 v1、Web v2 与后续目标；
 示意清单不能代替实际包含代码的模块包。
+当前菜单能力属于未发布源码；开发包仍标 0.2.3 不能证明 GitHub Release 0.2.3 含有该能力。
+历史发行配套 Notification 0.1.0 与当前源码配套 Notification 0.1.5 分开核对，
+精确宿主 SDK SHA 以通知仓库 `tooling/host-sdk.json` 为准。
 已确认的后续目标从[这里](product-requirements.md#single-service-target)进入；
 实际缺口从[架构对照](cockpit-plan.md#target-gap)进入。
 

@@ -4,7 +4,7 @@ import * as React from 'react';
 import { createPortal } from 'react-dom';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ServerEvent, type ModuleEventPayload } from '@cockpit/protocol';
-import type { ActivateFrontend, ComposerEditorProps, DraftSchemaHandle, ModuleAsset, ModuleFrontend, ModuleFrontendContext, MarkdownNode } from '@cockpit/module-api';
+import type { ActivateFrontend, ComposerEditorProps, DraftSchemaHandle, ModuleAsset, ModuleFrontend, ModuleFrontendContext, MarkdownNode, ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget } from '@cockpit/module-api';
 import { ModuleRuntime, validateModuleAsset } from './moduleRuntime';
 import { createSessionDrafts } from './textDraft';
 import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';
@@ -14,6 +14,16 @@ const asset = (id = 'fixture'): ModuleAsset => ({
   id, name: id, version: '1.0.0', digest, apiBase: `/_modules/${id}/${digest}/api`,
   entry: `/_modules/assets/${id}/${digest}/entry.js`, styles: [`/_modules/assets/${id}/${digest}/style.css`], config: { max: 20 },
 });
+const menuSource = () => {
+  let current = true;
+  const listeners = new Set<() => void>();
+  return {
+    isCurrent: () => current,
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    invalidate: () => { current = false; for (const listener of [...listeners]) listener(); },
+    listeners,
+  };
+};
 function fixture(modules: unknown[] = [asset()], frontend: ModuleFrontend | ActivateFrontend = { apiVersion: 2 }) {
   const requests: { url: string; init?: RequestInit }[] = [];
   const imports: string[] = [], styles: string[] = [], reports: unknown[] = [];
@@ -46,6 +56,192 @@ test('constructing/rendering the module store has no bootstrap or backend access
   unsubscribe();
 });
 
+test('menus share registration IDs and rollback, reject retired wrappers and malformed declarations', async () => {
+  const entry: ModuleMenuRegistration = { id: 'action', menu: 'global',
+    getState: () => ({ label: 'Action' }), onSelect() {} };
+  for (const patch of [
+    { menus: {} }, { menus: [null] }, { menus: [{ ...entry, id: '' }] },
+    { menus: [entry, entry] }, { menus: [{ ...entry, menu: 'page' }] },
+    { menus: [{ ...entry, menu: { toString: () => 'global' } }] },
+    { menus: [{ ...entry, order: Infinity }] }, { menus: [{ ...entry, extra: true }] },
+    { menus: [{ ...entry, getState: null }] }, { menus: [{ ...entry, subscribe: true }] },
+    { menus: [{ ...entry, onSelect: null }] },
+    { menus: [{ ...entry, subscribe: () => undefined }] },
+    { components: [{ id: 'old', boundary: 'globalNavigation', wrap: (Base: unknown) => Base }] },
+    { menus: [{ ...entry, id: 'state' }] },
+    { menus: [entry], components: [{ id: 'action', boundary: 'message', wrap: (Base: unknown) => Base }] },
+    { menus: [entry], markdown: [{ id: 'action', matches: () => false, component: () => null }] },
+  ]) {
+    let disposed = 0;
+    const f = fixture([asset()], context => {
+      context.state.register({ id: 'state', create: () => ({}), dispose: () => { disposed++; } });
+      return { apiVersion: 2, ...patch } as unknown as ModuleFrontend;
+    });
+    await f.runtime.start();
+    assert.deepEqual(f.runtime.getSnapshot(), [], JSON.stringify(patch));
+    assert.equal(disposed, 1);
+    assert.ok(f.reports.length);
+    f.runtime.stop();
+  }
+});
+
+test('global/session menus sort across modules, derive dynamic state and revoke subscriptions with their scope', async () => {
+  const listeners = new Set<() => void>();
+  let late = () => {};
+  let disabled = false;
+  let visible = true;
+  const calls: ModuleMenuTarget[] = [];
+  const f = fixture([asset('z'), asset('a')], () => ({
+    apiVersion: 2, menus: [
+      { id: 'same', menu: 'global', getState: () => ({ label: disabled ? 'Busy' : 'Ready', disabled, visible }),
+        subscribe: listener => { late = listener; listeners.add(listener); return () => { listeners.delete(listener); }; },
+        onSelect: target => { calls.push(target); } },
+      { id: 'before', menu: 'global', order: -1, getState: () => ({ label: 'Before' }), onSelect() {} },
+      { id: 'session', menu: 'session', getState: target => ({ label: JSON.stringify(target) }), onSelect() {} },
+    ],
+  }));
+  const source = menuSource();
+  assert.deepEqual(f.runtime.menuItems({ menu: 'global' }, source, () => true), []);
+  await f.runtime.start();
+  const items = () => f.runtime.menuItems({ menu: 'global' }, source, () => true);
+  assert.deepEqual(items().map(item => JSON.parse(item.id)), [
+    ['module', 'a', 'before'], ['module', 'z', 'before'], ['module', 'a', 'same'], ['module', 'z', 'same'],
+  ]);
+  assert.equal(f.runtime.menuItems({ menu: 'session', sessionId: 'A' }, source, () => true).length, 2);
+  const old = items()[2];
+  disabled = true;
+  const revision = f.runtime.getMenuRevision();
+  for (const notify of listeners) notify();
+  assert.ok(f.runtime.getMenuRevision() > revision);
+  assert.equal(items()[2].label, 'Busy');
+  assert.equal(items()[2].disabled, true);
+  old.onClick();
+  assert.equal(calls.length, 0, 'stale enabled presentation never authorizes an action');
+  disabled = false;
+  visible = false;
+  assert.equal(items().length, 2);
+  old.onClick();
+  assert.equal(calls.length, 0, 'hidden commands are guarded too');
+  visible = true;
+  f.runtime.unregister(f.runtime.getSnapshot()[0]);
+  assert.equal(listeners.size, 1);
+  assert.equal(items().length, 2);
+  old.onClick();
+  assert.equal(calls.length, 0);
+  f.runtime.stop();
+  assert.equal(listeners.size, 0);
+  const stoppedRevision = f.runtime.getMenuRevision();
+  late();
+  assert.equal(f.runtime.getMenuRevision(), stoppedRevision);
+});
+
+test('menu subscription failures rollback staged services and late notifications cannot survive cleanup errors', async () => {
+  for (const setupFails of [false, true]) {
+    const cleanup: string[] = [];
+    let late = () => {};
+    const f = fixture([asset('bad'), asset('peer')], context => {
+      if (context.moduleId === 'peer') return { apiVersion: 2 };
+      context.state.register({ id: 'service', create: () => ({}), dispose: () => { cleanup.push('service'); } });
+      const command = { menu: 'global' as const, getState: () => ({ label: 'Action' }), onSelect() {} };
+      return { apiVersion: 2, menus: [
+        { ...command, id: 'one', subscribe: listener => {
+          late = listener;
+          return () => { cleanup.push('one'); throw new Error('Unsubscribe failed'); };
+        } },
+        { ...command, id: 'two', subscribe: () => {
+          if (setupFails) throw new Error('Subscribe failed');
+          return () => { cleanup.push('two'); };
+        } },
+      ] };
+    });
+    await f.runtime.start();
+    assert.equal(f.runtime.getSnapshot().some(module => module.asset.id === 'bad'), !setupFails);
+    if (!setupFails) f.runtime.unregister(f.runtime.getSnapshot().find(module => module.asset.id === 'bad')!);
+    assert.deepEqual(cleanup, setupFails ? ['one', 'service'] : ['one', 'two', 'service']);
+    assert.deepEqual(f.runtime.getSnapshot().map(module => module.asset.id), ['peer']);
+    assert.ok(f.reports.length);
+    const revision = f.runtime.getMenuRevision();
+    late();
+    assert.equal(f.runtime.getMenuRevision(), revision);
+    f.runtime.stop();
+  }
+});
+
+test('menu actions preserve exact targets, abort on target/module loss, isolate late results and never retry', async () => {
+  for (const loss of ['target', 'module', 'none'] as const) {
+    const source = menuSource();
+    let opened = true;
+    let finish!: () => void;
+    let signal!: AbortSignal;
+    let received!: ModuleMenuTarget;
+    let calls = 0;
+    const f = fixture([asset()], {
+      apiVersion: 2, menus: [{ id: 'action', menu: 'session', getState: () => ({ label: 'Action' }),
+        onSelect: (target, context) => {
+          calls++; received = target; signal = context.signal;
+          return new Promise<void>(resolve => { finish = resolve; });
+        } }],
+    });
+    await f.runtime.start();
+    const target: ModuleMenuTarget = { menu: 'session', sessionId: 'A' };
+    const items = () => f.runtime.menuItems(target, source, () => opened);
+    const captured = items()[0];
+    captured.onClick();
+    assert.equal(calls, 1, 'onSelect runs in the initiating gesture');
+    assert.equal(Object.isFrozen(received), true);
+    assert.equal(items()[0].disabled, true, 'one in-flight action per registration/target');
+    captured.onClick();
+    assert.equal(calls, 1);
+    f.runtime.updateView({ sessionId: 'B', visible: true, connected: true });
+    opened = false;
+    assert.deepEqual(received, { menu: 'session', sessionId: 'A' });
+    assert.equal(signal.aborted, false, 'closing/navigating does not redirect or cancel accepted work');
+    if (loss === 'target') source.invalidate();
+    if (loss === 'module') f.runtime.unregister(f.runtime.getSnapshot()[0]);
+    assert.equal(signal.aborted, loss !== 'none');
+    if (loss !== 'none') assert.equal(source.listeners.size, 0, 'cancellation never waits for the action to settle');
+    const revision = f.runtime.getMenuRevision();
+    finish();
+    await new Promise(resolve => setImmediate(resolve));
+    if (loss !== 'none') assert.equal(f.runtime.getMenuRevision(), revision, 'late settlement cannot publish a revoked flight');
+    assert.equal(source.listeners.size, 0);
+    captured.onClick();
+    assert.equal(calls, 1, 'closed/stopped callbacks never dispatch');
+    f.runtime.stop();
+  }
+});
+
+test('menu state and action errors are local, reported, and preserve peers without success-shaped fallback', async () => {
+  let invalid = false;
+  let calls = 0;
+  const source = menuSource();
+  const f = fixture([asset()], {
+    apiVersion: 2, menus: [
+      { id: 'broken', menu: 'global', getState: () => {
+        if (invalid) return { label: 'Invalid', disabled: 'yes' } as unknown as ModuleMenuState;
+        throw new Error('State unavailable');
+      }, onSelect() {} },
+      { id: 'good', menu: 'global', getState: () => ({ label: 'Good' }), onSelect: () => { calls++; } },
+      { id: 'sync', menu: 'global', getState: () => ({ label: 'Sync' }), onSelect: () => { throw new Error('Sync failed'); } },
+      { id: 'async', menu: 'global', getState: () => ({ label: 'Async' }), onSelect: () => Promise.reject(new Error('Async failed')) },
+    ],
+  });
+  await f.runtime.start();
+  const items = () => f.runtime.menuItems({ menu: 'global' }, source, () => true);
+  assert.equal(items().length, 3);
+  invalid = true;
+  for (const item of items()) item.onClick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 1);
+  assert.equal(f.runtime.getSnapshot().length, 1);
+  assert.equal(f.reports.length, 4);
+  assert.equal(source.listeners.size, 0);
+  source.invalidate();
+  items().find(item => item.label === 'Good')!.onClick();
+  assert.equal(calls, 1);
+  f.runtime.stop();
+});
+
 test('bootstrap injects the actual React namespace and binds all requests to backend prefix, digest and credentials', async () => {
   const f = fixture();
   await f.runtime.start();
@@ -53,6 +249,7 @@ test('bootstrap injects the actual React namespace and binds all requests to bac
   assert.equal(f.contexts[0].react, React);
   assert.equal(f.contexts[0].apiVersion, 2);
   assert.equal(f.contexts[0].uiVersion, 1);
+  assert.equal(f.contexts[0].menuVersion, 1);
   assert.equal(f.contexts[0].createPortal, createPortal);
   assert.deepEqual(f.imports, [`https://backend.invalid/prefix/_modules/assets/fixture/${digest}/entry.js`]);
   assert.equal(f.styles.length, 1);
@@ -353,7 +550,7 @@ test('stable worker URLs stay in the backend prefix and are exposed without regi
 
 test('component middleware validates IDs, boundaries and order and composes stable types deterministically', async () => {
   for (const boundary of ['message', 'sessionStatus', 'composer', 'composerEditor', 'attachment',
-    'globalNavigation', 'managementHeader', 'managementDetailHeader'] as const) {
+    'managementHeader', 'managementDetailHeader'] as const) {
     const supported = fixture([asset()], {
       apiVersion: 2, components: [{ id: 'supported', boundary, wrap: Base => Base }],
     } as ModuleFrontend);
@@ -376,7 +573,7 @@ test('component middleware validates IDs, boundaries and order and composes stab
   const wraps: string[] = [];
   const f = fixture([asset('z'), asset('a')], context => ({
     apiVersion: 2, components: ['last', 'first'].map(id => ({
-      id, order: id === 'last' ? 2 : 0, boundary: 'globalNavigation',
+      id, order: id === 'last' ? 2 : 0, boundary: 'managementDetailHeader',
       wrap: Base => {
         wraps.push(`${context.moduleId}:${id}`);
         return props => React.createElement(Base, props);
@@ -385,15 +582,15 @@ test('component middleware validates IDs, boundaries and order and composes stab
   }));
   await f.runtime.start();
   const Base = () => React.createElement('button', null, 'Core');
-  const first = f.runtime.compose('globalNavigation', Base);
+  const first = f.runtime.compose('managementDetailHeader', Base);
   assert.deepEqual(wraps, ['z:last', 'a:last', 'z:first', 'a:first']);
-  assert.equal(f.runtime.compose('globalNavigation', Base), first);
+  assert.equal(f.runtime.compose('managementDetailHeader', Base), first);
   f.runtime.updateView({ sessionId: 'new', visible: true, connected: true });
-  assert.equal(f.runtime.compose('globalNavigation', Base), first);
-  assert.equal(renderToStaticMarkup(React.createElement(first, { items: [] })), '<button>Core</button>', 'the complete middleware stack adds no DOM');
+  assert.equal(f.runtime.compose('managementDetailHeader', Base), first);
+  assert.equal(renderToStaticMarkup(React.createElement(first, { item: 'fixture' })), '<button>Core</button>', 'the complete middleware stack adds no DOM');
   assert.equal(wraps.length, 4);
   f.runtime.stop();
-  assert.equal(f.runtime.compose('globalNavigation', Base), Base);
+  assert.equal(f.runtime.compose('managementDetailHeader', Base), Base);
 });
 
 test('view snapshots and invalidation subscriptions are scoped, stable and revoked with the module', async () => {
@@ -601,7 +798,7 @@ test('state rollback covers cross-registry IDs, synchronous/async factories and 
         if (failure === 'async') context.state.register({ id: 'async', create: (() => Promise.resolve({})) as never, dispose() {} });
       } catch { /* A swallowed registration error still invalidates activation. */ }
       return failure === 'frontend' ? { apiVersion: 1 } as unknown as ModuleFrontend : {
-        apiVersion: 2, components: failure === 'duplicate' ? [{ id: 'owned', boundary: 'globalNavigation', wrap: Base => Base }] : [],
+        apiVersion: 2, components: failure === 'duplicate' ? [{ id: 'owned', boundary: 'managementHeader', wrap: Base => Base }] : [],
       };
     });
     await f.runtime.start();

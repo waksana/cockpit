@@ -25,6 +25,7 @@ import { useLongPress } from '../lib/longpress';
 import { useMenuDismiss } from '../lib/useMenuDismiss';
 import type { ActivateFrontend, ComposerContext, ComponentMiddleware, DraftSchemaHandle, DraftSchemaScope, MessageIdentity, MessageProps, ModuleFrontendContext } from '@cockpit/module-api';
 import { fixtureSession } from '../dev/chat-fixtures';
+import App from '../App';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
 // scroll owner. Each rendered message occupies 100px in a 300px viewport.
@@ -73,7 +74,7 @@ class HostNode extends EventTarget {
     for (const node of this.childNodes) node.parentNode = null;
     this.childNodes = [];
   }
-  get dataset() { return { messageId: this.getAttribute('data-message-id') }; }
+  get dataset() { return { messageId: this.getAttribute('data-message-id'), sessionId: this.getAttribute('data-session-id') }; }
   get options(): HostNode[] { return this.childNodes; }
   get open() { return this.attributes.has('open'); }
   set open(value: boolean) { if (value) this.setAttribute('open', ''); else this.removeAttribute('open'); }
@@ -335,11 +336,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
         apiBase: `/_modules/navigation/${digest}/api`, entry: `/_modules/assets/navigation/${digest}/entry.js`,
       }], errors: [] }),
       load: async () => ({ activate: (() => ({
-        apiVersion: 2, components: [
-          { id: 'navigation', boundary: 'globalNavigation', wrap: Base => props => createElement(Base, {
-            ...props, items: [...props.items, { id: 'fixture.action', label: 'Module navigation',
-              onClick: () => { moduleActions++; } }],
-          }) },
+        apiVersion: 2,
+        menus: [{ id: 'navigation', menu: 'global', getState: () => ({ label: 'Module navigation' }),
+          onSelect: () => { moduleActions++; } }],
+        components: [
           { id: 'management', boundary: 'managementHeader', wrap: Base => props => createElement(Base, {
             ...props, actions: createElement(Fragment, null, props.actions,
               createElement('button', { type: 'button', 'aria-label': 'Module list action', onClick: () => { moduleActions++; } }, props.section)),
@@ -448,6 +448,125 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     }
     assert.equal(moduleActions, 3);
   });
+  await t.test('App session menus share registrations, dynamic focus, exact targets and revoked action lifetimes', async subtest => {
+    const previous = useCockpit.getState();
+    const sessions = ['A', 'B'].map(sessionId => ({ ...fixtureSession('user-time'), sessionId, title: `Session ${sessionId}` }));
+    useCockpit.setState({
+      sessions, activeId: 'A', connState: 'open', snapshotReady: true,
+      init: () => () => {},
+      setActiveId: activeId => { useCockpit.setState({ activeId }); },
+    });
+    const listeners = new Set<() => void>();
+    const reports: unknown[] = [];
+    const calls: { sessionId: string; signal: AbortSignal }[] = [];
+    const completions: (() => void)[] = [];
+    let disabled = false, visible = true;
+    const digest = 'd'.repeat(64);
+    const runtime = new ModuleRuntime({
+      pageUrl: 'https://fixture.invalid',
+      fetch: async () => Response.json({ modules: ['z', 'a'].map(id => ({
+        id, name: id, version: '1.0.0', digest, config: {}, styles: [],
+        apiBase: `/_modules/${id}/${digest}/api`, entry: `/_modules/assets/${id}/${digest}/entry.js`,
+      })), errors: [] }),
+      load: async () => ({ activate: ((context) => ({
+        apiVersion: 2,
+        menus: [{ id: 'info', menu: 'session', getState: target => ({
+          label: `${context.moduleId}:${target.menu === 'session' ? target.sessionId : 'global'}${disabled ? ':busy' : ''}`,
+          visible, disabled,
+        }), subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+        onSelect: (target, { signal }) => {
+          assert.equal(target.menu, 'session');
+          if (target.menu !== 'session') assert.fail();
+          calls.push({ sessionId: target.sessionId, signal });
+          return new Promise<void>(resolve => { completions.push(resolve); });
+        } }],
+      })) satisfies ActivateFrontend }),
+      report: error => { reports.push(error); },
+    });
+    subtest.after(async () => {
+      await act(() => root.render(null));
+      runtime.stop();
+      useCockpit.setState(previous, true);
+    });
+    const event = async (target: HostNode, type: string, fields: Record<string, unknown> = {}) => {
+      const input = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperties(input, Object.fromEntries(Object.entries({ target, ...fields }).map(([key, value]) => [key, { value }])));
+      await act(() => { container.dispatchEvent(input); });
+    };
+    const click = (target: HostNode) => event(target, 'click', { detail: 0 });
+    const node = (selector: string) => {
+      const value = container.querySelector(selector);
+      assert.ok(value, selector);
+      return value;
+    };
+    const items = () => container.querySelectorAll('[role="menuitem"]');
+    const labels = () => items().map(item => item.textContent);
+    const refresh = () => act(() => { for (const listener of listeners) listener(); });
+    await act(() => root.render(createElement(ModuleRuntimeProvider, { runtime,
+      children: createElement(MemoryRouter, { initialEntries: ['/session/A'] }, createElement(App)),
+    })));
+    const trigger = node('[aria-label="更多操作"]');
+    await click(trigger);
+    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '永久删除会话']);
+    await act(async () => { await runtime.start(); });
+    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '永久删除会话', 'a:A', 'z:A']);
+    assert.equal(container.querySelectorAll('[role="separator"]').length, 2);
+    await event(items()[0], 'keydown', { key: 'End' });
+    assert.equal(document.activeElement, items()[5]);
+    await event(items()[5], 'focusin');
+    disabled = true;
+    await refresh();
+    assert.equal(document.activeElement, items()[0], 'a disabled focused module command returns to a valid native command');
+    assert.equal(items()[4].attributes.has('disabled'), true);
+    await event(items()[0], 'keydown', { key: 'End' });
+    assert.equal(document.activeElement, items()[3], 'keyboard skips disabled module commands');
+    visible = false;
+    await refresh();
+    assert.equal(items().length, 4);
+    assert.equal(container.querySelectorAll('[role="separator"]').length, 1);
+    visible = true;
+    disabled = false;
+    await refresh();
+    await click(items()[4]);
+    assert.equal(calls[0].sessionId, 'A');
+    assert.equal(calls[0].signal.aborted, false, 'normal menu close does not cancel accepted work');
+    assert.equal(container.querySelector('[role="menu"]'), null);
+    assert.equal(document.activeElement, trigger);
+    const b = node('[data-session-id="B"]');
+    await event(b, 'contextmenu', { clientX: 40, clientY: 70 });
+    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '永久删除会话', 'a:B', 'z:B']);
+    assert.equal(useCockpit.getState().activeId, 'A', 'a row context menu does not select its session');
+    await click(items()[5]);
+    assert.deepEqual(calls.map(call => call.sessionId), ['A', 'B']);
+    assert.equal(document.activeElement, b);
+    await event(b, 'pointerdown', { pointerType: 'touch', button: 0, isPrimary: true, clientX: 40, clientY: 70 });
+    await act(() => new Promise(resolve => setTimeout(resolve, 470)));
+    await event(b, 'pointerup', { pointerType: 'touch' });
+    assert.deepEqual(labels().slice(-2), ['a:B', 'z:B'], 'long press consumes the same session registry');
+    await event(b, 'click', { detail: 1 });
+    assert.equal(useCockpit.getState().activeId, 'A', 'the trailing touch click does not select B');
+    await event(b, 'keydown', { key: 'F10', shiftKey: true });
+    assert.equal(items().length, 6);
+    await click(node('[data-session-id="A"]'));
+    await click(b);
+    assert.equal(useCockpit.getState().activeId, 'B');
+    assert.equal(container.querySelector('[role="menu"]'), null, 'routing closes the old row menu');
+    assert.equal(calls[0].sessionId, 'A');
+    await act(() => useCockpit.setState({ sessions: [sessions[1]] }));
+    assert.equal(calls[0].signal.aborted, true, 'deleting A invalidates only the A action');
+    assert.equal(calls[1].signal.aborted, false);
+    await click(node('[aria-label="更多操作"]'));
+    await act(() => runtime.unregister(runtime.getSnapshot().find(module => module.asset.id === 'z')!));
+    assert.equal(calls[1].signal.aborted, true);
+    assert.deepEqual(labels().slice(-1), ['a:B']);
+    await act(() => { for (const complete of completions) complete(); });
+    assert.deepEqual(labels().slice(-1), ['a:B'], 'late completion cannot reinstall a removed contribution');
+    await act(() => runtime.stop());
+    assert.equal(listeners.size, 0);
+    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '永久删除会话']);
+    assert.deepEqual(reports, []);
+  });
+
   await t.test('long-press timers belong to mounted primary gestures and native contextmenu cannot double-open', async subtest => {
     subtest.mock.timers.enable({ apis: ['setTimeout'] });
     let opens = 0;

@@ -4,13 +4,12 @@
 // Search/filtering is owned by the header
 // (App); this component receives the query string read-only.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import type { SessionMeta } from '../net/types';
 import { ContextMenu, type MenuItem } from './ContextMenu';
 import { useLongPress } from '../lib/longpress';
 import { filterSessions } from '../pages/session-list';
-import { menuFocusTarget } from '../lib/menuFocus';
 import { StateNotice } from './StateNotice';
 import { SessionStatus } from './ModuleComponents';
 
@@ -105,22 +104,11 @@ export function Sidebar(props: SidebarProps) {
   } = props;
   const [menu, setMenu] = useState<SessionMenu | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
-  const menuRef = useRef<HTMLLIElement | null>(null);
-  const focusInitialized = useRef(false);
-  const focusedItem = useRef<HTMLButtonElement | null>(null);
   const menuSession = menu && sessions.find(s => s.sessionId === menu.sessionId);
   const menuItems = useMemo(() => menuSession ? getMenuItems(menuSession) : [], [menuSession, getMenuItems]);
   if (menu && (!menuSession || menu.activeId !== activeId)) setMenu(null);
 
   const visible = filterSessions(sessions, query);
-
-  useEffect(() => {
-    if (!menu || !menuRef.current) return;
-    const enabled = Array.from(menuRef.current.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
-    const target = menuFocusTarget(focusInitialized.current, focusedItem.current, enabled);
-    if (target !== undefined) (target ?? menuRef.current).focus();
-    focusInitialized.current = true;
-  }, [menu, menuItems]);
 
   const closeMenu = (restoreFocus = true) => {
     setMenu(null);
@@ -133,8 +121,6 @@ export function Sidebar(props: SidebarProps) {
   };
 
   const openMenu = (s: SessionMeta) => (x: number, y: number, trigger?: HTMLElement) => {
-    focusInitialized.current = false;
-    focusedItem.current = null;
     setMenu({ x, y, trigger, sessionId: s.sessionId, activeId });
   };
 
@@ -156,28 +142,9 @@ export function Sidebar(props: SidebarProps) {
         </StateNotice></li>
       )}
       {menu && menuSession && menu.activeId === activeId && (
-        <li
-          ref={menuRef}
-          role="none"
-          tabIndex={-1}
-          onFocusCapture={(e) => {
-            if (e.target instanceof HTMLButtonElement && e.target.getAttribute('role') === 'menuitem') {
-              focusedItem.current = e.target;
-            }
-          }}
-          onKeyDown={(e) => {
-            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
-            e.preventDefault();
-            const items = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)'));
-            if (!items.length) return;
-            const current = items.indexOf(document.activeElement as HTMLButtonElement);
-            const next = e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1
-              : (current + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
-            items[next].focus();
-            items[next].scrollIntoView({ block: 'nearest' });
-          }}
-        >
-          <ContextMenu x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} label={menuSession.title} />
+        <li role="none">
+          <ContextMenu key={menu.sessionId} x={menu.x} y={menu.y} items={menuItems} onClose={closeMenu} label={menuSession.title}
+            moduleTarget={{ menu: 'session', sessionId: menu.sessionId }} />
         </li>
       )}
     </ul>
