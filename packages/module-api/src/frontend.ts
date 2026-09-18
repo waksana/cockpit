@@ -272,8 +272,19 @@ export interface ComposerProps extends ComposerTarget {
 export interface ComposerEditorProps extends ComposerProps,
   Omit<React.HTMLAttributes<HTMLDivElement>, keyof ComposerProps> {}
 
-/** The existing global navigation button and its menu; children extend that component. */
+export interface GlobalNavigationItem {
+  readonly id: string;
+  readonly label: string;
+  readonly icon?: React.ReactNode;
+  readonly disabled?: boolean;
+  readonly destructive?: boolean;
+  readonly separatorBefore?: boolean;
+  readonly onClick: () => void;
+}
+
+/** The existing global navigation button and its complete menu action list. */
 export interface GlobalNavigationProps {
+  readonly items: readonly GlobalNavigationItem[];
   readonly children?: React.ReactNode;
 }
 
@@ -326,12 +337,12 @@ export interface MessageProps extends React.HTMLAttributes<HTMLDivElement> {
   readonly adornment?: React.ReactNode;
 }
 
-/** Base retains native replying/error/needs-decision indications and adds children. */
+/** Base renders the native replying/waiting/error indication followed by children. */
 export interface SessionStatusProps {
   readonly sessionId: string;
   readonly status: SessionStatus;
   readonly needsDecision: boolean;
-  /** Phrasing-only, noninteractive badges inside the session's existing button. */
+  /** Trailing phrasing-only, noninteractive badges inside the session's existing button. */
   readonly children?: React.ReactNode;
 }
 

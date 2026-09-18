@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { compile } from 'sass';
 import { ModuleRuntime } from '../lib/moduleRuntime';
-import { ModuleRuntimeProvider } from './ModuleComponents';
+import { ModuleRuntimeProvider, SessionStatus } from './ModuleComponents';
 import { GlobalNavigation } from './GlobalNavigation';
 import { ManagementShell } from './ManagementShell';
 import { Sidebar } from './Sidebar';
@@ -59,8 +59,9 @@ test('semantic middleware preserves real navigation and management controls with
       onSelect() {}, getMenuItems: () => [],
     }));
     controls(sidebar, 1);
-    assert.match(sidebar, /class="dialog-status" title="需要选择" aria-label="需要选择">选/);
-    if (enhanced) assert.match(sidebar, /class="dialog-meta"><span data-fixture-session="/);
+    assert.match(sidebar, /class="dialog-status" data-tone="waiting">待回答/);
+    assert.doesNotMatch(sidebar, />回复中<|>选</);
+    if (enhanced) assert.match(sidebar, /待回答<\/span><span data-fixture-session="[^"]+">7<\/span><\/span>/);
     else assert.doesNotMatch(sidebar, /data-fixture-session/);
     const navigation = render(createElement(GlobalNavigation));
     controls(navigation, enhanced ? 2 : 1);
@@ -94,6 +95,20 @@ test('semantic middleware preserves real navigation and management controls with
   }
 });
 
+test('session native status is singular and module badges remain at the far end of the status row', () => {
+  for (const [status, needsDecision, expected] of [
+    ['running', true, '待回答'], ['idle', true, '待回答'], ['unloaded', true, '待回答'],
+    ['running', false, '回复中'], ['error', true, '出错'], ['error', false, '出错'],
+  ] as const) {
+    const html = renderToStaticMarkup(createElement(SessionStatus, {
+      sessionId: 'fixture', status, needsDecision,
+      children: createElement('span', { 'data-unread': true }, '1'),
+    }));
+    assert.match(html, new RegExp(`>${expected}</span><span data-unread="true">1</span></span>$`));
+    assert.equal((html.match(/class="dialog-status"/g) ?? []).length, 1);
+    assert.doesNotMatch(html, />选</);
+  }
+});
 test('middleware introduces no contribution-placeholder DOM or CSS and leaves scroll ownership in core', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.doesNotMatch(css, /module-message-decorations|module-composer-actions|module-composer-above/);

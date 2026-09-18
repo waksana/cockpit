@@ -337,8 +337,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       load: async () => ({ activate: (() => ({
         apiVersion: 2, components: [
           { id: 'navigation', boundary: 'globalNavigation', wrap: Base => props => createElement(Base, {
-            ...props, children: createElement(Fragment, null, props.children,
-              createElement('button', { type: 'button', 'aria-label': 'Module navigation', onClick: () => { moduleActions++; } }, 'Module')),
+            ...props, items: [...props.items, { id: 'fixture.action', label: 'Module navigation',
+              onClick: () => { moduleActions++; } }],
           }) },
           { id: 'management', boundary: 'managementHeader', wrap: Base => props => createElement(Base, {
             ...props, actions: createElement(Fragment, null, props.actions,
@@ -391,21 +391,16 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       const trigger = node('[aria-label="全局导航"]');
       assert.equal(trigger.getAttribute('aria-expanded'), 'false');
       assert.equal(container.querySelector('[role="menu"]'), null);
-      if (enhanced) {
-        const action = node('[aria-label="Module navigation"]');
-        assert.equal(action.parentNode, trigger.parentNode, 'the added control is a sibling, not a wrapped button');
-        await click(action);
-        assert.equal(trigger.getAttribute('aria-expanded'), 'false');
-      }
+      assert.equal(container.querySelectorAll('button').length, 1, 'menu extensions do not add a main-view button');
       await click(trigger);
       assert.equal(trigger.getAttribute('aria-expanded'), 'true');
       const items = container.querySelectorAll('[role="menuitem"]');
-      assert.deepEqual(items.map(item => item.textContent), ['全局 MCP', '全局 Skills']);
+      assert.deepEqual(items.map(item => item.textContent), enhanced ? ['全局 MCP', '全局 Skills', 'Module navigation'] : ['全局 MCP', '全局 Skills']);
       assert.equal(document.activeElement, items[0], 'opening focuses the first native menu command');
       const end = new Event('keydown', { bubbles: true, cancelable: true });
       Object.defineProperties(end, { target: { value: items[0] }, key: { value: 'End' } });
       await act(() => container.dispatchEvent(end));
-      assert.equal(document.activeElement, items[1]);
+      assert.equal(document.activeElement, items.at(-1));
       noNestedButtons();
       await act(() => new Promise(resolve => setTimeout(resolve, 1)));
       const escape = new Event('keydown', { cancelable: true });
@@ -415,6 +410,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(trigger.getAttribute('aria-expanded'), 'false');
       assert.equal(container.querySelector('[role="menu"]'), null);
       assert.equal(document.activeElement, trigger);
+      if (enhanced) {
+        await click(trigger);
+        await click(container.querySelectorAll('[role="menuitem"]')[2]);
+        assert.equal(container.querySelector('[role="menu"]'), null);
+        assert.equal(document.activeElement, trigger, 'module actions share native menu close/focus behavior');
+      }
       await click(trigger);
       await click(container.querySelectorAll('[role="menuitem"]')[1]);
       assert.equal(node('.fixture-route').textContent, '/skills');
