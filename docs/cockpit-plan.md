@@ -16,7 +16,9 @@ Cockpit 是一个直接启动的 Web/API 服务，通过官方 SDK 控制原生 
 `publish`/`onEvent` 数据事件。包/后端 API 为 v1，Web 为 v2、公共 UI 为 v1；
 前端扩展分为菜单声明（独立 `menuVersion: 1`）、真实语义组件 middleware、
 state/service/draft 和 Markdown，不提供任意页面/router 注册。
-菜单能力属于未发布开发源码，不代表仍标 0.2.3 的包与历史 0.2.3 Release 功能相同。
+菜单及 payload 能力纳入 0.2.4，**0.2.4 配套 / 发布资产以对应 Release 为准**；
+不表示发布已完成，也不反写历史 0.2.3 Release 的能力或 Notification 0.1.0 配套。
+精确模块配对与 SDK 源码 pin 见[模块协议](module-contract-draft.md)。
 远程安装、逐模块 HTTP MCP 和启动接续消息仍未实现，
 具体已实现范围见[模块协议](module-contract-draft.md)。
 模块安装与版本选择只在下次冷启动生效；不做热加载、热启停或热更新，

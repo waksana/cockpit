@@ -11,7 +11,7 @@ trusted, cold-loaded package model: backend API v1, Web API v2 and public UI v1.
 Backends run in the host Node process; `publish`/`onEvent` data events are implemented.
 Unimplemented capabilities are listed separately at the end of that contract.
 Modules remain cold-loaded: installation and version selection take effect on
-the next host start. Hot loading, enable/disable and updates are not product goals.
+the next host start. Hot loading, hot enable/disable and hot updates are not product goals.
 Do not reserve a hot-switching framework or change the trusted main-process model
 for that purpose. The separate planned native system page is not part of the
 menu-registry change and does not introduce arbitrary module page registration.
@@ -65,11 +65,15 @@ product builds or new testing tools. They may be committed/integrated without
 deploying or restarting the application. Maintain the current installation
 contract rather than compatibility aliases, archived pages or migration inventories.
 Generated reviews and build artifacts do not belong in the product source tree.
-The development package still says 0.2.3; that does not add unreleased source
-capabilities to GitHub Release 0.2.3 or change its Notification 0.1.0 pairing.
-Current source pairs with Notification 0.1.5 and its exact host SDK SHA in the
-notification repository's `tooling/host-sdk.json`; see the
-[module contract](module-contract-draft.md) for capability checks.
+The 0.2.4 release preparation includes module payload events and the independent
+menu registry. **0.2.4 配套 / 发布资产以对应 Release 为准**; documentation does
+not prove publication. It pairs with Notification 0.1.5; File 0.1.7 remains
+compatible and is not being rereleased. Historical 0.2.3 / Notification 0.1.0
+assets do not acquire these changes. Notification's `tooling/host-sdk.json`
+retains the exact compatible SDK source pin exported from 0.2.3 development source:
+the host's patch-version change does not alter those types. See the
+[module contract](module-contract-draft.md) for the full SHA and independent
+Web/UI/menu capability checks, not package-label inference.
 
 ## Interaction semantics and structural correctness
 

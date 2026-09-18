@@ -1,15 +1,22 @@
 # 模块接入协议
 
-**当前源码：模块包/后端 API v1，Web API v2，公共 UI v1，菜单能力 menuVersion 1。**
-本地可信包、主进程 import、冷加载已实现。本文描述未发布开发源码，不反写历史发行：
-GitHub Release **Cockpit 0.2.3** 的配套模块仍为 **Cockpit File 0.1.7 /
-Cockpit Notification 0.1.0**，以对应 tag 的文档和资产为准。
-[v0.2.3 运行包](https://github.com/waksana/cockpit/releases/tag/v0.2.3)及上述配套模块均已发布；
-下载和使用入口见[模块目录](module-catalog.md)。
-本轮源码的通知模块配套版本为 **Cockpit Notification 0.1.5**，是新的不可变模块版本，尚未发行；
-精确宿主 SDK SHA 固定在通知仓库的 `tooling/host-sdk.json`，不能只凭包版本判断兼容。
-宿主开发包版本仍为 0.2.3，不代表该历史 Release 已获得新菜单能力。
-Web v2、UI v1 和菜单能力分别检查；不保留旧 Web 插口或导航 middleware 的兼容别名。
+**Cockpit 0.2.4：模块包/后端 API v1，Web API v2，公共 UI v1，菜单能力 menuVersion 1。**
+本地可信包、主进程 import、冷加载、模块 payload 事件及独立菜单注册已实现。
+**0.2.4 配套 / 发布资产以对应 Release 为准**，本文不表示发布已完成。
+配套模块为 **Cockpit File 0.1.7 / Cockpit Notification 0.1.5**，
+下载和使用入口见[模块目录](module-catalog.md)。File 0.1.7 不使用已移除的
+`globalNavigation` HOC，继续兼容，本轮不重新发行文件模块。
+
+Notification 0.1.5 的精确宿主 SDK 源码 pin 为
+**`e6b0b8d7c4ba7b21a0b627dc21fd61c0c53f6ac0`**，权威记录位于通知仓库
+[`tooling/host-sdk.json`](https://github.com/waksana/cockpit-notification/blob/v0.1.5/tooling/host-sdk.json)。
+该导出来自当时包版本仍为 **0.2.3** 的开发源码（0.2.3-development），
+已经包含与本次等价、兼容的公开 API，并非历史 0.2.3 Release 的导出；
+宿主升为 0.2.4 的 patch 版本变更不改变这些类型，不需要仅为版本标签改写该源码 pin。
+这不等于历史 [Cockpit v0.2.3 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.3)
+具备新菜单/payload 能力；其 **File 0.1.7 / Notification 0.1.0** 配套及资产仍以历史 tag/Release 为准。
+Web v2、UI v1 和菜单能力分别检查，不能只凭包版本判断兼容；
+旧 `globalNavigation` HOC 已移除，不保留旧 Web 插口或导航 middleware 的兼容别名。
 源码更新不表示已经发布、安装或重启，也不代表已安装的服务或模块已经升级。
 远程签名 URL 安装、模块 HTTP MCP、角色/skill 包和通用页面贡献仍未实现。
 

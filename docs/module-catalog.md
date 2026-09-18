@@ -1,8 +1,9 @@
 # 模块目录
 
 本页区分**可安装模块、待适配的独立项目和后续方向**。模块单独发行，不随本体安装。
-下面的发行状态核对于 **2026-09-18**，配套宿主为
-[Cockpit v0.2.3](https://github.com/waksana/cockpit/releases/tag/v0.2.3)。
+下面的配套说明核对于 **2026-09-18**，面向
+[Cockpit v0.2.4](https://github.com/waksana/cockpit/releases/tag/v0.2.4)。
+**0.2.4 配套 / 发布资产以对应 Release 为准**；文档准备完成不表示发布已完成。
 包格式、安装命令和前后端接口统一见[模块接入协议](module-contract-draft.md)。
 
 ## 可安装模块
@@ -10,10 +11,12 @@
 | 模块 | 用途 | 配套发行与使用说明 |
 | --- | --- | --- |
 | [Cockpit File](https://github.com/waksana/cockpit-file) | 在聊天中选择、拖入或粘贴附件；预览、下载文件和媒体。 | [v0.1.7 运行包](https://github.com/waksana/cockpit-file/releases/tag/v0.1.7) · [安装说明](https://github.com/waksana/cockpit-file/blob/v0.1.7/docs/installation.md) |
-| [Cockpit Notification](https://github.com/waksana/cockpit-notification) | 为新回复和待回答问题提供未读标记、会话计数、Web Push 与应用角标。 | [v0.1.0 运行包](https://github.com/waksana/cockpit-notification/releases/tag/v0.1.0) · [使用说明](https://github.com/waksana/cockpit-notification/blob/v0.1.0/README.md) |
+| [Cockpit Notification](https://github.com/waksana/cockpit-notification) | 为新回复和待回答问题提供未读标记、会话计数、Web Push 与应用角标。 | 0.2.4 配套 [v0.1.5 Release](https://github.com/waksana/cockpit-notification/releases/tag/v0.1.5) · [使用说明](https://github.com/waksana/cockpit-notification/blob/v0.1.5/README.md)；发布资产以该 Release 为准。 |
 
-这两个版本都已发布 `.tgz` 与对应校验文件，使用包/后端 API v1、Web API v2、公共 UI v1。
-先从对应 Release 下载并校验，再按照模块说明配置，用本体的[本地安装命令](module-contract-draft.md#2-包格式与本地安装)
+File 0.1.7 已发布且继续兼容，本轮不重新发行；Notification 0.1.5 配套本次菜单及 payload 能力。
+两者使用包/后端 API v1、Web API v2、公共 UI v1，通知模块另外检查独立菜单能力 `menuVersion: 1`。
+确认对应 Release 的 `.tgz` 与校验文件均已发布后，再下载、校验并按模块说明配置，
+用本体的[本地安装命令](module-contract-draft.md#2-包格式与本地安装)
 显式信任并启用；下次冷启动才会加载。查询时区分“下次选中”与“当前已加载”，安装命令不会重启服务。
 
 ### 文件
@@ -27,18 +30,21 @@
 
 ### 通知
 
-通知模块记录主 Agent 最终回复和当前待回答问题的未读状态，在消息与会话列表上显示标记。
-打开会话不等于清空未读，已读判定基于内容在前台的实际呈现。
+通知模块记录主 Agent 最终回复和当前待回答问题的未读状态，显示消息红线与会话状态末尾计数。
+设备通知开关只放在现有全局菜单中，控制本设备；没有独立铃铛、页面级未读总数、
+通知对话框或页头控件。打开会话不等于清空未读，已读判定基于真实消息正文及当前 ask
+问题的 `bodyRef` 在前台的实际呈现。
 推送订阅、浏览器 worker 和角标由模块管理，不由本体申请权限。
 
-**v0.1.0 的未读记录只在内存中，重启清零，也不补历史。**
 Web Push 和角标取决于浏览器、设备及用户授权，不保证必达或跨设备瞬时一致；
-具体限制见[该版说明](https://github.com/waksana/cockpit-notification/blob/v0.1.0/docs/release-notes.md)。
+持久化、恢复及其他业务限制以
+[0.1.5 说明](https://github.com/waksana/cockpit-notification/blob/v0.1.5/docs/release-notes.md)为准。
 
-查询时 Notification 默认分支已为 **0.1.4**，但正式发行仍为 **0.1.0**。
-新版源码要求额外的模块 SSE payload 接口，已发布 Cockpit v0.2.3 不提供该接口；
-不要把默认分支的安装说明或功能直接套到上述发行组合上。
-源码配对要求以[模块自身说明](https://github.com/waksana/cockpit-notification/blob/dfaef1677ae941d5334710e2b5f473e02b9b8168/docs/release-notes.md)为准。
+0.1.5 需要模块 SSE payload 接口与独立菜单注册，不能与已发布 Cockpit 0.2.3 混用。
+其 `tooling/host-sdk.json` 保留兼容 API 的精确源码 pin，而不是按开发包标签推断能力；
+完整 SHA 与导出版本解释见[模块协议](module-contract-draft.md)。
+历史 **Cockpit 0.2.3 → Notification 0.1.0** 配套仍以对应 tag/Release 为准，
+不因本轮文档或源码更新而改变旧资产。
 
 ## 独立项目：待适配当前模块体系
 

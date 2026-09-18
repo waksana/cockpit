@@ -2,12 +2,13 @@
 
 本页维护构建产物和包身份。
 Cockpit 只产生包含前后端与必要依赖的包，由使用者决定放在哪里、何时运行。
-本页对应已发布的 0.2.3 发行；其他版本应使用对应 tag 的文档。
+本页面向 0.2.4，**0.2.4 配套 / 发布资产以对应 Release 为准**，不表示发布已完成。
+其他版本应使用对应 tag 的文档。
 
 ## 获取运行包
 
-普通使用者在 [Cockpit v0.2.3 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.3)
-下载 `runtime.tar.gz` 和 `runtime.tar.gz.sha256`；不必安装 pnpm 或克隆开发工作树。
+普通使用者确认 [Cockpit v0.2.4 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.4)
+发布成功后，下载 `runtime.tar.gz` 和 `runtime.tar.gz.sha256`；不必安装 pnpm 或克隆开发工作树。
 在下载目录验证摘要，再解压到新目录：
 
 ```sh
@@ -53,13 +54,15 @@ node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js
 ```
 
 这两个入口都直接进入对应 Node 进程；MCP 客户端通过 HTTP 调用后端。
-0.2.3 继续包含本地模块 CLI 和公共 module-api/protocol 类型，
+0.2.4 继续包含本地模块 CLI 和公共 module-api/protocol 类型，
 可以在包根运行 `apps/server/src/module-cli.ts` 或 `scripts/export-module-api.mjs`，
 具体命令见[模块契约](module-contract-draft.md)。
-本次 Web API v2 不兼容旧前端模块；使用文件或通知模块时，必须分别配套
-Cockpit File 0.1.7 / Cockpit Notification 0.1.0，见[发行说明](release-notes.md)。
-这是历史 0.2.3 Release 的配套关系，不是未发布源码的兼容声明；
-当前菜单能力和源码配对见[模块契约](module-contract-draft.md)，不能只凭开发包仍为 0.2.3 判断。
+包/后端 API v1、Web API v2、UI v1 保持不变，菜单另检查 `menuVersion: 1`；
+本次移除旧 `globalNavigation` HOC。配套模块为
+Cockpit File 0.1.7 / Cockpit Notification 0.1.5，见[发行说明](release-notes.md)。
+File 0.1.7 继续兼容且不重新发行；Notification 0.1.5 的精确兼容 SDK 源码 pin 见
+[模块契约](module-contract-draft.md)，不能只凭开发包版本标签判断。
+历史 0.2.3 → Notification 0.1.0 配套仍以对应 tag/Release 为准。
 模块单独发行，不包含在本体运行包内。
 
 ## 闭包与身份
@@ -123,8 +126,8 @@ COCKPIT_RUNTIME_ARCHIVE="$PWD/runtime-output/runtime.tar.gz" \
 
 ```sh
 git fetch origin
-git tag -a v0.2.3 VERIFIED_MAIN_SHA -m "Cockpit v0.2.3"
-git push origin v0.2.3
+git tag -a v0.2.4 VERIFIED_MAIN_SHA -m "Cockpit v0.2.4"
+git push origin v0.2.4
 ```
 
 将 `VERIFIED_MAIN_SHA` 替换成已通过检查的完整 main 提交。
