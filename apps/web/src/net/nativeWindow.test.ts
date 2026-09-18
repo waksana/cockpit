@@ -89,8 +89,17 @@ test('assistant origins use native message identity across deltas, finalization 
   const child = () => window.snapshot().messages.find(message => message.subtype === 'subagent')!.subMessages![0];
   const origin = { sessionId: 'fixture', messageId: 'native-response', agentId: 'child' };
   assert.deepEqual(child().origin, origin);
+  assert.equal(child().streaming, true);
+  accept(window, [event('root-final', 'assistant.message', { messageId: 'native-response', content: 'Root' })], liveAll);
+  const root = window.snapshot().messages.find(message => message.id === 'native-response')!;
+  assert.deepEqual(root.origin, { sessionId: 'fixture', messageId: 'native-response' });
+  assert.equal(root.streaming, undefined);
+  assert.equal(child().streaming, true, 'root completion cannot complete a child with the same message ID');
+  window.disconnect();
+  assert.equal(child().streaming, true, 'a disconnected fragment is not a complete message');
   accept(window, [owned('child', event('final-event', 'assistant.message', { messageId: 'native-response', content: 'Final' }))], liveAll);
   assert.deepEqual(child().origin, origin);
+  assert.equal(child().streaming, undefined);
   const isolated = new NativeWindow(['child']);
   accept(isolated, [owned('child', event('final-event', 'assistant.message', { messageId: 'native-response', content: 'Final' }))], { agentIds: ['child'] });
   assert.deepEqual(isolated.snapshot().messages[0].origin, origin);

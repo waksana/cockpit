@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import { constants } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { open, realpath } from 'node:fs/promises';
 import { validateHeaderName, validateHeaderValue } from 'node:http';
 import { join } from 'node:path';
@@ -7,8 +8,9 @@ import { Readable, Transform } from 'node:stream';
 import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { cockpitHome, type Engine } from '@cockpit/core';
+import { ServerEvent } from '@cockpit/protocol';
 import type { ModuleAsset, ModuleBackend, ModuleBackendContext, ModuleRoute, NativeObservation } from '@cockpit/module-api';
-import { isDeclaredAsset, moduleDataRoot, readModuleInstallation, readModuleSettings, safeModulePath, type ModuleInstallation } from './module-install.ts';
+import { isDeclaredAsset, moduleDataRoot, MODULE_WORKER_LIMIT, readModuleInstallation, readModuleSettings, safeModulePath, type ModuleInstallation } from './module-install.ts';
 
 const DEFAULT_BODY_LIMIT = 1024 * 1024;
 const routeSchema = z.object({
@@ -28,6 +30,11 @@ const backendSchema = z.object({
     types: z.array(z.string().min(1).max(128)).min(1).max(128),
     handle: z.custom<NonNullable<ModuleBackend['events']>['handle']>(value => typeof value === 'function'),
   }).strict().optional(),
+  controlEvents: z.object({
+    types: z.array(z.string().refine((type): type is ServerEvent['type'] => ServerEvent.options.some(event => event.shape.type.value === type)))
+      .min(1).max(64),
+    handle: z.custom<NonNullable<ModuleBackend['controlEvents']>['handle']>(value => typeof value === 'function'),
+  }).strict().optional(),
   dispose: z.custom<NonNullable<ModuleBackend['dispose']>>(value => typeof value === 'function').optional(),
 }).strict();
 
@@ -40,6 +47,7 @@ interface Loaded {
   streams: Set<Readable>;
   replies: Set<FastifyReply>;
   unsubscribe?: () => void;
+  unsubscribeControl?: () => void;
 }
 interface RequestScope {
   controller: AbortController;
@@ -81,7 +89,8 @@ export class ModuleHost {
   private initialized = false;
   constructor(private readonly options: {
     hostRoot?: string;
-    observer: Pick<Engine, 'onNativeEvent'>;
+    observer: Pick<Engine, 'onNativeEvent'> & Partial<Pick<Engine, 'onEvent'>>;
+    onInvalidate?: (id: string) => void;
     report?: (id: string, error: unknown) => void;
     activationTimeoutMs?: number;
   }) {}
@@ -102,6 +111,9 @@ export class ModuleHost {
           id: manifest.id, name: manifest.name, version: manifest.version, digest, apiBase: module.apiBase,
           entry: asset(manifest.frontend.entry), styles: (manifest.frontend.styles ?? []).map(asset),
           config: module.backend.publicConfig ?? {},
+          ...(manifest.frontend.worker ? { worker: {
+            entry: `/_modules/workers/${manifest.id}/worker.js`, scope: `/_modules/workers/${manifest.id}/`,
+          } } : {}),
         }];
       }),
       active: this.loaded.map(({ installation: { manifest, digest } }) => ({ id: manifest.id, version: manifest.version, digest })),
@@ -118,6 +130,7 @@ export class ModuleHost {
       return this.bootstrap();
     });
     app.get('/_modules/assets/:id/:digest/*', async (request, reply) => this.asset(request, reply));
+    app.get('/_modules/workers/:id/worker.js', async (request, reply) => this.worker(request, reply));
     const hostRoot = this.options.hostRoot ?? cockpitHome();
     let settings;
     try { settings = await readModuleSettings(hostRoot); }
@@ -137,6 +150,11 @@ export class ModuleHost {
           apiVersion: 1, moduleId: id, apiBase, dataRoot: await moduleDataRoot(id, hostRoot),
           config: Object.freeze(structuredClone(selected.config)), signal: controller.signal,
           report: (error: unknown) => this.report(id, error),
+          invalidate: () => {
+            if (controller.signal.aborted || this.closed || !this.loaded.some(module => module.controller === controller)) return;
+            try { this.options.onInvalidate?.(id); }
+            catch (error) { this.report(id, error); }
+          },
         });
         const preparation = (async () => {
           const imported = await import(pathToFileURL(join(installation.root, installation.manifest.backend)).href) as { activate?: unknown };
@@ -186,6 +204,24 @@ export class ModuleHost {
             try { void Promise.resolve(events.handle(observation)).catch(error => this.report(id, error)); }
             catch (error) { this.report(id, error); }
           }, { types: events.types });
+        }
+        if (backend.controlEvents) {
+          if (!this.options.observer.onEvent) {
+            loaded.unsubscribe?.();
+            throw new Error('Module requires native control event observation');
+          }
+          const events = backend.controlEvents;
+          const types = new Set(events.types);
+          try {
+            loaded.unsubscribeControl = this.options.observer.onEvent(event => {
+              if (controller.signal.aborted || !types.has(event.type)) return;
+              try { void Promise.resolve(events.handle(structuredClone(event))).catch(error => this.report(id, error)); }
+              catch (error) { this.report(id, error); }
+            });
+          } catch (error) {
+            loaded.unsubscribe?.();
+            throw error;
+          }
         }
         app.register(router => this.registerRouter(router, loaded));
         this.loaded.push(loaded);
@@ -424,6 +460,35 @@ export class ModuleHost {
     }
   }
 
+  private async worker(request: FastifyRequest, reply: FastifyReply): Promise<unknown> {
+    const { id } = request.params as { id: string };
+    const module = this.loaded.find(value => value.installation.manifest.id === id && !value.controller.signal.aborted);
+    const relative = module?.installation.manifest.frontend?.worker;
+    reply.header('Cache-Control', 'no-store');
+    if (!module || !relative) return reply.code(404).send({ code: 'MODULE_WORKER_NOT_FOUND', error: 'Module worker unavailable' });
+    const path = join(module.installation.root, relative);
+    if (await realpath(path) !== path) throw new Error('Module worker symlinks are forbidden');
+    const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+    let bytes: Buffer;
+    try {
+      const stat = await file.stat();
+      const expected = module.installation.files[relative];
+      if (!expected || !stat.isFile() || stat.size !== expected.bytes || stat.size > MODULE_WORKER_LIMIT || stat.nlink !== 1) {
+        throw new Error('Invalid module worker artifact');
+      }
+      bytes = await file.readFile();
+      if (createHash('sha256').update(bytes).digest('hex') !== expected.sha256) throw new Error('Module worker digest mismatch');
+    } finally { await file.close(); }
+    if (module.controller.signal.aborted) return reply.code(503).send({ error: 'Module is closing' });
+    const config = { moduleId: id, digest: module.installation.digest,
+      apiBase: `../../${id}/${module.installation.digest}/api` };
+    reply.header('Content-Type', 'text/javascript; charset=utf-8');
+    reply.header('X-Content-Type-Options', 'nosniff');
+    // The script's own directory is the maximum scope; it cannot control Chat.
+    reply.header('Service-Worker-Allowed', './');
+    return reply.send(Buffer.concat([Buffer.from(`self.__cockpitModuleWorker=${JSON.stringify(config)};\n`), bytes]));
+  }
+
   private dispose(id: string, backend: ModuleBackend): void {
     if (this.disposed.has(backend)) return;
     this.disposed.add(backend);
@@ -440,6 +505,7 @@ export class ModuleHost {
     this.scopes.clear();
     for (const module of this.loaded) {
       try { module.unsubscribe?.(); } catch (error) { this.report(module.installation.manifest.id, error); }
+      try { module.unsubscribeControl?.(); } catch (error) { this.report(module.installation.manifest.id, error); }
       for (const stream of module.streams) stream.destroy();
       module.streams.clear();
       for (const reply of module.replies) reply.raw.destroy();

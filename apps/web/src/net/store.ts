@@ -6,7 +6,7 @@ import { create } from 'zustand';
 import { isSessionUnloadedError, isTransportError, NetClient, SessionUnloadedError } from './client';
 import type { ConnState } from './client';
 import type {
-  NativeAttachment, ChatSession, ModelOption, ServerEvent,
+  ChatSession, ModelOption, ServerEvent,
 } from './types';
 import { MetaResource, SessionResource, type SessionMeta } from '@cockpit/protocol';
 import type { IntentResult, NativeChatRead, NativeChatPage, SessionProjection } from '@cockpit/protocol';
@@ -15,6 +15,8 @@ import { applyProjection, cleanProjection } from './sessionResources';
 import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
 import { readMessageHistory } from './messageHistory';
 import { describeReason, reportUxError } from '../lib/errorReporter';
+import type { NativeDraftRequest } from '../lib/draft';
+import { observeDraftDecisions } from '../lib/draftSelection';
 
 // Background tabs release their native chat read.
 const isVisible = () => typeof document !== 'undefined' && document.visibilityState === 'visible';
@@ -29,12 +31,13 @@ interface CockpitState {
   resourceRevisions: Record<string, Partial<Record<SessionResource, number>>>;
   // lifecycle
   init: () => () => void;
+  onModuleInvalidated: (listener: (moduleId: string) => void) => () => void;
   // intents
   setActiveId: (id: string | null) => void;
   newSession: (cwd: string) => Promise<string>;
   loadMore: (sessionId: string) => void;
   retryHistory: (sessionId: string) => void;
-  sendPrompt: (sessionId: string, text: string, attachments?: NativeAttachment[]) => Promise<boolean>;
+  sendDraft: (request: NativeDraftRequest) => Promise<boolean>;
   cancel: (sessionId: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<{ ok: true; interrupted: boolean }>;
   setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => Promise<IntentResult<'setModel'>>;
@@ -63,6 +66,7 @@ interface CockpitState {
 
 export const createCockpitStore = () => create<CockpitState>((set, get) => {
   let client: NetClient | null = null;
+  const moduleListeners = new Set<(moduleId: string) => void>();
   const summaryResources: MetaResource[] = ['identity', 'control', 'model'];
   const metaRequests = new Map<string, {
     dirty: Set<MetaResource>; stale: Set<MetaResource>; controller: AbortController; patches: Partial<SessionMeta>;
@@ -406,6 +410,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       }
       case 'agent/status':
         return;
+      case 'module/invalidated':
+        for (const listener of [...moduleListeners]) if (moduleListeners.has(listener)) listener(ev.moduleId);
+        return;
       case 'session/invalidated': {
         // Late invalidations cannot recreate resources for an absent session.
         if (!get().sessions.some(session => session.sessionId === ev.sessionId)) return;
@@ -515,6 +522,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     activeId: null,
     globalModels: [],
     resourceRevisions: {},
+    onModuleInvalidated(listener) {
+      moduleListeners.add(listener);
+      return () => { moduleListeners.delete(listener); };
+    },
 
     init() {
       client?.disconnect();
@@ -582,8 +593,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       else requestHistory(sid);
     },
 
-    sendPrompt(sid, text, attachments) {
-      return acknowledged(sid, (net) => net.prompt(sid, text, attachments));
+    sendDraft(request) {
+      return acknowledged(request.body.sessionId, (net) => net.sendDraft(request));
     },
 
     cancel(sid) { return mutation(sid, '取消', (net) => net.cancel(sid)); },
@@ -628,3 +639,4 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
 });
 
 export const useCockpit = createCockpitStore();
+useCockpit.subscribe(state => observeDraftDecisions(state.sessions, state.snapshotReady && state.connState === 'open'));

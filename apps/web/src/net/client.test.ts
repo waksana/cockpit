@@ -6,6 +6,7 @@ import { dismissUxError, getUxErrors } from '../lib/errorReporter';
 import { IntentHttpError, isSessionUnloadedError, NetClient, SessionUnloadedError, type ConnState } from './client';
 import { readDirectory } from '../lib/directoryResource';
 import { createKeyedAsync } from '../lib/keyedAsync';
+import type { NativeDraftRequest } from '../lib/draft';
 
 beforeEach((t: TestContext) => {
   t.mock.method(console, 'error', () => {});
@@ -72,6 +73,27 @@ test('text-only prompt sends no file metadata or hidden upload', async t => {
   const { client, fetch } = setup(t, async () => Response.json({ ok: true }));
   await client.prompt('session', 'hello');
   assertOnlyPost(fetch, 'prompt', { sessionId: 'session', text: 'hello' });
+});
+
+for (const request of [
+  { intent: 'prompt', body: { sessionId: 'session', text: '', attachments: [attachment] } },
+  { intent: 'respondAsk', body: { sessionId: 'session', requestId: 'ask', answer: 'Answer', wasFreeform: true } },
+  { intent: 'planSupersede', body: { sessionId: 'session', requestId: 'plan', message: 'Feedback' } },
+] satisfies NativeDraftRequest[]) {
+  test(`generic draft transport forwards the complete validated ${request.intent} payload exactly once`, async t => {
+    const { client, fetch } = setup(t, async () => Response.json({ ok: false }));
+    assert.deepEqual(await client.sendDraft(request), { ok: false });
+    assertOnlyPost(fetch, request.intent, request.body);
+  });
+}
+
+test('generic draft transport rejects unsupported routes and extra decision fields without fallback', t => {
+  const { client, fetch } = setup(t, async () => assert.fail('No native request'));
+  assert.throws(() => client.sendDraft({ intent: 'respondElicitation', body: {} } as unknown as NativeDraftRequest), /Unsupported/);
+  assert.throws(() => client.sendDraft({
+    intent: 'respondAsk', body: { sessionId: 'session', requestId: 'ask', answer: 'Answer', wasFreeform: true, attachments: [attachment] },
+  } as unknown as NativeDraftRequest));
+  assert.equal(fetch.mock.callCount(), 0);
 });
 
 test('native delete sends one canonical request without any module preflight or approval', async t => {

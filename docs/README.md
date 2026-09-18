@@ -13,7 +13,7 @@
 | [产品要求 R1–R8](product-requirements.md) | 已确认要求 | 定位、原生权威、单服务包、模块冷加载、graceful 退出与已接受成本。 |
 | [架构与运行边界](cockpit-plan.md) | 当前实现 / 目标差距 | 直接服务、原生权威、认证、身份、graceful 和模块接入的完成边界。 |
 | [模块目录](module-catalog.md) | 后续能力 | 各模块的用户能力和与本体的协作边界。 |
-| [模块接入协议](module-contract-draft.md) | 当前接口 / 后续目标 | Module API v1、本地包、主进程 import、输入/渲染插口，以及未实现的远程安装和 HTTP MCP。 |
+| [模块接入协议](module-contract-draft.md) | 当前接口 / 后续目标 | 包/后端 API v1、Web v2 state/middleware/Markdown 注册、本地包，以及未实现的远程安装和 HTTP MCP。 |
 | [模块 UI 开发指南](module-ui-guide.md) | 当前公共保证 | Module UI v1、Lucide、公共类/变量、模块样式协作和可运行前端示例。 |
 | [原生聊天](native-chat.md) | 当前协议说明 | 原生事件、cursor、Web 阅读窗口、历史/实时/重连和媒体边界。 |
 | [原生 fork](session-fork.md) | 当前协议说明 | 分叉前检、排他边界、实际继承与非幂等结果。 |

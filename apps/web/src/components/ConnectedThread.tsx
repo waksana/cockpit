@@ -7,15 +7,17 @@ export const ConnectedThread = memo(function ConnectedThread({ sessionId }: { se
   const session = useCockpit((s) => s.sessions.find((item) => item.sessionId === sessionId));
   const active = useCockpit(s => s.activeId === sessionId);
   const actions = useCockpit(useShallow((s) => ({
-    sendPrompt: s.sendPrompt, respondAsk: s.respondAsk, respondPlan: s.respondPlan,
-    planSupersede: s.planSupersede, respondElicitation: s.respondElicitation,
+    sendDraft: s.sendDraft, respondAsk: s.respondAsk, respondPlan: s.respondPlan,
+    respondElicitation: s.respondElicitation,
     removeQueued: s.removeQueued, cancel: s.cancel, interrupt: s.interrupt, loadMore: s.loadMore, retryHistory: s.retryHistory,
   })));
   const callbacks = useMemo<Omit<ComponentProps<typeof Thread>, 'session'>>(() => ({
-    onSend: (text, attachments) => actions.sendPrompt(sessionId, text, attachments),
+    onSend: request => {
+      if (request.body.sessionId !== sessionId) throw new Error('Native draft session changed');
+      return actions.sendDraft(request);
+    },
     onRespondAsk: (rid, answer, freeform) => actions.respondAsk(sessionId, rid, answer, freeform),
     onRespondPlan: (rid, action) => actions.respondPlan(sessionId, rid, action),
-    onPlanSupersede: (rid, message) => actions.planSupersede(sessionId, rid, message),
     onRespondElicitation: (rid, action) => actions.respondElicitation(sessionId, rid, action),
     onRemoveQueued: (itemId) => actions.removeQueued(sessionId, itemId),
     onCancel: () => actions.cancel(sessionId),

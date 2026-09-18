@@ -76,6 +76,8 @@ export interface ChatMessage {
   timestamp: number;
   // A bounded native window can retain content without a supported response link.
   incomplete?: string;
+  /** A text delta not yet replaced by its complete native assistant message. */
+  streaming?: boolean;
   toolCalls?: ToolCall[];
   // 'ask-reply' = the user's answer to an ask_user tool; 'subagent' = a sub-agent
   // card; 'skill' = a compact skill-activation pill.
@@ -96,6 +98,7 @@ export const ChatMessage: z.ZodType<ChatMessage> = z.lazy(() => z.object({
   thoughtKey: z.string().optional(),
   timestamp: z.number(),
   incomplete: z.string().optional(),
+  streaming: z.boolean().optional(),
   toolCalls: z.array(ToolCall).optional(),
   subtype: z.enum(['ask-reply', 'subagent', 'skill']).optional(),
   replyQuestion: z.string().optional(),

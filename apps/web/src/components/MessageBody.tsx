@@ -1,9 +1,9 @@
-import { createContext, memo, useContext, useRef, type ReactNode } from 'react';
+import { createContext, memo, useContext, useRef, type ReactNode, type Ref } from 'react';
 import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CopyButton } from './CopyButton';
-import { ModuleRenderNode } from './ModuleContributions';
-import type { MessageOrigin } from '@cockpit/module-api';
+import { MarkdownReplacement, MessagePresentation } from './ModuleComponents';
+import type { MessageIdentity, MessageOrigin } from '@cockpit/module-api';
 import { ORIGINAL_MARKDOWN_TARGET, originalMarkdownTarget, remarkOriginalMarkdownTargets } from '../lib/messageContent';
 
 const OriginContext = createContext<MessageOrigin | undefined>(undefined);
@@ -23,7 +23,8 @@ const MarkdownLink: Components['a'] = ({ node, href, children, ...props }) => {
   const fallback = <LinkContext.Provider value={true}>
     <a {...linkProps} href={href ? defaultUrlTransform(href) : undefined} target="_blank" rel="noopener noreferrer">{children}</a>
   </LinkContext.Provider>;
-  return origin ? <ModuleRenderNode node={{ kind: 'link', origin, target: originalMarkdownTarget(node, href), label: labelOf(children) }} fallback={fallback} /> : fallback;
+  const target = originalMarkdownTarget(node, href);
+  return origin && target !== undefined ? <MarkdownReplacement node={{ kind: 'link', origin, target, label: labelOf(children) }} fallback={fallback} /> : fallback;
 };
 // Preserve unsupported Markdown media as text; fetching and previewing it is
 // not part of the native text renderer.
@@ -33,10 +34,9 @@ const MarkdownMedia: Components['img'] = ({ node, src, alt }) => {
   const source = typeof src === 'string' ? src : undefined;
   const target = originalMarkdownTarget(node, source);
   const fallback = <span>{`![${alt ?? ''}](${source ?? ''})`}</span>;
-  return origin && !insideLink ? <ModuleRenderNode node={{ kind: 'image', origin, target, label: alt ?? '' }} fallback={fallback} /> : fallback;
+  return origin && !insideLink && target !== undefined ? <MarkdownReplacement node={{ kind: 'image', origin, target, label: alt ?? '' }} fallback={fallback} /> : fallback;
 };
-// Module cards may be block elements, including inside ordinary Markdown paragraphs.
-const MarkdownParagraph: Components['p'] = ({ node: _node, ...props }) => <div className="markdown-paragraph" {...props} />;
+const MarkdownParagraph: Components['p'] = ({ node: _node, ...props }) => <p className="markdown-paragraph" {...props} />;
 
 const MarkdownCodeBlock: Components['pre'] = ({ node, children }) => {
   const code = node?.children.find(child => child.type === 'element' && child.tagName === 'code');
@@ -65,8 +65,12 @@ const MarkdownTable: Components['table'] = ({ node: _node, ...props }) => {
 const components: Components = {
   a: MarkdownLink, img: MarkdownMedia, p: MarkdownParagraph, pre: MarkdownCodeBlock, table: MarkdownTable,
 };
-export const MessageBody = memo(function MessageBody({ body, origin }: { body: string; origin?: MessageOrigin }) {
-  return <OriginContext.Provider value={origin}><div className="message-body">
-    <ReactMarkdown remarkPlugins={[remarkGfm, remarkOriginalMarkdownTargets]} components={components} urlTransform={url => url}>{body}</ReactMarkdown>
-  </div></OriginContext.Provider>;
+export const MessageBody = memo(function MessageBody({ body, origin, elementRef, identity, complete = true }: {
+  body: string; origin?: MessageOrigin; elementRef?: Ref<HTMLDivElement>; identity?: MessageIdentity; complete?: boolean;
+}) {
+  const children = <ReactMarkdown remarkPlugins={[remarkGfm, remarkOriginalMarkdownTargets]} components={components} urlTransform={url => url}>{body}</ReactMarkdown>;
+  return <OriginContext.Provider value={origin}>
+    {identity ? <MessagePresentation className="message-body" identity={identity} complete={complete} bodyRef={elementRef}>{children}</MessagePresentation>
+      : <div className="message-body" ref={elementRef}>{children}</div>}
+  </OriginContext.Provider>;
 });

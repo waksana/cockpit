@@ -534,6 +534,7 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       const removed = bindResponse(state, ev, mid);
       const m = ensureStreaming(state, mid, tsOf(ev));
       m.content += delta;
+      m.streaming = true;
       if (origin) Object.assign(m, { origin });
       return { changed: [m.id], removed, metaChanged: false };
     }

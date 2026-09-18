@@ -523,6 +523,7 @@ app.post('/intent/*', async (req, reply) => {
 async function main(runtime: Engine): Promise<void> {
   moduleHost = new ModuleHost({
     observer: runtime,
+    onInvalidate: moduleId => onEngineEvent({ type: 'module/invalidated', moduleId }),
     report: (id, error) => app.log.error({ moduleId: id, err: error }, 'local module failed'),
   });
   await moduleHost.register(app);

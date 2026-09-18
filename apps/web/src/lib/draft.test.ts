@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { acknowledge, acknowledgeInView, sendThreadDraft } from './draft';
-import type { DraftSendHandlers } from './draft';
+import { acknowledge, acknowledgeInView, nativeDraftRequest } from './draft';
+import { SessionDraft } from './textDraft';
+import { DraftCache } from './draftSelection';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -41,70 +42,57 @@ test('acknowledgement is strict: undefined is not successful', async () => {
   assert.equal(await acknowledge(() => undefined), false);
 });
 
-for (const kind of ['prompt', 'ask', 'plan'] as const) {
-  for (const accepted of [true, false]) {
-    test(`${kind} text wrapper propagates ${accepted} only after acknowledgement`, async () => {
-      const post = deferred<boolean>();
-      const calls: unknown[][] = [];
-      const handlers: DraftSendHandlers = {
-        onSend: (...args) => { calls.push(['prompt', ...args]); return post.promise; },
-        onRespondAsk: (...args) => { calls.push(['ask', ...args]); return post.promise; },
-        onPlanSupersede: (...args) => { calls.push(['plan', ...args]); return post.promise; },
-      };
-      if (kind === 'ask') handlers.askRequestId = 'ask-id';
-      if (kind === 'plan') handlers.planRequestId = 'plan-id';
-      let settled = false;
-      const result = sendThreadDraft('message', handlers).then((ok) => { settled = true; return ok; });
-      await Promise.resolve();
-      assert.equal(settled, false);
-      assert.deepEqual(calls, [kind === 'ask' ? ['ask', 'ask-id', 'message', true]
-        : kind === 'plan' ? ['plan', 'plan-id', 'message'] : ['prompt', 'message']]);
-      post.resolve(accepted);
-      assert.equal(await result, accepted);
-    });
-  }
+for (const kind of ['prompt', 'ask', 'plan'] as const) for (const accepted of [true, false]) {
+  test(`${kind} dispatch uses its immutable draft purpose and acknowledges ${accepted} once`, async () => {
+    const draft = new SessionDraft('session', undefined, kind === 'prompt' ? { kind } : { kind, requestId: `${kind}-id` });
+    draft.edit('message');
+    const post = deferred<boolean>();
+    let calls = 0, settled = false;
+    const sending = draft.send(request => {
+      calls++;
+      assert.deepEqual(request, kind === 'ask'
+        ? { intent: 'respondAsk', body: { sessionId: 'session', requestId: 'ask-id', answer: 'message', wasFreeform: true } }
+        : kind === 'plan' ? { intent: 'planSupersede', body: { sessionId: 'session', requestId: 'plan-id', message: 'message' } }
+          : { intent: 'prompt', body: { sessionId: 'session', text: 'message' } });
+      return post.promise;
+    }).then(value => { settled = true; return value; });
+    await Promise.resolve();
+    assert.equal(settled, false);
+    post.resolve(accepted);
+    assert.equal(await sending, accepted);
+    assert.equal(calls, 1);
+  });
 }
 
-test('ask takes precedence over plan and never falls back after failure', async () => {
-  const calls: string[] = [];
-  assert.equal(await sendThreadDraft('answer', {
-    askRequestId: 'ask',
-    planRequestId: 'plan',
-    onRespondAsk: async () => { calls.push('ask'); return false; },
-    onPlanSupersede: async () => { calls.push('plan'); return true; },
-    onSend: async () => { calls.push('prompt'); return true; },
-  }), false);
-  assert.deepEqual(calls, ['ask']);
+test('ask takes precedence over plan without borrowing prompt fields or falling back after a failed answer', async () => {
+  const session = new DraftCache().session('A');
+  const decisions = { ask: { requestId: 'ask' }, planRequest: { requestId: 'plan' } };
+  session.synchronize(decisions);
+  const answer = session.current(decisions);
+  answer.edit('Answer');
+  const routes: string[] = [];
+  assert.equal(await answer.send(async request => { routes.push(request.intent); return false; }), false);
+  assert.deepEqual(routes, ['respondAsk']);
 });
 
-test('missing ask or plan handlers return false without sending an unrelated prompt', async () => {
-  let prompts = 0;
-  const onSend = async () => { prompts++; return true; };
-  assert.equal(await sendThreadDraft('text', { askRequestId: 'ask', onSend }), false);
-  assert.equal(await sendThreadDraft('text', { planRequestId: 'plan', onSend }), false);
-  assert.equal(await sendThreadDraft('text', {}), false);
-  assert.equal(prompts, 0);
-});
-
-test('rejected ask and plan POSTs propagate failure without automatic retries', async () => {
-  let calls = 0;
-  const fail = async () => { calls++; throw new Error('uncertain POST'); };
-  assert.equal(await sendThreadDraft('text', { askRequestId: 'ask', onRespondAsk: fail }), false);
-  assert.equal(await sendThreadDraft('text', { planRequestId: 'plan', onPlanSupersede: fail }), false);
-  assert.equal(calls, 2);
-});
-
-test('native attachments reach only prompt and never silently become ask answers or plan feedback', async () => {
-  const attachments = [{ type: 'file' as const, path: '/fixture/native' }];
-  const calls: unknown[][] = [];
-  const onSend = async (...args: unknown[]) => { calls.push(args); return true; };
-  assert.equal(await sendThreadDraft('', { onSend }, attachments), true);
-  assert.deepEqual(calls, [['', attachments]]);
-  for (const request of [{ askRequestId: 'ask' }, { planRequestId: 'plan' }]) {
-    assert.equal(await sendThreadDraft('keep', { ...request, onSend,
-      onRespondAsk: async () => assert.fail('No attachment route'),
-      onPlanSupersede: async () => assert.fail('No attachment route'),
-    }, attachments), false);
+test('unsupported decision text and unknown route fields fail rather than becoming a normal prompt', () => {
+  const elicitation = new SessionDraft('A', undefined, { kind: 'elicitation', requestId: 'tool' });
+  assert.throws(() => nativeDraftRequest(elicitation.reference, 'text', {}), /does not accept/);
+  for (const kind of ['ask', 'plan'] as const) {
+    const draft = new SessionDraft('A', undefined, { kind, requestId: 'request' });
+    assert.throws(() => nativeDraftRequest(draft.reference, 'text', { unexpected: 'field' }));
   }
-  assert.equal(calls.length, 1);
+});
+
+test('SDK attachments remain native transport fields, never base draft state or decision payloads', () => {
+  const fields = { attachments: [{ type: 'file' as const, path: '/fixture/native' }] };
+  const prompt = new SessionDraft('A');
+  assert.deepEqual(nativeDraftRequest(prompt.reference, '', fields), {
+    intent: 'prompt', body: { sessionId: 'A', text: '', attachments: fields.attachments },
+  });
+  for (const kind of ['ask', 'plan'] as const) {
+    const draft = new SessionDraft('A', undefined, { kind, requestId: 'request' });
+    assert.throws(() => nativeDraftRequest(draft.reference, 'text', fields));
+  }
+  assert.throws(() => nativeDraftRequest(prompt.reference, 'text', { mode: 'immediate' } as never), /overwrite/);
 });

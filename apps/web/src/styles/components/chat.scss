@@ -156,6 +156,8 @@
   flex: none;
 }
 
+.message-speech, .chat-answer-question { position: relative; }
+
 .msg-group { display: flex; flex-direction: column; min-width: 0; }
 .msg-group[data-gap='related'] { padding-block-start: var(--chat-gap-message); }
 .msg-group[data-gap='section'] { padding-block-start: var(--chat-gap-process); }
@@ -627,25 +629,6 @@ button.activity-head {
   padding: var(--chat-gap-meta);
   background: transparent;
 }
-.module-composer-actions {
-  display: flex; flex: none; align-items: center; gap: var(--chat-gap-meta);
-  &:empty { display: none; }
-}
-.module-composer-above, .module-draft-attachments {
-  flex: none; min-width: 0; margin: 0; font-size: var(--chat-text-label);
-  &:empty { display: none; }
-}
-.module-composer-above { display: flex; flex-direction: column; gap: var(--chat-gap-region); }
-.module-draft-attachments > div {
-  display: flex; align-items: center; gap: var(--chat-gap-control); padding: var(--chat-gap-meta) 0;
-  > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-}
-.module-draft-recovery {
-  display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: var(--chat-gap-control); min-width: 0;
-  margin: 0; color: var(--secondary-text-color); font-size: var(--chat-text-secondary); line-height: var(--chat-leading-ui);
-  > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-  > button { flex: 0 1 auto; min-width: 0; max-width: 100%; min-block-size: var(--chat-control-compact); padding: var(--chat-gap-meta) var(--chat-inset-compact); background: transparent; border: none; color: var(--link-color); cursor: pointer; font: inherit; overflow-wrap: anywhere; }
-}
 .message-attachments {
   display: flex; flex-direction: column; align-items: flex-start; gap: var(--chat-gap-control); min-width: 0;
   > * { min-width: 0; max-width: 100%; }
@@ -678,7 +661,7 @@ button.activity-head {
   touch-action: pan-y;
   &::placeholder { color: var(--chat-placeholder-color); opacity: 1; }
 }
-.module-composer-actions:not(:empty) + .chat-input-message { padding-inline-start: var(--chat-gap-meta); }
+.chat-input-message:not(:first-child) { padding-inline-start: var(--chat-gap-meta); }
 // The caret marks text focus inside the single shared input-card frame.
 .chat .chat-input-message:focus-visible {
   outline: none;
@@ -827,7 +810,7 @@ button.activity-head {
 .chat-queue-remove { align-self: flex-start; }
 @media (pointer: coarse) {
   .chat-copy-button.ck-button, .chat-execution-actions .ck-button,
-  .chat-execution-head, .chat-pending-detail > summary, .module-draft-recovery > button {
+  .chat-execution-head, .chat-pending-detail > summary {
     min-block-size: var(--ck-control-size);
   }
 }
