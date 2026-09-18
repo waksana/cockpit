@@ -34,8 +34,9 @@ Cockpit 面向在自己机器上使用 Copilot 的个人用户。它不是另一
 
 ```text
 请阅读 Cockpit 的安装文档：
-https://github.com/waksana/cockpit/blob/main/docs/DEPLOY-PORTABLE.md
+https://github.com/waksana/cockpit/blob/v0.2.3/docs/DEPLOY-PORTABLE.md
 
+先确认 v0.2.3 的 Release workflow 已成功发布运行包；未发布时等待，不使用其他版本替代。
 按照文档在这台机器上安装并启动 Cockpit。
 需要我完成登录或确认操作时请告诉我，完成后给我访问地址。
 ```

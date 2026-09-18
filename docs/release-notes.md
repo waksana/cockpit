@@ -1,32 +1,59 @@
-# Cockpit 0.2.2
+# Cockpit 0.2.3
 
-Release summary for v0.2.2, relative to v0.2.1. The checked runtime archive and
+Release summary for v0.2.3, relative to v0.2.2. The checked runtime archive and
 checksum are published only after the immutable tag's Release workflow succeeds.
 
-- [#24](https://github.com/waksana/cockpit/pull/24): simplify the independent
-  session settings, MCP and Skills panels, removing redundant notices while
-  preserving native controls and state readback.
-- Empty Skills panels no longer offer a global management entry.
-- Resource rows keep stable state layouts without automatic height changes or
-  separate error boxes. Long text and error details expand only on demand.
-- MCP connecting and disconnecting states use the existing off/on controls;
-  this release does not introduce a reconnect operation.
-- Decorative hover effects are removed while keyboard focus indicators and
-  selected-state styling remain available.
+## BREAKING: Module Web API v2
+
+- [#26](https://github.com/waksana/cockpit/pull/26) replaces legacy frontend
+  contribution slots with module state services, module-owned draft schemas,
+  middleware around actual components and separate Markdown link/image renderers.
+  Frontend activation and declarations now require `apiVersion: 2`; old frontend
+  slots are rejected, without a compatibility shim.
+- When using the file or notification modules, the paired **Cockpit File 0.1.7**
+  and **Cockpit Notification 0.1.0** releases are required for this new frontend
+  contract. Older frontend packages are not compatible. These modules are
+  distributed separately, not bundled or installed by this host release.
+- The base draft contains no attachments. Ordinary prompt drafts and native
+  ask/plan/elicitation decision drafts have separate identities and lifecycles;
+  switching back restores the prompt instead of overwriting it. Field projection,
+  acknowledgement (ACK) and persistence remain generic schema-driven mechanisms.
+- The file module owns the complete file-input lifecycle: picker, paste/drop,
+  captured draft identity, uploads, attachment state, persistence and cleanup.
+  The host has no file dispatcher or fallback attachment UI; late file results
+  cannot be redirected to a different session or decision draft.
+- Component middleware (HOCs) enhances the actual editor, navigation and management
+  headers, preserving their existing controls and behavior. There are no empty
+  global-action placeholders. Markdown registration remains separate from native
+  attachment rendering.
+- Module worker serving and invalidation are generic host facilities. Notification,
+  unread/read state, push and file policies remain module-owned; the host does not
+  register workers or request notification permission on a module's behalf.
+
+## Frontend presentation
+
+- [#27](https://github.com/waksana/cockpit/pull/27) groups MCP name/source text
+  compactly, with 8px top/bottom row padding. Switch targets remain 40px/44px.
+- Normal frontend geometry is preserved apart from the explicit prompt/decision
+  draft switch and this MCP row adjustment. Existing native controls, focus
+  behavior and session-page boundaries remain.
 
 ## Unchanged compatibility and runtime baseline
 
-- Web, backend and MCP must come from this same release. This is a presentation
-  update: API contracts, native session ownership and runtime behavior are unchanged.
+- Web, backend and MCP must come from this same release. The breaking change is
+  the module frontend contract, not the native backend API or session ownership.
+- Module manifests and backend API remain **v1**; Module UI remains **v1**,
+  including `context.uiVersion: 1` and `context.createPortal`. See the
+  [module contract](https://github.com/waksana/cockpit/blob/v0.2.3/docs/module-contract-draft.md)
+  and [public Module UI guide](https://github.com/waksana/cockpit/blob/v0.2.3/docs/module-ui-guide.md).
 - The supported package baseline remains Node **24.20.0**, Linux x64/glibc,
-  SDK **1.0.13**, bundled native runtime **1.0.83** / protocol **3**.
-- Module API v1 and Module UI v1 are unchanged, including `context.uiVersion: 1`
-  and `context.createPortal`. The
-  [public Module UI guide](https://github.com/waksana/cockpit/blob/v0.2.2/docs/module-ui-guide.md)
-  documents the shared host visual roles and compatibility contract.
-- The separate, compatible **Cockpit File 0.1.6** package is not bundled or
-  repinned by this host release. Existing module selection and data remain unchanged;
-  this release requires no module update or user-data migration.
+  pnpm **10.34.5**, SDK **1.0.13**, bundled native runtime **1.0.83** / protocol **3**.
+  This release does not upgrade dependencies.
+- Copilot remains the authority for native sessions, history, queues and settings.
+  Graceful shutdown still waits only for native work and required native in-flight
+  operations, not module business activity. Module selection remains an explicit
+  cold-start operation; deployment and process management remain user-owned.
 
 Publishing follows the same fixed-commit CI and immutable tag process.
-Publication alone does not restart or modify an installed service.
+Publication is not installation, deployment or restart and does not modify an
+installed service, module selection or user data.
