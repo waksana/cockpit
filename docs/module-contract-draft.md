@@ -5,12 +5,17 @@
 旧 Web 插口不保留兼容层。使用文件或通知模块时，必须分别配套
 Cockpit File 0.1.7 / Cockpit Notification 0.1.0；manifest/后端 API 和公共 UI 版本未变，
 不能只凭它们判断 Web 兼容性。
-运行包只在 v0.2.3 Release workflow 成功后可用；源码和文档不表示已经发布、安装或重启。
+[v0.2.3 运行包](https://github.com/waksana/cockpit/releases/tag/v0.2.3)及上述配套模块均已发布；
+下载和使用入口见[模块目录](module-catalog.md)。源码更新不代表已安装的服务或模块已经升级。
 远程签名 URL 安装、模块 HTTP MCP、角色/skill 包和通用页面贡献仍未实现。
 
 产品边界见 [R1–R8](product-requirements.md)，文件模块的业务契约由
 [cockpit-file](https://github.com/waksana/cockpit-file) 维护。
 本文维护宿主当前接口与未实现目标，不复制文件业务。
+
+**按任务阅读：**[安装模块](#2-包格式与本地安装) · [配置与数据](#3-代码数据与配置) ·
+[后端接口](#4-公共-typescript-契约) · [HTTP 与资源](#5-http资产与版本) ·
+[前端扩展](#6-前端注册与草稿) · [事件与退出](#7-原生观察和退出) · [后续目标](#8-后续目标)。
 
 ## 1. 当前支持范围
 
@@ -25,7 +30,7 @@ Cockpit File 0.1.7 / Cockpit Notification 0.1.0；manifest/后端 API 和公共 
 | 草稿 | 本体基础 state；模块经声明、作用域绑定的 actions 扩展，发送与 ACK 仍归本体 |
 | 启用/停用 | 修改下次启动选择，当前进程不热加载或热卸载 |
 
-首个消费者是文件模块。全局文件库和汉堡菜单页面已移至其 roadmap；
+文件和通知模块已经使用这些接口。全局文件库和文件管理页面仍在文件模块的 roadmap 中；
 当前 API v1 不提供全局页面或 session 菜单页面的注册字段，未知字段明确拒绝。
 不为尚未用到的插口预造通用组件反射或业务工作流系统。
 
@@ -200,7 +205,7 @@ apiBase、公开配置、request、signal、onInvalidate、试用源码的 onEve
 当前宿主另提供 `context.uiVersion: 1`，声明已实现的公共语义 CSS 与图标规范。
 精确类名、变量、兼容条件、两仓交付顺序与可运行示例统一维护在
 [模块 UI 开发指南](module-ui-guide.md)。这是前端 additive 能力，不是新的 manifest 字段；
-旧宿主没有该字段，依赖 UI v1 的模块必须明确拒绝不兼容激活，不能只看同为 0.2.0。
+依赖 UI v1 的模块必须检查该字段并明确拒绝不兼容激活，不能只看宿主 package 版本。
 
 模块 UI 与本体共同遵循[交互语义与结构正确性要求](DEVELOPMENT.md#interaction-semantics-and-structural-correctness)。
 Web 模块集成只使用 state 扩展、公开实际语义组件的 middleware，以及独立 Markdown/内容渲染器。

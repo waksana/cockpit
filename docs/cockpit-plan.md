@@ -13,7 +13,8 @@ Cockpit 是一个直接启动的 Web/API 服务，通过官方 SDK 控制原生 
 后端未接入的 SDK 方法或 Web 未提供的 API 入口，不自动构成实现缺口。
 
 当前源码提供本地可信模块包的冷加载、命名空间 HTTP/静态资源及输入/聊天渲染贡献，
-接口为 Module API v1。远程安装、逐模块 HTTP MCP 和启动接续消息仍未实现，
+包与后端接口为 API v1，前端为 Web API v2，公共样式为 UI v1。
+远程安装、逐模块 HTTP MCP 和启动接续消息仍未实现，
 具体已实现范围见[模块协议](module-contract-draft.md)。
 原生 `assistant` 消息、`task` 子代理、MCP/skill 和定时提示由 SDK 提供。
 

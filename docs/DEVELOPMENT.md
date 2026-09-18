@@ -6,8 +6,10 @@ production. Update this guide and the executable config together when changing
 engineering commands or package behavior.
 The [documentation index](README.md) defines each topic's single canonical page.
 The service provides Web/API and a public graceful shutdown operation.
-The [module contract](module-contract-draft.md) describes planned capabilities;
-its execution process model remains a design decision.
+The [module contract](module-contract-draft.md) describes the implemented local,
+trusted, cold-loaded package model: backend API v1, Web API v2 and public UI v1.
+Backends run in the host Node process; unimplemented capabilities are listed
+separately at the end of that contract.
 
 Use a short-lived branch and a pull request against `main`; an independent
 worktree is optional. Keep other contributors' unfinished trees and runtime data
@@ -48,7 +50,7 @@ owner's work as cleanup.
 ## Documentation maintenance
 
 Follow the [documentation ownership rules](README.md#维护规则). Keep current
-contracts separate from proposed module ABI; update links
+contracts separate from future module capabilities; update links
 instead of cloning a capability table into every guide. Check command/schema
 claims against their actual source. A requirement/implementation mismatch is
 an explicit gap, not authority to change either silently.
@@ -166,7 +168,7 @@ Choose `thought-markdown` for formatted thinking, code copying and incremental
 thought updates through the production renderer; its append and end-turn controls
 keep the same native-text fixture identity.
 
-For the README screenshot, open `/chat-lab.html?scene=workspace` at a desktop
+For the README workspace screenshot, open `/chat-lab.html?scene=workspace` at a desktop
 viewport of 1600 x 1000. This scene mounts the real App, session list, Chat and
 session settings with a synthetic store whose transport initialization is disabled.
 It starts with the settings panel open and a local input draft. Expand the
@@ -177,6 +179,14 @@ All content is synthetic, including tool output and model choices; it is not pro
 of a native execution. Keep the image in `docs/images/workspace.png` and update it
 from this scene when the represented interface changes. Do not substitute private
 session screenshots or add a second demo application.
+
+For the answer-input screenshot, open `/chat-lab.html?scene=ask&compact=1` at
+1040 x 650. Enter a short answer without submitting it, then capture only the
+expanded input card, including its status, question, choices and editor, to
+`docs/images/answering.png`. Do not include the Lab controls or unrelated
+long-content fixtures. The README labels both screenshots as synthetic.
+`docs/images/extensions.svg` is a hand-maintained architecture diagram, not a
+screenshot; keep its frontend/backend labels aligned with the module contract.
 
 ## Web installation metadata
 
