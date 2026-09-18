@@ -44,8 +44,9 @@ React 与公开接口，不需要另建聊天应用。
 公共 UI 版本目前为 v1，与包/后端及 Web API 的版本分别维护；
 菜单能力另检查 `context.menuVersion: 1`，不是旧接口的兼容别名。
 注册模块 state 不等于自动取得聊天数据：当前宿主基础快照只含会话 ID、可见性和连接状态。
-最近回复/当前问题的结构化只读上下文还没有前端公开入口，候选边界见
-[当前窗口上下文设计](module-contract-draft.md#window-context-proposal)，不要把它当成现成 API。
+开发源码新增的 `chatWindowVersion: 1` 提供[只读当前窗口](module-contract-draft.md#chat-window-state)，
+模块自行选择和裁剪文字；`composerActionsVersion: 1` 提供编辑器与原生发送按钮之间的动作组合。
+这两项尚不属于历史 0.2.4 Release，不新增本体后端能力或语音业务。
 
 ## 接口与架构
 

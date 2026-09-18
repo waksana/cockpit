@@ -2,6 +2,9 @@
 
 **Cockpit 0.2.4：模块包/后端 API v1，Web API v2，公共 UI v1，菜单能力 menuVersion 1。**
 本地可信包、主进程 import、冷加载、模块 payload 事件及独立菜单注册已实现。
+当前开发源码另提供 `chatWindowVersion: 1` 与 `composerActionsVersion: 1`：
+只读当前聊天窗口与真实输入行的后置动作组合。它们不是历史 0.2.4 Release 的能力；
+消费者须独立检查能力并使用配套源码导出的类型，不能仅凭 package 版本判断。
 **0.2.4 配套 / 发布资产以对应 Release 为准**，本文不表示发布已完成。
 配套模块为 **Cockpit File 0.1.7 / Cockpit Notification 0.1.5**，
 下载和使用入口见[模块目录](module-catalog.md)。File 0.1.7 不使用已移除的
@@ -169,11 +172,13 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 | 前端模块 API | `apiBase`、公开 `config`、`request(path, init)` | 请求只到本模块的摘要绑定 API，带既有认证；不是任意原生 API 代理，公开配置不能含长期密钥 |
 | 前端模块事件 | `onEvent(listener)`、`onInvalidate(listener)` | 只接收本模块 payload/失效提示，沿用既有 SSE；不是原生聊天事件订阅 |
 | 宿主基础 state | `context.state.host.getSnapshot()` / `subscribe()` | 只有当前 `sessionId`、页面 `visible`、连接 `connected` |
+| 当前已加载聊天窗口 | `context.state.chatWindow.getSnapshot()` / `subscribe()`，检查 `chatWindowVersion: 1` | 只读消息文字、归属、层级、顺序和窗口可用状态；不补读历史，不内置“最近回复”策略 |
 | 模块 state/service | `context.state.register({ id, create, dispose })`，返回 `handle.get()` | 创建并取得模块自己的服务；其数据来源、查询与方法由模块实现，不自动注入聊天数据 |
 | 草稿读取与编辑 | `context.state.bindDraft(reference)`，草稿 `getSnapshot()` / `subscribe()`、`editText(text)`、`block(reason)` | 绑定具体草稿生命周期；文字编辑需声明 `writes: ['text']`，不暴露通用原生提交/ACK/reset |
 | 草稿字段扩展 | `context.state.registerDraft(...)`，`forDraft(reference)`、字段 `getSnapshot()` / `subscribe()` / `update()` | 模块拥有 schema、校验、内容判定、投影、ACK 和可选持久化；不能修改别的模块字段 |
 | 菜单声明 | 返回 `menus`：`getState(target)`、可选 `subscribe`、`onSelect(target, { signal })` | 全局与指定 session 命令；本体保留原生项、渲染及焦点，不提供任意页面/router 注册 |
 | 组件增强 | 返回 `components`：按 boundary 提供 `wrap(Base)` | 只增强公开的真实组件，保留 props/children/ref；具体边界见 [6.2](#62-component-middleware) |
+| 输入行后置动作 | `ComposerEditorProps.actions`，检查 `composerActionsVersion: 1` | 编辑器之后、原生发送之前的真实兄弟节点；保留继承动作、ref 和发送门槛 |
 | Markdown 渲染 | 返回 `markdown`：`matches(node)`、`component` | 已解析 link/image 的目标、标签和消息归属；不是整份正文、附件或完整聊天解析接口 |
 | 模块 worker | 可选 `context.worker: { entry, scope }` | 宿主提供同包窄作用域资源地址，模块自行注册；不自动控制 Chat、申请权限或订阅 push |
 | 后端基础 context | `apiVersion: 1`、`moduleId`、`dataRoot`、`apiBase`、只读 `config`、`signal`、`report` | 模块私有数据与资源生命周期；不取得 Engine、根 Fastify 或 SDK session handle |
@@ -190,20 +195,32 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 | 想取得的数据 | 当前可用来源 | 不应推导出的能力 |
 | --- | --- | --- |
 | 当前会话与前后台/连接 | `HostSnapshot` 的三个字段 | 没有当前会话标题、项目目录、问题正文或消息列表 |
+| 当前窗口消息文字 | `ChatWindowSnapshot.messages`，节点 `text/origin/complete/subtype/children` | 仅已加载内容，不等于整个会话历史；ready 不等于全历史完整，未知归属不猜测 |
 | 当前草稿文字 | `DraftReference` 的稳定身份及草稿快照 | 快照含 `text/revision/pending/unconfirmed/blocks/hasContent`；不是聊天历史，也没有内建附件字段 |
 | 当前输入操作 | Composer 的 `draft/operation/disabled/busy/sendBlocked`、编辑器 ref 和受保护回调 | `purpose` 标识 prompt 或具体 ask/plan/elicitation 请求；不提供结构化问题正文，不能越过原生自由文本限制 |
 | 一条正在呈现的消息 | `MessageProps.identity/complete/bodyRef`、React `children/adornment` 与普通 DOM props | 没有原始正文字符串或全会话排序快照；React children、DOM 观察和组件挂载先后不是“最近回复”查询契约 |
 | 一个 Markdown 引用或附件 | link/image 的 `MarkdownNode`，或附件组件的 descriptor/index/origin | 不提供全部文件库或全部历史消息，也不因引用存在自动加载资源 |
 | 后端原生输出与控制事实 | `events` 的 `NativeObservation`、`controlEvents` 的 `ServerEvent` | 通知可能携带正文，但不是浏览器当前已加载窗口；不会自动转交前端或补读启用前历史 |
 
-**目前没有“取当前聊天窗口最近一条助手回复”或“取当前问题正文”的前端公共 state API。**
-不能注册一个空服务后就声称这些数据已经可用，也不能借此导入本体私有 store、
+**本体提供窗口读取，不提供语音上下文或 `getLatestReply()` 业务方法。**
+当前问题的结构化正文仍没有公共 state 入口。模块不得借窗口读取导入私有 store、
 查询私有 DOM、读取 native home 或扫描全部历史。公开 `bodyRef` 的呈现观察用途保持不变。
-用后端观察再保存/发布一份历史来替代当前窗口读取，也不是自动获得同等语义。
+用后端观察再保存/发布一份历史来替代当前窗口读取，不具有同等语义。
 
-语音等真实消费者若需要上下文，先定义已有窗口数据的最小、只读、有界来源，
-再由模块自己的 state 选择和裁剪；候选边界见[后续上下文能力](#window-context-proposal)。
-本节记录缺口，不引入新字段、API 或隐式数据收集。
+<a id="window-context-proposal"></a>
+### 4.3 由模块构建上下文
+
+```text
+本体 state.chatWindow 的当前只读窗口
+    → 模块 context state 选择消息、截取少量文字
+    → 组件在用户动作发生时读取本次上下文
+```
+
+数据状态和原生归属由本体如实提供，选哪些角色/回复、截多少字、是否附加自己的草稿、
+何时提交给外部服务均属于模块策略，不在本体预置语音提示词。
+消费者区分空窗口与未知/失效，捕获原始 session/draft/request 身份，
+不得把迟到结果改投到当前新目标或覆盖用户手动修改；文字读取本身不授权提交消息。
+精确字段与能力版本见[当前窗口契约](#chat-window-state)，无需另建历史读取或业务缓存。
 
 ## 5. HTTP、资产与版本
 
@@ -311,7 +328,10 @@ Web 模块集成有四种不同机制，不能相互伪装：
 快照、选择器、订阅、HTTP actions 和异步资源由服务自己管理；框架不自动持久化或重试。
 创建函数不能返回 Promise，初始网络读取由已创建服务执行，不阻塞普通聊天渲染。
 
-`context.state.host` 提供当前 session、页面可见性和连接状态的只读基础快照。
+`context.state.host` 仅提供 `sessionId/visible/connected` 三个只读基础字段；
+它没有消息列表、会话标题或当前问题正文。
+`context.state.chatWindow` 提供另一个只读当前窗口快照，见[窗口数据](#chat-window-state)。
+注册服务或调用 `handle.get()` 本身不会自动取得聊天数据，服务需显式读取对应公共来源。
 `onInvalidate` 仍是本模块的既有 SSE 变化提示，不携带完整业务 state。
 `onEvent` 是同一传输中按模块归属的数据出口；模块 state 可消费自己的 payload，
 不能把它注入原生会话 store。依赖新能力的模块须检查配套 SDK/运行时，不以旧发行版本号假定存在。
@@ -345,6 +365,34 @@ scope 提供只读快照、订阅和仅修改自己字段的验证型 update；�
 展示或发送，也不制造文件兜底 UI、阻止或清空操作。普通文字仍可发送。
 恢复、旧字段迁移和提交后空值标记由模块 schema 完成，防止旧记录重新导入。
 
+<a id="chat-window-state"></a>
+#### 当前窗口的只读数据
+
+依赖此能力须检查 `context.chatWindowVersion === 1`。通过
+`context.state.chatWindow.getSnapshot()` / `subscribe(listener)` 读取已有窗口；
+没有 session 参数、历史加载、分页、刷新或写入动作，不增加 HTTP、SSE 或 SDK 读取。
+只对当前活动 session 可见，切换时不会把上一会话的数据套到新身份。
+
+| 字段 | 含义 |
+| --- | --- |
+| sessionId | 当前活动会话，未选择时为 null |
+| status | `unavailable` 尚无窗口；`loading` 首次读取中；`ready` 已有有效窗口；`stale` 失效或断线；`error` 当前历史读取失败 |
+| hasMore / partial | 更早历史是否仍可读、窗口是否存在已知片段/归属边界；ready 不代表全历史完整 |
+| error | 已有窗口读取错误，不把失败伪造成空会话 |
+| messages | 当前已加载的根消息，保留窗口顺序；各消息的 children 保留子 Agent 层级及其各自顺序 |
+
+每条 `ChatWindowMessage` 只投影 `id/origin/role/text/complete/subtype/children`。
+`id` 是展示身份，`origin` 才是原生 session/message/agent 归属；未知归属为 null，
+不按组件挂载顺序、时间戳或猜测的原生 ID 重排。`complete` 不把流式片段或已知不完整内容当定稿。
+`text` 只取现有消息 content，不额外导出 thought、toolCalls、attachments、
+私有 store 或原生 session handle。
+原生问题的结构化正文不在这个接口中。
+
+快照和节点只读冻结；同一输入返回稳定引用，未变化的消息复用投影，
+没有消费者读取时不额外复制逐消息元数据。订阅随模块 scope 撤销，停止后的读取明确失败。
+空的 ready 窗口和尚未加载/失效/失败可区分；保留的旧内容不自动变成当前权威内容。
+模块自行选择角色、完成状态、截取长度与使用时机；本体没有“最近回复”或语音提示词策略。
+
 ### 6.2 Component middleware
 
 | boundary | 基础组件契约 |
@@ -352,7 +400,7 @@ scope 提供只读快照、订阅和仅修改自己字段的验证型 update；�
 | message | 原生消息/宿主当前 ask 身份、完成事实、实际正文 bodyRef、children 与真实 adornment 节点 |
 | sessionStatus | 原生回复中/错误/待选择状态和非交互 children，不嵌套按钮 |
 | composer | 实际输入卡片及其原生问题内容，组合 children；不预建附件组 |
-| composerEditor | 实际输入行、文字编辑器和发送控件；普通 DOM props/children/ref，不解释文件事件 |
+| composerEditor | 实际输入行、文字编辑器和发送控件；普通 DOM props/children/ref 及 actions，不解释文件或语音事件 |
 | attachment | 一项原生历史附件、消息归属、基础显示及附加动作；不承担草稿附件列表 |
 | managementHeader | 实际管理列表标题栏，包含返回、标题和刷新控件 |
 | managementDetailHeader | 实际管理详情标题栏，包含返回和标题焦点行为 |
@@ -364,6 +412,13 @@ React 增强链和错误边界不产生 HTML；不为注册项增加空 div/span
 新增业务节点通过原组件的正常 props/children 组合，不能产生视觉嵌套或改变原有布局。
 每个 boundary 的默认实现必须承担真实现有界面职责。禁止专门插入一个只返回 children、
 生产环境无基础内容的“全局动作”空边界；有 HOC 包装不等于不是 slot。
+
+输入行动作须检查 `context.composerActionsVersion === 1`：
+`ComposerEditorProps.children` 仍在文字编辑器前，`actions` 在编辑器后、既有发送按钮前。
+增强器保留并组合继承的 actions，不替换原生发送按钮、编辑器或其门槛。
+两者直接作为真实输入行的兄弟节点，不增加空容器或新的空组件边界；
+DOM/键盘顺序与视觉顺序一致，不用私有 CSS 把前置节点搬到后面。
+模块根据具体草稿/原生输入门槛决定自己的动作是否可用，不自动继承文件模块的 prompt-only 策略。
 
 message 的 bodyRef 指向实际正文或当前 ask 的问题，不含 byline、滚动外框或选择按钮。
 ask 使用宿主当前 AskRequest.requestId，不冒充 SDK requestId。
@@ -531,32 +586,3 @@ graceful 仍只等待原生工作和必要的原生在途操作。
 这些尚未实现，不应通过当前 API v1 的未知字段或旧原型入口模拟。
 已有菜单动作声明不等于任意页面/router 注册；当前没有此类公开注册入口。
 实施范围以 [模块目录](module-catalog.md)及明确的产品决定为准。
-
-<a id="window-context-proposal"></a>
-### 8.1 待设计：当前窗口的只读上下文
-
-语音模块 [#34](https://github.com/waksana/cockpit/issues/34) 讨论中的一个实际需求是：
-组件在开始听写时，从模块自己的 context state 取当前会话最近一条助手回复的短摘录。
-**这是待实现的数据来源，不是已经存在的 `context` 字段或 `getLatestReply()` API。**
-
-建议职责划分：
-
-```text
-本体已有聊天窗口的最小只读数据来源（尚未开放）
-    → 模块 context state 选择最近回复、截取少量文字
-    → 组件在用户动作发生时读取本次上下文
-```
-
-模块服务可直接读取当前草稿，但不能因此取得对话正文；扩展数据入口前应明确：
-
-- 只使用当前已加载的窗口，不为取摘录请求更多历史、加载其他 session 或建立后端聊天副本。
-- 保留真实 session/message/agent 归属、消息顺序和完成/可用事实；“最近”不能按 React 挂载顺序推断。
-- 截取哪些回复、多少字、是否附加草稿/提问属于消费者策略，不在本体预置语音提示词。
-  “几十字”是业务预算示例，不是已发布接口上限。
-- 空会话、尚未加载和不可用分别表达，不偷偷用前一个会话的内容或未知状态冒充空结果。
-- 用户动作捕获的上下文与草稿/request 身份固定，切换目标和迟到识别结果不能修改另一份草稿；
-  不覆盖用户手动编辑，不自动提交消息或回答。
-
-具体字段、读取/订阅形式、长度及版本能力检查需随真实实现一起确定和验证。
-不能为提供这个入口开放任意私有 store、整份 DOM 或所有会话；本节不授权模型调用、
-音频采集、上下文外发或部署，也不选定识别供应商。

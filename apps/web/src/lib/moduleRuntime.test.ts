@@ -56,6 +56,32 @@ test('constructing/rendering the module store has no bootstrap or backend access
   unsubscribe();
 });
 
+test('chat-window capability is read-only, scoped, and revoked with its module', async () => {
+  const f = fixture();
+  await f.runtime.start();
+  const context = f.contexts[0];
+  assert.equal(context.chatWindowVersion, 1);
+  assert.equal(context.composerActionsVersion, 1);
+  const state = context.state.chatWindow;
+  assert.ok(Object.isFrozen(state));
+  assert.equal(state.getSnapshot().status, 'unavailable');
+  const reads = f.requests.length;
+  let notified = 0;
+  const unsubscribe = state.subscribe(() => { notified++; });
+  const next = Object.freeze({ sessionId: 'A', status: 'ready' as const,
+    hasMore: true, partial: false, messages: Object.freeze([]) });
+  f.runtime.updateChatWindow(() => next);
+  assert.equal(notified, 1);
+  assert.equal(state.getSnapshot(), next);
+  assert.equal(f.requests.length, reads, 'reading a loaded view cannot request history');
+  f.runtime.unregister(f.runtime.getSnapshot()[0]);
+  f.runtime.updateChatWindow(() => next);
+  assert.equal(notified, 1);
+  assert.throws(() => state.getSnapshot(), /abort/i);
+  unsubscribe();
+  f.runtime.stop();
+});
+
 test('menus share registration IDs and rollback, reject retired wrappers and malformed declarations', async () => {
   const entry: ModuleMenuRegistration = { id: 'action', menu: 'global',
     getState: () => ({ label: 'Action' }), onSelect() {} };
