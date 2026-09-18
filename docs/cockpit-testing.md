@@ -29,6 +29,16 @@ server/core/MCP 的构建排除其测试文件；protocol 及 Web 的 tsconfig �
 下的测试，所以相应类型检查也覆盖它们。以各自实际脚本/tsconfig 为准，
 不能用“所有测试都不参与类型检查”概括。
 
+全局/会话菜单改动使用 Web 现有 runner，合并运行 `src/lib/moduleRuntime.test.ts`、
+`src/lib/sessionActions.test.ts`、`src/lib/menuFocus.test.ts`、
+`src/components/GlobalNavigation.test.ts`、`src/components/ModuleSurfaces.test.ts`、
+`src/components/Thread.lifecycle.test.ts`、`src/components/SessionResource.lifecycle.test.ts`
+和 `src/components/InteractionOwnership.test.ts`。
+其中 App 的合成挂载覆盖三点、右键、长按、动态状态、精确 session 与撤销后的晚结果；
+不连接原生服务或推送渠道。公共类型导出使用
+`node --test scripts/export-module-api.test.mjs`；模块还需从干净配套 SHA 导出并自行构建，
+不能以宿主用例代替真实模块包与消费者接入。
+
 ## 真正的 SDK 与包
 
 现有 native 用例使用新建 synthetic home/config/workspace 和 loopback 模型替身，

@@ -1,12 +1,16 @@
 # 模块接入协议
 
-**Cockpit 0.2.3：模块包/后端 API v1，Web API v2，公共 UI v1。**
-本地可信包、主进程 import、冷加载不变。Web v2 是需要宿主与模块配套升级的不兼容变更；
-旧 Web 插口不保留兼容层。使用文件或通知模块时，必须分别配套
-Cockpit File 0.1.7 / Cockpit Notification 0.1.0；manifest/后端 API 和公共 UI 版本未变，
-不能只凭它们判断 Web 兼容性。
+**当前源码：模块包/后端 API v1，Web API v2，公共 UI v1，菜单能力 menuVersion 1。**
+本地可信包、主进程 import、冷加载已实现。本文描述未发布开发源码，不反写历史发行：
+GitHub Release **Cockpit 0.2.3** 的配套模块仍为 **Cockpit File 0.1.7 /
+Cockpit Notification 0.1.0**，以对应 tag 的文档和资产为准。
 [v0.2.3 运行包](https://github.com/waksana/cockpit/releases/tag/v0.2.3)及上述配套模块均已发布；
-下载和使用入口见[模块目录](module-catalog.md)。源码更新不代表已安装的服务或模块已经升级。
+下载和使用入口见[模块目录](module-catalog.md)。
+本轮源码的通知模块配套版本为 **Cockpit Notification 0.1.5**，是新的不可变模块版本，尚未发行；
+精确宿主 SDK SHA 固定在通知仓库的 `tooling/host-sdk.json`，不能只凭包版本判断兼容。
+宿主开发包版本仍为 0.2.3，不代表该历史 Release 已获得新菜单能力。
+Web v2、UI v1 和菜单能力分别检查；不保留旧 Web 插口或导航 middleware 的兼容别名。
+源码更新不表示已经发布、安装或重启，也不代表已安装的服务或模块已经升级。
 远程签名 URL 安装、模块 HTTP MCP、角色/skill 包和通用页面贡献仍未实现。
 
 产品边界见 [R1–R8](product-requirements.md)，文件模块的业务契约由
@@ -26,12 +30,13 @@ Cockpit File 0.1.7 / Cockpit Notification 0.1.0；manifest/后端 API 和公共 
 | 前端 | 同包 ESM/CSS，共用宿主 React 和主题，不新建 SPA |
 | HTTP | 统一端口、模块命名空间、版本绑定的 API 与静态资源 |
 | 原生观察 | 按声明类型接收已加载会话的 SDK 通知，不开启额外历史读取 |
-| Web 贡献 | 模块 state 服务、命名组件 middleware、独立 Markdown link/image 渲染注册 |
+| Web 贡献 | 声明式全局/会话菜单、真实语义组件 middleware、模块 state/service/draft、独立 Markdown link/image 注册 |
 | 草稿 | 本体基础 state；模块经声明、作用域绑定的 actions 扩展，发送与 ACK 仍归本体 |
-| 启用/停用 | 修改下次启动选择，当前进程不热加载或热卸载 |
+| 安装/版本选择/启停选择 | 修改下次启动选择，当前实际加载不变；不做热加载、热启停或热更新 |
 
-文件和通知模块已经使用这些接口。全局文件库和文件管理页面仍在文件模块的 roadmap 中；
-当前 API v1 不提供全局页面或 session 菜单页面的注册字段，未知字段明确拒绝。
+文件和通知模块已经使用公开模块接口。全局文件库和文件管理页面仍在文件模块的 roadmap 中；
+当前 Web 菜单注册只声明已有全局/会话菜单中的动作，不注册任意页面或 router。
+manifest/后端 API v1 也不提供页面注册字段，未知字段明确拒绝。
 不为尚未用到的插口预造通用组件反射或业务工作流系统。
 
 ## 2. 包格式与本地安装
@@ -131,7 +136,7 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 
 | 输入/贡献 | 内容 |
 | --- | --- |
-| context | apiVersion、moduleId、dataRoot、apiBase、config、AbortSignal、report、invalidate；试用源码新增 publish |
+| context | apiVersion、moduleId、dataRoot、apiBase、config、AbortSignal、report、invalidate、publish |
 | routes | method/path、json 或 stream body、bodyLimit、handler |
 | publicConfig | 明确允许浏览器读取的少量配置，不默认公开整个 config |
 | events | 事件类型列表与只读处理器 |
@@ -173,7 +178,7 @@ GET/HEAD 可不带此 header，以支持 img/video 等，但 URL 已绑定版本
 不存储/重放模块状态，不增加每模块 SSE 连接，也不影响 graceful 的忙闲条件。
 消费者重连应自行重新读取模块状态，不能将提示当作可靠事件日志。
 
-**未发布的通用数据事件扩展：** `context.publish(payload)` 使用同一 `/events` 连接发送
+**当前已实现的通用数据事件：** `context.publish(payload)` 使用同一 `/events` 连接发送
 `module/event { moduleId, payload }`。moduleId 由宿主实际加载身份绑定，模块不能指定另一模块或伪造原生事件。
 payload 为 JSON 数据，最大 64 KiB；宿主拒绝不合法或超限数据，不静默截断、丢字段或回退为空值。
 发布时固定数据副本，调用方的后续修改不改变已排队内容。
@@ -198,7 +203,7 @@ worker 使用稳定的模块专属 URL 和相同目录 scope，`Service-Worker-A
 浏览器入口同样导出 `activate(context)`，但前端 context 和返回声明都要求 `apiVersion: 2`。
 这不改变 manifest、后端 context 或 HTTP API 的 v1。
 context 提供宿主现有 React、ReactDOM `createPortal`、state、
-apiBase、公开配置、request、signal、onInvalidate、试用源码的 onEvent 和 report。
+apiBase、公开配置、request、signal、onInvalidate、onEvent 和 report。
 模块不得自建 root 或依赖私有 DOM/store。
 宿主并行初始化不同前端模块；单个超时/错误不阻塞其他模块，晚结果不能重新发布已撤销贡献。
 
@@ -207,8 +212,20 @@ apiBase、公开配置、request、signal、onInvalidate、试用源码的 onEve
 [模块 UI 开发指南](module-ui-guide.md)。这是前端 additive 能力，不是新的 manifest 字段；
 依赖 UI v1 的模块必须检查该字段并明确拒绝不兼容激活，不能只看宿主 package 版本。
 
+菜单注册另由 **`context.menuVersion: 1`** 声明；使用菜单的模块必须独立检查此能力。
+它不是 `apiVersion` 或 `uiVersion` 的别名，也不是兼容旧导航接口的开关；
+缺少或不支持该能力时明确拒绝激活，不能回退到旧接口。
+
 模块 UI 与本体共同遵循[交互语义与结构正确性要求](DEVELOPMENT.md#interaction-semantics-and-structural-correctness)。
-Web 模块集成只使用 state 扩展、公开实际语义组件的 middleware，以及独立 Markdown/内容渲染器。
+Web 模块集成有四种不同机制，不能相互伪装：
+
+| 机制 | 责任 |
+| --- | --- |
+| 菜单声明 | 向本体已有全局/会话菜单声明动作和展示状态，不包装导航组件 |
+| 语义组件 middleware | 增强已有真实组件的 props/children/ref，不制造空插口 |
+| State/service/draft | 模块业务状态、订阅、异步操作与草稿 schema，复用模块已有服务 |
+| Markdown 注册 | 已解析 link/image 的独立渲染规则，不是通用组件或菜单机制 |
+
 不得把业务 dispatcher、旧 slot 或空组件改名后当作通用机制；基础设施不能承担模块业务。
 文件选择/上传和通知/已读/push 策略均由模块拥有。本体只提供通用状态生命周期、组件契约和原生操作适配。
 `context.createPortal(children, container)` 是宿主现有 ReactDOM 的原函数，
@@ -216,6 +233,17 @@ Web 模块集成只使用 state 扩展、公开实际语义组件的 middleware�
 它只提供通用 React 挂载，不管理弹窗业务、焦点或状态，也不是模块页面注册机制。
 模块可将自己拥有的原生 dialog 挂到标准 `document.body`，避免置于 Markdown 行内节点；
 组件卸载/作用域撤销时必须关闭并卸载，保留原生焦点返回。不得操作宿主私有 DOM。
+
+当前 `ModuleFrontend` 返回字段：
+
+| 字段 | 用途 |
+| --- | --- |
+| apiVersion | 必须为 2；旧 Web 声明明确拒绝 |
+| writes | 当前仅声明基础 text 编辑；模块字段经自己注册的 schema 修改，不是安全隔离 |
+| components | `{ id, boundary, order?, wrap }`，wrap 接收基础组件并返回增强组件 |
+| menus | `ModuleMenuRegistration[]`，声明已有全局/会话菜单的动作，见 [6.5](#65-菜单注册) |
+| markdown | 已解析 link/image 节点的排他渲染规则；不处理附件 |
+| dispose | 释放前端自己持有的资源；注册 state 的 disposer 由宿主单独执行 |
 
 ### 6.1 State 扩展
 
@@ -261,16 +289,6 @@ scope 提供只读快照、订阅和仅修改自己字段的验证型 update；�
 
 ### 6.2 Component middleware
 
-当前前端返回字段：
-
-| 字段 | 用途 |
-| --- | --- |
-| apiVersion | 必须为 2；旧 Web 声明明确拒绝 |
-| writes | 当前仅声明基础 text 编辑；模块字段经自己注册的 schema 修改，不是安全隔离 |
-| components | `{ id, boundary, order?, wrap }`，wrap 接收基础组件并返回增强组件 |
-| markdown | 已解析 link/image 节点的排他渲染规则；不处理附件 |
-| dispose | 释放前端自己持有的资源；注册 state 的 disposer 由宿主单独执行 |
-
 | boundary | 基础组件契约 |
 | --- | --- |
 | message | 原生消息/宿主当前 ask 身份、完成事实、实际正文 bodyRef、children 与真实 adornment 节点 |
@@ -278,7 +296,6 @@ scope 提供只读快照、订阅和仅修改自己字段的验证型 update；�
 | composer | 实际输入卡片及其原生问题内容，组合 children；不预建附件组 |
 | composerEditor | 实际输入行、文字编辑器和发送控件；普通 DOM props/children/ref，不解释文件事件 |
 | attachment | 一项原生历史附件、消息归属、基础显示及附加动作；不承担草稿附件列表 |
-| globalNavigation | 实际全局导航按钮及其菜单，增强时保留已有按钮和导航行为 |
 | managementHeader | 实际管理列表标题栏，包含返回、标题和刷新控件 |
 | managementDetailHeader | 实际管理详情标题栏，包含返回和标题焦点行为 |
 
@@ -294,7 +311,8 @@ message 的 bodyRef 指向实际正文或当前 ask 的问题，不含 byline、
 ask 使用宿主当前 AskRequest.requestId，不冒充 SDK requestId。
 模块可观察该元素，但不能查询私有 DOM、移动正文或写入滚动位置。
 边缘标记使用现有内容外侧留白，出现/消失不能改变宽度、换行、行高或输入框对齐；
-标记非交互但可以提供可访问说明。阅读阈值与未读数据仍属于模块。
+标记非交互但可以提供可访问说明。阅读阈值、未读数据和红线策略仍属于模块，
+本体不计算阅读完成、不维护红线或通知业务。
 
 ### 6.3 草稿与文件输入
 
@@ -340,13 +358,77 @@ Markdown 注册只接收 link/image，原生历史附件走 attachment middlewar
 模块不重新解析完整 Markdown；替代输出保持行内 phrasing 结构，
 dialog 使用 body portal，不嵌入链接或段落。相同目标的资源请求可在模块 state 中复用。
 
-同模块所有 state、middleware 和 Markdown 注册 ID 必须唯一。
+同模块所有 state、draft、components、menus 和 Markdown 注册 ID 必须唯一；
+宿主身份带 moduleId 命名空间，不会因不同模块使用相同局部 ID 而混淆。
 激活先暂存注册，整体校验后才发布；失败/超时回滚已经创建的 state。
 停止时立即撤销草稿绑定、活动 schema 及其阻止，但暂缓草稿通知；
 完成服务清理和退订、更新模块列表后，再通知最终状态，避免消费者通过已撤销 handle 回读。
 state disposer 逆注册顺序执行一次，某个清理失败不能阻止其他清理。
 state 作用域不等于组件挂载范围：切换会话不能取消仍属于原草稿的上传。
 页面 state 清理也不等于注销设备推送订阅或关闭后端模块。
+
+### 6.5 菜单注册
+
+`ModuleFrontend.menus` 中每项为 `ModuleMenuRegistration`：
+
+```ts
+interface ModuleMenuRegistration {
+  id: string;
+  menu: 'global' | 'session';
+  order?: number;
+  getState(
+    target: Readonly<{ menu: 'global' } | { menu: 'session'; sessionId: string }>,
+  ): ModuleMenuState;
+  subscribe?(listener: () => void): () => void;
+  onSelect(
+    target: Readonly<{ menu: 'global' } | { menu: 'session'; sessionId: string }>,
+    context: { signal: AbortSignal },
+  ): void | Promise<void>;
+}
+```
+
+`order` 必须是有限数，省略按 0 排序。宿主保留原生菜单项在前，
+随后按 `(order ?? 0, moduleId, id)` 稳定排列模块项，并规范化分隔线，
+不留下开头、结尾或连续分隔线。模块不能替换、重排或吞掉原生项。
+
+`target` 是判别联合 `{ menu: 'global' } | { menu: 'session', sessionId: string }`。
+宿主捕获并冻结原始目标，状态读取与动作使用该目标，不按当前活动路由重定向。
+会话模块动作要求前端已应用当前完整 snapshot、连接处于 open 且目标存在于该视图中；
+不可用或未知的目标拒绝使用，不靠旧元数据猜测，也不为菜单复制原生 store 或额外加载会话。
+这一门槛不改变原生导航已有的离线行为。
+这是前端生命周期保护，不证明 API 授权或替代后端的真实校验。
+
+`ModuleMenuState` 为：
+
+```ts
+interface ModuleMenuState {
+  label: string;
+  icon?: ReactNode;
+  visible?: boolean;
+  disabled?: boolean;
+  destructive?: boolean;
+  separatorBefore?: boolean;
+}
+```
+
+`getState` 必须同步、纯读取；网络请求、状态变更和业务副作用放在模块已有 service/action 中。
+`subscribe` 可监听同一模块服务并返回退订函数，变化时通知宿主重新读取，
+不建立菜单专属的原生状态镜像。订阅属于整个模块激活作用域，不随菜单每次打开重复建立。
+订阅初始化失败会回滚模块激活；退订失败报告错误，但继续其余清理。
+`getState` 抛错或返回不合法展示状态时，只省略并报告该命令，保留健康贡献，
+与 Markdown predicate 的错误隔离一致。图标渲染失败只去掉图标并报告，命令仍保留。
+`icon` 仅作装饰，不内嵌按钮或另一套菜单交互。
+可见性、禁用和分隔需求是声明；宿主负责实际菜单的键盘、焦点、关闭与焦点返回。
+点击时再次核对目标和最新 visible/disabled，不能以曾经渲染过的可用状态执行。
+
+`onSelect` 收到该次动作的 `AbortSignal`。异步操作始终绑定原始 session；
+宿主按注册项与目标组合防止重复并发执行。普通同步/异步动作错误只报告，不撤销健康贡献。
+模块停止、目标丢失或连接状态未知时信号中止，陈旧菜单回调拒绝执行。
+普通菜单关闭或路由切换不会取消已经接纳的动作，也不会把尚未接纳的旧回调变为新的动作。
+中止立即释放宿主的动作跟踪，不等待模块 Promise；晚完成不能重新发布已撤销贡献或恢复旧动作。
+宿主不将返回数据写入任何状态；模块必须在 `await` 后检查 signal，
+自行隔离晚结果、处理错误和业务状态。中止信号不证明已发出的后端副作用已被撤销。
+菜单动作可以开启模块自己拥有的 UI，但不取得任意页面或 router 注册能力。
 
 ## 7. 原生观察和退出
 
@@ -378,12 +460,16 @@ graceful 仍只等待原生工作和必要的原生在途操作。
 
 ## 8. 后续目标
 
-- 本体模块管理页面/API、GitHub Release 安装更新及 CLI 替代单独跟踪于
-  [#5](https://github.com/waksana/cockpit/issues/5)，不属于当前局部正确性修正。
+模块坚持主进程可信 import 和冷加载，安装及版本选择由下次启动生效。
+热加载、热启停和热更新不是后续目标，不为其预留业务框架或改进程模型。
+本体独立系统页面的只读版本/模块状态展示与安全退出范围见
+[R6](product-requirements.md#r6--自然交互产品取舍明确)，不纳入本次菜单注册实现，
+也不增加首版模块管理操作或替代现有安装 CLI。
+
 - 远程 HTTPS 签名发行描述、发布者信任与更新选择；在验证前不执行代码。
 - 同端口独立 HTTP MCP path，每模块工具表/协议会话隔离，不隐式修改原生 MCP 配置。
-- 全局页面/session 菜单页面等通用 UI 贡献，按真实消费者扩展版本化接口。
 - 角色/skill 等内容包与下次启动消息模块，保持各自业务和原生状态边界。
 
 这些尚未实现，不应通过当前 API v1 的未知字段或旧原型入口模拟。
+已有菜单动作声明不等于任意页面/router 注册；当前没有此类公开注册入口。
 实施范围以 [模块目录](module-catalog.md)及明确的产品决定为准。

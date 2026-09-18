@@ -58,6 +58,8 @@ node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js
 具体命令见[模块契约](module-contract-draft.md)。
 本次 Web API v2 不兼容旧前端模块；使用文件或通知模块时，必须分别配套
 Cockpit File 0.1.7 / Cockpit Notification 0.1.0，见[发行说明](release-notes.md)。
+这是历史 0.2.3 Release 的配套关系，不是未发布源码的兼容声明；
+当前菜单能力和源码配对见[模块契约](module-contract-draft.md)，不能只凭开发包仍为 0.2.3 判断。
 模块单独发行，不包含在本体运行包内。
 
 ## 闭包与身份

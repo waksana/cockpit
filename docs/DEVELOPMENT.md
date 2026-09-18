@@ -8,8 +8,13 @@ The [documentation index](README.md) defines each topic's single canonical page.
 The service provides Web/API and a public graceful shutdown operation.
 The [module contract](module-contract-draft.md) describes the implemented local,
 trusted, cold-loaded package model: backend API v1, Web API v2 and public UI v1.
-Backends run in the host Node process; unimplemented capabilities are listed
-separately at the end of that contract.
+Backends run in the host Node process; `publish`/`onEvent` data events are implemented.
+Unimplemented capabilities are listed separately at the end of that contract.
+Modules remain cold-loaded: installation and version selection take effect on
+the next host start. Hot loading, enable/disable and updates are not product goals.
+Do not reserve a hot-switching framework or change the trusted main-process model
+for that purpose. The separate planned native system page is not part of the
+menu-registry change and does not introduce arbitrary module page registration.
 
 Use a short-lived branch and a pull request against `main`; an independent
 worktree is optional. Keep other contributors' unfinished trees and runtime data
@@ -50,7 +55,7 @@ owner's work as cleanup.
 ## Documentation maintenance
 
 Follow the [documentation ownership rules](README.md#维护规则). Keep current
-contracts separate from future module capabilities; update links
+source contracts separate from released contracts and future module goals; update links
 instead of cloning a capability table into every guide. Check command/schema
 claims against their actual source. A requirement/implementation mismatch is
 an explicit gap, not authority to change either silently.
@@ -60,6 +65,11 @@ product builds or new testing tools. They may be committed/integrated without
 deploying or restarting the application. Maintain the current installation
 contract rather than compatibility aliases, archived pages or migration inventories.
 Generated reviews and build artifacts do not belong in the product source tree.
+The development package still says 0.2.3; that does not add unreleased source
+capabilities to GitHub Release 0.2.3 or change its Notification 0.1.0 pairing.
+Current source pairs with Notification 0.1.5 and its exact host SDK SHA in the
+notification repository's `tooling/host-sdk.json`; see the
+[module contract](module-contract-draft.md) for capability checks.
 
 ## Interaction semantics and structural correctness
 
@@ -100,6 +110,19 @@ patch an avoidably contradictory structure; explain necessary tradeoffs.
 Prefer the simplest coherent composition over accumulating special cases.
 Do not introduce a new UI framework, runtime service or module-specific host API
 just to satisfy this principle.
+
+Keep the four module extension mechanisms distinct: menu declarations, real
+semantic component middleware, state/service/draft and Markdown renderers.
+Menu contributions use the host's existing global/session menus, not a navigation
+HOC or page/router registration. The host owns menu keyboard/focus/closing and
+rechecks current availability when selecting an action; module state stays in
+its existing service. Validate original-target binding, stale callbacks, disabled
+changes and late async results without redirecting work to the active session.
+Normal menu closing and route changes do not cancel accepted work; target loss,
+unknown connection or module stop aborts its signal without waiting for the action
+Promise. Check per-command presentation/action error isolation separately from
+activation-owned subscription setup and cleanup failures. The precise contract is in
+[menu registration](module-contract-draft.md#65-菜单注册).
 
 Review rendered DOM and relevant interaction paths, not screenshots or static
 selectors alone. Reuse the existing component fixtures and isolated review

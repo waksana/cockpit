@@ -69,6 +69,7 @@ function Workspace() {
   );
   const [query, setQuery] = useState('');
   const [detailMenuOpen, setDetailMenuOpen] = useState(false);
+  if (detailMenuOpen && !active) setDetailMenuOpen(false);
   const kebabRef = useRef<HTMLButtonElement | null>(null);
   const [panelTrigger, setPanelTrigger] = useState<{ sessionId: string; element: HTMLElement | null } | null>(null);
   const previousPanel = useRef<{ sessionId: string | null; open: boolean }>({ sessionId: null, open: false });
@@ -233,6 +234,7 @@ function Workspace() {
       </DetailPane>
       {detailMenuOpen && active && (
         <AnchoredMenu triggerRef={kebabRef} items={getSessionMenuItems(active)} label={active.title}
+          moduleTarget={{ menu: 'session', sessionId: active.sessionId }}
           onClose={() => setDetailMenuOpen(false)} />
       )}
       {deleteTarget && <SessionDeleteDialog key={`${location.key}:${deleteTarget.sessionId}`}

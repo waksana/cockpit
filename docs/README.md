@@ -11,7 +11,7 @@ Cockpit 本体提供 Copilot 的浏览器界面与 API，模块扩展文件、�
 | [安装与运行](DEPLOY-PORTABLE.md) | 运行包/源码安装、Copilot 登录、首次聊天、远程访问、排错与关闭。 |
 | [模块目录](module-catalog.md) | 已发布模块、各自用途和版本配套；与待接入项目、后续方向分开列出。 |
 | [MCP 客户端](../apps/mcp/README.md#configuration) | 让其他 Agent 通过 stdio MCP 使用同一 Cockpit 后端。 |
-| [发行说明](https://github.com/waksana/cockpit/releases) | 已发布版本的下载与变更；仓库中的[发行摘要](release-notes.md)是对应版本的发行输入。 |
+| [发行说明](https://github.com/waksana/cockpit/releases) | 已发布版本的下载与变更；仓库中的[0.2.3 发行摘要](release-notes.md)记录该历史版本，不代表未发布源码能力。 |
 | [安全政策](../SECURITY.md) | 单操作者信任边界、远程认证要求和私密漏洞报告。 |
 
 ## 现有模块与扩展项目
@@ -34,14 +34,15 @@ React 与公开接口，不需要另建聊天应用。
 
 | 文档 | 内容 |
 | --- | --- |
-| [模块接入协议](module-contract-draft.md) | 包格式、本地安装与冷加载、后端路由和事件、Web state/middleware/Markdown 注册、草稿生命周期。 |
-| [模块 UI 开发指南](module-ui-guide.md) | 公共样式、主题变量、图标、组件组合及可运行的最小前端示例。 |
+| [模块接入协议](module-contract-draft.md) | 包格式、本地安装与冷加载、后端路由和数据事件；Web 的菜单声明、语义组件 middleware、state/service/draft 和 Markdown 四类扩展。 |
+| [模块 UI 开发指南](module-ui-guide.md) | 公共样式、独立菜单能力检查、主题变量、图标、组件组合及可运行的最小前端示例。 |
 | [公共 TypeScript 类型](../packages/module-api/src/index.ts) | 后端 API v1；[frontend.ts](../packages/module-api/src/frontend.ts) 定义 Web API v2。 |
 
 建议按“[导出类型](module-contract-draft.md#4-公共-typescript-契约) →
 [最小前端示例](module-ui-guide.md#executable-minimal-frontend) →
 [打包与安装](module-contract-draft.md#2-包格式与本地安装)”阅读。
-公共 UI 版本目前为 v1，与包/后端及 Web API 的版本分别维护。
+公共 UI 版本目前为 v1，与包/后端及 Web API 的版本分别维护；
+菜单能力另检查 `context.menuVersion: 1`，不是旧接口的兼容别名。
 
 ## 接口与架构
 
@@ -51,14 +52,20 @@ React 与公开接口，不需要另建聊天应用。
 | [API 发现与调用](../apps/mcp/README.md#discover-and-invoke-the-api) | `/capabilities`、HTTP intent、MCP 工具和错误语义。 |
 | [原生聊天](native-chat.md) | 原生事件、分页 cursor、历史/实时/重连、Web 阅读窗口和媒体边界。 |
 | [原生 fork](session-fork.md) | HTTP/MCP 分叉入口、前检与继承；不是 Web 界面功能。 |
-| [产品要求 R1–R8](product-requirements.md) | 已确认的定位、边界、目标及接受的成本，不代表每项目标已实现。 |
+| [产品要求 R1–R8](product-requirements.md) | 已确认的定位、边界、目标及接受的成本，包括模块冷加载和独立系统页面范围；不代表每项目标已实现。 |
 
 接口文档描述当前源码，安装文档对应指定发行；使用旧运行包时应阅读相同 tag 下的文档。
 对正在运行的服务，以 `/version` 和 `/capabilities` 为准。
+当前菜单能力属于未发布源码；开发包仍标 0.2.3 不能证明 GitHub Release 0.2.3 含有该能力。
+历史发行配套 Notification 0.1.0 与当前源码配套 Notification 0.1.5 分开核对，
+精确宿主 SDK SHA 以通知仓库 `tooling/host-sdk.json` 为准。
 
 为保留外部链接，`cockpit-plan.md` 和 `module-contract-draft.md` 沿用原文件名：
 前者是当前架构说明，后者是已实现的模块协议，并在末节单列[后续目标](module-contract-draft.md#8-后续目标)。
 已确认要求与实现的差距见[架构对照](cockpit-plan.md#target-gap)。
+[已确认要求](product-requirements.md#single-service-target)明确不做模块热加载、热启停或热更新；
+安装和版本选择由下次冷启动生效。系统页面是独立需求，不属于菜单注册实现，
+也不是模块任意页面注册机制。
 
 ## 参与开发
 
