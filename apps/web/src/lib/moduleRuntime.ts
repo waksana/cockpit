@@ -2,13 +2,14 @@ import * as React from 'react';
 import { createPortal } from 'react-dom';
 import type {
   ComponentMiddleware,
-  HostSnapshot, MarkdownNode, MarkdownRenderer, ModuleAsset, ModuleComponentProps,
+  HostSnapshot, ChatWindowSnapshot, MarkdownNode, MarkdownRenderer, ModuleAsset, ModuleComponentProps,
   DraftSchemaRegistration, ModuleEventPayload, ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
   ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget,
 } from '@cockpit/module-api';
 import { resolveDraft, type SessionDraft } from './textDraft';
 import { RegisteredDraftSchema, type RuntimeDraftSchema } from './draftSchemas';
 import { describeReason, reportUxError } from './errorReporter';
+import { EMPTY_CHAT_WINDOW } from './moduleChatWindow';
 
 interface RuntimeOptions {
   baseUrl?: string;
@@ -178,6 +179,8 @@ export class ModuleRuntime {
   private readonly listeners = new Set<() => void>();
   private view: HostSnapshot = EMPTY_VIEW;
   private readonly viewListeners = new Set<() => void>();
+  private readChatWindow: () => ChatWindowSnapshot = () => EMPTY_CHAT_WINDOW;
+  private readonly chatWindowListeners = new Set<() => void>();
   private readonly invalidationListeners = new Map<string, Set<() => void>>();
   private readonly eventListeners = new Map<string, Set<(payload: ModuleEventPayload) => void>>();
   private controller?: AbortController;
@@ -194,6 +197,11 @@ export class ModuleRuntime {
   }
   getSnapshot = (): readonly LoadedModule[] => this.snapshot;
   getViewSnapshot = (): HostSnapshot => this.view;
+  getChatWindowSnapshot = (): ChatWindowSnapshot => this.readChatWindow();
+  updateChatWindow(read: () => ChatWindowSnapshot): void {
+    this.readChatWindow = read;
+    for (const listener of [...this.chatWindowListeners]) if (this.chatWindowListeners.has(listener)) listener();
+  }
   updateView(view: HostSnapshot): void {
     if (view.sessionId === this.view.sessionId && view.visible === this.view.visible && view.connected === this.view.connected) return;
     this.view = Object.freeze({ ...view });
@@ -314,10 +322,18 @@ export class ModuleRuntime {
     };
     parentSignal.addEventListener('abort', stop, { once: true });
     const context: ModuleFrontendContext = {
-      apiVersion: 2, uiVersion: 1, menuVersion: 1, moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
+      apiVersion: 2, uiVersion: 1, menuVersion: 1, chatWindowVersion: 1, composerActionsVersion: 1,
+      moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
       config: asset.config, signal: controller.signal, report: this.report,
       state: Object.freeze({
         host: Object.freeze({ getSnapshot: this.getViewSnapshot, subscribe: (listener: () => void) => subscribe(this.viewListeners, listener) }),
+        chatWindow: Object.freeze({
+          getSnapshot: () => {
+            controller.signal.throwIfAborted();
+            return this.getChatWindowSnapshot();
+          },
+          subscribe: (listener: () => void) => subscribe(this.chatWindowListeners, listener),
+        }),
         register: <Service extends object>(registration: ModuleStateRegistration<Service>) => {
           if (!registering || controller.signal.aborted) throw new Error('Module state registration is activation-only');
           try {

@@ -39,6 +39,12 @@ server/core/MCP 的构建排除其测试文件；protocol 及 Web 的 tsconfig �
 `node --test scripts/export-module-api.test.mjs`；模块还需从干净配套 SHA 导出并自行构建，
 不能以宿主用例代替真实模块包与消费者接入。
 
+当前窗口公共读取与输入行动作组合使用同一 Web runner，合并运行
+`src/lib/moduleChatWindow.test.ts`、`src/lib/moduleView.test.ts`、
+`src/lib/moduleRuntime.test.ts`、`src/components/Composer.test.ts` 和
+`src/components/Thread.lifecycle.test.ts`，覆盖窗口状态/归属/撤销、原生输入门槛和节点顺序。
+模块本身的麦克风、凭据、外部识别与费用不是这些宿主用例的证明范围。
+
 ## 真正的 SDK 与包
 
 现有 native 用例使用新建 synthetic home/config/workspace 和 loopback 模型替身，

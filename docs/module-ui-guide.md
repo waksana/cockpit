@@ -6,6 +6,11 @@ The source of truth is
 [module contract](module-contract-draft.md) owns loading, contributions, drafts
 and native attachment delivery. All UI follows the
 [interaction semantics requirement](DEVELOPMENT.md#interaction-semantics-and-structural-correctness).
+For available methods and exactly which host data they expose, use the
+[public API map](module-contract-draft.md#public-api-map) and
+[data boundaries](module-contract-draft.md#public-data-boundaries).
+Registering module state does not itself inject chat data or expose the private
+host store. Read the explicit `state.chatWindow` capability where needed.
 
 ## Compatibility and ownership
 
@@ -248,6 +253,16 @@ The other real component boundaries remain session status, composer/editor
 (including ordinary paste/drop events), native attachments and management headers.
 Ordinary DOM event props are public component behavior; file selection and its
 picker/dispatch lifecycle belong entirely to the file module's state services.
+
+Development source additionally exposes `composerActionsVersion: 1`.
+On the actual composer editor, `children` remains before the textarea and
+`actions` composes directly after it, before the existing native send button.
+Preserve inherited actions, refs and send guards; no placeholder container or
+voice-specific host field is involved. Keep DOM and keyboard order aligned with
+the rendered controls. This capability is not present in the historical 0.2.4
+release. Data consumers separately check `chatWindowVersion: 1` and use the
+[read-only window state](module-contract-draft.md#chat-window-state), not private
+DOM, React children traversal or a second history reader.
 
 ## Menu declarations
 
