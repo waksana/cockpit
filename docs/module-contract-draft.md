@@ -2,6 +2,9 @@
 
 **Cockpit 0.2.4：模块包/后端 API v1，Web API v2，公共 UI v1，菜单能力 menuVersion 1。**
 本地可信包、主进程 import、冷加载、模块 payload 事件及独立菜单注册已实现。
+当前开发源码另提供 `chatWindowVersion: 1` 与 `composerActionsVersion: 1`：
+只读当前聊天窗口与真实输入行的后置动作组合。它们不是历史 0.2.4 Release 的能力；
+消费者须独立检查能力并使用配套源码导出的类型，不能仅凭 package 版本判断。
 **0.2.4 配套 / 发布资产以对应 Release 为准**，本文不表示发布已完成。
 配套模块为 **Cockpit File 0.1.7 / Cockpit Notification 0.1.5**，
 下载和使用入口见[模块目录](module-catalog.md)。File 0.1.7 不使用已移除的
@@ -260,7 +263,10 @@ Web 模块集成有四种不同机制，不能相互伪装：
 快照、选择器、订阅、HTTP actions 和异步资源由服务自己管理；框架不自动持久化或重试。
 创建函数不能返回 Promise，初始网络读取由已创建服务执行，不阻塞普通聊天渲染。
 
-`context.state.host` 提供当前 session、页面可见性和连接状态的只读基础快照。
+`context.state.host` 仅提供 `sessionId/visible/connected` 三个只读基础字段；
+它没有消息列表、会话标题或当前问题正文。
+`context.state.chatWindow` 提供另一个只读当前窗口快照，见[窗口数据](#chat-window-state)。
+注册服务或调用 `handle.get()` 本身不会自动取得聊天数据，服务需显式读取对应公共来源。
 `onInvalidate` 仍是本模块的既有 SSE 变化提示，不携带完整业务 state。
 `onEvent` 是同一传输中按模块归属的数据出口；模块 state 可消费自己的 payload，
 不能把它注入原生会话 store。依赖新能力的模块须检查配套 SDK/运行时，不以旧发行版本号假定存在。
@@ -294,6 +300,34 @@ scope 提供只读快照、订阅和仅修改自己字段的验证型 update；�
 展示或发送，也不制造文件兜底 UI、阻止或清空操作。普通文字仍可发送。
 恢复、旧字段迁移和提交后空值标记由模块 schema 完成，防止旧记录重新导入。
 
+<a id="chat-window-state"></a>
+#### 当前窗口的只读数据
+
+依赖此能力须检查 `context.chatWindowVersion === 1`。通过
+`context.state.chatWindow.getSnapshot()` / `subscribe(listener)` 读取已有窗口；
+没有 session 参数、历史加载、分页、刷新或写入动作，不增加 HTTP、SSE 或 SDK 读取。
+只对当前活动 session 可见，切换时不会把上一会话的数据套到新身份。
+
+| 字段 | 含义 |
+| --- | --- |
+| sessionId | 当前活动会话，未选择时为 null |
+| status | `unavailable` 尚无窗口；`loading` 首次读取中；`ready` 已有有效窗口；`stale` 失效或断线；`error` 当前历史读取失败 |
+| hasMore / partial | 更早历史是否仍可读、窗口是否存在已知片段/归属边界；ready 不代表全历史完整 |
+| error | 已有窗口读取错误，不把失败伪造成空会话 |
+| messages | 当前已加载的根消息，保留窗口顺序；各消息的 children 保留子 Agent 层级及其各自顺序 |
+
+每条 `ChatWindowMessage` 只投影 `id/origin/role/text/complete/subtype/children`。
+`id` 是展示身份，`origin` 才是原生 session/message/agent 归属；未知归属为 null，
+不按组件挂载顺序、时间戳或猜测的原生 ID 重排。`complete` 不把流式片段或已知不完整内容当定稿。
+`text` 只取现有消息 content，不额外导出 thought、toolCalls、attachments、
+私有 store 或原生 session handle。
+原生问题的结构化正文不在这个接口中。
+
+快照和节点只读冻结；同一输入返回稳定引用，未变化的消息复用投影，
+没有消费者读取时不额外复制逐消息元数据。订阅随模块 scope 撤销，停止后的读取明确失败。
+空的 ready 窗口和尚未加载/失效/失败可区分；保留的旧内容不自动变成当前权威内容。
+模块自行选择角色、完成状态、截取长度与使用时机；本体没有“最近回复”或语音提示词策略。
+
 ### 6.2 Component middleware
 
 | boundary | 基础组件契约 |
@@ -301,7 +335,7 @@ scope 提供只读快照、订阅和仅修改自己字段的验证型 update；�
 | message | 原生消息/宿主当前 ask 身份、完成事实、实际正文 bodyRef、children 与真实 adornment 节点 |
 | sessionStatus | 原生回复中/错误/待选择状态和非交互 children，不嵌套按钮 |
 | composer | 实际输入卡片及其原生问题内容，组合 children；不预建附件组 |
-| composerEditor | 实际输入行、文字编辑器和发送控件；普通 DOM props/children/ref，不解释文件事件 |
+| composerEditor | 实际输入行、文字编辑器和发送控件；普通 DOM props/children/ref 及 actions，不解释文件或语音事件 |
 | attachment | 一项原生历史附件、消息归属、基础显示及附加动作；不承担草稿附件列表 |
 | managementHeader | 实际管理列表标题栏，包含返回、标题和刷新控件 |
 | managementDetailHeader | 实际管理详情标题栏，包含返回和标题焦点行为 |
@@ -313,6 +347,13 @@ React 增强链和错误边界不产生 HTML；不为注册项增加空 div/span
 新增业务节点通过原组件的正常 props/children 组合，不能产生视觉嵌套或改变原有布局。
 每个 boundary 的默认实现必须承担真实现有界面职责。禁止专门插入一个只返回 children、
 生产环境无基础内容的“全局动作”空边界；有 HOC 包装不等于不是 slot。
+
+输入行动作须检查 `context.composerActionsVersion === 1`：
+`ComposerEditorProps.children` 仍在文字编辑器前，`actions` 在编辑器后、既有发送按钮前。
+增强器保留并组合继承的 actions，不替换原生发送按钮、编辑器或其门槛。
+两者直接作为真实输入行的兄弟节点，不增加空容器或新的空组件边界；
+DOM/键盘顺序与视觉顺序一致，不用私有 CSS 把前置节点搬到后面。
+模块根据具体草稿/原生输入门槛决定自己的动作是否可用，不自动继承文件模块的 prompt-only 策略。
 
 message 的 bodyRef 指向实际正文或当前 ask 的问题，不含 byline、滚动外框或选择按钮。
 ask 使用宿主当前 AskRequest.requestId，不冒充 SDK requestId。

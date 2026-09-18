@@ -4,6 +4,8 @@ import { ModuleRuntime } from './moduleRuntime';
 import { observeModuleView } from './moduleView';
 import { createCockpitStore } from '../net/store';
 import type { ModuleEventPayload } from '@cockpit/module-api';
+import { EMPTY_CHAT_WINDOW } from './moduleChatWindow';
+import { metaToSession } from '../net/sessionWindow';
 
 test('one view bridge projects focus, connection and visibility and releases all subscriptions on remount', t => {
   const store = createCockpitStore();
@@ -50,4 +52,39 @@ test('one view bridge projects focus, connection and visibility and releases all
     assert.equal(runtime.getViewSnapshot(), released);
     assert.deepEqual(released, { sessionId: null, visible: false, connected: false });
   }
+});
+
+test('the view bridge follows only the active loaded window, including deltas, disconnect and disposal', t => {
+  const store = createCockpitStore();
+  const runtime = new ModuleRuntime();
+  const visibility = Object.assign(new EventTarget(), { visibilityState: 'visible' as DocumentVisibilityState });
+  const first = {
+    ...metaToSession({ sessionId: 'first', title: 'First', cwd: '/synthetic/first', status: 'idle',
+      loaded: true, lastActivity: 100, ask: null }),
+    materialized: true,
+    messages: [{ id: 'row', origin: { sessionId: 'first', messageId: 'native' },
+      role: 'assistant' as const, content: 'Initial', timestamp: 100, streaming: true }],
+  };
+  const second = { ...first, sessionId: 'second', messages: [], materialized: false, loadingHistory: true };
+  store.setState({ activeId: 'first', sessions: [first, second], connState: 'open' });
+  const cleanup = observeModuleView(runtime, store, visibility);
+  t.after(cleanup);
+  const initial = runtime.getChatWindowSnapshot();
+  assert.equal(initial.messages[0].text, 'Initial');
+  assert.equal(initial.messages[0].complete, false);
+  store.setState({ globalModels: [] });
+  assert.equal(runtime.getChatWindowSnapshot(), initial);
+  store.setState({ sessions: [{ ...first, messages: [{ ...first.messages[0], content: 'Finished', streaming: false }] }, second] });
+  assert.equal(runtime.getChatWindowSnapshot().messages[0].text, 'Finished');
+  assert.equal(runtime.getChatWindowSnapshot().messages[0].complete, true);
+  store.setState({ connState: 'connecting' });
+  assert.equal(runtime.getChatWindowSnapshot().status, 'stale');
+  store.setState({ activeId: 'second', connState: 'open' });
+  assert.equal(runtime.getChatWindowSnapshot().sessionId, 'second');
+  assert.equal(runtime.getChatWindowSnapshot().status, 'loading');
+  assert.deepEqual(runtime.getChatWindowSnapshot().messages, []);
+  cleanup();
+  assert.equal(runtime.getChatWindowSnapshot(), EMPTY_CHAT_WINDOW);
+  store.setState({ activeId: 'first' });
+  assert.equal(runtime.getChatWindowSnapshot(), EMPTY_CHAT_WINDOW);
 });

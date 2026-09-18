@@ -94,7 +94,7 @@ function EnhancedComposerEditor(props: ComposerEditorProps) {
 }
 
 function ComposerEditorBase({ draft, operation: _operation, disabled, busy, placeholder, submitLabel, sendBlocked, statusInHeader, editorRef,
-  onTextChange, onSubmit, children, className, ...domProps }: ComposerEditorProps) {
+  onTextChange, onSubmit, children, actions, className, ...domProps }: ComposerEditorProps) {
   const { text, hasContent, blocks, pending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const blockedReason = blocks.map(block => block.reason).join('；');
   const canSend = hasContent && !disabled && !sendBlocked && !pending && !blocks.length;
@@ -110,6 +110,7 @@ function ComposerEditorBase({ draft, operation: _operation, disabled, busy, plac
             if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') { event.preventDefault(); submit(); return; }
             if (event.key === 'Enter' && !event.shiftKey && shouldSubmitOnEnter()) { event.preventDefault(); submit(); }
           }} />
+        {actions}
         <button type="button" className="chat-input-btn ck-icon-button send rp" disabled={!canSend} onClick={submit}
           aria-label={pending ? '正在提交' : submitLabel ?? (busy ? '排队发送' : '发送')} aria-busy={pending}
           title={pending ? '正在提交，草稿仍可编辑' : blockedReason || (submitLabel ?? (busy ? '加入队列' : '发送'))}>
