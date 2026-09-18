@@ -47,7 +47,9 @@ navigation or mutation policy. **`--host-*` and `--chat-*` are not module APIs**
 modules continue to use only the public `--ck-*` variables below.
 
 Session MCP rows pair name/source on the left with switch/connection status on
-the right. Only the operated row shows switching progress; other switches remain
+the right. Name/source form a compact, vertically centered group independent of
+the switch's height; MCP rows use 8px top/bottom insets without shrinking the
+40px/44px switch target. Only the operated row shows switching progress; other switches remain
 disabled during native serialization without repeated explanatory notices.
 The three session pages omit static instructional text, and an empty Skills
 page only reports that no skills were found. Actual failures, native results and

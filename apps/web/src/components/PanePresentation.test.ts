@@ -109,6 +109,8 @@ test('session pages share flat density and multiline settings without changing c
   assert.match(manage, /\.manage-row-status \{[^}]*min-height: calc/);
   assert.match(manage, /\.manage-session-row > \.manage-row-source \{[^}]*grid-column: 1;[^}]*grid-row: 2;/);
   assert.match(manage, /\.manage-session-row > \.manage-row-status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[^}]*justify-content: flex-end;/);
+  assert.match(manage, /\.manage-session-row\[data-mcp\] \{[^}]*padding-block: var\(--host-space-sm\);/);
+  assert.match(manage, /\.manage-mcp-identity \{[^}]*grid-row: 1\/3;[^}]*flex-direction: column;[^}]*justify-content: center;[^}]*gap: var\(--host-space-xs\);/);
   assert.match(manage, /\.manage-session-row \.manage-row-main:empty \{[^}]*display: none;/);
   assert.match(info, /\.info-session-id-value \{[^}]*overflow-wrap: anywhere;[^}]*user-select: text;/);
   assert.doesNotMatch(info.match(/\.info-session-id-value \{([^}]*)\}/)![1], /ellipsis|hidden|sticky|line-clamp/);
