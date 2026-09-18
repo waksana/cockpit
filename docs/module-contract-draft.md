@@ -126,7 +126,7 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 
 | 输入/贡献 | 内容 |
 | --- | --- |
-| context | apiVersion、moduleId、dataRoot、apiBase、config、AbortSignal、report、invalidate |
+| context | apiVersion、moduleId、dataRoot、apiBase、config、AbortSignal、report、invalidate；试用源码新增 publish |
 | routes | method/path、json 或 stream body、bodyLimit、handler |
 | publicConfig | 明确允许浏览器读取的少量配置，不默认公开整个 config |
 | events | 事件类型列表与只读处理器 |
@@ -168,6 +168,18 @@ GET/HEAD 可不带此 header，以支持 img/video 等，但 URL 已绑定版本
 不存储/重放模块状态，不增加每模块 SSE 连接，也不影响 graceful 的忙闲条件。
 消费者重连应自行重新读取模块状态，不能将提示当作可靠事件日志。
 
+**未发布的通用数据事件扩展：** `context.publish(payload)` 使用同一 `/events` 连接发送
+`module/event { moduleId, payload }`。moduleId 由宿主实际加载身份绑定，模块不能指定另一模块或伪造原生事件。
+payload 为 JSON 数据，最大 64 KiB；宿主拒绝不合法或超限数据，不静默截断、丢字段或回退为空值。
+发布时固定数据副本，调用方的后续修改不改变已排队内容。
+只有成功激活且仍存活的模块能够发布；失败按模块归属报告，不回滚模块已经完成的业务事务。
+
+Web 的 `context.onEvent(listener)` 只接收当前模块的 payload，随模块作用域撤销监听。
+本体不理解其中的业务 schema、版本、未读、文件或推送含义，也不维护第二份模块状态。
+此扩展没有新增长连接、原生历史事件、重放日志、业务等待或逐消息 ACK。
+它与原有 invalidate 提示兼容共存；是否发送完整数据、增量或同步提示由模块决定，
+丢失、断线和重连恢复也由模块自己的 state 管理。
+
 worker 使用稳定的模块专属 URL 和相同目录 scope，`Service-Worker-Allowed: ./`，
 不能控制 Chat 或根页面。宿主不自动注册、不申请通知权限、不实现 push/角标业务。
 只有当前成功加载且声明 worker 的包能被服务，每次读取核对包内大小和摘要，响应不缓存。
@@ -181,7 +193,7 @@ worker 使用稳定的模块专属 URL 和相同目录 scope，`Service-Worker-A
 浏览器入口同样导出 `activate(context)`，但前端 context 和返回声明都要求 `apiVersion: 2`。
 这不改变 manifest、后端 context 或 HTTP API 的 v1。
 context 提供宿主现有 React、ReactDOM `createPortal`、state、
-apiBase、公开配置、request、signal、onInvalidate 和 report。
+apiBase、公开配置、request、signal、onInvalidate、试用源码的 onEvent 和 report。
 模块不得自建 root 或依赖私有 DOM/store。
 宿主并行初始化不同前端模块；单个超时/错误不阻塞其他模块，晚结果不能重新发布已撤销贡献。
 
@@ -210,6 +222,8 @@ Web 模块集成只使用 state 扩展、公开实际语义组件的 middleware�
 
 `context.state.host` 提供当前 session、页面可见性和连接状态的只读基础快照。
 `onInvalidate` 仍是本模块的既有 SSE 变化提示，不携带完整业务 state。
+`onEvent` 是同一传输中按模块归属的数据出口；模块 state 可消费自己的 payload，
+不能把它注入原生会话 store。依赖新能力的模块须检查配套 SDK/运行时，不以旧发行版本号假定存在。
 模块扩展消息/session 的组合视图，不覆盖原生数据或派生另一份原生权威；
 未加载和读取失败不能伪造成 false/零。
 

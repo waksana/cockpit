@@ -1148,6 +1148,28 @@ test('SSE sends exact snapshot/retry/ping frames on reconnect and enforces the c
   }
 });
 
+test('module payloads reuse control SSE without native calls, shutdown work or reconnect replay', async t => {
+  const first = await openViewer();
+  t.after(() => first.close());
+  const second = await openViewer();
+  t.after(() => second.close());
+  const initial = [...first.frames];
+  const notify = t.mock.method(GracefulShutdown.prototype, 'notify', () => {});
+  calls.length = 0;
+  const event = ServerEvent.parse({ type: 'module/event', moduleId: 'fixture', payload: {
+    type: 'session/removed', sessionId: 's', values: ['界', null, true],
+  } });
+  onEngineEvent(event);
+  await nextTurn();
+  for (const viewer of [first, second]) assert.deepEqual(viewer.frames, [...initial, `data: ${JSON.stringify(event)}`]);
+  assert.deepEqual(calls, []);
+  assert.equal(notify.mock.callCount(), 0);
+  first.close();
+  const reconnected = await openViewer();
+  t.after(() => reconnected.close());
+  assert.deepEqual(reconnected.frames, initial, 'new consumers get no module event history');
+});
+
 test('two simultaneous viewers see no query events and receive exactly one mocked mutation reset', { timeout: 5000 }, async (t) => {
   const opened: Awaited<ReturnType<typeof openViewer>>[] = [];
   t.after(() => { for (const viewer of opened) viewer.close(); });

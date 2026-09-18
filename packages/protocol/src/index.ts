@@ -4,6 +4,9 @@
 // validate against them, so the frontend and backend can never drift.
 
 import { z } from 'zod';
+import { snapshotModuleEventPayload } from './module-event.ts';
+export { MAX_MODULE_EVENT_BYTES, snapshotModuleEventPayload } from './module-event.ts';
+export type { ModuleEventPayload } from './module-event.ts';
 import type { ChatMessage } from './validation.ts';
 export type { ChatMessage, ChatRole, SubagentInfo, ToolCall } from './validation.ts';
 
@@ -440,6 +443,17 @@ export type Snapshot = z.infer<typeof Snapshot>;
 export const ServerEvent = z.discriminatedUnion('type', [
   Snapshot,
   z.object({ type: z.literal('module/invalidated'), moduleId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/) }),
+  z.object({
+    type: z.literal('module/event'),
+    moduleId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
+    payload: z.unknown().transform((value, context) => {
+      try { return snapshotModuleEventPayload(value); }
+      catch (error) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: error instanceof Error ? error.message : 'Invalid module event payload' });
+        return z.NEVER;
+      }
+    }),
+  }).strict(),
   z.object({ type: z.literal('agent/status'), status: AgentStatus }),
   z.object({ type: z.literal('session/added'), session: SessionMeta }),
   z.object({

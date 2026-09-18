@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import * as React from 'react';
 import { createPortal } from 'react-dom';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { ServerEvent, type ModuleEventPayload } from '@cockpit/protocol';
 import type { ActivateFrontend, ComposerEditorProps, DraftSchemaHandle, ModuleAsset, ModuleFrontend, ModuleFrontendContext, MarkdownNode } from '@cockpit/module-api';
 import { ModuleRuntime, validateModuleAsset } from './moduleRuntime';
 import { createSessionDrafts } from './textDraft';
@@ -447,6 +448,7 @@ test('failed activation removes subscriptions even when a module never returns c
         context = value;
         value.state.host.subscribe(() => { notified++; });
         value.onInvalidate!(() => { notified++; });
+        value.onEvent(() => { notified++; });
         value.state.register({ id: 'owned', create: () => ({}), dispose: () => { disposed++; } });
         if (timeout) return new Promise(() => {});
         throw new Error('Initializer failed');
@@ -458,10 +460,69 @@ test('failed activation removes subscriptions even when a module never returns c
     assert.equal(context.signal.aborted, true);
     runtime.updateView({ sessionId: 'new', visible: true, connected: true });
     runtime.invalidate('fixture');
+    runtime.receiveEvent('fixture', null);
     assert.equal(notified, 0);
     assert.equal(disposed, 1);
     runtime.stop();
   }
+});
+
+test('module events route only to their owner, isolate listener errors and revoke every subscription', async () => {
+  const received: ModuleEventPayload[] = [];
+  const f = fixture([asset('a'), asset('b')], context => {
+    context.onEvent(payload => {
+      if (context.moduleId === 'b') assert.fail('Foreign module received payload');
+      (payload as { items: unknown[] }).items.push('mutation');
+    });
+    context.onEvent(payload => { received.push(payload); });
+    return { apiVersion: 2 };
+  });
+  await f.runtime.start();
+  const [a, b] = f.contexts;
+  let extra = 0;
+  const unsubscribe = a.onEvent(() => { extra++; });
+  const envelope = ServerEvent.parse({ type: 'module/event', moduleId: 'a', payload: { items: [1] } });
+  if (envelope.type !== 'module/event') assert.fail();
+  const view = f.runtime.getViewSnapshot(), modules = f.runtime.getSnapshot();
+  f.runtime.receiveEvent('unknown', null);
+  f.runtime.receiveEvent('a', envelope.payload);
+  assert.deepEqual(received, [{ items: [1] }]);
+  assert.equal(extra, 1);
+  assert.equal(f.reports.length, 1);
+  assert.equal(f.runtime.getViewSnapshot(), view);
+  assert.equal(f.runtime.getSnapshot(), modules);
+  unsubscribe();
+  unsubscribe();
+  f.runtime.receiveEvent('a', envelope.payload);
+  assert.equal(extra, 1);
+  f.runtime.unregister(modules.find(module => module.asset.id === 'a')!);
+  a.onEvent(() => assert.fail('Stopped module subscription'));
+  f.runtime.receiveEvent('a', null);
+  assert.equal(received.length, 2);
+  f.runtime.stop();
+  b.onEvent(() => assert.fail('Stopped runtime subscription'));
+  f.runtime.receiveEvent('b', null);
+  assert.equal(received.length, 2);
+});
+
+test('module event subscriptions can precede the initial module GET during activation', async () => {
+  const received: ModuleEventPayload[] = [];
+  const runtime = new ModuleRuntime({
+    pageUrl: 'https://fixture.invalid',
+    fetch: async input => {
+      if (String(input).endsWith('/_modules')) return Response.json({ modules: [asset()], errors: [] });
+      runtime.receiveEvent('fixture', Object.freeze({ kind: 'during-fetch' }));
+      return Response.json({});
+    },
+    load: async () => ({ activate: async (context: ModuleFrontendContext) => {
+      context.onEvent(payload => { received.push(payload); });
+      await context.request('/initial');
+      return { apiVersion: 2 };
+    } }),
+  });
+  await runtime.start();
+  assert.deepEqual(received, [{ kind: 'during-fetch' }]);
+  runtime.stop();
 });
 
 test('state registration creates concrete services once, stages publication and disposes in reverse order', async () => {

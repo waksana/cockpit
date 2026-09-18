@@ -1,5 +1,5 @@
 import type * as React from 'react';
-import type { NativeAttachmentDescriptor, SessionStatus } from '@cockpit/protocol';
+import type { ModuleEventPayload, NativeAttachmentDescriptor, SessionStatus } from '@cockpit/protocol';
 
 type ReadonlyData<T> = { readonly [Key in keyof T]: ReadonlyData<T[Key]> };
 
@@ -417,6 +417,8 @@ export interface ModuleFrontendContext {
   report(error: unknown): void;
   /** Existing generic SSE invalidation hint, automatically unsubscribed on module stop. */
   onInvalidate(listener: () => void): () => void;
+  /** Immutable payloads for this module only; subscriptions are revoked on stop. No replay. */
+  onEvent(listener: (payload: ModuleEventPayload) => void): () => void;
   /** Unchanged narrow module-worker metadata; never authority over the page/root scope. */
   readonly worker?: { entry: string; scope: string };
 }

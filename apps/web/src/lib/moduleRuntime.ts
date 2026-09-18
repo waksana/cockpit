@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import type {
   ComponentMiddleware,
   HostSnapshot, MarkdownNode, MarkdownRenderer, ModuleAsset, ModuleComponentProps,
-  DraftSchemaRegistration, ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
+  DraftSchemaRegistration, ModuleEventPayload, ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
 } from '@cockpit/module-api';
 import { resolveDraft, type SessionDraft } from './textDraft';
 import { RegisteredDraftSchema, type RuntimeDraftSchema } from './draftSchemas';
@@ -151,6 +151,7 @@ export class ModuleRuntime {
   private view: HostSnapshot = EMPTY_VIEW;
   private readonly viewListeners = new Set<() => void>();
   private readonly invalidationListeners = new Map<string, Set<() => void>>();
+  private readonly eventListeners = new Map<string, Set<(payload: ModuleEventPayload) => void>>();
   private controller?: AbortController;
   private readonly reports = new Set<string>();
   private readonly componentCache = new Map<object, { boundary: Boundary; entries: readonly object[]; component: unknown }>();
@@ -170,6 +171,10 @@ export class ModuleRuntime {
   invalidate(moduleId: string): void {
     const listeners = this.invalidationListeners.get(moduleId);
     if (listeners) for (const listener of [...listeners]) if (listeners.has(listener)) listener();
+  }
+  receiveEvent(moduleId: string, payload: ModuleEventPayload): void {
+    const listeners = this.eventListeners.get(moduleId);
+    if (listeners) for (const listener of [...listeners]) if (listeners.has(listener)) listener(payload);
   }
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   private publish(modules: readonly LoadedModule[]) {
@@ -253,9 +258,9 @@ export class ModuleRuntime {
       frontend = undefined;
       parentSignal.removeEventListener('abort', stop);
     }, bindings.keys());
-    const subscribe = (listeners: Set<() => void>, listener: () => void, onEmpty?: () => void): (() => void) => {
+    const subscribe = <Args extends unknown[]>(listeners: Set<(...args: Args) => void>, listener: (...args: Args) => void, onEmpty?: () => void): (() => void) => {
       if (controller.signal.aborted) return () => {};
-      const notify = () => { try { listener(); } catch (error) { this.report(error); } };
+      const notify = (...args: Args) => { try { listener(...args); } catch (error) { this.report(error); } };
       const unsubscribe = () => {
         if (!subscriptions.has(unsubscribe)) return;
         listeners.delete(notify);
@@ -325,6 +330,12 @@ export class ModuleRuntime {
         let listeners = this.invalidationListeners.get(asset.id);
         if (!listeners) this.invalidationListeners.set(asset.id, listeners = new Set());
         return subscribe(listeners, listener, () => { this.invalidationListeners.delete(asset.id); });
+      },
+      onEvent: listener => {
+        if (controller.signal.aborted) return () => {};
+        let listeners = this.eventListeners.get(asset.id);
+        if (!listeners) this.eventListeners.set(asset.id, listeners = new Set());
+        return subscribe(listeners, listener, () => { this.eventListeners.delete(asset.id); });
       },
       ...(asset.worker ? { worker: asset.worker } : {}),
       request: async (path, init = {}) => {

@@ -17,6 +17,7 @@ import { readMessageHistory } from './messageHistory';
 import { describeReason, reportUxError } from '../lib/errorReporter';
 import type { NativeDraftRequest } from '../lib/draft';
 import { observeDraftDecisions } from '../lib/draftSelection';
+import type { ModuleEventPayload } from '@cockpit/module-api';
 
 // Background tabs release their native chat read.
 const isVisible = () => typeof document !== 'undefined' && document.visibilityState === 'visible';
@@ -32,6 +33,7 @@ interface CockpitState {
   // lifecycle
   init: () => () => void;
   onModuleInvalidated: (listener: (moduleId: string) => void) => () => void;
+  onModuleEvent: (listener: (moduleId: string, payload: ModuleEventPayload) => void) => () => void;
   // intents
   setActiveId: (id: string | null) => void;
   newSession: (cwd: string) => Promise<string>;
@@ -67,6 +69,7 @@ interface CockpitState {
 export const createCockpitStore = () => create<CockpitState>((set, get) => {
   let client: NetClient | null = null;
   const moduleListeners = new Set<(moduleId: string) => void>();
+  const moduleEventListeners = new Set<(moduleId: string, payload: ModuleEventPayload) => void>();
   const summaryResources: MetaResource[] = ['identity', 'control', 'model'];
   const metaRequests = new Map<string, {
     dirty: Set<MetaResource>; stale: Set<MetaResource>; controller: AbortController; patches: Partial<SessionMeta>;
@@ -413,6 +416,12 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       case 'module/invalidated':
         for (const listener of [...moduleListeners]) if (moduleListeners.has(listener)) listener(ev.moduleId);
         return;
+      case 'module/event':
+        for (const listener of [...moduleEventListeners]) if (moduleEventListeners.has(listener)) {
+          try { listener(ev.moduleId, ev.payload); }
+          catch (error) { reportUxError(`模块反馈：${describeReason(error, false)}`); }
+        }
+        return;
       case 'session/invalidated': {
         // Late invalidations cannot recreate resources for an absent session.
         if (!get().sessions.some(session => session.sessionId === ev.sessionId)) return;
@@ -525,6 +534,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     onModuleInvalidated(listener) {
       moduleListeners.add(listener);
       return () => { moduleListeners.delete(listener); };
+    },
+    onModuleEvent(listener) {
+      moduleEventListeners.add(listener);
+      return () => { moduleEventListeners.delete(listener); };
     },
 
     init() {
