@@ -84,11 +84,43 @@ export interface DraftReference extends ReadonlyState<ModuleDraftSnapshot> {
 
 export type DraftWrite = 'text';
 
+/** Safe codes only: never native response text, payloads or module content. */
+export type DraftSendBlockReason =
+  | 'revoked' | 'retired' | 'cancelled' | 'revision-mismatch' | 'draft-changed'
+  | 'pending' | 'unconfirmed' | 'peer-blocked' | 'empty' | 'unavailable'
+  | 'read-only' | 'decision-changed' | 'unsupported' | 'persistence-failed' | 'projection-failed';
+
+export type DraftSendResult =
+  | { readonly status: 'acknowledged' }
+  | { readonly status: 'blocked'; readonly reason: DraftSendBlockReason }
+  | { readonly status: 'unconfirmed'; readonly reason: 'native-unconfirmed' | 'settlement-failed' };
+
+/**
+ * One consent checkpoint for an immutable captured draft lifetime and its full
+ * schema generation/mutation checkpoint. No caller-selected target or payload.
+ */
+export interface CapturedDraftSend {
+  /**
+   * Supply the current text revision after this module's own streaming edits.
+   * Any other writer's edit or schema mutation/generation change since capture
+   * invalidates consent, including ABA changes. Block release is not content.
+   * The first call consumes this intent, including a blocked result. All later
+   * calls return the same promise/result, never another native dispatch.
+   * blocked guarantees no dispatch; unconfirmed may have sent or failed local
+   * ACK settlement. Never automatically retry either an uncertain dispatch or
+   * a consumed intent by capturing replacement consent.
+   */
+  send(expectedRevision: number): Promise<DraftSendResult>;
+  /** Prevents dispatch if not yet started; cannot unsend an in-flight request. */
+  cancel(): void;
+}
+
 /**
  * Base capabilities only. Text edits require ModuleFrontend.writes and may
  * continue during a send, advancing revision. Schema data/actions belong to the
- * schema's own handle, never this base draft. No native store patch, attachment
- * model, submit, ACK, or reset action is exposed.
+ * schema's own handle, never this base draft. Captured submission requires
+ * independent sends permission. No native store patch, attachment model,
+ * arbitrary-payload send, ACK, or reset action is exposed.
  */
 export interface ModuleDraft extends DraftReference {
   editText(text: string): void;
@@ -101,6 +133,15 @@ export interface ModuleDraft extends DraftReference {
    * Ordinary editText retains its existing concurrent/memory-edit semantics.
    */
   editTextIfRevision(text: string, revision: number): boolean;
+  /**
+   * Requires the separate ModuleFrontend.sends: ['draft'] declaration.
+   * Capture at explicit user consent, before waiting for background completion.
+   * Throws on missing permission, revoked/retired or unavailable draft scope.
+   * Own blocks may still be held at capture; release them before send.
+   * Sends through the original prompt/ask/plan native route with all applicable
+   * schema fields and ACK rules, even when the original prompt is inactive.
+   */
+  captureSend(): CapturedDraftSend;
   /**
    * Requires a text write or an active schema applicable to this draft. Leases
    * belong to this module/draft and release idempotently. Module/schema loss
@@ -492,6 +533,8 @@ export interface ModuleFrontendContext {
   readonly composerInputVersion: 1;
   /** Observable permanent retirement and atomic revision-guarded text completion. */
   readonly draftLifecycleVersion: 1;
+  /** Explicitly authorized captured one-shot native draft submission. */
+  readonly draftSubmissionVersion: 1;
   readonly moduleId: string;
   readonly react: typeof React;
   createPortal(children: React.ReactNode, container: Element | DocumentFragment): React.ReactPortal;
@@ -530,6 +573,8 @@ export interface ModuleFrontendContext {
 export interface ModuleFrontend {
   readonly apiVersion: 2;
   readonly writes?: readonly DraftWrite[];
+  /** Independent native-send permission; text writes alone never grant this. */
+  readonly sends?: readonly 'draft'[];
   /** Native commands remain first; additions sort by (order ?? 0, moduleId, id). */
   readonly menus?: readonly ModuleMenuRegistration[];
   readonly components?: readonly ModuleComponentMiddleware[];

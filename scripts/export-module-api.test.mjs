@@ -23,6 +23,10 @@ test('module API export contains its canonical types and local protocol dependen
   assert.match(frontend, /readonly menuVersion: 1/);
   assert.match(frontend, /readonly composerInputVersion: 1/);
   assert.match(frontend, /readonly draftLifecycleVersion: 1/);
+  assert.match(frontend, /readonly draftSubmissionVersion: 1/);
+  assert.match(frontend, /readonly sends\?: readonly 'draft'\[\]/);
+  assert.match(frontend, /captureSend\(\): CapturedDraftSend/);
+  assert.match(frontend, /send\(expectedRevision: number\): Promise<DraftSendResult>/);
   assert.match(frontend, /readonly retired: boolean/);
   assert.match(frontend, /editTextIfRevision\(text: string, revision: number\): boolean/);
   assert.match(frontend, /composerInput: ComposerInputProps/);

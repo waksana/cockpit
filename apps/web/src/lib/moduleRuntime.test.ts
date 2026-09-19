@@ -108,6 +108,7 @@ test('menus share registration IDs and rollback, reject retired wrappers and mal
   const entry: ModuleMenuRegistration = { id: 'action', menu: 'global',
     getState: () => ({ label: 'Action' }), onSelect() {} };
   for (const patch of [
+    { sends: 'draft' }, { sends: ['prompt'] }, { sends: [null] },
     { menus: {} }, { menus: [null] }, { menus: [{ ...entry, id: '' }] },
     { menus: [entry, entry] }, { menus: [{ ...entry, menu: 'page' }] },
     { menus: [{ ...entry, menu: { toString: () => 'global' } }] },

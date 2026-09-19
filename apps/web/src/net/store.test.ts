@@ -5,6 +5,9 @@ import type { IntentBody, IntentName, IntentResult } from '@cockpit/protocol';
 import { CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { dismissUxError, getUxErrors } from '../lib/errorReporter';
 import { DraftCache, getDraftSession } from '../lib/draftSelection';
+import { ModuleRuntime } from '../lib/moduleRuntime';
+import type { DraftPurpose, DraftSchemaHandle, ModuleFrontendContext } from '@cockpit/module-api';
+import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';
 import { IntentHttpError, isSessionUnloadedError, SessionUnloadedError } from './client';
 import { createCockpitStore } from './store';
 import type { NativeAttachment, ChatMessage, ServerEvent, SessionMeta } from './types';
@@ -48,6 +51,124 @@ function replaceGlobal(t: TestContext, key: string, value: unknown) {
 }
 
 let now = 1_000_000;
+
+async function capturedFixture(t: TestContext, purpose: DraftPurpose = { kind: 'prompt' }) {
+  const h = setup(t);
+  h.source.open();
+  const native: SessionMeta = { ...meta('captured'),
+    ...(purpose.kind === 'ask' ? { ask: { requestId: purpose.requestId, question: 'Question', choices: [], allowFreeform: true } } : {}),
+    ...(purpose.kind === 'plan' ? { planRequest: { requestId: purpose.requestId, summary: 'Plan' } } : {}),
+  };
+  h.snapshot([], { sessions: [native, meta('elsewhere')] });
+  const cache = new DraftCache();
+  const session = cache.session('captured');
+  cache.observe(useCockpit.getState().sessions, true);
+  t.after(useCockpit.subscribe(state => cache.observe(state.sessions, state.snapshotReady && state.connState === 'open')));
+  const source = session.candidate(purpose);
+  let context!: ModuleFrontendContext, field!: DraftSchemaHandle<FixtureData>;
+  const digest = 'a'.repeat(64);
+  const runtime = new ModuleRuntime({
+    pageUrl: 'https://fixture.invalid',
+    fetch: async () => Response.json({ modules: [{
+      id: 'speech', name: 'Speech', version: '1.0.0', digest, config: {}, styles: [],
+      apiBase: `/_modules/speech/${digest}/api`, entry: `/_modules/assets/speech/${digest}/entry.js`,
+    }], errors: [] }),
+    load: async () => ({ activate: (value: ModuleFrontendContext) => {
+      context = value;
+      field = value.state.registerDraft(fixtureSchema());
+      return { apiVersion: 2, writes: ['text'], sends: ['draft'] };
+    } }),
+    report: () => {},
+    draftSubmission: {
+      check: draft => useCockpit.getState().canSendDraft(draft.reference),
+      send: request => useCockpit.getState().sendDraft(request),
+    },
+  });
+  await runtime.start();
+  t.after(() => runtime.stop());
+  runtime.prepareDraft(source, false);
+  const draft = context.state.bindDraft(source.reference);
+  draft.editText('Provisional');
+  return { h, runtime, cache, source, native, draft, field };
+}
+
+test('captured prompt sends its original full draft through native enqueue while another session and ask are active', async t => {
+  const f = await capturedFixture(t);
+  const field = f.field.forDraft(f.source.reference)!;
+  appendFixture(field, fixtureItem('attachment'));
+  const release = f.draft.block('Transcribing');
+  const intent = f.draft.captureSend();
+  const ask = { requestId: 'later', question: 'Question', choices: ['A'], allowFreeform: true };
+  f.h.source.emit({ type: 'session/patch', sessionId: 'captured', ask });
+  // No active-window callback is involved; target is immutable even if the UI is hidden.
+  useCockpit.setState({ activeId: 'elsewhere' });
+  f.runtime.updateView({ sessionId: 'elsewhere', visible: false, connected: true });
+  release();
+  assert.equal(f.draft.editTextIfRevision('Completed', 1), true);
+  const sending = intent.send(2);
+  await Promise.resolve();
+  f.h.assertPost(0, 'prompt', { sessionId: 'captured', text: 'Completed', attachments: [fixtureItem('attachment').value] });
+  // Omitted mode is the existing native enqueue default, never immediate or an ask reply.
+  await f.h.reply(0, { ok: true });
+  assert.deepEqual(await sending, { status: 'acknowledged' });
+  assert.deepEqual(session('captured').ask, ask);
+  assert.equal(field.getSnapshot().items.length, 0);
+  assert.equal(f.h.requests.length, 1);
+});
+
+for (const kind of ['ask', 'plan'] as const) {
+  test(`captured ${kind} preserves its original live request route across navigation`, async t => {
+    const f = await capturedFixture(t, { kind, requestId: 'original' });
+    const intent = f.draft.captureSend();
+    useCockpit.setState({ activeId: 'elsewhere' });
+    const sending = intent.send(1);
+    await Promise.resolve();
+    if (kind === 'ask') f.h.assertPost(0, 'respondAsk', { sessionId: 'captured', requestId: 'original', answer: 'Provisional', wasFreeform: true });
+    else f.h.assertPost(0, 'planSupersede', { sessionId: 'captured', requestId: 'original', message: 'Provisional' });
+    await f.h.reply(0, { ok: true });
+    assert.deepEqual(await sending, { status: 'acknowledged' });
+    assert.equal(f.h.requests.length, 1);
+  });
+}
+
+test('retired and reused asks never receive a captured answer or reroute it into the prompt', async t => {
+  const f = await capturedFixture(t, { kind: 'ask', requestId: 'original' });
+  const intent = f.draft.captureSend();
+  f.h.source.emit({ type: 'session/patch', sessionId: 'captured', ask: null });
+  f.h.source.emit({ type: 'session/patch', sessionId: 'captured', ask: f.native.ask });
+  assert.deepEqual(await intent.send(1), { status: 'blocked', reason: 'retired' });
+  assert.equal(f.h.requests.length, 0);
+  assert.equal(f.cache.session('captured').prompt.getSnapshot().text, '');
+});
+
+for (const gate of ['disconnect', 'snapshot', 'read-only', 'freeform', 'unloaded', 'deleted', 'compacting'] as const) {
+  test(`native captured-send gate rejects ${gate} without transport dispatch`, async t => {
+    const f = await capturedFixture(t, { kind: 'ask', requestId: 'original' });
+    const intent = f.draft.captureSend();
+    if (gate === 'disconnect') f.h.source.drop();
+    if (gate === 'snapshot') useCockpit.setState({ snapshotReady: false });
+    if (gate === 'read-only') f.runtime.prepareDraft(f.source, true);
+    if (gate === 'freeform') f.h.source.emit({ type: 'session/patch', sessionId: 'captured', ask: { ...f.native.ask!, allowFreeform: false } });
+    if (gate === 'unloaded') f.h.source.emit({ type: 'session/patch', sessionId: 'captured', loaded: false, ask: null });
+    if (gate === 'deleted') f.h.source.emit({ type: 'session/removed', sessionId: 'captured' });
+    if (gate === 'compacting') f.h.source.emit({ type: 'session/patch', sessionId: 'captured', compacting: true });
+    assert.deepEqual(await intent.send(1), { status: 'blocked',
+      reason: gate === 'deleted' ? 'retired' : gate === 'freeform' ? 'unsupported' : gate === 'read-only' ? 'read-only' : 'unavailable' });
+    assert.equal(f.h.requests.length, 0);
+  });
+}
+
+test('malformed native ACK remains unconfirmed and duplicate captured calls never issue a second POST', async t => {
+  const f = await capturedFixture(t);
+  const intent = f.draft.captureSend(), sending = intent.send(1);
+  await Promise.resolve();
+  await f.h.reply(0, { status: 'accepted' });
+  assert.deepEqual(await sending, { status: 'unconfirmed', reason: 'native-unconfirmed' });
+  assert.equal(intent.send(1), sending);
+  assert.equal(f.h.requests.length, 1);
+  assert.equal(f.draft.getSnapshot().text, 'Provisional');
+  assert.equal(f.draft.getSnapshot().unconfirmed, true);
+});
 
 test('native store authority retires cached drafts on confirmed absence but not disconnect or unload', t => {
   const h = setup(t);

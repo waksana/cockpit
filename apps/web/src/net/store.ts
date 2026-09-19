@@ -17,7 +17,7 @@ import { readMessageHistory } from './messageHistory';
 import { describeReason, reportUxError } from '../lib/errorReporter';
 import type { NativeDraftRequest } from '../lib/draft';
 import { observeDraftDecisions, retireDraftSession } from '../lib/draftSelection';
-import type { ModuleEventPayload } from '@cockpit/module-api';
+import type { DraftReference, DraftSendBlockReason, ModuleEventPayload } from '@cockpit/module-api';
 
 // Background tabs release their native chat read.
 const isVisible = () => typeof document !== 'undefined' && document.visibilityState === 'visible';
@@ -40,6 +40,7 @@ interface CockpitState {
   loadMore: (sessionId: string) => void;
   retryHistory: (sessionId: string) => void;
   sendDraft: (request: NativeDraftRequest) => Promise<boolean>;
+  canSendDraft: (draft: DraftReference) => DraftSendBlockReason | undefined;
   cancel: (sessionId: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<{ ok: true; interrupted: boolean }>;
   setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => Promise<IntentResult<'setModel'>>;
@@ -609,6 +610,21 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
 
     sendDraft(request) {
       return acknowledged(request.body.sessionId, (net) => net.sendDraft(request));
+    },
+    canSendDraft(draft) {
+      const state = get();
+      if (!client?.isOpen || state.connState !== 'open' || !state.snapshotReady) return 'unavailable';
+      const session = state.sessions.find(value => value.sessionId === draft.sessionId);
+      if (!session || session.loading || session.closing || (session.compacting && session.status !== 'running')) return 'unavailable';
+      if (draft.getSnapshot().retired) return 'retired';
+      const purpose = draft.purpose;
+      if (purpose.kind === 'prompt') return;
+      if (purpose.kind === 'elicitation') return 'unsupported';
+      if (!session.loaded) return 'unavailable';
+      if (purpose.kind === 'ask') {
+        if (session.ask?.requestId !== purpose.requestId) return 'decision-changed';
+        if (session.ask.allowFreeform === false) return 'unsupported';
+      } else if (session.planRequest?.requestId !== purpose.requestId) return 'decision-changed';
     },
 
     cancel(sid) { return mutation(sid, '取消', (net) => net.cancel(sid)); },

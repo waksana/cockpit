@@ -342,7 +342,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
     : interruptNotice?.sessionId === session.sessionId ? interruptNotice.text : null;
   const drafts = useMemo(() => getDraftSession(session.sessionId), [session.sessionId]);
   const runtime = useModuleRuntime();
-  useLayoutEffect(() => { runtime.prepareDraft(drafts.prompt); }, [runtime, drafts]);
+  useLayoutEffect(() => { runtime.prepareDraft(drafts.prompt, readOnly); }, [runtime, drafts, readOnly]);
   const draftRevision = useSyncExternalStore(drafts.subscribe, drafts.getSnapshot, drafts.getSnapshot);
   const askId = session.ask?.requestId, planId = session.planRequest?.requestId, elicitationId = session.elicitation?.requestId;
   const decisions = useMemo(() => ({
@@ -360,6 +360,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const askDraft = askId !== undefined ? drafts.candidate({ kind: 'ask', requestId: askId }) : undefined;
   const planDraft = planId !== undefined ? drafts.candidate({ kind: 'plan', requestId: planId }) : undefined;
   const elicitationDraft = elicitationId !== undefined ? drafts.candidate({ kind: 'elicitation', requestId: elicitationId }) : undefined;
+  useLayoutEffect(() => { runtime.prepareDraft(draft, readOnly); }, [runtime, draft, readOnly]);
   const canAct = useRef(false);
   useLayoutEffect(() => {
     canAct.current = authoritative && !readOnly;
