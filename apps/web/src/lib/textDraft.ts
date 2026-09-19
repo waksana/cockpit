@@ -65,7 +65,7 @@ interface CapturedField {
 
 export class SessionDraft {
   private snapshot: ModuleDraftSnapshot = Object.freeze({
-    text: '', blocks: Object.freeze([]), hasContent: false, revision: 0, pending: false, unconfirmed: false,
+    text: '', blocks: Object.freeze([]), hasContent: false, revision: 0, pending: false, unconfirmed: false, retired: false,
   });
   private readonly listeners = new Set<() => void>();
   private readonly blockOwners = new Map<string, string>();
@@ -121,9 +121,18 @@ export class SessionDraft {
     return () => { this.listeners.delete(listener); };
   };
   isRetired(): boolean { return this.retired; }
-  retire(): void { this.retired = true; }
+  retire(): void {
+    if (this.retired) return;
+    this.retired = true;
+    if (this.reference.purpose.kind === 'prompt') {
+      try {
+        if (this.storage && this.storage.getItem(this.key) === this.storedBytes) this.storage.removeItem(this.key);
+      } catch (error) { this.report(error); }
+    }
+    this.publish({ retired: true });
+  }
   assertEditable(): void {
-    if (this.retired) throw new Error('This decision draft has retired');
+    if (this.retired) throw new Error('This draft has retired');
     if (schemaHookDepth) throw new Error('Draft schema hooks must not mutate drafts');
   }
   pure<T>(callback: () => T): T {
@@ -261,6 +270,16 @@ export class SessionDraft {
         if (!active || !writes.includes('text')) throw new Error(`Module ${owner} cannot write text`);
         this.edit(text);
       },
+      editTextIfRevision: (text: string, revision: number) => {
+        if (!active || !writes.includes('text')) throw new Error(`Module ${owner} cannot write text`);
+        this.assertEditable();
+        const snapshot = this.snapshot;
+        if (snapshot.revision !== revision || snapshot.pending || snapshot.unconfirmed || snapshot.blocks.length) return false;
+        const next = { ...snapshot, text, revision: snapshot.revision + 1 };
+        this.persist(next);
+        this.publish(next);
+        return true;
+      },
       block: (reason: string) => {
         this.assertEditable();
         if (!active || (!writes.includes('text') && !canBlock())) throw new Error('Module cannot block this draft');
@@ -288,6 +307,7 @@ export class SessionDraft {
     } };
   }
   private assertSubmission(token: string): void {
+    if (this.retired && this.reference.purpose.kind === 'prompt') throw new Error('This prompt draft has retired');
     if (this.pendingToken !== token || !this.snapshot.pending) throw new Error('Stale draft submission token');
     if (this.storage) {
       const bytes = this.storage.getItem(this.key);

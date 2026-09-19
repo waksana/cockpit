@@ -82,6 +82,28 @@ test('chat-window capability is read-only, scoped, and revoked with its module',
   f.runtime.stop();
 });
 
+test('draft lifecycle capability completes captured inactive prompts and revokes writes on module disposal', async () => {
+  const f = fixture([asset()], { apiVersion: 2, writes: ['text'] });
+  await f.runtime.start();
+  const context = f.contexts[0];
+  assert.equal(context.draftLifecycleVersion, 1);
+  const source = createSessionDrafts()('A');
+  const draft = context.state.bindDraft(source.reference);
+  const release = draft.block('Background capture');
+  f.runtime.updateView({ sessionId: 'B', visible: false, connected: false });
+  release();
+  assert.equal(draft.editTextIfRevision('Captured A result', 0), true);
+  assert.equal(source.getSnapshot().text, 'Captured A result');
+  let retirement = false;
+  draft.subscribe(() => { retirement = draft.getSnapshot().retired; });
+  source.retire();
+  assert.equal(retirement, true);
+  assert.throws(() => draft.editTextIfRevision('Late', 1), /retired/);
+  f.runtime.unregister(f.runtime.getSnapshot()[0]);
+  assert.throws(() => draft.editTextIfRevision('Revoked', 1), /cannot write/);
+  f.runtime.stop();
+});
+
 test('menus share registration IDs and rollback, reject retired wrappers and malformed declarations', async () => {
   const entry: ModuleMenuRegistration = { id: 'action', menu: 'global',
     getState: () => ({ label: 'Action' }), onSelect() {} };

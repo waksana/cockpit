@@ -117,6 +117,96 @@ test('authoritative retirement is observed for inactive sessions, not inferred f
   assert.equal(session.current({ ask: { requestId: 'ask' } }).getSnapshot().text, '');
 });
 
+test('session absence retires every captured lifetime even before native observation, and reuse creates new references', () => {
+  for (const observed of [false, true]) {
+    const cache = new DraftCache();
+    const session = cache.session('deleted');
+    if (observed) cache.observe([{ sessionId: 'deleted', loaded: true }], true);
+    session.synchronize({ ask: { requestId: 'same' }, planRequest: { requestId: 'plan' }, elicitation: { requestId: 'tool' } });
+    const drafts = [session.prompt,
+      session.candidate({ kind: 'ask', requestId: 'same' }),
+      session.candidate({ kind: 'plan', requestId: 'plan' }),
+      session.candidate({ kind: 'elicitation', requestId: 'tool' })];
+    const notifications = drafts.map(() => 0);
+    drafts.forEach((draft, index) => draft.subscribe(() => {
+      notifications[index]++;
+      assert.ok(drafts.every(value => value.getSnapshot().retired), 'all lifetime flags precede notifications');
+    }));
+    cache.observe([], false);
+    cache.observe([{ sessionId: 'deleted', loaded: false, ask: null }], true);
+    assert.ok(drafts.every(draft => !draft.getSnapshot().retired), 'disconnect/unload is not retirement');
+    assert.equal(session.current({ loaded: false }), drafts[1]);
+    cache.observe([], true);
+    assert.deepEqual(notifications, [1, 1, 1, 1]);
+    assert.equal(session.candidate({ kind: 'ask', requestId: 'same' }), drafts[1]);
+    assert.throws(() => session.candidate({ kind: 'ask', requestId: 'new' }), /retired/);
+    const fresh = cache.session('deleted');
+    cache.observe([{ sessionId: 'deleted', loaded: true, ask: { requestId: 'same' } }], true);
+    assert.notEqual(fresh.prompt.reference.id, session.prompt.reference.id);
+    assert.notEqual(fresh.candidate({ kind: 'ask', requestId: 'same' }).reference.id, drafts[1].reference.id);
+    assert.equal(fresh.prompt.getSnapshot().retired, false);
+    assert.ok(drafts.every(draft => draft.getSnapshot().retired));
+  }
+});
+
+test('decision replacement publishes retirement without retiring the inactive writable prompt', () => {
+  const cache = new DraftCache(), session = cache.session('A');
+  const prompt = session.prompt.bindModule('speech', ['text']).draft;
+  prompt.editText('Captured');
+  const revision = prompt.getSnapshot().revision;
+  cache.observe([{ sessionId: 'A', ask: { requestId: 'same' } }], true);
+  const old = session.candidate({ kind: 'ask', requestId: 'same' }).bindModule('speech', ['text']).draft;
+  let retired = 0;
+  old.subscribe(() => { if (old.getSnapshot().retired) retired++; });
+  cache.observe([{ sessionId: 'A', ask: { requestId: 'replacement' } }], true);
+  assert.equal(retired, 1);
+  assert.equal(prompt.editTextIfRevision('Background result', revision), true);
+  assert.equal(prompt.getSnapshot().retired, false);
+  cache.observe([{ sessionId: 'A', ask: { requestId: 'same' } }], true);
+  assert.throws(() => old.editTextIfRevision('Late result', 0), /retired/);
+  assert.equal(session.candidate({ kind: 'ask', requestId: 'same' }).getSnapshot().text, '');
+  assert.equal(prompt.getSnapshot().text, 'Background result');
+});
+
+test('all ended decisions and selection are revoked before any retirement callback can run', async () => {
+  const session = new DraftCache().session('atomic-retirement');
+  session.synchronize({ ask: { requestId: 'ask' }, planRequest: { requestId: 'plan' } });
+  const ask = session.candidate({ kind: 'ask', requestId: 'ask' });
+  const plan = session.candidate({ kind: 'plan', requestId: 'plan' });
+  const binding = plan.bindModule('speech', ['text']).draft;
+  let observed: { retired: boolean; live: boolean; selected: boolean } | undefined;
+  let action: Promise<boolean> | undefined, dispatched = false;
+  ask.subscribe(() => {
+    if (!ask.getSnapshot().retired) return;
+    observed = { retired: plan.getSnapshot().retired, live: session.isLive(plan), selected: session.isCurrent(session.prompt) };
+    action = plan.runAction(async () => { dispatched = true; return true; }, () => session.isLive(plan));
+  });
+  session.synchronize({});
+  assert.deepEqual(observed, { retired: true, live: false, selected: true });
+  assert.equal(await action, false);
+  assert.equal(dispatched, false);
+  assert.throws(() => binding.editTextIfRevision('Late', 0), /retired/);
+});
+
+test('a retired prompt ACK cannot mutate storage or block completion in a reused session lifetime', async () => {
+  const { storage } = memoryDraftStorage();
+  const cache = new DraftCache(storage), old = cache.prompt('reused');
+  old.edit('Deleted prompt');
+  let finish!: (value: boolean) => void;
+  const sending = old.send(() => new Promise(resolve => { finish = resolve; }));
+  cache.observe([], true);
+  const fresh = cache.prompt('reused');
+  assert.equal(fresh.getSnapshot().text, '');
+  assert.equal(fresh.getSnapshot().unconfirmed, false);
+  const before = fresh.getSnapshot();
+  finish(true);
+  assert.equal(await sending, false);
+  assert.equal(fresh.getSnapshot(), before);
+  assert.equal(fresh.bindModule('speech', ['text']).draft.editTextIfRevision('New lifetime', 0), true);
+  assert.equal(new DraftCache(storage).prompt('reused').getSnapshot().text, 'New lifetime');
+  assert.equal(old.getSnapshot().retired, true);
+});
+
 test('choice responses preserve the cached prompt and never project its schema', async () => {
   const session = new DraftCache().session('A');
   let projects = 0;
