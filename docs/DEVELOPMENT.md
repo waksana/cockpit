@@ -181,6 +181,13 @@ retained drafts and errors outside the collapsed card. `streaming` / `idle-queue
 exercise folding without a question; Stop from the folded header restores ordinary
 input when no execution, queue or decision remains. Empty idle input has no header,
 including during its short-lived send. Include short-height and narrow-pane views.
+Use the existing hold/failure controls with `all` to review local-send following:
+scroll upward while a button or keyboard submission waits, then release it. A
+successful ACK resumes following; a failed send leaves the reading position alone.
+Scroll upward again after success and append a synthetic remote message to confirm
+that reading remains under user control. The mounted component regressions also
+exercise the public module captured-send path and ACK-before-DOM ordering without
+requiring a microphone, an external provider or a resident preview.
 Use `input-states` and its `输入状态` selector to transition between idle, execution,
 short/long questions, plans, tool confirmations and disabled input without changing
 the session, draft or mounted editor. Compare the same multiline draft before and

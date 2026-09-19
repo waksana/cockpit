@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { acknowledgeInView } from '../lib/draft';
+import { observeLocalSubmissions } from '../lib/localSubmission';
+import { SessionDraft } from '../lib/textDraft';
 import type { ChatSession } from '../net/types';
 import type { NativeChatEvent, NativeChatRead } from '@cockpit/protocol';
 import { NativeWindow } from '../net/nativeWindow';
@@ -579,32 +580,36 @@ test('geometry and programmatic bottom events cannot enable follow, but user ret
   assert.equal(clamped.notices.follows, 0);
 });
 
-test('acknowledgeInView does not follow when a pending send resolves after the reader drags', async () => {
+test('local ACK follows despite reading during send; later DOM follows until a new gesture', async t => {
   const h = fixture();
   let resolve!: (sent: boolean) => void;
   const post = new Promise<boolean>((done) => { resolve = done; });
-  let accepted = 0;
-  const callbacks = {
-    scrollRevision: () => h.scroll.revision,
-    onAccepted: () => { accepted++; h.scroll.follow(); },
-  };
-  const result = acknowledgeInView({ active: true }, () => post, callbacks);
+  const draft = new SessionDraft('scroll-submission');
+  draft.edit('Local message');
+  t.after(observeLocalSubmissions(draft.sessionId, () => h.scroll.follow()));
+  const result = draft.send(() => post);
   h.scroll.hold(true);
   readAt(h, h.view.bottom - 30);
   h.scroll.hold(false);
   h.scroll.settle();
   resolve(true);
   assert.equal(await result, true);
-  assert.equal(accepted, 0);
-  assert.equal(h.notices.follows, 0);
-  assert.equal(h.scroll.following, false);
-  assert.equal(h.frames.pending.size, 0);
-  assert.deepEqual(h.view.writes, []);
-  assert.equal(await acknowledgeInView({ active: true }, async () => true, callbacks), true);
   h.frames.flush();
-  assert.equal(accepted, 1, 'an unchanged view still follows its own accepted send');
+  assert.equal(h.notices.follows, 1);
   assert.equal(h.scroll.following, true);
   assert.deepEqual(h.view.writes, [700]);
+  h.view.rows.push({ id: 'local-message', height: 100 });
+  h.view.viewport -= 50;
+  h.scroll.changed();
+  h.frames.flush();
+  assert.equal(h.view.top, h.view.bottom, 'DOM append and input resize can arrive after the ACK frame');
+  readAt(h, 225);
+  h.view.rows.push({ id: 'remote-message', height: 100 });
+  h.scroll.changed();
+  h.frames.flush();
+  assert.equal(h.view.top, 225);
+  assert.equal(h.scroll.following, false);
+  assert.equal(h.notices.follows, 1, 'neither remote append nor later queue execution forces follow');
 });
 
 test('touch and subsequent momentum suppress corrections, including an old queued frame', () => {

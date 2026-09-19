@@ -4,6 +4,7 @@ import type { DraftSchemaHandle, DraftSchemaRegistration, DraftSendBlockReason, 
 import { DraftCache } from './draftSelection';
 import { ModuleRuntime } from './moduleRuntime';
 import type { NativeDraftRequest } from './draft';
+import { observeLocalSubmissions } from './localSubmission';
 import { appendFixture, fixtureItem, fixtureSchema, memoryDraftStorage, type FixtureData } from '../test/draftFixture';
 
 async function fixture(t: TestContext, options: {
@@ -13,6 +14,8 @@ async function fixture(t: TestContext, options: {
 } = {}) {
   const memory = memoryDraftStorage(), cache = new DraftCache(memory.storage);
   const source = cache.prompt('A'), requests: NativeDraftRequest[] = [];
+  let accepted = 0;
+  t.after(observeLocalSubmissions(source.sessionId, () => { accepted++; }));
   const contexts: ModuleFrontendContext[] = [];
   let handle: DraftSchemaHandle<FixtureData> | undefined;
   let reason: DraftSendBlockReason | undefined;
@@ -41,6 +44,7 @@ async function fixture(t: TestContext, options: {
   const context = contexts[0];
   const draft = context.state.bindDraft(source.reference);
   return { ...memory, cache, source, runtime, context, draft, requests, handle,
+    accepted: () => accepted,
     gate: (next?: DraftSendBlockReason) => { reason = next; } };
 }
 
@@ -62,6 +66,7 @@ test('captured send advertises separate permission, freezes the intent and dispa
   assert.equal(intent.send(-1), first);
   await Promise.resolve();
   assert.equal(f.requests.length, 1);
+  assert.equal(f.accepted(), 0, 'dispatch is not yet an acknowledged submission');
   assert.deepEqual(f.requests[0], { intent: 'prompt', body: {
     sessionId: 'A', text: 'Complete transcript', attachments: [fixtureItem('original').value],
   } });
@@ -73,6 +78,7 @@ test('captured send advertises separate permission, freezes the intent and dispa
   assert.equal(field.getSnapshot().items.length, 0);
   assert.equal(intent.send(revision), first);
   assert.equal(f.requests.length, 1);
+  assert.equal(f.accepted(), 1, 'captured sends notify the same local view exactly once');
 });
 
 test('text write capability alone never authorizes send; send-only permission does not authorize text edits', async t => {
@@ -97,6 +103,7 @@ for (const change of ['manual', 'manual-ABA', 'other-module', 'revision-mismatch
     const result = await intent.send(change === 'revision-mismatch' ? revision : f.draft.getSnapshot().revision);
     assert.deepEqual(result, { status: 'blocked', reason: change === 'revision-mismatch' ? 'revision-mismatch' : 'draft-changed' });
     assert.equal(f.requests.length, 0);
+    assert.equal(f.accepted(), 0, 'blocked or cancelled captured sends never notify the view');
     assert.equal(f.source.getSnapshot().pending, false);
     assert.equal(f.source.getSnapshot().unconfirmed, false);
   });
@@ -154,6 +161,7 @@ for (const gate of ['peer-blocked', 'pending', 'unconfirmed', 'read-only', 'unav
     assert.equal(intent.send(revision), first);
     assert.equal(f.requests.length, 0);
     if (pending) { finish(false); await pending; }
+    assert.equal(f.accepted(), 0, 'blocked or cancelled captured sends never notify the view');
   });
 }
 
@@ -224,6 +232,7 @@ for (const outcome of ['false', 'throw', 'unknown', 'schema-ack', 'text-settleme
     if (outcome === 'module-stop' || outcome === 'schema-stop') f.runtime.stop();
     if (outcome !== 'throw' && outcome !== 'unknown') finish(outcome !== 'false');
     const result = await first;
+    assert.equal(f.accepted(), ['false', 'throw', 'unknown'].includes(outcome) ? 0 : 1);
     assert.deepEqual(result, outcome === 'module-stop' ? { status: 'acknowledged' } : {
       status: 'unconfirmed', reason: ['schema-ack', 'text-settlement', 'schema-stop'].includes(outcome) ? 'settlement-failed' : 'native-unconfirmed',
     });

@@ -9,7 +9,8 @@ import { Composer, ComposerNotices } from './Composer';
 import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
 import type { ChatMessage, ChatSession, ExitPlanModeAction } from '../net/types';
-import { acknowledgeInView, type NativeDraftRequest } from '../lib/draft';
+import type { NativeDraftRequest } from '../lib/draft';
+import { observeLocalSubmissions } from '../lib/localSubmission';
 import { getDraftSession } from '../lib/draftSelection';
 import type { SessionDraft } from '../lib/textDraft';
 import { observeThreadScroll, READING_ACTIVITY_EVENT, type ThreadScroll } from './threadScroll';
@@ -365,7 +366,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   useLayoutEffect(() => {
     canAct.current = authoritative && !readOnly;
     return () => { canAct.current = false; };
-  }, [authoritative, readOnly]);
+  }, [session.sessionId, authoritative, readOnly]);
   const { pending: actionPending, hasContent } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const executionLabel = session.cancelling ? '正在停止…' : session.compacting ? '正在压缩上下文…'
     : actionPending && !readOnly ? session.ask ? '正在提交回答…' : '正在提交…'
@@ -392,12 +393,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const prependHeld = messages !== session.messages;
   const [hasNewContent, setHasNewContent] = useState(false);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
-  const actionScopeRef = useRef({ active: false });
-  useLayoutEffect(() => {
-    const scope = { active: true };
-    actionScopeRef.current = scope;
-    return () => { scope.active = false; };
-  }, [session.sessionId, draft]);
   const previousMessages = useRef<ChatMessage[]>([]);
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -415,6 +410,12 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
       scrollOwnerRef.current = null;
     };
   }, [session.sessionId]);
+
+  useLayoutEffect(() => {
+    const owner = scrollOwnerRef.current;
+    if (!owner || readOnly) return;
+    return observeLocalSubmissions(session.sessionId, () => owner.follow());
+  }, [session.sessionId, readOnly]);
 
   // Every mounted viewport owns its measured fill and near-head prefetch. A
   // retained native page proves neither two screens nor this viewport's size.
@@ -441,8 +442,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
 
   const jumpToBottom = useCallback(() => { scrollOwnerRef.current?.follow(); }, []);
 
-  // Sending from THIS device: force-follow the bottom through the user-message
-  // append + the stop button appearing (which shrinks the scroll viewport).
   // A composer send answers a pending ask (respondAsk), submits feedback on
   // a pending plan (planSupersede), or otherwise sends a normal prompt.
   const ask = session.ask;
@@ -457,20 +456,13 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   }, [session.sessionId, ask?.requestId, planRequest?.requestId, session.elicitation?.requestId, hasInputHeader]);
   const executionControlRef = useRemovedControlFocus(session.sessionId, inputCardRef);
   const operation = draft.reference.purpose.kind;
-  const runInView = useCallback((send: () => Promise<boolean>): Promise<boolean> => (
-    acknowledgeInView(actionScopeRef.current, send, {
-      scrollRevision: () => scrollOwnerRef.current?.revision ?? 0,
-      onAccepted: () => { scrollOwnerRef.current?.follow(); },
-    })
-  ), []);
-
   const runAction = useCallback((target: SessionDraft, send: () => Promise<boolean> | undefined): Promise<boolean> => (
-    runInView(() => target.runAction(send, () => canAct.current && drafts.isLive(target)))
-  ), [drafts, runInView]);
+    target.runAction(send, () => canAct.current && drafts.isLive(target))
+  ), [drafts]);
 
-  const handleSend = useCallback((): Promise<boolean> => runInView(() => draft.send(
+  const handleSend = useCallback((): Promise<boolean> => draft.send(
     request => onSend?.(request) ?? Promise.resolve(false), () => canAct.current && drafts.isCurrent(draft),
-  )), [draft, drafts, onSend, runInView]);
+  ), [draft, drafts, onSend]);
 
   const handleChoice = useCallback((choice: string): Promise<boolean> => {
     if (!ask || !askDraft) return Promise.resolve(false);

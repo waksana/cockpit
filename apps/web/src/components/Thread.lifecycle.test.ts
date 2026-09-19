@@ -804,6 +804,167 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     return { id: row.dataset.messageId, offset: row.getBoundingClientRect().top };
   };
 
+  await t.test('all local submission surfaces follow once on ACK, including captured module sends', async subtest => {
+    let activation!: ModuleFrontendContext;
+    let finish!: (ok: boolean) => void;
+    let requests = 0;
+    const send = async () => {
+      requests++;
+      return new Promise<boolean>(resolve => { finish = resolve; });
+    };
+    const digest = 'd'.repeat(64);
+    const runtime = new ModuleRuntime({
+      pageUrl: 'https://fixture.invalid',
+      fetch: async () => Response.json({ modules: [{
+        id: 'capture-fixture', name: 'Capture fixture', version: '1.0.0', digest, config: {}, styles: [],
+        apiBase: `/_modules/capture-fixture/${digest}/api`, entry: `/_modules/assets/capture-fixture/${digest}/entry.js`,
+      }], errors: [] }),
+      load: async () => ({ activate: (context: ModuleFrontendContext) => {
+        activation = context;
+        return { apiVersion: 2, writes: ['text'], sends: ['draft'] };
+      } }),
+      draftSubmission: { check: () => undefined, send },
+      report: assert.fail,
+    });
+    await runtime.start();
+    subtest.after(async () => { await act(() => root.render(null)); runtime.stop(); });
+    const show = async (value: ChatSession | null, readOnly = false) => {
+      await act(() => root.render(value ? createElement(ModuleRuntimeProvider, { runtime,
+        children: createElement(Thread, { session: value, onSend: send, onLoadMore: () => {},
+          onRespondAsk: send, onRespondPlan: send, onRespondElicitation: send, readOnly }),
+      }) : null));
+      await flush();
+    };
+    const dispatch = async (selector: string, type: string, properties: Record<string, unknown> = {}) => {
+      const target = container.querySelector(selector);
+      assert.ok(target, selector);
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'target', { value: target });
+      for (const [key, value] of Object.entries(properties)) Object.defineProperty(event, key, { value });
+      await act(() => container.dispatchEvent(event));
+    };
+    for (const surface of ['button', 'queued-button', 'enter', 'ctrl-enter', 'meta-enter', 'module',
+      'ask-choice', 'ask-enter', 'ask-module', 'plan-choice', 'plan-enter', 'plan-module', 'elicitation'] as const) {
+      let value: ChatSession = { ...session(`local-${surface}`), hasMore: false,
+        ...(surface === 'queued-button' ? { status: 'running' as const, queue: [{ id: 'existing', text: 'Already queued' }] } : {}),
+        ...(surface.startsWith('ask') ? { ask: { requestId: 'ask', question: 'Question', choices: ['Choice'], allowFreeform: true } } : {}),
+        ...(surface.startsWith('plan') ? { planRequest: { requestId: 'plan', summary: 'Plan', actions: ['interactive'] } } : {}),
+        ...(surface === 'elicitation' ? { elicitation: { requestId: 'tool', message: 'Tool confirmation' } } : {}),
+      };
+      await show(value);
+      const source = getDraftSession(value.sessionId).current(value);
+      await act(() => source.edit('Synthetic local submission'));
+      await readAt(325);
+      let captured: Promise<unknown> | undefined;
+      const before = requests;
+      if (surface.includes('module')) {
+        const bound = activation.state.bindDraft(source.reference);
+        const intent = bound.captureSend();
+        await act(() => { captured = intent.send(bound.getSnapshot().revision); });
+      } else if (surface.endsWith('choice') || surface === 'elicitation') {
+        await dispatch('.chat-ask-choice', 'click');
+      } else if (surface.endsWith('button')) await dispatch('.send', 'click');
+      else {
+        await dispatch('.chat-input-message', 'focusin');
+        await dispatch('.chat-input-message', 'keydown', {
+          key: 'Enter', ctrlKey: surface === 'ctrl-enter', metaKey: surface === 'meta-enter',
+        });
+      }
+      assert.equal(requests, before + 1, surface);
+      await readAt(125);
+      assert.equal(viewport().scrollTop, 125, 'a pending request does not force follow');
+      // Native decision removal can precede the HTTP acknowledgement.
+      if (surface.startsWith('ask') || surface.startsWith('plan') || surface === 'elicitation') {
+        value = { ...value, ask: null, planRequest: null, elicitation: null };
+        await show(value);
+      }
+      await act(async () => { finish(true); await captured; });
+      await flush();
+      assert.equal(viewport().scrollTop, bottom(), `${surface}: ACK overrides pre-ACK reading`);
+      assert.equal(value.messages.length, 12, 'ACK creates no optimistic chat message');
+      value = { ...value, messages: [...value.messages, {
+        id: 'delayed-local', role: 'user', content: 'Delayed native append', timestamp: 30,
+      }] };
+      await show(value);
+      assert.equal(viewport().scrollTop, bottom(), 'the native DOM append may follow the ACK frame');
+      viewport().clientHeight = 250;
+      await act(() => { for (const resize of resizes) resize(); });
+      await flush();
+      assert.equal(viewport().scrollTop, bottom(), 'later input-card layout changes keep following');
+      await readAt(225);
+      value = { ...value, status: 'running', queue: [], messages: [...value.messages, {
+        id: 'remote-user', role: 'user', content: 'Remote user or queued execution', timestamp: 40,
+      }, { id: 'remote-agent', role: 'assistant', content: 'Agent streaming', timestamp: 41, streaming: true }] };
+      await show(value);
+      assert.equal(viewport().scrollTop, 225, 'post-ACK gestures win over remote messages and queue execution');
+      await show(null);
+    }
+    for (const change of ['switch', 'return', 'unmount', 'read-only', 'failed', 'unknown'] as const) {
+      const value = { ...session(`late-module-${change}`), hasMore: false };
+      await show(value);
+      const source = getSessionDraft(value.sessionId);
+      await act(() => source.edit('Original target'));
+      const bound = activation.state.bindDraft(source.reference);
+      const intent = bound.captureSend();
+      let pending!: Promise<unknown>;
+      await act(() => { pending = intent.send(bound.getSnapshot().revision); });
+      await readAt(125);
+      if (change === 'unmount') await show(null);
+      if (change === 'read-only') await show(value, true);
+      if (change === 'switch' || change === 'return') {
+        await show({ ...session('unrelated-local-view'), hasMore: false });
+        if (change === 'return') await show(value);
+        await readAt(225);
+      }
+      await act(async () => { finish(change === 'unknown' ? undefined as unknown as boolean : change !== 'failed'); await pending; });
+      await flush();
+      if (change !== 'unmount') {
+        assert.equal(viewport().scrollTop, change === 'switch' || change === 'return' ? 225 : 125, change);
+      }
+      await show(null);
+    }
+    const value = { ...session('cancelled-module'), hasMore: false };
+    await show(value);
+    const source = getSessionDraft(value.sessionId);
+    const bound = activation.state.bindDraft(source.reference);
+    await readAt(225);
+    await act(() => bound.editText('Dictation only'));
+    await flush();
+    assert.equal(viewport().scrollTop, 225);
+    const intent = bound.captureSend();
+    intent.cancel();
+    const before = requests;
+    await act(async () => {
+      assert.deepEqual(await intent.send(bound.getSnapshot().revision), { status: 'blocked', reason: 'cancelled' });
+    });
+    await flush();
+    assert.equal(requests, before);
+    assert.equal(viewport().scrollTop, 225);
+    const blocked = bound.captureSend();
+    let release!: () => void;
+    await act(() => { release = bound.block('Synthetic recording'); });
+    await act(async () => {
+      assert.deepEqual(await blocked.send(bound.getSnapshot().revision), { status: 'blocked', reason: 'peer-blocked' });
+      release();
+    });
+    await flush();
+    assert.equal(requests, before);
+    assert.equal(viewport().scrollTop, 225);
+
+    const background = bound.captureSend();
+    const other = { ...session('background-visible'), hasMore: false };
+    await show(other);
+    await readAt(225);
+    let pending!: Promise<unknown>;
+    await act(() => { pending = background.send(bound.getSnapshot().revision); });
+    assert.equal(viewport().scrollTop, 225, 'background dispatch neither navigates nor scrolls the current thread');
+    await show(value);
+    await readAt(125);
+    await act(async () => { finish(true); await pending; });
+    await flush();
+    assert.equal(viewport().scrollTop, 125, 'a view opened after dispatch does not inherit its late ACK');
+  });
+
   await render(a);
   assert.equal(viewport().scrollTop, bottom());
   const mounted = viewport();
