@@ -140,6 +140,7 @@ for (const gate of ['peer-blocked', 'pending', 'unconfirmed', 'read-only', 'unav
     if (gate === 'pending') pending = f.source.runAction(() => new Promise(resolve => { finish = resolve; }));
     if (gate === 'unconfirmed') await f.source.runAction(async () => false);
     const intent = f.draft.captureSend();
+    const revision = f.draft.getSnapshot().revision;
     let release: (() => void) | undefined;
     if (gate === 'peer-blocked') release = f.source.bindModule('peer', ['text']).draft.block('Peer work');
     if (gate === 'read-only') f.runtime.prepareDraft(f.source, true);
@@ -147,10 +148,10 @@ for (const gate of ['peer-blocked', 'pending', 'unconfirmed', 'read-only', 'unav
     if (gate === 'retired') f.cache.retire('A');
     if (gate === 'cancelled') intent.cancel();
     if (gate === 'revoked') f.runtime.stop();
-    const first = intent.send(f.draft.getSnapshot().revision);
+    const first = intent.send(revision);
     assert.deepEqual(await first, { status: 'blocked', reason: gate });
     release?.(); f.gate(); f.runtime.prepareDraft(f.source, false);
-    assert.equal(intent.send(f.draft.getSnapshot().revision), first);
+    assert.equal(intent.send(revision), first);
     assert.equal(f.requests.length, 0);
     if (pending) { finish(false); await pending; }
   });
