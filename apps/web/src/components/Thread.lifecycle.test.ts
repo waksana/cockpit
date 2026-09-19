@@ -1760,8 +1760,18 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await act(() => root.render(createElement(Composer, { runtime, draft, editorRef, onSend: async () => assert.fail('speech never sends') })));
     const editor = container.querySelector('.chat-input-message')!;
     assert.deepEqual(refCalls, [editor]);
-    const row = editor.parentNode!;
-    assert.deepEqual(row.childNodes.map(node => node.tagName), ['BUTTON', 'TEXTAREA', 'BUTTON', 'BUTTON']);
+    const row = container.querySelector('.chat-input')!;
+    const inputControls = (node: HostNode): HostNode[] => node.childNodes.flatMap(child => [
+      ...(['BUTTON', 'TEXTAREA'].includes(child.tagName) ? [child] : []), ...inputControls(child),
+    ]);
+    const file = row.querySelector('[aria-label="File fixture"]')!;
+    const microphone = row.querySelector('.cockpit-speech-mic')!;
+    const send = row.querySelector('.send')!;
+    assert.deepEqual(inputControls(row), [file, editor, microphone, send],
+      'input middleware may wrap the editor without changing control order or duplicating controls');
+    assert.equal(file.parentNode, row);
+    assert.equal(microphone.parentNode, row);
+    assert.equal(send.parentNode, row);
     const click = async (selector: string) => {
       const target = container.querySelector(selector);
       assert.ok(target, selector);
