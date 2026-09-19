@@ -179,11 +179,20 @@ test('native store authority retires cached drafts on confirmed absence but not 
   assert.equal(session.prompt.getSnapshot().retired, false, 'open alone is not a complete snapshot');
   h.snapshot(['a'], { sessions: [{ ...meta('a'), ask: { requestId: 'decision', question: 'Question', choices: [] } }] });
   const answer = session.candidate({ kind: 'ask', requestId: 'decision' });
+  const captured = answer.getSnapshot();
+  assert.deepEqual(captured.askContext, { question: 'Question', choices: [] });
+  h.source.emit({ type: 'session/patch', sessionId: 'a',
+    ask: { requestId: 'decision', question: 'Updated question', choices: ['Choice'] } });
+  assert.deepEqual(answer.getSnapshot().askContext, { question: 'Updated question', choices: ['Choice'] });
+  assert.deepEqual(captured.askContext, { question: 'Question', choices: [] });
   h.source.drop();
+  assert.equal(answer.getSnapshot().askContext, undefined);
   h.source.open();
+  assert.equal(answer.getSnapshot().askContext, undefined, 'reconnect is not native confirmation');
   assert.equal(answer.getSnapshot().retired, false);
   h.snapshot(['a'], { sessions: [{ ...meta('a'), loaded: false, ask: null }] });
   assert.equal(answer.getSnapshot().retired, false, 'unloaded metadata does not prove decision completion');
+  assert.equal(answer.getSnapshot().askContext, undefined);
   assert.equal(session.prompt.getSnapshot().retired, false);
   h.snapshot([]);
   assert.equal(answer.getSnapshot().retired, true);
