@@ -2,8 +2,9 @@
 
 **Cockpit 0.2.5：模块包/后端 API v1，Web API v2，公共 UI v1，菜单能力 menuVersion 1。**
 本地可信包、主进程 import、冷加载、模块 payload 事件及独立菜单注册已实现。
-当前开发源码另提供 `chatWindowVersion: 1`、`composerInputVersion: 1` 与 `draftLifecycleVersion: 1`：
-只读当前聊天窗口、真实受控 textarea 的组件增强及草稿永久退休/原子修订写入。它们不是历史 0.2.4 Release 的能力；
+当前开发源码另提供 `chatWindowVersion: 1`、`composerInputVersion: 1`、
+`draftLifecycleVersion: 1` 与 `draftSubmissionVersion: 1`：
+只读当前聊天窗口、真实受控 textarea 的组件增强、草稿永久退休/原子修订写入及明确授权的一次性原稿提交。它们不是历史 0.2.4 Release 的能力；
 消费者须独立检查能力并使用配套源码导出的类型，不能仅凭 package 版本判断。
 **0.2.5 尚待发行**，本文不表示发布已完成。语音配套源码为 **Cockpit Speech 0.1.1**，
 精确 SDK 提交由语音仓库 `tooling/host-sdk.json` 记录，必须先导出该干净提交再构建。
@@ -178,6 +179,7 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 | 模块 state/service | `context.state.register({ id, create, dispose })`，返回 `handle.get()` | 创建并取得模块自己的服务；其数据来源、查询与方法由模块实现，不自动注入聊天数据 |
 | 草稿读取与编辑 | `context.state.bindDraft(reference)`，草稿 `getSnapshot()` / `subscribe()`、`editText(text)`、`block(reason)` | 绑定具体草稿生命周期；文字编辑需声明 `writes: ['text']`，不暴露通用原生提交/ACK/reset |
 | 后台草稿完成 | 检查 `draftLifecycleVersion: 1`；`editTextIfRevision(text, revision)`、快照 `retired` | 原子校验修订、pending/unconfirmed/所有租约；永久退休可订阅，不把导航、隐藏、断线或 unload 当成删除 |
+| 一次性原稿提交 | 检查 `draftSubmissionVersion: 1`；声明 `sends: ['draft']`，`captureSend().send(expectedRevision)` | 明确用户同意时捕获原稿及字段变更检查点；保留原生投影与 ACK，不能指定任意目标或 payload |
 | 草稿字段扩展 | `context.state.registerDraft(...)`，`forDraft(reference)`、字段 `getSnapshot()` / `subscribe()` / `update()` | 模块拥有 schema、校验、内容判定、投影、ACK 和可选持久化；不能修改别的模块字段 |
 | 菜单声明 | 返回 `menus`：`getState(target)`、可选 `subscribe`、`onSelect(target, { signal })` | 全局与指定 session 命令；本体保留原生项、渲染及焦点，不提供任意页面/router 注册 |
 | 组件增强 | 返回 `components`：按 boundary 提供 `wrap(Base)` | 只增强公开的真实组件，保留 props/children/ref；具体边界见 [6.2](#62-component-middleware) |
@@ -318,6 +320,7 @@ Web 模块集成有四种不同机制，不能相互伪装：
 | --- | --- |
 | apiVersion | 必须为 2；旧 Web 声明明确拒绝 |
 | writes | 当前仅声明基础 text 编辑；模块字段经自己注册的 schema 修改，不是安全隔离 |
+| sends | 独立声明 `['draft']` 才能捕获一次性原稿提交；`writes: ['text']` 本身没有发送权限 |
 | components | `{ id, boundary, order?, wrap }`，wrap 接收基础组件并返回增强组件 |
 | menus | `ModuleMenuRegistration[]`，声明已有全局/会话菜单的动作，见 [6.5](#65-菜单注册) |
 | markdown | 已解析 link/image 节点的排他渲染规则；不处理附件 |
@@ -464,6 +467,41 @@ unconfirmed 或任何 block 返回 `false`，不修改文字/修订/存储；退
 会话永久删除时清理该 prompt 的保存记录（存储失败会报告），退休 prompt 的晚到
 ACK 不再写存储，避免污染同 session ID 的新 lifetime；decision 的既有独立 occurrence
 存储与在途结算规则不变。
+
+#### 明确授权的一次性原稿提交
+
+消费者必须独立检查 `context.draftSubmissionVersion === 1`，并在 frontend 返回
+`sends: ['draft']`。在用户明确确认发送的时刻调用捕获草稿的 `captureSend()`，
+而不是等异步工作结束才重新捕获同意。返回的 `CapturedDraftSend` 不接受 session ID、
+request ID、附件或任意 payload。文字写入权限与发送权限互相独立。
+
+模块可继续使用自身 `editText` 做临时文字投影，维护自己的预期修订；完整收尾后先
+释放自己的租约，再用 `editTextIfRevision` 写最终文字，然后调用
+`intent.send(expectedRevision)`。自捕获以来的任何其他写入者文字修改或 schema
+新增、移除、更新、generation 变化都使同意失效，包括先改后恢复的 ABA；自身
+流式文字更新与纯 block 释放不改变字段检查点。宿主在 pending 发布后的最终派发
+边界再次检查，不会跳过发生变化的 schema 而偷偷发送剩余字段。
+
+首个 `send()` 消耗该 intent（包括 blocked）；重复调用返回**同一 Promise/结果**，
+不会再派发。`cancel()` 只在派发前生效，不能撤销已在途的原生请求。返回值：
+
+| status | 含义与处理 |
+| --- | --- |
+| `acknowledged` | 原生明确确认且本次文字/schema ACK 结算完成 |
+| `blocked` | 确定没有派发；`reason` 是修订/字段变更、pending、unconfirmed、租约、退休、撤销、只读、连接/原生请求门槛或投影/持久化失败等安全代码；保留现场交给用户 |
+| `unconfirmed` | 可能已发送，或原生已确认但本地 ACK 结算失败；`reason` 为 `native-unconfirmed` 或 `settlement-failed`；不得自动重新捕获同意或盲目重发 |
+
+派发走同一个 `SessionDraft` 投影、原生请求构造、pending token 和 schema ACK 事务。
+prompt 始终发送到原 session 的普通 prompt/enqueue，即使后来出现 ask，也不会回答、
+关闭或改写该 ask；ask 只回答原来仍 live 且允许自由文字的 request（`wasFreeform: true`）；
+plan 只提交原请求的 feedback；elicitation 没有文字路由。退休决策不会转投 prompt。
+检查原 session 的原生状态与连接完整快照，不依赖当前可见 session、页面是否隐藏或
+已卸载的 Composer 回调。只读原稿、断线、过期决策、未确认发送和其他模块租约仍阻止派发。
+模块在请求中途卸载不表示“未发送”，既有原生回执按原 token 保守结算。
+
+例如语音模块自行区分正常主动松手与按钮/中断/取消入口；宿主不推测手势、不自动录音、
+拼接语音或发送静音结果。这些业务规则由配套模块维护。普通手动发送按钮继续由用户管理，
+不能用这个能力自动重试未知回执。
 
 message 的 bodyRef 指向实际正文或当前 ask 的问题，不含 byline、滚动外框或选择按钮。
 ask 使用宿主当前 AskRequest.requestId，不冒充 SDK requestId。

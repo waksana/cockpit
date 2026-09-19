@@ -5,11 +5,14 @@ import type {
   HostSnapshot, ChatWindowSnapshot, MarkdownNode, MarkdownRenderer, ModuleAsset, ModuleComponentProps,
   DraftSchemaRegistration, ModuleEventPayload, ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
   ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget,
+  DraftSendBlockReason,
 } from '@cockpit/module-api';
 import { resolveDraft, type SessionDraft } from './textDraft';
 import { RegisteredDraftSchema, type RuntimeDraftSchema } from './draftSchemas';
 import { describeReason, reportUxError } from './errorReporter';
 import { EMPTY_CHAT_WINDOW } from './moduleChatWindow';
+import { useCockpit } from '../net/store';
+import type { NativeDraftRequest } from './draft';
 
 interface RuntimeOptions {
   baseUrl?: string;
@@ -19,6 +22,10 @@ interface RuntimeOptions {
   style?: (url: string) => () => void;
   report?: (error: unknown) => void;
   activationTimeoutMs?: number;
+  draftSubmission?: {
+    check(draft: SessionDraft): DraftSendBlockReason | undefined;
+    send(request: NativeDraftRequest): Promise<boolean>;
+  };
 }
 export interface LoadedModule {
   readonly asset: ModuleAsset;
@@ -108,10 +115,12 @@ function claimId(ids: Set<string>, id: unknown): void {
 }
 function validateFrontend(input: unknown, ids: Set<string>): ModuleFrontend {
   if (!record(input) || input.apiVersion !== 2) throw new Error('Module frontend API v2 is required');
-  const allowed = new Set(['apiVersion', 'writes', 'components', 'markdown', 'menus', 'dispose']);
+  const allowed = new Set(['apiVersion', 'writes', 'sends', 'components', 'markdown', 'menus', 'dispose']);
   for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`Unsupported module frontend field: ${key}`);
   if (input.writes !== undefined && (!Array.isArray(input.writes)
     || input.writes.some(value => value !== 'text'))) throw new Error('Invalid module writes declaration');
+  if (input.sends !== undefined && (!Array.isArray(input.sends)
+    || input.sends.some(value => value !== 'draft'))) throw new Error('Invalid module sends declaration');
   for (const key of ['components', 'markdown', 'menus'] as const) {
     const entries = input[key];
     if (entries === undefined) continue;
@@ -140,6 +149,7 @@ function validateFrontend(input: unknown, ids: Set<string>): ModuleFrontend {
   return Object.freeze({
     ...input,
     ...(input.writes ? { writes: Object.freeze([...input.writes as string[]]) } : {}),
+    ...(input.sends ? { sends: Object.freeze([...input.sends as string[]]) } : {}),
     components: Object.freeze((input.components as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
     markdown: Object.freeze((input.markdown as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
     menus: Object.freeze((input.menus as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
@@ -187,6 +197,7 @@ export class ModuleRuntime {
   private readonly reports = new Set<string>();
   private readonly componentCache = new Map<object, { boundary: Boundary; entries: readonly object[]; component: unknown }>();
   private readonly knownDrafts = new Set<SessionDraft>();
+  private readonly readOnlySessions = new Map<string, boolean>();
   private menuRevision = 0;
   private readonly menuListeners = new Set<() => void>();
   private readonly menuFlights = new Map<ModuleMenuRegistration, Set<string>>();
@@ -322,7 +333,7 @@ export class ModuleRuntime {
     };
     parentSignal.addEventListener('abort', stop, { once: true });
     const context: ModuleFrontendContext = {
-      apiVersion: 2, uiVersion: 1, menuVersion: 1, chatWindowVersion: 1, composerInputVersion: 1, draftLifecycleVersion: 1,
+      apiVersion: 2, uiVersion: 1, menuVersion: 1, chatWindowVersion: 1, composerInputVersion: 1, draftLifecycleVersion: 1, draftSubmissionVersion: 1,
       moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
       config: asset.config, signal: controller.signal, report: this.report,
       state: Object.freeze({
@@ -376,7 +387,15 @@ export class ModuleRuntime {
           let binding = bindings.get(source);
           if (!binding) {
             binding = source.bindModule(owner, frontend.writes ?? [], this.report,
-              () => schemas.some(schema => schema.applies(source) && schema.ready(source)));
+              () => schemas.some(schema => schema.applies(source) && schema.ready(source)),
+              frontend.sends?.includes('draft') ? {
+                check: () => {
+                  if (this.readOnlySessions.get(source.sessionId)) return 'read-only';
+                  if (!this.isDraftPrepared(source) || !this.knownDrafts.has(source) || !this.options.draftSubmission) return 'unavailable';
+                  return this.options.draftSubmission.check(source);
+                },
+                send: request => this.options.draftSubmission!.send(request),
+              } : undefined);
             bindings.set(source, binding);
           }
           return binding.draft;
@@ -549,7 +568,8 @@ export class ModuleRuntime {
   isDraftPrepared(draft: SessionDraft): boolean {
     return !draft.isRetired() && this.snapshot.every(module => module.schemas.every(schema => schema.ready(draft)));
   }
-  prepareDraft(draft: SessionDraft): void {
+  prepareDraft(draft: SessionDraft, readOnly?: boolean): void {
+    if (readOnly !== undefined) this.readOnlySessions.set(draft.sessionId, readOnly);
     if (draft.isRetired()) return;
     this.knownDrafts.add(draft);
     for (const module of [...this.snapshot]) {
@@ -608,4 +628,9 @@ export class ModuleRuntime {
 }
 
 // Importing/rendering components never starts network activity (including Chat Lab).
-export const moduleRuntime = new ModuleRuntime();
+export const moduleRuntime = new ModuleRuntime({
+  draftSubmission: {
+    check: draft => useCockpit.getState().canSendDraft(draft.reference),
+    send: request => useCockpit.getState().sendDraft(request),
+  },
+});
