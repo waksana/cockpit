@@ -16,7 +16,7 @@ import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
 import { readMessageHistory } from './messageHistory';
 import { describeReason, reportUxError } from '../lib/errorReporter';
 import type { NativeDraftRequest } from '../lib/draft';
-import { observeDraftDecisions } from '../lib/draftSelection';
+import { observeDraftDecisions, retireDraftSession } from '../lib/draftSelection';
 import type { ModuleEventPayload } from '@cockpit/module-api';
 
 // Background tabs release their native chat read.
@@ -180,6 +180,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
   const releaseSessions = (ids: readonly string[]) => {
     let revisions: CockpitState['resourceRevisions'] | undefined;
     for (const id of ids) {
+      retireDraftSession(id);
       metaRequests.get(id)?.controller.abort();
       metaRequests.delete(id);
       cancelHistory(id);

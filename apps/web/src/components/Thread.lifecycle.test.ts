@@ -198,13 +198,14 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('Lifecycle fixture must not access a backend'); });
   const previousConnection = useCockpit.getState().connState;
   const previousSnapshotReady = useCockpit.getState().snapshotReady;
+  const previousSessions = useCockpit.getState().sessions;
   useCockpit.setState({ connState: 'open', snapshotReady: true });
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container as unknown as HTMLElement);
   t.after(async () => {
     await act(() => root.unmount());
-    useCockpit.setState({ connState: previousConnection, snapshotReady: previousSnapshotReady });
+    useCockpit.setState({ connState: previousConnection, snapshotReady: previousSnapshotReady, sessions: previousSessions });
     for (const restore of restoreGlobals) restore();
   });
   await t.test('module decorations receive exact speech and host ask identities, and failed modules release their resources', async subtest => {
@@ -867,7 +868,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   const beforeFill = prefetches;
   await render(short);
   assert.equal(prefetches, beforeFill, 'an open transport cannot consume a fill before its snapshot');
-  await act(() => useCockpit.setState({ snapshotReady: true }));
+  await act(() => useCockpit.setState({ snapshotReady: true, sessions: [short] }));
   await flush();
   assert.equal(prefetches, beforeFill + 1, 'a retained short page is not a completed initial viewport');
   assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), null,

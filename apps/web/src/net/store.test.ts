@@ -4,6 +4,7 @@ import { test, type TestContext } from 'node:test';
 import type { IntentBody, IntentName, IntentResult } from '@cockpit/protocol';
 import { CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { dismissUxError, getUxErrors } from '../lib/errorReporter';
+import { DraftCache, getDraftSession } from '../lib/draftSelection';
 import { IntentHttpError, isSessionUnloadedError, SessionUnloadedError } from './client';
 import { createCockpitStore } from './store';
 import type { NativeAttachment, ChatMessage, ServerEvent, SessionMeta } from './types';
@@ -47,6 +48,41 @@ function replaceGlobal(t: TestContext, key: string, value: unknown) {
 }
 
 let now = 1_000_000;
+
+test('native store authority retires cached drafts on confirmed absence but not disconnect or unload', t => {
+  const h = setup(t);
+  const cache = new DraftCache();
+  const session = cache.session('a');
+  t.after(useCockpit.subscribe(state => cache.observe(state.sessions, state.snapshotReady && state.connState === 'open')));
+  h.source.open();
+  assert.equal(session.prompt.getSnapshot().retired, false, 'open alone is not a complete snapshot');
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), ask: { requestId: 'decision', question: 'Question', choices: [] } }] });
+  const answer = session.candidate({ kind: 'ask', requestId: 'decision' });
+  h.source.drop();
+  h.source.open();
+  assert.equal(answer.getSnapshot().retired, false);
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), loaded: false, ask: null }] });
+  assert.equal(answer.getSnapshot().retired, false, 'unloaded metadata does not prove decision completion');
+  assert.equal(session.prompt.getSnapshot().retired, false);
+  h.snapshot([]);
+  assert.equal(answer.getSnapshot().retired, true);
+  assert.equal(session.prompt.getSnapshot().retired, true);
+  const unseen = cache.session('cached-before-observation');
+  h.snapshot([]);
+  assert.equal(unseen.prompt.getSnapshot().retired, true);
+});
+
+test('explicit native removal retires captured drafts even before the first complete snapshot', t => {
+  const h = setup(t);
+  const session = getDraftSession('explicit-delete-before-snapshot');
+  session.synchronize({ ask: { requestId: 'decision' } });
+  const answer = session.candidate({ kind: 'ask', requestId: 'decision' });
+  h.source.open();
+  assert.equal(useCockpit.getState().snapshotReady, false);
+  h.source.emit({ type: 'session/removed', sessionId: session.prompt.sessionId });
+  assert.equal(session.prompt.getSnapshot().retired, true);
+  assert.equal(answer.getSnapshot().retired, true);
+});
 
 function setup(t: TestContext, store: Store = (useCockpit = createCockpitStore())) {
   if (typeof document === 'undefined') replaceGlobal(t, 'document', Object.assign(new EventTarget(), { visibilityState: 'visible' }));

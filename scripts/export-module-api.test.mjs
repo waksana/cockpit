@@ -22,6 +22,9 @@ test('module API export contains its canonical types and local protocol dependen
   assert.match(frontend, /interface ModuleMenuRegistration/);
   assert.match(frontend, /readonly menuVersion: 1/);
   assert.match(frontend, /readonly composerInputVersion: 1/);
+  assert.match(frontend, /readonly draftLifecycleVersion: 1/);
+  assert.match(frontend, /readonly retired: boolean/);
+  assert.match(frontend, /editTextIfRevision\(text: string, revision: number\): boolean/);
   assert.match(frontend, /composerInput: ComposerInputProps/);
   assert.match(frontend, /readonly chatWindowVersion: 1/);
   assert.doesNotMatch(frontend, /composerActionsVersion/);

@@ -30,7 +30,7 @@ test('base drafts contain only text, generic content/leases and native submissio
   assert.equal(saved(values, 'A').unconfirmed, false);
   assert.deepEqual(saved(values, 'A').__cockpitDraft, { version: 1, purpose: { kind: 'prompt' } });
   assert.deepEqual(createSessionDrafts(storage)('A').getSnapshot(), {
-    text: ' Native text\n', hasContent: true, blocks: [], revision: 0, pending: false, unconfirmed: false,
+    text: ' Native text\n', hasContent: true, blocks: [], revision: 0, pending: false, unconfirmed: false, retired: false,
   });
   assert.equal('attachments' in a.getSnapshot(), false);
   assert.equal('appendAttachments' in a, false);
@@ -90,7 +90,7 @@ test('native ACK clears only the captured text revision and removes an otherwise
   assert.equal(await draft.runAction(async () => assert.fail('Concurrent action')), false);
   finish(true);
   assert.equal(await sending, true);
-  assert.deepEqual(draft.getSnapshot(), { text: '', blocks: [], hasContent: false, revision: 2, pending: false, unconfirmed: false });
+  assert.deepEqual(draft.getSnapshot(), { text: '', blocks: [], hasContent: false, revision: 2, pending: false, unconfirmed: false, retired: false });
   assert.equal(values.has(key('A')), false);
 });
 
@@ -262,4 +262,84 @@ test('browser draft creation has no persistent-storage or generated-device-ident
   assert.deepEqual(reads, [key('browser'), 'cockpit:draft-requests:browser']);
   draft.edit('Tab text');
   assert.equal(await draft.send(async () => true), true);
+});
+
+test('guarded completion atomically checks revision, all leases, pending and unconfirmed without changing ordinary edits', async () => {
+  const { drafts, values } = fixture();
+  const source = drafts('guarded');
+  const { draft } = source.bindModule('speech', ['text']);
+  const other = source.bindModule('other', ['text']);
+  draft.editText('Base');
+  const revision = draft.getSnapshot().revision;
+  const unchanged = () => {
+    const snapshot = draft.getSnapshot(), bytes = values.get(key('guarded'));
+    assert.equal(draft.editTextIfRevision('Completion', revision), false);
+    assert.equal(draft.getSnapshot(), snapshot);
+    assert.equal(values.get(key('guarded')), bytes);
+  };
+  const ownRelease = draft.block('Own work'), otherRelease = other.draft.block('Other work');
+  unchanged();
+  ownRelease();
+  unchanged();
+  otherRelease();
+  let finish!: (value: boolean) => void;
+  const sending = source.runAction(() => new Promise(resolve => { finish = resolve; }));
+  unchanged();
+  finish(false);
+  assert.equal(await sending, false);
+  unchanged();
+  source.dismissNotice();
+  assert.equal(draft.getSnapshot().revision, revision, 'gates do not require a text revision change');
+  assert.equal(draft.editTextIfRevision('Completion', revision), true);
+  assert.equal(saved(values, 'guarded').text, 'Completion');
+  assert.equal(draft.getSnapshot().revision, revision + 1);
+  draft.editText('Base');
+  unchanged();
+  assert.equal(draft.getSnapshot().text, 'Base', 'ABA text cannot authorize the captured revision');
+});
+
+test('guarded completion throws on persistence/read/root failures without a success-shaped memory edit', () => {
+  for (const failure of ['write', 'remove', 'read', 'replaced']) {
+    const { storage, values } = memoryDraftStorage();
+    let fail = false;
+    const source = createSessionDrafts({
+      getItem: name => { if (fail && failure === 'read') throw new Error('Read blocked'); return storage.getItem(name); },
+      setItem: (name, value) => { if (fail && failure === 'write') throw new Error('Write blocked'); storage.setItem(name, value); },
+      removeItem: name => { if (fail && failure === 'remove') throw new Error('Remove blocked'); storage.removeItem(name); },
+    })('failure');
+    const { draft } = source.bindModule('speech', ['text']);
+    draft.editText('Base');
+    const before = draft.getSnapshot();
+    if (failure === 'replaced') values.set(key('failure'), '{"text":"Other","unconfirmed":false}');
+    const bytes = values.get(key('failure'));
+    fail = true;
+    assert.throws(() => draft.editTextIfRevision(failure === 'remove' ? '' : 'Result', before.revision));
+    assert.equal(draft.getSnapshot(), before);
+    assert.equal(values.get(key('failure')), bytes);
+    draft.editText('Ordinary memory edit');
+    assert.equal(draft.getSnapshot().text, 'Ordinary memory edit');
+  }
+});
+
+test('guarded completion enforces capability, revocation and observable irreversible retirement before gates', () => {
+  const source = createSessionDrafts()('lifetime');
+  const denied = source.bindModule('denied', []);
+  assert.throws(() => denied.draft.editTextIfRevision('Denied', -1), /cannot write/);
+  const revoked = source.bindModule('revoked', ['text']);
+  let revokedChanges = 0;
+  revoked.draft.subscribe(() => { revokedChanges++; });
+  revoked.dispose();
+  assert.throws(() => revoked.draft.editTextIfRevision('Late', -1), /cannot write/);
+  const binding = source.bindModule('active', ['text']);
+  const snapshots: boolean[] = [];
+  binding.draft.subscribe(() => { snapshots.push(binding.draft.getSnapshot().retired); });
+  const before = source.getSnapshot();
+  source.retire();
+  source.retire();
+  assert.deepEqual(snapshots, [true]);
+  assert.equal(before.retired, false);
+  assert.equal(source.getSnapshot().revision, before.revision);
+  assert.equal(revokedChanges, 0);
+  assert.throws(() => binding.draft.editTextIfRevision('Late', -1), /retired/);
+  assert.throws(() => binding.draft.editText('Late'), /retired/);
 });

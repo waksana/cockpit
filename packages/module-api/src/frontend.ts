@@ -56,6 +56,8 @@ export interface ModuleDraftSnapshot {
   readonly pending: boolean;
   /** Failure or unknown native outcome: retained content is not permission to retry. */
   readonly unconfirmed: boolean;
+  /** Irreversible end of this lifetime: decision ended or session authoritatively deleted. */
+  readonly retired: boolean;
 }
 
 /**
@@ -90,6 +92,15 @@ export type DraftWrite = 'text';
  */
 export interface ModuleDraft extends DraftReference {
   editText(text: string): void;
+  /**
+   * Atomic completion for this captured lifetime, including inactive prompts.
+   * Requires text write capability. Returns false without mutation on a revision
+   * mismatch, pending/unconfirmed submission, or any block (release your own
+   * lease first). Throws on retirement, revocation or persistence failure; true
+   * means the text was persisted and published with an incremented revision.
+   * Ordinary editText retains its existing concurrent/memory-edit semantics.
+   */
+  editTextIfRevision(text: string, revision: number): boolean;
   /**
    * Requires a text write or an active schema applicable to this draft. Leases
    * belong to this module/draft and release idempotently. Module/schema loss
@@ -479,6 +490,8 @@ export interface ModuleFrontendContext {
   readonly chatWindowVersion: 1;
   /** Middleware around the actual controlled textarea, independently of the input row. */
   readonly composerInputVersion: 1;
+  /** Observable permanent retirement and atomic revision-guarded text completion. */
+  readonly draftLifecycleVersion: 1;
   readonly moduleId: string;
   readonly react: typeof React;
   createPortal(children: React.ReactNode, container: Element | DocumentFragment): React.ReactPortal;

@@ -2,8 +2,8 @@
 
 **Cockpit 0.2.5：模块包/后端 API v1，Web API v2，公共 UI v1，菜单能力 menuVersion 1。**
 本地可信包、主进程 import、冷加载、模块 payload 事件及独立菜单注册已实现。
-当前开发源码另提供 `chatWindowVersion: 1` 与 `composerInputVersion: 1`：
-只读当前聊天窗口与真实受控 textarea 的组件增强。它们不是历史 0.2.4 Release 的能力；
+当前开发源码另提供 `chatWindowVersion: 1`、`composerInputVersion: 1` 与 `draftLifecycleVersion: 1`：
+只读当前聊天窗口、真实受控 textarea 的组件增强及草稿永久退休/原子修订写入。它们不是历史 0.2.4 Release 的能力；
 消费者须独立检查能力并使用配套源码导出的类型，不能仅凭 package 版本判断。
 **0.2.5 尚待发行**，本文不表示发布已完成。语音配套源码为 **Cockpit Speech 0.1.1**，
 精确 SDK 提交由语音仓库 `tooling/host-sdk.json` 记录，必须先导出该干净提交再构建。
@@ -177,6 +177,7 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 | 当前已加载聊天窗口 | `context.state.chatWindow.getSnapshot()` / `subscribe()`，检查 `chatWindowVersion: 1` | 只读消息文字、归属、层级、顺序和窗口可用状态；不补读历史，不内置“最近回复”策略 |
 | 模块 state/service | `context.state.register({ id, create, dispose })`，返回 `handle.get()` | 创建并取得模块自己的服务；其数据来源、查询与方法由模块实现，不自动注入聊天数据 |
 | 草稿读取与编辑 | `context.state.bindDraft(reference)`，草稿 `getSnapshot()` / `subscribe()`、`editText(text)`、`block(reason)` | 绑定具体草稿生命周期；文字编辑需声明 `writes: ['text']`，不暴露通用原生提交/ACK/reset |
+| 后台草稿完成 | 检查 `draftLifecycleVersion: 1`；`editTextIfRevision(text, revision)`、快照 `retired` | 原子校验修订、pending/unconfirmed/所有租约；永久退休可订阅，不把导航、隐藏、断线或 unload 当成删除 |
 | 草稿字段扩展 | `context.state.registerDraft(...)`，`forDraft(reference)`、字段 `getSnapshot()` / `subscribe()` / `update()` | 模块拥有 schema、校验、内容判定、投影、ACK 和可选持久化；不能修改别的模块字段 |
 | 菜单声明 | 返回 `menus`：`getState(target)`、可选 `subscribe`、`onSelect(target, { signal })` | 全局与指定 session 命令；本体保留原生项、渲染及焦点，不提供任意页面/router 注册 |
 | 组件增强 | 返回 `components`：按 boundary 提供 `wrap(Base)` | 只增强公开的真实组件，保留 props/children/ref；具体边界见 [6.2](#62-component-middleware) |
@@ -198,7 +199,7 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 | --- | --- | --- |
 | 当前会话与前后台/连接 | `HostSnapshot` 的三个字段 | 没有当前会话标题、项目目录、问题正文或消息列表 |
 | 当前窗口消息文字 | `ChatWindowSnapshot.messages`，节点 `text/origin/complete/subtype/children` | 仅已加载内容，不等于整个会话历史；ready 不等于全历史完整，未知归属不猜测 |
-| 当前草稿文字 | `DraftReference` 的稳定身份及草稿快照 | 快照含 `text/revision/pending/unconfirmed/blocks/hasContent`；不是聊天历史，也没有内建附件字段 |
+| 当前草稿文字 | `DraftReference` 的稳定身份及草稿快照 | 快照含 `text/revision/pending/unconfirmed/blocks/hasContent/retired`；不是聊天历史，也没有内建附件字段 |
 | 当前输入操作 | Composer 的 `draft/operation/disabled/busy/sendBlocked`、编辑器 ref 和受保护回调 | `purpose` 标识 prompt 或具体 ask/plan/elicitation 请求；不提供结构化问题正文，不能越过原生自由文本限制 |
 | 一条正在呈现的消息 | `MessageProps.identity/complete/bodyRef`、React `children/adornment` 与普通 DOM props | 没有原始正文字符串或全会话排序快照；React children、DOM 观察和组件挂载先后不是“最近回复”查询契约 |
 | 一个 Markdown 引用或附件 | link/image 的 `MarkdownNode`，或附件组件的 descriptor/index/origin | 不提供全部文件库或全部历史消息，也不因引用存在自动加载资源 |
@@ -433,6 +434,25 @@ callback(null) 和 React 19 callback cleanup；不查询或移动私有 DOM。
 它不能绕过 sendBlocked。输入增强独立于 File 的 prompt-only schema。
 所有异步输入仍捕获精确 draft.id、revision 与租约，旧输入或复用 request ID
 不授权写入新生命周期。选区/焦点恢复也必须核对原草稿身份和写入后的修订。
+
+后台完成须独立检查 `context.draftLifecycleVersion === 1`，使用捕获的
+`draft.editTextIfRevision(text, revision)`，不能用先检查快照再调用 `editText` 代替。
+先释放本任务自己的 block；其他模块租约仍阻止写入。修订不匹配、pending、
+unconfirmed 或任何 block 返回 `false`，不修改文字/修订/存储；退休、能力撤销、
+缺少 `writes: ['text']` 或持久化失败抛错，不冒充成功。`true` 表示已同步保存并发布
+新修订；原 `editText` 的并发手动编辑和存储失败时保留内存文字行为不变。
+
+草稿任务属于精确 lifetime，而不是当前组件或页面。切换会话、标签页、页面隐藏、
+断线、unload 或 prompt 暂时被 ask 覆盖，不退休 prompt；原修订与上述门槛仍有效时，
+后台结果可写回原非活动 prompt，不转投当前草稿。权威确认 decision 结束/替换时，
+该 decision 快照不可逆地变为 `retired: true` 并通知订阅者；权威会话删除/完整列表
+确认消失时，prompt 和所有 decision 一同退休。非权威空列表不代表删除。
+相同 session/request ID 再出现也获得新 lifetime，旧引用不能复活。模块须在退休
+通知时销毁保留的资源；临时不可见不是销毁信号。页面内任务/音频资源仍由模块服务
+管理，不由宿主持久化，也不会因该能力自动发送或重试原生请求。
+会话永久删除时清理该 prompt 的保存记录（存储失败会报告），退休 prompt 的晚到
+ACK 不再写存储，避免污染同 session ID 的新 lifetime；decision 的既有独立 occurrence
+存储与在途结算规则不变。
 
 message 的 bodyRef 指向实际正文或当前 ask 的问题，不含 byline、滚动外框或选择按钮。
 ask 使用宿主当前 AskRequest.requestId，不冒充 SDK requestId。
