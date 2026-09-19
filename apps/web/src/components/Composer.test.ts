@@ -108,8 +108,8 @@ test('the module owns the full draft list directly above the editor without a ho
   assert.match(html, /fixture-list/);
   assert.equal((html.match(/fixture-row/g) ?? []).length, 1);
   assert.doesNotMatch(html, /draft-attachments|draft-attachment"|module-draft-recovery|module-composer|chat-input-notice/);
-  assert.match(html, /<\/section><\/div><div class="chat-input">/);
-  assert.match(html, /<div class="chat-input"><button type="button" aria-label="Add item">Add item<\/button><textarea/);
+  assert.match(html, /<\/section><\/div><div class="chat-input ck-input-row">/);
+  assert.match(html, /<div class="chat-input ck-input-row"><button type="button" aria-label="Add item">Add item<\/button><textarea/);
   assert.equal((html.match(/<textarea\b/g) ?? []).length, 1);
   assert.equal((html.match(/class="chat-input-btn ck-icon-button send rp"/g) ?? []).length, 1);
   assert.doesNotMatch(html, /<button\b[^>]*>(?:(?!<\/button>)[\s\S])*<button\b/);

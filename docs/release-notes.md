@@ -1,3 +1,21 @@
+# Cockpit 0.2.6
+
+Adds public UI v1 input/status classes for paired Speech 0.3.1. The native
+composer uses the same `ck-input-row` geometry available to consumers.
+`ck-input-hint` follows the host input size; `ck-status-text` uses the auxiliary
+text role. Full-width status rows, marker alignment and trailing status actions
+are host-owned styles, not speech-specific slots or business dispatchers.
+See [Module UI guide](module-ui-guide.md#public-classes).
+
+Speech remains responsible for recording, timing, errors, retry and clear.
+Queue/question layout and scrolling remain unchanged and host-owned.
+No new font-size variable or private `.chat-*` dependency is required.
+Existing UI v1 controls and modules remain compatible; Speech 0.3.1 requires
+this paired host's additive styles. All workspace and MCP versions are 0.2.6.
+This source change does not itself create a tag, Release or deployment.
+
+---
+
 # Cockpit 0.2.5
 
 Unreleased source summary relative to 0.2.4. Workspace packages and MCP identify

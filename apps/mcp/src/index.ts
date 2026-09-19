@@ -29,7 +29,7 @@ import { registerFoundationTools } from './tools/foundation.js';
 import { registerTranscriptTools } from './tools/transcript.js';
 
 export function createMcpServer(): McpServer {
-const server = new McpServer({ name: 'cockpit-mcp-server', version: '0.2.5' });
+const server = new McpServer({ name: 'cockpit-mcp-server', version: '0.2.6' });
 
 // ── cockpit_list_sessions ──────────────────────────────────────────────────────
 server.registerTool(

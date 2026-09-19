@@ -1772,6 +1772,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(file.parentNode, row);
     assert.equal(microphone.parentNode, row);
     assert.equal(send.parentNode, row);
+    assert.match(row.attributes.get('class') ?? '', /ck-input-row/, 'native row owns the shared public layout');
     const click = async (selector: string) => {
       const target = container.querySelector(selector);
       assert.ok(target, selector);
@@ -1785,9 +1786,15 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(container.querySelector('.send')!.attributes.has('disabled'), true);
     assert.equal(container.querySelector('.cockpit-speech-panel'), null, 'recording is expressed by the button, not a phase panel');
     assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.get('aria-label'), '停止录音并转写');
+    const status = container.querySelector('.cockpit-speech-status')!;
+    assert.ok(status);
+    assert.equal(row.contains(status), false, 'status wraps the full input row instead of living inside it');
+    assert.equal(status.parentNode, row.parentNode);
+    assert.match(status.textContent, /正在录音/);
     await click('.cockpit-speech-mic');
     assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.has('disabled'), true);
     assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.get('aria-busy'), 'true');
+    assert.match(container.querySelector('.cockpit-speech-status')!.textContent, /正在处理录音/);
     assert.equal(requests, 1);
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); finish('speech'); });
     assert.equal(editor.value, 'hello speech');
@@ -1798,6 +1805,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.has('disabled'), false);
     assert.equal(container.querySelector('.cockpit-speech-panel'), null, 'successful insertion does not lift the editor with a notice');
     assert.equal(container.querySelector('.chat-input-message'), editor);
+    assert.equal(container.querySelector('.cockpit-speech-status'), null);
 
     await click('.cockpit-speech-mic');
     await act(() => draft.edit('manual text'));
