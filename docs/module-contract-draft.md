@@ -199,14 +199,14 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 | --- | --- | --- |
 | 当前会话与前后台/连接 | `HostSnapshot` 的三个字段 | 没有当前会话标题、项目目录、问题正文或消息列表 |
 | 当前窗口消息文字 | `ChatWindowSnapshot.messages`，节点 `text/origin/complete/subtype/children` | 仅已加载内容，不等于整个会话历史；ready 不等于全历史完整，未知归属不猜测 |
-| 当前草稿文字 | `DraftReference` 的稳定身份及草稿快照 | 快照含 `text/revision/pending/unconfirmed/blocks/hasContent/retired`；不是聊天历史，也没有内建附件字段 |
-| 当前输入操作 | Composer 的 `draft/operation/disabled/busy/sendBlocked`、编辑器 ref 和受保护回调 | `purpose` 标识 prompt 或具体 ask/plan/elicitation 请求；不提供结构化问题正文，不能越过原生自由文本限制 |
+| 当前草稿文字 | `DraftReference` 的稳定身份及草稿快照 | 快照含 `text/revision/pending/unconfirmed/blocks/hasContent/retired` 和可选 `askContext`；不是聊天历史，也没有内建附件字段 |
+| 当前输入操作 | Composer 的 `draft/operation/disabled/busy/sendBlocked`、编辑器 ref 和受保护回调 | `purpose` 标识 prompt 或具体 ask/plan/elicitation 请求；ask 草稿的 `askContext` 只提供问题与选项，不能越过原生自由文本限制 |
 | 一条正在呈现的消息 | `MessageProps.identity/complete/bodyRef`、React `children/adornment` 与普通 DOM props | 没有原始正文字符串或全会话排序快照；React children、DOM 观察和组件挂载先后不是“最近回复”查询契约 |
 | 一个 Markdown 引用或附件 | link/image 的 `MarkdownNode`，或附件组件的 descriptor/index/origin | 不提供全部文件库或全部历史消息，也不因引用存在自动加载资源 |
 | 后端原生输出与控制事实 | `events` 的 `NativeObservation`、`controlEvents` 的 `ServerEvent` | 通知可能携带正文，但不是浏览器当前已加载窗口；不会自动转交前端或补读启用前历史 |
 
 **本体提供窗口读取，不提供语音上下文或 `getLatestReply()` 业务方法。**
-当前问题的结构化正文仍没有公共 state 入口。模块不得借窗口读取导入私有 store、
+当前 ask 的问题与选项通过对应草稿的 `askContext` 读取，不是 session 全局状态。模块不得借窗口读取导入私有 store、
 查询私有 DOM、读取 native home 或扫描全部历史。公开 `bodyRef` 的呈现观察用途保持不变。
 用后端观察再保存/发布一份历史来替代当前窗口读取，不具有同等语义。
 
@@ -342,10 +342,21 @@ Web 模块集成有四种不同机制，不能相互伪装：
 未加载和读取失败不能伪造成 false/零。
 
 草稿也是本体基础 state，但基础快照不内建附件或其他模块字段。
-它只包含文字、文字修订、pending/unconfirmed、通用阻止和聚合 hasContent。
+它包含文字、文字修订、pending/unconfirmed、通用阻止、聚合 hasContent、retired 和可选 askContext。
 `DraftReference` 带稳定生命周期 id、sessionId 和 purpose；
 `context.state.bindDraft(reference)` 提供文字编辑及通用阻止，不暴露私有 store、
 附件方法或通用 native patch/submit/ACK/reset。
+
+`ModuleDraftSnapshot.askContext?: DraftAskContext` 是只读、深冻结的原生问题副本：
+`{ readonly question: string; readonly choices?: readonly string[] }`。只有此草稿对应的
+当前权威 ask 请求存在且 question 可用时才提供；prompt、plan、elicitation、结束/替换的
+ask、退役会话、未加载或连接尚未确认时为 `undefined`。没有 choices 与空 choices 不合并。
+问题不写入草稿存储，恢复答案不会恢复旧问题，必须等待原生权威再次确认。
+相同活跃 requestId 的问题/选项更新会发布新快照，但不改文字 revision、阻止或发送状态；
+requestId 在结束后重用属于新草稿生命周期。断线/卸载本身不证明请求结束。
+模块应在一次操作开始时同步读取并保存该快照；已有快照不会被后续更新改变。
+读取不要求文字写权限，但撤销的 module binding 的 `getSnapshot()` 会抛出；
+已捕获的不可变数据不因此被修改。契约不暴露其他会话、完整 native ask 对象或回复权限。
 
 模块通过同一个 state 注册体系的 `registerDraft` 扩展自己的草稿 schema：
 
