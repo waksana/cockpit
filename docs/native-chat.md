@@ -367,6 +367,24 @@ does not restore the previous cross-view reading position; retained history and
 native cursors still avoid a fresh history read. Within the same mounted view,
 rerenders, live updates and older-page insertion preserve the active reading
 anchor and gestures rather than forcing the reader to the bottom.
+
+A successful submission from this page explicitly resumes bottom-follow: this
+includes the send button, keyboard submission, module captured-draft sends and
+native decision answers/actions. The shared draft submission layer captures the
+target's mounted view at dispatch and notifies it only on a strict native ACK.
+Reading upward while that request waits does not cancel this one follow action.
+Leaving, replacing or making the view read-only revokes its pending view effects;
+returning to the same session does not inherit an earlier request's effect.
+Background sends never switch sessions or scroll an unrelated view.
+
+The existing single scroll owner follows subsequent DOM appends and layout
+changes; a new user reading gesture after acknowledgement stops following normally.
+Failed, blocked, unknown or pre-dispatch-cancelled sends, draft edits, remote
+messages and streaming updates do not initiate follow. A native queue acceptance
+uses the same one-time ACK effect without fabricating a chat message; later queue
+execution does not force follow again. Native success is not undone by a local
+draft-cleanup failure, and captured-send cancellation still only acts before dispatch.
+
 The return-to-latest action appears only when the distance from the bottom is
 at least one current transcript viewport; small upward movements remain quiet.
 This display threshold does not change the existing bottom-follow or anchor

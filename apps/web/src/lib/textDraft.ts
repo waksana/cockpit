@@ -5,6 +5,7 @@ import type {
 } from '@cockpit/module-api';
 import { CORE_DRAFT_FIELDS, nativeDraftRequest, type NativeDraftRequest } from './draft';
 import { describeReason, reportUxError } from './errorReporter';
+import { captureLocalSubmission } from './localSubmission';
 
 export type DraftStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 export type DraftReport = (error: unknown) => void;
@@ -421,7 +422,9 @@ export class SessionDraft {
       if (!this.allowed(check)) return false;
       this.begin(token, new Map());
       if (!check()) throw new Error('The native decision has changed');
+      const acceptedInView = captureLocalSubmission(this.sessionId);
       const acknowledged = (await send()) === true;
+      if (acknowledged) acceptedInView();
       return this.finish(token, acknowledged);
     } catch (error) {
       this.report(error);
@@ -473,7 +476,9 @@ export class SessionDraft {
       if (changed) throw new BlockedDraftSend(changed);
       if (!check()) throw new Error('The native draft/request changed before dispatch');
       dispatched = true;
+      const acceptedInView = captureLocalSubmission(this.sessionId);
       const acknowledged = nativeAcknowledged = (await send(request)) === true;
+      if (acknowledged) acceptedInView();
       this.assertSubmission(submission.id);
       let complete = acknowledged;
       if (acknowledged) for (const entry of captured) {

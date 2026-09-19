@@ -1,19 +1,3 @@
-export async function acknowledge(send: () => Promise<boolean> | undefined): Promise<boolean> {
-  try { return (await send()) === true; } catch { return false; }
-}
-
-export async function acknowledgeInView(
-  scope: { active: boolean },
-  send: () => Promise<boolean>,
-  callbacks: { scrollRevision: () => number; onAccepted: () => void },
-): Promise<boolean> {
-  if (!scope.active) return false;
-  const revision = callbacks.scrollRevision();
-  const sent = await acknowledge(send);
-  if (sent && scope.active && callbacks.scrollRevision() === revision) callbacks.onAccepted();
-  return sent;
-}
-
 import { Intents, type IntentBody } from '@cockpit/protocol';
 import type { DraftNativeFields, DraftReference } from '@cockpit/module-api';
 
