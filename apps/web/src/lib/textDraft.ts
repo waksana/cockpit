@@ -1,5 +1,5 @@
 import type {
-  DraftNativeFields, DraftPurpose, DraftReference, DraftRestoreInput, DraftSubmission,
+  DraftAskContext, DraftNativeFields, DraftPurpose, DraftReference, DraftRestoreInput, DraftSubmission,
   DraftWrite, ModuleDraft, ModuleDraftSnapshot,
 } from '@cockpit/module-api';
 import { CORE_DRAFT_FIELDS, nativeDraftRequest, type NativeDraftRequest } from './draft';
@@ -121,6 +121,15 @@ export class SessionDraft {
     return () => { this.listeners.delete(listener); };
   };
   isRetired(): boolean { return this.retired; }
+  setAskContext(context?: DraftAskContext): void {
+    const next = !this.retired && this.reference.purpose.kind === 'ask' ? context : undefined;
+    const previous = this.snapshot.askContext;
+    if (previous?.question === next?.question
+      && JSON.stringify(previous?.choices) === JSON.stringify(next?.choices)) return;
+    this.publish({ askContext: next === undefined ? undefined : immutableDraftData({
+      question: next.question, ...(next.choices === undefined ? {} : { choices: [...next.choices] }),
+    }) });
+  }
   retire(): void {
     if (this.retired) return;
     this.retired = true;
@@ -129,7 +138,7 @@ export class SessionDraft {
         if (this.storage && this.storage.getItem(this.key) === this.storedBytes) this.storage.removeItem(this.key);
       } catch (error) { this.report(error); }
     }
-    this.publish({ retired: true });
+    this.publish({ retired: true, ...(this.snapshot.askContext ? { askContext: undefined } : {}) });
   }
   assertEditable(): void {
     if (this.retired) throw new Error('This draft has retired');
@@ -260,6 +269,10 @@ export class SessionDraft {
     const subscriptions = new Set<() => void>();
     const draft: ModuleDraft = Object.freeze({
       ...this.reference,
+      getSnapshot: () => {
+        if (!active) throw new Error('Module draft binding has been revoked');
+        return this.snapshot;
+      },
       subscribe: (listener: () => void) => {
         if (!active) return () => {};
         const unsubscribe = this.subscribe(() => { try { listener(); } catch (error) { report(error); } });

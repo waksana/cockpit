@@ -4,7 +4,7 @@ import { describeReason, reportUxError } from './errorReporter';
 
 export interface NativeDraftDecisions {
   loaded?: boolean;
-  ask?: { requestId: string } | null;
+  ask?: { requestId: string; question?: string; choices?: readonly string[] } | null;
   planRequest?: { requestId: string } | null;
   elicitation?: { requestId: string } | null;
 }
@@ -80,7 +80,11 @@ export class DraftSession {
     return this.candidate(draftPurposes(decisions)[0] ?? { kind: 'prompt' });
   }
   synchronize(decisions: NativeDraftDecisions, authoritative = true): void {
-    if (!authoritative || decisions.loaded === false || this.prompt.isRetired()) return;
+    if (this.prompt.isRetired()) return;
+    if (!authoritative || decisions.loaded === false) {
+      for (const { draft } of this.requests.values()) draft.setAskContext();
+      return;
+    }
     const purposes = draftPurposes(decisions);
     const live = new Set(purposes.map(decisionKey));
     const selected = this.candidate(purposes[0] ?? { kind: 'prompt' });
@@ -99,11 +103,17 @@ export class DraftSession {
     this.occurrences = next;
     const selectionChanged = this.selected !== selected || [...this.live].join() !== [...live].join();
     const ended = [...this.requests].filter(([key]) => !live.has(key)).map(([, value]) => value.draft);
-    const releases = ended.map(draft => draft.deferNotifications());
+    const releases = [...this.requests.values()].map(({ draft }) => draft.deferNotifications());
     try {
       this.live = live;
       this.selected = selected;
       for (const draft of ended) draft.retire();
+      if (decisions.ask) {
+        const ask = decisions.ask;
+        this.candidate({ kind: 'ask', requestId: ask.requestId }).setAskContext(
+          typeof ask.question === 'string' ? { question: ask.question, choices: ask.choices } : undefined,
+        );
+      }
     } finally {
       for (const release of releases) release();
     }
@@ -157,10 +167,11 @@ export class DraftCache {
     session?.retire();
   }
   observe(sessions: readonly (NativeDraftDecisions & { sessionId: string })[], authoritative: boolean): void {
-    if (!authoritative) return;
     for (const [id, cached] of [...this.sessions]) {
       const session = sessions.find(value => value.sessionId === id);
-      if (session) {
+      if (!authoritative) {
+        cached.synchronize({}, false);
+      } else if (session) {
         cached.synchronize(session);
       } else {
         this.retire(id);

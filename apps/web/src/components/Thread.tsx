@@ -347,10 +347,10 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const askId = session.ask?.requestId, planId = session.planRequest?.requestId, elicitationId = session.elicitation?.requestId;
   const decisions = useMemo(() => ({
     loaded: session.loaded,
-    ask: askId !== undefined ? { requestId: askId } : null,
+    ask: session.ask,
     planRequest: planId !== undefined ? { requestId: planId } : null,
     elicitation: elicitationId !== undefined ? { requestId: elicitationId } : null,
-  }), [askId, planId, elicitationId, session.loaded]);
+  }), [session.ask, planId, elicitationId, session.loaded]);
   const authoritative = connected && snapshotReady;
   const draft = useMemo(() => {
     void draftRevision;

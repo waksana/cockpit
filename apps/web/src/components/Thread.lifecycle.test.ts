@@ -661,6 +661,14 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const answer = group.current(value);
     assert.notEqual(answer.reference.id, prompt.reference.id);
     assert.equal(answer.getSnapshot().text, '');
+    const capturedAsk = answer.getSnapshot();
+    assert.deepEqual(capturedAsk.askContext, { question: 'Question one', choices: ['Choice'] });
+    value = { ...value, ask: { ...value.ask!, question: 'Updated same question', choices: ['Updated choice'] } };
+    await act(show);
+    assert.equal(group.current(value), answer);
+    assert.deepEqual(answer.getSnapshot().askContext, { question: 'Updated same question', choices: ['Updated choice'] });
+    assert.equal(answer.getSnapshot().revision, capturedAsk.revision);
+    assert.deepEqual(capturedAsk.askContext, { question: 'Question one', choices: ['Choice'] });
     assert.equal(container.querySelector('.fixture-prompt-files'), null);
     assert.doesNotMatch(container.textContent, /Cached ordinary prompt|Prompt file|不接受附件/);
     const choice = container.querySelector('.chat-ask-choice')!;
@@ -681,10 +689,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(field.getSnapshot().items.length, 2);
     value = { ...value, ask: { requestId: 'second', question: 'Replacement question', choices: ['Choice'] } };
     await act(show);
+    assert.equal(answer.getSnapshot().askContext, undefined);
     assert.equal(group.current(value).getSnapshot().text, '');
     value = { ...value, ask: { requestId: 'first', question: 'Reused request ID', choices: ['Choice'] } };
     await act(show);
     assert.notEqual(group.current(value), answer);
+    assert.deepEqual(group.current(value).getSnapshot().askContext, { question: 'Reused request ID', choices: ['Choice'] });
     await act(() => staleChoice());
     assert.equal(choices, 0, 'a saved callback cannot answer a reused request occurrence');
     value = { ...value, ask: null };

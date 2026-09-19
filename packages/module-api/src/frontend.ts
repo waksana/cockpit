@@ -46,7 +46,20 @@ export interface DraftBlock {
   readonly reason: string;
 }
 
+/** Copied native question data for this exact live ask draft, never persisted. */
+export interface DraftAskContext {
+  readonly question: string;
+  readonly choices?: readonly string[];
+}
+
 export interface ModuleDraftSnapshot {
+  /**
+   * Present only for an authoritative live ask with an available question.
+   * Absent for other purposes, retirement, unload or lost authority. Capture
+   * synchronously at operation start; later updates never mutate prior snapshots.
+   * Context-only changes notify subscribers without advancing text revision.
+   */
+  readonly askContext?: DraftAskContext;
   readonly text: string;
   readonly blocks: readonly DraftBlock[];
   /** Nonblank text or content declared by an active applicable schema, not schema presence. */
