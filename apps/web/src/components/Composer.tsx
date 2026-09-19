@@ -101,7 +101,7 @@ function ComposerEditorBase({ draft, operation, disabled, busy, placeholder, sub
   const submit = () => {
     if (canSend) onSubmit();
   };
-  return <div {...domProps} className={['chat-input', className].filter(Boolean).join(' ')}>
+  return <div {...domProps} className={['chat-input', 'ck-input-row', className].filter(Boolean).join(' ')}>
         {children}
         <ComposerInput draft={draft} operation={operation} sendBlocked={sendBlocked} onSubmit={submit}
           editorRef={editorRef} className="chat-input-message ck-input" aria-label="消息输入" value={text}

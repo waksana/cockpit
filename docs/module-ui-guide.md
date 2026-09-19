@@ -106,6 +106,24 @@ order is not a theme API.
 | `ck-text-primary` / `ck-text-secondary` | Phrasing or flow text elements; primary and secondary theme ink, not a heading or label substitute. |
 | `ck-danger` | Dangerous action ink; combine with `ck-primary` for a filled destructive action. Always retain explanatory text/name. |
 | `ck-primary` | On a button/link: filled accent action with contrasting foreground. |
+| `ck-input-hint` | Input-adjacent hint text, using the host input font size (including the user's message-size setting) and UI leading. |
+| `ck-status-text` | Auxiliary status text with the host metadata size and UI leading; combine with semantic ink classes. |
+| `ck-input-row` | A real input/control row: full width, shared inset and control gap, bottom-aligned children. Used by the native composer itself. |
+| `ck-input-status` | A module-owned, normal-flow status row adjacent to an input row; full width and fixed 32px height. Does not render content or register actions. |
+| `ck-status-marker` | A 12px decorative status icon region aligned to the first input control's center. |
+| `ck-status-label` | Single-line status content with ellipsis; preserve the full accessible text and provide its full title. |
+| `ck-status-action` | On `ck-icon-button`: a trailing status action aligned to the native input row's last control, with a 32px-high target. |
+
+The input/status classes are additive UI v1 styles introduced in Cockpit 0.2.6.
+Consumers must pair with that host or newer; a previous UI v1 host does not
+retroactively acquire these classes. No additional component slot or host
+business dispatcher is introduced. Modules wrap the existing `composerEditor`
+Base, place their own status row in normal flow, and leave queue/question
+placement, available height and scrolling to the host. Do not copy `.chat-*`
+rules to adjust those ancestors. The status row has no background or state
+policy; content, visibility, icon, elapsed time and actions belong to its module.
+Its dense 32px status action is an explicit exception to ordinary control height;
+its horizontal target remains aligned to the 40px/44px input controls.
 
 `disabled`, `aria-disabled`, `hidden` and focus-visible are styled consistently.
 **CSS does not disable behavior.** Use real `disabled` on native buttons and

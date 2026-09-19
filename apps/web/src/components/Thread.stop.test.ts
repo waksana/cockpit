@@ -116,7 +116,7 @@ test('a pending question shares the card below its only status and action header
   assert.match(html, /<div class="chat-composer" data-question="true"/);
   assert.doesNotMatch(html, /class="chat-decisions"/);
   assert.ok(html.indexOf('class="chat-execution-head"') < html.indexOf('class="chat-composer"'));
-  assert.ok(html.indexOf('Which option?') < html.indexOf('class="chat-input"'));
+  assert.ok(html.indexOf('Which option?') < html.indexOf('class="chat-input ck-input-row"'));
   assert.doesNotMatch(html, /chat-answer-toggle|chat-answer-chevron/);
   assert.match(html, /Which option\?/);
   assert.doesNotMatch(region, /Which option\?|class="chat-ask/);

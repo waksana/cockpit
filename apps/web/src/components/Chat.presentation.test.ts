@@ -169,10 +169,16 @@ test('spacing tokens own visible boundaries and placeholder stays distinct on fo
 
 test('all input states share one full-width unframed editor row inside the same card', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  const bar = css.match(/(?:^|\n)\.chat-input \{([^}]+)\}/)![1];
+  const publicCss = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
+  const bar = publicCss.match(/(?:^|\n)\.ck-input-row \{([^}]+)\}/)![1];
   assert.match(bar, /width: 100%;\s*margin: 0;/);
-  assert.match(bar, /padding: var\(--chat-gap-meta\);/);
-  assert.match(bar, /gap: var\(--chat-gap-meta\);/);
+  assert.match(bar, /padding: var\(--host-space-xs\);/);
+  assert.match(bar, /gap: var\(--host-space-xs\);/);
+  assert.match(publicCss, /\.ck-input-hint \{[^}]*font-size: var\(--messages-text-size\);/);
+  assert.match(publicCss, /\.ck-status-text \{[^}]*font-size: var\(--host-text-meta\);/);
+  assert.match(publicCss, /\.ck-input-status \{[^}]*width: 100%;[^}]*height: 32px;/);
+  assert.match(publicCss, /\.ck-status-action \{[^}]*margin-inline-start: auto;/);
+  assert.doesNotMatch(publicCss, /\.chat-/);
   assert.match(css, /\.chat-input-card-body \{[^}]*scrollbar-gutter: stable both-edges;/);
   assert.doesNotMatch(css, /\.chat-input-card\[data-decision\] \.chat-input/);
   assert.doesNotMatch(css, /\.chat-input-card\[data-header\] \.chat-input(?:-message)? \{/);

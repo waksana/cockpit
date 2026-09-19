@@ -631,12 +631,6 @@ button.activity-head {
 .chat-input {
   position: relative;
   flex: 0 0 auto;
-  display: flex;
-  align-items: flex-end;
-  gap: var(--chat-gap-meta);
-  width: 100%;
-  margin: 0;
-  padding: var(--chat-gap-meta);
   background: transparent;
 }
 .message-attachments {
