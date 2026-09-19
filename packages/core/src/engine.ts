@@ -14,7 +14,7 @@ import type {
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
   MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem, NativeChatEvent,
 } from '@cockpit/protocol';
-import { NativeChatRead, SessionUsage, MetaResource as MetaResources, cleanSessionTitle } from '@cockpit/protocol';
+import { NativeChatRead, SessionActivity, SessionUsage, MetaResource as MetaResources, cleanSessionTitle } from '@cockpit/protocol';
 import { NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult } from '@cockpit/protocol';
 import { OfficialRuntime, sessionModelOptions } from './runtime.ts';
 import { normalizeEvent, type RuntimeAttachment } from './sdk-types.ts';
@@ -849,7 +849,7 @@ export class Engine {
       throw new Error('Native activity state is incomplete; cannot confirm session safety');
     }
     return {
-      queue, tasks, mcpHost: mcp.host,
+      processing, activity, queue, tasks, mcpHost: mcp.host,
       busy: processing.processing || activity.hasActiveWork || tasks.tasks.some(task => activeTask(task.status))
         || queue.items.length > 0 || queue.steeringMessages.length > 0 || queue.inFlightSteeringCount > 0
         || mcp.host.pendingConnections.length > 0,
@@ -1198,6 +1198,35 @@ export class Engine {
       }
       return NativeRewindResult.parse(result);
     });
+  }
+
+  async getActivity(id: string): Promise<SessionActivity> {
+    const st = this.sessions.get(id);
+    this.assertReadable(st);
+    if (!st?.sdk) throw new SessionUnloadedError();
+    st.operations++;
+    this.patch(st, { activeOperations: st.operations });
+    try {
+      const sdk = await this.liveSession(st);
+      if (!sdk) throw new SessionUnloadedError();
+      const control = await this.readControl(st, sdk);
+      return SessionActivity.parse({
+        sessionId: id, sampledAt: Date.now(),
+        processing: control.processing.processing,
+        hasActiveWork: control.activity.hasActiveWork, abortable: control.activity.abortable,
+        tasks: control.tasks.tasks.map(({ id, type, description, status }) => ({ id, type, description, status })),
+        queue: {
+          pendingCount: control.queue.items.length,
+          steeringCount: control.queue.steeringMessages.length,
+          inFlightSteeringCount: control.queue.inFlightSteeringCount,
+        },
+        mcp: { pendingConnections: control.mcpHost.pendingConnections },
+      });
+    } finally {
+      st.operations--;
+      this.patch(st, { activeOperations: st.operations });
+      this.release(st);
+    }
   }
 
   async getUsage(id: string): Promise<SessionUsage> {

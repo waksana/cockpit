@@ -78,6 +78,11 @@ const engine: ServerEngine = {
   }),
   getPanel: async (...args) => record('getPanel', args, []),
   getResources: async (...args) => record('getResources', args, busySession),
+  getActivity: async (...args) => record('getActivity', args, {
+    sessionId: 's', sampledAt: 1, processing: false, hasActiveWork: false, abortable: false,
+    tasks: [], queue: { pendingCount: 0, steeringCount: 0, inFlightSteeringCount: 0 },
+    mcp: { pendingConnections: ['fixture'] },
+  }),
   status: async (...args) => record('sessionStatus', args, sessions),
   respondAsk: (...args) => record('respondAsk', args, undefined),
   respondPlan: (...args) => record('respondPlan', args, undefined),
@@ -148,6 +153,7 @@ const cases = {
   'session/panels': { body: { sessionId: 's' }, method: 'getPanels', args: ['s'] },
   'session/panel': { body: { sessionId: 's', section: 'tasks' }, method: 'getPanel', args: ['s', 'tasks'] },
   'session/resources': { body: { sessionId: 's', resources: ['control'] }, method: 'getResources', args: ['s', ['control']] },
+  'session/activity': { body: { sessionId: 's' }, method: 'getActivity', args: ['s'] },
   respondAsk: { body: { sessionId: 's', requestId: 'r', answer: 'yes', wasFreeform: true }, method: 'respondAsk', args: ['s', 'r', 'yes', true] },
   respondPlan: { body: { sessionId: 's', requestId: 'r', action: 'interactive' }, method: 'respondPlan', args: ['s', 'r', 'interactive'] },
   planSupersede: { body: { sessionId: 's', requestId: 'r', message: 'instead' }, method: 'planSupersede', args: ['s', 'r', 'instead'] },
@@ -204,6 +210,17 @@ for (const [name, fixture] of Object.entries(cases)) {
     if (name === 'skills/refresh') assert.deepEqual(response.json(), { ok: true });
   });
 }
+
+test('session/activity preserves unloaded errors instead of returning idle details', async t => {
+  t.mock.method(engine, 'getActivity', async () => {
+    throw Object.assign(new Error('Explicitly resume the session first'), { statusCode: 409, code: 'SESSION_UNLOADED' });
+  });
+  const response = await app.inject({ method: 'POST', url: '/intent/session/activity', payload: { sessionId: 's' } });
+  assert.equal(response.statusCode, 409);
+  assert.equal(response.json().code, 'SESSION_UNLOADED');
+  assert.equal(response.json().processing, undefined);
+  assert.deepEqual(calls, []);
+});
 
 test('session/load surfaces readiness failure without reload, prompt or replacement fallback', async t => {
   const load = t.mock.method(engine, 'load', async () => {
