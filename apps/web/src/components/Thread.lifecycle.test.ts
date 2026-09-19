@@ -1652,54 +1652,75 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   }, async subtest => {
     const { activate } = await import(pathToFileURL(process.env.COCKPIT_TEST_SPEECH_ENTRY!).href);
     assert.equal(typeof activate, 'function');
+    const fileActivate: ActivateFrontend = context => ({
+      apiVersion: 2, components: [{
+        id: 'file-fixture', boundary: 'composerEditor',
+        wrap: Base => props => createElement(Base, props,
+          props.operation === 'prompt' ? context.react.createElement('button', { type: 'button', 'aria-label': 'File fixture' }, 'File') : null,
+          props.children),
+      }],
+    });
     let finish!: (text: string) => void;
     let requests = 0;
+    let captures = 0;
+    let failNext = false;
+    let capturePort: { onmessage: ((event: { data: unknown }) => void) | null } | undefined;
     const audioGlobals = {
       isSecureContext: true,
       navigator: { mediaDevices: { getUserMedia: async () => {
+        captures++;
         const track = { kind: 'audio', readyState: 'live', enabled: true, stop() { this.readyState = 'ended'; }, onended: null };
-        return { getTracks: () => [track] };
+        return { getTracks: () => [track], getAudioTracks: () => [track] };
       } } },
       AudioContext: class {
         currentTime = 0;
         state = 'running';
         resume = async () => {};
         close = async () => {};
-        createMediaStreamSource = () => ({ connect() {}, disconnect() {} });
-        createGain = () => ({ connect() {}, disconnect() {}, gain: { setValueAtTime() {} } });
-        createMediaStreamDestination = () => ({
-          stream: { getTracks: () => [{ stop() {} }] }, disconnect() {},
+        destination = {};
+        audioWorklet = { addModule: async () => {} };
+        createMediaStreamSource = () => ({
+          connect() { capturePort?.onmessage?.({ data: { type: 'pcm', buffer: new ArrayBuffer(4800) } }); },
+          disconnect() {},
         });
       },
-      RTCPeerConnection: class {
-        connectionState = 'connected';
-        channel = {
-          onopen: null as (() => void) | null,
-          onmessage: null as ((event: { data: string }) => void) | null,
-          close() {},
-          send: (message: string) => {
-            const { type } = JSON.parse(message);
-            if (type === 'input_audio_buffer.clear') {
-              this.channel.onmessage?.({ data: JSON.stringify({ type: 'input_audio_buffer.cleared' }) });
-            } else if (type === 'input_audio_buffer.commit') {
-              this.channel.onmessage?.({ data: JSON.stringify({ type: 'input_audio_buffer.committed', item_id: 'fixture-item' }) });
-              finish = text => this.channel.onmessage?.({ data: JSON.stringify({
-                type: 'conversation.item.input_audio_transcription.completed', item_id: 'fixture-item', content_index: 0, transcript: text,
-              }) });
-            } else assert.fail(`unexpected speech event ${type}`);
+      AudioWorkletNode: class {
+        port = {
+          onmessage: null as ((event: { data: unknown }) => void) | null,
+          postMessage: () => {
+            queueMicrotask(() => this.port.onmessage?.({ data: { type: 'ended', limited: false } }));
           },
+          close() {},
         };
-        addTrack() {}
-        createDataChannel = () => this.channel;
-        createOffer = async () => ({ type: 'offer', sdp: 'v=0\r\nfixture' });
-        setLocalDescription = async () => {};
-        setRemoteDescription = async () => { this.channel.onopen?.(); };
-        close() {}
+        constructor() { capturePort = this.port; }
+        connect() {}
+        disconnect() {}
       },
-      fetch: async (url: string, init?: RequestInit) => {
-        assert.equal(url, 'https://synthetic.openai.azure.com/openai/v1/realtime/calls');
-        assert.equal(init?.body, 'v=0\r\nfixture');
-        return new Response('v=0\r\nfixture-answer', { status: 201 });
+      WebSocket: class {
+        onopen: (() => void) | null = null;
+        onmessage: ((event: { data: string }) => void) | null = null;
+        bufferedAmount = 0;
+        constructor(url: string) {
+          assert.equal(new URL(url).origin, 'wss://synthetic.openai.azure.com');
+          queueMicrotask(() => this.onopen?.());
+        }
+        send(message: string) {
+          const { type, session } = JSON.parse(message);
+          if (type === 'session.update') {
+            this.onmessage?.({ data: JSON.stringify({ type: 'session.updated', session }) });
+          } else if (type === 'input_audio_buffer.commit') {
+            if (failNext) {
+              failNext = false;
+              this.onmessage?.({ data: JSON.stringify({ type: 'error', error: { code: 'RateLimitReached' } }) });
+              return;
+            }
+            this.onmessage?.({ data: JSON.stringify({ type: 'input_audio_buffer.committed', item_id: 'fixture-item' }) });
+            finish = text => this.onmessage?.({ data: JSON.stringify({
+              type: 'conversation.item.input_audio_transcription.completed', item_id: 'fixture-item', content_index: 0, transcript: text,
+            }) });
+          } else assert.equal(type, 'input_audio_buffer.append');
+        }
+        close() {}
       },
     };
     for (const [key, value] of Object.entries(audioGlobals)) {
@@ -1713,17 +1734,20 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       fetch: async url => {
         const path = new URL(String(url)).pathname;
         if (path === '/_modules') return Response.json({ modules: [{
-          id: 'cockpit-speech', name: 'Speech fixture', version: '0.1.1', digest, styles: [], config: {},
+          id: 'cockpit-speech', name: 'Speech fixture', version: '0.2.0', digest, styles: [], config: {},
           apiBase: `/_modules/cockpit-speech/${digest}/api`, entry: `/_modules/assets/cockpit-speech/${digest}/entry.js`,
+        }, {
+          id: 'file-fixture', name: 'File fixture', version: '1.0.0', digest, styles: [], config: {},
+          apiBase: `/_modules/file-fixture/${digest}/api`, entry: `/_modules/assets/file-fixture/${digest}/entry.js`,
         }], errors: [] });
         assert.ok(path.endsWith('/session'), 'module backend only mints a credential');
         requests++;
         return Response.json({
-          clientSecret: 'synthetic-ephemeral', expiresAt: Math.floor(Date.now() / 1000) + 60,
-          callsUrl: 'https://synthetic.openai.azure.com/openai/v1/realtime/calls',
+          clientSecret: 'synthetic-ephemeral', expiresAt: Math.floor(Date.now() / 1000) + 600, deployment: 'dictation',
+          socketUrl: 'wss://synthetic.openai.azure.com/openai/v1/realtime?intent=transcription',
         });
       },
-      load: async () => ({ activate }), report: assert.fail,
+      load: async url => ({ activate: url.includes('/file-fixture/') ? fileActivate : activate }), report: assert.fail,
     });
     subtest.after(async () => { await act(() => root.render(null)); runtime.stop(); });
     await runtime.start();
@@ -1737,7 +1761,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const editor = container.querySelector('.chat-input-message')!;
     assert.deepEqual(refCalls, [editor]);
     const row = editor.parentNode!;
-    assert.deepEqual(row.childNodes.map(node => node.tagName), ['TEXTAREA', 'BUTTON', 'BUTTON']);
+    assert.deepEqual(row.childNodes.map(node => node.tagName), ['BUTTON', 'TEXTAREA', 'BUTTON', 'BUTTON']);
     const click = async (selector: string) => {
       const target = container.querySelector(selector);
       assert.ok(target, selector);
@@ -1762,9 +1786,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(editor.selectionEnd, 12);
     assert.equal(draft.getSnapshot().blocks.length, 0);
     assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.has('disabled'), false);
-    const panel = container.querySelector('.cockpit-speech-panel')!;
-    assert.equal(row.contains(panel), false);
-    assert.equal(panel.parentNode, container.querySelector('.chat-composer')!.parentNode);
+    assert.equal(container.querySelector('.cockpit-speech-panel'), null, 'successful insertion does not lift the editor with a notice');
     assert.equal(container.querySelector('.chat-input-message'), editor);
 
     await click('.cockpit-speech-mic');
@@ -1774,6 +1796,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(editor.value, 'manual text');
     assert.equal(container.querySelectorAll('textarea').length, 2, 'one editor and one read-only recovery field');
     assert.match(container.querySelector('.cockpit-speech-panel')!.textContent, /识别结果/);
+    const panel = container.querySelector('.cockpit-speech-panel')!;
+    assert.equal(row.contains(panel), false);
+    assert.equal(panel.parentNode, container.querySelector('.chat-composer')!.parentNode);
     assert.equal(container.querySelector('.cockpit-speech-panel')!.contains(editor), false);
     const recoveryButton = container.querySelectorAll('button').find(node => node.textContent === '插入原输入框光标处')!;
     assert.equal(recoveryButton.attributes.has('disabled'), false);
@@ -1784,6 +1809,20 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(editor.value, 'manrecoveryual text');
     assert.equal(editor.selectionStart, 11);
     assert.equal(document.activeElement, editor);
+    assert.equal(requests, 1, 'successive recordings reuse an in-memory credential');
+    await click('.cockpit-speech-mic');
+    failNext = true;
+    await click('.cockpit-speech-mic');
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)); });
+    assert.equal(draft.getSnapshot().blocks.length, 0);
+    assert.equal(container.querySelector('.cockpit-speech-panel'), null, 'failure stays on the retry button');
+    assert.match(container.querySelector('.cockpit-speech-mic')!.attributes.get('class')!, /cockpit-speech-retry/);
+    const capturesBeforeRetry = captures;
+    await click('.cockpit-speech-mic');
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)); finish('replayed'); });
+    assert.equal(captures, capturesBeforeRetry, 'retry does not reopen the microphone');
+    assert.match(editor.value, /replayed/);
+    assert.equal(draft.getSnapshot().blocks.length, 0);
     await act(() => root.render(null));
     assert.equal(cleaned, 1);
     assert.deepEqual(refCalls, [editor], 'composed React 19 ref cleans up without a synthetic null call');
