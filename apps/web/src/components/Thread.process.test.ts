@@ -22,6 +22,24 @@ const renderProcess = (value = items, latest = false) =>
     items: groupTranscript(value).flatMap(row => row.kind === 'process' ? row.items : []), sessionId: 'fixture', latest,
   }));
 
+test('skill and thought icons stay distinct without changing process grouping or disclosure', () => {
+  const skill: ChatMessage = { ...message, id: 'skill', subtype: 'skill', content: 'fixture-skill' };
+  const html = renderProcess([skill, ...items], true);
+  assert.equal((html.match(/class="process-summary ck-button"/g) ?? []).length, 1);
+  assert.match(html, /3 次工具调用 · 1 次思考 · Skill · fixture-skill/);
+  assert.match(html, /class="activity-head skill-activity"><span class="activity-icon"><span class="ck-icon" data-icon="skills"/);
+  assert.match(html, /class="activity-head ck-button thought-toggle" aria-expanded="false"[^>]*><span class="activity-icon"><span class="ck-icon" data-icon="thought"/);
+  assert.match(html, /lucide-book-open/);
+  assert.match(html, /lucide-lightbulb/);
+  assert.ok(html.indexOf('data-icon="skills"') < html.indexOf('data-icon="thought"'));
+  for (const latest of [false, true]) {
+    const single = renderProcess([skill], latest);
+    assert.match(single, /process-summary-title">Skill · fixture-skill/);
+    assert.ok(single.includes(`class="process-summary ck-button" aria-expanded="${latest}"`));
+    assert.equal(single.includes('class="activity-head skill-activity"'), latest);
+  }
+});
+
 test('older overview summarizes consecutive items and retains failures without mounting hidden tool bodies', t => {
   t.mock.method(globalThis, 'fetch', async () => { assert.fail('Process disclosure must not read history'); });
   const html = renderProcess();

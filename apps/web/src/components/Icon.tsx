@@ -1,6 +1,6 @@
 import type { HTMLAttributes } from 'react';
 import {
-  ArrowLeft, ArrowUp, Check, ChevronDown, ChevronRight, ChevronUp, Circle,
+  ArrowLeft, ArrowUp, BookOpen, Check, ChevronDown, ChevronRight, ChevronUp, Circle,
   CircleAlert, CircleCheck, CircleHelp, ClipboardList, Clock, Copy, File,
   Folder, Lightbulb, Link, LoaderCircle, Menu, MessageSquare, MoreVertical, Play, RotateCw,
   Search, Square, SquarePen, Trash2, X,
@@ -23,6 +23,7 @@ export type IconName =
   | 'error'
   | 'menu'
   | 'skills'
+  | 'thought'
   | 'mcp'
   | 'file'
   | 'folder'
@@ -41,7 +42,7 @@ const icons = {
   search: Search, compose: SquarePen, newchat: MessageSquare, delete: Trash2,
   back: ArrowLeft, close: X, check: Check, arrow_up: ArrowUp, more: MoreVertical,
   down: ChevronDown, up: ChevronUp, reload: RotateCw, sending: Clock,
-  error: CircleAlert, menu: Menu, skills: Lightbulb, mcp: Link, file: File,
+  error: CircleAlert, menu: Menu, skills: BookOpen, thought: Lightbulb, mcp: Link, file: File,
   folder: Folder, mode_plan: ClipboardList, radiooff: Circle, copy: Copy,
   stop: Square, clock: Clock, unknown: CircleHelp, chevron_right: ChevronRight,
   play: Play, success: CircleCheck, loading: LoaderCircle,
