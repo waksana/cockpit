@@ -45,7 +45,7 @@ export const manifestSchema = z.object({
 const selectionSchema = z.object({
   version: versionSchema, digest: digestSchema, enabled: z.boolean(), config: z.record(z.unknown()).default({}),
 }).strict();
-const settingsSchema = z.object({ apiVersion: z.literal(1), selected: z.record(idSchema, selectionSchema) }).strict();
+export const settingsSchema = z.object({ apiVersion: z.literal(1), selected: z.record(idSchema, selectionSchema) }).strict();
 const recordSchema = z.object({
   apiVersion: z.literal(1), manifest: manifestSchema, digest: digestSchema,
   files: z.record(pathSchema, z.object({ bytes: z.number().int().nonnegative().max(MODULE_LIMITS.file), sha256: digestSchema }).strict()),
@@ -63,8 +63,16 @@ export function modulePaths(hostRoot = cockpitHome()) {
 const sha256 = (buffer: Uint8Array) => createHash('sha256').update(buffer).digest('hex');
 const missing = (error: unknown) => !!error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT';
 
-async function directory(path: string, create: boolean): Promise<void> {
-  if (create) await mkdir(path, { recursive: true, mode: 0o700 });
+export async function directory(path: string, create: boolean): Promise<void> {
+  if (create) {
+    try { await lstat(path); }
+    catch (error) {
+      if (!missing(error)) throw error;
+      await directory(dirname(resolve(path)), true);
+      try { await mkdir(path, { mode: 0o700 }); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+    }
+  }
   const info = await lstat(path);
   if (!info.isDirectory() || info.isSymbolicLink() || await realpath(path) !== resolve(path)) {
     throw new Error(`Module storage directory must not be a symlink: ${path}`);
@@ -78,8 +86,8 @@ export async function moduleDataRoot(id: string, hostRoot = cockpitHome()): Prom
   return join(paths.data, id);
 }
 
-async function regularBytes(path: string, maximum: number): Promise<Buffer> {
-  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+export async function regularBytes(path: string, maximum: number): Promise<Buffer> {
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
   try {
     const info = await file.stat();
     if (!info.isFile() || info.nlink !== 1 || info.size > maximum) throw new Error('Expected a bounded, unlinked regular module file');
@@ -236,26 +244,48 @@ export async function readModuleInstallation(id: string, selection: Pick<ModuleS
   return { ...record, root };
 }
 
-async function withStorageLock<T>(hostRoot: string, work: () => Promise<T>): Promise<T> {
+export async function assertNoModuleMigration(hostRoot: string): Promise<void> {
+  const root = modulePaths(hostRoot).root;
+  try {
+    await directory(root, false);
+    await lstat(join(root, '.migration.json'));
+  }
+  catch (error) { if (missing(error)) return; throw error; }
+  throw new Error('Module identity migration is pending; explicitly resume it before starting the host or changing modules');
+}
+
+export async function withStorageLock<T>(hostRoot: string, work: () => Promise<T>, options: { allowMigration?: boolean } = {}): Promise<T> {
   const paths = modulePaths(hostRoot);
   for (const path of [paths.hostRoot, paths.root, paths.installed]) await directory(path, true);
   const lock = join(paths.root, '.lock');
   await mkdir(lock, { mode: 0o700 });
-  try { return await work(); }
+  try {
+    if (!options.allowMigration) await assertNoModuleMigration(hostRoot);
+    return await work();
+  }
   finally { await rm(lock, { recursive: true, force: true }); }
 }
 
 async function writeSettings(settings: ModuleSettings, hostRoot: string): Promise<void> {
   const paths = modulePaths(hostRoot);
-  const file = join(paths.root, `.config-${randomUUID()}.json`);
+  await writeModuleBytes(paths.config, `${JSON.stringify(settingsSchema.parse(settings), null, 2)}\n`);
+}
+
+export async function syncModuleDirectory(path: string): Promise<void> {
+  const parent = await open(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try { await parent.sync(); } finally { await parent.close(); }
+}
+
+export async function writeModuleBytes(destination: string, bytes: string, stagingRoot = dirname(destination)): Promise<void> {
+  const root = dirname(destination);
+  const file = join(stagingRoot, `.metadata-${randomUUID()}.pending`);
   const handle = await open(file, 'wx', 0o600);
   try {
-    await handle.writeFile(`${JSON.stringify(settingsSchema.parse(settings), null, 2)}\n`);
+    await handle.writeFile(bytes);
     await handle.sync();
     await handle.close();
-    await rename(file, paths.config);
-    const parent = await open(paths.root, constants.O_RDONLY | constants.O_DIRECTORY);
-    try { await parent.sync(); } finally { await parent.close(); }
+    await rename(file, destination);
+    await syncModuleDirectory(root);
   } finally { await handle.close(); await rm(file, { force: true }); }
 }
 

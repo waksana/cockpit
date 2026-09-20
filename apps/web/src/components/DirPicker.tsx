@@ -8,6 +8,7 @@ import { Icon } from './Icon';
 import { DirectoryModal } from './Dialog';
 import { StateNotice } from './StateNotice';
 import type { RoleSelection } from '@cockpit/protocol';
+import { RolePicker } from './RolePicker';
 
 interface DirPickerProps {
   initialPath?: string;
@@ -61,23 +62,11 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
   };
   return <DirectoryModal busy={action.busy} onCancel={onCancel}>
     <h3 className="dialog-title">新建会话</h3>
-    <p className="dialog-message">创建原生 Copilot 会话，使用所选目录的原生配置并返回真实会话 ID；不会发送初始化消息。创建后在会话中发送内容。</p>
-    {roleResource.status && <StateNotice kind={roleResource.failed ? 'error' : 'loading'}>{roleResource.status}</StateNotice>}
-    {roleResource.failed && <button type="button" disabled={locked} onClick={() => void roleResource.refresh()}>重试加载角色</button>}
-    {roleResource.valid && !rolesAvailable && <p role="alert">所选角色已不可用，请关闭窗口后重新选择。</p>}
-    {!!roleResource.data?.length && <fieldset disabled={locked || !roleResource.valid}>
-      <legend>会话角色（可多选，创建后不可追加）</legend>
-      {roleResource.data.map(role => <label key={`${role.moduleId}/${role.roleId}`} style={{ display: 'block' }}>
-        <input type="checkbox" checked={selectedRoles.some(value => value.moduleId === role.moduleId && value.roleId === role.roleId)}
-          onChange={event => setSelectedRoles(current => event.target.checked
-            ? [...current, { moduleId: role.moduleId, roleId: role.roleId }]
-            : current.filter(value => value.moduleId !== role.moduleId || value.roleId !== role.roleId))} />
-        {role.moduleName} · {role.name}{role.description ? ` — ${role.description}` : ''}
-      </label>)}
-      <p>所选角色合并技能、工具与指令；角色标签不代表当前能力就绪。</p>
-    </fieldset>}
+    <p className="dialog-message">选择工作目录，按需添加模块角色。</p>
+    <div className="dirpicker-content scrollable">
+    <label className="dirpicker-section-title" htmlFor={`${identity}-path`}>工作目录</label>
     <div className="dirpicker-path">
-      <input className="dialog-input ck-input" value={edit} onChange={event => setEditedPath(event.target.value)}
+      <input id={`${identity}-path`} className="dialog-input ck-input" value={edit} onChange={event => setEditedPath(event.target.value)}
         onKeyDown={event => {
           if (event.key === 'Enter' && !event.nativeEvent.isComposing && event.keyCode !== 229) {
             event.preventDefault(); load(edit.trim() || undefined);
@@ -105,6 +94,17 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
           <span className="dirpicker-enter"><Icon name="chevron_right" size={16} /></span>
         </button>)}
     </div>
+    {roleResource.status && <StateNotice kind={roleResource.failed ? 'error' : 'loading'}>{roleResource.status}</StateNotice>}
+    {roleResource.failed && <button type="button" className="dialog-btn ck-button" disabled={locked}
+      onClick={() => void roleResource.refresh()}>重试加载角色</button>}
+    {roleResource.valid && !rolesAvailable && <p role="alert">所选角色已不可用，请关闭窗口后重新选择。</p>}
+    {!!roleResource.data?.length && <RolePicker roles={roleResource.data} selected={selectedRoles}
+      disabled={locked || !roleResource.valid} onChange={setSelectedRoles} />}
+    <details className="dirpicker-help">
+      <summary>创建说明</summary>
+      <p>角色提供模块的指令、技能和工具，不改变会话的业务身份，也不代表当前能力就绪。创建后暂不支持追加角色。</p>
+      <p>会话使用工作目录的原生配置，创建时不会发送消息。从未发送消息的空会话可能在卸载后消失。</p>
+    </details>
     {action.error && <p className="dialog-message dialog-error" role="alert">
       创建未完成：{action.error}。不会自动重建或发送消息；请先检查原生会话列表。
     </p>}
@@ -113,7 +113,7 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
         {incompleteSessionId}
       </button>
     </p>}
-    <p className="dialog-message">从未发送消息的空会话可能在卸载后消失；不会自动重建。</p>
+    </div>
     <div className="dialog-actions">
       <button type="button" className="dialog-btn ck-button rp" disabled={action.busy} onClick={onCancel}>取消</button>
       <button type="button" className="dialog-btn ck-button ck-primary primary rp" disabled={!canCreate} onClick={create}>

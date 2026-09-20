@@ -120,6 +120,19 @@ test('session rows own their spacing rather than inheriting the shared button ga
   assert.match(css, /\.chatlist-chat \.dialog-subtitle \{[^}]*margin-top: 0\.1rem;/);
 });
 
+test('session role badges are separate from cwd and preserve all literal names', () => {
+  const html = render([session('roles', { roles: [
+    { moduleId: 'cockpit-task', moduleName: 'Task', roleId: 'owner', name: 'Owner' },
+    { moduleId: 'other', moduleName: 'module_Original__Name', roleId: 'owner', name: 'cockpit-Exact-role' },
+  ] })]);
+  assert.match(html, /class="dialog-subtitle">project<\/span><span class="dialog-roles session-role-badges"/);
+  assert.equal((html.match(/class="role-badge"/g) ?? []).length, 2);
+  assert.match(html, /class="module-label-name">Task</);
+  assert.match(html, /class="module-label-name">module_Original__Name</);
+  assert.match(html, /class="role-badge-name">cockpit-Exact-role</);
+  assert.doesNotMatch(html, /readiness-badge|role-readiness/);
+});
+
 test('an empty list is not authoritative before the first connection snapshot', () => {
   for (const connected of [true, false]) {
     const html = render([], { snapshotReady: false, connected });

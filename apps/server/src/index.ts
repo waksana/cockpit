@@ -25,6 +25,7 @@ import { GracefulShutdown } from './shutdown.ts';
 import { registerChatStream } from './chat-stream.ts';
 import { serviceIdentity } from './identity.ts';
 import { ModuleHost } from './module-host.ts';
+import { guardModuleHostStartup, type ModuleStartupGuard } from './module-lifetime.ts';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.COCKPIT_PORT ?? 8771);
@@ -56,6 +57,7 @@ export type ServerEngine = Pick<Engine,
 >;
 let engine: ServerEngine;
 let moduleHost: ModuleHost | undefined;
+let moduleStartupGuard: ModuleStartupGuard | undefined;
 
 // No SDK construction, preferences, listeners, or production dependency override.
 export function setTestDependencies(deps: { engine: ServerEngine; shutdown?: GracefulShutdown }): void {
@@ -574,7 +576,12 @@ export async function registerStaticWeb(): Promise<void> {
 // (COCKPIT_NO_BOOT=1) builds the Fastify app + hooks WITHOUT constructing the
 // Engine (which connects the native runtime) or binding the port. Production
 // (`tsx src/index.ts`) runs with the env unset, so it boots normally.
-function boot(): void {
+async function boot(): Promise<void> {
+  // Held until process exit, including unsuccessful native/transport shutdown.
+  moduleStartupGuard = await guardModuleHostStartup();
+  if (moduleStartupGuard.fencing === 'unsupported-platform') {
+    app.log.warn({ platform: moduleStartupGuard.platform }, 'Module migration fencing unavailable; ordinary startup only, module ID migration disabled');
+  }
   const native = new OfficialRuntime();
   const runtime = new Engine({ runtime: native });
   runtime.log = (msg, data) => app.log.warn(data ?? {}, msg);
@@ -594,4 +601,7 @@ function boot(): void {
   });
 }
 
-if (process.env.COCKPIT_NO_BOOT !== '1') boot();
+if (process.env.COCKPIT_NO_BOOT !== '1') void boot().catch(error => {
+  app.log.error({ err: error }, 'service startup refused');
+  process.exitCode = 1;
+});

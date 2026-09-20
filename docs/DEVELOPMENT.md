@@ -161,6 +161,15 @@ and event projection; only session inputs and action callbacks are synthetic.
 It does not cover backend integration; management resources have their own
 component and API tests.
 
+For module-role and resource presentation, open
+`/chat-lab.html?scene=resources` (or add `&longNames=1`). This scene mounts the
+real session list, role picker, settings and MCP/Skills panels against synthetic
+resource callbacks. Session creation and toggles affect only the fixture store.
+It includes multiple roles and similarly named non-module resources so visual
+review can distinguish explicit module metadata from name-based inference.
+Check desktop/mobile, native checkbox keyboard use, long names and both themes.
+It is not evidence of native role assembly or production resource readiness.
+
 When changing a Chat component, update affected shared scenarios in the same
 change and keep their contract tests current. Add a scenario only for a distinct
 interaction or failure boundary; remove scenarios when that behavior is removed.

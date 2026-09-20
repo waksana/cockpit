@@ -36,6 +36,7 @@ let rejectedIntent: string | undefined;
 let intentFailure: number | 'invalid-json' | 'connection' | undefined;
 let invalidPolicy = false;
 let mcpSessionResult: unknown;
+let skillSessionResult: unknown;
 let mcpToggleResult: unknown;
 let unconfirmedMcp = false;
 let scheduleEntries: ScheduleEntry[] = [];
@@ -115,6 +116,7 @@ mockHttp((res, req) => {
       return send({ error: 'Native MCP state is unconfirmed for test-server: unknown status "future-status"' }, 409);
     }
     if (name === 'mcp/session') return send(mcpSessionResult);
+    if (name === 'skills/session') return send(skillSessionResult);
     if (name === 'mcp/session-toggle') return send(mcpToggleResult);
     if (name === 'runtime/snapshot') return send(invalidPolicy ? { ...snapshot, permissionPolicy: undefined } : snapshot);
     if (name === 'session/list') return send({ sessions: [meta] });
@@ -188,6 +190,7 @@ beforeEach(() => {
   unavailable = large = malformedPreview = mismatchedCapability = false;
   invalidPolicy = false;
   mcpSessionResult = { loaded: true, servers: [] };
+  skillSessionResult = { skills: [] };
   mcpToggleResult = undefined;
   unconfirmedMcp = false;
   scheduleEntries = [];
@@ -314,6 +317,24 @@ async function json(name: string, args: Record<string, unknown> = {}): Promise<u
   assert.equal(result.isError, false, result.text);
   return JSON.parse(result.text);
 }
+
+test('session resource tools retain explicit module metadata without replacing names or native source', async () => {
+  const module = { id: 'fixture', name: 'Fixture module' };
+  const server = { name: 'fixture-tools', detail: 'native', status: 'connected', enabled: true, module };
+  const skill = { name: 'fixture-skill', source: 'custom', enabled: false, description: 'Native description', module };
+  mcpSessionResult = { loaded: true, servers: [server] };
+  skillSessionResult = { skills: [skill] };
+  const mcp = await call('cockpit_list_session_mcp', { session_id: 'B' });
+  assert.match(mcp.text, /fixture-tools.*role-configured module: Fixture module \(fixture; not live connection identity\)/);
+  assert.match(mcp.text, /\n    native/);
+  assert.deepEqual(await json('cockpit_list_session_mcp', { session_id: 'B', response_format: 'json' }),
+    { loaded: true, servers: [server], count: 1 });
+  const skills = await call('cockpit_list_session_skills', { session_id: 'B' });
+  assert.match(skills.text, /fixture-skill \(custom\).*module: Fixture module \(fixture\)/);
+  assert.match(skills.text, /Native description/);
+  assert.deepEqual(await json('cockpit_list_session_skills', { session_id: 'B', response_format: 'json' }),
+    { skills: [skill], count: 1 });
+});
 
 for (const status of ['connected', 'failed', 'needs-auth', 'pending', 'disabled', 'stopped', 'not_configured']) {
   test(`MCP tools preserve ${status} independently of enablement in list, panels and toggle output`, async t => {

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
-import { SessionRole, type RoleSelection } from '@cockpit/protocol';
+import { SessionRole, type ModuleSource, type RoleSelection } from '@cockpit/protocol';
 import type { RoleAssembly, RoleProvider } from '@cockpit/core';
 import type { ModuleInstallation } from './module-install.ts';
 import { safeModulePath } from './module-install.ts';
@@ -24,7 +24,13 @@ export class ModuleRoles implements RoleProvider {
   }
 
   read(sessionId: string): SessionRole[] {
-    try { return SessionRole.array().parse(JSON.parse(readFileSync(this.file(sessionId), 'utf8'))); }
+    try {
+      return SessionRole.array().parse(JSON.parse(readFileSync(this.file(sessionId), 'utf8'))).map(selection => {
+        const manifest = this.installations().find(value => value.manifest.id === selection.moduleId)?.manifest;
+        const role = manifest?.roles?.find(value => value.id === selection.roleId);
+        return { ...selection, ...(manifest ? { moduleName: manifest.name } : {}), ...(role ? { name: role.name } : {}) };
+      });
+    }
     catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw error;
@@ -42,10 +48,11 @@ export class ModuleRoles implements RoleProvider {
 
   async assemble(sessionId: string, selections: RoleSelection[]): Promise<RoleAssembly> {
     const roles: SessionRole[] = [];
-    const skills = new Map<string, { name: string; path: string; hash: string }>();
+    const skills = new Map<string, { name: string; path: string; hash: string; module: ModuleSource }>();
     const directories = new Set<string>();
     const instructions = new Map<string, { headers: string[]; text: string }>();
     const servers: NonNullable<RoleAssembly['config']['mcpServers']> = {};
+    const mcpSources: Record<string, ModuleSource> = {};
     const selected = [...new Map(selections.map(role => [`${role.moduleId}/${role.roleId}`, role])).values()]
       .sort((a, b) => `${a.moduleId}/${a.roleId}`.localeCompare(`${b.moduleId}/${b.roleId}`));
     for (const selection of selected) {
@@ -53,6 +60,7 @@ export class ModuleRoles implements RoleProvider {
       const role = installation?.manifest.roles?.find(role => role.id === selection.roleId);
       if (!installation || !role) throw new Error(`Module role unavailable: ${selection.moduleId}/${selection.roleId}`);
       const { manifest, root } = installation;
+      const module = { id: manifest.id, name: manifest.name };
       const verified = async (relative: string) => {
         const path = join(root, safeModulePath(relative));
         if (!(await realpath(path)).startsWith(`${resolve(root)}${sep}`)) throw new Error('Role resource escapes module');
@@ -79,31 +87,34 @@ export class ModuleRoles implements RoleProvider {
           const name = /^---\r?\n[\s\S]*?^name:\s*["']?([^"'\r\n]+)["']?\s*$/m.exec(body)?.[1]?.trim() ?? path;
           const hash = createHash('sha256').update(body).digest('hex');
           const previous = skills.get(name);
-          if (previous && previous.hash !== hash) throw new Error(`Conflicting role skill: ${name}`);
+          if (previous && (previous.module.id !== module.id || previous.hash !== hash)) throw new Error(`Conflicting role skill: ${name}`);
           if (previous && previous.path !== join(root, path)) throw new Error(`Duplicate role skill name in different directories: ${name}`);
-          skills.set(name, { name, path: join(root, path), hash });
+          skills.set(name, { name, path: join(root, path), hash, module });
         }
         directories.add(absolute);
       }
       for (const [key, config] of Object.entries(role.mcpServers ?? {})) {
-        const name = `module_${manifest.id}__${key}`;
+        const name = key;
         const url = new URL(`/_modules/${manifest.id}/${installation.digest}/api${config.path}`, this.origin).href;
         const value = { type: 'http' as const, url, headers: { 'X-Cockpit-Module-Digest': installation.digest }, tools: [...new Set(config.tools)].sort() };
         if (value.tools.includes('*')) value.tools = ['*'];
-        const previous = servers[name];
+        const previous = Object.hasOwn(servers, name) ? servers[name] : undefined;
         if (previous) {
-          if (!('url' in previous) || previous.url !== value.url) throw new Error(`Conflicting role MCP configuration: ${name}`);
+          if (mcpSources[name]?.id !== manifest.id || !('url' in previous) || previous.url !== value.url) {
+            throw new Error(`Conflicting role MCP configuration: ${name}`);
+          }
           value.tools = [...new Set([...previous.tools ?? [], ...value.tools])].sort();
           if (value.tools.includes('*')) value.tools = ['*'];
         }
-        servers[name] = value;
+        Object.defineProperty(servers, name, { value, enumerable: true, configurable: true, writable: true });
+        Object.defineProperty(mcpSources, name, { value: module, enumerable: true, configurable: true, writable: true });
       }
     }
     const config: RoleAssembly['config'] = selected.length ? {
       systemMessage: { mode: 'append', content: [...instructions.values()].map(group => `${group.headers.join('\n')}\n${group.text}`).join('\n\n') },
       skillDirectories: [...directories], mcpServers: servers,
     } : {};
-    return { roles, config, skills: [...skills.values()],
+    return { roles, config, skills: [...skills.values()], mcpSources,
       fingerprint: createHash('sha256').update(JSON.stringify(config)).digest('hex') };
   }
 }

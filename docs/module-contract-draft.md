@@ -245,7 +245,7 @@ manifest 可声明 `roles`：
   "instructions": "roles/executor.md",
   "skillDirectories": ["skills/executor"],
   "mcpServers": {
-    "tools": { "type": "http", "path": "/mcp", "tools": ["task_read", "task_report"] }
+    "example-tools": { "type": "http", "path": "/mcp", "tools": ["task_read", "task_report"] }
   }
 }
 ```
@@ -254,13 +254,15 @@ manifest 可声明 `roles`：
 文件与目录是包根相对路径；`path` 是以 `/` 开头的
 模块 API 相对路径。每个 skill root 包含 `SKILL.md`（可位于子目录），只传入所选
 角色的目录。角色来源按 `moduleId/roleId` 排序，同一选择与同一资源去重；
-不同来源的同名 skill、同一 MCP key 的不同端点明确拒绝。原始 role System Prompt 带模块、
+不同来源的同名 skill、不同模块的同名 MCP、同一 MCP key 的不同端点明确拒绝。
+原生用户、工作区、插件等已发现的同名 MCP 也拒绝，即使配置相同，不自动合并或别名。
+原始 role System Prompt 带模块、
 角色与原生 session ID 标头，通过主 agent `systemMessage.mode: "append"` 追加；
 不替换基础指令，不创建 custom agent，也不发送初始化消息。
 
-MCP 名称为 `module_${moduleId}__${key}`。宿主生成
+MCP 名称原样采用 manifest 的 `mcpServers` key（例如 `example-tools`），不加模块前缀。宿主生成
 `http://127.0.0.1:<host-port>/_modules/<moduleId>/<digest>/api<path>`，
-并设置 `X-Cockpit-Module-Digest: <digest>`。同名同端点工具列表取并集，
+并设置 `X-Cockpit-Module-Digest: <digest>`。同一模块、同名同端点的角色工具列表取并集，
 `["*"]` 表示全部，`[]` 表示无工具。既有来源、摘要、请求大小和生命周期保护不变。
 模块负责 MCP 协议实现、依赖、工具表和错误；普通模块 HTTP API 可并存。
 
@@ -276,7 +278,23 @@ MCP 名称为 `module_${moduleId}__${key}`。宿主生成
 创建失败若已确认原生 ID，错误保留 `sessionId`，不得盲目重建。
 
 所选角色按 session ID 保存在宿主目录，列表、identity、Web、MCP 在 unloaded
-时仍展示；冷恢复使用宿主当前已冷加载的最新角色资源重新装配，缺失模块不静默丢弃角色。
+时仍展示；读取时按原有 moduleId/roleId 更新当前已安装模块与角色的展示名称，不迁移身份，
+不装载会话。缺失身份保留持久化标签，但不表示能力可用。
+冷恢复使用宿主当前已冷加载的最新角色资源重新装配，缺失模块不静默丢弃角色。
+既有 loaded 会话仍展示原生实际资源名，不把旧的生成名称伪装成新名称。
+
+`McpServerSession` 和 `SkillSession` 的可选 `module: {id, name}` 是显式模块来源，
+不是名称前缀或原生 `source` 的推断；原生名称、来源、状态、错误和启用字段不变。
+`skills/session` 仅在原生 name/path 与此 handle 实际装配的 skill 完全一致时输出来源；
+同名原生替代项或路径缺失不输出。冷恢复重建该匹配，重载后的读取仍按实际原生路径验证。
+`mcp/session` 的 `module` 表示本 handle 角色配置中声明该 MCP 名称的模块，
+不是当前连接身份的证明。原生列表中没有该名称就不生成资源行；普通同名风格或前缀
+不会得到模块标签。当前 SDK 1.0.13 不公开 live URL/config/resource identity，且支持
+同名 `startServer`/`restartServer` 替换，因此声明来源不能核验之后的同名替换。
+UI 提示和 Agent MCP 文本明确这个含义，连接状态仍独立取自原生。
+该字段不是 readiness，也不使用缓存就绪状态或额外后台查询。冷恢复重建声明来源。
+`session/resources` 当前只投影 metadata，不包含 MCP/skill 列表；Web 使用上述专用读取。
+`session/panel(s)` 保留既有原生标签，不增加来源推断。
 角色选择不是就绪：只有显式 `roles/readiness` / `cockpit_role_readiness` /
 `context.host.call('roles/readiness', ...)` 检查该 native handle 的装配、skill 路径/启用状态、
 MCP 连接/策略状态及当前原生工具 metadata。普通列表、snapshot、detail、identity 与 Web

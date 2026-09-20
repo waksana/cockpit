@@ -217,6 +217,7 @@ test('role MCP and appended instructions merge without replacing unrelated nativ
     assert.deepEqual(config.systemMessage, { mode: 'append', content: 'Native host appendix\n\nRaw role appendix' });
   }
   await assert.rejects(f.runtime.createSession({ mcpServers: { existing: role } }), /Conflicting MCP/);
+  await assert.rejects(f.runtime.createSession({ mcpServers: { existing } }), /Conflicting MCP/);
   await f.runtime.closeSession(a); await f.runtime.closeSession(b); await f.runtime.stop();
 });
 

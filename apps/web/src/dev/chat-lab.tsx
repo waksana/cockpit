@@ -221,9 +221,14 @@ export function Lab() {
 }
 
 const root = createRoot(document.getElementById('root')!);
-if (new URLSearchParams(location.search).get('scene') === 'workspace') {
+const scene = new URLSearchParams(location.search).get('scene');
+if (scene === 'workspace' || scene === 'resources') {
   const { installWorkspaceFixture, workspaceSessionId, workspaceDraft } = await import('./workspace-fixtures');
   installWorkspaceFixture(useCockpit);
+  if (scene === 'resources') {
+    const { installResourceFixture } = await import('./resource-fixtures');
+    installResourceFixture(useCockpit, new URLSearchParams(location.search).get('longNames') === '1');
+  }
   getSessionDraft(workspaceSessionId).edit(workspaceDraft);
   const { default: App } = await import('../App');
   root.render(<MemoryRouter initialEntries={[`/session/${workspaceSessionId}/info`]}>

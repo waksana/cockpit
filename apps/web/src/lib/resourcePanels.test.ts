@@ -54,13 +54,14 @@ test('open info panel identifies its session without cross-page navigation', () 
   assert.doesNotMatch(html, /交互模式/);
 });
 
-test('role labels describe selection only, without readiness status or badges', () => {
+test('joined role badges show literal module and role names, not readiness', () => {
   const html = renderToStaticMarkup(createElement(SessionInfoPanel, {
     session: { ...session, roles: [{ moduleId: 'fixture', roleId: 'owner', moduleName: 'Fixture', name: 'Owner' }] },
     open: true, onClose: noop, onSetModel: noModelMutation,
   }));
-  assert.match(html, /Fixture \/ Owner/);
-  assert.match(html, /title="创建时角色选择，不代表当前能力就绪"/);
+  assert.match(html, /class="module-label-name">Fixture</);
+  assert.match(html, /class="role-badge-name">Owner</);
+  assert.match(html, /不代表当前能力就绪/);
   assert.doesNotMatch(html, /读取时就绪|role-readiness|readiness-badge/);
 });
 

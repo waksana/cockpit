@@ -12,6 +12,7 @@ import { useLongPress } from '../lib/longpress';
 import { filterSessions } from '../pages/session-list';
 import { StateNotice } from './StateNotice';
 import { SessionStatus } from './ModuleComponents';
+import { RoleBadge } from './ModuleLabel';
 
 function cwdBasename(cwd: string): string {
   return cwd.split('/').filter(Boolean).pop() ?? cwd;
@@ -73,9 +74,10 @@ function SessionRow({ s, active, actions }: {
       <span className="dialog-avatar" style={{ '--chip-h': hue } as CSSProperties} aria-hidden="true">{mono}</span>
       <span className="dialog-title">{s.title}</span>
       <span className="dialog-time">{relTime(s.lastActivity)}</span>
-      <span className="dialog-subtitle">{cwdBasename(s.cwd)}
-        {!!s.roles?.length && <span title="创建时角色选择，不代表当前能力就绪"> · 角色：{s.roles.map(role => role.name).join(' / ')}</span>}
-      </span>
+      <span className="dialog-subtitle">{cwdBasename(s.cwd)}</span>
+      {!!s.roles?.length && <span className="dialog-roles session-role-badges">
+        {s.roles.map(role => <RoleBadge key={`${role.moduleId}/${role.roleId}`} role={role} />)}
+      </span>}
       <SessionStatus sessionId={s.sessionId} status={s.status} needsDecision={!!(s.ask || s.planRequest || s.elicitation)} />
     </button></li>
   );

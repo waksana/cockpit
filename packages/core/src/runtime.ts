@@ -7,7 +7,6 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ChildProcess } from 'node:child_process';
 import { channel } from 'node:diagnostics_channel';
 import { EventEmitter } from 'node:events';
-import { isDeepStrictEqual } from 'node:util';
 import type { ModelOption } from '@cockpit/protocol';
 
 export type RuntimeSession = CopilotSession;
@@ -213,8 +212,8 @@ export class OfficialRuntime {
 
   private sessionOptions(config: SessionConfig | ResumeSessionConfig): SessionConfig {
     const base = this.config.sessionConfig;
-    for (const [name, value] of Object.entries(config.mcpServers ?? {})) {
-      if (base?.mcpServers?.[name] && !isDeepStrictEqual(base.mcpServers[name], value)) {
+    for (const name of Object.keys(config.mcpServers ?? {})) {
+      if (base?.mcpServers && Object.hasOwn(base.mcpServers, name)) {
         throw new Error(`Conflicting MCP configuration: ${name}`);
       }
     }

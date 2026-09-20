@@ -195,6 +195,40 @@ function button(container: HostNode, text: string) {
 }
 function disabled(node: HostNode) { return node.attributes.has('disabled'); }
 
+for (const Component of [SessionMcp, SessionSkills]) {
+  test(`${Component.name}: metadata labels never alias names, infer provenance, or change mutation keys`, async t => {
+    const h = mount(t);
+    const name = Component === SessionMcp ? 'cockpit-task' : 'cockpit-task-owner';
+    const unrelated = 'module_cockpit-task__unrelated';
+    const module = { id: 'cockpit-task', name: 'Task' };
+    let enabled = true;
+    const calls: Array<[string, string, boolean]> = [];
+    const mutate = async (id: string, key: string, value: boolean) => { calls.push([id, key, value]); enabled = value; };
+    useCockpit.setState({
+      mcpSession: async () => [
+        { name, module, detail: 'native', enabled, status: enabled ? 'connected' : 'disabled' },
+        { name: unrelated, detail: 'native', enabled: false, status: 'disabled' },
+      ],
+      skillsSession: async () => [
+        { name, module, description: '', source: 'custom', enabled },
+        { name: unrelated, description: '', source: 'custom', enabled: false },
+      ],
+      mcpToggleSession: mutate, skillsToggleSession: mutate,
+    });
+    await h.render(createElement(Component, { session, onClose: noop }));
+    const rows = h.container.querySelectorAll('.manage-row');
+    assert.equal(rows[0].querySelector('.manage-row-name')?.textContent, name);
+    assert.equal(rows[0].querySelector('.module-label-name')?.textContent, 'Task');
+    if (Component === SessionMcp) assert.match(rows[0].querySelector('.module-label')!.getAttribute('title')!, /角色配置来源，不代表当前连接身份/);
+    assert.match(rows[0].querySelector('.manage-row-source')!.textContent, /native|custom/);
+    assert.equal(rows[1].querySelector('.manage-row-name')?.textContent, unrelated);
+    assert.equal(rows[1].querySelector('.module-label'), null);
+    await h.event(rows[0].querySelector('[role="switch"]')!, 'click');
+    assert.deepEqual(calls, [[session.sessionId, name, false]]);
+    assert.equal(rows[0].querySelector('.module-label-name')?.textContent, 'Task');
+  });
+}
+
 test('two-line disclosure measures overflow, keeps collapse while expanded, and remeasures resize and late text', async t => {
   const h = mount(t);
   const render = (text: string) => h.render(createElement(ExpandableText, { text, label: '说明' }));
