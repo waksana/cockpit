@@ -463,12 +463,13 @@ test('role creation, identity, cold resume and readiness preserve native unrelat
   const h = harness(t);
   const role = { moduleId: 'fixture', roleId: 'executor', name: 'Executor', moduleName: 'Fixture' };
   const saved = new Map<string, typeof role[]>();
+  let version = 1;
   const provider: RoleProvider = {
     list: () => [role], read: id => saved.get(id) ?? [], save: (id, roles) => { saved.set(id, roles); },
     assemble: async (id, roles) => ({
-      roles: roles.map(() => role), fingerprint: 'fixture-v1',
+      roles: roles.map(() => role), fingerprint: `fixture-v${version}`,
       config: {
-        systemMessage: { mode: 'append', content: `Module fixture/executor\nNative session ID: ${id}` },
+        systemMessage: { mode: 'append', content: `Module fixture/executor v${version}\nNative session ID: ${id}` },
         skillDirectories: ['/fixture/skills'],
         mcpServers: { module_fixture__tools: { type: 'http', url: 'http://127.0.0.1/mcp', tools: ['read'] } },
       }, skills: [{ name: 'executor', path: '/fixture/skills/executor/SKILL.md' }],
@@ -483,30 +484,91 @@ test('role creation, identity, cold resume and readiness preserve native unrelat
   assert.match(JSON.stringify(config.systemMessage), new RegExp(id));
   assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 0);
   assert.deepEqual((await h.engine.getMeta(id))!.roles, [role]);
-  assert.equal((await h.engine.roleReadiness(id)).ready, false);
   const native = h.natives.get(id)!;
+  const assemble = t.mock.method(provider, 'assemble');
+  const reads = [
+    () => h.engine.getResources(id, ['identity']),
+    () => h.engine.getMeta(id),
+    () => h.engine.listLive(),
+    () => h.engine.snapshot(),
+    () => h.engine.status(),
+  ];
+  for (const read of reads) {
+    const beforeMcp = native.rpc.mcp.list.mock.callCount();
+    const result = await read();
+    assert.doesNotMatch(JSON.stringify(result), /roleReadiness/);
+    assert.equal(native.rpc.skills.list.mock.callCount(), 0);
+    assert.equal(native.rpc.tools.getCurrentMetadata.mock.callCount(), 0);
+    assert.equal(assemble.mock.callCount(), 0);
+    assert.equal(native.rpc.mcp.list.mock.callCount() - beforeMcp, read === reads[0] ? 0 : 1,
+      'ordinary reads only inspect MCP host activity for existing control/lifecycle safety');
+  }
+  assert.equal((await h.engine.roleReadiness(id)).ready, false);
   native.state.skills = [{ name: 'executor', description: '', source: 'custom', path: '/fixture/skills/executor/SKILL.md', enabled: true } as Skill];
   native.state.mcp = mcpState([{ name: 'module_fixture__tools', status: 'connected' }]);
   assert.equal((await h.engine.roleReadiness(id, [role])).ready, true);
+  native.state.processing = true;
+  native.state.tasks = [task()];
+  native.state.queue.items = [queued('pending', 'Unrelated pending content')];
+  assert.equal((await h.engine.roleReadiness(id)).ready, true, 'capabilities are independent of turn/queue/subagent activity');
+  native.state.processing = false;
+  native.state.tasks = [];
+  native.state.queue.items = [];
+  assert.match((await h.engine.roleReadiness(id, [{ ...role, roleId: 'unselected' }])).reasons.join(), /Role not selected/);
   native.state.skills[0]!.enabled = false;
   assert.match((await h.engine.roleReadiness(id)).reasons.join(), /disabled/);
   native.state.skills[0]!.enabled = true;
   native.state.mcp.host!.disabledServers = ['module_fixture__tools'];
   assert.match((await h.engine.roleReadiness(id)).reasons.join(), /not connected/);
+  version = 2;
+  assert.match((await h.engine.roleReadiness(id)).reasons.join(), /resources differ/);
   await h.engine.unload(id);
   assert.deepEqual((await h.engine.listLive())[0]!.roles, [role]);
   assert.equal((await h.engine.roleReadiness(id)).loaded, false);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 0, 'explicit readiness never loads an unloaded session');
+  assert.match((await h.engine.roleReadiness('missing-session')).reasons.join(), /does not exist/);
   const cold = new Engine({ runtime: h.runtime as unknown as EngineRuntime });
   cold.setRoleProvider(provider);
   assert.deepEqual((await cold.getMeta(id))!.roles, [role]);
   await cold.load(id);
-  assert.deepEqual(h.configs.get(id)!.systemMessage, config.systemMessage);
+  assert.match(JSON.stringify(h.configs.get(id)!.systemMessage), /executor v2/);
+  assert.notDeepEqual(h.configs.get(id)!.systemMessage, config.systemMessage, 'cold resume uses current role resources');
   assert.deepEqual(h.configs.get(id)!.mcpServers, config.mcpServers);
   native.state.mcp.host!.disabledServers = [];
   native.rpc.tools.getCurrentMetadata.mock.mockImplementation(async () => ({ tools: [] }));
   assert.match((await cold.roleReadiness(id)).reasons.join(), /not currently offered/);
   assert.equal(native.rpc.tools.initializeAndValidate.mock.callCount(), 2, 'readiness never repairs tools');
 });
+
+for (const stage of ['assembly', 'capability read'] as const) {
+  test(`explicit readiness does not report a closed handle ready during ${stage}`, async t => {
+    const h = harness(t);
+    const roles = [{ moduleId: 'fixture', roleId: 'owner', moduleName: 'Fixture', name: 'Owner' }];
+    const saved = new Map<string, typeof roles>();
+    const assembly = { roles, skills: [], config: {}, fingerprint: 'fixture' };
+    const provider: RoleProvider = {
+      list: () => roles, read: id => saved.get(id) ?? [], save: (id, value) => { saved.set(id, value); },
+      assemble: async () => assembly,
+    };
+    h.engine.setRoleProvider(provider);
+    const id = await h.engine.newSession(h.cwd, roles);
+    const native = h.natives.get(id)!;
+    const held = deferred<typeof assembly>();
+    const tools = deferred<{ tools: [] }>();
+    if (stage === 'assembly') t.mock.method(provider, 'assemble', () => held.promise);
+    else native.rpc.tools.getCurrentMetadata.mock.mockImplementationOnce(() => tools.promise);
+    const reading = h.engine.roleReadiness(id);
+    await nextTurn();
+    h.runtime.expire(id, true);
+    held.resolve(assembly);
+    tools.resolve({ tools: [] });
+    const result = await reading;
+    assert.equal(result.ready, false);
+    assert.equal(result.loaded, false);
+    assert.match(result.reasons.join(), /closed|changed/);
+    assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+  });
+}
 
 test('role conflicts and failed native acknowledgement preserve attribution without a hidden retry', async t => {
   const h = harness(t);
@@ -530,190 +592,6 @@ test('role conflicts and failed native acknowledgement preserve attribution with
   await assert.rejects(h.engine.newSession(h.cwd, roles), /Conflicting/);
   assert.equal(h.runtime.createSession.mock.callCount(), 1);
 });
-
-test('queue advancement uses native transitions and flushQueued while retaining backgrounds and the latest turn', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  s.state.processing = true;
-  s.state.tasks = [task()];
-  s.state.queue.items = [queued('a', 'A'), queued('b', 'B')];
-  const result = await h.engine.advanceQueue({ action: 'start', sessionId: s.id });
-  assert.equal(result.operation!.state, 'running');
-  await nextTurn();
-  assert.equal(s.rpc.interruptMainTurn.mock.callCount(), 1);
-  await assert.rejects(h.engine.unload(s.id), protectedWork);
-  s.state.queue.items.shift();
-  s.emit(user('a'));
-  await nextTurn();
-  assert.equal(s.rpc.interruptMainTurn.mock.callCount(), 1);
-  s.emit(event('assistant.turn_start', { turnId: 'a' }));
-  await nextTurn();
-  assert.equal(s.rpc.interruptMainTurn.mock.callCount(), 2);
-  s.state.queue.items.push(queued('new', 'Concurrent message'));
-  s.emit(event('pending_messages.modified', {}));
-  s.state.queue.items.shift();
-  s.emit(user('b'));
-  s.emit(event('assistant.turn_start', { turnId: 'b' }));
-  await nextTurn();
-  assert.equal(s.rpc.interruptMainTurn.mock.callCount(), 3);
-  s.state.queue.items.shift();
-  s.emit(user('new'));
-  await nextTurn();
-  assert.equal((await h.engine.advanceQueue({ action: 'get', sessionId: s.id })).operation!.state, 'completed');
-  for (const call of s.rpc.interruptMainTurn.mock.calls) assert.deepEqual(call.arguments, [{ flushQueued: true }]);
-  assert.equal(s.rpc.queue.clear.mock.callCount(), 0);
-  assert.equal(s.rpc.queue.removeAt.mock.callCount(), 0);
-  assert.equal(s.sdk.abort.mock.callCount(), 0);
-  assert.equal(s.sdk.send.mock.callCount(), 0);
-  assert.equal(s.state.tasks[0]!.status, 'running');
-  assert.equal(s.state.processing, true);
-});
-
-for (const contention of ['identity read', 'prompt submission'] as const) {
-  test(`queue advancement waits for an ordinary ${contention} instead of failing or retrying`, async t => {
-    const h = harness(t);
-    const s = await h.load();
-    s.state.processing = true;
-    s.state.queue.items = [queued('a', 'A')];
-    let release!: () => void;
-    let held: Promise<unknown>;
-    if (contention === 'identity read') {
-      const snapshot = await s.rpc.metadata.snapshot();
-      const response = deferred<typeof snapshot>();
-      s.rpc.metadata.snapshot.mock.mockImplementationOnce(() => response.promise);
-      held = h.engine.getResources(s.id, ['identity']);
-      release = () => response.resolve(snapshot);
-    } else {
-      const response = deferred<string>();
-      s.sdk.send.mock.mockImplementationOnce(() => response.promise);
-      held = h.engine.prompt(s.id, 'concurrent queue message');
-      release = () => response.resolve('concurrent-message');
-    }
-    await nextTurn();
-    const started = await h.engine.advanceQueue({ action: 'start', sessionId: s.id });
-    await nextTurn();
-    assert.equal(s.rpc.interruptMainTurn.mock.callCount(), 0);
-    assert.equal((await h.engine.advanceQueue({ action: 'get', sessionId: s.id })).operation!.state, 'running');
-    release(); await held; await nextTurn();
-    assert.equal(s.rpc.interruptMainTurn.mock.callCount(), 1);
-    s.state.queue.items = [];
-    s.emit(user('a'));
-    await nextTurn();
-    const completed = (await h.engine.advanceQueue({ action: 'get', sessionId: s.id })).operation!;
-    assert.equal(completed.operationId, started.operation!.operationId);
-    assert.equal(completed.state, 'completed');
-    assert.equal(s.rpc.queue.clear.mock.callCount(), 0);
-    assert.equal(s.sdk.abort.mock.callCount(), 0);
-  });
-}
-
-for (const outcome of ['cancel', 'new admission', 'closed handle', 'uncertain interrupt'] as const) {
-  test(`queue advancement revalidates ${outcome} after local contention`, async t => {
-    const h = harness(t);
-    const s = await h.load();
-    s.state.processing = true;
-    s.state.queue.items = [queued('a', 'A')];
-    const snapshot = await s.rpc.metadata.snapshot();
-    const response = deferred<typeof snapshot>();
-    s.rpc.metadata.snapshot.mock.mockImplementationOnce(() => response.promise);
-    const held = h.engine.getResources(s.id, ['identity']).catch(error => error);
-    await nextTurn();
-    await h.engine.advanceQueue({ action: 'start', sessionId: s.id });
-    await nextTurn();
-    if (outcome === 'cancel') {
-      await h.engine.advanceQueue({ action: 'cancel', sessionId: s.id });
-      await nextTurn();
-      assert.equal((await h.engine.advanceQueue({ action: 'get', sessionId: s.id })).operation!.state, 'cancelled',
-        'cancellation must not wait for an unrelated read to finish');
-    } else if (outcome === 'new admission') {
-      s.state.queue.items = [];
-      s.emit(user('a'));
-      s.emit(event('assistant.turn_start', { turnId: 'a' }));
-    } else if (outcome === 'closed handle') {
-      h.runtime.expire(s.id, true);
-    } else {
-      s.rpc.interruptMainTurn.mock.mockImplementation(async () => { throw new Error('Native interruption outcome uncertain'); });
-    }
-    response.resolve(snapshot); await held; await nextTurn();
-    assert.equal(s.rpc.interruptMainTurn.mock.callCount(), outcome === 'uncertain interrupt' ? 1 : 0);
-    const operation = (await h.engine.advanceQueue({ action: 'get', sessionId: s.id })).operation!;
-    assert.equal(operation.state, outcome === 'cancel' ? 'cancelled' : outcome === 'new admission' ? 'completed' : 'failed');
-    if (outcome === 'uncertain interrupt') {
-      await h.engine.getResources(s.id, ['identity']);
-      s.emit(user('later')); s.emit(event('assistant.turn_start', { turnId: 'later' }));
-      await nextTurn();
-      assert.equal(s.rpc.interruptMainTurn.mock.callCount(), 1, 'a native failure is never retried after local work settles');
-    }
-  });
-}
-
-test('queue advancement shares an already in-flight interrupt rather than reinterrupting the unsettled turn', async t => {
-  const h = harness(t);
-  const s = await h.load();
-  s.state.processing = true;
-  s.state.queue.items = [queued('a', 'A')];
-  const response = deferred<{ interrupted: boolean }>();
-  s.rpc.interruptMainTurn.mock.mockImplementationOnce(() => response.promise);
-  const interrupt = h.engine.interrupt(s.id);
-  await nextTurn();
-  await h.engine.advanceQueue({ action: 'start', sessionId: s.id });
-  await nextTurn();
-  response.resolve({ interrupted: true });
-  await interrupt; await nextTurn();
-  assert.equal(s.rpc.interruptMainTurn.mock.callCount(), 1);
-  assert.equal((await h.engine.advanceQueue({ action: 'get', sessionId: s.id })).operation!.state, 'running');
-  s.state.queue.items = []; s.emit(user('a'));
-  await nextTurn();
-  assert.equal((await h.engine.advanceQueue({ action: 'get', sessionId: s.id })).operation!.state, 'completed');
-});
-
-for (const outcome of ['advance current turn', 'cancel', 'empty tail', 'failed readback'] as const) {
-  test(`queue advancement distinguishes the next turn from an older held interrupt readback: ${outcome}`, async t => {
-    const h = harness(t);
-    const s = await h.load();
-    s.state.processing = true;
-    s.state.queue.items = [queued('a', 'A'), queued('b', 'B')];
-    const readback = deferred<{ processing: boolean }>();
-    s.rpc.metadata.isProcessing.mock.mockImplementationOnce(() => readback.promise);
-    const original = h.engine.interrupt(s.id).catch(error => error);
-    await nextTurn();
-    assert.equal(s.rpc.interruptMainTurn.mock.callCount(), 1);
-    s.state.queue.items.shift();
-    s.emit(user('a'));
-    s.emit(event('assistant.turn_start', { turnId: 'a' }));
-    await h.engine.advanceQueue({ action: 'start', sessionId: s.id });
-    await nextTurn();
-    assert.equal((await h.engine.advanceQueue({ action: 'get', sessionId: s.id })).operation!.interrupts, 0);
-    assert.equal(s.rpc.interruptMainTurn.mock.callCount(), 1, 'old readback must settle before another native interrupt');
-    if (outcome === 'cancel') await h.engine.advanceQueue({ action: 'cancel', sessionId: s.id });
-    if (outcome === 'empty tail') {
-      s.state.queue.items = [];
-      s.emit(user('b'));
-      s.emit(event('assistant.turn_start', { turnId: 'b' }));
-    }
-    if (outcome === 'failed readback') readback.reject(new Error('Original interruption readback is uncertain'));
-    else readback.resolve({ processing: true });
-    await original; await nextTurn();
-    const operation = (await h.engine.advanceQueue({ action: 'get', sessionId: s.id })).operation!;
-    if (outcome === 'advance current turn') {
-      assert.equal(s.rpc.interruptMainTurn.mock.callCount(), 2, 'the old-turn receipt cannot count for the admitted current turn');
-      assert.equal(operation.interrupts, 1);
-      s.state.queue.items = []; s.emit(user('b'));
-      await nextTurn();
-      assert.equal((await h.engine.advanceQueue({ action: 'get', sessionId: s.id })).operation!.state, 'completed');
-    } else {
-      assert.equal(s.rpc.interruptMainTurn.mock.callCount(), 1);
-      assert.equal(operation.interrupts, 0);
-      assert.equal(operation.state, outcome === 'cancel' ? 'cancelled' : outcome === 'empty tail' ? 'completed' : 'failed');
-      if (outcome === 'failed readback') {
-        assert.match(operation.error!, /uncertain/);
-        s.emit(user('later')); s.emit(event('assistant.turn_start', { turnId: 'later' }));
-        await nextTurn();
-        assert.equal(s.rpc.interruptMainTurn.mock.callCount(), 1, 'uncertain settlement must never trigger a retry');
-      }
-    }
-  });
-}
 
 test('MCP-only roles reject discovered native config collisions on create and cold resume', async t => {
   const h = harness(t);

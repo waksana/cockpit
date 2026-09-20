@@ -236,9 +236,8 @@ function InfoDetails({ session, onClose, onSetModel }: SessionInfoPanelProps) {
       <section className="info-section">
         <ExpandableText className="info-summary-title" text={session.title} label="会话标题" />
         <div className="info-section-content info-meta-cwd">{session.cwd || '工作目录：原生未提供'}</div>
-        {!!session.roles?.length && <div className="info-section-content">
+        {!!session.roles?.length && <div className="info-section-content" title="创建时角色选择，不代表当前能力就绪">
           角色（不是就绪状态）：{session.roles.map(role => `${role.moduleName} / ${role.name}`).join('、')}
-          {session.roleReadiness && <p>读取时就绪：{session.roleReadiness.ready ? '是' : session.roleReadiness.reasons.join('；')}</p>}
         </div>}
         <div className="info-section-content info-session-id">
           <div className="info-session-id-heading">

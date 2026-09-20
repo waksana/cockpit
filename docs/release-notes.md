@@ -1,3 +1,23 @@
+# Unreleased source: explicit role capability checks
+
+Simplifies the development role integration from #68 without creating a release
+or authorizing deployment. `roles/readiness`, `cockpit_role_readiness` and the
+typed module `context.host.call('roles/readiness', ...)` bridge remain explicit,
+on-demand checks. Ordinary session metadata, lists, snapshots and Web panels no
+longer carry `roleReadiness`; consumers must explicitly request capability
+evidence and check busy/pending/subagent state separately.
+
+The automatic `session/advance-queue` intent, `cockpit_advance_queue` tool and
+`QueueAdvanceOperation` type are removed without aliases or receipt recovery.
+Single main-turn interruption preserving the queue, per-ID pending removal,
+prompt, ordinary Stop/cancel and lifecycle protections remain unchanged.
+Role selection labels are not capability proof; readiness badges are deferred.
+Creation-time role System Prompts, native Skill roots, shared MCP tool unions
+and selected-role persistence/current-resource cold resume remain supported.
+See the [module contract](module-contract-draft.md#44-创建时角色与模块-http-mcp).
+
+---
+
 # Cockpit 0.2.6
 
 Adds public UI v1 input/status classes for paired Speech 0.3.1. The native

@@ -12,8 +12,9 @@ Backends run in the host Node process; `publish`/`onEvent` data events are imple
 Unimplemented capabilities are listed separately at the end of that contract.
 Creation-time module roles and the narrow backend `host.call` bridge are additive
 development capabilities (backend API remains v1). The module contract owns their
-manifest, native readiness and cold-resume semantics. Queue advancement is a generic,
-event-driven native main-turn operation, not a scheduler or module business registry.
+manifest, explicit on-demand capability readiness and cold-resume semantics.
+Ordinary session reads expose selected-role identity only, not readiness; there
+is no readiness cache, badge or automatic queue advancement.
 Modules remain cold-loaded: installation and version selection take effect on
 the next host start. Hot loading, hot enable/disable and hot updates are not product goals.
 Do not reserve a hot-switching framework or change the trusted main-process model

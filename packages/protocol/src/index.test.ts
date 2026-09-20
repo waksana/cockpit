@@ -83,6 +83,22 @@ const minimalMeta = {
   ask: null,
 } satisfies SessionMeta;
 
+test('role readiness is an explicit result, never a session identity projection', () => {
+  const roles = [{ moduleId: 'fixture', roleId: 'owner', moduleName: 'Fixture', name: 'Owner' }];
+  const roleReadiness = { sessionId: 's1', roles, loaded: true, ready: true, reasons: [] };
+  roundTrip(Intents['roles/readiness'].result, roleReadiness);
+  for (const schema of [SessionMeta, SessionBrief, Protocol.SessionProjection]) {
+    const value = schema.parse({ ...minimalMeta, roles, roleReadiness });
+    assert.deepEqual(value.roles, roles);
+    assert.equal('roleReadiness' in value, false);
+  }
+  assert.deepEqual(ServerEvent.parse({ type: 'session/patch', sessionId: 's1', roles, roleReadiness }), {
+    type: 'session/patch', sessionId: 's1', roles,
+  });
+  assert.equal('session/advance-queue' in Intents, false);
+  assert.equal('QueueAdvanceOperation' in Protocol, false);
+});
+
 test('retired project identity is stripped from session metadata and SSE patches', () => {
   for (const project of [
     { kind: 'unknown' },
@@ -422,7 +438,6 @@ const intentFixtures = {
   'session/new': { body: { cwd: minimalMeta.cwd }, result: sid },
   'roles/list': { body: {}, result: { roles: [] } },
   'roles/readiness': { body: sid, result: { ...sid, roles: [], loaded: false, ready: false, reasons: ['Session is unloaded'] } },
-  'session/advance-queue': { body: { ...sid, action: 'get' }, result: { operation: null } },
   'session/fork': { body: { sessionId: 'parent', toEventId: 'user-event', name: 'Child' }, result: sid },
   'session/chat': { body: { ...sid, source: 'persisted', direction: 'backward', max: 64, waitMs: 0, bootstrap: false }, result: nativePage },
   prompt: { body: { ...sid, text: 'continue', mode: 'enqueue',
