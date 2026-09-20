@@ -346,17 +346,9 @@ export const RoleReadiness = z.object({
   roles: z.array(SessionRole), reasons: z.array(z.string()),
 });
 export type RoleReadiness = z.infer<typeof RoleReadiness>;
-export const QueueAdvanceOperation = z.object({
-  operationId: z.string(), sessionId: z.string(),
-  state: z.enum(['running', 'cancelling', 'completed', 'cancelled', 'failed']),
-  startedAt: z.number(), completedAt: z.number().optional(),
-  interrupts: z.number().int().nonnegative(), error: z.string().optional(),
-});
-export type QueueAdvanceOperation = z.infer<typeof QueueAdvanceOperation>;
 
 export const SessionMeta = z.object({
   roles: z.array(SessionRole).optional(),
-  roleReadiness: RoleReadiness.optional(),
   sessionId: z.string(),
   title: z.string(),
   cwd: z.string(),
@@ -432,7 +424,6 @@ export type PanelSection = z.infer<typeof PanelSection>;
 // subscribing to the SSE snapshot stream.
 export const SessionBrief = z.object({
   roles: z.array(SessionRole).optional(),
-  roleReadiness: RoleReadiness.optional(),
   sessionId: z.string(),
   title: z.string(),
   cwd: z.string(),
@@ -549,16 +540,9 @@ export const Intents = {
     result: z.object({ roles: z.array(SessionRole.extend({ description: z.string().optional() })) }),
   },
   'roles/readiness': {
+    description: 'Explicitly check current role assembly, native skills, MCP connections and tool visibility without loading or repairing a session. Capability readiness is independent of busy turns, pending messages and subagents. Selected-role labels are not readiness evidence.',
     body: z.object({ sessionId: z.string().min(1), roles: z.array(RoleSelection).max(64).optional() }).strict(),
     result: RoleReadiness,
-  },
-  'session/advance-queue': {
-    description: 'Start, inspect or cancel queue advancement. Start returns immediately; one active operation per target. Interrupts only the main turn with flushQueued:true, following native transitions to the latest tail. Cancel stops future interrupts, not the target or backgrounds. No business timeout, retries or restart recovery. Query by sessionId after a lost receipt.',
-    body: z.object({
-      action: z.enum(['start', 'get', 'cancel']), sessionId: z.string().min(1),
-      operationId: z.string().min(1).optional(),
-    }).strict(),
-    result: z.object({ operation: QueueAdvanceOperation.nullable() }),
   },
   'session/fork': {
     description: 'Native history fork from a loaded, idle session. Optional toEventId is a root user.message event ID from session history, excluded from the child; omit for full history. Rejects unfinished boundaries and any inherited schedule history. Returns a new unloaded session ID; no prompt is sent. Native fork appends an informational record to the parent. Model/mode follow native persisted history; skills/MCP use cold-resume defaults, not a complete configuration clone. cwd/files are shared, not a worktree. Non-idempotent: on an uncertain error inspect session/list and source history before any retry.',

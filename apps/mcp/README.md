@@ -26,31 +26,23 @@ stripping in an arbitrary Node version.
 
 ## Discover and invoke the API
 
-### Roles and queue advancement
+### Roles and explicit capability readiness
 
 `cockpit_list_roles` discovers module roles. `cockpit_new_session` accepts optional
 `roles: [{moduleId,roleId}]`, including multiple roles from the same module.
-Selected tools are unioned and source-labelled instructions appended; no startup
+Selected tools are unioned and source-labelled role System Prompts appended; no startup
 prompt is sent. Session list/get JSON and Markdown preserve selected roles even
-while unloaded. `cockpit_role_readiness` reads actual loaded skill/tool readiness;
-it does not load, repair or add roles to existing sessions.
+while unloaded; ordinary list/get/snapshot reads do not calculate or return role
+readiness. `cockpit_role_readiness` explicitly checks the current role assembly,
+native skill enablement, MCP connection/policy state and current tool visibility.
+It does not load, repair or add roles to existing sessions. The result is
+on-demand capability evidence, independent of busy turns, pending messages or
+subagents—not a cached status or a readiness badge.
 
-`cockpit_advance_queue` takes `action: "start" | "get" | "cancel"`, `session_id`
-and optional `operation_id` (get/cancel only). Start returns immediately with a
-receipt. At most one operation runs per target; another start returns that active
-receipt. Get without an operation ID returns the latest retained operation for
-the target, allowing recovery after a lost receipt without blind retries.
-
-Advancement preserves the native queue and background tasks, interrupts only
-the main turn with `flushQueued:true`, and waits for observed native admission/start
-before another interrupt. New queued messages join the dynamic tail. Once no
-queued items remain, the last admitted turn continues; idle is not required.
-There is no business timeout, round limit, replay or automatic retry after an
-uncertain interrupt. Cancel stops future interruptions, allowing an in-flight
-call to settle; it does not cancel the target. Client disconnect is not cancel.
-The host retains up to 500 recent receipts (active operations are never evicted);
-restart neither restores nor resumes them. Shutdown waits for active work and
-permits get/cancel while waiting. Unload cannot bypass active advancement.
+Queue control remains explicit: `session/interrupt` interrupts one main turn
+while preserving pending content, per-ID removal removes only the selected
+pending item, and ordinary Stop/cancel clears the queue and aborts. There is no
+automatic queue advancement or operation-receipt API.
 
 `GET /capabilities` lists the actual protocol `Intents`, with names, descriptions,
 and a transport inventory. `prefix`, `limit` (1–100), and `offset` bound the listing.

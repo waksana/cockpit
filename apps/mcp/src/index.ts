@@ -27,11 +27,11 @@ import { registerGlobalTools } from './tools/global.js';
 import { registerDirectoryTools } from './tools/directory.js';
 import { registerFoundationTools } from './tools/foundation.js';
 import { registerTranscriptTools } from './tools/transcript.js';
-import { registerRoleQueueTools } from './tools/roles-queue.js';
+import { registerRoleTools } from './tools/roles.js';
 
 export function createMcpServer(): McpServer {
 const server = new McpServer({ name: 'cockpit-mcp-server', version: '0.2.6' });
-registerRoleQueueTools(server);
+registerRoleTools(server);
 
 // ── cockpit_list_sessions ──────────────────────────────────────────────────────
 server.registerTool(
@@ -63,7 +63,6 @@ server.registerTool(
         model: s.currentModelId ?? null,
         lastActivity: s.lastActivity,
         roles: s.roles ?? [],
-        roleReadiness: s.roleReadiness,
       }));
       const structured = { sessions: items, count: items.length, total: sessions.length };
       if (response_format === 'json') return ok(cappedJson(structured));
@@ -72,7 +71,7 @@ server.registerTool(
         const model = s.model ? ` · ${s.model}` : '';
         const loaded = s.loaded ? '' : ' (unloaded)';
         const active = Number.isFinite(s.lastActivity) ? new Date(s.lastActivity).toLocaleString() : '—';
-        return `- ${s.title}\n    id: ${s.sessionId}\n    status: ${s.status}${loaded}${model}\n    cwd: ${s.cwd}\n    active: ${active}\n    roles (selection, not readiness): ${s.roles.map(role => `${role.moduleId}/${role.roleId}`).join(', ') || 'none'}${s.roleReadiness ? `\n    role readiness: ${s.roleReadiness.ready ? 'ready at read time' : s.roleReadiness.reasons.join('; ')}` : ''}`;
+        return `- ${s.title}\n    id: ${s.sessionId}\n    status: ${s.status}${loaded}${model}\n    cwd: ${s.cwd}\n    active: ${active}\n    roles (selection, not readiness): ${s.roles.map(role => `${role.moduleId}/${role.roleId}`).join(', ') || 'none'}`;
       });
       return ok(
         capped(`# Sessions (${sessions.length})\n${lines.join('\n')}`)

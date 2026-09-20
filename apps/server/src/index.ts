@@ -52,7 +52,7 @@ export type ServerEngine = Pick<Engine,
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
   | 'listGlobalSkills' | 'setGlobalSkill' | 'readSkillBody' | 'listSessionSkills' | 'toggleSessionSkill' | 'refreshSkills'
   | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
-  | 'listRoles' | 'roleReadiness' | 'advanceQueue'
+  | 'listRoles' | 'roleReadiness'
 >;
 let engine: ServerEngine;
 let moduleHost: ModuleHost | undefined;
@@ -312,7 +312,6 @@ const handlers: IntentHandlers = {
   'session/new': async (b) => ({ sessionId: await (b.roles ? engine.newSession(b.cwd, b.roles) : engine.newSession(b.cwd)) }),
   'roles/list': async () => ({ roles: engine.listRoles() }),
   'roles/readiness': b => engine.roleReadiness(b.sessionId, b.roles),
-  'session/advance-queue': b => engine.advanceQueue(b),
   'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
   'session/chat': (b, signal) => engine.chat(b, signal),
   prompt: async (b) => b.attachments === undefined
@@ -491,9 +490,7 @@ app.post('/intent/*', async (req, reply) => {
   if (!['running', 'waiting'].includes(phase)) {
     return reply.code(503).send({ code: 'SERVICE_CLOSING', error: 'Cockpit is closing', shutdown: shutdown.snapshot() });
   }
-  const queueSettlement = name === 'session/advance-queue' && req.body && typeof req.body === 'object'
-    && 'action' in req.body && ['get', 'cancel'].includes(String(req.body.action));
-  if (phase === 'waiting' && !readIntents.has(name) && !settlementIntents.has(name) && !queueSettlement) {
+  if (phase === 'waiting' && !readIntents.has(name) && !settlementIntents.has(name)) {
     return reply.code(503).send({
       code: 'SERVICE_SHUTTING_DOWN', error: 'Graceful shutdown is pending; new independent work is not accepted',
     });

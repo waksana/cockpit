@@ -34,8 +34,6 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
   });
   const metadata = new Map<string, SessionRole[]>();
   const captured: unknown[] = [];
-  let holdReplies = false;
-  const heldReplies = new Set<() => void>();
   let mcpCalls = 0;
   const mcp = createServer(async (request, response) => {
     assert.equal(request.headers['x-cockpit-module-digest'], 'synthetic-digest');
@@ -64,13 +62,7 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
         response.write(`data: ${JSON.stringify({ ...completion, object: 'chat.completion.chunk', choices: [{ index: 0, ...choice }] })}\n\n`);
       };
       emit({ delta: { role: 'assistant', content: 'Synthetic role reply' }, finish_reason: null });
-      const finish = () => {
-        heldReplies.delete(finish);
-        emit({ delta: {}, finish_reason: 'stop' }); response.end('data: [DONE]\n\n');
-      };
-      if (holdReplies) {
-        heldReplies.add(finish); response.once('close', () => heldReplies.delete(finish));
-      } else finish();
+      emit({ delta: {}, finish_reason: 'stop' }); response.end('data: [DONE]\n\n');
     } else {
       response.writeHead(200, { 'content-type': 'application/json' });
       response.end(JSON.stringify({ ...completion, object: 'chat.completion',
@@ -134,31 +126,6 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     assert.equal((await engine.roleReadiness(id)).loaded, false);
     await engine.load(id);
     assert.equal((await engine.roleReadiness(id)).ready, true);
-    holdReplies = true;
-    const before = captured.length;
-    await engine.prompt(id, 'Synthetic queue primary');
-    const queueDeadline = Date.now() + 20_000;
-    while (captured.length === before) { assert.ok(Date.now() < queueDeadline); await setTimeout(10); }
-    await engine.prompt(id, 'Synthetic queued A');
-    await engine.prompt(id, 'Synthetic queued B');
-    const started = await engine.advanceQueue({ action: 'start', sessionId: id });
-    assert.ok(started.operation);
-    let operation = started.operation;
-    while (operation.state === 'running') {
-      assert.ok(Date.now() < queueDeadline, JSON.stringify(operation));
-      await setTimeout(10);
-      operation = (await engine.advanceQueue({ action: 'get', sessionId: id })).operation!;
-    }
-    assert.equal(operation.state, 'completed', JSON.stringify(operation));
-    assert.ok(operation.interrupts >= 1);
-    assert.equal((await engine.getMeta(id))!.queue!.length, 0);
-    assert.equal(await engine.busyCount(), 1, 'the admitted tail continues rather than requiring idle');
-    holdReplies = false;
-    for (const finish of heldReplies) finish();
-    while (await engine.busyCount()) {
-      for (const finish of heldReplies) finish();
-      assert.ok(Date.now() < queueDeadline); await setTimeout(10);
-    }
     await engine.stop();
   } finally {
     await runtime?.stop().catch(() => {});

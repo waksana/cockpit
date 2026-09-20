@@ -14,7 +14,7 @@ import type {
   ModelOption, ScheduleEntry, ServerEvent, SessionMeta, SessionPanels,
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
   MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem, NativeChatEvent,
-  RoleSelection, RoleReadiness, IntentBody,
+  RoleSelection, RoleReadiness,
 } from '@cockpit/protocol';
 import { NativeChatRead, SessionUsage, MetaResource as MetaResources, cleanSessionTitle } from '@cockpit/protocol';
 import { NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult } from '@cockpit/protocol';
@@ -24,7 +24,6 @@ import { readNativeChat } from './native-chat.ts';
 import { describeMcpServer, redactMcpConfig } from './mcp-config.ts';
 import { validateForkHistory } from './fork.ts';
 import type { RoleProvider, RoleAssembly } from './roles.ts';
-import { QueueAdvancer } from './advance-queue.ts';
 
 export type EngineRuntime = Pick<OfficialRuntime,
   'start' | 'models' | 'listSessions' | 'createSession' | 'resumeSession' |
@@ -89,10 +88,7 @@ interface State {
   load?: Promise<void>;
   closing: boolean;
   cancelling?: Promise<void>;
-  interrupting?: {
-    promise: Promise<IntentResult<'session/interrupt'>>;
-    ownership: { target?: { sdk: CopilotSession; epoch: number } };
-  };
+  interrupting?: Promise<IntentResult<'session/interrupt'>>;
   interruptTurn?: { epoch: number; interactionId?: string; decisions: Map<string, Decision> };
   turnEpoch: number;
   interruptedEpoch?: number;
@@ -151,35 +147,6 @@ function stateFor(id: string): State {
 }
 
 export class Engine {
-  private readonly queueAdvancer = new QueueAdvancer();
-  async advanceQueue(body: IntentBody<'session/advance-queue'>) {
-    if (body.action === 'start') { this.assertAvailable(); if (this.lifecycle || this.stopped) throw new Error('Host is closing'); }
-    return this.queueAdvancer.call(body, async () => {
-      const st = await this.state(body.sessionId);
-      const sdk = st.sdk && await this.liveSession(st);
-      if (!sdk) { this.release(st); throw new SessionUnloadedError(); }
-      return {
-        pending: async () => (await this.withSession(st, sdk, () => sdk.rpc.queue.pendingItems())).items.length,
-        interrupt: (isCurrent: () => boolean, signal: AbortSignal) => this.advanceInterrupt(st, sdk, isCurrent, signal),
-        observe: (listener: (event: 'admitted' | 'started' | 'changed' | Error) => void) => {
-          const off = this.onNativeEvent(({ sessionId, event }) => {
-            if (sessionId !== st.id) return;
-            if (event.agentId || event.parentToolCallId || event.data.agentId || event.data.parentToolCallId) return;
-            if (event.type === 'session.error') listener(new Error('Native turn failed during queue advancement'));
-            else if (event.type === 'user.message') listener('admitted');
-            else if (event.type === 'assistant.turn_start') listener('started');
-            else if (['pending_messages.modified', 'session.idle', 'abort'].includes(event.type)) listener('changed');
-          });
-          const closed = (value: CopilotSession) => {
-            if (value === sdk) listener(new Error('Session closed during queue advancement; outcome may be uncertain'));
-          };
-          this.bus.on('closed', closed);
-          const fatal = this.onFatal(listener);
-          return () => { off(); fatal(); this.bus.off('closed', closed); this.bus.emit('activity-settled'); };
-        },
-      };
-    });
-  }
   private roles?: RoleProvider;
   setRoleProvider(roles: RoleProvider): void {
     if (this.started || this.sessions.size) throw new Error('Roles must be configured before native startup');
@@ -191,30 +158,32 @@ export class Engine {
     const roles = this.roles?.read(id) ?? [];
     const st = this.sessions.get(id);
     const result: RoleReadiness = { sessionId: id, roles, loaded: false, ready: false, reasons: [] };
-    if (!await this.runtime.getSessionMetadata(id) && !st?.sdk) {
-      result.reasons.push('Session does not exist'); return result;
-    }
-    const sdk = st && await this.liveSession(st);
-    result.loaded = !!sdk;
-    if (!sdk || !st) { result.reasons.push('Session is unloaded'); return result; }
-    const selected = requested ?? roles;
-    if (!selected.length) result.reasons.push('No roles selected');
-    for (const role of selected) {
-      if (!roles.some(value => value.moduleId === role.moduleId && value.roleId === role.roleId)) {
-        result.reasons.push(`Role not selected: ${role.moduleId}/${role.roleId}`);
-      }
-    }
-    if (!this.roles || !st.roleAssembly) result.reasons.push('Role assembly was not applied to this native handle');
-    if (result.reasons.length) return result;
     try {
+      if (!await this.untilFatal(() => this.runtime.getSessionMetadata(id)) && !st?.sdk) {
+        result.reasons.push('Session does not exist'); return result;
+      }
+      const sdk = st && await this.liveSession(st);
+      result.loaded = !!sdk;
+      if (!sdk || !st) { result.reasons.push('Session is unloaded'); return result; }
+      if (st.closing || st.load) { result.reasons.push('Session is loading or closing'); return result; }
+      const selected = requested ?? roles;
+      if (!selected.length) result.reasons.push('No roles selected');
+      for (const role of selected) {
+        if (!roles.some(value => value.moduleId === role.moduleId && value.roleId === role.roleId)) {
+          result.reasons.push(`Role not selected: ${role.moduleId}/${role.roleId}`);
+        }
+      }
+      const applied = st.roleAssembly;
+      if (!this.roles || !applied) result.reasons.push('Role assembly was not applied to this native handle');
+      if (result.reasons.length) return result;
       const assembly = await this.roles!.assemble(id, roles);
-      if (assembly.fingerprint !== st.roleAssembly!.fingerprint) result.reasons.push('Current role resources differ from this native handle');
+      if (assembly.fingerprint !== applied!.fingerprint) result.reasons.push('Current role resources differ from this native handle');
       const required = await this.roles!.assemble(id, selected);
       const [skills, mcp, tools] = await this.withSession(st, sdk, () => settled([
         sdk.rpc.skills.list(), sdk.rpc.mcp.list(), sdk.rpc.tools.getCurrentMetadata(),
       ] as const));
       for (const skill of required.skills) {
-        const expected = st.roleAssembly!.skills.find(value => value.path === skill.path);
+        const expected = applied!.skills.find(value => value.path === skill.path);
         if (!skills.skills.some(value => value.name === expected?.name && value.enabled && value.path === skill.path)) {
           result.reasons.push(`Role skill is unavailable or disabled: ${expected?.name ?? skill.name}`);
         }
@@ -232,8 +201,15 @@ export class Engine {
           }
         }
       }
-      if (st.sdk !== sdk || st.closing) result.reasons.push('Session is closing');
-    } catch (error) { result.reasons.push(`Readiness unconfirmed: ${messageOf(error)}`); }
+      const current = await this.liveSession(st);
+      result.loaded = !!current;
+      if (current !== sdk || st.closing || st.roleAssembly !== applied) {
+        result.reasons.push('Native session changed or is closing');
+      }
+    } catch (error) {
+      result.loaded = !!st?.sdk;
+      result.reasons.push(`Readiness unconfirmed: ${messageOf(error)}`);
+    }
     result.ready = result.reasons.length === 0;
     return result;
   }
@@ -424,7 +400,6 @@ export class Engine {
     const roles = this.roles?.read(row.sessionId) ?? [];
     return {
       roles,
-      ...(roles.length ? { roleReadiness: { sessionId: row.sessionId, roles, loaded: false, ready: false, reasons: ['Session is unloaded'] } } : {}),
       sessionId: row.sessionId, title: cleanSessionTitle(row.summary) || row.sessionId.slice(0, 8),
       cwd: row.context?.workingDirectory ?? '',
       createdAt: row.startTime.getTime(), lastActivity: row.modifiedTime.getTime(), lastActivitySource: 'native-persisted',
@@ -496,8 +471,7 @@ export class Engine {
         ? sessionModelOptions(models.list, await this.withSession(st, sdk, () => this.runtime.models())) : nativeModels;
       return {
         sessionId: id, loaded: true,
-        ...(wants.has('identity') ? { roles: this.roles?.read(id) ?? [],
-          ...(st.roleAssembly ? { roleReadiness: await this.roleReadiness(id) } : {}) } : {}),
+        ...(wants.has('identity') ? { roles: this.roles?.read(id) ?? [] } : {}),
         ...(metadata ? {
           title: cleanSessionTitle(name?.name ?? metadata.summary) || id.slice(0, 8), cwd: metadata.workingDirectory,
           createdAt: Date.parse(metadata.startTime),
@@ -535,7 +509,6 @@ export class Engine {
       loaded: meta.loaded, lastActivity: meta.lastActivity, currentModelId: meta.currentModelId,
       lastActivitySource: meta.lastActivitySource,
       roles: meta.roles,
-      roleReadiness: meta.roleReadiness,
     }));
   }
   async status(): Promise<SessionMeta[]> {
@@ -1119,69 +1092,12 @@ export class Engine {
     st.interruptedEpoch = target.epoch;
   }
 
-  private async advanceInterrupt(st: State, sdk: CopilotSession, isCurrent: () => boolean, signal: AbortSignal) {
-    const contended = () => !!(st.load || st.operations || st.cancelling || st.interrupting);
-    let sharedInterrupt: State['interrupting'];
-    for (;;) {
-      if (signal.aborted || !isCurrent()) return { ok: true as const, interrupted: false };
-      this.assertAdmission(st);
-      if (st.sdk !== sdk) throw new Error('Native handle changed while awaiting queue advancement');
-      const existing = sharedInterrupt ?? st.interrupting;
-      if (existing) {
-        sharedInterrupt = undefined;
-        const targetsCurrentTurn = () => existing.ownership.target?.sdk === sdk
-          && existing.ownership.target.epoch === st.turnEpoch;
-        if (targetsCurrentTurn()) return existing.promise;
-        // A previous turn's interruption may still be reading back after the
-        // current turn starts. Its receipt cannot stand in for this turn.
-        const result = await existing.promise;
-        if (targetsCurrentTurn()) return result;
-        continue;
-      }
-      if (!contended()) {
-        // Admission and reservation are synchronous. Only local contention is
-        // waited out; a native interrupt error is never retried.
-        return this.beginInterrupt(st, async () => {
-          const queue = await this.withSession(st, sdk, () => sdk.rpc.queue.pendingItems());
-          return st.sdk === sdk && !signal.aborted && isCurrent() && queue.items.length > 0;
-        });
-      }
-      await new Promise<void>(resolve => {
-        const settle = () => {
-          this.bus.off('activity-settled', check);
-          this.bus.off('event', check);
-          this.bus.off('closed', check);
-          this.bus.off('fatal', check);
-          signal.removeEventListener('abort', settle);
-          resolve();
-        };
-        const check = () => {
-          if (st.interrupting) sharedInterrupt = st.interrupting;
-          if (signal.aborted || !isCurrent() || this.failure || st.sdk !== sdk || st.closing || sharedInterrupt || !contended()) settle();
-        };
-        this.bus.on('activity-settled', check);
-        this.bus.on('event', check);
-        this.bus.on('closed', check);
-        this.bus.on('fatal', check);
-        signal.addEventListener('abort', settle, { once: true });
-        check();
-      });
-    }
-  }
-
   async interrupt(id: string): Promise<IntentResult<'session/interrupt'>> {
     const st = await this.state(id);
-    return this.beginInterrupt(st);
-  }
-
-  private beginInterrupt(st: State, guard?: () => Promise<boolean>): Promise<IntentResult<'session/interrupt'>> {
-    if (st.interrupting) return st.interrupting.promise;
+    if (st.interrupting) return st.interrupting;
     if (st.load || st.operations || st.cancelling) return Promise.reject(new Error('Session operation is still in progress'));
-    const ownership: NonNullable<State['interrupting']>['ownership'] = {};
-    const pending = this.operation(st.id, async (sdk) => {
-      if (guard && !await guard()) return { ok: true as const, interrupted: false };
+    const pending = this.operation(id, async (sdk) => {
       const target = { epoch: st.turnEpoch, interactionId: st.interactionId, decisions: new Map(st.decisions) };
-      ownership.target = { sdk, epoch: target.epoch };
       st.interruptTurn = target;
       const result = await sdk.rpc.interruptMainTurn({ flushQueued: true });
       if (st.sdk !== sdk || this.failure) throw new Error('Native session closed during interrupt; outcome is uncertain');
@@ -1190,10 +1106,9 @@ export class Engine {
       await this.syncNative(st);
       return { ok: true as const, interrupted: result.interrupted };
     }, 'read', st, ['control', 'queue']).finally(() => {
-      if (st.interrupting?.promise === pending) st.interrupting = undefined;
-      this.bus.emit('activity-settled');
+      if (st.interrupting === pending) st.interrupting = undefined;
     });
-    st.interrupting = { promise: pending, ownership };
+    st.interrupting = pending;
     return pending;
   }
 
@@ -1209,7 +1124,7 @@ export class Engine {
   }
 
   private localBusy(st: State, ownTransition = false): boolean {
-    return this.queueAdvancer.active(st.id) || (!ownTransition && st.closing) || st.operations > 0 || !!st.load
+    return (!ownTransition && st.closing) || st.operations > 0 || !!st.load
       || !!st.cancelling || st.decisions.size > 0 || st.sends > 0 || st.accepted.size > 0;
   }
 

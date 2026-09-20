@@ -54,6 +54,16 @@ test('open info panel identifies its session without cross-page navigation', () 
   assert.doesNotMatch(html, /交互模式/);
 });
 
+test('role labels describe selection only, without readiness status or badges', () => {
+  const html = renderToStaticMarkup(createElement(SessionInfoPanel, {
+    session: { ...session, roles: [{ moduleId: 'fixture', roleId: 'owner', moduleName: 'Fixture', name: 'Owner' }] },
+    open: true, onClose: noop, onSetModel: noModelMutation,
+  }));
+  assert.match(html, /Fixture \/ Owner/);
+  assert.match(html, /title="创建时角色选择，不代表当前能力就绪"/);
+  assert.doesNotMatch(html, /读取时就绪|role-readiness|readiness-badge/);
+});
+
 const modelOptions: ModelOption[] = [
   { modelId: 'alpha', name: 'Alpha', supportedReasoningEfforts: ['high'], defaultReasoningEffort: 'high', supportsLongContext: true },
   { modelId: 'beta', name: 'Beta', supportedReasoningEfforts: ['high', 'max'], defaultReasoningEffort: 'high', supportsLongContext: true },

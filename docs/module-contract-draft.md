@@ -250,10 +250,11 @@ manifest 可声明 `roles`：
 }
 ```
 
-`roles` 是上述对象的数组。每份短角色指令最多 64 KiB。文件与目录是包根相对路径；`path` 是以 `/` 开头的
+`roles` 是上述对象的数组。每份 role System Prompt 最多 64 KiB，manifest 字段仍为 `instructions`。
+文件与目录是包根相对路径；`path` 是以 `/` 开头的
 模块 API 相对路径。每个 skill root 包含 `SKILL.md`（可位于子目录），只传入所选
 角色的目录。角色来源按 `moduleId/roleId` 排序，同一选择与同一资源去重；
-不同来源的同名 skill、同一 MCP key 的不同端点明确拒绝。角色原始指令带模块、
+不同来源的同名 skill、同一 MCP key 的不同端点明确拒绝。原始 role System Prompt 带模块、
 角色与原生 session ID 标头，通过主 agent `systemMessage.mode: "append"` 追加；
 不替换基础指令，不创建 custom agent，也不发送初始化消息。
 
@@ -275,11 +276,20 @@ MCP 名称为 `module_${moduleId}__${key}`。宿主生成
 创建失败若已确认原生 ID，错误保留 `sessionId`，不得盲目重建。
 
 所选角色按 session ID 保存在宿主目录，列表、identity、Web、MCP 在 unloaded
-时仍展示；冷恢复重新解析已启用模块并装配。缺失模块不静默丢弃角色。
-角色选择不是就绪：读取时检查该 native handle 的装配、skill 路径/启用状态、
-MCP 连接/策略状态及当前原生工具 metadata。新建和冷恢复可初始化原生工具表，
-只读 readiness 不补装、重载、启用或自动修复。就绪是读取时证据而非永久承诺；
+时仍展示；冷恢复使用宿主当前已冷加载的最新角色资源重新装配，缺失模块不静默丢弃角色。
+角色选择不是就绪：只有显式 `roles/readiness` / `cockpit_role_readiness` /
+`context.host.call('roles/readiness', ...)` 检查该 native handle 的装配、skill 路径/启用状态、
+MCP 连接/策略状态及当前原生工具 metadata。普通列表、snapshot、detail、identity 与 Web
+会话资源不计算或携带 readiness。保留既有普通控制/生命周期安全读取，不引入能力轮询、
+持续缓存或失效刷新服务。Web 仅展示创建时角色标签及说明，不实现 readiness badge 或逐角色结果。
+新建和冷恢复可初始化原生工具表，只读 readiness 不自动加载 unloaded 会话，
+也不补装、重载、启用或自动修复。就绪是请求时能力证据而非永久承诺；
+busy、pending、subagent 等活动状态须另行读取，不能与角色能力就绪混为一谈。
 没有 Task ACL，也不支持运行中追加角色。
+
+宿主不提供自动队列推进。保留单次 `session/interrupt`（保留队列）、
+按 ID 删除 pending、当前状态读取、prompt 以及普通 Stop/cancel。
+模块业务通知及 Owner 更新处理由模块承担，不产生宿主队列助手或业务事件卡片。
 
 ## 5. HTTP、资产与版本
 
