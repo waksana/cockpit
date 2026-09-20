@@ -8,7 +8,7 @@ import { Icon, type IconName } from './Icon';
 
 test('every semantic icon is a decorative local Lucide SVG with the same complete viewBox', () => {
   const names: IconName[] = ['search', 'compose', 'newchat', 'delete', 'back', 'close', 'check',
-    'arrow_up', 'more', 'down', 'up', 'reload', 'sending', 'error', 'menu', 'skills', 'mcp',
+    'arrow_up', 'more', 'down', 'up', 'reload', 'sending', 'error', 'menu', 'skills', 'thought', 'mcp',
     'file', 'folder', 'mode_plan', 'radiooff', 'copy', 'stop', 'clock', 'unknown',
     'chevron_right', 'play', 'success', 'loading'];
   for (const name of names) {
@@ -20,6 +20,15 @@ test('every semantic icon is a decorative local Lucide SVG with the same complet
     assert.equal((html.match(/<svg /g) ?? []).length, 1);
     assert.doesNotMatch(html, /tgico|<use|<image|<title/);
   }
+});
+
+test('skills use BookOpen while thoughts retain Lightbulb', () => {
+  const skills = renderToStaticMarkup(createElement(Icon, { name: 'skills' }));
+  const thought = renderToStaticMarkup(createElement(Icon, { name: 'thought' }));
+  assert.match(skills, /lucide-book-open/);
+  assert.doesNotMatch(skills, /lucide-lightbulb/);
+  assert.match(thought, /lucide-lightbulb/);
+  assert.doesNotMatch(thought, /lucide-book-open/);
 });
 
 test('Module UI v1 publishes common primitives without private ancestors or icon fonts', () => {
