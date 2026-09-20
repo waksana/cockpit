@@ -1,5 +1,6 @@
 import type { Readable } from 'node:stream';
 import type { ModuleEventPayload, NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent, ServerEvent } from '@cockpit/protocol';
+import type { IntentBody, IntentResult } from '@cockpit/protocol';
 
 export type { NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent, ServerEvent };
 export { MAX_MODULE_EVENT_BYTES } from '@cockpit/protocol';
@@ -12,7 +13,22 @@ export interface ModuleManifest {
   name: string;
   version: string;
   backend: string;
+  roles?: ModuleRole[];
   frontend?: { entry: string; styles?: string[]; assets: string[]; worker?: string };
+}
+
+export interface ModuleRole {
+  id: string;
+  name: string;
+  description?: string;
+  instructions?: string;
+  skillDirectories?: string[];
+  mcpServers?: Record<string, { type: 'http'; path: string; tools: string[] }>;
+}
+
+export type ModuleHostIntent = 'session/new' | 'session/get' | 'roles/readiness' | 'prompt';
+export interface ModuleHostApi {
+  call<N extends ModuleHostIntent>(name: N, body: IntentBody<N>): Promise<IntentResult<N>>;
 }
 
 export interface NativeObservation {
@@ -45,6 +61,8 @@ export interface ModuleRoute {
 }
 
 export interface ModuleBackendContext {
+  /** Public validated host intents only; no native runtime or state-store access. */
+  host: ModuleHostApi;
   apiVersion: 1;
   moduleId: string;
   dataRoot: string;

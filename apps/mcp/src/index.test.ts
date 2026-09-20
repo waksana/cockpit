@@ -120,6 +120,11 @@ mockHttp((res, req) => {
     if (name === 'session/list') return send({ sessions: [meta] });
     if (name === 'session/get') return send({ meta });
     if (name === 'session/plan') return send(plan);
+    if (name === 'roles/list') return send({ roles: [{ moduleId: 'board', roleId: 'owner', name: 'Owner', moduleName: 'Board' }] });
+    if (name === 'roles/readiness') return send({ sessionId: 'B', loaded: false, ready: false, roles: [], reasons: ['Session is unloaded'] });
+    if (name === 'session/advance-queue') return send({ operation: {
+      operationId: 'advance-1', sessionId: 'B', state: 'running', startedAt: 1, interrupts: 0,
+    } });
     if (name === 'session/usage') return send({
       sessionId: 'B', sampledAt: 123, context: null,
       usage: { sessionStartTime: '2026-09-09T00:00:00Z', totalUserRequests: 1,
@@ -369,6 +374,22 @@ for (const status of ['needs_auth', 'future-status']) {
   });
 }
 
+test('role tools and queue operation MCP route exactly once with public camelCase bodies', async () => {
+  const roles = [{ moduleId: 'board', roleId: 'owner' }, { moduleId: 'board', roleId: 'executor' }];
+  await call('cockpit_new_session', { cwd: '/fixture', roles });
+  assert.deepEqual(requests.at(-1)!.body, { cwd: '/fixture', roles });
+  assert.equal((await json('cockpit_list_roles', { response_format: 'json' }) as { roles: unknown[] }).roles.length, 1);
+  assert.equal((await json('cockpit_role_readiness', { session_id: 'B', roles }) as { ready: boolean }).ready, false);
+  for (const action of ['start', 'get', 'cancel']) {
+    const before = requests.length;
+    const args = { action, session_id: 'B', ...(action === 'start' ? {} : { operation_id: 'advance-1' }) };
+    const value = await json('cockpit_advance_queue', args) as { operation: { operationId: string } };
+    assert.equal(value.operation.operationId, 'advance-1');
+    assert.equal(requests.length, before + 1);
+    assert.deepEqual(requests.at(-1)!.body, { action, sessionId: 'B', ...(action === 'start' ? {} : { operationId: 'advance-1' }) });
+  }
+});
+
 test('registry exposes native controls without parked file, organization or restart tools', async () => {
   const { tools } = await client.listTools();
   const names = tools.map(({ name }) => name);
@@ -386,12 +407,13 @@ test('registry exposes native controls without parked file, organization or rest
     'cockpit_list_global_mcp', 'cockpit_set_global_mcp_default', 'cockpit_refresh_mcp',
     'cockpit_reload_session_mcp', 'cockpit_list_global_skills', 'cockpit_list_session_skills',
     'cockpit_refresh_skills', 'cockpit_list_dir',
+    'cockpit_list_roles', 'cockpit_role_readiness', 'cockpit_advance_queue',
   ];
   assert.deepEqual(names.sort(), expected.sort());
   assert.equal(new Set(names).size, names.length);
   assert.equal(names.some((name) => /hook|flow|gate|spawned/.test(name)), false);
   const newSession = tools.find(({ name }) => name === 'cockpit_new_session');
-  assert.deepEqual(Object.keys(newSession?.inputSchema.properties ?? {}), ['cwd']);
+  assert.deepEqual(Object.keys(newSession?.inputSchema.properties ?? {}), ['cwd', 'roles']);
   assert.deepEqual(newSession?.inputSchema.required, ['cwd']);
   assert.equal(requests.length, 0, 'registry construction must not read HTTP or local state');
 });

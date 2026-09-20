@@ -52,6 +52,7 @@ export type ServerEngine = Pick<Engine,
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
   | 'listGlobalSkills' | 'setGlobalSkill' | 'readSkillBody' | 'listSessionSkills' | 'toggleSessionSkill' | 'refreshSkills'
   | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
+  | 'listRoles' | 'roleReadiness' | 'advanceQueue'
 >;
 let engine: ServerEngine;
 let moduleHost: ModuleHost | undefined;
@@ -308,7 +309,10 @@ const handlers: IntentHandlers = {
   'system/shutdown': () => ({ ok: true, shutdown: shutdown.request() }),
   'system/status': serviceStatus,
   'runtime/snapshot': async () => engine.snapshot(),
-  'session/new': async (b) => ({ sessionId: await engine.newSession(b.cwd) }),
+  'session/new': async (b) => ({ sessionId: await (b.roles ? engine.newSession(b.cwd, b.roles) : engine.newSession(b.cwd)) }),
+  'roles/list': async () => ({ roles: engine.listRoles() }),
+  'roles/readiness': b => engine.roleReadiness(b.sessionId, b.roles),
+  'session/advance-queue': b => engine.advanceQueue(b),
   'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
   'session/chat': (b, signal) => engine.chat(b, signal),
   prompt: async (b) => b.attachments === undefined
@@ -427,17 +431,17 @@ class IntentBoundaryError extends Error {
   }
 }
 
-async function dispatch<K extends IntentName>(name: K, body: unknown, signal?: AbortSignal): Promise<unknown> {
+async function dispatch<K extends IntentName>(name: K, body: unknown, signal?: AbortSignal): Promise<IntentResult<K>> {
   const input = Intents[name].body.safeParse(body === undefined ? {} : body);
   if (!input.success) throw new IntentBoundaryError(input.error.message, 400, 'INVALID_INTENT_BODY');
   // Zod's indexed schema union loses the key/value correlation; the mapped
-  // handlers retain it. This is the only assertion at the transport boundary.
+  // handlers retain it. Assertions restore that correlation after validation.
   const result = await handlers[name](input.data as IntentBody<K>, signal);
   const output = Intents[name].result.safeParse(result);
   if (!output.success) {
     throw new IntentBoundaryError(`Invalid result for ${name}: ${output.error.message}`, 500, 'INVALID_INTENT_RESULT');
   }
-  return output.data;
+  return output.data as IntentResult<K>;
 }
 
 function errorStatus(error: unknown): number {
@@ -448,6 +452,7 @@ function errorStatus(error: unknown): number {
 }
 
 const readIntents = new Set<IntentName>([
+  'roles/list', 'roles/readiness',
   'system/status', 'runtime/snapshot', 'session/chat', 'session/list', 'session/get', 'session/refresh',
   'session/resources', 'session/usage', 'session/plan', 'session/panels', 'session/panel',
   'mcp/global', 'mcp/session', 'skills/global', 'skills/read', 'skills/session',
@@ -486,7 +491,9 @@ app.post('/intent/*', async (req, reply) => {
   if (!['running', 'waiting'].includes(phase)) {
     return reply.code(503).send({ code: 'SERVICE_CLOSING', error: 'Cockpit is closing', shutdown: shutdown.snapshot() });
   }
-  if (phase === 'waiting' && !readIntents.has(name) && !settlementIntents.has(name)) {
+  const queueSettlement = name === 'session/advance-queue' && req.body && typeof req.body === 'object'
+    && 'action' in req.body && ['get', 'cancel'].includes(String(req.body.action));
+  if (phase === 'waiting' && !readIntents.has(name) && !settlementIntents.has(name) && !queueSettlement) {
     return reply.code(503).send({
       code: 'SERVICE_SHUTTING_DOWN', error: 'Graceful shutdown is pending; new independent work is not accepted',
     });
@@ -522,12 +529,21 @@ app.post('/intent/*', async (req, reply) => {
 
 async function main(runtime: Engine): Promise<void> {
   moduleHost = new ModuleHost({
+    origin: `http://${HOST}:${PORT}`,
+    host: { call: async (name, body) => {
+      const state = shutdown.snapshot();
+      if (state.phase !== 'running') throw new Error('Host is shutting down');
+      const release = shutdown.retain();
+      try { return await dispatch(name, body); }
+      finally { release(); }
+    } },
     observer: runtime,
     onInvalidate: moduleId => onEngineEvent({ type: 'module/invalidated', moduleId }),
     onEvent: (moduleId, payload) => onEngineEvent({ type: 'module/event', moduleId, payload }),
     report: (id, error) => app.log.error({ moduleId: id, err: error }, 'local module failed'),
   });
   await moduleHost.register(app);
+  runtime.setRoleProvider(moduleHost.roles);
   await registerStaticWeb();
   await runtime.start();
   app.log.info(`engine up (login=${await runtime.login()})`);

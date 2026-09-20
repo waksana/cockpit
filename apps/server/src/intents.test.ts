@@ -50,6 +50,9 @@ const engine: ServerEngine = {
   snapshot: async () => record('snapshot', [], snapshot()),
   busyCount: async () => sessions.filter(sessionMetaBusy).length,
   newSession: async (...args) => record('newSession', args, 'created'),
+  listRoles: (...args) => record('listRoles', args, []),
+  roleReadiness: async (...args) => record('roleReadiness', args, { sessionId: 's', loaded: false, ready: false, roles: [], reasons: ['unloaded'] }),
+  advanceQueue: async (...args) => record('advanceQueue', args, { operation: null }),
   forkSession: async (...args) => record('forkSession', args, { sessionId: 'forked' }),
   chat: async (query, signal) => {
     assert.ok(signal instanceof AbortSignal);
@@ -126,6 +129,9 @@ const cases = {
   'system/status': { body: {}, method: 'sessionStatus', args: [] },
   'runtime/snapshot': { body: {}, method: 'snapshot', args: [] },
   'session/new': { body: { cwd: '/fixture' }, method: 'newSession', args: ['/fixture'] },
+  'roles/list': { body: {}, method: 'listRoles', args: [] },
+  'roles/readiness': { body: { sessionId: 's' }, method: 'roleReadiness', args: ['s', undefined] },
+  'session/advance-queue': { body: { action: 'get', sessionId: 's' }, method: 'advanceQueue', args: [{ action: 'get', sessionId: 's' }] },
   'session/fork': { body: { sessionId: 's', toEventId: 'user-event', name: 'Child' }, method: 'forkSession', args: ['s', 'user-event', 'Child'] },
   'session/chat': {
     body: Intents['session/chat'].body.parse({ sessionId: 's', cursor: 'native-before', max: 12 }),
@@ -1000,6 +1006,10 @@ test('health/status and shutdown use only injected state and retain every native
 
 test('graceful shutdown refuses new work but keeps decisions, queue controls and native reads available', async () => {
   await app.inject({ method: 'POST', url: '/intent/system/shutdown', payload: { confirm: true } });
+  for (const action of ['start', 'get', 'cancel']) {
+    const response = await app.inject({ method: 'POST', url: '/intent/session/advance-queue', payload: { action, sessionId: 's' } });
+    assert.equal(response.statusCode, action === 'start' ? 503 : 200);
+  }
   calls.length = 0;
   for (const name of ['prompt', 'session/new', 'session/fork', 'setModel', 'schedule/add', 'mcp/global-default'] as const) {
     const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: cases[name].body });

@@ -7,6 +7,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ChildProcess } from 'node:child_process';
 import { channel } from 'node:diagnostics_channel';
 import { EventEmitter } from 'node:events';
+import { isDeepStrictEqual } from 'node:util';
 import type { ModelOption } from '@cockpit/protocol';
 
 export type RuntimeSession = CopilotSession;
@@ -211,15 +212,29 @@ export class OfficialRuntime {
   }
 
   private sessionOptions(config: SessionConfig | ResumeSessionConfig): SessionConfig {
+    const base = this.config.sessionConfig;
+    for (const [name, value] of Object.entries(config.mcpServers ?? {})) {
+      if (base?.mcpServers?.[name] && !isDeepStrictEqual(base.mcpServers[name], value)) {
+        throw new Error(`Conflicting MCP configuration: ${name}`);
+      }
+    }
+    if (base?.systemMessage && config.systemMessage && base.systemMessage.mode !== 'append') {
+      throw new Error('Role instructions cannot replace a custom base system message');
+    }
     return {
       streaming: true, includeSubAgentStreamingEvents: true,
       enableFileChangeTracking: true, manageScheduleEnabled: true,
       ...this.config.sessionConfig, ...config,
+      mcpServers: { ...base?.mcpServers, ...config.mcpServers },
+      ...(base?.systemMessage && config.systemMessage && base.systemMessage.mode === 'append'
+        && config.systemMessage.mode === 'append' ? { systemMessage: {
+          mode: 'append' as const, content: `${base.systemMessage.content}\n\n${config.systemMessage.content}`,
+        } } : {}),
       tools: [...this.config.sessionConfig?.tools ?? [], ...config.tools ?? []],
-      skillDirectories: [
+      skillDirectories: [...new Set([
         ...this.config.sessionConfig?.skillDirectories ?? [],
         ...config.skillDirectories ?? [],
-      ],
+      ])],
       // The product deliberately has no interactive permission policy.
       onPermissionRequest: approveAll,
     };

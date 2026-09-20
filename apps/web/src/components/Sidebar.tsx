@@ -73,7 +73,9 @@ function SessionRow({ s, active, actions }: {
       <span className="dialog-avatar" style={{ '--chip-h': hue } as CSSProperties} aria-hidden="true">{mono}</span>
       <span className="dialog-title">{s.title}</span>
       <span className="dialog-time">{relTime(s.lastActivity)}</span>
-      <span className="dialog-subtitle">{cwdBasename(s.cwd)}</span>
+      <span className="dialog-subtitle">{cwdBasename(s.cwd)}
+        {!!s.roles?.length && <span title="创建时角色选择，不代表当前能力就绪"> · 角色：{s.roles.map(role => role.name).join(' / ')}</span>}
+      </span>
       <SessionStatus sessionId={s.sessionId} status={s.status} needsDecision={!!(s.ask || s.planRequest || s.elicitation)} />
     </button></li>
   );

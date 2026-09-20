@@ -28,6 +28,15 @@ const pathSchema = z.string().refine(value => {
 export const manifestSchema = z.object({
   apiVersion: z.literal(1), id: idSchema, name: z.string().trim().min(1).max(200),
   version: versionSchema, backend: pathSchema,
+  roles: z.array(z.object({
+    id: idSchema, name: z.string().trim().min(1).max(200), description: z.string().max(4000).optional(),
+    instructions: pathSchema.optional(), skillDirectories: z.array(pathSchema).max(64).optional(),
+    mcpServers: z.record(idSchema, z.object({
+      type: z.literal('http'),
+      path: z.string().refine(value => value.startsWith('/') && (() => { try { safeModulePath(value.slice(1)); return true; } catch { return false; } })(), 'Invalid module API path'),
+      tools: z.array(z.string().min(1).max(200)).max(256),
+    }).strict()).optional(),
+  }).strict()).max(64).refine(roles => new Set(roles.map(role => role.id)).size === roles.length, 'Duplicate role ID').optional(),
   frontend: z.object({
     entry: pathSchema, styles: z.array(pathSchema).max(64).optional(), assets: z.array(pathSchema).min(1).max(128),
     worker: pathSchema.optional(),

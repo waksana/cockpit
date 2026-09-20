@@ -24,7 +24,8 @@ Notification 0.1.5 的精确宿主 SDK 源码 pin 为
 Web v2、UI v1 和菜单能力分别检查，不能只凭包版本判断兼容；
 旧 `globalNavigation` HOC 已移除，不保留旧 Web 插口或导航 middleware 的兼容别名。
 源码更新不表示已经发布、安装或重启，也不代表已安装的服务或模块已经升级。
-远程签名 URL 安装、模块 HTTP MCP、角色/skill 包和通用页面贡献仍未实现。
+远程签名 URL 安装和通用页面贡献仍未实现。当前开发源码新增创建时角色装配与
+模块自有 HTTP MCP 配置（下文 4.4）；不表示历史发行版具备这些能力。
 
 产品边界见 [R1–R8](product-requirements.md)，文件模块的业务契约由
 [cockpit-file](https://github.com/waksana/cockpit-file) 维护。
@@ -120,6 +121,7 @@ node --import ./apps/server/node_modules/tsx/dist/loader.mjs \
     config.json                    下次启动选择及每模块配置
     installed/<id>/<version>/<digest>/package/
     data/<id>/                     模块业务数据
+  session-roles/<sessionId>.json    创建时角色选择；不是原生能力缓存
 ```
 
 Copilot 原生数据不在上面的宿主管理范围内。本体不覆盖其 baseDirectory/configDirectory，
@@ -150,7 +152,7 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 
 | 输入/贡献 | 内容 |
 | --- | --- |
-| context | apiVersion、moduleId、dataRoot、apiBase、config、AbortSignal、report、invalidate、publish |
+| context | apiVersion、moduleId、dataRoot、apiBase、config、AbortSignal、report、invalidate、publish、host.call |
 | routes | method/path、json 或 stream body、bodyLimit、handler |
 | publicConfig | 明确允许浏览器读取的少量配置，不默认公开整个 config |
 | events | 事件类型列表与只读处理器 |
@@ -226,6 +228,58 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 消费者区分空窗口与未知/失效，捕获原始 session/draft/request 身份，
 不得把迟到结果改投到当前新目标或覆盖用户手动修改；文字读取本身不授权提交消息。
 精确字段与能力版本见[当前窗口契约](#chat-window-state)，无需另建历史读取或业务缓存。
+
+### 4.4 创建时角色与模块 HTTP MCP
+
+后端 API 仍为 v1，新增 `context.host.call`。消费者须检查该字段是否存在，不以
+`apiVersion: 1` 推断旧宿主已经支持。Web API v2/UI v1 不变。
+模块自己实现 HTTP MCP，并用现有 `routes` 挂载；本体不注册模块业务工具。
+
+manifest 可声明 `roles`：
+
+```json
+{
+  "id": "executor",
+  "name": "Executor",
+  "description": "Optional role summary",
+  "instructions": "roles/executor.md",
+  "skillDirectories": ["skills/executor"],
+  "mcpServers": {
+    "tools": { "type": "http", "path": "/mcp", "tools": ["task_read", "task_report"] }
+  }
+}
+```
+
+`roles` 是上述对象的数组。每份短角色指令最多 64 KiB。文件与目录是包根相对路径；`path` 是以 `/` 开头的
+模块 API 相对路径。每个 skill root 包含 `SKILL.md`（可位于子目录），只传入所选
+角色的目录。角色来源按 `moduleId/roleId` 排序，同一选择与同一资源去重；
+不同来源的同名 skill、同一 MCP key 的不同端点明确拒绝。角色原始指令带模块、
+角色与原生 session ID 标头，通过主 agent `systemMessage.mode: "append"` 追加；
+不替换基础指令，不创建 custom agent，也不发送初始化消息。
+
+MCP 名称为 `module_${moduleId}__${key}`。宿主生成
+`http://127.0.0.1:<host-port>/_modules/<moduleId>/<digest>/api<path>`，
+并设置 `X-Cockpit-Module-Digest: <digest>`。同名同端点工具列表取并集，
+`["*"]` 表示全部，`[]` 表示无工具。既有来源、摘要、请求大小和生命周期保护不变。
+模块负责 MCP 协议实现、依赖、工具表和错误；普通模块 HTTP API 可并存。
+
+公开 intent（Web 和本体 MCP 共用）：
+
+- `roles/list {}` → `{roles: [{moduleId,roleId,moduleName,name,description?}]}`
+- `session/new {cwd,roles?: [{moduleId,roleId}]}` → `{sessionId}`
+- `roles/readiness {sessionId,roles?}` → `{sessionId,loaded,ready,roles,reasons}`
+
+后端 `context.host.call(name,body)` 只接受 `session/new`、`session/get`、
+`roles/readiness`、`prompt`，参数和结果使用 `@cockpit/protocol` 的 typed intents。
+不暴露 Engine、SDK 或持久层；宿主校验输入、输出和 shutdown admission。
+创建失败若已确认原生 ID，错误保留 `sessionId`，不得盲目重建。
+
+所选角色按 session ID 保存在宿主目录，列表、identity、Web、MCP 在 unloaded
+时仍展示；冷恢复重新解析已启用模块并装配。缺失模块不静默丢弃角色。
+角色选择不是就绪：读取时检查该 native handle 的装配、skill 路径/启用状态、
+MCP 连接/策略状态及当前原生工具 metadata。新建和冷恢复可初始化原生工具表，
+只读 readiness 不补装、重载、启用或自动修复。就绪是读取时证据而非永久承诺；
+没有 Task ACL，也不支持运行中追加角色。
 
 ## 5. HTTP、资产与版本
 
@@ -663,8 +717,7 @@ graceful 仍只等待原生工作和必要的原生在途操作。
 也不增加首版模块管理操作或替代现有安装 CLI。
 
 - 远程 HTTPS 签名发行描述、发布者信任与更新选择；在验证前不执行代码。
-- 同端口独立 HTTP MCP path，每模块工具表/协议会话隔离，不隐式修改原生 MCP 配置。
-- 角色/skill 等内容包与下次启动消息模块，保持各自业务和原生状态边界。
+- 纯内容包（没有 backend）和下次启动消息模块；现有角色须随可执行模块包提供。
 
 这些尚未实现，不应通过当前 API v1 的未知字段或旧原型入口模拟。
 已有菜单动作声明不等于任意页面/router 注册；当前没有此类公开注册入口。

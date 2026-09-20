@@ -262,7 +262,8 @@ MCP 客户端配置单独见 [MCP](../apps/mcp/README.md#configuration)。
 不是登录认证，不能把未认证的隧道作为替代。
 普通代理与服务管理属于宿主选择，不由 Cockpit 安装或改写。
 当前 MCP 是本地 stdio 客户端，其 HTTP 请求经过同一后端认证入口；
-逐模块 HTTP MCP path 仍属于未来协议。
+当前开发源码还允许模块在既有摘要绑定 routes 实现 HTTP MCP，由创建时角色配置装配；
+旧发行版不会自动获得此能力，详见[模块协议](module-contract-draft.md#44-创建时角色与模块-http-mcp)。
 
 ### 示例：自行管理的 nginx HTTPS + Basic 认证
 

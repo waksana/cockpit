@@ -420,6 +420,9 @@ const intentFixtures = {
     shutdown: { phase: 'running', requestedAt: null, error: null }, sessions: [] } },
   'runtime/snapshot': { body: {}, result: snapshot },
   'session/new': { body: { cwd: minimalMeta.cwd }, result: sid },
+  'roles/list': { body: {}, result: { roles: [] } },
+  'roles/readiness': { body: sid, result: { ...sid, roles: [], loaded: false, ready: false, reasons: ['Session is unloaded'] } },
+  'session/advance-queue': { body: { ...sid, action: 'get' }, result: { operation: null } },
   'session/fork': { body: { sessionId: 'parent', toEventId: 'user-event', name: 'Child' }, result: sid },
   'session/chat': { body: { ...sid, source: 'persisted', direction: 'backward', max: 64, waitMs: 0, bootstrap: false }, result: nativePage },
   prompt: { body: { ...sid, text: 'continue', mode: 'enqueue',
@@ -535,9 +538,11 @@ test('session/fork uses strict native fields and never accepts cwd or blank boun
   }
 });
 
-test('session/new accepts only the native cwd and rejects retired module or hidden launch inputs', () => {
+test('session/new accepts cwd and explicit roles while rejecting retired module or hidden launch inputs', () => {
   const schema = Intents['session/new'].body;
-  assert.deepEqual(Object.keys(schema.shape), ['cwd']);
+  assert.deepEqual(Object.keys(schema.shape), ['cwd', 'roles']);
+  roundTrip(schema, { cwd: '/workspace', roles: [{ moduleId: 'board', roleId: 'owner' }, { moduleId: 'board', roleId: 'executor' }] });
+  assert.equal(schema.safeParse({ cwd: '/workspace', roles: [{ moduleId: 'board', roleId: '../escape' }] }).success, false);
   assert.equal(schema.safeParse({ cwd: '/workspace/project', modules: [] }).success, false);
   for (const cwd of ['/workspace/project', 'relative/path']) {
     roundTrip(schema, { cwd });
@@ -958,7 +963,7 @@ type SlimContractGuards = [
   Expect<Equal<Extract<keyof SessionMeta, RemovedMetaField>, never>>,
   Expect<Equal<Extract<keyof SessionBrief, RemovedMetaField>, never>>,
   Expect<Equal<Extract<keyof Extract<Protocol.ServerEvent, { type: 'session/patch' }>, RemovedMetaField>, never>>,
-  Expect<Equal<IntentBody<'session/new'>, { cwd: string }>>,
+  Expect<Equal<IntentBody<'session/new'>, { cwd: string; roles?: Array<{ moduleId: string; roleId: string }> }>>,
   Expect<Equal<IntentBody<'session/delete'>, { sessionId: string }>>,
   Expect<Equal<IntentBody<'session/chat'>, Protocol.NativeChatRead>>,
   Expect<Equal<IntentBody<'skills/global'>, { cwd?: string }>>,

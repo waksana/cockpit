@@ -26,7 +26,7 @@ export function DirectoryModal({ children, busy = false, onCancel }: {
   const modal = (
     <div className="dialog-scrim directory-modal" onPointerDown={() => { if (!busy) onCancel(); }}>
       <div ref={ref} tabIndex={-1} className="dialog-card dirpicker" role="dialog" aria-modal="true"
-        aria-label="选择工作目录" aria-busy={busy} onPointerDown={event => event.stopPropagation()}>
+        aria-label="新建会话：选择目录和角色" aria-busy={busy} onPointerDown={event => event.stopPropagation()}>
         {children}
       </div>
     </div>

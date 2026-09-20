@@ -139,6 +139,13 @@ test('native deletion failure or missing acknowledgement is not retried or accep
   assert.ok(fetch.mock.calls.every(call => call.arguments[0] === intentUrl('session/delete')));
 });
 
+test('same-module multiselect creation uses only the canonical intent', async t => {
+  const roles = [{ moduleId: 'board', roleId: 'owner' }, { moduleId: 'board', roleId: 'executor' }];
+  const { client, fetch } = setup(t, async () => Response.json({ sessionId: 'native-role-id' }));
+  await client.newSession('/workspace', roles);
+  assertOnlyPost(fetch, 'session/new', { cwd: '/workspace', roles });
+});
+
 test('creation preserves an explicitly reported native identity without automatic retry', async t => {
   const { client, fetch } = setup(t, async () => Response.json({
     error: 'Native creation readback incomplete', code: 'SESSION_CREATION_INCOMPLETE', sessionId: 'retained-session',

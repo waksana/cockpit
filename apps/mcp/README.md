@@ -12,11 +12,10 @@ The client does not read or write local files on behalf of attachment inputs.
 This documents the checked-in source. See
 [source status](../../docs/cockpit-plan.md#source-status) and the
 [documentation index](../../docs/README.md).
-The agreed [module target](../../docs/module-contract-draft.md#8-后续目标)
-will give modules separate HTTP MCP paths on the host's one port. That is not
-implemented by this current stdio API client. Module cold-loading and native
-per-session MCP switches are different operations; this document only describes
-the currently available tools.
+Modules may implement their own HTTP MCP through existing host routes and declare
+creation-time roles; see the [module contract](../../docs/module-contract-draft.md#44-创建时角色与模块-http-mcp).
+Their business tools do not enter this stdio registry. Module cold-loading,
+role selection and native per-session MCP switches remain distinct operations.
 
 Entry: `dist/index.js`, started with the packaged `tsx` loader so the
 `@cockpit/protocol` TypeScript workspace dependency is also supported.
@@ -26,6 +25,32 @@ Node/platform requirements are authoritative; do not rely on implicit TypeScript
 stripping in an arbitrary Node version.
 
 ## Discover and invoke the API
+
+### Roles and queue advancement
+
+`cockpit_list_roles` discovers module roles. `cockpit_new_session` accepts optional
+`roles: [{moduleId,roleId}]`, including multiple roles from the same module.
+Selected tools are unioned and source-labelled instructions appended; no startup
+prompt is sent. Session list/get JSON and Markdown preserve selected roles even
+while unloaded. `cockpit_role_readiness` reads actual loaded skill/tool readiness;
+it does not load, repair or add roles to existing sessions.
+
+`cockpit_advance_queue` takes `action: "start" | "get" | "cancel"`, `session_id`
+and optional `operation_id` (get/cancel only). Start returns immediately with a
+receipt. At most one operation runs per target; another start returns that active
+receipt. Get without an operation ID returns the latest retained operation for
+the target, allowing recovery after a lost receipt without blind retries.
+
+Advancement preserves the native queue and background tasks, interrupts only
+the main turn with `flushQueued:true`, and waits for observed native admission/start
+before another interrupt. New queued messages join the dynamic tail. Once no
+queued items remain, the last admitted turn continues; idle is not required.
+There is no business timeout, round limit, replay or automatic retry after an
+uncertain interrupt. Cancel stops future interruptions, allowing an in-flight
+call to settle; it does not cancel the target. Client disconnect is not cancel.
+The host retains up to 500 recent receipts (active operations are never evicted);
+restart neither restores nor resumes them. Shutdown waits for active work and
+permits get/cancel while waiting. Unload cannot bypass active advancement.
 
 `GET /capabilities` lists the actual protocol `Intents`, with names, descriptions,
 and a transport inventory. `prefix`, `limit` (1–100), and `offset` bound the listing.

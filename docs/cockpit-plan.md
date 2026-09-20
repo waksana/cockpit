@@ -22,7 +22,7 @@ state/service/draft 和 Markdown，不提供任意页面/router 注册。
 当前 0.2.5 源码以真实 `composerInput` textarea middleware 提供输入增强，
 与 Speech 0.1.1 配套；只读 chatWindow 保持独立。公开破坏性变化见[发行摘要](release-notes.md)，
 源码准备不表示发行或部署。
-远程安装、逐模块 HTTP MCP 和启动接续消息仍未实现，
+远程安装和启动接续消息仍未实现；当前开发源码支持模块自有 HTTP MCP 与创建时角色装配，
 具体已实现范围见[模块协议](module-contract-draft.md)。
 模块安装与版本选择只在下次冷启动生效；不做热加载、热启停或热更新，
 也不为热切换预留框架或改变可信主进程 import 模型。
