@@ -1,0 +1,59 @@
+.module-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--host-space-xs);
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--link-color) 12%, var(--surface-color));
+  color: var(--primary-text-color);
+  font-family: inherit;
+  font-size: var(--host-text-meta);
+  font-weight: 500;
+  line-height: var(--host-leading-ui);
+  vertical-align: middle;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.module-mark {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--link-color);
+  border-radius: 2px;
+  box-shadow: 2px -2px 0 -1px var(--surface-color), 2px -2px 0 0 var(--link-color);
+}
+.module-label-name { min-width: 0; }
+.role-badge {
+  display: inline-flex;
+  align-items: stretch;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: var(--host-text-meta);
+  line-height: var(--host-leading-ui);
+  vertical-align: middle;
+  .module-label { border-radius: 0; }
+}
+.role-badge-name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 2px 7px;
+  border-inline-start: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--primary-text-color) 6%, var(--surface-color));
+  color: var(--primary-text-color);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.session-role-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--host-space-xs);
+  min-width: 0;
+}

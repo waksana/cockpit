@@ -10,6 +10,8 @@ import { PanelCloseButton, RefreshButton, ResourceStatus, SessionResume } from '
 import { useClippedText } from '../lib/useClippedText';
 import { PaneHeader } from './PaneHeader';
 import { Icon } from './Icon';
+import { ModuleLabel } from './ModuleLabel';
+import type { ModuleSource } from '@cockpit/protocol';
 
 export function Toggle({ on, onChange, disabled, label, busy }: {
   on: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string; busy?: boolean;
@@ -47,8 +49,9 @@ function RowError({ error, name }: { error: string; name: string }) {
   </>;
 }
 
-function SessionToggleRow({ identity, name, description, source = '', status, enabled, disabled, disabledReason, nativeError, onChange }: {
+function SessionToggleRow({ identity, name, description, source = '', module, status, enabled, disabled, disabledReason, nativeError, onChange }: {
   identity: string; name: string; description?: string; source?: string; status?: ReactNode; enabled: boolean;
+  module?: ModuleSource;
   disabled: boolean; disabledReason?: string; nativeError?: string; onChange: (name: string, enabled: boolean) => Promise<void>;
 }) {
   const action = useKeyedAction(identity);
@@ -58,7 +61,11 @@ function SessionToggleRow({ identity, name, description, source = '', status, en
     {status ? desired ? '连接中' : '断开中' : desired ? '启用中' : '停用中'}</>;
   const identityText = <>
     <div className="manage-row-name"><RowText key={name} text={name} label={`${name}名称`} /></div>
-    <div className="manage-row-source"><RowText key={source} text={source} label={`${name}来源`} /></div>
+    <div className="manage-row-source">
+      {module && <ModuleLabel name={module.name} id={module.id}
+        description={status ? '角色配置来源，不代表当前连接身份；无法核验后续同名配置替换' : undefined} />}
+      <RowText key={source} text={source} label={`${name}来源`} />
+    </div>
   </>;
   return <div className="manage-row manage-session-row" data-mcp={status ? true : undefined}
     data-resource-name={name} title={disabled ? disabledReason : undefined}>
@@ -162,7 +169,7 @@ export function SessionMcp({ session, onClose }: SessionManageProps) {
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
     {resource.data?.map(server => <SessionToggleRow key={JSON.stringify([sessionId, server.name])}
       identity={JSON.stringify(['mcp', sessionId, server.name])} name={server.name}
-      source={server.detail} nativeError={server.error} status={<McpStatusPill status={server.status} />}
+      source={server.detail} module={server.module} nativeError={server.error} status={<McpStatusPill status={server.status} />}
       enabled={server.enabled} disabled={!resource.usable || busy}
       disabledReason={busy ? 'MCP 正在切换或连接，请等待完成后再修改。' : undefined} onChange={action.run} />)}
   </ManageShell>;
@@ -183,7 +190,7 @@ export function SessionSkills({ session, onClose }: SessionManageProps) {
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
     {resource.data?.map(skill => <SessionToggleRow key={JSON.stringify([sessionId, skill.name])}
       identity={JSON.stringify(['skills', sessionId, skill.name])} name={skill.name}
-      description={skill.description} source={skill.source}
+      description={skill.description} source={skill.source} module={skill.module}
       enabled={skill.enabled} disabled={!resource.usable} onChange={action.run} />)}
   </ManageShell>;
 }

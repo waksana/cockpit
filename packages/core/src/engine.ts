@@ -3,7 +3,6 @@ import { randomUUID } from 'node:crypto';
 import { accessSync, constants, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { isDeepStrictEqual } from 'node:util';
 import type {
   CopilotSession, SessionConfig, SessionMetadata, SessionEvent,
   ExitPlanModeResult, ElicitationResult,
@@ -14,7 +13,7 @@ import type {
   ModelOption, ScheduleEntry, ServerEvent, SessionMeta, SessionPanels,
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
   MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem, NativeChatEvent,
-  RoleSelection, RoleReadiness,
+  RoleSelection, RoleReadiness, SkillSession,
 } from '@cockpit/protocol';
 import { NativeChatRead, SessionUsage, MetaResource as MetaResources, cleanSessionTitle } from '@cockpit/protocol';
 import { NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult } from '@cockpit/protocol';
@@ -589,9 +588,12 @@ export class Engine {
       }
     }
     if (st.roleAssembly) {
-      const discovered = await this.untilFatal(() => this.runtime.rpc.mcp.config.list());
-      for (const [name, config] of Object.entries(st.roleAssembly.config.mcpServers ?? {})) {
-        if (discovered.servers[name] && !isDeepStrictEqual(discovered.servers[name], config)) {
+      const [configured, discovered] = await this.untilFatal(() => settled([
+        this.runtime.rpc.mcp.config.list(),
+        this.runtime.rpc.mcp.discover({ workingDirectory: cwd ?? st.observedCwd ?? undefined }),
+      ] as const));
+      for (const name of Object.keys(st.roleAssembly.config.mcpServers ?? {})) {
+        if (Object.hasOwn(configured.servers, name) || discovered.servers.some(server => server.name === name)) {
           throw new Error(`Role MCP conflicts with native configuration: ${name}`);
         }
       }
@@ -1413,8 +1415,10 @@ export class Engine {
       return await this.operation(id, async (sdk, st) => {
         const result = await this.withSession(st, sdk, () => sdk.rpc.mcp.list());
         const disabled = new Set(result.host?.disabledServers);
+        const sources = st.roleAssembly?.mcpSources;
         return { loaded: true, servers: result.servers.map(server => ({
           name: server.name, detail: server.sourcePlugin ?? server.source ?? 'native',
+          ...(sources && Object.hasOwn(sources, server.name) ? { module: sources[server.name] } : {}),
           ...this.mcpServerState(result, server.name, server, disabled), error: server.error,
         })) };
       }, 'read');
@@ -1575,9 +1579,12 @@ export class Engine {
     const skill = (await this.globalSkills(cwd)).find(skill => skill.name === name);
     if (!skill || skill.enabled !== enabled) throw new Error('Native global skill state did not confirm the requested change');
   }
-  async listSessionSkills(id: string) {
+  async listSessionSkills(id: string): Promise<SkillSession[]> {
     return this.operation(id, async (sdk, st) => (await this.withSession(st, sdk, () => sdk.rpc.skills.list())).skills.map(
-      ({ name, description, source, enabled }) => ({ name, description, source, enabled })), 'read');
+      ({ name, description, source, enabled, path }) => {
+        const module = st.roleAssembly?.skills.find(skill => skill.name === name && skill.path === path)?.module;
+        return { name, description, source, enabled, ...(module ? { module: { ...module } } : {}) };
+      }), 'read');
   }
   async toggleSessionSkill(id: string, name: string, enabled: boolean): Promise<void> {
     await this.operation(id, async (sdk, st) => {

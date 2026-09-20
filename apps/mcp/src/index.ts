@@ -142,7 +142,7 @@ server.registerTool(
       const structured = { loaded, servers, count: servers.length };
       if (response_format === 'json') {
         const shrink = shrinkList(servers, 'servers', {
-          keep: ['name', 'enabled', 'status', 'error', 'operation'],
+          keep: ['name', 'module', 'enabled', 'status', 'error', 'operation'],
           clip: ['detail'],
         });
         return ok(cappedJson(structured, (attempt) => {
@@ -158,6 +158,7 @@ server.registerTool(
       const lines = servers.map(
         (s) =>
           `- ${s.enabled ? '🟢' : '⚪'} ${s.name} — enabled=${s.enabled} (${s.status})${s.error ? ` · error: ${s.error}` : ''}`
+          + `${s.module ? ` · role-configured module: ${s.module.name} (${s.module.id}; not live connection identity)` : ''}`
           + `${s.operation ? ` · toggle ${s.operation.id}=${s.operation.state}/${s.operation.status}${s.operation.error ? `: ${s.operation.error}` : ''}` : ''}\n    ${s.detail}`,
       );
       return ok(capped(`# MCP servers for ${session_id}${loadNote}\n${lines.join('\n')}`));
@@ -236,11 +237,12 @@ server.registerTool(
       const { skills } = await intent('skills/session', { sessionId: session_id });
       const structured = { skills, count: skills.length };
       if (response_format === 'json')
-        return ok(cappedJson(structured, shrinkList(skills, 'skills', { keep: ['name', 'enabled', 'source'], clip: ['description'] })));
+        return ok(cappedJson(structured, shrinkList(skills, 'skills', { keep: ['name', 'module', 'enabled', 'source'], clip: ['description'] })));
       if (skills.length === 0) return ok('_No skills are available._');
       const lines = skills.map(
         (s) =>
-          `- ${s.enabled ? '🟢' : '⚪'} ${s.name}${s.source ? ` (${s.source})` : ''}${s.description ? `\n    ${s.description}` : ''}`,
+          `- ${s.enabled ? '🟢' : '⚪'} ${s.name}${s.source ? ` (${s.source})` : ''}`
+          + `${s.module ? ` · module: ${s.module.name} (${s.module.id})` : ''}${s.description ? `\n    ${s.description}` : ''}`,
       );
       return ok(capped(`# Skills for ${session_id}\n${lines.join('\n')}`));
     } catch (e) {

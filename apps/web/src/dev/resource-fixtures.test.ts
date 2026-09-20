@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { Intents, SessionMeta, McpServerSession, SkillSession } from '@cockpit/protocol';
+import { createCockpitStore } from '../net/store';
+import { installResourceFixture } from './resource-fixtures';
+import { workspaceSessionId } from './workspace-fixtures';
+
+test('resource scene exercises actual names and explicit provenance without HTTP', async t => {
+  const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('Fixture must not use HTTP'); });
+  const store = createCockpitStore();
+  installResourceFixture(store);
+  const state = store.getState();
+  const roles = await state.listRoles();
+  Intents['roles/list'].result.parse({ roles });
+  const mcp = await state.mcpSession(workspaceSessionId);
+  mcp.forEach(server => McpServerSession.parse(server));
+  const skills = await state.skillsSession(workspaceSessionId);
+  skills.forEach(skill => SkillSession.parse(skill));
+  assert.equal(mcp[0].module?.name, 'Task');
+  assert.equal(mcp[1].module, undefined);
+  assert.equal(skills[2].module, undefined);
+  await state.mcpToggleSession(workspaceSessionId, mcp[0].name, false);
+  assert.equal((await state.mcpSession(workspaceSessionId))[0].enabled, false);
+  await state.skillsToggleSession(workspaceSessionId, skills[0].name, false);
+  assert.equal((await state.skillsSession(workspaceSessionId))[0].enabled, false);
+  const directory = await state.listDir();
+  const id = await state.newSession(directory.path, roles.map(({ moduleId, roleId }) => ({ moduleId, roleId })));
+  const created = store.getState().sessions.find(session => session.sessionId === id);
+  SessionMeta.parse(created);
+  assert.deepEqual(created?.roles?.map(role => role.roleId), ['owner', 'executor']);
+  await assert.rejects(state.newSession('/workspace', [{ moduleId: 'unknown', roleId: 'owner' }]), /Unknown synthetic role/);
+  await assert.rejects(state.mcpToggleSession(workspaceSessionId, 'task', true), /Unknown synthetic MCP/);
+  assert.equal(fetch.mock.callCount(), 0);
+});

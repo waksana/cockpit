@@ -607,6 +607,12 @@ test('MCP-only roles reject discovered native config collisions on create and co
   await assert.rejects(h.engine.newSession(h.cwd, roles), /Role MCP conflicts with native configuration/);
   assert.equal(h.runtime.createSession.mock.callCount(), 0);
   assert.deepEqual(h.mcpDefinitions.module_fixture__tools, native);
+  h.mcpDefinitions.module_fixture__tools = config;
+  await assert.rejects(h.engine.newSession(h.cwd, roles), /Role MCP conflicts with native configuration/);
+  delete h.mcpDefinitions.module_fixture__tools;
+  h.discoveredMcp.push({ name: 'module_fixture__tools', source: 'workspace', enabled: true });
+  await assert.rejects(h.engine.newSession(h.cwd, roles), /Role MCP conflicts with native configuration/);
+  h.discoveredMcp.length = 0;
   delete h.mcpDefinitions.module_fixture__tools;
   const id = await h.engine.newSession(h.cwd, roles);
   await h.engine.unload(id);
@@ -616,6 +622,74 @@ test('MCP-only roles reject discovered native config collisions on create and co
   assert.deepEqual(saved.get(id), roles);
   assert.deepEqual(h.mcpDefinitions.module_fixture__tools, native);
   assert.equal(h.runtime.rpc.skills.discover.mock.callCount(), 0, 'MCP validation does not depend on role skills');
+});
+
+test('session skill provenance uses assembled identity and native path, never source or name prefixes', async t => {
+  const h = harness(t);
+  const module = { id: 'fixture', name: 'Fixture module' };
+  const role = { moduleId: module.id, moduleName: module.name, roleId: 'worker', name: 'Worker' };
+  const saved = new Map<string, typeof role[]>();
+  let path = '/fixture/v1/worker/SKILL.md';
+  const provider: RoleProvider = {
+    list: () => [role], read: id => saved.get(id) ?? [], save: (id, roles) => { saved.set(id, roles); },
+    assemble: async () => ({
+      roles: [role], fingerprint: path, skills: [{ name: 'fixture-worker', path, module }],
+      mcpSources: { 'fixture-tools': module },
+      config: { skillDirectories: [path.slice(0, path.lastIndexOf('/'))],
+        mcpServers: { 'fixture-tools': { type: 'http', url: 'http://127.0.0.1/mcp', tools: ['read'] } } },
+    }),
+  };
+  h.engine.setRoleProvider(provider);
+  h.discoveredSkills.push({ name: 'fixture-worker', path, description: '', source: 'custom' } as ServerSkill);
+  const id = await h.engine.newSession(h.cwd, [role]);
+  const native = h.natives.get(id)!;
+  native.state.skills = [
+    { name: 'fixture-worker', description: 'Native description', path, source: 'custom', enabled: false } as Skill,
+    { name: 'module_fixture__unrelated', description: '', path: '/native/SKILL.md', source: 'custom', enabled: true } as Skill,
+  ];
+  const before = structuredClone(native.state.skills);
+  const assemble = t.mock.method(provider, 'assemble');
+  const skills = await h.engine.listSessionSkills(id);
+  assert.deepEqual(skills[0], {
+    name: 'fixture-worker', description: 'Native description', source: 'custom', enabled: false, module,
+  });
+  assert.equal(Object.hasOwn(skills[1]!, 'module'), false);
+  assert.deepEqual(native.state.skills, before, 'projection does not mutate SDK objects');
+  assert.equal(assemble.mock.callCount(), 0, 'resource reads do not assemble or calculate readiness');
+  await h.engine.refreshSkills();
+  assert.deepEqual((await h.engine.listSessionSkills(id))[0]!.module, module);
+  native.state.skills[0]!.path = '/replacement/SKILL.md';
+  await h.engine.refreshSkills();
+  assert.equal(Object.hasOwn((await h.engine.listSessionSkills(id))[0]!, 'module'), false);
+  native.state.skills[0]!.path = path;
+  native.state.mcp = mcpState([{ name: 'fixture-tools', source: 'user', status: 'failed', error: 'Native error' }]);
+  assert.deepEqual((await h.engine.listSessionMcp(id)).servers, [{
+    name: 'fixture-tools', detail: 'user', enabled: true, status: 'failed', error: 'Native error', module,
+  }], 'MCP module is role configuration provenance, independent of native source and connection state');
+  native.state.mcp = mcpState([
+    { name: 'module_fixture__unrelated', source: 'custom', status: 'connected' },
+    { name: 'constructor', source: 'custom', status: 'connected' },
+  ]);
+  assert.ok((await h.engine.listSessionMcp(id)).servers.every(server => !Object.hasOwn(server, 'module')),
+    'neither lookalike names nor inherited object properties declare module configuration');
+  native.state.mcp = mcpState([{ name: 'fixture-tools', source: 'user', status: 'connected' }]);
+  await h.engine.reloadSessionMcp(id);
+  assert.deepEqual((await h.engine.listSessionMcp(id)).servers[0]!.module, module,
+    'role configuration declaration remains, without claiming to verify a same-name native replacement');
+  assert.doesNotMatch(JSON.stringify(await h.engine.getResources(id, ['identity'])), /roleReadiness/);
+  await h.engine.unload(id);
+  assert.deepEqual(await h.engine.listSessionMcp(id), { loaded: false, servers: [] });
+  await assert.rejects(h.engine.listSessionSkills(id), unavailableSession);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+  path = '/fixture/v2/worker/SKILL.md';
+  h.discoveredSkills[0]!.path = path;
+  await h.engine.load(id);
+  assert.deepEqual((await h.engine.listSessionMcp(id)).servers[0]!.module, module,
+    'cold resume rebuilds the role configuration source');
+  assert.equal(Object.hasOwn((await h.engine.listSessionSkills(id))[0]!, 'module'), false,
+    'cold resume assembly must not label a native skill retaining the old path');
+  native.state.skills[0]!.path = path;
+  assert.deepEqual((await h.engine.listSessionSkills(id))[0]!.module, module);
 });
 
 test('readonly native observer sees live deltas without web/history reads and isolates failures', async t => {

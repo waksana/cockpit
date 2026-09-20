@@ -18,6 +18,20 @@ import {
   type IntentResult,
 } from './index.ts';
 
+test('resource module provenance is explicit optional metadata independent of literal names and native source', () => {
+  const module = { id: 'fixture', name: 'Fixture module' };
+  const mcp = { name: 'fixture-tools', detail: 'user', enabled: true, status: 'failed', error: 'Native error', module };
+  const skill = { name: 'fixture-skill', source: 'custom', enabled: false, module };
+  assert.deepEqual(Intents['mcp/session'].result.parse({ loaded: true, servers: [mcp] }).servers[0], mcp);
+  assert.deepEqual(Intents['skills/session'].result.parse({ skills: [skill] }).skills[0], skill);
+  assert.equal(Object.hasOwn(Protocol.McpServerSession.parse({
+    name: 'module_fixture__native', detail: 'native', enabled: true, status: 'connected',
+  }), 'module'), false);
+  assert.equal(Object.hasOwn(Protocol.SkillSession.parse({ name: 'fixture-skill', source: 'custom', enabled: true }), 'module'), false);
+  assert.equal(Intents['session/resources'].body.safeParse({ sessionId: 's', resources: ['skills', 'mcp'] }).success, false,
+    'session/resources is a metadata-only projection; resource lists have dedicated intents');
+});
+
 test('folded-message validators are absent from the production wire entry point', () => {
   for (const name of ['ToolCall', 'ChatRole', 'SubagentInfo', 'ChatMessage']) {
     assert.equal(Object.hasOwn(Protocol, name), false);

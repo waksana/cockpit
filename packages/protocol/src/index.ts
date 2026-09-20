@@ -250,8 +250,15 @@ export const McpToggleOperation = z.object({
 });
 export type McpToggleOperation = z.infer<typeof McpToggleOperation>;
 
+export const ModuleSource = z.object({
+  id: z.string(),
+  name: z.string(),
+});
+export type ModuleSource = z.infer<typeof ModuleSource>;
+
 export const McpServerSession = z.object({
   name: z.string(),
+  module: ModuleSource.optional().describe('Module that declared this MCP name in this session handle role configuration. Not proof of the live connection identity; same-name native replacements cannot be verified.'),
   detail: z.string(),
   status: McpServerStatus,
   enabled: z.boolean().describe('Configured and not explicitly disabled; does not imply connected or permitted to restart.'),
@@ -283,6 +290,7 @@ export type SkillGlobal = z.infer<typeof SkillGlobal>;
 
 export const SkillSession = z.object({
   name: z.string(),
+  module: ModuleSource.optional().describe('Module source verified against the native skill name and file path for this session handle.'),
   description: z.string().optional(),
   source: z.string().optional(),
   enabled: z.boolean(),
