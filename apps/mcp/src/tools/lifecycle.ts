@@ -1,6 +1,7 @@
 // Lifecycle tools: create, permanently delete, unload, and reload sessions.
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { RoleSelection } from '@cockpit/protocol';
 import { CockpitError, protocolIntent as intent } from '../cockpit.js';
 import { ok, fail, type ToolResult } from '../shared.js';
 
@@ -17,17 +18,19 @@ export function registerLifecycleTools(server: McpServer): void {
         'it never sends a message. Send subsequent content with cockpit_send_prompt to that ID. ' +
         'An empty session with no first message may not survive unload. ' +
         'A persisted session can be resumed with its original ID; a missing one is never silently recreated. ' +
-        'Uses native configuration discovery without product role injection. Do not retry an uncertain creation. ' +
+        'Optional module roles combine instructions, skills and HTTP MCP tool subsets; selection is not readiness. Do not retry an uncertain creation. ' +
         'Reading history does not load a runtime. Use cockpit_list_dir to pick a cwd.',
       inputSchema: z.object({
         cwd: z.string().min(1).describe('Absolute working directory for the new session'),
+        roles: z.array(RoleSelection).max(64).optional().describe('Creation-time module roles; multiple roles from the same module are supported'),
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ cwd }): Promise<ToolResult> => {
+    async ({ cwd, roles }): Promise<ToolResult> => {
       try {
         const res = await intent('session/new', {
           cwd,
+          ...(roles ? { roles } : {}),
         });
         return ok(
           `Created session ${res.sessionId} (cwd: ${cwd}).`,

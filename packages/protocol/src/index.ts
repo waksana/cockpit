@@ -337,7 +337,26 @@ export type TodoProgress = z.infer<typeof TodoProgress>;
 export const AgentMode = z.enum(['interactive', 'plan', 'autopilot']);
 export type AgentMode = z.infer<typeof AgentMode>;
 
+export const RoleSelection = z.object({ moduleId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/), roleId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/) }).strict();
+export type RoleSelection = z.infer<typeof RoleSelection>;
+export const SessionRole = RoleSelection.extend({ name: z.string(), moduleName: z.string() });
+export type SessionRole = z.infer<typeof SessionRole>;
+export const RoleReadiness = z.object({
+  sessionId: z.string(), loaded: z.boolean(), ready: z.boolean(),
+  roles: z.array(SessionRole), reasons: z.array(z.string()),
+});
+export type RoleReadiness = z.infer<typeof RoleReadiness>;
+export const QueueAdvanceOperation = z.object({
+  operationId: z.string(), sessionId: z.string(),
+  state: z.enum(['running', 'cancelling', 'completed', 'cancelled', 'failed']),
+  startedAt: z.number(), completedAt: z.number().optional(),
+  interrupts: z.number().int().nonnegative(), error: z.string().optional(),
+});
+export type QueueAdvanceOperation = z.infer<typeof QueueAdvanceOperation>;
+
 export const SessionMeta = z.object({
+  roles: z.array(SessionRole).optional(),
+  roleReadiness: RoleReadiness.optional(),
   sessionId: z.string(),
   title: z.string(),
   cwd: z.string(),
@@ -412,6 +431,8 @@ export type PanelSection = z.infer<typeof PanelSection>;
 // can discover sessions (and pick one to rename / toggle MCP-skills on) without
 // subscribing to the SSE snapshot stream.
 export const SessionBrief = z.object({
+  roles: z.array(SessionRole).optional(),
+  roleReadiness: RoleReadiness.optional(),
   sessionId: z.string(),
   title: z.string(),
   cwd: z.string(),
@@ -519,9 +540,25 @@ export const Intents = {
     result: Snapshot,
   },
   'session/new': {
-    description: 'Create one native Copilot session using its working directory and native configuration discovery. Returns the real native ID without sending a message; Web and MCP then use prompt with that ID. Never recreate on an uncertain result. Empty sessions may disappear after unload. No module roles or global/project files are written.',
-    body: z.object({ cwd: z.string().min(1) }).strict(),
+    description: 'Create one native session with optional module roles, combined instructions, skills and HTTP MCP tool subsets. No startup message or global/project config writes. Role selection is not live readiness. Never recreate on an uncertain result.',
+    body: z.object({ cwd: z.string().min(1), roles: z.array(RoleSelection).max(64).optional() }).strict(),
     result: z.object({ sessionId: z.string() }),
+  },
+  'roles/list': {
+    body: z.object({}).strict(),
+    result: z.object({ roles: z.array(SessionRole.extend({ description: z.string().optional() })) }),
+  },
+  'roles/readiness': {
+    body: z.object({ sessionId: z.string().min(1), roles: z.array(RoleSelection).max(64).optional() }).strict(),
+    result: RoleReadiness,
+  },
+  'session/advance-queue': {
+    description: 'Start, inspect or cancel queue advancement. Start returns immediately; one active operation per target. Interrupts only the main turn with flushQueued:true, following native transitions to the latest tail. Cancel stops future interrupts, not the target or backgrounds. No business timeout, retries or restart recovery. Query by sessionId after a lost receipt.',
+    body: z.object({
+      action: z.enum(['start', 'get', 'cancel']), sessionId: z.string().min(1),
+      operationId: z.string().min(1).optional(),
+    }).strict(),
+    result: z.object({ operation: QueueAdvanceOperation.nullable() }),
   },
   'session/fork': {
     description: 'Native history fork from a loaded, idle session. Optional toEventId is a root user.message event ID from session history, excluded from the child; omit for full history. Rejects unfinished boundaries and any inherited schedule history. Returns a new unloaded session ID; no prompt is sent. Native fork appends an informational record to the parent. Model/mode follow native persisted history; skills/MCP use cold-resume defaults, not a complete configuration clone. cwd/files are shared, not a worktree. Non-idempotent: on an uncertain error inspect session/list and source history before any retry.',

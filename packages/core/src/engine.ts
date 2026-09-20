@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { accessSync, constants, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { isDeepStrictEqual } from 'node:util';
 import type {
   CopilotSession, SessionConfig, SessionMetadata, SessionEvent,
   ExitPlanModeResult, ElicitationResult,
@@ -13,6 +14,7 @@ import type {
   ModelOption, ScheduleEntry, ServerEvent, SessionMeta, SessionPanels,
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
   MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem, NativeChatEvent,
+  RoleSelection, RoleReadiness, IntentBody,
 } from '@cockpit/protocol';
 import { NativeChatRead, SessionUsage, MetaResource as MetaResources, cleanSessionTitle } from '@cockpit/protocol';
 import { NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult } from '@cockpit/protocol';
@@ -21,6 +23,8 @@ import { normalizeEvent, type RuntimeAttachment } from './sdk-types.ts';
 import { readNativeChat } from './native-chat.ts';
 import { describeMcpServer, redactMcpConfig } from './mcp-config.ts';
 import { validateForkHistory } from './fork.ts';
+import type { RoleProvider, RoleAssembly } from './roles.ts';
+import { QueueAdvancer } from './advance-queue.ts';
 
 export type EngineRuntime = Pick<OfficialRuntime,
   'start' | 'models' | 'listSessions' | 'createSession' | 'resumeSession' |
@@ -77,13 +81,18 @@ function completeMeta(meta: SessionProjection): SessionMeta {
   return { ...meta, title, cwd, lastActivity, status, ask };
 }
 interface State {
+  roleAssembly?: RoleAssembly;
+  creationSubmitted?: boolean;
   id: string;
   observedCwd?: string | null;
   sdk: CopilotSession | null;
   load?: Promise<void>;
   closing: boolean;
   cancelling?: Promise<void>;
-  interrupting?: Promise<IntentResult<'session/interrupt'>>;
+  interrupting?: {
+    promise: Promise<IntentResult<'session/interrupt'>>;
+    ownership: { target?: { sdk: CopilotSession; epoch: number } };
+  };
   interruptTurn?: { epoch: number; interactionId?: string; decisions: Map<string, Decision> };
   turnEpoch: number;
   interruptedEpoch?: number;
@@ -142,6 +151,92 @@ function stateFor(id: string): State {
 }
 
 export class Engine {
+  private readonly queueAdvancer = new QueueAdvancer();
+  async advanceQueue(body: IntentBody<'session/advance-queue'>) {
+    if (body.action === 'start') { this.assertAvailable(); if (this.lifecycle || this.stopped) throw new Error('Host is closing'); }
+    return this.queueAdvancer.call(body, async () => {
+      const st = await this.state(body.sessionId);
+      const sdk = st.sdk && await this.liveSession(st);
+      if (!sdk) { this.release(st); throw new SessionUnloadedError(); }
+      return {
+        pending: async () => (await this.withSession(st, sdk, () => sdk.rpc.queue.pendingItems())).items.length,
+        interrupt: (isCurrent: () => boolean, signal: AbortSignal) => this.advanceInterrupt(st, sdk, isCurrent, signal),
+        observe: (listener: (event: 'admitted' | 'started' | 'changed' | Error) => void) => {
+          const off = this.onNativeEvent(({ sessionId, event }) => {
+            if (sessionId !== st.id) return;
+            if (event.agentId || event.parentToolCallId || event.data.agentId || event.data.parentToolCallId) return;
+            if (event.type === 'session.error') listener(new Error('Native turn failed during queue advancement'));
+            else if (event.type === 'user.message') listener('admitted');
+            else if (event.type === 'assistant.turn_start') listener('started');
+            else if (['pending_messages.modified', 'session.idle', 'abort'].includes(event.type)) listener('changed');
+          });
+          const closed = (value: CopilotSession) => {
+            if (value === sdk) listener(new Error('Session closed during queue advancement; outcome may be uncertain'));
+          };
+          this.bus.on('closed', closed);
+          const fatal = this.onFatal(listener);
+          return () => { off(); fatal(); this.bus.off('closed', closed); this.bus.emit('activity-settled'); };
+        },
+      };
+    });
+  }
+  private roles?: RoleProvider;
+  setRoleProvider(roles: RoleProvider): void {
+    if (this.started || this.sessions.size) throw new Error('Roles must be configured before native startup');
+    this.roles = roles;
+  }
+  listRoles() { return this.roles?.list() ?? []; }
+
+  async roleReadiness(id: string, requested?: RoleSelection[]): Promise<RoleReadiness> {
+    const roles = this.roles?.read(id) ?? [];
+    const st = this.sessions.get(id);
+    const result: RoleReadiness = { sessionId: id, roles, loaded: false, ready: false, reasons: [] };
+    if (!await this.runtime.getSessionMetadata(id) && !st?.sdk) {
+      result.reasons.push('Session does not exist'); return result;
+    }
+    const sdk = st && await this.liveSession(st);
+    result.loaded = !!sdk;
+    if (!sdk || !st) { result.reasons.push('Session is unloaded'); return result; }
+    const selected = requested ?? roles;
+    if (!selected.length) result.reasons.push('No roles selected');
+    for (const role of selected) {
+      if (!roles.some(value => value.moduleId === role.moduleId && value.roleId === role.roleId)) {
+        result.reasons.push(`Role not selected: ${role.moduleId}/${role.roleId}`);
+      }
+    }
+    if (!this.roles || !st.roleAssembly) result.reasons.push('Role assembly was not applied to this native handle');
+    if (result.reasons.length) return result;
+    try {
+      const assembly = await this.roles!.assemble(id, roles);
+      if (assembly.fingerprint !== st.roleAssembly!.fingerprint) result.reasons.push('Current role resources differ from this native handle');
+      const required = await this.roles!.assemble(id, selected);
+      const [skills, mcp, tools] = await this.withSession(st, sdk, () => settled([
+        sdk.rpc.skills.list(), sdk.rpc.mcp.list(), sdk.rpc.tools.getCurrentMetadata(),
+      ] as const));
+      for (const skill of required.skills) {
+        const expected = st.roleAssembly!.skills.find(value => value.path === skill.path);
+        if (!skills.skills.some(value => value.name === expected?.name && value.enabled && value.path === skill.path)) {
+          result.reasons.push(`Role skill is unavailable or disabled: ${expected?.name ?? skill.name}`);
+        }
+      }
+      for (const [name, config] of Object.entries(required.config.mcpServers ?? {})) {
+        const server = mcp.servers.find(value => value.name === name);
+        if (!server || server.status !== 'connected' || !mcp.host?.mcp3pEnabled
+          || mcp.host.disabledServers.includes(name) || mcp.host.filteredServers.includes(name)) {
+          result.reasons.push(`Role MCP is not connected: ${name}`);
+        }
+        const offered = tools.tools?.filter(tool => tool.mcpServerName === name) ?? [];
+        for (const tool of config.tools ?? []) {
+          if (tool === '*' ? !offered.length : !offered.some(value => value.mcpToolName === tool)) {
+            result.reasons.push(`Role MCP tool is not currently offered: ${name}/${tool}`);
+          }
+        }
+      }
+      if (st.sdk !== sdk || st.closing) result.reasons.push('Session is closing');
+    } catch (error) { result.reasons.push(`Readiness unconfirmed: ${messageOf(error)}`); }
+    result.ready = result.reasons.length === 0;
+    return result;
+  }
   private readonly runtime: EngineRuntime;
   private readonly sessions = new Map<string, State>();
   private readonly creating = new Set<string>();
@@ -326,7 +421,10 @@ export class Engine {
   }
 
   private listedMeta(row: SessionMetadata): SessionMeta {
+    const roles = this.roles?.read(row.sessionId) ?? [];
     return {
+      roles,
+      ...(roles.length ? { roleReadiness: { sessionId: row.sessionId, roles, loaded: false, ready: false, reasons: ['Session is unloaded'] } } : {}),
       sessionId: row.sessionId, title: cleanSessionTitle(row.summary) || row.sessionId.slice(0, 8),
       cwd: row.context?.workingDirectory ?? '',
       createdAt: row.startTime.getTime(), lastActivity: row.modifiedTime.getTime(), lastActivitySource: 'native-persisted',
@@ -398,6 +496,8 @@ export class Engine {
         ? sessionModelOptions(models.list, await this.withSession(st, sdk, () => this.runtime.models())) : nativeModels;
       return {
         sessionId: id, loaded: true,
+        ...(wants.has('identity') ? { roles: this.roles?.read(id) ?? [],
+          ...(st.roleAssembly ? { roleReadiness: await this.roleReadiness(id) } : {}) } : {}),
         ...(metadata ? {
           title: cleanSessionTitle(name?.name ?? metadata.summary) || id.slice(0, 8), cwd: metadata.workingDirectory,
           createdAt: Date.parse(metadata.startTime),
@@ -434,6 +534,8 @@ export class Engine {
       sessionId: meta.sessionId, title: meta.title, cwd: meta.cwd, status: meta.status,
       loaded: meta.loaded, lastActivity: meta.lastActivity, currentModelId: meta.currentModelId,
       lastActivitySource: meta.lastActivitySource,
+      roles: meta.roles,
+      roleReadiness: meta.roleReadiness,
     }));
   }
   async status(): Promise<SessionMeta[]> {
@@ -492,7 +594,37 @@ export class Engine {
 
   private async config(st: State, cwd?: string): Promise<SessionConfig> {
     const disabled = await this.globalDisabledSkills();
+    const selected = this.roles?.read(st.id) ?? [];
+    st.roleAssembly = selected.length ? await this.roles!.assemble(st.id, selected) : undefined;
+    if (st.roleAssembly?.skills.length) {
+      const existing = await this.discoverSkills(cwd ?? st.observedCwd ?? undefined);
+      const names = new Map(existing.skills.map(skill => [skill.name, skill.path]));
+      for (const directory of st.roleAssembly.config.skillDirectories ?? []) {
+        const discovered = await this.untilFatal(() => this.runtime.rpc.skills.discover({
+          projectPaths: [], skillDirectories: [directory],
+        }));
+        if (discovered.errors?.length) throw new Error(`Role skill discovery failed: ${discovered.errors.join('; ')}`);
+        for (const skill of st.roleAssembly.skills.filter(skill => skill.path.startsWith(`${directory}/`))) {
+          const native = discovered.skills.find(value => value.path === skill.path);
+          if (!native) throw new Error(`Role skill was not discovered by native runtime: ${skill.path}`);
+          if (names.has(native.name) && names.get(native.name) !== skill.path) {
+            throw new Error(`Role skill conflicts with native discovered skill: ${native.name}`);
+          }
+          names.set(native.name, skill.path);
+          skill.name = native.name;
+        }
+      }
+    }
+    if (st.roleAssembly) {
+      const discovered = await this.untilFatal(() => this.runtime.rpc.mcp.config.list());
+      for (const [name, config] of Object.entries(st.roleAssembly.config.mcpServers ?? {})) {
+        if (discovered.servers[name] && !isDeepStrictEqual(discovered.servers[name], config)) {
+          throw new Error(`Role MCP conflicts with native configuration: ${name}`);
+        }
+      }
+    }
     return {
+      ...st.roleAssembly?.config,
       sessionId: st.id, ...(cwd ? { workingDirectory: cwd } : {}), streaming: true,
       enableConfigDiscovery: true,
       // Runtime 1.0.83 discovers skills but does not apply its global disabled
@@ -564,7 +696,7 @@ export class Engine {
     return result.finally(() => { this.births--; this.bus.emit('activity-settled'); });
   }
 
-  async newSession(cwd: string): Promise<string> {
+  async newSession(cwd: string, roles: RoleSelection[] = []): Promise<string> {
     this.assertAvailable();
     if (this.stopped) throw new Error('Engine is stopped; start it before creating sessions');
     if (this.lifecycle) throw new Error('Engine lifecycle transition is in progress');
@@ -573,6 +705,11 @@ export class Engine {
     const id = randomUUID();
     if (this.creating.has(id) || this.sessions.has(id)) throw new Error('Session identity already has an active handle or creation');
     const st = stateFor(id);
+    if (roles.length) {
+      if (!this.roles) throw new Error('Module roles are unavailable');
+      const assembly = await this.roles.assemble(id, roles);
+      this.roles.save(id, assembly.roles);
+    }
     this.creating.add(id);
     try {
       await this.ensureLoaded(st, true, directory);
@@ -582,6 +719,10 @@ export class Engine {
         throw Object.assign(new Error(`Native session ${id} was created, but readiness readback failed: ${messageOf(error)}. Inspect this session; do not create a replacement automatically.`, { cause: error }),
           { sessionId: id, code: 'SESSION_CREATION_INCOMPLETE', statusCode: 409 });
       }
+      if (st.creationSubmitted) throw Object.assign(
+        new Error(`Native session creation ${id} is uncertain: ${messageOf(error)}. Inspect this identity; do not retry blindly.`, { cause: error }),
+        { sessionId: id, code: 'SESSION_CREATION_UNCERTAIN', statusCode: 409 },
+      );
       throw error;
     } finally {
       this.creating.delete(id);
@@ -642,6 +783,7 @@ export class Engine {
           this.log('native control event failed', { sessionId: st.id, error: messageOf(error) });
         }
       } };
+      if (create) st.creationSubmitted = true;
       const sdk = await this.untilFatal(() => create
         ? this.runtime.createSession(config)
         : this.runtime.resumeSession(st.id, config));
@@ -658,6 +800,7 @@ export class Engine {
         throw new Error('Native session closed while loading; explicitly resume to continue');
       }
       delete owner.closed;
+      if (st.roleAssembly) await this.withSession(st, sdk, () => sdk.rpc.tools.initializeAndValidate());
       const meta = await this.getResources(st.id, summaryResources);
       if (!meta) throw new Error('Native session metadata is unavailable after loading');
       if (!owner.contextChanged) st.observedCwd = meta.cwd || null;
@@ -976,12 +1119,69 @@ export class Engine {
     st.interruptedEpoch = target.epoch;
   }
 
+  private async advanceInterrupt(st: State, sdk: CopilotSession, isCurrent: () => boolean, signal: AbortSignal) {
+    const contended = () => !!(st.load || st.operations || st.cancelling || st.interrupting);
+    let sharedInterrupt: State['interrupting'];
+    for (;;) {
+      if (signal.aborted || !isCurrent()) return { ok: true as const, interrupted: false };
+      this.assertAdmission(st);
+      if (st.sdk !== sdk) throw new Error('Native handle changed while awaiting queue advancement');
+      const existing = sharedInterrupt ?? st.interrupting;
+      if (existing) {
+        sharedInterrupt = undefined;
+        const targetsCurrentTurn = () => existing.ownership.target?.sdk === sdk
+          && existing.ownership.target.epoch === st.turnEpoch;
+        if (targetsCurrentTurn()) return existing.promise;
+        // A previous turn's interruption may still be reading back after the
+        // current turn starts. Its receipt cannot stand in for this turn.
+        const result = await existing.promise;
+        if (targetsCurrentTurn()) return result;
+        continue;
+      }
+      if (!contended()) {
+        // Admission and reservation are synchronous. Only local contention is
+        // waited out; a native interrupt error is never retried.
+        return this.beginInterrupt(st, async () => {
+          const queue = await this.withSession(st, sdk, () => sdk.rpc.queue.pendingItems());
+          return st.sdk === sdk && !signal.aborted && isCurrent() && queue.items.length > 0;
+        });
+      }
+      await new Promise<void>(resolve => {
+        const settle = () => {
+          this.bus.off('activity-settled', check);
+          this.bus.off('event', check);
+          this.bus.off('closed', check);
+          this.bus.off('fatal', check);
+          signal.removeEventListener('abort', settle);
+          resolve();
+        };
+        const check = () => {
+          if (st.interrupting) sharedInterrupt = st.interrupting;
+          if (signal.aborted || !isCurrent() || this.failure || st.sdk !== sdk || st.closing || sharedInterrupt || !contended()) settle();
+        };
+        this.bus.on('activity-settled', check);
+        this.bus.on('event', check);
+        this.bus.on('closed', check);
+        this.bus.on('fatal', check);
+        signal.addEventListener('abort', settle, { once: true });
+        check();
+      });
+    }
+  }
+
   async interrupt(id: string): Promise<IntentResult<'session/interrupt'>> {
     const st = await this.state(id);
-    if (st.interrupting) return st.interrupting;
+    return this.beginInterrupt(st);
+  }
+
+  private beginInterrupt(st: State, guard?: () => Promise<boolean>): Promise<IntentResult<'session/interrupt'>> {
+    if (st.interrupting) return st.interrupting.promise;
     if (st.load || st.operations || st.cancelling) return Promise.reject(new Error('Session operation is still in progress'));
-    const pending = this.operation(id, async (sdk) => {
+    const ownership: NonNullable<State['interrupting']>['ownership'] = {};
+    const pending = this.operation(st.id, async (sdk) => {
+      if (guard && !await guard()) return { ok: true as const, interrupted: false };
       const target = { epoch: st.turnEpoch, interactionId: st.interactionId, decisions: new Map(st.decisions) };
+      ownership.target = { sdk, epoch: target.epoch };
       st.interruptTurn = target;
       const result = await sdk.rpc.interruptMainTurn({ flushQueued: true });
       if (st.sdk !== sdk || this.failure) throw new Error('Native session closed during interrupt; outcome is uncertain');
@@ -990,9 +1190,10 @@ export class Engine {
       await this.syncNative(st);
       return { ok: true as const, interrupted: result.interrupted };
     }, 'read', st, ['control', 'queue']).finally(() => {
-      if (st.interrupting === pending) st.interrupting = undefined;
+      if (st.interrupting?.promise === pending) st.interrupting = undefined;
+      this.bus.emit('activity-settled');
     });
-    st.interrupting = pending;
+    st.interrupting = { promise: pending, ownership };
     return pending;
   }
 
@@ -1008,7 +1209,7 @@ export class Engine {
   }
 
   private localBusy(st: State, ownTransition = false): boolean {
-    return (!ownTransition && st.closing) || st.operations > 0 || !!st.load
+    return this.queueAdvancer.active(st.id) || (!ownTransition && st.closing) || st.operations > 0 || !!st.load
       || !!st.cancelling || st.decisions.size > 0 || st.sends > 0 || st.accepted.size > 0;
   }
 

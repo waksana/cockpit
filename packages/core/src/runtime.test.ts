@@ -200,6 +200,26 @@ test('detach failure retries detach without repeating successful native close', 
   await f.runtime.stop();
 });
 
+test('role MCP and appended instructions merge without replacing unrelated native configuration', async () => {
+  const existing = { type: 'http' as const, url: 'http://127.0.0.1/existing', tools: ['native'] };
+  const role = { type: 'http' as const, url: 'http://127.0.0.1/role', tools: ['role'] };
+  const f = fixture({ sessionConfig: {
+    mcpServers: { existing }, systemMessage: { mode: 'append', content: 'Native host appendix' },
+  } });
+  const a = await f.runtime.createSession({
+    mcpServers: { module_fixture__tools: role }, systemMessage: { mode: 'append', content: 'Raw role appendix' },
+  });
+  const b = await f.runtime.resumeSession('resumed-role', {
+    mcpServers: { module_fixture__tools: role }, systemMessage: { mode: 'append', content: 'Raw role appendix' },
+  });
+  for (const config of f.configs) {
+    assert.deepEqual(config.mcpServers, { existing, module_fixture__tools: role });
+    assert.deepEqual(config.systemMessage, { mode: 'append', content: 'Native host appendix\n\nRaw role appendix' });
+  }
+  await assert.rejects(f.runtime.createSession({ mcpServers: { existing: role } }), /Conflicting MCP/);
+  await f.runtime.closeSession(a); await f.runtime.closeSession(b); await f.runtime.stop();
+});
+
 test('shutdown Error[] is not success and prevents silently starting another client', async () => {
   const f = fixture();
   await f.runtime.start();

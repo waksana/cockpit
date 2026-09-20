@@ -10,7 +10,8 @@ import { types } from 'node:util';
 import { z } from 'zod';
 import { cockpitHome, type Engine } from '@cockpit/core';
 import { ServerEvent, snapshotModuleEventPayload } from '@cockpit/protocol';
-import type { ModuleAsset, ModuleBackend, ModuleBackendContext, ModuleEventPayload, ModuleRoute, NativeObservation } from '@cockpit/module-api';
+import type { ModuleAsset, ModuleBackend, ModuleBackendContext, ModuleEventPayload, ModuleRoute, NativeObservation, ModuleHostApi } from '@cockpit/module-api';
+import { ModuleRoles } from './module-roles.ts';
 import { isDeclaredAsset, moduleDataRoot, MODULE_WORKER_LIMIT, readModuleInstallation, readModuleSettings, safeModulePath, type ModuleInstallation } from './module-install.ts';
 
 const DEFAULT_BODY_LIMIT = 1024 * 1024;
@@ -82,6 +83,7 @@ const mimeTypes: Record<string, string> = {
 };
 
 export class ModuleHost {
+  readonly roles: ModuleRoles;
   private readonly loaded: Loaded[] = [];
   private readonly errors = new Map<string, ModuleHostError>();
   private readonly scopes = new Set<AbortController>();
@@ -95,7 +97,12 @@ export class ModuleHost {
     onEvent?: (id: string, payload: ModuleEventPayload) => void;
     report?: (id: string, error: unknown) => void;
     activationTimeoutMs?: number;
-  }) {}
+    host?: ModuleHostApi;
+    origin?: string;
+  }) {
+    this.roles = new ModuleRoles(options.hostRoot ?? cockpitHome(), options.origin ?? 'http://127.0.0.1:8771',
+      () => this.closed ? [] : this.loaded.map(module => module.installation));
+  }
 
   private report(id: string, error: unknown): void {
     const code = failure(error).code;
@@ -149,6 +156,13 @@ export class ModuleHost {
         const installation = await readModuleInstallation(id, selected, hostRoot);
         const apiBase = `/_modules/${id}/${installation.digest}/api`;
         const context: ModuleBackendContext = Object.freeze({
+          host: Object.freeze({ call: (name, body) => {
+            if (controller.signal.aborted || this.closed) throw new Error('Module is stopped');
+            if (!this.loaded.some(module => module.controller === controller)) throw new Error('Module host intents are not active');
+            if (!['session/new', 'session/get', 'roles/readiness', 'prompt'].includes(name)) throw new Error('Module host intent is not allowed');
+            if (!this.options.host) throw new Error('Module host intents are unavailable');
+            return this.options.host.call(name, body);
+          } } satisfies ModuleHostApi),
           apiVersion: 1, moduleId: id, apiBase, dataRoot: await moduleDataRoot(id, hostRoot),
           config: Object.freeze(structuredClone(selected.config)), signal: controller.signal,
           report: (error: unknown) => this.report(id, error),

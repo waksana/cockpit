@@ -36,7 +36,8 @@ interface CockpitState {
   onModuleEvent: (listener: (moduleId: string, payload: ModuleEventPayload) => void) => () => void;
   // intents
   setActiveId: (id: string | null) => void;
-  newSession: (cwd: string) => Promise<string>;
+  newSession: (cwd: string, roles?: import('@cockpit/protocol').RoleSelection[]) => Promise<string>;
+  listRoles: () => Promise<IntentResult<'roles/list'>['roles']>;
   loadMore: (sessionId: string) => void;
   retryHistory: (sessionId: string) => void;
   sendDraft: (request: NativeDraftRequest) => Promise<boolean>;
@@ -575,9 +576,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       }
       maybeMaterialize();
     },
-    newSession(cwd) {
+    newSession(cwd, roles) {
       let reportedByTransport = false;
-      const promise = read(net => net.newSession(cwd).catch(error => {
+      const promise = read(net => net.newSession(cwd, roles).catch(error => {
         reportedByTransport = !isSessionUnloadedError(error);
         throw error;
       })).then(result => result.sessionId);
@@ -665,6 +666,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     skillsSession(sid) { return nativeRead(sid, (net) => net.skillsSession(sid)).then((r) => r.skills); },
     skillsToggleSession(sid, name, enabled) { return mutation(sid, `切换技能 ${name}`, (net) => net.skillsToggleSession(sid, name, enabled)); },
     listDir(path) { return read((net) => net.listDir(path)); },
+    listRoles() { return read(net => net.listRoles()).then(result => result.roles); },
   };
 });
 

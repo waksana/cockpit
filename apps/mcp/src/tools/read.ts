@@ -36,10 +36,12 @@ export function registerReadTools(server: McpServer): void {
           `id: ${meta.sessionId}`,
           `status: ${meta.status}${meta.loaded ? '' : ' (unloaded)'}`,
           `cwd: ${meta.cwd || 'unknown (not provided by native metadata)'}`,
+          `roles (selection, not readiness): ${(meta.roles ?? []).map(role => `${role.moduleId}/${role.roleId}`).join(', ') || 'none'}`,
           `model: ${meta.currentModelId ?? '—'}${meta.currentReasoningEffort ? ` (${meta.currentReasoningEffort})` : ''}` +
             `${meta.currentContextTier ? ` · ${meta.currentContextTier}` : ''}`,
           `interaction mode: ${meta.currentMode ?? '—'} (not a permission policy)`,
         ];
+        if (meta.roleReadiness) lines.push(`role readiness: ${meta.roleReadiness.ready ? 'ready at read time' : meta.roleReadiness.reasons.join('; ')}`);
         if (!meta.loaded) lines.push('Native runtime fields (model, mode, queue, tasks, schedules, MCP) are unavailable while unloaded; no previous values or global defaults are substituted.');
         const operations = ['loading', 'closing', 'cancelling'] as const;
         for (const operation of operations) if (meta[operation]) lines.push(`${operation}: true`);
