@@ -64,6 +64,11 @@ export interface ModuleBackendContext {
   /** Public validated host intents only; no native runtime or state-store access. */
   host: ModuleHostApi;
   apiVersion: 1;
+  /**
+   * Advertises ModuleBackend.onReady support; absent on older API v1 hosts.
+   * Modules requiring readiness must check this before opening/migrating data.
+   */
+  readonly serviceReadyVersion: 1;
   moduleId: string;
   dataRoot: string;
   apiBase: string;
@@ -86,6 +91,14 @@ export interface ModuleBackendContext {
 export interface ModuleBackend {
   routes: readonly ModuleRoute[];
   publicConfig?: Readonly<Record<string, unknown>>;
+  /**
+   * Called once after the runtime has started and public HTTP is listening,
+   * unless the host is already stopping. Not awaited by startup or shutdown.
+   * Use context.signal for cancellation; recheck it after awaits.
+   * Throws/rejections are reported as module errors, without retry or unload.
+   * Requires context.serviceReadyVersion === 1; apiVersion alone is not enough.
+   */
+  onReady?(): void | Promise<void>;
   events?: {
     types: readonly string[];
     handle(observation: NativeObservation): void | Promise<void>;
