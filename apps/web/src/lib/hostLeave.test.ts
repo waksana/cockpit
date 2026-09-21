@@ -81,6 +81,24 @@ test('passive reads never install leave listeners, including failures', async t 
   assert.equal(hasHostLeaveRisk(), false);
 });
 
+test('resource preparation is protected until its acknowledged success or known rejection', async t => {
+  const view = fixture(t);
+  const net = client(t);
+  let respond!: (value: Response) => void;
+  t.mock.method(globalThis, 'fetch', () => new Promise<Response>(resolve => { respond = resolve; }));
+  for (const result of [
+    { sessionId: 'prepare', ok: true, skills: [], mcpServers: [], tools: 'initialized' },
+    { sessionId: 'prepare', ok: false, skills: [], mcpServers: [], tools: 'not_attempted', error: 'Synthetic guard rejection' },
+  ]) {
+    const request = net.intent('session/resources-prepare', { sessionId: 'prepare' });
+    assert.equal(view.handlers.size, 1);
+    respond(Response.json(result));
+    assert.deepEqual(await request, result);
+    assert.equal(view.handlers.size, 0);
+    assert.equal(hasHostLeaveRisk(), false);
+  }
+});
+
 test('entry protection survives a React error boundary unmounting all view-owned forms', async t => {
   const entry = fixture(t);
   const document = Object.assign(new EventTarget(), { nodeType: 9, activeElement: null });
@@ -205,4 +223,25 @@ test('aborting after dispatch keeps uncertainty across disconnect and guard remo
   assert.equal(remounted.handlers.size, 1);
   for (const handler of remounted.handlers) handler({ preventDefault() {}, returnValue: '' } as BeforeUnloadEvent);
   assert.equal(fetch.mock.callCount(), 1);
+});
+
+test('unconfirmed resource preparation receipts keep protection and report uncertainty without replay', async t => {
+  const view = fixture(t);
+  const net = client(t);
+  t.mock.method(console, 'error', () => {});
+  const fetch = t.mock.method(globalThis, 'fetch');
+  const base = { sessionId: 'prepare', ok: false, skills: [], mcpServers: [], tools: 'not_attempted' };
+  for (const result of [
+    { ...base, skills: [{ name: 'synthetic-skill', effect: 'unconfirmed', enabled: null }] },
+    { ...base, mcpServers: [{ name: 'synthetic-mcp', effect: 'unconfirmed', enabled: null, status: null, tools: null }] },
+    { ...base, tools: 'unconfirmed' },
+  ]) {
+    fetch.mock.mockImplementation(async () => Response.json(result));
+    const before = getUxErrors().filter(error => error.message.includes('session/resources-prepare')).length;
+    const calls = fetch.mock.callCount();
+    assert.deepEqual(await net.intent('session/resources-prepare', { sessionId: 'prepare' }), result);
+    assert.equal(fetch.mock.callCount(), calls + 1);
+    assert.equal(view.handlers.size, 1);
+    assert.equal(getUxErrors().filter(error => error.message.includes('session/resources-prepare')).length, before + 1);
+  }
 });

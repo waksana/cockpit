@@ -14,7 +14,7 @@ import { beginHostMutation } from '../lib/hostLeave';
 export const HOST_INTENT_MUTATES = {
   'system/shutdown': true, 'system/status': false, 'runtime/snapshot': false,
   'session/chat': false, 'session/new': true, 'roles/list': false, 'roles/add': true,
-  'roles/readiness': false, 'session/tools-initialize': true, 'session/fork': true,
+  'roles/readiness': false, 'session/tools-initialize': true, 'session/resources-prepare': true, 'session/fork': true,
   prompt: true, cancel: true, 'session/interrupt': true, setModel: true,
   'session/rename': true, 'session/compact': true, 'session/rewind': true, setMode: true,
   'session/delete': true, 'session/unload': true, 'session/load': true, 'session/reload': true,
@@ -34,6 +34,12 @@ function knownMutationResult<K extends IntentName>(name: K, result: IntentResult
     case 'setMode': return classifyNativeModeSetResult((result as IntentResult<'setMode'>).result).state !== 'unknown';
     case 'session/rewind': return classifyNativeRewindResult((result as IntentResult<'session/rewind'>).result).state !== 'unknown';
     case 'roles/add': return (result as IntentResult<'roles/add'>).status !== 'uncertain';
+    case 'session/resources-prepare': {
+      const value = result as IntentResult<'session/resources-prepare'>;
+      return value.tools !== 'unconfirmed'
+        && value.skills.every(item => item.effect !== 'unconfirmed')
+        && value.mcpServers.every(item => item.effect !== 'unconfirmed');
+    }
     case 'mcp/session-toggle': {
       const { state } = (result as IntentResult<'mcp/session-toggle'>).operation;
       return state === 'succeeded' || state === 'failed';
