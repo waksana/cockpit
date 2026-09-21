@@ -247,7 +247,8 @@ test('directory picker without an initial path has no hardcoded home and cannot 
   const html = renderToStaticMarkup(createElement(DirPicker, {
     onCreate: async () => { throw new Error('render must not create a session'); }, onCreated: noop, onCancel: noop,
   }));
-  assert.match(html, /role="dialog" aria-modal="true" aria-label="新建会话：选择目录和角色"/);
+  assert.match(html, /<dialog[^>]*class="dialog-scrim directory-modal host-modal"[^>]*aria-labelledby="[^"]+"/);
+  assert.match(html, /<h3[^>]*tabindex="-1"[^>]*data-dialog-focus="true">新建会话<\/h3>/);
   assert.doesNotMatch(html, /\/home\/honglai|没有子文件夹/);
   assert.match(html, /class="dialog-btn ck-button ck-primary primary rp" disabled=""[^>]*>创建会话/);
   assert.match(html, /等待连接/);

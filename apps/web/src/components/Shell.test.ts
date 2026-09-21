@@ -29,9 +29,10 @@ test('mobile hidden panes are inert, not merely positioned off-screen', () => {
   assert.doesNotMatch(list, /class="master-pane"[^>]*inert/);
 });
 
-test('open overlay details make both underlying pane controls inert', () => {
+test('open details leave modal isolation to the native dialog, retaining hidden-pane inertness', () => {
   const html = render(true, true);
   assert.match(html, /class="master-pane"[^>]*inert=""[^>]*aria-hidden="true"/);
-  assert.match(html, /class="detail-pane"[^>]*inert=""[^>]*aria-hidden="true"/);
+  assert.doesNotMatch(html, /class="detail-pane"[^>]*(?:inert|aria-hidden)/);
+  assert.equal(html, render(false, true).replace('data-info-open="false"', 'data-info-open="true"'));
   assert.match(html, /<textarea/);
 });

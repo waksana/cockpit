@@ -51,8 +51,7 @@ for (const section of ['mcp', 'skills']) {
 test('desktop master and narrow detail return one level without duplicate visible controls', () => {
   assert.match(shell, /up\(item === null \? '\/' : `\/\$\{section\}`\)/);
   assert.match(shell, /className="chat-back ck-icon-button rp lg:hidden".*onClick=\{\(\) => up\(\)\}/);
-  assert.match(shell, /if \(item === null\) backRef.current\?\.focus\(\)/);
-  assert.match(shell, /useLayoutEffect\(\(\) => \{ titleRef.current\?\.focus\(\); \}, \[item\]\)/);
+  assert.doesNotMatch(shell, /\.focus\(|autoFocus|tabIndex/);
 });
 
 test('global skill toggles render only authoritative booleans and never assume unknown means enabled', () => {
