@@ -436,7 +436,7 @@ test('registry exposes native controls without parked file, organization or rest
     'cockpit_list_global_mcp', 'cockpit_set_global_mcp_default', 'cockpit_refresh_mcp',
     'cockpit_reload_session_mcp', 'cockpit_list_global_skills', 'cockpit_list_session_skills',
     'cockpit_refresh_skills', 'cockpit_list_dir',
-    'cockpit_list_roles', 'cockpit_role_readiness',
+    'cockpit_list_roles', 'cockpit_role_readiness', 'cockpit_add_roles',
   ];
   assert.deepEqual(names.sort(), expected.sort());
   assert.equal(new Set(names).size, names.length);

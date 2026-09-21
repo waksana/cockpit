@@ -11,7 +11,7 @@ import { useKeyedAction } from '../lib/useKeyedResource';
 import { ExpandableText, PanelPageShell, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
 import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
-import { RoleBadge } from './ModuleLabel';
+import { SessionRoles } from './SessionRoles';
 import type { ChatSession } from '../net/types';
 
 type ContextTier = 'default' | 'long_context';
@@ -237,9 +237,6 @@ function InfoDetails({ session, onClose, onSetModel }: SessionInfoPanelProps) {
       <section className="info-section">
         <ExpandableText className="info-summary-title" text={session.title} label="会话标题" />
         <div className="info-section-content info-meta-cwd">{session.cwd || '工作目录：原生未提供'}</div>
-        {!!session.roles?.length && <div className="info-section-content session-role-badges" aria-label="会话角色">
-          {session.roles.map(role => <RoleBadge key={`${role.moduleId}/${role.roleId}`} role={role} />)}
-        </div>}
         <div className="info-section-content info-session-id">
           <div className="info-session-id-heading">
             <span className="info-meta-id-label">Session ID</span>
@@ -249,6 +246,7 @@ function InfoDetails({ session, onClose, onSetModel }: SessionInfoPanelProps) {
         </div>
       </section>
 
+      <SessionRoles session={session} />
       <SessionResume sessionId={sid} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
       {resource.requiresResume && <ResourceStatus status={resource.status} failed={resource.failed} pending={resource.pending} />}
       {/* Accepted same-connection data supports edits and Apply during refresh. */}

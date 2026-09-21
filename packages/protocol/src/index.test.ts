@@ -451,6 +451,8 @@ const intentFixtures = {
   'runtime/snapshot': { body: {}, result: snapshot },
   'session/new': { body: { cwd: minimalMeta.cwd }, result: sid },
   'roles/list': { body: {}, result: { roles: [] } },
+  'roles/add': { body: { ...sid, roles: [{ moduleId: 'fixture', roleId: 'owner' }] },
+    result: { ...sid, status: 'applied', phase: 'verify', roles: [], appliedRoles: [], loaded: true } },
   'roles/readiness': { body: sid, result: { ...sid, roles: [], loaded: false, ready: false, reasons: ['Session is unloaded'] } },
   'session/fork': { body: { sessionId: 'parent', toEventId: 'user-event', name: 'Child' }, result: sid },
   'session/chat': { body: { ...sid, source: 'persisted', direction: 'backward', max: 64, waitMs: 0, bootstrap: false }, result: nativePage },

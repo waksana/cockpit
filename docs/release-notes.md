@@ -1,3 +1,22 @@
+# Unreleased source: append roles to an existing session
+
+Adds `roles/add`, `cockpit_add_roles` and a Web session-settings action for
+explicit append-only role assembly on the same session ID. Loaded sessions must
+be idle; unloaded sessions resume directly. No hidden prompt, copied session,
+busy waiting or automatic retry. Existing roles use the original composition and
+module-provenance rules; this does not change Task ownership or delegation.
+
+The operation separates saved selection, acknowledged handle assembly and
+on-demand readiness. Native temporary Skill/MCP choices are carried through this
+reload, without a persistent resource mirror. Preflight rejects unreconstructable
+session-only resources, unsafe work, schedules and empty unsaved conversation
+history. Persistence/native partial failures remain explicit and recoverable by
+inspection, not an assumed atomic rollback. See the
+[role contract](module-contract-draft.md#已有会话显式追加) for limitations.
+No Task package adaptation, release, deployment or real-session mutation is implied.
+
+---
+
 # Unreleased source: explicit role capability checks
 
 Simplifies the development role integration from #68 without creating a release

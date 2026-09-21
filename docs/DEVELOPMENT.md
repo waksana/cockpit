@@ -10,7 +10,7 @@ The [module contract](module-contract-draft.md) describes the implemented local,
 trusted, cold-loaded package model: backend API v1, Web API v2 and public UI v1.
 Backends run in the host Node process; `publish`/`onEvent` data events are implemented.
 Unimplemented capabilities are listed separately at the end of that contract.
-Creation-time module roles and the narrow backend `host.call` bridge are additive
+Creation-time and explicit idle-session role additions, and the narrow backend `host.call` bridge, are additive
 development capabilities (backend API remains v1). The module contract owns their
 manifest, explicit on-demand capability readiness and cold-resume semantics.
 Ordinary session reads expose selected-role identity only, not readiness; there

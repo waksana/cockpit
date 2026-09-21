@@ -102,6 +102,23 @@ test('native delete sends one canonical request without any module preflight or 
   assertOnlyPost(fetch, 'session/delete', { sessionId: 'session' });
 });
 
+for (const status of ['applied', 'unchanged', 'incomplete', 'uncertain'] as const) {
+  test(`role addition sends one explicit request and preserves ${status} details`, async t => {
+    const result = { sessionId: 'session', status, phase: 'resume', roles: [], appliedRoles: [], loaded: false,
+      error: 'Synthetic diagnostic', recovery: 'Inspect before retry' };
+    const { client, fetch } = setup(t, async () => Response.json(result));
+    assert.deepEqual(await client.addRoles('session', [{ moduleId: 'fixture', roleId: 'reviewer' }]), result);
+    assertOnlyPost(fetch, 'roles/add', { sessionId: 'session', roles: [{ moduleId: 'fixture', roleId: 'reviewer' }] });
+  });
+}
+
+test('role readiness is one passive explicit read, without loading or repairing a session', async t => {
+  const result = { sessionId: 'session', roles: [], appliedRoles: [], loaded: false, ready: false, reasons: ['Unloaded'] };
+  const { client, fetch } = setup(t, async () => Response.json(result));
+  assert.deepEqual(await client.roleReadiness('session'), result);
+  assertOnlyPost(fetch, 'roles/readiness', { sessionId: 'session' });
+});
+
 test('removed session pages have no dedicated Web client helpers', t => {
   const { client, fetch } = setup(t, async () => { throw new Error('Unexpected request'); });
   for (const name of [

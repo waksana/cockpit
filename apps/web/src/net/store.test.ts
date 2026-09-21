@@ -1268,7 +1268,19 @@ const globalSkills: IntentResult<'skills/global'>['skills'] = [{ name: 'fixture-
 const sessionSkills: IntentResult<'skills/session'>['skills'] = [{ name: 'fixture-skill', enabled: true }];
 const skill: IntentResult<'skills/read'> = { name: 'fixture-skill', body: 'fixture body', enabled: false };
 const directory: IntentResult<'fs/listDir'> = { path: '/fixture', parent: '/', entries: [] };
+const roleAddition: IntentResult<'roles/add'> = {
+  sessionId: 'a', status: 'incomplete', phase: 'resume', roles: [], appliedRoles: [], loaded: false,
+  error: 'Synthetic partial outcome', recovery: 'Inspect before retry',
+};
+const roleReadiness: IntentResult<'roles/readiness'> = {
+  sessionId: 'a', roles: [], appliedRoles: [], loaded: false, ready: false, reasons: ['Unloaded'],
+};
 const resources: ResourceCase[] = [
+  { label: 'listRoles', name: 'roles/list', body: {}, read: s => s.listRoles(), response: { roles: [] }, expected: [] },
+  { label: 'addRoles', name: 'roles/add', body: { sessionId: 'a', roles: [{ moduleId: 'fixture', roleId: 'reviewer' }] },
+    read: s => s.addRoles('a', [{ moduleId: 'fixture', roleId: 'reviewer' }]), response: roleAddition, expected: roleAddition },
+  { label: 'roleReadiness', name: 'roles/readiness', body: { sessionId: 'a' },
+    read: s => s.roleReadiness('a'), response: roleReadiness, expected: roleReadiness },
   {
     label: 'getResources', name: 'session/resources', body: { sessionId: 'a', resources: ['model'] },
     read: (s) => s.getResources('a', ['model'], new AbortController().signal),

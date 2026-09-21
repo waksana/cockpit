@@ -12,6 +12,9 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
       name: longNames ? 'Original_executor-role-with-a-very-long-unbroken-identifier' : 'Executor',
       description: '完整负责承接的任务，同步要求并报告结果。' },
   ];
+  const additionalRole = { moduleId: 'fixture-notes', moduleName: 'Notes', roleId: 'reviewer',
+    name: 'Reviewer', description: '合成追加角色：保留原有会话 ID、历史和工作目录。' };
+  const catalog = [...roles, additionalRole];
   const roleSummary = ({ moduleId, moduleName, roleId, name }: SessionRole): SessionRole =>
     ({ moduleId, moduleName, roleId, name });
   let mcp: McpServerSession[] = [
@@ -33,7 +36,30 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
       ...session, roles: index === 0 ? roles.map(roleSummary) : index === 1 ? [roleSummary(roles[0])] : [],
       ...(index === 0 ? { title: '模块角色与资源（合成）', status: 'idle' as const, nativeProcessing: false, intent: null } : {}),
     })),
-    listRoles: async () => roles,
+    listRoles: async () => catalog,
+    roleReadiness: async id => {
+      const session = find(id);
+      return { sessionId: id, roles: session.roles ?? [], appliedRoles: session.loaded ? session.roles ?? [] : [],
+        loaded: session.loaded, ready: session.loaded, reasons: session.loaded ? [] : ['Synthetic session is unloaded'] };
+    },
+    addRoles: async (id, selected) => {
+      const original = find(id);
+      if (original.loaded && original.status !== 'idle') throw new Error('Synthetic session is busy');
+      const added = selected.map(selection => {
+        const role = catalog.find(role => role.moduleId === selection.moduleId && role.roleId === selection.roleId);
+        if (!role) throw new Error('Unknown synthetic role');
+        return roleSummary(role);
+      });
+      const combined = [...original.roles ?? []];
+      for (const role of added) {
+        if (!combined.some(saved => saved.moduleId === role.moduleId && saved.roleId === role.roleId)) combined.push(role);
+      }
+      store.setState(state => ({ sessions: state.sessions.map(session => session.sessionId === id
+        ? { ...session, roles: combined, loaded: true } : session) }));
+      return { sessionId: id, status: combined.length === original.roles?.length ? 'unchanged' : 'applied',
+        phase: 'verify', roles: combined, appliedRoles: combined, loaded: true,
+        readiness: await store.getState().roleReadiness(id) };
+    },
     listDir: async (path = '/workspace') => {
       if (path !== '/workspace' && path !== '/workspace/cockpit') throw new Error(`Unknown synthetic directory: ${path}`);
       return { path, parent: path === '/workspace' ? null : '/workspace',
@@ -42,7 +68,7 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
     newSession: async (cwd, selected = []) => {
       if (!['/workspace', '/workspace/cockpit'].includes(cwd)) throw new Error('Unknown synthetic directory');
       const selectedRoles: SessionRole[] = selected.map(selection => {
-        const role = roles.find(role => role.moduleId === selection.moduleId && role.roleId === selection.roleId);
+        const role = catalog.find(role => role.moduleId === selection.moduleId && role.roleId === selection.roleId);
         if (!role) throw new Error('Unknown synthetic role');
         return roleSummary(role);
       });

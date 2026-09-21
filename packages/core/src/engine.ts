@@ -13,7 +13,7 @@ import type {
   ModelOption, ScheduleEntry, ServerEvent, SessionMeta, SessionPanels,
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
   MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem, NativeChatEvent,
-  RoleSelection, RoleReadiness, SkillSession,
+  RoleSelection, RoleReadiness, RoleAdditionResult, SkillSession,
 } from '@cockpit/protocol';
 import { NativeChatRead, SessionUsage, MetaResource as MetaResources, cleanSessionTitle } from '@cockpit/protocol';
 import { NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult } from '@cockpit/protocol';
@@ -27,7 +27,7 @@ import type { RoleProvider, RoleAssembly } from './roles.ts';
 export type EngineRuntime = Pick<OfficialRuntime,
   'start' | 'models' | 'listSessions' | 'createSession' | 'resumeSession' |
   'closeSession' | 'deleteSession' | 'getAuthStatus' | 'stop' | 'rpc' |
-  'isSessionLive' | 'onSessionClosed' | 'onFatal' | 'failure' | 'getSessionMetadata'>;
+  'isSessionLive' | 'onSessionClosed' | 'onFatal' | 'failure' | 'getSessionMetadata' | 'validateSessionConfig'>;
 
 export interface NativeObservation {
   readonly sessionId: string;
@@ -80,6 +80,7 @@ function completeMeta(meta: SessionProjection): SessionMeta {
 }
 interface State {
   roleAssembly?: RoleAssembly;
+  roleChange?: boolean;
   creationSubmitted?: boolean;
   id: string;
   observedCwd?: string | null;
@@ -156,13 +157,14 @@ export class Engine {
   async roleReadiness(id: string, requested?: RoleSelection[]): Promise<RoleReadiness> {
     const roles = this.roles?.read(id) ?? [];
     const st = this.sessions.get(id);
-    const result: RoleReadiness = { sessionId: id, roles, loaded: false, ready: false, reasons: [] };
+    const result: RoleReadiness = { sessionId: id, roles, appliedRoles: [], loaded: false, ready: false, reasons: [] };
     try {
       if (!await this.untilFatal(() => this.runtime.getSessionMetadata(id)) && !st?.sdk) {
         result.reasons.push('Session does not exist'); return result;
       }
       const sdk = st && await this.liveSession(st);
       result.loaded = !!sdk;
+      if (sdk) result.appliedRoles = st?.roleAssembly?.roles ?? [];
       if (!sdk || !st) { result.reasons.push('Session is unloaded'); return result; }
       if (st.closing || st.load) { result.reasons.push('Session is loading or closing'); return result; }
       const selected = requested ?? roles;
@@ -203,6 +205,7 @@ export class Engine {
       const current = await this.liveSession(st);
       result.loaded = !!current;
       if (current !== sdk || st.closing || st.roleAssembly !== applied) {
+        result.appliedRoles = current ? st.roleAssembly?.roles ?? [] : [];
         result.reasons.push('Native session changed or is closing');
       }
     } catch (error) {
@@ -211,6 +214,145 @@ export class Engine {
     }
     result.ready = result.reasons.length === 0;
     return result;
+  }
+
+  async addRoles(id: string, additions: RoleSelection[]): Promise<RoleAdditionResult> {
+    if (!this.roles) throw new Error('Module roles are unavailable');
+    if (!additions.length) throw new Error('At least one additional role is required');
+    const st = await this.state(id);
+    this.assertAdmission(st);
+    let phase: RoleAdditionResult['phase'] = 'persist';
+    let submitted = false;
+    let selected = this.roles.read(id);
+    st.roleChange = true;
+    try {
+      const combined = [...new Map([...selected, ...additions].map(role =>
+        [`${role.moduleId}/${role.roleId}`, { moduleId: role.moduleId, roleId: role.roleId }])).values()];
+      if (combined.length > 64) throw new Error('A session can select at most 64 roles');
+      let prepared: Awaited<ReturnType<Engine['config']>> | undefined;
+      let previousSkills: Awaited<ReturnType<CopilotSession['rpc']['skills']['list']>>['skills'] = [];
+      let previousTools: Awaited<ReturnType<CopilotSession['rpc']['tools']['getCurrentMetadata']>>['tools'] = [];
+      const previousMcp: Array<{ name: string; enabled: boolean }> = [];
+      const unchanged = await this.transition(st, async () => {
+        prepared = await this.config(st, undefined, combined);
+        const base = this.runtime.validateSessionConfig(prepared.config);
+        const sdk = st.sdk;
+        if (sdk && st.roleAssembly?.fingerprint === prepared.assembly?.fingerprint) return true;
+        if (sdk) {
+          await this.withSession(st, sdk, () => sdk.rpc.tools.initializeAndValidate());
+          const [history, schedules, skills, mcp, tools, discovered, discoverableSkills] = await this.withSession(st, sdk, () => settled([
+            sdk.rpc.eventLog.read({ direction: 'backward', max: 1, types: ['user.message'], agentScope: 'primary' }),
+            sdk.rpc.schedule.list(), sdk.rpc.skills.list(), sdk.rpc.mcp.list(),
+            sdk.rpc.tools.getCurrentMetadata(),
+            this.runtime.rpc.mcp.discover({ workingDirectory: st.observedCwd ?? undefined }),
+            this.runtime.rpc.skills.discover({ projectPaths: st.observedCwd ? [st.observedCwd] : [],
+              skillDirectories: [...base.skillDirectories, ...st.roleAssembly?.config.skillDirectories ?? []] }),
+          ] as const));
+          if (!history.events.length) throw new Error('An empty session cannot safely survive reload; send an explicit user message first');
+          if (schedules.entries.length) throw new Error('Role addition requires a session without active schedules; nothing was changed');
+          if (!mcp.host || mcp.host.pendingConnections.length) throw new Error('Native MCP state is not settled');
+          if (!tools.tools) throw new Error('Current tool inventory is unavailable; capability preservation cannot be confirmed');
+          if (discoverableSkills.errors?.length) throw new Error(`Skill preservation preflight failed: ${discoverableSkills.errors.join('; ')}`);
+          for (const skill of skills.skills) {
+            if (!discoverableSkills.skills.some(value => value.name === skill.name && value.path === skill.path)) {
+              throw new Error(`Cannot preserve session-only skill across role reload: ${skill.name}`);
+            }
+          }
+          const known = new Set([...base.mcpNames, ...discovered.servers.map(server => server.name),
+            ...Object.keys(st.roleAssembly?.config.mcpServers ?? {})]);
+          for (const server of mcp.servers) {
+            const actual = this.mcpServerState(mcp, server.name, server);
+            if (!known.has(server.name) || actual.status === 'stopped' || actual.status === 'not_configured') {
+              throw new Error(`Cannot preserve session-only or stopped MCP configuration across role reload: ${server.name}`);
+            }
+            previousMcp.push({ name: server.name, enabled: actual.enabled });
+          }
+          for (const skill of prepared.assembly?.skills ?? []) {
+            const existing = skills.skills.find(value => value.name === skill.name);
+            if (existing && existing.path !== skill.path) throw new Error(`Role skill conflicts with live skill: ${skill.name}`);
+          }
+          previousSkills = skills.skills;
+          previousTools = tools.tools;
+          // Carry temporary enablement through this one explicit reload, not into
+          // a second persistent resource registry. Future cold loads stay native.
+          const disabledSkills = new Set(prepared.config.disabledSkills);
+          for (const skill of previousSkills) {
+            if (skill.enabled) disabledSkills.delete(skill.name);
+            else disabledSkills.add(skill.name);
+          }
+          prepared.config.disabledSkills = [...disabledSkills];
+          prepared.config.disabledMcpServers = mcp.servers
+            .filter(server => !this.mcpServerState(mcp, server.name, server).enabled).map(server => server.name);
+        }
+        await this.checkIdle(st);
+        submitted = true;
+        this.roles!.save(id, prepared.assembly!.roles);
+        selected = this.roles!.read(id);
+        phase = 'close';
+        await this.close(st);
+        return false;
+      }, true);
+      if (!unchanged) {
+        phase = 'resume';
+        await this.ensureLoaded(st, false, undefined, prepared);
+        const sdk = st.sdk;
+        if (!sdk) throw new Error('Native session is no longer loaded');
+        const current = await this.withSession(st, sdk, () => sdk.rpc.mcp.list());
+        let restored = false;
+        for (const before of previousMcp) {
+          const after = this.mcpServerState(current, before.name, current.servers.find(server => server.name === before.name));
+          if (after.enabled === before.enabled) continue;
+          try {
+            await this.withSession(st, sdk, () => sdk.rpc.mcp[before.enabled ? 'enable' : 'disable']({ serverName: before.name }));
+          } catch (error) {
+            throw new Error(`Restoring previous MCP ${before.name} enabled=${before.enabled} is unconfirmed: ${messageOf(error)}. Inspect this resource before explicitly restoring it.`, { cause: error });
+          }
+          restored = true;
+        }
+        if (restored) await this.withSession(st, sdk, () => sdk.rpc.tools.initializeAndValidate());
+      }
+      phase = 'verify';
+      const sdk = st.sdk;
+      if (!sdk) throw new Error('Native session is no longer loaded');
+      if (!unchanged) {
+        const [skills, tools, mcp] = await this.withSession(st, sdk, () => settled([
+          sdk.rpc.skills.list(), sdk.rpc.tools.getCurrentMetadata(), sdk.rpc.mcp.list(),
+        ] as const));
+        for (const before of previousSkills) {
+          if (!skills.skills.some(after => after.name === before.name && after.path === before.path && after.enabled === before.enabled)) {
+            throw new Error(`Previous skill state was not preserved: ${before.name}, enabled=${before.enabled}, path=${before.path}`);
+          }
+        }
+        for (const before of previousTools ?? []) {
+          if (!tools.tools?.some(after => after.name === before.name && after.mcpServerName === before.mcpServerName
+            && after.mcpToolName === before.mcpToolName)) throw new Error(`Previous tool is no longer offered: ${before.name}`);
+        }
+        for (const before of previousMcp) {
+          const after = this.mcpServerState(mcp, before.name, mcp.servers.find(server => server.name === before.name));
+          if (after.enabled !== before.enabled) throw new Error(`Previous MCP enablement was not preserved: ${before.name}`);
+        }
+      }
+      const readiness = await this.roleReadiness(id);
+      if (!readiness.loaded || st.sdk !== sdk) throw new Error('Native handle changed during role verification');
+      return { sessionId: id, status: unchanged ? 'unchanged' : 'applied', phase,
+        roles: selected, appliedRoles: st.roleAssembly?.roles ?? [], loaded: readiness.loaded, readiness };
+    } catch (error) {
+      if (!submitted) throw error;
+      let selectionConfirmed = true;
+      try { selected = this.roles.read(id); }
+      catch { selectionConfirmed = false; }
+      const currentPhase = (() : RoleAdditionResult['phase'] => phase)();
+      const uncertain = !selectionConfirmed || currentPhase === 'close' || (currentPhase === 'resume' && !st.sdk);
+      return { sessionId: id, status: uncertain ? 'uncertain' : 'incomplete', phase,
+        roles: selected, appliedRoles: st.sdk ? st.roleAssembly?.roles ?? [] : [], loaded: !!st.sdk,
+        error: `${messageOf(error)}${selectionConfirmed ? '' : '; saved role selection is also unconfirmed'}`,
+        recovery: 'Inspect session/get and roles/readiness for this same ID. No rollback or retry was performed. Resolve the reported failure, then explicitly invoke roles/add again if needed; never create a replacement session.' };
+    } finally {
+      st.roleChange = false;
+      this.patch(st, { activeOperations: st.operations });
+      this.invalidate(st, ['identity', 'skills', 'mcp', 'instructions', 'usage']);
+      this.release(st);
+    }
   }
   private readonly runtime: EngineRuntime;
   private readonly sessions = new Map<string, State>();
@@ -443,7 +585,7 @@ export class Engine {
       return row ? {
         ...this.listedMeta(row),
         ...(st ? { loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling,
-          activeOperations: st.operations, activeMcpOperations: st.mcpOperations,
+          activeOperations: st.operations + Number(!!st.roleChange), activeMcpOperations: st.mcpOperations,
           ...this.decisionFields(st) } : {}),
       } : null;
     }
@@ -491,7 +633,7 @@ export class Engine {
         ...(wants.has('queue') ? { queue: (control?.queue ?? queue)!.items.map(item => ({ id: item.id, text: item.displayText })) } : {}),
         ...(todos ? { todo: this.todoSummary(todos) } : {}),
         ...(schedules ? { scheduleCount: schedules.entries.length } : {}),
-        activeOperations: Math.max(0, st.operations - 1),
+        activeOperations: Math.max(0, st.operations - 1) + Number(!!st.roleChange),
         loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling,
         ...this.decisionFields(st),
       };
@@ -538,20 +680,20 @@ export class Engine {
         this.sessions.set(id, st);
       }
     }
-    if (st.closing) throw new Error('Session transition is in progress');
+    if (st.closing || st.roleChange) throw new Error('Session transition is in progress');
     return st;
   }
 
   private release(st: State): void {
-    if (!st.sdk && !st.load && !st.closing && !st.operations && !st.cancelling
+    if (!st.sdk && !st.load && !st.closing && !st.roleChange && !st.operations && !st.cancelling
       && !st.decisions.size && this.sessions.get(st.id) === st) this.sessions.delete(st.id);
     this.bus.emit('activity-settled');
   }
 
-  private assertAdmission(st: State): void {
+  private assertAdmission(st: State, roleChange = false): void {
     this.assertAvailable();
     const current = this.sessions.get(st.id);
-    if (this.stopped || this.lifecycle || st.closing || (current && current !== st)) {
+    if (this.stopped || this.lifecycle || st.closing || (st.roleChange && !roleChange) || (current && current !== st)) {
       throw new Error('Session lifecycle transition is in progress or its handle changed');
     }
   }
@@ -564,19 +706,19 @@ export class Engine {
     );
   }
 
-  private async config(st: State, cwd?: string): Promise<SessionConfig> {
+  private async config(st: State, cwd?: string, selections?: RoleSelection[]): Promise<{ config: SessionConfig; assembly?: RoleAssembly }> {
     const disabled = await this.globalDisabledSkills();
-    const selected = this.roles?.read(st.id) ?? [];
-    st.roleAssembly = selected.length ? await this.roles!.assemble(st.id, selected) : undefined;
-    if (st.roleAssembly?.skills.length) {
+    const selected = selections ?? this.roles?.read(st.id) ?? [];
+    const assembly = selected.length ? await this.roles!.assemble(st.id, selected) : undefined;
+    if (assembly?.skills.length) {
       const existing = await this.discoverSkills(cwd ?? st.observedCwd ?? undefined);
       const names = new Map(existing.skills.map(skill => [skill.name, skill.path]));
-      for (const directory of st.roleAssembly.config.skillDirectories ?? []) {
+      for (const directory of assembly.config.skillDirectories ?? []) {
         const discovered = await this.untilFatal(() => this.runtime.rpc.skills.discover({
           projectPaths: [], skillDirectories: [directory],
         }));
         if (discovered.errors?.length) throw new Error(`Role skill discovery failed: ${discovered.errors.join('; ')}`);
-        for (const skill of st.roleAssembly.skills.filter(skill => skill.path.startsWith(`${directory}/`))) {
+        for (const skill of assembly.skills.filter(skill => skill.path.startsWith(`${directory}/`))) {
           const native = discovered.skills.find(value => value.path === skill.path);
           if (!native) throw new Error(`Role skill was not discovered by native runtime: ${skill.path}`);
           if (names.has(native.name) && names.get(native.name) !== skill.path) {
@@ -587,19 +729,19 @@ export class Engine {
         }
       }
     }
-    if (st.roleAssembly) {
+    if (assembly) {
       const [configured, discovered] = await this.untilFatal(() => settled([
         this.runtime.rpc.mcp.config.list(),
         this.runtime.rpc.mcp.discover({ workingDirectory: cwd ?? st.observedCwd ?? undefined }),
       ] as const));
-      for (const name of Object.keys(st.roleAssembly.config.mcpServers ?? {})) {
+      for (const name of Object.keys(assembly.config.mcpServers ?? {})) {
         if (Object.hasOwn(configured.servers, name) || discovered.servers.some(server => server.name === name)) {
           throw new Error(`Role MCP conflicts with native configuration: ${name}`);
         }
       }
     }
-    return {
-      ...st.roleAssembly?.config,
+    return { assembly, config: {
+      ...assembly?.config,
       sessionId: st.id, ...(cwd ? { workingDirectory: cwd } : {}), streaming: true,
       enableConfigDiscovery: true,
       // Runtime 1.0.83 discovers skills but does not apply its global disabled
@@ -625,7 +767,7 @@ export class Engine {
           throw new Error('Structured/URL elicitation acceptance is unsupported; decline or cancel the real request');
         }
       }),
-    };
+    } };
   }
 
   private decision<T>(st: State, kind: DecisionKind, fields: object, validate?: (value: T) => void): Promise<T> {
@@ -736,12 +878,13 @@ export class Engine {
     });
   }
 
-  private async ensureLoaded(st: State, create = false, cwd?: string): Promise<void> {
-    this.assertAdmission(st);
+  private async ensureLoaded(st: State, create = false, cwd?: string,
+    prepared?: Awaited<ReturnType<Engine['config']>>): Promise<void> {
+    this.assertAdmission(st, !!prepared);
     if (st.load) return st.load;
     if (!create) this.sessions.set(st.id, st);
     if (st.sdk && await this.liveSession(st)) return;
-    this.assertAdmission(st);
+    this.assertAdmission(st, !!prepared);
     if (st.load) return st.load;
     this.patch(st, { loading: true });
     st.load = this.untilFatal(() => this.birth(async () => {
@@ -749,7 +892,8 @@ export class Engine {
       const owner: NonNullable<State['eventOwner']> = {};
       st.eventOwner = owner;
       if (create) st.observedCwd = cwd ?? null;
-      const config: SessionConfig = { ...await this.config(st, cwd), onEvent: event => {
+      const assembled = prepared ?? await this.config(st, cwd);
+      const config: SessionConfig = { ...assembled.config, onEvent: event => {
         if (st.eventOwner !== owner || this.failure) return;
         this.observeNative(st, event);
         try { this.onLive(st, event); }
@@ -769,6 +913,7 @@ export class Engine {
       }
       if (st.eventOwner !== owner) throw new Error('Native session closed while loading; explicitly resume to continue');
       st.sdk = sdk;
+      st.roleAssembly = assembled.assembly;
       this.sessions.set(sdk.sessionId, st);
       if (owner.closed?.has(sdk) || (create && !await this.liveSession(st))) {
         this.detach(st);
@@ -1126,7 +1271,7 @@ export class Engine {
   }
 
   private localBusy(st: State, ownTransition = false): boolean {
-    return (!ownTransition && st.closing) || st.operations > 0 || !!st.load
+    return (!ownTransition && (st.closing || !!st.roleChange)) || st.operations > 0 || !!st.load
       || !!st.cancelling || st.decisions.size > 0 || st.sends > 0 || st.accepted.size > 0;
   }
 
@@ -1185,8 +1330,8 @@ export class Engine {
     this.release(st);
   }
 
-  private async transition<T>(st: State, work: () => Promise<T>): Promise<T> {
-    this.assertAdmission(st);
+  private async transition<T>(st: State, work: () => Promise<T>, roleChange = false): Promise<T> {
+    this.assertAdmission(st, roleChange);
     if (st.closing || st.load || st.operations || st.cancelling) throw new Error('Session operation is in progress');
     st.closing = true;
     this.patch(st, { closing: true });
@@ -1230,7 +1375,7 @@ export class Engine {
       throw Object.assign(new Error('Engine lifecycle operation is in progress'), { statusCode: 409, code: 'SESSION_BUSY' });
     }
     const all = [...this.sessions.values()];
-    if (all.some(st => st.closing || st.load || st.operations || st.cancelling)) {
+    if (all.some(st => st.closing || st.roleChange || st.load || st.operations || st.cancelling)) {
       throw Object.assign(new Error('Session operation is in progress'), { statusCode: 409, code: 'SESSION_BUSY' });
     }
     this.lifecycle = true;
@@ -1800,6 +1945,7 @@ export class Engine {
   }
 
   private patch(st: State, fields: Partial<LiveMeta>): void {
+    if (fields.activeOperations !== undefined) fields.activeOperations += Number(!!st.roleChange);
     for (const key of ['currentReasoningEffort', 'currentContextTier', 'currentMode'] as const) {
       if (key in fields && fields[key] === undefined) fields[key] = null;
     }

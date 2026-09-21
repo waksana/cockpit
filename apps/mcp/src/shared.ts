@@ -47,6 +47,11 @@ export function ok(text: string): ToolResult {
 export function intentJson(name: string, value: unknown): ToolResult {
   let classification: NativeOperationClassification | undefined;
   switch (name) {
+    case 'roles/add': {
+      const parsed = Intents['roles/add'].result.parse(value);
+      return { ...ok(JSON.stringify(value, null, 2)),
+        ...(['incomplete', 'uncertain'].includes(parsed.status) ? { isError: true } : {}) };
+    }
     case 'setModel': {
       const parsed = Intents.setModel.result.parse(value);
       classification = classifyNativeModelSwitchResult(parsed.result);
