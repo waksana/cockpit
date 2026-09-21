@@ -11,6 +11,7 @@ import { useSessionResource } from '../lib/useSessionResource';
 import { useKeyedResource } from '../lib/useKeyedResource';
 import { ModelControls, SessionInfoPanel } from './SessionInfoPanel';
 import { SessionRoles } from './SessionRoles';
+import { Sidebar } from './Sidebar';
 import { SessionMcp, SessionSkills } from './Manage';
 import { CopyButton } from './CopyButton';
 import { ManageWorkspace } from './ManageWorkspace';
@@ -208,9 +209,11 @@ function roleFixture(t: TestContext, overrides: Partial<ChatSession> = {}) {
   const target = { ...session, roles: [roleCatalog[0]], appliedRoles: [roleCatalog[0]], rolesNeedReload: false, ...overrides };
   let catalogs = 0;
   let inspections = 0;
+  let refreshes = 0;
   const calls: Array<{ id: string; roles: unknown }> = [];
   useCockpit.setState({
     sessions: [target],
+    snapshotReady: true,
     listRoles: async () => { catalogs++; return roleCatalog; },
     addRoles: async (id, roles) => {
       calls.push({ id, roles });
@@ -223,6 +226,12 @@ function roleFixture(t: TestContext, overrides: Partial<ChatSession> = {}) {
       inspections++;
       return { sessionId: id, roles: target.roles ?? [], appliedRoles: target.roles ?? [],
         loaded: target.loaded, ready: target.loaded, reasons: [] };
+    },
+    refreshRoles: async id => {
+      refreshes++;
+      const current = useCockpit.getState().sessions.find(row => row.sessionId === id)!;
+      return { sessionId: id, roles: current.roles, appliedRoles: current.appliedRoles,
+        loaded: current.loaded, rolesNeedReload: current.rolesNeedReload };
     },
     loadSession: noMutation,
   });
@@ -245,7 +254,8 @@ function roleFixture(t: TestContext, overrides: Partial<ChatSession> = {}) {
   const submit = () => h.event(button(h.container, '保存追加角色'), 'click');
   return { ...h, target, render, open, choose, submit, calls,
     unmount: () => h.render(null),
-    catalogs: () => catalogs, inspections: () => inspections };
+    refresh: () => h.event(h.container.querySelector('[aria-label="刷新模块角色"]')!, 'click'),
+    catalogs: () => catalogs, inspections: () => inspections, refreshes: () => refreshes };
 }
 
 test('roles remain passive until addition opens; native checkbox selection never submits or reloads', async t => {
@@ -253,28 +263,48 @@ test('roles remain passive until addition opens; native checkbox selection never
   await h.render();
   assert.equal(h.catalogs(), 0);
   assert.equal(h.inspections(), 0);
-  assert.match(h.container.textContent, /已保存.*不代表当前应用或就绪/);
+  assert.ok(h.container.querySelector('[aria-label="已保存的模块角色"]'));
+  assert.equal(h.refreshes(), 0);
   await h.open();
   assert.equal(h.catalogs(), 1);
   assert.equal(h.container.querySelectorAll('input').length, 1, 'already selected role is not removable');
   const input = h.container.querySelector('input')!;
   assert.ok(input.getAttribute('aria-labelledby'));
-  assert.equal(h.container.querySelector('fieldset')?.querySelector('legend')?.textContent, '模块角色 可选，可多选');
+  assert.equal(h.container.querySelector('fieldset')?.querySelector('legend')?.textContent, '模块角色');
   assert.equal(disabled(button(h.container, '保存追加角色')), true);
   await h.choose();
   assert.equal(h.calls.length, 0);
   assert.equal(disabled(button(h.container, '保存追加角色')), false);
-  assert.match(h.container.textContent, /不重新加载或恢复会话/);
-  assert.match(h.container.textContent, /不发送隐藏提示/);
-  assert.match(h.container.textContent, /不保留临时 MCP \/ Skill 开关/);
+  assert.doesNotMatch(h.container.textContent, /检查当前角色状态|可选，可多选|执行中、有待决问题/);
   await h.submit();
   assert.deepEqual(h.calls, [{ id: h.target.sessionId, roles: [{ moduleId: 'fixture', roleId: 'added' }] }]);
   assert.match(h.container.textContent, /角色选择已保存/);
   assert.match(h.container.textContent, /需要另行显式重新加载会话/);
-  assert.match(h.container.textContent, /本次返回的已保存选择.*本次返回的已应用角色/);
+  assert.doesNotMatch(h.container.textContent, /本次返回的已保存选择|本次返回的已应用角色|完整结果/);
+  assert.equal(h.container.querySelector('pre'), null);
   assert.match(h.container.textContent, /目录中的角色均已选择/);
   assert.equal(h.inspections(), 0, 'no automatic readiness polling');
 });
+
+for (const state of [
+  { loaded: true, appliedRoles: [roleCatalog[0]], muted: [false, true] },
+  { loaded: true, appliedRoles: undefined, muted: [true, true] },
+  { loaded: false, appliedRoles: roleCatalog, muted: [true, true] },
+  { loaded: true, appliedRoles: roleCatalog.map(role => ({ ...role, moduleId: 'different' })), muted: [true, true] },
+]) {
+  test(`settings and sidebar show one identical saved set: ${JSON.stringify(state)}`, async t => {
+    const h = mount(t);
+    const target = { ...session, ...state, roles: roleCatalog };
+    useCockpit.setState({ sessions: [target], snapshotReady: true });
+    await h.render(createElement('div', null, createElement(SessionRoles, { session: target }),
+      createElement(Sidebar, { sessions: [target], activeId: null, query: '', connected: true, snapshotReady: true,
+        onSelect: () => {}, getMenuItems: () => [] })));
+    const lists = h.container.querySelectorAll('.session-role-badges');
+    assert.equal(lists.length, 2, 'one saved list on each surface');
+    for (const list of lists) assert.deepEqual(list.querySelectorAll('.role-badge')
+      .map(badge => badge.getAttribute('data-unapplied') === 'true'), state.muted);
+  });
+}
 
 test('unloaded role addition uses one same-ID add request, without a preliminary load', async t => {
   const h = roleFixture(t, { loaded: false });
@@ -297,8 +327,9 @@ test('saved roles never imply application or capability readiness', async t => {
   await h.open();
   await h.choose();
   await h.submit();
-  assert.match(h.container.textContent, /角色选择已保存，未重新加载会话/);
-  assert.match(h.container.textContent, /角色应用不代表能力就绪/);
+  assert.match(h.container.textContent, /角色选择已保存，需要另行显式重新加载会话/);
+  assert.equal((h.container.textContent.match(/角色选择已保存/g) ?? []).length, 1);
+  assert.match(h.container.textContent, /不代表能力就绪/);
   assert.equal(h.inspections(), 0);
 });
 
@@ -339,7 +370,7 @@ for (const busy of [
 }
 
 for (const status of ['uncertain'] as const) {
-  test(`role ${status} preserves full outcome and requires explicit inspection before retry`, async t => {
+  test(`role ${status} preserves concise errors and requires a fresh saved selection before retry`, async t => {
     const h = roleFixture(t);
     let calls = 0;
     let inspections = 0;
@@ -355,9 +386,10 @@ for (const status of ['uncertain'] as const) {
         assert.deepEqual(roles, [{ moduleId: 'fixture', roleId: 'added' }]);
         return result;
       },
-      roleReadiness: async () => {
+      refreshRoles: async () => {
         inspections++;
-        return { ...result, ready: false, reasons: ['Saved roles need reload'] };
+        return { sessionId: result.sessionId, loaded: result.loaded, rolesNeedReload: result.rolesNeedReload,
+          appliedRoles: result.appliedRoles, roles: [roleCatalog[0]] };
       },
     });
     await h.open();
@@ -365,17 +397,18 @@ for (const status of ['uncertain'] as const) {
     await h.submit();
     assert.equal(calls, 1);
     assert.equal(inspections, 0);
-    assert.match(h.container.textContent, /请先检查当前状态，再显式重试/);
-    assert.deepEqual(JSON.parse(h.container.querySelector('pre')!.textContent), result);
+    assert.match(h.container.textContent, /请先刷新模块角色，再显式重试/);
+    assert.match(h.container.textContent, /Synthetic persistence uncertainty.*Inspect before retry/);
+    assert.equal(h.container.querySelector('pre'), null);
     assert.equal(disabled(button(h.container, '保存追加角色')), true);
     await h.event(button(h.container, '收起角色追加'), 'click');
     await h.event(button(h.container, '追加模块角色…'), 'click');
-    assert.deepEqual(JSON.parse(h.container.querySelector('pre')!.textContent), result, 'collapsing retains partial diagnostics');
+    assert.match(h.container.textContent, /Synthetic persistence uncertainty/, 'collapsing retains diagnostics');
     assert.equal(disabled(button(h.container, '保存追加角色')), true);
-    await h.event(button(h.container, '检查当前角色状态'), 'click');
+    await h.refresh();
     assert.equal(inspections, 1);
     assert.equal(calls, 1, 'inspection never retries addition');
-    assert.match(h.container.textContent, /仅此时刻，不持续监测/);
+    assert.match(h.container.textContent, /角色状态已刷新；应用不代表能力就绪/);
     assert.equal(disabled(button(h.container, '保存追加角色')), false);
     await h.submit();
     assert.equal(calls, 2, 'only this explicit action retries the original additions');
@@ -397,27 +430,29 @@ test('authoritative identity replaces saved and applied badges after another cli
   await h.open();
   await h.choose();
   await h.submit();
-  const saved = () => h.container.querySelector('[aria-label="已保存的角色选择（不代表当前应用或就绪）"]')!;
-  const applied = () => h.container.querySelector('[aria-label="当前已应用角色（不代表能力就绪）"]');
+  const saved = () => h.container.querySelector('[aria-label="已保存的模块角色"]')!;
+  const muted = () => saved().querySelectorAll('[data-unapplied="true"]').map(node => node.textContent);
   assert.match(saved().textContent, /Additional role/);
-  assert.doesNotMatch(applied()!.textContent, /Additional role/);
+  assert.equal(muted().length, 1);
+  assert.match(muted()[0], /Additional role/);
   await act(async () => useCockpit.setState({ sessions: [{
     ...h.target, roles: roleCatalog, appliedRoles: roleCatalog, rolesNeedReload: false,
   }] }));
-  assert.match(applied()!.textContent, /Additional role/);
+  assert.equal(muted().length, 0);
   assert.doesNotMatch(h.container.textContent, /角色选择已保存，需要另行显式重新加载会话/);
   const remoteRole = { ...roleCatalog[1], roleId: 'remote', name: 'Other client role' };
   await act(async () => useCockpit.setState({ sessions: [{
     ...h.target, roles: [...roleCatalog, remoteRole], appliedRoles: roleCatalog, rolesNeedReload: true,
   }] }));
   assert.match(saved().textContent, /Other client role/);
-  assert.doesNotMatch(applied()!.textContent, /Other client role/);
+  assert.equal(muted().length, 1);
+  assert.match(muted()[0], /Other client role/);
   assert.match(h.container.textContent, /角色选择已保存，需要另行显式重新加载会话/);
   await act(async () => useCockpit.setState({ sessions: [{
     ...h.target, roles: [...roleCatalog, remoteRole], loaded: false, appliedRoles: [], rolesNeedReload: false,
   }] }));
   assert.match(saved().textContent, /Other client role/);
-  assert.equal(applied(), null);
+  assert.equal(muted().length, 3);
   assert.match(h.container.textContent, /会话未加载；已保存的角色将在下次加载时应用/);
   assert.equal(h.inspections(), 0);
 });
@@ -471,8 +506,8 @@ test('transport uncertainty keeps the draft and requires a matching explicit ins
   let calls = 0;
   useCockpit.setState({
     addRoles: async () => { calls++; throw new Error('Synthetic lost acknowledgement'); },
-    roleReadiness: async () => ({
-      sessionId: 'wrong-target', roles: [], loaded: false, ready: false, reasons: ['Not this target'],
+    refreshRoles: async () => ({
+      sessionId: 'wrong-target', roles: [], loaded: false, appliedRoles: [], rolesNeedReload: false,
     }),
   });
   await h.open();
@@ -481,11 +516,110 @@ test('transport uncertainty keeps the draft and requires a matching explicit ins
   assert.match(h.container.textContent, /Synthetic lost acknowledgement/);
   assert.equal(h.container.querySelector('input')!.checked, true);
   assert.equal(disabled(button(h.container, '保存追加角色')), true);
-  await h.event(button(h.container, '检查当前角色状态'), 'click');
+  await h.refresh();
   assert.match(h.container.textContent, /会话 ID 不匹配/);
   assert.equal(disabled(button(h.container, '保存追加角色')), true);
   assert.equal(calls, 1);
 });
+
+for (const loaded of [true, false]) {
+  test(`role header refresh is passive, including unloaded sessions: ${loaded}`, async t => {
+    const h = roleFixture(t, { loaded });
+    await h.render();
+    await h.refresh();
+    assert.equal(h.refreshes(), 1);
+    assert.equal(h.catalogs(), 0);
+    assert.equal(h.inspections(), 0);
+    assert.equal(h.calls.length, 0);
+    assert.match(h.container.textContent, /角色状态已刷新/);
+  });
+}
+
+test('double save is exclusive; disconnect preserves the uncertain-save lock until explicit fresh identity', async t => {
+  const h = roleFixture(t);
+  const pending = deferred<IntentResult<'roles/add'>>();
+  let calls = 0;
+  useCockpit.setState({ addRoles: async () => { calls++; return pending.promise; } });
+  await h.open();
+  await h.choose();
+  await h.submit();
+  await h.submit();
+  assert.equal(calls, 1);
+  assert.equal(disabled(h.container.querySelector('[aria-label="刷新模块角色"]')!), true);
+  await act(async () => useCockpit.setState({ connState: 'connecting' }));
+  await act(async () => useCockpit.setState({ connState: 'open', connectionGeneration: 2 }));
+  assert.equal(h.container.querySelector('input')!.checked, true);
+  assert.equal(disabled(button(h.container, '保存追加角色')), true);
+  await act(async () => pending.resolve({
+    sessionId: h.target.sessionId, status: 'saved', roles: roleCatalog, appliedRoles: [],
+    loaded: true, rolesNeedReload: true,
+  }));
+  assert.equal(disabled(button(h.container, '保存追加角色')), true);
+  assert.doesNotMatch(h.container.textContent, /角色选择已保存，未重新加载会话/);
+  await h.refresh();
+  assert.equal(disabled(button(h.container, '保存追加角色')), false);
+  assert.equal(calls, 1);
+});
+
+for (const failure of ['missing roles', 'read failure'] as const) {
+  test(`refresh ${failure} never unlocks an uncertain save`, async t => {
+    const h = roleFixture(t);
+    useCockpit.setState({
+      addRoles: async () => { throw new Error('Unconfirmed save'); },
+      refreshRoles: async () => {
+        if (failure === 'read failure') throw new Error('Cannot read persisted selection');
+        return { sessionId: h.target.sessionId, loaded: true, appliedRoles: [], rolesNeedReload: false };
+      },
+    });
+    await h.open();
+    await h.choose();
+    await h.submit();
+    await h.refresh();
+    assert.match(h.container.textContent, /刷新失败/);
+    assert.equal(disabled(button(h.container, '保存追加角色')), true);
+    assert.equal(h.container.querySelector('input')!.checked, true);
+  });
+}
+
+test('refresh reconciles a saved-but-unacknowledged role without resubmitting it', async t => {
+  const h = roleFixture(t);
+  useCockpit.setState({
+    addRoles: async () => { throw new Error('Lost acknowledgement'); },
+    refreshRoles: async id => {
+      const next = { ...h.target, roles: roleCatalog, rolesNeedReload: true };
+      useCockpit.setState({ sessions: [next] });
+      return { ...next, sessionId: id };
+    },
+  });
+  await h.open();
+  await h.choose();
+  await h.submit();
+  await h.refresh();
+  assert.equal(h.container.querySelectorAll('input').length, 0);
+  assert.match(h.container.textContent, /目录中的角色均已选择/);
+  assert.equal(disabled(button(h.container, '保存追加角色')), true);
+  assert.equal(h.inspections(), 0);
+});
+
+for (const leave of ['target', 'unmount', 'reconnect', 'offline'] as const) {
+  test(`late role refresh does not publish feedback after ${leave}`, async t => {
+    const h = roleFixture(t);
+    const pending = deferred<SessionProjection>();
+    useCockpit.setState({ refreshRoles: async () => pending.promise });
+    await h.render();
+    await h.refresh();
+    await h.refresh();
+    if (leave === 'target') {
+      const next = { ...h.target, sessionId: 'another-target', roles: [] };
+      useCockpit.setState({ sessions: [h.target, next] });
+      await h.render(next);
+    } else if (leave === 'unmount') await h.unmount();
+    else await act(async () => useCockpit.setState(leave === 'reconnect'
+      ? { connectionGeneration: 2 } : { connState: 'connecting' }));
+    await act(async () => pending.resolve(h.target));
+    assert.doesNotMatch(h.container.textContent, /角色状态已刷新/);
+  });
+}
 
 test('role submit rechecks the original target, not the active session or stale rendered idle state', async t => {
   const h = roleFixture(t);
