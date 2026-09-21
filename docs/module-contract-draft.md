@@ -305,6 +305,7 @@ MCP 名称原样采用 manifest 的 `mcpServers` key（例如 `example-tools`）
 - `roles/list {}` → `{roles: [{moduleId,roleId,moduleName,name,description?}]}`
 - `session/new {cwd,roles?: [{moduleId,roleId}]}` → `{sessionId}`
 - `roles/readiness {sessionId,roles?}` → `{sessionId,loaded,ready,roles,reasons,appliedRoles?,rolesNeedReload?}`
+- `session/tools-initialize {sessionId}` → `{ok:true}`，显式初始化已加载空闲会话的原生工具表；不是 readiness。
 - `roles/add {sessionId,roles: [{moduleId,roleId}]}` → 仅追加已保存角色 metadata，结果见下文。
 
 后端 `context.host.call(name,body)` 只接受 `session/new`、`session/get`、
@@ -348,6 +349,46 @@ MCP 连接/策略状态及当前原生工具 metadata。普通列表、snapshot�
 也不补装、重载、启用或自动修复。就绪是请求时能力证据而非永久承诺；
 busy、pending、subagent 等活动状态须另行读取，不能与角色能力就绪混为一谈。
 没有 Task ACL，不支持对当前 handle 热装配角色；活动工作期间可以保存待下次加载的角色。
+
+#### 工具表失效与显式恢复
+
+SDK 1.0.13 / runtime 1.0.83 的 `tools.getCurrentMetadata()` 返回的是**已初始化**
+工具表快照。`tools: null` 表示尚未初始化（也可能是配置变化后的失效），不是空工具集；
+`tools: []` 才是已初始化但没有工具。隔离 native 用例证实，模型配置变化和 Skill
+开关可使原先正常的 metadata 变为 null，MCP 重连不保证恢复。MCP 连接、角色标签
+或工具名称前缀不能代替实际过滤后的工具证据。
+
+`roles/readiness` 对 null 返回 `ready:false` 和明确的未初始化原因，不再逐工具误报缺失。
+它不自动初始化、重连、启用资源、加载会话或发送提示。非 null 的工具表仍按
+`mcpServerName` / `mcpToolName` 核对角色所需工具；真正被过滤或缺失的工具仍失败，
+读取失败仍为 unconfirmed，不降级为成功。
+
+当前源码提供独立的 `session/tools-initialize` intent，通过 SDK 公开的
+`tools.initializeAndValidate()` 构建工具表并读回确认。仅允许已加载、空闲且无受保护
+工作/并发操作的会话；不会冷恢复或关闭当前 handle，不应用新保存的角色，不修改全局
+配置，也不启用被禁用的 Skill/MCP。当前模型、临时资源选择、历史和 ID 保持原样，
+原生工具过滤仍生效。返回 `ok:true` 只表示工具表已初始化（可以为空），调用者随后
+必须另行检查 `roles/readiness`；原生错误、关闭竞态或 null 读回均失败，无自动重试。
+初始化失败不承诺回滚已发生的原生效果。
+
+本体 MCP 使用已有通用调用器，不增加专用工具或扩大模块 `host.call` 白名单：
+
+```json
+{"name":"session/tools-initialize","body":{"sessionId":"TARGET_SESSION_ID"}}
+```
+
+先通过 `cockpit_capabilities` 确认**运行宿主**发布此 intent，再调用
+`cockpit_call_intent`，最后显式 `cockpit_role_readiness`。这不需要引导 prompt，
+也不自动派单。活动中的调用者不能用它初始化自己的会话。
+
+**旧宿主恢复边界：**0.2.6/source `59c4049` 与 0.2.7/source `1dd38c6` 的检查逻辑相同，
+均未提供此 intent，源码合并不改变这些运行实例。已有持久化历史且空闲的会话可以用
+现有 `session/reload` / `cockpit_reload_session` 正常冷恢复，再检查 readiness；
+但临时 Skill/MCP 选择遵循全局默认，不会特殊保留。若依赖再次切换专业 Skill，
+工具表又可能失效，因此这不是“保留临时配置”的恢复办法。空白未发言会话可能在关闭后
+消失，不能拿完整 reload 当通用修复。对于必须保留当前 handle/临时选择的失效场景，
+这些旧宿主没有已证实安全的公开恢复入口；需要另行授权部署包含新 intent 的版本，
+不能私用 SDK/store、改全局配置、发送初始化提示或绕过 readiness。
 
 #### 已有会话显式追加
 

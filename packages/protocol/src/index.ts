@@ -576,6 +576,11 @@ export const Intents = {
     body: z.object({ sessionId: z.string().min(1), roles: z.array(RoleSelection).max(64).optional() }).strict(),
     result: RoleReadiness,
   },
+  'session/tools-initialize': {
+    description: 'Explicitly resolve, build and validate the native tool table on a loaded idle session after configuration invalidation. Preserves the current handle, model, temporary skill/MCP choices and native tool filtering. Does not load, reload, enable resources, apply saved roles, write global config or send a prompt. Rejects protected work and concurrent operations. ok confirms initialized metadata, not role readiness; call roles/readiness separately. Failures may leave initialization effects; no automatic retry.',
+    body: z.object({ sessionId: z.string().min(1) }).strict(),
+    result: z.object({ ok: z.literal(true) }),
+  },
   'session/fork': {
     description: 'Native history fork from a loaded, idle session. Optional toEventId is a root user.message event ID from session history, excluded from the child; omit for full history. Rejects unfinished boundaries and any inherited schedule history. Returns a new unloaded session ID; no prompt is sent. Native fork appends an informational record to the parent. Model/mode follow native persisted history; skills/MCP use cold-resume defaults, not a complete configuration clone. cwd/files are shared, not a worktree. Non-idempotent: on an uncertain error inspect session/list and source history before any retry.',
     body: z.object({

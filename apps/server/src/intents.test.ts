@@ -55,6 +55,7 @@ const engine: ServerEngine = {
     sessionId: 's', status: 'saved' as const, roles: [], appliedRoles: [], loaded: true, rolesNeedReload: false,
   }),
   roleReadiness: async (...args) => record('roleReadiness', args, { sessionId: 's', loaded: false, ready: false, roles: [], reasons: ['unloaded'] }),
+  initializeSessionTools: async (...args) => record('initializeSessionTools', args, undefined),
   forkSession: async (...args) => record('forkSession', args, { sessionId: 'forked' }),
   chat: async (query, signal) => {
     assert.ok(signal instanceof AbortSignal);
@@ -135,6 +136,7 @@ const cases = {
   'roles/add': { body: { sessionId: 's', roles: [{ moduleId: 'fixture', roleId: 'owner' }] },
     method: 'addRoles', args: ['s', [{ moduleId: 'fixture', roleId: 'owner' }]] },
   'roles/readiness': { body: { sessionId: 's' }, method: 'roleReadiness', args: ['s', undefined] },
+  'session/tools-initialize': { body: { sessionId: 's' }, method: 'initializeSessionTools', args: ['s'] },
   'session/fork': { body: { sessionId: 's', toEventId: 'user-event', name: 'Child' }, method: 'forkSession', args: ['s', 'user-event', 'Child'] },
   'session/chat': {
     body: Intents['session/chat'].body.parse({ sessionId: 's', cursor: 'native-before', max: 12 }),

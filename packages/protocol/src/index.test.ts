@@ -117,6 +117,16 @@ test('role readiness is an explicit result, never a session identity projection'
   assert.deepEqual(ServerEvent.parse({ type: 'session/patch', sessionId: 's1', roles, roleReadiness }), {
     type: 'session/patch', sessionId: 's1', roles,
   });
+
+  test('tool initialization accepts only an explicit session identity and does not claim readiness', () => {
+    const intent = Intents['session/tools-initialize'];
+    roundTrip(intent.body, { sessionId: 's' });
+    for (const body of [{}, { sessionId: '' }, { sessionId: 's', reload: true }, { sessionId: 's', prompt: 'bootstrap' }]) {
+      assert.equal(intent.body.safeParse(body).success, false);
+    }
+    assert.equal(intent.result.safeParse({ ok: false }).success, false);
+    assert.match(intent.description, /not role readiness/);
+  });
   assert.equal('session/advance-queue' in Intents, false);
   assert.equal('QueueAdvanceOperation' in Protocol, false);
 });
@@ -477,6 +487,7 @@ const intentFixtures = {
   'session/unload': { body: sid, result: ok },
   'session/load': { body: sid, result: { ok: true, ...sid } },
   'session/reload': { body: sid, result: ok },
+  'session/tools-initialize': { body: sid, result: { ok: true } },
   'session/plan': { body: sid, result: plan },
   'session/usage': { body: sid, result: { ...sid, sampledAt: 1, context: null,
     usage: { sessionStartTime: '2026-09-09T00:00:00Z', totalUserRequests: 0,

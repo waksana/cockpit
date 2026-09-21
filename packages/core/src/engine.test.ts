@@ -209,7 +209,7 @@ function fakeSession(t: TestContext, sessionId: string) {
     },
     tools: {
       initializeAndValidate: t.mock.fn(async () => ({})),
-      getCurrentMetadata: t.mock.fn(async () => ({ tools: [
+      getCurrentMetadata: t.mock.fn(async (): Promise<Awaited<ReturnType<Rpc['tools']['getCurrentMetadata']>>> => ({ tools: [
         { name: 'read', description: '', mcpServerName: 'module_fixture__tools', mcpToolName: 'read' },
       ] })),
     },
@@ -750,10 +750,97 @@ test('role creation, identity, cold resume and readiness preserve native unrelat
   assert.notDeepEqual(h.configs.get(id)!.systemMessage, config.systemMessage, 'cold resume uses current role resources');
   assert.deepEqual(h.configs.get(id)!.mcpServers, config.mcpServers);
   native.state.mcp.host!.disabledServers = [];
+  native.rpc.tools.getCurrentMetadata.mock.mockImplementation(async () => ({ tools: null }));
+  const uninitialized = await cold.roleReadiness(id);
+  assert.equal(uninitialized.ready, false);
+  assert.match(uninitialized.reasons.join(), /uninitialized.*session\/tools-initialize/);
+  assert.doesNotMatch(uninitialized.reasons.join(), /not currently offered/);
   native.rpc.tools.getCurrentMetadata.mock.mockImplementation(async () => ({ tools: [] }));
   assert.match((await cold.roleReadiness(id)).reasons.join(), /not currently offered/);
   assert.equal(native.rpc.tools.initializeAndValidate.mock.callCount(), 2, 'readiness never repairs tools');
+  native.rpc.tools.getCurrentMetadata.mock.mockImplementation(async () => { throw new Error('metadata unavailable'); });
+  assert.match((await cold.roleReadiness(id)).reasons.join(), /Readiness unconfirmed: metadata unavailable/);
 });
+
+test('explicit tool initialization preserves the handle and temporary choices without sending or reloading', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  s.state.skills = [{ name: 'temporary', path: '/fixture/SKILL.md', description: '', source: 'custom', enabled: true } as Skill];
+  s.state.mcp = mcpState([{ name: 'temporary', status: 'connected' }], ['disabled']);
+  const before = structuredClone(s.state);
+  await h.engine.initializeSessionTools(s.id);
+  assert.equal(s.rpc.tools.initializeAndValidate.mock.callCount(), 1);
+  assert.equal(s.rpc.tools.getCurrentMetadata.mock.callCount(), 1);
+  assert.deepEqual(s.state, before);
+  assert.equal(s.sdk.send.mock.callCount(), 0);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 1, 'only the explicit load resumed');
+  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+});
+
+test('explicit tool initialization rejects unloaded, busy and concurrent work without repairing or retrying', async t => {
+  const h = harness(t);
+  const s = await h.seed();
+  await assert.rejects(h.engine.initializeSessionTools('missing'), /Unknown session/);
+  await assert.rejects(h.engine.initializeSessionTools(s.id), unavailableSession);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+  await h.engine.load(s.id);
+  for (const work of ['main', 'task', 'queue', 'steering', 'mcp'] as const) {
+    s.state.processing = work === 'main';
+    s.state.tasks = work === 'task' ? [task()] : [];
+    s.state.queue.items = work === 'queue' ? [queued('q')] : [];
+    s.state.queue.inFlightSteeringCount = work === 'steering' ? 1 : 0;
+    s.state.mcp.host!.pendingConnections = work === 'mcp' ? ['pending'] : [];
+    await assert.rejects(h.engine.initializeSessionTools(s.id), protectedWork);
+  }
+  s.state.mcp.host!.pendingConnections = [];
+  assert.equal(s.rpc.tools.initializeAndValidate.mock.callCount(), 0);
+  const held = deferred<{}>();
+  s.rpc.tools.initializeAndValidate.mock.mockImplementationOnce(() => held.promise);
+  const initializing = h.engine.initializeSessionTools(s.id);
+  await nextTurn();
+  await assert.rejects(h.engine.initializeSessionTools(s.id), protectedWork);
+  await assert.rejects(h.engine.toggleSessionSkill(s.id, 'temporary', true), protectedWork);
+  await assert.rejects(h.engine.unload(s.id), protectedWork);
+  await assert.rejects(h.engine.stop(), protectedWork);
+  held.resolve({});
+  await initializing;
+  s.rpc.tools.initializeAndValidate.mock.mockImplementationOnce(async () => { throw new Error('native validation failed'); });
+  await assert.rejects(h.engine.initializeSessionTools(s.id), /native validation failed/);
+  assert.equal(s.rpc.tools.initializeAndValidate.mock.callCount(), 2, 'no retry');
+  s.rpc.tools.getCurrentMetadata.mock.mockImplementationOnce(async () => ({ tools: null }));
+  await assert.rejects(h.engine.initializeSessionTools(s.id), /initialization is unconfirmed/);
+  s.rpc.tools.getCurrentMetadata.mock.mockImplementationOnce(async () => ({ tools: [] }));
+  await h.engine.initializeSessionTools(s.id);
+  const skills = deferred<{ skills: Skill[] }>();
+  s.rpc.skills.list.mock.mockImplementationOnce(() => skills.promise);
+  const reading = h.engine.listSessionSkills(s.id);
+  await nextTurn();
+  await assert.rejects(h.engine.initializeSessionTools(s.id), protectedWork);
+  skills.resolve({ skills: [] });
+  await reading;
+  assert.equal(s.sdk.send.mock.callCount(), 0);
+  assert.equal(s.sdk.abort.mock.callCount(), 0);
+});
+
+for (const stage of ['initialization', 'readback'] as const) {
+  test(`explicit tool initialization fails if its native handle closes during ${stage}`, async t => {
+    const h = harness(t);
+    const s = await h.load();
+    const initialized = deferred<{}>();
+    const metadata = deferred<Awaited<ReturnType<Rpc['tools']['getCurrentMetadata']>>>();
+    if (stage === 'initialization') s.rpc.tools.initializeAndValidate.mock.mockImplementationOnce(() => initialized.promise);
+    else s.rpc.tools.getCurrentMetadata.mock.mockImplementationOnce(() => metadata.promise);
+    const work = h.engine.initializeSessionTools(s.id);
+    await nextTurn();
+    const rejected = assert.rejects(work, unavailableSession);
+    h.runtime.expire(s.id, true);
+    initialized.resolve({});
+    metadata.resolve({ tools: [] });
+    await rejected;
+    assert.equal(h.runtime.resumeSession.mock.callCount(), 1, 'no repair resume');
+    if (stage === 'initialization') assert.equal(s.rpc.tools.getCurrentMetadata.mock.callCount(), 0);
+  });
+}
 
 for (const stage of ['assembly', 'capability read'] as const) {
   test(`explicit readiness does not report a closed handle ready during ${stage}`, async t => {

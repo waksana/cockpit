@@ -728,6 +728,19 @@ test('fork is discoverable and callable through the unified MCP intent entry wit
   assert.deepEqual(requests[0]?.body, body);
 });
 
+test('tool initialization uses one explicit generic call without a prompt, reload or readiness claim', async () => {
+  const name = 'session/tools-initialize';
+  const body = { sessionId: 'target' };
+  assert.deepEqual(await json('cockpit_call_intent', { name, body }), { ok: true });
+  assert.deepEqual(requests.map(request => [request.path, request.body]), [[`/intent/${name}`, body]]);
+  requests.length = 0;
+  intentFailure = 409;
+  const failure = await call('cockpit_call_intent', { name, body });
+  assert.equal(failure.isError, true);
+  assert.match(failure.text, /HTTP 409/);
+  assert.deepEqual(requests.map(request => request.path), [`/intent/${name}`]);
+});
+
 test('generic invocation surfaces authoritative unknown and retired name errors with one POST each', async () => {
   for (const name of [
     'unknown', 'hook/add', 'flow/run', 'flow/write-gate', 'flow-schedule/add', 'session/set-spawned-by',

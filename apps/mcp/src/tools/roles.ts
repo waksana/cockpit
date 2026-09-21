@@ -26,7 +26,7 @@ export function registerRoleTools(server: McpServer): void {
     catch (error) { return fail(String(error)); }
   });
   server.registerTool('cockpit_role_readiness', {
-    title: 'Check session role readiness', description: 'Explicitly check current role assembly, native skills, MCP connections and tool visibility. A separate passive check: does not load, apply saved roles or repair sessions. Capability readiness is independent of busy turns, pending messages and subagents. Persisted role labels and rolesNeedReload are not readiness.',
+    title: 'Check session role readiness', description: 'Explicitly check current role assembly, native skills, MCP connections and tool visibility. A separate passive check: does not load, apply saved roles or repair sessions. Uninitialized native tool metadata is unconfirmed, not proof of missing tools; on hosts publishing session/tools-initialize, explicitly invoke that intent on the loaded idle target, then check again. Capability readiness is independent of busy turns, pending messages and subagents. Persisted role labels and rolesNeedReload are not readiness.',
     inputSchema: { session_id: z.string().min(1), roles: z.array(RoleSelection).max(64).optional() },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, async ({ session_id, roles }) => {

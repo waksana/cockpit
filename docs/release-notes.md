@@ -20,6 +20,24 @@ This source preparation does not create a tag or Release.
 
 ---
 
+# Unreleased source: explicit native tool-table recovery
+
+Distinguishes uninitialized native tool metadata (`null`) from an initialized
+empty or filtered tool table. Role readiness remains passive and fails explicitly
+on unknown visibility or genuinely missing tools. Adds `session/tools-initialize`
+through the existing API/generic MCP caller for a loaded idle target: resolve and
+validate native tools without a prompt, cold reload, global writes, role application
+or resource enablement. A successful initialization is not role readiness.
+
+SDK 1.0.13/runtime 1.0.83 can invalidate the table after model/Skill changes;
+the isolated native fixture covers fresh sessions, persisted-session reuse and
+preserved native filtering. See [recovery boundaries](module-contract-draft.md#工具表失效与显式恢复).
+This fix is not part of the already deployed 0.2.7/source `1dd38c6`. No version
+publication, installation or restart is implied; allocate a new delivery version
+before packaging/deploying changed contents.
+
+---
+
 # Unreleased source: append roles to an existing session
 
 Adds `roles/add`, `cockpit_add_roles` and a Web session-settings action for

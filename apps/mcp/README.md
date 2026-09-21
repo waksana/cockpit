@@ -40,6 +40,16 @@ It does not load, repair or add roles to existing sessions. The result is
 on-demand capability evidence, independent of busy turns, pending messages or
 subagents—not a cached status or a readiness badge.
 
+Native tool metadata can become uninitialized after model or Skill changes.
+This is unconfirmed visibility, not proof that every role tool is missing.
+Hosts publishing `session/tools-initialize` support explicit recovery through
+`cockpit_call_intent` with `{name:"session/tools-initialize",body:{sessionId:"..."}}`
+on a loaded idle target, followed by a separate readiness check. It preserves the
+current handle and temporary choices; it does not send a prompt or enable tools.
+See [tool invalidation and recovery](../../docs/module-contract-draft.md#工具表失效与显式恢复)
+for the older-host and empty-session limits. Discover the running host's capability;
+source documentation is not deployment evidence.
+
 `cockpit_add_roles {session_id, roles: [{moduleId,roleId}]}` invokes the same
 `roles/add` intent as Web. It appends saved role metadata only, retaining the
 original ID, history and cwd. Main turns, subagents, shells, queued work,
