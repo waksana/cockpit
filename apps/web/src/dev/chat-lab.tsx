@@ -110,7 +110,7 @@ export function Lab() {
     const page = ++historyPage.current;
     const progressive = scenario === 'history-progressive';
     setSession(value => ({ ...value, loadingHistory: true }));
-    window.setTimeout(() => {
+    const deliver = () => {
       if (generation.current !== owner) return;
       setSession(value => ({ ...value, loadingHistory: false, materialized: true, hasMore: progressive && page < 8,
         messages: [...Array.from({ length: progressive ? 2 : 6 }, (_, i): ChatMessage => ({
@@ -121,8 +121,12 @@ export function Lab() {
       }));
       setReceipt('一次有界合成历史插入；未读取真实历史。');
       historyBusy.current = false;
+    };
+    window.setTimeout(() => {
+      if (lateFrame) requestAnimationFrame(() => flushSync(deliver));
+      else deliver();
     }, 900);
-  }, [scenario, setSession, setReceipt]);
+  }, [scenario, setSession, setReceipt, lateFrame]);
   return <div className="cockpit-shell chat-lab" data-compact={compact || undefined}>
     <details className="lab-controls" open={!compact}>
       <summary>合成场景控制</summary>

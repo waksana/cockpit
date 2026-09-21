@@ -825,6 +825,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await commit(value);
       assert.equal(viewport().scrollTop, bottom(), `${initial}: layout effect must position before queued frames`);
       await flush();
+      await act(() => {
+        viewport().clientHeight -= 40;
+        for (const resize of resizes) resize();
+      });
+      assert.equal(viewport().scrollTop, bottom(), 'input/viewport resize must settle before RO returns, not next RAF');
+      await flush();
       await readAt(225);
       const reader = anchor();
       await commit({ ...value, messages: [...value.messages, {

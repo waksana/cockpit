@@ -196,6 +196,13 @@ actual first-content paint (for example text Element Timing intersection rectang
 as well as scroll geometry. A RAF sample at zero or a correct final position alone
 does not prove what was painted. Layout-shift totals also include initial content
 insertion and containment changes, not only scrolling.
+Continue recording after the initial message paint: the asynchronous card's new
+detail paragraphs must first paint at their corrected positions, not below the
+viewport followed by a next-frame jump. `frame=1` also applies to the progressive
+history loader to exercise a late-frame prepend. Exercise it with a reader
+anchor as well; initial positioning alone is not evidence of stable subsequent
+layouts. A RAF probe can still see old offsets before ResizeObserver runs, even
+when correction completes before the actual paint.
 
 For current event ordering and process disclosure behavior, choose `ordered-events`.
 Its controls feed synthetic historical/live/reconnect pages through the production
