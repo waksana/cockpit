@@ -4,8 +4,10 @@ This is the authoritative guide to the **implemented Module UI v1** primitives.
 The source of truth is
 [`public-ui.scss`](../apps/web/src/styles/primitives/public-ui.scss); the
 [module contract](module-contract-draft.md) owns loading, contributions, drafts
-and native attachment delivery. All UI follows the
-[interaction semantics requirement](DEVELOPMENT.md#interaction-semantics-and-structural-correctness).
+and native attachment delivery. Before any host or module UI work, read and follow
+the [frontend guidelines](frontend-guidelines.md). They own the shared principles;
+this guide owns the public styling, icon and composition contract, not a second
+theme or a claim that existing modules already conform.
 For available methods and exactly which host data they expose, use the
 [public API map](module-contract-draft.md#public-api-map) and
 [data boundaries](module-contract-draft.md#public-data-boundaries).
@@ -345,18 +347,13 @@ physically inside the card.
 
 ## Author checklist
 
-Review actual composed DOM and the accessibility tree, not just a screenshot or
-isolated JSX. Exercise long names, narrow widths, light/dark themes, idle/loading/
-failure/retry/disabled states and disappearance while work is pending. Confirm
-no cropped glyphs, overflow, card-size shifts or duplicate accessible names.
-
-Use keyboard Tab/Shift+Tab, Enter/Space, Escape and focus return as well as pointer
-and touch. Inspect main versus secondary actions, drag/drop/paste ownership,
-native disabled behavior, late callbacks and resource/session switching. Do not
-hide ownership bugs with blur calls or broad event suppression. Use existing
-component tests, Chat Lab and the module's isolated fixtures; never send synthetic
-inputs to production sessions. State which browsers/input methods were actually
-exercised rather than claiming all-platform compliance.
+Use the shared [frontend review checklist](frontend-guidelines.md#轻量-review-清单).
+For modules, also check explicit capability versions, public-only styles and icon
+provenance, the actual host-composed DOM/accessibility tree, drag/drop/paste
+ownership, and original-resource binding across session/resource replacement.
+Exercise Tab/Shift+Tab, Enter/Space, Escape and focus return through the composed
+controls. Use the existing component tests, Chat Lab or module-isolated fixtures,
+never production sessions; report the browsers and input methods actually covered.
 
 Inspect the built assets too: only used icons, no icon fonts/CDN requests, no
 bundled second React, and a complete distributed license. Update the example and
