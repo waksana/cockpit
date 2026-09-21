@@ -23,7 +23,7 @@ export function checkTagTarget(tag, sourceSha, refs) {
 export function checkSourceVersion(repository = resolve(fileURLToPath(new URL('..', import.meta.url)))) {
   const { version } = JSON.parse(readFileSync(resolve(repository, 'package.json'), 'utf8'));
   assert.match(version, /^\d+\.\d+\.\d+$/, 'Delivery versions use MAJOR.MINOR.PATCH');
-  for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol', 'packages/module-api']) {
+  for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol', 'packages/module-api', 'packages/ui']) {
     const metadata = JSON.parse(readFileSync(resolve(repository, name, 'package.json'), 'utf8'));
     assert.equal(metadata.version, version, `${name || 'root'} version does not match ${version}`);
   }

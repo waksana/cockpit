@@ -1,3 +1,18 @@
+# Cockpit 0.3.0
+
+Source preparation for the independent shadcn-based Web presentation in #99.
+Classic remains the default. The shared UI workspace contains host-used source
+components, and modules can declare separate `frontend.next` assets under their
+existing immutable archive. `ModuleNextFrontendContext.ui` supplies actual host
+components without claiming classic CSS support or adding a second React runtime.
+This capability is not present in released 0.2.7 archives.
+
+The new presentation and its paired File/Speech integrations are under
+development. This version allocation does not publish a tag or Release, deploy
+any service, switch the default UI, or authorize data migration.
+
+---
+
 # Cockpit 0.2.7
 
 Current-source deployment version for the shared UI and responsive pane

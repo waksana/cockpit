@@ -1,5 +1,6 @@
 import type * as React from 'react';
 import type { ModuleEventPayload, NativeAttachmentDescriptor, SessionStatus } from '@cockpit/protocol';
+import type { ModuleUi } from './ui.ts';
 
 type ReadonlyData<T> = { readonly [Key in keyof T]: ReadonlyData<T[Key]> };
 
@@ -534,12 +535,9 @@ export interface MarkdownRenderer {
   readonly component: React.ComponentType<MarkdownRendererProps>;
 }
 
-export interface ModuleFrontendContext {
+export interface ModuleFrontendServices {
   /** Web contract only. Module manifest, backend context and route API remain v1. */
   readonly apiVersion: 2;
-  readonly uiVersion: 1;
-  /** Shared surface/heading/actions/badge/modal CSS. Check separately from base UI v1. */
-  readonly uiSurfaceVersion: 1;
   /** Declarative global/session menu capability; not a component boundary. */
   readonly menuVersion: 1;
   /** Read-only current-window text projection. Check independently of Web API v2. */
@@ -566,6 +564,16 @@ export interface ModuleFrontendContext {
   onEvent(listener: (payload: ModuleEventPayload) => void): () => void;
   /** Unchanged narrow module-worker metadata; never authority over the page/root scope. */
   readonly worker?: { entry: string; scope: string };
+}
+
+export interface ModuleFrontendContext extends ModuleFrontendServices {
+  readonly uiVersion: 1;
+  /** Classic shared surfaces, independent of the new React component library. */
+  readonly uiSurfaceVersion: 1;
+}
+
+export interface ModuleNextFrontendContext extends ModuleFrontendServices {
+  readonly ui: ModuleUi;
 }
 
 /**
@@ -598,3 +606,4 @@ export interface ModuleFrontend {
 }
 
 export type ActivateFrontend = (context: ModuleFrontendContext) => ModuleFrontend | Promise<ModuleFrontend>;
+export type ActivateNextFrontend = (context: ModuleNextFrontendContext) => ModuleFrontend | Promise<ModuleFrontend>;

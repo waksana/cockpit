@@ -6,6 +6,7 @@ export type { NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent, Ser
 export { MAX_MODULE_EVENT_BYTES } from '@cockpit/protocol';
 export type { ModuleEventPayload } from '@cockpit/protocol';
 export type * from './frontend.ts';
+export type * from './ui.ts';
 
 export interface ModuleManifest {
   apiVersion: 1;
@@ -14,7 +15,14 @@ export interface ModuleManifest {
   version: string;
   backend: string;
   roles?: ModuleRole[];
-  frontend?: { entry: string; styles?: string[]; assets: string[]; worker?: string };
+  frontend?: {
+    entry: string;
+    styles?: string[];
+    assets: string[];
+    worker?: string;
+    /** Independent new-UI entry; its files must use the same declared asset roots. */
+    next?: { entry: string; styles?: string[] };
+  };
 }
 
 export interface ModuleRole {
@@ -120,6 +128,7 @@ export interface ModuleAsset {
   apiBase: string;
   entry: string;
   styles: string[];
+  next?: { entry: string; styles: string[] };
   config: Readonly<Record<string, unknown>>;
   worker?: { entry: string; scope: string };
 }
