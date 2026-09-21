@@ -302,8 +302,8 @@ MCP 名称原样采用 manifest 的 `mcpServers` key（例如 `example-tools`）
 
 - `roles/list {}` → `{roles: [{moduleId,roleId,moduleName,name,description?}]}`
 - `session/new {cwd,roles?: [{moduleId,roleId}]}` → `{sessionId}`
-- `roles/readiness {sessionId,roles?}` → `{sessionId,loaded,ready,roles,reasons}`
-- `roles/add {sessionId,roles: [{moduleId,roleId}]}` → 显式追加并重载/恢复原会话，结果见下文。
+- `roles/readiness {sessionId,roles?}` → `{sessionId,loaded,ready,roles,reasons,appliedRoles?,rolesNeedReload?}`
+- `roles/add {sessionId,roles: [{moduleId,roleId}]}` → 仅追加已保存角色 metadata，结果见下文。
 
 后端 `context.host.call(name,body)` 只接受 `session/new`、`session/get`、
 `roles/readiness`、`prompt`，参数和结果使用 `@cockpit/protocol` 的 typed intents。
@@ -323,7 +323,8 @@ MCP 名称原样采用 manifest 的 `mcpServers` key（例如 `example-tools`）
 没有已证实角色来源时省略 `roles`，只展示模块；非模块资源不补造来源。
 Web 使用分段标签（例如 `Task | Owner` 或 `Task | Executor、Owner`），模块前不加装饰图标。
 这些来源不是授权、启用、连接或就绪证明，也不是会话全部已选角色的副本。
-追加仍绑定实际返回的 handle 装配：仅持久化、等待恢复、恢复结果未知时不宣称新增角色已提供资源；
+来源仍绑定实际返回的 handle 装配：`roles/add` 只保存选择，旧 handle 继续仅展示原有贡献角色；
+显式重载等待恢复、恢复结果未知时不宣称新增角色已提供资源；
 恢复已返回但后续核验失败时可保留该 handle 已装配的配置来源，不把失败解释为全部就绪。
 `skills/session` 仅在原生 name/path 与此 handle 实际装配的 skill 完全一致时输出来源；
 同名原生替代项或路径缺失不输出。冷恢复重建该匹配，重载后的读取仍按实际原生路径验证。
@@ -344,16 +345,19 @@ MCP 连接/策略状态及当前原生工具 metadata。普通列表、snapshot�
 新建和冷恢复可初始化原生工具表，只读 readiness 不自动加载 unloaded 会话，
 也不补装、重载、启用或自动修复。就绪是请求时能力证据而非永久承诺；
 busy、pending、subagent 等活动状态须另行读取，不能与角色能力就绪混为一谈。
-没有 Task ACL，也不支持在活动工作期间热追加角色。
+没有 Task ACL，不支持对当前 handle 热装配角色；活动工作期间可以保存待下次加载的角色。
 
 #### 已有会话显式追加
 
 `roles/add` / `cockpit_add_roles` 与 Web 会话设置使用同一入口。只追加、不移除；
-请求与已有角色去重后按原规则重新装配，最多 64 个角色。不改变 Task 责任、
+请求与已有角色去重保存，最多 64 个角色。不改变 Task 责任、
 标题、工作目录或会话 ID，不复制会话，不发送初始化 prompt。
-用户明确执行一次“追加并重载/恢复”：已加载会话先确认空闲，再关闭 handle 并
-恢复原 ID；unloaded 会话直接恢复。自我调用的当前回合仍忙，必须结束回合后由
-用户在 Web 或另一调用端执行；没有忙时待追加、后台等待或自动应用队列。
+用户明确执行一次“保存角色”：只更新原有角色持久化 metadata，不调用原生
+stop、close/reload、resume 或 prompt。主回合、子代理/shell、队列/steering、
+待答 ask/plan/elicitation、schedules 均不阻止保存；自我调用与无主用户消息的
+空会话也可以保存。unloaded 会话保持 unloaded，不自动恢复。
+原生加载、关闭、删除等生命周期冲突仍可拒绝；忙于执行本身不是拒绝理由。
+没有后台等待、自动应用队列或新通知机制。
 
 SDK 1.0.13 / runtime 1.0.83 的公开 `options.update` 可更新 `skillDirectories`，
 `skills.enable/disable` 与 `mcp.startServer/restartServer` 也提供局部运行时操作，
@@ -361,35 +365,32 @@ SDK 1.0.13 / runtime 1.0.83 的公开 `options.update` 可更新 `skillDirectori
 `createSession` / `resumeSession` 的 `systemMessage.mode: "append"`，
 不借组织指令字段、custom agent 或隐藏消息模拟热装配。
 
-预检拒绝主回合、活动子代理/shell、队列/steering、待答 ask/plan/elicitation、
-在途操作和正在连接的 MCP。原生安全读取失败也拒绝。已加载会话存在 schedule
-时拒绝，避免重载改变其相对计时或在预检后触发工作；不自动停止 schedule。
-尚无主用户消息的空会话也拒绝重载，避免原生释放后丢失该 ID。
-重载期间拒绝其他会话变更，关闭前再次核对空闲。
+保存时校验本次选择的 catalog module/role ID 及去重后 64 个角色上限；
+角色组合、integrity、资源冲突校验延后到普通加载。不在保存时初始化工具表、
+读取/改写临时 Skill/MCP 开关或验证 session-only 资源是否可重建。
+新角色仅在后续普通显式 reload 或下一次冷加载时按原规则装配；普通 reload 的
+空闲及生命周期限制保持不变。沿用原生/全局默认配置，没有角色追加专用的临时开关
+或 session-only 资源保留层。已保存角色的资源不可用时加载明确失败，不静默丢弃
+角色、不降级为无角色成功，也不创建替代会话。
 
-沿用宿主配置、原生发现与全部已有角色；在关闭前检查资源冲突及可重建来源。
-追加操作会初始化原生工具表以取得可比较的当前工具清单；这不写入全局配置，也不发送消息。
-无法从当前配置重建的 session-only MCP/Skill、stopped/not_configured MCP
-明确拒绝，不猜测配置或偷偷丢弃。已有 Skill/MCP 的临时启用选择在本次操作内读取，
-通过恢复参数及必要的单次原生开关调用保留，并检查原有 Skill 路径/状态与工具可见性。
-这些临时选择不另行持久化为资源镜像，未来普通冷恢复仍遵循原生全局配置。
-原生 SDK 不公开 live MCP endpoint/config 身份；这里仍按已有的声明来源契约
-重建，不能核验外部调用曾对同名服务器作出的配置替换。
+结果为 `{sessionId,status,roles,appliedRoles,loaded,rolesNeedReload,error?,recovery?}`。
+`roles` 是已保存选择；`appliedRoles` 是当前 handle 已装配角色。
+`status` 为 `saved | unchanged | uncertain`：`saved` 只表示保存成功，不表示已装配
+或就绪；相同已保存选择返回 `unchanged`，即使还未装配，也不会触发加载或修复。
+兼容性变更：不再返回 `applied` / `incomplete`，删除 `phase` 和内嵌 `readiness`。
+`SessionMeta` / `SessionBrief` 可选返回 `appliedRoles` 与 `rolesNeedReload`；
+`rolesNeedReload` 仅在 loaded 且已保存/已装配角色 ID 集合不同时为 true。
+unloaded 时为 false，表示下次加载采用保存选择，不表示已就绪。
+`roles/readiness` 保留独立、被动、显式检查入口，可选返回 `appliedRoles` 与
+`rolesNeedReload`，不因此自动装配新角色。普通读取不额外计算 readiness。
 
-结果包含 `status`、`phase`、`roles`（已保存选择）、`appliedRoles`（当前 handle
-已确认装配）、`loaded`，以及可用的 `readiness`、`error`、`recovery`。
-`applied` 不等于 `readiness.ready`：原先禁用的资源不会因追加而擅自启用。
-相同选择已装配时返回 `unchanged`，不重复重载、不修复禁用资源；
-unloaded 或此前只保存未装配的同一选择仍可由用户显式请求恢复。
-`roles/readiness` 另返回 `appliedRoles`，只在用户明确检查时读取实际能力。
-
-持久化与 native close/resume **不是跨系统原子事务**。预检失败不保存选择；
-通过预检后先保存组合选择，再执行关闭、恢复及核对。保存/关闭/恢复/核对失败
-分别保留实际阶段，返回 `incomplete` 或 `uncertain`，不回滚已发生的副作用，
-不自动重试，也不创建替代会话。不确定结果中的 handle 信息是最后确认值，
-不是仍然活跃的保证。先用 `session/get`、`roles/readiness` 及相应原生资源读取
-核对同一 ID；解决具体错误后才显式重试或恢复。已保存选择会用于后续冷恢复，
-即使原请求的 native 应用未完成。网络错误同样不能视为“什么都没发生”。
+持久化异常后，若能读回保存状态，返回 `uncertain` 和检查/恢复指导；
+若读回也失败，则明确报错（`AggregateError`），不返回陈旧的保存快照。
+两者都不自动重试或回滚。
+先用 `session/get` 核对同一 ID 的保存选择；需要能力证据时另行显式读取
+`roles/readiness` 及原生资源。解决具体错误后才由调用者显式恢复。
+网络错误同样不能视为“什么都没保存”。保存选择将用于后续普通加载；
+metadata 保存成功不是未来 native 加载成功的保证。
 
 宿主不提供自动队列推进。保留单次 `session/interrupt`（保留队列）、
 按 ID 删除 pending、当前状态读取、prompt 以及普通 Stop/cancel。

@@ -102,9 +102,9 @@ test('native delete sends one canonical request without any module preflight or 
   assertOnlyPost(fetch, 'session/delete', { sessionId: 'session' });
 });
 
-for (const status of ['applied', 'unchanged', 'incomplete', 'uncertain'] as const) {
+for (const status of ['saved', 'unchanged', 'uncertain'] as const) {
   test(`role addition sends one explicit request and preserves ${status} details`, async t => {
-    const result = { sessionId: 'session', status, phase: 'resume', roles: [], appliedRoles: [], loaded: false,
+    const result = { sessionId: 'session', status, roles: [], appliedRoles: [], loaded: false, rolesNeedReload: false,
       error: 'Synthetic diagnostic', recovery: 'Inspect before retry' };
     const { client, fetch } = setup(t, async () => Response.json(result));
     assert.deepEqual(await client.addRoles('session', [{ moduleId: 'fixture', roleId: 'reviewer' }]), result);

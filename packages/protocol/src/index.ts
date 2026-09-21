@@ -355,16 +355,16 @@ export const RoleReadiness = z.object({
   sessionId: z.string(), loaded: z.boolean(), ready: z.boolean(),
   roles: z.array(SessionRole), reasons: z.array(z.string()),
   appliedRoles: z.array(SessionRole).optional(),
+  rolesNeedReload: z.boolean().optional(),
 });
 export type RoleReadiness = z.infer<typeof RoleReadiness>;
 export const RoleAdditionResult = z.object({
   sessionId: z.string(),
-  status: z.enum(['applied', 'unchanged', 'incomplete', 'uncertain']),
-  phase: z.enum(['persist', 'close', 'resume', 'verify']),
+  status: z.enum(['saved', 'unchanged', 'uncertain']),
   roles: z.array(SessionRole),
   appliedRoles: z.array(SessionRole),
   loaded: z.boolean(),
-  readiness: RoleReadiness.optional(),
+  rolesNeedReload: z.boolean(),
   error: z.string().optional(),
   recovery: z.string().optional(),
 });
@@ -372,6 +372,8 @@ export type RoleAdditionResult = z.infer<typeof RoleAdditionResult>;
 
 export const SessionMeta = z.object({
   roles: z.array(SessionRole).optional(),
+  appliedRoles: z.array(SessionRole).optional(),
+  rolesNeedReload: z.boolean().optional(),
   sessionId: z.string(),
   title: z.string(),
   cwd: z.string(),
@@ -447,6 +449,8 @@ export type PanelSection = z.infer<typeof PanelSection>;
 // subscribing to the SSE snapshot stream.
 export const SessionBrief = z.object({
   roles: z.array(SessionRole).optional(),
+  appliedRoles: z.array(SessionRole).optional(),
+  rolesNeedReload: z.boolean().optional(),
   sessionId: z.string(),
   title: z.string(),
   cwd: z.string(),
@@ -563,7 +567,7 @@ export const Intents = {
     result: z.object({ roles: z.array(SessionRole.extend({ description: z.string().optional() })) }),
   },
   'roles/add': {
-    description: 'Explicitly append module roles and reload/resume the same session. Requires idle native work; never interrupts, queues, sends a prompt or retries. Selected, applied and ready are separate. Inspect incomplete/uncertain outcomes before any explicit recovery.',
+    description: 'Save additional module roles for the same session, including while native work is busy. Does not load, reload, interrupt or send a prompt. Saved roles take effect on an explicit idle reload or the next cold load; ordinary native/global resource defaults apply. rolesNeedReload compares saved roles with the current handle. Saving does not establish capability readiness; inspect uncertain persistence before retrying.',
     body: z.object({ sessionId: z.string().min(1), roles: z.array(RoleSelection).min(1).max(64) }).strict(),
     result: RoleAdditionResult,
   },

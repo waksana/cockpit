@@ -429,7 +429,8 @@ test('ordinary MCP session reads retain selected roles without a readiness check
     for (const name of ['cockpit_list_sessions', 'cockpit_get_session']) {
       const args = name === 'cockpit_get_session' ? { session_id: 'B' } : {};
       const rendered = await call(name, args);
-      assert.match(rendered.text, /roles \(selection, not readiness\): board\/owner/);
+      assert.match(rendered.text, /roles \(saved selection, not readiness\): board\/owner/);
+      assert.doesNotMatch(rendered.text, /applied roles \(current handle\):|roles need reload:/);
       assert.doesNotMatch(rendered.text, /role readiness:|ready at read time/);
       const result = await json(name, { ...args, response_format: 'json' });
       assert.doesNotMatch(JSON.stringify(result), /roleReadiness/);
@@ -439,6 +440,43 @@ test('ordinary MCP session reads retain selected roles without a readiness check
     assert.ok(requests.every(request => !request.path.includes('roles/readiness')));
   } finally { delete meta.roles; }
 });
+
+for (const loaded of [true, false]) {
+  test(`ordinary MCP reads expose saved/applied roles without native work, loaded:${loaded}`, async () => {
+    const originalLoaded = meta.loaded;
+    const originalStatus = meta.status;
+    meta.loaded = loaded;
+    meta.status = loaded ? 'running' : 'unloaded';
+    meta.roles = [{ moduleId: 'board', roleId: 'owner', moduleName: 'Board', name: 'Owner' }];
+    meta.appliedRoles = [];
+    meta.rolesNeedReload = loaded;
+    try {
+      for (const name of ['cockpit_list_sessions', 'cockpit_get_session']) {
+        const args = name === 'cockpit_get_session' ? { session_id: 'B' } : {};
+        const rendered = await call(name, args);
+        assert.match(rendered.text, /roles \(saved selection, not readiness\): board\/owner/);
+        assert.match(rendered.text, /applied roles \(current handle\): none/);
+        assert.match(rendered.text, new RegExp(`roles need reload: ${loaded}`));
+        assert.match(rendered.text, loaded ? /ordinary explicit reload/ : /Saved roles apply on next load/);
+        const result = await json(name, { ...args, response_format: 'json' }) as {
+          sessions?: SessionMeta[]; roles?: SessionMeta['roles']; appliedRoles?: SessionMeta['appliedRoles']; rolesNeedReload?: boolean;
+        };
+        const state = result.sessions?.[0] ?? result;
+        assert.deepEqual(state.roles, meta.roles);
+        assert.deepEqual(state.appliedRoles, []);
+        assert.equal(state.rolesNeedReload, loaded);
+      }
+      assert.equal(requests.length, 4);
+      assert.ok(requests.every(request => ['/intent/session/get', '/intent/session/list'].includes(request.path)));
+    } finally {
+      meta.loaded = originalLoaded;
+      meta.status = originalStatus;
+      delete meta.roles;
+      delete meta.appliedRoles;
+      delete meta.rolesNeedReload;
+    }
+  });
+}
 
 test('registry exposes native controls without parked file, organization or restart tools', async () => {
   const { tools } = await client.listTools();

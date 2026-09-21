@@ -39,17 +39,21 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
   store.setState(state => ({
     sessions: state.sessions.map((session, index) => ({
       ...session, roles: index === 0 ? roles.map(roleSummary) : index === 1 ? [roleSummary(roles[0])] : [],
+      appliedRoles: session.loaded ? index === 0 ? roles.map(roleSummary) : index === 1 ? [roleSummary(roles[0])] : [] : [],
+      rolesNeedReload: false,
       ...(index === 0 ? { title: '模块角色与资源（合成）', status: 'idle' as const, nativeProcessing: false, intent: null } : {}),
     })),
     listRoles: async () => catalog,
     roleReadiness: async id => {
       const session = find(id);
-      return { sessionId: id, roles: session.roles ?? [], appliedRoles: session.loaded ? session.roles ?? [] : [],
-        loaded: session.loaded, ready: session.loaded, reasons: session.loaded ? [] : ['Synthetic session is unloaded'] };
+      return { sessionId: id, roles: session.roles ?? [], appliedRoles: session.appliedRoles ?? [],
+        rolesNeedReload: session.rolesNeedReload, loaded: session.loaded,
+        ready: session.loaded && !session.rolesNeedReload,
+        reasons: !session.loaded ? ['Synthetic session is unloaded'] : session.rolesNeedReload ? ['Saved roles need reload'] : [] };
     },
     addRoles: async (id, selected) => {
       const original = find(id);
-      if (original.loaded && original.status !== 'idle') throw new Error('Synthetic session is busy');
+      if (original.loading || original.closing) throw new Error('Synthetic session is transitioning');
       const added = selected.map(selection => {
         const role = catalog.find(role => role.moduleId === selection.moduleId && role.roleId === selection.roleId);
         if (!role) throw new Error('Unknown synthetic role');
@@ -59,11 +63,13 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
       for (const role of added) {
         if (!combined.some(saved => saved.moduleId === role.moduleId && saved.roleId === role.roleId)) combined.push(role);
       }
+      const appliedRoles = original.appliedRoles ?? [];
+      const rolesNeedReload = original.loaded && (combined.length !== appliedRoles.length
+        || combined.some(role => !appliedRoles.some(applied => role.moduleId === applied.moduleId && role.roleId === applied.roleId)));
       store.setState(state => ({ sessions: state.sessions.map(session => session.sessionId === id
-        ? { ...session, roles: combined, loaded: true } : session) }));
-      return { sessionId: id, status: combined.length === original.roles?.length ? 'unchanged' : 'applied',
-        phase: 'verify', roles: combined, appliedRoles: combined, loaded: true,
-        readiness: await store.getState().roleReadiness(id) };
+        ? { ...session, roles: combined, rolesNeedReload } : session) }));
+      return { sessionId: id, status: combined.length === (original.roles?.length ?? 0) ? 'unchanged' : 'saved',
+        roles: combined, appliedRoles, loaded: original.loaded, rolesNeedReload };
     },
     listDir: async (path = '/workspace') => {
       if (path !== '/workspace' && path !== '/workspace/cockpit') throw new Error(`Unknown synthetic directory: ${path}`);
@@ -79,7 +85,8 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
       });
       const sessionId = `synthetic-role-session-${store.getState().sessions.length}`;
       const session = { ...find(workspaceSessionId), sessionId, title: '新建角色会话（合成）', cwd,
-        roles: selectedRoles, messages: [], lastActivity: Date.now() };
+        roles: selectedRoles, appliedRoles: selectedRoles, rolesNeedReload: false, loaded: true,
+        messages: [], lastActivity: Date.now() };
       store.setState(state => ({ sessions: [session, ...state.sessions] }));
       return sessionId;
     },

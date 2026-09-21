@@ -52,7 +52,7 @@ const engine: ServerEngine = {
   newSession: async (...args) => record('newSession', args, 'created'),
   listRoles: (...args) => record('listRoles', args, []),
   addRoles: async (...args) => record('addRoles', args, {
-    sessionId: 's', status: 'applied' as const, phase: 'verify' as const, roles: [], appliedRoles: [], loaded: true,
+    sessionId: 's', status: 'saved' as const, roles: [], appliedRoles: [], loaded: true, rolesNeedReload: false,
   }),
   roleReadiness: async (...args) => record('roleReadiness', args, { sessionId: 's', loaded: false, ready: false, roles: [], reasons: ['unloaded'] }),
   forkSession: async (...args) => record('forkSession', args, { sessionId: 'forked' }),
