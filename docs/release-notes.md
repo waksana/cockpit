@@ -1,17 +1,26 @@
 # Unreleased source: append roles to an existing session
 
 Adds `roles/add`, `cockpit_add_roles` and a Web session-settings action for
-explicit append-only role assembly on the same session ID. Loaded sessions must
-be idle; unloaded sessions resume directly. No hidden prompt, copied session,
-busy waiting or automatic retry. Existing roles use the original composition and
-module-provenance rules; this does not change Task ownership or delegation.
+metadata-only append on the same session ID. Saving is allowed during main turns,
+subagents, shells, queues, questions and schedules; unloaded sessions stay unloaded.
+No native stop/reload/resume/prompt, copied session, busy waiting, new notification
+mechanism or automatic retry. Native lifecycle load/close/delete conflicts may
+reject. Catalog IDs and the combined 64-role limit are checked when saving;
+composition, integrity and resource conflicts are validated at ordinary load.
+This does not change Task ownership, delegation or role persistence.
 
-The operation separates saved selection, acknowledged handle assembly and
-on-demand readiness. Native temporary Skill/MCP choices are carried through this
-reload, without a persistent resource mirror. Preflight rejects unreconstructable
-session-only resources, unsafe work, schedules and empty unsaved conversation
-history. Persistence/native partial failures remain explicit and recoverable by
-inspection, not an assumed atomic rollback. See the
+New roles apply only on ordinary explicit reload or next cold load, under normal
+native/global defaults without special retention of temporary switches or
+session-only resources. Unavailable saved resources fail loading, not silently
+fall back. Saved `roles`, live `appliedRoles` and `rolesNeedReload` distinguish
+selection from application; unloaded sessions have next-load semantics and no
+reload flag. Readiness remains a separate passive check.
+
+**Compatibility:** the addition result now uses `saved | unchanged | uncertain`,
+not `applied | unchanged | incomplete | uncertain`; `phase` and embedded
+`readiness` are removed. `saved` is not proof of application or readiness.
+Duplicate saved choices return `unchanged` without applying them. Unknown
+persistence outcomes require inspection, never automatic retry or rollback. See the
 [role contract](module-contract-draft.md#已有会话显式追加) for limitations.
 No Task package adaptation, release, deployment or real-session mutation is implied.
 

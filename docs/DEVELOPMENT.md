@@ -10,11 +10,16 @@ The [module contract](module-contract-draft.md) describes the implemented local,
 trusted, cold-loaded package model: backend API v1, Web API v2 and public UI v1.
 Backends run in the host Node process; `publish`/`onEvent` data events are implemented.
 Unimplemented capabilities are listed separately at the end of that contract.
-Creation-time and explicit idle-session role additions, and the narrow backend `host.call` bridge, are additive
+Creation-time roles, metadata-only existing-session role additions, and the narrow backend `host.call` bridge are additive
 development capabilities (backend API remains v1). The module contract owns their
 manifest, explicit on-demand capability readiness and cold-resume semantics.
-Ordinary session reads expose selected-role identity only, not readiness; there
-is no readiness cache, badge or automatic queue advancement.
+Ordinary session reads expose saved/applied role identity and reload state, not
+readiness; there is no readiness cache, badge or automatic queue advancement.
+`roles/add` saves selections even during active work without native lifecycle
+calls. New roles apply on ordinary explicit reload or next cold load, under
+normal lifecycle restrictions and native/global defaults; temporary switches and
+session-only resources receive no special preservation. The result uses
+`saved | unchanged | uncertain`, with no `phase` or embedded `readiness`.
 Modules remain cold-loaded: installation and version selection take effect on
 the next host start. Hot loading, hot enable/disable and hot updates are not product goals.
 Do not reserve a hot-switching framework or change the trusted main-process model

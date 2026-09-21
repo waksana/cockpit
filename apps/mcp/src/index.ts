@@ -13,6 +13,7 @@ import {
   fail,
   capped,
   cappedJson,
+  roleSummary,
   shrinkList,
   type ToolResult,
   McpSessionResult,
@@ -40,7 +41,7 @@ server.registerTool(
     title: 'List cockpit sessions',
     description:
       'List Copilot sessions known to cockpit (newest activity ' +
-      'first), each with its title, working directory, status, and current model. Use this ' +
+      'first), each with its title, working directory, status, current model, saved/applied roles and reload state. Use this ' +
       'to find a session id before renaming it, toggling its MCP servers / skills, or reading ' +
       'its transcript. Authoritative: the same view the web sidebar shows.',
     inputSchema: {
@@ -63,6 +64,8 @@ server.registerTool(
         model: s.currentModelId ?? null,
         lastActivity: s.lastActivity,
         roles: s.roles ?? [],
+        ...(s.appliedRoles === undefined ? {} : { appliedRoles: s.appliedRoles }),
+        ...(s.rolesNeedReload === undefined ? {} : { rolesNeedReload: s.rolesNeedReload }),
       }));
       const structured = { sessions: items, count: items.length, total: sessions.length };
       if (response_format === 'json') return ok(cappedJson(structured));
@@ -71,7 +74,7 @@ server.registerTool(
         const model = s.model ? ` · ${s.model}` : '';
         const loaded = s.loaded ? '' : ' (unloaded)';
         const active = Number.isFinite(s.lastActivity) ? new Date(s.lastActivity).toLocaleString() : '—';
-        return `- ${s.title}\n    id: ${s.sessionId}\n    status: ${s.status}${loaded}${model}\n    cwd: ${s.cwd}\n    active: ${active}\n    roles (selection, not readiness): ${s.roles.map(role => `${role.moduleId}/${role.roleId}`).join(', ') || 'none'}`;
+        return `- ${s.title}\n    id: ${s.sessionId}\n    status: ${s.status}${loaded}${model}\n    cwd: ${s.cwd}\n    active: ${active}\n    ${roleSummary(s).join('\n    ')}`;
       });
       return ok(
         capped(`# Sessions (${sessions.length})\n${lines.join('\n')}`)

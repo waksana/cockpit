@@ -611,16 +611,49 @@ test('source changes fence narrow requests and clear stale native fields immedia
   const store = createCockpitStore();
   const h = setup(t, store);
   h.source.open();
-  h.snapshot(['a'], { sessions: [{ ...meta('a'), currentModelId: 'old', availableModels: [], scheduleCount: 2 }] });
+  const roles = [{ moduleId: 'fixture', roleId: 'reviewer', moduleName: 'Fixture', name: 'Reviewer' }];
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), currentModelId: 'old', availableModels: [], scheduleCount: 2,
+    roles, appliedRoles: [], rolesNeedReload: true }] });
   h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['model'] });
   await setImmediate();
   h.source.emit({ type: 'session/patch', sessionId: 'a', loaded: false, status: 'unloaded', ask: null });
   assert.equal(h.request(0).init?.signal?.aborted, true);
   assert.equal(session('a', store).availableModels, undefined);
   assert.equal(session('a', store).scheduleCount, undefined);
+  assert.deepEqual(session('a', store).roles, roles);
+  assert.deepEqual(session('a', store).appliedRoles, []);
+  assert.equal(session('a', store).rolesNeedReload, false);
   await h.reply(0, { meta: { sessionId: 'a', loaded: true, currentModelId: 'obsolete' } });
   assert.equal(session('a', store).currentModelId, undefined);
   assert.equal(session('a', store).loaded, false);
+});
+
+test('role identity invalidation fences stale saved/applied roles and tracks explicit reload', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  const roles = [{ moduleId: 'fixture', roleId: 'reviewer', moduleName: 'Fixture', name: 'Reviewer' }];
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), roles: [], appliedRoles: [], rolesNeedReload: false }] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['identity', 'model'] });
+  await setImmediate();
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['identity'] });
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, roles, appliedRoles: roles,
+    rolesNeedReload: true, currentModelId: 'fresh' } });
+  assert.deepEqual(session('a', store).roles, []);
+  assert.deepEqual(session('a', store).appliedRoles, []);
+  assert.equal(session('a', store).rolesNeedReload, false);
+  assert.equal(session('a', store).currentModelId, 'fresh');
+  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['identity'] });
+  await h.reply(1, { meta: { sessionId: 'a', loaded: true, roles, appliedRoles: [], rolesNeedReload: true } });
+  assert.deepEqual(session('a', store).roles, roles);
+  assert.deepEqual(session('a', store).appliedRoles, []);
+  assert.equal(session('a', store).rolesNeedReload, true);
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['identity'] });
+  await setImmediate();
+  await h.reply(2, { meta: { sessionId: 'a', loaded: true, roles, appliedRoles: roles, rolesNeedReload: false } });
+  assert.deepEqual(session('a', store).appliedRoles, roles);
+  assert.equal(session('a', store).rolesNeedReload, false);
+  assert.equal(h.requests.length, 3, 'only identity reads, never reload or role polling');
 });
 
 test('queue invalidations discard old selected reads after navigation without reading the hidden queue', async t => {
@@ -1269,7 +1302,7 @@ const sessionSkills: IntentResult<'skills/session'>['skills'] = [{ name: 'fixtur
 const skill: IntentResult<'skills/read'> = { name: 'fixture-skill', body: 'fixture body', enabled: false };
 const directory: IntentResult<'fs/listDir'> = { path: '/fixture', parent: '/', entries: [] };
 const roleAddition: IntentResult<'roles/add'> = {
-  sessionId: 'a', status: 'incomplete', phase: 'resume', roles: [], appliedRoles: [], loaded: false,
+  sessionId: 'a', status: 'uncertain', roles: [], appliedRoles: [], loaded: false, rolesNeedReload: false,
   error: 'Synthetic partial outcome', recovery: 'Inspect before retry',
 };
 const roleReadiness: IntentResult<'roles/readiness'> = {
