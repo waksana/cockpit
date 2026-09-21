@@ -490,6 +490,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
               return metaToSession({
                 title: s.title, cwd: s.cwd, createdAt: s.createdAt,
                 lastActivity: s.lastActivity, lastActivitySource: s.lastActivitySource,
+                roles: s.roles, appliedRoles: [], rolesNeedReload: false,
                 loaded: false, status: 'unloaded', ask: null,
                 ...patch,
               }, s);

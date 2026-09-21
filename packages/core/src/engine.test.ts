@@ -277,7 +277,6 @@ function harness(t: TestContext, options: {
   const discoveredMcp: DiscoveredMcp[] = Object.keys(mcpDefinitions).map(name => ({ name, source: 'user', enabled: true }));
   let failure: Error | undefined;
   const runtime = {
-    validateSessionConfig: t.mock.fn(() => ({ mcpNames: [], skillDirectories: [] })),
     get failure() { return failure; },
     onFatal: t.mock.fn((handler: (error: Error) => void) => {
       fatalListeners.add(handler);
@@ -483,30 +482,58 @@ async function roleAdditionFixture(t: TestContext) {
   return { ...h, id, native, catalog, saved, provider };
 }
 
-test('role addition preserves ID/history/cwd, unions roles, handles unloaded and avoids duplicate reload', async t => {
+test('role addition only saves metadata; explicit reload applies the union to the same session', async t => {
   const h = await roleAdditionFixture(t);
   const before = structuredClone(h.native.state.events);
+  const config = h.configs.get(h.id);
+  const assemble = t.mock.method(h.provider, 'assemble');
   const first = await h.engine.addRoles(h.id, [h.catalog[0]!]);
-  assert.equal(first.status, 'applied', JSON.stringify(first));
-  assert.equal(first.readiness?.ready, true);
-  assert.deepEqual(first.appliedRoles, [h.catalog[0]]);
+  assert.equal(first.status, 'saved', JSON.stringify(first));
+  assert.equal(first.rolesNeedReload, true);
+  assert.deepEqual(first.appliedRoles, []);
   const second = await h.engine.addRoles(h.id, [h.catalog[1]!, h.catalog[1]!]);
-  assert.equal(second.status, 'applied');
+  assert.equal(second.status, 'saved');
   assert.deepEqual(second.roles, h.catalog);
+  assert.equal(assemble.mock.callCount(), 0, 'composition is deferred to normal loading');
+  assert.equal(h.configs.get(h.id), config);
   assert.equal(h.runtime.createSession.mock.callCount(), 1);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
   assert.equal(h.native.sdk.send.mock.callCount(), 0);
   assert.equal(h.native.sdk.abort.mock.callCount(), 0);
   assert.deepEqual(h.native.state.events, before);
   assert.equal((await h.engine.getMeta(h.id))?.cwd, h.cwd);
-  assert.equal((await h.engine.addRoles(h.id, h.catalog)).status, 'unchanged');
-  assert.equal(h.runtime.closeSession.mock.callCount(), 2);
+  for (const meta of [(await h.engine.getMeta(h.id))!, (await h.engine.listLive())[0]!]) {
+    assert.deepEqual(meta.roles, h.catalog);
+    assert.deepEqual(meta.appliedRoles, []);
+    assert.equal(meta.rolesNeedReload, true);
+  }
+  const duplicate = await h.engine.addRoles(h.id, h.catalog);
+  assert.equal(duplicate.status, 'unchanged');
+  assert.equal(duplicate.rolesNeedReload, true);
+  assert.equal((await h.engine.roleReadiness(h.id)).ready, false);
+  await h.engine.reload(h.id);
+  const applied = (await h.engine.getMeta(h.id))!;
+  assert.equal(applied.sessionId, h.id);
+  assert.deepEqual(applied.appliedRoles, h.catalog);
+  assert.equal(applied.rolesNeedReload, false);
+  assert.equal((await h.engine.roleReadiness(h.id)).ready, true);
+  assert.equal(h.runtime.closeSession.mock.callCount(), 1);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
+  assert.deepEqual(h.native.state.events, before);
   await h.engine.unload(h.id);
-  assert.equal((await h.engine.addRoles(h.id, h.catalog)).status, 'applied');
-  assert.equal(h.runtime.closeSession.mock.callCount(), 3, 'unloaded addition does not close another handle');
+  const unloaded = await h.engine.addRoles(h.id, h.catalog);
+  assert.equal(unloaded.status, 'unchanged');
+  assert.equal(unloaded.loaded, false);
+  assert.equal(unloaded.rolesNeedReload, false);
+  assert.deepEqual(unloaded.appliedRoles, []);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 1, 'saving does not load');
+  await h.engine.load(h.id);
+  assert.deepEqual((await h.engine.getMeta(h.id))?.appliedRoles, h.catalog);
 });
 
-for (const activity of ['main', 'subagent', 'shell', 'queue', 'steering', 'mcp', 'ask', 'plan'] as const) {
-  test(`role addition rejects ${activity} before saving or closing`, async t => {
+for (const activity of ['main', 'subagent', 'shell', 'queue', 'steering', 'mcp', 'ask', 'plan', 'schedule'] as const) {
+  test(`role addition saves during ${activity} without touching native work`, async t => {
     const h = await roleAdditionFixture(t);
     let answer: Promise<unknown> | undefined;
     switch (activity) {
@@ -518,93 +545,133 @@ for (const activity of ['main', 'subagent', 'shell', 'queue', 'steering', 'mcp',
       case 'mcp': h.native.state.mcp.host!.pendingConnections = ['fixture']; break;
       case 'ask': answer = Promise.resolve(h.configs.get(h.id)!.onUserInputRequest!({ question: 'synthetic question', choices: ['yes'], allowFreeform: true }, { sessionId: h.id })); break;
       case 'plan': answer = Promise.resolve(h.configs.get(h.id)!.onExitPlanModeRequest!({ summary: 'synthetic plan', actions: ['interactive'], recommendedAction: 'interactive' }, { sessionId: h.id })); break;
+      case 'schedule': h.native.state.schedules = [schedule()]; break;
     }
-    await assert.rejects(h.engine.addRoles(h.id, [h.catalog[1]!]), protectedWork);
-    assert.equal(h.saved.size, 0);
+    const before = structuredClone(h.native.state);
+    const result = await h.engine.addRoles(h.id, [h.catalog[1]!]);
+    assert.equal(result.status, 'saved');
+    assert.equal(result.rolesNeedReload, true);
+    assert.deepEqual(h.saved.get(h.id), [h.catalog[1]]);
+    assert.deepEqual(h.native.state, before);
     assert.equal(h.runtime.closeSession.mock.callCount(), 0);
     assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
     assert.equal(h.native.sdk.abort.mock.callCount(), 0);
+    assert.equal(h.native.sdk.send.mock.callCount(), 0);
+    assert.equal(h.native.rpc.skills.list.mock.callCount(), 0);
+    assert.equal(h.native.rpc.tools.getCurrentMetadata.mock.callCount(), 0);
     if (activity === 'ask') await h.engine.respondAsk(h.id, (await h.engine.getMeta(h.id))!.ask!.requestId, 'yes', false);
     if (activity === 'plan') await h.engine.respondPlan(h.id, (await h.engine.getMeta(h.id))!.planRequest!.requestId, 'interactive');
     await answer;
   });
 }
 
-test('role preflight rejects empty history, schedules, unknown resources, base conflicts and invalid roles without persistence', async t => {
+test('role save accepts empty history and runtime-only resources without reconfiguring them', async t => {
   const h = await roleAdditionFixture(t);
   h.native.state.events = [];
-  await assert.rejects(h.engine.addRoles(h.id, [h.catalog[0]!]), /empty session/i);
-  h.native.state.events = [user('synthetic-history')];
   h.native.state.schedules = [schedule()];
-  await assert.rejects(h.engine.addRoles(h.id, [h.catalog[0]!]), /schedules/);
-  h.native.state.schedules = [];
-  h.native.state.mcp = mcpState([{ name: 'ephemeral-only', status: 'connected' }]);
-  await assert.rejects(h.engine.addRoles(h.id, [h.catalog[0]!]), /session-only/);
-  h.native.state.mcp = mcpState();
+  h.native.state.mcp = mcpState([{ name: 'ephemeral-only', status: 'stopped' }]);
   h.native.state.skills = [{ name: 'ephemeral-only', path: '/synthetic/unknown/SKILL.md', enabled: true } as Skill];
-  await assert.rejects(h.engine.addRoles(h.id, [h.catalog[0]!]), /session-only skill/);
-  h.native.state.skills = [];
-  h.runtime.validateSessionConfig.mock.mockImplementationOnce(() => { throw new Error('Conflicting base configuration'); });
-  await assert.rejects(h.engine.addRoles(h.id, [h.catalog[0]!]), /Conflicting base/);
-  await assert.rejects(h.engine.addRoles(h.id, [{ moduleId: 'missing', roleId: 'missing' }]), /Unknown role/);
-  assert.equal(h.saved.size, 0);
+  const before = structuredClone(h.native.state);
+  assert.equal((await h.engine.addRoles(h.id, [h.catalog[0]!])).status, 'saved');
+  assert.deepEqual(h.native.state, before);
   assert.equal(h.runtime.closeSession.mock.callCount(), 0);
 });
 
-test('role reload carries temporary switches without persisting a resource mirror', async t => {
+test('role save validates catalog and total role limit, not deferred resource composition', async t => {
   const h = await roleAdditionFixture(t);
-  h.native.state.skills = [{ name: 'existing', path: '/synthetic/existing/SKILL.md', enabled: false } as Skill];
-  h.discoveredSkills.push({ name: 'existing', path: '/synthetic/existing/SKILL.md' } as ServerSkill);
-  h.native.state.mcp = mcpState([{ name: 'existing', status: 'disabled' }], ['existing']);
-  h.discoveredMcp.push({ name: 'existing', source: 'user', enabled: true });
-  const result = await h.engine.addRoles(h.id, [h.catalog[0]!]);
-  assert.equal(result.status, 'applied', JSON.stringify(result));
-  assert.deepEqual(h.configs.get(h.id)!.disabledSkills, ['existing']);
-  assert.deepEqual(h.configs.get(h.id)!.disabledMcpServers, ['existing']);
-  assert.deepEqual(h.saved.get(h.id), [h.catalog[0]]);
+  await assert.rejects(h.engine.addRoles(h.id, []), /At least one/);
+  await assert.rejects(h.engine.addRoles(h.id, [{ moduleId: 'missing', roleId: 'missing' }]), /Unknown module role/);
+  assert.equal(h.saved.size, 0);
+  const all = Array.from({ length: 65 }, (_, index) => ({ moduleId: 'fixture', moduleName: 'Fixture', roleId: `role-${index}`, name: `Role ${index}` }));
+  t.mock.method(h.provider, 'list', () => all);
+  assert.equal((await h.engine.addRoles(h.id, all.slice(0, 64))).status, 'saved');
+  await assert.rejects(h.engine.addRoles(h.id, all.slice(64)), /at most 64/);
+  assert.equal(h.saved.get(h.id)?.length, 64);
+  t.mock.method(h.provider, 'assemble', async () => { throw new Error('synthetic unavailable role resource'); });
+  await assert.rejects(h.engine.reload(h.id), /synthetic unavailable role resource/);
+  assert.equal(h.saved.get(h.id)?.length, 64);
+  assert.equal((await h.engine.getMeta(h.id))?.loaded, false);
 });
 
-for (const phase of ['persist', 'close', 'resume', 'verify'] as const) {
-  test(`role addition exposes ${phase} failure without rollback, retry or replacement`, async t => {
+for (const written of [false, true]) {
+  test(`role persistence failure afterWrite=${written} returns uncertainty without native effects`, async t => {
     const h = await roleAdditionFixture(t);
-    if (phase === 'persist') t.mock.method(h.provider, 'save', () => { throw new Error('synthetic write failure'); });
-    if (phase === 'close') h.runtime.closeSession.mock.mockImplementationOnce(async () => { throw new Error('synthetic close acknowledgement lost'); });
-    if (phase === 'resume') h.runtime.resumeSession.mock.mockImplementationOnce(async () => { throw new Error('synthetic resume acknowledgement lost'); });
-    if (phase === 'verify') {
-      h.native.rpc.skills.list.mock.mockImplementationOnce(async () => ({ skills: [] }), 0);
-      h.native.rpc.skills.list.mock.mockImplementationOnce(async () => { throw new Error('synthetic verification failure'); }, 1);
-    }
+    const save = t.mock.method(h.provider, 'save', (id, roles) => {
+      if (written) h.saved.set(id, roles);
+      throw new Error('synthetic write acknowledgement failure');
+    });
     const result = await h.engine.addRoles(h.id, [h.catalog[0]!]);
-    assert.equal(result.phase, phase);
-    assert.equal(result.status, phase === 'close' || phase === 'resume' ? 'uncertain' : 'incomplete', JSON.stringify(result));
+    assert.equal(result.status, 'uncertain');
     assert.match(result.error!, /synthetic/);
-    assert.match(result.recovery!, /No rollback or retry/);
+    assert.match(result.recovery!, /No reload, rollback or retry/);
+    assert.equal(save.mock.callCount(), 1);
     assert.equal(h.runtime.createSession.mock.callCount(), 1);
-    assert.ok(h.runtime.closeSession.mock.callCount() <= 1);
-    assert.ok(h.runtime.resumeSession.mock.callCount() <= 1);
-    assert.deepEqual(result.roles, phase === 'persist' ? [] : [h.catalog[0]]);
-    assert.deepEqual(result.appliedRoles, phase === 'verify' ? [h.catalog[0]] : []);
+    assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+    assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+    assert.deepEqual(result.roles, written ? [h.catalog[0]] : []);
+    assert.deepEqual(result.appliedRoles, []);
+    assert.equal(result.rolesNeedReload, written);
   });
 }
 
-test('role addition owns the lifecycle across persistence and native resume', async t => {
+test('role save never returns a success-shaped snapshot when persistence readback is unavailable', async t => {
+  const h = await roleAdditionFixture(t);
+  const read = h.provider.read;
+  let written = false;
+  t.mock.method(h.provider, 'save', (id, roles) => { h.saved.set(id, roles); written = true; });
+  t.mock.method(h.provider, 'read', id => {
+    if (written) throw new Error('synthetic unreadable persisted selection');
+    return read(id);
+  });
+  await assert.rejects(h.engine.addRoles(h.id, [h.catalog[0]!]), /persistence outcome and saved selection are unconfirmed/);
+  assert.deepEqual(h.saved.get(h.id), [h.catalog[0]]);
+  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+});
+
+test('role readiness observes a role saved while native capability reads are in flight', async t => {
+  const h = await roleAdditionFixture(t);
+  await h.engine.addRoles(h.id, [h.catalog[0]!]);
+  await h.engine.reload(h.id);
+  const held = deferred<{ skills: Skill[] }>();
+  h.native.rpc.skills.list.mock.mockImplementationOnce(() => held.promise);
+  const checking = h.engine.roleReadiness(h.id);
+  await nextTurn();
+  await h.engine.addRoles(h.id, [h.catalog[1]!]);
+  held.resolve({ skills: [] });
+  const result = await checking;
+  assert.equal(result.ready, false);
+  assert.equal(result.rolesNeedReload, true);
+  assert.deepEqual(result.roles, h.catalog);
+  assert.deepEqual(result.appliedRoles, [h.catalog[0]]);
+});
+
+test('concurrent role saves union without losing selections and do not reload an unloaded session', async t => {
+  const h = await roleAdditionFixture(t);
+  await h.engine.unload(h.id);
+  const results = await Promise.all(h.catalog.map(role => h.engine.addRoles(h.id, [role])));
+  assert.ok(results.every(result => result.status === 'saved' && !result.loaded && !result.rolesNeedReload));
+  assert.deepEqual(h.saved.get(h.id), h.catalog);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+  await h.engine.load(h.id);
+  assert.deepEqual((await h.engine.getMeta(h.id))?.appliedRoles, h.catalog);
+});
+
+test('role save refuses an in-flight resume but does not reserve the running turn', async t => {
   const h = await roleAdditionFixture(t);
   const held = deferred<CopilotSession>();
   h.runtime.resumeSession.mock.mockImplementationOnce(() => held.promise);
-  const adding = h.engine.addRoles(h.id, [h.catalog[0]!]);
+  const reloading = h.engine.reload(h.id);
   await nextTurn();
-  for (const action of [
-    () => h.engine.addRoles(h.id, [h.catalog[1]!]), () => h.engine.prompt(h.id, 'must not send'),
-    () => h.engine.reload(h.id), () => h.engine.unload(h.id), () => h.engine.cancel(h.id),
-  ]) await assert.rejects(action, protectedWork);
-  assert.equal(await h.engine.busyCount(), 1);
-  assert.equal((await h.engine.getMeta(h.id))?.activeOperations, 1);
+  await assert.rejects(h.engine.addRoles(h.id, [h.catalog[0]!]), /loading|transition/i);
+  assert.equal(h.saved.size, 0);
   h.runtime.isSessionLive.mock.mockImplementation(async () => true);
   held.resolve(h.native.sdk as unknown as CopilotSession);
-  assert.equal((await adding).status, 'applied');
-  assert.equal(await h.engine.busyCount(), 0);
-  assert.equal((await h.engine.getMeta(h.id))?.activeOperations, 0);
-  assert.equal(h.native.sdk.send.mock.callCount(), 0);
+  await reloading;
+  h.native.state.processing = true;
+  assert.equal((await h.engine.addRoles(h.id, [h.catalog[0]!])).status, 'saved');
+  await assert.rejects(h.engine.reload(h.id), protectedWork);
+  assert.equal((await h.engine.getMeta(h.id))?.rolesNeedReload, true);
 });
 
 test('role creation, identity, cold resume and readiness preserve native unrelated config', async t => {

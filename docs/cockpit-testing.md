@@ -71,11 +71,19 @@ COCKPIT_NATIVE_MODEL_SMOKE=1 COCKPIT_NATIVE_DELETE_TEST=1 \
   src/fork-native.test.ts src/model-settings-native.test.ts src/delete-native.test.ts
 ```
 
+角色追加的定向合成验证使用现有入口：
+`pnpm --filter @cockpit/mcp exec node --import tsx --test src/tools/roles.test.ts src/index.test.ts`
+及 `apps/server/src/intents.test.ts` 的 HTTP stub。核对一次 metadata-only 请求、
+`saved/unchanged/uncertain` 完整结果、未知持久化结果的错误标记、已保存/已装配角色与
+reload 状态，以及普通读取不触发 readiness 或原生加载。
+
 角色追加使用同一隔离 native 入口：
 `COCKPIT_NATIVE_ROLES=1 pnpm --filter @cockpit/core exec node --import tsx --test src/roles-native.test.ts`
-（仓库根执行）。它覆盖已有原生 ID/历史/cwd、组合指令、最小工具子集、临时资源开关、
-重复追加与冷恢复；不读取真实会话。busy、待决交互、持久化/native 部分失败与并发保护
-由 `packages/core/src/engine.test.ts` 的角色用例补充，不能把 mock 注入等同于生产故障实证。
+（仓库根执行）。验证边界是已有原生 ID/历史/cwd、保存期间能力不变，以及后续普通
+显式 reload/冷恢复的组合指令和最小工具子集；临时资源开关遵循原生全局默认，
+不要求角色追加特殊保留，不读取真实会话。`packages/core/src/engine.test.ts` 的角色用例
+补充 busy/待决交互/队列/schedules 期间允许保存、unloaded 保持 unloaded、重复保存、
+持久化不确定结果、生命周期并发保护以及加载时资源校验；不把 mock 注入等同于生产故障实证。
 
 文件输入用例让 Engine 传入合成原生文件，再由 native view 读取。
 四种附件 schema/转发用例不等于每种媒体/模型均实测可读。完整 MCP/native fork 用例

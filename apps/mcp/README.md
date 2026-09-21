@@ -13,7 +13,7 @@ This documents the checked-in source. See
 [source status](../../docs/cockpit-plan.md#source-status) and the
 [documentation index](../../docs/README.md).
 Modules may implement their own HTTP MCP through existing host routes and declare
-creation-time roles or explicit idle-session additions; see the [module contract](../../docs/module-contract-draft.md#44-创建时角色与模块-http-mcp).
+creation-time roles or metadata-only additions applied on ordinary reload/next cold load; see the [module contract](../../docs/module-contract-draft.md#44-创建时角色与模块-http-mcp).
 Their business tools do not enter this stdio registry. Module cold-loading,
 role selection and native per-session MCP switches remain distinct operations.
 
@@ -31,8 +31,9 @@ stripping in an arbitrary Node version.
 `cockpit_list_roles` discovers module roles. `cockpit_new_session` accepts optional
 `roles: [{moduleId,roleId}]`, including multiple roles from the same module.
 Selected tools are unioned and source-labelled role System Prompts appended; no startup
-prompt is sent. Session list/get JSON and Markdown preserve selected roles even
-while unloaded; ordinary list/get/snapshot reads do not calculate or return role
+prompt is sent. Session list/get JSON and Markdown expose saved selections,
+current-handle `appliedRoles` and `rolesNeedReload` when provided, including saved
+roles while unloaded; ordinary list/get/snapshot reads do not calculate or return role
 readiness. `cockpit_role_readiness` explicitly checks the current role assembly,
 native skill enablement, MCP connection/policy state and current tool visibility.
 It does not load, repair or add roles to existing sessions. The result is
@@ -40,21 +41,31 @@ on-demand capability evidence, independent of busy turns, pending messages or
 subagents—not a cached status or a readiness badge.
 
 `cockpit_add_roles {session_id, roles: [{moduleId,roleId}]}` invokes the same
-`roles/add` intent as Web. It unions saved roles and explicitly reloads/resumes the
-original session, retaining its ID, history and cwd. A loaded target must be idle,
-without decisions, queued work, active operations or schedules. Empty sessions
-without a root user message cannot safely survive reload and are rejected.
-A self-call is busy: finish the turn and have the user invoke from Web or another
-client. No hidden prompt, automatic idle wait, global configuration change or retry.
+`roles/add` intent as Web. It appends saved role metadata only, retaining the
+original ID, history and cwd. Main turns, subagents, shells, queued work,
+questions and schedules do not block saving; self-calls and empty sessions are
+allowed. Native load/close/delete conflicts may reject. It never stops, reloads,
+resumes or prompts a session; unloaded sessions stay unloaded. There is no
+automatic idle wait, notification mechanism, global configuration change or retry.
+Saving validates selected catalog IDs and the combined 64-role limit, not resource
+composition or availability. New roles apply only on ordinary explicit reload or
+next cold load. Normal lifecycle restrictions and native/global defaults still
+apply, without special preservation of temporary switches or session-only
+resources. Composition, integrity and resource conflicts are validated then;
+unavailable saved resources fail loading rather than silently dropping roles.
 
-The result separates saved `roles`, handle `appliedRoles` and optional `readiness`.
-`applied` does not promise `ready`; existing disabled resources stay disabled.
-Duplicate already-applied choices return `unchanged` without reloading or repair.
-Both semantic and generic MCP tools preserve complete `incomplete` / `uncertain`
-results and mark them `isError`. Inspect the same session and its resources before
-explicit recovery; persistence and native changes are not atomic. Temporary switches
-are carried through this operation, not persisted as a second resource registry.
-Unknown session-only resources and stopped MCP configurations are rejected.
+The result is `{sessionId,status,roles,appliedRoles,loaded,rolesNeedReload,error?,recovery?}`.
+Compatibility change: `status` is now `saved | unchanged | uncertain`, not `applied`
+or `incomplete`, and there is no `phase` or `readiness` response. `saved` does not
+mean applied or ready; duplicate saved selections return `unchanged`, even when
+not yet applied. `rolesNeedReload` is true exactly when loaded saved/applied role
+ID sets differ; it is false while unloaded because saved roles apply on next load.
+Readiness remains a separate passive check. Both semantic and generic MCP tools
+preserve complete `uncertain` results and mark them `isError`. Inspect the same
+session's saved metadata before explicit recovery; unknown persistence outcomes
+are not proof that nothing was saved. If persistence readback also fails, the
+backend returns an explicit error instead of a stale saved-role snapshot.
+No automatic retries or rollback.
 
 Queue control remains explicit: `session/interrupt` interrupts one main turn
 while preserving pending content, per-ID removal removes only the selected

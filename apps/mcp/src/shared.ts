@@ -10,6 +10,7 @@ import {
   classifyNativeCompactResult,
   classifyNativeRewindResult,
   type NativeOperationClassification,
+  type SessionMeta,
   McpServerSession as ProtocolMcpServerSession,
   McpToggleOperation as ProtocolMcpToggleOperation,
   McpToggleResult as ProtocolMcpToggleResult,
@@ -44,13 +45,25 @@ export function ok(text: string): ToolResult {
   return { content: [{ type: 'text', text }] };
 }
 
+export function roleSummary(meta: Pick<SessionMeta, 'roles' | 'appliedRoles' | 'rolesNeedReload' | 'loaded'>): string[] {
+  const labels = (roles: NonNullable<SessionMeta['roles']>) =>
+    roles.map(role => `${role.moduleId}/${role.roleId}`).join(', ') || 'none';
+  return [
+    `roles (saved selection, not readiness): ${labels(meta.roles ?? [])}`,
+    ...(meta.appliedRoles === undefined ? [] : [`applied roles (current handle): ${labels(meta.appliedRoles)}`]),
+    ...(meta.rolesNeedReload === undefined ? [] : [`roles need reload: ${meta.rolesNeedReload}`]),
+    ...(!meta.loaded ? ['Saved roles apply on next load; this read does not load the session.']
+      : meta.rolesNeedReload ? ['Saved role changes apply on ordinary explicit reload, not during current work.'] : []),
+  ];
+}
+
 export function intentJson(name: string, value: unknown): ToolResult {
   let classification: NativeOperationClassification | undefined;
   switch (name) {
     case 'roles/add': {
       const parsed = Intents['roles/add'].result.parse(value);
       return { ...ok(JSON.stringify(value, null, 2)),
-        ...(['incomplete', 'uncertain'].includes(parsed.status) ? { isError: true } : {}) };
+        ...(parsed.status === 'uncertain' ? { isError: true } : {}) };
     }
     case 'setModel': {
       const parsed = Intents.setModel.result.parse(value);

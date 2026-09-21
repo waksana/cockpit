@@ -136,31 +136,42 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     await runtime.rpc.mcp.config.disable({ names: ['synthetic-unrelated'] });
     const existing = await engine.newSession(dirs.work!);
     await engine.rename(existing, 'Synthetic existing responsibility');
-    await assert.rejects(engine.addRoles(existing, [selected[1]!]), /empty session/i);
+    const emptySaved = await engine.addRoles(existing, [selected[1]!]);
+    assert.equal(emptySaved.status, 'saved');
+    assert.equal(emptySaved.rolesNeedReload, true);
+    assert.deepEqual(emptySaved.appliedRoles, []);
     await engine.prompt(existing, 'Synthetic prior user history');
     while (await engine.busyCount()) { assert.ok(Date.now() < deadline); await setTimeout(20); }
+    assert.doesNotMatch(JSON.stringify(captured.at(-1)), /fixture\/executor/, 'saving does not change the live system prompt');
     await engine.toggleSessionMcp(existing, 'synthetic-unrelated', true);
     const before = captured.length;
     const first = await engine.addRoles(existing, [selected[1]!]);
-    assert.equal(first.status, 'applied', JSON.stringify(first));
-    assert.equal(first.readiness?.ready, true, JSON.stringify(first));
+    assert.equal(first.status, 'unchanged', JSON.stringify(first));
+    assert.equal(first.rolesNeedReload, true);
     assert.equal(first.sessionId, existing);
     assert.equal((await engine.listSessionMcp(existing)).servers.find(server => server.name === 'synthetic-unrelated')?.enabled, true,
-      'preserve an unrelated per-session enable even when its global default is disabled');
+      'metadata-only saves leave temporary native settings untouched');
     assert.equal(captured.length, before, 'adding roles sends no hidden prompt');
     assert.equal((await engine.getMeta(existing))?.title, 'Synthetic existing responsibility');
     assert.equal((await engine.getMeta(existing))?.cwd, dirs.work);
+    assert.equal((await engine.roleReadiness(existing)).ready, false);
+    await engine.reload(existing);
+    assert.equal((await engine.getMeta(existing))?.rolesNeedReload, false);
+    assert.deepEqual((await engine.getMeta(existing))?.appliedRoles, [selected[1]]);
+    assert.equal((await engine.listSessionMcp(existing)).servers.find(server => server.name === 'synthetic-unrelated')?.enabled, false,
+      'ordinary reload follows the global default, not a temporary-switch mirror');
     await engine.toggleSessionSkill(existing, 'fixture-executor', false);
     await engine.toggleSessionMcp(existing, 'module_fixture__tools', false);
     const second = await engine.addRoles(existing, [selected[0]!]);
-    assert.equal(second.status, 'applied', JSON.stringify(second));
-    assert.equal(second.readiness?.ready, false, 'applied is not ready when prior resources remain disabled');
+    assert.equal(second.status, 'saved', JSON.stringify(second));
+    assert.equal(second.rolesNeedReload, true);
+    assert.deepEqual(second.appliedRoles, [selected[1]]);
     assert.equal((await engine.listSessionSkills(existing)).find(skill => skill.name === 'fixture-executor')?.enabled, false);
     assert.equal((await engine.listSessionMcp(existing)).servers.find(server => server.name === 'module_fixture__tools')?.enabled, false);
-    await engine.toggleSessionSkill(existing, 'fixture-executor', true);
-    await engine.toggleSessionMcp(existing, 'module_fixture__tools', true);
+    await engine.reload(existing);
     const duplicate = await engine.addRoles(existing, selected);
     assert.equal(duplicate.status, 'unchanged', JSON.stringify(duplicate));
+    assert.equal(duplicate.rolesNeedReload, false);
     await engine.prompt(existing, 'Synthetic after role addition');
     while (await engine.busyCount()) { assert.ok(Date.now() < deadline); await setTimeout(20); }
     const enabled = await engine.roleReadiness(existing);
@@ -172,17 +183,20 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     assert.doesNotMatch(JSON.stringify((captured.at(-1) as { tools: unknown }).tools), /not-selected/);
     await engine.unload(existing);
     const resumed = await engine.addRoles(existing, selected);
-    assert.equal(resumed.status, 'applied', JSON.stringify(resumed));
-    assert.equal(resumed.readiness?.ready, true);
+    assert.equal(resumed.status, 'unchanged', JSON.stringify(resumed));
+    assert.equal(resumed.loaded, false);
+    assert.deepEqual(resumed.appliedRoles, []);
+    assert.equal((await engine.roleReadiness(existing)).loaded, false);
     const ownerOnly = await engine.newSession(dirs.work!);
     await engine.prompt(ownerOnly, 'Synthetic owner-only prior history');
     while (await engine.busyCount()) { assert.ok(Date.now() < deadline); await setTimeout(20); }
     await engine.unload(ownerOnly);
     const ownerAdded = await engine.addRoles(ownerOnly, [selected[0]!]);
     assert.equal(ownerAdded.sessionId, ownerOnly);
-    assert.equal(ownerAdded.status, 'applied', JSON.stringify(ownerAdded));
+    assert.equal(ownerAdded.status, 'saved', JSON.stringify(ownerAdded));
     assert.deepEqual(ownerAdded.roles, [selected[0]]);
-    assert.equal(ownerAdded.readiness?.ready, true);
+    assert.equal(ownerAdded.loaded, false);
+    assert.equal(ownerAdded.rolesNeedReload, false);
     await engine.prompt(ownerOnly, 'Synthetic owner-only capability probe');
     while (await engine.busyCount()) { assert.ok(Date.now() < deadline); await setTimeout(20); }
     assert.match(JSON.stringify(captured.at(-1)), /Synthetic owner-only prior history/);
