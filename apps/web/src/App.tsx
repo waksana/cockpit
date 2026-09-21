@@ -58,10 +58,10 @@ function Workspace() {
   const sessions = useCockpit(selectMetadata);
   const {
     connState, snapshotReady, newSession,
-    globalModels,
+    globalModels, reloadingSessionIds,
   } = useCockpit(useShallow((s) => ({
     connState: s.connState, snapshotReady: s.snapshotReady, newSession: s.newSession,
-    globalModels: s.globalModels,
+    globalModels: s.globalModels, reloadingSessionIds: s.reloadingSessionIds,
   })));
   const active = useMemo(
     () => sessions.find((s) => s.sessionId === routeId) ?? null,
@@ -169,10 +169,14 @@ function Workspace() {
   };
   const menuHandlers: SessionActionHandlers = {
     openPanel: openDetails,
+    reload: sessionId => {
+      // The store owns pending and request diagnostics beyond this menu/route.
+      void useCockpit.getState().reloadSession(sessionId).catch(() => {});
+    },
     delete: doDelete,
   };
   const getSessionMenuItems = (session: typeof sessions[number]) => (
-    sessionActionItems(session, connState === 'open', menuHandlers)
+    sessionActionItems(session, connState === 'open' && snapshotReady, menuHandlers, reloadingSessionIds.includes(session.sessionId))
   );
 
   const modelLabel = active

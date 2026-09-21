@@ -15,6 +15,7 @@ import { applyProjection, cleanProjection } from './sessionResources';
 import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
 import { readMessageHistory } from './messageHistory';
 import { describeReason, reportUxError } from '../lib/errorReporter';
+import { sessionReloadBlockReason } from '../lib/sessionReload';
 import type { NativeDraftRequest } from '../lib/draft';
 import { observeDraftDecisions, retireDraftSession } from '../lib/draftSelection';
 import type { DraftReference, DraftSendBlockReason, ModuleEventPayload } from '@cockpit/module-api';
@@ -30,6 +31,7 @@ interface CockpitState {
   activeId: string | null;
   globalModels: ModelOption[];
   resourceRevisions: Record<string, Partial<Record<SessionResource, number>>>;
+  reloadingSessionIds: string[];
   // lifecycle
   init: () => () => void;
   onModuleInvalidated: (listener: (moduleId: string) => void) => () => void;
@@ -49,6 +51,7 @@ interface CockpitState {
   setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => Promise<IntentResult<'setModel'>>;
   deleteSession: (sessionId: string) => Promise<void>;
   loadSession: (sessionId: string) => Promise<void>;
+  reloadSession: (sessionId: string) => Promise<void>;
   getResources: (sessionId: string, resources: MetaResource[], signal?: AbortSignal) => Promise<SessionProjection>;
   // MCP + Skills management
   mcpGlobal: () => Promise<import('@cockpit/protocol').McpServerGlobal[]>;
@@ -232,11 +235,13 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     sid: string | null,
     operation: string,
     send: (net: NetClient) => Promise<{ ok: boolean; applied?: boolean; error?: string }>,
+    beforeSend?: () => void,
   ): Promise<void> => {
     const generation = get().connectionGeneration;
     const origin = sid ? `会话 ${get().sessions.find((s) => s.sessionId === sid)?.title ?? sid} (${sid})：` : '';
     let reportedByTransport = false;
     const promise = (async () => {
+      beforeSend?.();
       const result = await send(connectedClient()).catch((error) => {
         reportedByTransport = !isSessionUnloadedError(error);
         throw error;
@@ -637,6 +642,23 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       // Native ACKs include queued, confirmation and partial-persistence outcomes.
       // They are not void mutations and never become optimistic session state.
       return read(net => net.setModel(sid, modelId, opts));
+    },
+    reloadingSessionIds: [],
+    reloadSession(sid) {
+      let submitted = false;
+      return mutation(sid, '重新加载会话', net => net.reloadSession(sid), () => {
+        const state = get();
+        const reason = sessionReloadBlockReason(
+          state.sessions.find(s => s.sessionId === sid),
+          state.connState === 'open' && state.snapshotReady,
+          state.reloadingSessionIds.includes(sid),
+        );
+        if (reason) throw new Error(reason);
+        submitted = true;
+        set({ reloadingSessionIds: [...state.reloadingSessionIds, sid] });
+      }).finally(() => {
+        if (submitted) set(st => ({ reloadingSessionIds: st.reloadingSessionIds.filter(id => id !== sid) }));
+      });
     },
     deleteSession(sid) { return mutation(sid, '永久删除会话', (net) => net.deleteSession(sid)); },
     loadSession(sid) { return mutation(sid, '恢复会话', (net) => net.loadSession(sid)); },
