@@ -28,6 +28,7 @@ const routeSchema = z.object({
 const backendSchema = z.object({
   routes: z.array(routeSchema).max(256),
   publicConfig: z.record(z.unknown()).optional(),
+  onReady: z.custom<NonNullable<ModuleBackend['onReady']>>(value => typeof value === 'function').optional(),
   events: z.object({
     types: z.array(z.string().min(1).max(128)).min(1).max(128),
     handle: z.custom<NonNullable<ModuleBackend['events']>['handle']>(value => typeof value === 'function'),
@@ -90,6 +91,8 @@ export class ModuleHost {
   private readonly disposed = new WeakSet<object>();
   private closed = false;
   private initialized = false;
+  private app?: FastifyInstance;
+  private readyNotified = false;
   constructor(private readonly options: {
     hostRoot?: string;
     observer: Pick<Engine, 'onNativeEvent'> & Partial<Pick<Engine, 'onEvent'>>;
@@ -133,6 +136,7 @@ export class ModuleHost {
   async register(app: FastifyInstance): Promise<void> {
     if (this.initialized) throw new Error('Module host can only cold-load once');
     this.initialized = true;
+    this.app = app;
     app.addHook('preClose', async () => { this.close(); });
     app.get('/_modules', async (_request, reply) => {
       reply.header('Cache-Control', 'private, no-store');
@@ -163,7 +167,7 @@ export class ModuleHost {
             if (!this.options.host) throw new Error('Module host intents are unavailable');
             return this.options.host.call(name, body);
           } } satisfies ModuleHostApi),
-          apiVersion: 1, moduleId: id, apiBase, dataRoot: await moduleDataRoot(id, hostRoot),
+          apiVersion: 1, serviceReadyVersion: 1, moduleId: id, apiBase, dataRoot: await moduleDataRoot(id, hostRoot),
           config: Object.freeze(structuredClone(selected.config)), signal: controller.signal,
           report: (error: unknown) => this.report(id, error),
           invalidate: () => {
@@ -258,6 +262,20 @@ export class ModuleHost {
         if (activated) this.dispose(id, activated);
         this.report(id, error);
       } finally { if (timer) clearTimeout(timer); }
+    }
+  }
+
+  /** The server calls this only after runtime.start() and HTTP listen succeed. */
+  ready(): void {
+    if (this.closed || this.readyNotified) return;
+    if (!this.app?.server.listening) throw new Error('Module service readiness requires a listening HTTP server');
+    this.readyNotified = true;
+    for (const module of this.loaded) {
+      if (this.closed) break;
+      if (module.controller.signal.aborted || !module.backend.onReady) continue;
+      const id = module.installation.manifest.id;
+      try { void Promise.resolve(module.backend.onReady()).catch(error => this.report(id, error)); }
+      catch (error) { this.report(id, error); }
     }
   }
 
