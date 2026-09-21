@@ -61,7 +61,6 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
     }, () => { onCreated(sessionId); onCancel(); });
   };
   return <DirectoryModal busy={action.busy} onCancel={onCancel}>
-    <h3 className="dialog-title">新建会话</h3>
     <p className="dialog-message">选择工作目录，按需添加模块角色。</p>
     <div className="dirpicker-content scrollable">
     <label className="dirpicker-section-title" htmlFor={`${identity}-path`}>工作目录</label>

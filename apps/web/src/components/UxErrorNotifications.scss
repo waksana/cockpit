@@ -1,6 +1,11 @@
-.cockpit-shell,
-.info-panel {
+.cockpit-shell {
   bottom: var(--ux-error-height, 0px);
+}
+
+// The same error store stays reachable inside a native modal; the background
+// copy is hidden rather than trying to exempt it from browser modal isolation.
+:root:has(.host-modal:modal) .ux-error-notifications:not([data-dialog-notices]) {
+  display: none;
 }
 
 .cockpit-shell {

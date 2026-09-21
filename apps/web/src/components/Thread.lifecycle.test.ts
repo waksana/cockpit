@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+import assert, { assertIdentityList } from '../test/identityAssert';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { act, createElement, Fragment, useCallback, useLayoutEffect, useState, useSyncExternalStore } from 'react';
@@ -82,6 +82,8 @@ class HostNode extends EventTarget {
   get options(): HostNode[] { return this.childNodes; }
   get open() { return this.attributes.has('open'); }
   set open(value: boolean) { if (value) this.setAttribute('open', ''); else this.removeAttribute('open'); }
+  showModal() { this.open = true; }
+  close() { this.open = false; }
   get value(): string {
     if (this.tagName === 'OPTION') return this.getAttribute('value') ?? this.textContent;
     if (this.tagName === 'SELECT') return this.options.find(option => option.selected)?.value ?? '';
@@ -429,7 +431,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(node('[aria-label="全局导航"]'), trigger, 'menu changes keep the actual native trigger mounted');
 
       await mount(true, '/skills');
-      assert.equal(document.activeElement, node('[aria-label="返回会话列表"]'));
+      assert.equal(document.activeElement, document.body, 'entering management does not move focus to Back');
       assert.equal(node('.manage-title').textContent, '全局 Skills');
       const refresh = node('[aria-label="刷新"]');
       assert.equal(refresh.attributes.has('disabled'), false);
@@ -442,13 +444,13 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
 
       await mount(true, '/skills/resource');
       assert.equal(node('.manage-detail-headtitle').textContent, 'resource');
-      assert.equal(document.activeElement, node('.manage-detail-headtitle'));
+      assert.equal(document.activeElement, document.body, 'entering a detail does not focus its title');
       if (enhanced) await click(node('[aria-label="Module detail action"]'));
       noNestedButtons();
       await click(node('[aria-label="返回"]'));
       assert.equal(node('.fixture-route').textContent, '/skills');
       assert.equal(container.querySelector('.manage-detail-headtitle'), null);
-      assert.equal(document.activeElement, node('[aria-label="返回会话列表"]'));
+      assert.equal(document.activeElement, document.body, 'removing detail Back does not focus another control');
       await act(() => root.render(null));
     }
     assert.equal(moduleActions, 3);
@@ -1894,13 +1896,13 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const legacyRef = (node: HTMLTextAreaElement | null) => { legacyCalls.push(node); };
     await renderInput({ editorRef: legacyRef });
     assert.equal(objectRef.current, null);
-    assert.deepEqual(legacyCalls, [editor]);
+    assertIdentityList(legacyCalls, [editor]);
     let cleaned = 0;
     const modernCalls: (HTMLTextAreaElement | null)[] = [];
     const modernRef = (node: HTMLTextAreaElement | null) => { modernCalls.push(node); return () => { cleaned++; }; };
     await renderInput({ editorRef: modernRef });
-    assert.deepEqual(legacyCalls, [editor, null]);
-    assert.deepEqual(modernCalls, [editor]);
+    assertIdentityList(legacyCalls, [editor, null]);
+    assertIdentityList(modernCalls, [editor]);
     const oldSubmit = input.onSubmit;
     await act(() => { draft = getSessionDraft('replacement-input'); });
     await renderInput({ editorRef: modernRef, disabled: true });
@@ -1908,7 +1910,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(sends, 1, 'a captured action never submits a replacement draft');
     await act(() => root.render(null));
     assert.equal(cleaned, 1);
-    assert.deepEqual(modernCalls, [editor], 'React 19 invokes cleanup instead of callback(null)');
+    assertIdentityList(modernCalls, [editor], 'React 19 invokes cleanup instead of callback(null)');
   });
 
   await t.test('paired speech consumer mounts the real input and keeps feedback, leases, refs and focus scoped', {
@@ -1982,6 +1984,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
             finish = text => this.onmessage?.({ data: JSON.stringify({
               type: 'conversation.item.input_audio_transcription.completed', item_id: 'fixture-item', content_index: 0, transcript: text,
             }) });
+          } else if (type === 'input_audio_buffer.clear') {
+            this.onmessage?.({ data: JSON.stringify({ type: 'input_audio_buffer.cleared' }) });
           } else assert.equal(type, 'input_audio_buffer.append');
         }
         close() {}
@@ -2023,7 +2027,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const editorRef = (node: HTMLTextAreaElement | null) => { refCalls.push(node); return () => { cleaned++; }; };
     await act(() => root.render(createElement(Composer, { runtime, draft, editorRef, onSend: async () => assert.fail('speech never sends') })));
     const editor = container.querySelector('.chat-input-message')!;
-    assert.deepEqual(refCalls, [editor]);
+    assertIdentityList(refCalls, [editor]);
     const row = container.querySelector('.chat-input')!;
     const inputControls = (node: HostNode): HostNode[] => node.childNodes.flatMap(child => [
       ...(['BUTTON', 'TEXTAREA'].includes(child.tagName) ? [child] : []), ...inputControls(child),
@@ -2031,7 +2035,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const file = row.querySelector('[aria-label="File fixture"]')!;
     const microphone = row.querySelector('.cockpit-speech-mic')!;
     const send = row.querySelector('.send')!;
-    assert.deepEqual(inputControls(row), [file, editor, microphone, send],
+    assertIdentityList(inputControls(row), [file, editor, microphone, send],
       'input middleware may wrap the editor without changing control order or duplicating controls');
     assert.equal(file.parentNode, row);
     assert.equal(microphone.parentNode, row);
@@ -2045,11 +2049,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await act(async () => { container.dispatchEvent(event); });
     };
     editor.setSelectionRange(6, 11);
+    microphone.focus();
     await click('.cockpit-speech-mic');
     assert.equal(draft.getSnapshot().blocks.length, 1);
     assert.equal(container.querySelector('.send')!.attributes.has('disabled'), true);
     assert.equal(container.querySelector('.cockpit-speech-panel'), null, 'recording is expressed by the button, not a phase panel');
-    assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.get('aria-label'), '停止录音并转写');
+    assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.get('aria-label'), '停止录音并收取剩余文字');
     const status = container.querySelector('.cockpit-speech-status')!;
     assert.ok(status);
     assert.equal(row.contains(status), false, 'status wraps the full input row instead of living inside it');
@@ -2062,7 +2067,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(requests, 1);
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); finish('speech'); });
     assert.equal(editor.value, 'hello speech');
-    assert.equal(document.activeElement, editor);
+    assert.notEqual(document.activeElement, editor, 'asynchronous transcription does not take editor focus');
     assert.equal(editor.selectionStart, 12);
     assert.equal(editor.selectionEnd, 12);
     assert.equal(draft.getSnapshot().blocks.length, 0);
@@ -2107,7 +2112,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(draft.getSnapshot().blocks.length, 0);
     await act(() => root.render(null));
     assert.equal(cleaned, 1);
-    assert.deepEqual(refCalls, [editor], 'composed React 19 ref cleans up without a synthetic null call');
+    assertIdentityList(refCalls, [editor], 'composed React 19 ref cleans up without a synthetic null call');
   });
 
   await t.test('module components retain scoped drafts and native send guards while DOM handlers compose on the real editor', async subtest => {

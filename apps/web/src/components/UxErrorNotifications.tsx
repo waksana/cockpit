@@ -1,13 +1,14 @@
 import { useSyncExternalStore } from 'react';
 import { dismissUxError, getUxErrors, subscribeUxErrors } from '../lib/errorReporter';
 
-export function UxErrorNotifications() {
+export function UxErrorNotifications({ withinDialog = false }: { withinDialog?: boolean }) {
   const errors = useSyncExternalStore(subscribeUxErrors, getUxErrors, getUxErrors);
   const dismiss = (id: number, button: HTMLButtonElement) => {
     if (document.activeElement === button) {
       const buttons = Array.from(button.closest('aside')?.querySelectorAll<HTMLButtonElement>('button') ?? []);
       const index = buttons.indexOf(button);
       const fallback = buttons[index + 1] ?? buttons[index - 1]
+        ?? button.closest('dialog')?.querySelector<HTMLElement>('[data-dialog-focus]')
         ?? document.querySelector<HTMLElement>('.info-panel[data-open="true"]')
         ?? document.querySelector<HTMLElement>('.cockpit-shell');
       if (fallback) {
@@ -20,7 +21,7 @@ export function UxErrorNotifications() {
   if (!errors.length) return null;
 
   return (
-    <aside className="ux-error-notifications" aria-label="本地错误通知">
+    <aside className="ux-error-notifications" data-dialog-notices={withinDialog || undefined} aria-label="本地错误通知">
       {errors.map((error) => (
         <div key={error.id} className="ux-error-notification">
           <div className="ux-error-notification-content" role="alert">

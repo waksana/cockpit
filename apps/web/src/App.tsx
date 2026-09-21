@@ -77,7 +77,9 @@ function Workspace() {
     if (!panel && previousPanel.current.open && previousPanel.current.sessionId === routeId) {
       const trigger = panelTrigger?.sessionId === routeId ? panelTrigger.element : null;
       const valid = trigger?.isConnected && trigger.getClientRects().length && !trigger.closest('[inert]');
-      (valid ? trigger : kebabRef.current)?.focus();
+      // Native modals already restore their invoker. Only repair a removed
+      // docked-panel control; never pull focus away from an ongoing chat edit.
+      if (document.activeElement === document.body) (valid ? trigger : kebabRef.current)?.focus();
     }
     previousPanel.current = { sessionId: routeId, open: panel !== null };
   }, [panel, routeId, panelTrigger]);

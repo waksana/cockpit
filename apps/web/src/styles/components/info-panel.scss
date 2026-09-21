@@ -5,23 +5,30 @@
 //   • wide (≥1200px): docked — the chat compresses to make room, no scrim
 // Flat host-owned sections inside; geometry above retains the responsive shell.
 
-.info-panel-scrim {
+.session-details-dialog {
   position: fixed;
   inset: 0;
-  z-index: 40;
-  background: rgba(0, 0, 0, 0.32);
-  opacity: 0;
-  visibility: hidden;
-  &[data-open='true'] { opacity: 1; visibility: visible; }
-  // Wide/docked tier: the panel takes its own space, so no scrim.
-  @media (min-width: 1200px) { display: none; }
+  z-index: 41;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  background: transparent;
+  color: var(--primary-text-color);
+  @media (min-width: 1200px) {
+    inset-inline-start: auto;
+    width: 24rem;
+    height: calc(100% - var(--ux-error-height, 0px));
+  }
 }
 
 .info-panel {
   --info-panel-w: 24rem;
-  position: fixed;
-  inset-block: 0;
-  inset-inline-end: 0;
+  position: absolute;
+  inset: 0 0 var(--ux-error-height, 0px) auto;
   z-index: 41;
   width: 100%;
   max-width: var(--info-panel-w);
@@ -29,8 +36,7 @@
   flex-direction: column;
   background: var(--background-color);
   border-inline-start: 1px solid var(--border-color);
-  transform: translateX(100%);
-  &[data-open='true'] { transform: translateX(0); }
+  @media (min-width: 1200px) { bottom: 0; }
   // Narrowest tier: full page.
   @media (max-width: 599px) { max-width: 100%; }
 }
@@ -173,7 +179,7 @@
   font-size: var(--host-text-body); line-height: var(--host-leading-ui); color: var(--secondary-text-color);
 }
 .session-settings {
-  :is(button, summary, select):focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+  :is(button, summary, select):focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; }
 }
 .info-model-actions { display: flex; flex-wrap: wrap; gap: var(--host-space-sm); }
 .info-model-status {

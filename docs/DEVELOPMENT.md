@@ -123,6 +123,19 @@ activation-owned subscription setup and cleanup failures. The precise contract i
 
 ## Isolated Chat component review
 
+Host confirmation and directory pickers use native modal dialogs. The directory
+picker's non-input heading is the explicit autofocus target, including lazy
+loading, so opening New Session does not start path editing or request a keyboard.
+Session details use the same mounted dialog: modal below 1200px, nonmodal/docked
+above it without an entry focus move. The browser owns isolation, Tab and modal
+return; errors from the shared local error store remain reachable inside host
+modals. No body mutation observer or focus-in trap supplements native behavior.
+Menus retain their command selection/arrow navigation and close restoration;
+removed execution controls and dismissed errors retain scoped recovery only when
+they owned focus. Management headers no longer focus themselves on navigation.
+Visible outlines stay inside controls and the transcript viewport; pressing F8
+may still make the browser's existing focus visible, without changing its target.
+
 `COCKPIT_CHAT_LAB=1 pnpm --filter @cockpit/web dev --host 127.0.0.1 --port 47831 --strictPort`
 opens the opt-in development-only `/chat-lab.html` entry. It mounts the production
 Chat components with synthetic native inputs and local
