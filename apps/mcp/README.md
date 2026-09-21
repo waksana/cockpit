@@ -50,6 +50,23 @@ See [tool invalidation and recovery](../../docs/module-contract-draft.md#工具�
 for the older-host and empty-session limits. Discover the running host's capability;
 source documentation is not deployment evidence.
 
+Hosts publishing `session/resources-prepare` accept one explicit preparation via
+`cockpit_call_intent`, for example
+`{name:"session/resources-prepare",body:{sessionId:"...",skills:["optional"],mcpServers:[{name:"tools",tools:["raw_tool_name"]}]}}`.
+The target must already be loaded and idle. All selections are prevalidated;
+only selected disabled resources are enabled, with no prompt/reload/global change.
+Tools are exact native `mcpToolName` identities, not wire names; `"*"` is rejected,
+and omitted/empty tools require at least one actual offered tool and return only
+the first offered name as a minimal witness. Errors are capped at 2000 characters
+with explicit truncation. Keep the whole
+partial/unconfirmed receipt on failure; never retry automatically. `ok:true` is
+not role readiness, Task binding or Skill body loading. Preparation initializes
+once after a confirmed resource enable or when metadata is null, repairing the
+native MCP-enable stale non-null table without a separate follow-on call.
+Native filtering remains effective; unchanged already-enabled selections with
+non-null missing tools fail without speculative rebuilding.
+See [resource preparation](../../docs/module-contract-draft.md#session-resource-preparation).
+
 `cockpit_add_roles {session_id, roles: [{moduleId,roleId}]}` invokes the same
 `roles/add` intent as Web. It appends saved role metadata only, retaining the
 original ID, history and cwd. Main turns, subagents, shells, queued work,

@@ -160,10 +160,10 @@ export class ModuleHost {
         const installation = await readModuleInstallation(id, selected, hostRoot);
         const apiBase = `/_modules/${id}/${installation.digest}/api`;
         const context: ModuleBackendContext = Object.freeze({
-          host: Object.freeze({ call: (name, body) => {
+          host: Object.freeze({ resourcePreparationVersion: 1, call: (name, body) => {
             if (controller.signal.aborted || this.closed) throw new Error('Module is stopped');
             if (!this.loaded.some(module => module.controller === controller)) throw new Error('Module host intents are not active');
-            if (!['session/new', 'session/get', 'roles/readiness', 'prompt'].includes(name)) throw new Error('Module host intent is not allowed');
+            if (!['session/new', 'session/get', 'roles/readiness', 'session/resources-prepare', 'prompt'].includes(name)) throw new Error('Module host intent is not allowed');
             if (!this.options.host) throw new Error('Module host intents are unavailable');
             return this.options.host.call(name, body);
           } } satisfies ModuleHostApi),

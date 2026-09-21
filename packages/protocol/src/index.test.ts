@@ -46,6 +46,35 @@ test('folded-message validators are absent from the production wire entry point'
   }
 });
 
+test('resource preparation has bounded exact identities, strict bodies and honest partial receipts', () => {
+  const { body, result } = Intents['session/resources-prepare'];
+  const selection = { sessionId: 's', skills: ['optional'], mcpServers: [{ name: 'tools', tools: ['raw_name'] }] };
+  assert.deepEqual(body.parse(selection), selection);
+  assert.deepEqual(body.parse({ sessionId: 's' }), { sessionId: 's' });
+  for (const invalid of [
+    { ...selection, roles: [] }, { ...selection, sessionId: ' ' },
+    { ...selection, skills: ['a', 'a'] }, { ...selection, skills: [' '] },
+    { ...selection, skills: ['a'.repeat(201)] },
+    { ...selection, skills: Array.from({ length: 65 }, (_, i) => `s${i}`) },
+    { ...selection, mcpServers: [{ name: 'a' }, { name: 'a' }] },
+    { ...selection, mcpServers: Array.from({ length: 65 }, (_, i) => ({ name: `s${i}` })) },
+    ...[['*'], ['a', 'a'], [''], [' '], ['a'.repeat(201)],
+      Array.from({ length: 257 }, (_, i) => `t${i}`)].map(tools => ({ ...selection, mcpServers: [{ name: 'a', tools }] })),
+    { ...selection, mcpServers: [{ name: 'a', enabled: true }] },
+  ]) assert.equal(body.safeParse(invalid).success, false, JSON.stringify(invalid));
+  const receipt = {
+    sessionId: 's', ok: false, skills: [{ name: 'optional', effect: 'enabled', enabled: true }],
+    mcpServers: [{ name: 'tools', effect: 'unconfirmed', enabled: null, status: null, tools: null }],
+    tools: 'not_attempted', error: 'Native readback failed',
+  };
+  assert.deepEqual(result.parse(receipt), receipt);
+  assert.equal(result.safeParse({ ...receipt, error: 'x'.repeat(2000) }).success, true);
+  assert.equal(result.safeParse({ ...receipt, error: 'x'.repeat(2001) }).success, false);
+  assert.equal(result.safeParse({ ...receipt, readiness: true }).success, false);
+  assert.equal(result.safeParse({ ...receipt, tools: 'ready' }).success, false);
+  assert.equal(result.safeParse({ ...receipt, mcpServers: [{ ...receipt.mcpServers[0], status: 'unknown' }] }).success, false);
+});
+
 test('response messages retain thought, body and explicit incompleteness without provisional state', () => {
   const response = { id: 'native-message', role: 'assistant', content: ' \nBody', thought: 'Thought\n ',
     thoughtKey: 'native-response-parent', timestamp: 1, incomplete: 'Missing native response reference' };
@@ -488,6 +517,7 @@ const intentFixtures = {
   'session/load': { body: sid, result: { ok: true, ...sid } },
   'session/reload': { body: sid, result: ok },
   'session/tools-initialize': { body: sid, result: { ok: true } },
+  'session/resources-prepare': { body: sid, result: { sessionId: 's', ok: true, skills: [], mcpServers: [], tools: 'unchanged' } },
   'session/plan': { body: sid, result: plan },
   'session/usage': { body: sid, result: { ...sid, sampledAt: 1, context: null,
     usage: { sessionStartTime: '2026-09-09T00:00:00Z', totalUserRequests: 0,
