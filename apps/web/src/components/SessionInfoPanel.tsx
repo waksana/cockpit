@@ -2,12 +2,12 @@
 // It reads identifying summary fields and on-demand model state; MCP and Skills
 // resources are owned by their dedicated pages.
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback } from 'react';
 import { classifyNativeModelSwitchResult } from '@cockpit/protocol';
 import type { IntentResult, NativeModelSwitchResult } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
 import { useSessionResource } from '../lib/useSessionResource';
-import { useKeyedAction } from '../lib/useKeyedResource';
+import { useModelSettings, selectionFrom, type ModelSelection } from '../features/session-settings/useModelSettings';
 import { ExpandableText, PanelPageShell, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
 import { CopyButton } from './CopyButton';
 import { SectionHeading, SelectField } from './UI';
@@ -22,12 +22,6 @@ const EFFORT_LABEL: Record<string, string> = {
 };
 const CONTEXT_LABEL: Record<ContextTier, string> = { default: '标准上下文', long_context: '长上下文' };
 
-type ModelSelection = { modelId: string; reasoningEffort?: string; contextTier?: ContextTier };
-const selectionFrom = (session: ChatSession): ModelSelection => ({
-  modelId: session.currentModelId ?? '',
-  ...(session.currentReasoningEffort ? { reasoningEffort: session.currentReasoningEffort } : {}),
-  ...(session.currentContextTier ? { contextTier: session.currentContextTier } : {}),
-});
 const selectionLabel = (selection: ModelSelection) => [
   selection.modelId || '模型未提供',
   `思考力度：${selection.reasoningEffort ? EFFORT_LABEL[selection.reasoningEffort] ?? selection.reasoningEffort : '未指定'}`,
@@ -96,14 +90,8 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
     onRefresh: () => void; refreshDisabled: boolean;
   };
 }) {
-  const [draft, setDraft] = useState<{ selection: ModelSelection; revision: number } | null>(null);
-  const [submission, setSubmission] = useState<{ selection: ModelSelection; revision: number } | null>(null);
-  const [outcome, setOutcome] = useState<IntentResult<'setModel'> | null>(null);
-  const submittedRevision = useRef<number | null>(null);
-  const action = useKeyedAction(`model:${session.sessionId}`);
-  const selection = draft?.selection ?? selectionFrom(session);
-  const revision = draft?.revision ?? 0;
-  const edit = (next: ModelSelection) => setDraft({ selection: next, revision: revision + 1 });
+  const { draft, submission, outcome, action, selection, revision, edit, apply,
+    list, currentModel, efforts, supportsLong, invalid } = useModelSettings(session, onSetModel, disabled);
   const heading = <>
     <SectionHeading className="info-section-name" actions={resource && <RefreshButton onClick={resource.onRefresh}
         disabled={resource.refreshDisabled || resource.pending || action.busy}
@@ -121,7 +109,6 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
     {outcome ? <ModelOutcome result={outcome.result} selection={submission?.selection} />
       : submission && <ModelSubmissionDetails selection={submission.selection} />}
   </>;
-  const list = session.availableModels;
   if (!list || list.length === 0) return <section className="info-section">
     {heading}
     <div className="info-section-content info-controls">
@@ -133,24 +120,8 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
   </section>;
 
   const current = selection.modelId;
-  const currentModel = list.find((m) => m.modelId === current);
-  const efforts = currentModel?.supportedReasoningEfforts ?? [];
-  const supportsLong = currentModel?.supportsLongContext ?? false;
   const curEffort = selection.reasoningEffort ?? '';
   const curTier = selection.contextTier ?? '';
-  const invalid = !currentModel || (efforts.length > 0 && !!curEffort && !efforts.includes(curEffort));
-  const apply = () => {
-    if (disabled || invalid || action.busy || submittedRevision.current === revision) return;
-    submittedRevision.current = revision;
-    const options = {
-      ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}),
-      ...(selection.contextTier ? { contextTier: selection.contextTier } : {}),
-    };
-    setSubmission({ selection, revision });
-    setOutcome(null);
-    let result: IntentResult<'setModel'>;
-    void action.run(async () => { result = await onSetModel(selection.modelId, options); }, () => setOutcome(result));
-  };
 
   return (
     <section className="info-section">

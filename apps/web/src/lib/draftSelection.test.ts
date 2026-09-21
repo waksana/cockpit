@@ -4,6 +4,27 @@ import { DraftCache } from './draftSelection';
 import { RegisteredDraftSchema } from './draftSchemas';
 import { appendFixture, fixtureItem, fixtureSchema, memoryDraftStorage } from '../test/draftFixture';
 
+test('cache dirtiness follows hidden prompt and decision edits independently of view subscriptions', () => {
+  const cache = new DraftCache();
+  let changes = 0;
+  const unsubscribe = cache.subscribe(() => { changes++; });
+  const session = cache.session('A');
+  session.prompt.edit('Hidden prompt');
+  session.synchronize({ ask: { requestId: 'ask' } });
+  const answer = session.current({ ask: { requestId: 'ask' } });
+  answer.edit('Answer');
+  session.prompt.edit('');
+  assert.equal(cache.hasUnpersistedChanges(), true);
+  answer.edit('');
+  assert.equal(cache.hasUnpersistedChanges(), false);
+  assert.ok(changes >= 5);
+  unsubscribe();
+  const before = changes;
+  answer.edit('No subscribed view');
+  assert.equal(changes, before);
+  assert.equal(cache.hasUnpersistedChanges(), true);
+});
+
 test('ask interrupts with an independent draft while cached prompt uploads remain writable', async () => {
   const { storage } = memoryDraftStorage();
   const cache = new DraftCache(storage), session = cache.session('A');

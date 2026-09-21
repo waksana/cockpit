@@ -1,12 +1,50 @@
 // Control SSE and view-owned chat SSE are separate. Native cursors and message
 // projections remain in the browser; typed POSTs also serve older event pages.
 
-import { ServerEvent, Intents, NativeChatStreamRequest } from '@cockpit/protocol';
+import { ServerEvent, Intents, NativeChatStreamRequest, classifyNativeModelSwitchResult,
+  classifyNativeModeSetResult, classifyNativeRewindResult } from '@cockpit/protocol';
 import type { NativeAttachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction, NativeChatPage } from '@cockpit/protocol';
 import { EVENTS_URL, CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { reportUxError, describeReason } from '../lib/errorReporter';
 import { consumeChatStream } from './chatStream';
 import type { NativeDraftRequest } from '../lib/draft';
+import { beginHostMutation } from '../lib/hostLeave';
+
+// Exhaustive so adding a host intent requires an explicit read/write decision.
+export const HOST_INTENT_MUTATES = {
+  'system/shutdown': true, 'system/status': false, 'runtime/snapshot': false,
+  'session/chat': false, 'session/new': true, 'roles/list': false, 'roles/add': true,
+  'roles/readiness': false, 'session/tools-initialize': true, 'session/fork': true,
+  prompt: true, cancel: true, 'session/interrupt': true, setModel: true,
+  'session/rename': true, 'session/compact': true, 'session/rewind': true, setMode: true,
+  'session/delete': true, 'session/unload': true, 'session/load': true, 'session/reload': true,
+  'session/usage': false, 'session/plan': false, 'session/panels': false, 'session/panel': false,
+  respondAsk: true, respondPlan: true, planSupersede: true, respondElicitation: true,
+  'queue/remove': true, 'session/refresh': true, 'session/list': false, 'session/get': false,
+  'session/resources': false, 'mcp/global': false, 'mcp/global-default': true, 'mcp/refresh': true,
+  'mcp/reload-session': true, 'mcp/session': false, 'mcp/session-toggle': true,
+  'skills/global': false, 'skills/read': false, 'skills/session': false,
+  'skills/session-toggle': true, 'skills/global-toggle': true, 'skills/refresh': true,
+  'fs/listDir': false, 'schedule/add': true, 'schedule/stop': true, 'schedule/list': false,
+} satisfies Record<IntentName, boolean>;
+
+function knownMutationResult<K extends IntentName>(name: K, result: IntentResult<K>): boolean {
+  switch (name) {
+    case 'setModel': return classifyNativeModelSwitchResult((result as IntentResult<'setModel'>).result).state !== 'unknown';
+    case 'setMode': return classifyNativeModeSetResult((result as IntentResult<'setMode'>).result).state !== 'unknown';
+    case 'session/rewind': return classifyNativeRewindResult((result as IntentResult<'session/rewind'>).result).state !== 'unknown';
+    case 'roles/add': return (result as IntentResult<'roles/add'>).status !== 'uncertain';
+    case 'mcp/session-toggle': {
+      const { state } = (result as IntentResult<'mcp/session-toggle'>).operation;
+      return state === 'succeeded' || state === 'failed';
+    }
+    case 'schedule/add': {
+      const value = result as IntentResult<'schedule/add'>;
+      return !!value.entry || value.possiblyCreated !== true;
+    }
+    default: return true;
+  }
+}
 
 // The client always actively (re)connects, so externally there are only two
 // states the UI cares about: actively connecting/reconnecting, or connected.
@@ -161,15 +199,19 @@ export class NetClient {
       ? `目录 ${'path' in body && typeof body.path === 'string' ? body.path : '服务器主目录（未指定路径）'}`
       : 'name' in body && typeof body.name === 'string' ? body.name : undefined;
     const source = [target, resource].filter(Boolean).join(' · ');
+    let settle: ((known: boolean) => void) | undefined;
     try {
       // Validate native prompt fields even when callers pass extra runtime properties.
       const payload = name === 'prompt' ? Intents.prompt.body.parse(body) : body;
       const expectedSessionId = 'sessionId' in payload ? payload.sessionId : undefined;
+      const serialized = JSON.stringify(payload);
+      signal?.throwIfAborted();
+      if (HOST_INTENT_MUTATES[name]) settle = beginHostMutation();
       const res = await fetch(intentUrl(name), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         credentials: 'include',
-        body: JSON.stringify(payload),
+        body: serialized,
         ...(signal ? { signal } : {}),
       });
       const json: unknown = await res.json().catch(() => ({}));
@@ -184,12 +226,18 @@ export class NetClient {
       if (name === 'session/chat' && 'sessionId' in result && result.sessionId !== expectedSessionId) {
         throw new Error(`intent ${name} returned sessionId ${JSON.stringify(result.sessionId)} instead of ${JSON.stringify(expectedSessionId)}`);
       }
+      const known = knownMutationResult(name, result as IntentResult<K>);
+      settle?.(known);
+      if (settle && !known) reportUxError(`接口 ${name} 的变更结果尚未确认；请检查原生状态，不要自动重试。`, { deduplicate: false });
       return result as IntentResult<K>;
     } catch (e) {
+      settle?.(false);
       // Diagnostics stay local. Never execute a prompt or retry an uncertain POST.
       if (!signal?.aborted && !isSessionUnloadedError(e)
         && (name !== 'session/chat' || !isTransportError(e))) {
-        reportUxError(`${source ? `${source}：` : ''}接口 ${name} 调用失败：${describeReason(e, false)}`, { deduplicate: false });
+        reportUxError(`${source ? `${source}：` : ''}接口 ${name} 调用失败：${describeReason(e, false)}${settle ? '；变更结果尚未确认，请检查原生状态，不要自动重试。' : ''}`, { deduplicate: false });
+      } else if (settle) {
+        reportUxError(`接口 ${name} 的变更结果尚未确认；停止等待不代表原生操作已取消，请检查后再操作。`, { deduplicate: false });
       }
       throw e;
     }

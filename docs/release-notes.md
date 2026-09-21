@@ -7,9 +7,22 @@ existing immutable archive. `ModuleNextFrontendContext.ui` supplies actual host
 components without claiming classic CSS support or adding a second React runtime.
 This capability is not present in released 0.2.7 archives.
 
-The new presentation and its paired File/Speech integrations are under
-development. This version allocation does not publish a tag or Release, deploy
-any service, switch the default UI, or authorize data migration.
+The independent `/next/` entry provides a conversation-first workspace, dedicated
+session settings, global MCP/Skills resources, native decisions, queue controls
+and shared dialogs/menus. It reuses native transport/history, reading anchors and
+draft ownership instead of creating another backend or persisted state authority.
+Classic remains directly available at `/`; switching documents does not undo
+business actions or transfer in-memory uploads/recordings. Both entries protect
+unfinished native work, and unknown module draft fields cannot silently become a
+text-only submission.
+
+The paired new module presentations are File 0.2.0 and Speech 0.9.0, built against
+the host SDK source `0fa433d99c053df2caf80770f0f8762b9ed7002e`.
+Task and Notification remain classic-only; this delivery does not claim that
+every installed module has migrated. The isolated Chat Lab supports actual
+compiled File/Speech presentation integration with synthetic uploads/audio.
+This source preparation does not publish a tag or Release, deploy any service,
+switch the default UI, or authorize data migration.
 
 ---
 

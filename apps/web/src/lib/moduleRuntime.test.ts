@@ -7,7 +7,7 @@ import { ServerEvent, type ModuleEventPayload } from '@cockpit/protocol';
 import type { ActivateFrontend, ComposerEditorProps, DraftSchemaHandle, ModuleAsset, ModuleFrontend, ModuleFrontendContext, MarkdownNode, ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget } from '@cockpit/module-api';
 import { ModuleRuntime, validateModuleAsset } from './moduleRuntime';
 import { createSessionDrafts } from './textDraft';
-import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';
+import { appendFixture, fixtureItem, fixtureSchema, memoryDraftStorage, type FixtureData } from '../test/draftFixture';
 import { nextUi } from '../next/ui';
 
 const digest = 'a'.repeat(64);
@@ -604,19 +604,24 @@ test('renderer selection never fetches and a throwing matcher keeps the safe hos
   f.runtime.stop();
 });
 
-test('explicit module failure releases only its blockers and omits its revoked schema fields', async () => {
+test('explicit module failure releases only its blockers and retains opaque fields until their owner restores them', async t => {
+  t.mock.method(console, 'error', () => {});
   let handle!: DraftSchemaHandle<FixtureData>;
   const f = fixture([asset()], context => {
     handle = context.state.registerDraft(fixtureSchema());
     return { apiVersion: 2 };
   });
+  t.after(() => f.runtime.stop());
   await f.runtime.start();
-  const draft = createSessionDrafts()('failed-module');
+  const { storage, values } = memoryDraftStorage();
+  const draft = createSessionDrafts(storage)('failed-module');
   f.runtime.prepareDraft(draft);
   const captured = f.contexts[0].state.bindDraft(draft.reference);
   captured.block('Registered work');
   appendFixture(handle.forDraft(draft.reference)!, fixtureItem('ready'));
   draft.edit('Retained text');
+  const stored = values.get('cockpit:chat-draft:failed-module');
+  assert.ok(stored);
   const releaseOther = draft.bindModule('other', ['text']).draft.block('Other module');
   f.runtime.fail(f.runtime.getSnapshot()[0], new Error('Module failed'));
   assert.equal(f.runtime.getSnapshot().length, 0);
@@ -626,10 +631,28 @@ test('explicit module failure releases only its blockers and omits its revoked s
   assert.throws(() => captured.block('stale'), /cannot block/);
   assert.throws(() => handle.forDraft(draft.reference), /stopped/);
   releaseOther();
+  assert.equal(draft.getSnapshot().blocks.length, 0);
+  assert.equal(draft.hasUnclaimedStoredData(), true);
+  let dispatched = 0;
+  const incompleteSend = async () => { dispatched++; return true; };
+  assert.equal(await draft.send(incompleteSend), false);
+  assert.equal(await draft.runAction(incompleteSend), false);
+  assert.equal(dispatched, 0, 'neither text nor decision actions may omit opaque data');
+  assert.equal(draft.getSnapshot().text, 'Retained text');
+  assert.equal(values.get('cockpit:chat-draft:failed-module'), stored, 'blocked sends preserve the complete stored record');
+  f.runtime.stop();
+  await f.runtime.start();
+  f.runtime.prepareDraft(draft);
+  assert.equal(draft.hasUnclaimedStoredData(), false);
+  assert.deepEqual(handle.forDraft(draft.reference)!.getSnapshot().items, [fixtureItem('ready')]);
   assert.equal(await draft.send(async request => {
-    assert.deepEqual(request.body, { sessionId: 'failed-module', text: 'Retained text' });
+    assert.deepEqual(request.body, {
+      sessionId: 'failed-module', text: 'Retained text', attachments: [fixtureItem('ready').value],
+    });
     return true;
   }), true);
+  assert.deepEqual(handle.forDraft(draft.reference)!.getSnapshot().items, []);
+  assert.equal(draft.getSnapshot().text, '');
   f.runtime.stop();
 });
 

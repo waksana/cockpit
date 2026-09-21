@@ -218,8 +218,10 @@ component boundary, without clipping the option or widening the card.
 Choice selection still submits the complete original value directly; freeform text uses the existing
 send action, and choice-only questions still block freeform submission.
 
-The same editor and module contribution instances stay mounted while the card
-opens/closes, changes questions or returns to normal composition. Collapse does
+Within one draft identity, the same editor and module contribution instances stay
+mounted while the card opens/closes. A different native request ID or transition
+between a decision and the ordinary prompt uses its own editor and draft identity;
+old callbacks cannot edit or submit the replacement draft. Collapse does
 not discard a draft or answer the request. A new native request ID opens the card;
 ordinary updates to the same request preserve the browser's disclosure state.
 Completion also opens the ordinary composer if the question was collapsed.
@@ -235,8 +237,10 @@ Module upload/recovery and per-item copy feedback remain with their own items.
 Folding preserves the original editor, module instances, draft and attachments.
 Plans and tool confirmations keep distinct native callbacks, including when more
 than one kind is present. A pending decision does not hide Stop.
-Stop retains its native queue-clearing behavior and stays disabled
+Stop retains its native queue-clearing behavior and cannot dispatch again
 while disconnected, closing, cancelling or another protected operation is active.
+A pending focused control can remain focusable with guarded `aria-disabled`
+instead of losing focus when its native request is submitted.
 The execution label takes the space remaining beside its actions rather than
 reserving a large minimum column. Where space permits, the status and both
 queue actions share one line; long status text truncates. When they cannot fit,

@@ -1,5 +1,12 @@
 # 模块接入协议
 
+**0.3.0 开发源码：经典界面仍为默认入口，独立新版通过 `frontend.next` 选择模块展示。**
+新版使用 `ModuleNextFrontendContext.ui.version === 1` 的实际宿主 React 组件，
+不声明经典 `uiVersion` / `uiSurfaceVersion` CSS 能力。配套 SDK 源码为
+`0fa433d99c053df2caf80770f0f8762b9ed7002e`；这是可获取的开发提交，不是已发行或已部署的证明。
+具体组件与展示边界见[独立新版 UI](module-ui-guide.md#independent-new-ui)。
+下述历史版本配套记录不表示旧发行包具有该新增能力。
+
 **Cockpit 0.2.5：模块包/后端 API v1，Web API v2，公共 UI v1，菜单能力 menuVersion 1。**
 本地可信包、主进程 import、冷加载、模块 payload 事件及独立菜单注册已实现。
 当前开发源码另提供 `chatWindowVersion: 1`、`composerInputVersion: 1`、
@@ -80,6 +87,13 @@ manifest/后端 API v1 也不提供页面注册字段，未知字段明确拒绝
 可选 `frontend.worker` 指向包内、已声明 assets 根下的独立 `.js` 文件，最大 1 MiB，
 安装与读取使用同一上限。
 依赖该字段的模块需要包含 worker 能力的宿主，旧运行包不会自动得到支持。
+
+可选 `frontend.next` 的形状为 `{ "entry": "dist/web/next/index.js",
+"styles": ["dist/web/next/styles.css"] }`；`styles` 可省略，表示没有额外新版样式，
+不继承经典样式。入口和样式必须位于同一包的 `frontend.assets` 根中，并接受相同
+路径/文件校验和不可变摘要约束。经典入口仅加载原来的 `entry` / `styles`；
+新版仅加载明确声明的 `next`。缺少新版声明只表示该展示不可用，不能据此判定后端停用。
+旧宿主可能拒绝此新增 manifest 字段，双入口模块须明确要求配套 0.3.0 宿主能力。
 
 安装器接受普通 tar 文件/目录，支持统一的 npm `package/` 前缀；
 拒绝符号链接、硬链接、特殊文件、路径逃逸、重复条目和扩展 tar header。
@@ -206,7 +220,8 @@ scope 已关闭的模块也不调用。安装、启停和版本选择仍只在�
 
 | 入口 | 当前实际提供 | 作用域与限制 |
 | --- | --- | --- |
-| 前端版本与运行基础 | `apiVersion: 2`、`uiVersion: 1`、`uiSurfaceVersion: 1`、`menuVersion: 1`、`moduleId`、宿主 `react`、`createPortal`、`signal`、`report` | 同一模块激活生命周期；能力分别检查，不另建 React root |
+| 前端版本与运行基础 | `apiVersion: 2`、`menuVersion: 1`、`moduleId`、宿主 `react`、`createPortal`、`signal`、`report` | 同一模块激活生命周期；能力分别检查，不另建 React root |
+| 展示能力 | 经典：`uiVersion: 1` / `uiSurfaceVersion: 1`；新版：`ui.version: 1` 及公开 React 组件 | 入口分别检查；不混用两套样式或不同实例的复合组件 |
 | 前端模块 API | `apiBase`、公开 `config`、`request(path, init)` | 请求只到本模块的摘要绑定 API，带既有认证；不是任意原生 API 代理，公开配置不能含长期密钥 |
 | 前端模块事件 | `onEvent(listener)`、`onInvalidate(listener)` | 只接收本模块 payload/失效提示，沿用既有 SSE；不是原生聊天事件订阅 |
 | 宿主基础 state | `context.state.host.getSnapshot()` / `subscribe()` | 只有当前 `sessionId`、页面 `visible`、连接 `connected` |
@@ -499,7 +514,7 @@ apiBase、公开配置、request、signal、onInvalidate、onEvent 和 report。
 模块不得自建 root 或依赖私有 DOM/store。
 宿主并行初始化不同前端模块；单个超时/错误不阻塞其他模块，晚结果不能重新发布已撤销贡献。
 
-当前宿主另提供 `context.uiVersion: 1`，声明已实现的公共语义 CSS 与图标规范。
+经典界面的激活 context 另提供 `context.uiVersion: 1`，声明已实现的公共语义 CSS 与图标规范。
 共享表面组合另以 `context.uiSurfaceVersion: 1` 声明；使用新增 surface/heading/actions/badge/modal
 样式的消费者必须独立检查该能力，不能从 UI v1 或包版本推断。
 它只声明 CSS 能力，不新增 React 运行时、组件中间件边界或原生模态行为。
@@ -508,6 +523,14 @@ apiBase、公开配置、request、signal、onInvalidate、onEvent 和 report。
 精确类名、变量、兼容条件、两仓交付顺序与可运行示例统一维护在
 [模块 UI 开发指南](module-ui-guide.md)。这是前端 additive 能力，不是新的 manifest 字段；
 依赖 UI v1 的模块必须检查该字段并明确拒绝不兼容激活，不能只看宿主 package 版本。
+
+新版入口使用 `ModuleNextFrontendContext`，只通过 `context.ui` 消费当前宿主组件。
+`ModuleFrontendServices` 抽出两种展示共用的非视觉能力；模块共用服务代码不应要求
+经典 CSS 标志或导入任一展示入口。新版先等待该模块声明的样式加载，再激活/发布组件；
+失败按模块报告并释放资源，不回退到经典组件。宿主原生阅读无需等所有模块完成，
+但模块敏感的草稿提交必须等待本次启动结束及当前草稿准备完成，不能把暂时空的
+模块快照误认为初始化成功。跨文档切换不会转移内存中的上传、录音或待确认操作；
+离开保护与资源归属见[模块 UI 指南](module-ui-guide.md#independent-new-ui)。
 
 菜单注册另由 **`context.menuVersion: 1`** 声明；使用菜单的模块必须独立检查此能力。
 它不是 `apiVersion` 或 `uiVersion` 的别名，也不是兼容旧导航接口的开关；

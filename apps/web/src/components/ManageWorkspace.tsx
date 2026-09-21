@@ -1,5 +1,5 @@
 // URL-driven master-detail management; Shell keeps list/detail navigation responsive.
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, type ReactNode } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import type { McpServerGlobal } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
@@ -11,6 +11,7 @@ import { ResourceStatus } from './SessionPanelKit';
 import { PaneBody } from './PaneHeader';
 import { ResourceSummary } from './ResourceRow';
 import { Badge, SectionHeading, Toggle } from './UI';
+import { useGlobalResourceMutations } from '../features/session-settings/useGlobalResources';
 
 type ListProps = { selected: string | null; onSelect: (name: string) => void; revision: number };
 type McpCatalog = ReturnType<typeof useKeyedResource<McpServerGlobal[]>>;
@@ -148,28 +149,9 @@ function ManagementContent({ section, item }: {
   section: ManageSection; item: string | null;
 }) {
   const navigate = useNavigate();
-  const [refreshNonce, setRefreshNonce] = useState(0);
+  const { refreshNonce, refresh, onChange } = useGlobalResourceMutations(section);
   const mcpGlobal = useCockpit((s) => s.mcpGlobal);
-  const mutate = useCockpit((s) => section === 'mcp' ? s.mcpSetDefault : s.skillsSetGlobal);
-  const connected = useCockpit((s) => s.connState === 'open');
-  const generation = useCockpit((s) => s.connectionGeneration);
-  const owner = useRef({ active: false });
-  useLayoutEffect(() => {
-    const current = { active: true };
-    owner.current = current;
-    return () => { current.active = false; };
-  }, [connected, generation]);
   const mcpCatalog = useKeyedResource('global:mcp', mcpGlobal, refreshNonce, section === 'mcp');
-  const refresh = () => setRefreshNonce((n) => n + 1);
-  // Detail tasks own their feedback; the mounted catalog owns mutation readback.
-  const onChange: GlobalToggle = async (name, enabled) => {
-    const current = owner.current;
-    try { await mutate(name, enabled); }
-    finally {
-      const state = useCockpit.getState();
-      if (current.active && state.connState === 'open' && state.connectionGeneration === generation) refresh();
-    }
-  };
   const select = (name: string) => { void navigate(`/${section}/${encodeURIComponent(name)}`, { replace: item !== null }); };
   return (
     <ManagementShell section={section} item={item} onRefresh={refresh}

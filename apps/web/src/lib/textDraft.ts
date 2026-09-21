@@ -83,6 +83,9 @@ export class SessionDraft {
   private readonly listeners = new Set<() => void>();
   private readonly blockOwners = new Map<string, string>();
   private readonly fields = new Map<string, DraftField>();
+  private readonly legacyRestorers = new Set<string>();
+  private persistedText = '';
+  private persistedUnconfirmed = false;
   private record?: Record<string, unknown>;
   private storedBytes: string | null = null;
   private readError?: unknown;
@@ -128,6 +131,8 @@ export class SessionDraft {
       const meta = this.metadata();
       this.snapshot = Object.freeze({ ...this.snapshot, text: value.text, hasContent: !!value.text.trim(),
         unconfirmed: value.unconfirmed || meta.pendingToken !== undefined });
+      this.persistedText = this.snapshot.text;
+      this.persistedUnconfirmed = this.snapshot.unconfirmed;
     } catch (error) { this.readError = error; this.report(error); }
   }
 
@@ -137,6 +142,27 @@ export class SessionDraft {
     return () => { this.listeners.delete(listener); };
   };
   isRetired(): boolean { return this.retired; }
+  hasUnpersistedChanges(): boolean {
+    return this.snapshot.text !== this.persistedText || this.snapshot.unconfirmed !== this.persistedUnconfirmed;
+  }
+  hasUnclaimedStoredData(): boolean {
+    if (this.readError) return true;
+    if (!this.record) return false;
+    const meta = this.metadata();
+    const owns = (namespace: string) => {
+      const field = this.fields.get(namespace);
+      return field?.active && field.encoded !== undefined;
+    };
+    if (Object.keys((meta.schemas ?? {}) as Record<string, unknown>).some(namespace => !owns(namespace))) return true;
+    if (Object.keys(meta).some(key => !['version', 'purpose', 'pendingToken', 'schemas'].includes(key))) return true;
+    const purposeKeys = this.reference.purpose.kind === 'prompt' ? ['kind'] : ['kind', 'requestId'];
+    if (draftRecord(meta.purpose) && Object.keys(meta.purpose).some(key => !purposeKeys.includes(key))) return true;
+    // The existing persistence.restore contract owns the complete legacyRecord,
+    // not individually declared legacy keys. Only a live restoring field may
+    // interpret it; merely sharing a module prefix does not own a namespace.
+    return Object.keys(this.record).some(key => !['text', 'unconfirmed', META].includes(key))
+      && ![...this.legacyRestorers].some(owns);
+  }
   setAskContext(context?: DraftAskContext): void {
     const next = !this.retired && this.reference.purpose.kind === 'ask' ? context : undefined;
     const previous = this.snapshot.askContext;
@@ -151,7 +177,7 @@ export class SessionDraft {
     this.retired = true;
     if (this.reference.purpose.kind === 'prompt') {
       try {
-        if (this.storage && this.storage.getItem(this.key) === this.storedBytes) this.storage.removeItem(this.key);
+        if (!this.hasUnclaimedStoredData() && this.storage && this.storage.getItem(this.key) === this.storedBytes) this.storage.removeItem(this.key);
       } catch (error) { this.report(error); }
     }
     this.publish({ retired: true, ...(this.snapshot.askContext ? { askContext: undefined } : {}) });
@@ -218,13 +244,14 @@ export class SessionDraft {
     const schemas = { ...(previous.schemas as Record<string, unknown> | undefined) };
     for (const [namespace, value] of encoded) Object.defineProperty(schemas, namespace, { value, enumerable: true, configurable: true, writable: true });
     const meta: Record<string, unknown> = {
-      ...previous, version: 1, purpose: this.reference.purpose,
+      ...previous, version: 1, purpose: { ...(previous.purpose as Record<string, unknown> | undefined), ...this.reference.purpose },
       ...(Object.keys(schemas).length ? { schemas } : {}),
     };
     if (token) meta.pendingToken = token;
     else delete meta.pendingToken;
     const next = { ...this.record, text: snapshot.text, unconfirmed: snapshot.unconfirmed || !!token, [META]: meta };
     const hasOpaque = Object.keys(next).some(key => !['text', 'unconfirmed', META].includes(key))
+      || Object.keys(meta.purpose as Record<string, unknown>).some(key => !Object.hasOwn(this.reference.purpose, key))
       || Object.keys(schemas).length > 0 || Object.keys(meta).some(key => !['version', 'purpose'].includes(key));
     if (!snapshot.text && !snapshot.unconfirmed && !token && !hasOpaque) {
       this.storage?.removeItem(this.key);
@@ -236,10 +263,15 @@ export class SessionDraft {
       this.record = immutableDraftData(next);
       this.storedBytes = bytes;
     }
+    if (this.storage) {
+      this.persistedText = snapshot.text;
+      this.persistedUnconfirmed = snapshot.unconfirmed;
+    }
   }
   restoreInput(namespace: string): DraftRestoreInput | undefined {
     if (this.readError) throw this.readError;
     if (!this.record) return undefined;
+    this.legacyRestorers.add(namespace);
     const schemas = this.metadata().schemas as Record<string, unknown> | undefined;
     return Object.freeze({
       stored: schemas && Object.hasOwn(schemas, namespace)
@@ -420,8 +452,10 @@ export class SessionDraft {
     const token = `action-${draftIdentity()}`;
     try {
       if (!this.allowed(check)) return false;
+      if (this.hasUnclaimedStoredData()) throw new Error('草稿包含尚未由当前界面模块恢复的数据；请切换到经典界面恢复后再提交。');
       this.begin(token, new Map());
       if (!check()) throw new Error('The native decision has changed');
+      if (this.hasUnclaimedStoredData()) throw new Error('Draft schema ownership changed before dispatch');
       const acceptedInView = captureLocalSubmission(this.sessionId);
       const acknowledged = (await send()) === true;
       if (acknowledged) acceptedInView();
@@ -444,6 +478,9 @@ export class SessionDraft {
       const blocked = guard?.(false);
       if (blocked) return blockedSend(blocked);
       if (!this.allowed(check)) return blockedSend('pending');
+      if (this.hasUnclaimedStoredData()) {
+        throw new Error('草稿包含尚未由当前界面模块恢复的数据；请切换到经典界面恢复后再提交。');
+      }
       if (this.snapshot.blocks.length) return blockedSend('peer-blocked');
       if (!this.snapshot.hasContent) return blockedSend('empty');
       submission = Object.freeze({ id: `send-${draftIdentity()}`, draft: this.reference, base: this.snapshot });
@@ -475,6 +512,7 @@ export class SessionDraft {
       const changed = guard?.(true);
       if (changed) throw new BlockedDraftSend(changed);
       if (!check()) throw new Error('The native draft/request changed before dispatch');
+      if (this.hasUnclaimedStoredData()) throw new Error('Draft schema ownership changed before dispatch');
       dispatched = true;
       const acceptedInView = captureLocalSubmission(this.sessionId);
       const acknowledged = nativeAcknowledged = (await send(request)) === true;
