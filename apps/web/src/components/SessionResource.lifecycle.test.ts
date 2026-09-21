@@ -508,7 +508,8 @@ for (const Component of [SessionMcp, SessionSkills]) {
     const h = mount(t);
     const name = Component === SessionMcp ? 'cockpit-task' : 'cockpit-task-owner';
     const unrelated = 'module_cockpit-task__unrelated';
-    const module = { id: 'cockpit-task', name: 'Task' };
+    const module = { id: 'cockpit-task', name: 'Task',
+      roles: [{ id: 'executor', name: 'Executor' }, { id: 'owner', name: 'Owner' }] };
     let enabled = true;
     const calls: Array<[string, string, boolean]> = [];
     const mutate = async (id: string, key: string, value: boolean) => { calls.push([id, key, value]); enabled = value; };
@@ -527,6 +528,9 @@ for (const Component of [SessionMcp, SessionSkills]) {
     const rows = h.container.querySelectorAll('.manage-row');
     assert.equal(rows[0].querySelector('.manage-row-name')?.textContent, name);
     assert.equal(rows[0].querySelector('.module-label-name')?.textContent, 'Task');
+    assert.equal(rows.length, 2, 'shared resources still have one row');
+    assert.equal(rows[0].querySelector('.role-badge-name')?.textContent, 'Executor、Owner');
+    assert.equal(h.container.querySelector('.module-mark'), null);
     if (Component === SessionMcp) assert.match(rows[0].querySelector('.module-label')!.getAttribute('title')!, /角色配置来源，不代表当前连接身份/);
     assert.match(rows[0].querySelector('.manage-row-source')!.textContent, /native|custom/);
     assert.equal(rows[1].querySelector('.manage-row-name')?.textContent, unrelated);
@@ -534,6 +538,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
     await h.event(rows[0].querySelector('[role="switch"]')!, 'click');
     assert.deepEqual(calls, [[session.sessionId, name, false]]);
     assert.equal(rows[0].querySelector('.module-label-name')?.textContent, 'Task');
+    assert.equal(rows[0].querySelector('.role-badge-name')?.textContent, 'Executor、Owner');
   });
 }
 
