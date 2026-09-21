@@ -259,6 +259,7 @@ export class NetClient {
     return this.intent('session/delete', { sessionId });
   }
   loadSession(sessionId: string) { return this.intent('session/load', { sessionId }); }
+  reloadSession(sessionId: string) { return this.intent('session/reload', { sessionId }); }
   getResources(sessionId: string, resources: import('@cockpit/protocol').MetaResource[], signal?: AbortSignal) {
     return this.intent('session/resources', { sessionId, resources }, signal);
   }

@@ -243,6 +243,7 @@ export function Lab() {
       {moreOpen && <AnchoredMenu triggerRef={moreRef} label={session.title} onClose={() => setMoreOpen(false)}
         items={sessionActionItems(session, true, {
           openPanel: (_id, panel) => setReceipt(`面板入口：${panel ?? 'info'}；这里只展示导航回调。`),
+          reload: () => setReceipt('重新加载入口回调；没有调用原生重新加载。'),
           delete: () => setReceipt('删除入口回调；没有调用原生删除。'),
         })} />}
     </div>

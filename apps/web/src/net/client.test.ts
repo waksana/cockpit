@@ -124,9 +124,15 @@ test('removed session pages have no dedicated Web client helpers', t => {
   for (const name of [
     'forkSession', 'getSession', 'getPlan', 'getPanels', 'getPanel', 'getUsage',
     'scheduleList', 'scheduleAdd', 'scheduleStop', 'compactSession',
-    'rewindSession', 'unloadSession', 'reloadSession', 'setMode',
+    'rewindSession', 'unloadSession', 'setMode',
   ]) assert.equal(name in client, false, name);
   assert.equal(fetch.mock.callCount(), 0);
+});
+
+test('explicit reload sends only the authorized canonical request', async t => {
+  const { client, fetch } = setup(t, async () => Response.json({ ok: true }));
+  assert.deepEqual(await client.reloadSession('background'), { ok: true });
+  assertOnlyPost(fetch, 'session/reload', { sessionId: 'background' });
 });
 
 test('explicit load sends exactly one non-destructive session/load request', async t => {
