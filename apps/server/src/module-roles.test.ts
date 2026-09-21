@@ -148,7 +148,9 @@ test('module host bridge is allowlisted, lifecycle bound and preserves public ca
   const installed = await installLocalModule(await f.package(moduleEntries('bridge', `
     let ctx;
     export function activate(value) { ctx = value; return { routes: [{method: 'POST', path: '/call',
-      handler: async req => ({body: await ctx.host.call(req.body.name, req.body.body)})}] }; }
+      handler: async req => ({body: req.body.name === 'capability'
+        ? { version: ctx.host.resourcePreparationVersion, frozen: Object.isFrozen(ctx.host) }
+        : await ctx.host.call(req.body.name, req.body.body)})}] }; }
   `)), { trustLocalCode: true, enable: true });
   const calls: unknown[] = [];
   const app = Fastify(); t.after(() => app.close());
@@ -163,7 +165,14 @@ test('module host bridge is allowlisted, lifecycle bound and preserves public ca
   assert.equal(response.statusCode, 200, response.body);
   assert.deepEqual(response.json(), { sessionId: 'actual-native-id' });
   assert.deepEqual(calls, [{ name: 'session/new', body }]);
-  assert.equal((await app.inject({ method: 'POST', url, headers, payload: { name: 'session/delete', body: { sessionId: 'x' } } })).statusCode, 500);
-  assert.equal(calls.length, 1);
+  assert.deepEqual((await app.inject({ method: 'POST', url, headers, payload: { name: 'capability' } })).json(),
+    { version: 1, frozen: true });
+  const preparation = { sessionId: 'x', skills: ['optional'], mcpServers: [{ name: 'tools', tools: ['read'] }] };
+  assert.equal((await app.inject({ method: 'POST', url, headers, payload: { name: 'session/resources-prepare', body: preparation } })).statusCode, 200);
+  assert.deepEqual(calls[1], { name: 'session/resources-prepare', body: preparation });
+  for (const name of ['session/delete', 'session/tools-initialize', 'skills/session-toggle', 'mcp/session-toggle', 'arbitrary/intent']) {
+    assert.equal((await app.inject({ method: 'POST', url, headers, payload: { name, body: { sessionId: 'x' } } })).statusCode, 500);
+  }
+  assert.equal(calls.length, 2);
   assert.equal((await app.inject({ method: 'POST', url, payload: { name: 'session/get', body: {} } })).statusCode, 409);
 });

@@ -60,6 +60,10 @@ export function roleSummary(meta: Pick<SessionMeta, 'roles' | 'appliedRoles' | '
 export function intentJson(name: string, value: unknown): ToolResult {
   let classification: NativeOperationClassification | undefined;
   switch (name) {
+    case 'session/resources-prepare': {
+      const parsed = Intents['session/resources-prepare'].result.parse(value);
+      return { ...ok(JSON.stringify(value, null, 2)), ...(!parsed.ok ? { isError: true } : {}) };
+    }
     case 'roles/add': {
       const parsed = Intents['roles/add'].result.parse(value);
       return { ...ok(JSON.stringify(value, null, 2)),

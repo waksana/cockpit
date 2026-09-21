@@ -66,6 +66,35 @@ before packaging/deploying changed contents.
 
 ---
 
+# Unreleased source: guarded session resource preparation
+
+Adds the strict public `session/resources-prepare` intent and only that narrow
+addition to the module host bridge. The frozen facade advertises
+`resourcePreparationVersion: 1`; resource-aware consumers must check it before
+creating or preparing a session. Backend API v1 and the existing Task UI pairing
+at `9fd5204` / `uiSurfaceVersion: 1` are unchanged.
+
+On an already loaded idle target, one lifecycle guard protects complete selection
+prevalidation, explicit disabled-resource activation, tool-table initialization
+and native readback. Unrelated choices are preserved. Partial and unknown effects
+remain in per-request receipts; no prompt, reload, authentication, connector retry,
+global configuration or persisted resource mirror is introduced. Host preparation
+is not role readiness or Task assignment; unfinished Task selection protection
+remains solely in the Task module. Raw native MCP tool names are required, `"*"`
+is rejected, and omitted/empty tool lists require at least one actual offered tool.
+Tools initialize once after a confirmed resource enable or when metadata is null.
+This repairs the native MCP-enable stale-table case in the same preparation even
+when metadata is non-null. ToolSet/native filtering is preserved; genuine missing
+tools still fail with confirmed enablement retained. Already-enabled selections
+with non-null missing tools do not trigger speculative rebuilding.
+See the [full contract](module-contract-draft.md#session-resource-preparation).
+
+This is source-only, not deployed in 0.2.7/source `1dd38c6`. No per-commit version
+bump, release, installation or restart is performed. A new immutable delivery
+version is required before publishing/deploying changed contents.
+
+---
+
 # Unreleased source: append roles to an existing session
 
 Adds `roles/add`, `cockpit_add_roles` and a Web session-settings action for
