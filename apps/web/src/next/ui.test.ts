@@ -35,8 +35,8 @@ test('the compiled shared theme styles actual Radix states and independent touch
   assert.match(unchecked, /data-state="unchecked"/);
   assert.match(css, /\.data-checked\\:bg-primary:where\(\[data-state="checked"\][^{]*\{\s*background-color:/);
   assert.match(css, /\.data-unchecked\\:bg-input:where\(\[data-state="unchecked"\][^{]*\{\s*background-color:/);
-  assert.match(css, /\.data-horizontal\\:h-px:where\(\[data-orientation="horizontal"\]\)\s*\{\s*height: 1px/);
   assert.match(css, /\.data-open\\:animate-in:where\(\[data-state="open"\]/);
+  assert.match(css, /\.data-closed\\:animate-out:where\(\[data-state="closed"\]/);
 
   // Build output is formatted: this must be a root media rule, not nested under reduced motion.
   assert.match(css, /^@media \(pointer: coarse\) \{[\s\S]*?\[data-slot=(?:"checkbox"|checkbox)\]:after/m);

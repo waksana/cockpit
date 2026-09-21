@@ -107,7 +107,6 @@ export interface ModuleUi {
   readonly Badge: Component<UiBadgeProps>;
   readonly Checkbox: Component<UiCheckboxProps>;
   readonly Switch: Component<UiSwitchProps>;
-  readonly Separator: Component<DivProps & { orientation?: 'horizontal' | 'vertical'; decorative?: boolean }>;
   readonly Alert: Component<DivProps & { variant?: 'default' | 'destructive' | null }>;
   readonly AlertTitle: Component<DivProps>;
   readonly AlertDescription: Component<DivProps>;
@@ -142,10 +141,14 @@ export interface ModuleUi {
   readonly DropdownMenuGroup: Component<DivProps>;
   readonly DropdownMenuLabel: Component<DivProps & { inset?: boolean }>;
   readonly DropdownMenuSeparator: Component<DivProps>;
+  readonly ContextMenu: Component<Pick<UiOpenProps, 'children' | 'onOpenChange'> & { dir?: 'ltr' | 'rtl'; modal?: boolean }>;
+  readonly ContextMenuTrigger: Component<React.ComponentProps<'span'> & { asChild?: boolean; disabled?: boolean }>;
+  readonly ContextMenuContent: Component<Omit<UiMenuContentProps, 'side' | 'align' | 'sideOffset' | 'alignOffset'>>;
+  readonly ContextMenuItem: Component<UiMenuItemProps>;
+  readonly ContextMenuGroup: Component<DivProps>;
+  readonly ContextMenuLabel: Component<DivProps & { inset?: boolean }>;
+  readonly ContextMenuSeparator: Component<DivProps>;
   readonly Collapsible: Component<DivProps & UiOpenProps & { disabled?: boolean }>;
   readonly CollapsibleTrigger: Component<TriggerProps>;
   readonly CollapsibleContent: Component<DivProps & { forceMount?: true }>;
-  readonly Tooltip: Component<UiOpenProps & { delayDuration?: number; disableHoverableContent?: boolean }>;
-  readonly TooltipTrigger: Component<TriggerProps>;
-  readonly TooltipContent: Component<Omit<UiMenuContentProps, 'onCloseAutoFocus' | 'onInteractOutside'>>;
 }

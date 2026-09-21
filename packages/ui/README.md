@@ -18,7 +18,8 @@ They map the source's shorthand variants to actual Radix attributes.
 
 The intentional local defaults are:
 
-- Neutral light/dark semantic colors and reduced-motion support.
+- Neutral light/dark semantic colors following the system preference through
+  CSS, without a post-paint theme-class change, and reduced-motion support.
 - Compact desktop controls; 44px coarse-pointer action targets. Checkbox and
   switch hit areas expand without enlarging their visible marks. Consumers must
   space these controls so those hit areas do not overlap.
@@ -44,3 +45,8 @@ Adding a component requires an actual host use. Update the public capability
 only when it should be shared, and keep compound component parts in one
 implementation instance. Do not silently replace a component's public
 behavior with page-specific selector overrides.
+
+The current host catalog is Button, Input, Textarea, Label, Select, Checkbox,
+Switch, Badge, Alert, Dialog, AlertDialog, DropdownMenu, ContextMenu and
+Collapsible. Unused Tooltip and standalone Separator sources were removed
+during the host behavior audit; module-only demand does not retain a component.

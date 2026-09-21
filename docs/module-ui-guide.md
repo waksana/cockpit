@@ -68,8 +68,6 @@ Composite component parts (for example Dialog root/content/close) must come
 from one implementation instance. Copying one part from another dependency
 instance does not share its context. Public component reuse does not grant
 access to private stores or change business-state ownership.
-The new host root provides the matching `TooltipProvider` for its public Tooltip
-parts; modules do not create a provider from another Radix instance.
 
 Switching entries replaces the document. Persisted drafts share their existing
 encoding, but browser Files, uploads, recording/recovery resources and pending
