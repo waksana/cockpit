@@ -47,7 +47,7 @@ export type ServerEngine = Pick<Engine,
   | 'login' | 'snapshot' | 'status' | 'busyCount' | 'newSession' | 'forkSession' | 'chat' | 'stop'
   | 'prompt' | 'cancel' | 'interrupt' | 'setModel' | 'rename' | 'compact' | 'rewind' | 'setMode'
   | 'deleteSession' | 'unload' | 'load'
-  | 'reload' | 'initializeSessionTools' | 'getPlan' | 'getUsage' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
+  | 'reload' | 'initializeSessionTools' | 'prepareSessionResources' | 'getPlan' | 'getUsage' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
   | 'planSupersede' | 'respondElicitation' | 'removeQueued' | 'refreshList'
   | 'listLive' | 'getMeta' | 'listGlobalMcp' | 'setMcpDefault'
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
@@ -319,6 +319,7 @@ const handlers: IntentHandlers = {
     await engine.initializeSessionTools(b.sessionId);
     return { ok: true };
   },
+  'session/resources-prepare': b => engine.prepareSessionResources(b),
   'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
   'session/chat': (b, signal) => engine.chat(b, signal),
   prompt: async (b) => b.attachments === undefined

@@ -38,6 +38,7 @@ let invalidPolicy = false;
 let mcpSessionResult: unknown;
 let skillSessionResult: unknown;
 let mcpToggleResult: unknown;
+let resourcePreparationResult: unknown;
 let unconfirmedMcp = false;
 let scheduleEntries: ScheduleEntry[] = [];
 let scheduleStopped = true;
@@ -118,6 +119,7 @@ mockHttp((res, req) => {
     if (name === 'mcp/session') return send(mcpSessionResult);
     if (name === 'skills/session') return send(skillSessionResult);
     if (name === 'mcp/session-toggle') return send(mcpToggleResult);
+    if (name === 'session/resources-prepare') return send(resourcePreparationResult);
     if (name === 'runtime/snapshot') return send(invalidPolicy ? { ...snapshot, permissionPolicy: undefined } : snapshot);
     if (name === 'session/list') return send({ sessions: [meta] });
     if (name === 'session/get') return send({ meta });
@@ -192,6 +194,7 @@ beforeEach(() => {
   mcpSessionResult = { loaded: true, servers: [] };
   skillSessionResult = { skills: [] };
   mcpToggleResult = undefined;
+  resourcePreparationResult = { sessionId: 'target', ok: true, skills: [], mcpServers: [], tools: 'unchanged' };
   unconfirmedMcp = false;
   scheduleEntries = [];
   scheduleStopped = true;
@@ -739,6 +742,23 @@ test('tool initialization uses one explicit generic call without a prompt, reloa
   assert.equal(failure.isError, true);
   assert.match(failure.text, /HTTP 409/);
   assert.deepEqual(requests.map(request => request.path), [`/intent/${name}`]);
+});
+
+test('resource preparation generic invocation retains all partial steps and never retries failures', async () => {
+  const name = 'session/resources-prepare';
+  const body = { sessionId: 'target', skills: ['optional'], mcpServers: [{ name: 'tools', tools: ['raw_name'] }] };
+  assert.deepEqual(await json('cockpit_call_intent', { name, body }), resourcePreparationResult);
+  assert.deepEqual(requests.map(request => [request.path, request.body]), [[`/intent/${name}`, body]]);
+  requests.length = 0;
+  resourcePreparationResult = {
+    sessionId: 'target', ok: false, skills: [{ name: 'optional', enabled: true, effect: 'enabled' }],
+    mcpServers: [{ name: 'tools', effect: 'unconfirmed', enabled: null, status: null, tools: null }],
+    tools: 'not_attempted', error: 'Native readback failed',
+  };
+  const failure = await call('cockpit_call_intent', { name, body });
+  assert.equal(failure.isError, true);
+  assert.deepEqual(JSON.parse(failure.text), resourcePreparationResult);
+  assert.deepEqual(requests.map(request => [request.path, request.body]), [[`/intent/${name}`, body]]);
 });
 
 test('generic invocation surfaces authoritative unknown and retired name errors with one POST each', async () => {

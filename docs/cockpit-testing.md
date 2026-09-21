@@ -96,6 +96,14 @@ reload 状态，以及普通读取不触发 readiness 或原生加载。
 导致缺失，而非只核对连接。Engine 用例补充未知/未加载/忙碌/并发操作拒绝、原生错误、
 null 读回和关闭竞态；HTTP intent 与通用 MCP 调用器用既有 runner 验证。
 
+`session/resources-prepare` 复用上述 Engine、HTTP/module facade 和 native roles 入口，
+覆盖整体前检后才修改、逐步部分/未知效果、生命周期并发保护、null 或已确认启用资源后仅初始化一次、
+raw MCP 工具身份/实际过滤，以及保留无关禁用资源而不冷重载。
+native fixture 覆盖 MCP enable 后保留的非 null 空表在同次准备中重建成功，以及 Skill
+失效后的 null 恢复；已知配置变化后的重建仍保留真实工具过滤，未修改资源的非 null
+缺工具场景不进行推测性重建。模块的完整结果持久化与 Task 一致性
+须由实际配套模块自行验证，宿主 fixture 不替代模块/native 集成。
+
 文件输入用例让 Engine 传入合成原生文件，再由 native view 读取。
 四种附件 schema/转发用例不等于每种媒体/模型均实测可读。完整 MCP/native fork 用例
 见[分叉指南](session-fork.md#local-regression-fixture)，不要用 schema 样例代替真实连接。

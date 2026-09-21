@@ -299,6 +299,34 @@ export const SkillSession = z.object({
 });
 export type SkillSession = z.infer<typeof SkillSession>;
 
+const ResourceName = z.string().min(1).max(200).refine(value => value.trim().length > 0, 'Name must not be blank');
+const ResourceNames = z.array(ResourceName).max(64).refine(values => new Set(values).size === values.length, 'Names must be unique');
+const PreparationToolNames = z.array(ResourceName.refine(value => value !== '*', 'Wildcard tools are not supported'))
+  .max(256).refine(values => new Set(values).size === values.length, 'Tools must be unique');
+export const SessionResourcesPrepare = z.object({
+  sessionId: ResourceName,
+  skills: ResourceNames.optional(),
+  mcpServers: z.array(z.object({ name: ResourceName, tools: PreparationToolNames.optional() }).strict())
+    .max(64).refine(values => new Set(values.map(value => value.name)).size === values.length, 'Servers must be unique').optional(),
+}).strict();
+export type SessionResourcesPrepare = z.infer<typeof SessionResourcesPrepare>;
+const ResourcePreparationEffect = z.enum(['not_attempted', 'unchanged', 'enabled', 'unconfirmed']);
+export const RESOURCE_PREPARATION_ERROR_LIMIT = 2000;
+export const ResourcePreparationResult = z.object({
+  sessionId: ResourceName,
+  ok: z.boolean(),
+  skills: z.array(z.object({
+    name: ResourceName, effect: ResourcePreparationEffect, enabled: z.boolean().nullable(),
+  }).strict()).max(64),
+  mcpServers: z.array(z.object({
+    name: ResourceName, effect: ResourcePreparationEffect, enabled: z.boolean().nullable(),
+    status: McpServerStatus.nullable(), tools: z.array(ResourceName).max(256).nullable(),
+  }).strict()).max(64),
+  tools: z.enum(['not_attempted', 'unchanged', 'initialized', 'unconfirmed']),
+  error: z.string().max(RESOURCE_PREPARATION_ERROR_LIMIT).optional(),
+}).strict();
+export type ResourcePreparationResult = z.infer<typeof ResourcePreparationResult>;
+
 
 
 // A pending ask_user request surfaced by the model (structured questionnaire).
@@ -580,6 +608,11 @@ export const Intents = {
     description: 'Explicitly resolve, build and validate the native tool table on a loaded idle session after configuration invalidation. Preserves the current handle, model, temporary skill/MCP choices and native tool filtering. Does not load, reload, enable resources, apply saved roles, write global config or send a prompt. Rejects protected work and concurrent operations. ok confirms initialized metadata, not role readiness; call roles/readiness separately. Failures may leave initialization effects; no automatic retry.',
     body: z.object({ sessionId: z.string().min(1) }).strict(),
     result: z.object({ ok: z.literal(true) }),
+  },
+  'session/resources-prepare': {
+    description: 'Prepare only explicitly selected native skills and MCP servers on an already loaded idle session, preserving unrelated temporary choices. Prevalidates all selections under one lifecycle guard, enables only disabled selections, and initializes tools once after a confirmed enable or when metadata is null. Unchanged non-null missing tools do not trigger a rebuild; native filtering remains effective. Tools are exact raw mcpToolName identities; wildcards are rejected; omitted or empty tools require at least one actual offered tool. No prompt, reload, global changes, authentication or connector retries. Returns per-request partial/unconfirmed receipts; enabled does not mean skill body loaded. ok requires enabled skills, connected unfiltered MCP with actual offered tools and initialized metadata, not role readiness, Task binding or authorization.',
+    body: SessionResourcesPrepare,
+    result: ResourcePreparationResult,
   },
   'session/fork': {
     description: 'Native history fork from a loaded, idle session. Optional toEventId is a root user.message event ID from session history, excluded from the child; omit for full history. Rejects unfinished boundaries and any inherited schedule history. Returns a new unloaded session ID; no prompt is sent. Native fork appends an informational record to the parent. Model/mode follow native persisted history; skills/MCP use cold-resume defaults, not a complete configuration clone. cwd/files are shared, not a worktree. Non-idempotent: on an uncertain error inspect session/list and source history before any retry.',

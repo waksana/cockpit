@@ -306,10 +306,11 @@ MCP 名称原样采用 manifest 的 `mcpServers` key（例如 `example-tools`）
 - `session/new {cwd,roles?: [{moduleId,roleId}]}` → `{sessionId}`
 - `roles/readiness {sessionId,roles?}` → `{sessionId,loaded,ready,roles,reasons,appliedRoles?,rolesNeedReload?}`
 - `session/tools-initialize {sessionId}` → `{ok:true}`，显式初始化已加载空闲会话的原生工具表；不是 readiness。
+- `session/resources-prepare {sessionId,skills?,mcpServers?}` → 请求范围的逐步资源准备回执，精确契约见[资源准备](#session-resource-preparation)。
 - `roles/add {sessionId,roles: [{moduleId,roleId}]}` → 仅追加已保存角色 metadata，结果见下文。
 
 后端 `context.host.call(name,body)` 只接受 `session/new`、`session/get`、
-`roles/readiness`、`prompt`，参数和结果使用 `@cockpit/protocol` 的 typed intents。
+`roles/readiness`、`session/resources-prepare`、`prompt`，参数和结果使用 `@cockpit/protocol` 的 typed intents。
 不暴露 Engine、SDK 或持久层；宿主校验输入、输出和 shutdown admission。
 创建失败若已确认原生 ID，错误保留 `sessionId`，不得盲目重建。
 
@@ -371,7 +372,7 @@ SDK 1.0.13 / runtime 1.0.83 的 `tools.getCurrentMetadata()` 返回的是**已�
 必须另行检查 `roles/readiness`；原生错误、关闭竞态或 null 读回均失败，无自动重试。
 初始化失败不承诺回滚已发生的原生效果。
 
-本体 MCP 使用已有通用调用器，不增加专用工具或扩大模块 `host.call` 白名单：
+本体 MCP 使用已有通用调用器；`session/tools-initialize` 不增加专用工具，也不进入模块 `host.call` 白名单：
 
 ```json
 {"name":"session/tools-initialize","body":{"sessionId":"TARGET_SESSION_ID"}}
@@ -389,6 +390,96 @@ SDK 1.0.13 / runtime 1.0.83 的 `tools.getCurrentMetadata()` 返回的是**已�
 消失，不能拿完整 reload 当通用修复。对于必须保留当前 handle/临时选择的失效场景，
 这些旧宿主没有已证实安全的公开恢复入口；需要另行授权部署包含新 intent 的版本，
 不能私用 SDK/store、改全局配置、发送初始化提示或绕过 readiness。
+
+<a id="session-resource-preparation"></a>
+#### 显式会话资源准备
+
+当前源码的只读、冻结 `context.host.resourcePreparationVersion: 1` 标记表明宿主支持
+狭窄的 `session/resources-prepare` 模块桥接。类型中该字段可选，用于表示旧宿主缺能力；
+消费者必须在**需要资源的新建会话之前**及准备已有会话之前检查标记，不能根据
+backend API v1、包版本、角色标签或 UI 能力猜测。旧的不带资源创建契约不变。
+模块桥接不开放单独的资源开关、工具初始化或任意 intent 透传。
+
+严格请求体：
+
+```ts
+{
+  sessionId: string;
+  skills?: string[];
+  mcpServers?: Array<{ name: string; tools?: string[] }>;
+}
+```
+
+名称和 sessionId 非空白、长度最多 200，不改写原生身份；skills 最多 64 且名称唯一，
+MCP 最多 64 且 server name 唯一，每个 tools 最多 256 且唯一。
+tools 是原生 `mcpToolName`，不是带 server 前缀的 wire name。
+显式 `"*"` 拒绝；省略或空 tools 表示至少需要一个实际 offered tool，
+并只返回第一个实际 offered 原生工具名作为最小见证，不复制完整工具目录。
+显式 tools 只返回请求中实际 offered 的名称，保留请求顺序。
+省略/空 skills 或 mcpServers 不选择任何该类资源；
+两者都空时仅在必要时初始化当前工具表。
+
+```ts
+{
+  sessionId: string;
+  ok: boolean;
+  skills: Array<{
+    name: string;
+    effect: 'not_attempted' | 'unchanged' | 'enabled' | 'unconfirmed';
+    enabled: boolean | null;
+  }>;
+  mcpServers: Array<{
+    name: string;
+    effect: 'not_attempted' | 'unchanged' | 'enabled' | 'unconfirmed';
+    enabled: boolean | null;
+    status: 'connected' | 'failed' | 'needs-auth' | 'pending'
+      | 'disabled' | 'stopped' | 'not_configured' | null;
+    tools: string[] | null;
+  }>;
+  tools: 'not_attempted' | 'unchanged' | 'initialized' | 'unconfirmed';
+  error?: string;
+}
+```
+
+必须是已加载且空闲的目标；同一个 transition 生命周期保护覆盖前检、原生修改、
+初始化与读回，期间排除普通宿主修改、prompt 和 reload。修改前再次检查保存角色与当前
+handle 的 applied roles，以及当前角色装配 fingerprint；需要 reload 或装配不一致/不明确
+时返回未尝试的失败回执，不能依赖调用者先前的被动观察。此检查不要求未选中的角色
+Skill 启用，也不等同于角色 readiness。所有选择先通过原生列表
+验证，未知/重复/不明确的身份或状态在任何修改前拒绝。MCP 必须允许第三方工具、
+未被 host 过滤，且仅 connected 或明确 disabled 状态允许继续；stopped 不重启，
+needs-auth 不认证，pending/failed/not_configured 不重试连接。
+只启用明确选中且禁用的资源，不改无关临时选择。Skill 启用由原生列表读回确认，
+不是加载 Skill 正文。MCP enable 异常只额外读回一次连接状态，不再次 enable。
+
+修改后读取真实 `tools.getCurrentMetadata()`；当 metadata 为 null，或本次已确认启用
+任一所选资源时，调用一次 `initializeAndValidate()` 并读回，两个条件同时成立也只调用一次。
+SDK 1.0.13/runtime 1.0.83 的隔离用例证实：MCP enable 有时保留此前已初始化的空表，
+确认配置变化后必须重建才能提供实际工具，因此即使 metadata 非 null 也在本次准备中完成
+初始化，不要求调用者再手动修复。原生 ToolSet/角色工具过滤仍生效；重建后真正缺失的工具
+仍返回失败及已确认的启用效果，不扩大工具子集，也不再次初始化或重试连接。
+所选资源原本已启用且 metadata 非 null 时不重建；仅仅发现空表/缺工具不是初始化依据。
+调用者不能改用 prompt、重载、全局开关或私有 SDK 来绕过失败。
+
+只有所有选择启用、MCP connected 且未过滤、按 `mcpServerName/mcpToolName`
+匹配的实际工具满足选择、metadata 已初始化时才 `ok:true`。这不是角色装配 readiness、
+Task 绑定、授权、Skill 正文已读或永久承诺。未完成 Task 的 Executor 选择保护及一致性
+完全属于 Task 模块，不进入宿主。
+
+进入序列前的 schema/admission 错误可抛出且无资源副作用；进入后失败返回 `ok:false`
+与原生错误及逐步回执。`not_attempted` 表示未尝试该修改；`unchanged` 表示确认已启用，
+`enabled` 表示确认此次启用，`unconfirmed` 表示已尝试但未确认。enabled/status
+保留最后确认的观察；已尝试修改而结果未知时为 null。后续读失败不抹去已确认的
+effect/状态，`ok:false` 和 error 表明最终确认失败。MCP tools 是选中且实际确认的
+原生工具子集（省略或空选择时只返回一个实际 offered 名称）；null 表示未观察，[] 表示观察到没有匹配。
+连接已启用但失败/需要认证仍可有 `effect:'enabled'`，不能把它当作连接就绪。
+不自动重试、不回滚已发生效果、不保存回执镜像或资源控制工作流。调用者保留完整结果。
+error 最多 2000 字符；超长原生错误保留前缀并以 `... [truncated]` 明示截断，不丢弃逐步效果回执。
+
+此能力是 **source-only**；已运行 0.2.7/source `1dd38c6` 不含它或
+`session/tools-initialize`。发布/部署改后内容前必须分配新的不可变交付版本，
+不因每次源码提交修改宿主版本。Task 既有 UI pairing
+`9fd5204bda99a8bd65b2c5ef152cc47ce87837d5` / `uiSurfaceVersion: 1` 独立且不变。
 
 #### 已有会话显式追加
 

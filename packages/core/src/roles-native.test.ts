@@ -35,6 +35,9 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
   const professional = join(dirs.skills!, 'professional');
   mkdirSync(professional);
   writeFileSync(join(professional, 'SKILL.md'), '---\nname: fixture-professional\ndescription: Synthetic optional skill\n---\nNo external work.\n');
+  const unrelated = join(dirs.skills!, 'unrelated');
+  mkdirSync(unrelated);
+  writeFileSync(join(unrelated, 'SKILL.md'), '---\nname: fixture-unrelated\ndescription: Synthetic unselected skill\n---\nNo external work.\n');
   const metadata = new Map<string, SessionRole[]>();
   const captured: unknown[] = [];
   let mcpCalls = 0;
@@ -98,7 +101,7 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
         model: 'gpt-4.1', provider: { type: 'openai', wireApi: 'completions', baseUrl: `${providerUrl}/v1`, modelId: 'gpt-4.1' },
         configDirectory: dirs.state, enableFileHooks: false, enableHostGitOperations: false,
         enableSessionStore: false, enableSkills: true, pluginDirectories: [], instructionDirectories: [], customAgents: [],
-        skillDirectories: [professional],
+        skillDirectories: [professional, unrelated],
         enableManagedSettings: false, skipEmbeddingRetrieval: true, embeddingCacheStorage: 'in-memory',
         enableSessionTelemetry: false, remoteSession: 'off', enableExperimentalMode: true,
         availableTools: new ToolSet().addMcp('*'),
@@ -128,6 +131,12 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
       return sdk;
     });
     await runtime.rpc.skills.config.setSkillDisabled({ name: 'fixture-professional', disabled: true });
+    await runtime.rpc.skills.config.setSkillDisabled({ name: 'fixture-unrelated', disabled: true });
+    await runtime.rpc.mcp.config.add({ name: 'synthetic-unrelated', config: {
+      type: 'http', url: `${mcpUrl}/mcp`, tools: ['read'],
+      headers: { 'X-Cockpit-Module-Digest': 'synthetic-digest' },
+    } });
+    await runtime.rpc.mcp.config.disable({ names: ['synthetic-unrelated'] });
     const id = await engine.newSession(dirs.work!, selected);
     const readiness = await engine.roleReadiness(id);
     assert.equal(readiness.ready, true, JSON.stringify(readiness));
@@ -161,8 +170,13 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     assert.equal(disconnected.ready, false);
     assert.match(disconnected.reasons.join(), /Role MCP is not connected/);
     assert.equal((await engine.listSessionMcp(id)).servers.find(server => server.name === 'module_fixture__tools')?.enabled, false);
-    await engine.toggleSessionMcp(id, 'module_fixture__tools', true);
-    await engine.initializeSessionTools(id);
+    assert.deepEqual((await sdk.rpc.tools.getCurrentMetadata()).tools, []);
+    const connected = await engine.prepareSessionResources({ sessionId: id,
+      mcpServers: [{ name: 'module_fixture__tools', tools: ['read', 'report'] }] });
+    assert.equal(connected.ok, true, JSON.stringify(connected));
+    assert.equal(connected.mcpServers[0]!.effect, 'enabled');
+    assert.deepEqual(connected.mcpServers[0]!.tools, ['read', 'report']);
+    assert.equal(connected.tools, 'initialized', 'confirmed MCP activation rebuilds its retained stale table within the same preparation');
     await assertReady(id);
     await engine.toggleSessionSkill(id, 'fixture-executor', false);
     await engine.initializeSessionTools(id);
@@ -177,6 +191,17 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     await assertUninitialized(id);
     await engine.initializeSessionTools(id);
     await assertReady(id);
+    await engine.toggleSessionSkill(id, 'fixture-professional', false);
+    await engine.toggleSessionMcp(id, 'module_fixture__tools', false);
+    const prepared = await engine.prepareSessionResources({ sessionId: id, skills: ['fixture-professional'],
+      mcpServers: [{ name: 'module_fixture__tools', tools: ['read', 'report'] }] });
+    assert.equal(prepared.ok, true, JSON.stringify(prepared));
+    assert.deepEqual(prepared.skills, [{ name: 'fixture-professional', enabled: true, effect: 'enabled' }]);
+    assert.equal(prepared.tools, 'initialized');
+    assert.equal(prepared.mcpServers[0]!.effect, 'enabled');
+    assert.equal((await engine.listSessionSkills(id)).find(skill => skill.name === 'fixture-unrelated')?.enabled, false);
+    assert.equal((await engine.listSessionMcp(id)).servers.find(server => server.name === 'synthetic-unrelated')?.enabled, false);
+    assert.equal((await engine.prepareSessionResources({ sessionId: id })).tools, 'unchanged');
     assert.equal((await engine.listSessionSkills(id)).find(skill => skill.name === 'fixture-professional')?.enabled, true);
     assert.equal(captured.length, 0, 'configuration and tool initialization never send a bootstrap prompt');
     assert.deepEqual(await sdk.rpc.model.getCurrent(), model, 'the original native handle and model are preserved');
@@ -194,17 +219,14 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     assert.equal((await engine.listSessionSkills(id)).find(skill => skill.name === 'fixture-professional')?.enabled, false,
       'cold recovery does not preserve a temporary professional skill choice');
     const beforeReuse = captured.length;
-    await engine.toggleSessionSkill(id, 'fixture-professional', true);
-    await assertUninitialized(id);
-    await engine.initializeSessionTools(id);
+    const reused = await engine.prepareSessionResources({ sessionId: id, skills: ['fixture-professional'],
+      mcpServers: [{ name: 'module_fixture__tools' }] });
+    assert.equal(reused.ok, true, JSON.stringify(reused));
+    assert.equal(reused.tools, 'initialized');
+    assert.deepEqual(reused.mcpServers[0]!.tools, ['create']);
     await assertReady(id);
     assert.equal((await engine.listSessionSkills(id)).find(skill => skill.name === 'fixture-professional')?.enabled, true);
     assert.equal(captured.length, beforeReuse, 'reuse is repaired without another message');
-    await runtime.rpc.mcp.config.add({ name: 'synthetic-unrelated', config: {
-      type: 'http', url: `${mcpUrl}/mcp`, tools: ['read'],
-      headers: { 'X-Cockpit-Module-Digest': 'synthetic-digest' },
-    } });
-    await runtime.rpc.mcp.config.disable({ names: ['synthetic-unrelated'] });
     const existing = await engine.newSession(dirs.work!);
     await engine.rename(existing, 'Synthetic existing responsibility');
     const emptySaved = await engine.addRoles(existing, [selected[1]!]);
@@ -237,6 +259,14 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     assert.equal(second.status, 'saved', JSON.stringify(second));
     assert.equal(second.rolesNeedReload, true);
     assert.deepEqual(second.appliedRoles, [selected[1]]);
+    assert.equal((await engine.listSessionSkills(existing)).find(skill => skill.name === 'fixture-executor')?.enabled, false);
+    assert.equal((await engine.listSessionMcp(existing)).servers.find(server => server.name === 'module_fixture__tools')?.enabled, false);
+    const stalePreparation = await engine.prepareSessionResources({ sessionId: existing, skills: ['fixture-executor'],
+      mcpServers: [{ name: 'module_fixture__tools', tools: ['read', 'report'] }] });
+    assert.equal(stalePreparation.ok, false);
+    assert.match(stalePreparation.error!, /Saved roles differ/);
+    assert.equal(stalePreparation.skills[0]!.effect, 'not_attempted');
+    assert.equal(stalePreparation.mcpServers[0]!.effect, 'not_attempted');
     assert.equal((await engine.listSessionSkills(existing)).find(skill => skill.name === 'fixture-executor')?.enabled, false);
     assert.equal((await engine.listSessionMcp(existing)).servers.find(server => server.name === 'module_fixture__tools')?.enabled, false);
     await engine.reload(existing);
@@ -280,6 +310,31 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     assert.match(notOffered.reasons.join(), /not currently offered: module_fixture__tools\/report/);
     assert.deepEqual((await handles.get(filtered)!.rpc.tools.getCurrentMetadata()).tools!.map(tool => tool.mcpToolName), ['read'],
       'initialization honors native session filtering, not just the connected MCP catalog');
+    const beforeFiltered = captured.length;
+    const filteredPreparation = await engine.prepareSessionResources({ sessionId: filtered, skills: ['fixture-professional'],
+      mcpServers: [{ name: 'module_fixture__tools', tools: ['read', 'report'] }] });
+    assert.equal(filteredPreparation.ok, false);
+    assert.equal(filteredPreparation.skills[0]!.effect, 'enabled');
+    assert.equal(filteredPreparation.tools, 'initialized');
+    assert.deepEqual(filteredPreparation.mcpServers[0]!.tools, ['read']);
+    assert.match(filteredPreparation.error!, /not currently offered/);
+    assert.equal(captured.length, beforeFiltered, 'preparation does not infer or reload to bypass native filtering');
+    assert.equal((await engine.listSessionSkills(filtered)).find(skill => skill.name === 'fixture-unrelated')?.enabled, false);
+    assert.equal((await engine.listSessionMcp(filtered)).servers.find(server => server.name === 'synthetic-unrelated')?.enabled, false);
+    await engine.toggleSessionMcp(filtered, 'module_fixture__tools', false);
+    await engine.initializeSessionTools(filtered);
+    const filteredActivation = await engine.prepareSessionResources({ sessionId: filtered,
+      mcpServers: [{ name: 'module_fixture__tools', tools: ['read', 'report'] }] });
+    assert.equal(filteredActivation.ok, false);
+    assert.equal(filteredActivation.mcpServers[0]!.effect, 'enabled');
+    assert.equal(filteredActivation.tools, 'initialized');
+    assert.deepEqual(filteredActivation.mcpServers[0]!.tools, ['read']);
+    assert.match(filteredActivation.error!, /not currently offered/);
+    const filteredNoop = await engine.prepareSessionResources({ sessionId: filtered,
+      mcpServers: [{ name: 'module_fixture__tools', tools: ['read', 'report'] }] });
+    assert.equal(filteredNoop.ok, false);
+    assert.equal(filteredNoop.tools, 'unchanged');
+    assert.equal(captured.length, beforeFiltered, 'known-change initialization and no-op failure do not infer or broaden ToolSet filtering');
     t.diagnostic('SDK 1.0.13/runtime 1.0.83: model/skill invalidation yields null metadata; MCP reload does not repair it; explicit initialization preserves temporary choices and native filtering without inference.');
     await engine.stop();
   } finally {
