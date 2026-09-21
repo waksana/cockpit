@@ -1,3 +1,5 @@
+@use '../styles/responsive';
+
 .chat-lab {
   flex-direction: column;
 }
@@ -5,22 +7,20 @@
 .chat-lab:not([data-compact]) .lab-controls > summary { display: none; }
 .chat-lab[data-compact] .lab-controls {
   position: absolute; inset-inline: 0; top: 0; z-index: 46;
-  font-size: 12px; background: var(--surface-color);
+  font-size: var(--host-text-meta); background: var(--surface-color);
   > summary { cursor: pointer; text-align: center; padding: 0.25rem; border-bottom: 1px solid var(--border-color); }
 }
 .lab-toolbar {
-  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
-  padding: 12px 16px; border-bottom: 1px solid var(--border-color);
-  font-size: 12px;
-  label { display: inline-flex; align-items: center; gap: 6px; }
+  flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--host-space-sm) var(--host-space-md);
+  padding: var(--host-space-md) var(--host-space-lg); border-bottom: 1px solid var(--border-color);
+  font-size: var(--host-text-meta);
+  label { display: inline-flex; align-items: center; gap: var(--host-space-sm); }
   select { max-width: 220px; }
-  button, select { font: inherit; min-height: 30px; padding: 4px 8px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--surface-color); color: inherit; }
-  :focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
 }
 .lab-receipt { flex: none; padding: 6px 16px; font-size: 12px; color: var(--secondary-text-color); overflow-wrap: anywhere; }
 .lab-stage { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .lab-stage[data-narrow] { width: min(100%, 28.5rem); }
-@media (max-width: 599px) {
+@media (max-width: responsive.$phone-max) {
   .lab-toolbar { max-height: 150px; overflow: auto; padding: 8px; }
   .lab-receipt { padding: 4px 8px; }
 }

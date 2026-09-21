@@ -298,6 +298,7 @@ test('bootstrap injects the actual React namespace and binds all requests to bac
   assert.equal(f.contexts[0].react, React);
   assert.equal(f.contexts[0].apiVersion, 2);
   assert.equal(f.contexts[0].uiVersion, 1);
+  assert.equal(f.contexts[0].uiSurfaceVersion, 1);
   assert.equal(f.contexts[0].menuVersion, 1);
   assert.equal(f.contexts[0].createPortal, createPortal);
   assert.deepEqual(f.imports, [`https://backend.invalid/prefix/_modules/assets/fixture/${digest}/entry.js`]);

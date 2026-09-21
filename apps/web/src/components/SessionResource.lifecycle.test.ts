@@ -1036,7 +1036,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.equal(h.container.querySelector('[data-kind="loading"]'), null);
     assert.match(h.container.textContent, /本会话没有可用的 MCP|未发现技能/);
     if (Component === SessionSkills) {
-      assert.equal(h.container.querySelector('.manage-empty')?.textContent, '未发现技能');
+      assert.equal(h.container.querySelector('[data-kind="empty"]')?.textContent, '未发现技能');
       assert.equal(h.container.querySelector('a'), null);
     }
   });
@@ -1058,7 +1058,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.equal(calls, 1);
     assert.equal(disabled(control), true);
     assert.equal(control.getAttribute('aria-checked'), 'true', 'no optimistic native value');
-    const notice = h.container.querySelector('.manage-row-main');
+    const notice = h.container.querySelector('.resource-row');
     assert.ok(notice);
     assert.equal(h.container.querySelector('.mcp-operation-status')?.textContent, Component === SessionMcp ? '断开中' : '停用中');
     if (Component === SessionMcp) {

@@ -2,17 +2,6 @@
 // _inputSearch. Real structure + values; Solarized colors via tokens. cockpit
 // maps Telegram's person-avatar to a project-colored cwd monogram.
 
-// ── Sidebar header: search fills it, symmetric header-height ────────────────
-.sidebar-header {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  height: var(--header-height);
-  min-height: var(--header-height);
-  padding: 0 0.5rem;
-  border-bottom: 1px solid var(--border-color);
-}
 .sidebar-hamburger { flex: none; }
 // ── Input-search (pill, leading icon ↔ spinner on loading, clear) ───────────
 .input-search {
@@ -47,12 +36,10 @@
     border-radius: calc(var(--height) / 2);
     background-color: var(--input-search-background-color);
     color: var(--primary-text-color);
-    font-size: var(--font-size-15);
-    line-height: var(--line-height-16);
-    outline: none;
+    font-size: var(--host-text-body);
+    line-height: var(--host-leading-ui);
     &::placeholder { color: var(--input-placeholder-color); }
     &::-webkit-search-cancel-button { display: none; }
-    &:focus { background-color: color-mix(in srgb, var(--primary-color) 10%, transparent); }
   }
   &-clear {
     position: absolute;
@@ -97,7 +84,7 @@
   // Attention badges (.dialog-meta) stay full strength — an unloaded session
   // can still be waiting on you.
   &.is-unloaded {
-    .dialog-avatar, .dialog-title, .dialog-time, .dialog-subtitle { opacity: 0.45; }
+    .dialog-avatar, .session-row-title, .dialog-time, .dialog-subtitle { opacity: 0.45; }
   }
 
   .dialog-avatar {
@@ -111,7 +98,7 @@
     // hue set inline via --chip-h
     background: oklch(58% 0.11 calc(var(--chip-h, 220) * 1deg));
   }
-  .dialog-title {
+  .session-row-title {
     grid-area: title;
     align-self: flex-end;
     min-width: 0;

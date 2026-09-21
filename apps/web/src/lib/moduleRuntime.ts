@@ -333,7 +333,7 @@ export class ModuleRuntime {
     };
     parentSignal.addEventListener('abort', stop, { once: true });
     const context: ModuleFrontendContext = {
-      apiVersion: 2, uiVersion: 1, menuVersion: 1, chatWindowVersion: 1, composerInputVersion: 1, draftLifecycleVersion: 1, draftSubmissionVersion: 1,
+      apiVersion: 2, uiVersion: 1, uiSurfaceVersion: 1, menuVersion: 1, chatWindowVersion: 1, composerInputVersion: 1, draftLifecycleVersion: 1, draftSubmissionVersion: 1,
       moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
       config: asset.config, signal: controller.signal, report: this.report,
       state: Object.freeze({

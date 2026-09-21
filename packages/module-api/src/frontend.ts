@@ -538,6 +538,8 @@ export interface ModuleFrontendContext {
   /** Web contract only. Module manifest, backend context and route API remain v1. */
   readonly apiVersion: 2;
   readonly uiVersion: 1;
+  /** Shared surface/heading/actions/badge/modal CSS. Check separately from base UI v1. */
+  readonly uiSurfaceVersion: 1;
   /** Declarative global/session menu capability; not a component boundary. */
   readonly menuVersion: 1;
   /** Read-only current-window text projection. Check independently of Web API v2. */

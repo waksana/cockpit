@@ -72,7 +72,7 @@ function SessionRow({ s, active, actions, connected }: {
       onPointerCancel={lp.onPointerCancel}
     >
       <span className="dialog-avatar" style={{ '--chip-h': hue } as CSSProperties} aria-hidden="true">{mono}</span>
-      <span className="dialog-title">{s.title}</span>
+      <span className="session-row-title">{s.title}</span>
       <span className="dialog-time">{relTime(s.lastActivity)}</span>
       <span className="dialog-subtitle">{cwdBasename(s.cwd)}</span>
       {!!s.roles?.length && <span className="dialog-roles session-role-badges">

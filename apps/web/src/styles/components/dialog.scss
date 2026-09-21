@@ -1,4 +1,6 @@
-// Modal dialogs — dimmed scrim and centered card for deletion and directory picking.
+@use '../responsive';
+
+// Modal geometry; shared surfaces own appearance.
 
 .dialog-scrim {
   position: fixed;
@@ -18,52 +20,37 @@
   background: transparent;
 }
 
-.host-modal::backdrop { background: rgba(0, 0, 0, 0.32); }
-.host-modal [data-dialog-focus]:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; }
+.host-modal [data-dialog-focus]:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: inset 3px 0 0 var(--primary-color);
+  &:dir(rtl) { box-shadow: inset -3px 0 0 var(--primary-color); }
+}
 
 .dialog-card {
   width: 100%;
   max-width: 22rem;
-  padding: 1.1rem 1.2rem 0.9rem;
-  border-radius: var(--host-radius-dialog);
-  background: var(--surface-color);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
   max-height: 100%;
   overflow-y: auto;
 }
 
 .dialog-title {
-  margin: 0 0 0.4rem;
-  font-size: var(--font-size-17, 1.0625rem);
-  font-weight: 600;
-  color: var(--primary-text-color);
+  margin: 0 0 var(--host-space-sm);
 }
 
 .dialog-message {
-  margin: 0 0 0.8rem;
-  font-size: var(--font-size-14);
-  line-height: 1.5;
+  margin: 0 0 var(--host-space-md);
+  font-size: var(--host-text-body);
+  line-height: var(--host-leading-ui);
   color: var(--secondary-text-color);
 }
 
 .dialog-input {
   width: 100%;
-  margin: 0.2rem 0 0.9rem;
-  padding: 0.5rem 0.7rem;
-  font-size: var(--font-size-15, 0.9375rem);
+  margin: var(--host-space-xs) 0 var(--host-space-lg);
 }
 
 .dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.2rem;
-}
-
-.dialog-btn {
-  padding: 0.4rem 0.95rem;
-  font-size: var(--font-size-15, 0.9375rem);
-  font-weight: 600;
+  margin-top: var(--host-space-xs);
 }
 
 // ── Folder picker (new-session working directory chooser) ───────────────────
@@ -96,9 +83,9 @@
 .dirpicker-path {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
-  margin: 0.2rem 0 0.6rem;
-  .dialog-input { margin: 0; flex: 1 1 auto; font-size: var(--font-size-13); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  gap: var(--host-space-xs);
+  margin: var(--host-space-xs) 0 var(--host-space-sm);
+  .dialog-input { margin: 0; flex: 1 1 auto; font-family: var(--host-font-mono); }
 }
 .dirpicker-list {
   max-height: 14rem;
@@ -121,25 +108,6 @@
   }
 }
 .role-picker-options { display: grid; gap: var(--host-space-sm); }
-.role-option {
-  position: relative;
-  display: flex;
-  align-items: flex-start;
-  gap: var(--host-space-md);
-  padding: var(--host-space-md);
-  border: 1px solid var(--border-color);
-  border-radius: var(--host-radius-control);
-  cursor: pointer;
-  &[data-selected] {
-    border-color: var(--primary-color);
-    background: color-mix(in srgb, var(--primary-color) 8%, var(--surface-color));
-    .role-option-check { visibility: visible; }
-  }
-  &:has(input:focus-visible) { outline: 2px solid var(--primary-color); outline-offset: -2px; }
-  .role-option-check { flex: none; margin-top: 2px; visibility: hidden; color: var(--primary-color); }
-  fieldset:disabled & { cursor: default; opacity: 0.6; }
-}
-.role-option-content { display: flex; flex-direction: column; min-width: 0; gap: var(--host-space-xs); width: 100%; }
 .role-option-heading {
   display: flex;
   flex-wrap: wrap;
@@ -158,33 +126,16 @@
   summary { cursor: pointer; padding-block: var(--host-space-xs); }
   p { margin: var(--host-space-xs) 0 var(--host-space-sm); }
 }
-@media (max-width: 600px) {
-  .dialog-card.dirpicker { padding: var(--host-space-lg); }
+@media (max-width: responsive.$phone-max) {
   .dirpicker-list { max-height: 10rem; }
 }
 .dirpicker-row {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
   width: 100%;
-  padding: 0.55rem 0.7rem;
-  border: none;
-  background: transparent;
-  color: var(--primary-text-color);
-  font-size: var(--font-size-14);
-  font-family: inherit;
   text-align: start;
-  cursor: pointer;
   position: relative;        // ripple host
   overflow: hidden;
   .dirpicker-ico { flex: none; display: inline-flex; color: var(--secondary-text-color); &.folder { color: var(--primary-color); } }
   .dirpicker-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dirpicker-enter { flex: none; color: var(--tertiary-text-color); }
   &.up { color: var(--secondary-text-color); }
-}
-.dirpicker-empty {
-  padding: 1.5rem 1rem;
-  text-align: center;
-  color: var(--tertiary-text-color);
-  font-size: var(--font-size-13);
 }

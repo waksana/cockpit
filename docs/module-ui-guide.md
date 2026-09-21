@@ -60,6 +60,23 @@ version and a documented paired migration. Internal stylesheet refactors cannot
 silently break these names. Modules should not infer support from a private
 selector or duplicate a fallback copy of the host stylesheet.
 
+The shared surface compositions additionally expose **`context.uiSurfaceVersion === 1`**.
+This is an independent capability of the current source, not a retroactive claim
+about a released UI-v1 host. Consumers of `ck-surface`, `ck-heading`, `ck-actions`,
+`ck-badge` or `ck-modal` must reject missing/unsupported capability before
+registering contributions, and build against the actual paired host source pin:
+
+```ts
+if (context.uiVersion !== 1 || context.uiSurfaceVersion !== 1) {
+  throw new Error('This module requires Cockpit UI v1 and shared surfaces v1');
+}
+```
+
+These are CSS compositions, not a public React component SDK. They provide no
+dialog lifecycle, focus trap, routing, loading state or optimistic mutation.
+Keep native dialog/portal ownership in the existing consumer. A normal panel
+using `ck-surface` does not become modal.
+
 The host's internal visual foundations live in `styles/tokens.scss`: the
 `--host-*` roles own shared spacing (4/8/12/16/24px), UI typography
 (16px title / 14px body / 12px metadata, 1.5 leading), and control/dialog radii.
@@ -115,6 +132,11 @@ order is not a theme API.
 | `ck-status-marker` | A 12px decorative status icon region aligned to the first input control's center. |
 | `ck-status-label` | Single-line status content with ellipsis; preserve the full accessible text and provide its full title. |
 | `ck-status-action` | On `ck-icon-button`: a trailing status action aligned to the native input row's last control, with a 32px-high target. |
+| `ck-surface` | Flow container or native dialog: common surface ink/background, border, surface radius, body typography and content inset. Consumer owns positioning, available size and scrolling. |
+| `ck-heading` | Native heading: shared title typography, zero margin and full wrapping. Choose the correct heading level for the surrounding content. |
+| `ck-actions` | Flow container for sibling actions: wrapping flex row, shared gap, trailing alignment. Not a role or action dispatcher. |
+| `ck-badge` | Noninteractive status/count text: metadata typography, neutral fill and small inset. Consumer retains the accessible label and truthful semantic state; color alone is not a status. |
+| `ck-modal` | On native `dialog`: shared backdrop and modal-surface shadow. Supports a dialog that is itself `ck-surface` or has a direct `ck-surface` child. Does not call `showModal`, size the dialog or move focus. |
 
 The input/status classes are additive UI v1 styles introduced in Cockpit 0.2.6.
 Consumers must pair with that host or newer; a previous UI v1 host does not
@@ -180,6 +202,9 @@ automatically.
 | `--ck-space` | `8px` | Common button gap/padding unit. |
 | `--ck-radius` | `12px` | Common button/field radius; icon targets are round. |
 | `--ck-disabled-opacity` | `0.3`, unitless | Disabled feedback, not state ownership. |
+| `--ck-text-title` / `--ck-text-body` / `--ck-text-meta` | `16px` / `14px` / `12px` | Shared-surfaces v1 title/body/metadata roles; not a prose-size override. |
+| `--ck-leading-ui` | `1.5`, unitless | Shared-surfaces v1 UI line height. |
+| `--ck-radius-surface` | `16px` | Shared-surfaces v1 surface radius, distinct from controls. |
 
 Colors follow the host light/dark palette; Chat supplies its local readable ink
 through the same public names. Modules consume the inherited values, not the

@@ -1,7 +1,7 @@
 import type { ModuleSource, SessionMeta, SessionRole } from '@cockpit/protocol';
 
 export function ModuleLabel({ name, id, description }: { name: string; id: string; description?: string }) {
-  return <span className="module-label" title={`模块：${name} (${id})${description ? `；${description}` : ''}`}>
+  return <span className="ck-badge module-label" title={`模块：${name} (${id})${description ? `；${description}` : ''}`}>
     <span className="module-label-name">{name}</span>
   </span>;
 }

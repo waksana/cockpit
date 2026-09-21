@@ -88,9 +88,4 @@ a { color: var(--link-color); text-decoration: none; }
   text-align: center;
   color: var(--secondary-text-color);
   background: var(--background-color);
-  button {
-    appearance: none; cursor: pointer; font: inherit;
-    padding: 0.5rem 1.1rem; border: none; border-radius: var(--border-radius-medium);
-    background: var(--primary-color); color: #fff;
-  }
 }

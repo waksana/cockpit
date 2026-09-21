@@ -9,3 +9,12 @@ export function PaneHeader({ title, leading, actions, className = '' }: {
     {actions}
   </header>;
 }
+
+// A page body owns scrolling unless its content already has a scroll owner
+// (for example Thread). Headers and overlays are always outside that owner.
+export function PaneBody({ children, className = '', scroll = true, padded = true }: {
+  children: ReactNode; className?: string; scroll?: boolean; padded?: boolean;
+}) {
+  return <div className={`pane-body${scroll ? ' scrollable' : ''}${className ? ` ${className}` : ''}`}
+    data-scroll={scroll} data-padded={padded}>{children}</div>;
+}

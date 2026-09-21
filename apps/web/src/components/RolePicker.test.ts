@@ -25,7 +25,8 @@ test('role picker names roles and modules separately, retains multiselection and
   assert.match(html, /class="module-label-name">module_Original__Name</);
   assert.match(html, />cockpit-Exact-owner</);
   assert.doesNotMatch(html, /可选，可多选|readiness|role="switch"/);
-  assert.equal((html.match(/class="chat-sr-only" type="checkbox"/g) ?? []).length, 3);
+  assert.equal((html.match(/class="ui-visually-hidden" type="checkbox"/g) ?? []).length, 3);
+  assert.equal((html.match(/class="ui-choice-card role-option"/g) ?? []).length, 3);
   assert.equal((html.match(/data-icon="check"/g) ?? []).length, 3);
 });
 

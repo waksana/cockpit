@@ -75,7 +75,7 @@ test('ordinary dialogs have native initial focus without repeated focus or selec
     onConfirm: () => assert.fail('Rendering must not mutate a session'),
     onCancel: () => assert.fail('Rendering must not dismiss'),
   }));
-  assert.match(html, /<dialog class="dialog-scrim host-modal"/);
+  assert.match(html, /<dialog class="dialog-scrim host-modal ck-modal"/);
   assert.match(html, /value="Target B"/);
 });
 
@@ -111,12 +111,13 @@ test('long menus keep internal scroll open and dismiss before panel Escape; Tab 
 
 test('session pages retain a stable native frame without initial focus or a custom Tab trap', () => {
   const details = source('./SessionDetails.tsx');
+  const shell = source('./Shell.tsx');
   assert.doesNotMatch(details, /navigation=|SESSION_PRIMARY|SESSION_MORE|<nav|<Link/);
-  assert.match(details, /<dialog ref=\{frame\}/);
-  assert.ok(details.indexOf('<dialog ref={frame}') < details.indexOf('<Suspense fallback='));
-  assert.match(details, /useNativeDialog\(frame, !wide\)/);
-  assert.doesNotMatch(details, /\.focus\(|event.key [!=]== 'Tab'/);
-  assert.match(details, /event.defaultPrevented/);
+  assert.match(shell, /<dialog ref=\{frame\}/);
+  assert.ok(details.indexOf('<InspectorPane') < details.indexOf('<Suspense fallback='));
+  assert.match(shell, /useNativeDialog\(frame, !wide\)/);
+  assert.doesNotMatch(shell, /\.focus\(|event.key [!=]== 'Tab'/);
+  assert.match(shell, /event.defaultPrevented/);
   for (const file of ['./SessionInfoPanel.tsx', './SessionPanelKit.tsx', './Manage.tsx']) {
     assert.doesNotMatch(source(file), /navigation[?=:]|info-panel-nav|info-panel-more/);
   }
@@ -126,12 +127,13 @@ test('panel keyboard scope includes the nonmodal error tray and dismissal does n
   const details = source('./SessionDetails.tsx');
   const notifications = source('./UxErrorNotifications.tsx');
   const css = source('./UxErrorNotifications.scss');
-  assert.match(details, /!wide && <UxErrorNotifications withinDialog/);
-  assert.match(details, /event.defaultPrevented/);
+  assert.match(details, /modalFooter=\{<UxErrorNotifications withinDialog/);
+  assert.match(source('./Shell.tsx'), /!wide && modalFooter/);
+  assert.match(source('./Shell.tsx'), /event.defaultPrevented/);
   assert.match(notifications, /event.stopPropagation\(\)/);
   assert.match(notifications, /dismiss\(error.id, event.currentTarget\)/);
   assert.match(notifications, /buttons\[index \+ 1\] \?\? buttons\[index - 1\]/);
-  assert.match(notifications, /querySelector<HTMLElement>\('\.info-panel\[data-open="true"\]'\) \?\? document.querySelector<HTMLElement>\('\.cockpit-shell'\)/);
+  assert.match(notifications, /querySelector<HTMLElement>\('\.inspector-pane\[open\] \.inspector-surface'\) \?\? document.querySelector<HTMLElement>\('\.cockpit-shell'\)/);
   assert.match(css, /bottom: var\(--ux-error-height, 0px\)/);
   assert.match(css, /height: calc\(100dvh - var\(--ux-error-height, 0px\)\)/);
   assert.match(css, /:root:has\(\.ux-error-notifications\) \.chat-input \{\s*padding-bottom: 0\.25rem/);

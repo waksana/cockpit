@@ -1,53 +1,19 @@
 // Per-session MCP and Skills use the same row presentation, not the same
 // mutation policy: MCP writes are serialized by the native host.
-import { useCallback, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { ChatSession } from '../net/types';
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { useSessionResource } from '../lib/useSessionResource';
 import { McpStatusPill } from './McpStatus';
 import { PanelCloseButton, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
-import { useClippedText } from '../lib/useClippedText';
-import { PaneHeader } from './PaneHeader';
+import { PaneBody, PaneHeader } from './PaneHeader';
 import { Icon } from './Icon';
 import { ModuleSourceBadge } from './ModuleLabel';
 import type { ModuleSource } from '@cockpit/protocol';
-
-export function Toggle({ on, onChange, disabled, label, busy }: {
-  on: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string; busy?: boolean;
-}) {
-  return <button type="button" role="switch" aria-label={label} aria-checked={on}
-    aria-busy={busy || undefined} disabled={disabled} className={`switch ck-button${on ? ' is-on' : ''}`}
-    onClick={() => onChange(!on)}><span className="switch-knob" /></button>;
-}
-
-// The text itself is the disclosure target: discovering overflow never adds a row.
-function RowText({ text, label, lines = 1 }: { text: string; label: string; lines?: 1 | 2 }) {
-  const id = useId();
-  const { ref, clipped } = useClippedText(text, lines);
-  const [expanded, setExpanded] = useState(false);
-  const content = <span ref={ref} id={id} className="manage-row-text" data-lines={lines}
-    data-expanded={expanded || undefined}>{text}</span>;
-  return clipped || expanded
-    ? <button type="button" className="manage-text-disclosure ck-button"
-      aria-label={`${expanded ? '收起' : '展开'}${label}`} aria-expanded={expanded} aria-controls={id}
-      onClick={() => setExpanded(!expanded)}>{content}</button>
-    : content;
-}
-
-function RowError({ error, name }: { error: string; name: string }) {
-  const id = useId();
-  const [expanded, setExpanded] = useState(false);
-  return <>
-    <div className="manage-row-status" role="status">
-      <button type="button" className="manage-error-disclosure ck-button"
-        aria-label={`${expanded ? '收起' : '展开'}${name}错误详情`} aria-expanded={expanded} aria-controls={id}
-        title={expanded ? '收起错误详情' : '查看错误详情'}
-        onClick={() => setExpanded(!expanded)}>{expanded ? '收起' : '失败'}</button>
-    </div>
-    <div id={id} className="manage-row-error" hidden={!expanded}>未确认：{error}</div>
-  </>;
-}
+import { ResourceError, ResourceRow, ResourceText } from './ResourceRow';
+import { Badge, Toggle } from './UI';
+import { StateNotice } from './StateNotice';
 
 function SessionToggleRow({ identity, name, description, source = '', module, status, enabled, disabled, disabledReason, nativeError, onChange }: {
   identity: string; name: string; description?: string; source?: string; status?: ReactNode; enabled: boolean;
@@ -59,34 +25,26 @@ function SessionToggleRow({ identity, name, description, source = '', module, st
   const error = action.error ?? nativeError;
   const progress = <><Icon name="loading" className="spinner" size={10} />
     {status ? desired ? '连接中' : '断开中' : desired ? '启用中' : '停用中'}</>;
-  const identityText = <>
-    <div className="manage-row-name"><RowText key={name} text={name} label={`${name}名称`} /></div>
-    <div className="manage-row-source">
+  return <ResourceRow name={name} connection={Boolean(status)} title={disabled ? disabledReason : undefined}
+    source={<>
       {module && <ModuleSourceBadge module={module}
         description={status ? '角色配置来源，不代表当前连接身份；无法核验后续同名配置替换' : undefined} />}
-      <RowText key={source} text={source} label={`${name}来源`} />
-    </div>
-  </>;
-  return <div className="manage-row manage-session-row" data-mcp={status ? true : undefined}
-    data-resource-name={name} title={disabled ? disabledReason : undefined}>
-    {status ? <div className="manage-mcp-identity">{identityText}</div> : identityText}
-    <Toggle label={`启用 ${name}`} disabled={disabled || action.busy} busy={action.busy} on={enabled}
+      <ResourceText key={source} text={source} label={`${name}来源`} />
+    </>}
+    control={<Toggle label={`启用 ${name}`} disabled={disabled || action.busy} busy={action.busy} on={enabled}
       onChange={next => {
         if (disabled || action.busy) return;
         setDesired(next);
         void action.run(() => onChange(name, next));
-      }} />
-    {error && !action.busy
-      ? <RowError key={JSON.stringify([identity, error])} error={error} name={name} />
+      }} />}
+    status={error && !action.busy
+      ? <ResourceError key={JSON.stringify([identity, error])} error={error} name={name} />
       : <div className="manage-row-status" role="status">
-        {action.busy ? <span className="mcp-status mcp-operation-status" data-tone="pending">{progress}</span>
-          : status ?? <span className="mcp-status" data-tone="off">{enabled ? '已启用' : '已关闭'}</span>}
+        {action.busy ? <Badge className="mcp-status mcp-operation-status" tone="pending" appearance="text">{progress}</Badge>
+          : status ?? <Badge className="mcp-status" tone="off" appearance="text">{enabled ? '已启用' : '已关闭'}</Badge>}
       </div>}
-    <div className="manage-row-main">
-      {!status && <div className="manage-row-description"><RowText key={description ?? ''} text={description ?? ''}
-        lines={2} label={`${name}说明`} /></div>}
-    </div>
-  </div>;
+    description={!status ? <ResourceText key={description ?? ''} text={description ?? ''}
+      lines={2} label={`${name}说明`} /> : undefined} />;
 }
 
 // Only in-flight UI ownership is retained here. Values always come from the
@@ -137,15 +95,15 @@ function ManageShell({ title, onClose, refresh, status, failed, pending, hasData
 }) {
   return <>
     <PaneHeader leading={<PanelCloseButton onClose={onClose} />}
-      title={<span className="manage-title info-panel-title" title={title}>{title}</span>}
+      title={<span className="pane-title" title={title}>{title}</span>}
       actions={<RefreshButton pending={hasData && pending && !working}
         disabled={blocked || pending || working} onClick={refresh} />} />
-    <div className="manage-body scrollable">
+    <PaneBody className="manage-body">
       <ResourceStatus status={hasData && pending ? null : status} failed={failed}
         pending={pending} placement={hasData ? 'inline' : 'pane'} />
       {children}
-      {empty && <div className="manage-empty">{empty}</div>}
-    </div>
+      {empty && <StateNotice kind="empty" placement="pane">{empty}</StateNotice>}
+    </PaneBody>
   </>;
 }
 
@@ -169,7 +127,7 @@ export function SessionMcp({ session, onClose }: SessionManageProps) {
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
     {resource.data?.map(server => <SessionToggleRow key={JSON.stringify([sessionId, server.name])}
       identity={JSON.stringify(['mcp', sessionId, server.name])} name={server.name}
-      source={server.detail} module={server.module} nativeError={server.error} status={<McpStatusPill status={server.status} />}
+      source={server.detail} module={server.module} nativeError={server.error} status={<McpStatusPill status={server.status} appearance="text" />}
       enabled={server.enabled} disabled={!resource.usable || busy}
       disabledReason={busy ? 'MCP 正在切换或连接，请等待完成后再修改。' : undefined} onChange={action.run} />)}
   </ManageShell>;

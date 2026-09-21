@@ -74,7 +74,7 @@ function render(sessions: ChatSession[], overrides: Partial<ComponentProps<typeo
     sessions, activeId: null, query: '', snapshotReady: true, connected: true, onSelect: noAction, getMenuItems: () => [], ...overrides,
   }));
 }
-const titles = (html: string) => [...html.matchAll(/<span class="dialog-title">([^<]*)<\/span>/g)].map(match => match[1]);
+const titles = (html: string) => [...html.matchAll(/<span class="session-row-title">([^<]*)<\/span>/g)].map(match => match[1]);
 
 test('sidebar is a single list and keeps unloaded rows focusable and selectable', () => {
   const rows = [
@@ -106,7 +106,7 @@ test('running state and pending decisions remain without schedule indicators or 
 
 test('sidebar preserves its basic grid, native cwd label and empty-state distinction', () => {
   const html = render([session('cwd', { cwd: '/work/项目/' })]);
-  assert.match(html, /<span class="dialog-avatar" style="--chip-h:\d+" aria-hidden="true">项<\/span><span class="dialog-title">Session cwd<\/span>/);
+  assert.match(html, /<span class="dialog-avatar" style="--chip-h:\d+" aria-hidden="true">项<\/span><span class="session-row-title">Session cwd<\/span>/);
   assert.match(html, /<span class="dialog-subtitle">项目<\/span><span class="dialog-meta"><\/span>/);
   assert.match(render([]), /服务器上没有 session/);
   assert.match(render([session('one')], { query: 'missing' }), /没有匹配的会话/);

@@ -6,6 +6,8 @@ import { useKeyedAction, useKeyedResource } from '../lib/useKeyedResource';
 import { RoleBadge } from './ModuleLabel';
 import { RolePicker } from './RolePicker';
 import { RefreshButton, ResourceStatus } from './SessionPanelKit';
+import { SectionHeading } from './UI';
+import { StateNotice } from './StateNotice';
 
 const sameRole = (a: RoleSelection, b: RoleSelection) => a.moduleId === b.moduleId && a.roleId === b.roleId;
 
@@ -72,53 +74,52 @@ function RolesSection({ session }: { session: ChatSession }) {
     });
   };
   return <section className="info-section">
-    <div className="info-section-name">模块角色
+    <SectionHeading className="info-section-name" actions={
       <RefreshButton label="刷新模块角色" pending={action.busy && operation === 'refresh'}
-        disabled={!connected || action.busy} onClick={refresh} />
-    </div>
+        disabled={!connected || action.busy} onClick={refresh} />}>模块角色</SectionHeading>
     <div className="info-section-content info-controls">
       {session.roles ? session.roles.length ? <div className="session-role-badges" aria-label="已保存的模块角色">
         {session.roles.map(role => <RoleBadge key={`${role.moduleId}/${role.roleId}`}
           role={role} session={session} connected={connected} />)}
       </div> : <span className="info-meta-id-label">无</span>
         : <span className="info-meta-id-label">未读取</span>}
-      {!connected ? <div role="status">等待连接，应用状态未确认。</div>
-        : !session.loaded ? <div role="status">会话未加载；已保存的角色将在下次加载时应用。</div>
-          : session.rolesNeedReload || resultNeedsReload ? <div role="status">角色选择已保存，需要另行显式重新加载会话。</div> : null}
-      {action.error && <div className="info-model-status" role="alert">
+      {!connected ? <StateNotice>等待连接，应用状态未确认。</StateNotice>
+        : !session.loaded ? <StateNotice>会话未加载；已保存的角色将在下次加载时应用。</StateNotice>
+          : session.rolesNeedReload || resultNeedsReload ? <StateNotice>角色选择已保存，需要另行显式重新加载会话。</StateNotice> : null}
+      {action.error && <StateNotice kind="error" className="info-model-status">
         {operation === 'save' ? '追加结果未确认' : '刷新失败'}：{action.error}
-      </div>}
-      {needsInspection && !action.busy && <div className="info-model-status" role="alert">
+      </StateNotice>}
+      {needsInspection && !action.busy && <StateNotice kind="error" className="info-model-status">
         {result?.error && `${result.error}。`}追加结果未确认，请先刷新模块角色，再显式重试。
         {result?.recovery && <div>{result.recovery}</div>}
-      </div>}
+      </StateNotice>}
       {result && result.status !== 'uncertain'
         && (result.status === 'unchanged' || !session.rolesNeedReload && !resultNeedsReload || result.error || result.recovery)
-        && <div className="info-model-status" role="status">
+        && <StateNotice className="info-model-status">
         {result.status === 'saved' ? '角色选择已保存，未重新加载会话。' : '角色选择未变。'}
         {result.error && ` ${result.error}`}
         {result.recovery && <div>{result.recovery}</div>}
-      </div>}
-      {refreshed && <div role="status">角色状态已刷新；应用不代表能力就绪。</div>}
+      </StateNotice>}
+      {refreshed && <StateNotice>角色状态已刷新；应用不代表能力就绪。</StateNotice>}
       <button type="button" className="dialog-btn ck-button rp" aria-expanded={open}
         onClick={() => { setOpened(true); setOpen(value => !value); }}>{open ? '收起角色追加' : '追加模块角色…'}</button>
       {opened && <div hidden={!open}><div className="info-controls">
-        {blocked && <div className="info-model-status" role="status">当前不可保存：请等待连接及会话加载或关闭完成。</div>}
+        {blocked && <StateNotice className="info-model-status">当前不可保存：请等待连接及会话加载或关闭完成。</StateNotice>}
         <ResourceStatus status={catalog.status} failed={catalog.failed} pending={catalog.pending} />
         {catalog.failed && <button type="button" className="dialog-btn ck-button rp"
           disabled={!catalog.connected || catalog.pending || action.busy}
           onClick={() => { void catalog.refresh(); }}>重试读取角色目录</button>}
-        {catalog.usable && (!catalog.data?.length ? <div>没有可用的模块角色。</div>
-          : !available.length ? <div>目录中的角色均已选择，无法重复追加。</div>
+        {catalog.usable && (!catalog.data?.length ? <StateNotice kind="empty">没有可用的模块角色。</StateNotice>
+          : !available.length ? <StateNotice kind="empty">目录中的角色均已选择，无法重复追加。</StateNotice>
             : <RolePicker roles={available} selected={additions} disabled={blocked || action.busy || needsInspection}
               onChange={setSelected} />)}
-        {additions.length > 64 && <div role="alert">每次最多追加 64 个角色。</div>}
-        <div className="info-model-actions">
+        {additions.length > 64 && <StateNotice kind="error">每次最多追加 64 个角色。</StateNotice>}
+        <div className="info-model-actions ck-actions">
           <button type="button" className="dialog-btn ck-button ck-primary primary rp"
             disabled={blocked || action.busy || needsInspection || !catalog.usable || !additions.length || additions.length > 64}
             aria-busy={action.busy && operation === 'save'} onClick={submit}>保存追加角色</button>
         </div>
-        {action.busy && operation === 'save' && <div role="status">正在保存…</div>}
+        {action.busy && operation === 'save' && <StateNotice kind="loading">正在保存…</StateNotice>}
       </div></div>}
     </div>
   </section>;
