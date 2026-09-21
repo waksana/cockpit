@@ -48,38 +48,34 @@ test('creation has one native action owner and no first-message or virtual ident
   assert.doesNotMatch(app + picker, /sessionStart|<Composer|creation\.draft|onStart|session\/start/);
 });
 
-test('directory modal isolates background, allows notices and keeps a focusable busy and lazy fallback', () => {
+test('directory modal delegates isolation to the browser and starts outside the path input', () => {
   const dialog = source('./Dialog.tsx');
-  const focus = source('../lib/useModalFocus.ts');
+  const focus = source('../lib/useNativeDialog.ts');
   const css = source('../styles/components/dialog.scss');
-  assert.match(dialog, /useModalFocus\(ref, true\)/);
-  assert.match(dialog, /event.target.closest\('\.ux-error-notifications'\)/);
-  assert.match(focus, /shell.inert = true/);
-  assert.match(focus, /shell.inert = wasInert \?\? false/);
-  assert.match(focus, /\.ux-error-notifications button:not\(:disabled\)/);
-  assert.match(focus, /observer\?\.disconnect\(\)/);
-  assert.match(css, /\.directory-modal \{ bottom: var\(--ux-error-height, 0px\)/);
+  assert.match(dialog, /useNativeDialog\(ref\)/);
+  assert.match(dialog, /<UxErrorNotifications withinDialog/);
+  assert.match(focus, /dialog.showModal\(\)/);
+  assert.match(focus, /dialog.close\(\)/);
+  assert.doesNotMatch(focus, /\.focus\(|MutationObserver|focusin|keydown|inert/);
+  assert.match(css, /calc\(0.5rem \+ var\(--ux-error-height, 0px\)\)/);
   const html = renderToStaticMarkup(createElement(DirectoryModal, {
     busy: true, children: 'pending', onCancel: () => assert.fail('render cannot cancel'),
   }));
-  assert.match(html, /tabindex="-1".*aria-modal="true".*aria-busy="true"/);
+  assert.match(html, /<dialog.*aria-busy="true"/);
+  assert.match(html, /<h3[^>]*tabindex="-1"[^>]*>新建会话/);
+  assert.match(dialog, /heading.autofocus = true/);
 });
 
-test('ordinary dialogs participate in the shared modal focus lifecycle with an empty-controls fallback', () => {
+test('ordinary dialogs have native initial focus without repeated focus or selection', () => {
   const dialog = source('./Dialog.tsx');
-  assert.match(dialog, /useModalFocus\(dialogRef\)/);
-  assert.match(dialog, /ref=\{dialogRef\} tabIndex=\{-1\} className="dialog-card"/);
-  assert.ok(dialog.indexOf('useModalFocus(dialogRef)') < dialog.indexOf('inputRef.current?.select()'));
-  const focus = source('../lib/useModalFocus.ts');
-  assert.match(focus, /const shell = document.querySelector<HTMLElement>\('\.cockpit-shell'\)/);
-  assert.match(focus, /\.filter\(available\)/);
-  assert.match(focus, /select:not\(:disabled\), textarea:not\(:disabled\), a\[href\], summary/);
+  assert.match(dialog, /useNativeDialog\(dialogRef\)/);
+  assert.doesNotMatch(dialog, /\.focus\(|\.select\(|addEventListener/);
   const html = renderToStaticMarkup(createElement(Dialog, {
     title: 'Rename target', input: { initial: 'Target B' },
     onConfirm: () => assert.fail('Rendering must not mutate a session'),
     onCancel: () => assert.fail('Rendering must not dismiss'),
   }));
-  assert.match(html, /tabindex="-1" class="dialog-card" role="dialog" aria-modal="true"/);
+  assert.match(html, /<dialog class="dialog-scrim host-modal"/);
   assert.match(html, /value="Target B"/);
 });
 
@@ -113,12 +109,13 @@ test('long menus keep internal scroll open and dismiss before panel Escape; Tab 
   assert.match(source('./ContextMenu.tsx'), /maxHeight: 'calc\(100dvh - 16px\)', overflowY: 'auto'/);
 });
 
-test('session pages have no injected navigation and keep one stable, focused frame around lazy content', () => {
+test('session pages retain a stable native frame without initial focus or a custom Tab trap', () => {
   const details = source('./SessionDetails.tsx');
   assert.doesNotMatch(details, /navigation=|SESSION_PRIMARY|SESSION_MORE|<nav|<Link/);
-  assert.match(details, /<aside ref=\{frame\} tabIndex=\{-1\}/);
-  assert.ok(details.indexOf('<aside ref={frame}') < details.indexOf('<Suspense fallback='));
-  assert.match(details, /frame.current\?\.focus\(\); \}, \[panel\]/);
+  assert.match(details, /<dialog ref=\{frame\}/);
+  assert.ok(details.indexOf('<dialog ref={frame}') < details.indexOf('<Suspense fallback='));
+  assert.match(details, /useNativeDialog\(frame, !wide\)/);
+  assert.doesNotMatch(details, /\.focus\(|event.key [!=]== 'Tab'/);
   assert.match(details, /event.defaultPrevented/);
   for (const file of ['./SessionInfoPanel.tsx', './SessionPanelKit.tsx', './Manage.tsx']) {
     assert.doesNotMatch(source(file), /navigation[?=:]|info-panel-nav|info-panel-more/);
@@ -129,7 +126,7 @@ test('panel keyboard scope includes the nonmodal error tray and dismissal does n
   const details = source('./SessionDetails.tsx');
   const notifications = source('./UxErrorNotifications.tsx');
   const css = source('./UxErrorNotifications.scss');
-  assert.match(details, /\.ux-error-notifications button:not\(:disabled\)/);
+  assert.match(details, /!wide && <UxErrorNotifications withinDialog/);
   assert.match(details, /event.defaultPrevented/);
   assert.match(notifications, /event.stopPropagation\(\)/);
   assert.match(notifications, /dismiss\(error.id, event.currentTarget\)/);
@@ -140,6 +137,13 @@ test('panel keyboard scope includes the nonmodal error tray and dismissal does n
   assert.match(css, /:root:has\(\.ux-error-notifications\) \.chat-input \{\s*padding-bottom: 0\.25rem/);
   assert.match(css, /z-index: 45/);
   assert.doesNotMatch(notifications, /aria-modal|onClose|navigate/);
+});
+
+test('management does not move focus on entry or async detail changes and focus rings stay in bounds', () => {
+  assert.doesNotMatch(source('./ManagementShell.tsx'), /\.focus\(|autoFocus|tabIndex/);
+  assert.match(source('../styles/primitives/public-ui.scss'), /:focus-visible \{ outline: 2px solid var\(--ck-color-accent\); outline-offset: -2px/);
+  assert.match(source('../styles/components/chat.scss'), /\[tabindex\]\):focus-visible \{ outline: 2px solid var\(--chat-accent-ink\); outline-offset: -2px/);
+  assert.match(source('./threadScroll.ts'), /active.blur\(\)/);
 });
 
 test('sidebar menu stores target identity, derives current actions, and dismisses when its owner disappears', () => {

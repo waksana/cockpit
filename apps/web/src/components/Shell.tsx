@@ -3,17 +3,12 @@
 // 925px dock line only one pane shows at a time (list ↔ chat), driven by
 // `mobileVisible`; at/above it both dock side-by-side.
 
-import { createContext, useContext, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { useMediaQuery } from '../lib/useMediaQuery';
 
-const CoveredPanes = createContext(false);
-
 export function Shell({ children, ariaLabel, infoOpen }: { children: ReactNode; ariaLabel: string; infoOpen?: boolean }) {
-  const wide = useMediaQuery('(min-width: 1200px)');
   return (
-    <CoveredPanes value={Boolean(infoOpen && !wide)}>
-      <section className="cockpit-shell" data-info-open={infoOpen ? 'true' : 'false'} aria-label={ariaLabel}>{children}</section>
-    </CoveredPanes>
+    <section className="cockpit-shell" data-info-open={infoOpen ? 'true' : 'false'} aria-label={ariaLabel}>{children}</section>
   );
 }
 
@@ -23,8 +18,7 @@ export function MasterPane({
   children: ReactNode; ariaLabel: string; mobileVisible: boolean; header?: ReactNode; overlay?: ReactNode;
 }) {
   const docked = useMediaQuery('(min-width: 925px)');
-  const covered = useContext(CoveredPanes);
-  const hidden = covered || (!docked && !mobileVisible);
+  const hidden = !docked && !mobileVisible;
   return (
     <aside className="master-pane" data-visible={mobileVisible ? 'true' : 'false'} aria-label={ariaLabel}
       inert={hidden} aria-hidden={hidden || undefined}>
@@ -41,8 +35,7 @@ export function DetailPane({
   children: ReactNode; ariaLabel: string; mobileVisible: boolean; header?: ReactNode;
 }) {
   const docked = useMediaQuery('(min-width: 925px)');
-  const covered = useContext(CoveredPanes);
-  const hidden = covered || (!docked && !mobileVisible);
+  const hidden = !docked && !mobileVisible;
   return (
     <section className="detail-pane" data-visible={mobileVisible ? 'true' : 'false'} aria-label={ariaLabel}
       inert={hidden} aria-hidden={hidden || undefined}>

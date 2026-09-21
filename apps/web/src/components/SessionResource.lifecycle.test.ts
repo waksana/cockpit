@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+import assert from '../test/identityAssert';
 import { test, type TestContext } from 'node:test';
 import { act, createElement, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -85,6 +85,9 @@ class HostNode extends EventTarget {
   removeAttribute(name: string) { this.attributes.delete(name); }
   getAttribute(name: string) { return this.attributes.get(name) ?? null; }
   focus() { this.ownerDocument.activeElement = this; }
+  open = false;
+  showModal() { this.open = true; this.ownerDocument.nativeModal = this; }
+  close() { this.open = false; if (this.ownerDocument.nativeModal === this) this.ownerDocument.nativeModal = null; }
   getClientRects() { return [1]; }
   closest(selector: string): HostNode | null {
     return this.matches(selector) ? this : this.parentNode?.closest(selector) ?? null;
@@ -853,7 +856,7 @@ for (const desktop of [true, false]) {
       createElement(Routes, null,
         createElement(Route, { path: '/session/:id/mcp', element: createElement(Panel) }),
         createElement(Route, { path: '/session/:id', element: createElement('div', null, 'closed panel') }))));
-    const frame = h.container.querySelector('aside');
+    const frame = h.container.querySelector('dialog');
     assert.ok(frame);
     const modal = h.document.createElement('dialog');
     h.document.nativeModal = modal;
@@ -868,16 +871,17 @@ for (const desktop of [true, false]) {
     assert.equal((await key('Tab')).defaultPrevented, false, 'native modal keeps browser Tab handling');
     assert.equal(h.document.activeElement, modal, 'background panel cannot steal modal focus');
     await key('Escape');
-    assert.equal(h.container.querySelector('aside'), frame, 'modal Escape cannot navigate the background');
+    assert.equal(h.container.querySelector('dialog'), frame, 'modal Escape cannot navigate the background');
     h.document.nativeModal = null;
     await key('Escape', true);
-    assert.equal(h.container.querySelector('aside'), frame, 'claimed Escape remains ignored');
+    assert.equal(h.container.querySelector('dialog'), frame, 'claimed Escape remains ignored');
     frame.focus();
-    assert.equal((await key('Tab')).defaultPrevented, !desktop, 'original panel Tab behavior remains');
-    await key('Escape');
+    assert.equal((await key('Tab')).defaultPrevented, false, 'Tab belongs to the browser at both widths');
+    if (desktop) await key('Escape');
+    else await act(async () => { frame.dispatchEvent(new Event('cancel', { cancelable: true })); });
     assert.equal(h.container.textContent, 'closed panel');
     await act(async () => { await navigate(`/session/${session.sessionId}/mcp`); });
-    assert.ok(h.container.querySelector('aside'));
+    assert.ok(h.container.querySelector('dialog'));
   });
 }
 
