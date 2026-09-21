@@ -839,9 +839,11 @@ test('MCP-only roles reject discovered native config collisions on create and co
   assert.equal(h.runtime.rpc.skills.discover.mock.callCount(), 0, 'MCP validation does not depend on role skills');
 });
 
-test('session skill provenance uses assembled identity and native path, never source or name prefixes', async t => {
+for (const provenRoles of [false, true]) {
+test(`session provenance with known roles=${provenRoles} uses assembled identity and native path, never prefixes`, async t => {
   const h = harness(t);
-  const module = { id: 'fixture', name: 'Fixture module' };
+  const module = { id: 'fixture', name: 'Fixture module',
+    ...(provenRoles ? { roles: [{ id: 'worker', name: 'Worker' }] } : {}) };
   const role = { moduleId: module.id, moduleName: module.name, roleId: 'worker', name: 'Worker' };
   const saved = new Map<string, typeof role[]>();
   let path = '/fixture/v1/worker/SKILL.md';
@@ -905,6 +907,106 @@ test('session skill provenance uses assembled identity and native path, never so
     'cold resume assembly must not label a native skill retaining the old path');
   native.state.skills[0]!.path = path;
   assert.deepEqual((await h.engine.listSessionSkills(id))[0]!.module, module);
+  native.state.skills[0]!.name = 'same-path-different-name';
+  assert.equal((await h.engine.listSessionSkills(id))[0]!.module, undefined);
+  native.state.skills[0]!.name = 'fixture-worker';
+  delete native.state.skills[0]!.path;
+  assert.equal((await h.engine.listSessionSkills(id))[0]!.module, undefined);
+});
+}
+
+async function roleProvenanceFixture(t: TestContext) {
+  const h = await roleAdditionFixture(t);
+  const path = '/synthetic/shared/SKILL.md';
+  const assemble = h.provider.assemble.bind(h.provider);
+  h.provider.assemble = async (id, selections) => {
+    const value = await assemble(id, selections);
+    const module = { id: 'fixture', name: 'Fixture',
+      roles: value.roles.map(role => ({ id: role.roleId, name: role.name })) };
+    return { ...value, skills: [{ name: 'shared-skill', path, module }],
+      mcpSources: { 'shared-tools': module }, config: { ...value.config,
+        skillDirectories: ['/synthetic/shared'],
+        mcpServers: { 'shared-tools': { type: 'http', url: 'http://127.0.0.1/mcp', tools: ['read'] } },
+      } };
+  };
+  h.discoveredSkills.push({ name: 'shared-skill', path } as ServerSkill);
+  assert.equal((await h.engine.addRoles(h.id, [h.catalog[0]!])).status, 'saved');
+  await h.engine.reload(h.id);
+  h.native.state.skills = [{ name: 'shared-skill', path, source: 'custom', enabled: true } as Skill];
+  h.native.state.mcp = mcpState([{ name: 'shared-tools', status: 'connected' }]);
+  const sources = async () => {
+    const mcp = await h.engine.listSessionMcp(h.id);
+    if (!mcp.loaded) {
+      assert.deepEqual(mcp.servers, []);
+      await assert.rejects(h.engine.listSessionSkills(h.id), unavailableSession);
+      return [];
+    }
+    const skills = await h.engine.listSessionSkills(h.id);
+    assert.equal(mcp.servers.length, 1);
+    assert.equal(skills.length, 1);
+    assert.deepEqual(mcp.servers[0]!.module, skills[0]!.module);
+    return mcp.servers[0]!.module?.roles?.map(role => role.id);
+  };
+  assert.deepEqual(await sources(), ['executor']);
+  return { ...h, sources };
+}
+
+for (const phase of ['close', 'assemble', 'resume', 'initialize', 'success'] as const) {
+  test(`resource contributors follow applied handles across explicit role reload ${phase}`, async t => {
+    const h = await roleProvenanceFixture(t);
+    const result = await h.engine.addRoles(h.id, [h.catalog[1]!]);
+    assert.equal(result.status, 'saved');
+    assert.equal(result.rolesNeedReload, true);
+    assert.deepEqual(result.roles, h.catalog);
+    assert.deepEqual(result.appliedRoles, [h.catalog[0]]);
+    assert.deepEqual(await h.sources(), ['executor'], 'saved roles are not resource contributors until loaded');
+    if (phase === 'close') h.runtime.closeSession.mock.mockImplementationOnce(async () => { throw new Error('synthetic close unknown'); });
+    if (phase === 'assemble') t.mock.method(h.provider, 'assemble', async () => { throw new Error('synthetic assembly failure'); });
+    if (phase === 'resume') h.runtime.resumeSession.mock.mockImplementationOnce(async () => { throw new Error('synthetic resume unknown'); });
+    if (phase === 'initialize') {
+      h.native.rpc.tools.initializeAndValidate.mock.mockImplementationOnce(async () => { throw new Error('synthetic initialization failure'); });
+    }
+    if (phase === 'success') await h.engine.reload(h.id);
+    else await assert.rejects(h.engine.reload(h.id), /synthetic/);
+    assert.deepEqual(await h.sources(), phase === 'resume' || phase === 'assemble' ? [] : phase === 'close'
+      ? ['executor'] : ['executor', 'owner']);
+    if (phase === 'success') {
+      assert.equal((await h.engine.addRoles(h.id, h.catalog)).status, 'unchanged');
+      await h.engine.unload(h.id);
+      assert.deepEqual(await h.sources(), []);
+      await h.engine.load(h.id);
+      assert.deepEqual(await h.sources(), ['executor', 'owner']);
+    }
+  });
+}
+
+for (const written of [false, true]) {
+  test(`uncertain role save afterWrite=${written} preserves previous resource contributors`, async t => {
+    const h = await roleProvenanceFixture(t);
+    t.mock.method(h.provider, 'save', (id, roles) => {
+      if (written) h.saved.set(id, roles);
+      throw new Error('synthetic persistence acknowledgement failure');
+    });
+    const result = await h.engine.addRoles(h.id, [h.catalog[1]!]);
+    assert.equal(result.status, 'uncertain');
+    assert.deepEqual(result.roles, written ? h.catalog : [h.catalog[0]]);
+    assert.deepEqual(await h.sources(), ['executor']);
+  });
+}
+
+test('pending role resume never exposes selected contributors before a handle returns', async t => {
+  const h = await roleProvenanceFixture(t);
+  const held = deferred<CopilotSession>();
+  h.runtime.resumeSession.mock.mockImplementationOnce(() => held.promise);
+  await h.engine.addRoles(h.id, [h.catalog[1]!]);
+  const loading = h.engine.reload(h.id);
+  await nextTurn();
+  assert.deepEqual(h.saved.get(h.id), h.catalog);
+  assert.deepEqual(await h.sources(), []);
+  h.runtime.isSessionLive.mock.mockImplementation(async () => true);
+  held.resolve(h.native.sdk as unknown as CopilotSession);
+  await loading;
+  assert.deepEqual(await h.sources(), ['executor', 'owner']);
 });
 
 test('readonly native observer sees live deltas without web/history reads and isolates failures', async t => {

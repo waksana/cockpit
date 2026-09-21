@@ -336,6 +336,27 @@ test('session resource tools retain explicit module metadata without replacing n
     { skills: [skill], count: 1 });
 });
 
+test('resource MCP text and JSON preserve single and shared contributors without inventing missing roles', async () => {
+  for (const roles of [undefined, [], [{ id: 'owner', name: 'Owner' }],
+    [{ id: 'executor', name: 'Executor' }, { id: 'owner', name: 'Owner' }]]) {
+    const module = { id: 'fixture', name: 'Fixture', ...(roles ? { roles } : {}) };
+    const server = { name: 'raw-server', detail: 'user', enabled: false, status: 'failed', module };
+    const skill = { name: 'raw-skill', source: 'custom', enabled: false, module };
+    mcpSessionResult = { loaded: true, servers: [server] };
+    skillSessionResult = { skills: [skill] };
+    for (const tool of ['cockpit_list_session_mcp', 'cockpit_list_session_skills']) {
+      const result = await call(tool, { session_id: 'B' });
+      assert.equal(result.isError, false, result.text);
+      if (roles?.length) assert.ok(result.text.includes(`contributing roles: ${roles.map(role => `${role.name} (${role.id})`).join(', ')}`));
+      else assert.doesNotMatch(result.text, /contributing roles/);
+    }
+    assert.deepEqual(await json('cockpit_list_session_mcp', { session_id: 'B', response_format: 'json' }),
+      { loaded: true, servers: [server], count: 1 });
+    assert.deepEqual(await json('cockpit_list_session_skills', { session_id: 'B', response_format: 'json' }),
+      { skills: [skill], count: 1 });
+  }
+});
+
 for (const status of ['connected', 'failed', 'needs-auth', 'pending', 'disabled', 'stopped', 'not_configured']) {
   test(`MCP tools preserve ${status} independently of enablement in list, panels and toggle output`, async t => {
     const previous = panels.mcpServers;

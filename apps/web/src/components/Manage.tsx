@@ -10,7 +10,7 @@ import { PanelCloseButton, RefreshButton, ResourceStatus, SessionResume } from '
 import { useClippedText } from '../lib/useClippedText';
 import { PaneHeader } from './PaneHeader';
 import { Icon } from './Icon';
-import { ModuleLabel } from './ModuleLabel';
+import { ModuleSourceBadge } from './ModuleLabel';
 import type { ModuleSource } from '@cockpit/protocol';
 
 export function Toggle({ on, onChange, disabled, label, busy }: {
@@ -62,7 +62,7 @@ function SessionToggleRow({ identity, name, description, source = '', module, st
   const identityText = <>
     <div className="manage-row-name"><RowText key={name} text={name} label={`${name}名称`} /></div>
     <div className="manage-row-source">
-      {module && <ModuleLabel name={module.name} id={module.id}
+      {module && <ModuleSourceBadge module={module}
         description={status ? '角色配置来源，不代表当前连接身份；无法核验后续同名配置替换' : undefined} />}
       <RowText key={source} text={source} label={`${name}来源`} />
     </div>

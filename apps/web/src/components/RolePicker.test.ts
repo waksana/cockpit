@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { ModuleLabel, RoleBadge } from './ModuleLabel';
+import { ModuleLabel, ModuleSourceBadge, RoleBadge } from './ModuleLabel';
 import { RolePicker } from './RolePicker';
 
 const roles = [
@@ -38,6 +38,24 @@ test('module and joined role labels preserve exact names and explain their meani
   assert.match(html, /class="module-label-name">module_Original__Name</);
   assert.match(html, /class="role-badge-name">cockpit-Exact-owner</);
   assert.match(html, /不代表当前能力就绪/);
-  assert.doesNotMatch(html, /data-tone=|role="status"/);
+  assert.doesNotMatch(html, /data-tone=|role="status"|module-mark|<svg/);
   assert.match(renderToStaticMarkup(createElement(ModuleLabel, { id: 'raw', name: '<module>' })), /&lt;module&gt;/);
+});
+
+test('resource badges join only explicit contributors and retain module-only fallback', () => {
+  for (const contributors of [undefined, [], [{ id: 'owner', name: 'Owner' }],
+    [{ id: 'executor', name: '<Executor>' }, { id: 'owner', name: 'Owner' }]]) {
+    const html = renderToStaticMarkup(createElement(ModuleSourceBadge, {
+      module: { id: 'task', name: 'Task', roles: contributors }, description: 'Configuration, not live connection identity',
+    }));
+    assert.match(html, /class="module-label-name">Task</);
+    assert.match(html, /Configuration, not live connection identity/);
+    assert.doesNotMatch(html, /module-mark|<svg|data-tone=|role="status"/);
+    if (!contributors?.length) assert.doesNotMatch(html, /role-badge/);
+    else {
+      assert.match(html, /class="role-badge"/);
+      assert.match(html, /不代表授权、启用或就绪/);
+      assert.match(html, contributors.length === 1 ? />Owner</ : />&lt;Executor&gt;、Owner</);
+    }
+  }
 });
