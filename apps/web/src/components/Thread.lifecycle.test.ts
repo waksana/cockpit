@@ -2103,7 +2103,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)); });
     assert.equal(draft.getSnapshot().blocks.length, 0);
     assert.equal(container.querySelector('.cockpit-speech-panel'), null, 'failure stays on the retry button');
-    assert.match(container.querySelector('.cockpit-speech-mic')!.attributes.get('class')!, /cockpit-speech-retry/);
+    assert.match(container.querySelector('.cockpit-speech-mic')!.attributes.get('class')!, /\bck-danger\b/);
     const capturesBeforeRetry = captures;
     await click('.cockpit-speech-mic');
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)); finish('replayed'); });
