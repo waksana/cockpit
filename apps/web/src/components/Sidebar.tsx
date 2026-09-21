@@ -39,8 +39,8 @@ interface RowActions {
   onMenu: (x: number, y: number, trigger?: HTMLElement) => void;
 }
 
-function SessionRow({ s, active, actions }: {
-  s: SessionMeta; active: boolean; actions: RowActions;
+function SessionRow({ s, active, actions, connected }: {
+  s: SessionMeta; active: boolean; actions: RowActions; connected: boolean;
 }) {
   const firedRef = useRef(false);
   const lp = useLongPress(actions.onMenu, firedRef);
@@ -76,7 +76,7 @@ function SessionRow({ s, active, actions }: {
       <span className="dialog-time">{relTime(s.lastActivity)}</span>
       <span className="dialog-subtitle">{cwdBasename(s.cwd)}</span>
       {!!s.roles?.length && <span className="dialog-roles session-role-badges">
-        {s.roles.map(role => <RoleBadge key={`${role.moduleId}/${role.roleId}`} role={role} />)}
+        {s.roles.map(role => <RoleBadge key={`${role.moduleId}/${role.roleId}`} role={role} session={s} connected={connected} />)}
       </span>}
       <SessionStatus sessionId={s.sessionId} status={s.status} needsDecision={!!(s.ask || s.planRequest || s.elicitation)} />
     </button></li>
@@ -132,6 +132,7 @@ export function Sidebar(props: SidebarProps) {
     <SessionRow
       key={s.sessionId}
       s={s}
+      connected={connected && snapshotReady}
       active={s.sessionId === activeId}
       actions={{ onSelect: () => onSelect(s.sessionId), onMenu: openMenu(s) }}
     />

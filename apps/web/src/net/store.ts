@@ -42,6 +42,7 @@ interface CockpitState {
   listRoles: () => Promise<IntentResult<'roles/list'>['roles']>;
   addRoles: (sessionId: string, roles: import('@cockpit/protocol').RoleSelection[]) => Promise<IntentResult<'roles/add'>>;
   roleReadiness: (sessionId: string) => Promise<IntentResult<'roles/readiness'>>;
+  refreshRoles: (sessionId: string, signal?: AbortSignal) => Promise<SessionProjection>;
   loadMore: (sessionId: string) => void;
   retryHistory: (sessionId: string) => void;
   sendDraft: (request: NativeDraftRequest) => Promise<boolean>;
@@ -694,6 +695,30 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     listRoles() { return read(net => net.listRoles()).then(result => result.roles); },
     addRoles(sid, roles) { return read(net => net.addRoles(sid, roles)); },
     roleReadiness(sid) { return read(net => net.roleReadiness(sid)); },
+    async refreshRoles(sid, signal) {
+      const net = connectedClient();
+      const generation = get().connectionGeneration;
+      const original = get().sessions.find(row => row.sessionId === sid);
+      const revision = get().resourceRevisions[sid]?.identity;
+      const { meta } = await net.getResources(sid, ['identity'], signal);
+      if (!meta || meta.sessionId !== sid) throw new Error('返回的会话 ID 不匹配或会话已不存在');
+      if (!meta.roles || !meta.appliedRoles || meta.rolesNeedReload === undefined) {
+        throw new Error('角色保存或应用状态未确认，请重新刷新');
+      }
+      const current = get().sessions.find(row => row.sessionId === sid);
+      // Do not overwrite newer SSE identity or unlock a retry with an obsolete read.
+      if (signal?.aborted || client !== net || get().connState !== 'open' || get().connectionGeneration !== generation
+        || !original || !current || current.loaded !== meta.loaded || current.loaded !== original.loaded
+        || current.roles !== original.roles || current.appliedRoles !== original.appliedRoles
+        || get().resourceRevisions[sid]?.identity !== revision) {
+        throw new Error('连接或会话角色已变化，请重新刷新');
+      }
+      const fields = { roles: meta.roles, appliedRoles: meta.appliedRoles, rolesNeedReload: meta.rolesNeedReload };
+      const pending = metaRequests.get(sid);
+      if (pending) Object.assign(pending.patches, fields);
+      patchLocal(sid, row => ({ ...row, ...fields }));
+      return meta;
+    },
   };
 });
 

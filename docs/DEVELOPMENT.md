@@ -15,6 +15,12 @@ development capabilities (backend API remains v1). The module contract owns thei
 manifest, explicit on-demand capability readiness and cold-resume semantics.
 Ordinary session reads expose saved/applied role identity and reload state, not
 readiness; there is no readiness cache, badge or automatic queue advancement.
+Web settings and the sidebar show one saved-role collection, with unapplied or
+unconfirmed roles muted; applied does not mean ready. The role-header refresh
+reads only `session/resources` identity (including persisted selections), without
+loading the session or inspecting MCP/Skills/tools. An uncertain addition remains
+locked until this explicit read confirms the saved selection; it never retries
+automatically. Creation and addition share native checkbox role cards.
 `roles/add` saves selections even during active work without native lifecycle
 calls. New roles apply on ordinary explicit reload or next cold load, under
 normal lifecycle restrictions and native/global defaults; temporary switches and

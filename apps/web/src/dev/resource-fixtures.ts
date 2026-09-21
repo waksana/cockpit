@@ -44,6 +44,11 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
       ...(index === 0 ? { title: '模块角色与资源（合成）', status: 'idle' as const, nativeProcessing: false, intent: null } : {}),
     })),
     listRoles: async () => catalog,
+    refreshRoles: async id => {
+      const session = find(id);
+      return { sessionId: id, roles: session.roles, appliedRoles: session.appliedRoles,
+        rolesNeedReload: session.rolesNeedReload, loaded: session.loaded };
+    },
     roleReadiness: async id => {
       const session = find(id);
       return { sessionId: id, roles: session.roles ?? [], appliedRoles: session.appliedRoles ?? [],

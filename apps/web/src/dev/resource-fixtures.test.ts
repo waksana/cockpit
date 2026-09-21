@@ -45,6 +45,10 @@ test('resource scene exercises actual names and explicit provenance without HTTP
   assert.equal(updated.cwd, original.cwd);
   assert.deepEqual(updated.roles?.slice(0, 2), original.roles);
   assert.equal((await state.roleReadiness(workspaceSessionId)).ready, false);
+  const refreshed = await state.refreshRoles(workspaceSessionId);
+  assert.deepEqual(refreshed.roles, updated.roles);
+  assert.deepEqual(refreshed.appliedRoles, original.appliedRoles);
+  assert.equal(refreshed.rolesNeedReload, true);
   assert.equal((await state.addRoles(workspaceSessionId, [roles[2]])).status, 'unchanged');
   await assert.rejects(state.newSession('/workspace', [{ moduleId: 'unknown', roleId: 'owner' }]), /Unknown synthetic role/);
   await assert.rejects(state.mcpToggleSession(workspaceSessionId, 'task', true), /Unknown synthetic MCP/);
@@ -74,6 +78,7 @@ test('resource role saving allows busy work and never loads an unloaded fixture'
     assert.equal(updated.ask?.requestId, 'ask');
     assert.equal(updated.queue?.length, 1);
     assert.equal((await state.roleReadiness(workspaceSessionId)).rolesNeedReload, loaded);
+    assert.equal((await state.refreshRoles(workspaceSessionId)).loaded, loaded);
   }
   assert.equal(fetch.mock.callCount(), 0);
 });

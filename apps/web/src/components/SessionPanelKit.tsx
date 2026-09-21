@@ -61,10 +61,10 @@ export function ResourceStatus({ status, failed, pending, placement = 'inline' }
   return status ? <StateNotice kind={failed ? 'error' : pending ? 'loading' : 'info'} placement={placement}>{status}</StateNotice> : null;
 }
 
-export function RefreshButton({ onClick, disabled, pending }: {
-  onClick: () => void; disabled?: boolean; pending: boolean;
+export function RefreshButton({ onClick, disabled, pending, label = '刷新' }: {
+  onClick: () => void; disabled?: boolean; pending: boolean; label?: string;
 }) {
-  return <button className="ck-icon-button rp manage-action" type="button" aria-label="刷新"
+  return <button className="ck-icon-button rp manage-action" type="button" aria-label={label}
     onClick={onClick} disabled={disabled} aria-busy={pending}>
     {pending ? <Icon name="loading" className="spinner" size={16} /> : <Icon name="reload" size={20} />}
   </button>;

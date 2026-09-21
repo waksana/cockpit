@@ -1409,6 +1409,80 @@ const roleAddition: IntentResult<'roles/add'> = {
 const roleReadiness: IntentResult<'roles/readiness'> = {
   sessionId: 'a', roles: [], appliedRoles: [], loaded: false, ready: false, reasons: ['Unloaded'],
 };
+
+for (const loaded of [true, false]) {
+  test(`role refresh only reads identity and updates saved/applied fields while loaded=${loaded}`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot([], { sessions: [{ ...meta('a'), loaded, roles: [], appliedRoles: [] }] });
+    const roles = [{ moduleId: 'fixture', roleId: 'reviewer', moduleName: 'Fixture', name: 'Reviewer' }];
+    const pending = useCockpit.getState().refreshRoles('a', new AbortController().signal);
+    h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['identity'] });
+    const refreshed = { sessionId: 'a', loaded, roles, appliedRoles: [], rolesNeedReload: loaded };
+    await h.reply(0, { meta: refreshed });
+    assert.deepEqual(await pending, refreshed);
+    assert.deepEqual(session().roles, roles);
+    assert.deepEqual(session().appliedRoles, []);
+    assert.equal(session().rolesNeedReload, loaded);
+    assert.equal(session().loaded, loaded);
+    assert.equal(h.requests.length, 1, 'no lifecycle, readiness, catalog or all-panel reads');
+  });
+}
+
+for (const change of ['roles', 'applied', 'identity revision', 'loaded', 'disconnect', 'reconnect', 'delete', 'abort'] as const) {
+  test(`role refresh rejects stale ${change} before publishing or unlocking retry`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot([], { sessions: [{ ...meta('a'), roles: [], appliedRoles: [] }] });
+    const controller = new AbortController();
+    const pending = useCockpit.getState().refreshRoles('a', controller.signal);
+    const rejected = assert.rejects(pending, /连接或会话角色已变化/);
+    if (change === 'roles') useCockpit.setState({ sessions: [{ ...session(), roles: [] }] });
+    if (change === 'applied') useCockpit.setState({ sessions: [{ ...session(), appliedRoles: [] }] });
+    if (change === 'identity revision') useCockpit.setState({ resourceRevisions: { a: { identity: 1 } } });
+    if (change === 'loaded') useCockpit.setState({ sessions: [{ ...session(), loaded: false }] });
+    if (change === 'disconnect') h.source.drop();
+    if (change === 'reconnect') useCockpit.setState(state => ({ connectionGeneration: state.connectionGeneration + 1 }));
+    if (change === 'delete') useCockpit.setState({ sessions: [] });
+    if (change === 'abort') controller.abort();
+    const before = useCockpit.getState().sessions;
+    await h.reply(0, { meta: { sessionId: 'a', loaded: true, roles: [], appliedRoles: [], rolesNeedReload: true } });
+    await rejected;
+    assert.equal(useCockpit.getState().sessions, before);
+    assert.equal(h.requests.length, 1);
+  });
+}
+
+for (const result of [null, { sessionId: 'wrong', loaded: true, roles: [], appliedRoles: [], rolesNeedReload: false },
+  { sessionId: 'a', loaded: true, appliedRoles: [], rolesNeedReload: false },
+  { sessionId: 'a', loaded: true, roles: [], rolesNeedReload: false }]) {
+  test(`role refresh refuses incomplete or mismatched metadata: ${JSON.stringify(result)}`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    const pending = useCockpit.getState().refreshRoles('a', new AbortController().signal);
+    const rejected = assert.rejects(pending, /会话 ID 不匹配|状态未确认/);
+    await h.reply(0, { meta: result });
+    await rejected;
+    assert.equal(session().roles, undefined);
+  });
+}
+
+test('fresh role identity survives an older in-flight summary response', async t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot([], { sessions: [{ ...meta('a'), roles: [], appliedRoles: [] }] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['identity'] });
+  await Promise.resolve();
+  const pending = useCockpit.getState().refreshRoles('a', new AbortController().signal);
+  const roles = [{ moduleId: 'fixture', roleId: 'reviewer', moduleName: 'Fixture', name: 'Reviewer' }];
+  await h.reply(1, { meta: { sessionId: 'a', loaded: true, roles, appliedRoles: [], rolesNeedReload: true } });
+  await pending;
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, roles: [], appliedRoles: [], rolesNeedReload: false } });
+  assert.deepEqual(session().roles, roles);
+  assert.equal(session().rolesNeedReload, true);
+});
+
 const resources: ResourceCase[] = [
   { label: 'listRoles', name: 'roles/list', body: {}, read: s => s.listRoles(), response: { roles: [] }, expected: [] },
   { label: 'addRoles', name: 'roles/add', body: { sessionId: 'a', roles: [{ moduleId: 'fixture', roleId: 'reviewer' }] },
