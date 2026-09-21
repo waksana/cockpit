@@ -1,3 +1,25 @@
+# Cockpit 0.2.7
+
+Current-source deployment version for the shared UI and responsive pane
+composition from #93. Existing session and management screens consume shared
+controls, resource rows and pane headers/bodies; wide inspectors participate in
+normal layout flow and narrower inspectors retain native dialog semantics.
+
+Adds the independent `uiSurfaceVersion: 1` capability for public CSS surfaces.
+Base UI v1 remains unchanged. New paired module consumers explicitly require
+this capability; their SDK pairing to source
+`9fd5204bda99a8bd65b2c5ef152cc47ce87837d5` remains valid. This version does not
+claim that earlier 0.2.6 packages expose that capability.
+
+All workspace and MCP versions are 0.2.7. Existing current-source role changes
+described below are included. Native data, drafts, resource ownership and
+module business behavior are unchanged by this version-preparation change.
+The [delivery rules](packaging.md#delivery-versions) now make immutable module
+versions and pre-deployment checks explicit in developer entry points.
+This source preparation does not create a tag or Release.
+
+---
+
 # Unreleased source: append roles to an existing session
 
 Adds `roles/add`, `cockpit_add_roles` and a Web session-settings action for

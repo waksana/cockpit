@@ -31,7 +31,7 @@ import { registerTranscriptTools } from './tools/transcript.js';
 import { registerRoleTools } from './tools/roles.js';
 
 export function createMcpServer(): McpServer {
-const server = new McpServer({ name: 'cockpit-mcp-server', version: '0.2.6' });
+const server = new McpServer({ name: 'cockpit-mcp-server', version: '0.2.7' });
 registerRoleTools(server);
 
 // ── cockpit_list_sessions ──────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 {
   "name": "@cockpit/module-api",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "type": "module",
   "license": "GPL-3.0-only",
   "files": ["src"],

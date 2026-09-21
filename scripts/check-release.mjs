@@ -20,16 +20,26 @@ export function checkTagTarget(tag, sourceSha, refs) {
     sourceSha, 'Release tag moved after this workflow started');
 }
 
+export function checkSourceVersion(repository = resolve(fileURLToPath(new URL('..', import.meta.url)))) {
+  const { version } = JSON.parse(readFileSync(resolve(repository, 'package.json'), 'utf8'));
+  assert.match(version, /^\d+\.\d+\.\d+$/, 'Delivery versions use MAJOR.MINOR.PATCH');
+  for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol', 'packages/module-api']) {
+    const metadata = JSON.parse(readFileSync(resolve(repository, name, 'package.json'), 'utf8'));
+    assert.equal(metadata.version, version, `${name || 'root'} version does not match ${version}`);
+  }
+  const mcp = readFileSync(resolve(repository, 'apps/mcp/src/index.ts'), 'utf8');
+  assert.ok(mcp.includes(`new McpServer({ name: 'cockpit-mcp-server', version: '${version}' })`),
+    'MCP self-reported version must match the workspace');
+  const notes = readFileSync(resolve(repository, 'docs/release-notes.md'), 'utf8');
+  assert.equal(notes.split(/\r?\n/)[0], `# Cockpit ${version}`, 'Release notes must match the workspace version');
+  return version;
+}
+
 export function checkRelease(tag, sourceSha, archive, repository = resolve(fileURLToPath(new URL('..', import.meta.url)))) {
   assert.match(tag, /^v\d+\.\d+\.\d+$/, 'Release tags use vMAJOR.MINOR.PATCH');
   assert.match(sourceSha, /^[a-f0-9]{40}$/, 'Release source must be an exact commit');
   const version = tag.slice(1);
-  for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol', 'packages/module-api']) {
-    const metadata = JSON.parse(readFileSync(resolve(repository, name, 'package.json'), 'utf8'));
-    assert.equal(metadata.version, version, `${name || 'root'} version does not match ${tag}`);
-  }
-  const notes = readFileSync(resolve(repository, 'docs/release-notes.md'), 'utf8');
-  assert.equal(notes.split(/\r?\n/)[0], `# Cockpit ${version}`, 'Release notes must match the tag');
+  assert.equal(checkSourceVersion(repository), version, 'Workspace version must match the tag');
   const checksum = createHash('sha256').update(readFileSync(archive)).digest('hex');
   assert.equal(readFileSync(`${archive}.sha256`, 'utf8').trim(), `${checksum}  ${basename(archive)}`);
   const manifest = JSON.parse(execFileSync('tar', ['-xOzf', archive, './runtime-manifest.json'], {
