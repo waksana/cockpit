@@ -547,6 +547,7 @@ async function main(runtime: Engine): Promise<void> {
   await runtime.start();
   app.log.info(`engine up (login=${await runtime.login()})`);
   await app.listen({ host: HOST, port: PORT });
+  if (shutdown.snapshot().phase === 'running') moduleHost.ready();
 }
 
 // Serve the built SPA (apps/web/dist) from this process when SERVE_WEB is on, so a

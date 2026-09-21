@@ -152,16 +152,47 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 
 | 输入/贡献 | 内容 |
 | --- | --- |
-| context | apiVersion、moduleId、dataRoot、apiBase、config、AbortSignal、report、invalidate、publish、host.call |
+| context | apiVersion、serviceReadyVersion、moduleId、dataRoot、apiBase、config、AbortSignal、report、invalidate、publish、host.call |
 | routes | method/path、json 或 stream body、bodyLimit、handler |
 | publicConfig | 明确允许浏览器读取的少量配置，不默认公开整个 config |
 | events | 事件类型列表与只读处理器 |
 | controlEvents | 按 ServerEvent 类型选择宿主已有原生控制投影；不是重新读取原生会话 |
+| onReady | 可选的一次性服务就绪回调；原生 runtime 已启动且公共 HTTP 已监听后调用 |
 | dispose | 非阻塞的资源释放入口，不进入宿主 graceful 等待链 |
 
 模块返回声明，不取得根 Fastify、Engine 私有状态或原生 session handle。
 宿主先在未监听候选中校验路由，再注册到主服务；失败和超时归属具体模块。
 同进程无法隔离无限同步计算、OOM、process.exit 等行为，不提供安全沙箱。
+
+`onReady?(): void | Promise<void>` 是当前开发源码新增的后端可选贡献，API 仍为 v1；
+不声明它的旧模块行为不变。使用它的消费者须配对包含此能力的宿主源码，
+并在 `activate(context)` 中检查只读能力标记 `context.serviceReadyVersion === 1`。
+旧宿主没有该字段；依赖回调的模块应在启动业务前明确抛错，不得默默忽略、
+回退到 `agent/status`、入站请求或轮询。不能以 `apiVersion: 1` 判断是否支持；
+旧宿主还会拒绝未知贡献字段。
+能力检查必须先于打开、创建或迁移模块自己的持久化数据，避免不支持的宿主留下部分业务变更。
+
+```ts
+if (context.serviceReadyVersion !== 1) {
+  throw new Error('This module requires a host with serviceReadyVersion: 1');
+}
+```
+
+宿主在 `runtime.start()` 和公共 HTTP `listen()` 都成功后，对每个成功激活的模块调用一次；
+此时本模块已声明的 HTTP 路由也已生效，回调中的 `host.call` 可以连接同一模块的 HTTP MCP；
+这不替代原生连接结果或显式角色 readiness 检查。
+`activate()`、Fastify `ready()`/注入请求及较早的 `agent/status: up` 都不是这个信号。
+无需任何外部请求或轮询。启动/监听失败或就绪前已开始 shutdown 时不调用；
+scope 已关闭的模块也不调用。安装、启停和版本选择仍只在下次冷启动生效，
+不在运行中重新激活或重放回调；下次冷启动的新激活会再次收到一次。
+
+回调的 Promise 不阻塞其他模块、服务启动或 graceful 退出。同步异常及 Promise 拒绝
+沿现有模块错误报告入口记录日志并显示在 `/_modules.errors`，不隐式重试、卸载模块或发送替代事件。
+模块使用原 `context.signal` 协作取消，并在 `await` 后重新检查；
+关闭会 abort 该 signal，宿主不等待业务完成。通过 `context.host.call` 发起的原生调用
+仍遵循既有 shutdown admission 和在途保护，模块就绪业务本身不进入等待链。
+此回调只保证调用时的本地服务就绪，不保证认证、特定会话/角色能力、外部网关或业务投递成功；
+持久化、恢复策略、幂等性及未知结果仍由模块负责。
 
 <a id="public-api-map"></a>
 ### 4.1 公共接口速查
@@ -190,6 +221,7 @@ node scripts/export-module-api.mjs /absolute/new/sdk-directory
 | 模块 worker | 可选 `context.worker: { entry, scope }` | 宿主提供同包窄作用域资源地址，模块自行注册；不自动控制 Chat、申请权限或订阅 push |
 | 后端基础 context | `apiVersion: 1`、`moduleId`、`dataRoot`、`apiBase`、只读 `config`、`signal`、`report` | 模块私有数据与资源生命周期；不取得 Engine、根 Fastify 或 SDK session handle |
 | 后端 HTTP 与公开配置 | 返回 `routes`、可选 `publicConfig` | 路由接收正文/查询/参数/headers/signal，返回状态/headers/body 或响应流；不直接开放 WebSocket upgrade |
+| 后端服务就绪 | 检查 `context.serviceReadyVersion === 1`；返回可选 `onReady()` | runtime 启动且 HTTP 监听成功后每次冷激活调用一次；非阻塞、无重试，使用 context.signal 取消 |
 | 后端观察与发布 | 返回 `events` / `controlEvents`；调用 `publish(payload)` / `invalidate()` | 观察已有原生通知/控制投影，发布自己的模块事件；不修改原生事实、不自动读取历史 |
 
 例如，组件调用 `serviceHandle.get().getSnapshot()` 时，

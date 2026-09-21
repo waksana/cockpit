@@ -35,6 +35,8 @@ test('module API export contains its canonical types and local protocol dependen
   assert.doesNotMatch(frontend.match(/interface ComposerEditorProps[\s\S]*?\{\}/)?.[0] ?? assert.fail('Missing input row type'), /actions/);
   assert.doesNotMatch(frontend, /GlobalNavigationProps|globalNavigation:/);
   assert.match(types, /interface ModuleBackendContext/);
+  assert.match(types, /readonly serviceReadyVersion: 1/);
+  assert.match(types, /onReady\?\(\): void \| Promise<void>/);
   assert.match(types, /publish\(payload: ModuleEventPayload\): void/);
   assert.match(types, /export \{ MAX_MODULE_EVENT_BYTES \}/);
   assert.match(frontend, /onEvent\(listener: \(payload: ModuleEventPayload\) => void\): \(\) => void/);
