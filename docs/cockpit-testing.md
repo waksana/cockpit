@@ -71,6 +71,12 @@ COCKPIT_NATIVE_MODEL_SMOKE=1 COCKPIT_NATIVE_DELETE_TEST=1 \
   src/fork-native.test.ts src/model-settings-native.test.ts src/delete-native.test.ts
 ```
 
+角色追加使用同一隔离 native 入口：
+`COCKPIT_NATIVE_ROLES=1 pnpm --filter @cockpit/core exec node --import tsx --test src/roles-native.test.ts`
+（仓库根执行）。它覆盖已有原生 ID/历史/cwd、组合指令、最小工具子集、临时资源开关、
+重复追加与冷恢复；不读取真实会话。busy、待决交互、持久化/native 部分失败与并发保护
+由 `packages/core/src/engine.test.ts` 的角色用例补充，不能把 mock 注入等同于生产故障实证。
+
 文件输入用例让 Engine 传入合成原生文件，再由 native view 读取。
 四种附件 schema/转发用例不等于每种媒体/模型均实测可读。完整 MCP/native fork 用例
 见[分叉指南](session-fork.md#local-regression-fixture)，不要用 schema 样例代替真实连接。

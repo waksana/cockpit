@@ -51,6 +51,9 @@ const engine: ServerEngine = {
   busyCount: async () => sessions.filter(sessionMetaBusy).length,
   newSession: async (...args) => record('newSession', args, 'created'),
   listRoles: (...args) => record('listRoles', args, []),
+  addRoles: async (...args) => record('addRoles', args, {
+    sessionId: 's', status: 'applied' as const, phase: 'verify' as const, roles: [], appliedRoles: [], loaded: true,
+  }),
   roleReadiness: async (...args) => record('roleReadiness', args, { sessionId: 's', loaded: false, ready: false, roles: [], reasons: ['unloaded'] }),
   forkSession: async (...args) => record('forkSession', args, { sessionId: 'forked' }),
   chat: async (query, signal) => {
@@ -129,6 +132,8 @@ const cases = {
   'runtime/snapshot': { body: {}, method: 'snapshot', args: [] },
   'session/new': { body: { cwd: '/fixture' }, method: 'newSession', args: ['/fixture'] },
   'roles/list': { body: {}, method: 'listRoles', args: [] },
+  'roles/add': { body: { sessionId: 's', roles: [{ moduleId: 'fixture', roleId: 'owner' }] },
+    method: 'addRoles', args: ['s', [{ moduleId: 'fixture', roleId: 'owner' }]] },
   'roles/readiness': { body: { sessionId: 's' }, method: 'roleReadiness', args: ['s', undefined] },
   'session/fork': { body: { sessionId: 's', toEventId: 'user-event', name: 'Child' }, method: 'forkSession', args: ['s', 'user-event', 'Child'] },
   'session/chat': {

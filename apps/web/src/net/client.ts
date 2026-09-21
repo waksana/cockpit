@@ -198,6 +198,8 @@ export class NetClient {
   // --- typed intent helpers --------------------------------------------------
   newSession(cwd: string, roles?: IntentBody<'session/new'>['roles']) { return this.intent('session/new', { cwd, ...(roles ? { roles } : {}) }); }
   listRoles() { return this.intent('roles/list', {}); }
+  addRoles(sessionId: string, roles: IntentBody<'roles/add'>['roles']) { return this.intent('roles/add', { sessionId, roles }); }
+  roleReadiness(sessionId: string) { return this.intent('roles/readiness', { sessionId }); }
   chat(body: IntentBody<'session/chat'>, signal?: AbortSignal) { return this.intent('session/chat', body, signal); }
   async chatStream(
     body: NativeChatStreamRequest, receive: (page: NativeChatPage) => void, signal: AbortSignal,

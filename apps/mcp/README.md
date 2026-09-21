@@ -13,7 +13,7 @@ This documents the checked-in source. See
 [source status](../../docs/cockpit-plan.md#source-status) and the
 [documentation index](../../docs/README.md).
 Modules may implement their own HTTP MCP through existing host routes and declare
-creation-time roles; see the [module contract](../../docs/module-contract-draft.md#44-创建时角色与模块-http-mcp).
+creation-time roles or explicit idle-session additions; see the [module contract](../../docs/module-contract-draft.md#44-创建时角色与模块-http-mcp).
 Their business tools do not enter this stdio registry. Module cold-loading,
 role selection and native per-session MCP switches remain distinct operations.
 
@@ -38,6 +38,23 @@ native skill enablement, MCP connection/policy state and current tool visibility
 It does not load, repair or add roles to existing sessions. The result is
 on-demand capability evidence, independent of busy turns, pending messages or
 subagents—not a cached status or a readiness badge.
+
+`cockpit_add_roles {session_id, roles: [{moduleId,roleId}]}` invokes the same
+`roles/add` intent as Web. It unions saved roles and explicitly reloads/resumes the
+original session, retaining its ID, history and cwd. A loaded target must be idle,
+without decisions, queued work, active operations or schedules. Empty sessions
+without a root user message cannot safely survive reload and are rejected.
+A self-call is busy: finish the turn and have the user invoke from Web or another
+client. No hidden prompt, automatic idle wait, global configuration change or retry.
+
+The result separates saved `roles`, handle `appliedRoles` and optional `readiness`.
+`applied` does not promise `ready`; existing disabled resources stay disabled.
+Duplicate already-applied choices return `unchanged` without reloading or repair.
+Both semantic and generic MCP tools preserve complete `incomplete` / `uncertain`
+results and mark them `isError`. Inspect the same session and its resources before
+explicit recovery; persistence and native changes are not atomic. Temporary switches
+are carried through this operation, not persisted as a second resource registry.
+Unknown session-only resources and stopped MCP configurations are rejected.
 
 Queue control remains explicit: `session/interrupt` interrupts one main turn
 while preserving pending content, per-ID removal removes only the selected

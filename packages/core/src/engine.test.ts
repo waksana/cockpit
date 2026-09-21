@@ -277,6 +277,7 @@ function harness(t: TestContext, options: {
   const discoveredMcp: DiscoveredMcp[] = Object.keys(mcpDefinitions).map(name => ({ name, source: 'user', enabled: true }));
   let failure: Error | undefined;
   const runtime = {
+    validateSessionConfig: t.mock.fn(() => ({ mcpNames: [], skillDirectories: [] })),
     get failure() { return failure; },
     onFatal: t.mock.fn((handler: (error: Error) => void) => {
       fatalListeners.add(handler);
@@ -458,6 +459,153 @@ function harness(t: TestContext, options: {
   };
 }
 type Harness = ReturnType<typeof harness>;
+
+async function roleAdditionFixture(t: TestContext) {
+  const h = harness(t);
+  const catalog = ['executor', 'owner'].map(roleId => ({
+    moduleId: 'fixture', moduleName: 'Fixture', roleId, name: roleId,
+  }));
+  const saved = new Map<string, typeof catalog>();
+  const provider: RoleProvider = {
+    list: () => catalog, read: id => saved.get(id) ?? [],
+    save: (id, roles) => { saved.set(id, roles); },
+    assemble: async (id, choices) => {
+      const roles = catalog.filter(role => choices.some(choice => choice.moduleId === role.moduleId && choice.roleId === role.roleId));
+      if (roles.length !== choices.length) throw new Error('Unknown role selection');
+      return { roles, fingerprint: roles.map(role => role.roleId).join('+'), skills: [],
+        config: { systemMessage: { mode: 'append' as const, content: `Roles for ${id}: ${roles.map(role => role.roleId).join(',')}` } } };
+    },
+  };
+  h.engine.setRoleProvider(provider);
+  const id = await h.engine.newSession(h.cwd);
+  const native = h.natives.get(id)!;
+  native.state.events.push(user('synthetic-history'));
+  return { ...h, id, native, catalog, saved, provider };
+}
+
+test('role addition preserves ID/history/cwd, unions roles, handles unloaded and avoids duplicate reload', async t => {
+  const h = await roleAdditionFixture(t);
+  const before = structuredClone(h.native.state.events);
+  const first = await h.engine.addRoles(h.id, [h.catalog[0]!]);
+  assert.equal(first.status, 'applied', JSON.stringify(first));
+  assert.equal(first.readiness?.ready, true);
+  assert.deepEqual(first.appliedRoles, [h.catalog[0]]);
+  const second = await h.engine.addRoles(h.id, [h.catalog[1]!, h.catalog[1]!]);
+  assert.equal(second.status, 'applied');
+  assert.deepEqual(second.roles, h.catalog);
+  assert.equal(h.runtime.createSession.mock.callCount(), 1);
+  assert.equal(h.native.sdk.send.mock.callCount(), 0);
+  assert.equal(h.native.sdk.abort.mock.callCount(), 0);
+  assert.deepEqual(h.native.state.events, before);
+  assert.equal((await h.engine.getMeta(h.id))?.cwd, h.cwd);
+  assert.equal((await h.engine.addRoles(h.id, h.catalog)).status, 'unchanged');
+  assert.equal(h.runtime.closeSession.mock.callCount(), 2);
+  await h.engine.unload(h.id);
+  assert.equal((await h.engine.addRoles(h.id, h.catalog)).status, 'applied');
+  assert.equal(h.runtime.closeSession.mock.callCount(), 3, 'unloaded addition does not close another handle');
+});
+
+for (const activity of ['main', 'subagent', 'shell', 'queue', 'steering', 'mcp', 'ask', 'plan'] as const) {
+  test(`role addition rejects ${activity} before saving or closing`, async t => {
+    const h = await roleAdditionFixture(t);
+    let answer: Promise<unknown> | undefined;
+    switch (activity) {
+      case 'main': h.native.state.processing = true; break;
+      case 'subagent': h.native.state.tasks = [task()]; break;
+      case 'shell': h.native.state.activeWork = true; break;
+      case 'queue': h.native.state.queue.items = [queued('pending', 'synthetic queued work')]; break;
+      case 'steering': h.native.state.queue.inFlightSteeringCount = 1; break;
+      case 'mcp': h.native.state.mcp.host!.pendingConnections = ['fixture']; break;
+      case 'ask': answer = Promise.resolve(h.configs.get(h.id)!.onUserInputRequest!({ question: 'synthetic question', choices: ['yes'], allowFreeform: true }, { sessionId: h.id })); break;
+      case 'plan': answer = Promise.resolve(h.configs.get(h.id)!.onExitPlanModeRequest!({ summary: 'synthetic plan', actions: ['interactive'], recommendedAction: 'interactive' }, { sessionId: h.id })); break;
+    }
+    await assert.rejects(h.engine.addRoles(h.id, [h.catalog[1]!]), protectedWork);
+    assert.equal(h.saved.size, 0);
+    assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+    assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+    assert.equal(h.native.sdk.abort.mock.callCount(), 0);
+    if (activity === 'ask') await h.engine.respondAsk(h.id, (await h.engine.getMeta(h.id))!.ask!.requestId, 'yes', false);
+    if (activity === 'plan') await h.engine.respondPlan(h.id, (await h.engine.getMeta(h.id))!.planRequest!.requestId, 'interactive');
+    await answer;
+  });
+}
+
+test('role preflight rejects empty history, schedules, unknown resources, base conflicts and invalid roles without persistence', async t => {
+  const h = await roleAdditionFixture(t);
+  h.native.state.events = [];
+  await assert.rejects(h.engine.addRoles(h.id, [h.catalog[0]!]), /empty session/i);
+  h.native.state.events = [user('synthetic-history')];
+  h.native.state.schedules = [schedule()];
+  await assert.rejects(h.engine.addRoles(h.id, [h.catalog[0]!]), /schedules/);
+  h.native.state.schedules = [];
+  h.native.state.mcp = mcpState([{ name: 'ephemeral-only', status: 'connected' }]);
+  await assert.rejects(h.engine.addRoles(h.id, [h.catalog[0]!]), /session-only/);
+  h.native.state.mcp = mcpState();
+  h.native.state.skills = [{ name: 'ephemeral-only', path: '/synthetic/unknown/SKILL.md', enabled: true } as Skill];
+  await assert.rejects(h.engine.addRoles(h.id, [h.catalog[0]!]), /session-only skill/);
+  h.native.state.skills = [];
+  h.runtime.validateSessionConfig.mock.mockImplementationOnce(() => { throw new Error('Conflicting base configuration'); });
+  await assert.rejects(h.engine.addRoles(h.id, [h.catalog[0]!]), /Conflicting base/);
+  await assert.rejects(h.engine.addRoles(h.id, [{ moduleId: 'missing', roleId: 'missing' }]), /Unknown role/);
+  assert.equal(h.saved.size, 0);
+  assert.equal(h.runtime.closeSession.mock.callCount(), 0);
+});
+
+test('role reload carries temporary switches without persisting a resource mirror', async t => {
+  const h = await roleAdditionFixture(t);
+  h.native.state.skills = [{ name: 'existing', path: '/synthetic/existing/SKILL.md', enabled: false } as Skill];
+  h.discoveredSkills.push({ name: 'existing', path: '/synthetic/existing/SKILL.md' } as ServerSkill);
+  h.native.state.mcp = mcpState([{ name: 'existing', status: 'disabled' }], ['existing']);
+  h.discoveredMcp.push({ name: 'existing', source: 'user', enabled: true });
+  const result = await h.engine.addRoles(h.id, [h.catalog[0]!]);
+  assert.equal(result.status, 'applied', JSON.stringify(result));
+  assert.deepEqual(h.configs.get(h.id)!.disabledSkills, ['existing']);
+  assert.deepEqual(h.configs.get(h.id)!.disabledMcpServers, ['existing']);
+  assert.deepEqual(h.saved.get(h.id), [h.catalog[0]]);
+});
+
+for (const phase of ['persist', 'close', 'resume', 'verify'] as const) {
+  test(`role addition exposes ${phase} failure without rollback, retry or replacement`, async t => {
+    const h = await roleAdditionFixture(t);
+    if (phase === 'persist') t.mock.method(h.provider, 'save', () => { throw new Error('synthetic write failure'); });
+    if (phase === 'close') h.runtime.closeSession.mock.mockImplementationOnce(async () => { throw new Error('synthetic close acknowledgement lost'); });
+    if (phase === 'resume') h.runtime.resumeSession.mock.mockImplementationOnce(async () => { throw new Error('synthetic resume acknowledgement lost'); });
+    if (phase === 'verify') {
+      h.native.rpc.skills.list.mock.mockImplementationOnce(async () => ({ skills: [] }), 0);
+      h.native.rpc.skills.list.mock.mockImplementationOnce(async () => { throw new Error('synthetic verification failure'); }, 1);
+    }
+    const result = await h.engine.addRoles(h.id, [h.catalog[0]!]);
+    assert.equal(result.phase, phase);
+    assert.equal(result.status, phase === 'close' || phase === 'resume' ? 'uncertain' : 'incomplete', JSON.stringify(result));
+    assert.match(result.error!, /synthetic/);
+    assert.match(result.recovery!, /No rollback or retry/);
+    assert.equal(h.runtime.createSession.mock.callCount(), 1);
+    assert.ok(h.runtime.closeSession.mock.callCount() <= 1);
+    assert.ok(h.runtime.resumeSession.mock.callCount() <= 1);
+    assert.deepEqual(result.roles, phase === 'persist' ? [] : [h.catalog[0]]);
+    assert.deepEqual(result.appliedRoles, phase === 'verify' ? [h.catalog[0]] : []);
+  });
+}
+
+test('role addition owns the lifecycle across persistence and native resume', async t => {
+  const h = await roleAdditionFixture(t);
+  const held = deferred<CopilotSession>();
+  h.runtime.resumeSession.mock.mockImplementationOnce(() => held.promise);
+  const adding = h.engine.addRoles(h.id, [h.catalog[0]!]);
+  await nextTurn();
+  for (const action of [
+    () => h.engine.addRoles(h.id, [h.catalog[1]!]), () => h.engine.prompt(h.id, 'must not send'),
+    () => h.engine.reload(h.id), () => h.engine.unload(h.id), () => h.engine.cancel(h.id),
+  ]) await assert.rejects(action, protectedWork);
+  assert.equal(await h.engine.busyCount(), 1);
+  assert.equal((await h.engine.getMeta(h.id))?.activeOperations, 1);
+  h.runtime.isSessionLive.mock.mockImplementation(async () => true);
+  held.resolve(h.native.sdk as unknown as CopilotSession);
+  assert.equal((await adding).status, 'applied');
+  assert.equal(await h.engine.busyCount(), 0);
+  assert.equal((await h.engine.getMeta(h.id))?.activeOperations, 0);
+  assert.equal(h.native.sdk.send.mock.callCount(), 0);
+});
 
 test('role creation, identity, cold resume and readiness preserve native unrelated config', async t => {
   const h = harness(t);

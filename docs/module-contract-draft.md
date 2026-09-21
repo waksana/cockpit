@@ -24,7 +24,7 @@ Notification 0.1.5 的精确宿主 SDK 源码 pin 为
 Web v2、UI v1 和菜单能力分别检查，不能只凭包版本判断兼容；
 旧 `globalNavigation` HOC 已移除，不保留旧 Web 插口或导航 middleware 的兼容别名。
 源码更新不表示已经发布、安装或重启，也不代表已安装的服务或模块已经升级。
-远程签名 URL 安装和通用页面贡献仍未实现。当前开发源码新增创建时角色装配与
+远程签名 URL 安装和通用页面贡献仍未实现。当前开发源码新增创建时/已有空闲会话角色装配与
 模块自有 HTTP MCP 配置（下文 4.4）；不表示历史发行版具备这些能力。
 
 产品边界见 [R1–R8](product-requirements.md)，文件模块的业务契约由
@@ -121,7 +121,7 @@ node --import ./apps/server/node_modules/tsx/dist/loader.mjs \
     config.json                    下次启动选择及每模块配置
     installed/<id>/<version>/<digest>/package/
     data/<id>/                     模块业务数据
-  session-roles/<sessionId>.json    创建时角色选择；不是原生能力缓存
+  session-roles/<sessionId>.json    已保存的角色选择；不是原生能力缓存
 ```
 
 Copilot 原生数据不在上面的宿主管理范围内。本体不覆盖其 baseDirectory/configDirectory，
@@ -303,6 +303,7 @@ MCP 名称原样采用 manifest 的 `mcpServers` key（例如 `example-tools`）
 - `roles/list {}` → `{roles: [{moduleId,roleId,moduleName,name,description?}]}`
 - `session/new {cwd,roles?: [{moduleId,roleId}]}` → `{sessionId}`
 - `roles/readiness {sessionId,roles?}` → `{sessionId,loaded,ready,roles,reasons}`
+- `roles/add {sessionId,roles: [{moduleId,roleId}]}` → 显式追加并重载/恢复原会话，结果见下文。
 
 后端 `context.host.call(name,body)` 只接受 `session/new`、`session/get`、
 `roles/readiness`、`prompt`，参数和结果使用 `@cockpit/protocol` 的 typed intents。
@@ -331,11 +332,57 @@ UI 提示和 Agent MCP 文本明确这个含义，连接状态仍独立取自原
 `context.host.call('roles/readiness', ...)` 检查该 native handle 的装配、skill 路径/启用状态、
 MCP 连接/策略状态及当前原生工具 metadata。普通列表、snapshot、detail、identity 与 Web
 会话资源不计算或携带 readiness。保留既有普通控制/生命周期安全读取，不引入能力轮询、
-持续缓存或失效刷新服务。Web 仅展示创建时角色标签及说明，不实现 readiness badge 或逐角色结果。
+持续缓存或失效刷新服务。Web 普通会话标签仅表示角色选择，不实现实时 readiness badge；
+显式追加或检查操作单独呈现其结果。
 新建和冷恢复可初始化原生工具表，只读 readiness 不自动加载 unloaded 会话，
 也不补装、重载、启用或自动修复。就绪是请求时能力证据而非永久承诺；
 busy、pending、subagent 等活动状态须另行读取，不能与角色能力就绪混为一谈。
-没有 Task ACL，也不支持运行中追加角色。
+没有 Task ACL，也不支持在活动工作期间热追加角色。
+
+#### 已有会话显式追加
+
+`roles/add` / `cockpit_add_roles` 与 Web 会话设置使用同一入口。只追加、不移除；
+请求与已有角色去重后按原规则重新装配，最多 64 个角色。不改变 Task 责任、
+标题、工作目录或会话 ID，不复制会话，不发送初始化 prompt。
+用户明确执行一次“追加并重载/恢复”：已加载会话先确认空闲，再关闭 handle 并
+恢复原 ID；unloaded 会话直接恢复。自我调用的当前回合仍忙，必须结束回合后由
+用户在 Web 或另一调用端执行；没有忙时待追加、后台等待或自动应用队列。
+
+SDK 1.0.13 / runtime 1.0.83 的公开 `options.update` 可更新 `skillDirectories`，
+`skills.enable/disable` 与 `mcp.startServer/restartServer` 也提供局部运行时操作，
+但 `systemMessage` 不在 mutable options 中。完整主会话角色指令沿用
+`createSession` / `resumeSession` 的 `systemMessage.mode: "append"`，
+不借组织指令字段、custom agent 或隐藏消息模拟热装配。
+
+预检拒绝主回合、活动子代理/shell、队列/steering、待答 ask/plan/elicitation、
+在途操作和正在连接的 MCP。原生安全读取失败也拒绝。已加载会话存在 schedule
+时拒绝，避免重载改变其相对计时或在预检后触发工作；不自动停止 schedule。
+尚无主用户消息的空会话也拒绝重载，避免原生释放后丢失该 ID。
+重载期间拒绝其他会话变更，关闭前再次核对空闲。
+
+沿用宿主配置、原生发现与全部已有角色；在关闭前检查资源冲突及可重建来源。
+追加操作会初始化原生工具表以取得可比较的当前工具清单；这不写入全局配置，也不发送消息。
+无法从当前配置重建的 session-only MCP/Skill、stopped/not_configured MCP
+明确拒绝，不猜测配置或偷偷丢弃。已有 Skill/MCP 的临时启用选择在本次操作内读取，
+通过恢复参数及必要的单次原生开关调用保留，并检查原有 Skill 路径/状态与工具可见性。
+这些临时选择不另行持久化为资源镜像，未来普通冷恢复仍遵循原生全局配置。
+原生 SDK 不公开 live MCP endpoint/config 身份；这里仍按已有的声明来源契约
+重建，不能核验外部调用曾对同名服务器作出的配置替换。
+
+结果包含 `status`、`phase`、`roles`（已保存选择）、`appliedRoles`（当前 handle
+已确认装配）、`loaded`，以及可用的 `readiness`、`error`、`recovery`。
+`applied` 不等于 `readiness.ready`：原先禁用的资源不会因追加而擅自启用。
+相同选择已装配时返回 `unchanged`，不重复重载、不修复禁用资源；
+unloaded 或此前只保存未装配的同一选择仍可由用户显式请求恢复。
+`roles/readiness` 另返回 `appliedRoles`，只在用户明确检查时读取实际能力。
+
+持久化与 native close/resume **不是跨系统原子事务**。预检失败不保存选择；
+通过预检后先保存组合选择，再执行关闭、恢复及核对。保存/关闭/恢复/核对失败
+分别保留实际阶段，返回 `incomplete` 或 `uncertain`，不回滚已发生的副作用，
+不自动重试，也不创建替代会话。不确定结果中的 handle 信息是最后确认值，
+不是仍然活跃的保证。先用 `session/get`、`roles/readiness` 及相应原生资源读取
+核对同一 ID；解决具体错误后才显式重试或恢复。已保存选择会用于后续冷恢复，
+即使原请求的 native 应用未完成。网络错误同样不能视为“什么都没发生”。
 
 宿主不提供自动队列推进。保留单次 `session/interrupt`（保留队列）、
 按 ID 删除 pending、当前状态读取、prompt 以及普通 Stop/cancel。

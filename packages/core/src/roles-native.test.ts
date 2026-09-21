@@ -103,11 +103,14 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     engine = new Engine({ runtime });
     const roles: RoleProvider = {
       list: () => selected, read: id => metadata.get(id) ?? [], save: (id, values) => { metadata.set(id, values); },
-      assemble: async id => ({ roles: selected, skills, fingerprint: 'synthetic',
-        config: { skillDirectories: selected.map(role => join(dirs.skills!, role.roleId)),
-          systemMessage: { mode: 'append', content: `Synthetic role source fixture/owner+executor. Native session ID: ${id}.` },
+      assemble: async (id, choices) => ({ roles: selected.filter(role => choices.some(choice => choice.roleId === role.roleId)),
+        skills: skills.filter(skill => choices.some(choice => skill.name === `fixture-${choice.roleId}`)),
+        fingerprint: choices.map(choice => choice.roleId).sort().join('+'),
+        config: { skillDirectories: choices.map(role => join(dirs.skills!, role.roleId)),
+          systemMessage: { mode: 'append', content: `Synthetic role source ${choices.map(role => `fixture/${role.roleId}`).join('+')}. Native session ID: ${id}.` },
           mcpServers: { module_fixture__tools: { type: 'http', url: `${mcpUrl}/mcp`,
-            headers: { 'X-Cockpit-Module-Digest': 'synthetic-digest' }, tools: ['read', 'create', 'report'] } } },
+            headers: { 'X-Cockpit-Module-Digest': 'synthetic-digest' },
+            tools: ['read', ...choices.map(role => role.roleId === 'owner' ? 'create' : 'report')] } } },
       }),
     };
     engine.setRoleProvider(roles); await engine.start();
@@ -126,9 +129,68 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     assert.equal((await engine.roleReadiness(id)).loaded, false);
     await engine.load(id);
     assert.equal((await engine.roleReadiness(id)).ready, true);
+    await runtime.rpc.mcp.config.add({ name: 'synthetic-unrelated', config: {
+      type: 'http', url: `${mcpUrl}/mcp`, tools: ['read'],
+      headers: { 'X-Cockpit-Module-Digest': 'synthetic-digest' },
+    } });
+    await runtime.rpc.mcp.config.disable({ names: ['synthetic-unrelated'] });
+    const existing = await engine.newSession(dirs.work!);
+    await engine.rename(existing, 'Synthetic existing responsibility');
+    await assert.rejects(engine.addRoles(existing, [selected[1]!]), /empty session/i);
+    await engine.prompt(existing, 'Synthetic prior user history');
+    while (await engine.busyCount()) { assert.ok(Date.now() < deadline); await setTimeout(20); }
+    await engine.toggleSessionMcp(existing, 'synthetic-unrelated', true);
+    const before = captured.length;
+    const first = await engine.addRoles(existing, [selected[1]!]);
+    assert.equal(first.status, 'applied', JSON.stringify(first));
+    assert.equal(first.readiness?.ready, true, JSON.stringify(first));
+    assert.equal(first.sessionId, existing);
+    assert.equal((await engine.listSessionMcp(existing)).servers.find(server => server.name === 'synthetic-unrelated')?.enabled, true,
+      'preserve an unrelated per-session enable even when its global default is disabled');
+    assert.equal(captured.length, before, 'adding roles sends no hidden prompt');
+    assert.equal((await engine.getMeta(existing))?.title, 'Synthetic existing responsibility');
+    assert.equal((await engine.getMeta(existing))?.cwd, dirs.work);
+    await engine.toggleSessionSkill(existing, 'fixture-executor', false);
+    await engine.toggleSessionMcp(existing, 'module_fixture__tools', false);
+    const second = await engine.addRoles(existing, [selected[0]!]);
+    assert.equal(second.status, 'applied', JSON.stringify(second));
+    assert.equal(second.readiness?.ready, false, 'applied is not ready when prior resources remain disabled');
+    assert.equal((await engine.listSessionSkills(existing)).find(skill => skill.name === 'fixture-executor')?.enabled, false);
+    assert.equal((await engine.listSessionMcp(existing)).servers.find(server => server.name === 'module_fixture__tools')?.enabled, false);
+    await engine.toggleSessionSkill(existing, 'fixture-executor', true);
+    await engine.toggleSessionMcp(existing, 'module_fixture__tools', true);
+    const duplicate = await engine.addRoles(existing, selected);
+    assert.equal(duplicate.status, 'unchanged', JSON.stringify(duplicate));
+    await engine.prompt(existing, 'Synthetic after role addition');
+    while (await engine.busyCount()) { assert.ok(Date.now() < deadline); await setTimeout(20); }
+    const enabled = await engine.roleReadiness(existing);
+    assert.equal(enabled.ready, true, JSON.stringify(enabled));
+    const after = JSON.stringify(captured.at(-1));
+    assert.match(after, /Synthetic prior user history/);
+    assert.match(after, /fixture\/owner/);
+    assert.match(after, /fixture\/executor/);
+    assert.doesNotMatch(JSON.stringify((captured.at(-1) as { tools: unknown }).tools), /not-selected/);
+    await engine.unload(existing);
+    const resumed = await engine.addRoles(existing, selected);
+    assert.equal(resumed.status, 'applied', JSON.stringify(resumed));
+    assert.equal(resumed.readiness?.ready, true);
+    const ownerOnly = await engine.newSession(dirs.work!);
+    await engine.prompt(ownerOnly, 'Synthetic owner-only prior history');
+    while (await engine.busyCount()) { assert.ok(Date.now() < deadline); await setTimeout(20); }
+    await engine.unload(ownerOnly);
+    const ownerAdded = await engine.addRoles(ownerOnly, [selected[0]!]);
+    assert.equal(ownerAdded.sessionId, ownerOnly);
+    assert.equal(ownerAdded.status, 'applied', JSON.stringify(ownerAdded));
+    assert.deepEqual(ownerAdded.roles, [selected[0]]);
+    assert.equal(ownerAdded.readiness?.ready, true);
+    await engine.prompt(ownerOnly, 'Synthetic owner-only capability probe');
+    while (await engine.busyCount()) { assert.ok(Date.now() < deadline); await setTimeout(20); }
+    assert.match(JSON.stringify(captured.at(-1)), /Synthetic owner-only prior history/);
+    assert.doesNotMatch(JSON.stringify((captured.at(-1) as { tools: unknown }).tools), /report|not-selected/);
     await engine.stop();
   } finally {
-    await runtime?.stop().catch(() => {});
+    if (engine) await engine.stop();
+    else await runtime?.stop();
     mcp.closeAllConnections(); provider.closeAllConnections();
     await Promise.all([mcp, provider].map(server => new Promise<void>(resolve => server.close(() => resolve()))));
     process.chdir(originalCwd);

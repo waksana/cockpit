@@ -2,11 +2,11 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { RoleSelection } from '@cockpit/protocol';
 import { protocolIntent as intent } from '../cockpit.js';
-import { ResponseFormat, cappedJson, fail, ok } from '../shared.js';
+import { ResponseFormat, cappedJson, fail, ok, intentJson } from '../shared.js';
 
 export function registerRoleTools(server: McpServer): void {
   server.registerTool('cockpit_list_roles', {
-    title: 'List module roles', description: 'Discover creation-time module roles. Multiple roles from one module are allowed. No live role additions.',
+    title: 'List module roles', description: 'Discover module roles for creation or explicit idle-session addition. Multiple roles from one module are allowed.',
     inputSchema: { response_format: ResponseFormat },
     annotations: { readOnlyHint: true, destructiveHint: false, openWorldHint: false },
   }, async ({ response_format }) => {
@@ -15,6 +15,15 @@ export function registerRoleTools(server: McpServer): void {
       return ok(response_format === 'json' ? cappedJson(result)
         : result.roles.map(role => `- ${role.moduleId}/${role.roleId}: ${role.name}${role.description ? ` — ${role.description}` : ''}`).join('\n') || 'No module roles available.');
     } catch (error) { return fail(String(error)); }
+  });
+  server.registerTool('cockpit_add_roles', {
+    title: 'Add session roles',
+    description: 'Explicitly append module roles and reload/resume the SAME session ID. Requires idle main/subagent/shell work, no decisions, queue, active operations or schedules. A self-call is busy: finish the turn and let the user invoke from Web or another client. Preserves existing selected roles; never removes roles, copies a session, sends a prompt, interrupts, waits for idle or retries. Unloaded sessions are resumed directly. Selected/applied/ready differ; inspect incomplete or uncertain results before explicit recovery. Does not change Task responsibility or global configuration.',
+    inputSchema: { session_id: z.string().min(1), roles: z.array(RoleSelection).min(1).max(64) },
+    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true },
+  }, async ({ session_id, roles }) => {
+    try { return intentJson('roles/add', await intent('roles/add', { sessionId: session_id, roles })); }
+    catch (error) { return fail(String(error)); }
   });
   server.registerTool('cockpit_role_readiness', {
     title: 'Check session role readiness', description: 'Explicitly check current role assembly, native skills, MCP connections and tool visibility. Does not load or repair sessions. Capability readiness is independent of busy turns, pending messages and subagents. Persisted role labels are not readiness.',

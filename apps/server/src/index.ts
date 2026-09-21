@@ -53,7 +53,7 @@ export type ServerEngine = Pick<Engine,
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
   | 'listGlobalSkills' | 'setGlobalSkill' | 'readSkillBody' | 'listSessionSkills' | 'toggleSessionSkill' | 'refreshSkills'
   | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
-  | 'listRoles' | 'roleReadiness'
+  | 'listRoles' | 'roleReadiness' | 'addRoles'
 >;
 let engine: ServerEngine;
 let moduleHost: ModuleHost | undefined;
@@ -313,6 +313,7 @@ const handlers: IntentHandlers = {
   'runtime/snapshot': async () => engine.snapshot(),
   'session/new': async (b) => ({ sessionId: await (b.roles ? engine.newSession(b.cwd, b.roles) : engine.newSession(b.cwd)) }),
   'roles/list': async () => ({ roles: engine.listRoles() }),
+  'roles/add': b => engine.addRoles(b.sessionId, b.roles),
   'roles/readiness': b => engine.roleReadiness(b.sessionId, b.roles),
   'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
   'session/chat': (b, signal) => engine.chat(b, signal),

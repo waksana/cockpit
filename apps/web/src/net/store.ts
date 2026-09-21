@@ -38,6 +38,8 @@ interface CockpitState {
   setActiveId: (id: string | null) => void;
   newSession: (cwd: string, roles?: import('@cockpit/protocol').RoleSelection[]) => Promise<string>;
   listRoles: () => Promise<IntentResult<'roles/list'>['roles']>;
+  addRoles: (sessionId: string, roles: import('@cockpit/protocol').RoleSelection[]) => Promise<IntentResult<'roles/add'>>;
+  roleReadiness: (sessionId: string) => Promise<IntentResult<'roles/readiness'>>;
   loadMore: (sessionId: string) => void;
   retryHistory: (sessionId: string) => void;
   sendDraft: (request: NativeDraftRequest) => Promise<boolean>;
@@ -667,6 +669,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     skillsToggleSession(sid, name, enabled) { return mutation(sid, `切换技能 ${name}`, (net) => net.skillsToggleSession(sid, name, enabled)); },
     listDir(path) { return read((net) => net.listDir(path)); },
     listRoles() { return read(net => net.listRoles()).then(result => result.roles); },
+    addRoles(sid, roles) { return read(net => net.addRoles(sid, roles)); },
+    roleReadiness(sid) { return read(net => net.roleReadiness(sid)); },
   };
 });
 

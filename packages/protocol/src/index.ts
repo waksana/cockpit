@@ -352,8 +352,21 @@ export type SessionRole = z.infer<typeof SessionRole>;
 export const RoleReadiness = z.object({
   sessionId: z.string(), loaded: z.boolean(), ready: z.boolean(),
   roles: z.array(SessionRole), reasons: z.array(z.string()),
+  appliedRoles: z.array(SessionRole).optional(),
 });
 export type RoleReadiness = z.infer<typeof RoleReadiness>;
+export const RoleAdditionResult = z.object({
+  sessionId: z.string(),
+  status: z.enum(['applied', 'unchanged', 'incomplete', 'uncertain']),
+  phase: z.enum(['persist', 'close', 'resume', 'verify']),
+  roles: z.array(SessionRole),
+  appliedRoles: z.array(SessionRole),
+  loaded: z.boolean(),
+  readiness: RoleReadiness.optional(),
+  error: z.string().optional(),
+  recovery: z.string().optional(),
+});
+export type RoleAdditionResult = z.infer<typeof RoleAdditionResult>;
 
 export const SessionMeta = z.object({
   roles: z.array(SessionRole).optional(),
@@ -546,6 +559,11 @@ export const Intents = {
   'roles/list': {
     body: z.object({}).strict(),
     result: z.object({ roles: z.array(SessionRole.extend({ description: z.string().optional() })) }),
+  },
+  'roles/add': {
+    description: 'Explicitly append module roles and reload/resume the same session. Requires idle native work; never interrupts, queues, sends a prompt or retries. Selected, applied and ready are separate. Inspect incomplete/uncertain outcomes before any explicit recovery.',
+    body: z.object({ sessionId: z.string().min(1), roles: z.array(RoleSelection).min(1).max(64) }).strict(),
+    result: RoleAdditionResult,
   },
   'roles/readiness': {
     description: 'Explicitly check current role assembly, native skills, MCP connections and tool visibility without loading or repairing a session. Capability readiness is independent of busy turns, pending messages and subagents. Selected-role labels are not readiness evidence.',

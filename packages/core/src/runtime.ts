@@ -239,6 +239,12 @@ export class OfficialRuntime {
     };
   }
 
+  validateSessionConfig(config: SessionConfig): { mcpNames: string[]; skillDirectories: string[] } {
+    this.sessionOptions(config);
+    return { mcpNames: Object.keys(this.config.sessionConfig?.mcpServers ?? {}),
+      skillDirectories: this.config.sessionConfig?.skillDirectories ?? [] };
+  }
+
   createSession(config: SessionConfig): Promise<RuntimeSession> {
     return this.exclusive(async () => {
       await this.connect();
