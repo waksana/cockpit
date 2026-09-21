@@ -468,9 +468,110 @@ test('removed session pages have no dedicated Web store actions or readers', () 
   for (const name of [
     'forkSession', 'getPlan', 'getPanels', 'getPanel', 'getUsage',
     'scheduleList', 'scheduleAdd', 'scheduleStop', 'compactSession',
-    'rewindSession', 'unloadSession', 'reloadSession', 'setMode',
+    'rewindSession', 'unloadSession', 'setMode',
   ]) assert.equal(name in state, false, name);
 });
+
+for (const loaded of [true, false]) {
+  test(`reload targets the original session and preserves drafts/history (loaded=${loaded})`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot([], { sessions: [{ ...meta('a'), loaded }, meta('b')] });
+    useCockpit.setState({ activeId: 'b' });
+    const draft = getDraftSession('a').prompt;
+    draft.edit('keep original draft');
+    const before = session('a');
+    const reload = useCockpit.getState().reloadSession('a');
+    h.assertPost(0, 'session/reload', { sessionId: 'a' });
+    assert.deepEqual(useCockpit.getState().reloadingSessionIds, ['a']);
+    await assert.rejects(useCockpit.getState().reloadSession('a'), /尚未结束/);
+    assert.deepEqual(useCockpit.getState().reloadingSessionIds, ['a']);
+    useCockpit.setState({ activeId: null });
+    await h.reply(0, { ok: true });
+    await reload;
+    assert.equal(useCockpit.getState().activeId, null);
+    assert.equal(session('a').loaded, loaded, 'ACK does not invent lifecycle state');
+    assert.strictEqual(session('a').messages, before.messages);
+    assert.equal(draft.getSnapshot().text, 'keep original draft');
+    assert.deepEqual(useCockpit.getState().reloadingSessionIds, []);
+    assert.equal(h.requests.length, 1, 'no stop, clear, load, refresh, prompt, or retry');
+  });
+}
+
+for (const patch of [
+  { status: 'running' }, { nativeProcessing: true }, { activeSubagents: 1 },
+  { activeOperations: 1 }, { activeMcpOperations: 1 }, { loading: true },
+  { closing: true }, { cancelling: true }, { compacting: true },
+  { queue: [{ id: 'q', text: 'protected' }] },
+  { ask: { requestId: 'ask', question: 'Choose', choices: [], allowFreeform: true } },
+  { planRequest: { requestId: 'plan', summary: 'Plan' } },
+  { elicitation: { requestId: 'elicit', message: 'Choose' } },
+] satisfies Partial<SessionMeta>[]) {
+  test(`reload rechecks current protected work before dispatch: ${JSON.stringify(patch)}`, async t => {
+    const h = setup(t);
+    h.source.open(); h.snapshot();
+    const reload = useCockpit.getState().reloadSession;
+    h.source.emit({ type: 'session/patch', sessionId: 'a', ...patch });
+    await assert.rejects(reload('a'), /仍有工作/);
+    assert.equal(h.requests.length, 0);
+    assert.deepEqual(useCockpit.getState().reloadingSessionIds, []);
+    assert.match(getUxErrors().at(-1)!.message, /会话 a \(a\)/);
+  });
+}
+
+for (const gate of ['offline', 'snapshot', 'missing'] as const) {
+  test(`reload fresh guard rejects ${gate}`, async t => {
+    const h = setup(t);
+    h.source.open(); h.snapshot();
+    const reload = useCockpit.getState().reloadSession;
+    if (gate === 'offline') h.source.drop();
+    if (gate === 'snapshot') useCockpit.setState({ snapshotReady: false });
+    if (gate === 'missing') h.source.emit({ type: 'session/removed', sessionId: 'a' });
+    await assert.rejects(reload('a'), /尚未就绪|已不存在/);
+    assert.equal(h.requests.length, 0);
+    assert.ok(getUxErrors().length);
+  });
+}
+
+for (const failure of ['busy', 'negative', 'unknown', 'transport'] as const) {
+  test(`reload ${failure} stays visible after navigation and never retries`, async t => {
+    const h = setup(t);
+    h.source.open(); h.snapshot(['a', 'b']);
+    const reload = useCockpit.getState().reloadSession('a');
+    const rejected = assert.rejects(reload);
+    useCockpit.setState({ activeId: 'b' });
+    const response = h.assertPost(0, 'session/reload', { sessionId: 'a' });
+    if (failure === 'transport') response.reject(new TypeError('Unknown reload outcome'));
+    else response.resolve(Response.json(failure === 'busy' ? { error: 'Native protected steering work' }
+      : failure === 'negative' ? { ok: false } : {}, { status: failure === 'busy' ? 409 : 200 }));
+    await rejected;
+    assert.equal(useCockpit.getState().activeId, 'b');
+    assert.equal(session('b').error, null);
+    assert.match(session('a').error!, /重新加载会话失败/);
+    assert.match(getUxErrors().at(-1)!.message, /会话 a \(a\)/);
+    assert.deepEqual(useCockpit.getState().reloadingSessionIds, []);
+    assert.equal(h.requests.length, 1);
+  });
+}
+
+for (const boundary of ['removed', 'reconnect', 'cleanup'] as const) {
+  test(`reload late failure survives ${boundary} without stale writes`, async t => {
+    const h = setup(t);
+    h.source.open(); h.snapshot(['a', 'b']);
+    const reload = useCockpit.getState().reloadSession('a');
+    const rejected = assert.rejects(reload, /uncertain/);
+    if (boundary === 'removed') h.source.emit({ type: 'session/removed', sessionId: 'a' });
+    else if (boundary === 'reconnect') h.reconnect();
+    else h.cleanup();
+    const before = useCockpit.getState().sessions;
+    h.assertPost(0, 'session/reload', { sessionId: 'a' }).reject(new TypeError('uncertain'));
+    await rejected;
+    assert.strictEqual(useCockpit.getState().sessions, before);
+    assert.match(getUxErrors().at(-1)!.message, /会话 a \(a\)/);
+    assert.deepEqual(useCockpit.getState().reloadingSessionIds, []);
+    assert.equal(h.requests.length, 1);
+  });
+}
 
 test('native deletion supports unloaded sessions and failures never retry or remove displayed state', async t => {
   const store = createCockpitStore();
