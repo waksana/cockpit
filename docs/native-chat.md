@@ -364,7 +364,12 @@ this is not an LRU policy and does not delete Composer drafts or retained files.
 
 Entering a chat view lands at its latest loaded content. Leaving and re-entering
 does not restore the previous cross-view reading position; retained history and
-native cursors still avoid a fresh history read. Within the same mounted view,
+native cursors still avoid a fresh history read. The single scroll owner positions
+the first committed message layout before paint, including an asynchronous first
+page after an empty mount. Empty-layout follow frames do not consume this initial
+positioning; prior user reading intent cancels it. Subsequent geometry changes
+remain frame-coalesced, without hiding messages or waiting for module data.
+Within the same mounted view,
 rerenders, live updates and older-page insertion preserve the active reading
 anchor and gestures rather than forcing the reader to the bottom.
 

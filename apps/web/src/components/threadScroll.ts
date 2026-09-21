@@ -67,6 +67,7 @@ export class ThreadScroll {
   private towardBottom = false;
   private reachedBottom = false;
   private forced = false;
+  private initialPositionPending = true;
   private reportedActive = false;
   private onActivity: (active: boolean) => void;
   private view: ThreadScrollView;
@@ -106,6 +107,7 @@ export class ThreadScroll {
 
   private read() {
     this.following = false;
+    this.initialPositionPending = false;
     this.forced = false;
     this.reachedBottom = false;
     this.revision++;
@@ -183,8 +185,30 @@ export class ThreadScroll {
     return { following: this.following, anchor: this.view.firstVisible() };
   }
 
-  changed() {
-    if (this.disposed || this.touching || this.moving || this.frame !== null) return;
+  private correct() {
+    const now = this.view.measure();
+    const currentOffset = this.anchor && this.view.offset(this.anchor.id);
+    const target = this.following
+      ? Math.max(0, now.height - now.viewport)
+      : now.top + (currentOffset != null && this.anchor ? currentOffset - this.anchor.offset : 0);
+    const clamped = Math.max(0, Math.min(target, Math.max(0, now.height - now.viewport)));
+    // scrollHeight/clientHeight round to integers, including subpixel reflow.
+    if (Math.abs(clamped - now.top) > EPSILON) this.view.write(clamped);
+    this.forced = false;
+    this.remember();
+  }
+
+  changed({ contentReady = false }: { contentReady?: boolean } = {}) {
+    if (this.disposed || this.touching || this.moving) return;
+    // Only the first committed message layout is synchronous. An empty mount's
+    // follow/resize frame must not consume this pre-paint positioning opportunity.
+    if (this.initialPositionPending && contentReady && this.view.measure().viewport > 0) {
+      this.initialPositionPending = false;
+      this.cancelFrame();
+      this.correct();
+      return;
+    }
+    if (this.frame !== null) return;
     const g = this.view.measure();
     const offset = this.anchor && this.view.offset(this.anchor.id);
     const shifted = offset != null && this.anchor && Math.abs(offset - this.anchor.offset) >= EPSILON;
@@ -193,16 +217,7 @@ export class ThreadScroll {
     const frame = this.frames.request(() => {
       if (this.disposed || this.frame !== frame || revision !== this.revision) return;
       this.frame = null;
-      const now = this.view.measure();
-      const currentOffset = this.anchor && this.view.offset(this.anchor.id);
-      const target = this.following
-        ? Math.max(0, now.height - now.viewport)
-        : now.top + (currentOffset != null && this.anchor ? currentOffset - this.anchor.offset : 0);
-      const clamped = Math.max(0, Math.min(target, Math.max(0, now.height - now.viewport)));
-      // scrollHeight/clientHeight round to integers, including subpixel reflow.
-      if (Math.abs(clamped - now.top) > EPSILON) this.view.write(clamped);
-      this.forced = false;
-      this.remember();
+      this.correct();
     });
     this.frame = frame;
   }

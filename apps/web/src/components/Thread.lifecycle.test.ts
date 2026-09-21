@@ -804,6 +804,51 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     return { id: row.dataset.messageId, offset: row.getBoundingClientRect().top };
   };
 
+  await t.test('first message commit reaches latest without a RAF, including empty async mounts and cached switches', async () => {
+    const commit = async (value: ChatSession | null) => {
+      await act(() => root.render(value ? createElement(Thread, {
+        session: value, readOnly: true, onLoadMore,
+      }) : null));
+    };
+    for (const initial of ['cached', 'loading', 'empty', 'filtered']) {
+      await commit(null);
+      const value = { ...session(`initial-${initial}`), hasMore: false };
+      if (initial !== 'cached') {
+        await commit({ ...value, messages: initial === 'filtered'
+          ? [{ id: 'whitespace', role: 'assistant', content: ' \n ', timestamp: 0 }] : [],
+        materialized: initial === 'empty', loadingHistory: initial === 'loading' });
+        await flush();
+        assert.equal(viewport().scrollTop, 0);
+        assert.equal(viewport().querySelector('[data-message-frame]'), null,
+          'empty and filtered native pages have no rendered content to position');
+      }
+      await commit(value);
+      assert.equal(viewport().scrollTop, bottom(), `${initial}: layout effect must position before queued frames`);
+      await flush();
+      await readAt(225);
+      const reader = anchor();
+      await commit({ ...value, messages: [...value.messages, {
+        id: 'remote-tail', role: 'system', content: 'Remote tail', timestamp: 20,
+      }] });
+      await flush();
+      assert.deepEqual(anchor(), reader);
+
+      await commit({ ...value, sessionId: `${value.sessionId}-switch` });
+      assert.equal(viewport().scrollTop, bottom(), 'same message array in a new session still gets its own initial commit');
+      await flush();
+    }
+    await commit(null);
+    const cold = { ...session('initial-user-intent'), messages: [] };
+    await commit(cold);
+    await flush();
+    await readAt(0);
+    await commit({ ...cold, messages: session(cold.sessionId).messages });
+    assert.equal(viewport().scrollTop, 0, 'a gesture before the first page cancels initial following');
+    await flush();
+    assert.equal(viewport().scrollTop, 0);
+    await commit(null);
+  });
+
   await t.test('all local submission surfaces follow once on ACK, including captured module sends', async subtest => {
     let activation!: ModuleFrontendContext;
     let finish!: (ok: boolean) => void;

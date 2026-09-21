@@ -437,8 +437,8 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
       setHasNewContent(true);
     }
     previousMessages.current = session.messages;
-    scrollOwnerRef.current?.changed();
-  }, [messages, session.messages, session.status, session.compacting, session.error, session.materialized, session.hasMore]);
+    scrollOwnerRef.current?.changed({ contentReady: !!contentRef.current?.querySelector('[data-message-frame]') });
+  }, [messages, session.sessionId, session.messages, session.status, session.compacting, session.error, session.materialized, session.hasMore]);
 
   const jumpToBottom = useCallback(() => { scrollOwnerRef.current?.follow(); }, []);
 
