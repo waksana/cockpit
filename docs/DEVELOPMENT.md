@@ -94,43 +94,13 @@ See [release notes](release-notes.md); no tag, publication or deployment is impl
 
 ## Interaction semantics and structural correctness
 
-This is a confirmed development requirement for both the host Web UI and module
-UI: invisible structure and behavior must make sense, not merely produce the
-right appearance or respond to a mouse click. Visible affordances, HTML semantics,
-accessible names, focus, event handling and state transitions must describe the
-same interaction. This is ordinary engineering correctness, not a separate
-accessibility feature request or a claim of full accessibility conformance.
-Existing implementations are subject to review; this requirement does not certify them.
-
-- Prefer native elements whose behavior matches the action: buttons for actions,
-  links for navigation/downloads and native disclosure/dialog behavior where it
-  fits. Keep independent actions separate; do not nest interactive controls or
-  reconstruct native keyboard behavior without a concrete need.
-- Keep DOM content models valid, including controls rendered inside Markdown or
-  module slots. Give dialogs and overlays an appropriate mount location and clear
-  ownership. ARIA cannot repair invalid nesting or contradictory interaction
-  structure.
-- Make the visible label, accessible name and actual result agree. Prefer a direct
-  relationship between the control and its visible content; do not announce
-  decoration as another action or add needless focus stops and repeated labels.
-  ARIA remains appropriate where native/visible content cannot convey the needed
-  name, description or state.
-- Preserve logical focus entry, order and return across open/close, disclosure,
-  submission and resource replacement. Do not hide a layout or focus defect by
-  indiscriminate `blur()`, suppressed focus indicators or unexpected focus moves.
-  Keep keyboard, pointer and touch paths consistent in meaning.
-- Check event ownership and the full state cycle, including loading, disabled,
-  pending, error, retry, unmount and late results. Secondary actions must not
-  accidentally invoke the primary action; displayed availability must match
-  actual execution guards. Do not invent a second state authority to make the UI
-  look consistent.
-
-Transparent hit-area overlays, `pointer-events`, event propagation control and
-ARIA are not automatically defects. Use them for a concrete requirement, not to
-patch an avoidably contradictory structure; explain necessary tradeoffs.
-Prefer the simplest coherent composition over accumulating special cases.
-Do not introduce a new UI framework, runtime service or module-specific host API
-just to satisfy this principle.
+Before any host Web or module UI work, read and follow the
+[frontend guidelines](frontend-guidelines.md). They are the single home for
+native-first semantics, valid structure, focus/event ownership, minimal JS,
+reading behavior, truthful state and the lightweight review checklist.
+These are ordinary engineering requirements, not a separate accessibility feature
+or certification of existing implementations. This entry keeps its public anchor;
+the module integration details below remain governed by the module contract.
 
 Keep the four module extension mechanisms distinct: menu declarations, real
 semantic component middleware, state/service/draft and Markdown renderers.
@@ -144,12 +114,6 @@ unknown connection or module stop aborts its signal without waiting for the acti
 Promise. Check per-command presentation/action error isolation separately from
 activation-owned subscription setup and cleanup failures. The precise contract is in
 [menu registration](module-contract-draft.md#65-菜单注册).
-
-Review rendered DOM and relevant interaction paths, not screenshots or static
-selectors alone. Reuse the existing component fixtures and isolated review
-harnesses; record evidence and uncovered boundaries. Separate reproducible defects,
-structural simplifications and accepted tradeoffs, and keep audit findings in
-issues rather than turning this guide into a stale component inventory.
 
 ## Isolated Chat component review
 
@@ -274,6 +238,10 @@ vanish on server shutdown. See the [module contract](module-contract-draft.md).
 Production builds have one HTML entry: `index.html`.
 
 ## Web presentation boundaries
+
+Apply the required [frontend guidelines](frontend-guidelines.md); the following
+describes the current host component and resource ownership, not another set of
+general UI principles.
 
 `PaneHeader` and `StateNotice` share presentation, not routing or resource state.
 The management route keeps its header and back control during lazy loading.

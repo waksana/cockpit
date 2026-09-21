@@ -31,6 +31,8 @@ Cockpit 本体提供 Copilot 的浏览器界面与 API，模块扩展文件、�
 
 模块包可以同时包含后端 JavaScript 和前端 ESM/CSS。它们使用本体的服务端口、
 React 与公开接口，不需要另建聊天应用。
+本体与模块的前端新工作、改动都必须先读[前端规范](frontend-guidelines.md)；
+公共 UI 的精确合同继续由模块 UI 开发指南维护。
 
 | 文档 | 内容 |
 | --- | --- |
@@ -78,6 +80,7 @@ File 0.1.7 继续兼容且不重新发行；历史 0.2.3 → Notification 0.1.0 
 | 文档 | 内容 |
 | --- | --- |
 | [贡献指南](../CONTRIBUTING.md) | 问题报告、分支、PR、review 和许可。 |
+| [前端规范（必读）](frontend-guidelines.md) | 本体与模块 UI 的单一原则入口：自然简单直观、原生/CSS 优先、最少必要 JS、真实状态及轻量 review 清单。 |
 | [开发与集成](DEVELOPMENT.md) | 工程流程、交互语义、隔离 Chat Lab 和文档截图的更新方式。 |
 | [验证指南](cockpit-testing.md) | 按改动选择现有命令、隔离条件和清理要求。 |
 | [构建与发行](packaging.md) | 运行包内容、来源 manifest、依赖闭包、CI、版本政策和 tag 发行。 |
