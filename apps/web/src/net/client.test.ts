@@ -610,7 +610,8 @@ for (const failure of failures) {
     const diagnostics = getUxErrors();
     assert.equal(diagnostics.length, 1);
     assert.match(diagnostics[0].message, /^会话 session \(session\)：接口 respondAsk 调用失败：/);
-    assert.match(diagnostics[0].message, failure.diagnostic);
+    assert.match(diagnostics[0].message.replace(/；变更结果尚未确认.*$/, ''), failure.diagnostic);
+    assert.match(diagnostics[0].message, /变更结果尚未确认/);
     assert.deepEqual(events, []);
   });
 
@@ -642,8 +643,17 @@ test('failed explicit load never falls back to reload or creates a replacement s
   assertOnlyPost(fetch, 'session/load', { sessionId: 'session' });
   assert.deepEqual(events, []);
   assert.equal(getUxErrors().length, 1);
-  assert.match(getUxErrors()[0].message, /^会话 session \(session\)：接口 session\/load 调用失败：Original session is unavailable$/);
+  assert.match(getUxErrors()[0].message, /^会话 session \(session\)：接口 session\/load 调用失败：Original session is unavailable；变更结果尚未确认/);
 });
+
+for (const result of [{}, { status: 'future-native-status' }]) {
+  test(`native model uncertainty is returned intact with an explicit local diagnostic: ${JSON.stringify(result)}`, async t => {
+    const { client, fetch } = setup(t, async () => Response.json({ ok: true, result }));
+    assert.deepEqual(await client.setModel('session', 'requested'), { ok: true, result });
+    assert.equal(fetch.mock.callCount(), 1);
+    assert.match(getUxErrors()[0].message, /结果尚未确认/);
+  });
+}
 
 for (const [index, response] of [null, { error: { detail: 'unavailable' } }, 'unavailable'].entries()) {
   test(`history HTTP failure with non-error JSON ${index} preserves status and diagnostics`, async (t) => {

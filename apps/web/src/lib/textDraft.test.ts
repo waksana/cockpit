@@ -160,7 +160,7 @@ test('blank drafts do not send, while choice ACKs preserve unrelated typed text'
   assert.equal(draft.getSnapshot().text, 'Retained');
 });
 
-test('unregistered legacy values and opaque schema namespaces survive text edits and sends but are never payloads', async () => {
+test('unregistered legacy values and opaque schema namespaces survive edits and block every submission route', async () => {
   const { values, drafts } = fixture();
   const unknown = { attachments: Array.from({ length: 25 }, (_, index) => ({ opaque: index })),
     extra: { vendor: ['keep'] }, text: 'Old', unconfirmed: false,
@@ -168,17 +168,80 @@ test('unregistered legacy values and opaque schema namespaces survive text edits
   };
   values.set(key('A'), JSON.stringify(unknown));
   const draft = drafts('A');
+  assert.equal(draft.hasUnclaimedStoredData(), true);
   draft.edit('New');
-  assert.equal(await draft.send(async request => {
-    assert.deepEqual(request.body, { sessionId: 'A', text: 'New' });
-    return true;
-  }), true);
+  const bytes = values.get(key('A'));
+  assert.equal(await draft.send(async () => assert.fail('Opaque data must not be omitted')), false);
+  assert.equal(await draft.runAction(async () => assert.fail('Actions must not bypass recovery')), false);
+  const module = draft.bindModule('speech', ['text'], undefined, undefined, {
+    check: () => undefined, send: async () => assert.fail('Captured module send must not bypass recovery'),
+  });
+  assert.equal((await module.draft.captureSend().send(draft.getSnapshot().revision)).status, 'blocked');
+  module.dispose();
+  assert.equal(values.get(key('A')), bytes);
   const record = saved(values, 'A');
   assert.deepEqual(record.attachments, unknown.attachments);
   assert.deepEqual(record.extra, unknown.extra);
   assert.deepEqual(record.__cockpitDraft.schemas, unknown.__cockpitDraft.schemas);
-  assert.equal(draft.getSnapshot().hasContent, false);
+  assert.equal(draft.getSnapshot().text, 'New');
+  assert.equal(draft.getSnapshot().hasContent, true);
   assert.equal(draft.getSnapshot().blocks.length, 0);
+  draft.retire();
+  assert.equal(values.get(key('A')), bytes, 'retirement does not delete opaque recovery data');
+});
+
+test('clean host metadata is claimed, but unknown metadata and unreadable roots are not', async () => {
+  for (const extra of [{}, { schemas: {} }, { pendingToken: 'old-send' }]) {
+    const { values, drafts } = fixture();
+    values.set(key('A'), JSON.stringify({ text: 'Host', unconfirmed: false,
+      __cockpitDraft: { version: 1, purpose: { kind: 'prompt' }, ...extra } }));
+    const draft = drafts('A');
+    assert.equal(draft.hasUnclaimedStoredData(), false);
+    assert.equal(await draft.send(async () => true), true);
+  }
+  for (const root of [
+    { text: '', unconfirmed: false, attachments: [] },
+    { text: 'Host', unconfirmed: false, __cockpitDraft: { version: 1, purpose: { kind: 'prompt' }, future: {} } },
+    { text: 'Host', unconfirmed: false, __cockpitDraft: { version: 1, purpose: { kind: 'prompt', future: { untouched: true } } } },
+  ]) {
+    const { values, drafts } = fixture();
+    values.set(key('A'), JSON.stringify(root));
+    assert.equal(drafts('A').hasUnclaimedStoredData(), true);
+    drafts('A').edit('Changed text');
+    assert.deepEqual(saved(values, 'A').__cockpitDraft.purpose,
+      root.__cockpitDraft?.purpose ?? { kind: 'prompt' });
+    drafts('A').edit('');
+    assert.equal(drafts('A').hasUnclaimedStoredData(), true, 'clearing host text does not discard opaque data');
+    assert.deepEqual(saved(values, 'A').__cockpitDraft.purpose,
+      root.__cockpitDraft?.purpose ?? { kind: 'prompt' });
+    drafts('A').edit('Replacement text');
+    assert.equal(await drafts('A').send(async () => assert.fail('Opaque data must block the native send')), false);
+  }
+  assert.equal(createSessionDrafts()('clean').hasUnclaimedStoredData(), false);
+});
+
+test('only genuinely unpersisted host text and notices need leave protection', () => {
+  const { storage, values } = memoryDraftStorage();
+  let fails = false;
+  const draft = createSessionDrafts({ ...storage, setItem(name, value) {
+    if (fails) throw new Error('Write unavailable');
+    storage.setItem(name, value);
+  } })('dirty');
+  assert.equal(draft.hasUnpersistedChanges(), false);
+  draft.edit('Saved');
+  assert.equal(draft.hasUnpersistedChanges(), false);
+  fails = true;
+  draft.edit('Memory only');
+  assert.equal(draft.hasUnpersistedChanges(), true);
+  assert.equal(JSON.parse(values.get(key('dirty'))!).text, 'Saved');
+  fails = false;
+  draft.edit('Memory only');
+  assert.equal(draft.hasUnpersistedChanges(), false);
+  const memory = createSessionDrafts()('memory-only');
+  memory.edit('Unsaved');
+  assert.equal(memory.hasUnpersistedChanges(), true);
+  memory.edit('');
+  assert.equal(memory.hasUnpersistedChanges(), false);
 });
 
 test('malformed base records/checkpoints stay untouched and fail explicitly rather than dispatching', async () => {

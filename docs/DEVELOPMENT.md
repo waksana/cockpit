@@ -151,6 +151,60 @@ callbacks, without initializing a native client or creating sessions. Normal
 production builds do not include the entry. The lab exercises
 native text, tools, decisions, queue and reading behavior.
 
+Use `/chat-lab.html?ui=next&scene=workspace` for the independent new host, or
+`?ui=next&scene=ask&compact=1` for its conversation flow. The small lab entry
+loads only the selected presentation and its styles. The next fixture replaces
+browser storage with in-memory storage before importing the real App, disables
+application transports, and uses a `MemoryRouter`. No production bootstrap or
+user session data is read. Its toolbar and typed `window.nextLab` controls hold,
+fail or release synthetic operations, replace native decisions, navigate settings,
+and deliver history in a late animation frame. `firstContent` records the first
+content commit after the production layout effects, before paint.
+On an App scene, run `await import('/src/dev/next-lab-checks.ts').then(m => m.runNextLabChecks())`
+for maintained real-DOM focus, pending, request-identity and reading regressions;
+use a 1440x960 desktop viewport and repeat at a 390x844 touch viewport.
+`?ui=next&view=conversation&scene=readonly`
+mounts the production conversation component without the App shell.
+
+For combined File/Speech presentation review, first build and verify each module's
+clean package with its own repository tooling, then extract the archives into
+separate temporary directories. Start the same lab with their absolute package
+roots (the directory containing `cockpit.module.json` and `module-build.json`):
+
+```sh
+COCKPIT_CHAT_LAB=1 \
+COCKPIT_LAB_FILE_ROOT=/absolute/extracted/file/package \
+COCKPIT_LAB_SPEECH_ROOT=/absolute/extracted/speech/package \
+pnpm --filter @cockpit/web dev --host 127.0.0.1 --port 47831 --strictPort
+```
+
+Open `/chat-lab.html?ui=next&modules=1&compact=1&path=/session/fixture-next-workspace-0`.
+The actual module runtime mounts the compiled new presentations with host components.
+Only receipt-inventoried frontend assets are served; module backends never execute.
+Uploads use a bounded in-memory File API. Names starting with `fail-once` fail once,
+then permit explicit retry; `nextLab.modules.files(true/false)` holds/releases
+uploads. Speech uses generated oscillator audio, the real recorder/AudioWorklet,
+and a local synthetic protocol adapter, never a microphone, speaker, provider or
+credential service. Its controls expose transcript, next-credential-failure,
+held-final and resource diagnostics. Recognition/VAD and real provider behavior
+are outside this fixture's coverage.
+
+In a fresh document, run
+`await import('/src/dev/next-lab-module-checks.ts').then(m => m.runNextModuleChecks())`
+for actual module paste/drop/retry, preview/modal focus, F8 isolation, hidden-draft
+leave protection, capture and original-draft attachment submission. Run with both
+light/desktop and dark/touch layouts. A browser may require a user gesture to allow
+the generated AudioContext; no actual media permission is needed. Reload between
+the host and module checks, which intentionally leave different synthetic states.
+`nextLab.draftRequests()` records the exact synthetic native submission bodies;
+it is not a backend acknowledgement or provider integration test.
+For first-input geometry, a browser driver can hold the synthetic `/_modules`
+response before entry execution, then pass its release callback to
+`runNextBootstrapCheck(release)`. This checks actual input position/size within
+1px before and after bootstrap with a retained multiline-width draft, while
+native reading remains visible. Repeat in fresh documents with empty text and
+explicit newlines; do not substitute a settled screenshot for this transition.
+
 Chat Lab is a maintained developer harness, not a product page, alternate chat
 implementation or saved screenshot gallery. It imports the production components
 and event projection; only session inputs and action callbacks are synthetic.
@@ -279,13 +333,53 @@ push subscriptions. A trusted module may declare a packaged worker served at a
 stable module-specific URL with a narrow scope; registration, notification and
 badge behavior belong to that module. Existing browser registrations do not
 vanish on server shutdown. See the [module contract](module-contract-draft.md).
-Production builds have one HTML entry: `index.html`.
+Production builds have independent classic `index.html` and new `next/index.html`
+entries. Chat Lab is not a production entry.
 
 ## Web presentation boundaries
 
 Apply the required [frontend guidelines](frontend-guidelines.md); the following
 describes the current host component and resource ownership, not another set of
 general UI principles.
+
+### Independent new host
+
+`src/next/App.tsx` owns the conversation-first shell, session navigation, dedicated
+session settings, and explicit global MCP/Skills pages. `next/conversation`,
+`next/settings` and `next/resources` compose the shared shadcn components; classic
+presentation and styles remain on the default entry. There is no new System page.
+Both presentations reuse native transport/projection, draft/schema ownership,
+keyed resources/actions and the single transcript scroll controller. Shared
+settings controllers live in `features/session-settings`; they do not store a
+second authoritative model or resource inventory.
+
+Only the entry starts the module runtime. App initializes native transport and
+observes the module view; its `moduleBootstrap` prop gates module-sensitive input,
+not readable native history. Settlement is not a claim that every module loaded.
+Missing next presentations remain explicitly classic-only, never activate classic
+UI as a fallback, and do not imply that their module backends are disabled.
+
+Unknown persisted draft namespaces (including data from an absent or failed
+module) block native submission until the owning schema can restore them. Text
+edits, empty-text updates and retirement preserve opaque recovery data. This is
+a shared draft safety rule, including classic: a missing module cannot silently
+turn an attachment submission into a text-only send. The next composer provides
+an explicit classic recovery link.
+
+The next document entry must call `installHostLeaveProtection(window)` from
+`src/lib/hostLeave.ts` before its first render, outside React and its error boundary.
+Keep the returned disposer until entry teardown/HMR; do not call it when App
+unmounts or startup switches to an error fallback. This installs conditional
+native `beforeunload` protection for unpersisted
+host drafts, genuinely dirty forms, and dispatched host mutations, including work
+whose original view has unmounted. Known outcomes release their pending ownership;
+uncertain outcomes retain conservative protection for the document lifetime.
+The handler only requests browser confirmation and never cancels, retries or
+changes work. Module activations separately protect their own in-memory work.
+Ordinary in-app navigation does not cancel accepted native work; full-document
+classic links use the browser's leave confirmation rather than a second router.
+
+### Classic presentation
 
 `PaneHeader` and `StateNotice` share presentation, not routing or resource state.
 The management route keeps its header and back control during lazy loading.

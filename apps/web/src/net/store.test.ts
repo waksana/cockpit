@@ -1387,6 +1387,7 @@ interface ResourceCase {
   read: (state: State) => Promise<unknown>;
   response: unknown;
   expected: unknown;
+  expectedErrors?: string[];
 }
 
 const projection: IntentResult<'session/resources'>['meta'] = {
@@ -1486,7 +1487,8 @@ test('fresh role identity survives an older in-flight summary response', async t
 const resources: ResourceCase[] = [
   { label: 'listRoles', name: 'roles/list', body: {}, read: s => s.listRoles(), response: { roles: [] }, expected: [] },
   { label: 'addRoles', name: 'roles/add', body: { sessionId: 'a', roles: [{ moduleId: 'fixture', roleId: 'reviewer' }] },
-    read: s => s.addRoles('a', [{ moduleId: 'fixture', roleId: 'reviewer' }]), response: roleAddition, expected: roleAddition },
+    read: s => s.addRoles('a', [{ moduleId: 'fixture', roleId: 'reviewer' }]), response: roleAddition, expected: roleAddition,
+    expectedErrors: ['接口 roles/add 的变更结果尚未确认；请检查原生状态，不要自动重试。'] },
   { label: 'roleReadiness', name: 'roles/readiness', body: { sessionId: 'a' },
     read: s => s.roleReadiness('a'), response: roleReadiness, expected: roleReadiness },
   {
@@ -1762,7 +1764,7 @@ for (const resource of resources) {
     assert.deepEqual(await pending, resource.expected);
     assert.strictEqual(session(), before);
     assert.equal(h.requests.length, 1);
-    assert.deepEqual(getUxErrors(), []);
+    assert.deepEqual(getUxErrors().map(error => error.message), resource.expectedErrors ?? []);
   });
 
   test(`${resource.label} rejects disconnected reads or mutations instead of returning empty data or success`, async (t) => {
@@ -1796,6 +1798,26 @@ for (const resource of resources) {
       assert.equal(h.requests.length, 1);
     });
   }
+}
+
+for (const status of ['saved', 'unchanged'] as const) {
+  test(`addRoles ${status} returns a known result without an uncertainty warning or projection mutation`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    const before = session();
+    const roles = [{ moduleId: 'fixture', roleId: 'reviewer' }];
+    const result: IntentResult<'roles/add'> = {
+      sessionId: 'a', status, roles: roles.map(role => ({ ...role, moduleName: 'Fixture', name: 'Reviewer' })),
+      appliedRoles: [], loaded: true, rolesNeedReload: true,
+    };
+    const pending = useCockpit.getState().addRoles('a', roles);
+    h.assertPost(0, 'roles/add', { sessionId: 'a', roles }).resolve(Response.json(result));
+    assert.deepEqual(await pending, result);
+    assert.strictEqual(session(), before);
+    assert.equal(h.requests.length, 1);
+    assert.deepEqual(getUxErrors(), []);
+  });
 }
 
 test('attached prompt failures keep the original false acknowledgement and local diagnostic contract', async (t) => {

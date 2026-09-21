@@ -11,7 +11,7 @@ import { checkRelease, checkSourceVersion, checkTagTarget } from './check-releas
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'cockpit-release-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol', 'packages/module-api']) {
+  for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol', 'packages/module-api', 'packages/ui']) {
     mkdirSync(join(root, name), { recursive: true });
     writeFileSync(join(root, name, 'package.json'), JSON.stringify({ version: '0.1.0' }));
   }
@@ -42,6 +42,12 @@ test('delivery rejects a stale MCP self-reported version', t => {
   writeFileSync(join(f.root, 'apps/mcp/src/index.ts'),
     "const server = new McpServer({ name: 'cockpit-mcp-server', version: '0.0.9' });\n");
   assert.throws(f.check, /MCP self-reported version/);
+});
+
+test('delivery rejects a UI workspace version that differs from its host', t => {
+  const f = fixture(t);
+  writeFileSync(join(f.root, 'packages/ui/package.json'), JSON.stringify({ version: '0.0.9' }));
+  assert.throws(f.check, /packages\/ui version/);
 });
 
 test('release metadata binds the tag, all workspace versions, fixed archive and current Node platform', t => {

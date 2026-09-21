@@ -57,6 +57,10 @@ export class DraftSession {
     return () => { this.listeners.delete(listener); };
   };
   getSnapshot = (): number => this.revision;
+  hasUnpersistedChanges(): boolean {
+    return this.prompt.hasUnpersistedChanges()
+      || [...this.requests.values()].some(({ draft }) => draft.hasUnpersistedChanges());
+  }
   candidate(purpose: DraftPurpose): SessionDraft {
     if (purpose.kind === 'prompt') return this.prompt;
     const key = decisionKey(purpose);
@@ -148,6 +152,14 @@ export class DraftSession {
 
 export class DraftCache {
   private readonly sessions = new Map<string, DraftSession>();
+  private readonly listeners = new Set<() => void>();
+  private readonly subscriptions = new Map<string, () => void>();
+  private notify = (): void => { for (const listener of this.listeners) listener(); };
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener);
+    return () => { this.listeners.delete(listener); };
+  };
+  hasUnpersistedChanges = (): boolean => [...this.sessions.values()].some(session => session.hasUnpersistedChanges());
   private readonly storage?: DraftStorage;
   constructor(storage?: DraftStorage) {
     this.storage = storage;
@@ -158,6 +170,8 @@ export class DraftCache {
     if (!session) {
       session = new DraftSession(new SessionDraft(sessionId, this.storage), this.storage);
       this.sessions.set(sessionId, session);
+      this.subscriptions.set(sessionId, session.subscribe(this.notify));
+      this.notify();
     }
     return session;
   }
@@ -165,6 +179,9 @@ export class DraftCache {
     const session = this.sessions.get(sessionId);
     this.sessions.delete(sessionId);
     session?.retire();
+    this.subscriptions.get(sessionId)?.();
+    this.subscriptions.delete(sessionId);
+    this.notify();
   }
   observe(sessions: readonly (NativeDraftDecisions & { sessionId: string })[], authoritative: boolean): void {
     for (const [id, cached] of [...this.sessions]) {
@@ -183,6 +200,8 @@ export class DraftCache {
 let browserCache: DraftCache | undefined;
 function cache() { return browserCache ??= new DraftCache(browserDraftStorage()); }
 export const getSessionDraft = (sessionId: string): SessionDraft => cache().prompt(sessionId);
+export const hasUnpersistedDraftChanges = (): boolean => browserCache?.hasUnpersistedChanges() ?? false;
+export const subscribeDraftChanges = (listener: () => void): (() => void) => cache().subscribe(listener);
 export const getDraftSession = (sessionId: string): DraftSession => cache().session(sessionId);
 export const retireDraftSession = (sessionId: string): void => browserCache?.retire(sessionId);
 export function observeDraftDecisions(sessions: readonly (NativeDraftDecisions & { sessionId: string })[], authoritative: boolean): void {

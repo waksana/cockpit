@@ -1,0 +1,70 @@
+.next-app { height: 100dvh; display: flex; flex-direction: column; min-width: 0; background: var(--background); color: var(--foreground); font: 14px/1.5 system-ui, sans-serif; }
+.next-app * { box-sizing: border-box; }
+.next-app a { text-underline-offset: .2em; }
+.next-app-header { flex: none; display: flex; align-items: center; gap: 1.5rem; min-height: 3.75rem; border-bottom: 1px solid var(--border); padding: .5rem 1.25rem; }
+.next-brand { display: inline-flex; align-items: center; min-height: 2.75rem; font-weight: 650; font-size: 1.05rem; letter-spacing: -.025em; }
+.next-app-header nav { flex: 1; display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.next-app-header nav a { display: inline-flex; align-items: center; min-height: 2.75rem; color: var(--muted-foreground); padding-block: .5rem; }
+.next-app-header nav a.active { color: var(--foreground); text-decoration: underline; }
+.next-connection, .next-classic-only { flex: none; padding: .5rem 1.25rem; border-bottom: 1px solid var(--border); background: var(--muted); overflow-wrap: anywhere; }
+.next-classic-only summary { cursor: pointer; }
+.next-classic-only p { padding-top: .5rem; }
+.next-classic-only a { text-decoration: underline; margin-inline-start: .5rem; }
+.next-workspace { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.next-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; outline: none; }
+.next-main:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.next-session-nav { flex: 0 0 19rem; width: 19rem; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--border); background: var(--sidebar, var(--background)); }
+.next-session-nav-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: 1.25rem 1rem .75rem; }
+.next-session-nav-heading h1 { font-weight: 600; font-size: 1rem; }
+.next-search { display: flex; align-items: center; gap: .5rem; padding: 0 1rem .75rem; }
+.next-search > svg { width: 1rem; color: var(--muted-foreground); flex: none; }
+.next-session-list { overflow-y: auto; overscroll-behavior: contain; min-height: 0; margin: 0; padding: 0 .5rem .75rem; list-style: none; }
+.next-session-row { display: flex; align-items: flex-start; gap: .25rem; border-radius: var(--radius); margin-block: .25rem; padding: .25rem; }
+.next-session-row[data-active="true"] { background: var(--accent); }
+.next-session-row > a { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: .25rem; padding: .5rem; border-radius: var(--radius); }
+.next-session-title { font-weight: 550; overflow-wrap: anywhere; }
+.next-session-directory { color: var(--muted-foreground); font-size: .8rem; overflow-wrap: anywhere; }
+.next-session-row > button { flex: none; }
+.next-session-status { display: flex; gap: .5rem; flex-wrap: wrap; font-size: .75rem; color: var(--muted-foreground); }
+.next-empty-list { padding: 1rem; color: var(--muted-foreground); }
+.next-conversation-header { display: flex; gap: .75rem; align-items: center; padding: 1rem 1.5rem; border-bottom: 1px solid var(--border); flex: none; }
+.next-conversation-identity { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.next-conversation-identity h1 { font-weight: 600; }
+.next-conversation-identity p { margin-top: .2rem; color: var(--muted-foreground); font-size: .8rem; }
+.next-list-back { display: none; }
+.next-page-toolbar { padding: .75rem 1.25rem; display: flex; align-items: center; justify-content: space-between; gap: .5rem; flex: none; }
+.next-settings-tabs { display: flex; gap: 1rem; padding: 0 1.5rem; border-bottom: 1px solid var(--border); flex: none; }
+.next-settings-tabs a { padding: .75rem .25rem; color: var(--muted-foreground); border-bottom: 2px solid transparent; }
+.next-settings-tabs a.active { color: var(--foreground); border-bottom-color: var(--foreground); }
+.next-page-scroll { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.next-page-empty { margin: auto; padding: 2rem; width: min(100%, 42rem); display: flex; flex-direction: column; align-items: flex-start; gap: 1rem; }
+.next-page-empty h1, .next-page-empty h2 { font-size: 1.5rem; font-weight: 600; letter-spacing: -.03em; }
+.next-muted { color: var(--muted-foreground); }
+.next-errors { display: grid; gap: .5rem; flex: none; padding: .5rem 1rem; max-height: 30dvh; overflow-y: auto; }
+.next-errors p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.next-errors button { margin-top: .5rem; }
+.next-create-dialog { width: min(40rem, calc(100vw - 2rem)); max-width: 40rem; }
+.next-form-field { display: grid; gap: .5rem; }
+.next-path-row { display: flex; gap: .5rem; align-items: center; }
+.next-path-row input { min-width: 0; flex: 1; }
+.next-directory-list { display: flex; flex-direction: column; max-height: 30dvh; overflow-y: auto; gap: .25rem; }
+.next-directory-list button { justify-content: flex-start; height: auto; white-space: normal; overflow-wrap: anywhere; text-align: start; }
+.next-role-options { display: grid; gap: .75rem; }
+.next-role-options legend { margin-bottom: .5rem; font-weight: 600; }
+.next-role-option { display: flex; align-items: flex-start; gap: .75rem; }
+.next-role-option > div { flex: 1; min-width: 0; }
+.next-role-option label { white-space: normal; overflow-wrap: anywhere; }
+.next-role-option p { font-size: .85rem; color: var(--muted-foreground); margin-top: .25rem; overflow-wrap: anywhere; }
+@media (max-width: 767px) {
+  .next-app-header { gap: .75rem; padding-inline: .75rem; }
+  .next-app-header nav { gap: .75rem; font-size: .8rem; }
+  .next-session-nav { flex: 1; width: 100%; border: 0; }
+  .next-session-workspace[data-conversation="true"] .next-session-nav { display: none; }
+  .next-session-workspace[data-conversation="false"] .next-main { display: none; }
+  .next-list-back { display: inline-flex; }
+  .next-conversation-header { gap: .25rem; padding: .5rem; }
+  .next-conversation-header > a { padding-inline: .5rem; }
+  .next-conversation-header > a svg { display: none; }
+  .next-errors { padding: .5rem; }
+  .next-settings-tabs { gap: .75rem; padding-inline: 1rem; }
+}

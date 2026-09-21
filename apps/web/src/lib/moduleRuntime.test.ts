@@ -7,7 +7,8 @@ import { ServerEvent, type ModuleEventPayload } from '@cockpit/protocol';
 import type { ActivateFrontend, ComposerEditorProps, DraftSchemaHandle, ModuleAsset, ModuleFrontend, ModuleFrontendContext, MarkdownNode, ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget } from '@cockpit/module-api';
 import { ModuleRuntime, validateModuleAsset } from './moduleRuntime';
 import { createSessionDrafts } from './textDraft';
-import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';
+import { appendFixture, fixtureItem, fixtureSchema, memoryDraftStorage, type FixtureData } from '../test/draftFixture';
+import { nextUi } from '../next/ui';
 
 const digest = 'a'.repeat(64);
 const asset = (id = 'fixture'): ModuleAsset => ({
@@ -54,6 +55,146 @@ test('constructing/rendering the module store has no bootstrap or backend access
   assert.deepEqual(f.requests, []);
   assert.deepEqual(f.imports, []);
   unsubscribe();
+});
+
+test('new UI loads only explicit new entries and never advertises classic CSS', async () => {
+  const next = { entry: `/_modules/assets/fixture/${digest}/next.js`, styles: [`/_modules/assets/fixture/${digest}/next.css`] };
+  const contexts: Record<string, unknown>[] = [];
+  const loaded: string[] = [];
+  const styles: string[] = [];
+  const removed: string[] = [];
+  const runtime = new ModuleRuntime({
+    pageUrl: 'https://ui.invalid/next/',
+    fetch: async () => Response.json({ modules: [{ ...asset(), next }, asset('classic-only')], errors: [] }),
+    load: async url => {
+      loaded.push(url);
+      return { activate(context: Record<string, unknown>) { contexts.push(context); return { apiVersion: 2 }; } };
+    },
+    style: url => { styles.push(url); return () => { removed.push(url); }; },
+    report: error => assert.fail(String(error)),
+  });
+  await runtime.start('', nextUi);
+  assert.deepEqual(loaded, [`https://ui.invalid${next.entry}`]);
+  assert.deepEqual(styles, [`https://ui.invalid${next.styles[0]}`]);
+  assert.equal(contexts[0].ui, nextUi);
+  assert.equal(contexts[0].react, React);
+  assert.equal('uiVersion' in contexts[0], false);
+  assert.equal('uiSurfaceVersion' in contexts[0], false);
+  assert.deepEqual(runtime.getUnavailablePresentations(), [{ id: 'classic-only', name: 'classic-only' }]);
+  await assert.rejects(runtime.start(), /new document/);
+  runtime.stop();
+  assert.deepEqual(removed, styles);
+  assert.deepEqual(runtime.getUnavailablePresentations(), []);
+});
+
+test('classic UI ignores the optional new presentation without loading its styles', async () => {
+  const f = fixture([{ ...asset(), next: {
+    entry: `/_modules/assets/fixture/${digest}/next.js`, styles: [`/_modules/assets/fixture/${digest}/next.css`],
+  } }]);
+  await f.runtime.start();
+  assert.ok(f.imports.every(url => url.endsWith('/entry.js')));
+  assert.ok(f.styles.every(url => url.endsWith('/style.css')));
+  assert.equal('ui' in f.contexts[0], false);
+  assert.equal(f.contexts[0].uiVersion, 1);
+  f.runtime.stop();
+});
+
+test('a stopped bootstrap body cannot replace current availability or report stale errors', async () => {
+  let finishBody: () => void = () => assert.fail('Bootstrap body was not created');
+  const first = new Response(new ReadableStream<Uint8Array>({
+    start(controller) {
+      finishBody = () => {
+        controller.enqueue(new TextEncoder().encode(JSON.stringify({
+          modules: [asset('stale')], errors: ['stale bootstrap error'],
+        })));
+        controller.close();
+      };
+    },
+  }));
+  let requests = 0;
+  const reports: unknown[] = [];
+  const runtime = new ModuleRuntime({
+    pageUrl: 'https://ui.invalid/next/',
+    fetch: async () => ++requests === 1 ? first : Response.json({ modules: [asset('current')], errors: [] }),
+    report: error => reports.push(error),
+  });
+  const stale = runtime.start('', nextUi);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  runtime.stop();
+  await runtime.start('', nextUi);
+  const current = runtime.getUnavailablePresentations();
+  assert.deepEqual(current, [{ id: 'current', name: 'current' }]);
+  let notifications = 0;
+  const unsubscribe = runtime.subscribe(() => { notifications++; });
+  finishBody();
+  await stale;
+  assert.equal(runtime.getUnavailablePresentations(), current);
+  assert.deepEqual(reports, []);
+  assert.equal(notifications, 0);
+  unsubscribe();
+  runtime.stop();
+});
+
+test('new presentation URLs retain immutable module and backend scope validation', () => {
+  const backend = new URL('https://backend.invalid/prefix/');
+  for (const next of [
+    { entry: 'https://evil.invalid/next.js', styles: [] },
+    { entry: `/_modules/assets/other/${digest}/next.js`, styles: [] },
+    { entry: `/_modules/assets/fixture/${digest}/next.js`, styles: ['https://evil.invalid/next.css'] },
+    { entry: `/_modules/assets/fixture/${digest}/next.js`, styles: [], worker: 'unexpected.js' },
+    { entry: `/_modules/assets/fixture/${digest}/next.js`, styles: 'not-an-array' },
+  ]) assert.throws(() => validateModuleAsset({ ...asset(), next }, backend), /module|Module|backend/i);
+});
+
+test('new UI waits for actual stylesheet load before importing or publishing a module', async t => {
+  class Link {
+    rel = '';
+    href = '';
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    removed = false;
+    remove() { this.removed = true; }
+  }
+  const links: Link[] = [];
+  const descriptor = Object.getOwnPropertyDescriptor(globalThis, 'document');
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: {
+    createElement: () => new Link(), head: { appendChild(link: Link) { links.push(link); } },
+  } });
+  t.after(() => {
+    if (descriptor) Object.defineProperty(globalThis, 'document', descriptor);
+    else Reflect.deleteProperty(globalThis, 'document');
+  });
+  const modules = [{ ...asset(), next: {
+    entry: `/_modules/assets/fixture/${digest}/next.js`, styles: [`/_modules/assets/fixture/${digest}/next.css`],
+  } }];
+  const imports: string[] = [];
+  const reports: unknown[] = [];
+  const runtime = new ModuleRuntime({
+    pageUrl: 'https://ui.invalid/next/', fetch: async () => Response.json({ modules, errors: [] }),
+    load: async url => { imports.push(url); return { activate: () => ({ apiVersion: 2 }) }; },
+    report: error => reports.push(error),
+  });
+  const start = runtime.start('', nextUi);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  assert.equal(links.length, 1);
+  assert.deepEqual(imports, []);
+  assert.deepEqual(runtime.getSnapshot(), []);
+  links[0].onload?.();
+  await start;
+  assert.equal(imports.length, 1);
+  assert.equal(runtime.getSnapshot().length, 1);
+  runtime.stop();
+  assert.equal(links[0].removed, true);
+
+  const failed = runtime.start('', nextUi);
+  await new Promise(resolve => setTimeout(resolve, 0));
+  links[1].onerror?.();
+  await failed;
+  assert.equal(imports.length, 1, 'failed styles do not activate an unstyled module');
+  assert.equal(runtime.getSnapshot().length, 0);
+  assert.equal(links[1].removed, true);
+  assert.match(String(reports[0]), /stylesheet failed/);
+  runtime.stop();
 });
 
 test('chat-window capability is read-only, scoped, and revoked with its module', async () => {
@@ -463,19 +604,24 @@ test('renderer selection never fetches and a throwing matcher keeps the safe hos
   f.runtime.stop();
 });
 
-test('explicit module failure releases only its blockers and omits its revoked schema fields', async () => {
+test('explicit module failure releases only its blockers and retains opaque fields until their owner restores them', async t => {
+  t.mock.method(console, 'error', () => {});
   let handle!: DraftSchemaHandle<FixtureData>;
   const f = fixture([asset()], context => {
     handle = context.state.registerDraft(fixtureSchema());
     return { apiVersion: 2 };
   });
+  t.after(() => f.runtime.stop());
   await f.runtime.start();
-  const draft = createSessionDrafts()('failed-module');
+  const { storage, values } = memoryDraftStorage();
+  const draft = createSessionDrafts(storage)('failed-module');
   f.runtime.prepareDraft(draft);
   const captured = f.contexts[0].state.bindDraft(draft.reference);
   captured.block('Registered work');
   appendFixture(handle.forDraft(draft.reference)!, fixtureItem('ready'));
   draft.edit('Retained text');
+  const stored = values.get('cockpit:chat-draft:failed-module');
+  assert.ok(stored);
   const releaseOther = draft.bindModule('other', ['text']).draft.block('Other module');
   f.runtime.fail(f.runtime.getSnapshot()[0], new Error('Module failed'));
   assert.equal(f.runtime.getSnapshot().length, 0);
@@ -485,10 +631,28 @@ test('explicit module failure releases only its blockers and omits its revoked s
   assert.throws(() => captured.block('stale'), /cannot block/);
   assert.throws(() => handle.forDraft(draft.reference), /stopped/);
   releaseOther();
+  assert.equal(draft.getSnapshot().blocks.length, 0);
+  assert.equal(draft.hasUnclaimedStoredData(), true);
+  let dispatched = 0;
+  const incompleteSend = async () => { dispatched++; return true; };
+  assert.equal(await draft.send(incompleteSend), false);
+  assert.equal(await draft.runAction(incompleteSend), false);
+  assert.equal(dispatched, 0, 'neither text nor decision actions may omit opaque data');
+  assert.equal(draft.getSnapshot().text, 'Retained text');
+  assert.equal(values.get('cockpit:chat-draft:failed-module'), stored, 'blocked sends preserve the complete stored record');
+  f.runtime.stop();
+  await f.runtime.start();
+  f.runtime.prepareDraft(draft);
+  assert.equal(draft.hasUnclaimedStoredData(), false);
+  assert.deepEqual(handle.forDraft(draft.reference)!.getSnapshot().items, [fixtureItem('ready')]);
   assert.equal(await draft.send(async request => {
-    assert.deepEqual(request.body, { sessionId: 'failed-module', text: 'Retained text' });
+    assert.deepEqual(request.body, {
+      sessionId: 'failed-module', text: 'Retained text', attachments: [fixtureItem('ready').value],
+    });
     return true;
   }), true);
+  assert.deepEqual(handle.forDraft(draft.reference)!.getSnapshot().items, []);
+  assert.equal(draft.getSnapshot().text, '');
   f.runtime.stop();
 });
 

@@ -2306,8 +2306,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(container.querySelector('.module-draft-recovery'), null);
       await dispatch('.chat-input-message', 'keydown', { key: 'Enter', ctrlKey: true });
       await dispatch('.send', 'click');
-      assert.equal(sends, 2, 'module loss leaves ordinary core text usable');
-      assert.deepEqual(requests.at(-1)?.body, { sessionId: draft.sessionId, text: 'Crash module action' });
+      assert.equal(sends, 1, 'module loss must not dispatch text while silently omitting persisted module data');
+      assert.equal(draft.getSnapshot().text, 'Crash module action', 'host text stays editable and retained');
+      assert.equal(draft.hasUnclaimedStoredData(), true);
+      assert.equal(field.getSnapshot().items.length, 2, 'unrestored module values remain recoverable');
     } finally {
       restoreConsole.mock.restore();
       await act(() => root.render(null));
