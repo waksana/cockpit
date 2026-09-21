@@ -96,6 +96,8 @@ node --import ./apps/server/node_modules/tsx/dist/loader.mjs \
 `--trust-local-code` 表示信任这个包的可执行代码，**不是签名验证**。
 验证完成前不 import 入口，不运行安装脚本。相同版本不同摘要拒绝覆盖，
 不能覆盖当前进程仍在使用的代码。模块与 Copilot plugin 的格式和加载机制相互独立。
+开发者须在发布或部署不同包内容前递增版本并同步元数据，不是每次提交都递增；
+固定源码 SHA 不能替代版本号。详见[不可变交付版本规则](packaging.md#delivery-versions)。
 
 启用、停用和查询：
 

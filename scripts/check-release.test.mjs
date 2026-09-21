@@ -4,8 +4,9 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { checkRelease, checkTagTarget } from './check-release.mjs';
+import { checkRelease, checkSourceVersion, checkTagTarget } from './check-release.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'cockpit-release-'));
@@ -15,6 +16,9 @@ function fixture(t) {
     writeFileSync(join(root, name, 'package.json'), JSON.stringify({ version: '0.1.0' }));
   }
   mkdirSync(join(root, 'docs'));
+  mkdirSync(join(root, 'apps/mcp/src'));
+  writeFileSync(join(root, 'apps/mcp/src/index.ts'),
+    "const server = new McpServer({ name: 'cockpit-mcp-server', version: '0.1.0' });\n");
   writeFileSync(join(root, 'docs/release-notes.md'), '# Cockpit 0.1.0\n');
   const manifest = { format: 1, product: 'cockpit', version: '0.1.0', sourceSha: 'a'.repeat(40),
     node: process.versions.node, platform: 'linux', arch: 'x64' };
@@ -28,6 +32,17 @@ function fixture(t) {
   pack();
   return { root, archive, manifest, pack, check: () => checkRelease('v0.1.0', 'a'.repeat(40), archive, root) };
 }
+
+test('checked-in workspace, MCP and delivery notes use one version', () => {
+  checkSourceVersion(fileURLToPath(new URL('..', import.meta.url)));
+});
+
+test('delivery rejects a stale MCP self-reported version', t => {
+  const f = fixture(t);
+  writeFileSync(join(f.root, 'apps/mcp/src/index.ts'),
+    "const server = new McpServer({ name: 'cockpit-mcp-server', version: '0.0.9' });\n");
+  assert.throws(f.check, /MCP self-reported version/);
+});
 
 test('release metadata binds the tag, all workspace versions, fixed archive and current Node platform', t => {
   const f = fixture(t);
@@ -60,7 +75,7 @@ test('release rejects an unsupported package platform or different Node version'
 test('release notes cannot describe a different version than the artifact', t => {
   const f = fixture(t);
   writeFileSync(join(f.root, 'docs/release-notes.md'), '# Cockpit 0.0.9\n');
-  assert.throws(f.check, /Release notes must match the tag/);
+  assert.throws(f.check, /Release notes must match the workspace version/);
 });
 
 test('release binds both lightweight and annotated remote tags and rejects moved or missing tags', () => {

@@ -44,6 +44,12 @@ tests, builds, exercises isolated native contracts and verifies the runtime
 archive. Fork PRs use read-only permissions and no production credentials;
 there is no `pull_request_target` execution path.
 
+Before preparing an installable delivery, follow the
+[immutable delivery version rules](packaging.md#delivery-versions), including
+the target's existing version/digest, synchronized metadata and post-restart
+loaded identity. Ordinary tests check host workspace/MCP/release-note version
+consistency, but CI cannot discover an operator's installed module versions.
+
 Main requires a PR, the successful `Required checks` status on an up-to-date
 base, and resolved conversations. A maintainer checks scope and evidence before
 merging; there is no mandatory second-person approval while the project has one

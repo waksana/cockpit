@@ -73,6 +73,14 @@ is a fresh installation, without old API aliases or automatic migration.
 Breaking changes still require a new public version and clear release notes.
 Workspace packages are internal parts of Cockpit, not separately supported SDKs.
 
+Commits do not each need a version bump. Before publishing or deploying changed
+package contents, allocate a new version and follow the
+[immutable delivery version rules](docs/packaging.md#delivery-versions).
+This also applies to installation from a fixed source commit, not only tags.
+Module installers reject a different archive digest for an already installed
+module ID/version; a source SHA or new digest is not a substitute for a new
+version. Never delete an installed version or bypass this guard to replace it.
+
 The [release procedure](docs/packaging.md#versioned-releases) owns version changes,
 tags and publication: green main → `vX.Y.Z` → full checks/native smoke/build/package
 → publish the exact checked archive and checksum. It does **not** deploy to a
