@@ -156,6 +156,76 @@ test('cached content enters synchronously and short initial content follows late
   }
 });
 
+test('post-layout delivery corrects async growth before paint without synchronizing each change notification', () => {
+  const h = fixture(0);
+  h.scroll.follow();
+  h.scroll.changed({ contentReady: true });
+  assert.deepEqual(h.view.writes, [700]);
+  h.view.rows[0].height += 100;
+  h.scroll.changed();
+  const stale = h.frames.callbacks.at(-1)!;
+  h.view.rows.at(-1)!.height += 150;
+  h.scroll.changed();
+  assert.deepEqual(h.view.writes, [700], 'ordinary DOM notifications still coalesce');
+  assert.equal(h.frames.pending.size, 1);
+  h.scroll.changed({ layoutReady: true });
+  assert.deepEqual(h.view.writes, [700, 950], 'latest measured geometry is corrected in RO, not after paint');
+  assert.equal(h.frames.pending.size, 0);
+  stale();
+  h.scroll.changed({ layoutReady: true });
+  h.scroll.scroll();
+  assert.deepEqual(h.view.writes, [700, 950], 'duplicate delivery and stale RAF cannot correct twice');
+  assert.equal(h.scroll.following, true);
+});
+
+test('layout delivery keeps latest visible across short-page overflow, prepends and viewport changes', () => {
+  const h = fixture(0);
+  h.view.rows = h.view.rows.slice(0, 2);
+  h.scroll.follow();
+  h.scroll.changed({ contentReady: true });
+  for (const update of [
+    () => h.view.rows.unshift({ id: 'older', height: 200 }),
+    () => { h.view.rows[0].height += 80; },
+    () => { h.view.viewport -= 50; },
+  ]) {
+    update();
+    h.scroll.changed();
+    h.scroll.changed({ layoutReady: true });
+    assert.equal(h.view.top, h.view.bottom);
+    assert.equal(h.frames.pending.size, 0);
+    h.scroll.scroll();
+    assert.equal(h.scroll.following, true);
+  }
+});
+
+test('post-layout correction preserves reading anchors and respects touch, selection and explicit follow', () => {
+  const h = fixture();
+  const anchor = readAt(h, 275);
+  h.view.rows.unshift({ id: 'older', height: 200 });
+  h.view.rows.at(-1)!.height += 100;
+  h.scroll.changed({ layoutReady: true });
+  assert.deepEqual(h.view.firstVisible(), anchor);
+  assert.equal(h.view.top, 475);
+  assert.equal(h.scroll.following, false);
+  h.scroll.hold(true);
+  h.view.rows[0].height += 100;
+  h.scroll.changed({ layoutReady: true });
+  assert.equal(h.view.top, 475, 'RO must not move a held finger');
+  h.scroll.hold(false);
+  h.scroll.navigate();
+  const selected = h.view.firstVisible();
+  h.scroll.changed({ layoutReady: true });
+  assert.equal(h.view.top, 475, 'selection navigation still owns its position');
+  h.scroll.settle();
+  h.frames.flush();
+  assert.deepEqual(h.view.firstVisible(), selected);
+  h.scroll.follow();
+  h.view.rows.push({ id: 'local-message', height: 150 });
+  h.scroll.changed({ layoutReady: true });
+  assert.equal(h.view.top, h.view.bottom);
+  assert.equal(h.frames.pending.size, 0);
+});
+
 test('initial layout waits for a measurable viewport or finger release and never overrides reading intent', () => {
   for (const blocked of ['viewport', 'hold', 'intent', 'selection', 'interact', 'dispose']) {
     const h = fixture(0);
@@ -228,6 +298,7 @@ test('each mounted scroll adapter starts at latest and real gestures cancel queu
   const view = new Transcript();
   view.top = 0;
   const frames = new Frames();
+  let resized = () => {};
   let owner: ReturnType<typeof observeThreadScroll> | undefined;
   t.after(() => owner?.dispose());
   const globals: Record<string, unknown> = {
@@ -235,6 +306,11 @@ test('each mounted scroll adapter starts at latest and real gestures cancel queu
     CSS: { escape: (id: string) => id },
     requestAnimationFrame: frames.request.bind(frames),
     cancelAnimationFrame: frames.cancel.bind(frames),
+    ResizeObserver: class {
+      constructor(callback: () => void) { resized = callback; }
+      observe() {}
+      disconnect() {}
+    },
   };
   for (const [key, value] of Object.entries(globals)) {
     const original = Object.getOwnPropertyDescriptor(globalThis, key);
@@ -263,6 +339,13 @@ test('each mounted scroll adapter starts at latest and real gestures cancel queu
   owner = observeThreadScroll(el as HTMLDivElement, content as unknown as HTMLDivElement, () => {}, undefined,
     away => distances.push(away));
   frames.flush();
+  assert.equal(view.top, view.bottom);
+  view.rows.at(-1)!.height += 125;
+  resized();
+  assert.equal(view.top, view.bottom, 'the actual adapter corrects RO delivery before the next paint');
+  assert.equal(frames.pending.size, 0);
+  view.rows.at(-1)!.height -= 125;
+  resized();
   assert.equal(view.top, view.bottom);
   const wheel = new Event('wheel');
   Object.defineProperties(wheel, { deltaY: { value: -20 }, ctrlKey: { value: false } });

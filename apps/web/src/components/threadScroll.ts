@@ -198,9 +198,9 @@ export class ThreadScroll {
     this.remember();
   }
 
-  changed({ contentReady = false }: { contentReady?: boolean } = {}) {
+  changed({ contentReady = false, layoutReady = false }: { contentReady?: boolean; layoutReady?: boolean } = {}) {
     if (this.disposed || this.touching || this.moving) return;
-    // Only the first committed message layout is synchronous. An empty mount's
+    // Only the first message commit requests immediate positioning. An empty mount's
     // follow/resize frame must not consume this pre-paint positioning opportunity.
     if (this.initialPositionPending && contentReady && this.view.measure().viewport > 0) {
       this.initialPositionPending = false;
@@ -208,11 +208,18 @@ export class ThreadScroll {
       this.correct();
       return;
     }
-    if (this.frame !== null) return;
+    if (this.frame !== null && !layoutReady) return;
     const g = this.view.measure();
     const offset = this.anchor && this.view.offset(this.anchor.id);
     const shifted = offset != null && this.anchor && Math.abs(offset - this.anchor.offset) >= EPSILON;
     if (!this.forced && !resized(g, this.geometry) && !shifted) return;
+    // ResizeObserver already batches layout changes before paint. Deferring its
+    // correction to RAF would paint the new height with the old reading position.
+    if (layoutReady) {
+      this.cancelFrame();
+      this.correct();
+      return;
+    }
     const revision = this.revision;
     const frame = this.frames.request(() => {
       if (this.disposed || this.frame !== frame || revision !== this.revision) return;
@@ -323,7 +330,7 @@ export function observeThreadScroll(el: HTMLDivElement, content: HTMLDivElement,
     if (selection && !selection.isCollapsed
       && (content.contains(selection.anchorNode) || content.contains(selection.focusNode))) navigate();
   };
-  const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => { scroll.changed(); reportDistance(); });
+  const ro = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => { scroll.changed({ layoutReady: true }); reportDistance(); });
   ro?.observe(el);
   ro?.observe(content);
   el.addEventListener('scroll', onScroll, { passive: true });

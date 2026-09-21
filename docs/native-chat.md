@@ -367,8 +367,12 @@ does not restore the previous cross-view reading position; retained history and
 native cursors still avoid a fresh history read. The single scroll owner positions
 the first committed message layout before paint, including an asynchronous first
 page after an empty mount. Empty-layout follow frames do not consume this initial
-positioning; prior user reading intent cancels it. Subsequent geometry changes
-remain frame-coalesced, without hiding messages or waiting for module data.
+positioning; prior user reading intent cancels it. Subsequent DOM notifications
+remain frame-coalesced. When ResizeObserver delivers the resulting layout, the
+same owner corrects the reading position before that layout is painted, canceling
+any superseded RAF. This also covers auto-filled history, asynchronous module
+content and viewport changes: newly measured geometry is not painted with the
+previous scroll offset. No messages are hidden while waiting for module data.
 Within the same mounted view,
 rerenders, live updates and older-page insertion preserve the active reading
 anchor and gestures rather than forcing the reader to the bottom.
