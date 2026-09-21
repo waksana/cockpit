@@ -90,6 +90,12 @@ reload 状态，以及普通读取不触发 readiness 或原生加载。
 补充 busy/待决交互/队列/schedules 期间允许保存、unloaded 保持 unloaded、重复保存、
 持久化不确定结果、生命周期并发保护以及加载时资源校验；不把 mock 注入等同于生产故障实证。
 
+同一 native 入口还覆盖模型/Skill 变化后的 null 工具 metadata、MCP reload 不能恢复、
+显式 `session/tools-initialize` 在不推理/不重载的情况下恢复，以及旧会话冷恢复后再次
+启用专业 Skill 的复用。核对临时选择保留、被禁用 Skill 仍失败、真实原生工具过滤仍
+导致缺失，而非只核对连接。Engine 用例补充未知/未加载/忙碌/并发操作拒绝、原生错误、
+null 读回和关闭竞态；HTTP intent 与通用 MCP 调用器用既有 runner 验证。
+
 文件输入用例让 Engine 传入合成原生文件，再由 native view 读取。
 四种附件 schema/转发用例不等于每种媒体/模型均实测可读。完整 MCP/native fork 用例
 见[分叉指南](session-fork.md#local-regression-fixture)，不要用 schema 样例代替真实连接。

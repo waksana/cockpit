@@ -195,6 +195,9 @@ export class Engine {
       const [skills, mcp, tools] = await this.withSession(st, sdk, () => settled([
         sdk.rpc.skills.list(), sdk.rpc.mcp.list(), sdk.rpc.tools.getCurrentMetadata(),
       ] as const));
+      if (tools.tools === null) {
+        result.reasons.push('Native tool metadata is uninitialized; explicitly call session/tools-initialize when idle, then check readiness again');
+      }
       for (const skill of required.skills) {
         const expected = applied!.skills.find(value => value.path === skill.path);
         if (!skills.skills.some(value => value.name === expected?.name && value.enabled && value.path === skill.path)) {
@@ -207,7 +210,8 @@ export class Engine {
           || mcp.host.disabledServers.includes(name) || mcp.host.filteredServers.includes(name)) {
           result.reasons.push(`Role MCP is not connected: ${name}`);
         }
-        const offered = tools.tools?.filter(tool => tool.mcpServerName === name) ?? [];
+        if (tools.tools === null) continue;
+        const offered = tools.tools.filter(tool => tool.mcpServerName === name);
         for (const tool of config.tools ?? []) {
           if (tool === '*' ? !offered.length : !offered.some(value => value.mcpToolName === tool)) {
             result.reasons.push(`Role MCP tool is not currently offered: ${name}/${tool}`);
@@ -1284,6 +1288,19 @@ export class Engine {
     const st = await this.state(id);
     await this.transition(st, () => this.close(st));
     await this.ensureLoaded(st);
+  }
+
+  async initializeSessionTools(id: string): Promise<void> {
+    const st = await this.state(id);
+    if (!st.sdk) { this.release(st); throw new SessionUnloadedError(); }
+    await this.transition(st, async () => {
+      const sdk = st.sdk;
+      if (!sdk) throw new SessionUnloadedError();
+      await this.withSession(st, sdk, () => sdk.rpc.tools.initializeAndValidate());
+      // Configuration changes can invalidate the native table without removing tools.
+      const metadata = await this.withSession(st, sdk, () => sdk.rpc.tools.getCurrentMetadata());
+      if (!Array.isArray(metadata.tools)) throw new Error('Native tool initialization is unconfirmed; metadata is unavailable');
+    });
   }
 
   async stop(): Promise<void> {

@@ -47,7 +47,7 @@ export type ServerEngine = Pick<Engine,
   | 'login' | 'snapshot' | 'status' | 'busyCount' | 'newSession' | 'forkSession' | 'chat' | 'stop'
   | 'prompt' | 'cancel' | 'interrupt' | 'setModel' | 'rename' | 'compact' | 'rewind' | 'setMode'
   | 'deleteSession' | 'unload' | 'load'
-  | 'reload' | 'getPlan' | 'getUsage' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
+  | 'reload' | 'initializeSessionTools' | 'getPlan' | 'getUsage' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
   | 'planSupersede' | 'respondElicitation' | 'removeQueued' | 'refreshList'
   | 'listLive' | 'getMeta' | 'listGlobalMcp' | 'setMcpDefault'
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
@@ -315,6 +315,10 @@ const handlers: IntentHandlers = {
   'roles/list': async () => ({ roles: engine.listRoles() }),
   'roles/add': b => engine.addRoles(b.sessionId, b.roles),
   'roles/readiness': b => engine.roleReadiness(b.sessionId, b.roles),
+  'session/tools-initialize': async b => {
+    await engine.initializeSessionTools(b.sessionId);
+    return { ok: true };
+  },
   'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
   'session/chat': (b, signal) => engine.chat(b, signal),
   prompt: async (b) => b.attachments === undefined
