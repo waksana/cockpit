@@ -71,7 +71,7 @@ test('semantic middleware preserves real navigation and management controls with
       }));
       controls(management, enhanced ? 3 : 2);
       assert.match(management, /<button[^>]*aria-label="返回会话列表"/);
-      assert.match(management, new RegExp(`<span class="manage-title ck-text-primary">${title}</span>`));
+      assert.match(management, new RegExp(`<span class="pane-title ck-text-primary">${title}</span>`));
       assert.match(management, new RegExp(`<button[^>]*aria-label="${refresh}"[^>]*disabled=""`));
       if (enhanced) assert.match(management, new RegExp(`</div><button type="button">Fixture list: ${section}</button><button`));
       else assert.doesNotMatch(management, /Fixture list:/);
@@ -82,7 +82,7 @@ test('semantic middleware preserves real navigation and management controls with
       controls(detail, enhanced ? 5 : 3);
       assert.match(detail, new RegExp(`<button[^>]*aria-label="返回${title}列表"`));
       assert.match(detail, /<button[^>]*class="chat-back ck-icon-button rp lg:hidden"[^>]*aria-label="返回"/);
-      assert.match(detail, /<span class="manage-title manage-detail-headtitle">fixture-resource<\/span>/);
+      assert.match(detail, /<span class="pane-title">fixture-resource<\/span>/);
       if (enhanced) assert.match(detail, /<\/div><button type="button">Fixture detail: fixture-resource<\/button><\/header>/);
       else assert.doesNotMatch(detail, /Fixture detail:/);
       assert.doesNotMatch(detail, /<div class="lg:hidden"/);

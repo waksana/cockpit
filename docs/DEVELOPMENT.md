@@ -126,8 +126,10 @@ activation-owned subscription setup and cleanup failures. The precise contract i
 Host confirmation and directory pickers use native modal dialogs. The directory
 picker's non-input heading is the explicit autofocus target, including lazy
 loading, so opening New Session does not start path editing or request a keyboard.
-Session details use the same mounted dialog: modal below 1200px, nonmodal/docked
-above it without an entry focus move. The browser owns isolation, Tab and modal
+Session details compose the shared `InspectorPane`: the same mounted dialog is
+modal below 1200px and nonmodal/in-flow docked above it without an entry focus
+move. The persistent reading surface is the native autofocus target, so lazy
+content replacement does not remove initial focus. The browser owns isolation, Tab and modal
 return; errors from the shared local error store remain reachable inside host
 modals. No body mutation observer or focus-in trap supplements native behavior.
 Menus retain their command selection/arrow navigation and close restoration;
@@ -157,6 +159,16 @@ It includes multiple roles and similarly named non-module resources so visual
 review can distinguish explicit module metadata from name-based inference.
 Check desktop/mobile, native checkbox keyboard use, long names and both themes.
 It is not evidence of native role assembly or production resource readiness.
+This scene also exercises the real global MCP/Skills management pages: use the
+global menu or `&page=mcp` / `&page=skills`. The fixture owns both global defaults
+and per-session switches separately; changing one does not pretend to change
+the other. Add `&empty=1` for empty catalogs, `&fail=1` for explicit resource
+failures, or `&delay=1` for 1.2-second synthetic reads/mutations (initial loading,
+retained refresh content and row pending). These switches never enable transport.
+Use the same scene at 1600px, 1024px and 390px for three columns, overlay and
+single-page navigation; cross the live breakpoints with an open inspector too.
+The [shared component map](frontend-guidelines.md#宿主组件与页面组合) explains which
+component owns each header, content scroller and optional layout slot.
 
 When changing a Chat component, update affected shared scenarios in the same
 change and keep their contract tests current. Add a scenario only for a distinct

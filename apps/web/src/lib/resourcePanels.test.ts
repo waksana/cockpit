@@ -247,7 +247,7 @@ test('directory picker without an initial path has no hardcoded home and cannot 
   const html = renderToStaticMarkup(createElement(DirPicker, {
     onCreate: async () => { throw new Error('render must not create a session'); }, onCreated: noop, onCancel: noop,
   }));
-  assert.match(html, /<dialog[^>]*class="dialog-scrim directory-modal host-modal"[^>]*aria-labelledby="[^"]+"/);
+  assert.match(html, /<dialog[^>]*class="dialog-scrim directory-modal host-modal ck-modal"[^>]*aria-labelledby="[^"]+"/);
   assert.match(html, /<h3[^>]*tabindex="-1"[^>]*data-dialog-focus="true">新建会话<\/h3>/);
   assert.doesNotMatch(html, /\/home\/honglai|没有子文件夹/);
   assert.match(html, /class="dialog-btn ck-button ck-primary primary rp" disabled=""[^>]*>创建会话/);
@@ -313,7 +313,7 @@ for (const page of nativePages) {
     assert.match(html, /会话未加载。恢复后可查看这些设置/);
     assert.match(html, /聊天历史仍可直接查看/);
     assert.match(html, /class="dialog-btn ck-button rp" aria-busy="false" aria-describedby="[^"]+">恢复会话<\/button>/);
-    assert.match(html, /class="session-resume" role="group" aria-label="会话未加载"/);
+    assert.match(html, /class="session-resume ck-surface" role="group" aria-label="会话未加载"/);
     assert.doesNotMatch(html, /没有可用的 skill|本会话没有可用的 MCP|没有配置 MCP/);
     assert.match(html, /aria-label="刷新" disabled=""/);
   });

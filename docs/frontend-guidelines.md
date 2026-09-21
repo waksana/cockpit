@@ -113,6 +113,52 @@ ARIA 用于补足原生/可见内容未能表达的名称、说明或状态，�
 复用已有语义色与文字层级，在浅色/深色主题都保持可读；不要用自选亮色、
 额外 badge 或装饰 hover 效果吸引无必要的注意。
 
+## 宿主组件与页面组合
+
+新页面先组合现有层，不再复制页面标题、按钮、字段或滚动容器的样式。
+公共外观的唯一来源仍是 `styles/primitives/public-ui.scss`，宿主也消费
+`ck-button` / `ck-icon-button` / `ck-input`；私有组件负责可复用的语义组合，
+不再建立一套按钮外观。模块不能导入这些私有 React 组件。
+
+| 层 | 维护位置与职责 |
+| --- | --- |
+| 基础 | `tokens.scss` 的字体角色、间距、圆角、语义色；公共 `ck-*` 控件、原生 disabled、内收 focus-visible。Lucide 与公共尺寸仍由模块 UI 指南维护。 |
+| 页面骨架 | `Shell` 的 `master`、`main`、`inspector`、`overlays` 槽；不读取 URL、会话或资源状态。只需主页面时省略其余槽。 |
+| 列表与主内容 | `MasterPane` / `DetailPane` 负责窄屏可见性及 inert；`PaneHeader` 组合 leading/title/actions，`PaneBody` 声明滚动与内边距。 |
+| 配置/详情 | `InspectorPane` 是可停靠的详情框，不是任意页面包装器；`SessionDetails` 选择业务内容，`ManagementShell` 组合管理页。 |
+| 表单与内容 | `UI.tsx` 的字段、选择卡、开关、section heading 与 `Badge`；`ResourceRow.tsx` 组合名称/来源/开关/状态、完整文本及错误披露，不拥有资源请求。 |
+| 状态与浮层 | `StateNotice` 区分 empty/loading/info/error；`Dialog` / `DirectoryModal` 使用原生模态，菜单沿用既有键盘和关闭所有者。 |
+
+宿主与模块的普通表面、标题、动作行和非交互 badge 共用
+`ck-surface` / `ck-heading` / `ck-actions` / `ck-badge`；原生模态外观使用 `ck-modal`。
+这是[独立声明的公共 CSS 能力](module-ui-guide.md#compatibility-and-ownership)，
+不是让模块导入宿主组件或把普通页面变成模态。组件本身不推断操作成功或资源就绪。
+
+`PaneBody` 默认自己滚动并带统一内容内边距。聊天主内容使用
+`scroll={false} padded={false}`，把消息滚动完全交给 Thread；
+列表头、详情头和浮动动作不放入内容滚动区。不能再用页面 CSS 为第三栏预留
+`padding` 或另设固定宽度补偿：停靠的 inspector 本身参与布局。
+
+响应式阈值集中在 `styles/_responsive.scss` 与对应的 `lib/layout.ts` 行为查询，
+由合同用例检查两者一致：925px 起左列表停靠，1200px 起右详情停靠；
+600–1199px 详情为带遮罩的原生模态，低于 600px 占满页面。
+页面决定窄屏显示列表还是主内容及如何返回，Shell 不拥有第二份导航状态。
+断点仍是既有产品策略，不是任意新页面各选一套尺寸。
+
+焦点按语义处理：普通控件保留内收可见轮廓，静态初始阅读目标使用阅读标记，
+不伪装成按钮。Inspector 的持久容器是原生 autofocus 目标，避免 lazy 内容替换
+移除已聚焦的临时关闭按钮；宽屏非模态打开不调用 `show()` 或主动移焦。
+目录对话框从静态标题开始，确认/文本对话框仍使用浏览器的默认初始焦点。
+刷新数据不移焦；菜单返回、已移除控件恢复和触摸滑动聊天时的输入 blur 保持各自所有权。
+`:focus-visible` 是浏览器判断，不等于仅 Tab；F8 不需要输入模式跟踪器。
+
+扩展共享层的条件是多个页面的**同一语义**缺少表达，而不是某个截图需要几个像素。
+先增加有类型、被实际消费的变体，再迁移调用者并删除重复声明。
+聊天 prose/code、媒体/波形、原生状态的资源行分区、会话头像与角色来源是内容专用部分，
+可以保留布局，但复用基础字体/颜色/控件，不能重置公共类或缩小独立动作的触摸目标。
+现有 [Chat Lab](DEVELOPMENT.md#isolated-chat-component-review) 是组合示例和行为入口，
+不维护第二套 demo 组件。
+
 ## 短正反例
 
 | 场景 | 优先做法 | 避免 |

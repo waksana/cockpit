@@ -27,7 +27,7 @@ function MasterHeaderBase({ section, item, onRefresh, actions }: ManagementHeade
         onClick={() => up(item === null ? '/' : `/${section}`)}>
         <Icon name="back" size={24} />
       </button>}
-      title={<span className="manage-title ck-text-primary">{SECTION_TITLE[section]}</span>}
+      title={<span className="pane-title ck-text-primary">{SECTION_TITLE[section]}</span>}
       actions={<>{actions}<button className="ck-icon-button rp manage-action" type="button"
         aria-label={section === 'mcp' ? '刷新 Copilot MCP 配置缓存' : '刷新'}
         disabled={!onRefresh || connState !== 'open' || busy} aria-busy={busy} onClick={() => {
@@ -48,17 +48,16 @@ function DetailHeaderBase({ item, actions }: ManagementDetailHeaderProps) {
     leading={<button className="chat-back ck-icon-button rp lg:hidden" type="button" aria-label="返回" onClick={() => up()}>
       <Icon name="back" size={24} />
     </button>}
-    title={<span className="manage-title manage-detail-headtitle">{item}</span>}
+    title={<span className="pane-title">{item}</span>}
     actions={actions} />;
 }
 
 export function ManagementShell({ section, item, master, detail, onRefresh }: {
   section: ManageSection; item: string | null; master: ReactNode; detail: ReactNode; onRefresh?: () => void;
 }) {
-  return <Shell ariaLabel="管理">
-    <MasterPane ariaLabel={SECTION_TITLE[section]} mobileVisible={item === null}
-      header={<MasterHeader section={section} item={item} onRefresh={onRefresh} />}>{master}</MasterPane>
-    <DetailPane ariaLabel="详情" mobileVisible={item !== null}
-      header={item !== null ? <DetailHeader item={item} /> : undefined}>{detail}</DetailPane>
-  </Shell>;
+  return <Shell ariaLabel="管理"
+    master={<MasterPane ariaLabel={SECTION_TITLE[section]} mobileVisible={item === null}
+      header={<MasterHeader section={section} item={item} onRefresh={onRefresh} />}>{master}</MasterPane>}
+    main={<DetailPane ariaLabel="详情" mobileVisible={item !== null}
+      header={item !== null ? <DetailHeader item={item} /> : undefined}>{detail}</DetailPane>} />;
 }

@@ -1,3 +1,6 @@
+@use 'host-ui';
+@use 'surfaces';
+
 // Public Module UI v1. Business layout stays with the consuming component.
 :root {
   --ck-color-text: var(--primary-text-color);
@@ -35,6 +38,7 @@
   background: transparent;
   color: var(--ck-color-text);
   font: inherit;
+  font-size: var(--host-text-body);
   line-height: var(--host-leading-ui);
   text-decoration: none;
   cursor: pointer;
@@ -59,6 +63,7 @@
   background: var(--ck-color-surface);
   color: var(--ck-color-text);
   font: inherit;
+  font-size: var(--host-text-body);
   line-height: var(--host-leading-ui);
   accent-color: var(--ck-color-accent);
 }

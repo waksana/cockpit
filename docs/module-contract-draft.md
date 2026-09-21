@@ -204,7 +204,7 @@ scope 已关闭的模块也不调用。安装、启停和版本选择仍只在�
 
 | 入口 | 当前实际提供 | 作用域与限制 |
 | --- | --- | --- |
-| 前端版本与运行基础 | `apiVersion: 2`、`uiVersion: 1`、`menuVersion: 1`、`moduleId`、宿主 `react`、`createPortal`、`signal`、`report` | 同一模块激活生命周期；能力分别检查，不另建 React root |
+| 前端版本与运行基础 | `apiVersion: 2`、`uiVersion: 1`、`uiSurfaceVersion: 1`、`menuVersion: 1`、`moduleId`、宿主 `react`、`createPortal`、`signal`、`report` | 同一模块激活生命周期；能力分别检查，不另建 React root |
 | 前端模块 API | `apiBase`、公开 `config`、`request(path, init)` | 请求只到本模块的摘要绑定 API，带既有认证；不是任意原生 API 代理，公开配置不能含长期密钥 |
 | 前端模块事件 | `onEvent(listener)`、`onInvalidate(listener)` | 只接收本模块 payload/失效提示，沿用既有 SSE；不是原生聊天事件订阅 |
 | 宿主基础 state | `context.state.host.getSnapshot()` / `subscribe()` | 只有当前 `sessionId`、页面 `visible`、连接 `connected` |
@@ -457,6 +457,11 @@ apiBase、公开配置、request、signal、onInvalidate、onEvent 和 report。
 宿主并行初始化不同前端模块；单个超时/错误不阻塞其他模块，晚结果不能重新发布已撤销贡献。
 
 当前宿主另提供 `context.uiVersion: 1`，声明已实现的公共语义 CSS 与图标规范。
+共享表面组合另以 `context.uiSurfaceVersion: 1` 声明；使用新增 surface/heading/actions/badge/modal
+样式的消费者必须独立检查该能力，不能从 UI v1 或包版本推断。
+它只声明 CSS 能力，不新增 React 运行时、组件中间件边界或原生模态行为。
+准确类名、变量及组合由[模块 UI 指南](module-ui-guide.md#public-classes)维护；
+配套消费者使用真实可获取的宿主源码 pin，不把当前源码能力当成旧 Release 已提供。
 精确类名、变量、兼容条件、两仓交付顺序与可运行示例统一维护在
 [模块 UI 开发指南](module-ui-guide.md)。这是前端 additive 能力，不是新的 manifest 字段；
 依赖 UI v1 的模块必须检查该字段并明确拒绝不兼容激活，不能只看宿主 package 版本。

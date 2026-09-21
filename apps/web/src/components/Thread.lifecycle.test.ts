@@ -432,7 +432,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
 
       await mount(true, '/skills');
       assert.equal(document.activeElement, document.body, 'entering management does not move focus to Back');
-      assert.equal(node('.manage-title').textContent, '全局 Skills');
+      assert.equal(node('.pane-title').textContent, '全局 Skills');
       const refresh = node('[aria-label="刷新"]');
       assert.equal(refresh.attributes.has('disabled'), false);
       await click(refresh);
@@ -443,13 +443,13 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(node('.fixture-route').textContent, '/');
 
       await mount(true, '/skills/resource');
-      assert.equal(node('.manage-detail-headtitle').textContent, 'resource');
+      assert.equal(node('.manage-detail-header').querySelector('.pane-title')?.textContent, 'resource');
       assert.equal(document.activeElement, document.body, 'entering a detail does not focus its title');
       if (enhanced) await click(node('[aria-label="Module detail action"]'));
       noNestedButtons();
       await click(node('[aria-label="返回"]'));
       assert.equal(node('.fixture-route').textContent, '/skills');
-      assert.equal(container.querySelector('.manage-detail-headtitle'), null);
+      assert.equal(container.querySelector('.manage-detail-header'), null);
       assert.equal(document.activeElement, document.body, 'removing detail Back does not focus another control');
       await act(() => root.render(null));
     }
@@ -2103,7 +2103,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)); });
     assert.equal(draft.getSnapshot().blocks.length, 0);
     assert.equal(container.querySelector('.cockpit-speech-panel'), null, 'failure stays on the retry button');
-    assert.match(container.querySelector('.cockpit-speech-mic')!.attributes.get('class')!, /cockpit-speech-retry/);
+    assert.match(container.querySelector('.cockpit-speech-mic')!.attributes.get('class')!, /\bck-danger\b/);
     const capturesBeforeRetry = captures;
     await click('.cockpit-speech-mic');
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)); finish('replayed'); });

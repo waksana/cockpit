@@ -47,8 +47,8 @@ test('Module UI v1 publishes common primitives without private ancestors or icon
   assert.doesNotMatch(chat, /queue-chevron/);
   const management = compile(new URL('../styles/components/manage.scss', import.meta.url).pathname).css;
   assert.match(management, /\.manage-row-sub \{[^}]*display: block;/);
-  assert.match(management, /\.switch \{[^}]*height: var\(--ck-control-size\)/);
-  assert.match(management, /\.switch::before \{[^}]*height: 1.4rem;/,
+  assert.match(css, /\.switch \{[^}]*height: var\(--ck-control-size\)/);
+  assert.match(css, /\.switch::before \{[^}]*height: 1.4rem;/,
     'the shared switch target must not stretch its original visual track');
 });
 

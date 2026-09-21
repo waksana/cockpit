@@ -1,9 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { compile } from 'sass';
 import { Intents, SessionMeta, McpServerSession, SkillSession } from '@cockpit/protocol';
 import { createCockpitStore } from '../net/store';
 import { installResourceFixture } from './resource-fixtures';
 import { workspaceSessionId } from './workspace-fixtures';
+
+test('the maintained lab compiles shared styles instead of redefining its button controls', () => {
+  const css = compile(new URL('./chat-lab.scss', import.meta.url).pathname).css;
+  assert.match(css, /@media \(max-width: 599px\)/);
+  assert.doesNotMatch(css, /\.lab-toolbar (?:button|:focus-visible)/);
+});
 
 test('resource scene exercises actual names and explicit provenance without HTTP', async t => {
   const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('Fixture must not use HTTP'); });
@@ -80,5 +87,41 @@ test('resource role saving allows busy work and never loads an unloaded fixture'
     assert.equal((await state.roleReadiness(workspaceSessionId)).rolesNeedReload, loaded);
     assert.equal((await state.refreshRoles(workspaceSessionId)).loaded, loaded);
   }
+  assert.equal(fetch.mock.callCount(), 0);
+});
+
+test('global resource fixtures use native contracts, isolated mutations and explicit empty/error/loading states', async t => {
+  const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('Fixture must not use HTTP'); });
+  const store = createCockpitStore();
+  installResourceFixture(store);
+  const state = store.getState();
+  const mcp = await state.mcpGlobal();
+  Intents['mcp/global'].result.parse({ servers: mcp });
+  await state.mcpSetDefault(mcp[0].name, false);
+  assert.equal((await state.mcpGlobal())[0].defaultOn, false);
+  assert.equal((await state.mcpSession(workspaceSessionId))[0].enabled, true);
+  const skills = await state.skillsGlobal();
+  Intents['skills/global'].result.parse({ skills });
+  await state.skillsSetGlobal(skills[0].name, false);
+  const skill = await state.skillsRead(skills[0].name);
+  Intents['skills/read'].result.parse(skill);
+  assert.equal(skill.enabled, false);
+  assert.ok(skill.body?.includes('Synthetic skill body'));
+  assert.equal((await state.skillsSession(workspaceSessionId))[0].enabled, true);
+  installResourceFixture(store, false, { empty: true });
+  assert.deepEqual(await store.getState().mcpGlobal(), []);
+  assert.deepEqual(await store.getState().skillsSession(workspaceSessionId), []);
+  installResourceFixture(store, false, { fail: true });
+  await assert.rejects(store.getState().mcpGlobal(), /Synthetic resource failure/);
+  await assert.rejects(store.getState().getResources(workspaceSessionId, ['models']), /Synthetic resource failure/);
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  installResourceFixture(store, false, { beforeRequest: () => gate });
+  let settled = false;
+  const pending = store.getState().skillsGlobal().then(value => { settled = true; return value; });
+  await Promise.resolve();
+  assert.equal(settled, false);
+  release();
+  assert.ok((await pending).length > 0);
   assert.equal(fetch.mock.callCount(), 0);
 });

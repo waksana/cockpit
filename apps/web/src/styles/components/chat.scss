@@ -2,6 +2,7 @@
 // _chatTopbar / _chat / _chatBubble / _input, with cockpit's signature deviation
 // (assistant replies are NOT bubbles — they read as a document).
 @use 'chat-design';
+@use '../responsive';
 
 .chat {
   --chat-placeholder-color: #757570;
@@ -40,18 +41,6 @@
 }
 
 // ── Topbar (two-line: title + status/model subtitle, symmetric height) ──────
-.chat-topbar {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  height: var(--header-height);
-  min-height: var(--header-height);
-  padding: 0 0.5rem;
-  border-bottom: 1px solid var(--border-color);
-  background-color: var(--surface-color);
-  button:focus-visible { outline: 2px solid var(--primary-text-color); outline-offset: -3px; }
-}
 .chat-back { flex: none; }
 .chat-topbar-content {
   flex: 1 1 auto;
@@ -62,21 +51,12 @@
   align-items: flex-start;
   gap: 0.05rem;
   padding-inline-start: 0.25rem;
-  // It's a <button> (opens the info panel) — strip chrome.
-  border: none;
-  background: transparent;
   text-align: start;
-  cursor: pointer;
-  font-family: inherit;
-  color: inherit;
   overflow: hidden;
 }
 .chat-topbar-title {
   max-width: 100%;
-  font-size: var(--font-size-16);
-  font-weight: 500;
   line-height: 1.2;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .chat-topbar-subtitle {
   max-width: 100%;
@@ -823,7 +803,7 @@ button.activity-head {
   .process-summary-states { gap: var(--chat-gap-meta); }
   .process-summary time { display: none; }
 }
-@media (max-width: 599px) {
+@media (max-width: responsive.$phone-max) {
   .user-message { max-width: 92%; }
 }
 @container chat-agent (max-width: 36rem) {

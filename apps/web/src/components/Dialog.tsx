@@ -7,6 +7,7 @@ import { createPortal } from 'react-dom';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { useNativeDialog } from '../lib/useNativeDialog';
 import { UxErrorNotifications } from './UxErrorNotifications';
+import { StateNotice } from './StateNotice';
 
 // Both the lazy placeholder and the loaded picker own the same modal boundary.
 export function DirectoryModal({ children, busy = false, onCancel }: {
@@ -16,11 +17,11 @@ export function DirectoryModal({ children, busy = false, onCancel }: {
   useNativeDialog(ref);
   const titleId = useId();
   const modal = (
-    <dialog ref={ref} className="dialog-scrim directory-modal host-modal" aria-labelledby={titleId} aria-busy={busy}
+    <dialog ref={ref} className="dialog-scrim directory-modal host-modal ck-modal" aria-labelledby={titleId} aria-busy={busy}
       onCancel={event => { event.preventDefault(); if (!busy) onCancel(); }}
       onClick={event => { if (event.target === event.currentTarget && !busy) onCancel(); }}>
-      <div className="dialog-card dirpicker">
-        <h3 id={titleId} className="dialog-title" tabIndex={-1} data-dialog-focus
+      <div className="dialog-card dirpicker ck-surface">
+        <h3 id={titleId} className="dialog-title ck-heading" tabIndex={-1} data-dialog-focus
           ref={heading => { if (heading) heading.autofocus = true; }}>新建会话</h3>
         {children}
       </div>
@@ -73,12 +74,12 @@ function DialogContent({
   };
 
   return (
-    <dialog ref={dialogRef} className="dialog-scrim host-modal" aria-label={title} aria-busy={action.busy}
+    <dialog ref={dialogRef} className="dialog-scrim host-modal ck-modal" aria-label={title} aria-busy={action.busy}
       aria-describedby={message ? `${identity}-message` : undefined}
       onCancel={event => { event.preventDefault(); cancel(); }}
       onClick={event => { if (event.target === event.currentTarget) cancel(); }}>
-      <div className="dialog-card">
-        <h3 className="dialog-title" data-dialog-focus>{title}</h3>
+      <div className="dialog-card ck-surface">
+        <h3 className="dialog-title ck-heading" data-dialog-focus>{title}</h3>
         {message && <p id={`${identity}-message`} className="dialog-message">{message}</p>}
         {input && (
           <input
@@ -94,11 +95,11 @@ function DialogContent({
             }}
           />
         )}
-        {action.error && <p className="dialog-message dialog-error" role="alert">操作失败：{action.error}</p>}
+        {action.error && <StateNotice kind="error">操作失败：{action.error}</StateNotice>}
         {!action.connected && (
-          <p className="dialog-message" role="status">等待连接…连接恢复后可重试。</p>
+          <StateNotice>等待连接…连接恢复后可重试。</StateNotice>
         )}
-        <div className="dialog-actions">
+        <div className="dialog-actions ck-actions">
           <button type="button" className="dialog-btn ck-button rp" disabled={action.busy} onClick={cancel}>取消</button>
           <button
             type="button"

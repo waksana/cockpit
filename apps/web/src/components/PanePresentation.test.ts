@@ -87,7 +87,7 @@ test('refresh uses one circular arrow everywhere, with no font glyph or square o
 });
 test('resume groups its message and centered action in a single notice; copying preserves value geometry', () => {
   const css = compile(new URL('../styles/components/info-panel.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.session-resume \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*align-items: center;[^}]*border: 1px solid/);
+  assert.match(css, /\.session-resume \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*align-items: center;/);
   assert.match(css, /\.session-resume-message \{[^}]*margin: 0;/);
   assert.match(css, /\.copy-value-text, \.copy-value-feedback \{[^}]*grid-area: 1\/1;/);
   assert.match(css, /\.copy-value-text\[aria-hidden=true\] \{[^}]*visibility: hidden;/);
@@ -99,23 +99,24 @@ test('session pages share flat density and multiline settings without changing c
   const manage = compile(new URL('../styles/components/manage.scss', import.meta.url).pathname).css;
   const tokens = compile(new URL('../styles/tokens.scss', import.meta.url).pathname).css;
   const publicUi = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
-  assert.match(info, /\.info-panel-body \{[^}]*padding: var\(--host-space-lg\);[^}]*font-size: var\(--host-text-body\);[^}]*line-height: var\(--host-leading-ui\)/);
-  assert.match(manage, /\.manage-body \{[^}]*padding: var\(--host-space-lg\);[^}]*font-size: var\(--host-text-body\)/);
+  const pane = compile(new URL('../styles/components/pane.scss', import.meta.url).pathname).css;
+  assert.match(pane, /\.pane-body \{[^}]*font-size: var\(--host-text-body\);[^}]*line-height: var\(--host-leading-ui\)/);
+  assert.match(pane, /\.pane-body\[data-padded=true\] \{[^}]*padding: var\(--host-space-lg\)/);
+  assert.doesNotMatch(info + manage, /\.(?:info-panel-body|manage-body|manage-detail) \{/);
   assert.match(tokens, /--host-space-lg: 16px;[^}]*--host-space-xl: 24px;/);
   assert.match(tokens, /--host-text-title: var\(--font-size-16\);[^}]*--host-text-body: var\(--font-size-14\);[^}]*--host-text-meta: var\(--font-size-12\)/);
   assert.match(publicUi, /--ck-radius: var\(--host-radius-control\)/);
-  assert.match(manage, /\.manage-row \{[^}]*background: transparent;[^}]*border-radius: 0;[^}]*border-bottom: 1px solid/);
+  assert.match(publicUi, /\.resource-row \{[^}]*border-bottom: 1px solid/);
   assert.match(manage, /\.manage-session-row \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto;/);
   assert.match(manage, /\.manage-row-status \{[^}]*min-height: calc/);
   assert.match(manage, /\.manage-session-row > \.manage-row-source \{[^}]*grid-column: 1;[^}]*grid-row: 2;/);
   assert.match(manage, /\.manage-session-row > \.manage-row-status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[^}]*justify-content: flex-end;/);
   assert.match(manage, /\.manage-session-row\[data-mcp\] \{[^}]*padding-block: var\(--host-space-sm\);/);
   assert.match(manage, /\.manage-mcp-identity \{[^}]*grid-row: 1\/3;[^}]*flex-direction: column;[^}]*justify-content: center;[^}]*gap: var\(--host-space-xs\);/);
-  assert.match(manage, /\.manage-session-row \.manage-row-main:empty \{[^}]*display: none;/);
   assert.match(info, /\.info-session-id-value \{[^}]*overflow-wrap: anywhere;[^}]*user-select: text;/);
   assert.doesNotMatch(info.match(/\.info-session-id-value \{([^}]*)\}/)![1], /ellipsis|hidden|sticky|line-clamp/);
-  assert.match(info, /\.info-control \{[^}]*flex-direction: column;/);
-  assert.match(info, /\.info-select \{[^}]*width: 100%;/);
+  assert.match(publicUi, /\.ui-field \{[^}]*flex-direction: column;/);
+  assert.match(publicUi, /\.ui-select \{[^}]*width: 100%;/);
   assert.match(info, /\.panel-expandable-text \{[^}]*-webkit-line-clamp: 2;/);
 });
 

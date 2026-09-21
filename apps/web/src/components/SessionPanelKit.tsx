@@ -5,7 +5,8 @@ import { Icon } from './Icon';
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { useMediaQuery } from '../lib/useMediaQuery';
-import { PaneHeader } from './PaneHeader';
+import { PHONE_QUERY } from '../lib/layout';
+import { PaneBody, PaneHeader } from './PaneHeader';
 import { StateNotice } from './StateNotice';
 import { useClippedText } from '../lib/useClippedText';
 
@@ -27,7 +28,7 @@ export function ExpandableText({ text, label, className = '' }: {
 // The shell for a per-session detail sub-page rendered in the info-panel slot:
 // the same header (close + title) and scrollable body as SessionInfoPanel.
 export function PanelCloseButton({ onClose }: { onClose: () => void }) {
-  const phone = useMediaQuery('(max-width: 599px)');
+  const phone = useMediaQuery(PHONE_QUERY);
   return (
     <button className="ck-icon-button rp" type="button" aria-label={phone ? '返回对话' : '关闭'} onClick={onClose}>
       <Icon name={phone ? 'back' : 'close'} size={24} />
@@ -45,12 +46,12 @@ export function PanelPageShell({ title, onClose, loading, children, bodyClassNam
   return (
     <>
       <PaneHeader leading={<PanelCloseButton onClose={onClose} />}
-        title={<span className="info-panel-title" title={title}>{title}</span>} />
-      <div className={`info-panel-body scrollable ${bodyClassName}`.trim()}>
+        title={<span className="pane-title" title={title}>{title}</span>} />
+      <PaneBody className={`info-panel-body ${bodyClassName}`.trim()}>
         {loading
           ? <StateNotice kind="loading" placement="pane">加载中…</StateNotice>
           : children}
-      </div>
+      </PaneBody>
     </>
   );
 }
@@ -84,7 +85,7 @@ export function SessionResume({ sessionId, required, onResumed }: {
     await loadSession(sessionId);
   }, onResumed);
   return (
-    <div className="session-resume" role="group" aria-label="会话未加载">
+    <div className="session-resume ck-surface" role="group" aria-label="会话未加载">
       <p id={descriptionId} className="session-resume-message" role="status">会话未加载。恢复后可查看这些设置；聊天历史仍可直接查看。</p>
       <button type="button" className="dialog-btn ck-button rp"
         disabled={!action.connected || !session || session.closing || session.status === 'running' || session.compacting || action.busy}

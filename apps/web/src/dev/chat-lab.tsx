@@ -258,11 +258,19 @@ if (scene === 'workspace' || scene === 'resources') {
   installWorkspaceFixture(useCockpit);
   if (scene === 'resources') {
     const { installResourceFixture } = await import('./resource-fixtures');
-    installResourceFixture(useCockpit, new URLSearchParams(location.search).get('longNames') === '1');
+    const query = new URLSearchParams(location.search);
+    installResourceFixture(useCockpit, query.get('longNames') === '1', {
+      empty: query.get('empty') === '1',
+      fail: query.get('fail') === '1',
+      beforeRequest: query.get('delay') === '1' ? () => new Promise(resolve => setTimeout(resolve, 1200)) : undefined,
+    });
   }
   getSessionDraft(workspaceSessionId).edit(workspaceDraft);
   const { default: App } = await import('../App');
-  root.render(<MemoryRouter initialEntries={[`/session/${workspaceSessionId}/info`]}>
+  const page = new URLSearchParams(location.search).get('page');
+  const initialRoute = scene === 'resources' && (page === 'mcp' || page === 'skills')
+    ? `/${page}` : `/session/${workspaceSessionId}/info`;
+  root.render(<MemoryRouter initialEntries={[initialRoute]}>
     <App /><UxErrorNotifications />
   </MemoryRouter>);
 } else {

@@ -85,7 +85,7 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
         <span className="dirpicker-ico"><Icon name="back" size={20} /></span>
         <span className="dirpicker-name">上级目录</span>
       </button>}
-      {resource.valid && entries?.length === 0 ? <div className="dirpicker-empty">（没有子文件夹）</div>
+      {resource.valid && entries?.length === 0 ? <StateNotice kind="empty" placement="pane">（没有子文件夹）</StateNotice>
         : entries?.map(entry => <button key={entry.name} type="button" className="dirpicker-row ck-button rp"
           disabled={!resource.valid || locked} onClick={() => load(`${path === '/' ? '' : path}/${entry.name}`)}>
           <span className="dirpicker-ico folder"><Icon name="folder" size={20} /></span>
@@ -96,7 +96,7 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
     {roleResource.status && <StateNotice kind={roleResource.failed ? 'error' : 'loading'}>{roleResource.status}</StateNotice>}
     {roleResource.failed && <button type="button" className="dialog-btn ck-button" disabled={locked}
       onClick={() => void roleResource.refresh()}>重试加载角色</button>}
-    {roleResource.valid && !rolesAvailable && <p role="alert">所选角色已不可用，请关闭窗口后重新选择。</p>}
+    {roleResource.valid && !rolesAvailable && <StateNotice kind="error">所选角色已不可用，请关闭窗口后重新选择。</StateNotice>}
     {!!roleResource.data?.length && <RolePicker roles={roleResource.data} selected={selectedRoles}
       disabled={locked || !roleResource.valid} onChange={setSelectedRoles} />}
     <details className="dirpicker-help">
@@ -104,16 +104,16 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
       <p>角色提供模块的指令、技能和工具，不改变会话的业务身份，也不代表当前能力就绪。创建后暂不支持追加角色。</p>
       <p>会话使用工作目录的原生配置，创建时不会发送消息。从未发送消息的空会话可能在卸载后消失。</p>
     </details>
-    {action.error && <p className="dialog-message dialog-error" role="alert">
+    {action.error && <StateNotice kind="error">
       创建未完成：{action.error}。不会自动重建或发送消息；请先检查原生会话列表。
-    </p>}
+    </StateNotice>}
     {incompleteSessionId && <p>已确认创建、后续状态尚待核对的原生会话：
       <button type="button" className="dialog-btn ck-button" onClick={() => { onCreated(incompleteSessionId); onCancel(); }}>
         {incompleteSessionId}
       </button>
     </p>}
     </div>
-    <div className="dialog-actions">
+    <div className="dialog-actions ck-actions">
       <button type="button" className="dialog-btn ck-button rp" disabled={action.busy} onClick={onCancel}>取消</button>
       <button type="button" className="dialog-btn ck-button ck-primary primary rp" disabled={!canCreate} onClick={create}>
         {action.busy ? '创建中…' : '创建会话'}

@@ -9,7 +9,7 @@ export function UxErrorNotifications({ withinDialog = false }: { withinDialog?: 
       const index = buttons.indexOf(button);
       const fallback = buttons[index + 1] ?? buttons[index - 1]
         ?? button.closest('dialog')?.querySelector<HTMLElement>('[data-dialog-focus]')
-        ?? document.querySelector<HTMLElement>('.info-panel[data-open="true"]')
+        ?? document.querySelector<HTMLElement>('.inspector-pane[open] .inspector-surface')
         ?? document.querySelector<HTMLElement>('.cockpit-shell');
       if (fallback) {
         if (!fallback.hasAttribute('tabindex') && fallback.tagName !== 'BUTTON') fallback.tabIndex = -1;
@@ -23,7 +23,7 @@ export function UxErrorNotifications({ withinDialog = false }: { withinDialog?: 
   return (
     <aside className="ux-error-notifications" data-dialog-notices={withinDialog || undefined} aria-label="本地错误通知">
       {errors.map((error) => (
-        <div key={error.id} className="ux-error-notification">
+        <div key={error.id} className="ux-error-notification ck-surface">
           <div className="ux-error-notification-content" role="alert">
             <strong>操作或界面出错</strong>
             <p className="user-select-text">{error.message}</p>
