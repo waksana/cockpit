@@ -316,8 +316,15 @@ MCP 名称原样采用 manifest 的 `mcpServers` key（例如 `example-tools`）
 冷恢复使用宿主当前已冷加载的最新角色资源重新装配，缺失模块不静默丢弃角色。
 既有 loaded 会话仍展示原生实际资源名，不把旧的生成名称伪装成新名称。
 
-`McpServerSession` 和 `SkillSession` 的可选 `module: {id, name}` 是显式模块来源，
+`McpServerSession` 和 `SkillSession` 的可选 `module: {id, name, roles?: [{id, name}]}` 是显式模块来源，
 不是名称前缀或原生 `source` 的推断；原生名称、来源、状态、错误和启用字段不变。
+`roles` 只记录该模块内实际为此资源贡献配置的角色，按角色 ID 去重、稳定排序；
+共享 MCP 工具子集合并、同路径/同哈希 Skill 去重仍只有一个资源行，但保留所有贡献角色。
+没有已证实角色来源时省略 `roles`，只展示模块；非模块资源不补造来源。
+Web 使用分段标签（例如 `Task | Owner` 或 `Task | Executor、Owner`），模块前不加装饰图标。
+这些来源不是授权、启用、连接或就绪证明，也不是会话全部已选角色的副本。
+追加仍绑定实际返回的 handle 装配：仅持久化、等待恢复、恢复结果未知时不宣称新增角色已提供资源；
+恢复已返回但后续核验失败时可保留该 handle 已装配的配置来源，不把失败解释为全部就绪。
 `skills/session` 仅在原生 name/path 与此 handle 实际装配的 skill 完全一致时输出来源；
 同名原生替代项或路径缺失不输出。冷恢复重建该匹配，重载后的读取仍按实际原生路径验证。
 `mcp/session` 的 `module` 表示本 handle 角色配置中声明该 MCP 名称的模块，

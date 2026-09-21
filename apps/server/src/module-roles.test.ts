@@ -35,15 +35,19 @@ test('module roles union shared HTTP tools, label raw instructions and persist i
     type: 'http', url: `http://127.0.0.1:12345/_modules/board/${installed.digest}/api/mcp`,
     headers: { 'X-Cockpit-Module-Digest': installed.digest }, tools: ['create', 'read', 'report'],
   } });
-  assert.deepEqual(value.mcpSources, { 'board-tools': { id: 'board', name: 'Fixture board' } });
+  assert.deepEqual(value.mcpSources, { 'board-tools': { id: 'board', name: 'Fixture board',
+    roles: [{ id: 'executor', name: 'Executor' }, { id: 'owner', name: 'Owner' }] } });
   assert.deepEqual(value.skills.map(skill => skill.module), [
-    { id: 'board', name: 'Fixture board' }, { id: 'board', name: 'Fixture board' },
+    { id: 'board', name: 'Fixture board', roles: [{ id: 'executor', name: 'Executor' }] },
+    { id: 'board', name: 'Fixture board', roles: [{ id: 'owner', name: 'Owner' }] },
   ]);
   assert.deepEqual(value.config.systemMessage, { mode: 'append', content:
     '## Module board / role executor (Executor)\nNative session ID: native-id\nRAW executor guidance\n\n'
     + '## Module board / role owner (Owner)\nNative session ID: native-id\nRAW owner guidance\nkeep this unchanged' });
   assert.deepEqual((await host.roles.assemble('native-id', [executor, owner])).config, value.config);
-  assert.equal((await host.roles.assemble('native-id', [owner])).skills.length, 1);
+  const single = await host.roles.assemble('native-id', [owner]);
+  assert.equal(single.skills.length, 1);
+  assert.deepEqual(single.mcpSources?.['board-tools']?.roles, [{ id: 'owner', name: 'Owner' }]);
   host.roles.save('native-id', value.roles);
   const replacement = new ModuleHost({ observer: f.observer });
   assert.deepEqual(replacement.roles.read('native-id'), value.roles);
@@ -52,6 +56,35 @@ test('module roles union shared HTTP tools, label raw instructions and persist i
   host.close();
   assert.deepEqual(host.roles.read('native-id'), value.roles);
   await assert.rejects(host.roles.assemble('native-id', [owner]), /unavailable/);
+});
+
+test('shared skills retain only actual contributors through overlapping roots, deduplication and cold assembly', async t => {
+  const f = await moduleFixture(t);
+  const entries = moduleEntries('shared', undefined, { roles: [
+    { id: 'owner', name: 'Owner', skillDirectories: ['skills', 'skills/shared'],
+      mcpServers: { tools: { type: 'http', path: '/mcp', tools: ['read'] } } },
+    { id: 'executor', name: 'Executor', skillDirectories: ['skills/shared'],
+      mcpServers: { tools: { type: 'http', path: '/mcp', tools: ['*', 'report'] } } },
+    { id: 'observer', name: 'Observer' },
+  ] });
+  entries.push({ path: 'skills/shared/SKILL.md', content: '---\nname: shared-skill\n---\nShared' });
+  const installed = await installLocalModule(await f.package(entries), { trustLocalCode: true, enable: true });
+  const provider = new ModuleRoles(f.hostRoot, 'http://127.0.0.1', () => [installed]);
+  const selections = ['owner', 'observer', 'executor', 'owner'].map(roleId => ({ moduleId: 'shared', roleId }));
+  const value = await provider.assemble('id', selections);
+  const source = { id: 'shared', name: 'Fixture shared',
+    roles: [{ id: 'executor', name: 'Executor' }, { id: 'owner', name: 'Owner' }] };
+  assert.equal(value.skills.length, 1);
+  assert.deepEqual(value.skills[0]!.module, source);
+  assert.deepEqual(value.mcpSources, { tools: source });
+  assert.deepEqual(value.config.mcpServers?.tools?.tools, ['*']);
+  assert.deepEqual(await provider.assemble('id', [...selections].reverse()), value);
+  provider.save('id', value.roles);
+  const cold = new ModuleRoles(f.hostRoot, 'http://127.0.0.1', () => [installed]);
+  assert.deepEqual(await cold.assemble('id', cold.read('id')), value);
+  installed.manifest.roles!.find(role => role.id === 'owner')!.name = 'Current Owner';
+  assert.deepEqual((await cold.assemble('id', cold.read('id'))).skills[0]!.module?.roles,
+    [{ id: 'executor', name: 'Executor' }, { id: 'owner', name: 'Current Owner' }]);
 });
 
 test('unrelated modules cannot claim the same literal MCP name', async t => {
@@ -91,14 +124,17 @@ test('conflicting resources and unsafe manifest paths fail instead of overriding
     { id: 'a', name: 'A', skillDirectories: ['skills/a'], mcpServers: { tools: { type: 'http', path: '/one', tools: ['x'] } } },
     { id: 'b', name: 'B', skillDirectories: ['skills/b'], mcpServers: { tools: { type: 'http', path: '/two', tools: ['y'] } } },
     { id: 'c', name: 'C', mcpServers: { tools: { type: 'http', path: '/two', tools: ['y'] } } },
+    { id: 'd', name: 'D', skillDirectories: ['skills/d'] },
   ] });
   entries.push({ path: 'skills/a/SKILL.md', content: '---\nname: duplicate\n---\nA' },
-    { path: 'skills/b/SKILL.md', content: '---\nname: duplicate\n---\nB' });
+    { path: 'skills/b/SKILL.md', content: '---\nname: duplicate\n---\nB' },
+    { path: 'skills/d/SKILL.md', content: '---\nname: duplicate\n---\nA' });
   await installLocalModule(await f.package(entries), { trustLocalCode: true, enable: true });
   const app = Fastify(); t.after(() => app.close());
   const host = new ModuleHost({ observer: f.observer }); await host.register(app);
   await assert.rejects(host.roles.assemble('id', [{ moduleId: 'conflict', roleId: 'a' }, { moduleId: 'conflict', roleId: 'b' }]), /Conflicting role skill/);
   await assert.rejects(host.roles.assemble('id', [{ moduleId: 'conflict', roleId: 'a' }, { moduleId: 'conflict', roleId: 'c' }]), /Conflicting role MCP/);
+  await assert.rejects(host.roles.assemble('id', [{ moduleId: 'conflict', roleId: 'a' }, { moduleId: 'conflict', roleId: 'd' }]), /Duplicate role skill name in different directories/);
   const manifest = JSON.parse(String(entries[0]!.content));
   manifest.roles[0].instructions = '../outside';
   assert.equal(manifestSchema.safeParse(manifest).success, false);

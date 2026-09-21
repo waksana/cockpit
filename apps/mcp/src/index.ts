@@ -117,6 +117,7 @@ server.registerTool(
       'its configured/not-disabled flag and native connection status ' +
       '(connected | failed | needs-auth | pending | disabled | stopped | not_configured). ' +
       'Enabled does not imply connected. Stopped includes policy quarantine and does not imply restart is allowed. ' +
+      'Optional module/roles identify actual handle configuration contributors, not all selected roles or live connection identity; later same-name native replacements cannot be verified. ' +
       'Unknown native state fails explicitly rather than claiming not_configured. An ' +
       'unloaded session returns loaded:false and no claimed per-session enablement; explicitly ' +
       'resume it for live details or use cockpit_list_global_mcp for global defaults. Call this before ' +
@@ -159,6 +160,7 @@ server.registerTool(
         (s) =>
           `- ${s.enabled ? '🟢' : '⚪'} ${s.name} — enabled=${s.enabled} (${s.status})${s.error ? ` · error: ${s.error}` : ''}`
           + `${s.module ? ` · role-configured module: ${s.module.name} (${s.module.id}; not live connection identity)` : ''}`
+          + `${s.module?.roles?.length ? ` · contributing roles: ${s.module.roles.map(role => `${role.name} (${role.id})`).join(', ')}` : ''}`
           + `${s.operation ? ` · toggle ${s.operation.id}=${s.operation.state}/${s.operation.status}${s.operation.error ? `: ${s.operation.error}` : ''}` : ''}\n    ${s.detail}`,
       );
       return ok(capped(`# MCP servers for ${session_id}${loadNote}\n${lines.join('\n')}`));
@@ -223,8 +225,9 @@ server.registerTool(
   {
     title: "List a session's skills",
     description:
-      "List every available skill with one session's enabled flag. Skills are global " +
-      'definitions; each session can disable specific ones. Call this before ' +
+      "List every available skill with one session's enabled flag. Optional module/roles identify actual " +
+      'handle contributors verified against the native skill name and path, not all selected roles or readiness. ' +
+      'Missing role provenance remains module-only. Each session can disable specific skills. Call this before ' +
       'cockpit_set_session_skill to get exact skill names and current on/off state.',
     inputSchema: {
       session_id: z.string().min(1).describe('The session id'),
@@ -242,7 +245,9 @@ server.registerTool(
       const lines = skills.map(
         (s) =>
           `- ${s.enabled ? '🟢' : '⚪'} ${s.name}${s.source ? ` (${s.source})` : ''}`
-          + `${s.module ? ` · module: ${s.module.name} (${s.module.id})` : ''}${s.description ? `\n    ${s.description}` : ''}`,
+          + `${s.module ? ` · module: ${s.module.name} (${s.module.id})` : ''}`
+          + `${s.module?.roles?.length ? ` · contributing roles: ${s.module.roles.map(role => `${role.name} (${role.id})`).join(', ')}` : ''}`
+          + `${s.description ? `\n    ${s.description}` : ''}`,
       );
       return ok(capped(`# Skills for ${session_id}\n${lines.join('\n')}`));
     } catch (e) {

@@ -17,14 +17,19 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
   const catalog = [...roles, additionalRole];
   const roleSummary = ({ moduleId, moduleName, roleId, name }: SessionRole): SessionRole =>
     ({ moduleId, moduleName, roleId, name });
+  const source = (contributors: typeof roles) => ({ ...module,
+    roles: contributors.map(role => ({ id: role.roleId, name: role.name })).sort((a, b) => a.id.localeCompare(b.id)) });
   let mcp: McpServerSession[] = [
-    { name: 'cockpit-task', module, detail: 'native', enabled: true, status: 'connected' },
+    { name: 'cockpit-task', module: source(roles), detail: 'native', enabled: true, status: 'connected' },
     { name: 'module_cockpit-task__unrelated', detail: 'native', enabled: false, status: 'disabled' },
+    { name: 'module-only', module, detail: 'native', enabled: false, status: 'disabled' },
   ];
   let skills: SkillSession[] = [
-    { name: 'cockpit-task-owner', module, source: 'custom', enabled: true, description: roles[0].description },
-    { name: 'cockpit-task-executor', module, source: 'custom', enabled: true, description: roles[1].description },
+    { name: 'cockpit-task-owner', module: source([roles[0]]), source: 'custom', enabled: true, description: roles[0].description },
+    { name: 'cockpit-task-executor', module: source([roles[1]]), source: 'custom', enabled: true, description: roles[1].description },
     { name: 'cockpit-task-unrelated', source: 'personal-copilot', enabled: false, description: '合成的非模块资源，不应从名称推断来源。' },
+    { name: 'shared-skill', module: source(roles), source: 'custom', enabled: true },
+    { name: 'module-only-skill', module, source: 'custom', enabled: false },
   ];
   const find = (id: string) => {
     const session = store.getState().sessions.find(row => row.sessionId === id);

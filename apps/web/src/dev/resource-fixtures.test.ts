@@ -17,8 +17,13 @@ test('resource scene exercises actual names and explicit provenance without HTTP
   const skills = await state.skillsSession(workspaceSessionId);
   skills.forEach(skill => SkillSession.parse(skill));
   assert.equal(mcp[0].module?.name, 'Task');
+  assert.deepEqual(mcp[0].module?.roles?.map(role => role.id), ['executor', 'owner']);
   assert.equal(mcp[1].module, undefined);
+  assert.equal(mcp[2].module?.roles, undefined);
+  assert.deepEqual(skills[0].module?.roles?.map(role => role.id), ['owner']);
+  assert.deepEqual(skills[1].module?.roles?.map(role => role.id), ['executor']);
   assert.equal(skills[2].module, undefined);
+  assert.deepEqual(skills[3].module, mcp[0].module);
   await state.mcpToggleSession(workspaceSessionId, mcp[0].name, false);
   assert.equal((await state.mcpSession(workspaceSessionId))[0].enabled, false);
   await state.skillsToggleSession(workspaceSessionId, skills[0].name, false);

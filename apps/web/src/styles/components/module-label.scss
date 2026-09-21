@@ -1,7 +1,6 @@
 .module-label {
   display: inline-flex;
   align-items: center;
-  gap: var(--host-space-xs);
   min-width: 0;
   max-width: 100%;
   padding: 2px 7px;
@@ -15,14 +14,6 @@
   vertical-align: middle;
   white-space: normal;
   overflow-wrap: anywhere;
-}
-.module-mark {
-  flex: none;
-  width: 7px;
-  height: 7px;
-  border: 1px solid var(--link-color);
-  border-radius: 2px;
-  box-shadow: 2px -2px 0 -1px var(--surface-color), 2px -2px 0 0 var(--link-color);
 }
 .module-label-name { min-width: 0; }
 .role-badge {

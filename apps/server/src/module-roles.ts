@@ -61,6 +61,11 @@ export class ModuleRoles implements RoleProvider {
       if (!installation || !role) throw new Error(`Module role unavailable: ${selection.moduleId}/${selection.roleId}`);
       const { manifest, root } = installation;
       const module = { id: manifest.id, name: manifest.name };
+      const contribute = (previous?: ModuleSource): ModuleSource => ({
+        ...module,
+        roles: [...new Map([...previous?.roles ?? [], { id: role.id, name: role.name }]
+          .map(source => [source.id, source])).values()],
+      });
       const verified = async (relative: string) => {
         const path = join(root, safeModulePath(relative));
         if (!(await realpath(path)).startsWith(`${resolve(root)}${sep}`)) throw new Error('Role resource escapes module');
@@ -89,7 +94,7 @@ export class ModuleRoles implements RoleProvider {
           const previous = skills.get(name);
           if (previous && (previous.module.id !== module.id || previous.hash !== hash)) throw new Error(`Conflicting role skill: ${name}`);
           if (previous && previous.path !== join(root, path)) throw new Error(`Duplicate role skill name in different directories: ${name}`);
-          skills.set(name, { name, path: join(root, path), hash, module });
+          skills.set(name, { name, path: join(root, path), hash, module: contribute(previous?.module) });
         }
         directories.add(absolute);
       }
@@ -107,7 +112,9 @@ export class ModuleRoles implements RoleProvider {
           if (value.tools.includes('*')) value.tools = ['*'];
         }
         Object.defineProperty(servers, name, { value, enumerable: true, configurable: true, writable: true });
-        Object.defineProperty(mcpSources, name, { value: module, enumerable: true, configurable: true, writable: true });
+        Object.defineProperty(mcpSources, name, {
+          value: contribute(previous ? mcpSources[name] : undefined), enumerable: true, configurable: true, writable: true,
+        });
       }
     }
     const config: RoleAssembly['config'] = selected.length ? {

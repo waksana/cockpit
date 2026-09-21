@@ -214,6 +214,26 @@ for (const [name, fixture] of Object.entries(cases)) {
   });
 }
 
+test('resource HTTP responses preserve contributing roles, module-only and non-module sources', async t => {
+  const module = { id: 'fixture', name: 'Fixture',
+    roles: [{ id: 'executor', name: 'Executor' }, { id: 'owner', name: 'Owner' }] };
+  const sources = [module, { id: 'legacy', name: 'Module only' }, undefined];
+  const servers = sources.map((module, index) => ({
+    name: `native-${index}`, detail: 'native', enabled: false, status: 'disabled' as const, ...(module ? { module } : {}),
+  }));
+  const skills = sources.map((module, index) => ({
+    name: `skill-${index}`, source: 'custom', enabled: true, ...(module ? { module } : {}),
+  }));
+  t.mock.method(engine, 'listSessionMcp', async () => ({ loaded: true, servers }));
+  t.mock.method(engine, 'listSessionSkills', async () => skills);
+  for (const [name, expected] of [['mcp/session', { loaded: true, servers }], ['skills/session', { skills }]] as const) {
+    const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: { sessionId: 's' } });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json(), expected);
+  }
+  assert.deepEqual(calls, [], 'no extra readiness, assembly or session calls');
+});
+
 test('session/load surfaces readiness failure without reload, prompt or replacement fallback', async t => {
   const load = t.mock.method(engine, 'load', async () => {
     throw Object.assign(new Error('Readiness remains unconfirmed'), { statusCode: 409, code: 'LOAD_UNCONFIRMED' });

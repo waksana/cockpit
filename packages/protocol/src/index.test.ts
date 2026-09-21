@@ -24,6 +24,14 @@ test('resource module provenance is explicit optional metadata independent of li
   const skill = { name: 'fixture-skill', source: 'custom', enabled: false, module };
   assert.deepEqual(Intents['mcp/session'].result.parse({ loaded: true, servers: [mcp] }).servers[0], mcp);
   assert.deepEqual(Intents['skills/session'].result.parse({ skills: [skill] }).skills[0], skill);
+  for (const roles of [[], [{ id: 'owner', name: 'Owner' }],
+    [{ id: 'executor', name: 'Executor' }, { id: 'owner', name: 'Owner' }]]) {
+    const source = { ...module, roles };
+    assert.deepEqual(Intents['mcp/session'].result.parse({ loaded: true, servers: [{ ...mcp, module: source }] }).servers[0]?.module, source);
+    assert.deepEqual(Intents['skills/session'].result.parse({ skills: [{ ...skill, module: source }] }).skills[0]?.module, source);
+  }
+  assert.equal(Object.hasOwn(Protocol.ModuleSource.parse(module), 'roles'), false);
+  assert.equal(Protocol.ModuleSource.safeParse({ ...module, roles: [{ name: 'Missing identity' }] }).success, false);
   assert.equal(Object.hasOwn(Protocol.McpServerSession.parse({
     name: 'module_fixture__native', detail: 'native', enabled: true, status: 'connected',
   }), 'module'), false);
