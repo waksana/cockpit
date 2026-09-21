@@ -110,6 +110,74 @@ function fixture(top = 700) {
   return { view, frames, scroll, notices };
 }
 
+test('first committed content supersedes an empty mount frame before paint, even after empty frames run', () => {
+  for (const flushEmpty of [false, true]) {
+    const h = fixture(0);
+    const messages = h.view.rows;
+    h.view.rows = [];
+    h.scroll.follow();
+    const emptyFrame = h.frames.callbacks.at(-1)!;
+    if (flushEmpty) h.frames.flush();
+    h.scroll.changed({ contentReady: false });
+    h.view.rows = messages;
+    h.scroll.changed({ contentReady: true });
+    assert.equal(h.view.top, h.view.bottom, 'no animation frame is needed to position the first content');
+    assert.deepEqual(h.view.writes, [700]);
+    assert.equal(h.frames.pending.size, 0);
+    emptyFrame();
+    assert.deepEqual(h.view.writes, [700], 'a superseded empty-layout callback cannot write again');
+    h.scroll.scroll();
+    assert.equal(h.scroll.following, true);
+
+    h.view.rows[0].height += 100;
+    h.scroll.changed({ contentReady: true });
+    h.scroll.changed();
+    assert.deepEqual(h.view.writes, [700], 'later message and module layouts remain frame-coalesced');
+    assert.equal(h.frames.pending.size, 1);
+    h.frames.flush();
+    assert.deepEqual(h.view.writes, [700, 800]);
+  }
+});
+
+test('cached content enters synchronously and short initial content follows later overflow asynchronously', () => {
+  for (const short of [false, true]) {
+    const h = fixture(0);
+    if (short) h.view.rows = h.view.rows.slice(0, 2);
+    h.scroll.follow();
+    h.scroll.changed({ contentReady: true });
+    assert.equal(h.view.top, h.view.bottom);
+    assert.equal(h.frames.pending.size, 0);
+    const writes = h.view.writes.length;
+    h.view.rows.unshift({ id: 'fill', height: 500 });
+    h.scroll.changed({ contentReady: true });
+    assert.equal(h.view.writes.length, writes);
+    h.frames.flush();
+    assert.equal(h.view.top, h.view.bottom);
+  }
+});
+
+test('initial layout waits for a measurable viewport or finger release and never overrides reading intent', () => {
+  for (const blocked of ['viewport', 'hold', 'intent', 'selection', 'interact', 'dispose']) {
+    const h = fixture(0);
+    h.scroll.follow();
+    if (blocked === 'viewport') h.view.viewport = 0;
+    if (blocked === 'hold') h.scroll.hold(true);
+    if (blocked === 'intent') h.scroll.intent(false);
+    if (blocked === 'selection') h.scroll.navigate();
+    if (blocked === 'interact') h.scroll.interact();
+    if (blocked === 'dispose') h.scroll.dispose();
+    h.scroll.changed({ contentReady: true });
+    assert.deepEqual(h.view.writes, []);
+    if (blocked === 'viewport') h.view.viewport = 300;
+    if (blocked === 'hold') h.scroll.hold(false);
+    h.scroll.changed({ contentReady: true });
+    assert.equal(h.view.top, blocked === 'viewport' || blocked === 'hold' ? h.view.bottom : 0);
+    h.scroll.settle();
+    h.frames.flush();
+    assert.equal(h.view.top, blocked === 'viewport' || blocked === 'hold' ? h.view.bottom : 0);
+  }
+});
+
 test('incremental backward owner repair and interleaved live rows retain the actual reading anchor', () => {
   const window = new NativeWindow(undefined, true);
   const message = (id: string): NativeChatEvent => ({

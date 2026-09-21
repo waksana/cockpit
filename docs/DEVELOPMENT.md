@@ -216,6 +216,18 @@ page. The same bounded synthetic loader then supplies further pages as normal
 viewport prefetch requests them. Each received page must already be visible
 while the next one is pending; scroll upward to exercise retained reading anchors.
 
+Use `/chat-lab.html?scene=initial-history&compact=1` for an empty mount followed by an asynchronous
+first page. Add `&frame=1` to deliver it in a late-frame React commit, exposing
+the difference between pre-paint positioning and a next-frame scroll correction.
+Add `&short=1` for short content or `&cards=1` for a synthetic message middleware
+card that grows after 1.8 seconds; these delays simulate fixture I/O only.
+`reading` provides the same long history already cached at mount. Switch between
+scenes to exercise SPA entry. Compare desktop/mobile and CPU throttling; record
+actual first-content paint (for example text Element Timing intersection rectangles)
+as well as scroll geometry. A RAF sample at zero or a correct final position alone
+does not prove what was painted. Layout-shift totals also include initial content
+insertion and containment changes, not only scrolling.
+
 For current event ordering and process disclosure behavior, choose `ordered-events`.
 Its controls feed synthetic historical/live/reconnect pages through the production
 browser projection. The [native chat guide](native-chat.md#ordered-presentation)

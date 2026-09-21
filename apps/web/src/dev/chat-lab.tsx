@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import { BrowserRouter, MemoryRouter } from 'react-router-dom';
 import type { ChatMessage } from '@cockpit/protocol';
 import { Thread } from '../components/Thread';
@@ -42,8 +43,31 @@ export function Lab() {
   const draft = getDraftSession(session.sessionId).current(session);
   const compact = query.get('compact') === '1';
   const narrow = query.get('pane') === 'narrow';
+  const shortHistory = query.get('short') === '1';
+  const lateFrame = query.get('frame') === '1';
 
   useEffect(() => () => { generation.current++; pending.current.splice(0).forEach(resolve => resolve()); }, []);
+
+  useEffect(() => {
+    if (scenario !== 'initial-history' || session.materialized) return;
+    let frame: number | undefined;
+    const timer = window.setTimeout(() => {
+      const source = fixtureSession(shortHistory ? 'user-time' : 'reading');
+      const deliver = () => setSession(value => ({ ...value, materialized: true, loadingHistory: false, hasMore: false,
+        messages: source.messages.map(message => ({ ...message,
+          origin: message.origin ? { ...message.origin, sessionId: value.sessionId } : undefined,
+        })),
+      }));
+      // Exercise a commit after this frame's RAF callbacks have begun: a newly
+      // queued scroll RAF cannot run before this content's first paint.
+      if (lateFrame) frame = requestAnimationFrame(() => flushSync(deliver));
+      else deliver();
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
+  }, [scenario, session.materialized, shortHistory, lateFrame]);
 
   function choose(value: Scenario) {
     generation.current++;
@@ -54,7 +78,9 @@ export function Lab() {
     setScenario(value);
     ordered.current = null;
     setSession(fixtureSession(value));
-    history.replaceState(null, '', `/chat-lab.html?scene=${value}${compact ? '&compact=1' : ''}${narrow ? '&pane=narrow' : ''}`);
+    const nextQuery = new URLSearchParams(location.search);
+    nextQuery.set('scene', value);
+    history.replaceState(null, '', `/chat-lab.html?${nextQuery}`);
     setReceipt(`场景：${value}。操作不会发送到后端。`);
   }
   function orderedAction(action: 'thought' | 'body' | 'tool' | 'older' | 'duplicate' | 'reconnect' | 'cold' | 'streamStep') {
@@ -235,5 +261,13 @@ if (scene === 'workspace' || scene === 'resources') {
     <App /><UxErrorNotifications />
   </MemoryRouter>);
 } else {
-  root.render(<BrowserRouter><Lab /></BrowserRouter>);
+  const lab = <BrowserRouter><Lab /></BrowserRouter>;
+  if (new URLSearchParams(location.search).get('cards') === '1') {
+    const { createAsyncCardFixture } = await import('./initial-history-fixture');
+    const { ModuleRuntimeProvider } = await import('../components/ModuleComponents');
+    const runtime = createAsyncCardFixture();
+    await runtime.start();
+    window.addEventListener('pagehide', () => runtime.stop(), { once: true });
+    root.render(<ModuleRuntimeProvider runtime={runtime}>{lab}</ModuleRuntimeProvider>);
+  } else root.render(lab);
 }

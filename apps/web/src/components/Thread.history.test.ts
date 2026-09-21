@@ -6,6 +6,7 @@ import type { ChatSession } from '../net/types';
 import { createSessionDrafts } from '../lib/textDraft';
 import { Composer, ComposerNotices } from './Composer';
 import { Thread } from './Thread';
+import { fixtureSession } from '../dev/chat-fixtures';
 
 const base: ChatSession = {
   sessionId: 'history-display', title: 'History', cwd: '/project', lastActivity: 0,
@@ -78,6 +79,19 @@ test('cold history loading is not presented as an empty conversation', () => {
   assert.doesNotMatch(html, /开始对话|重新读取最新历史/);
   assert.equal((html.match(/class="state-notice chat-history-loading"/g) ?? []).length, 1);
   assert.match(html, /aria-label="对话消息" aria-busy="true"/);
+});
+
+test('initial-history lab starts empty and loading, while its cached counterpart contains the latest row', () => {
+  const cold = fixtureSession('initial-history');
+  assert.equal(cold.materialized, false);
+  assert.equal(cold.loadingHistory, true);
+  assert.deepEqual(cold.messages, []);
+  assert.match(render(cold), /加载更早的消息/);
+  assert.doesNotMatch(render(cold), /开始对话/);
+  const cached = fixtureSession('reading');
+  assert.equal(cached.materialized, true);
+  assert.equal(cached.loadingHistory, false);
+  assert.equal(cached.messages.at(-1)?.id, 'followup');
 });
 
 test('failed history remains visibly unsynchronized and offers an explicit read retry', () => {
