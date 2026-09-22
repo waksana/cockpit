@@ -93,7 +93,7 @@ export async function runNextLabChecks(lab: NextLabControls = window.nextLab) {
     lab.operations.hold(false);
     lab.createUncertain(false);
     recover.click();
-    await until(() => document.querySelector('.next-conversation-header h1')?.textContent === 'Synthetic newly created session', 'created session navigation');
+    await until(() => document.querySelector('.next-conversation-title')?.textContent === 'Synthetic newly created session', 'created session navigation');
     const actions = await until(() => document.querySelector<HTMLButtonElement>('.next-conversation-header button[aria-haspopup="menu"]'), 'session menu trigger');
     const openDelete = async () => {
       actions.focus();
@@ -122,14 +122,15 @@ export async function runNextLabChecks(lab: NextLabControls = window.nextLab) {
     results.push('creation uncertainty recovery, keyboard menu, destructive confirmation and focus');
 
     const historyId = lab.choose('initial-history');
-    await until(() => document.querySelector('.next-conversation-header h1')?.textContent?.includes('initial-history'), 'history view');
+    await until(() => document.querySelector('.next-conversation-title')?.textContent?.includes('initial-history'), 'history view');
     const prior = lab.firstContent.length;
     lab.deliverHistory(true);
     const first = await until(() => lab.firstContent.slice(prior).find(item => item.sessionId === historyId), 'first visible history commit');
     check(first.bottomGap <= 1, `first content must enter at latest, gap=${first.bottomGap}`);
     const viewport = await until(() => document.querySelector<HTMLElement>('.next-messages'), 'transcript viewport');
     viewport.dispatchEvent(new WheelEvent('wheel', { deltaY: -400, bubbles: true }));
-    viewport.scrollTop = Math.max(0, (viewport.scrollHeight - viewport.clientHeight) / 2);
+    // The latest control appears one viewport away, not at an arbitrary midpoint.
+    viewport.scrollTop = Math.max(0, viewport.scrollHeight - 2 * viewport.clientHeight - 50);
     viewport.dispatchEvent(new Event('scroll'));
     await until(() => document.querySelector('.next-latest'), 'reading mode');
     const before = viewport.scrollTop;
@@ -156,6 +157,35 @@ export async function runNextLabChecks(lab: NextLabControls = window.nextLab) {
     await until(() => document.body.textContent?.includes('连接：connected')
       && !document.body.textContent.includes('Synthetic mcp.list failure'), 'MCP refresh recovery');
     results.push('MCP pending-cache passive refresh and failed-read recovery');
+
+    const runningId = lab.choose('streaming');
+    lab.draft(runningId, 'Retain the draft when execution ends.');
+    const collapse = await until(() => document.querySelector<HTMLButtonElement>('.chat-execution-head'), 'execution collapse control');
+    const input = document.querySelector<HTMLTextAreaElement>('.next-textarea')!;
+    collapse.focus();
+    collapse.click();
+    await until(() => document.querySelector('.next-input-content')?.hasAttribute('hidden'), 'collapsed execution input');
+    const stop = await until(() => visibleButton('停止并清空队列'), 'stop outside collapsed input');
+    stop.focus();
+    stop.click();
+    await until(() => !document.querySelector('.next-input-header') && document.activeElement === input, 'idle input and removed stop focus');
+    check(!document.querySelector('.next-input-content')?.hasAttribute('hidden'), 'idle input must reopen without its collapse control');
+    check(input === document.querySelector('.next-textarea') && input.value === 'Retain the draft when execution ends.',
+      'execution-to-idle preserves the editor and draft');
+    lab.operations.hold(true);
+    const send = await until(() => document.querySelector<HTMLButtonElement>('.next-editor [aria-label="发送"]'), 'idle send');
+    send.focus();
+    send.click();
+    await until(() => document.querySelector('.next-input-header')?.textContent?.includes('正在提交'), 'pending input status');
+    check(!input.disabled, 'pending submission leaves the draft editable');
+    input.focus();
+    lab.draft(runningId, 'Edited while the native send is pending.');
+    lab.operations.release('fail');
+    await until(() => !document.querySelector('.next-input-header'), 'pending status removal');
+    check(document.activeElement === input
+      && document.querySelector<HTMLTextAreaElement>('.next-textarea')?.value === 'Edited while the native send is pending.',
+      'failed submission retains ongoing editing and its draft');
+    results.push('collapsed execution to idle, retained input/draft, removed-control focus and pending status');
     return results;
   } finally {
     lab.mcpPending(false);

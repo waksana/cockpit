@@ -1,8 +1,9 @@
-import { useId, type ReactNode } from 'react';
+import { useContext, useId, type ReactNode } from 'react';
 import { Alert, AlertDescription, Button, Label, Select, SelectContent, SelectItem, SelectTrigger, SelectValue, Switch } from '@cockpit/ui';
 import { useKeyedAction } from '../../lib/useKeyedResource';
 import { useCockpit } from '../../net/store';
 import { readSelectValue, selectValue } from './selectValue';
+import { SettingsOverlayContainer } from './overlayContainer';
 
 export function Notice({ children, error = false }: { children: ReactNode; error?: boolean }) {
   return <Alert variant={error ? 'destructive' : 'default'} role={error ? 'alert' : 'status'}>
@@ -15,12 +16,13 @@ export function SettingSelect({ label, value, options, disabled, onChange, place
   disabled?: boolean; onChange: (value: string | undefined) => void; placeholder?: string;
 }) {
   const id = useId();
+  const container = useContext(SettingsOverlayContainer);
   const missing = value && !options.some(option => option.value === value);
   return <div className="next-settings-field">
     <Label htmlFor={id}>{label}</Label>
     <Select value={selectValue(value)} disabled={disabled} onValueChange={next => onChange(readSelectValue(next))}>
       <SelectTrigger id={id} aria-label={label}><SelectValue /></SelectTrigger>
-      <SelectContent>
+      <SelectContent container={container}>
         <SelectItem value="unspecified">{placeholder}</SelectItem>
         {missing && <SelectItem value={selectValue(value)} disabled>{value}（当前值，列表未提供）</SelectItem>}
         {options.filter(option => option.value !== '').map(option => <SelectItem key={option.value}

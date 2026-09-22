@@ -14,7 +14,7 @@ export function Errors() {
           const controls = Array.from(button.closest('aside')?.querySelectorAll<HTMLButtonElement>('button') ?? []);
           const index = controls.indexOf(button);
           const fallback = controls[index + 1] ?? controls[index - 1]
-            ?? button.closest('[role="dialog"],[role="alertdialog"]')?.querySelector<HTMLElement>('[data-next-focus]')
+            ?? button.closest('dialog,[role="dialog"],[role="alertdialog"]')?.querySelector<HTMLElement>('[data-next-focus]')
             ?? document.querySelector<HTMLElement>('.next-main');
           fallback?.focus();
         }

@@ -9,6 +9,7 @@ import type { ChatMessage, ChatSession } from '../../net/types';
 import { useCockpit } from '../../net/store';
 import { ModuleRuntime } from '../../lib/moduleRuntime';
 import { SessionDraft } from '../../lib/textDraft';
+import { getDraftSession } from '../../lib/draftSelection';
 import { DisclosureContext } from '../../lib/disclosureChoice';
 import { fixtureSchema, fixtureItem, appendFixture, type FixtureData } from '../../test/draftFixture';
 import { ModuleRuntimeProvider } from '../modules';
@@ -61,6 +62,64 @@ test('module bootstrap does not hide native reading and exposes disabled input p
   assert.equal((html.match(/class="next-messages chat-messages"/g) ?? []).length, 1);
   assert.match(html, /data-message-frame="visible"/);
   assert.match(html, /data-message-id="visible"/);
+});
+
+test('idle composer omits the redundant collapse header but retains the full-width native input', () => {
+  for (const moduleBootstrap of ['loading', 'settled'] as const) {
+    const html = render({}, { moduleBootstrap });
+    assert.doesNotMatch(html, /next-input-header|chat-execution-head/);
+    assert.match(html, /next-input-content[^>]*><div class="next-composer"/);
+    const input = html.match(/<textarea\b[^>]*>/)?.[0] ?? '';
+    assert.match(input, /rows="1"/);
+    assert.match(input, /field-sizing-content/);
+    assert.match(input, /\bmin-h-10\b/);
+    assert.match(input, /pointer-coarse:min-h-11/);
+    assert.doesNotMatch(input, /\bmin-h-16\b/);
+    assert.match(html, /aria-label="发送"[^>]*><svg[^>]*aria-hidden="true"/);
+  }
+});
+
+test('execution, cancellation, queue and decisions retain meaningful collapse controls', () => {
+  const cases: [Partial<ChatSession>, string][] = [
+    [{ status: 'running' }, '执行中…'],
+    [{ cancelling: true }, '正在停止…'],
+    [{ compacting: true }, '正在压缩上下文…'],
+    [{ queue: [{ id: 'queued', text: 'Keep the queued message' }] }, '等待处理队列'],
+    [{ ask: { requestId: 'density-ask', question: 'Question' } }, '等待你的回答'],
+    [{ planRequest: { requestId: 'density-plan', summary: 'Plan', actions: ['exit_only'] } }, '等待确认计划'],
+    [{ elicitation: { requestId: 'density-tool', message: 'Tool confirmation' } }, '等待工具确认'],
+  ];
+  for (const [patch, label] of cases) {
+    const html = render(patch);
+    assert.match(html, /next-input-header/);
+    const trigger = html.match(/<button\b[^>]*class="[^"]*chat-execution-head[^>]*>/)?.[0] ?? '';
+    assert.match(trigger, /aria-expanded="true"/);
+    assert.ok(html.includes(label));
+    assert.match(html, /<textarea/);
+  }
+});
+
+test('submission shows its collapse status only while pending without changing draft identity', async () => {
+  const sessionId = 'density-pending';
+  const draft = getDraftSession(sessionId).prompt;
+  draft.edit('Preserved editable draft');
+  const reference = draft.reference;
+  let finish!: (accepted: boolean) => void;
+  const action = draft.runAction(() => new Promise(resolve => { finish = resolve; }));
+  try {
+    assert.equal(draft.getSnapshot().pending, true);
+    const html = render({ sessionId });
+    assert.match(html, /next-input-header/);
+    assert.match(html, /正在提交…/);
+    assert.match(html, /aria-label="正在提交，草稿仍可编辑"/);
+    assert.match(html, /Preserved editable draft/);
+  } finally {
+    finish(false);
+    await action;
+  }
+  assert.doesNotMatch(render({ sessionId }), /next-input-header/);
+  assert.equal(draft.reference, reference);
+  assert.equal(draft.getSnapshot().text, 'Preserved editable draft');
 });
 
 test('history failures retain readable messages, full errors and explicit recovery', () => {
@@ -119,6 +178,40 @@ test('production transcript preserves process grouping and manually opened full 
   assert.match(html, /Complete native failure output/);
   assert.match(html, /复制工具输入/);
   assert.match(html, /复制工具输出/);
+});
+
+test('transcript shows compact local clocks and day separators while preserving full accessible timestamps and anchors', () => {
+  const first = new Date(2025, 11, 31, 23, 57, 8);
+  const second = new Date(2025, 11, 31, 23, 59, 9);
+  const third = new Date(2026, 0, 1, 0, 5, 10);
+  const messages = [
+    message('date-first', { role: 'user', timestamp: first.getTime() }),
+    message('date-second', { timestamp: second.getTime() }),
+    message('date-process', { timestamp: third.getTime(), content: '', toolCalls: [
+      { toolCallId: 'date-tool', title: 'Synthetic tool', name: 'synthetic_tool', status: 'completed' },
+    ] }),
+    message('date-last', { timestamp: third.getTime() }),
+  ];
+  const html = renderToStaticMarkup(h(Transcript, { messages, scope: 'date-scope' }));
+  assert.equal((html.match(/class="next-date-separator"/g) ?? []).length, 2);
+  for (const date of [first, third]) {
+    assert.ok(html.includes(date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })));
+  }
+  const times = [...html.matchAll(/<time\b([^>]*)>([^<]*)<\/time>/g)];
+  assert.deepEqual(times.map(value => value[2]), ['23:57', '23:59', '00:05', '00:05']);
+  for (const [index, date] of [first, second, third, third].entries()) {
+    const attributes = times[index][1];
+    const full = date.toLocaleString('zh-CN', { hour12: false, timeZoneName: 'short' });
+    assert.ok(attributes.includes(`dateTime="${date.toISOString()}"`));
+    assert.ok(attributes.includes(`title="${full}"`));
+    assert.ok(attributes.includes(`aria-label="${full}"`));
+  }
+  assert.equal((html.match(/data-message-frame=/g) ?? []).length, 4);
+  for (const m of messages) assert.ok(html.includes(`data-window-item-id="${m.id}"`));
+  const nested = renderToStaticMarkup(h(Transcript, { messages, scope: 'child', nested: true }));
+  assert.doesNotMatch(nested, /next-date-separator/);
+  assert.match(nested, /aria-label="[^"]*2026/);
+  assert.equal((nested.match(/data-window-item-id=/g) ?? []).length, 4);
 });
 
 test('latest reasoning opens automatically but manual closure wins', () => {
@@ -251,10 +344,13 @@ test('real module middleware composes around next message, attachment, composer,
       assert.ok(output.includes(`>${text}</textarea>`), 'ready draft text remains visible throughout bootstrap');
       const input = output.match(/<textarea\b[^>]*>/)?.[0] ?? '';
       assert.match(input, /field-sizing-content/);
+      assert.match(input, /rows="1"/);
+      assert.match(input, /\bmin-h-10\b/);
+      assert.match(input, /pointer-coarse:min-h-11/);
       assert.doesNotMatch(input, /style=/, 'host does not compete with CSS autosizing through inline heights');
       const send = output.match(/<button\b[^>]*aria-label="发送"[^>]*>/)?.[0] ?? '';
-      assert.match(send, /data-size="lg"/);
-      assert.match(send, /\bmin-h-10\b/, 'primary action owns the stable desktop row height even without modules');
+      assert.match(send, /data-size="icon"/);
+      assert.match(send, /\bsize-10\b/, 'primary action owns a stable 40px desktop target even without modules');
       assert.match(send, /pointer-coarse:min-h-11/, 'touch targets retain the shared 44px minimum');
       if (loading) assert.match(input, /disabled=""/);
       else {

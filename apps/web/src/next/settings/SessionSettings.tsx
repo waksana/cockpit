@@ -15,8 +15,6 @@ export function SessionSettings({ sessionId, panel }: { sessionId: string; panel
   const session = useCockpit(s => s.sessions.find(row => row.sessionId === sessionId));
   if (!session) return <div className="next-settings"><Notice>会话不可用，请返回会话列表检查。</Notice></div>;
   return <div className="next-settings">
-    <header><h1>{panel === 'info' ? '会话设置' : panel === 'mcp' ? 'MCP 服务器' : '技能'}</h1>
-      <p className="next-settings-muted">{session.title}</p></header>
     {panel === 'info' ? <SessionInformation key={sessionId} session={session} />
       : panel === 'mcp' ? <SessionMcpSettings key={sessionId} sessionId={sessionId} />
         : <SessionSkillSettings key={sessionId} sessionId={sessionId} />}

@@ -35,7 +35,7 @@ export function ModelSettings({ session, disabled, onSetModel }: { session: Chat
   const model = useModelSettings(session, onSetModel, disabled);
   const { selection, list, action, submission, outcome } = model;
   return <div className="next-settings-section">
-    <dl className="next-settings-metadata" aria-label="当前原生模型值">
+    <dl className="next-settings-metadata next-model-current" aria-label="当前原生模型值">
       <dt>当前模型</dt><dd>{session.currentModelId || '原生未提供'}</dd>
       <dt>思考力度</dt><dd>{session.currentReasoningEffort ? effortLabel[session.currentReasoningEffort] ?? session.currentReasoningEffort : '未指定'}</dd>
       <dt>上下文</dt><dd>{session.currentContextTier ? contextLabel[session.currentContextTier] ?? session.currentContextTier : '未指定'}</dd>

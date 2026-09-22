@@ -95,10 +95,12 @@ function ConversationContent({ session, moduleBootstrap, readOnly = false, onSen
   const controlRef = useRemovedControlFocus(session.sessionId, controls);
   const askId = session.ask?.requestId, planId = session.planRequest?.requestId, elicitationId = session.elicitation?.requestId;
   const executing = session.status === 'running' || !!session.compacting;
-  const inputKey = JSON.stringify([askId, planId, elicitationId, executing]);
+  const showInputHeader = executing || !!session.cancelling || state.pending
+    || !!session.ask || !!session.planRequest || !!session.elicitation || !!session.queue?.length;
+  const inputKey = JSON.stringify([askId, planId, elicitationId, executing, showInputHeader]);
   const [inputState, setInputState] = useState({ key: inputKey, open: true });
   if (inputState.key !== inputKey) setInputState({ key: inputKey, open: true });
-  const inputOpen = inputState.key !== inputKey || inputState.open;
+  const inputOpen = !showInputHeader || inputState.key !== inputKey || inputState.open;
   const setInputOpen = (open: boolean) => setInputState({ key: inputKey, open });
 
   const viewport = useRef<HTMLDivElement>(null);
@@ -193,8 +195,8 @@ function ConversationContent({ session, moduleBootstrap, readOnly = false, onSen
       {!readOnly && [askDraft, planDraft, elicitationDraft].filter((target): target is SessionDraft => !!target && target !== draft)
         .map(target => <DraftNotices key={target.reference.id} draft={target} moduleBootstrap="settled" />)}
       {readOnly ? <p>只读会话</p> : <Collapsible open={inputOpen} onOpenChange={setInputOpen}>
-        <div className="next-input-header">
-          <CollapsibleTrigger asChild><Button ref={controlRef} variant="ghost" className="chat-execution-head">
+        {showInputHeader && <div className="next-input-header">
+          <CollapsibleTrigger asChild><Button ref={controlRef} variant="ghost" className="chat-execution-head min-h-10">
             <ChevronDown aria-hidden="true" /><span>{label}</span>{state.hasContent && <span>有草稿</span>}
           </Button></CollapsibleTrigger>
           <div className="next-actions">
@@ -212,7 +214,7 @@ function ConversationContent({ session, moduleBootstrap, readOnly = false, onSen
               if (canControl) void controlAction.run(onCancel);
             }}><Square aria-hidden="true" />{session.cancelling ? '正在停止…' : queue.length ? '停止并清空队列' : '停止'}</Button>}
           </div>
-        </div>
+        </div>}
         <CollapsibleContent forceMount hidden={!inputOpen} className="next-input-content">
           {!!queue.length && <section aria-label="排队中的消息" className="next-queue">
             {queue.map(item => <article key={item.id}><pre>{item.text}</pre><div className="next-actions">
