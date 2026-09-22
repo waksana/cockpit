@@ -265,7 +265,17 @@ before importing components. Publish only that output behind the existing review
 authentication and a `connect-src 'none'` CSP; do not expose Vite or the worktree,
 replace another review, or change the production application entry.
 
-The proposed separated control area is an opt-in synthetic scene at
+The published static control-review entry now mounts the complete production
+`App` with a `MemoryRouter` and `installFullWebFixture`. It does not import
+`chat-lab.scss`, override components, or construct a separate preview shell.
+The same sidebar, routing, conversation, settings, global menus and resource
+pages consume synthetic data and local callbacks. The input and status layout
+is the normal production layout, not the earlier proposed dock. Browser storage
+and application transports remain isolated before imports. Use
+`/chat-lab.html?scene=full-web` for this scene in the development Lab;
+`case=tool-loading` selects the last-tool reproduction in either entry.
+
+The earlier proposed separated control area remains an opt-in component scene at
 `/chat-lab.html?scene=control-design`. It reuses Thread's transcript, native
 decision cards and composer through an alternate activity/queue composition.
 Task cancellation, independent main-turn stopping, queue clearing and immediate
@@ -287,8 +297,8 @@ preserves separate prompt/answer drafts and carries editor geometry across purpo
 changes. This alternate composition is opt-in; the production composer stays unchanged.
 
 Use `?scene=control-design&case=tool-loading` in Chat Lab, or `?case=tool-loading`
-on the static control review, for a final active tool after scrollable static
-history. The preview's `对比修复前图标` toggle restores the old inline SVG display.
+on the full Web static review, for a final active tool after scrollable static
+history. Only the earlier component scene's `对比修复前图标` toggle restores the old inline SVG display.
 The inline line box rotated with the tool status wrapper and changed scrollable
 overflow, even while the message content height stayed fixed. A block SVG removes
 that line box; keep the animation and the existing scroll owner, rather than
