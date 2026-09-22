@@ -116,25 +116,32 @@ test('native runtime busy state survives the shared wire projection', () => {
   }).success, false);
 });
 
-test('session/activity requires real flags and counts without idle defaults', () => {
-  const schema = Intents['session/activity'];
+test('control activity requires real flags and counts without idle defaults', () => {
+  const schema = Protocol.SessionActivity;
   const result = {
-    sessionId: 's', sampledAt: 1, processing: false, hasActiveWork: true, abortable: false,
-    tasks: [{ id: 'task', type: 'agent', description: 'Inspect', status: 'future-native-status' }],
+    sampledAt: 1, processing: false, hasActiveWork: true, abortable: false,
+    tasks: { activeAgents: 0, activeShells: 1, unknown: 1 },
     queue: { pendingCount: 0, steeringCount: 2, inFlightSteeringCount: 1 },
-    mcp: { pendingConnections: ['tools'] },
+    mcp: { pendingConnectionCount: 1 },
   };
-  roundTrip(schema.result, result);
+  roundTrip(schema, result);
   for (const key of ['processing', 'hasActiveWork', 'abortable', 'tasks', 'queue', 'mcp'] as const) {
     const incomplete = { ...result };
     Reflect.deleteProperty(incomplete, key);
-    assert.equal(schema.result.safeParse(incomplete).success, false, key);
+    assert.equal(schema.safeParse(incomplete).success, false, key);
   }
   for (const count of [-1, 0.5, undefined]) {
-    assert.equal(schema.result.safeParse({ ...result, queue: { ...result.queue, pendingCount: count } }).success, false);
+    assert.equal(schema.safeParse({ ...result, queue: { ...result.queue, pendingCount: count } }).success, false);
+    assert.equal(schema.safeParse({ ...result, tasks: { ...result.tasks, unknown: count } }).success, false);
   }
-  assert.equal(schema.body.safeParse({ sessionId: '' }).success, false);
-  assert.equal(schema.body.safeParse({ sessionId: 's', load: true }).success, false);
+  assert.equal('session/activity' in Intents, false);
+  for (const projection of [SessionMeta, SessionBrief, Protocol.SessionProjection]) {
+    assert.equal('activity' in projection.parse(minimalMeta), false);
+    for (const activity of [null, result]) {
+      assert.deepEqual(projection.parse({ ...minimalMeta, activity }).activity, activity);
+      roundTrip(ServerEvent, { type: 'session/patch', sessionId: 's', activity });
+    }
+  }
 });
 
 function roundTrip(schema: z.ZodTypeAny, value: unknown, label?: string) {
@@ -546,8 +553,6 @@ const intentFixtures = {
   'session/panels': { body: sid, result: panels },
   'session/panel': { body: { ...sid, section: 'tasks' }, result: { items: panels.tasks } },
   'session/resources': { body: { ...sid, resources: ['schedule'] }, result: { meta: { ...sid, loaded: true, scheduleCount: 2 } } },
-  'session/activity': { body: sid, result: { ...sid, sampledAt: 1, processing: false, hasActiveWork: false, abortable: false,
-    tasks: [], queue: { pendingCount: 0, steeringCount: 0, inFlightSteeringCount: 0 }, mcp: { pendingConnections: ['tools'] } } },
   respondAsk: { body: { ...sid, requestId: 'r1', answer: 'yes', wasFreeform: false }, result: ok },
   respondPlan: { body: { ...sid, requestId: 'r1', action: 'autopilot_fleet' }, result: ok },
   planSupersede: { body: { ...sid, requestId: 'r1', message: 'Do this instead' }, result: ok },

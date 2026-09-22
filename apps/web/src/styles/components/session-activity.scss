@@ -1,0 +1,18 @@
+.session-activity {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--host-space-xs);
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  font-size: var(--font-size-12);
+  color: var(--secondary-text-color);
+}
+.session-activity-item {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 0.15rem;
+  &[data-activity='decision'], &[data-activity='processing'] { color: var(--primary-color); }
+  &[data-activity='error'] { color: var(--danger-color); }
+}

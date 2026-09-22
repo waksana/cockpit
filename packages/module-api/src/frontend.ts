@@ -1,5 +1,5 @@
 import type * as React from 'react';
-import type { ModuleEventPayload, NativeAttachmentDescriptor, SessionStatus } from '@cockpit/protocol';
+import type { ModuleEventPayload, NativeAttachmentDescriptor, SessionMeta, SessionStatus } from '@cockpit/protocol';
 import type { ModuleUi } from './ui.ts';
 
 type ReadonlyData<T> = { readonly [Key in keyof T]: ReadonlyData<T[Key]> };
@@ -460,11 +460,16 @@ export interface MessageProps extends React.HTMLAttributes<HTMLDivElement> {
   readonly adornment?: React.ReactNode;
 }
 
-/** Base renders the native replying/waiting/error indication followed by children. */
+/** Base renders concurrent native activity facts followed by children. */
 export interface SessionStatusProps {
   readonly sessionId: string;
   readonly status: SessionStatus;
   readonly needsDecision: boolean;
+  /** Missing activity is unknown, not idle. Legacy status remains a safety aggregate. */
+  readonly activity?: ReadonlyData<SessionMeta['activity']>;
+  readonly loaded?: boolean;
+  /** False until the current connection has received its snapshot. */
+  readonly connected?: boolean;
   /** Trailing phrasing-only, noninteractive badges inside the session's existing button. */
   readonly children?: React.ReactNode;
 }

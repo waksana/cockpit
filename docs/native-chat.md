@@ -15,38 +15,126 @@ Native SDK callbacks still handle control/resource events; registering no
 chat handler does not promise that the SDK transport stops receiving all native
 notifications.
 
-## `POST /intent/session/activity`
+## Native activity in existing control summaries
 
-Send `{ "sessionId": "session-id" }` to read the native activity details for an
-already loaded session. The result contains `sessionId`, `sampledAt` (read
-completion time), the native `processing`, `hasActiveWork` and `abortable` flags,
-`tasks` (ID, agent/shell type, description and native status),
-`queue: { pendingCount, steeringCount, inFlightSteeringCount }`, and
-`mcp: { pendingConnections }` (connecting server names).
+`POST /intent/session/resources` with
+`{"sessionId":"synthetic-shell","resources":["control"]}` includes `meta.activity`.
+The same summary is included by `session/get`, `session/list`, `runtime/snapshot`
+and the global SSE snapshot/`session/added` projections. There is no separate
+`session/activity` intent or new resource/detail API.
 
-The read reuses the five control RPCs: `metadata.isProcessing`,
-`metadata.activity`, `tasks.list`, `queue.pendingItems` and `mcp.list`. Their
-results are not an atomic snapshot. No chat scanning, persistent activity cache,
-inference or implicit session loading is involved. Unknown/unloaded handles
-return `409 SESSION_UNLOADED`; unavailable or malformed native reads fail rather
-than returning false/zero/empty placeholders.
+One existing control pass reads `metadata.isProcessing`, `metadata.activity`,
+`tasks.list`, `queue.pendingItems` and `mcp.list`. Requesting both `control` and
+`queue` reuses that queue read. No additional native calls, chat scanning,
+inference, implicit loading, polling or cross-request activity cache is involved.
+`sampledAt` is the completion time of those non-atomic reads, not proof that
+their facts remain current when acted upon.
 
-`processing` means a turn or background continuation, not necessarily model
-generation. `hasActiveWork` can be true without a more specific explanation.
-Tasks are those currently tracked by the runtime, possibly including retained
-finished tasks, not a complete historical registry. In-flight steering messages
-are a subset of the steering queue, not an extra count. Task prompts/results,
-shell commands and queue message bodies are not included in this activity read.
+| Field | Truth boundary |
+| --- | --- |
+| `processing` | Native turn **or background continuation**, not a model-generation indicator. |
+| `hasActiveWork` | Broad native flag; it can be true without a more specific explanation. |
+| `abortable` | Sampled native capability, not permission or a promise that a subsequent abort succeeds. |
+| `tasks.activeAgents`, `tasks.activeShells` | Currently tracked tasks of the matching type with native status `running`. |
+| `tasks.unknown` | Unrecognized task types (including client-owned tasks) or statuses; not known active agents/shells. |
+| `queue.pendingCount` | Native pending items, including queued commands/model changes, not just user messages. |
+| `queue.steeringCount` | Immediate steering entries, including already in-flight entries. |
+| `queue.inFlightSteeringCount` | Subset of `steeringCount` already folded into the turn; **never add** these two counts. |
+| `mcp.pendingConnectionCount` | Connecting native MCP entries, not all MCP operations or a readiness assessment. |
 
-Existing `status` and `nativeProcessing` retain their legacy aggregate-busy
-semantics; the new `processing` field is the actual native flag. Safety gates
-still independently read current state. This endpoint neither changes the Web
-display nor adds a new SSE payload. Consumers can reread after
-`session/invalidated` for `control`, `tasks`, `queue` or `mcp` (or an unscoped
-invalidation), relevant `session/patch` changes such as turn start or lifecycle
-changes, and reconnection. Do not reread on the `activeOperations`-only lease
-patches emitted by reads themselves. Initial SSE snapshots/`session/added` and
-existing metadata reads still supply the old summary, not these new details.
+SDK 1.0.13's agent/shell `TaskStatus` is `running`, `idle`, `completed`, `failed`,
+or `cancelled`. Idle/terminal tasks may remain tracked but are not counted as
+active. Task counts are not a historical registry. Unknown statuses retain
+conservative legacy busy protection, without inventing known active counts.
+`status`, `nativeProcessing` and `activeSubagents` keep their legacy safety
+semantics: the first two aggregate busy work, and the last conservatively counts
+all non-idle/non-terminal tasks, including shells and unknown statuses. Display
+uses the new typed counts; Task/lifecycle gates independently read fresh state.
+
+`activity:null` means unloaded, unavailable or invalidated, **not idle**.
+Omission in a resource projection means control was not requested. An unknown
+session returns `meta:null`. Failed/malformed reads reject explicitly and emit
+an `activity:null` patch rather than returning old facts or fabricated zeros.
+Control/task/queue/MCP invalidations and unload clear the sample. Native events
+during a read invalidate its activity result too. Consumers reconcile the
+existing control resource after relevant invalidations and reconnect, not after
+`activeOperations`-only read-lease patches. There is no background retry.
+
+The summary contains no task IDs, descriptions, prompts/results, shell commands,
+queue text or MCP names. Classic UI uses only a one-line icon summary, with no
+new activity disclosure/details or next-UI changes. Existing on-demand
+`session/panel` (`section:"tasks"`), queue and MCP reads remain separate and may
+contain their existing details. MCP list/get Markdown spells out the sampled
+facts, unavailable state and steering subset rather than calling all work
+generation.
+
+### Full synthetic control exchanges
+
+Shell work after the main turn ends:
+
+```http
+POST /intent/session/resources
+Content-Type: application/json
+
+{"sessionId":"synthetic-shell","resources":["control"]}
+```
+
+```json
+{"meta":{"sessionId":"synthetic-shell","loaded":true,"status":"running","nativeProcessing":true,"activity":{"sampledAt":1790000000000,"processing":false,"hasActiveWork":true,"abortable":true,"tasks":{"activeAgents":0,"activeShells":1,"unknown":0},"queue":{"pendingCount":0,"steeringCount":0,"inFlightSteeringCount":0},"mcp":{"pendingConnectionCount":0}},"activeSubagents":1,"activeMcpOperations":0,"activeOperations":0,"loading":false,"closing":false,"cancelling":false,"ask":null,"planRequest":null,"elicitation":null}}
+```
+
+Coexisting native processing, agent/shell work, decision and queue facts are not
+exclusive “reasons”. The decision is the existing control callback, not activity:
+
+```http
+POST /intent/session/resources
+Content-Type: application/json
+
+{"sessionId":"synthetic-coexisting","resources":["control"]}
+```
+
+```json
+{"meta":{"sessionId":"synthetic-coexisting","loaded":true,"status":"running","nativeProcessing":true,"activity":{"sampledAt":1790000000100,"processing":true,"hasActiveWork":true,"abortable":true,"tasks":{"activeAgents":1,"activeShells":1,"unknown":0},"queue":{"pendingCount":2,"steeringCount":3,"inFlightSteeringCount":1},"mcp":{"pendingConnectionCount":1}},"activeSubagents":2,"activeMcpOperations":1,"activeOperations":0,"loading":false,"closing":false,"cancelling":false,"ask":{"requestId":"synthetic-decision","question":"Continue?","choices":["Yes","No"]},"planRequest":null,"elicitation":null}}
+```
+
+Unrecognized task status is unknown rather than a made-up active shell:
+
+```http
+POST /intent/session/resources
+Content-Type: application/json
+
+{"sessionId":"synthetic-unknown-status","resources":["control"]}
+```
+
+```json
+{"meta":{"sessionId":"synthetic-unknown-status","loaded":true,"status":"running","nativeProcessing":true,"activity":{"sampledAt":1790000000200,"processing":false,"hasActiveWork":false,"abortable":false,"tasks":{"activeAgents":0,"activeShells":0,"unknown":1},"queue":{"pendingCount":0,"steeringCount":0,"inFlightSteeringCount":0},"mcp":{"pendingConnectionCount":0}},"activeSubagents":1,"activeMcpOperations":0,"activeOperations":0,"loading":false,"closing":false,"cancelling":false,"ask":null,"planRequest":null,"elicitation":null}}
+```
+
+An indexed unloaded session does not load to provide its activity:
+
+```http
+POST /intent/session/resources
+Content-Type: application/json
+
+{"sessionId":"synthetic-unloaded","resources":["control"]}
+```
+
+```json
+{"meta":{"sessionId":"synthetic-unloaded","title":"Synthetic unloaded","cwd":"/synthetic/work","createdAt":1790000000000,"lastActivity":1790000000000,"lastActivitySource":"native-persisted","roles":[],"appliedRoles":[],"rolesNeedReload":false,"loaded":false,"status":"unloaded","ask":null,"planRequest":null,"elicitation":null,"activity":null}}
+```
+
+An ID absent from the native index is distinct from unloaded:
+
+```http
+POST /intent/session/resources
+Content-Type: application/json
+
+{"sessionId":"synthetic-missing","resources":["control"]}
+```
+
+```json
+{"meta":null}
+```
 
 ## `POST /intent/session/chat`
 
@@ -261,8 +349,9 @@ Completion also opens the ordinary composer if the question was collapsed.
 No JavaScript height measurement, collapse state machine or layout animation
 is introduced.
 
-Submission progress replaces the status label when a header already exists; it
-does not add a second progress line in a decision or create an idle header. Idle
+Submission progress shares the single status line with the sampled activity
+indicators when a header already exists; it does not add a second progress line
+in a decision or create an idle header. Idle
 sends retain the button's busy indicator. A busy label reports local submission,
 not native execution success. Session errors, uncertain-send/answer outcomes,
 attachment-route notices and interrupt results stay above and outside disclosure.
@@ -286,8 +375,19 @@ text remains distinct from entered text, including on focus. Existing attachment
 and unconfirmed-send notices remain explicit. Queue items can be expanded to read
 their full text independently of removal; there is no editing, reordering or new
 steering mode.
-The native running status has a quiet leading dot, without an additional
-animation. An idle queue does not gain a running indicator.
+Classic session rows and the input header share one compact, noninteractive
+activity line. Terminal means shell, Wrench means a general tool, Bot means agent,
+and CircleHelp means a real pending decision. Process/tool rows, agent cards and
+decision cards use those same semantic icons; execution-result icons remain
+separate. Concurrent facts use separate icons/counts, not an exclusive busy reason.
+The native processing icon means a turn or background continuation, never proven
+model generation. Disconnection, missing facts and unloaded state are explicit;
+an aggregate `running` value alone cannot produce a replying indicator.
+Activity adds no disclosure, detail area or task-management page. Existing input
+and transcript disclosures are unchanged. The independent next UI is not redesigned.
+Stop acknowledgement reports only acceptance; remaining shell/agent facts stay
+visible. A sampled non-abortable state disables interruption without asserting
+that all work ended, and queued-message clearing remains available when applicable.
 Queue entries always expose a small copy button beside removal, including
 single-line and collapsed messages. It copies
 the complete original text through the same control used by code/tool details,

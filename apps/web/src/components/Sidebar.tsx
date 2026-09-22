@@ -78,7 +78,8 @@ function SessionRow({ s, active, actions, connected }: {
       {!!s.roles?.length && <span className="dialog-roles session-role-badges">
         {s.roles.map(role => <RoleBadge key={`${role.moduleId}/${role.roleId}`} role={role} session={s} connected={connected} />)}
       </span>}
-      <SessionStatus sessionId={s.sessionId} status={s.status} needsDecision={!!(s.ask || s.planRequest || s.elicitation)} />
+      <SessionStatus sessionId={s.sessionId} status={s.status} loaded={s.loaded} connected={connected}
+        activity={s.activity} needsDecision={!!(s.ask || s.planRequest || s.elicitation)} />
     </button></li>
   );
 }

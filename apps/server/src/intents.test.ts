@@ -87,11 +87,6 @@ const engine: ServerEngine = {
   }),
   getPanel: async (...args) => record('getPanel', args, []),
   getResources: async (...args) => record('getResources', args, busySession),
-  getActivity: async (...args) => record('getActivity', args, {
-    sessionId: 's', sampledAt: 1, processing: false, hasActiveWork: false, abortable: false,
-    tasks: [], queue: { pendingCount: 0, steeringCount: 0, inFlightSteeringCount: 0 },
-    mcp: { pendingConnections: ['fixture'] },
-  }),
   status: async (...args) => record('sessionStatus', args, sessions),
   respondAsk: (...args) => record('respondAsk', args, undefined),
   respondPlan: (...args) => record('respondPlan', args, undefined),
@@ -169,7 +164,6 @@ const cases = {
   'session/panels': { body: { sessionId: 's' }, method: 'getPanels', args: ['s'] },
   'session/panel': { body: { sessionId: 's', section: 'tasks' }, method: 'getPanel', args: ['s', 'tasks'] },
   'session/resources': { body: { sessionId: 's', resources: ['control'] }, method: 'getResources', args: ['s', ['control']] },
-  'session/activity': { body: { sessionId: 's' }, method: 'getActivity', args: ['s'] },
   respondAsk: { body: { sessionId: 's', requestId: 'r', answer: 'yes', wasFreeform: true }, method: 'respondAsk', args: ['s', 'r', 'yes', true] },
   respondPlan: { body: { sessionId: 's', requestId: 'r', action: 'interactive' }, method: 'respondPlan', args: ['s', 'r', 'interactive'] },
   planSupersede: { body: { sessionId: 's', requestId: 'r', message: 'instead' }, method: 'planSupersede', args: ['s', 'r', 'instead'] },
@@ -227,15 +221,51 @@ for (const [name, fixture] of Object.entries(cases)) {
   });
 }
 
-test('session/activity preserves unloaded errors instead of returning idle details', async t => {
-  t.mock.method(engine, 'getActivity', async () => {
-    throw Object.assign(new Error('Explicitly resume the session first'), { statusCode: 409, code: 'SESSION_UNLOADED' });
-  });
+test('retired independent activity intent is absent from HTTP and capabilities', async () => {
   const response = await app.inject({ method: 'POST', url: '/intent/session/activity', payload: { sessionId: 's' } });
-  assert.equal(response.statusCode, 409);
-  assert.equal(response.json().code, 'SESSION_UNLOADED');
-  assert.equal(response.json().processing, undefined);
+  assert.equal(response.statusCode, 404);
+  assert.equal(isIntentName('session/activity'), false);
+  const capabilities = await app.inject({ method: 'GET', url: '/capabilities' });
+  assert.equal(capabilities.statusCode, 200);
+  assert.doesNotMatch(capabilities.body, /session\/activity/);
   assert.deepEqual(calls, []);
+});
+
+test('activity summary survives existing HTTP lists, control projections and snapshots', async t => {
+  const activity = {
+    sampledAt: 1, processing: false, hasActiveWork: true, abortable: true,
+    tasks: { activeAgents: 0, activeShells: 1, unknown: 0 },
+    queue: { pendingCount: 1, steeringCount: 2, inFlightSteeringCount: 1 },
+    mcp: { pendingConnectionCount: 1 },
+  };
+  sessions = [{ ...busySession, activity }];
+  t.mock.method(engine, 'listLive', async () => sessions);
+  t.mock.method(engine, 'getResources', async (_id, resources) => ({
+    sessionId: 's', loaded: true, ...(resources.includes('control') ? { activity } : {}),
+  }));
+  for (const name of ['session/list', 'runtime/snapshot']) {
+    const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: {} });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json().sessions[0].activity, activity);
+  }
+  for (const resource of ['control', 'identity']) {
+    const response = await app.inject({ method: 'POST', url: '/intent/session/resources',
+      payload: { sessionId: 's', resources: [resource] } });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json().meta.activity, resource === 'control' ? activity : undefined);
+  }
+  const viewer = await openViewer();
+  try {
+    const invalidated: ServerEvent = { type: 'session/patch', sessionId: 's', activity: null };
+    onEngineEvent(invalidated);
+    await nextTurn();
+    assert.equal(viewer.frames.at(-1), `data: ${JSON.stringify(invalidated)}`);
+  } finally { viewer.close(); }
+  t.mock.method(engine, 'getResources', async () => { throw new Error('synthetic read failed'); });
+  const failed = await app.inject({ method: 'POST', url: '/intent/session/resources',
+    payload: { sessionId: 's', resources: ['control'] } });
+  assert.equal(failed.statusCode, 500);
+  assert.equal(failed.json().meta, undefined);
 });
 
 test('resource HTTP responses preserve contributing roles, module-only and non-module sources', async t => {

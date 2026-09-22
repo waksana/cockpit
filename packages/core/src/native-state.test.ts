@@ -361,7 +361,7 @@ test('fork and metadata reads cannot enter another operation closing lock', asyn
   await h.engine.stop();
 });
 
-test('metadata rechecks lifecycle admission after its asynchronous liveness probe', async t => {
+test('metadata reserves its read lease before its asynchronous liveness probe', async t => {
   const h = fixture(t);
   await h.engine.start();
   await h.engine.reload('native-id');
@@ -369,18 +369,15 @@ test('metadata rechecks lifecycle admission after its asynchronous liveness prob
   const heldProbe = new Promise<boolean>(resolve => { probe = resolve; });
   t.mock.method(h.runtime, 'isSessionLive', async () => h.native.live)
     .mock.mockImplementationOnce(() => heldProbe);
-  let close!: () => void;
-  const heldClose = new Promise<void>(resolve => { close = resolve; });
-  t.mock.method(h.runtime, 'closeSession', async () => { await heldClose; h.native.live = false; });
   const reading = h.engine.getMeta('native-id');
-  const unloading = h.engine.unload('native-id');
+  const unloading = assert.rejects(h.engine.unload('native-id'), /operation.*progress/i);
   await nextTurn();
   const reads = h.rpc.metadata.snapshot.mock.callCount();
   probe(true);
-  await assert.rejects(reading, { code: 'SESSION_TRANSITION' });
-  assert.equal(h.rpc.metadata.snapshot.mock.callCount(), reads);
-  close();
+  assert.equal((await reading)!.loaded, true);
+  assert.equal(h.rpc.metadata.snapshot.mock.callCount(), reads + 1);
   await unloading;
+  await h.engine.unload('native-id');
   await h.engine.stop();
 });
 

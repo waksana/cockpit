@@ -1,6 +1,7 @@
 import type { ChatMessage } from '@cockpit/protocol';
 import type { ChatSession } from '../net/types';
 import { orderedFixture } from './ordered-fixtures';
+import { activityFixture } from './activity-fixtures';
 
 const timestamp = new Date('2026-09-11T09:40:00').getTime();
 
@@ -151,6 +152,10 @@ export const scenarios = [
   ['process-history', '连续过程 / 无正文 / 最新展开'],
   ['ordered-events', '原生事件 / 连续概览 / 重连补全'],
   ['streaming', '流式 / 队列 / 停止'],
+  ['activity-processing', '活动 / 原生处理'],
+  ['activity-shell', '活动 / 回合结束但 shell 继续'],
+  ['activity-mixed', '活动 / shell、agent、待回答并存'],
+  ['activity-unknown', '活动 / 未分类与未知状态'],
   ['input-states', '同一输入框 / 状态切换 / 尺寸稳定'],
   ['cancelling', '停止请求中'],
   ['ask', '选择 / 自由回答'],
@@ -272,6 +277,26 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   if (scenario === 'compacting') session.compacting = true;
   if (scenario === 'auto-compacting') Object.assign(session, { compacting: true, status: 'running' });
   if (scenario === 'unloaded') Object.assign(session, { status: 'unloaded', loaded: false });
+  session.activity = session.loaded ? activityFixture({
+    processing: session.status === 'running', hasActiveWork: session.status === 'running',
+    abortable: session.status === 'running',
+    queue: { pendingCount: session.queue?.length ?? 0, steeringCount: 0, inFlightSteeringCount: 0 },
+  }) : null;
+  if (scenario.startsWith('activity-')) {
+    session.status = 'running';
+    session.nativeProcessing = true;
+    session.messages = [message('activity-result', 'assistant', '这是已结束的合成回复。活动状态只来自结构化原生采样，不从这段正文推断。')];
+    session.activity = activityFixture({
+      processing: scenario === 'activity-processing' || scenario === 'activity-mixed',
+      hasActiveWork: true, abortable: scenario !== 'activity-shell',
+      tasks: { activeAgents: scenario === 'activity-mixed' ? 1 : 0,
+        activeShells: ['activity-shell', 'activity-mixed'].includes(scenario) ? 1 : 0, unknown: 0 },
+      queue: { pendingCount: 0, steeringCount: scenario === 'activity-mixed' ? 2 : 0,
+        inFlightSteeringCount: scenario === 'activity-mixed' ? 1 : 0 },
+      mcp: { pendingConnectionCount: scenario === 'activity-mixed' ? 1 : 0 },
+    });
+    if (scenario === 'activity-mixed') session.ask = { requestId: 'activity-question', question: '选择下一步（合成）', choices: ['继续'] };
+  }
   session.messages = fixtureItems(session.messages, session.sessionId);
   if (scenario === 'ordered-events') Object.assign(session, orderedFixture().snapshot());
   return session;

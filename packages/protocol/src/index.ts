@@ -398,6 +398,25 @@ export const RoleAdditionResult = z.object({
 });
 export type RoleAdditionResult = z.infer<typeof RoleAdditionResult>;
 
+export const SessionActivity = z.object({
+  sampledAt: z.number().int().nonnegative().describe('Read completion time in epoch milliseconds; native reads are not atomic.'),
+  processing: z.boolean().describe('Native isProcessing: a turn or background continuation, not necessarily model generation.'),
+  hasActiveWork: z.boolean().describe('Broad native activity flag; may be true without a more specific explanation.'),
+  abortable: z.boolean().describe('Sampled native capability, not authorization or a guarantee that a later abort succeeds.'),
+  tasks: z.object({
+    activeAgents: z.number().int().nonnegative(),
+    activeShells: z.number().int().nonnegative(),
+    unknown: z.number().int().nonnegative().describe('Unrecognized task types or statuses, not known active agents or shells.'),
+  }),
+  queue: z.object({
+    pendingCount: z.number().int().nonnegative(),
+    steeringCount: z.number().int().nonnegative(),
+    inFlightSteeringCount: z.number().int().nonnegative().describe('Subset of steeringCount already folded into the running turn; never add the two counts.'),
+  }),
+  mcp: z.object({ pendingConnectionCount: z.number().int().nonnegative() }),
+});
+export type SessionActivity = z.infer<typeof SessionActivity>;
+
 export const SessionMeta = z.object({
   roles: z.array(SessionRole).optional(),
   appliedRoles: z.array(SessionRole).optional(),
@@ -438,11 +457,8 @@ export const SessionMeta = z.object({
   // Number of active scheduled prompts on this session (drives the list timer
   // badge). Read on demand; omitted when native runtime data is unavailable.
   scheduleCount: z.number().optional(),
-  // Count of in-flight `task` sub-agent invocations (foreground OR background).
-  // A background sub-agent outlives the turn that spawned it (status returns to
-  // idle while it runs), so this is what lets the graceful-restart gate avoid
-  // killing one. Tracked from the task tool's execution_start/complete events;
-  // cleared on abort/unload. 0 (or absent) means none in flight.
+  // Legacy conservative count across all task types and unknown statuses.
+  // Display typed activity.tasks counts instead; preserve this safety contract.
   activeSubagents: z.number().optional(),
   // True while the SDK is compacting this session's history (CLI /compact OR
   // automatic mid-turn compaction). Distinct from the turn `status`: auto
@@ -456,27 +472,10 @@ export const SessionMeta = z.object({
   // represented as a still-settling operation.
   activeMcpOperations: z.number().int().nonnegative().optional(),
   activeOperations: z.number().int().nonnegative().optional(),
-  nativeProcessing: z.boolean().optional().describe('Legacy aggregate busy flag, not the raw native isProcessing result. Use session/activity.processing for the native flag.'),
+  nativeProcessing: z.boolean().optional().describe('Legacy aggregate busy flag, not the raw native isProcessing result. Use activity.processing for the native flag.'),
+  activity: SessionActivity.nullable().optional().describe('Control summary. Null means unavailable or invalidated, not idle; omission means not requested.'),
 });
 export type SessionMeta = z.infer<typeof SessionMeta>;
-
-export const SessionActivity = z.object({
-  sessionId: z.string(),
-  sampledAt: z.number().int().nonnegative().describe('Read completion time in epoch milliseconds; the native reads are not an atomic snapshot.'),
-  processing: z.boolean().describe('Native isProcessing: a turn or background continuation, not necessarily model generation.'),
-  hasActiveWork: z.boolean().describe('Native activity flag; may be true without a more specific reason in this response.'),
-  abortable: z.boolean().describe('Native activity flag, not authorization or a guarantee that a later abort will succeed.'),
-  tasks: z.array(z.object({
-    id: z.string(), type: z.enum(['agent', 'shell']), description: z.string(), status: z.string(),
-  })).describe('Currently tracked native tasks, including idle/finished tasks if retained; not a complete historical registry.'),
-  queue: z.object({
-    pendingCount: z.number().int().nonnegative(),
-    steeringCount: z.number().int().nonnegative(),
-    inFlightSteeringCount: z.number().int().nonnegative().describe('Leading steering messages already folded into the running turn; a subset, not an additional queue.'),
-  }),
-  mcp: z.object({ pendingConnections: z.array(z.string()) }),
-});
-export type SessionActivity = z.infer<typeof SessionActivity>;
 
 // Resource names describe read dependencies, not cached native state. Omission
 // in a projection means "not requested", never an empty/default value.
@@ -494,6 +493,7 @@ export type PanelSection = z.infer<typeof PanelSection>;
 // can discover sessions (and pick one to rename / toggle MCP-skills on) without
 // subscribing to the SSE snapshot stream.
 export const SessionBrief = z.object({
+  activity: SessionActivity.nullable().optional(),
   roles: z.array(SessionRole).optional(),
   appliedRoles: z.array(SessionRole).optional(),
   rolesNeedReload: z.boolean().optional(),
@@ -766,14 +766,9 @@ export const Intents = {
     result: z.object({ meta: SessionMeta.nullable() }),
   },
   'session/resources': {
-    description: 'Read only requested metadata resources, without loading a session. Omitted fields were not requested, not cleared. loaded:false invalidates all previous native fields; meta:null means unknown session. Control display is not permission to delete, unload or restart; mutations independently confirm fresh safety.',
+    description: 'Read only requested metadata resources, without loading a session. Control includes sampled native activity flags and typed task/queue/MCP counts, not task descriptions or queue text. activity:null is unavailable/invalidated, not idle; omitted activity means control was not requested. Other omitted fields were not requested, not cleared. loaded:false invalidates all previous native fields; meta:null means unknown session. Control display is not permission to delete, unload or restart; mutations independently confirm fresh safety.',
     body: z.object({ sessionId: z.string(), resources: z.array(MetaResource).min(1).max(MetaResource.options.length) }),
     result: z.object({ meta: SessionProjection.nullable() }),
-  },
-  'session/activity': {
-    description: 'Read native processing/activity flags, tracked task summaries, queue counts and connecting MCP names for a loaded session. Does not load sessions, scan chat, infer exclusive busy reasons or change legacy status/nativeProcessing. Refresh after control/tasks/queue/mcp invalidations or relevant session patches and after reconnect. Unloaded/unknown native handles fail explicitly.',
-    body: z.object({ sessionId: z.string().min(1) }).strict(),
-    result: SessionActivity,
   },
   'mcp/global': {
     description: 'Read Copilot native user MCP configuration and defaults without activating a session.',

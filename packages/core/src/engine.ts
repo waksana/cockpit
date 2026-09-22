@@ -486,7 +486,9 @@ export class Engine {
     for (const id of ids) {
       const st = this.sessions.get(id);
       const row = byId.get(id);
-      const meta = st ? await this.getResources(id, resources, row) : row ? this.listedMeta(row) : await this.getResources(id, resources);
+      const meta = st ? await this.getResources(id, resources, row) : row ? {
+        ...this.listedMeta(row), ...(resources.includes('control') ? { activity: null } : {}),
+      } : await this.getResources(id, resources);
       if (meta) result.push(completeMeta(meta));
     }
     return result;
@@ -504,20 +506,24 @@ export class Engine {
       new Error('Native session creation is still awaiting acknowledgement'), { statusCode: 409, code: 'SESSION_TRANSITION' },
     );
     this.assertReadable(st);
-    const sdk = st && await this.liveSession(st);
-    this.assertReadable(st);
-    if (!st || !sdk) {
-      const row = listedRow ?? await this.untilFatal(() => this.runtime.getSessionMetadata(id));
-      return row ? {
-        ...this.listedMeta(row),
-        ...(st ? { loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling,
-          activeOperations: st.operations, activeMcpOperations: st.mcpOperations,
-          ...this.decisionFields(st) } : {}),
-      } : null;
+    if (st) {
+      st.operations++;
+      this.patch(st, { activeOperations: st.operations });
     }
-    st.operations++;
-    this.patch(st, { activeOperations: st.operations });
     try {
+      const sdk = st && await this.liveSession(st);
+      this.assertReadable(st);
+      if (!st || !sdk) {
+        const row = listedRow ?? await this.untilFatal(() => this.runtime.getSessionMetadata(id));
+        return row ? {
+          ...this.listedMeta(row),
+          ...(resources.includes('control') ? { activity: null } : {}),
+          ...(st ? { loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling,
+            activeOperations: Math.max(0, st.operations - 1), activeMcpOperations: st.mcpOperations,
+            ...this.decisionFields(st) } : {}),
+        } : null;
+      }
+      const revision = st.revision;
       const wants = new Set(resources);
       const [metadata, name, model, models, mode, todos, schedules, control, queue, row] = await this.withSession(st, sdk, () => settled([
         wants.has('identity') ? sdk.rpc.metadata.snapshot() : Promise.resolve(undefined),
@@ -548,6 +554,7 @@ export class Engine {
         ...(control ? {
           status: control.busy || st.sends > 0 || st.accepted.size > 0 ? 'running' as const : 'idle' as const,
           nativeProcessing: control.busy,
+          activity: revision === st.revision ? control.summary : null,
           ...(!control.busy && !st.sends && !st.accepted.size ? { intent: null } : {}),
           activeSubagents: control.tasks.tasks.filter(task => activeTask(task.status)).length,
           activeMcpOperations: st.mcpOperations + control.mcpHost.pendingConnections.length,
@@ -563,10 +570,15 @@ export class Engine {
         loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling,
         ...this.decisionFields(st),
       };
+    } catch (error) {
+      if (st && resources.includes('control')) this.patch(st, { activity: null });
+      throw error;
     } finally {
-      st.operations--;
-      this.patch(st, { activeOperations: st.operations });
-      this.release(st);
+      if (st) {
+        st.operations--;
+        this.patch(st, { activeOperations: st.operations });
+        this.release(st);
+      }
     }
   }
 
@@ -575,6 +587,7 @@ export class Engine {
       sessionId: meta.sessionId, title: meta.title, cwd: meta.cwd, status: meta.status,
       loaded: meta.loaded, lastActivity: meta.lastActivity, currentModelId: meta.currentModelId,
       lastActivitySource: meta.lastActivitySource,
+      activity: meta.activity,
       roles: meta.roles, appliedRoles: meta.appliedRoles, rolesNeedReload: meta.rolesNeedReload,
     }));
   }
@@ -919,8 +932,12 @@ export class Engine {
     }
     if (event.type === 'session.shutdown'
       || (event.type === 'session.connection_state_changed' && ['reconnecting', 'disconnected'].includes(String(data.state)))) {
+      this.patch(st, { activity: null });
       this.probe(st);
       return;
+    }
+    if (root && ['user.message', 'abort', 'session.compaction_start'].includes(event.type)) {
+      this.invalidate(st, ['control', 'queue']);
     }
     if (native.type === 'tool.execution_complete') {
       this.scheduleSync(st);
@@ -1036,8 +1053,25 @@ export class Engine {
       || !Number.isInteger(queue.inFlightSteeringCount) || queue.inFlightSteeringCount < 0) {
       throw new Error('Native activity state is incomplete; cannot confirm session safety');
     }
+    const counts = { activeAgents: 0, activeShells: 0, unknown: 0 };
+    for (const task of tasks.tasks) {
+      if ((task.type !== 'agent' && task.type !== 'shell')
+        || !['running', 'idle', 'completed', 'failed', 'cancelled'].includes(task.status)) counts.unknown++;
+      else if (task.status === 'running') {
+        if (task.type === 'agent') counts.activeAgents++;
+        else counts.activeShells++;
+      }
+    }
+    const summary = SessionActivity.parse({
+      sampledAt: Date.now(), processing: processing.processing,
+      hasActiveWork: activity.hasActiveWork, abortable: activity.abortable,
+      tasks: counts,
+      queue: { pendingCount: queue.items.length, steeringCount: queue.steeringMessages.length,
+        inFlightSteeringCount: queue.inFlightSteeringCount },
+      mcp: { pendingConnectionCount: mcp.host.pendingConnections.length },
+    });
     return {
-      processing, activity, queue, tasks, mcpHost: mcp.host,
+      processing, activity, queue, tasks, mcpHost: mcp.host, summary,
       busy: processing.processing || activity.hasActiveWork || tasks.tasks.some(task => activeTask(task.status))
         || queue.items.length > 0 || queue.steeringMessages.length > 0 || queue.inFlightSteeringCount > 0
         || mcp.host.pendingConnections.length > 0,
@@ -1247,7 +1281,7 @@ export class Engine {
     for (const decision of st.decisions.values()) decision.reject(error ?? new Error('Native session closed'));
     st.decisions.clear();
     this.patch(st, {
-      loaded: false, status: error ? 'error' : 'unloaded', nativeProcessing: false,
+      loaded: false, status: error ? 'error' : 'unloaded', nativeProcessing: false, activity: null,
       appliedRoles: [], rolesNeedReload: false,
       activeSubagents: 0, activeMcpOperations: 0, compacting: false,
       queue: [], ask: null, planRequest: null, elicitation: null, intent: null,
@@ -1572,35 +1606,6 @@ export class Engine {
       }
       return NativeRewindResult.parse(result);
     });
-  }
-
-  async getActivity(id: string): Promise<SessionActivity> {
-    const st = this.sessions.get(id);
-    this.assertReadable(st);
-    if (!st?.sdk) throw new SessionUnloadedError();
-    st.operations++;
-    this.patch(st, { activeOperations: st.operations });
-    try {
-      const sdk = await this.liveSession(st);
-      if (!sdk) throw new SessionUnloadedError();
-      const control = await this.readControl(st, sdk);
-      return SessionActivity.parse({
-        sessionId: id, sampledAt: Date.now(),
-        processing: control.processing.processing,
-        hasActiveWork: control.activity.hasActiveWork, abortable: control.activity.abortable,
-        tasks: control.tasks.tasks.map(({ id, type, description, status }) => ({ id, type, description, status })),
-        queue: {
-          pendingCount: control.queue.items.length,
-          steeringCount: control.queue.steeringMessages.length,
-          inFlightSteeringCount: control.queue.inFlightSteeringCount,
-        },
-        mcp: { pendingConnections: control.mcpHost.pendingConnections },
-      });
-    } finally {
-      st.operations--;
-      this.patch(st, { activeOperations: st.operations });
-      this.release(st);
-    }
   }
 
   async getUsage(id: string): Promise<SessionUsage> {
@@ -2073,6 +2078,9 @@ export class Engine {
 
   private invalidate(st: State, resources?: SessionResource[]): void {
     if (this.sessions.get(st.id) !== st) return;
+    if (!resources || resources.some(resource => ['control', 'tasks', 'queue', 'mcp'].includes(resource))) {
+      this.patch(st, { activity: null });
+    }
     if (resources) {
       resources = resources.filter(resource => {
         if (!st.resourceWrites.has(resource)) return true;

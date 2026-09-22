@@ -12,6 +12,7 @@ import { getDraftSession, getSessionDraft } from '../lib/draftSelection';
 import { useCockpit } from '../net/store';
 import { fixtureSession, scenarios, type Scenario } from './chat-fixtures';
 import { orderedFixture } from './ordered-fixtures';
+import { Sidebar } from '../components/Sidebar';
 import '../styles/index.scss';
 import '../components/UxErrorNotifications.scss';
 import './chat-lab.scss';
@@ -193,6 +194,9 @@ export function Lab() {
     <output className="lab-receipt" aria-live="polite">{receipt}</output>
     </details>
     <div className="lab-stage" data-narrow={narrow || undefined}>
+      {scenario.startsWith('activity-') && <Sidebar sessions={[session]} activeId={session.sessionId}
+        query="" snapshotReady connected={useCockpit.getState().connState === 'open'}
+        onSelect={() => {}} getMenuItems={() => []} />}
       <ChatHeader title={`${session.title} · 长标题与会话入口边界`} modelLabel="Synthetic model · no native connection"
         moreRef={moreRef} moreOpen={moreOpen}
         onBack={() => setReceipt('返回入口回调（导航不在此场景内执行）。')}
@@ -221,17 +225,21 @@ export function Lab() {
         onRespondPlan={(id, answer) => action(`${id} / ${answer}`, () => setSession(value => ({ ...value, planRequest: null })))}
         onRespondElicitation={(id, answer) => action(`${id} / ${answer}`, () => setSession(value => ({ ...value, elicitation: null })))}
         onRemoveQueued={id => { setReceipt(`移除队列项：${id}`); setSession(value => ({ ...value, queue: value.queue?.filter(q => q.id !== id) })); }}
-        onCancel={() => {
+        onCancel={async () => {
           const owner = generation.current;
           setSession(value => ({ ...value, cancelling: true }));
-          void action('停止并清空队列（合成）', () => {
+          try { await action('停止并清空队列（合成）', () => {
             setSession(value => ({
-              ...value, cancelling: false, status: 'idle', queue: [], ask: null, planRequest: null, elicitation: null,
+              ...value, cancelling: false, status: value.activity?.tasks.activeShells ? 'running' : 'idle',
+              queue: [], ask: null, planRequest: null, elicitation: null,
+              activity: value.activity ? { ...value.activity, processing: false, abortable: false,
+                hasActiveWork: !!(value.activity.tasks.activeShells || value.activity.tasks.activeAgents),
+                queue: { pendingCount: 0, steeringCount: 0, inFlightSteeringCount: 0 } } : null,
             }));
-            append('本次执行已取消（合成记录）。', 'system');
-          }).catch(() => {
+            append('停止请求已受理，后台任务未被自动取消（合成记录）。', 'system');
+          }); } finally {
             if (owner === generation.current) setSession(value => ({ ...value, cancelling: false }));
-          });
+          }
         }}
         onInterrupt={async () => {
           await action('打断并保留队列', () => setSession(value => ({

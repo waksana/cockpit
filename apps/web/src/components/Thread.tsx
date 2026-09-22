@@ -30,6 +30,8 @@ import { useModuleRuntime } from './ModuleComponents';
 import { useClippedText } from '../lib/useClippedText';
 import { hasNewTranscriptContent } from '../lib/transcriptActivity';
 import { useRemovedControlFocus } from '../lib/useRemovedControlFocus';
+import { sessionActivityIndicators } from '../lib/sessionActivity';
+import { SessionActivity } from './SessionActivity';
 
 function Thought({ message, latest, sessionId }: { message: ChatMessage; latest: boolean; sessionId: string }) {
   const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'thought', message.thoughtKey ?? message.id]), latest);
@@ -79,6 +81,7 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
       aria-label={`${open ? '收起' : '展开'}过程：${description} · ${time}`} title={description}
       onClick={toggle}>
       <span className="process-summary-chevron"><Icon name="down" size={16} /></span>
+      {!!tools.length && <Icon name="tool" size={16} />}
       <span ref={titleRef} className="process-summary-title">{title}</span>
       <span className="process-summary-states">
         {states.filter(([count]) => count > 0).map(([count, status]) => <span key={status ?? 'unknown'}
@@ -141,7 +144,7 @@ function SubagentCard({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
     <div className="subagent-card" data-status={sa.status}>
       <div className="subagent-overview">
         <button type="button" className="subagent-head ck-button rp" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          <span className="subagent-ico"><Icon name="newchat" size={20} /></span>
+          <span className="subagent-ico"><Icon name="agent" size={20} /></span>
           <span className="subagent-name">{sa.displayName}</span>
           <span className="subagent-status" title="根据已加载的子代理事件记录，不代表当前仍在运行或任务目标已完成。">
             记录：{status}{!connected && ' · 待同步'}
@@ -314,7 +317,7 @@ interface ThreadProps {
   onRespondPlan?: (requestId: string, action: ExitPlanModeAction) => Promise<boolean>;
   onRespondElicitation?: (requestId: string, action: 'accept' | 'decline' | 'cancel') => Promise<boolean>;
   onRemoveQueued?: (itemId: string) => void;
-  onCancel?: () => void;
+  onCancel?: () => void | Promise<void>;
   onInterrupt?: () => Promise<{ ok: true; interrupted: boolean }>;
   onLoadMore: () => void;
   onRetryHistory?: () => void;
@@ -328,15 +331,21 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const connected = useCockpit((s) => s.connState === 'open');
   const snapshotReady = useCockpit((s) => s.snapshotReady);
   const interruptAction = useKeyedAction(`interrupt:${session.sessionId}`);
+  const stopAction = useKeyedAction(`stop:${session.sessionId}`);
+  const [stopNotice, setStopNotice] = useState<{ sessionId: string; text: string } | null>(null);
   const [interruptNotice, setInterruptNotice] = useState<{ sessionId: string; text: string } | null>(null);
   const canInterrupt = !!onInterrupt && session.loaded && session.status === 'running'
     && !session.loading && !session.closing && !session.cancelling && !session.compacting
-    && session.nativeProcessing !== false;
-  const queueCount = session.queue?.length ?? 0;
+    && session.nativeProcessing !== false && session.activity?.abortable !== false;
+  const queueCount = session.activity
+    ? session.activity.queue.pendingCount + session.activity.queue.steeringCount
+    : session.queue?.length ?? 0;
   const showStop = !readOnly && session.status === 'running' && !session.compacting;
-  const stopPending = !!session.cancelling;
+  const stopPending = !!session.cancelling || stopAction.busy;
+  const notAbortable = connected && snapshotReady && session.loaded && session.activity?.abortable === false && queueCount === 0
+    && !session.ask && !session.planRequest && !session.elicitation;
   const stopDisabled = !connected || !session.loaded || session.loading || session.closing
-    || (!stopPending && (!!session.activeOperations || interruptAction.busy)) || !onCancel;
+    || !snapshotReady || (!stopPending && (!!session.activeOperations || interruptAction.busy || notAbortable)) || !onCancel;
   const showInterrupt = !readOnly && queueCount > 0 && canInterrupt;
   const interruptResult = readOnly ? null : interruptAction.error
     ? `打断未确认：${interruptAction.error}。请核对会话状态，不要直接重试。`
@@ -368,11 +377,14 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
     return () => { canAct.current = false; };
   }, [session.sessionId, authoritative, readOnly]);
   const { pending: actionPending, hasContent } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
-  const executionLabel = session.cancelling ? '正在停止…' : session.compacting ? '正在压缩上下文…'
+  const activityItems = sessionActivityIndicators({
+    ...session, needsDecision: !!(session.ask || session.planRequest || session.elicitation),
+  }, connected && snapshotReady);
+  const executionProgress = connected && snapshotReady && session.cancelling ? '正在停止…'
+    : connected && snapshotReady && session.compacting ? '正在压缩上下文…'
     : actionPending && !readOnly ? session.ask ? '正在提交回答…' : '正在提交…'
-    : session.ask ? '等待你的回答' : session.planRequest ? '等待确认计划'
-      : session.elicitation ? '等待工具确认' : session.status === 'running'
-        ? session.intent || '执行中…' : queueCount > 0 ? '等待处理' : '执行结果';
+    : connected && snapshotReady && session.activity?.processing ? session.intent : null;
+  const executionLabel = [executionProgress, ...activityItems.map(item => item.label)].filter(Boolean).join(' · ') || '当前无活动';
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const scrollOwnerRef = useRef<ThreadScroll | null>(null);
@@ -448,7 +460,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const planRequest = session.planRequest;
   const hasPendingDecision = !readOnly && !!(planRequest || session.elicitation);
   const hasExecution = session.compacting || session.status === 'running' || (!readOnly && queueCount > 0);
-  const hasInputHeader = !!(hasExecution || hasPendingDecision || (!readOnly && ask));
+  const hasInputHeader = !!(hasExecution || hasPendingDecision || (!readOnly && ask) || activityItems.length);
   const inputCardRef = useRef<HTMLDetailsElement | null>(null);
   useLayoutEffect(() => {
     // Native disclosure survives ordinary updates; a new request or idle input opens afresh.
@@ -530,6 +542,10 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           {interruptResult && <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
             {interruptResult}
           </p>}
+          {(stopAction.error || stopNotice?.sessionId === session.sessionId) && <p className="chat-interrupt-status"
+            role={stopAction.error ? 'alert' : 'status'}>
+            {stopAction.error ? `停止结果未确认：${stopAction.error}` : stopNotice?.text}
+          </p>}
           {!readOnly && <ComposerNotices draft={draft} />}
         </div>
         <details className="chat-input-card" ref={inputCardRef} open
@@ -537,7 +553,10 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           data-question={(!readOnly && operation === 'ask') || undefined}>
           <summary className="chat-execution-head" hidden={!hasInputHeader} aria-label={`${executionLabel}，展开或收起输入卡片`}>
             <span className="chat-execution-label" role="status" title={executionLabel}
-              data-running={session.status === 'running' || undefined}>{executionLabel}</span>
+              aria-label={executionLabel}>
+              {executionProgress && <span className="chat-execution-progress">{executionProgress}</span>}
+              <SessionActivity items={activityItems} />
+            </span>
             {!readOnly && hasContent && <span className="chat-folded-draft">有草稿</span>}
             {(showStop || showInterrupt) && <span className="chat-execution-actions" role="group" aria-label="执行操作"
               onClick={event => event.stopPropagation()}>
@@ -555,9 +574,13 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                 }}>{interruptAction.busy ? '正在请求…' : '打断并处理队列'}</button>}
               {showStop && <button ref={executionControlRef} type="button" className="chat-typing-stop ck-button ck-danger" disabled={stopDisabled}
                 aria-disabled={stopPending || undefined} aria-busy={stopPending || undefined}
-                onClick={() => { if (!stopDisabled && !stopPending) onCancel?.(); }}>
+                onClick={() => {
+                  if (!stopDisabled && !stopPending) void stopAction.run(async () => { await onCancel?.(); },
+                    () => setStopNotice({ sessionId: session.sessionId,
+                      text: '停止请求已受理；后台任务可能继续，当前活动以原生状态为准。' }));
+                }}>
                 <Icon name="stop" size={16} />
-                {session.cancelling ? '正在停止…' : queueCount > 0 ? '停止并清空队列' : '停止'}
+                {stopPending ? '正在停止…' : notAbortable ? '当前不可中断' : queueCount > 0 ? '停止并清空队列' : '停止'}
               </button>}
             </span>}
           </summary>

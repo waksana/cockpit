@@ -71,6 +71,7 @@ test('streaming store updates do not notify the metadata/sidebar render boundary
       sessions: state.sessions.map((s) => s.sessionId === 'active' ? { ...s, status: 'running' } : s),
     }));
     assert.equal(renderCount, 3);
-    assert.match(render(), /data-tone="running">回复中/);
+    assert.match(render(), /当前活动未知/);
+    assert.doesNotMatch(render(), /回复中/);
   } finally { unsubscribe(); }
 });
