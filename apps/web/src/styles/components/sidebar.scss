@@ -35,9 +35,6 @@
     border: none;
     border-radius: calc(var(--height) / 2);
     background-color: var(--input-search-background-color);
-    color: var(--primary-text-color);
-    font-size: var(--host-text-body);
-    line-height: var(--host-leading-ui);
     &::placeholder { color: var(--input-placeholder-color); }
     &::-webkit-search-cancel-button { display: none; }
   }
@@ -73,8 +70,6 @@
   min-height: 4.25rem;
   padding: 0.25rem 0.6rem;
   border-radius: var(--border-radius-medium);
-  cursor: pointer;
-  color: var(--primary-text-color);
   overflow: hidden;             // clip content to the rounded row
 
   &.active { background-color: var(--selected-fill); }

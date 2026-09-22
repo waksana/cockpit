@@ -182,6 +182,12 @@ ARIA 用于补足原生/可见内容未能表达的名称、说明或状态，�
 先增加有类型、被实际消费的变体，再迁移调用者并删除重复声明。
 聊天 prose/code、媒体/波形、原生状态的资源行分区、会话头像与角色来源是内容专用部分，
 可以保留布局，但复用基础字体/颜色/控件，不能重置公共类或缩小独立动作的触摸目标。
+
+共享组合的样式跟随其实际所有者，不寄存在最早使用它的页面中：
+`CopyButton`、`MessageBody`、`RolePicker` 分别由
+`styles/components/copy.scss`、`markdown.scss`、`role-picker.scss` 维护，
+在经典入口统一加载；页面仅保留上下文布局与有意差异。
+这些是本体内部共享样式，不新增模块公开接口，也不要求业务内容使用同一种布局。
 现有 [Chat Lab](DEVELOPMENT.md#isolated-chat-component-review) 是组合示例和行为入口，
 不维护第二套 demo 组件。
 

@@ -11,7 +11,12 @@
 @use 'primitives/preloader';
 @use 'primitives/menu';
 
-// Components
+// Shared host compositions
+@use 'components/copy';
+@use 'components/markdown';
+@use 'components/role-picker';
+
+// Page structure and contextual presentation
 @use 'components/shell';
 @use 'components/pane';
 @use 'components/module-label';

@@ -1,0 +1,63 @@
+// MessageBody is shared by chat and resource details. Chat supplies its own tokens.
+.message-body {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-size: var(--chat-text-body, var(--messages-text-size));
+  line-height: var(--chat-leading-prose, 1.7);
+  p, .markdown-paragraph { margin: var(--chat-gap-prose, 0.65em) 0; white-space: pre-wrap; }
+  ul, ol { margin: var(--chat-gap-prose, 0.65em) 0; padding-inline-start: 1.5rem; white-space: normal; }
+  li { margin: 0.2em 0; }
+  li > p, li > .markdown-paragraph { margin: 0; }
+  li > ul, li > ol { margin: 0.15em 0; }
+  .contains-task-list { list-style: none; padding-inline-start: 0.2rem; }
+  .task-list-item input { margin: 0 0.45rem 0 0; accent-color: var(--primary-color); }
+  a:not(.ck-button, .ck-icon-button) {
+    color: var(--chat-link-ink, var(--link-color));
+    text-decoration: underline; text-underline-offset: 3px;
+  }
+  pre {
+    margin: var(--chat-gap-prose-section, 0.75rem) 0; padding: var(--chat-inset-panel, 0.85rem 1rem);
+    background: color-mix(in srgb, var(--primary-text-color) 8%, transparent);
+    border-radius: var(--border-radius); overflow-x: auto; white-space: pre;
+  }
+  code { font-family: var(--chat-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 0.875em; }
+  :not(pre) > code:not([class^='language-']) {
+    padding: 0.05em 0.3em;
+    background: color-mix(in srgb, var(--primary-text-color) 12%, transparent);
+    border-radius: 0.2rem;
+  }
+  table {
+    border-collapse: collapse; margin: 0; font-size: 0.875em;
+    display: block; overflow-x: auto; max-width: 100%; white-space: normal;
+  }
+  th, td { border: 1px solid var(--border-color); padding: var(--chat-inset-field, 0.55rem 0.75rem); text-align: start; vertical-align: top; min-width: 7rem; }
+  thead th { background: color-mix(in srgb, var(--primary-text-color) 8%, transparent); }
+  blockquote {
+    margin: var(--chat-gap-prose-section, 0.85rem) 0; padding: 0.15rem 0 0.15rem 1rem;
+    border-inline-start: 2px solid var(--primary-color); color: var(--secondary-text-color);
+  }
+  h1, h2, h3, h4, h5, h6 { margin: 1.4em 0 0.5em; font-weight: 600; line-height: var(--chat-leading-heading, 1.4); }
+  h1 { font-size: 1.5em; letter-spacing: -0.02em; }
+  h2 { font-size: 1.25em; }
+  h3 { font-size: 1.1em; }
+  h4 { font-size: 1em; }
+  h5, h6 { font-size: 0.9em; color: var(--secondary-text-color); }
+  hr { border: 0; border-top: 1px solid var(--border-color); margin: 1.25rem 0; }
+  // Class-based paragraphs have the same specificity, so edge rules come last.
+  & > :first-child { margin-top: 0; }
+  & > :last-child { margin-bottom: 0; }
+}
+.chat-table-scroll { margin: var(--chat-gap-prose-section, 0.85rem) 0; max-width: 100%; }
+.chat-code-block {
+  margin: var(--chat-gap-prose-section, 0.85rem) 0; min-width: 0; border: 1px solid var(--border-color);
+  border-radius: var(--border-radius); overflow: hidden;
+  .chat-code-head {
+    display: flex; align-items: center; justify-content: space-between; gap: var(--chat-gap-control, 1rem);
+    padding: var(--chat-gap-meta, 0.25rem) var(--chat-inset-panel, 0.75rem); background: var(--ripple-color);
+    color: var(--secondary-text-color); font-size: var(--chat-text-meta, var(--font-size-12)); line-height: var(--chat-leading-ui, 1.5);
+  }
+  pre { margin: 0; border-radius: 0; background: transparent; line-height: var(--chat-leading-code, 1.65); }
+  pre:focus-visible { outline-offset: -3px; }
+  pre code { font-size: var(--chat-text-label, var(--font-size-13)); }
+}
