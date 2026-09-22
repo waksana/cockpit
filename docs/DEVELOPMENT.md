@@ -277,6 +277,22 @@ scenarios remain explicit. For the separately authorized static preview, add
 `COCKPIT_REVIEW_SCENE=control` to the build command above and use a new output
 directory; its asset base is `/review/activity-design-20260922/control/`.
 Do not overwrite the previous activity preview or deploy the main application.
+
+The control scene now keeps a single native input-card frame: one status toggle,
+grouped agent/terminal/queue rows, native question/decision content, and a bottom
+editor. The normal editor is never collapsed with the task list. A new question
+opens the list and positions its answer at the bottom once, before paint; later
+task updates do not repeat that navigation. The preview retains the same textarea,
+preserves separate prompt/answer drafts and carries editor geometry across purpose
+changes. This alternate composition is opt-in; the production composer stays unchanged.
+
+Use `?scene=control-design&case=tool-loading` in Chat Lab, or `?case=tool-loading`
+on the static control review, for a final active tool after scrollable static
+history. The preview's `对比修复前图标` toggle restores the old inline SVG display.
+The inline line box rotated with the tool status wrapper and changed scrollable
+overflow, even while the message content height stayed fixed. A block SVG removes
+that line box; keep the animation and the existing scroll owner, rather than
+masking the jitter with timers or repeated scroll writes.
 Add `&pane=narrow` to constrain the actual Chat pane to 456px while keeping a
 desktop viewport. This reproduces the space available beside docked settings:
 decisions and process rows must adapt to their own width, not the window width.

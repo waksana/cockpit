@@ -81,6 +81,29 @@ test('only manual compaction offers cancellation', () => {
   assert.throws(() => applyControlAction(controlDesignState('auto'), { type: 'cancel-compaction' }), /不是可取消/);
 });
 
+test('global stop settles synthetic work without clearing transcript or removing task rows', () => {
+  const initial = controlDesignState('mixed');
+  const stopped = applyControlAction(initial, { type: 'stop-all' });
+  assert.equal(stopped.main, false);
+  assert.equal(stopped.queue.length, 0);
+  assert.equal(stopped.tasks.length, initial.tasks.length);
+  assert.ok(stopped.tasks.every(task => task.status === 'cancelled'));
+  assert.equal(stopped.session.messages.length, initial.session.messages.length);
+  assert.equal(applyControlAction(stopped, { type: 'prune-tasks' }).tasks.length, 0);
+});
+
+test('loading reproduction ends in a genuinely active tool with static preceding history', () => {
+  const initial = controlDesignState('tool-loading');
+  assert.ok(initial.session.messages.length > 20);
+  assert.equal(initial.session.messages.at(-1)?.toolCalls?.[0].status, 'in_progress');
+  const ended = applyControlAction(initial, { type: 'finish-tool' });
+  assert.equal(ended.session.messages.at(-1)?.toolCalls?.[0].status, 'completed');
+  assert.equal(ended.main, false);
+  const stopped = applyControlAction(initial, { type: 'stop-all' });
+  assert.equal(stopped.session.messages.at(-1)?.toolCalls?.[0].status, 'failed');
+  assert.match(stopped.session.messages.at(-1)?.toolCalls?.[0].output ?? '', /已停止/);
+});
+
 test('a late answer cannot restart a stopped turn or answer a replacement decision', () => {
   const initial = controlDesignState('ask');
   const answer = { type: 'answer' as const, id: 'answer', kind: 'ask' as const,

@@ -13,6 +13,7 @@ export const controlScenes = [
   ['manual', '手动压缩'],
   ['auto', '自动后台压缩'],
   ['idle', '空闲输入框'],
+  ['tool-loading', '最底部工具 loading'],
 ] as const;
 export type ControlScene = typeof controlScenes[number][0];
 export interface PreviewTask {
@@ -33,8 +34,8 @@ export interface ControlDesignState {
   events: NativeChatEvent[];
 }
 export type ControlAction =
-  | { type: 'stop-main' | 'clear-queue' | 'cancel-compaction' | 'finish-compaction' | 'consume' }
-  | { type: 'stop-task' | 'remove' | 'steer'; id: string }
+  | { type: 'stop-main' | 'stop-all' | 'clear-queue' | 'cancel-compaction' | 'finish-compaction' | 'consume' | 'prune-tasks' | 'finish-tool' }
+  | { type: 'stop-task' | 'remove-task' | 'remove' | 'steer' | 'question'; id: string }
   | { type: 'send'; id: string; text: string }
   | { type: 'answer'; id: string; text: string; kind: 'ask' | 'plan' | 'elicitation'; requestId: string; resume?: boolean; record?: boolean };
 
@@ -59,11 +60,20 @@ export function controlDesignState(scene: ControlScene, identity: string = scene
       })),
     }, ...source.messages.filter(message => message.subtype === 'subagent')] : []),
   ];
+  if (scene === 'tool-loading') {
+    messages.push(...Array.from({ length: 24 }, (_, index): ChatMessage => ({
+      id: `loading-history-${index}`, role: index % 2 ? 'assistant' : 'user',
+      timestamp: 1_790_000_010_000 + index * 1000,
+      content: index % 2 ? '这段是静止的合成历史，用于产生真实滚动距离。没有流式更新或轮询。' : `历史问题 ${index / 2 + 1}`,
+    })), { id: 'loading-last-tool', role: 'assistant', content: '', timestamp: 1_790_000_040_000,
+      toolCalls: [{ toolCallId: 'loading-last-call', name: 'bash', title: '等待合成工具返回（持续 loading）',
+        status: 'in_progress' }] });
+  }
   return {
     session: { ...source, sessionId: `control-design-${identity}`, title: '会话控制区设计',
       messages, queue: [], compacting: false, ask: source.ask, planRequest: source.planRequest,
       elicitation: source.elicitation },
-    main: ['mixed', 'main', 'ask', 'plan', 'elicitation'].includes(scene),
+    main: ['mixed', 'main', 'ask', 'plan', 'elicitation', 'tool-loading'].includes(scene),
     compaction: scene === 'manual' || scene === 'auto' ? scene : null,
     tasks, queue: ['mixed', 'background', 'ask'].includes(scene)
       ? [{ id: 'preview-q1', text: '先不要提交' }, { id: 'preview-q2', text: '再检查移动端布局，并保留现有输入草稿和阅读位置。' }] : [],
@@ -102,6 +112,32 @@ function appendUser(state: ControlDesignState, item: PreviewQueued, delivery: 'i
 // This is a deterministic UI scenario, not an implementation of the SDK methods.
 export function applyControlAction(state: ControlDesignState, action: ControlAction): ControlDesignState {
   switch (action.type) {
+    case 'question':
+      return { ...state, main: true, session: { ...state.session, ask: {
+        requestId: action.id, question: '是否继续调整这个界面？也可以在下面补充具体要求。',
+        choices: ['继续', '保持当前方案'], allowFreeform: true,
+      } } };
+    case 'stop-all': {
+      let next = applyControlAction(state, { type: 'stop-main' });
+      for (const task of state.tasks) if (task.status === 'running') next = applyControlAction(next, { type: 'stop-task', id: task.id });
+      return { ...next, compaction: null, queue: [], steering: [],
+        session: { ...next.session, messages: next.session.messages.map(message =>
+          message.toolCalls?.some(tool => tool.status === 'in_progress' || tool.status === 'pending')
+            ? { ...message, toolCalls: message.toolCalls.map(tool =>
+              tool.status === 'in_progress' || tool.status === 'pending'
+                ? { ...tool, status: 'failed', output: [tool.output, '合成执行已停止。'].filter(Boolean).join('\n') } : tool) }
+            : message) },
+      };
+    }
+    case 'prune-tasks':
+      return { ...state, tasks: state.tasks.filter(task => task.status === 'running') };
+    case 'remove-task':
+      if (state.tasks.some(task => task.id === action.id && task.status === 'running')) throw new Error('运行中的任务只能停止，不能移除。');
+      return { ...state, tasks: state.tasks.filter(task => task.id !== action.id) };
+    case 'finish-tool':
+      return { ...state, main: false, session: { ...state.session, messages: state.session.messages.map(message =>
+        message.id === 'loading-last-tool' ? { ...message, toolCalls: message.toolCalls?.map(tool =>
+          ({ ...tool, status: 'completed', output: '合成执行已结束。' })) } : message) } };
     case 'stop-main':
       return { ...state, main: false, session: { ...state.session, ask: null, planRequest: null, elicitation: null } };
     case 'clear-queue':

@@ -817,8 +817,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   await t.test('control preview separates steering acceptance, history, task cancellation and queue clearing', async () => {
     await act(() => root.render(createElement(ControlDesignLab)));
     await flush();
-    const click = async (label: string) => {
-      const target = container.querySelectorAll('button').find(node => node.textContent === label);
+    const click = async (label: string, scope = container) => {
+      const target = scope.querySelectorAll('button').find(node => node.textContent === label);
       assert.ok(target, label);
       const event = new Event('click', { bubbles: true });
       Object.defineProperty(event, 'target', { value: target });
@@ -827,24 +827,35 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     };
     assert.equal(container.querySelectorAll('.control-lab-queued').length, 2);
     assert.equal(container.querySelectorAll('.subagent-head').length, 1);
-    const tasks = container.querySelector('.control-lab-tasks')!;
-    tasks.open = true;
+    container.querySelector('.control-design-options')!.open = true;
     await click('立即发送');
     assert.match(container.textContent, /等待纳入当前回合/);
     assert.equal(container.querySelector('[data-message-id="event-preview-q1"]'), null);
     await click('模拟纳入回合');
     assert.ok(container.querySelector('[data-message-id="event-preview-q1"]'));
     assert.match(container.querySelector('.control-lab-events')!.textContent, /"delivery": "steering"/);
-    await click('停止');
-    assert.equal(container.querySelectorAll('.control-lab-task').length, 2);
-    await click('停止当前回合');
-    assert.equal(container.querySelectorAll('.control-lab-task').length, 2);
+    await click('停止', container.querySelector('[data-task-id="preview-build"]')!);
+    assert.equal(container.querySelectorAll('.control-lab-task').length, 3, 'finished rows stay in place while the list is open');
+    assert.match(container.querySelector('[data-task-id="preview-build"]')!.textContent, /已停止/);
     assert.equal(container.querySelectorAll('.control-lab-queued').length, 1);
-    assert.equal(container.querySelector('.chat-input-message')?.getAttribute('placeholder'), '输入消息…');
-    assert.equal(container.querySelector('.send')?.getAttribute('aria-label'), '发送');
     await click('清空队列');
     assert.equal(container.querySelector('.control-lab-queue'), null);
     assert.ok(container.querySelector('[data-message-id="event-preview-q1"]'));
+    const draft = getSessionDraft('control-design-mixed');
+    await act(() => draft.edit('保留这份普通消息草稿'));
+    const editor = container.querySelector('.chat-input-message')!;
+    editor.focus();
+    await click('出现问卷（不换会话）');
+    assert.equal(container.querySelectorAll('.chat-input-message').length, 1);
+    assert.equal(container.querySelector('.chat-input-message'), editor, 'question uses the same physical textarea');
+    assert.equal(document.activeElement, editor);
+    assert.equal(editor.value, '', 'answer and prompt keep distinct drafts');
+    await click('继续');
+    assert.equal(container.querySelector('.chat-input-message'), editor);
+    assert.equal(editor.value, '保留这份普通消息草稿');
+    await click('停止', container.querySelector('.control-lab-header')!);
+    assert.equal(container.querySelector('.chat-input-message')?.getAttribute('placeholder'), '输入消息…');
+    assert.equal(container.querySelector('.send')?.getAttribute('aria-label'), '发送');
     await act(() => root.render(null));
   });
 

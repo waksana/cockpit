@@ -56,7 +56,8 @@ test('alternate controls sit above the native composer and replace only activity
   const html = render({ queue: [{ id: 'q', text: 'Original queue item' }],
     ask: { requestId: 'ask', question: 'Still a real question', choices: ['Continue'], allowFreeform: true } },
   createElement('section', { 'aria-label': 'Alternate controls' }, 'Separate queue and activity'));
-  assert.ok(html.indexOf('Alternate controls') < html.indexOf('class="chat-input-card"'));
+  assert.ok(html.indexOf('class="chat-input-card"') < html.indexOf('Alternate controls'));
+  assert.ok(html.indexOf('Alternate controls') < html.indexOf('class="chat-composer"'));
   assert.match(html, /Still a real question/);
   assert.match(html, /Continue/);
   assert.doesNotMatch(html, /aria-label="排队中的消息"/);

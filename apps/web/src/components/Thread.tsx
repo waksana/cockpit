@@ -549,7 +549,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           </p>}
           {!readOnly && <ComposerNotices draft={draft} />}
         </div>
-        {!readOnly && composerControls}
         <details className="chat-input-card" ref={inputCardRef} open
           data-header={hasInputHeader || undefined} data-decision={!!(!readOnly && (ask || hasPendingDecision)) || undefined}
           data-question={(!readOnly && operation === 'ask') || undefined}>
@@ -581,6 +580,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
             </span>}
           </summary>
           <div className="chat-input-card-body">
+            {!readOnly && composerControls}
             <div className="chat-input-context">
               {!readOnly && composerControls === undefined && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
                 {session.queue?.map((q) => (
@@ -613,7 +613,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
               <div className="chat-readonly-note" aria-label="只读会话">只读会话</div>
             ) : (
               <Composer
-                key={draft.reference.id}
+                key={composerControls === undefined ? draft.reference.id : 'shared-composer'}
                 busy={promptBusy && !ask && !planRequest}
                 submitLabel={ask ? '提交回答' : planRequest ? '发送新指令' : undefined}
                 disabled={!!session.compacting && session.status !== 'running'}
