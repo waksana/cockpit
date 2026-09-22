@@ -1,0 +1,32 @@
+// CopyButton is shared by transcripts, resource content and session settings.
+.chat-copy { display: inline-flex; align-items: center; gap: var(--host-space-xs); max-width: 100%; }
+.chat-copy-button {
+  gap: var(--host-space-xs);
+  min-block-size: var(--chat-control-compact, 32px);
+  padding: var(--host-space-xs) var(--host-space-sm);
+  color: var(--secondary-text-color);
+  font-size: var(--chat-text-meta, var(--font-size-12)); line-height: var(--chat-leading-ui, 1.5);
+  white-space: nowrap;
+}
+.chat-copy-label { display: grid; text-align: start; }
+.chat-copy-label > span { grid-area: 1 / 1; }
+.chat-copy-label-size { visibility: hidden; }
+.chat-copy-error { color: var(--chat-danger-ink, var(--danger-color)); font-size: var(--chat-text-meta, var(--font-size-12)); line-height: var(--chat-leading-ui, 1.5); }
+
+.copy-value {
+  display: flex; flex-direction: column; align-items: flex-start;
+}
+.copy-value-button {
+  display: grid; min-width: 0; max-width: 100%;
+  padding: 0; border-radius: 4px;
+  color: var(--secondary-text-color); text-align: start;
+  font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+.copy-value-text, .copy-value-feedback { grid-area: 1 / 1; }
+.copy-value-text[aria-hidden='true'] { visibility: hidden; }
+.copy-value-feedback { align-self: center; justify-self: center; font-family: var(--font-family, inherit); }
+
+@media (pointer: coarse) {
+  .chat-copy-button.ck-button { min-block-size: var(--ck-control-size); }
+}

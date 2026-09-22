@@ -86,7 +86,7 @@ test('refresh uses one circular arrow everywhere, with no font glyph or square o
   }
 });
 test('resume groups its message and centered action in a single notice; copying preserves value geometry', () => {
-  const css = compile(new URL('../styles/components/info-panel.scss', import.meta.url).pathname).css;
+  const css = compile(new URL('../styles/index.scss', import.meta.url).pathname).css;
   assert.match(css, /\.session-resume \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*align-items: center;/);
   assert.match(css, /\.session-resume-message \{[^}]*margin: 0;/);
   assert.match(css, /\.copy-value-text, \.copy-value-feedback \{[^}]*grid-area: 1\/1;/);

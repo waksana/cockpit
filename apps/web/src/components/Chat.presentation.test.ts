@@ -57,7 +57,7 @@ test('Markdown keeps semantic headings and exact code text in a labeled copyable
 });
 
 test('Markdown edge rules follow class-based paragraphs without changing bubble padding or paragraph rhythm', () => {
-  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  const css = compile(new URL('../styles/index.scss', import.meta.url).pathname).css;
   const paragraph = css.indexOf('.message-body .markdown-paragraph {');
   assert.ok(paragraph >= 0);
   assert.ok(css.indexOf('.message-body > :first-child {') > paragraph);
@@ -204,7 +204,7 @@ test('all input states share one full-width unframed editor row inside the same 
 });
 
 test('dense process rows stay compact on touch without shrinking standalone controls', () => {
-  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  const css = compile(new URL('../styles/index.scss', import.meta.url).pathname).css;
   assert.match(css, /--chat-row-process: 28px;/);
   assert.match(css, /\.activity-head \{[^}]*height: var\(--chat-row-process\);[^}]*min-block-size: var\(--chat-row-process\);/);
   assert.match(css, /\.process-summary \{[^}]*min-height: var\(--chat-row-process\);/);
@@ -365,7 +365,7 @@ test('CSS owns the shell again, with no replacement global JS viewport controlle
 });
 
 test('Chat typography is role-based and narrow layouts follow their own available width', () => {
-  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  const css = compile(new URL('../styles/index.scss', import.meta.url).pathname).css;
   const tokens = compile(new URL('../styles/components/chat-design.scss', import.meta.url).pathname).css;
   assert.doesNotMatch(tokens, /:root|body \{/);
   assert.match(tokens, /--chat-text-body: var\(--messages-text-size\)/);

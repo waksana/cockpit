@@ -1,0 +1,25 @@
+// RolePicker is shared by session creation and existing-session role settings.
+.role-picker {
+  min-width: 0;
+  margin: var(--host-space-lg) 0 0;
+  padding: 0;
+  border: 0;
+  legend {
+    width: 100%;
+    margin-bottom: var(--host-space-sm);
+    padding: 0;
+    font-size: var(--host-text-body);
+    font-weight: 600;
+  }
+}
+.role-picker-options { display: grid; gap: var(--host-space-sm); }
+.role-option-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--host-space-xs) var(--host-space-sm);
+  > span { min-width: 0; max-width: 100%; }
+}
+.role-option-name { font-size: var(--host-text-body); font-weight: 600; overflow-wrap: anywhere; }
+.role-option-description { color: var(--secondary-text-color); font-size: var(--host-text-meta); line-height: var(--host-leading-ui); overflow-wrap: anywhere; }
