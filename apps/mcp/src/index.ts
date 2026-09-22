@@ -14,6 +14,7 @@ import {
   capped,
   cappedJson,
   roleSummary,
+  activitySummary,
   shrinkList,
   type ToolResult,
   McpSessionResult,
@@ -41,7 +42,7 @@ server.registerTool(
     title: 'List cockpit sessions',
     description:
       'List Copilot sessions known to cockpit (newest activity ' +
-      'first), each with its title, working directory, status, current model, saved/applied roles and reload state. Use this ' +
+      'first), each with its title, working directory, legacy aggregate status, sampled native activity flags/counts, current model, saved/applied roles and reload state. Processing means a turn or background continuation, not necessarily generation. Null activity is unavailable, not idle. Use this ' +
       'to find a session id before renaming it, toggling its MCP servers / skills, or reading ' +
       'its transcript. Authoritative: the same view the web sidebar shows.',
     inputSchema: {
@@ -61,6 +62,7 @@ server.registerTool(
         cwd: s.cwd,
         status: s.status,
         loaded: s.loaded,
+        ...(s.activity === undefined ? {} : { activity: s.activity }),
         model: s.currentModelId ?? null,
         lastActivity: s.lastActivity,
         roles: s.roles ?? [],
@@ -74,7 +76,7 @@ server.registerTool(
         const model = s.model ? ` · ${s.model}` : '';
         const loaded = s.loaded ? '' : ' (unloaded)';
         const active = Number.isFinite(s.lastActivity) ? new Date(s.lastActivity).toLocaleString() : '—';
-        return `- ${s.title}\n    id: ${s.sessionId}\n    status: ${s.status}${loaded}${model}\n    cwd: ${s.cwd}\n    active: ${active}\n    ${roleSummary(s).join('\n    ')}`;
+        return `- ${s.title}\n    id: ${s.sessionId}\n    status: ${s.status}${loaded}${model}\n    cwd: ${s.cwd}\n    active: ${active}\n    ${[...activitySummary(s.activity), ...roleSummary(s)].join('\n    ')}`;
       });
       return ok(
         capped(`# Sessions (${sessions.length})\n${lines.join('\n')}`)

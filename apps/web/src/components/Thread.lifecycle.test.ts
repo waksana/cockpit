@@ -26,6 +26,7 @@ import { useLongPress } from '../lib/longpress';
 import { useMenuDismiss } from '../lib/useMenuDismiss';
 import type { ActivateFrontend, ComposerContext, ComposerInputProps, ComposerProps, ComponentMiddleware, DraftSchemaHandle, DraftSchemaScope, MessageIdentity, MessageProps, ModuleFrontendContext } from '@cockpit/module-api';
 import { fixtureSession } from '../dev/chat-fixtures';
+import { activityFixture } from '../dev/activity-fixtures';
 import App from '../App';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
@@ -1306,6 +1307,45 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await act(() => root.render(null));
   });
 
+  await t.test('accepted stop keeps remaining native activity and rejects late feedback for a different target', async () => {
+    for (const switchTarget of [false, true]) {
+      let value = fixtureSession('activity-mixed');
+      value = { ...value, sessionId: `activity-stop-${switchTarget}` };
+      let accept!: () => void;
+      let calls = 0;
+      const show = async () => {
+        await act(() => root.render(createElement(Thread, {
+          session: value, onLoadMore,
+          onCancel: async () => { calls++; await new Promise<void>(resolve => { accept = resolve; }); },
+        })));
+        await flush();
+      };
+      await show();
+      const stop = container.querySelector('.chat-typing-stop')!;
+      const event = new Event('click', { bubbles: true });
+      Object.defineProperty(event, 'target', { value: stop });
+      await act(() => container.dispatchEvent(event));
+      assert.equal(calls, 1);
+      assert.equal(stop.getAttribute('aria-busy'), 'true');
+      if (switchTarget) value = { ...fixtureSession('reading'), sessionId: 'different-stop-target' };
+      else value = { ...value, ask: null, activity: activityFixture({
+        hasActiveWork: true, tasks: { activeAgents: 1, activeShells: 1, unknown: 0 },
+      }) };
+      await show();
+      await act(async () => { accept(); });
+      await flush();
+      if (switchTarget) {
+        assert.doesNotMatch(container.textContent, /停止请求已受理/);
+      } else {
+        assert.match(container.textContent, /停止请求已受理；后台任务可能继续/);
+        assert.ok(container.querySelector('[data-activity="shell"]'));
+        assert.ok(container.querySelector('[data-activity="agent"]'));
+        assert.equal(container.querySelector('[data-activity="processing"]'), null);
+        assert.equal(container.querySelector('.chat-typing-stop')?.attributes.has('disabled'), true);
+      }
+    }
+  });
+
   await t.test('pending decisions retain the same input and independent queue controls across updates', async subtest => {
     const previousNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
     const copied: string[] = [];
@@ -1369,13 +1409,13 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     let reply!: Promise<boolean>;
     await act(() => { reply = localDraft.runAction(() => new Promise(resolve => { finishReply = resolve; })); });
     assert.equal(decision.open, false, 'submission feedback does not reopen a manually folded card');
-    assert.equal(container.querySelector('.chat-execution-label')?.textContent, '正在提交回答…');
+    assert.equal(container.querySelector('.chat-execution-progress')?.textContent, '正在提交回答…');
     assert.equal(container.querySelector('.chat-pending-hint'), null, 'progress belongs to the header, not the answer body');
     assert.equal(container.querySelector('.chat-ask-choice')?.attributes.has('disabled'), true);
     assert.equal(container.querySelector('.send')?.getAttribute('aria-busy'), 'true');
     await act(async () => { finishReply(false); await reply; });
     assert.equal(decision.open, false);
-    assert.equal(container.querySelector('.chat-execution-label')?.textContent, '等待你的回答');
+    assert.equal(container.querySelector('[data-activity="decision"]')?.getAttribute('aria-label'), '等待你的回答或确认');
     const error = container.querySelector('.chat-input-notice')!;
     assert.ok(container.querySelector('.chat-input-notices')?.contains(error));
     assert.equal(decision.contains(error), false, 'an unconfirmed result remains outside native disclosure');
@@ -1417,7 +1457,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.deepEqual(removed, ['next']);
     assert.deepEqual(copied, [value.queue![0].text, value.queue![0].text]);
     decision.open = false;
-    await show({ status: 'idle', ask: null, queue: [] });
+    await show({ status: 'idle', ask: null, queue: [], activity: activityFixture() });
     assert.equal(decision.open, true);
     assert.equal(execution.attributes.has('hidden'), true, 'idle input has no folding control or extra status row');
     assert.equal(getDraftSession(value.sessionId).current({}), promptDraft);

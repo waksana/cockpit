@@ -133,9 +133,10 @@ test('one card frame retains compact execution/queue typography and independent 
   assert.doesNotMatch(css, /\.chat-queue-label|\.chat-composer-hint/);
   assert.match(css, /\.chat-queue-copy \{[^}]*display: flex;/);
   assert.doesNotMatch(css, /\.chat-queue-entry\[open\] \+ \.chat-queue-copy/);
-  assert.match(css, /\.chat-execution-label\[data-running\]::before \{[^}]*width: 5px;[^}]*height: 5px;/);
+  assert.doesNotMatch(css, /\.chat-execution-label\[data-running\]::before/);
   assert.match(css, /\.chat-execution-label \{[^}]*flex: 1 1 0;[^}]*min-width: 4em;[^}]*text-overflow: ellipsis;/);
-  assert.doesNotMatch(css.match(/\.chat-execution-label\[data-running\]::before \{([^}]+)\}/)?.[1] ?? '', /animation|transition/);
+  const activity = compile(new URL('../styles/components/session-activity.scss', import.meta.url).pathname).css;
+  assert.match(activity, /\.session-activity \{[^}]*white-space: nowrap/);
 });
 
 test('only answer drafts opt into the shared question scroller', () => {
@@ -338,7 +339,7 @@ test('the entire input card uses one default-open disclosure without an arrow or
   }));
   assert.equal((html.match(/<textarea/g) ?? []).length, 1);
   assert.match(html, /<details class="chat-input-card" open="" data-header="true" data-decision="true" data-question="true"><summary class="chat-execution-head"/);
-  assert.match(html, /aria-label="等待你的回答，展开或收起输入卡片"/);
+  assert.match(html, /aria-label="活动待同步，展开或收起输入卡片"/);
   assert.match(html, /class="chat-pending-body chat-answer-question" role="group" aria-label="需要你的选择"/);
   assert.ok(html.indexOf('class="chat-queue"') < html.indexOf('class="chat-composer"'));
   assert.doesNotMatch(html, /class="chat-decisions"|class="chat-ask chat-pending/);
@@ -442,8 +443,10 @@ test('a native cancelling flag disables duplicate stop clicks without claiming c
   t.after(() => original ? Object.defineProperty(globalThis, 'window', original) : Reflect.deleteProperty(globalThis, 'window'));
   const state = useCockpit.getInitialState();
   const previousConnection = state.connState;
+  const previousReady = state.snapshotReady;
   state.connState = 'open';
-  t.after(() => { state.connState = previousConnection; });
+  state.snapshotReady = true;
+  t.after(() => { state.connState = previousConnection; state.snapshotReady = previousReady; });
   const html = renderToStaticMarkup(createElement(Thread, {
     session: fixtureSession('cancelling'), onLoadMore() {}, onCancel() {},
   }));

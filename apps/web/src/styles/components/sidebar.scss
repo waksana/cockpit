@@ -125,7 +125,11 @@
     justify-self: end;
     display: flex; align-items: center; gap: 0.35rem;
     margin-top: 0.1rem;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
   }
+
   &:has(.dialog-roles) {
     grid-template-rows: auto auto auto;
     grid-template-areas: 'avatar title time' 'avatar subtitle meta' 'avatar roles roles';

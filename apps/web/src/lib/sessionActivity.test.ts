@@ -1,0 +1,51 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { sessionActivityIndicators } from './sessionActivity';
+import { SessionActivity } from '../components/SessionActivity';
+import { activityFixture } from '../dev/activity-fixtures';
+import type { SessionMeta } from '@cockpit/protocol';
+
+const session = { status: 'running' as const, loaded: true, needsDecision: false };
+const indicators = (activity: SessionMeta['activity']) => sessionActivityIndicators({ ...session, activity }, true);
+
+test('shell, agents, decisions and native processing coexist without generation claims', () => {
+  const activity = activityFixture({
+    processing: true, hasActiveWork: true, abortable: true,
+    tasks: { activeAgents: 2, activeShells: 1, unknown: 0 },
+  });
+  const items = sessionActivityIndicators({ ...session, activity, needsDecision: true }, true);
+  assert.deepEqual(items.map(item => item.key), ['decision', 'processing', 'shell', 'agent']);
+  const html = renderToStaticMarkup(createElement(SessionActivity, { items }));
+  for (const icon of ['shell', 'agent', 'decision']) assert.match(html, new RegExp(`data-icon="${icon}"`));
+  assert.match(html, /aria-label="后台 shell 1"/);
+  assert.match(html, /aria-label="活动 agent 2"/);
+  assert.match(html, /不代表模型正在生成/);
+  assert.doesNotMatch(html, /回复中|<button|<details|<summary/);
+});
+
+test('turn ended with shell work is shell-only, including after accepted stop', () => {
+  assert.deepEqual(indicators(activityFixture({ hasActiveWork: true,
+    tasks: { activeAgents: 0, activeShells: 1, unknown: 0 } })).map(item => item.key), ['shell']);
+  assert.deepEqual(sessionActivityIndicators({ ...session, status: 'idle', activity: activityFixture() }, true),
+    [], 'terminal retained tasks are not active summary counts');
+});
+
+test('steering in-flight is a subset and MCP wait is an independent fact', () => {
+  const items = indicators(activityFixture({
+    queue: { pendingCount: 2, steeringCount: 3, inFlightSteeringCount: 2 },
+    mcp: { pendingConnectionCount: 1 },
+  }));
+  assert.deepEqual(items.map(item => [item.key, item.count]), [['queue', 5], ['mcp', 1]]);
+  assert.match(items[0].label, /其中 2 已纳入回合/);
+});
+
+test('missing, unloaded, disconnected and unclassified activity never imply idle', () => {
+  for (const activity of [undefined, null]) assert.equal(indicators(activity)[0].key, 'unknown');
+  const active = { ...session, activity: activityFixture({ processing: true }), needsDecision: true };
+  assert.deepEqual(sessionActivityIndicators(active, false).map(item => item.key), ['offline']);
+  assert.deepEqual(sessionActivityIndicators({ ...active, loaded: false }, true).map(item => item.key), ['unloaded']);
+  assert.equal(indicators(activityFixture({ hasActiveWork: true }))[0].key, 'other');
+  assert.equal(indicators(activityFixture({ tasks: { activeAgents: 0, activeShells: 0, unknown: 1 } }))[0].key, 'unknown-tasks');
+});

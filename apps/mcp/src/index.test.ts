@@ -956,6 +956,35 @@ test('canonical nullable status and todo intent survive JSON and render without 
   }
 });
 
+test('list and get expose sampled activity facts without conflating shell work and generation', async () => {
+  const previous = meta.activity;
+  const activity = {
+    sampledAt: 123, processing: false, hasActiveWork: true, abortable: true,
+    tasks: { activeAgents: 0, activeShells: 1, unknown: 2 },
+    queue: { pendingCount: 1, steeringCount: 2, inFlightSteeringCount: 1 },
+    mcp: { pendingConnectionCount: 1 },
+  };
+  try {
+    meta.activity = activity;
+    for (const name of ['cockpit_get_session', 'cockpit_list_sessions']) {
+      const args = name === 'cockpit_get_session' ? { session_id: 'B' } : {};
+      const rendered = await call(name, args);
+      assert.match(rendered.text, /processing: false.*not necessarily generation/);
+      assert.match(rendered.text, /0 active agents; 1 active shells; 2 unknown/);
+      assert.match(rendered.text, /2 steering \(1 in flight, included in steering\)/);
+      assert.match(rendered.text, /sampled capability, not a promise/);
+      const full = await json(name, { ...args, response_format: 'json' }) as { activity?: unknown; sessions?: { activity: unknown }[] };
+      assert.deepEqual(name === 'cockpit_get_session' ? full.activity : full.sessions![0].activity, activity);
+      meta.activity = null;
+      assert.match((await call(name, args)).text, /activity: unavailable or invalidated \(not idle\)/);
+      meta.activity = activity;
+    }
+  } finally {
+    if (previous === undefined) delete meta.activity;
+    else meta.activity = previous;
+  }
+});
+
 test('default session output is an explicit compact summary and capability consumers request JSON initially', async () => {
   const { tools } = await client.listTools();
   const summaryTool = tools.find(tool => tool.name === 'cockpit_get_session')!;

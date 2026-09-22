@@ -7,6 +7,8 @@ import { fixtureSession } from '../dev/chat-fixtures';
 import { MessageProcess, Thread } from './Thread';
 import { CopyButton } from './CopyButton';
 import { groupTranscript } from '../lib/transcriptRows';
+import { ToolCallRow } from './ToolCallRow';
+import { PlanCard, ElicitationCard } from './PendingDecision';
 
 const message: ChatMessage = { id: 'body', role: 'assistant', content: '', timestamp: 1000 };
 const items: ChatMessage[] = [
@@ -21,6 +23,24 @@ const renderProcess = (value = items, latest = false) =>
   renderToStaticMarkup(createElement(MessageProcess, {
     items: groupTranscript(value).flatMap(row => row.kind === 'process' ? row.items : []), sessionId: 'fixture', latest,
   }));
+
+test('classic process rows and decision cards share activity semantic icons', () => {
+  for (const [name, icon] of [['bash', 'shell'], ['functions.read_bash', 'shell'], ['task', 'agent'],
+    ['read_agent', 'agent'], ['view', 'tool'], ['ask_user', 'decision']] as const) {
+    const html = renderToStaticMarkup(createElement(ToolCallRow, {
+      sessionId: 'fixture', tc: { toolCallId: name, name, title: name, status: 'completed' },
+    }));
+    assert.match(html, new RegExp(`data-icon="${icon}"`));
+    assert.match(html, /data-icon="success"/, 'execution outcome remains independent of tool kind');
+  }
+  for (const html of [
+    renderToStaticMarkup(createElement(PlanCard, { request: { requestId: 'plan', summary: 'Plan' }, pending: false, onSelect() {} })),
+    renderToStaticMarkup(createElement(ElicitationCard, { request: { requestId: 'tool', message: 'Confirm' }, pending: false, onSelect() {} })),
+  ]) assert.match(html, /data-icon="decision"/);
+  assert.match(renderToStaticMarkup(createElement(Thread, {
+    session: fixtureSession('process'), readOnly: true, onLoadMore() {},
+  })), /class="subagent-ico"><span class="ck-icon" data-icon="agent"/);
+});
 
 test('skill and thought icons stay distinct without changing process grouping or disclosure', () => {
   const skill: ChatMessage = { ...message, id: 'skill', subtype: 'skill', content: 'fixture-skill' };

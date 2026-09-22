@@ -117,6 +117,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         request.patches = {};
         const { meta: response } = await net.getResources(sessionId, reading, request.controller.signal);
         if (client !== net || get().connectionGeneration !== generation || metaRequests.get(sessionId) !== request) return;
+        if (response && response.sessionId !== sessionId) throw new Error('Session projection returned a different session');
         // A late invalidation only dirties its own dependencies; keep other
         // projected fields, but never publish an obsolete read of that resource.
         const meta = response ? { ...cleanProjection(response, request.stale), ...request.patches } : null;
@@ -442,8 +443,12 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
           for (const resource of resources) revisions[resource] = (revisions[resource] ?? 0) + 1;
           return {
             resourceRevisions: { ...st.resourceRevisions, [ev.sessionId]: revisions },
-            ...(resources.includes('queue') && st.activeId !== ev.sessionId ? {
-              sessions: st.sessions.map(s => s.sessionId === ev.sessionId ? { ...s, queue: undefined } : s),
+            ...(resources.includes('control') || (resources.includes('queue') && st.activeId !== ev.sessionId) ? {
+              sessions: st.sessions.map(s => s.sessionId === ev.sessionId ? {
+                ...s,
+                ...(resources.includes('control') ? { activity: null } : {}),
+                ...(resources.includes('queue') && st.activeId !== ev.sessionId ? { queue: undefined } : {}),
+              } : s),
             } : {}),
           };
         });

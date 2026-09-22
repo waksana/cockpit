@@ -4,7 +4,16 @@ import { useDisclosureChoice } from '../lib/disclosureChoice';
 import { CopyButton } from './CopyButton';
 import { useClippedText } from '../lib/useClippedText';
 import { toolStatusLabel } from '../lib/toolStatus';
-import { Icon } from './Icon';
+import { Icon, type IconName } from './Icon';
+
+function toolIcon(name?: string): IconName {
+  switch (name?.replace(/^functions\./, '')) {
+    case 'bash': case 'powershell': case 'read_bash': case 'stop_bash': case 'list_bash': return 'shell';
+    case 'task': case 'read_agent': case 'write_agent': case 'list_agents': return 'agent';
+    case 'ask_user': case 'exit_plan_mode': return 'decision';
+    default: return 'tool';
+  }
+}
 
 export function ToolStatusIcon({ status }: { status: ToolCall['status'] }) {
   return <Icon className="tool-state-icon" data-status={status ?? 'unknown'} size={16}
@@ -24,11 +33,12 @@ export function ToolCallRow({ tc, sessionId }: { tc: ToolCall; sessionId: string
   return <div className="msg-tool" data-status={tc.status ?? 'unknown'} data-open={open || undefined}>
     <button type="button" className="activity-head tool-head tool-toggle ck-button" aria-expanded={open}
       aria-controls={contentId} aria-label={`${open ? '收起' : '展开'}细节：${label}`} title={label} onClick={toggle}>
-      <span className="activity-icon"><ToolStatusIcon status={tc.status} /></span>
+      <span className="activity-icon"><Icon name={toolIcon(tc.name)} size={16} /></span>
       <span className="tool-heading-content">
         {description && <span ref={descriptionRef} className="tool-description" data-clipped={descriptionClipped || undefined}>{description}</span>}
         <span ref={nameRef} className="tool-label" data-clipped={nameClipped || undefined}><bdi dir="ltr">{name}</bdi></span>
       </span>
+      <ToolStatusIcon status={tc.status} />
     </button>
     {open && <div id={contentId} className="activity-detail tool-detail">
       {nameClipped && <section><div className="tool-detail-label">工具名</div><div className="tool-full-name">{name}</div></section>}

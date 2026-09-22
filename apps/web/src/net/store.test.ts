@@ -11,6 +11,7 @@ import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../
 import { IntentHttpError, isSessionUnloadedError, SessionUnloadedError } from './client';
 import { createCockpitStore } from './store';
 import type { NativeAttachment, ChatMessage, ServerEvent, SessionMeta } from './types';
+import { activityFixture } from '../dev/activity-fixtures';
 type HistoryFixture = { sessionId: string; messages: ChatMessage[]; hasMore: boolean; latest?: boolean };
 
 type Store = ReturnType<typeof createCockpitStore>;
@@ -706,6 +707,48 @@ test('late resource changes rerun only their dependency and retain independent f
   await h.reply(1, { meta: { sessionId: 'a', loaded: true, currentModelId: 'fresh-model' } });
   assert.equal(session('a', store).currentModelId, 'fresh-model');
   assert.equal(h.requests.length, 2);
+});
+
+test('activity uses control invalidation once, rejects old reads and keeps the original session target', async t => {
+  const h = setup(t);
+  h.source.open();
+  const shell = activityFixture({ hasActiveWork: true, tasks: { activeAgents: 0, activeShells: 1, unknown: 0 } });
+  h.snapshot([], { sessions: [{ ...meta('a'), activity: shell }, { ...meta('b'), activity: activityFixture() }] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['control', 'tasks'] });
+  assert.equal(session('a').activity, null, 'invalidated facts are not presented as current');
+  await setImmediate();
+  h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['control'] });
+  useCockpit.setState({ activeId: 'b' });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['control'] });
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, activity: shell } });
+  assert.equal(session('a').activity, null, 'superseded activity is discarded');
+  assert.deepEqual(session('b').activity, activityFixture());
+  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['control'] });
+  await h.reply(1, { meta: { sessionId: 'a', loaded: true, activity: activityFixture() } });
+  assert.deepEqual(session('a').activity, activityFixture());
+  assert.equal(h.requests.length, 2, 'no separate activity/task read or polling');
+});
+
+test('failed, unloaded and pre-reconnect activity reads cannot retain or restore old facts', async t => {
+  const h = setup(t);
+  h.source.open();
+  const active = activityFixture({ processing: true });
+  h.snapshot([], { sessions: [{ ...meta('a'), activity: active }] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['control'] });
+  await setImmediate();
+  h.requests[0].response.resolve(Response.json({ error: 'Synthetic control failure' }, { status: 500 }));
+  await setImmediate();
+  assert.equal(session('a').activity, null);
+  assert.ok(getUxErrors().length);
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['control'] });
+  await setImmediate();
+  h.source.drop();
+  h.source.open();
+  h.snapshot([], { sessions: [{ ...meta('a'), activity: activityFixture() }] });
+  await h.reply(1, { meta: { sessionId: 'a', loaded: true, activity: active } });
+  assert.deepEqual(session('a').activity, activityFixture());
+  h.source.emit({ type: 'session/patch', sessionId: 'a', loaded: false, status: 'unloaded' });
+  assert.equal(session('a').activity, undefined);
 });
 
 test('source changes fence narrow requests and clear stale native fields immediately', async t => {

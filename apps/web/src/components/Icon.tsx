@@ -1,9 +1,9 @@
 import type { HTMLAttributes } from 'react';
 import {
   ArrowLeft, ArrowUp, BookOpen, Check, ChevronDown, ChevronRight, ChevronUp, Circle,
-  CircleAlert, CircleCheck, CircleHelp, ClipboardList, Clock, Copy, File,
+  Bot, CircleAlert, CircleCheck, CircleDashed, CircleHelp, ClipboardList, Clock, Copy, File,
   Folder, Lightbulb, Link, LoaderCircle, Menu, MessageSquare, MoreVertical, Play, RotateCw,
-  Search, Square, SquarePen, Trash2, X,
+  ListOrdered, Search, Square, SquarePen, Terminal, Trash2, Wrench, X,
 } from 'lucide-react';
 
 export type IconName =
@@ -36,7 +36,8 @@ export type IconName =
   | 'chevron_right'
   | 'play'
   | 'success'
-  | 'loading';
+  | 'loading'
+  | 'shell' | 'tool' | 'agent' | 'decision' | 'queue';
 
 const icons = {
   search: Search, compose: SquarePen, newchat: MessageSquare, delete: Trash2,
@@ -44,8 +45,9 @@ const icons = {
   down: ChevronDown, up: ChevronUp, reload: RotateCw, sending: Clock,
   error: CircleAlert, menu: Menu, skills: BookOpen, thought: Lightbulb, mcp: Link, file: File,
   folder: Folder, mode_plan: ClipboardList, radiooff: Circle, copy: Copy,
-  stop: Square, clock: Clock, unknown: CircleHelp, chevron_right: ChevronRight,
+  stop: Square, clock: Clock, unknown: CircleDashed, chevron_right: ChevronRight,
   play: Play, success: CircleCheck, loading: LoaderCircle,
+  shell: Terminal, tool: Wrench, agent: Bot, decision: CircleHelp, queue: ListOrdered,
 } satisfies Record<IconName, typeof Search>;
 
 interface IconProps extends HTMLAttributes<HTMLSpanElement> {

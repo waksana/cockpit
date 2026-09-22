@@ -116,6 +116,34 @@ test('native runtime busy state survives the shared wire projection', () => {
   }).success, false);
 });
 
+test('control activity requires real flags and counts without idle defaults', () => {
+  const schema = Protocol.SessionActivity;
+  const result = {
+    sampledAt: 1, processing: false, hasActiveWork: true, abortable: false,
+    tasks: { activeAgents: 0, activeShells: 1, unknown: 1 },
+    queue: { pendingCount: 0, steeringCount: 2, inFlightSteeringCount: 1 },
+    mcp: { pendingConnectionCount: 1 },
+  };
+  roundTrip(schema, result);
+  for (const key of ['processing', 'hasActiveWork', 'abortable', 'tasks', 'queue', 'mcp'] as const) {
+    const incomplete = { ...result };
+    Reflect.deleteProperty(incomplete, key);
+    assert.equal(schema.safeParse(incomplete).success, false, key);
+  }
+  for (const count of [-1, 0.5, undefined]) {
+    assert.equal(schema.safeParse({ ...result, queue: { ...result.queue, pendingCount: count } }).success, false);
+    assert.equal(schema.safeParse({ ...result, tasks: { ...result.tasks, unknown: count } }).success, false);
+  }
+  assert.equal('session/activity' in Intents, false);
+  for (const projection of [SessionMeta, SessionBrief, Protocol.SessionProjection]) {
+    assert.equal('activity' in projection.parse(minimalMeta), false);
+    for (const activity of [null, result]) {
+      assert.deepEqual(projection.parse({ ...minimalMeta, activity }).activity, activity);
+      roundTrip(ServerEvent, { type: 'session/patch', sessionId: 's', activity });
+    }
+  }
+});
+
 function roundTrip(schema: z.ZodTypeAny, value: unknown, label?: string) {
   assert.deepEqual(schema.parse(JSON.parse(JSON.stringify(value))), value, label);
 }

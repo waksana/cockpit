@@ -12,6 +12,7 @@ import { ManagementShell } from './ManagementShell';
 import { Sidebar } from './Sidebar';
 import { fixtureSession } from '../dev/chat-fixtures';
 import type { ActivateFrontend } from '@cockpit/module-api';
+import { activityFixture } from '../dev/activity-fixtures';
 
 test('semantic middleware preserves real navigation and management controls without nested buttons or placeholders', async t => {
   const digest = 'a'.repeat(64);
@@ -55,9 +56,9 @@ test('semantic middleware preserves real navigation and management controls with
       onSelect() {}, getMenuItems: () => [],
     }));
     controls(sidebar, 1);
-    assert.match(sidebar, /class="dialog-status" data-tone="waiting">待回答/);
+    assert.match(sidebar, /data-activity="decision"/);
     assert.doesNotMatch(sidebar, />回复中<|>选</);
-    if (enhanced) assert.match(sidebar, /待回答<\/span><span data-fixture-session="[^"]+">7<\/span><\/span>/);
+    if (enhanced) assert.match(sidebar, /<\/span><span data-fixture-session="[^"]+">7<\/span><\/span>/);
     else assert.doesNotMatch(sidebar, /data-fixture-session/);
     const navigation = render(createElement(GlobalNavigation));
     controls(navigation, 1);
@@ -90,17 +91,20 @@ test('semantic middleware preserves real navigation and management controls with
   }
 });
 
-test('session native status is singular and module badges remain at the far end of the status row', () => {
+test('concurrent activity and decisions preserve trailing module badges without claiming generation', () => {
   for (const [status, needsDecision, expected] of [
-    ['running', true, '待回答'], ['idle', true, '待回答'], ['unloaded', true, '待回答'],
-    ['running', false, '回复中'], ['error', true, '出错'], ['error', false, '出错'],
+    ['running', true, 'decision'], ['idle', true, 'decision'], ['unloaded', true, 'unloaded'],
+    ['running', false, 'shell'], ['error', true, 'error'], ['error', false, 'error'],
   ] as const) {
     const html = renderToStaticMarkup(createElement(SessionStatus, {
-      sessionId: 'fixture', status, needsDecision,
+      sessionId: 'fixture', status, needsDecision, connected: true, loaded: status !== 'unloaded',
+      activity: activityFixture({ tasks: { activeAgents: 1, activeShells: 1, unknown: 0 } }),
       children: createElement('span', { 'data-unread': true }, '1'),
     }));
-    assert.match(html, new RegExp(`>${expected}</span><span data-unread="true">1</span></span>$`));
-    assert.equal((html.match(/class="dialog-status"/g) ?? []).length, 1);
+    assert.match(html, new RegExp(`data-activity="${expected}"`));
+    assert.match(html, /<span data-unread="true">1<\/span><\/span>$/);
+    if (status !== 'unloaded') for (const type of ['shell', 'agent']) assert.match(html, new RegExp(`data-activity="${type}"`));
+    assert.doesNotMatch(html, /回复中/);
     assert.doesNotMatch(html, />选</);
   }
 });

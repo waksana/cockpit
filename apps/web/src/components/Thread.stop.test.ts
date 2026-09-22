@@ -7,6 +7,7 @@ import { Thread } from './Thread';
 import { useCockpit } from '../net/store';
 import { getSessionDraft } from '../lib/textDraft';
 import { getDraftSession } from '../lib/draftSelection';
+import { activityFixture } from '../dev/activity-fixtures';
 
 const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
 const initialState = useCockpit.getInitialState();
@@ -31,8 +32,13 @@ const session: ChatSession = {
 };
 
 function render(patch: Partial<ChatSession> = {}) {
+  const current = { ...session, ...patch };
   return renderToStaticMarkup(createElement(Thread, {
-    session: { ...session, ...patch },
+    session: { ...current, activity: 'activity' in patch ? patch.activity : activityFixture({
+      processing: current.status === 'running', hasActiveWork: current.status === 'running',
+      abortable: current.status === 'running',
+      queue: { pendingCount: current.queue?.length ?? 0, steeringCount: 0, inFlightSteeringCount: 0 },
+    }) },
     onLoadMore() { assert.fail('Rendering must not load history'); },
     onCancel() { assert.fail('Rendering must not cancel'); },
     async onInterrupt() { assert.fail('Rendering must not interrupt'); },
@@ -50,12 +56,18 @@ test('Stop stays concise when the authoritative queue is empty', () => {
   assert.doesNotMatch(render(), /停止并清空队列/);
 });
 
-test('the execution indicator follows native running status, not queued message count', () => {
-  assert.match(render(), /chat-execution-label[^>]*data-running="true"[^>]*>执行中…/);
-  assert.match(render({ intent: 'Reading source' }), /chat-execution-label[^>]*data-running="true"[^>]*>Reading source/);
-  assert.match(render({ cancelling: true }), /chat-execution-label[^>]*data-running="true"[^>]*>正在停止…/);
+test('execution indicators follow raw activity, not aggregate running or historical intent', () => {
+  assert.match(render(), /data-activity="processing"/);
+  assert.match(render({ intent: 'Reading source' }), /chat-execution-progress">Reading source/);
+  assert.match(render({ cancelling: true }), /chat-execution-progress">正在停止…/);
+  const shell = render({ intent: 'Stale turn intent', activity: activityFixture({
+    hasActiveWork: true, tasks: { activeAgents: 0, activeShells: 1, unknown: 0 },
+  }) });
+  assert.match(shell, /data-activity="shell"/);
+  assert.match(shell, /当前不可中断/);
+  assert.doesNotMatch(shell, /data-activity="processing"|Stale turn intent|回复中/);
   for (const status of ['idle', 'unloaded', 'error'] as const) {
-    assert.doesNotMatch(render({ status, queue: [{ id: 'q', text: 'Waiting' }] }), /data-running=/);
+    assert.doesNotMatch(render({ status, queue: [{ id: 'q', text: 'Waiting' }] }), /data-activity="processing"/);
   }
 });
 
@@ -100,7 +112,7 @@ test('idle queues show their messages without inventing a running operation, and
   const html = render({ status: 'idle', queue: [{ id: 'q', text: 'Next request' }] });
   assert.match(html, /<summary class="chat-queue-text" aria-label="查看排队消息：Next request">Next request<\/summary>/);
   assert.doesNotMatch(html, /queue-chevron/);
-  assert.match(html, /chat-execution-label[^>]*>等待处理/);
+  assert.match(html, /data-activity="queue"/);
   assert.doesNotMatch(html, /chat-execution-actions/);
   const readonly = renderToStaticMarkup(createElement(Thread, {
     session, readOnly: true, onLoadMore() {}, onCancel() {}, async onInterrupt() { return { ok: true, interrupted: true }; },
@@ -120,8 +132,8 @@ test('a pending question shares the card below its only status and action header
   assert.doesNotMatch(html, /chat-answer-toggle|chat-answer-chevron/);
   assert.match(html, /Which option\?/);
   assert.doesNotMatch(region, /Which option\?|class="chat-ask/);
-  assert.match(region, /chat-execution-label[^>]*>等待你的回答<\/span>/);
-  assert.doesNotMatch(region, /Generic running intent/);
+  assert.match(region, /data-activity="decision"/);
+  assert.match(region, /data-activity="processing"/);
   assert.match(region, /class="chat-typing-stop ck-button ck-danger">[\s\S]*?停止/);
   assert.doesNotMatch(html, /输入内容将回答当前问题|chat-composer-hint/);
 });
@@ -255,7 +267,7 @@ test('submitting uses an existing header without adding an idle header or duplic
     const pending = draft.runAction(() => new Promise(resolve => { finish = resolve; }));
     try {
       const html = render(patch);
-      assert.match(html, /chat-execution-label[^>]*>正在提交(?:回答)?…<\/span>/);
+      assert.match(html, /chat-execution-progress">正在提交(?:回答)?…<\/span>/);
       assert.doesNotMatch(html, /chat-pending-hint[^>]*>正在提交|data-icon="sending"/);
       assert.match(html, /class="chat-input-btn ck-icon-button send rp" disabled="" aria-label="正在提交" aria-busy="true"/);
       if (draft.reference.purpose.kind === 'prompt') {

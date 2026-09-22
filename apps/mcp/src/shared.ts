@@ -18,6 +18,18 @@ import {
 
 export type { PanelItem } from '@cockpit/protocol';
 
+export function activitySummary(activity: SessionMeta['activity']): string[] {
+  if (activity === undefined) return [];
+  if (activity === null) return ['activity: unavailable or invalidated (not idle)'];
+  return [
+    `activity sampled at: ${activity.sampledAt} (non-atomic native reads)`,
+    `processing: ${activity.processing} (turn or background continuation, not necessarily generation); hasActiveWork: ${activity.hasActiveWork} (broad native flag); abortable: ${activity.abortable} (sampled capability, not a promise)`,
+    `tasks: ${activity.tasks.activeAgents} active agents; ${activity.tasks.activeShells} active shells; ${activity.tasks.unknown} unknown`,
+    `queue counts: ${activity.queue.pendingCount} pending; ${activity.queue.steeringCount} steering (${activity.queue.inFlightSteeringCount} in flight, included in steering)`,
+    `MCP: ${activity.mcp.pendingConnectionCount} pending connections`,
+  ];
+}
+
 export const ResponseFormat = z.enum(['markdown', 'json']).default('markdown');
 
 // Preserve forward-compatible fields at each existing MCP envelope boundary.

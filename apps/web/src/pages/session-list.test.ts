@@ -6,11 +6,12 @@ import { compile } from 'sass';
 import type { ChatSession } from '../net/types';
 import { Sidebar } from '../components/Sidebar';
 import { filterSessions } from './session-list';
+import { activityFixture } from '../dev/activity-fixtures';
 
 function session(sessionId: string, overrides: Partial<ChatSession> = {}): ChatSession {
   return {
     sessionId, title: `Session ${sessionId}`, cwd: '/work/project', lastActivity: 100,
-    status: 'idle', error: null, loaded: true, queue: [], ask: null,
+    status: 'idle', error: null, loaded: true, queue: [], ask: null, activity: activityFixture(),
     messages: [], materialized: false, historyStale: true, hasMore: false, loadingHistory: false,
     ...overrides,
   };
@@ -92,14 +93,14 @@ test('sidebar is a single list and keeps unloaded rows focusable and selectable'
 test('running state and pending decisions remain without schedule indicators or an inbox', () => {
   const html = render([
     session('scheduled', { scheduleCount: 2 }),
-    session('running', { status: 'running' }),
+    session('running', { status: 'running', activity: activityFixture({ processing: true }) }),
     session('ask', { ask: { requestId: 'a', question: 'Choose' } }),
     session('plan', { planRequest: { requestId: 'p', summary: 'Plan' } }),
     session('elicit', { elicitation: { requestId: 'e', message: 'Confirm' } }),
   ]);
   assert.doesNotMatch(html, /dialog-schedule|定时任务/);
-  assert.match(html, /data-tone="running">回复中/);
-  assert.equal((html.match(/data-tone="waiting">待回答/g) ?? []).length, 3);
+  assert.match(html, /data-activity="processing"/);
+  assert.equal((html.match(/data-activity="decision"/g) ?? []).length, 3);
   assert.doesNotMatch(html, />选</);
   assert.doesNotMatch(html, /未读|已读|dialog-unread|dialog-pinned/);
 });
@@ -107,7 +108,7 @@ test('running state and pending decisions remain without schedule indicators or 
 test('sidebar preserves its basic grid, native cwd label and empty-state distinction', () => {
   const html = render([session('cwd', { cwd: '/work/项目/' })]);
   assert.match(html, /<span class="dialog-avatar" style="--chip-h:\d+" aria-hidden="true">项<\/span><span class="session-row-title">Session cwd<\/span>/);
-  assert.match(html, /<span class="dialog-subtitle">项目<\/span><span class="dialog-meta"><\/span>/);
+  assert.match(html, /<span class="dialog-subtitle">项目<\/span><span class="dialog-meta"><span class="session-activity"><\/span><\/span>/);
   assert.match(render([]), /服务器上没有 session/);
   assert.match(render([session('one')], { query: 'missing' }), /没有匹配的会话/);
 });

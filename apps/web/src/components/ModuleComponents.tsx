@@ -3,6 +3,8 @@ import type {
   AttachmentProps, MarkdownNode, MessageProps, ModuleComponentProps, SessionStatusProps,
 } from '@cockpit/module-api';
 import { ModuleErrorBoundary, moduleRuntime, type ModuleRuntime } from '../lib/moduleRuntime';
+import { sessionActivityIndicators } from '../lib/sessionActivity';
+import { SessionActivity } from './SessionActivity';
 
 const RuntimeContext = createContext(moduleRuntime);
 export function ModuleRuntimeProvider({ runtime, children }: { runtime: ModuleRuntime; children: ReactNode }) {
@@ -28,12 +30,10 @@ export function MessagePresentation(props: MessageProps) {
   return useModuleElement('message', MessageBase, props);
 }
 
-const STATUS_TEXT = { unloaded: '', idle: '', running: '回复中', error: '出错' };
-function SessionStatusBase({ status, needsDecision, children }: SessionStatusProps) {
-  const tone = status === 'error' ? 'error' : needsDecision ? 'waiting' : status;
-  const label = tone === 'waiting' ? '待回答' : STATUS_TEXT[status];
+function SessionStatusBase({ status, needsDecision, activity, loaded, connected = false, children }: SessionStatusProps) {
+  const items = sessionActivityIndicators({ status, needsDecision, activity, loaded }, connected);
   return <span className="dialog-meta">
-    {label && <span className="dialog-status" data-tone={tone}>{label}</span>}
+    <SessionActivity items={items} />
     {children}
   </span>;
 }

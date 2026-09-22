@@ -679,14 +679,11 @@ button.activity-head {
 }
 .chat-execution-label {
   flex: 1 1 0; min-width: 4em;
+  display: flex; align-items: center; gap: var(--chat-gap-control);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: var(--chat-text-meta); line-height: var(--chat-leading-ui);
-  &[data-running]::before {
-    content: ''; display: inline-block; width: 5px; height: 5px;
-    margin-inline-end: var(--chat-gap-control); vertical-align: middle;
-    border-radius: 50%; background: var(--chat-accent-ink);
-  }
 }
+.chat-execution-progress { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .chat-execution-actions {
   --ck-disabled-opacity: 0.5;
   display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end;
