@@ -181,6 +181,11 @@ Steering acceptance does not create a local user bubble. The native
 `user.message` with `delivery: "steering"` does that when the message is consumed;
 the fold preserves the current response association rather than inventing a new
 turn. In-flight steering is not counted again as a waiting queue row.
+Host prompt acceptance and control writes share a short per-session gate (only
+the send acknowledgement, not the model's running turn). Clearing pending
+steering retires its tracked acceptance receipts without deleting newer prompts.
+Global Stop binds its original main-turn identity before asynchronous preparation;
+a newer turn that starts during that preparation is not retargeted.
 
 ## `POST /intent/session/chat`
 

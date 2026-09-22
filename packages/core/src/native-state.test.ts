@@ -437,6 +437,86 @@ test('subagent compaction events do not overwrite the parent compaction state', 
   assert.equal((await h.controls()).compaction, null);
 });
 
+for (const action of ['clear-queue', 'stop-all'] as const) {
+  for (const delivery of ['enqueue', 'immediate'] as const) {
+    test(`${action} reconciles discarded ${delivery} steering receipts without a phantom busy session`, async t => {
+      const h = await controlsFixture(t);
+      h.native.busy = true;
+      t.mock.method(h.sdk, 'send', async () => {
+        if (delivery === 'enqueue') h.native.queue.push(queuedMessage('pending', 'receipt'));
+        else h.native.steering.push('Pending steering');
+        return 'receipt';
+      });
+      await h.engine.prompt('native-id', 'Pending steering', delivery);
+      if (delivery === 'enqueue') await h.engine.control('native-id', h.token, { type: 'steer', id: 'pending' });
+      assert.equal((h.retained().get('native-id')!.accepted as Set<string>).has('receipt'), true);
+      h.rpc.queue.clear.mock.mockImplementationOnce(async () => { h.native.queue = []; h.native.steering = []; });
+      const result = await h.engine.control('native-id', h.token, { type: action });
+      assert.equal(result.ok, true);
+      h.native.busy = false;
+      assert.equal((h.retained().get('native-id')!.accepted as Set<string>).size, 0);
+      assert.equal(await h.engine.busyCount(), 0);
+      await h.engine.unload('native-id');
+    });
+  }
+}
+
+test('queue clearing cannot discard a prompt accepted after that control operation', async t => {
+  const h = await controlsFixture(t);
+  h.native.busy = true;
+  const send = t.mock.method(h.sdk, 'send', async ({ prompt }) => {
+    const id = prompt === 'first' ? 'first' : 'newer';
+    h.native.queue.push(queuedMessage(id, id));
+    return id;
+  });
+  await h.engine.prompt('native-id', 'first');
+  await h.engine.control('native-id', h.token, { type: 'steer', id: 'first' });
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  h.rpc.queue.clear.mock.mockImplementationOnce(async () => {
+    await held; h.native.queue = []; h.native.steering = [];
+  });
+  const clearing = h.engine.control('native-id', h.token, { type: 'clear-queue' });
+  await nextTurn();
+  const newer = h.engine.prompt('native-id', 'newer');
+  await nextTurn();
+  assert.equal(send.mock.callCount(), 1, 'new acceptance waits behind the clear, not the model turn');
+  release();
+  await clearing;
+  await newer;
+  assert.deepEqual([...(h.retained().get('native-id')!.accepted as Set<string>)], ['newer']);
+  assert.deepEqual(h.native.queue.map(item => item.messageId), ['newer']);
+});
+
+test('Stop binds the main turn at admission, before its asynchronous task snapshot', async t => {
+  const h = await controlsFixture(t);
+  h.native.busy = true;
+  const start = (name: string) => {
+    h.config()!.onEvent!({ type: 'user.message', id: `user-${name}`, timestamp: '2026-09-22T00:00:00Z',
+      parentId: null, data: { content: name, interactionId: name } } as SessionEvent);
+    h.config()!.onEvent!({ type: 'assistant.turn_start', id: `turn-${name}`, timestamp: '2026-09-22T00:00:00Z',
+      parentId: null, data: { turnId: name, interactionId: name } } as SessionEvent);
+  };
+  start('original');
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  h.rpc.tasks.list.mock.mockImplementationOnce(async () => { await held; return { tasks: [] }; });
+  const stopping = h.engine.control('native-id', h.token, { type: 'stop-all' });
+  await nextTurn();
+  start('newer');
+  const answer = Promise.resolve(h.config()!.onUserInputRequest!({ question: 'New decision', choices: ['Yes'] }, { sessionId: 'native-id' })).catch(() => {});
+  const requestId = (await h.engine.getMeta('native-id'))!.ask!.requestId;
+  release();
+  const result = await stopping;
+  assert.equal(result.ok, false);
+  assert.match(result.outcomes[0]?.error ?? '', /Main turn changed/);
+  assert.equal(h.rpc.abort.mock.callCount(), 0);
+  assert.equal(h.rpc.queue.clear.mock.callCount(), 0);
+  assert.equal((await h.engine.getMeta('native-id'))?.ask?.requestId, requestId);
+  await h.engine.cancel('native-id');
+  await answer;
+});
+
 function fixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'cockpit-native-state-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));

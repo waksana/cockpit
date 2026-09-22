@@ -103,6 +103,7 @@ interface State {
   mcpOperations: number;
   sends: number;
   accepted: Set<string>;
+  steeringAccepted: Set<string>;
   decisions: Map<string, Decision>;
   eventOwner?: { closed?: WeakSet<CopilotSession>; contextChanged?: boolean };
   sendReceipts: Set<string>;
@@ -145,7 +146,7 @@ async function settled<T extends readonly unknown[]>(work: { [K in keyof T]: Pro
 function stateFor(id: string): State {
   return {
     id, sdk: null, closing: false, operations: 0, mcpOperations: 0, sends: 0,
-    accepted: new Set(), decisions: new Map(), sendReceipts: new Set(),
+    accepted: new Set(), steeringAccepted: new Set(), decisions: new Map(), sendReceipts: new Set(),
     revision: 0, activityRevision: 0, turnEpoch: 0,
     scheduleGate: Promise.resolve(),
     resourceWrites: new Map(), pendingInvalidations: new Set(),
@@ -925,6 +926,7 @@ export class Engine {
       for (const id of [native.id, data.messageId]) {
         if (typeof id !== 'string') continue;
         st.accepted.delete(id);
+        st.steeringAccepted.delete(id);
         if (st.sends) st.sendReceipts.add(id);
       }
       this.patch(st, { lastActivity: Date.now(), lastActivitySource: 'host-event-receipt' });
@@ -1198,8 +1200,9 @@ export class Engine {
 
   async prompt(id: string, text: string, mode: 'enqueue' | 'immediate' = 'enqueue', attachments?: RuntimeAttachment[]): Promise<{ ok: boolean; queued?: boolean }> {
     if (!text.trim() && !attachments?.length) throw new Error('Prompt must not be empty');
-    return this.operation(id, async (sdk, st) => {
-      const queued = (await this.readControl(st, sdk)).busy && mode === 'enqueue';
+    return this.operation(id, (sdk, st) => this.serializeMutation(st, 'controlGate', async () => {
+      const before = await this.readControl(st, sdk);
+      const queued = before.busy && mode === 'enqueue';
       st.sends++;
       this.patch(st, { status: 'running', error: null });
       try {
@@ -1209,7 +1212,10 @@ export class Engine {
         }));
         if (typeof accepted !== 'string' || !accepted) throw new Error('Native message acceptance receipt is missing; delivery is unconfirmed');
         if (st.sdk !== sdk) throw new Error('Native session closed during send; delivery is uncertain');
-        if (!st.sendReceipts.has(accepted)) st.accepted.add(accepted);
+        if (!st.sendReceipts.has(accepted)) {
+          st.accepted.add(accepted);
+          if (mode === 'immediate' && before.processing.processing) st.steeringAccepted.add(accepted);
+        }
         return { ok: true, ...(queued ? { queued: true } : {}) };
       } catch (error) {
         this.patch(st, { status: 'error', error: messageOf(error) });
@@ -1219,7 +1225,7 @@ export class Engine {
         if (!st.sends) st.sendReceipts.clear();
         this.scheduleSync(st);
       }
-    });
+    }));
   }
 
   async cancel(id: string): Promise<void> {
@@ -1236,6 +1242,7 @@ export class Engine {
       for (const decision of st.decisions.values()) decision.reject(new Error('Native request cancelled'));
       st.decisions.clear();
       st.accepted.clear();
+      st.steeringAccepted.clear();
       this.projectDecisions(st);
       await this.syncNative(st);
       // Abort acknowledges cancellation, but native work can take another event
@@ -1316,6 +1323,7 @@ export class Engine {
       if (st.load || st.cancelling || st.interrupting) throw new Error('Session operation is still in progress');
     };
     assertOwner();
+    const admittedTurn = { epoch: st.turnEpoch, interactionId: st.interactionId, decisions: new Map(st.decisions) };
     st.operations++;
     this.patch(st, { activeOperations: st.operations });
     try {
@@ -1324,6 +1332,16 @@ export class Engine {
         if (!await this.liveSession(st)) throw new SessionUnloadedError();
         assertOwner();
         const outcomes: SessionControlResult['outcomes'] = [];
+        const acceptedAtDispatch = new Set(st.accepted);
+        const forgetReceipt = (receipt: string) => {
+          st.accepted.delete(receipt);
+          st.steeringAccepted.delete(receipt);
+        };
+        const assertOriginalTurn = () => {
+          if (st.turnEpoch !== admittedTurn.epoch || st.interactionId !== admittedTurn.interactionId) {
+            throw new Error('Main turn changed during Stop; the newer turn was not interrupted');
+          }
+        };
         type Outcome = SessionControlResult['outcomes'][number];
         // Unlike a read race, this lease lasts until the actual RPC settles.
         // Closing a native handle must not release an outstanding control write.
@@ -1381,13 +1399,13 @@ export class Engine {
         const clearQueue = async () => {
           await attempt('queue.clear', undefined, async (outcome, mutate) => {
             const before = await native(() => sdk.rpc.queue.pendingItems());
+            const steering = new Set(st.steeringAccepted);
             await mutate(() => sdk.rpc.queue.clear());
             outcome.state = 'accepted';
-            const after = await native(() => sdk.rpc.queue.pendingItems());
-            const remaining = new Set(after.items.map(item => item.messageId));
-            for (const item of before.items) {
-              if (item.messageId && !remaining.has(item.messageId)) st.accepted.delete(item.messageId);
-            }
+            // Prompt acceptance shares controlGate, so these receipts belong to
+            // the cleared lanes, never to a concurrently accepted newer prompt.
+            for (const item of before.items) if (item.messageId) forgetReceipt(item.messageId);
+            for (const receipt of steering) forgetReceipt(receipt);
           });
         };
         switch (action.type) {
@@ -1426,11 +1444,14 @@ export class Engine {
                 }
                 const result = await mutate(() => sdk.rpc.queue.sendNow({ id: action.id }));
                 outcome.state = result.steered === true ? 'accepted' : result.steered === false ? 'unchanged' : 'unconfirmed';
+                if (result.steered === true) for (const row of rows) {
+                  if (row.messageId && st.accepted.has(row.messageId)) st.steeringAccepted.add(row.messageId);
+                }
               } else {
                 const result = await mutate(() => sdk.rpc.queue.removeAt({ id: action.id }));
                 outcome.state = result.removed === true ? 'accepted' : result.removed === false ? 'failed' : 'unconfirmed';
                 if (result.removed === true) for (const row of rows) {
-                  if (row.messageId) st.accepted.delete(row.messageId);
+                  if (row.messageId) forgetReceipt(row.messageId);
                 }
               }
             });
@@ -1472,24 +1493,26 @@ export class Engine {
           case 'stop-all': {
             let taskIds: string[] = [];
             await attempt('tasks.snapshot', undefined, async outcome => {
+              assertOriginalTurn();
               taskIds = (await native(() => sdk.rpc.tasks.list())).tasks.filter(task =>
                 (task.type === 'agent' || task.type === 'shell') && task.status === 'running').map(task => task.id);
+              assertOriginalTurn();
               outcome.state = 'unchanged';
             });
-            const target = { epoch: st.turnEpoch, interactionId: st.interactionId, decisions: new Map(st.decisions) };
+            if (outcomes.at(-1)?.state !== 'unchanged') break;
+            const target = admittedTurn;
             await clearQueue();
             await settled([
               attempt('session.abort', undefined, async (outcome, mutate) => {
-                if (st.turnEpoch !== target.epoch) {
-                  outcome.state = 'unchanged';
-                  outcome.error = 'Main turn changed during Stop; the newer turn was not interrupted';
-                  return;
-                }
+                assertOriginalTurn();
                 st.interruptTurn = target;
                 try {
                   const result = await mutate(() => sdk.rpc.abort({}));
                   outcome.state = result.success === true ? 'accepted' : result.success === false ? 'failed' : 'unconfirmed';
-                  if (result.success === true) this.clearInterruptedTurn(st, target);
+                  if (result.success === true) {
+                    this.clearInterruptedTurn(st, target);
+                    for (const receipt of acceptedAtDispatch) forgetReceipt(receipt);
+                  }
                   else outcome.error = result.error || 'Native turn abortion was not confirmed';
                 } finally {
                   if (st.interruptTurn === target) st.interruptTurn = undefined;
@@ -1497,10 +1520,12 @@ export class Engine {
               }),
               (async () => { for (const taskId of new Set(taskIds)) await cancelTask(taskId, undefined, true); })(),
               attempt('history.abortManualCompaction', undefined, async (outcome, mutate) => {
+                assertOriginalTurn();
                 const result = await mutate(() => sdk.rpc.history.abortManualCompaction());
                 outcome.state = result.aborted === true ? 'accepted' : result.aborted === false ? 'unchanged' : 'unconfirmed';
               }),
               attempt('history.cancelBackgroundCompaction', undefined, async (outcome, mutate) => {
+                assertOriginalTurn();
                 const result = await mutate(() => sdk.rpc.history.cancelBackgroundCompaction());
                 outcome.state = result.cancelled === true ? 'accepted' : result.cancelled === false ? 'unchanged' : 'unconfirmed';
               }),
@@ -1570,6 +1595,7 @@ export class Engine {
     if (sdk) this.bus.emit('closed', sdk);
     st.sendReceipts.clear();
     st.accepted.clear();
+    st.steeringAccepted.clear();
     for (const decision of st.decisions.values()) decision.reject(error ?? new Error('Native session closed'));
     st.decisions.clear();
     this.patch(st, {
