@@ -13,7 +13,7 @@ const render = (tc = tool, open = false) => renderToStaticMarkup(createElement(D
   children: createElement(ToolCallRow, { tc, sessionId: 'test' }),
 }));
 
-test('all tool states use only a status icon and one header with no collapsed detail preview', () => {
+test('tool identity and outcome have independent icons in one header without a collapsed detail preview', () => {
   const shapes = new Set<string>();
   for (const status of ['completed', 'failed', 'in_progress', 'pending', undefined] as const) {
     const html = render({ ...tool, status });
@@ -21,7 +21,9 @@ test('all tool states use only a status icon and one header with no collapsed de
     assert.match(html, /custom_tool/);
     assert.match(html, /Native intent/);
     assert.doesNotMatch(html, /activity-status|activity-chevron|tool-detail|exact|Exact output/);
-    shapes.add(html.match(/<svg[\s\S]+?<\/svg>/)![0].replace(/data-status="[^"]+"/, ''));
+    assert.match(html, /data-icon="tool"/);
+    assert.equal((html.match(/<svg /g) ?? []).length, 2);
+    shapes.add(html.match(/class="ck-icon tool-state-icon"[^>]*>(<svg[\s\S]+?<\/svg>)/)![1]);
   }
   assert.equal(shapes.size, 5, 'unknown, pending and running must not share the same shape');
 });
@@ -37,11 +39,12 @@ test('expanded tool details retain copyable inputs and outputs without repeating
   assert.doesNotMatch(detail, /custom_tool|Native intent|已完成|工具名|说明/);
 });
 
-test('tool headers put status first, native description next and the name tag last', () => {
+test('tool headers put semantic identity first, description and name next, and outcome last', () => {
   for (const open of [false, true]) {
     const header = render(tool, open).split('</button>')[0];
     assert.ok(header.indexOf('class="activity-icon"') < header.indexOf('class="tool-description"'));
     assert.ok(header.indexOf('class="tool-description"') < header.indexOf('class="tool-label"'));
+    assert.ok(header.indexOf('class="tool-label"') < header.indexOf('class="ck-icon tool-state-icon"'));
     assert.doesNotMatch(header, /tool-heading-separator/);
   }
 });
