@@ -10,7 +10,7 @@ test('every semantic icon is a decorative local Lucide SVG with the same complet
   const names: IconName[] = ['search', 'compose', 'newchat', 'delete', 'back', 'close', 'check',
     'arrow_up', 'more', 'down', 'up', 'reload', 'sending', 'error', 'menu', 'skills', 'thought', 'mcp',
     'file', 'folder', 'mode_plan', 'radiooff', 'copy', 'stop', 'clock', 'unknown',
-    'chevron_right', 'play', 'success', 'loading', 'shell', 'tool', 'agent', 'decision', 'queue'];
+    'chevron_right', 'play', 'success', 'loading', 'compress', 'shell', 'tool', 'agent', 'decision', 'queue'];
   for (const name of names) {
     const html = renderToStaticMarkup(createElement(Icon, { name }));
     assert.match(html, /class="ck-icon"/);
@@ -24,7 +24,7 @@ test('every semantic icon is a decorative local Lucide SVG with the same complet
 
 test('activity semantics use one consistent glyph, distinct from outcome and unknown icons', () => {
   for (const [name, glyph] of [['shell', 'terminal'], ['tool', 'wrench'], ['agent', 'bot'],
-    ['decision', 'circle-help'], ['unknown', 'circle-dashed']] as const) {
+    ['decision', 'circle-help'], ['unknown', 'circle-dashed'], ['compress', 'file-archive']] as const) {
     assert.match(renderToStaticMarkup(createElement(Icon, { name })), new RegExp(`lucide-${glyph}`));
   }
 });
