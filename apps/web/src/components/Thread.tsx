@@ -328,14 +328,15 @@ interface ThreadProps {
   composerControls?: ReactNode;
   promptBusy?: boolean;
   onControlAction?: (action: SessionControlAction) => Promise<void>;
+  onRetryControls?: () => void;
   // Read-only transcript: renders the paginated
   // message list but hides the composer and every interactive banner, so the
   // conversation can be browsed but not driven.
   readOnly?: boolean;
 }
 
-export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, composerControls, promptBusy = session.controls?.main ?? session.status === 'running', onControlAction, readOnly = false }: ThreadProps) {
-  const controls = !readOnly && onControlAction ? session.controls : undefined;
+export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, composerControls, promptBusy = session.controls?.main ?? session.status === 'running', onControlAction, onRetryControls, readOnly = false }: ThreadProps) {
+  const controls = !readOnly && onControlAction ? session.controls ?? session.controlsDisplay : undefined;
   const connected = useCockpit((s) => s.connState === 'open');
   const snapshotReady = useCockpit((s) => s.snapshotReady);
   const interruptAction = useKeyedAction(`interrupt:${session.sessionId}`);
@@ -346,13 +347,13 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const queueCount = session.activity
     ? session.activity.queue.pendingCount + session.activity.queue.steeringCount
     : session.queue?.length ?? 0;
-  const showStop = !readOnly && session.status === 'running' && !session.compacting;
+  const showStop = !readOnly && !onControlAction && session.status === 'running' && !session.compacting;
   const stopPending = !!session.cancelling || stopAction.busy;
   const notAbortable = connected && snapshotReady && session.loaded && session.activity?.abortable === false && queueCount === 0
     && !session.ask && !session.planRequest && !session.elicitation;
   const stopDisabled = !connected || !session.loaded || session.loading || session.closing
     || !snapshotReady || (!stopPending && (!!session.activeOperations || interruptAction.busy || notAbortable)) || !onCancel;
-  const showInterrupt = !readOnly && queueCount > 0 && canInterrupt;
+  const showInterrupt = !readOnly && !onControlAction && queueCount > 0 && canInterrupt;
   const interruptResult = readOnly ? null : interruptAction.error
     ? `打断未确认：${interruptAction.error}。请核对会话状态，不要直接重试。`
     : null;
@@ -480,9 +481,10 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const executionControlRef = useRemovedControlFocus(session.sessionId, inputCardRef);
   const cancelDecision = (kind: 'ask' | 'plan' | 'elicitation', requestId: string, pending: boolean) =>
     controls && onControlAction ? <SessionControlActionButton
-      identity={JSON.stringify([session.sessionId, 'cancel-decision', kind, requestId])}
+      identity={JSON.stringify([session.sessionId, session.controls?.token ?? session.controlsDisplay?.token, 'cancel-decision', kind, requestId])}
       label={kind === 'ask' ? '取消问题并中断当前回合' : kind === 'plan' ? '取消计划确认（仅退出计划）' : '取消工具确认'}
-      icon="close" waiting="取消中…" disabled={!authoritative || pending || !session.loaded || !!session.closing || !!session.loading}
+      icon="close" waiting="取消中…" disabled={!authoritative || pending || !session.loaded || !!session.closing || !!session.loading
+        || !!session.controlsStale || activityRefreshing}
       controlRef={executionControlRef} onAction={() => onControlAction({ type: 'cancel-decision', kind, requestId })} /> : undefined;
   const operation = draft.reference.purpose.kind;
   const runAction = useCallback((target: SessionDraft, send: () => Promise<boolean> | undefined): Promise<boolean> => (
@@ -552,6 +554,11 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
 
       <div className="chat-input-area">
         <div className="chat-input-notices">
+          {!readOnly && session.controlsError && <p className="chat-error" role="alert">
+            活动列表读取失败：{session.controlsError}
+            {onRetryControls && <button type="button" className="ck-button" disabled={!authoritative || activityRefreshing}
+              onClick={onRetryControls}>重试</button>}
+          </p>}
           {session.error && <p className="chat-error" role="alert">错误: {session.error}
             {onRetryHistory && session.materialized && !session.historyStale && <button type="button"
               className="ck-button rp" onClick={onRetryHistory}>重试同步</button>}
@@ -598,12 +605,12 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           </summary>
           <div className="chat-input-card-body">
             {controls && onControlAction && <SessionControlBar session={session} controls={controls} connected={authoritative}
-              expanded={controlsOpen} disabled={!authoritative || !session.loaded || !!session.loading || !!session.closing || activityRefreshing}
+              expanded={controlsOpen} disabled={!authoritative || !session.loaded || !!session.loading || !!session.closing || activityRefreshing || !!session.controlsStale}
               controlRef={executionControlRef} onAction={onControlAction}
               onToggle={() => { setControlsDisclosure({ decision: decisionKey, open: !controlsOpen }); }} />}
             {!readOnly && composerControls}
             <div className="chat-input-context">
-              {!readOnly && !controls && composerControls === undefined && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
+              {!readOnly && !onControlAction && composerControls === undefined && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
                 {session.queue?.map((q) => (
                   <div key={q.id} className="chat-queue-item">
                     <details className="chat-queue-entry">
@@ -636,7 +643,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
               <div className="chat-readonly-note" aria-label="只读会话">只读会话</div>
             ) : (
               <Composer
-                key={!controls && composerControls === undefined ? draft.reference.id : 'shared-composer'}
+                key={!onControlAction && composerControls === undefined ? draft.reference.id : 'shared-composer'}
                 busy={promptBusy && !ask && !planRequest}
                 submitLabel={ask ? '提交回答' : planRequest ? '发送新指令' : undefined}
                 disabled={!!session.compacting && session.status !== 'running'}

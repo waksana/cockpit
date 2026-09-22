@@ -35,7 +35,9 @@ export interface ControlDesignState {
   events: NativeChatEvent[];
 }
 export type ControlAction = SessionControlAction
-  | { type: 'stop-main' | 'finish-compaction' | 'consume' | 'finish-tool' }
+  | { type: 'stop-main' | 'finish-compaction' | 'consume' | 'finish-tool' | 'prune-tasks' | 'cancel-compaction' }
+  | { type: 'remove-task'; id: string }
+  | { type: 'clear-decisions'; requests: { kind: 'ask' | 'plan' | 'elicitation'; requestId: string }[] }
   | { type: 'question'; id: string }
   | { type: 'send'; id: string; text: string }
   | { type: 'answer'; id: string; text: string; kind: 'ask' | 'plan' | 'elicitation'; requestId: string; resume?: boolean; record?: boolean };
@@ -86,7 +88,7 @@ export function controlSession(state: ControlDesignState): ChatSession {
   const running = state.tasks.filter(task => task.status === 'running');
   const active = state.main || running.length > 0 || !!state.compaction;
   return { ...state.session, status: state.main || running.length ? 'running' : 'idle', nativeProcessing: state.main,
-    compacting: !!state.compaction, queue: state.queue,
+    compacting: !!state.compaction, queue: state.queue.map(item => ({ ...item, canSteer: true })),
     activity: activityFixture({ processing: state.main, hasActiveWork: active, abortable: state.main,
       tasks: { activeShells: running.filter(task => task.kind === 'shell').length,
         activeAgents: running.filter(task => task.kind === 'agent').length, unknown: 0 },

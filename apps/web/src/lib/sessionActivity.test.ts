@@ -47,7 +47,7 @@ test('steering in-flight is a subset and MCP wait is an independent fact', () =>
     queue: { pendingCount: 2, steeringCount: 3, inFlightSteeringCount: 2 },
     mcp: { pendingConnectionCount: 1 },
   }));
-  assert.deepEqual(items.map(item => [item.key, item.count]), [['overall', undefined], ['queue', 5], ['mcp', 1]]);
+  assert.deepEqual(items.map(item => [item.key, item.count]), [['overall', undefined], ['queue', 3], ['mcp', 1]]);
   assert.match(items[1].label, /其中 2 已纳入回合/);
 });
 

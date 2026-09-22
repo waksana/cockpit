@@ -52,8 +52,9 @@ export function sessionActivityIndicators(session: {
     key: 'shell', icon: 'shell', count: activity.tasks.activeShells, label: `后台 shell ${activity.tasks.activeShells}`,
   }));
   const { pendingCount, steeringCount, inFlightSteeringCount } = activity.queue;
-  if (pendingCount + steeringCount || inFlightSteeringCount) items.push(retained({
-    key: 'queue', icon: 'queue', count: pendingCount + steeringCount,
+  const waitingCount = pendingCount + Math.max(0, steeringCount - inFlightSteeringCount);
+  if (waitingCount) items.push(retained({
+    key: 'queue', icon: 'queue', count: waitingCount,
     label: `待处理项 ${pendingCount}，steering ${steeringCount}（其中 ${inFlightSteeringCount} 已纳入回合，不重复计数）`,
   }));
   if (activity.mcp.pendingConnectionCount) items.push(retained({

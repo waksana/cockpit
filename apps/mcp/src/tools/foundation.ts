@@ -26,7 +26,7 @@ async function capability(name: string) {
 export async function invokePublishedIntent(name: string, body: Record<string, unknown>): Promise<unknown> {
   IntentName.parse(name);
   const result = await intent(name, body);
-  return name === 'session/resources-prepare' ? result : assertIntentSuccess(result, name);
+  return name === 'session/resources-prepare' || name === 'session/control' ? result : assertIntentSuccess(result, name);
 }
 
 export function registerFoundationTools(server: McpServer): void {

@@ -271,7 +271,9 @@ The published static control-review entry now mounts the complete production
 The same sidebar, routing, conversation, settings, global menus and resource
 pages consume synthetic data and local callbacks. The real Thread now optionally
 renders `SessionControlBar` when the fixture supplies browser-only `controls` and
-`sessionControlAction`. Only this input dock changes; the full App remains the
+`sessionControlAction`. Production obtains those values through its view-owned
+controls resource and native action adapter; the fixture replaces that data source
+with local synthetic state. Only this input dock changes; the full App remains the
 same. The leading indicator is an independent overall state: a spinner coexists
 with question, agent, terminal, queue and compaction icons whenever activity
 remains. Confirmed idle hides the input status bar; offline and errors stay explicit. Browser storage
@@ -298,10 +300,12 @@ editor. The normal editor is never collapsed with the task list. A new question
 opens the list and positions its answer at the bottom once, before paint; later
 task updates do not repeat that navigation. The preview retains the same textarea,
 preserves separate prompt/answer drafts and carries editor geometry across purpose
-changes. This alternate composition is opt-in; the production composer stays unchanged.
+changes. The production conversation and the isolated preview use the same
+control composition once their activity details are available.
 Full-Web steering first shows acceptance, then a 700ms synthetic runtime event
 places the same message in history; Stop/clear/disposal fence delayed events.
-The backend has no new mutation API and never receives these fixture actions.
+The fixture never calls the backend; production operations use `session/control`
+with the loaded-handle token returned by `session/resources`.
 The activity bar now contains active work only. Confirmed stopped tasks disappear
 immediately, without deleting their recorded output. Agent/terminal rows only
 have a cancel X; only queue rows retain copy and immediate-send actions. The bar

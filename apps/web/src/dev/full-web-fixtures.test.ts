@@ -87,7 +87,6 @@ test('the full App control source removes confirmed stopped work from the active
   assert.equal(current().controls?.tasks.length, 2);
   assert.equal(current().activity?.tasks.activeShells, 1);
   assert.equal(current().controls?.main, true);
-  await act(workspaceSessionId, { type: 'prune-tasks' });
   assert.equal(current().controls?.tasks.length, 2);
   await act(workspaceSessionId, { type: 'stop-all' });
   assert.equal(current().activity?.hasActiveWork, false);
@@ -139,8 +138,7 @@ test('agent details are task-owned even when their chat message is outside the l
   assert.notEqual(peer?.description, detail?.description, 'same task IDs in different sessions never alias');
   await store.getState().sessionControlAction!(id, { type: 'stop-task', id: 'preview-agent' });
   assert.equal((await read(id, 'preview-agent', signal))?.status, 'cancelled');
-  await store.getState().sessionControlAction!(id, { type: 'remove-task', id: 'preview-agent' });
-  assert.equal(await read(id, 'preview-agent', signal), null);
+  assert.equal(await read(id, 'missing-agent', signal), null);
   const cancelled = new AbortController();
   cancelled.abort();
   await assert.rejects(read(workspaceSessionId, 'preview-agent', cancelled.signal), /abort/i);

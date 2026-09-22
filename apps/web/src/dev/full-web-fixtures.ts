@@ -31,6 +31,7 @@ export function installFullWebFixture(store: ReturnType<typeof createCockpitStor
   };
   const project = (model: ControlDesignState): ChatSession => model.session.loaded
     ? { ...controlSession(model), controls: {
+      token: `synthetic:${model.session.sessionId}`, sampledAt: Date.now(),
       main: model.main, compaction: model.compaction, tasks: model.tasks.filter(task => task.status === 'running'), steering: model.steering,
     } }
     : { ...model.session, controls: undefined, status: 'unloaded', activity: null, nativeProcessing: false };
@@ -99,6 +100,7 @@ export function installFullWebFixture(store: ReturnType<typeof createCockpitStor
   const activeId = [...models].find(([, model]) => model.session.sessionId === `control-design-${selected}`)?.[0] ?? workspaceSessionId;
   store.setState({
     sessions: [...models.values()].map(project), activeId,
+    watchControls: () => () => {},
     init: () => {
       active = true;
       return () => { active = false; for (const timer of timers) clearTimeout(timer); timers.clear(); };

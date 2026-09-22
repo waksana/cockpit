@@ -546,7 +546,10 @@ for (const activity of ['main', 'subagent', 'shell', 'queue', 'steering', 'mcp',
       case 'subagent': h.native.state.tasks = [task()]; break;
       case 'shell': h.native.state.activeWork = true; break;
       case 'queue': h.native.state.queue.items = [queued('pending', 'synthetic queued work')]; break;
-      case 'steering': h.native.state.queue.inFlightSteeringCount = 1; break;
+      case 'steering':
+        h.native.state.queue.steeringMessages = ['consumed steering'];
+        h.native.state.queue.inFlightSteeringCount = 1;
+        break;
       case 'mcp': h.native.state.mcp.host!.pendingConnections = ['fixture']; break;
       case 'ask': answer = Promise.resolve(h.configs.get(h.id)!.onUserInputRequest!({ question: 'synthetic question', choices: ['yes'], allowFreeform: true }, { sessionId: h.id })); break;
       case 'plan': answer = Promise.resolve(h.configs.get(h.id)!.onExitPlanModeRequest!({ summary: 'synthetic plan', actions: ['interactive'], recommendedAction: 'interactive' }, { sessionId: h.id })); break;
@@ -1141,7 +1144,8 @@ test('resource preparation requires loaded idle state and excludes all ordinary 
   for (const work of ['main', 'task', 'queue', 'steering', 'mcp'] as const) {
     s.state.processing = work === 'main';
     s.state.tasks = work === 'task' ? [task()] : [];
-    s.state.queue.items = work === 'queue' ? [queued('q')] : [];
+    s.state.queue.items = work === 'queue' ? [queued('q', 'pending message')] : [];
+    s.state.queue.steeringMessages = work === 'steering' ? ['consumed steering'] : [];
     s.state.queue.inFlightSteeringCount = work === 'steering' ? 1 : 0;
     s.state.mcp.host!.pendingConnections = work === 'mcp' ? ['pending'] : [];
     await assert.rejects(h.engine.prepareSessionResources(input), protectedWork);
@@ -1199,7 +1203,8 @@ test('explicit tool initialization rejects unloaded, busy and concurrent work wi
   for (const work of ['main', 'task', 'queue', 'steering', 'mcp'] as const) {
     s.state.processing = work === 'main';
     s.state.tasks = work === 'task' ? [task()] : [];
-    s.state.queue.items = work === 'queue' ? [queued('q')] : [];
+    s.state.queue.items = work === 'queue' ? [queued('q', 'pending message')] : [];
+    s.state.queue.steeringMessages = work === 'steering' ? ['consumed steering'] : [];
     s.state.queue.inFlightSteeringCount = work === 'steering' ? 1 : 0;
     s.state.mcp.host!.pendingConnections = work === 'mcp' ? ['pending'] : [];
     await assert.rejects(h.engine.initializeSessionTools(s.id), protectedWork);
@@ -2193,7 +2198,10 @@ for (const condition of ['running', 'task', 'queue', 'steering', 'timer', 'close
     if (condition === 'running') s.state.processing = true;
     if (condition === 'task') s.state.tasks = [task()];
     if (condition === 'queue') s.state.queue.items = [queued('queued', 'new work')];
-    if (condition === 'steering') s.state.queue.inFlightSteeringCount = 1;
+    if (condition === 'steering') {
+      s.state.queue.steeringMessages = ['consumed steering'];
+      s.state.queue.inFlightSteeringCount = 1;
+    }
     if (condition === 'timer') s.state.schedules = [schedule()];
     if (condition === 'closed') h.runtime.expire(s.id, true);
     if (condition === 'fatal') h.runtime.emitFatal(new Error('fixture fatal'));
@@ -2213,7 +2221,10 @@ for (const condition of ['running', 'task', 'queue', 'steering', 'timer', 'unloa
     if (condition === 'running') s.state.processing = true;
     if (condition === 'task') s.state.tasks = [task()];
     if (condition === 'queue') s.state.queue.items = [queued('queued', 'old task')];
-    if (condition === 'steering') s.state.queue.inFlightSteeringCount = 1;
+    if (condition === 'steering') {
+      s.state.queue.steeringMessages = ['consumed steering'];
+      s.state.queue.inFlightSteeringCount = 1;
+    }
     if (condition === 'timer') s.state.schedules = [schedule()];
     await assert.rejects(h.engine.forkSession(s.id), /protected|unloaded|timers/i);
     assert.equal(h.runtime.rpc.sessions.fork.mock.callCount(), 0);
@@ -2937,7 +2948,7 @@ test('narrow status retains queue-only, steering-only, task-only and MCP-only bu
   for (const change of [
     () => { s.state.queue.items = [queued('q', 'not a turn')]; },
     () => { s.state.queue.steeringMessages = ['pending steering']; },
-    () => { s.state.queue.inFlightSteeringCount = 1; },
+    () => { s.state.queue.steeringMessages = ['consumed steering']; s.state.queue.inFlightSteeringCount = 1; },
     () => { s.state.tasks = [task()]; },
     () => { s.state.mcp.host!.pendingConnections = ['tools']; },
   ]) {
@@ -4121,14 +4132,14 @@ test('native queue IDs survive duplicate text and reordering; removal targets an
   s.state.queue.items = [queued('queue-a', 'duplicate'), queued('queue-b', 'duplicate')];
   s.emit(event('pending_messages.modified', {}));
   await nextTurn();
-  assert.deepEqual((await h.engine.getMeta(s.id))?.queue, [{ id: 'queue-a', text: 'duplicate' }, { id: 'queue-b', text: 'duplicate' }]);
+  assert.deepEqual((await h.engine.getMeta(s.id))?.queue, [{ id: 'queue-a', text: 'duplicate', canSteer: true }, { id: 'queue-b', text: 'duplicate', canSteer: true }]);
   s.state.queue.items.reverse();
   s.emit(event('pending_messages.modified', {}));
   await nextTurn();
   assert.deepEqual((await h.engine.getMeta(s.id))?.queue?.map(item => item.id), ['queue-b', 'queue-a']);
   await h.engine.removeQueued(s.id, 'queue-a');
   assert.deepEqual(s.rpc.queue.removeAt.mock.calls[0]!.arguments, [{ id: 'queue-a' }]);
-  assert.deepEqual((await h.engine.getMeta(s.id))?.queue, [{ id: 'queue-b', text: 'duplicate' }]);
+  assert.deepEqual((await h.engine.getMeta(s.id))?.queue, [{ id: 'queue-b', text: 'duplicate', canSteer: true }]);
   assert.equal(s.sdk.send.mock.callCount(), 0);
 });
 
@@ -4731,7 +4742,7 @@ test('queue-clear failure neither invokes abort nor hides pending native queue i
   s.rpc.queue.clear.mock.mockImplementation(async () => { throw new Error('clear refused'); });
   await assert.rejects(h.engine.cancel(s.id), /clear refused/);
   assert.equal(s.sdk.abort.mock.callCount(), 0);
-  assert.deepEqual((await h.engine.getMeta(s.id))?.queue, [{ id: 'still-queued', text: 'keep pending' }]);
+  assert.deepEqual((await h.engine.getMeta(s.id))?.queue, [{ id: 'still-queued', text: 'keep pending', canSteer: true }]);
   assert.equal((await h.engine.getMeta(s.id))?.cancelling, false);
   assert.equal(h.runtime.closeSession.mock.callCount(), 0);
   visibleError(h, s.id, /clear refused/);
@@ -4761,7 +4772,7 @@ test('interrupt coalesces without cancel or replay and preserves accepted queue 
   assert.equal(s.rpc.queue.clear.mock.callCount(), 0);
   assert.equal(s.sdk.abort.mock.callCount(), 0);
   assert.equal(s.sdk.send.mock.callCount(), 2);
-  assert.deepEqual((await h.engine.getMeta(s.id))?.queue, [{ id: 'a', text: 'A' }, { id: 'b', text: 'B' }]);
+  assert.deepEqual((await h.engine.getMeta(s.id))?.queue, [{ id: 'a', text: 'A', canSteer: true }, { id: 'b', text: 'B', canSteer: true }]);
   s.state.processing = false;
   s.state.queue.items = [];
   s.emit(event('session.idle', {}));
@@ -5140,7 +5151,7 @@ for (const cleared of [false, true]) {
     assert.equal(meta.currentReasoningEffort, reasoningEffort);
     assert.equal(meta.currentContextTier, contextTier);
     const summary = (await h.engine.snapshot()).sessions.find(session => session.sessionId === s.id)!;
-    const { queue: _queue, availableModels: _models, todo: _todo, ...summaryMeta } = meta;
+    const { queue: _queue, availableModels: _models, todo: _todo, controls: _controls, ...summaryMeta } = meta;
     assertSameControlFacts(summary, summaryMeta);
     assert.ok(h.events.some(event => event.type === 'session/invalidated' && event.sessionId === s.id));
     assert.equal(s.rpc.model.switchTo.mock.callCount(), 0);
@@ -6510,7 +6521,7 @@ for (const action of ['unload', 'stop'] as const) {
       assert.equal(s.state.processing, work === 'processing');
       assert.deepEqual(s.state.queue, queue);
       assert.deepEqual((await h.engine.getMeta(s.id))?.queue, work === 'queue'
-        ? [{ id: 'protected-queue', text: 'must remain queued' }] : []);
+        ? [{ id: 'protected-queue', text: 'must remain queued', canSteer: true }] : []);
       assert.equal(h.runtime.closeSession.mock.callCount(), 0);
       assert.equal(h.runtime.stop.mock.callCount(), 0);
       assert.equal(s.sdk.abort.mock.callCount(), 0);

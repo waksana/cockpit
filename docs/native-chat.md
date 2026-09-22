@@ -21,7 +21,8 @@ notifications.
 `{"sessionId":"synthetic-shell","resources":["control"]}` includes `meta.activity`.
 The same summary is included by `session/get`, `session/list`, `runtime/snapshot`
 and the global SSE snapshot/`session/added` projections. There is no separate
-`session/activity` intent or new resource/detail API.
+`session/activity` intent. Actionable task details use the optional `controls`
+resource described below rather than enlarging these summary reads.
 
 One existing control pass reads `metadata.isProcessing`, `metadata.activity`,
 `tasks.list`, `queue.pendingItems` and `mcp.list`. Requesting both `control` and
@@ -135,6 +136,51 @@ Content-Type: application/json
 ```json
 {"meta":null}
 ```
+
+## Native activity controls
+
+The classic control area consumes `session/resources` with `controls` only while
+its conversation is mounted. Sidebar summaries still consume `control`, not task
+descriptions. A combined `control` / `controls` / `queue` read reuses the native
+activity pass. The controls projection includes the current loaded-handle token,
+active native agent/shell IDs and titles, and only steering messages not yet
+folded into the turn. It never scans the loaded chat window for task identity.
+Queue batches retain their canonical queue item ID; `canSteer` is explicit,
+not inferred from arbitrary text or a busy aggregate.
+
+`POST /intent/session/control` takes `{sessionId, token, action}`. The token is
+the identity of the loaded native handle, not an authorization credential.
+Operations never implicitly resume a session. The native target is rechecked;
+unload/reload, an obsolete handle, an ended task or a replaced decision cannot
+silently redirect an action to different work.
+
+| Action | Scope |
+| --- | --- |
+| `stop-task` with `id` | Cancel that native task. Its transcript and output remain. |
+| `clear-tasks` with `kind` and `ids` | Cancel the captured IDs in that group. Remove tracking only where native terminal state allows it; never delete chat history. |
+| `clear-queue` | Clear native pending queued work, not messages already consumed into context. |
+| `remove` with `id` | Remove one canonical pending queue item. |
+| `steer` with `id` | Move an eligible queued message into the live main turn's steering lane, without resending it as another prompt. |
+| `cancel-decision` with `kind` and `requestId` | Resolve the identified native decision through its appropriate cancel/exit/interrupt path. Ask interruption preserves queued prompts and background work; the runtime controls subsequent queue execution. |
+| `stop-all` | Request cancellation of this session's current work and queue, including background tasks and compaction through public native APIs. It is not a process-wide kill or a runtime restart. |
+
+The result contains every attempted operation's native outcome, including partial
+failure and uncertainty. Acceptance is not proof that tasks have finished.
+Buttons do not optimistically hide rows: native invalidation and fresh resource
+reads determine what remains active. Confirmed errors stay visible even if their
+original row disappears; uncertain writes are never automatically retried.
+The legacy `cancel` endpoint keeps its existing queue-clear plus abort semantics;
+the new `stop-all` action does not silently redefine existing MCP tools.
+
+Ordinary control refreshes retain the previous appearance separately from current
+native facts and disable stale operations. Disconnect, handle replacement and
+unmounted readers cannot publish late results into another view. Read failure
+has an explicit retry, not an endless success-shaped spinner or empty list.
+
+Steering acceptance does not create a local user bubble. The native
+`user.message` with `delivery: "steering"` does that when the message is consumed;
+the fold preserves the current response association rather than inventing a new
+turn. In-flight steering is not counted again as a waiting queue row.
 
 ## `POST /intent/session/chat`
 

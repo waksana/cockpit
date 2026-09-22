@@ -14,6 +14,7 @@ import type {
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
   MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem, NativeChatEvent,
   RoleSelection, RoleReadiness, RoleAdditionResult, SkillSession, ResourcePreparationResult,
+  SessionControls, SessionControlAction, SessionControlResult, QueuedItem,
 } from '@cockpit/protocol';
 import { NativeChatRead, SessionActivity, SessionUsage, MetaResource as MetaResources, cleanSessionTitle, SessionResourcesPrepare, RESOURCE_PREPARATION_ERROR_LIMIT } from '@cockpit/protocol';
 import { NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult } from '@cockpit/protocol';
@@ -58,6 +59,8 @@ type UserInputResponse = Awaited<ReturnType<NonNullable<SessionConfig['onUserInp
 type DecisionKind = 'ask' | 'planRequest' | 'elicitation';
 interface Decision {
   kind: DecisionKind;
+  epoch: number;
+  interactionId?: string;
   value: NonNullable<SessionMeta[DecisionKind]>;
   answer: (value: unknown) => void;
   reject: (error: Error) => void;
@@ -84,6 +87,10 @@ interface State {
   id: string;
   observedCwd?: string | null;
   sdk: CopilotSession | null;
+  controlToken?: string;
+  controlGate: Promise<void>;
+  observedCompaction: boolean;
+  manualCompactions: number;
   load?: Promise<void>;
   closing: boolean;
   cancelling?: Promise<void>;
@@ -143,6 +150,7 @@ function stateFor(id: string): State {
     scheduleGate: Promise.resolve(),
     resourceWrites: new Map(), pendingInvalidations: new Set(),
     modelGate: Promise.resolve(),
+    controlGate: Promise.resolve(), observedCompaction: false, manualCompactions: 0,
   };
 }
 
@@ -519,6 +527,7 @@ export class Engine {
         return row ? {
           ...this.listedMeta(row),
           ...(resources.includes('control') ? { activity: null } : {}),
+          ...(resources.includes('controls') ? { controls: null } : {}),
           ...(st ? { loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling,
             activeOperations: Math.max(0, st.operations - 1), activeMcpOperations: st.mcpOperations,
             ...this.decisionFields(st) } : {}),
@@ -526,6 +535,7 @@ export class Engine {
       }
       const activityRevision = st.activityRevision;
       const wants = new Set(resources);
+      const readsControl = wants.has('control') || wants.has('controls');
       const [metadata, name, model, models, mode, todos, schedules, control, queue, row] = await this.withSession(st, sdk, () => settled([
         wants.has('identity') ? sdk.rpc.metadata.snapshot() : Promise.resolve(undefined),
         wants.has('identity') ? sdk.rpc.name.get() : Promise.resolve(undefined),
@@ -534,8 +544,8 @@ export class Engine {
         wants.has('mode') && !wants.has('identity') ? sdk.rpc.mode.get() : Promise.resolve(undefined),
         wants.has('todo') ? sdk.rpc.plan.readSqlTodos() : Promise.resolve(undefined),
         wants.has('schedule') ? sdk.rpc.schedule.list() : Promise.resolve(undefined),
-        wants.has('control') ? this.readControl(st, sdk) : Promise.resolve(undefined),
-        wants.has('queue') && !wants.has('control') ? sdk.rpc.queue.pendingItems() : Promise.resolve(undefined),
+        readsControl ? this.readControl(st, sdk) : Promise.resolve(undefined),
+        wants.has('queue') && !readsControl ? sdk.rpc.queue.pendingItems() : Promise.resolve(undefined),
         wants.has('identity') ? listedRow ? Promise.resolve(listedRow) : this.runtime.getSessionMetadata(id) : Promise.resolve(undefined),
       ] as const));
       const nativeModels = models ? sessionModelOptions(models.list) : undefined;
@@ -552,7 +562,7 @@ export class Engine {
           lastActivity: row?.modifiedTime.getTime() ?? Date.parse(metadata.modifiedTime),
           lastActivitySource: row ? 'native-persisted' as const : 'native-construction' as const,
         } : {}),
-        ...(control ? {
+        ...(control && wants.has('control') ? {
           status: control.busy || st.sends > 0 || st.accepted.size > 0 ? 'running' as const : 'idle' as const,
           nativeProcessing: control.busy,
           activity: activityRevision === st.activityRevision ? control.summary : null,
@@ -560,11 +570,14 @@ export class Engine {
           activeSubagents: control.tasks.tasks.filter(task => activeTask(task.status)).length,
           activeMcpOperations: st.mcpOperations + control.mcpHost.pendingConnections.length,
         } : {}),
+        ...(wants.has('controls') ? { controls: activityRevision === st.activityRevision && st.sdk === sdk
+          ? this.controlProjection(st, control!) : null } : {}),
         ...(model ? { currentModelId: model.modelId, currentReasoningEffort: model.reasoningEffort ?? null,
           currentContextTier: model.contextTier ?? null } : {}),
         ...(wants.has('mode') ? { currentMode: metadata?.currentMode ?? mode } : {}),
         ...(models ? { availableModels } : {}),
-        ...(wants.has('queue') ? { queue: (control?.queue ?? queue)!.items.map(item => ({ id: item.id, text: item.displayText })) } : {}),
+        ...(wants.has('queue') && activityRevision === st.activityRevision && st.sdk === sdk
+          ? { queue: this.queueProjection((control?.queue ?? queue)!) } : {}),
         ...(todos ? { todo: this.todoSummary(todos) } : {}),
         ...(schedules ? { scheduleCount: schedules.entries.length } : {}),
         activeOperations: Math.max(0, st.operations - 1),
@@ -573,6 +586,7 @@ export class Engine {
       };
     } catch (error) {
       if (st && resources.includes('control')) this.patch(st, { activity: null });
+      if (st && resources.includes('controls')) this.patch(st, { controls: null });
       throw error;
     } finally {
       if (st) {
@@ -716,7 +730,8 @@ export class Engine {
     const requestId = randomUUID();
     return new Promise<T>((answer, reject) => {
       st.decisions.set(requestId, {
-        kind, value: { ...fields, requestId } as Decision['value'],
+        kind, epoch: st.turnEpoch, interactionId: st.interactionId,
+        value: { ...fields, requestId } as Decision['value'],
         answer: value => answer(value as T), reject,
         validate: validate ? value => validate(value as T) : undefined,
       });
@@ -852,6 +867,7 @@ export class Engine {
       }
       if (st.eventOwner !== owner) throw new Error('Native session closed while loading; explicitly resume to continue');
       st.sdk = sdk;
+      st.controlToken = randomUUID();
       st.roleAssembly = assembled.assembly;
       this.sessions.set(sdk.sessionId, st);
       if (owner.closed?.has(sdk) || (create && !await this.liveSession(st))) {
@@ -916,7 +932,7 @@ export class Engine {
     if (root && event.type !== 'user.message' && typeof data.interactionId === 'string'
       && st.interactionId && data.interactionId !== st.interactionId
       && (event.type.startsWith('assistant.') || event.type === 'session.error')) return;
-    if (root && (event.type === 'user.message' || event.type === 'assistant.turn_start')) {
+    if (root && ((event.type === 'user.message' && data.delivery !== 'steering') || event.type === 'assistant.turn_start')) {
       st.turnEpoch++;
       st.interruptedEpoch = undefined;
       st.interactionId = typeof data.interactionId === 'string' ? data.interactionId : undefined;
@@ -934,7 +950,7 @@ export class Engine {
     if (event.type === 'session.shutdown'
       || (event.type === 'session.connection_state_changed' && ['reconnecting', 'disconnected'].includes(String(data.state)))) {
       st.activityRevision++;
-      this.patch(st, { activity: null });
+      this.patch(st, { activity: null, controls: null });
       this.probe(st);
       return;
     }
@@ -966,8 +982,12 @@ export class Engine {
     if (event.type === 'session.mode_changed' && ['interactive', 'plan', 'autopilot'].includes(String(data.newMode))) {
       this.patch(st, { currentMode: data.newMode as SessionMeta['currentMode'] });
     }
-    if (event.type === 'session.compaction_start') this.patch(st, { compacting: true });
-    if (event.type === 'session.compaction_complete') {
+    if (root && event.type === 'session.compaction_start') {
+      st.observedCompaction = true;
+      this.patch(st, { compacting: true });
+    }
+    if (root && event.type === 'session.compaction_complete') {
+      st.observedCompaction = false;
       this.patch(st, { compacting: false });
     }
     switch (native.type) {
@@ -1056,9 +1076,15 @@ export class Engine {
     if (!mcp.host) throw new Error('Native MCP host state is unavailable; cannot confirm session safety');
     if (typeof processing.processing !== 'boolean' || typeof activity.hasActiveWork !== 'boolean'
       || typeof queue.inFlightSteeringCount !== 'number'
-      || !Number.isInteger(queue.inFlightSteeringCount) || queue.inFlightSteeringCount < 0) {
-      throw new Error('Native activity state is incomplete; cannot confirm session safety');
+      || !Number.isInteger(queue.inFlightSteeringCount) || queue.inFlightSteeringCount < 0
+      || !Array.isArray(queue.steeringMessages)
+      || queue.steeringMessages.some(text => typeof text !== 'string')
+      || queue.inFlightSteeringCount > queue.steeringMessages.length
+      || !Array.isArray(queue.items)
+      || queue.items.some(item => !item || typeof item.id !== 'string' || !item.id || typeof item.displayText !== 'string')) {
+      throw new Error('Native activity state is incomplete or inconsistent; cannot confirm session safety');
     }
+
     const counts = { activeAgents: 0, activeShells: 0, unknown: 0 };
     for (const task of tasks.tasks) {
       if ((task.type !== 'agent' && task.type !== 'shell')
@@ -1072,7 +1098,7 @@ export class Engine {
       sampledAt: Date.now(), processing: processing.processing,
       hasActiveWork: activity.hasActiveWork, abortable: activity.abortable,
       tasks: counts,
-      queue: { pendingCount: queue.items.length, steeringCount: queue.steeringMessages.length,
+      queue: { pendingCount: new Set(queue.items.map(item => item.id)).size, steeringCount: queue.steeringMessages.length,
         inFlightSteeringCount: queue.inFlightSteeringCount },
       mcp: { pendingConnectionCount: mcp.host.pendingConnections.length },
     });
@@ -1081,6 +1107,41 @@ export class Engine {
       busy: processing.processing || activity.hasActiveWork || tasks.tasks.some(task => activeTask(task.status))
         || queue.items.length > 0 || queue.steeringMessages.length > 0 || queue.inFlightSteeringCount > 0
         || mcp.host.pendingConnections.length > 0,
+    };
+  }
+
+  private queueProjection(queue: Awaited<ReturnType<CopilotSession['rpc']['queue']['pendingItems']>>): QueuedItem[] {
+    const groups = new Map<string, typeof queue.items>();
+    for (const item of queue.items) {
+      if (!item || typeof item.id !== 'string' || !item.id || typeof item.displayText !== 'string') {
+        throw new Error('Native queue item identity or display text is incomplete');
+      }
+      const rows = groups.get(item.id) ?? [];
+      rows.push(item);
+      groups.set(item.id, rows);
+    }
+    return [...groups].map(([id, rows]) => ({
+      id, text: rows.map(row => row.displayText).join('\n'),
+      canSteer: rows.length === 1 && rows.every(row => row.kind === 'message'
+        && typeof row.messageId === 'string' && !!row.messageId && row.agentMode !== 'shell'),
+    }));
+  }
+
+  private controlProjection(st: State, control: Awaited<ReturnType<Engine['readControl']>>): SessionControls {
+    return {
+      token: st.controlToken!, sampledAt: control.summary.sampledAt,
+      main: control.processing.processing,
+      compaction: st.manualCompactions ? 'manual' : st.observedCompaction ? 'unknown' : null,
+      tasks: control.tasks.tasks.flatMap(task => (
+        (task.type === 'agent' || task.type === 'shell') && task.status === 'running'
+          ? [{ id: task.id, kind: task.type, status: task.status,
+            title: (task.type === 'agent' ? task.displayName : undefined)
+              || task.description || (task.type === 'shell' ? task.command : task.id) }]
+          : []
+      )),
+      steering: control.queue.steeringMessages.slice(control.queue.inFlightSteeringCount).map((text, index) => ({
+        id: `steering:${control.summary.sampledAt}:${index}`, text,
+      })),
     };
   }
 
@@ -1106,7 +1167,7 @@ export class Engine {
     this.patch(st, { activeOperations: st.operations });
     // Merge a mutation's native resource event with its readback notification.
     // Control/queue hints still flow immediately while the operation is busy.
-    const held = changes.filter(resource => resource !== 'control' && resource !== 'queue');
+    const held = changes.filter(resource => resource !== 'control' && resource !== 'controls' && resource !== 'queue');
     for (const resource of held) st.resourceWrites.set(resource, (st.resourceWrites.get(resource) ?? 0) + 1);
     try {
       if (kind === 'read') {
@@ -1235,6 +1296,228 @@ export class Engine {
     }, ['control', 'queue']);
   }
 
+  async control(id: string, token: string, action: SessionControlAction): Promise<SessionControlResult> {
+    if (action.type === 'clear-tasks') {
+      if (!action.ids.length || new Set(action.ids).size !== action.ids.length) {
+        throw Object.assign(new Error('Clear tasks requires nonempty unique native task IDs'), { statusCode: 400 });
+      }
+      action = { ...action, ids: [...action.ids] };
+    }
+    const st = this.sessions.get(id);
+    this.assertAvailable();
+    if (!st?.sdk) throw new SessionUnloadedError();
+    const sdk = st.sdk;
+    const assertOwner = () => {
+      this.assertAdmission(st);
+      if (st.sdk !== sdk || st.controlToken !== token) throw Object.assign(
+        new Error('Session controls belong to a different native handle; refresh before retrying'),
+        { statusCode: 409, code: 'STALE_SESSION_CONTROLS' },
+      );
+      if (st.load || st.cancelling || st.interrupting) throw new Error('Session operation is still in progress');
+    };
+    assertOwner();
+    st.operations++;
+    this.patch(st, { activeOperations: st.operations });
+    try {
+      return await this.serializeMutation(st, 'controlGate', async () => {
+        assertOwner();
+        if (!await this.liveSession(st)) throw new SessionUnloadedError();
+        assertOwner();
+        const outcomes: SessionControlResult['outcomes'] = [];
+        type Outcome = SessionControlResult['outcomes'][number];
+        // Unlike a read race, this lease lasts until the actual RPC settles.
+        // Closing a native handle must not release an outstanding control write.
+        const native = async <T>(work: () => Promise<T>): Promise<T> => {
+          assertOwner();
+          return await work();
+        };
+        const attempt = async (
+          operation: string, targetId: string | undefined,
+          work: (outcome: Outcome, mutate: <T extends object | void>(work: () => Promise<T>) => Promise<T>) => Promise<void>,
+        ) => {
+          const outcome: Outcome = { operation, ...(targetId ? { targetId } : {}), state: 'failed' };
+          outcomes.push(outcome);
+          let dispatched = false;
+          try {
+            await work(outcome, async work => {
+              assertOwner();
+              dispatched = true;
+              const result = await work();
+              if (result && typeof result === 'object') outcome.result = { ...result };
+              if (st.sdk !== sdk || this.failure) throw new Error('Native handle closed during control; outcome is uncertain');
+              return result;
+            });
+          } catch (error) {
+            outcome.state = dispatched ? 'unconfirmed' : 'failed';
+            outcome.error = messageOf(error);
+          }
+        };
+        const taskById = async (taskId: string, kind?: 'agent' | 'shell', allowMissing = false) => {
+          const rows = (await native(() => sdk.rpc.tasks.list())).tasks.filter(task => task.id === taskId);
+          if (!rows.length && allowMissing) return undefined;
+          const task = rows.length === 1 ? rows[0] : undefined;
+          if (!task || (task.type !== 'agent' && task.type !== 'shell') || (kind && task.type !== kind)) {
+            throw new Error('Task is not an addressable agent/shell in this session');
+          }
+          if (!['running', 'idle', 'completed', 'failed', 'cancelled'].includes(task.status)) {
+            throw new Error('Native task status is unknown');
+          }
+          return task;
+        };
+        const terminal = (status: string) => ['completed', 'failed', 'cancelled'].includes(status);
+        const cancelTask = async (taskId: string, kind?: 'agent' | 'shell', allowMissing = false) => {
+          await attempt('tasks.cancel', taskId, async (outcome, mutate) => {
+            const task = await taskById(taskId, kind, allowMissing);
+            if (!task || terminal(task.status)) { outcome.state = 'unchanged'; return; }
+            if (task.status !== 'running') throw new Error('Task is not running; idle records are not cancelled');
+            const result = await mutate(() => sdk.rpc.tasks.cancel({ id: taskId }));
+            if (result.cancelled === true) { outcome.state = 'accepted'; return; }
+            if (result.cancelled !== false) throw new Error('Native task cancellation result is incomplete');
+            const after = await taskById(taskId, kind, true);
+            outcome.state = !after || terminal(after.status) ? 'unchanged' : 'failed';
+            if (outcome.state === 'failed') outcome.error = 'Native task cancellation returned false and the task is not terminal';
+          });
+        };
+        const clearQueue = async () => {
+          await attempt('queue.clear', undefined, async (outcome, mutate) => {
+            const before = await native(() => sdk.rpc.queue.pendingItems());
+            await mutate(() => sdk.rpc.queue.clear());
+            outcome.state = 'accepted';
+            const after = await native(() => sdk.rpc.queue.pendingItems());
+            const remaining = new Set(after.items.map(item => item.messageId));
+            for (const item of before.items) {
+              if (item.messageId && !remaining.has(item.messageId)) st.accepted.delete(item.messageId);
+            }
+          });
+        };
+        switch (action.type) {
+          case 'stop-task':
+            await cancelTask(action.id);
+            break;
+          case 'clear-tasks':
+            for (const taskId of action.ids) {
+              await cancelTask(taskId, action.kind);
+              await attempt('tasks.remove', taskId, async (outcome, mutate) => {
+                const task = await taskById(taskId, action.kind, true);
+                if (!task) { outcome.state = 'unchanged'; return; }
+                if (!terminal(task.status)) {
+                  outcome.state = 'unchanged';
+                  outcome.error = 'Task is still non-terminal; its native record was retained';
+                  return;
+                }
+                const result = await mutate(() => sdk.rpc.tasks.remove({ id: taskId }));
+                outcome.state = result.removed === true ? 'accepted' : result.removed === false ? 'failed' : 'unconfirmed';
+                if (outcome.state !== 'accepted') outcome.error = 'Native task removal was not confirmed';
+              });
+            }
+            break;
+          case 'clear-queue':
+            await clearQueue();
+            break;
+          case 'remove':
+          case 'steer':
+            await attempt(action.type === 'remove' ? 'queue.removeAt' : 'queue.sendNow', action.id, async (outcome, mutate) => {
+              const queue = await native(() => sdk.rpc.queue.pendingItems());
+              const rows = queue.items.filter(item => item.id === action.id);
+              if (!rows.length) throw new Error('Queue item is no longer pending in this session');
+              if (action.type === 'steer') {
+                if (!this.queueProjection(queue).find(item => item.id === action.id)?.canSteer) {
+                  throw new Error('Queue item is not an eligible native message');
+                }
+                const result = await mutate(() => sdk.rpc.queue.sendNow({ id: action.id }));
+                outcome.state = result.steered === true ? 'accepted' : result.steered === false ? 'unchanged' : 'unconfirmed';
+              } else {
+                const result = await mutate(() => sdk.rpc.queue.removeAt({ id: action.id }));
+                outcome.state = result.removed === true ? 'accepted' : result.removed === false ? 'failed' : 'unconfirmed';
+                if (result.removed === true) for (const row of rows) {
+                  if (row.messageId) st.accepted.delete(row.messageId);
+                }
+              }
+            });
+            break;
+          case 'cancel-decision':
+            await attempt(`decision.${action.kind}`, action.requestId, async (outcome, mutate) => {
+              const kind = action.kind === 'plan' ? 'planRequest' : action.kind;
+              const decision = st.decisions.get(action.requestId);
+              if (!decision || decision.kind !== kind) throw new Error('Request is no longer pending');
+              if (kind === 'planRequest') {
+                const request = decision.value as NonNullable<SessionMeta['planRequest']>;
+                if (!request.actions?.includes('exit_only')) throw new Error('Native plan request does not offer exit_only');
+                this.answer(st, action.requestId, kind, { approved: true, selectedAction: 'exit_only' });
+                outcome.state = 'accepted';
+              } else if (kind === 'elicitation') {
+                this.answer(st, action.requestId, kind, { action: 'cancel' });
+                outcome.state = 'accepted';
+              } else {
+                if (decision.epoch !== st.turnEpoch || decision.interactionId !== st.interactionId) {
+                  throw new Error('Request no longer belongs to the current main turn');
+                }
+                const target = { epoch: decision.epoch, interactionId: decision.interactionId,
+                  decisions: new Map(st.decisions) };
+                st.interruptTurn = target;
+                try {
+                  const result = await mutate(() => sdk.rpc.interruptMainTurn({ flushQueued: true }));
+                  if (result.interrupted === true) {
+                    this.clearInterruptedTurn(st, target);
+                    outcome.state = 'accepted';
+                  } else {
+                    outcome.state = result.interrupted === false ? 'unchanged' : 'unconfirmed';
+                  }
+                } finally {
+                  if (st.interruptTurn === target) st.interruptTurn = undefined;
+                }
+              }
+            });
+            break;
+          case 'stop-all': {
+            let taskIds: string[] = [];
+            await attempt('tasks.snapshot', undefined, async outcome => {
+              taskIds = (await native(() => sdk.rpc.tasks.list())).tasks.filter(task =>
+                (task.type === 'agent' || task.type === 'shell') && task.status === 'running').map(task => task.id);
+              outcome.state = 'unchanged';
+            });
+            const target = { epoch: st.turnEpoch, interactionId: st.interactionId, decisions: new Map(st.decisions) };
+            await clearQueue();
+            await settled([
+              attempt('session.abort', undefined, async (outcome, mutate) => {
+                if (st.turnEpoch !== target.epoch) {
+                  outcome.state = 'unchanged';
+                  outcome.error = 'Main turn changed during Stop; the newer turn was not interrupted';
+                  return;
+                }
+                st.interruptTurn = target;
+                try {
+                  const result = await mutate(() => sdk.rpc.abort({}));
+                  outcome.state = result.success === true ? 'accepted' : result.success === false ? 'failed' : 'unconfirmed';
+                  if (result.success === true) this.clearInterruptedTurn(st, target);
+                  else outcome.error = result.error || 'Native turn abortion was not confirmed';
+                } finally {
+                  if (st.interruptTurn === target) st.interruptTurn = undefined;
+                }
+              }),
+              (async () => { for (const taskId of new Set(taskIds)) await cancelTask(taskId, undefined, true); })(),
+              attempt('history.abortManualCompaction', undefined, async (outcome, mutate) => {
+                const result = await mutate(() => sdk.rpc.history.abortManualCompaction());
+                outcome.state = result.aborted === true ? 'accepted' : result.aborted === false ? 'unchanged' : 'unconfirmed';
+              }),
+              attempt('history.cancelBackgroundCompaction', undefined, async (outcome, mutate) => {
+                const result = await mutate(() => sdk.rpc.history.cancelBackgroundCompaction());
+                outcome.state = result.cancelled === true ? 'accepted' : result.cancelled === false ? 'unchanged' : 'unconfirmed';
+              }),
+            ]);
+            break;
+          }
+        }
+        return { ok: outcomes.every(outcome => outcome.state === 'accepted' || outcome.state === 'unchanged'), outcomes };
+      });
+    } finally {
+      st.operations--;
+      this.patch(st, { activeOperations: st.operations });
+      this.invalidate(st, ['control', 'queue', 'tasks']);
+      this.release(st);
+    }
+  }
+
   private localBusy(st: State, ownTransition = false): boolean {
     return (!ownTransition && st.closing) || st.operations > 0 || !!st.load
       || !!st.cancelling || st.decisions.size > 0 || st.sends > 0 || st.accepted.size > 0;
@@ -1278,6 +1561,9 @@ export class Engine {
     const sdk = st.sdk;
     st.eventOwner = undefined;
     st.sdk = null;
+    st.controlToken = undefined;
+    st.observedCompaction = false;
+    st.manualCompactions = 0;
     st.interruptTurn = undefined;
     st.interruptedEpoch = undefined;
     st.interactionId = undefined;
@@ -1287,7 +1573,7 @@ export class Engine {
     for (const decision of st.decisions.values()) decision.reject(error ?? new Error('Native session closed'));
     st.decisions.clear();
     this.patch(st, {
-      loaded: false, status: error ? 'error' : 'unloaded', nativeProcessing: false, activity: null,
+      loaded: false, status: error ? 'error' : 'unloaded', nativeProcessing: false, activity: null, controls: null,
       appliedRoles: [], rolesNeedReload: false,
       activeSubagents: 0, activeMcpOperations: 0, compacting: false,
       queue: [], ask: null, planRequest: null, elicitation: null, intent: null,
@@ -1589,12 +1875,20 @@ export class Engine {
   }
   async compact(id: string, customInstructions?: string) {
     return this.operation(id, async (sdk, st) => {
+      const token = st.controlToken;
+      st.manualCompactions++;
       this.patch(st, { compacting: true });
+      this.invalidate(st, ['controls']);
       try {
         return NativeCompactResult.parse(await this.withSession(st, sdk, () => sdk.rpc.history.compact({ customInstructions })));
       }
-      finally { this.patch(st, { compacting: false }); }
-    }, ['usage']);
+      finally {
+        if (st.sdk === sdk && st.controlToken === token) {
+          st.manualCompactions = Math.max(0, st.manualCompactions - 1);
+          this.patch(st, { compacting: st.manualCompactions > 0 || st.observedCompaction });
+        }
+      }
+    }, ['usage', 'controls']);
   }
   async rewind(id: string, toMsgId: string, rollbackFiles = false) {
     const st = await this.state(id);
@@ -1960,7 +2254,7 @@ export class Engine {
       return { possiblyCreated: true, error: `Native schedule operation ended after dispatch; a schedule may have been created: ${messageOf(error)}. Do not retry automatically` };
     });
   }
-  private serializeMutation<T>(st: State, gate: 'scheduleGate' | 'modelGate', work: () => Promise<T>): Promise<T> {
+  private serializeMutation<T>(st: State, gate: 'scheduleGate' | 'modelGate' | 'controlGate', work: () => Promise<T>): Promise<T> {
     const next = st[gate].then(work);
     st[gate] = next.then(() => {}, () => {});
     return next;
@@ -2084,10 +2378,11 @@ export class Engine {
 
   private invalidate(st: State, resources?: SessionResource[]): void {
     if (this.sessions.get(st.id) !== st) return;
-    if (!resources || resources.some(resource => ['control', 'tasks', 'queue', 'mcp'].includes(resource))) {
+    if (!resources || resources.some(resource => ['control', 'controls', 'tasks', 'queue', 'mcp'].includes(resource))) {
       st.activityRevision++;
-      this.patch(st, { activity: null });
+      this.patch(st, { activity: null, controls: null });
       if (resources && !resources.includes('control')) resources = [...resources, 'control'];
+      if (resources && !resources.includes('controls')) resources = [...resources, 'controls'];
     }
     if (resources) {
       resources = resources.filter(resource => {

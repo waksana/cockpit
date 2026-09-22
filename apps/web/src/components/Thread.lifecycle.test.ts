@@ -30,6 +30,7 @@ import { activityFixture } from '../dev/activity-fixtures';
 import { ControlDesignLab } from '../dev/control-design-lab';
 import { installFullWebFixture } from '../dev/full-web-fixtures';
 import { ConnectedThread } from './ConnectedThread';
+import { SessionControlBar } from './SessionControlBar';
 import { workspaceSessionId } from '../dev/workspace-fixtures';
 import App from '../App';
 
@@ -925,6 +926,20 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(container.querySelector('.chat-controls-header'), null, 'confirmed idle has no status bar');
       assert.equal(container.querySelector('.chat-input-message'), editor);
       assert.equal(editor.value, '普通消息草稿');
+      let rejectOld!: (error: Error) => void;
+      const controls = { token: 'old-handle', sampledAt: 1, main: false, compaction: null,
+        tasks: [{ id: 'same-task-id', kind: 'shell' as const, title: 'Native task', status: 'running' as const }], steering: [] };
+      const renderHandle = (token: string) => root.render(createElement(SessionControlBar, {
+        session: { ...session('handle-owned-actions'), status: 'running', controls: { ...controls, token } },
+        controls, connected: true, expanded: true, disabled: false, onToggle() {}, controlRef() {},
+        onAction: async () => new Promise<void>((_resolve, reject) => { rejectOld = reject; }),
+      }));
+      await act(() => renderHandle('old-handle'));
+      await click('[aria-label="取消任务：Native task"]');
+      await act(() => renderHandle('replacement-handle'));
+      assert.ok(container.querySelector('[aria-label="取消任务：Native task"]'));
+      await act(() => rejectOld(new Error('Old handle operation failure')));
+      assert.doesNotMatch(container.textContent, /Old handle operation failure/);
     } finally {
       await act(() => root.render(null));
       unsubscribe();

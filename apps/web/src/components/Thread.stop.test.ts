@@ -69,6 +69,17 @@ test('Stop stays concise when the authoritative queue is empty', () => {
   assert.doesNotMatch(render(), /停止并清空队列/);
 });
 
+test('missing native controls never exposes legacy queue actions without a handle token', () => {
+  const html = renderToStaticMarkup(createElement(Thread, {
+    session: { ...session, controls: null, controlsStale: true, queue: [{ id: 'queued', text: 'Pending' }] },
+    onControlAction: async () => {},
+    onRemoveQueued() { assert.fail('Must not use the legacy queue mutation'); },
+    onCancel() { assert.fail('Must not use the legacy cancellation'); },
+    onLoadMore() {},
+  }));
+  assert.doesNotMatch(html, /chat-queue-remove|chat-typing-stop|打断并处理队列/);
+});
+
 test('retained activity affects presentation only, never Stop or interrupt eligibility', () => {
   const html = render({ activity: null, nativeProcessing: false,
     activityDisplay: { previous: { status: 'running', activity: activityFixture({

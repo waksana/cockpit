@@ -1,17 +1,8 @@
 import type { ChatSession } from '../net/types';
 import { sessionActivityIndicators, type ActivityIndicator } from './sessionActivity';
+import type { SessionControls as NativeSessionControls } from '@cockpit/protocol';
 
-export interface SessionControls {
-  main: boolean;
-  compaction: 'manual' | 'auto' | null;
-  tasks: {
-    id: string;
-    kind: 'shell' | 'agent';
-    title: string;
-    status: 'running' | 'cancelled';
-  }[];
-  steering: { id: string; text: string }[];
-}
+export type SessionControls = Pick<NativeSessionControls, 'main' | 'compaction' | 'tasks' | 'steering'>;
 
 export interface AgentTaskDetails {
   sessionId: string;
@@ -30,12 +21,7 @@ export interface AgentTaskDetails {
 
 export type ReadAgentTaskDetails = (sessionId: string, taskId: string, signal: AbortSignal) => Promise<AgentTaskDetails | null>;
 
-export type SessionControlAction =
-  | { type: 'stop-all' | 'clear-queue' | 'cancel-compaction' | 'prune-tasks' }
-  | { type: 'stop-task' | 'remove-task' | 'remove' | 'steer'; id: string }
-  | { type: 'clear-tasks'; kind: 'agent' | 'shell'; ids: string[] }
-  | { type: 'cancel-decision'; kind: 'ask' | 'plan' | 'elicitation'; requestId: string }
-  | { type: 'clear-decisions'; requests: { kind: 'ask' | 'plan' | 'elicitation'; requestId: string }[] };
+export type { SessionControlAction } from '@cockpit/protocol';
 
 export function controlIndicators(session: ChatSession, controls: SessionControls, connected: boolean): ActivityIndicator[] {
   return sessionActivityIndicators({ ...session, compacting: !!controls.compaction,

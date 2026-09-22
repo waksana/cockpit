@@ -72,6 +72,11 @@ export function roleSummary(meta: Pick<SessionMeta, 'roles' | 'appliedRoles' | '
 export function intentJson(name: string, value: unknown): ToolResult {
   let classification: NativeOperationClassification | undefined;
   switch (name) {
+    case 'session/control': {
+      const parsed = Intents['session/control'].result.parse(value);
+      return { ...ok(JSON.stringify(value, null, 2)),
+        ...(!parsed.ok || parsed.outcomes.some(outcome => outcome.state === 'failed' || outcome.state === 'unconfirmed') ? { isError: true } : {}) };
+    }
     case 'session/resources-prepare': {
       const parsed = Intents['session/resources-prepare'].result.parse(value);
       return { ...ok(JSON.stringify(value, null, 2)), ...(!parsed.ok ? { isError: true } : {}) };
