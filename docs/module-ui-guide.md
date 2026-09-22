@@ -142,6 +142,13 @@ These are CSS compositions, not a public React component SDK. They provide no
 dialog lifecycle, focus trap, routing, loading state or optimistic mutation.
 Keep native dialog/portal ownership in the existing consumer. A normal panel
 using `ck-surface` does not become modal.
+The classic host observes native `ck-modal` focus entry/return to avoid WebKit's
+pointer-only focus outlines, while retaining keyboard and editing indication.
+Consumers keep their existing dialog lifecycle; no extra module capability or
+focus call is required. The host's temporary DOM marker is private, not a class
+or attribute for modules to set. See the [frontend guidelines](frontend-guidelines.md)
+for the bounded behavior and the [dialog focus lab](DEVELOPMENT.md#isolated-chat-component-review)
+for real-component review.
 
 The host's internal visual foundations live in `styles/tokens.scss`: the
 `--host-*` roles own shared spacing (4/8/12/16/24px), UI typography

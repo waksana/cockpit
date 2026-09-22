@@ -15,6 +15,9 @@ if (new URLSearchParams(location.search).get('ui') === 'next') {
     startModuleLab(controls);
   } else await import('./next-lab');
 } else {
+  const { installNativeDialogFocus } = await import('../lib/nativeDialogFocus');
+  const removeDialogFocus = installNativeDialogFocus(document);
+  import.meta.hot?.dispose(removeDialogFocus);
   await import('./chat-lab');
 }
 

@@ -259,7 +259,19 @@ export function Lab() {
 
 const root = createRoot(document.getElementById('root')!);
 const scene = new URLSearchParams(location.search).get('scene');
-if (scene === 'full-web') {
+if (scene === 'dialog-focus') {
+  const { DialogFocusLab } = await import('./dialog-focus-lab');
+  const modules = new URLSearchParams(location.search).get('modules') === '1';
+  if (modules) {
+    const { moduleRuntime } = await import('../lib/moduleRuntime');
+    await moduleRuntime.start('');
+    if (!moduleRuntime.getSnapshot().some(module => module.asset.id === 'cockpit-file')) {
+      throw new Error('The dialog focus scene requires COCKPIT_LAB_FILE_ROOT when modules=1.');
+    }
+    window.addEventListener('pagehide', () => moduleRuntime.stop(), { once: true });
+  }
+  root.render(<DialogFocusLab modules={modules} />);
+} else if (scene === 'full-web') {
   const { installFullWebFixture } = await import('./full-web-fixtures');
   const id = installFullWebFixture(useCockpit, new URLSearchParams(location.search).get('case') ?? 'mixed');
   const { default: App } = await import('../App');

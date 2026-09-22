@@ -138,6 +138,16 @@ move. The persistent reading surface is the native autofocus target, so lazy
 content replacement does not remove initial focus. The browser owns isolation, Tab and modal
 return; errors from the shared local error store remain reachable inside host
 modals. No body mutation observer or focus-in trap supplements native behavior.
+The classic document entry additionally owns a small native-dialog **indicator**
+policy. WebKit can match `:focus-visible` after pointer-driven `showModal()` and
+native close restoration, unlike the script-focus path in the new UI. The host
+observes pointer/key input and modal focus transitions, marking only the focused
+non-editing element in an open `dialog.ck-modal` or its immediate return target.
+Keyboard input clears that private presentation marker before navigation;
+unknown input and editing controls retain normal indication. It never moves focus,
+changes modal isolation, intercepts keys, or tracks application dialog state.
+The same policy covers independently implemented module `ck-modal` dialogs without
+a module update. It does not restyle ordinary nonmodal focus or the new UI.
 Menus retain their command selection/arrow navigation and close restoration;
 removed execution controls and dismissed errors retain scoped recovery only when
 they owned focus. Management headers no longer focus themselves on navigation.
@@ -150,6 +160,34 @@ Chat components with synthetic native inputs and local
 callbacks, without initializing a native client or creating sessions. Normal
 production builds do not include the entry. The lab exercises
 native text, tools, decisions, queue and reading behavior.
+
+`/chat-lab.html?scene=dialog-focus` mounts the real confirmation/input,
+`DirectoryModal` and persistent `InspectorPane` boundaries. Use 1000x800 for the
+modal inspector, then resize above 1200px to confirm the same form stays docked.
+Add `&modules=1` with the receipt-verified `COCKPIT_LAB_FILE_ROOT` described below
+to include the **unmodified** File module's synthetic PNG attachment and inline
+reference (the latter intentionally returns a synthetic unavailable response).
+No module backend or user image is read.
+
+Use actual mouse/touch and keyboard actions, not DOM `.click()` alone. After each
+open/close, run `await import('/src/dev/dialog-focus-checks.ts').then(m => m.checkDialogFocus('pointer'))`,
+or use `'keyboard'` / `'input'` for the corresponding focused target.
+`readDialogFocus()` returns the active target, native `:focus-visible`, private
+marker, computed outline/shadow and modal scope. A pointer path may still match
+native `:focus-visible`; its computed outline must be absent. Keyboard indication
+must remain visible. Cover confirm, input after typing, directory, settings,
+module button and inline link with pointer open/close, Enter/Space, Tab/Shift+Tab
+and Escape, plus pointer-open/keyboard-close and the inverse. Repeat both themes
+and a touch viewport; this is not real iOS validation.
+
+The fixture's `window.dialogFocusLab.directoryReady()` replaces asynchronous
+directory content without moving its heading focus. `replaceTrigger()` and
+`removeTrigger()` exercise native restoration when an invoker disappears.
+The directory contains a nested confirmation; native isolation and return must
+remain within its parent. “Hold confirmation” plus `dialogFocusLab.release()`
+exercises delayed completion. Confirm no private marker remains on blurred or
+detached targets and ordinary outside controls remain unchanged. The new UI's
+existing module scene remains the script-focus comparison.
 
 `/chat-lab.html?scene=sidebar` mounts the classic App with short, long Chinese,
 unbroken English, unloaded, role and activity fixtures plus synthetic module unread
