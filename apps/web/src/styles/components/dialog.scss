@@ -94,14 +94,6 @@
   border-radius: var(--border-radius);
   background: color-mix(in srgb, var(--primary-text-color) 4%, transparent);
 }
-.dirpicker-help {
-  margin-top: var(--host-space-md);
-  color: var(--secondary-text-color);
-  font-size: var(--host-text-meta);
-  line-height: var(--host-leading-ui);
-  summary { cursor: pointer; padding-block: var(--host-space-xs); }
-  p { margin: var(--host-space-xs) 0 var(--host-space-sm); }
-}
 @media (max-width: responsive.$phone-max) {
   .dirpicker-list { max-height: 10rem; }
 }
