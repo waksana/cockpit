@@ -265,6 +265,7 @@ automatically.
 | `--ck-icon-size` | `24px` | Drawing dimensions; prefer the size classes. |
 | `--ck-icon-stroke` | `2`, unitless SVG units | Lucide line width; do not override per path. |
 | `--ck-control-size` | `40px`, `44px` for coarse pointers | Minimum button/field block size and icon target inline size. |
+| `--ck-input-font-min` | `0px`, `16px` when any coarse pointer is available | Font-size floor for text fields, including wide touch layouts; preserve it in custom input typography to avoid mobile focus zoom. Not a cap on larger text or user zoom. |
 | `--ck-space` | `8px` | Common button gap/padding unit. |
 | `--ck-radius` | `12px` | Common button/field radius; icon targets are round. |
 | `--ck-disabled-opacity` | `0.3`, unitless | Disabled feedback, not state ownership. |

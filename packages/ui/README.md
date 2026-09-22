@@ -23,6 +23,10 @@ The intentional local defaults are:
 - Compact desktop controls; 44px coarse-pointer action targets. Checkbox and
   switch hit areas expand without enlarging their visible marks. Consumers must
   space these controls so those hit areas do not overlap.
+- Input and Textarea retain their normal font roles with a 16px minimum whenever
+  any coarse pointer is available, including wide touch/tablet layouts. This
+  avoids small-text focus zoom without restricting user zoom or reducing larger
+  text. Custom field typography must retain that minimum.
 - Chinese dialog close labels, reserved header space for the common close
   control, viewport-constrained scrollable dialog content, and footer actions
   whose visual order follows DOM and keyboard order on every screen size.

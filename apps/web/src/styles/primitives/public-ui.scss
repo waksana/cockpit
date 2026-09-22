@@ -15,6 +15,7 @@
   --ck-icon-size: 24px;
   --ck-icon-stroke: 2;
   --ck-control-size: 40px;
+  --ck-input-font-min: 0px;
   --ck-space: var(--host-space-sm);
   --ck-radius: var(--host-radius-control);
   --ck-disabled-opacity: var(--disabled-opacity);
@@ -22,6 +23,11 @@
 
 @media (pointer: coarse) {
   :root { --ck-control-size: 44px; }
+}
+
+// iOS focus zoom is triggered by small field text, not by the control's height.
+@media (any-pointer: coarse) {
+  :root { --ck-input-font-min: 16px; }
 }
 
 :where(.ck-button, .ck-icon-button) {
@@ -63,7 +69,7 @@
   background: var(--ck-color-surface);
   color: var(--ck-color-text);
   font: inherit;
-  font-size: var(--host-text-body);
+  font-size: max(var(--ck-input-font-min), var(--host-text-body));
   line-height: var(--host-leading-ui);
   accent-color: var(--ck-color-accent);
 }
@@ -89,7 +95,7 @@ svg.ck-icon, .ck-icon > svg {
 .ck-icon-sm { --ck-icon-size: 16px; }
 .ck-icon-md { --ck-icon-size: 20px; }
 .ck-icon-lg { --ck-icon-size: 24px; }
-.ck-input-hint { font-size: var(--messages-text-size); line-height: var(--host-leading-ui); }
+.ck-input-hint { font-size: max(var(--ck-input-font-min), var(--messages-text-size)); line-height: var(--host-leading-ui); }
 .ck-status-text { font-size: var(--host-text-meta); line-height: var(--host-leading-ui); }
 .ck-input-row {
   display: flex; align-items: flex-end; gap: var(--host-space-xs);

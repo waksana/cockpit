@@ -554,7 +554,7 @@ button.activity-head {
   background: transparent;
   color: var(--primary-text-color);
   font: inherit;
-  font-size: var(--chat-text-body);
+  font-size: max(var(--ck-input-font-min), var(--chat-text-body));
   line-height: var(--chat-leading-ui);
   resize: none;
   field-sizing: content;

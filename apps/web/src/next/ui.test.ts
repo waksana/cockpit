@@ -42,4 +42,15 @@ test('the compiled shared theme styles actual Radix states and independent touch
   assert.match(css, /^@media \(pointer: coarse\) \{[\s\S]*?\[data-slot=(?:"checkbox"|checkbox)\]:after/m);
   assert.match(css, /\.pointer-coarse\\:min-h-11\s*\{\s*min-height:/);
   assert.match(css, /\.pointer-coarse\\:min-w-11\s*\{\s*min-width:/);
+
+  assert.match(css, /^@media \(any-pointer: coarse\) \{\s*:root \{\s*--input-font-min: 16px;/m);
+  for (const size of ['base', 'sm']) {
+    assert.ok(css.includes(`font-size: max(var(--input-font-min, 0px), var(--text-${size}))`));
+    assert.ok(css.includes(`line-height: var(--text-${size}--line-height)`));
+  }
+  for (const control of [React.createElement(nextUi.Input), React.createElement(nextUi.Textarea)]) {
+    const html = renderToStaticMarkup(control);
+    assert.ok(html.includes('text-[length:max(var(--input-font-min,0px),var(--text-base))]'));
+    assert.ok(html.includes('md:text-[length:max(var(--input-font-min,0px),var(--text-sm))]'));
+  }
 });
