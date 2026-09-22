@@ -66,19 +66,20 @@ test('stopped tasks vanish immediately without requiring collapse and no idle ba
   assert.equal(render(false, 'idle'), '');
 });
 
-test('headings use icon then name then count, and the question moves into its own group', () => {
+test('headings use icon then name then count without a separate waiting-for-answer heading', () => {
   const html = render(true, 'ask');
   const top = html.slice(0, html.indexOf('class="chat-controls-list"'));
   assert.doesNotMatch(top, /data-activity="decision"/);
   assert.match(render(false, 'ask').slice(0, render(false, 'ask').indexOf('class="chat-controls-list"')), /data-activity="decision"/);
   const headers: string[] = html.match(/<header[^>]*>[\s\S]*?<\/header>/g) ?? [];
-  for (const [icon, label, count] of [['agent', 'Agent', '1'], ['shell', 'Terminal', '2'], ['queue', '队列', '2'], ['decision', '待回答', '1']]) {
+  for (const [icon, label, count] of [['agent', 'Agent', '1'], ['shell', 'Terminal', '2'], ['queue', '队列', '2']]) {
     const header = headers.find(value => value.includes(`data-icon="${icon}"`));
     assert.ok(header, label);
     assert.ok(header.indexOf(`data-icon="${icon}"`) < header.indexOf(`>${label}<`));
     assert.ok(header.indexOf(`>${label}<`) < header.indexOf(`>${count}<`));
     assert.match(header, /data-icon="delete"/);
   }
+  assert.doesNotMatch(html, /chat-controls-decisions|>待回答<|清空待回答/);
   const compact = render(true, 'manual');
   assert.match(compact.slice(0, compact.indexOf('class="chat-controls-list"')), /data-icon="compress"/);
   assert.doesNotMatch(compact, /手动压缩上下文|chat-queue-item/);

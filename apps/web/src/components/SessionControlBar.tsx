@@ -50,11 +50,6 @@ export function SessionControlBar({ session, controls, connected, expanded, disa
   const queueCount = (session.queue?.length ?? 0) + controls.steering.length;
   const active = controls.main || controls.compaction || queueCount > 0 || controls.tasks.some(task => task.status === 'running')
     || session.ask || session.planRequest || session.elicitation;
-  const decisions = [
-    ...(session.ask ? [{ kind: 'ask' as const, requestId: session.ask.requestId }] : []),
-    ...(session.planRequest ? [{ kind: 'plan' as const, requestId: session.planRequest.requestId }] : []),
-    ...(session.elicitation ? [{ kind: 'elicitation' as const, requestId: session.elicitation.requestId }] : []),
-  ];
   const relocated = new Set(expanded ? ['agent', 'shell', 'queue', 'decision'] : []);
   const headerItems = items.filter(item => !relocated.has(item.key));
   const action = (key: string, label: string, icon: IconName, command: SessionControlAction, blocked = false, waiting?: string) =>
@@ -105,14 +100,6 @@ export function SessionControlBar({ session, controls, connected, expanded, disa
           <CopyButton text={item.text} label={`复制待纳入消息：${item.text}`} variant="icon" />
         </div>)}
       </section>}
-      {decisions.length > 0 && <header className="chat-queue chat-controls-decisions">
-        <div className="chat-controls-title">
-          <SessionActivity items={[{ key: 'decision', icon: 'decision', count: decisions.length,
-            label: `待回答 ${decisions.length}` }]} names={{ decision: '待回答' }} />
-          {action(`clear:decisions:${JSON.stringify(decisions)}`, '清空待回答并中断当前回合', 'delete',
-            { type: 'clear-decisions', requests: decisions }, false, '取消中…')}
-        </div>
-      </header>}
     </div>
   </section>;
 }

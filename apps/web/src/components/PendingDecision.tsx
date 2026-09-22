@@ -33,6 +33,7 @@ export function AskContent({ request, sessionId, pending, disabled = false, onCh
 }) {
   const body = <div className="chat-pending-body chat-answer-question" role="group" aria-label="需要你的选择" aria-busy={pending}>
     {actions ? <div className="chat-question-row">
+      <Icon name="decision" size={16} />
       <MessagePresentation className="chat-ask-q" identity={{ sessionId, kind: 'ask', id: request.requestId }} complete>{request.question}</MessagePresentation>
       <span className="chat-decision-actions">{actions}</span>
     </div> : <MessagePresentation className="chat-ask-q" identity={{ sessionId, kind: 'ask', id: request.requestId }} complete>{request.question}</MessagePresentation>}
@@ -48,7 +49,7 @@ export function PlanCard({ request, pending, disabled = false, onSelect, actions
   request: NonNullable<ChatSession['planRequest']>; pending: boolean; disabled?: boolean; onSelect: (action: ExitPlanModeAction) => void;
   actions?: ReactNode;
 }) {
-  return <PendingDecision label="计划待确认" title="计划已就绪" icon={actions ? null : <Icon name="decision" size={16} />}
+  return <PendingDecision label="计划待确认" title="计划已就绪" icon={<Icon name="decision" size={16} />}
     className="chat-plan" pending={pending} actions={actions}>
     <div className="chat-pending-content" role="region" tabIndex={0} aria-label="计划内容">
       <div className="chat-pending-summary"><MessageBody body={request.summary} /></div>
@@ -73,7 +74,7 @@ export function ElicitationCard({ request, pending, disabled = false, onSelect, 
   onSelect: (action: 'accept' | 'decline' | 'cancel') => void;
   actions?: ReactNode;
 }) {
-  return <PendingDecision label="需要你的输入" title="工具请求确认" icon={actions ? null : <Icon name="decision" size={16} />}
+  return <PendingDecision label="需要你的输入" title="工具请求确认" icon={<Icon name="decision" size={16} />}
     className="chat-tool-confirm" pending={pending} actions={actions}>
     <div className="chat-ask-q">{request.message}</div>
     <div className="chat-ask-choices">

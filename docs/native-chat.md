@@ -392,9 +392,10 @@ actions. Read failures display an error; disconnection remains explicit. Unload,
 removal and reconnect discard retained presentation.
 Unloaded rows retain their muted appearance without a redundant activity badge.
 An aggregate `running` value can keep overall activity visible but cannot claim
-that the model is replying. The opt-in grouped controls move agent, terminal,
-queue and pending-decision icons into section headings (icon, name, count) while
-expanded and back into the bar when collapsed. The overall indicator stays in
+that the model is replying. The opt-in grouped controls move agent, terminal and
+queue icons into section headings (icon, name, count) while expanded. The question
+icon moves directly before the question, without a separate waiting heading.
+Collapsed controls return these icons to the bar. The overall indicator stays in
 place while active; confirmed idle hides the input bar. There is no disclosure
 triangle; `aria-expanded`, keyboard activation and focus treatment remain.
 Active task rows only expose an X to cancel. Group clear cancels that group's

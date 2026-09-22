@@ -309,13 +309,14 @@ does not read or navigate agent history. `case=agent-unloaded` still demonstrate
 that task listing/cancellation do not require a startup card in the chat window.
 Every group header has a trash action. Agent/terminal clear cancels the captured
 task IDs in that group and removes their list records, preserving peer groups and
-history. Pending-question clear is request-bound and interrupts the current main
-turn without cancelling unrelated background work. Cancelling ask stops its main
+history. Question cancellation is request-bound and does not cancel unrelated
+background work. Cancelling ask stops its main
 turn; plan uses exit-only semantics; elicitation uses cancellation. These remain
 synthetic scenarios, not additional native endpoints.
 The sidebar uses the same shared projection and icon renderer as the input bar.
 Expanded controls keep the overall icon in the bar and relocate agent/terminal/
-queue and decision icons into section headings ordered icon, name, count;
+queue icons into section headings ordered icon, name, count. The question icon
+sits directly before its question, without a separate "waiting for answer" heading;
 collapsed controls reunite them without a chevron. Compaction stays in the bar,
 not a separate manual-compaction row. Row actions use accessible icon buttons,
 including the existing CopyButton's icon variant for queued messages. Sticky surfaces use the input card's existing

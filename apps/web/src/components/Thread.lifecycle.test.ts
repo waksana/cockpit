@@ -903,7 +903,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.ok(container.querySelector('[data-activity="overall"]')?.querySelector('.spinner'));
       assert.ok(container.querySelector('[data-activity="decision"]'));
       assert.equal(container.querySelector('.chat-controls-header')?.querySelector('[data-activity="decision"]'), null);
-      assert.ok(container.querySelector('[aria-label="清空待回答并中断当前回合"]'));
+      assert.equal(container.querySelector('.chat-controls-decisions'), null);
+      assert.equal(container.querySelector('.chat-question-row')?.firstChild?.getAttribute('data-icon'), 'decision');
+      assert.ok(container.querySelector('[aria-label="取消问题并中断当前回合"]'));
       await click('.chat-ask-choice');
       assert.equal(container.querySelector('.chat-input-message'), editor);
       assert.equal(editor.value, '普通消息草稿');
