@@ -6,6 +6,7 @@ import { createCockpitStore } from '../net/store';
 import type { ChatSession } from '../net/types';
 import { Sidebar } from '../components/Sidebar';
 import { createSessionMetadataSelector } from './sessionSelectors';
+import { activityFixture } from '../dev/activity-fixtures';
 
 function session(sessionId: string): ChatSession {
   return {
@@ -71,7 +72,17 @@ test('streaming store updates do not notify the metadata/sidebar render boundary
       sessions: state.sessions.map((s) => s.sessionId === 'active' ? { ...s, status: 'running' } : s),
     }));
     assert.equal(renderCount, 3);
-    assert.match(render(), /当前活动未知/);
+    assert.match(render(), /等待活动状态，不代表模型正在生成/);
+    assert.match(render(), /data-icon="loading"/);
     assert.doesNotMatch(render(), /回复中/);
+    store.setState((state) => ({
+      sessions: state.sessions.map((s) => s.sessionId === 'active' ? {
+        ...s, activity: null, activityDisplay: { previous: { status: 'running', activity: activityFixture({
+          hasActiveWork: true, tasks: { activeAgents: 0, activeShells: 2, unknown: 0 },
+        }) } },
+      } : s),
+    }));
+    assert.match(render(), /data-activity="shell"/);
+    assert.match(render(), /上次采样，等待更新：后台 shell 2/);
   } finally { unsubscribe(); }
 });
