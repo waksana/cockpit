@@ -1,3 +1,21 @@
+# Cockpit 0.3.1
+
+Current-source delivery version for the compact next workspace in #103.
+The `/next/` entry uses compact session navigation and a single conversation
+header, contextual settings that retain their form across responsive changes,
+and a smaller idle composer with accessible compact timestamps. Desktop settings
+keep the chat mounted; full-page phone settings release hidden reading while
+retaining drafts. Select popups stay inside the native settings dialog.
+
+Classic remains the default at `/`. Shared native transport, draft ownership,
+module APIs and user data are unchanged. Existing File 0.2.0 and Speech 0.9.0
+presentations remain paired; Task and Notification remain classic-only.
+This delivery does not include the subsequent responsive-layout proposals.
+All host workspace and MCP versions are 0.3.1; modules need no version change.
+This version preparation does not itself publish a tag or GitHub Release.
+
+---
+
 # Cockpit 0.3.0
 
 Source preparation for the independent shadcn-based Web presentation in #99.
