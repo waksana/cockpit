@@ -101,7 +101,8 @@ test('concurrent activity and decisions preserve trailing module badges without 
       activity: activityFixture({ tasks: { activeAgents: 1, activeShells: 1, unknown: 0 } }),
       children: createElement('span', { 'data-unread': true }, '1'),
     }));
-    assert.match(html, new RegExp(`data-activity="${expected}"`));
+    if (status === 'unloaded') assert.doesNotMatch(html, /data-activity=|未加载/);
+    else assert.match(html, new RegExp(`data-activity="${expected}"`));
     assert.match(html, /<span data-unread="true">1<\/span><\/span>$/);
     if (status !== 'unloaded') for (const type of ['shell', 'agent']) assert.match(html, new RegExp(`data-activity="${type}"`));
     assert.doesNotMatch(html, /回复中/);

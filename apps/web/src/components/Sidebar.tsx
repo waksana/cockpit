@@ -13,6 +13,7 @@ import { filterSessions } from '../pages/session-list';
 import { StateNotice } from './StateNotice';
 import { SessionStatus } from './ModuleComponents';
 import { RoleBadge } from './ModuleLabel';
+import { useCockpit } from '../net/store';
 
 function cwdBasename(cwd: string): string {
   return cwd.split('/').filter(Boolean).pop() ?? cwd;
@@ -43,6 +44,7 @@ function SessionRow({ s, active, actions, connected }: {
   s: SessionMeta; active: boolean; actions: RowActions; connected: boolean;
 }) {
   const firedRef = useRef(false);
+  const activityRefreshing = useCockpit(state => state.activityRefreshingIds.includes(s.sessionId));
   const lp = useLongPress(actions.onMenu, firedRef);
 
   const { mono, hue } = cwdChip(s.cwd);
@@ -79,6 +81,7 @@ function SessionRow({ s, active, actions, connected }: {
         {s.roles.map(role => <RoleBadge key={`${role.moduleId}/${role.roleId}`} role={role} session={s} connected={connected} />)}
       </span>}
       <SessionStatus sessionId={s.sessionId} status={s.status} loaded={s.loaded} connected={connected}
+        activityRefreshing={activityRefreshing}
         activity={s.activity} needsDecision={!!(s.ask || s.planRequest || s.elicitation)} />
     </button></li>
   );

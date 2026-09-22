@@ -381,8 +381,11 @@ and CircleHelp means a real pending decision. Process/tool rows, agent cards and
 decision cards use those same semantic icons; execution-result icons remain
 separate. Concurrent facts use separate icons/counts, not an exclusive busy reason.
 The native processing icon means a turn or background continuation, never proven
-model generation. Disconnection, missing facts and unloaded state are explicit;
-an aggregate `running` value alone cannot produce a replying indicator.
+model generation. Processing and pending activity reads use the rotating loading
+glyph; a pending read is labeled as refreshing, not native processing or unknown.
+Failed or unavailable reads remain unknown, and disconnection remains explicit.
+Unloaded rows retain their muted appearance without a redundant activity badge.
+An aggregate `running` value alone cannot produce a replying indicator.
 Activity adds no disclosure, detail area or task-management page. Existing input
 and transcript disclosures are unchanged. The independent next UI is not redesigned.
 Stop acknowledgement reports only acceptance; remaining shell/agent facts stay

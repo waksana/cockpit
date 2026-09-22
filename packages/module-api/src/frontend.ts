@@ -467,6 +467,8 @@ export interface SessionStatusProps {
   readonly needsDecision: boolean;
   /** Missing activity is unknown, not idle. Legacy status remains a safety aggregate. */
   readonly activity?: ReadonlyData<SessionMeta['activity']>;
+  /** A browser-owned control read is pending; not evidence of native processing. */
+  readonly activityRefreshing?: boolean;
   readonly loaded?: boolean;
   /** False until the current connection has received its snapshot. */
   readonly connected?: boolean;

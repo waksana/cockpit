@@ -716,16 +716,19 @@ test('activity uses control invalidation once, rejects old reads and keeps the o
   h.snapshot([], { sessions: [{ ...meta('a'), activity: shell }, { ...meta('b'), activity: activityFixture() }] });
   h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['control', 'tasks'] });
   assert.equal(session('a').activity, null, 'invalidated facts are not presented as current');
+  assert.deepEqual(useCockpit.getState().activityRefreshingIds, ['a']);
   await setImmediate();
   h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['control'] });
   useCockpit.setState({ activeId: 'b' });
   h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['control'] });
   await h.reply(0, { meta: { sessionId: 'a', loaded: true, activity: shell } });
   assert.equal(session('a').activity, null, 'superseded activity is discarded');
+  assert.deepEqual(useCockpit.getState().activityRefreshingIds, ['a']);
   assert.deepEqual(session('b').activity, activityFixture());
   h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['control'] });
   await h.reply(1, { meta: { sessionId: 'a', loaded: true, activity: activityFixture() } });
   assert.deepEqual(session('a').activity, activityFixture());
+  assert.deepEqual(useCockpit.getState().activityRefreshingIds, []);
   assert.equal(h.requests.length, 2, 'no separate activity/task read or polling');
 });
 
@@ -739,16 +742,19 @@ test('failed, unloaded and pre-reconnect activity reads cannot retain or restore
   h.requests[0].response.resolve(Response.json({ error: 'Synthetic control failure' }, { status: 500 }));
   await setImmediate();
   assert.equal(session('a').activity, null);
+  assert.deepEqual(useCockpit.getState().activityRefreshingIds, []);
   assert.ok(getUxErrors().length);
   h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['control'] });
   await setImmediate();
   h.source.drop();
+  assert.deepEqual(useCockpit.getState().activityRefreshingIds, []);
   h.source.open();
   h.snapshot([], { sessions: [{ ...meta('a'), activity: activityFixture() }] });
   await h.reply(1, { meta: { sessionId: 'a', loaded: true, activity: active } });
   assert.deepEqual(session('a').activity, activityFixture());
   h.source.emit({ type: 'session/patch', sessionId: 'a', loaded: false, status: 'unloaded' });
   assert.equal(session('a').activity, undefined);
+  assert.deepEqual(useCockpit.getState().activityRefreshingIds, []);
 });
 
 test('source changes fence narrow requests and clear stale native fields immediately', async t => {

@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ToolCall } from '@cockpit/protocol';
 import { ToolCallRow } from './ToolCallRow';
 import { DisclosureContext } from '../lib/disclosureChoice';
+import { compile } from 'sass';
 
 const tool: ToolCall = { toolCallId: 'tool', name: 'custom_tool', title: 'Native intent',
   args: '{"input":"exact"}', output: 'Exact output', status: 'completed' };
@@ -53,4 +54,12 @@ test('missing tool metadata remains explicit and a name-equivalent title is not 
   assert.match(render({ toolCallId: 'unknown', title: 'Missing start' }), /缺少工具名称/);
   assert.doesNotMatch(render({ ...tool, title: tool.name! }), /tool-description|tool-heading-separator/);
   assert.match(render({ toolCallId: 'empty', name: 'empty', title: 'empty' }, true), /暂无输入或输出记录/);
+});
+
+test('tool headers reserve separate grid cells for identity, content and outcome', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.tool-head \{[^}]*grid-template-columns: 1rem minmax\(0, 1fr\) 1rem;/);
+  for (const [selector, column] of [['activity-icon', 1], ['tool-heading-content', 2], ['tool-state-icon', 3]]) {
+    assert.match(css, new RegExp(`\\.tool-head > \\.${selector} \\{[^}]*grid-area: 1\\s*/\\s*${column};`));
+  }
 });

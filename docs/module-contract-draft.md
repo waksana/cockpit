@@ -746,7 +746,7 @@ scope 提供只读快照、订阅和仅修改自己字段的验证型 update；�
 | boundary | 基础组件契约 |
 | --- | --- |
 | message | 原生消息/宿主当前 ask 身份、完成事实、实际正文 bodyRef、children 与真实 adornment 节点 |
-| sessionStatus | 原生并存活动摘要/错误/真实待决策和非交互 children，不嵌套按钮；activity、loaded、connected 提供采样及可用边界，缺失不代表 idle |
+| sessionStatus | 原生并存活动摘要/错误/真实待决策和非交互 children，不嵌套按钮；activity、loaded、connected 提供采样及可用边界，缺失不代表 idle；activityRefreshing 仅表示浏览器 control 读取正在进行，不表示原生处理 |
 | composer | 实际输入卡片及其原生问题内容，组合 children；不预建附件组 |
 | composerEditor | 实际输入行、文字编辑器和发送控件；普通 DOM props 与前置 children，不解释文件或语音事件 |
 | composerInput | 实际受控 textarea；value/onChange、原生事件、editorRef、draft/operation/disabled/sendBlocked 和受保护 onSubmit |
