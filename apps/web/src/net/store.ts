@@ -73,6 +73,7 @@ interface CockpitState {
   respondElicitation: (sessionId: string, requestId: string, action: 'accept' | 'decline' | 'cancel') => Promise<boolean>;
   removeQueued: (sessionId: string, itemId: string) => Promise<void>;
   refreshList: () => Promise<void>;
+  sessionControlAction?: (sessionId: string, action: import('../lib/sessionControls').SessionControlAction) => Promise<void>;
 }
 
 export const createCockpitStore = () => create<CockpitState>((set, get) => {

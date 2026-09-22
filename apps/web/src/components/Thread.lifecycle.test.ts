@@ -8,7 +8,7 @@ import { getSessionDraft } from '../lib/textDraft';
 import { getDraftSession } from '../lib/draftSelection';
 import type { NativeDraftRequest } from '../lib/draft';
 import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';
-import { useCockpit } from '../net/store';
+import { createCockpitStore, useCockpit } from '../net/store';
 import type { ChatSession } from '../net/types';
 import type { IntentResult, SessionProjection } from '@cockpit/protocol';
 import { MessageProcess, Thread } from './Thread';
@@ -28,6 +28,9 @@ import type { ActivateFrontend, ComposerContext, ComposerInputProps, ComposerPro
 import { fixtureSession } from '../dev/chat-fixtures';
 import { activityFixture } from '../dev/activity-fixtures';
 import { ControlDesignLab } from '../dev/control-design-lab';
+import { installFullWebFixture } from '../dev/full-web-fixtures';
+import { ConnectedThread } from './ConnectedThread';
+import { workspaceSessionId } from '../dev/workspace-fixtures';
 import App from '../App';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
@@ -858,6 +861,62 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(container.querySelector('.send')?.getAttribute('aria-label'), '发送');
     await act(() => root.render(null));
   });
+
+  const checkCompleteControls = async () => {
+    const previous = useCockpit.getState();
+    const fixture = createCockpitStore();
+    installFullWebFixture(fixture);
+    const mirror = () => useCockpit.setState({ ...fixture.getState(), sessions: [...previous.sessions, ...fixture.getState().sessions] });
+    const unsubscribe = fixture.subscribe(mirror);
+    try {
+      mirror();
+      await act(() => root.render(createElement(ConnectedThread, { sessionId: workspaceSessionId })));
+      await flush();
+      const click = async (selector: string, scope = container) => {
+        const target = scope.querySelector(selector);
+        assert.ok(target, selector);
+        const event = new Event('click', { bubbles: true });
+        Object.defineProperty(event, 'target', { value: target });
+        await act(() => container.dispatchEvent(event));
+        await flush();
+      };
+      const indicators = container.querySelector('.chat-controls-header')!.querySelectorAll('.session-activity-item');
+      assert.equal(indicators[0].getAttribute('data-activity'), 'overall');
+      assert.ok(indicators[0].querySelector('.spinner'));
+      assert.ok(container.querySelector('[aria-label="Agent 列表"]'));
+      assert.ok(container.querySelector('[aria-label="Terminal 列表"]'));
+      const editor = container.querySelector('.chat-input-message')!;
+      await act(() => getSessionDraft(workspaceSessionId).edit('普通消息草稿'));
+      editor.focus();
+      await click('.chat-controls-toggle');
+      assert.equal(container.querySelector('.chat-controls-list')?.getAttribute('hidden'), '');
+      assert.equal(container.querySelector('.chat-input-message'), editor, 'normal input never folds with activities');
+      await act(() => fixture.setState(state => ({ sessions: state.sessions.map(session => session.sessionId === workspaceSessionId
+        ? { ...session, ask: { requestId: 'fresh-question', question: '继续吗？', choices: ['继续'], allowFreeform: true } } : session) })));
+      await flush();
+      assert.equal(container.querySelector('.chat-controls-toggle')?.getAttribute('aria-expanded'), 'true');
+      assert.equal(container.querySelector('.chat-input-message'), editor);
+      assert.equal(editor.value, '');
+      assert.equal(document.activeElement, editor);
+      assert.ok(container.querySelector('[data-activity="overall"]')?.querySelector('.spinner'));
+      assert.ok(container.querySelector('[data-activity="decision"]'));
+      await click('.chat-ask-choice');
+      assert.equal(container.querySelector('.chat-input-message'), editor);
+      assert.equal(editor.value, '普通消息草稿');
+      if (container.querySelector('.chat-controls-toggle')?.getAttribute('aria-expanded') !== 'true') await click('.chat-controls-toggle');
+      await click('button', container.querySelector('[data-task-id="preview-build"]')!);
+      assert.equal(container.querySelectorAll('.chat-controls-task').length, 3);
+      assert.match(container.querySelector('[data-task-id="preview-build"]')!.textContent, /已停止/);
+      await click('.chat-controls-toggle');
+      assert.equal(container.querySelector('[data-task-id="preview-build"]'), null);
+      await click('button', container.querySelector('.chat-controls-header')!.querySelector('.chat-control-action')!);
+      assert.equal(container.querySelector('[data-activity="overall"]')?.querySelector('.spinner'), null);
+    } finally {
+      await act(() => root.render(null));
+      unsubscribe();
+      useCockpit.setState(previous, true);
+    }
+  };
 
   await t.test('first message commit reaches latest without a RAF, including empty async mounts and cached switches', async () => {
     const commit = async (value: ChatSession | null) => {
@@ -2375,4 +2434,5 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       runtime.stop();
     }
   });
+  await t.test('complete App thread applies grouped controls, retains the leading spinner and reuses the answer editor', checkCompleteControls);
 });

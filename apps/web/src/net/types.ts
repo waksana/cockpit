@@ -14,6 +14,7 @@ import type { ChatMessage, SessionMeta } from '@cockpit/protocol';
 // A session as the UI holds it: the server's authoritative meta plus this tab's
 // materialized message window and view flags.
 export interface ChatSession extends SessionMeta {
+  controls?: import('../lib/sessionControls').SessionControls;
   activityDisplay?: import('@cockpit/module-api').SessionActivityDisplay;
   messages: ChatMessage[];
   materialized: boolean;

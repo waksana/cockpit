@@ -516,6 +516,36 @@ button.activity-head {
 .chat-folded-draft {
   display: none; flex: none; font-size: var(--chat-text-meta); color: var(--secondary-text-color);
 }
+.chat-controls { display: contents; font-size: var(--chat-text-meta); }
+.chat-controls-header { position: sticky; top: 0; z-index: 2; background: var(--surface-color); cursor: default; }
+.chat-controls-toggle.ck-button {
+  flex: 1; min-width: 0; justify-content: flex-start; gap: var(--chat-gap-control);
+  min-height: var(--chat-control-compact); padding: 0; border: 0; border-radius: 0;
+  font-size: var(--chat-text-meta); background: transparent;
+}
+.chat-controls-title {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--chat-gap-control);
+  min-height: var(--chat-control-compact); color: var(--secondary-text-color);
+}
+.chat-controls-actions { display: flex; align-items: center; gap: var(--chat-gap-control); }
+.chat-controls-task { align-items: center; }
+.chat-controls-task-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.chat-controls-muted { color: var(--secondary-text-color); }
+.chat-control-action { flex-direction: column; align-items: flex-start; }
+.chat-control-action [role='alert'] { max-width: 240px; color: var(--chat-danger-ink); overflow-wrap: anywhere; }
+.chat-input-card[data-controls] {
+  .chat-input-card-body { display: block; overflow-y: auto; }
+  .chat-input-context { overflow: visible; }
+  .chat-composer, .chat-composer-body { display: contents; }
+  .chat-input { position: sticky; bottom: 0; z-index: 1; background: var(--surface-color); }
+  &[data-controls-open='false'][data-decision] {
+    .chat-input-context, .chat-composer-context, .chat-input { display: none; }
+  }
+  &[data-editor-sized] .chat-input-message { min-height: var(--control-editor-height); }
+  &[data-editor-fixed] .chat-input-message {
+    field-sizing: fixed; height: var(--control-editor-height); max-height: var(--control-editor-height);
+  }
+}
 .chat-input-card:not([open]) .chat-folded-draft { display: inline; }
 .chat-composer {
   display: block;

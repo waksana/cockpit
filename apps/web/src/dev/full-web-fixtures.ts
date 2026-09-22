@@ -4,7 +4,7 @@ import type { ChatSession } from '../net/types';
 import { retireDraftSession } from '../lib/draftSelection';
 import { installResourceFixture } from './resource-fixtures';
 import { workspaceSessionId } from './workspace-fixtures';
-import { applyControlAction, controlDesignState, controlScenes, controlSession,
+import { applyControlAction, canSteer, controlDesignState, controlScenes, controlSession,
   type ControlAction, type ControlDesignState, type ControlScene } from './control-design-state';
 
 const titles: Record<ControlScene, string> = {
@@ -14,12 +14,14 @@ const titles: Record<ControlScene, string> = {
 };
 
 // The real App, routes and components consume this replacement data source.
-// No alternate page composition, component overrides or preview stylesheet.
+// The optional controls are rendered by Thread itself, not by a preview shell.
 export function installFullWebFixture(store: ReturnType<typeof createCockpitStore>, selected = 'mixed') {
   installResourceFixture(store);
   const resources = store.getState();
   const template = resources.sessions[0];
   const models = new Map<string, ControlDesignState>();
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+  let active = true;
   let serial = 0;
   const find = (id: string) => {
     const session = store.getState().sessions.find(value => value.sessionId === id);
@@ -27,7 +29,10 @@ export function installFullWebFixture(store: ReturnType<typeof createCockpitStor
     return session;
   };
   const project = (model: ControlDesignState): ChatSession => model.session.loaded
-    ? controlSession(model) : { ...model.session, status: 'unloaded', activity: null, nativeProcessing: false };
+    ? { ...controlSession(model), controls: {
+      main: model.main, compaction: model.compaction, tasks: model.tasks, steering: model.steering,
+    } }
+    : { ...model.session, controls: undefined, status: 'unloaded', activity: null, nativeProcessing: false };
   for (const [scene] of controlScenes) {
     const model = controlDesignState(scene);
     const sessionId = scene === 'mixed' ? workspaceSessionId : model.session.sessionId;
@@ -72,6 +77,28 @@ export function installFullWebFixture(store: ReturnType<typeof createCockpitStor
   const activeId = [...models].find(([, model]) => model.session.sessionId === `control-design-${selected}`)?.[0] ?? workspaceSessionId;
   store.setState({
     sessions: [...models.values()].map(project), activeId,
+    init: () => {
+      active = true;
+      return () => { active = false; for (const timer of timers) clearTimeout(timer); timers.clear(); };
+    },
+    sessionControlAction: async (id, action) => {
+      if (!active || store.getState().connState !== 'open' || !store.getState().snapshotReady) throw new Error('合成会话连接已失效。');
+      change(id, action);
+      if (action.type === 'steer') {
+        const timer = setTimeout(() => {
+          timers.delete(timer);
+          const model = models.get(id);
+          if (!active || !model || !store.getState().sessions.some(session => session.sessionId === id)) return;
+          const live = current(id);
+          if (!live.steering.some(item => item.id === action.id) || !canSteer(live)) return;
+          // Simulate a native consumption event after acceptance, not a UI success bubble.
+          const item = live.steering.find(item => item.id === action.id)!;
+          const consumed = applyControlAction({ ...live, steering: [item] }, { type: 'consume' });
+          publish(id, { ...consumed, steering: live.steering.filter(value => value.id !== item.id) });
+        }, 700);
+        timers.add(timer);
+      }
+    },
     canSendDraft: draft => {
       const session = store.getState().sessions.find(value => value.sessionId === draft.sessionId);
       if (!session || session.compacting || !store.getState().snapshotReady) return 'unavailable';

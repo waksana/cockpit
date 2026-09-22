@@ -269,8 +269,12 @@ The published static control-review entry now mounts the complete production
 `App` with a `MemoryRouter` and `installFullWebFixture`. It does not import
 `chat-lab.scss`, override components, or construct a separate preview shell.
 The same sidebar, routing, conversation, settings, global menus and resource
-pages consume synthetic data and local callbacks. The input and status layout
-is the normal production layout, not the earlier proposed dock. Browser storage
+pages consume synthetic data and local callbacks. The real Thread now optionally
+renders `SessionControlBar` when the fixture supplies browser-only `controls` and
+`sessionControlAction`. Only this input dock changes; the full App remains the
+same. The leading indicator is an independent overall state: a spinner coexists
+with question, agent, terminal, queue and compaction icons whenever activity
+remains. Idle, offline and errors retain distinct overall indicators. Browser storage
 and application transports remain isolated before imports. Use
 `/chat-lab.html?scene=full-web` for this scene in the development Lab;
 `case=tool-loading` selects the last-tool reproduction in either entry.
@@ -295,6 +299,9 @@ opens the list and positions its answer at the bottom once, before paint; later
 task updates do not repeat that navigation. The preview retains the same textarea,
 preserves separate prompt/answer drafts and carries editor geometry across purpose
 changes. This alternate composition is opt-in; the production composer stays unchanged.
+Full-Web steering first shows acceptance, then a 700ms synthetic runtime event
+places the same message in history; Stop/clear/disposal fence delayed events.
+The backend has no new mutation API and never receives these fixture actions.
 
 Use `?scene=control-design&case=tool-loading` in Chat Lab, or `?case=tool-loading`
 on the full Web static review, for a final active tool after scrollable static

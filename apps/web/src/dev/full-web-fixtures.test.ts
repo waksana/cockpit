@@ -77,3 +77,46 @@ test('new, load, reload and delete use synthetic models independent of the initi
   assert.equal(store.getState().sessions.some(value => value.sessionId === id), false);
   await assert.rejects(store.getState().getResources(id, ['model']), /Unknown synthetic session/);
 });
+
+test('the full App control source stops one task, retains rows until collapse and stops the rest explicitly', async () => {
+  const store = createCockpitStore();
+  installFullWebFixture(store);
+  const act = store.getState().sessionControlAction!;
+  const current = () => store.getState().sessions.find(value => value.sessionId === workspaceSessionId)!;
+  await act(workspaceSessionId, { type: 'stop-task', id: 'preview-build' });
+  assert.equal(current().controls?.tasks.length, 3);
+  assert.equal(current().activity?.tasks.activeShells, 1);
+  assert.equal(current().controls?.main, true);
+  await act(workspaceSessionId, { type: 'prune-tasks' });
+  assert.equal(current().controls?.tasks.length, 2);
+  await act(workspaceSessionId, { type: 'stop-all' });
+  assert.equal(current().activity?.hasActiveWork, false);
+  assert.equal(current().queue?.length, 0);
+  assert.ok(current().controls?.tasks.every(task => task.status === 'cancelled'));
+  assert.ok(current().messages.some(message => message.subtype === 'subagent'));
+});
+
+test('steering has distinct acceptance and consumption, with stop, session and disposal fencing', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const store = createCockpitStore();
+  installFullWebFixture(store);
+  const dispose = store.getState().init();
+  const act = store.getState().sessionControlAction!;
+  const current = () => store.getState().sessions.find(value => value.sessionId === workspaceSessionId)!;
+  const before = current().messages.length;
+  await act(workspaceSessionId, { type: 'steer', id: 'preview-q1' });
+  assert.equal(current().controls?.steering.length, 1);
+  assert.equal(current().messages.length, before);
+  store.getState().setActiveId('control-design-idle');
+  t.mock.timers.tick(700);
+  assert.equal(current().messages.length, before + 1);
+  assert.equal(current().controls?.steering.length, 0);
+  assert.equal(current().messages.at(-1)?.content, '先不要提交');
+  assert.equal(store.getState().sessions.find(value => value.sessionId === 'control-design-idle')?.messages.length, 2);
+  await act(workspaceSessionId, { type: 'steer', id: 'preview-q2' });
+  await act(workspaceSessionId, { type: 'stop-all' });
+  t.mock.timers.tick(700);
+  assert.equal(current().messages.length, before + 1, 'stopped steering never enters history');
+  dispose();
+  await assert.rejects(act(workspaceSessionId, { type: 'clear-queue' }), /已失效/);
+});

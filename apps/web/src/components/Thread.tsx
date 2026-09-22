@@ -6,6 +6,9 @@ import { MessageBody } from './MessageBody';
 import { MessageContent } from './MessageContent';
 import { hasMessageContent } from '../lib/messageContent';
 import { Composer, ComposerNotices } from './Composer';
+import { SessionControlBar } from './SessionControlBar';
+import type { SessionControlAction } from '../lib/sessionControls';
+import { useControlComposer } from '../lib/useControlComposer';
 import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
 import type { ChatMessage, ChatSession, ExitPlanModeAction } from '../net/types';
@@ -324,13 +327,15 @@ interface ThreadProps {
   // Alternate activity/queue composition; Thread still owns decisions and drafts.
   composerControls?: ReactNode;
   promptBusy?: boolean;
+  onControlAction?: (action: SessionControlAction) => Promise<void>;
   // Read-only transcript: renders the paginated
   // message list but hides the composer and every interactive banner, so the
   // conversation can be browsed but not driven.
   readOnly?: boolean;
 }
 
-export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, composerControls, promptBusy = session.status === 'running', readOnly = false }: ThreadProps) {
+export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, composerControls, promptBusy = session.controls?.main ?? session.status === 'running', onControlAction, readOnly = false }: ThreadProps) {
+  const controls = !readOnly && onControlAction ? session.controls : undefined;
   const connected = useCockpit((s) => s.connState === 'open');
   const snapshotReady = useCockpit((s) => s.snapshotReady);
   const interruptAction = useKeyedAction(`interrupt:${session.sessionId}`);
@@ -462,8 +467,12 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const planRequest = session.planRequest;
   const hasPendingDecision = !readOnly && !!(planRequest || session.elicitation);
   const hasExecution = session.compacting || session.status === 'running' || (!readOnly && queueCount > 0);
-  const hasInputHeader = composerControls === undefined && !!(hasExecution || hasPendingDecision || (!readOnly && ask) || activityItems.length);
+  const hasInputHeader = !controls && composerControls === undefined && !!(hasExecution || hasPendingDecision || (!readOnly && ask) || activityItems.length);
   const inputCardRef = useRef<HTMLDetailsElement | null>(null);
+  const decisionKey = askId ? `ask:${askId}` : planId ? `plan:${planId}` : elicitationId ? `elicitation:${elicitationId}` : undefined;
+  const [controlsDisclosure, setControlsDisclosure] = useState<{ decision?: string; open: boolean }>({ open: true });
+  const controlsOpen = decisionKey && decisionKey !== controlsDisclosure.decision ? true : controlsDisclosure.open;
+  const releaseEditorSize = useControlComposer(inputCardRef, !!controls, draft.reference.id, decisionKey);
   useLayoutEffect(() => {
     // Native disclosure survives ordinary updates; a new request or idle input opens afresh.
     if (inputCardRef.current) inputCardRef.current.open = true;
@@ -550,6 +559,8 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           {!readOnly && <ComposerNotices draft={draft} />}
         </div>
         <details className="chat-input-card" ref={inputCardRef} open
+          data-controls={!!controls || undefined} data-controls-open={controls ? controlsOpen : undefined}
+          onChange={controls ? event => { if (event.target instanceof HTMLTextAreaElement) releaseEditorSize(); } : undefined}
           data-header={hasInputHeader || undefined} data-decision={!!(!readOnly && (ask || hasPendingDecision)) || undefined}
           data-question={(!readOnly && operation === 'ask') || undefined}>
           <summary className="chat-execution-head" hidden={!hasInputHeader} aria-label={`${executionLabel}，展开或收起输入卡片`}>
@@ -580,9 +591,21 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
             </span>}
           </summary>
           <div className="chat-input-card-body">
+            {controls && onControlAction && <SessionControlBar session={session} controls={controls} connected={authoritative}
+              expanded={controlsOpen} disabled={!authoritative || !session.loaded || !!session.loading || !!session.closing || activityRefreshing}
+              controlRef={executionControlRef} onAction={onControlAction}
+              onToggle={() => { setControlsDisclosure({ decision: decisionKey, open: !controlsOpen }); }}
+              onView={messageId => {
+                const target = contentRef.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
+                if (!target) throw new Error('这条任务记录尚未加载。');
+                target.scrollIntoView({ block: 'center' });
+                const toggle = target.querySelector<HTMLButtonElement>('button[aria-expanded]');
+                if (toggle?.getAttribute('aria-expanded') === 'false') toggle.click();
+                toggle?.focus({ preventScroll: true });
+              }} />}
             {!readOnly && composerControls}
             <div className="chat-input-context">
-              {!readOnly && composerControls === undefined && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
+              {!readOnly && !controls && composerControls === undefined && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
                 {session.queue?.map((q) => (
                   <div key={q.id} className="chat-queue-item">
                     <details className="chat-queue-entry">
@@ -613,7 +636,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
               <div className="chat-readonly-note" aria-label="只读会话">只读会话</div>
             ) : (
               <Composer
-                key={composerControls === undefined ? draft.reference.id : 'shared-composer'}
+                key={!controls && composerControls === undefined ? draft.reference.id : 'shared-composer'}
                 busy={promptBusy && !ask && !planRequest}
                 submitLabel={ask ? '提交回答' : planRequest ? '发送新指令' : undefined}
                 disabled={!!session.compacting && session.status !== 'running'}

@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import { Minimize2 } from 'lucide-react';
 import { Thread } from '../components/Thread';
 import { Icon } from '../components/Icon';
 import { PaneHeader } from '../components/PaneHeader';
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
+import { controlIndicators } from '../lib/sessionControls';
+import { SessionActivity } from '../components/SessionActivity';
 import { applyControlAction, canSteer, controlDesignState, controlScenes, controlSession,
   type ControlAction, type ControlDesignState, type ControlScene } from './control-design-state';
 
@@ -86,7 +87,6 @@ export function ControlDesignLab() {
     if (body) body.scrollTop = body.scrollHeight;
   }, [request]);
   const queueCount = state.queue.length + state.steering.length;
-  const specific = decision || tasks.length || state.compaction || queueCount;
   const statusLabel = !connected ? '待同步' : [
     decision && '待回答', state.compaction && '正在压缩上下文',
     ...(['agent', 'shell'] as const).flatMap(kind => {
@@ -106,21 +106,8 @@ export function ControlDesignLab() {
           setDisclosure({ request, open: !expanded });
           if (expanded) commit(applyControlAction(current.current, { type: 'prune-tasks' }));
         }}>
+        <SessionActivity items={controlIndicators(session, state, connected)} />
         <Icon name={expanded ? 'down' : 'chevron_right'} size={16} />
-        <span className="control-lab-indicators">
-        {!connected ? <span><Icon name="unknown" size={16} />待同步</span> : <>
-          {decision && <span><Icon name="decision" size={16} />待回答</span>}
-          {state.compaction && <span><span className="ck-icon" data-icon="compress" aria-hidden="true"><Minimize2 size={16} /></span>
-            {state.compaction === 'manual' ? '正在压缩上下文' : '后台压缩上下文'}</span>}
-          {state.main && !specific && <span><Icon name="loading" className="spinner" size={16} />正在处理</span>}
-          {!state.main && !specific && <span className="control-lab-muted">当前无活动</span>}
-          {(['agent', 'shell'] as const).map(kind => {
-            const count = tasks.filter(task => task.kind === kind).length;
-            return count ? <span key={kind}><Icon name={kind} size={16} />{count}</span> : null;
-          })}
-          {queueCount > 0 && <span><Icon name="queue" size={16} />{queueCount}</span>}
-        </>}
-        </span>
       </button>
       {(state.main || tasks.length > 0 || state.compaction || queueCount > 0) &&
         action('all', '停止', { type: 'stop-all' }, false, '停止中…')}
