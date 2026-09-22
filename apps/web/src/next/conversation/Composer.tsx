@@ -84,11 +84,11 @@ function EditorBase({ draft, operation, disabled, busy, placeholder, submitLabel
   return <div {...domProps} className={['next-editor', className].filter(Boolean).join(' ')}>
     {children}
     <Input draft={draft} operation={operation} sendBlocked={sendBlocked} onSubmit={submit} editorRef={editorRef}
-      className="next-textarea chat-input-message" aria-label="消息输入" value={state.text} disabled={disabled}
-      onChange={event => onTextChange(event.target.value)} placeholder={placeholder ?? '输入消息…'} rows={3} />
-    <Button type="button" size="lg" className="min-h-10" disabled={!canSend} onClick={submit} aria-busy={state.pending}
+      className="next-textarea chat-input-message min-h-10 pointer-coarse:min-h-11" aria-label="消息输入" value={state.text} disabled={disabled}
+      onChange={event => onTextChange(event.target.value)} placeholder={placeholder ?? '输入消息…'} rows={1} />
+    <Button type="button" size="icon" className="size-10" disabled={!canSend} onClick={submit} aria-busy={state.pending}
       aria-label={state.pending ? '正在提交，草稿仍可编辑' : submitLabel ?? (busy ? '排队发送' : '发送')}>
-      <ArrowUp aria-hidden="true" />{state.pending ? '提交中' : submitLabel ?? (busy ? '排队' : '发送')}
+      <ArrowUp aria-hidden="true" />
     </Button>
   </div>;
 }

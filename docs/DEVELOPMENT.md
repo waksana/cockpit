@@ -163,6 +163,13 @@ content commit after the production layout effects, before paint.
 On an App scene, run `await import('/src/dev/next-lab-checks.ts').then(m => m.runNextLabChecks())`
 for maintained real-DOM focus, pending, request-identity and reading regressions;
 use a 1440x960 desktop viewport and repeat at a 390x844 touch viewport.
+Run `await import('/src/dev/next-workspace-checks.ts').then(m => m.runNextWorkspaceChecks())`
+at 1440x960, 1000x800 and 390x844 to cover compact rows/headers, contextual
+settings, mounted desktop chat versus released phone chat, in-dialog Select
+portals, title-trigger focus restoration and retained drafts. Also resize with
+an unapplied model selection open: call `prepareNextWorkspaceResizeCheck()` from
+that module, retain its returned check function, and invoke it after resizing to
+each of the three widths. The same inspector form must stay mounted.
 `?ui=next&view=conversation&scene=readonly`
 mounts the production conversation component without the App shell.
 

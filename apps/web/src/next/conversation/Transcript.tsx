@@ -10,6 +10,13 @@ import { createMessageLayout, canSkipMessageLayout } from '../../components/mess
 import { READING_ACTIVITY_EVENT } from '../../components/threadScroll';
 import { CopyText, Markdown, MessageContent } from './Markdown';
 
+function MessageTimestamp({ timestamp, className }: { timestamp: number; className?: string }) {
+  const date = new Date(timestamp);
+  const full = date.toLocaleString('zh-CN', { hour12: false, timeZoneName: 'short' });
+  const clock = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  return <time className={className} dateTime={date.toISOString()} title={full} aria-label={full}>{clock}</time>;
+}
+
 export function Disclosures({ children }: { children: ReactNode }) {
   const [values, setValues] = useState<ReadonlyMap<string, boolean>>(() => new Map());
   const context = useMemo(() => ({ values, set: (key: string, open: boolean) =>
@@ -55,9 +62,7 @@ function Process({ items, scope, identity, latest, latestItem }: {
       title={<><span>{title}</span>{states.map(({ status, count }) =>
         <span key={status ?? 'unknown'} className="next-recorded-status">{count} 项{toolStatusLabel(status)}</span>)}
         {thoughts.some(item => item.message.incomplete) && <span>思考归属未确认</span>}
-        <time className="next-recorded-status" dateTime={new Date(items[0].message.timestamp).toISOString()}>
-          {new Date(items[0].message.timestamp).toLocaleTimeString()}
-        </time></>}>
+        <MessageTimestamp className="next-recorded-status" timestamp={items[0].message.timestamp} /></>}>
       <div data-child-history>{items.map(item => <div key={item.key} data-child-message-frame={item.key}>
         <div data-message-id={JSON.stringify([scope, item.key])}>
           {item.kind === 'tool' ? <Tool tool={item.tool} scope={scope} /> : item.kind === 'skill'
@@ -121,7 +126,7 @@ const Message = memo(function Message({ message, scope, nested, layout, live }: 
       {message.role === 'system' && message.level === 'error' && <strong>错误</strong>}
       <MessageContent message={message} />
       {message.incomplete && <p role="status">{message.incomplete}</p>}
-      <time dateTime={new Date(message.timestamp).toISOString()}>{new Date(message.timestamp).toLocaleString()}</time>
+      <MessageTimestamp timestamp={message.timestamp} />
     </>}
   </div>;
 });
@@ -142,9 +147,16 @@ export const Transcript = memo(function Transcript({ messages, scope, nested = f
   const latestItem = last?.kind === 'process' ? last.items.at(-1)?.key : last?.message.id;
   return rows.map((row, index) => {
     const first = row.kind === 'process' ? row.items[0].message : row.message;
+    const previous = rows[index - 1];
+    const previousTimestamp = previous?.kind === 'process' ? previous.items[0].message.timestamp : previous?.message.timestamp;
+    const newDay = !nested && (previousTimestamp === undefined
+      || new Date(previousTimestamp).toDateString() !== new Date(first.timestamp).toDateString());
     return <div key={row.key} className="next-message-frame" data-gap={transcriptGap(rows[index - 1], row)}
       data-window-item-id={first.id} data-message-frame={nested ? undefined : row.key}
       data-child-message-frame={nested ? row.key : undefined}>
+      {newDay && <div className="next-date-separator" aria-hidden="true">
+        {new Date(first.timestamp).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })}
+      </div>}
       {row.kind === 'process'
         ? <Process items={row.items} identity={row.key} scope={scope} latest={row === lastProcess} latestItem={latestItem} />
         : <Message message={row.message} scope={scope} nested={nested} layout={layout} live={row.message.id === liveId} />}

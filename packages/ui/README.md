@@ -28,6 +28,9 @@ The intentional local defaults are:
   whose visual order follows DOM and keyboard order on every screen size.
 - Content-sized action menus, constrained by the viewport, rather than menus
   that copy an arbitrarily wide or narrow trigger.
+- Select content accepts Radix's optional portal `container`. The host uses it
+  inside its responsive native settings inspector so options remain in the
+  modal's top layer; omission preserves the usual document-body portal.
 
 Only the new Web entry imports `styles/theme.css`. Its Tailwind sources are
 explicitly restricted to this package and new host views; classic styles and

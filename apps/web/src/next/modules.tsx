@@ -15,7 +15,7 @@ function StatusBase({ status, needsDecision, children }: SessionStatusProps) {
   const label = needsDecision ? '等待确认' : {
     unloaded: '未加载', idle: '空闲', running: '执行中', error: '出错',
   }[status];
-  return <span className="next-session-status">{label}{children}</span>;
+  return <span className="next-session-status"><span className={!needsDecision && (status === 'idle' || status === 'unloaded') ? 'sr-only' : undefined}>{label}</span>{children}</span>;
 }
 
 export function SessionStatus(props: SessionStatusProps) {
