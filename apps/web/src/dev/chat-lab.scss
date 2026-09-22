@@ -26,6 +26,41 @@
   > p { padding: var(--host-space-md); font-size: var(--host-text-meta); }
 }
 .activity-design-chat { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.control-lab-controls { font-size: var(--host-text-meta); }
+.control-lab-status, .control-lab-queue > header {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap;
+  gap: var(--host-space-sm); padding: var(--host-space-sm) 0;
+}
+.control-lab-indicators, .control-lab-actions, .control-lab-indicators > span {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--host-space-sm);
+}
+.control-lab-tasks > summary {
+  cursor: pointer; padding: var(--host-space-sm) 0; min-height: 40px;
+  > span { display: inline-flex; align-items: center; gap: var(--host-space-sm); margin-inline-end: var(--host-space-md); }
+}
+.control-lab-task-list, .control-lab-queued-list { max-height: 160px; overflow: auto; }
+.control-lab-task {
+  display: flex; align-items: center; gap: var(--host-space-sm);
+  padding: var(--host-space-sm) 0; border-top: 1px solid var(--border-color);
+}
+.control-lab-task-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.control-lab-queue { border-top: 1px solid var(--border-color); }
+.control-lab-queued {
+  display: flex; align-items: flex-start; flex-wrap: wrap; gap: var(--host-space-sm);
+  padding: var(--host-space-sm) 0; border-top: 1px solid var(--border-color);
+  > details, > p { flex: 1 1 140px; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+  > details > summary { cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 40px; }
+  > details > p { margin-block: var(--host-space-sm); }
+}
+.control-lab-muted { color: var(--secondary-text-color); }
+.control-lab-action { display: flex; flex-direction: column; align-items: flex-start; max-width: 100%; }
+.control-lab-action [role='alert'] { max-width: 240px; color: var(--danger-color); overflow-wrap: anywhere; }
+.control-lab-events {
+  flex: none; font-size: var(--host-text-meta); padding: var(--host-space-sm) var(--host-space-lg);
+  > summary { cursor: pointer; }
+  > pre { max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+}
+.control-design-lab .chat-input-area { flex: 0 1 auto; max-height: 65%; overflow: auto; }
 @media (max-width: responsive.$phone-max) {
   .lab-toolbar { max-height: 150px; overflow: auto; padding: 8px; }
   .lab-receipt { padding: 4px 8px; }

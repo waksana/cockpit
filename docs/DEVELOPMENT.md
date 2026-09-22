@@ -264,6 +264,19 @@ Its bootstrap installs memory-only storage and disables application transports
 before importing components. Publish only that output behind the existing review
 authentication and a `connect-src 'none'` CSP; do not expose Vite or the worktree,
 replace another review, or change the production application entry.
+
+The proposed separated control area is an opt-in synthetic scene at
+`/chat-lab.html?scene=control-design`. It reuses Thread's transcript, native
+decision cards and composer through an alternate activity/queue composition.
+Task cancellation, independent main-turn stopping, queue clearing and immediate
+steering are local scenario transitions, not connected SDK commands. Use
+`模拟纳入回合` to move accepted steering into a synthetic `user.message` with
+`delivery: steering`; the event inspector distinguishes acceptance from history.
+Hold/failure, reconnect, refresh, manual/background compaction and decision
+scenarios remain explicit. For the separately authorized static preview, add
+`COCKPIT_REVIEW_SCENE=control` to the build command above and use a new output
+directory; its asset base is `/review/activity-design-20260922/control/`.
+Do not overwrite the previous activity preview or deploy the main application.
 Add `&pane=narrow` to constrain the actual Chat pane to 456px while keeping a
 desktop viewport. This reproduces the space available beside docked settings:
 decisions and process rows must adapt to their own width, not the window width.

@@ -259,7 +259,10 @@ export function Lab() {
 
 const root = createRoot(document.getElementById('root')!);
 const scene = new URLSearchParams(location.search).get('scene');
-if (scene === 'activity-design') {
+if (scene === 'control-design') {
+  const { ControlDesignLab } = await import('./control-design-lab');
+  root.render(<BrowserRouter><ControlDesignLab /></BrowserRouter>);
+} else if (scene === 'activity-design') {
   const { ActivityDesignLab } = await import('./activity-design-lab');
   root.render(<BrowserRouter><ActivityDesignLab /></BrowserRouter>);
 } else if (scene === 'workspace' || scene === 'resources') {

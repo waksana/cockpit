@@ -14,5 +14,11 @@ Object.defineProperty(window, 'WebSocket', {
 
 const { useCockpit } = await import('../net/store');
 useCockpit.setState({ connState: 'open', snapshotReady: true, init: () => () => {} });
-const { ActivityDesignLab } = await import('./activity-design-lab');
-createRoot(document.getElementById('root')!).render(<BrowserRouter><ActivityDesignLab /></BrowserRouter>);
+const root = createRoot(document.getElementById('root')!);
+if (import.meta.env.COCKPIT_CONTROL_DESIGN_REVIEW) {
+  const { ControlDesignLab } = await import('./control-design-lab');
+  root.render(<BrowserRouter><ControlDesignLab /></BrowserRouter>);
+} else {
+  const { ActivityDesignLab } = await import('./activity-design-lab');
+  root.render(<BrowserRouter><ActivityDesignLab /></BrowserRouter>);
+}

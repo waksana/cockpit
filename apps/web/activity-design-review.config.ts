@@ -8,7 +8,8 @@ if (process.env.COCKPIT_ACTIVITY_DESIGN_REVIEW !== '1' || !process.env.COCKPIT_R
 
 export default defineConfig({
   ...config,
-  base: '/review/activity-design-20260922/',
+  base: process.env.COCKPIT_REVIEW_SCENE === 'control' ? '/review/activity-design-20260922/control/' : '/review/activity-design-20260922/',
+  define: { ...config.define, 'import.meta.env.COCKPIT_CONTROL_DESIGN_REVIEW': process.env.COCKPIT_REVIEW_SCENE === 'control' },
   publicDir: false,
   build: {
     ...config.build,

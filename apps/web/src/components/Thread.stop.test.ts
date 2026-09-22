@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { createElement } from 'react';
+import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatSession } from '../net/types';
 import { Thread } from './Thread';
@@ -31,9 +31,10 @@ const session: ChatSession = {
   messages: [], materialized: true, historyStale: false, hasMore: false, loadingHistory: false,
 };
 
-function render(patch: Partial<ChatSession> = {}) {
+function render(patch: Partial<ChatSession> = {}, composerControls?: ReactNode) {
   const current = { ...session, ...patch };
   return renderToStaticMarkup(createElement(Thread, {
+    composerControls,
     session: { ...current, activity: 'activity' in patch ? patch.activity : activityFixture({
       processing: current.status === 'running', hasActiveWork: current.status === 'running',
       abortable: current.status === 'running',
@@ -49,6 +50,17 @@ test('Stop exposes queue-clearing semantics in visible text and its native acces
   const html = render({ queue: [{ id: 'queued', text: 'Next request' }] });
   assert.match(html, /<button type="button" class="chat-typing-stop ck-button ck-danger">[\s\S]*?停止并清空队列<\/button>/);
   assert.equal((html.match(/class="chat-typing-stop ck-button ck-danger"/g) ?? []).length, 1);
+});
+
+test('alternate controls sit above the native composer and replace only activity and queue presentation', () => {
+  const html = render({ queue: [{ id: 'q', text: 'Original queue item' }],
+    ask: { requestId: 'ask', question: 'Still a real question', choices: ['Continue'], allowFreeform: true } },
+  createElement('section', { 'aria-label': 'Alternate controls' }, 'Separate queue and activity'));
+  assert.ok(html.indexOf('Alternate controls') < html.indexOf('class="chat-input-card"'));
+  assert.match(html, /Still a real question/);
+  assert.match(html, /Continue/);
+  assert.doesNotMatch(html, /aria-label="排队中的消息"/);
+  assert.match(html, /class="chat-execution-head" hidden=""/);
 });
 
 test('Stop stays concise when the authoritative queue is empty', () => {

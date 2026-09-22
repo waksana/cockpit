@@ -27,6 +27,7 @@ import { useMenuDismiss } from '../lib/useMenuDismiss';
 import type { ActivateFrontend, ComposerContext, ComposerInputProps, ComposerProps, ComponentMiddleware, DraftSchemaHandle, DraftSchemaScope, MessageIdentity, MessageProps, ModuleFrontendContext } from '@cockpit/module-api';
 import { fixtureSession } from '../dev/chat-fixtures';
 import { activityFixture } from '../dev/activity-fixtures';
+import { ControlDesignLab } from '../dev/control-design-lab';
 import App from '../App';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
@@ -812,6 +813,40 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.ok(row);
     return { id: row.dataset.messageId, offset: row.getBoundingClientRect().top };
   };
+
+  await t.test('control preview separates steering acceptance, history, task cancellation and queue clearing', async () => {
+    await act(() => root.render(createElement(ControlDesignLab)));
+    await flush();
+    const click = async (label: string) => {
+      const target = container.querySelectorAll('button').find(node => node.textContent === label);
+      assert.ok(target, label);
+      const event = new Event('click', { bubbles: true });
+      Object.defineProperty(event, 'target', { value: target });
+      await act(() => container.dispatchEvent(event));
+      await flush();
+    };
+    assert.equal(container.querySelectorAll('.control-lab-queued').length, 2);
+    assert.equal(container.querySelectorAll('.subagent-head').length, 1);
+    const tasks = container.querySelector('.control-lab-tasks')!;
+    tasks.open = true;
+    await click('立即发送');
+    assert.match(container.textContent, /等待纳入当前回合/);
+    assert.equal(container.querySelector('[data-message-id="event-preview-q1"]'), null);
+    await click('模拟纳入回合');
+    assert.ok(container.querySelector('[data-message-id="event-preview-q1"]'));
+    assert.match(container.querySelector('.control-lab-events')!.textContent, /"delivery": "steering"/);
+    await click('停止');
+    assert.equal(container.querySelectorAll('.control-lab-task').length, 2);
+    await click('停止当前回合');
+    assert.equal(container.querySelectorAll('.control-lab-task').length, 2);
+    assert.equal(container.querySelectorAll('.control-lab-queued').length, 1);
+    assert.equal(container.querySelector('.chat-input-message')?.getAttribute('placeholder'), '输入消息…');
+    assert.equal(container.querySelector('.send')?.getAttribute('aria-label'), '发送');
+    await click('清空队列');
+    assert.equal(container.querySelector('.control-lab-queue'), null);
+    assert.ok(container.querySelector('[data-message-id="event-preview-q1"]'));
+    await act(() => root.render(null));
+  });
 
   await t.test('first message commit reaches latest without a RAF, including empty async mounts and cached switches', async () => {
     const commit = async (value: ChatSession | null) => {

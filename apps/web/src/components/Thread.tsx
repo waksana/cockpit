@@ -1,7 +1,7 @@
 // Chat window (detail pane). Reading position and explicit bottom-follow are
 // maintained by one scroll owner; message bodies reuse the markdown renderer.
 
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { MessageBody } from './MessageBody';
 import { MessageContent } from './MessageContent';
 import { hasMessageContent } from '../lib/messageContent';
@@ -321,13 +321,16 @@ interface ThreadProps {
   onInterrupt?: () => Promise<{ ok: true; interrupted: boolean }>;
   onLoadMore: () => void;
   onRetryHistory?: () => void;
+  // Alternate activity/queue composition; Thread still owns decisions and drafts.
+  composerControls?: ReactNode;
+  promptBusy?: boolean;
   // Read-only transcript: renders the paginated
   // message list but hides the composer and every interactive banner, so the
   // conversation can be browsed but not driven.
   readOnly?: boolean;
 }
 
-export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, readOnly = false }: ThreadProps) {
+export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, composerControls, promptBusy = session.status === 'running', readOnly = false }: ThreadProps) {
   const connected = useCockpit((s) => s.connState === 'open');
   const snapshotReady = useCockpit((s) => s.snapshotReady);
   const interruptAction = useKeyedAction(`interrupt:${session.sessionId}`);
@@ -459,7 +462,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const planRequest = session.planRequest;
   const hasPendingDecision = !readOnly && !!(planRequest || session.elicitation);
   const hasExecution = session.compacting || session.status === 'running' || (!readOnly && queueCount > 0);
-  const hasInputHeader = !!(hasExecution || hasPendingDecision || (!readOnly && ask) || activityItems.length);
+  const hasInputHeader = composerControls === undefined && !!(hasExecution || hasPendingDecision || (!readOnly && ask) || activityItems.length);
   const inputCardRef = useRef<HTMLDetailsElement | null>(null);
   useLayoutEffect(() => {
     // Native disclosure survives ordinary updates; a new request or idle input opens afresh.
@@ -546,6 +549,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           </p>}
           {!readOnly && <ComposerNotices draft={draft} />}
         </div>
+        {!readOnly && composerControls}
         <details className="chat-input-card" ref={inputCardRef} open
           data-header={hasInputHeader || undefined} data-decision={!!(!readOnly && (ask || hasPendingDecision)) || undefined}
           data-question={(!readOnly && operation === 'ask') || undefined}>
@@ -578,7 +582,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           </summary>
           <div className="chat-input-card-body">
             <div className="chat-input-context">
-              {!readOnly && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
+              {!readOnly && composerControls === undefined && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
                 {session.queue?.map((q) => (
                   <div key={q.id} className="chat-queue-item">
                     <details className="chat-queue-entry">
@@ -610,10 +614,10 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
             ) : (
               <Composer
                 key={draft.reference.id}
-                busy={session.status === 'running' && !ask && !planRequest}
+                busy={promptBusy && !ask && !planRequest}
                 submitLabel={ask ? '提交回答' : planRequest ? '发送新指令' : undefined}
                 disabled={!!session.compacting && session.status !== 'running'}
-                placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : operation === 'elicitation' ? '请选择上方操作' : session.status === 'running' ? '加入队列' : '输入消息…'))}
+                placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : operation === 'elicitation' ? '请选择上方操作' : promptBusy ? '加入队列' : '输入消息…'))}
                 draft={draft}
                 editorRef={executionControlRef}
                 statusInHeader={hasInputHeader}
