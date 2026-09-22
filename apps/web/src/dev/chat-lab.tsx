@@ -9,6 +9,7 @@ import { AnchoredMenu } from '../components/AnchoredMenu';
 import { sessionActionItems } from '../lib/sessionActions';
 import { UxErrorNotifications } from '../components/UxErrorNotifications';
 import { getDraftSession, getSessionDraft } from '../lib/draftSelection';
+import { installNativeDialogFocus } from '../lib/nativeDialogFocus';
 import { useCockpit } from '../net/store';
 import { fixtureSession, scenarios, type Scenario } from './chat-fixtures';
 import { orderedFixture } from './ordered-fixtures';
@@ -20,6 +21,8 @@ import './chat-lab.scss';
 if (!import.meta.env.DEV || import.meta.env.COCKPIT_CHAT_LAB !== true) {
   throw new Error('Start the isolated chat lab with COCKPIT_CHAT_LAB=1.');
 }
+const removeDialogFocus = installNativeDialogFocus(document);
+import.meta.hot?.dispose(removeDialogFocus);
 
 // Component scenes have no transport. The workspace scene below mounts the real
 // App with an isolated store; unhandled HTTP is rejected by the Vite lab server too.
