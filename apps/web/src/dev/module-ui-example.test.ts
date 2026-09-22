@@ -30,7 +30,7 @@ test('the documented module example extends the real editor and preserves named 
   assert.match(render(false), /class="ck-icon-button example-draft-action"/);
   assert.match(render(false), /aria-label="Append example text"/);
   assert.match(render(false), /viewBox="0 0 24 24" aria-hidden="true" focusable="false"/);
-  assert.match(render(false), /<div class="chat-input"><button[^>]*example-draft-action/);
+  assert.match(render(false), /<div class="chat-input ck-input-row"><button[^>]*example-draft-action/);
   assert.match(render(false), /<\/button><textarea[^>]*aria-label="消息输入"/);
   assert.equal((render(false).match(/<textarea\b/g) ?? []).length, 1);
   assert.equal((render(false).match(/class="chat-input-btn ck-icon-button send rp"/g) ?? []).length, 1);
@@ -47,6 +47,6 @@ test('the documented module example extends the real editor and preserves named 
   await sending;
   runtime.stop();
   assert.doesNotMatch(render(false), /example-draft-action/);
-  assert.match(render(false), /<div class="chat-input"><textarea/);
+  assert.match(render(false), /<div class="chat-input ck-input-row"><textarea/);
   assert.match(render(false), /class="chat-input-btn ck-icon-button send rp" aria-label="发送"/);
 });

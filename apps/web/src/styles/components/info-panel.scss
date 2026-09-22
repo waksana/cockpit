@@ -1,89 +1,7 @@
-// Session info panel — ported from tweb #column-right + .sidebar-left-section.
-// Appears at the inline-end. Three responsive tiers (Telegram-style):
-//   • narrowest (<600px): full page (covers the chat)
-//   • medium (600–1199px): floating overlay over the chat + scrim
-//   • wide (≥1200px): docked — the chat compresses to make room, no scrim
-// Flat host-owned sections inside; geometry above retains the responsive shell.
-
-.info-panel-scrim {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-  background: rgba(0, 0, 0, 0.32);
-  opacity: 0;
-  visibility: hidden;
-  &[data-open='true'] { opacity: 1; visibility: visible; }
-  // Wide/docked tier: the panel takes its own space, so no scrim.
-  @media (min-width: 1200px) { display: none; }
-}
-
-.info-panel {
-  --info-panel-w: 24rem;
-  position: fixed;
-  inset-block: 0;
-  inset-inline-end: 0;
-  z-index: 41;
-  width: 100%;
-  max-width: var(--info-panel-w);
-  display: flex;
-  flex-direction: column;
-  background: var(--background-color);
-  border-inline-start: 1px solid var(--border-color);
-  transform: translateX(100%);
-  &[data-open='true'] { transform: translateX(0); }
-  // Narrowest tier: full page.
-  @media (max-width: 599px) { max-width: 100%; }
-}
-
-// Wide/docked tier: when the panel is open, compress the chat by the panel
-// width so both are fully visible side by side (the fixed panel sits flush over
-// that reserved strip). The squeeze is instant (motion removed).
-@media (min-width: 1200px) {
-  .cockpit-shell[data-info-open='true'] .detail-pane {
-    padding-inline-end: 24rem;
-  }
-}
-
-.info-panel-title {
-  flex: 1 1 auto;
-  font-size: var(--host-text-title);
-  font-weight: 500;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.dialog-error { color: var(--danger-color); overflow-wrap: anywhere; }
-
-.info-panel-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding: var(--host-space-lg);
-  background: var(--surface-color);
-  font-size: var(--host-text-body);
-  line-height: var(--host-leading-ui);
-}
-
 .info-section {
   min-width: 0;
   margin-bottom: var(--host-space-xl);
   & + & { padding-top: var(--host-space-xl); border-top: 1px solid var(--border-color); }
-}
-.info-section-name {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--host-space-md);
-  color: var(--primary-text-color);
-  font-size: var(--host-text-title);
-  font-weight: 600;
-  width: 100%;
-  background: transparent;
-  border: none;
-  text-align: start;
-  overflow-wrap: anywhere;
 }
 .info-summary-title { font-size: var(--host-text-title); font-weight: 600; }
 .info-meta-cwd {
@@ -105,16 +23,8 @@
   &[open] > summary { margin-bottom: var(--host-space-sm); }
 }
 
-.info-empty {
-  display: flex; align-items: center; gap: var(--host-space-sm);
-  padding: var(--host-space-sm) 0;
-  font-size: var(--host-text-body);
-  color: var(--secondary-text-color);
-}
-
 // Model controls (model / effort / context) — labeled rows in the info panel.
 .info-controls { display: flex; flex-direction: column; gap: var(--host-space-md); }
-.info-controls .info-empty { min-width: 0; overflow-wrap: anywhere; }
 .info-model-current {
   color: var(--secondary-text-color);
   font-size: var(--host-text-meta);
@@ -127,7 +37,6 @@
 }
 .info-session-id {
   margin-top: var(--host-space-md); min-width: 0;
-  .chat-copy-error { color: var(--danger-color); }
 }
 .info-session-id-heading {
   display: flex; align-items: center; justify-content: space-between; gap: var(--host-space-sm);
@@ -147,23 +56,9 @@
   padding-inline: 0; color: var(--link-color);
   font-size: var(--host-text-meta); font-weight: 400;
 }
-.copy-value {
-  display: flex; flex-direction: column; align-items: flex-start;
-}
-.copy-value-button {
-  display: grid; min-width: 0; max-width: 100%;
-  padding: 0; border: 0; border-radius: 4px; background: transparent;
-  color: var(--secondary-text-color); text-align: start; cursor: pointer;
-  font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
-  overflow-wrap: anywhere;
-}
-.copy-value-text, .copy-value-feedback { grid-area: 1 / 1; }
-.copy-value-text[aria-hidden='true'] { visibility: hidden; }
-.copy-value-feedback { align-self: center; justify-self: center; font-family: var(--font-family, inherit); }
 .session-resume {
   display: flex; flex-direction: column; align-items: center; gap: var(--host-space-md);
-  margin: var(--host-space-lg) 0; padding: var(--host-space-lg);
-  border: 1px solid var(--border-color); border-radius: var(--host-radius-control);
+  margin: var(--host-space-lg) 0;
   background: color-mix(in srgb, var(--primary-color) 4%, var(--surface-color));
   text-align: center;
   > .dialog-btn { min-width: 7rem; }
@@ -172,14 +67,8 @@
   margin: 0; max-width: 28rem;
   font-size: var(--host-text-body); line-height: var(--host-leading-ui); color: var(--secondary-text-color);
 }
-.session-settings {
-  :is(button, summary, select):focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
-}
-.info-model-actions { display: flex; flex-wrap: wrap; gap: var(--host-space-sm); }
-.info-model-status {
-  color: var(--secondary-text-color);
-  &[role='alert'] { color: var(--danger-color); }
-}
+.session-settings summary:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; }
+.info-model-actions { justify-content: flex-start; }
 .info-model-result {
   display: flex;
   flex-direction: column;
@@ -192,37 +81,4 @@
   font-size: var(--host-text-body);
   overflow-wrap: anywhere;
   pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-}
-.info-control {
-  display: flex;
-  flex-direction: column;
-  gap: var(--host-space-sm);
-}
-.info-control-label {
-  flex: none;
-  font-size: var(--host-text-body);
-  color: var(--secondary-text-color);
-}
-.info-select-wrap {
-  display: flex; position: relative; min-width: 0;
-  > .ck-icon {
-    position: absolute; inset-inline-end: var(--host-space-md); top: 50%; transform: translateY(-50%);
-    pointer-events: none; color: var(--secondary-text-color);
-  }
-}
-.info-select {
-  width: 100%; min-width: 0;
-  appearance: none; -webkit-appearance: none;
-  border: 1px solid var(--border-color);
-  border-radius: var(--host-radius-control);
-  padding: var(--host-space-sm) calc(var(--host-space-lg) + 2 * var(--host-space-md)) var(--host-space-sm) var(--host-space-md);
-  background: var(--input-search-background-color);
-  color: var(--primary-text-color);
-  font: inherit;
-  font-size: var(--host-text-body);
-  cursor: pointer;
-  text-align: start;
-  text-overflow: ellipsis;
-  &:focus { outline: none; background: color-mix(in srgb, var(--primary-color) 12%, transparent); }
-  option { color: var(--primary-text-color); background: var(--surface-color); text-align: start; }
 }

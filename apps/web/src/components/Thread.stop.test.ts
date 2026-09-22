@@ -41,12 +41,12 @@ function render(patch: Partial<ChatSession> = {}) {
 
 test('Stop exposes queue-clearing semantics in visible text and its native accessible name', () => {
   const html = render({ queue: [{ id: 'queued', text: 'Next request' }] });
-  assert.match(html, /<button type="button" class="chat-typing-stop ck-button">[\s\S]*?停止并清空队列<\/button>/);
-  assert.equal((html.match(/class="chat-typing-stop ck-button"/g) ?? []).length, 1);
+  assert.match(html, /<button type="button" class="chat-typing-stop ck-button ck-danger">[\s\S]*?停止并清空队列<\/button>/);
+  assert.equal((html.match(/class="chat-typing-stop ck-button ck-danger"/g) ?? []).length, 1);
 });
 
 test('Stop stays concise when the authoritative queue is empty', () => {
-  assert.match(render(), /<button type="button" class="chat-typing-stop ck-button">[\s\S]*?停止<\/button>/);
+  assert.match(render(), /<button type="button" class="chat-typing-stop ck-button ck-danger">[\s\S]*?停止<\/button>/);
   assert.doesNotMatch(render(), /停止并清空队列/);
 });
 
@@ -62,9 +62,9 @@ test('the execution indicator follows native running status, not queued message 
 test('queue contents do not change the existing running and compacting visibility guards', () => {
   const queue = [{ id: 'queued', text: 'Next request' }];
   for (const status of ['idle', 'unloaded', 'error'] as const) {
-    assert.doesNotMatch(render({ status, queue }), /class="chat-typing-stop ck-button"/);
+    assert.doesNotMatch(render({ status, queue }), /class="chat-typing-stop ck-button ck-danger"/);
   }
-  assert.doesNotMatch(render({ compacting: true, queue }), /class="chat-typing-stop ck-button"/);
+  assert.doesNotMatch(render({ compacting: true, queue }), /class="chat-typing-stop ck-button ck-danger"/);
 });
 
 test('interrupt action keeps its context without the removed persistent hint or stale description reference', () => {
@@ -116,13 +116,13 @@ test('a pending question shares the card below its only status and action header
   assert.match(html, /<div class="chat-composer" data-question="true"/);
   assert.doesNotMatch(html, /class="chat-decisions"/);
   assert.ok(html.indexOf('class="chat-execution-head"') < html.indexOf('class="chat-composer"'));
-  assert.ok(html.indexOf('Which option?') < html.indexOf('class="chat-input"'));
+  assert.ok(html.indexOf('Which option?') < html.indexOf('class="chat-input ck-input-row"'));
   assert.doesNotMatch(html, /chat-answer-toggle|chat-answer-chevron/);
   assert.match(html, /Which option\?/);
   assert.doesNotMatch(region, /Which option\?|class="chat-ask/);
   assert.match(region, /chat-execution-label[^>]*>等待你的回答<\/span>/);
   assert.doesNotMatch(region, /Generic running intent/);
-  assert.match(region, /class="chat-typing-stop ck-button">[\s\S]*?停止/);
+  assert.match(region, /class="chat-typing-stop ck-button ck-danger">[\s\S]*?停止/);
   assert.doesNotMatch(html, /输入内容将回答当前问题|chat-composer-hint/);
 });
 
@@ -136,29 +136,29 @@ test('multiple native decisions stay separate from one execution/queue area', ()
   assert.match(html, /Proposed plan/);
   assert.match(html, /Tool confirmation/);
   assert.equal((html.match(/class="chat-execution-head"/g) ?? []).length, 1);
-  assert.equal((html.match(/class="chat-typing-stop ck-button"/g) ?? []).length, 1);
+  assert.equal((html.match(/class="chat-typing-stop ck-button ck-danger"/g) ?? []).length, 1);
 });
 
 test('stop remains natively disabled for unavailable states and unrelated active operations', () => {
   for (const patch of [{ loaded: false }, { loading: true }, { closing: true }, { activeOperations: 1 }]) {
     assert.match(render({ ...patch, ask: { requestId: 'ask', question: 'Choose' } }),
-      /class="chat-typing-stop ck-button" disabled=""/);
+      /class="chat-typing-stop ck-button ck-danger" disabled=""/);
   }
   initialState.connState = 'connecting';
   try {
-    assert.match(render(), /class="chat-typing-stop ck-button" disabled=""/);
-    assert.match(render({ cancelling: true }), /class="chat-typing-stop ck-button" disabled=""/);
+    assert.match(render(), /class="chat-typing-stop ck-button ck-danger" disabled=""/);
+    assert.match(render({ cancelling: true }), /class="chat-typing-stop ck-button ck-danger" disabled=""/);
   }
   finally { initialState.connState = 'open'; }
 });
 
 test('native cancellation keeps its Stop target focusable while blocking repeated activation', () => {
   const html = render({ cancelling: true, activeOperations: 1 });
-  const stop = html.match(/<button[^>]*class="chat-typing-stop ck-button"[^>]*>/)![0];
+  const stop = html.match(/<button[^>]*class="chat-typing-stop ck-button ck-danger"[^>]*>/)![0];
   assert.match(stop, /aria-disabled="true" aria-busy="true"/);
   assert.doesNotMatch(stop, / disabled=/);
   for (const patch of [{ loaded: false }, { loading: true }, { closing: true }]) {
-    assert.match(render({ cancelling: true, ...patch }), /class="chat-typing-stop ck-button" disabled=""/);
+    assert.match(render({ cancelling: true, ...patch }), /class="chat-typing-stop ck-button ck-danger" disabled=""/);
   }
 });
 

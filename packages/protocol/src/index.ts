@@ -4,6 +4,9 @@
 // validate against them, so the frontend and backend can never drift.
 
 import { z } from 'zod';
+import { snapshotModuleEventPayload } from './module-event.ts';
+export { MAX_MODULE_EVENT_BYTES, snapshotModuleEventPayload } from './module-event.ts';
+export type { ModuleEventPayload } from './module-event.ts';
 import type { ChatMessage } from './validation.ts';
 export type { ChatMessage, ChatRole, SubagentInfo, ToolCall } from './validation.ts';
 
@@ -247,8 +250,17 @@ export const McpToggleOperation = z.object({
 });
 export type McpToggleOperation = z.infer<typeof McpToggleOperation>;
 
+export const ModuleSource = z.object({
+  id: z.string(),
+  name: z.string(),
+  roles: z.array(z.object({ id: z.string(), name: z.string() })).optional()
+    .describe('Actual contributing roles within this module in the current handle assembly, deduplicated and sorted by role ID. Omitted when unproven; never inferred from selected session roles. Provenance is not authorization, enablement or readiness.'),
+});
+export type ModuleSource = z.infer<typeof ModuleSource>;
+
 export const McpServerSession = z.object({
   name: z.string(),
+  module: ModuleSource.optional().describe('Module and known contributing roles that declared this MCP name in this session handle role configuration. Not proof of the live connection identity; same-name native replacements cannot be verified.'),
   detail: z.string(),
   status: McpServerStatus,
   enabled: z.boolean().describe('Configured and not explicitly disabled; does not imply connected or permitted to restart.'),
@@ -280,11 +292,40 @@ export type SkillGlobal = z.infer<typeof SkillGlobal>;
 
 export const SkillSession = z.object({
   name: z.string(),
+  module: ModuleSource.optional().describe('Module and known contributing roles verified against the native skill name and file path for this session handle.'),
   description: z.string().optional(),
   source: z.string().optional(),
   enabled: z.boolean(),
 });
 export type SkillSession = z.infer<typeof SkillSession>;
+
+const ResourceName = z.string().min(1).max(200).refine(value => value.trim().length > 0, 'Name must not be blank');
+const ResourceNames = z.array(ResourceName).max(64).refine(values => new Set(values).size === values.length, 'Names must be unique');
+const PreparationToolNames = z.array(ResourceName.refine(value => value !== '*', 'Wildcard tools are not supported'))
+  .max(256).refine(values => new Set(values).size === values.length, 'Tools must be unique');
+export const SessionResourcesPrepare = z.object({
+  sessionId: ResourceName,
+  skills: ResourceNames.optional(),
+  mcpServers: z.array(z.object({ name: ResourceName, tools: PreparationToolNames.optional() }).strict())
+    .max(64).refine(values => new Set(values.map(value => value.name)).size === values.length, 'Servers must be unique').optional(),
+}).strict();
+export type SessionResourcesPrepare = z.infer<typeof SessionResourcesPrepare>;
+const ResourcePreparationEffect = z.enum(['not_attempted', 'unchanged', 'enabled', 'unconfirmed']);
+export const RESOURCE_PREPARATION_ERROR_LIMIT = 2000;
+export const ResourcePreparationResult = z.object({
+  sessionId: ResourceName,
+  ok: z.boolean(),
+  skills: z.array(z.object({
+    name: ResourceName, effect: ResourcePreparationEffect, enabled: z.boolean().nullable(),
+  }).strict()).max(64),
+  mcpServers: z.array(z.object({
+    name: ResourceName, effect: ResourcePreparationEffect, enabled: z.boolean().nullable(),
+    status: McpServerStatus.nullable(), tools: z.array(ResourceName).max(256).nullable(),
+  }).strict()).max(64),
+  tools: z.enum(['not_attempted', 'unchanged', 'initialized', 'unconfirmed']),
+  error: z.string().max(RESOURCE_PREPARATION_ERROR_LIMIT).optional(),
+}).strict();
+export type ResourcePreparationResult = z.infer<typeof ResourcePreparationResult>;
 
 
 
@@ -334,7 +375,33 @@ export type TodoProgress = z.infer<typeof TodoProgress>;
 export const AgentMode = z.enum(['interactive', 'plan', 'autopilot']);
 export type AgentMode = z.infer<typeof AgentMode>;
 
+export const RoleSelection = z.object({ moduleId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/), roleId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/) }).strict();
+export type RoleSelection = z.infer<typeof RoleSelection>;
+export const SessionRole = RoleSelection.extend({ name: z.string(), moduleName: z.string() });
+export type SessionRole = z.infer<typeof SessionRole>;
+export const RoleReadiness = z.object({
+  sessionId: z.string(), loaded: z.boolean(), ready: z.boolean(),
+  roles: z.array(SessionRole), reasons: z.array(z.string()),
+  appliedRoles: z.array(SessionRole).optional(),
+  rolesNeedReload: z.boolean().optional(),
+});
+export type RoleReadiness = z.infer<typeof RoleReadiness>;
+export const RoleAdditionResult = z.object({
+  sessionId: z.string(),
+  status: z.enum(['saved', 'unchanged', 'uncertain']),
+  roles: z.array(SessionRole),
+  appliedRoles: z.array(SessionRole),
+  loaded: z.boolean(),
+  rolesNeedReload: z.boolean(),
+  error: z.string().optional(),
+  recovery: z.string().optional(),
+});
+export type RoleAdditionResult = z.infer<typeof RoleAdditionResult>;
+
 export const SessionMeta = z.object({
+  roles: z.array(SessionRole).optional(),
+  appliedRoles: z.array(SessionRole).optional(),
+  rolesNeedReload: z.boolean().optional(),
   sessionId: z.string(),
   title: z.string(),
   cwd: z.string(),
@@ -427,6 +494,9 @@ export type PanelSection = z.infer<typeof PanelSection>;
 // can discover sessions (and pick one to rename / toggle MCP-skills on) without
 // subscribing to the SSE snapshot stream.
 export const SessionBrief = z.object({
+  roles: z.array(SessionRole).optional(),
+  appliedRoles: z.array(SessionRole).optional(),
+  rolesNeedReload: z.boolean().optional(),
   sessionId: z.string(),
   title: z.string(),
   cwd: z.string(),
@@ -458,6 +528,17 @@ export type Snapshot = z.infer<typeof Snapshot>;
 export const ServerEvent = z.discriminatedUnion('type', [
   Snapshot,
   z.object({ type: z.literal('module/invalidated'), moduleId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/) }),
+  z.object({
+    type: z.literal('module/event'),
+    moduleId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
+    payload: z.unknown().transform((value, context) => {
+      try { return snapshotModuleEventPayload(value); }
+      catch (error) {
+        context.addIssue({ code: z.ZodIssueCode.custom, message: error instanceof Error ? error.message : 'Invalid module event payload' });
+        return z.NEVER;
+      }
+    }),
+  }).strict(),
   z.object({ type: z.literal('agent/status'), status: AgentStatus }),
   z.object({ type: z.literal('session/added'), session: SessionMeta }),
   z.object({
@@ -523,9 +604,33 @@ export const Intents = {
     result: Snapshot,
   },
   'session/new': {
-    description: 'Create one native Copilot session using its working directory and native configuration discovery. Returns the real native ID without sending a message; Web and MCP then use prompt with that ID. Never recreate on an uncertain result. Empty sessions may disappear after unload. No module roles or global/project files are written.',
-    body: z.object({ cwd: z.string().min(1) }).strict(),
+    description: 'Create one native session with optional module roles, combined instructions, skills and HTTP MCP tool subsets. No startup message or global/project config writes. Role selection is not live readiness. Never recreate on an uncertain result.',
+    body: z.object({ cwd: z.string().min(1), roles: z.array(RoleSelection).max(64).optional() }).strict(),
     result: z.object({ sessionId: z.string() }),
+  },
+  'roles/list': {
+    body: z.object({}).strict(),
+    result: z.object({ roles: z.array(SessionRole.extend({ description: z.string().optional() })) }),
+  },
+  'roles/add': {
+    description: 'Save additional module roles for the same session, including while native work is busy. Does not load, reload, interrupt or send a prompt. Saved roles take effect on an explicit idle reload or the next cold load; ordinary native/global resource defaults apply. rolesNeedReload compares saved roles with the current handle. Saving does not establish capability readiness; inspect uncertain persistence before retrying.',
+    body: z.object({ sessionId: z.string().min(1), roles: z.array(RoleSelection).min(1).max(64) }).strict(),
+    result: RoleAdditionResult,
+  },
+  'roles/readiness': {
+    description: 'Explicitly check current role assembly, native skills, MCP connections and tool visibility without loading or repairing a session. Capability readiness is independent of busy turns, pending messages and subagents. Selected-role labels are not readiness evidence.',
+    body: z.object({ sessionId: z.string().min(1), roles: z.array(RoleSelection).max(64).optional() }).strict(),
+    result: RoleReadiness,
+  },
+  'session/tools-initialize': {
+    description: 'Explicitly resolve, build and validate the native tool table on a loaded idle session after configuration invalidation. Preserves the current handle, model, temporary skill/MCP choices and native tool filtering. Does not load, reload, enable resources, apply saved roles, write global config or send a prompt. Rejects protected work and concurrent operations. ok confirms initialized metadata, not role readiness; call roles/readiness separately. Failures may leave initialization effects; no automatic retry.',
+    body: z.object({ sessionId: z.string().min(1) }).strict(),
+    result: z.object({ ok: z.literal(true) }),
+  },
+  'session/resources-prepare': {
+    description: 'Prepare only explicitly selected native skills and MCP servers on an already loaded idle session, preserving unrelated temporary choices. Prevalidates all selections under one lifecycle guard, enables only disabled selections, and initializes tools once after a confirmed enable or when metadata is null. Unchanged non-null missing tools do not trigger a rebuild; native filtering remains effective. Tools are exact raw mcpToolName identities; wildcards are rejected; omitted or empty tools require at least one actual offered tool. No prompt, reload, global changes, authentication or connector retries. Returns per-request partial/unconfirmed receipts; enabled does not mean skill body loaded. ok requires enabled skills, connected unfiltered MCP with actual offered tools and initialized metadata, not role readiness, Task binding or authorization.',
+    body: SessionResourcesPrepare,
+    result: ResourcePreparationResult,
   },
   'session/fork': {
     description: 'Native history fork from a loaded, idle session. Optional toEventId is a root user.message event ID from session history, excluded from the child; omit for full history. Rejects unfinished boundaries and any inherited schedule history. Returns a new unloaded session ID; no prompt is sent. Native fork appends an informational record to the parent. Model/mode follow native persisted history; skills/MCP use cold-resume defaults, not a complete configuration clone. cwd/files are shared, not a worktree. Non-idempotent: on an uncertain error inspect session/list and source history before any retry.',

@@ -1,8 +1,7 @@
-// Master-detail shell layout. Dock line = tweb's $floating-left-sidebar (925px).
-// Below it: one pane at a time (drill-down). At/above: master docked left at
-// --column-width, detail fills the rest.
+@use '../responsive';
 
 .cockpit-shell {
+  --inspector-width: 24rem;
   position: fixed;
   inset: 0;
   display: flex;
@@ -21,7 +20,6 @@
   position: relative;                 // FAB overlay anchor
   background-color: var(--surface-color);
 }
-.master-pane-scroll { flex: 1 1 auto; min-height: 0; }
 
 .detail-pane {
   display: flex;
@@ -33,17 +31,16 @@
   overflow: hidden;
   background-color: var(--background-color);
 }
-.detail-pane-body { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 .chat { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow: hidden; }
 
 // Mobile (< dock line): show only the visible pane.
-@media (max-width: 924px) {
+@media (width < responsive.$master-dock) {
   .master-pane[data-visible='false'],
   .detail-pane[data-visible='false'] { display: none; }
 }
 
 // Docked (>= dock line): both panes; master fixed width, detail fills.
-@media (min-width: 925px) {
+@media (min-width: responsive.$master-dock) {
   .master-pane {
     width: var(--column-width);
     border-inline-end: 1px solid var(--border-color);
@@ -51,6 +48,46 @@
   .master-pane[data-visible='false'],
   .detail-pane[data-visible='false'] { display: flex; }
   .lg\:hidden { display: none !important; }
+}
+
+.inspector-pane {
+  position: fixed;
+  inset: 0;
+  z-index: 41;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  background: transparent;
+  color: var(--primary-text-color);
+}
+.inspector-surface {
+  position: absolute;
+  inset: 0 0 var(--ux-error-height, 0px) auto;
+  width: min(100%, var(--inspector-width, 24rem));
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface-color);
+  border-inline-start: 1px solid var(--border-color);
+}
+@media (max-width: responsive.$phone-max) {
+  .inspector-surface { width: 100%; }
+}
+@media (min-width: responsive.$inspector-dock) {
+  .inspector-pane {
+    position: relative;
+    inset: auto;
+    flex: 0 0 var(--inspector-width, 24rem);
+    width: var(--inspector-width, 24rem);
+    height: 100%;
+    min-width: 0;
+  }
+  .inspector-surface { position: static; width: 100%; height: 100%; }
 }
 
 // Detail empty state.

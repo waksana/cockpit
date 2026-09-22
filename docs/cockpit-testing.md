@@ -24,10 +24,44 @@
 同 runner 的相关选择器合并执行；仅当改变范围或结果需要时再扩大到全套。
 文档变更核对链接、锚点、来源和命令路径；没有专门文档用例时无需运行产品构建或测试。
 
+模拟 DOM/React 节点的身份断言使用 `src/test/identityAssert.ts`；不要把包含 React
+内部引用的对象图直接交给 Node assert 的失败差异格式化，节点数组也按元素身份比较。
+共享机器上对测试进程施加独立 cgroup 内存上限、禁用 swap 和执行超时；工具的
+等待返回阈值不是执行超时。不要在资源耗尽后无保护地重跑同一失败用例。
+
 默认用例采用合成输入和受控依赖；明确 opt-in 的 native probes 不包含在普通成功数字里。
 server/core/MCP 的构建排除其测试文件；protocol 及 Web 的 tsconfig 包含 `src`
 下的测试，所以相应类型检查也覆盖它们。以各自实际脚本/tsconfig 为准，
 不能用“所有测试都不参与类型检查”概括。
+
+全局/会话菜单改动使用 Web 现有 runner，合并运行 `src/lib/moduleRuntime.test.ts`、
+`src/lib/sessionActions.test.ts`、`src/lib/menuFocus.test.ts`、
+`src/components/GlobalNavigation.test.ts`、`src/components/ModuleSurfaces.test.ts`、
+`src/components/Thread.lifecycle.test.ts`、`src/components/SessionResource.lifecycle.test.ts`
+和 `src/components/InteractionOwnership.test.ts`。
+其中 App 的合成挂载覆盖三点、右键、长按、动态状态、精确 session 与撤销后的晚结果；
+不连接原生服务或推送渠道。公共类型导出使用
+`node --test scripts/export-module-api.test.mjs`；模块还需从干净配套 SHA 导出并自行构建，
+不能以宿主用例代替真实模块包与消费者接入。
+
+当前窗口公共读取与真实输入组件增强使用同一 Web runner，合并运行
+`src/lib/moduleChatWindow.test.ts`、`src/lib/moduleView.test.ts`、
+`src/lib/moduleRuntime.test.ts`、`src/components/Composer.test.ts` 和
+`src/components/Thread.lifecycle.test.ts`，覆盖窗口状态/归属/撤销、原生输入门槛和节点顺序。
+模块本身的麦克风、凭据、外部识别与费用不是这些宿主用例的证明范围。
+
+配套 Speech 已按其精确宿主 SDK pin 构建后，可以在同一组件 runner 上运行真实消费者：
+
+```sh
+COCKPIT_TEST_SPEECH_ENTRY=/absolute/cockpit-speech/dist/web/index.js \
+  pnpm --filter @cockpit/web exec tsx --tsconfig tsconfig.app.json --test \
+  src/components/Thread.lifecycle.test.ts
+```
+
+该 opt-in 用例将真实语音 middleware 挂到真实 Composer，使用合成 AudioContext、
+AudioWorklet/PCM、WebSocket、权限与 HTTP 响应，覆盖合法输入包装后的控件顺序、
+ref cleanup、选区/焦点返回、面板结构、租约
+及手动修改恢复。未设置入口时明确跳过；不读取语音配置或调用 Azure/真实麦克风。
 
 ## 真正的 SDK 与包
 
@@ -41,6 +75,34 @@ COCKPIT_NATIVE_MODEL_SMOKE=1 COCKPIT_NATIVE_DELETE_TEST=1 \
   node --import tsx --test src/runtime-smoke.test.ts src/native-state-smoke.test.ts \
   src/fork-native.test.ts src/model-settings-native.test.ts src/delete-native.test.ts
 ```
+
+角色追加的定向合成验证使用现有入口：
+`pnpm --filter @cockpit/mcp exec node --import tsx --test src/tools/roles.test.ts src/index.test.ts`
+及 `apps/server/src/intents.test.ts` 的 HTTP stub。核对一次 metadata-only 请求、
+`saved/unchanged/uncertain` 完整结果、未知持久化结果的错误标记、已保存/已装配角色与
+reload 状态，以及普通读取不触发 readiness 或原生加载。
+
+角色追加使用同一隔离 native 入口：
+`COCKPIT_NATIVE_ROLES=1 pnpm --filter @cockpit/core exec node --import tsx --test src/roles-native.test.ts`
+（仓库根执行）。验证边界是已有原生 ID/历史/cwd、保存期间能力不变，以及后续普通
+显式 reload/冷恢复的组合指令和最小工具子集；临时资源开关遵循原生全局默认，
+不要求角色追加特殊保留，不读取真实会话。`packages/core/src/engine.test.ts` 的角色用例
+补充 busy/待决交互/队列/schedules 期间允许保存、unloaded 保持 unloaded、重复保存、
+持久化不确定结果、生命周期并发保护以及加载时资源校验；不把 mock 注入等同于生产故障实证。
+
+同一 native 入口还覆盖模型/Skill 变化后的 null 工具 metadata、MCP reload 不能恢复、
+显式 `session/tools-initialize` 在不推理/不重载的情况下恢复，以及旧会话冷恢复后再次
+启用专业 Skill 的复用。核对临时选择保留、被禁用 Skill 仍失败、真实原生工具过滤仍
+导致缺失，而非只核对连接。Engine 用例补充未知/未加载/忙碌/并发操作拒绝、原生错误、
+null 读回和关闭竞态；HTTP intent 与通用 MCP 调用器用既有 runner 验证。
+
+`session/resources-prepare` 复用上述 Engine、HTTP/module facade 和 native roles 入口，
+覆盖整体前检后才修改、逐步部分/未知效果、生命周期并发保护、null 或已确认启用资源后仅初始化一次、
+raw MCP 工具身份/实际过滤，以及保留无关禁用资源而不冷重载。
+native fixture 覆盖 MCP enable 后保留的非 null 空表在同次准备中重建成功，以及 Skill
+失效后的 null 恢复；已知配置变化后的重建仍保留真实工具过滤，未修改资源的非 null
+缺工具场景不进行推测性重建。模块的完整结果持久化与 Task 一致性
+须由实际配套模块自行验证，宿主 fixture 不替代模块/native 集成。
 
 文件输入用例让 Engine 传入合成原生文件，再由 native view 读取。
 四种附件 schema/转发用例不等于每种媒体/模型均实测可读。完整 MCP/native fork 用例

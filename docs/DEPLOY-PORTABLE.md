@@ -3,13 +3,20 @@
 Cockpit 提供普通前后端服务包。使用者准备运行环境、配置原生登录与远程认证入口，
 并选择如何启动服务。
 
-> 本页对应 **0.2.3 发行**；下载前确认该版本 Release workflow 已成功发布运行包。
-> 安装已发布 v0.1.0 时，请使用[该版本的安装指南](https://github.com/waksana/cockpit/blob/v0.1.0/docs/DEPLOY-PORTABLE.md)，
-> 不要混用本页的宿主配置和模块命令。需要本地模块功能时，使用对应的 0.2.3 运行包或固定源码。
-> 本次 Web API v2 不兼容旧前端模块；使用文件或通知模块时，必须分别配套
-> **Cockpit File 0.1.7 / Cockpit Notification 0.1.0**，见[发行说明](release-notes.md)。
+> 本页面向 [**v0.2.4**](https://github.com/waksana/cockpit/releases/tag/v0.2.4)；
+> **0.2.4 配套 / 发布资产以对应 Release 为准**，不表示发布已完成。
+> 安装其他版本时，请阅读相同 tag 下的文档，不混用宿主配置、模块命令或运行包文件。
+> 使用文件或通知模块时，配套 **Cockpit File 0.1.7 / Cockpit Notification 0.1.5**，
+> 下载与使用说明见[模块目录](module-catalog.md)。File 0.1.7 继续兼容，不重新发行。
+> 本次移除旧 `globalNavigation` HOC；通知模块需要独立菜单及 payload 能力，精确 SDK pin
+> 和能力检查见[模块契约](module-contract-draft.md)。
+> 历史 0.2.3 → Notification 0.1.0 配套不变，不能把本次能力套到旧运行包。
 
 本指南也供 Agent 执行安装时使用。先核对运行前提，再下载、认证、启动并完成首次聊天。
+开始安装前，阅读[模块目录](module-catalog.md)，逐个向用户介绍现有模块的用途、
+主要限制和与所选宿主版本的兼容性；对每个可安装模块分别询问是否安装，一次只问一个。
+允许全部不安装，只安装用户明确选择的配套发行。待适配项目只作介绍，不作为可安装选项。
+完成后说明已安装与实际加载的模块，以及仍需用户配置或授权的事项。
 如果机器上已有安装或运行中的服务，先与用户确认再替换、停止或变更配置；
 不要把安装请求当成删除旧会话或迁移用户数据的授权。
 需要用户登录时引导其在本机安全输入，不要求将令牌粘贴到聊天中。
@@ -18,7 +25,7 @@ Cockpit 提供普通前后端服务包。使用者准备运行环境、配置原
 
 | 项目 | 当前要求 |
 | --- | --- |
-| 发行 | **v0.2.3**；正式运行包只从[对应 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.3) 获取，以 workflow 成功发布的资产为准。 |
+| 发行 | **v0.2.4**；正式运行包只从[对应 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.4) 获取，以 workflow 成功发布的资产为准。 |
 | 平台 | Linux x64 / glibc；未承诺 musl、arm64、macOS 或 Windows 运行包。 |
 | Node | **24.20.0**，由安装者单独准备；运行包 manifest 校验完整版本号，其他 patch 也会被拒绝。 |
 | 原生配对 | 已包含 SDK **1.0.13**、bundled runtime **1.0.83** / protocol **3**。 |
@@ -37,8 +44,8 @@ Web 与 API 在一个 Node 服务内；SDK 自己的进程外 runtime、原生 M
 
 ## 安装运行包
 
-从 v0.2.3 Release 下载 `runtime.tar.gz` 与 `runtime.tar.gz.sha256`。
-若该版本尚未生成这两项资产，请等待 Release workflow 成功，不使用旧版或开发 artifact 替代。
+确认 v0.2.4 Release 已发布后，下载 `runtime.tar.gz` 与 `runtime.tar.gz.sha256`。
+两项资产必须齐全；下载失败时先排查网络或发布资产，不使用其他版本或开发 artifact 替代。
 GitHub 自动生成的 Source code ZIP/tar 不包含安装好的依赖，不能替代 `runtime.tar.gz`。
 
 确认已准备上面的 Node 版本后，在新的下载目录执行：
@@ -46,8 +53,8 @@ GitHub 自动生成的 Source code ZIP/tar 不包含安装好的依赖，不能�
 ```sh
 mkdir cockpit-download &&
 cd cockpit-download &&
-curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/download/v0.2.3/runtime.tar.gz &&
-curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/download/v0.2.3/runtime.tar.gz.sha256 &&
+curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/download/v0.2.4/runtime.tar.gz &&
+curl --fail --location --remote-name https://github.com/waksana/cockpit/releases/download/v0.2.4/runtime.tar.gz.sha256 &&
 sha256sum -c runtime.tar.gz.sha256 &&
 mkdir cockpit &&
 tar -xzf runtime.tar.gz -C cockpit &&
@@ -75,15 +82,14 @@ node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/ind
 <a id="from-source"></a>
 ## 从源码安装
 
-普通使用者选择固定发行 tag `v0.2.3`，不是旧 v0.1.0 tag。
-tag 尚未发布时应等待发行，或由开发者明确选择已验证的完整源码 SHA。
+普通使用者在发布后选择固定发行 tag `v0.2.4`；开发者也可以明确选择已验证的完整源码 SHA。
 贡献者按[贡献指南](../CONTRIBUTING.md)工作。
 在新目录中执行：
 
 ```sh
 git clone https://github.com/waksana/cockpit.git cockpit &&
 cd cockpit &&
-git switch --detach v0.2.3 &&
+git switch --detach v0.2.4 &&
 node --version &&
 pnpm --version &&
 pnpm install --frozen-lockfile &&
@@ -229,8 +235,8 @@ node --import ./apps/server/node_modules/tsx/dist/loader.mjs \
 安装器只接收本地 `.tgz`，不执行安装脚本或自动安装依赖。
 安装、启用或停用只改变下次启动选择，不会热改正在运行的服务；
 是否关闭已有服务仍需遵循其正常 graceful 流程。
+可安装的模块与配套版本见[模块目录](module-catalog.md)，
 详细格式、状态查询和公共接口见[模块契约](module-contract-draft.md)。
-此能力从 `v0.2.0` 提供；`v0.1.0` 不支持模块，不能在旧包上执行上述命令。
 
 ## 环境配置
 
@@ -256,7 +262,8 @@ MCP 客户端配置单独见 [MCP](../apps/mcp/README.md#configuration)。
 不是登录认证，不能把未认证的隧道作为替代。
 普通代理与服务管理属于宿主选择，不由 Cockpit 安装或改写。
 当前 MCP 是本地 stdio 客户端，其 HTTP 请求经过同一后端认证入口；
-逐模块 HTTP MCP path 仍属于未来协议。
+当前开发源码还允许模块在既有摘要绑定 routes 实现 HTTP MCP，由创建时角色配置装配；
+旧发行版不会自动获得此能力，详见[模块协议](module-contract-draft.md#44-创建时角色与模块-http-mcp)。
 
 ### 示例：自行管理的 nginx HTTPS + Basic 认证
 

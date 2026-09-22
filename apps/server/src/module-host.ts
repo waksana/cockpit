@@ -6,10 +6,12 @@ import { validateHeaderName, validateHeaderValue } from 'node:http';
 import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pathToFileURL } from 'node:url';
+import { types } from 'node:util';
 import { z } from 'zod';
 import { cockpitHome, type Engine } from '@cockpit/core';
-import { ServerEvent } from '@cockpit/protocol';
-import type { ModuleAsset, ModuleBackend, ModuleBackendContext, ModuleRoute, NativeObservation } from '@cockpit/module-api';
+import { ServerEvent, snapshotModuleEventPayload } from '@cockpit/protocol';
+import type { ModuleAsset, ModuleBackend, ModuleBackendContext, ModuleEventPayload, ModuleRoute, NativeObservation, ModuleHostApi } from '@cockpit/module-api';
+import { ModuleRoles } from './module-roles.ts';
 import { isDeclaredAsset, moduleDataRoot, MODULE_WORKER_LIMIT, readModuleInstallation, readModuleSettings, safeModulePath, type ModuleInstallation } from './module-install.ts';
 
 const DEFAULT_BODY_LIMIT = 1024 * 1024;
@@ -26,6 +28,7 @@ const routeSchema = z.object({
 const backendSchema = z.object({
   routes: z.array(routeSchema).max(256),
   publicConfig: z.record(z.unknown()).optional(),
+  onReady: z.custom<NonNullable<ModuleBackend['onReady']>>(value => typeof value === 'function').optional(),
   events: z.object({
     types: z.array(z.string().min(1).max(128)).min(1).max(128),
     handle: z.custom<NonNullable<ModuleBackend['events']>['handle']>(value => typeof value === 'function'),
@@ -81,19 +84,28 @@ const mimeTypes: Record<string, string> = {
 };
 
 export class ModuleHost {
+  readonly roles: ModuleRoles;
   private readonly loaded: Loaded[] = [];
   private readonly errors = new Map<string, ModuleHostError>();
   private readonly scopes = new Set<AbortController>();
   private readonly disposed = new WeakSet<object>();
   private closed = false;
   private initialized = false;
+  private app?: FastifyInstance;
+  private readyNotified = false;
   constructor(private readonly options: {
     hostRoot?: string;
     observer: Pick<Engine, 'onNativeEvent'> & Partial<Pick<Engine, 'onEvent'>>;
     onInvalidate?: (id: string) => void;
+    onEvent?: (id: string, payload: ModuleEventPayload) => void;
     report?: (id: string, error: unknown) => void;
     activationTimeoutMs?: number;
-  }) {}
+    host?: ModuleHostApi;
+    origin?: string;
+  }) {
+    this.roles = new ModuleRoles(options.hostRoot ?? cockpitHome(), options.origin ?? 'http://127.0.0.1:8771',
+      () => this.closed ? [] : this.loaded.map(module => module.installation));
+  }
 
   private report(id: string, error: unknown): void {
     const code = failure(error).code;
@@ -110,6 +122,9 @@ export class ModuleHost {
         return [{
           id: manifest.id, name: manifest.name, version: manifest.version, digest, apiBase: module.apiBase,
           entry: asset(manifest.frontend.entry), styles: (manifest.frontend.styles ?? []).map(asset),
+          ...(manifest.frontend.next ? { next: {
+            entry: asset(manifest.frontend.next.entry), styles: (manifest.frontend.next.styles ?? []).map(asset),
+          } } : {}),
           config: module.backend.publicConfig ?? {},
           ...(manifest.frontend.worker ? { worker: {
             entry: `/_modules/workers/${manifest.id}/worker.js`, scope: `/_modules/workers/${manifest.id}/`,
@@ -124,6 +139,7 @@ export class ModuleHost {
   async register(app: FastifyInstance): Promise<void> {
     if (this.initialized) throw new Error('Module host can only cold-load once');
     this.initialized = true;
+    this.app = app;
     app.addHook('preClose', async () => { this.close(); });
     app.get('/_modules', async (_request, reply) => {
       reply.header('Cache-Control', 'private, no-store');
@@ -147,13 +163,31 @@ export class ModuleHost {
         const installation = await readModuleInstallation(id, selected, hostRoot);
         const apiBase = `/_modules/${id}/${installation.digest}/api`;
         const context: ModuleBackendContext = Object.freeze({
-          apiVersion: 1, moduleId: id, apiBase, dataRoot: await moduleDataRoot(id, hostRoot),
+          host: Object.freeze({ resourcePreparationVersion: 1, call: (name, body) => {
+            if (controller.signal.aborted || this.closed) throw new Error('Module is stopped');
+            if (!this.loaded.some(module => module.controller === controller)) throw new Error('Module host intents are not active');
+            if (!['session/new', 'session/get', 'roles/readiness', 'session/resources-prepare', 'prompt'].includes(name)) throw new Error('Module host intent is not allowed');
+            if (!this.options.host) throw new Error('Module host intents are unavailable');
+            return this.options.host.call(name, body);
+          } } satisfies ModuleHostApi),
+          apiVersion: 1, serviceReadyVersion: 1, moduleId: id, apiBase, dataRoot: await moduleDataRoot(id, hostRoot),
           config: Object.freeze(structuredClone(selected.config)), signal: controller.signal,
           report: (error: unknown) => this.report(id, error),
           invalidate: () => {
             if (controller.signal.aborted || this.closed || !this.loaded.some(module => module.controller === controller)) return;
             try { this.options.onInvalidate?.(id); }
             catch (error) { this.report(id, error); }
+          },
+          publish: (payload: ModuleEventPayload) => {
+            if (controller.signal.aborted || this.closed || !this.loaded.some(module => module.controller === controller)) return;
+            try {
+              if (!this.options.onEvent) throw moduleError('MODULE_EVENT_UNAVAILABLE', 'Module event transport is unavailable', 503);
+              const snapshot = snapshotModuleEventPayload(payload, types.isProxy);
+              this.options.onEvent(id, snapshot);
+            } catch (error) {
+              this.report(id, error);
+              throw error;
+            }
           },
         });
         const preparation = (async () => {
@@ -231,6 +265,20 @@ export class ModuleHost {
         if (activated) this.dispose(id, activated);
         this.report(id, error);
       } finally { if (timer) clearTimeout(timer); }
+    }
+  }
+
+  /** The server calls this only after runtime.start() and HTTP listen succeed. */
+  ready(): void {
+    if (this.closed || this.readyNotified) return;
+    if (!this.app?.server.listening) throw new Error('Module service readiness requires a listening HTTP server');
+    this.readyNotified = true;
+    for (const module of this.loaded) {
+      if (this.closed) break;
+      if (module.controller.signal.aborted || !module.backend.onReady) continue;
+      const id = module.installation.manifest.id;
+      try { void Promise.resolve(module.backend.onReady()).catch(error => this.report(id, error)); }
+      catch (error) { this.report(id, error); }
     }
   }
 

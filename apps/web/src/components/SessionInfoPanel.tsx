@@ -2,15 +2,17 @@
 // It reads identifying summary fields and on-demand model state; MCP and Skills
 // resources are owned by their dedicated pages.
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback } from 'react';
 import { classifyNativeModelSwitchResult } from '@cockpit/protocol';
 import type { IntentResult, NativeModelSwitchResult } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
 import { useSessionResource } from '../lib/useSessionResource';
-import { useKeyedAction } from '../lib/useKeyedResource';
+import { useModelSettings, selectionFrom, type ModelSelection } from '../features/session-settings/useModelSettings';
 import { ExpandableText, PanelPageShell, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
 import { CopyButton } from './CopyButton';
-import { Icon } from './Icon';
+import { SectionHeading, SelectField } from './UI';
+import { StateNotice } from './StateNotice';
+import { SessionRoles } from './SessionRoles';
 import type { ChatSession } from '../net/types';
 
 type ContextTier = 'default' | 'long_context';
@@ -20,12 +22,6 @@ const EFFORT_LABEL: Record<string, string> = {
 };
 const CONTEXT_LABEL: Record<ContextTier, string> = { default: '标准上下文', long_context: '长上下文' };
 
-type ModelSelection = { modelId: string; reasoningEffort?: string; contextTier?: ContextTier };
-const selectionFrom = (session: ChatSession): ModelSelection => ({
-  modelId: session.currentModelId ?? '',
-  ...(session.currentReasoningEffort ? { reasoningEffort: session.currentReasoningEffort } : {}),
-  ...(session.currentContextTier ? { contextTier: session.currentContextTier } : {}),
-});
 const selectionLabel = (selection: ModelSelection) => [
   selection.modelId || '模型未提供',
   `思考力度：${selection.reasoningEffort ? EFFORT_LABEL[selection.reasoningEffort] ?? selection.reasoningEffort : '未指定'}`,
@@ -71,9 +67,9 @@ export function ModelOutcome({ result, selection }: { result: NativeModelSwitchR
   const message = (classification.state === 'failed' || classification.state === 'needs-action') && result.message
     ? `：${result.message}` : '';
   return <div className="info-model-result">
-    <div className="info-model-status" role={classification.isError ? 'alert' : 'status'}>
+    <StateNotice className="info-model-status" kind={classification.isError ? 'error' : 'info'}>
       {status + persistence + message}
-    </div>
+    </StateNotice>
     {result.confirmation && <div>
       目标：{result.confirmation.targetModelDisplayName}；当前令牌：{result.confirmation.currentTokens}；目标上限：{result.confirmation.targetLimit}。
       本页不会自动确认或继续执行。
@@ -94,112 +90,69 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
     onRefresh: () => void; refreshDisabled: boolean;
   };
 }) {
-  const [draft, setDraft] = useState<{ selection: ModelSelection; revision: number } | null>(null);
-  const [submission, setSubmission] = useState<{ selection: ModelSelection; revision: number } | null>(null);
-  const [outcome, setOutcome] = useState<IntentResult<'setModel'> | null>(null);
-  const submittedRevision = useRef<number | null>(null);
-  const action = useKeyedAction(`model:${session.sessionId}`);
-  const selection = draft?.selection ?? selectionFrom(session);
-  const revision = draft?.revision ?? 0;
-  const edit = (next: ModelSelection) => setDraft({ selection: next, revision: revision + 1 });
+  const { draft, submission, outcome, action, selection, revision, edit, apply,
+    list, currentModel, efforts, supportsLong, invalid } = useModelSettings(session, onSetModel, disabled);
   const heading = <>
-    <div className="info-section-name">模型配置
-      {resource && <RefreshButton onClick={resource.onRefresh}
+    <SectionHeading className="info-section-name" actions={resource && <RefreshButton onClick={resource.onRefresh}
         disabled={resource.refreshDisabled || resource.pending || action.busy}
-        pending={resource.pending && resource.usable && !action.busy} />}
-    </div>
+        pending={resource.pending && resource.usable && !action.busy} />}>模型配置</SectionHeading>
     {resource && <ResourceStatus
       status={resource.pending && (resource.usable || action.busy) ? null : resource.status}
       failed={resource.failed} pending={resource.pending} />}
   </>;
   const resultView = <>
-    {action.error && <div className="info-model-status" role="alert">
+    {action.error && <StateNotice className="info-model-status" kind="error">
       应用结果未确认：{action.error}。请核对原生状态；不会自动重试。
-    </div>}
+    </StateNotice>}
     {submission && !action.busy && !action.error && !outcome
-      && <div className="info-model-status" role="status">提交结果尚未确认，请核对原生状态；不会自动重试。</div>}
+      && <StateNotice className="info-model-status">提交结果尚未确认，请核对原生状态；不会自动重试。</StateNotice>}
     {outcome ? <ModelOutcome result={outcome.result} selection={submission?.selection} />
       : submission && <ModelSubmissionDetails selection={submission.selection} />}
   </>;
-  const list = session.availableModels;
   if (!list || list.length === 0) return <section className="info-section">
     {heading}
     <div className="info-section-content info-controls">
       <CurrentModel session={session} />
-      <div className="info-empty">{list ? '原生可选模型列表为空' : '原生可选模型列表不可用'}</div>
-      {action.busy && <div className="info-model-status" role="status">正在提交…</div>}
+      <StateNotice kind="empty">{list ? '原生可选模型列表为空' : '原生可选模型列表不可用'}</StateNotice>
+      {action.busy && <StateNotice kind="loading" className="info-model-status">正在提交…</StateNotice>}
       {resultView}
     </div>
   </section>;
 
   const current = selection.modelId;
-  const currentModel = list.find((m) => m.modelId === current);
-  const efforts = currentModel?.supportedReasoningEfforts ?? [];
-  const supportsLong = currentModel?.supportsLongContext ?? false;
   const curEffort = selection.reasoningEffort ?? '';
   const curTier = selection.contextTier ?? '';
-  const invalid = !currentModel || (efforts.length > 0 && !!curEffort && !efforts.includes(curEffort));
-  const apply = () => {
-    if (disabled || invalid || action.busy || submittedRevision.current === revision) return;
-    submittedRevision.current = revision;
-    const options = {
-      ...(selection.reasoningEffort ? { reasoningEffort: selection.reasoningEffort } : {}),
-      ...(selection.contextTier ? { contextTier: selection.contextTier } : {}),
-    };
-    setSubmission({ selection, revision });
-    setOutcome(null);
-    let result: IntentResult<'setModel'>;
-    void action.run(async () => { result = await onSetModel(selection.modelId, options); }, () => setOutcome(result));
-  };
 
   return (
     <section className="info-section">
       {heading}
       <div className="info-section-content info-controls">
         <CurrentModel session={session} />
-        <label className="info-control">
-          <span className="info-control-label">模型</span>
-          <span className="info-select-wrap">
-            <select className="info-select ck-input" disabled={disabled} value={current}
+        <SelectField label="模型" disabled={disabled} value={current}
               onChange={(e) => edit({ modelId: e.target.value })} aria-label="选择模型">
               {current === '' && <option value="" disabled>选择模型…</option>}
               {current !== '' && !currentModel && <option value={current} disabled>{current}（当前值，列表未提供）</option>}
               {list.map((m) => <option key={m.modelId} value={m.modelId}>{m.name}</option>)}
-            </select>
-            <Icon name="down" size={16} />
-          </span>
-        </label>
+        </SelectField>
 
         {efforts.length > 0 && (
-          <label className="info-control">
-            <span className="info-control-label">思考力度</span>
-            <span className="info-select-wrap">
-              <select className="info-select ck-input" disabled={disabled} value={curEffort}
+          <SelectField label="思考力度" disabled={disabled} value={curEffort}
                 onChange={(e) => edit({ ...selection, reasoningEffort: e.target.value || undefined })} aria-label="思考力度">
                 <option value="">未指定</option>
                 {curEffort !== '' && !efforts.includes(curEffort) && <option value={curEffort} disabled>{curEffort}（当前值，列表未提供）</option>}
                 {efforts.map((e) => <option key={e} value={e}>{EFFORT_LABEL[e] ?? e}</option>)}
-              </select>
-              <Icon name="down" size={16} />
-            </span>
-          </label>
+          </SelectField>
         )}
 
         {supportsLong && (
-          <label className="info-control">
-            <span className="info-control-label">上下文长度</span>
-            <span className="info-select-wrap">
-              <select className="info-select ck-input" disabled={disabled} value={curTier}
+          <SelectField label="上下文长度" disabled={disabled} value={curTier}
                 onChange={(e) => edit({ ...selection, contextTier: e.target.value ? e.target.value as ContextTier : undefined })} aria-label="上下文长度">
                 <option value="">未指定</option>
                 <option value="default">标准上下文</option>
                 <option value="long_context">长上下文</option>
-              </select>
-              <Icon name="down" size={16} />
-            </span>
-          </label>
+          </SelectField>
         )}
-        <div className="info-model-actions">
+        <div className="info-model-actions ck-actions">
           <button type="button" className="dialog-btn ck-button ck-primary primary rp"
             disabled={disabled || invalid || action.busy || submission?.revision === revision}
             aria-busy={action.busy}
@@ -245,6 +198,7 @@ function InfoDetails({ session, onClose, onSetModel }: SessionInfoPanelProps) {
         </div>
       </section>
 
+      <SessionRoles session={session} />
       <SessionResume sessionId={sid} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
       {resource.requiresResume && <ResourceStatus status={resource.status} failed={resource.failed} pending={resource.pending} />}
       {/* Accepted same-connection data supports edits and Apply during refresh. */}

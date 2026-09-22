@@ -1,5 +1,6 @@
 import type * as React from 'react';
-import type { NativeAttachmentDescriptor, SessionStatus } from '@cockpit/protocol';
+import type { ModuleEventPayload, NativeAttachmentDescriptor, SessionStatus } from '@cockpit/protocol';
+import type { ModuleUi } from './ui.ts';
 
 type ReadonlyData<T> = { readonly [Key in keyof T]: ReadonlyData<T[Key]> };
 
@@ -15,6 +16,28 @@ export interface HostSnapshot {
   readonly connected: boolean;
 }
 
+/** Text projection of an already-loaded window; each array retains its native display order. */
+export interface ChatWindowMessage {
+  /** Presentation identity; use origin for native identity and attribution. */
+  readonly id: string;
+  readonly origin: Readonly<MessageOrigin> | null;
+  readonly role: 'user' | 'assistant' | 'system' | 'tool';
+  readonly text: string;
+  readonly complete: boolean;
+  readonly subtype?: 'ask-reply' | 'subagent' | 'skill';
+  readonly children: readonly ChatWindowMessage[];
+}
+
+export interface ChatWindowSnapshot {
+  readonly sessionId: string | null;
+  readonly status: 'unavailable' | 'loading' | 'ready' | 'stale' | 'error';
+  readonly hasMore: boolean;
+  readonly partial: boolean;
+  readonly error?: string;
+  /** Root messages; nested agents stay in children, not a synthetic global ordering. */
+  readonly messages: readonly ChatWindowMessage[];
+}
+
 export type DraftPurpose =
   | { readonly kind: 'prompt' }
   | { readonly kind: 'ask' | 'plan' | 'elicitation'; readonly requestId: string };
@@ -24,7 +47,20 @@ export interface DraftBlock {
   readonly reason: string;
 }
 
+/** Copied native question data for this exact live ask draft, never persisted. */
+export interface DraftAskContext {
+  readonly question: string;
+  readonly choices?: readonly string[];
+}
+
 export interface ModuleDraftSnapshot {
+  /**
+   * Present only for an authoritative live ask with an available question.
+   * Absent for other purposes, retirement, unload or lost authority. Capture
+   * synchronously at operation start; later updates never mutate prior snapshots.
+   * Context-only changes notify subscribers without advancing text revision.
+   */
+  readonly askContext?: DraftAskContext;
   readonly text: string;
   readonly blocks: readonly DraftBlock[];
   /** Nonblank text or content declared by an active applicable schema, not schema presence. */
@@ -34,6 +70,8 @@ export interface ModuleDraftSnapshot {
   readonly pending: boolean;
   /** Failure or unknown native outcome: retained content is not permission to retry. */
   readonly unconfirmed: boolean;
+  /** Irreversible end of this lifetime: decision ended or session authoritatively deleted. */
+  readonly retired: boolean;
 }
 
 /**
@@ -60,14 +98,64 @@ export interface DraftReference extends ReadonlyState<ModuleDraftSnapshot> {
 
 export type DraftWrite = 'text';
 
+/** Safe codes only: never native response text, payloads or module content. */
+export type DraftSendBlockReason =
+  | 'revoked' | 'retired' | 'cancelled' | 'revision-mismatch' | 'draft-changed'
+  | 'pending' | 'unconfirmed' | 'peer-blocked' | 'empty' | 'unavailable'
+  | 'read-only' | 'decision-changed' | 'unsupported' | 'persistence-failed' | 'projection-failed';
+
+export type DraftSendResult =
+  | { readonly status: 'acknowledged' }
+  | { readonly status: 'blocked'; readonly reason: DraftSendBlockReason }
+  | { readonly status: 'unconfirmed'; readonly reason: 'native-unconfirmed' | 'settlement-failed' };
+
+/**
+ * One consent checkpoint for an immutable captured draft lifetime and its full
+ * schema generation/mutation checkpoint. No caller-selected target or payload.
+ */
+export interface CapturedDraftSend {
+  /**
+   * Supply the current text revision after this module's own streaming edits.
+   * Any other writer's edit or schema mutation/generation change since capture
+   * invalidates consent, including ABA changes. Block release is not content.
+   * The first call consumes this intent, including a blocked result. All later
+   * calls return the same promise/result, never another native dispatch.
+   * blocked guarantees no dispatch; unconfirmed may have sent or failed local
+   * ACK settlement. Never automatically retry either an uncertain dispatch or
+   * a consumed intent by capturing replacement consent.
+   */
+  send(expectedRevision: number): Promise<DraftSendResult>;
+  /** Prevents dispatch if not yet started; cannot unsend an in-flight request. */
+  cancel(): void;
+}
+
 /**
  * Base capabilities only. Text edits require ModuleFrontend.writes and may
  * continue during a send, advancing revision. Schema data/actions belong to the
- * schema's own handle, never this base draft. No native store patch, attachment
- * model, submit, ACK, or reset action is exposed.
+ * schema's own handle, never this base draft. Captured submission requires
+ * independent sends permission. No native store patch, attachment model,
+ * arbitrary-payload send, ACK, or reset action is exposed.
  */
 export interface ModuleDraft extends DraftReference {
   editText(text: string): void;
+  /**
+   * Atomic completion for this captured lifetime, including inactive prompts.
+   * Requires text write capability. Returns false without mutation on a revision
+   * mismatch, pending/unconfirmed submission, or any block (release your own
+   * lease first). Throws on retirement, revocation or persistence failure; true
+   * means the text was persisted and published with an incremented revision.
+   * Ordinary editText retains its existing concurrent/memory-edit semantics.
+   */
+  editTextIfRevision(text: string, revision: number): boolean;
+  /**
+   * Requires the separate ModuleFrontend.sends: ['draft'] declaration.
+   * Capture at explicit user consent, before waiting for background completion.
+   * Throws on missing permission, revoked/retired or unavailable draft scope.
+   * Own blocks may still be held at capture; release them before send.
+   * Sends through the original prompt/ask/plan native route with all applicable
+   * schema fields and ACK rules, even when the original prompt is inactive.
+   */
+  captureSend(): CapturedDraftSend;
   /**
    * Requires a text write or an active schema applicable to this draft. Leases
    * belong to this module/draft and release idempotently. Module/schema loss
@@ -201,6 +289,8 @@ export interface DraftSchemaRegistration<State extends object> {
 
 export interface ModuleStateRegistry {
   readonly host: ReadonlyState<HostSnapshot>;
+  /** Read-only current loaded window, never a history reader or native state mutation API. */
+  readonly chatWindow: ReadonlyState<ChatWindowSnapshot>;
   /**
    * Activation-only registration, staged until the whole frontend validates.
    * No required global snapshot shape, hooks, persistence, or automatic retries.
@@ -268,13 +358,57 @@ export interface ComposerProps extends ComposerTarget {
   onSubmit(): void;
 }
 
-/** The actual input row: the existing text editor and submit control, not an empty slot. */
+/** The actual input row: leading children, the text input and the native submit control. */
 export interface ComposerEditorProps extends ComposerProps,
   Omit<React.HTMLAttributes<HTMLDivElement>, keyof ComposerProps> {}
 
-/** The existing global navigation button and its menu; children extend that component. */
-export interface GlobalNavigationProps {
-  readonly children?: React.ReactNode;
+/**
+ * The controlled textarea itself. Base owns native editing and IME/Enter handling,
+ * even without middleware. Preserve native props/events and compose editorRef,
+ * including React 19 callback cleanup. Sibling enhancements render after Base;
+ * full-width feedback belongs around the existing composer, not inside this row.
+ */
+export interface ComposerInputProps extends ComposerTarget,
+  Omit<React.TextareaHTMLAttributes<HTMLTextAreaElement>, keyof ComposerTarget | 'value' | 'onChange' | 'onSubmit' | 'children' | 'defaultValue'> {
+  readonly value: string;
+  readonly onChange: React.ChangeEventHandler<HTMLTextAreaElement>;
+  readonly editorRef?: React.Ref<HTMLTextAreaElement>;
+  /** Submission gate, not textarea disabled: pending/blocks also gate onSubmit. */
+  readonly sendBlocked: boolean;
+  /** Same captured, rechecked host submit action as ComposerProps.onSubmit. */
+  onSubmit(): void;
+}
+
+export type ModuleMenuTarget =
+  | { readonly menu: 'global' }
+  | { readonly menu: 'session'; readonly sessionId: string };
+
+/** Pure presentation derived from the module's existing state/service. */
+export interface ModuleMenuState {
+  readonly label: string;
+  readonly icon?: React.ReactNode;
+  readonly visible?: boolean;
+  readonly disabled?: boolean;
+  readonly destructive?: boolean;
+  readonly separatorBefore?: boolean;
+}
+
+export interface ModuleMenuRegistration {
+  readonly id: string;
+  readonly menu: ModuleMenuTarget['menu'];
+  readonly order?: number;
+  /** Synchronous and side-effect-free; never a hook or a native-store replica. */
+  getState(target: ModuleMenuTarget): ModuleMenuState;
+  /** Notify when presentation changes. Owned and revoked by the module scope. */
+  subscribe?(listener: () => void): () => void;
+  /**
+   * Invoked synchronously in the user gesture, after availability is rechecked.
+   * The immutable target never follows navigation. Normal menu close does not
+   * cancel accepted work; module/target loss aborts signal. Check it after awaits.
+   * Returned promises carry no host mutation or navigation instruction. API
+   * conditions/authorization remain authoritative, regardless of disabled UI.
+   */
+  onSelect(target: ModuleMenuTarget, context: { readonly signal: AbortSignal }): void | Promise<void>;
 }
 
 /** Existing global resource-list header, including back/title/refresh controls. */
@@ -326,12 +460,12 @@ export interface MessageProps extends React.HTMLAttributes<HTMLDivElement> {
   readonly adornment?: React.ReactNode;
 }
 
-/** Base retains native replying/error/needs-decision indications and adds children. */
+/** Base renders the native replying/waiting/error indication followed by children. */
 export interface SessionStatusProps {
   readonly sessionId: string;
   readonly status: SessionStatus;
   readonly needsDecision: boolean;
-  /** Phrasing-only, noninteractive badges inside the session's existing button. */
+  /** Trailing phrasing-only, noninteractive badges inside the session's existing button. */
   readonly children?: React.ReactNode;
 }
 
@@ -355,8 +489,8 @@ export interface ModuleComponentProps {
   sessionStatus: SessionStatusProps;
   composer: ComposerProps;
   composerEditor: ComposerEditorProps;
+  composerInput: ComposerInputProps;
   attachment: AttachmentProps;
-  globalNavigation: GlobalNavigationProps;
   managementHeader: ManagementHeaderProps;
   managementDetailHeader: ManagementDetailHeaderProps;
 }
@@ -401,10 +535,19 @@ export interface MarkdownRenderer {
   readonly component: React.ComponentType<MarkdownRendererProps>;
 }
 
-export interface ModuleFrontendContext {
+export interface ModuleFrontendServices {
   /** Web contract only. Module manifest, backend context and route API remain v1. */
   readonly apiVersion: 2;
-  readonly uiVersion: 1;
+  /** Declarative global/session menu capability; not a component boundary. */
+  readonly menuVersion: 1;
+  /** Read-only current-window text projection. Check independently of Web API v2. */
+  readonly chatWindowVersion: 1;
+  /** Middleware around the actual controlled textarea, independently of the input row. */
+  readonly composerInputVersion: 1;
+  /** Observable permanent retirement and atomic revision-guarded text completion. */
+  readonly draftLifecycleVersion: 1;
+  /** Explicitly authorized captured one-shot native draft submission. */
+  readonly draftSubmissionVersion: 1;
   readonly moduleId: string;
   readonly react: typeof React;
   createPortal(children: React.ReactNode, container: Element | DocumentFragment): React.ReactPortal;
@@ -417,13 +560,25 @@ export interface ModuleFrontendContext {
   report(error: unknown): void;
   /** Existing generic SSE invalidation hint, automatically unsubscribed on module stop. */
   onInvalidate(listener: () => void): () => void;
+  /** Immutable payloads for this module only; subscriptions are revoked on stop. No replay. */
+  onEvent(listener: (payload: ModuleEventPayload) => void): () => void;
   /** Unchanged narrow module-worker metadata; never authority over the page/root scope. */
   readonly worker?: { entry: string; scope: string };
 }
 
+export interface ModuleFrontendContext extends ModuleFrontendServices {
+  readonly uiVersion: 1;
+  /** Classic shared surfaces, independent of the new React component library. */
+  readonly uiSurfaceVersion: 1;
+}
+
+export interface ModuleNextFrontendContext extends ModuleFrontendServices {
+  readonly ui: ModuleUi;
+}
+
 /**
  * All IDs are nonempty and unique within this module across state services,
- * draft schemas, middleware and Markdown. The host stages the entire activation
+ * draft schemas, menus, middleware and Markdown. The host stages the entire activation
  * before publishing; old slot fields and frontend versions are rejected.
  *
  * Middleware sorts by (order ?? 0, moduleId, id), lowest first/outermost, and is
@@ -441,9 +596,14 @@ export interface ModuleFrontendContext {
 export interface ModuleFrontend {
   readonly apiVersion: 2;
   readonly writes?: readonly DraftWrite[];
+  /** Independent native-send permission; text writes alone never grant this. */
+  readonly sends?: readonly 'draft'[];
+  /** Native commands remain first; additions sort by (order ?? 0, moduleId, id). */
+  readonly menus?: readonly ModuleMenuRegistration[];
   readonly components?: readonly ModuleComponentMiddleware[];
   readonly markdown?: readonly MarkdownRenderer[];
   dispose?(): void;
 }
 
 export type ActivateFrontend = (context: ModuleFrontendContext) => ModuleFrontend | Promise<ModuleFrontend>;
+export type ActivateNextFrontend = (context: ModuleNextFrontendContext) => ModuleFrontend | Promise<ModuleFrontend>;

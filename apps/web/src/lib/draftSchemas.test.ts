@@ -133,7 +133,7 @@ test('module-owned legacy restore persists an empty tombstone and never reimport
   next.schema.dispose();
 });
 
-test('inactive schema bytes and active peer data survive module loss and plain-text sends', async () => {
+test('inactive schema bytes block plain-text sends even with an active peer schema', async () => {
   const { storage, values } = memoryDraftStorage();
   const draft = new SessionDraft('A', storage);
   const files = install(draft);
@@ -143,14 +143,38 @@ test('inactive schema bytes and active peer data survive module loss and plain-t
   const before = JSON.parse(values.get(recordKey)!).__cockpitDraft.schemas;
   files.schema.dispose();
   draft.edit('Plain text');
-  assert.equal(await draft.send(async request => {
-    assert.deepEqual(request.body, { sessionId: 'A', text: 'Plain text' });
-    return true;
-  }), true);
+  assert.equal(draft.hasUnclaimedStoredData(), true);
+  assert.equal(await draft.send(async () => assert.fail('Missing field owner')), false);
+  assert.equal(draft.getSnapshot().text, 'Plain text');
   assert.deepEqual(peer.scope.getSnapshot().items.map(item => item.id), ['peer-data']);
   assert.deepEqual(JSON.parse(values.get(recordKey)!).__cockpitDraft.schemas, before);
   assert.equal(draft.getSnapshot().blocks.length, 0);
   peer.schema.dispose();
+});
+
+test('successful active schema restoration claims only its exact persisted namespace', async () => {
+  const { storage, values } = memoryDraftStorage();
+  const initial = new SessionDraft('A', storage);
+  const first = install(initial);
+  appendFixture(first.scope, fixtureItem('saved'));
+  first.schema.dispose();
+  const restored = new SessionDraft('A', storage);
+  assert.equal(restored.hasUnclaimedStoredData(), true);
+  const owner = install(restored);
+  assert.equal(restored.hasUnclaimedStoredData(), false);
+  assert.equal(await restored.send(async request => {
+    assert.ok('attachments' in request.body);
+    return true;
+  }), true);
+  owner.schema.dispose();
+  assert.equal(restored.hasUnclaimedStoredData(), true, 'opaque empty encodings are not interpreted by the host');
+  const record = JSON.parse(values.get(recordKey)!);
+  record.__cockpitDraft.schemas[JSON.stringify(['files', 'another-schema'])] = '{"future":true}';
+  values.set(recordKey, JSON.stringify(record));
+  const unknownPeer = new SessionDraft('A', storage);
+  const active = install(unknownPeer);
+  assert.equal(unknownPeer.hasUnclaimedStoredData(), true, 'same module does not own other schema IDs');
+  active.schema.dispose();
 });
 
 test('validation, serialization and storage errors leave prior field data and bytes unchanged', () => {
@@ -193,6 +217,7 @@ test('invalid stored values and asynchronous factories fail explicitly without e
   const draft = new SessionDraft('A', storage);
   const invalid = new RegisteredDraftSchema('owner', 'files', fixtureSchema(), () => {});
   assert.throws(() => invalid.prepare(draft));
+  assert.equal(draft.hasUnclaimedStoredData(), true, 'a failed restorer must not claim stored data');
   assert.equal(draft.getSnapshot().text, 'Keep');
   assert.equal(values.get(recordKey), before);
   invalid.dispose();

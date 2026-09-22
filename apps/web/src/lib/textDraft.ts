@@ -1,9 +1,11 @@
 import type {
-  DraftNativeFields, DraftPurpose, DraftReference, DraftRestoreInput, DraftSubmission,
+  DraftAskContext, DraftNativeFields, DraftPurpose, DraftReference, DraftRestoreInput, DraftSubmission,
   DraftWrite, ModuleDraft, ModuleDraftSnapshot,
+  CapturedDraftSend, DraftSendBlockReason, DraftSendResult,
 } from '@cockpit/module-api';
 import { CORE_DRAFT_FIELDS, nativeDraftRequest, type NativeDraftRequest } from './draft';
 import { describeReason, reportUxError } from './errorReporter';
+import { captureLocalSubmission } from './localSubmission';
 
 export type DraftStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 export type DraftReport = (error: unknown) => void;
@@ -63,13 +65,27 @@ interface CapturedField {
   acknowledge(): void;
 }
 
+export interface DraftSubmissionTransport {
+  check(): DraftSendBlockReason | undefined;
+  send(request: NativeDraftRequest): Promise<boolean>;
+}
+
+class BlockedDraftSend extends Error {
+  readonly reason: DraftSendBlockReason;
+  constructor(reason: DraftSendBlockReason) { super(`Draft submission blocked: ${reason}`); this.reason = reason; }
+}
+const blockedSend = (reason: DraftSendBlockReason): DraftSendResult => Object.freeze({ status: 'blocked', reason });
+
 export class SessionDraft {
   private snapshot: ModuleDraftSnapshot = Object.freeze({
-    text: '', blocks: Object.freeze([]), hasContent: false, revision: 0, pending: false, unconfirmed: false,
+    text: '', blocks: Object.freeze([]), hasContent: false, revision: 0, pending: false, unconfirmed: false, retired: false,
   });
   private readonly listeners = new Set<() => void>();
   private readonly blockOwners = new Map<string, string>();
   private readonly fields = new Map<string, DraftField>();
+  private readonly legacyRestorers = new Set<string>();
+  private persistedText = '';
+  private persistedUnconfirmed = false;
   private record?: Record<string, unknown>;
   private storedBytes: string | null = null;
   private readError?: unknown;
@@ -77,6 +93,9 @@ export class SessionDraft {
   private retired = false;
   private notificationDepth = 0;
   private notificationPending = false;
+  private fieldRevision = 0;
+  private submissionRevision = 0;
+  private readonly textEdits = new Map<string, number>();
   readonly reference: DraftReference;
   readonly sessionId: string;
   private readonly storage?: DraftStorage;
@@ -112,6 +131,8 @@ export class SessionDraft {
       const meta = this.metadata();
       this.snapshot = Object.freeze({ ...this.snapshot, text: value.text, hasContent: !!value.text.trim(),
         unconfirmed: value.unconfirmed || meta.pendingToken !== undefined });
+      this.persistedText = this.snapshot.text;
+      this.persistedUnconfirmed = this.snapshot.unconfirmed;
     } catch (error) { this.readError = error; this.report(error); }
   }
 
@@ -121,9 +142,48 @@ export class SessionDraft {
     return () => { this.listeners.delete(listener); };
   };
   isRetired(): boolean { return this.retired; }
-  retire(): void { this.retired = true; }
+  hasUnpersistedChanges(): boolean {
+    return this.snapshot.text !== this.persistedText || this.snapshot.unconfirmed !== this.persistedUnconfirmed;
+  }
+  hasUnclaimedStoredData(): boolean {
+    if (this.readError) return true;
+    if (!this.record) return false;
+    const meta = this.metadata();
+    const owns = (namespace: string) => {
+      const field = this.fields.get(namespace);
+      return field?.active && field.encoded !== undefined;
+    };
+    if (Object.keys((meta.schemas ?? {}) as Record<string, unknown>).some(namespace => !owns(namespace))) return true;
+    if (Object.keys(meta).some(key => !['version', 'purpose', 'pendingToken', 'schemas'].includes(key))) return true;
+    const purposeKeys = this.reference.purpose.kind === 'prompt' ? ['kind'] : ['kind', 'requestId'];
+    if (draftRecord(meta.purpose) && Object.keys(meta.purpose).some(key => !purposeKeys.includes(key))) return true;
+    // The existing persistence.restore contract owns the complete legacyRecord,
+    // not individually declared legacy keys. Only a live restoring field may
+    // interpret it; merely sharing a module prefix does not own a namespace.
+    return Object.keys(this.record).some(key => !['text', 'unconfirmed', META].includes(key))
+      && ![...this.legacyRestorers].some(owns);
+  }
+  setAskContext(context?: DraftAskContext): void {
+    const next = !this.retired && this.reference.purpose.kind === 'ask' ? context : undefined;
+    const previous = this.snapshot.askContext;
+    if (previous?.question === next?.question
+      && JSON.stringify(previous?.choices) === JSON.stringify(next?.choices)) return;
+    this.publish({ askContext: next === undefined ? undefined : immutableDraftData({
+      question: next.question, ...(next.choices === undefined ? {} : { choices: [...next.choices] }),
+    }) });
+  }
+  retire(): void {
+    if (this.retired) return;
+    this.retired = true;
+    if (this.reference.purpose.kind === 'prompt') {
+      try {
+        if (!this.hasUnclaimedStoredData() && this.storage && this.storage.getItem(this.key) === this.storedBytes) this.storage.removeItem(this.key);
+      } catch (error) { this.report(error); }
+    }
+    this.publish({ retired: true, ...(this.snapshot.askContext ? { askContext: undefined } : {}) });
+  }
   assertEditable(): void {
-    if (this.retired) throw new Error('This decision draft has retired');
+    if (this.retired) throw new Error('This draft has retired');
     if (schemaHookDepth) throw new Error('Draft schema hooks must not mutate drafts');
   }
   pure<T>(callback: () => T): T {
@@ -184,13 +244,14 @@ export class SessionDraft {
     const schemas = { ...(previous.schemas as Record<string, unknown> | undefined) };
     for (const [namespace, value] of encoded) Object.defineProperty(schemas, namespace, { value, enumerable: true, configurable: true, writable: true });
     const meta: Record<string, unknown> = {
-      ...previous, version: 1, purpose: this.reference.purpose,
+      ...previous, version: 1, purpose: { ...(previous.purpose as Record<string, unknown> | undefined), ...this.reference.purpose },
       ...(Object.keys(schemas).length ? { schemas } : {}),
     };
     if (token) meta.pendingToken = token;
     else delete meta.pendingToken;
     const next = { ...this.record, text: snapshot.text, unconfirmed: snapshot.unconfirmed || !!token, [META]: meta };
     const hasOpaque = Object.keys(next).some(key => !['text', 'unconfirmed', META].includes(key))
+      || Object.keys(meta.purpose as Record<string, unknown>).some(key => !Object.hasOwn(this.reference.purpose, key))
       || Object.keys(schemas).length > 0 || Object.keys(meta).some(key => !['version', 'purpose'].includes(key));
     if (!snapshot.text && !snapshot.unconfirmed && !token && !hasOpaque) {
       this.storage?.removeItem(this.key);
@@ -202,10 +263,15 @@ export class SessionDraft {
       this.record = immutableDraftData(next);
       this.storedBytes = bytes;
     }
+    if (this.storage) {
+      this.persistedText = snapshot.text;
+      this.persistedUnconfirmed = snapshot.unconfirmed;
+    }
   }
   restoreInput(namespace: string): DraftRestoreInput | undefined {
     if (this.readError) throw this.readError;
     if (!this.record) return undefined;
+    this.legacyRestorers.add(namespace);
     const schemas = this.metadata().schemas as Record<string, unknown> | undefined;
     return Object.freeze({
       stored: schemas && Object.hasOwn(schemas, namespace)
@@ -220,11 +286,13 @@ export class SessionDraft {
   attachField(field: DraftField): void {
     this.assertCanAttach(field);
     this.fields.set(field.namespace, field);
+    this.fieldRevision++;
     this.publish();
   }
   detachField(field: DraftField): void {
     if (this.fields.get(field.namespace) !== field) return;
     this.fields.delete(field.namespace);
+    this.fieldRevision++;
     this.publish();
   }
   commitField(field: DraftField, encoded: string | undefined, commit: () => void, submission?: DraftSubmission): void {
@@ -233,12 +301,14 @@ export class SessionDraft {
     else this.assertEditable();
     if (encoded !== undefined) this.persist(this.snapshot, this.pendingToken, new Map([[field.namespace, encoded]]));
     commit();
+    this.fieldRevision++;
     this.publish();
   }
-  edit = (text: string): void => {
+  edit = (text: string, owner?: string): void => {
     this.assertEditable();
     const next = { ...this.snapshot, text, revision: this.snapshot.revision + 1 };
     try { this.persist(next); } catch (error) { this.report(error); }
+    if (owner) this.textEdits.set(owner, (this.textEdits.get(owner) ?? 0) + 1);
     this.publish(next);
   };
   dismissNotice = (): void => {
@@ -246,11 +316,16 @@ export class SessionDraft {
     try { this.persist(next); } catch (error) { this.report(error); return; }
     this.publish(next);
   };
-  bindModule(owner: string, writes: readonly DraftWrite[], report: DraftReport = this.report, canBlock = () => false): { draft: ModuleDraft; dispose(): void } {
+  bindModule(owner: string, writes: readonly DraftWrite[], report: DraftReport = this.report, canBlock = () => false,
+    transport?: DraftSubmissionTransport): { draft: ModuleDraft; dispose(): void } {
     let active = true;
     const subscriptions = new Set<() => void>();
     const draft: ModuleDraft = Object.freeze({
       ...this.reference,
+      getSnapshot: () => {
+        if (!active) throw new Error('Module draft binding has been revoked');
+        return this.snapshot;
+      },
       subscribe: (listener: () => void) => {
         if (!active) return () => {};
         const unsubscribe = this.subscribe(() => { try { listener(); } catch (error) { report(error); } });
@@ -259,7 +334,45 @@ export class SessionDraft {
       },
       editText: (text: string) => {
         if (!active || !writes.includes('text')) throw new Error(`Module ${owner} cannot write text`);
-        this.edit(text);
+        this.edit(text, owner);
+      },
+      editTextIfRevision: (text: string, revision: number) => {
+        if (!active || !writes.includes('text')) throw new Error(`Module ${owner} cannot write text`);
+        this.assertEditable();
+        const snapshot = this.snapshot;
+        if (snapshot.revision !== revision || snapshot.pending || snapshot.unconfirmed || snapshot.blocks.length) return false;
+        const next = { ...snapshot, text, revision: snapshot.revision + 1 };
+        this.persist(next);
+        this.textEdits.set(owner, (this.textEdits.get(owner) ?? 0) + 1);
+        this.publish(next);
+        return true;
+      },
+      captureSend: (): CapturedDraftSend => {
+        if (!active || !transport) throw new Error(`Module ${owner} cannot send this draft`);
+        this.assertEditable();
+        const unavailable = transport.check();
+        if (unavailable) throw new BlockedDraftSend(unavailable);
+        const fields = this.fieldRevision, attempts = this.submissionRevision;
+        const externalText = this.snapshot.revision - (this.textEdits.get(owner) ?? 0);
+        let result: Promise<DraftSendResult> | undefined, cancelled = false;
+        return Object.freeze({
+          cancel: () => { cancelled = true; },
+          send: (expectedRevision: number) => {
+            result ??= Promise.resolve().then(() => this.submit(transport.send, () => true, ownPending => {
+              if (!active) return 'revoked';
+              if (this.retired) return 'retired';
+              if (cancelled) return 'cancelled';
+              if (this.snapshot.revision !== expectedRevision) return 'revision-mismatch';
+              if (this.snapshot.revision - (this.textEdits.get(owner) ?? 0) !== externalText) return 'draft-changed';
+              if (this.fieldRevision !== fields || this.submissionRevision !== attempts + (ownPending ? 1 : 0)) return 'draft-changed';
+              if (this.snapshot.pending && !ownPending) return 'pending';
+              if (this.snapshot.unconfirmed) return 'unconfirmed';
+              if (this.snapshot.blocks.length) return 'peer-blocked';
+              return transport.check();
+            }));
+            return result;
+          },
+        });
       },
       block: (reason: string) => {
         this.assertEditable();
@@ -288,6 +401,7 @@ export class SessionDraft {
     } };
   }
   private assertSubmission(token: string): void {
+    if (this.retired && this.reference.purpose.kind === 'prompt') throw new Error('This prompt draft has retired');
     if (this.pendingToken !== token || !this.snapshot.pending) throw new Error('Stale draft submission token');
     if (this.storage) {
       const bytes = this.storage.getItem(this.key);
@@ -302,6 +416,7 @@ export class SessionDraft {
     const next = { ...this.snapshot, pending: true, unconfirmed: false };
     this.persist(next, token, encoded);
     this.pendingToken = token;
+    this.submissionRevision++;
     this.publish(next);
   }
   private finish(token: string, acknowledged: boolean, revision?: number): boolean {
@@ -337,9 +452,13 @@ export class SessionDraft {
     const token = `action-${draftIdentity()}`;
     try {
       if (!this.allowed(check)) return false;
+      if (this.hasUnclaimedStoredData()) throw new Error('草稿包含尚未由当前界面模块恢复的数据；请切换到经典界面恢复后再提交。');
       this.begin(token, new Map());
       if (!check()) throw new Error('The native decision has changed');
+      if (this.hasUnclaimedStoredData()) throw new Error('Draft schema ownership changed before dispatch');
+      const acceptedInView = captureLocalSubmission(this.sessionId);
       const acknowledged = (await send()) === true;
+      if (acknowledged) acceptedInView();
       return this.finish(token, acknowledged);
     } catch (error) {
       this.report(error);
@@ -347,10 +466,23 @@ export class SessionDraft {
       return false;
     }
   };
-  send = async (send: (request: NativeDraftRequest) => Promise<boolean>, check = () => true): Promise<boolean> => {
+  send = async (send: (request: NativeDraftRequest) => Promise<boolean>, check = () => true): Promise<boolean> =>
+    (await this.submit(send, check)).status === 'acknowledged';
+
+  private submit = async (send: (request: NativeDraftRequest) => Promise<boolean>, check: () => boolean,
+    guard?: (ownPending: boolean) => DraftSendBlockReason | undefined): Promise<DraftSendResult> => {
     let submission: DraftSubmission | undefined;
+    let dispatched = false, nativeAcknowledged = false;
+    let failure: DraftSendBlockReason = 'projection-failed';
     try {
-      if (!this.allowed(check) || this.snapshot.blocks.length || !this.snapshot.hasContent) return false;
+      const blocked = guard?.(false);
+      if (blocked) return blockedSend(blocked);
+      if (!this.allowed(check)) return blockedSend('pending');
+      if (this.hasUnclaimedStoredData()) {
+        throw new Error('草稿包含尚未由当前界面模块恢复的数据；请切换到经典界面恢复后再提交。');
+      }
+      if (this.snapshot.blocks.length) return blockedSend('peer-blocked');
+      if (!this.snapshot.hasContent) return blockedSend('empty');
       submission = Object.freeze({ id: `send-${draftIdentity()}`, draft: this.reference, base: this.snapshot });
       const fields: Record<string, unknown> = Object.create(null);
       const captured: CapturedField[] = [];
@@ -375,9 +507,16 @@ export class SessionDraft {
       const text = submission.base.text.trim();
       if (!text && !fieldContent) throw new Error('The draft has no projected native content');
       const request = immutableDraftData(nativeDraftRequest(this.reference, text, fields));
+      failure = 'persistence-failed';
       this.begin(submission.id, encoded);
+      const changed = guard?.(true);
+      if (changed) throw new BlockedDraftSend(changed);
       if (!check()) throw new Error('The native draft/request changed before dispatch');
-      const acknowledged = (await send(request)) === true;
+      if (this.hasUnclaimedStoredData()) throw new Error('Draft schema ownership changed before dispatch');
+      dispatched = true;
+      const acceptedInView = captureLocalSubmission(this.sessionId);
+      const acknowledged = nativeAcknowledged = (await send(request)) === true;
+      if (acknowledged) acceptedInView();
       this.assertSubmission(submission.id);
       let complete = acknowledged;
       if (acknowledged) for (const entry of captured) {
@@ -393,11 +532,21 @@ export class SessionDraft {
         try { this.persist(next); } catch (error) { this.report(error); }
         this.publish(next);
       }
-      return result && complete;
+      return Object.freeze(result && complete ? { status: 'acknowledged' }
+        : { status: 'unconfirmed', reason: acknowledged ? 'settlement-failed' : 'native-unconfirmed' });
     } catch (error) {
-      this.report(error);
-      if (submission && this.pendingToken === submission.id) this.finish(submission.id, false);
-      return false;
+      if (!(error instanceof BlockedDraftSend)) this.report(error);
+      if (submission && this.pendingToken === submission.id) {
+        if (guard && !dispatched) {
+          const next = { ...this.snapshot, pending: false, unconfirmed: submission.base.unconfirmed };
+          try { this.persist(next, null); }
+          catch (error) { next.unconfirmed = true; this.report(error); }
+          this.pendingToken = undefined;
+          this.publish(next);
+        } else this.finish(submission.id, false);
+      }
+      return dispatched ? Object.freeze({ status: 'unconfirmed', reason: nativeAcknowledged ? 'settlement-failed' : 'native-unconfirmed' })
+        : blockedSend(error instanceof BlockedDraftSend ? error.reason : failure);
     }
   };
 }

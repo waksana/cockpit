@@ -12,11 +12,10 @@ The client does not read or write local files on behalf of attachment inputs.
 This documents the checked-in source. See
 [source status](../../docs/cockpit-plan.md#source-status) and the
 [documentation index](../../docs/README.md).
-The agreed [module target](../../docs/module-contract-draft.md#8-后续目标)
-will give modules separate HTTP MCP paths on the host's one port. That is not
-implemented by this current stdio API client. Module cold-loading and native
-per-session MCP switches are different operations; this document only describes
-the currently available tools.
+Modules may implement their own HTTP MCP through existing host routes and declare
+creation-time roles or metadata-only additions applied on ordinary reload/next cold load; see the [module contract](../../docs/module-contract-draft.md#44-创建时角色与模块-http-mcp).
+Their business tools do not enter this stdio registry. Module cold-loading,
+role selection and native per-session MCP switches remain distinct operations.
 
 Entry: `dist/index.js`, started with the packaged `tsx` loader so the
 `@cockpit/protocol` TypeScript workspace dependency is also supported.
@@ -26,6 +25,79 @@ Node/platform requirements are authoritative; do not rely on implicit TypeScript
 stripping in an arbitrary Node version.
 
 ## Discover and invoke the API
+
+### Roles and explicit capability readiness
+
+`cockpit_list_roles` discovers module roles. `cockpit_new_session` accepts optional
+`roles: [{moduleId,roleId}]`, including multiple roles from the same module.
+Selected tools are unioned and source-labelled role System Prompts appended; no startup
+prompt is sent. Session list/get JSON and Markdown expose saved selections,
+current-handle `appliedRoles` and `rolesNeedReload` when provided, including saved
+roles while unloaded; ordinary list/get/snapshot reads do not calculate or return role
+readiness. `cockpit_role_readiness` explicitly checks the current role assembly,
+native skill enablement, MCP connection/policy state and current tool visibility.
+It does not load, repair or add roles to existing sessions. The result is
+on-demand capability evidence, independent of busy turns, pending messages or
+subagents—not a cached status or a readiness badge.
+
+Native tool metadata can become uninitialized after model or Skill changes.
+This is unconfirmed visibility, not proof that every role tool is missing.
+Hosts publishing `session/tools-initialize` support explicit recovery through
+`cockpit_call_intent` with `{name:"session/tools-initialize",body:{sessionId:"..."}}`
+on a loaded idle target, followed by a separate readiness check. It preserves the
+current handle and temporary choices; it does not send a prompt or enable tools.
+See [tool invalidation and recovery](../../docs/module-contract-draft.md#工具表失效与显式恢复)
+for the older-host and empty-session limits. Discover the running host's capability;
+source documentation is not deployment evidence.
+
+Hosts publishing `session/resources-prepare` accept one explicit preparation via
+`cockpit_call_intent`, for example
+`{name:"session/resources-prepare",body:{sessionId:"...",skills:["optional"],mcpServers:[{name:"tools",tools:["raw_tool_name"]}]}}`.
+The target must already be loaded and idle. All selections are prevalidated;
+only selected disabled resources are enabled, with no prompt/reload/global change.
+Tools are exact native `mcpToolName` identities, not wire names; `"*"` is rejected,
+and omitted/empty tools require at least one actual offered tool and return only
+the first offered name as a minimal witness. Errors are capped at 2000 characters
+with explicit truncation. Keep the whole
+partial/unconfirmed receipt on failure; never retry automatically. `ok:true` is
+not role readiness, Task binding or Skill body loading. Preparation initializes
+once after a confirmed resource enable or when metadata is null, repairing the
+native MCP-enable stale non-null table without a separate follow-on call.
+Native filtering remains effective; unchanged already-enabled selections with
+non-null missing tools fail without speculative rebuilding.
+See [resource preparation](../../docs/module-contract-draft.md#session-resource-preparation).
+
+`cockpit_add_roles {session_id, roles: [{moduleId,roleId}]}` invokes the same
+`roles/add` intent as Web. It appends saved role metadata only, retaining the
+original ID, history and cwd. Main turns, subagents, shells, queued work,
+questions and schedules do not block saving; self-calls and empty sessions are
+allowed. Native load/close/delete conflicts may reject. It never stops, reloads,
+resumes or prompts a session; unloaded sessions stay unloaded. There is no
+automatic idle wait, notification mechanism, global configuration change or retry.
+Saving validates selected catalog IDs and the combined 64-role limit, not resource
+composition or availability. New roles apply only on ordinary explicit reload or
+next cold load. Normal lifecycle restrictions and native/global defaults still
+apply, without special preservation of temporary switches or session-only
+resources. Composition, integrity and resource conflicts are validated then;
+unavailable saved resources fail loading rather than silently dropping roles.
+
+The result is `{sessionId,status,roles,appliedRoles,loaded,rolesNeedReload,error?,recovery?}`.
+Compatibility change: `status` is now `saved | unchanged | uncertain`, not `applied`
+or `incomplete`, and there is no `phase` or `readiness` response. `saved` does not
+mean applied or ready; duplicate saved selections return `unchanged`, even when
+not yet applied. `rolesNeedReload` is true exactly when loaded saved/applied role
+ID sets differ; it is false while unloaded because saved roles apply on next load.
+Readiness remains a separate passive check. Both semantic and generic MCP tools
+preserve complete `uncertain` results and mark them `isError`. Inspect the same
+session's saved metadata before explicit recovery; unknown persistence outcomes
+are not proof that nothing was saved. If persistence readback also fails, the
+backend returns an explicit error instead of a stale saved-role snapshot.
+No automatic retries or rollback.
+
+Queue control remains explicit: `session/interrupt` interrupts one main turn
+while preserving pending content, per-ID removal removes only the selected
+pending item, and ordinary Stop/cancel clears the queue and aborts. There is no
+automatic queue advancement or operation-receipt API.
 
 `GET /capabilities` lists the actual protocol `Intents`, with names, descriptions,
 and a transport inventory. `prefix`, `limit` (1–100), and `offset` bound the listing.

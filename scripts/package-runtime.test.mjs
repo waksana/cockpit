@@ -84,7 +84,7 @@ async function fixture(t, { realDeploy = false } = {}) {
     put(source, path, contents, mode === '100755' ? 0o755 : 0o644);
     tracked.set(path, mode);
   };
-  for (const path of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/web/package.json',
+  for (const path of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/web/package.json', 'packages/ui/package.json',
     'apps/server/package.json', 'apps/mcp/package.json', 'packages/core/package.json', 'packages/protocol/package.json',
     'packages/module-api/package.json', 'scripts/export-module-api.mjs']) {
     track(path, readFileSync(join(repository, path), 'utf8'));
@@ -116,7 +116,10 @@ export const marker = [Fixture.READY, typeof CopilotClient, protocolMarker];
     'consumer-runtime.json', 'service-delivery.json']) track(path, 'Must not ship');
   put(source, 'apps/server/src/untracked.ts', 'Must not ship untracked source');
   put(source, 'apps/web/dist/index.html', '<!doctype html><title>Synthetic Web</title>');
-  put(source, 'apps/web/dist/licenses/lucide.txt', 'Synthetic bundled icon license');
+  put(source, 'apps/web/dist/next/index.html', '<!doctype html><title>Synthetic New Web</title>');
+  for (const name of ['lucide', 'frontend', 'shadcn', 'tw-animate-css']) {
+    put(source, `apps/web/dist/licenses/${name}.txt`, `Synthetic ${name} license`);
+  }
   put(source, 'apps/web/dist/assets/app.js', 'console.log("synthetic Web");');
   put(source, 'apps/web/dist/assets/app.test.mjs', 'Must not ship a first-party test');
   put(source, 'apps/mcp/dist/index.js', `
@@ -234,7 +237,9 @@ test('fresh Web installation keeps static app metadata without a worker or archi
   for (const path of ['src/sw.ts', 'src/assets/vite.svg', 'fixtures/composer-input.html',
     'public/icons.svg', 'public/icon.svg', 'public/favicon.svg', 'public/apple-touch-icon.png',
     'public/icon-192.png', 'public/icon-512.png']) assert.equal(existsSync(join(web, path)), false, path);
-  assert.doesNotMatch(config, /VitePWA|injectManifest|\binput\s*:/);
+  assert.doesNotMatch(config, /VitePWA|injectManifest|chat-lab\.html/);
+  assert.match(config, /classic:.*new URL\('\.\/index\.html'/);
+  assert.match(config, /next:.*new URL\('\.\/next\/index\.html'/);
   const devDependencies = JSON.parse(readFileSync(join(web, 'package.json'), 'utf8')).devDependencies;
   assert.equal(devDependencies['vite-plugin-pwa'], undefined);
 });
@@ -244,7 +249,11 @@ test('Chat Lab stays an opt-in production-component harness rather than another 
   const entry = readFileSync(join(web, 'chat-lab.html'), 'utf8');
   const source = readFileSync(join(web, 'src/dev/chat-lab.tsx'), 'utf8');
   const plugin = readFileSync(join(web, 'chat-lab-plugin.ts'), 'utf8');
-  assert.match(entry, /\/src\/dev\/chat-lab\.tsx/);
+  assert.match(entry, /\/src\/dev\/chat-lab-entry\.ts/);
+  const loader = readFileSync(join(web, 'src/dev/chat-lab-entry.ts'), 'utf8');
+  assert.match(loader, /await import\('\.\/chat-lab'\)/);
+  assert.match(loader, /isolateNextLab\(window\)/);
+  assert.match(loader, /await import\('\.\/next-lab'\)/);
   for (const component of ['Thread', 'ChatHeader']) {
     assert.ok(source.includes(`from '../components/${component}'`));
   }
@@ -321,7 +330,10 @@ test('synthetic packaging inventories its complete closure and preserves depende
   }
   assert.ok(manifest.files.some(file => file.path.endsWith(wrapper) && file.mode === '0755'));
   assert.ok(paths.includes('apps/web/dist/assets/app.js'));
-  assert.ok(paths.includes('apps/web/dist/licenses/lucide.txt'));
+  assert.ok(paths.includes('apps/web/dist/next/index.html'));
+  for (const name of ['lucide', 'frontend', 'shadcn', 'tw-animate-css']) {
+    assert.ok(paths.includes(`apps/web/dist/licenses/${name}.txt`));
+  }
   assert.ok(paths.includes('NOTICE.md'));
   assert.equal(paths.some(path => path.includes('untracked.ts') || path.endsWith('.modules.yaml') || path.endsWith('/lock.yaml')
     || path.endsWith('/.bin/build-shim')), false);
@@ -355,12 +367,14 @@ test('packaging rejects dirty source, the wrong commit, and unsafe or existing o
 });
 
 test('packaging fails explicitly on missing inputs and dependency failures without retaining partial output', async t => {
-  for (const failure of ['tracked', 'web', 'icon-license', 'mcp', 'loader', 'native', 'sdk-version', 'deploy', 'dirty-during-deploy']) {
+  for (const failure of ['tracked', 'web', 'next-web', 'lucide-license', 'frontend-license', 'shadcn-license', 'tw-animate-css-license',
+    'mcp', 'loader', 'native', 'sdk-version', 'deploy', 'dirty-during-deploy']) {
     await t.test(failure, async t => {
       const f = await fixture(t);
       if (failure === 'tracked') f.tracked.delete('LICENSE');
       if (failure === 'web') await rm(join(f.source, 'apps/web/dist/index.html'));
-      if (failure === 'icon-license') await rm(join(f.source, 'apps/web/dist/licenses/lucide.txt'));
+      if (failure === 'next-web') await rm(join(f.source, 'apps/web/dist/next/index.html'));
+      if (failure.endsWith('-license')) await rm(join(f.source, `apps/web/dist/licenses/${failure.slice(0, -8)}.txt`));
       if (failure === 'mcp') await writeFile(join(f.source, 'apps/mcp/dist/index.js'), '');
       if (failure === 'loader') f.state.missingLoader = true;
       if (failure === 'native') f.state.missingNative = true;

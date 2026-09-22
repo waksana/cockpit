@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { useUp } from '../lib/nav';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { useCockpit } from '../net/store';
@@ -17,21 +17,17 @@ function MasterHeader(props: ManagementHeaderProps) {
 }
 function MasterHeaderBase({ section, item, onRefresh, actions }: ManagementHeaderProps) {
   const up = useUp();
-  const backRef = useRef<HTMLButtonElement | null>(null);
   const connState = useCockpit((s) => s.connState);
   const mcpRefresh = useCockpit((s) => s.mcpRefresh);
   const { run, busy, error } = useKeyedAction(`global:refresh:${section}`);
-  useLayoutEffect(() => {
-    if (item === null) backRef.current?.focus();
-  }, [item]);
   return <>
     <PaneHeader
-      leading={<button ref={backRef} className="ck-icon-button rp" type="button"
+      leading={<button className="ck-icon-button rp" type="button"
         aria-label={item === null ? '返回会话列表' : `返回${SECTION_TITLE[section]}列表`}
         onClick={() => up(item === null ? '/' : `/${section}`)}>
         <Icon name="back" size={24} />
       </button>}
-      title={<span className="manage-title ck-text-primary">{SECTION_TITLE[section]}</span>}
+      title={<span className="pane-title ck-text-primary">{SECTION_TITLE[section]}</span>}
       actions={<>{actions}<button className="ck-icon-button rp manage-action" type="button"
         aria-label={section === 'mcp' ? '刷新 Copilot MCP 配置缓存' : '刷新'}
         disabled={!onRefresh || connState !== 'open' || busy} aria-busy={busy} onClick={() => {
@@ -48,23 +44,20 @@ function DetailHeader(props: ManagementDetailHeaderProps) {
 }
 function DetailHeaderBase({ item, actions }: ManagementDetailHeaderProps) {
   const up = useUp();
-  const titleRef = useRef<HTMLSpanElement | null>(null);
-  useLayoutEffect(() => { titleRef.current?.focus(); }, [item]);
   return <PaneHeader className="chat-topbar manage-detail-header"
     leading={<button className="chat-back ck-icon-button rp lg:hidden" type="button" aria-label="返回" onClick={() => up()}>
       <Icon name="back" size={24} />
     </button>}
-    title={<span ref={titleRef} tabIndex={-1} className="manage-title manage-detail-headtitle">{item}</span>}
+    title={<span className="pane-title">{item}</span>}
     actions={actions} />;
 }
 
 export function ManagementShell({ section, item, master, detail, onRefresh }: {
   section: ManageSection; item: string | null; master: ReactNode; detail: ReactNode; onRefresh?: () => void;
 }) {
-  return <Shell ariaLabel="管理">
-    <MasterPane ariaLabel={SECTION_TITLE[section]} mobileVisible={item === null}
-      header={<MasterHeader section={section} item={item} onRefresh={onRefresh} />}>{master}</MasterPane>
-    <DetailPane ariaLabel="详情" mobileVisible={item !== null}
-      header={item !== null ? <DetailHeader item={item} /> : undefined}>{detail}</DetailPane>
-  </Shell>;
+  return <Shell ariaLabel="管理"
+    master={<MasterPane ariaLabel={SECTION_TITLE[section]} mobileVisible={item === null}
+      header={<MasterHeader section={section} item={item} onRefresh={onRefresh} />}>{master}</MasterPane>}
+    main={<DetailPane ariaLabel="详情" mobileVisible={item !== null}
+      header={item !== null ? <DetailHeader item={item} /> : undefined}>{detail}</DetailPane>} />;
 }

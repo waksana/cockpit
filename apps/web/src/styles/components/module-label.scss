@@ -1,0 +1,49 @@
+.module-label {
+  background: color-mix(in srgb, var(--link-color) 12%, var(--surface-color));
+  color: var(--primary-text-color);
+  font-family: inherit;
+  font-weight: 500;
+  vertical-align: middle;
+  white-space: normal;
+}
+.module-label-name { min-width: 0; }
+.role-badge {
+  display: inline-grid;
+  grid-template-columns: minmax(0, max-content) minmax(0, max-content);
+  align-items: stretch;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: var(--host-space-xs);
+  font-family: inherit;
+  font-size: var(--host-text-meta);
+  line-height: var(--host-leading-ui);
+  vertical-align: middle;
+  .module-label { border-radius: 0; }
+  &[data-unapplied] {
+    border-style: dashed;
+    .module-label, .role-badge-name {
+      background: var(--surface-color);
+      color: var(--secondary-text-color);
+    }
+  }
+}
+.role-badge-name {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 1px var(--host-space-xs);
+  border-inline-start: 1px solid var(--border-color);
+  background: color-mix(in srgb, var(--primary-text-color) 6%, var(--surface-color));
+  color: var(--primary-text-color);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.session-role-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--host-space-xs);
+  min-width: 0;
+}

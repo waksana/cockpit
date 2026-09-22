@@ -25,6 +25,7 @@ import { GracefulShutdown } from './shutdown.ts';
 import { registerChatStream } from './chat-stream.ts';
 import { serviceIdentity } from './identity.ts';
 import { ModuleHost } from './module-host.ts';
+import { guardModuleHostStartup, type ModuleStartupGuard } from './module-lifetime.ts';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.COCKPIT_PORT ?? 8771);
@@ -46,15 +47,17 @@ export type ServerEngine = Pick<Engine,
   | 'login' | 'snapshot' | 'status' | 'busyCount' | 'newSession' | 'forkSession' | 'chat' | 'stop'
   | 'prompt' | 'cancel' | 'interrupt' | 'setModel' | 'rename' | 'compact' | 'rewind' | 'setMode'
   | 'deleteSession' | 'unload' | 'load'
-  | 'reload' | 'getPlan' | 'getUsage' | 'getActivity' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
+  | 'reload' | 'initializeSessionTools' | 'prepareSessionResources' | 'getPlan' | 'getUsage' | 'getActivity' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
   | 'planSupersede' | 'respondElicitation' | 'removeQueued' | 'refreshList'
   | 'listLive' | 'getMeta' | 'listGlobalMcp' | 'setMcpDefault'
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
   | 'listGlobalSkills' | 'setGlobalSkill' | 'readSkillBody' | 'listSessionSkills' | 'toggleSessionSkill' | 'refreshSkills'
   | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
+  | 'listRoles' | 'roleReadiness' | 'addRoles'
 >;
 let engine: ServerEngine;
 let moduleHost: ModuleHost | undefined;
+let moduleStartupGuard: ModuleStartupGuard | undefined;
 
 // No SDK construction, preferences, listeners, or production dependency override.
 export function setTestDependencies(deps: { engine: ServerEngine; shutdown?: GracefulShutdown }): void {
@@ -308,7 +311,15 @@ const handlers: IntentHandlers = {
   'system/shutdown': () => ({ ok: true, shutdown: shutdown.request() }),
   'system/status': serviceStatus,
   'runtime/snapshot': async () => engine.snapshot(),
-  'session/new': async (b) => ({ sessionId: await engine.newSession(b.cwd) }),
+  'session/new': async (b) => ({ sessionId: await (b.roles ? engine.newSession(b.cwd, b.roles) : engine.newSession(b.cwd)) }),
+  'roles/list': async () => ({ roles: engine.listRoles() }),
+  'roles/add': b => engine.addRoles(b.sessionId, b.roles),
+  'roles/readiness': b => engine.roleReadiness(b.sessionId, b.roles),
+  'session/tools-initialize': async b => {
+    await engine.initializeSessionTools(b.sessionId);
+    return { ok: true };
+  },
+  'session/resources-prepare': b => engine.prepareSessionResources(b),
   'session/fork': (b) => engine.forkSession(b.sessionId, b.toEventId, b.name),
   'session/chat': (b, signal) => engine.chat(b, signal),
   prompt: async (b) => b.attachments === undefined
@@ -428,17 +439,17 @@ class IntentBoundaryError extends Error {
   }
 }
 
-async function dispatch<K extends IntentName>(name: K, body: unknown, signal?: AbortSignal): Promise<unknown> {
+async function dispatch<K extends IntentName>(name: K, body: unknown, signal?: AbortSignal): Promise<IntentResult<K>> {
   const input = Intents[name].body.safeParse(body === undefined ? {} : body);
   if (!input.success) throw new IntentBoundaryError(input.error.message, 400, 'INVALID_INTENT_BODY');
   // Zod's indexed schema union loses the key/value correlation; the mapped
-  // handlers retain it. This is the only assertion at the transport boundary.
+  // handlers retain it. Assertions restore that correlation after validation.
   const result = await handlers[name](input.data as IntentBody<K>, signal);
   const output = Intents[name].result.safeParse(result);
   if (!output.success) {
     throw new IntentBoundaryError(`Invalid result for ${name}: ${output.error.message}`, 500, 'INVALID_INTENT_RESULT');
   }
-  return output.data;
+  return output.data as IntentResult<K>;
 }
 
 function errorStatus(error: unknown): number {
@@ -449,6 +460,7 @@ function errorStatus(error: unknown): number {
 }
 
 const readIntents = new Set<IntentName>([
+  'roles/list', 'roles/readiness',
   'system/status', 'runtime/snapshot', 'session/chat', 'session/list', 'session/get', 'session/refresh',
   'session/resources', 'session/usage', 'session/activity', 'session/plan', 'session/panels', 'session/panel',
   'mcp/global', 'mcp/session', 'skills/global', 'skills/read', 'skills/session',
@@ -523,15 +535,26 @@ app.post('/intent/*', async (req, reply) => {
 
 async function main(runtime: Engine): Promise<void> {
   moduleHost = new ModuleHost({
+    origin: `http://${HOST}:${PORT}`,
+    host: { call: async (name, body) => {
+      const state = shutdown.snapshot();
+      if (state.phase !== 'running') throw new Error('Host is shutting down');
+      const release = shutdown.retain();
+      try { return await dispatch(name, body); }
+      finally { release(); }
+    } },
     observer: runtime,
     onInvalidate: moduleId => onEngineEvent({ type: 'module/invalidated', moduleId }),
+    onEvent: (moduleId, payload) => onEngineEvent({ type: 'module/event', moduleId, payload }),
     report: (id, error) => app.log.error({ moduleId: id, err: error }, 'local module failed'),
   });
   await moduleHost.register(app);
+  runtime.setRoleProvider(moduleHost.roles);
   await registerStaticWeb();
   await runtime.start();
   app.log.info(`engine up (login=${await runtime.login()})`);
   await app.listen({ host: HOST, port: PORT });
+  if (shutdown.snapshot().phase === 'running') moduleHost.ready();
 }
 
 // Serve the built SPA (apps/web/dist) from this process when SERVE_WEB is on, so a
@@ -550,8 +573,10 @@ export async function registerStaticWeb(): Promise<void> {
   await app.register(fastifyStatic, { root: WEB_DIR, index: ['index.html'] });
   app.setNotFoundHandler((req, reply) => {
     const path = req.url.split('?')[0]!;
-    const webRoute = /^\/(?:session\/[^/]+(?:\/[^/]+)?|(?:mcp|skills)(?:\/[^/]+)?)?\/?$/.test(path);
-    if (req.method === 'GET' && webRoute) return reply.sendFile('index.html');
+    const next = path === '/next' || path.startsWith('/next/');
+    const route = next ? path.slice('/next'.length) || '/' : path;
+    const webRoute = /^\/(?:session\/[^/]+(?:\/[^/]+)?|(?:mcp|skills)(?:\/[^/]+)?)?\/?$/.test(route);
+    if (req.method === 'GET' && webRoute) return reply.sendFile(next ? 'next/index.html' : 'index.html');
     reply.code(404).send({ error: 'not found' });
   });
   app.log.info(`serving web SPA from ${WEB_DIR}`);
@@ -561,7 +586,12 @@ export async function registerStaticWeb(): Promise<void> {
 // (COCKPIT_NO_BOOT=1) builds the Fastify app + hooks WITHOUT constructing the
 // Engine (which connects the native runtime) or binding the port. Production
 // (`tsx src/index.ts`) runs with the env unset, so it boots normally.
-function boot(): void {
+async function boot(): Promise<void> {
+  // Held until process exit, including unsuccessful native/transport shutdown.
+  moduleStartupGuard = await guardModuleHostStartup();
+  if (moduleStartupGuard.fencing === 'unsupported-platform') {
+    app.log.warn({ platform: moduleStartupGuard.platform }, 'Module migration fencing unavailable; ordinary startup only, module ID migration disabled');
+  }
   const native = new OfficialRuntime();
   const runtime = new Engine({ runtime: native });
   runtime.log = (msg, data) => app.log.warn(data ?? {}, msg);
@@ -581,4 +611,7 @@ function boot(): void {
   });
 }
 
-if (process.env.COCKPIT_NO_BOOT !== '1') boot();
+if (process.env.COCKPIT_NO_BOOT !== '1') void boot().catch(error => {
+  app.log.error({ err: error }, 'service startup refused');
+  process.exitCode = 1;
+});

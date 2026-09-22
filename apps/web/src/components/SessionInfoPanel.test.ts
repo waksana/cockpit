@@ -113,7 +113,7 @@ test('model controls retain missing native choices and translate known current v
   assert.match(futureEffort, /class="info-model-name" title="known">Known/);
   assert.match(futureEffort, /模型配置/);
   assert.match(futureEffort, /当前原生值：/);
-  assert.equal((futureEffort.match(/class="info-select-wrap"/g) ?? []).length, 3);
+  assert.equal((futureEffort.match(/class="ui-select-wrap"/g) ?? []).length, 3);
   assert.equal((futureEffort.match(/data-icon="down"/g) ?? []).length, 3, 'each full-width select has the existing decorative chevron');
   assert.doesNotMatch(futureEffort, /原生未提供思考力度选项|原生未提供上下文档位能力/);
   for (const availableModels of [undefined, []]) {

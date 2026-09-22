@@ -8,7 +8,7 @@ import { ModuleRuntime } from '../lib/moduleRuntime';
 import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';
 import { Composer } from './Composer';
 
-async function fixture() {
+async function fixture(withInput = false) {
   const digest = 'a'.repeat(64);
   let context!: ModuleFrontendContext, handle!: DraftSchemaHandle<FixtureData>;
   function List({ draft, field }: { draft: ModuleDraft; field: DraftSchemaScope<FixtureData> }) {
@@ -56,6 +56,11 @@ async function fixture() {
             })),
           });
         },
+      }, {
+        id: 'input', boundary: 'composerInput',
+        wrap: Base => props => h(Fragment, null, h(Base, props), withInput && h('button', {
+          type: 'button', 'aria-label': 'Microphone', disabled: props.disabled || props.sendBlocked,
+        }, 'Microphone')),
       }] };
     } }),
     report: assert.fail,
@@ -74,6 +79,24 @@ async function fixture() {
   return { runtime, draft, context, handle, field: handle.forDraft(draft.reference)!, render };
 }
 
+test('left contributions, enhanced input and native send retain their DOM order for prompt and answers', async t => {
+  const f = await fixture(true);
+  t.after(() => f.runtime.stop());
+  const prompt = f.render();
+  assert.ok(prompt.indexOf('aria-label="Add item"') < prompt.indexOf('<textarea'));
+  assert.ok(prompt.indexOf('</textarea>') < prompt.indexOf('aria-label="Microphone"'));
+  assert.ok(prompt.indexOf('aria-label="Microphone"') < prompt.indexOf('class="chat-input-btn'));
+  for (const kind of ['ask', 'plan', 'elicitation'] as const) {
+    const answer = new SessionDraft('fixture', undefined, { kind, requestId: `${kind}-request` });
+    const html = f.render(answer);
+    assert.doesNotMatch(html, /aria-label="Add item"/);
+    assert.ok(html.indexOf('</textarea>') < html.indexOf('aria-label="Microphone"'));
+    assert.ok(html.indexOf('aria-label="Microphone"') < html.indexOf('class="chat-input-btn'));
+    assert.equal((html.match(/<textarea\b/g) ?? []).length, 1);
+    assert.doesNotMatch(html, /actions=|<button\b[^>]*>(?:(?!<\/button>)[\s\S])*<button\b/);
+  }
+});
+
 test('the module owns the full draft list directly above the editor without a host list or plumbing wrapper', async t => {
   const f = await fixture();
   t.after(() => f.runtime.stop());
@@ -85,8 +108,8 @@ test('the module owns the full draft list directly above the editor without a ho
   assert.match(html, /fixture-list/);
   assert.equal((html.match(/fixture-row/g) ?? []).length, 1);
   assert.doesNotMatch(html, /draft-attachments|draft-attachment"|module-draft-recovery|module-composer|chat-input-notice/);
-  assert.match(html, /<\/section><\/div><div class="chat-input">/);
-  assert.match(html, /<div class="chat-input"><button type="button" aria-label="Add item">Add item<\/button><textarea/);
+  assert.match(html, /<\/section><\/div><div class="chat-input ck-input-row">/);
+  assert.match(html, /<div class="chat-input ck-input-row"><button type="button" aria-label="Add item">Add item<\/button><textarea/);
   assert.equal((html.match(/<textarea\b/g) ?? []).length, 1);
   assert.equal((html.match(/class="chat-input-btn ck-icon-button send rp"/g) ?? []).length, 1);
   assert.doesNotMatch(html, /<button\b[^>]*>(?:(?!<\/button>)[\s\S])*<button\b/);
@@ -97,9 +120,10 @@ test('the module owns the full draft list directly above the editor without a ho
   assert.doesNotMatch(f.render(), /class="chat-input-btn ck-icon-button send rp" disabled=""/);
 });
 
-test('module loss removes field UI/blockers and sends core text without hidden schema payloads', async t => {
+test('module loss removes field UI/blockers but blocks text-only sends until retained schema data is restored', async t => {
   const f = await fixture();
   t.after(() => f.runtime.stop());
+  t.mock.method(console, 'error', () => {});
   appendFixture(f.field, fixtureItem('Ready'));
   f.draft.edit('Ordinary text');
   f.context.state.bindDraft(f.draft.reference).block('Interrupted work');
@@ -107,12 +131,25 @@ test('module loss removes field UI/blockers and sends core text without hidden s
   const html = f.render();
   assert.doesNotMatch(html, /Ready|Add item|fixture-list|draft-attachments|module-draft-recovery|移除未完成|不接受附件/);
   assert.match(html, /<textarea[^>]*>Ordinary text<\/textarea>/);
-  assert.match(html, /class="chat-input-btn ck-icon-button send rp" aria-label="发送"/);
   assert.equal(f.draft.getSnapshot().blocks.length, 0);
+  assert.equal(f.draft.hasUnclaimedStoredData(), true);
+  let dispatched = 0;
+  assert.equal(await f.draft.send(async () => { dispatched++; return true; }), false);
+  assert.equal(dispatched, 0, 'revoked fields must not become an incomplete native send');
+  assert.equal(f.draft.getSnapshot().text, 'Ordinary text');
+  assert.deepEqual(f.field.getSnapshot().items, [fixtureItem('Ready')]);
+  f.runtime.stop();
+  await f.runtime.start();
+  assert.match(f.render(), /Ready/);
+  assert.equal(f.draft.hasUnclaimedStoredData(), false);
   assert.equal(await f.draft.send(async request => {
-    assert.deepEqual(request.body, { sessionId: 'fixture', text: 'Ordinary text' });
+    assert.deepEqual(request.body, {
+      sessionId: 'fixture', text: 'Ordinary text', attachments: [fixtureItem('Ready').value],
+    });
     return true;
   }), true);
+  assert.equal(f.draft.getSnapshot().text, '');
+  assert.doesNotMatch(f.render(), /fixture-list/);
 });
 
 test('a request-scoped answer hides the prompt schema without moving or clearing prompt state', async t => {

@@ -2,34 +2,31 @@
 // a confirm (optional destructive) and an optional single text input.
 // Dismisses on scrim tap / Escape / cancel unless an action is pending.
 
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useId, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useKeyedAction } from '../lib/useKeyedResource';
-import { useModalFocus } from '../lib/useModalFocus';
+import { useNativeDialog } from '../lib/useNativeDialog';
+import { UxErrorNotifications } from './UxErrorNotifications';
+import { StateNotice } from './StateNotice';
 
 // Both the lazy placeholder and the loaded picker own the same modal boundary.
 export function DirectoryModal({ children, busy = false, onCancel }: {
   children: ReactNode; busy?: boolean; onCancel: () => void;
 }) {
-  const ref = useRef<HTMLDivElement>(null);
-  useModalFocus(ref, true);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || (event.target instanceof Element && event.target.closest('.ux-error-notifications'))) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      if (!busy) onCancel();
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [busy, onCancel]);
+  const ref = useRef<HTMLDialogElement>(null);
+  useNativeDialog(ref);
+  const titleId = useId();
   const modal = (
-    <div className="dialog-scrim directory-modal" onPointerDown={() => { if (!busy) onCancel(); }}>
-      <div ref={ref} tabIndex={-1} className="dialog-card dirpicker" role="dialog" aria-modal="true"
-        aria-label="选择工作目录" aria-busy={busy} onPointerDown={event => event.stopPropagation()}>
+    <dialog ref={ref} className="dialog-scrim directory-modal host-modal ck-modal" aria-labelledby={titleId} aria-busy={busy}
+      onCancel={event => { event.preventDefault(); if (!busy) onCancel(); }}
+      onClick={event => { if (event.target === event.currentTarget && !busy) onCancel(); }}>
+      <div className="dialog-card dirpicker ck-surface">
+        <h3 id={titleId} className="dialog-title ck-heading" tabIndex={-1} data-dialog-focus
+          ref={heading => { if (heading) heading.autofocus = true; }}>新建会话</h3>
         {children}
       </div>
-    </div>
+      <UxErrorNotifications withinDialog />
+    </dialog>
   );
   return typeof document === 'undefined' ? modal : createPortal(modal, document.body);
 }
@@ -58,9 +55,8 @@ function DialogContent({
   actionKey, onConfirm, onSuccess, onCancel,
 }: DialogProps) {
   const [value, setValue] = useState(input?.initial ?? '');
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  const dialogRef = useRef<HTMLDivElement | null>(null);
-  useModalFocus(dialogRef);
+  const dialogRef = useRef<HTMLDialogElement | null>(null);
+  useNativeDialog(dialogRef);
   const identity = useId();
   const action = useKeyedAction(`dialog:${identity}:${actionKey ?? ''}`);
   const hasInput = input !== undefined;
@@ -77,30 +73,16 @@ function DialogContent({
     if (!action.busy) onCancel();
   };
 
-  useEffect(() => {
-    if (hasInput) { inputRef.current?.focus(); inputRef.current?.select(); }
-  }, [hasInput]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      if (!action.busy) onCancel();
-    };
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  }, [action.busy, onCancel]);
-
   return (
-    <div className="dialog-scrim" onPointerDown={cancel}>
-      <div ref={dialogRef} tabIndex={-1} className="dialog-card" role="dialog" aria-modal="true" aria-label={title} aria-busy={action.busy}
-        aria-describedby={message ? `${identity}-message` : undefined} onPointerDown={(e) => e.stopPropagation()}>
-        <h3 className="dialog-title">{title}</h3>
+    <dialog ref={dialogRef} className="dialog-scrim host-modal ck-modal" aria-label={title} aria-busy={action.busy}
+      aria-describedby={message ? `${identity}-message` : undefined}
+      onCancel={event => { event.preventDefault(); cancel(); }}
+      onClick={event => { if (event.target === event.currentTarget) cancel(); }}>
+      <div className="dialog-card ck-surface">
+        <h3 className="dialog-title ck-heading" data-dialog-focus>{title}</h3>
         {message && <p id={`${identity}-message`} className="dialog-message">{message}</p>}
         {input && (
           <input
-            ref={inputRef}
             className="dialog-input ck-input"
             type="text"
             aria-label={input.placeholder || title}
@@ -113,11 +95,11 @@ function DialogContent({
             }}
           />
         )}
-        {action.error && <p className="dialog-message dialog-error" role="alert">操作失败：{action.error}</p>}
+        {action.error && <StateNotice kind="error">操作失败：{action.error}</StateNotice>}
         {!action.connected && (
-          <p className="dialog-message" role="status">等待连接…连接恢复后可重试。</p>
+          <StateNotice>等待连接…连接恢复后可重试。</StateNotice>
         )}
-        <div className="dialog-actions">
+        <div className="dialog-actions ck-actions">
           <button type="button" className="dialog-btn ck-button rp" disabled={action.busy} onClick={cancel}>取消</button>
           <button
             type="button"
@@ -129,6 +111,7 @@ function DialogContent({
           </button>
         </div>
       </div>
-    </div>
+      <UxErrorNotifications withinDialog />
+    </dialog>
   );
 }

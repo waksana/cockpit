@@ -1,3 +1,6 @@
+@use 'host-ui';
+@use 'surfaces';
+
 // Public Module UI v1. Business layout stays with the consuming component.
 :root {
   --ck-color-text: var(--primary-text-color);
@@ -35,6 +38,7 @@
   background: transparent;
   color: var(--ck-color-text);
   font: inherit;
+  font-size: var(--host-text-body);
   line-height: var(--host-leading-ui);
   text-decoration: none;
   cursor: pointer;
@@ -59,6 +63,7 @@
   background: var(--ck-color-surface);
   color: var(--ck-color-text);
   font: inherit;
+  font-size: var(--host-text-body);
   line-height: var(--host-leading-ui);
   accent-color: var(--ck-color-accent);
 }
@@ -84,6 +89,25 @@ svg.ck-icon, .ck-icon > svg {
 .ck-icon-sm { --ck-icon-size: 16px; }
 .ck-icon-md { --ck-icon-size: 20px; }
 .ck-icon-lg { --ck-icon-size: 24px; }
+.ck-input-hint { font-size: var(--messages-text-size); line-height: var(--host-leading-ui); }
+.ck-status-text { font-size: var(--host-text-meta); line-height: var(--host-leading-ui); }
+.ck-input-row {
+  display: flex; align-items: flex-end; gap: var(--host-space-xs);
+  width: 100%; margin: 0; padding: var(--host-space-xs);
+}
+.ck-input-status {
+  box-sizing: border-box; display: flex; align-items: center; gap: var(--host-space-xs);
+  width: 100%; height: 32px; margin-block: 2px var(--host-space-xs); padding-inline: var(--host-space-xs);
+}
+.ck-status-marker {
+  flex: none; display: flex; align-items: center; justify-content: center;
+  width: 12px; height: 100%; margin-inline-start: calc(var(--ck-control-size) / 2 - 6px);
+}
+.ck-status-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ck-status-action {
+  flex: none; margin-inline-start: auto; min-inline-size: var(--ck-control-size);
+  width: var(--ck-control-size); min-block-size: 32px; height: 32px; padding: 0;
+}
 .ck-text-primary { color: var(--ck-color-text); }
 .ck-text-secondary { color: var(--ck-color-muted); }
 .ck-danger { color: var(--ck-color-danger); }
@@ -92,7 +116,7 @@ svg.ck-icon, .ck-icon > svg {
 
 :is(.ck-button, .ck-icon-button, .ck-input):focus-visible {
   outline: 2px solid var(--ck-color-accent);
-  outline-offset: 2px;
+  outline-offset: -2px;
 }
 :is(.ck-button, .ck-icon-button, .ck-input):is(:disabled, [aria-disabled='true']) {
   opacity: var(--ck-disabled-opacity);

@@ -9,7 +9,8 @@ import { Composer, ComposerNotices } from './Composer';
 import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
 import type { ChatMessage, ChatSession, ExitPlanModeAction } from '../net/types';
-import { acknowledgeInView, type NativeDraftRequest } from '../lib/draft';
+import type { NativeDraftRequest } from '../lib/draft';
+import { observeLocalSubmissions } from '../lib/localSubmission';
 import { getDraftSession } from '../lib/draftSelection';
 import type { SessionDraft } from '../lib/textDraft';
 import { observeThreadScroll, READING_ACTIVITY_EVENT, type ThreadScroll } from './threadScroll';
@@ -34,7 +35,7 @@ function Thought({ message, latest, sessionId }: { message: ChatMessage; latest:
   const { open, toggle } = useDisclosureChoice(JSON.stringify([sessionId, 'thought', message.thoughtKey ?? message.id]), latest);
   return (
     <div className="msg-thought-block">
-      <ActivityHeader className="thought-toggle" icon={<Icon name="skills" size={16} />}
+      <ActivityHeader className="thought-toggle" icon={<Icon name="thought" size={16} />}
         title="思考过程" disclosure={{ open, onToggle: toggle }} />
       {message.incomplete && <div className="thought-incomplete" role="status">{message.incomplete}</div>}
       {open && <div className="activity-detail msg-thought"><MessageBody body={message.thought ?? ''} /></div>}
@@ -342,14 +343,15 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
     : interruptNotice?.sessionId === session.sessionId ? interruptNotice.text : null;
   const drafts = useMemo(() => getDraftSession(session.sessionId), [session.sessionId]);
   const runtime = useModuleRuntime();
-  useLayoutEffect(() => { runtime.prepareDraft(drafts.prompt); }, [runtime, drafts]);
+  useLayoutEffect(() => { runtime.prepareDraft(drafts.prompt, readOnly); }, [runtime, drafts, readOnly]);
   const draftRevision = useSyncExternalStore(drafts.subscribe, drafts.getSnapshot, drafts.getSnapshot);
   const askId = session.ask?.requestId, planId = session.planRequest?.requestId, elicitationId = session.elicitation?.requestId;
   const decisions = useMemo(() => ({
-    ask: askId !== undefined ? { requestId: askId } : null,
+    loaded: session.loaded,
+    ask: session.ask,
     planRequest: planId !== undefined ? { requestId: planId } : null,
     elicitation: elicitationId !== undefined ? { requestId: elicitationId } : null,
-  }), [askId, planId, elicitationId]);
+  }), [session.ask, planId, elicitationId, session.loaded]);
   const authoritative = connected && snapshotReady;
   const draft = useMemo(() => {
     void draftRevision;
@@ -359,11 +361,12 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const askDraft = askId !== undefined ? drafts.candidate({ kind: 'ask', requestId: askId }) : undefined;
   const planDraft = planId !== undefined ? drafts.candidate({ kind: 'plan', requestId: planId }) : undefined;
   const elicitationDraft = elicitationId !== undefined ? drafts.candidate({ kind: 'elicitation', requestId: elicitationId }) : undefined;
+  useLayoutEffect(() => { runtime.prepareDraft(draft, readOnly); }, [runtime, draft, readOnly]);
   const canAct = useRef(false);
   useLayoutEffect(() => {
     canAct.current = authoritative && !readOnly;
     return () => { canAct.current = false; };
-  }, [authoritative, readOnly]);
+  }, [session.sessionId, authoritative, readOnly]);
   const { pending: actionPending, hasContent } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
   const executionLabel = session.cancelling ? '正在停止…' : session.compacting ? '正在压缩上下文…'
     : actionPending && !readOnly ? session.ask ? '正在提交回答…' : '正在提交…'
@@ -390,12 +393,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const prependHeld = messages !== session.messages;
   const [hasNewContent, setHasNewContent] = useState(false);
   const [awayFromBottom, setAwayFromBottom] = useState(false);
-  const actionScopeRef = useRef({ active: false });
-  useLayoutEffect(() => {
-    const scope = { active: true };
-    actionScopeRef.current = scope;
-    return () => { scope.active = false; };
-  }, [session.sessionId, draft]);
   const previousMessages = useRef<ChatMessage[]>([]);
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -413,6 +410,12 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
       scrollOwnerRef.current = null;
     };
   }, [session.sessionId]);
+
+  useLayoutEffect(() => {
+    const owner = scrollOwnerRef.current;
+    if (!owner || readOnly) return;
+    return observeLocalSubmissions(session.sessionId, () => owner.follow());
+  }, [session.sessionId, readOnly]);
 
   // Every mounted viewport owns its measured fill and near-head prefetch. A
   // retained native page proves neither two screens nor this viewport's size.
@@ -434,13 +437,11 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
       setHasNewContent(true);
     }
     previousMessages.current = session.messages;
-    scrollOwnerRef.current?.changed();
-  }, [messages, session.messages, session.status, session.compacting, session.error, session.materialized, session.hasMore]);
+    scrollOwnerRef.current?.changed({ contentReady: !!contentRef.current?.querySelector('[data-message-frame]') });
+  }, [messages, session.sessionId, session.messages, session.status, session.compacting, session.error, session.materialized, session.hasMore]);
 
   const jumpToBottom = useCallback(() => { scrollOwnerRef.current?.follow(); }, []);
 
-  // Sending from THIS device: force-follow the bottom through the user-message
-  // append + the stop button appearing (which shrinks the scroll viewport).
   // A composer send answers a pending ask (respondAsk), submits feedback on
   // a pending plan (planSupersede), or otherwise sends a normal prompt.
   const ask = session.ask;
@@ -455,20 +456,13 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   }, [session.sessionId, ask?.requestId, planRequest?.requestId, session.elicitation?.requestId, hasInputHeader]);
   const executionControlRef = useRemovedControlFocus(session.sessionId, inputCardRef);
   const operation = draft.reference.purpose.kind;
-  const runInView = useCallback((send: () => Promise<boolean>): Promise<boolean> => (
-    acknowledgeInView(actionScopeRef.current, send, {
-      scrollRevision: () => scrollOwnerRef.current?.revision ?? 0,
-      onAccepted: () => { scrollOwnerRef.current?.follow(); },
-    })
-  ), []);
-
   const runAction = useCallback((target: SessionDraft, send: () => Promise<boolean> | undefined): Promise<boolean> => (
-    runInView(() => target.runAction(send, () => canAct.current && drafts.isLive(target)))
-  ), [drafts, runInView]);
+    target.runAction(send, () => canAct.current && drafts.isLive(target))
+  ), [drafts]);
 
-  const handleSend = useCallback((): Promise<boolean> => runInView(() => draft.send(
+  const handleSend = useCallback((): Promise<boolean> => draft.send(
     request => onSend?.(request) ?? Promise.resolve(false), () => canAct.current && drafts.isCurrent(draft),
-  )), [draft, drafts, onSend, runInView]);
+  ), [draft, drafts, onSend]);
 
   const handleChoice = useCallback((choice: string): Promise<boolean> => {
     if (!ask || !askDraft) return Promise.resolve(false);
@@ -488,7 +482,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                 {session.loadingHistory ? null : session.historyStale || !session.materialized ? (
                   <StateNotice className="chat-loading-older" kind={session.historyError ? 'error' : 'info'}>
                     {session.historyError ? `历史加载失败：${session.historyError}` : '对话历史尚未同步。'}
-                    {onRetryHistory && <button type="button" className="dialog-btn ck-button rp" onClick={() => {
+                    {onRetryHistory && <button type="button" className="chat-history-retry ck-button rp" onClick={() => {
                       scrollOwnerRef.current?.follow();
                       onRetryHistory();
                     }}>
@@ -497,7 +491,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                   </StateNotice>
                 ) : session.historyError ? <StateNotice className="chat-loading-older" kind="error">
                   历史加载失败：{session.historyError}
-                  {onRetryHistory && <button type="button" className="dialog-btn ck-button rp" onClick={onRetryHistory}>重试加载历史</button>}
+                  {onRetryHistory && <button type="button" className="chat-history-retry ck-button rp" onClick={onRetryHistory}>重试加载历史</button>}
                 </StateNotice> : null}
               </div>
               {session.partialHistory && <p className="chat-history-note" role="status">
@@ -531,7 +525,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
         <div className="chat-input-notices">
           {session.error && <p className="chat-error" role="alert">错误: {session.error}
             {onRetryHistory && session.materialized && !session.historyStale && <button type="button"
-              className="dialog-btn ck-button rp" onClick={onRetryHistory}>重试同步</button>}
+              className="ck-button rp" onClick={onRetryHistory}>重试同步</button>}
           </p>}
           {interruptResult && <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
             {interruptResult}
@@ -539,7 +533,8 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           {!readOnly && <ComposerNotices draft={draft} />}
         </div>
         <details className="chat-input-card" ref={inputCardRef} open
-          data-header={hasInputHeader || undefined} data-decision={!!(!readOnly && (ask || hasPendingDecision)) || undefined}>
+          data-header={hasInputHeader || undefined} data-decision={!!(!readOnly && (ask || hasPendingDecision)) || undefined}
+          data-question={(!readOnly && operation === 'ask') || undefined}>
           <summary className="chat-execution-head" hidden={!hasInputHeader} aria-label={`${executionLabel}，展开或收起输入卡片`}>
             <span className="chat-execution-label" role="status" title={executionLabel}
               data-running={session.status === 'running' || undefined}>{executionLabel}</span>
@@ -558,7 +553,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                     ? '已请求打断；队列由 Copilot 接着处理。'
                     : '当前没有可打断的主回合；队列未改动。' }));
                 }}>{interruptAction.busy ? '正在请求…' : '打断并处理队列'}</button>}
-              {showStop && <button ref={executionControlRef} type="button" className="chat-typing-stop ck-button" disabled={stopDisabled}
+              {showStop && <button ref={executionControlRef} type="button" className="chat-typing-stop ck-button ck-danger" disabled={stopDisabled}
                 aria-disabled={stopPending || undefined} aria-busy={stopPending || undefined}
                 onClick={() => { if (!stopDisabled && !stopPending) onCancel?.(); }}>
                 <Icon name="stop" size={16} />
@@ -567,32 +562,34 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
             </span>}
           </summary>
           <div className="chat-input-card-body">
-            {!readOnly && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
-              {session.queue?.map((q) => (
-                <div key={q.id} className="chat-queue-item">
-                  <details className="chat-queue-entry">
-                    <summary className="chat-queue-text" aria-label={`查看排队消息：${q.text}`}>
-                      {q.text}
-                    </summary>
-                  </details>
-                  <div className="chat-queue-copy"><CopyButton text={q.text} label="复制排队消息" /></div>
-                  <button ref={executionControlRef} type="button" className="chat-queue-remove ck-icon-button" disabled={!connected || !onRemoveQueued}
-                    aria-label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)}><Icon name="close" size={16} /></button>
-                </div>
-              ))}
-            </div>}
-            {hasPendingDecision && <div className="chat-decisions">
-              {planRequest && planDraft && <PlanCard request={planRequest}
-                pending={planDraft.getSnapshot().pending}
-                disabled={!authoritative || !onRespondPlan}
-                onSelect={action => { void runAction(planDraft,
-                  () => onRespondPlan?.(planRequest.requestId, action)); }} />}
-              {session.elicitation && elicitationDraft && <ElicitationCard request={session.elicitation}
-                pending={elicitationDraft.getSnapshot().pending}
-                disabled={!authoritative || !onRespondElicitation}
-                onSelect={action => { void runAction(elicitationDraft,
-                  () => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
-            </div>}
+            <div className="chat-input-context">
+              {!readOnly && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
+                {session.queue?.map((q) => (
+                  <div key={q.id} className="chat-queue-item">
+                    <details className="chat-queue-entry">
+                      <summary className="chat-queue-text" aria-label={`查看排队消息：${q.text}`}>
+                        {q.text}
+                      </summary>
+                    </details>
+                    <div className="chat-queue-copy"><CopyButton text={q.text} label="复制排队消息" /></div>
+                    <button ref={executionControlRef} type="button" className="chat-queue-remove ck-icon-button" disabled={!connected || !onRemoveQueued}
+                      aria-label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)}><Icon name="close" size={16} /></button>
+                  </div>
+                ))}
+              </div>}
+              {hasPendingDecision && <div className="chat-decisions">
+                {planRequest && planDraft && <PlanCard request={planRequest}
+                  pending={planDraft.getSnapshot().pending}
+                  disabled={!authoritative || !onRespondPlan}
+                  onSelect={action => { void runAction(planDraft,
+                    () => onRespondPlan?.(planRequest.requestId, action)); }} />}
+                {session.elicitation && elicitationDraft && <ElicitationCard request={session.elicitation}
+                  pending={elicitationDraft.getSnapshot().pending}
+                  disabled={!authoritative || !onRespondElicitation}
+                  onSelect={action => { void runAction(elicitationDraft,
+                    () => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
+              </div>}
+            </div>
             {readOnly ? (
               <div className="chat-readonly-note" aria-label="只读会话">只读会话</div>
             ) : (

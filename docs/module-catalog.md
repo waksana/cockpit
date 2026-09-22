@@ -1,28 +1,90 @@
-# 模块能力目录
+# 模块目录
 
-本文维护模块的用户能力和协作边界。本体已提供本地冷加载的最小模块接入，
-具体支持范围见[模块协议](module-contract-draft.md)；表中的显示名称不决定 moduleId。
+本页区分**可安装模块、已实现待发行源码、待适配的独立项目和后续方向**。模块单独发行，不随本体安装。
+下面的配套说明核对于 **2026-09-18**，面向
+[Cockpit v0.2.4](https://github.com/waksana/cockpit/releases/tag/v0.2.4)。
+**0.2.4 配套 / 发布资产以对应 Release 为准**；文档准备完成不表示发布已完成。
+包格式、安装命令和前后端接口统一见[模块接入协议](module-contract-draft.md)。
 
-## 能力
+## 可安装模块
 
-| 模块能力 | 用户能力 | 与本体的协作 |
+| 模块 | 用途 | 配套发行与使用说明 |
 | --- | --- | --- |
-| 文件 | 首版聊天上传、托管、下载、输入区附件和媒体卡片；全局文件库延后。 | [cockpit-file](https://github.com/waksana/cockpit-file) 使用原生附件与新实时通知；不补抓历史，发送仍由本体完成。 |
-| 通知/收件箱 | 未读/已读、提醒、去重、订阅、push 和 badge。 | [cockpit-notification](https://github.com/waksana/cockpit-notification) 独立实现内存未读与推送；本体只提供消息边缘/会话标记等通用插口，普通消息、原生决策和 API 错误提示仍由本体提供。 |
-| 语音 | 听写、语言、采音、识别提供方及令牌。 | 编辑原草稿；发送录音时使用文件能力，由本体执行一次正常发送。 |
-| 会话整理 | 置顶和首回复自动命名策略。 | 使用原生命名 API，保存额外整理偏好；标题和历史仍以原生为准。 |
-| 系统状态展示 | 系统、模块版本和外部运行状态看板。 | 读取各自权威接口；普通版本与健康信息由本体提供。 |
-| 下次启动消息 | 保存下一次启动的 prompt，展示发送尝试、受理、失败或 unknown。 | 记录落盘后可调用本体退出；下一次宿主就绪后使用普通 prompt API。 |
-| Context Reset | self-only 上下文清理工具、skill 与交接。 | 使用明确的原生生命周期操作，保持它与 compaction、rewind 和服务退出的区别。 |
-| Assistant | 公开角色、skills 和模板。 | 显式应用到原生 session，遵循工作区规则；用户人格与记忆由用户持有。 |
-| Task | 目标、授权、身份、Commander/Owner、业务投递和结果。 | 自有业务状态，通过公开 API 使用原生 session。 |
-| 微信 | 渠道绑定、收发、媒体和 unknown 处理。 | 自有渠道数据与恢复策略，通过公开 API 使用原生 session。 |
+| [Cockpit File](https://github.com/waksana/cockpit-file) | 在聊天中选择、拖入或粘贴附件；预览、下载文件和媒体。 | [v0.1.7 运行包](https://github.com/waksana/cockpit-file/releases/tag/v0.1.7) · [安装说明](https://github.com/waksana/cockpit-file/blob/v0.1.7/docs/installation.md) |
+| [Cockpit Notification](https://github.com/waksana/cockpit-notification) | 为新回复和待回答问题提供未读标记、会话计数、Web Push 与应用角标。 | 0.2.4 配套 [v0.1.5 Release](https://github.com/waksana/cockpit-notification/releases/tag/v0.1.5) · [使用说明](https://github.com/waksana/cockpit-notification/blob/v0.1.5/README.md)；发布资产以该 Release 为准。 |
 
-Task 与微信源码仍分别属于
-[cockpit-task](https://github.com/waksana/cockpit-task)、
-[cockpit-wechat-connector](https://github.com/waksana/cockpit-wechat-connector)。
-两者需要按共同协议完成模块接入；仓库存在不等于宿主已经支持安装。
-原生 `assistant` 消息和 `task` 子代理属于 SDK，与这两类业务角色分别命名。
+File 0.1.7 已发布且继续兼容，本轮不重新发行；Notification 0.1.5 配套本次菜单及 payload 能力。
+两者使用包/后端 API v1、Web API v2、公共 UI v1，通知模块另外检查独立菜单能力 `menuVersion: 1`。
+确认对应 Release 的 `.tgz` 与校验文件均已发布后，再下载、校验并按模块说明配置，
+用本体的[本地安装命令](module-contract-draft.md#2-包格式与本地安装)
+显式信任并启用；下次冷启动才会加载。查询时区分“下次选中”与“当前已加载”，安装命令不会重启服务。
+
+### 文件
+
+文件模块增强真实输入区，负责选择器、粘贴/拖放、上传状态、草稿附件和媒体展示；
+本体仍负责发送消息。启用后的新上传和新实时回复可以保存文件，
+同一路径后续变化不会覆盖旧消息已捕获的版本。
+
+它不扫描或补存旧聊天，不是服务器项目文件编辑器。
+全局文件库、搜索和从文件库选择附件仍属[后续计划](https://github.com/waksana/cockpit-file/blob/v0.1.7/docs/roadmap.md)。
+
+### 通知
+
+通知模块记录主 Agent 最终回复和当前待回答问题的未读状态，显示消息红线与会话状态末尾计数。
+设备通知开关只放在现有全局菜单中，控制本设备；没有独立铃铛、页面级未读总数、
+通知对话框或页头控件。打开会话不等于清空未读，已读判定基于真实消息正文及当前 ask
+问题的 `bodyRef` 在前台的实际呈现。
+推送订阅、浏览器 worker 和角标由模块管理，不由本体申请权限。
+
+Web Push 和角标取决于浏览器、设备及用户授权，不保证必达或跨设备瞬时一致；
+持久化、恢复及其他业务限制以
+[0.1.5 说明](https://github.com/waksana/cockpit-notification/blob/v0.1.5/docs/release-notes.md)为准。
+
+0.1.5 需要模块 SSE payload 接口与独立菜单注册，不能与已发布 Cockpit 0.2.3 混用。
+其 `tooling/host-sdk.json` 保留兼容 API 的精确源码 pin，而不是按开发包标签推断能力；
+完整 SHA 与导出版本解释见[模块协议](module-contract-draft.md)。
+历史 **Cockpit 0.2.3 → Notification 0.1.0** 配套仍以对应 tag/Release 为准，
+不因本轮文档或源码更新而改变旧资产。
+
+## 已实现源码：待配套发行
+
+| 模块 | 当前实现 | 配套边界 |
+| --- | --- | --- |
+| [Cockpit Speech](https://github.com/waksana/cockpit-speech) | Azure LLM Speech 听写；包装真实输入框，在原生发送前录音，停止后把文字写入捕获的草稿，不自动发送。 | 源码 0.1.1 配套 Cockpit 0.2.5，尚无配套 Release；需要 `chatWindowVersion: 1` 和 `composerInputVersion: 1`，历史 Cockpit 0.2.4 Release 不具备这两项能力。精确宿主 SDK pin 见语音仓库 `tooling/host-sdk.json`。 |
+
+语音按钮随普通 prompt 和回答输入存在，原生不允许自由文本时保持可见但禁用。
+上下文选择、录音、识别、错误和草稿冲突恢复均由模块负责；本体只提供通用只读窗口与真实输入组件增强，
+不新增语音后端能力或另一套原生历史。
+模块不提供 Key 初始化/设置页面，只读取自己数据目录内的配置文件，缺少配置明确报错。
+配置字段、录音上限、数据外发范围和浏览器要求由模块
+[README](https://github.com/waksana/cockpit-speech#readme)维护，不在本体重复一套业务参数。
+源码或本地构建包存在不代表已发布、安装或部署；当前没有通过文件模块发送录音的功能。
+
+## 独立项目：待适配当前模块体系
+
+| 项目 | 已有用途 | 已发布版本 |
+| --- | --- | --- |
+| [Cockpit Task](https://github.com/waksana/cockpit-task) | 结构化任务、明确授权的派单、Commander/Owner 协作与执行者报告；不是自动调度或自动监工。 | [v1.2.7](https://github.com/waksana/cockpit-task/releases/tag/v1.2.7) |
+| [Cockpit WeChat Connector](https://github.com/waksana/cockpit-wechat-connector) | 把一个授权微信私信用户连接到指定会话，收发文本及支持的媒体；群聊和原生语音未接入。 | [v0.1.6](https://github.com/waksana/cockpit-wechat-connector/releases/tag/v0.1.6) |
+
+两者已有实现和独立 ZIP 发布包，但使用 `module.json` 与独立服务协议，
+不是当前宿主的 `cockpit.module.json` / `.tgz` 格式，**不能直接用当前模块 CLI 安装**。
+其角色应用和会话绑定等接入仍需适配；也不能仅凭项目中的“Cockpit API 1”
+就认定与当前宿主完全兼容。各自业务文档由对应仓库维护。
+原生 `assistant` 消息和 `task` 子代理属于 SDK，不等同于这些业务角色。
+
+## 后续方向
+
+下表不是已发布模块清单，也不是对当前安装包的功能承诺。
+
+| 方向 | 预期用途与协作边界 |
+| --- | --- |
+| 语音扩展 | 已有听写源码见上；更多识别提供方或录音附件发送尚未实现，不能把听写自动变成发送消息。 |
+| 会话整理 | 置顶、首回复自动命名等策略；使用原生命名 API，额外偏好由模块保存。 |
+| 系统状态展示 | 系统、模块版本和外部运行状态看板；普通版本与健康信息仍由本体提供。 |
+| 下次启动消息 | 先保存下一次启动的 prompt，再请求退出；下次就绪后记录普通发送的受理、失败或 unknown。 |
+| Context Reset | self-only 上下文清理工具、skill 与交接；与 compaction、rewind 和服务退出分别处理。 |
+| Assistant | 公开角色、skills 和模板，显式应用到原生 session；人格与记忆由用户持有。 |
 
 ## 共同约束
 

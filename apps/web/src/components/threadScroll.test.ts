@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { acknowledgeInView } from '../lib/draft';
+import { observeLocalSubmissions } from '../lib/localSubmission';
+import { SessionDraft } from '../lib/textDraft';
 import type { ChatSession } from '../net/types';
 import type { NativeChatEvent, NativeChatRead } from '@cockpit/protocol';
 import { NativeWindow } from '../net/nativeWindow';
@@ -109,6 +110,144 @@ function fixture(top = 700) {
   return { view, frames, scroll, notices };
 }
 
+test('first committed content supersedes an empty mount frame before paint, even after empty frames run', () => {
+  for (const flushEmpty of [false, true]) {
+    const h = fixture(0);
+    const messages = h.view.rows;
+    h.view.rows = [];
+    h.scroll.follow();
+    const emptyFrame = h.frames.callbacks.at(-1)!;
+    if (flushEmpty) h.frames.flush();
+    h.scroll.changed({ contentReady: false });
+    h.view.rows = messages;
+    h.scroll.changed({ contentReady: true });
+    assert.equal(h.view.top, h.view.bottom, 'no animation frame is needed to position the first content');
+    assert.deepEqual(h.view.writes, [700]);
+    assert.equal(h.frames.pending.size, 0);
+    emptyFrame();
+    assert.deepEqual(h.view.writes, [700], 'a superseded empty-layout callback cannot write again');
+    h.scroll.scroll();
+    assert.equal(h.scroll.following, true);
+
+    h.view.rows[0].height += 100;
+    h.scroll.changed({ contentReady: true });
+    h.scroll.changed();
+    assert.deepEqual(h.view.writes, [700], 'later message and module layouts remain frame-coalesced');
+    assert.equal(h.frames.pending.size, 1);
+    h.frames.flush();
+    assert.deepEqual(h.view.writes, [700, 800]);
+  }
+});
+
+test('cached content enters synchronously and short initial content follows later overflow asynchronously', () => {
+  for (const short of [false, true]) {
+    const h = fixture(0);
+    if (short) h.view.rows = h.view.rows.slice(0, 2);
+    h.scroll.follow();
+    h.scroll.changed({ contentReady: true });
+    assert.equal(h.view.top, h.view.bottom);
+    assert.equal(h.frames.pending.size, 0);
+    const writes = h.view.writes.length;
+    h.view.rows.unshift({ id: 'fill', height: 500 });
+    h.scroll.changed({ contentReady: true });
+    assert.equal(h.view.writes.length, writes);
+    h.frames.flush();
+    assert.equal(h.view.top, h.view.bottom);
+  }
+});
+
+test('post-layout delivery corrects async growth before paint without synchronizing each change notification', () => {
+  const h = fixture(0);
+  h.scroll.follow();
+  h.scroll.changed({ contentReady: true });
+  assert.deepEqual(h.view.writes, [700]);
+  h.view.rows[0].height += 100;
+  h.scroll.changed();
+  const stale = h.frames.callbacks.at(-1)!;
+  h.view.rows.at(-1)!.height += 150;
+  h.scroll.changed();
+  assert.deepEqual(h.view.writes, [700], 'ordinary DOM notifications still coalesce');
+  assert.equal(h.frames.pending.size, 1);
+  h.scroll.changed({ layoutReady: true });
+  assert.deepEqual(h.view.writes, [700, 950], 'latest measured geometry is corrected in RO, not after paint');
+  assert.equal(h.frames.pending.size, 0);
+  stale();
+  h.scroll.changed({ layoutReady: true });
+  h.scroll.scroll();
+  assert.deepEqual(h.view.writes, [700, 950], 'duplicate delivery and stale RAF cannot correct twice');
+  assert.equal(h.scroll.following, true);
+});
+
+test('layout delivery keeps latest visible across short-page overflow, prepends and viewport changes', () => {
+  const h = fixture(0);
+  h.view.rows = h.view.rows.slice(0, 2);
+  h.scroll.follow();
+  h.scroll.changed({ contentReady: true });
+  for (const update of [
+    () => h.view.rows.unshift({ id: 'older', height: 200 }),
+    () => { h.view.rows[0].height += 80; },
+    () => { h.view.viewport -= 50; },
+  ]) {
+    update();
+    h.scroll.changed();
+    h.scroll.changed({ layoutReady: true });
+    assert.equal(h.view.top, h.view.bottom);
+    assert.equal(h.frames.pending.size, 0);
+    h.scroll.scroll();
+    assert.equal(h.scroll.following, true);
+  }
+});
+
+test('post-layout correction preserves reading anchors and respects touch, selection and explicit follow', () => {
+  const h = fixture();
+  const anchor = readAt(h, 275);
+  h.view.rows.unshift({ id: 'older', height: 200 });
+  h.view.rows.at(-1)!.height += 100;
+  h.scroll.changed({ layoutReady: true });
+  assert.deepEqual(h.view.firstVisible(), anchor);
+  assert.equal(h.view.top, 475);
+  assert.equal(h.scroll.following, false);
+  h.scroll.hold(true);
+  h.view.rows[0].height += 100;
+  h.scroll.changed({ layoutReady: true });
+  assert.equal(h.view.top, 475, 'RO must not move a held finger');
+  h.scroll.hold(false);
+  h.scroll.navigate();
+  const selected = h.view.firstVisible();
+  h.scroll.changed({ layoutReady: true });
+  assert.equal(h.view.top, 475, 'selection navigation still owns its position');
+  h.scroll.settle();
+  h.frames.flush();
+  assert.deepEqual(h.view.firstVisible(), selected);
+  h.scroll.follow();
+  h.view.rows.push({ id: 'local-message', height: 150 });
+  h.scroll.changed({ layoutReady: true });
+  assert.equal(h.view.top, h.view.bottom);
+  assert.equal(h.frames.pending.size, 0);
+});
+
+test('initial layout waits for a measurable viewport or finger release and never overrides reading intent', () => {
+  for (const blocked of ['viewport', 'hold', 'intent', 'selection', 'interact', 'dispose']) {
+    const h = fixture(0);
+    h.scroll.follow();
+    if (blocked === 'viewport') h.view.viewport = 0;
+    if (blocked === 'hold') h.scroll.hold(true);
+    if (blocked === 'intent') h.scroll.intent(false);
+    if (blocked === 'selection') h.scroll.navigate();
+    if (blocked === 'interact') h.scroll.interact();
+    if (blocked === 'dispose') h.scroll.dispose();
+    h.scroll.changed({ contentReady: true });
+    assert.deepEqual(h.view.writes, []);
+    if (blocked === 'viewport') h.view.viewport = 300;
+    if (blocked === 'hold') h.scroll.hold(false);
+    h.scroll.changed({ contentReady: true });
+    assert.equal(h.view.top, blocked === 'viewport' || blocked === 'hold' ? h.view.bottom : 0);
+    h.scroll.settle();
+    h.frames.flush();
+    assert.equal(h.view.top, blocked === 'viewport' || blocked === 'hold' ? h.view.bottom : 0);
+  }
+});
+
 test('incremental backward owner repair and interleaved live rows retain the actual reading anchor', () => {
   const window = new NativeWindow(undefined, true);
   const message = (id: string): NativeChatEvent => ({
@@ -159,6 +298,7 @@ test('each mounted scroll adapter starts at latest and real gestures cancel queu
   const view = new Transcript();
   view.top = 0;
   const frames = new Frames();
+  let resized = () => {};
   let owner: ReturnType<typeof observeThreadScroll> | undefined;
   t.after(() => owner?.dispose());
   const globals: Record<string, unknown> = {
@@ -166,6 +306,11 @@ test('each mounted scroll adapter starts at latest and real gestures cancel queu
     CSS: { escape: (id: string) => id },
     requestAnimationFrame: frames.request.bind(frames),
     cancelAnimationFrame: frames.cancel.bind(frames),
+    ResizeObserver: class {
+      constructor(callback: () => void) { resized = callback; }
+      observe() {}
+      disconnect() {}
+    },
   };
   for (const [key, value] of Object.entries(globals)) {
     const original = Object.getOwnPropertyDescriptor(globalThis, key);
@@ -194,6 +339,13 @@ test('each mounted scroll adapter starts at latest and real gestures cancel queu
   owner = observeThreadScroll(el as HTMLDivElement, content as unknown as HTMLDivElement, () => {}, undefined,
     away => distances.push(away));
   frames.flush();
+  assert.equal(view.top, view.bottom);
+  view.rows.at(-1)!.height += 125;
+  resized();
+  assert.equal(view.top, view.bottom, 'the actual adapter corrects RO delivery before the next paint');
+  assert.equal(frames.pending.size, 0);
+  view.rows.at(-1)!.height -= 125;
+  resized();
   assert.equal(view.top, view.bottom);
   const wheel = new Event('wheel');
   Object.defineProperties(wheel, { deltaY: { value: -20 }, ctrlKey: { value: false } });
@@ -579,32 +731,36 @@ test('geometry and programmatic bottom events cannot enable follow, but user ret
   assert.equal(clamped.notices.follows, 0);
 });
 
-test('acknowledgeInView does not follow when a pending send resolves after the reader drags', async () => {
+test('local ACK follows despite reading during send; later DOM follows until a new gesture', async t => {
   const h = fixture();
   let resolve!: (sent: boolean) => void;
   const post = new Promise<boolean>((done) => { resolve = done; });
-  let accepted = 0;
-  const callbacks = {
-    scrollRevision: () => h.scroll.revision,
-    onAccepted: () => { accepted++; h.scroll.follow(); },
-  };
-  const result = acknowledgeInView({ active: true }, () => post, callbacks);
+  const draft = new SessionDraft('scroll-submission');
+  draft.edit('Local message');
+  t.after(observeLocalSubmissions(draft.sessionId, () => h.scroll.follow()));
+  const result = draft.send(() => post);
   h.scroll.hold(true);
   readAt(h, h.view.bottom - 30);
   h.scroll.hold(false);
   h.scroll.settle();
   resolve(true);
   assert.equal(await result, true);
-  assert.equal(accepted, 0);
-  assert.equal(h.notices.follows, 0);
-  assert.equal(h.scroll.following, false);
-  assert.equal(h.frames.pending.size, 0);
-  assert.deepEqual(h.view.writes, []);
-  assert.equal(await acknowledgeInView({ active: true }, async () => true, callbacks), true);
   h.frames.flush();
-  assert.equal(accepted, 1, 'an unchanged view still follows its own accepted send');
+  assert.equal(h.notices.follows, 1);
   assert.equal(h.scroll.following, true);
   assert.deepEqual(h.view.writes, [700]);
+  h.view.rows.push({ id: 'local-message', height: 100 });
+  h.view.viewport -= 50;
+  h.scroll.changed();
+  h.frames.flush();
+  assert.equal(h.view.top, h.view.bottom, 'DOM append and input resize can arrive after the ACK frame');
+  readAt(h, 225);
+  h.view.rows.push({ id: 'remote-message', height: 100 });
+  h.scroll.changed();
+  h.frames.flush();
+  assert.equal(h.view.top, 225);
+  assert.equal(h.scroll.following, false);
+  assert.equal(h.notices.follows, 1, 'neither remote append nor later queue execution forces follow');
 });
 
 test('touch and subsequent momentum suppress corrections, including an old queued frame', () => {

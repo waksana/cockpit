@@ -16,7 +16,9 @@ export const REQUIRED_FILES = [
   'apps/server/package.json', 'apps/server/src/index.ts',
   'apps/server/src/module-cli.ts',
   'apps/server/node_modules/tsx/dist/loader.mjs',
-  'apps/web/dist/index.html', 'apps/web/dist/licenses/lucide.txt',
+  'apps/web/dist/index.html', 'apps/web/dist/next/index.html',
+  'apps/web/dist/licenses/lucide.txt', 'apps/web/dist/licenses/frontend.txt',
+  'apps/web/dist/licenses/shadcn.txt', 'apps/web/dist/licenses/tw-animate-css.txt',
   'apps/mcp/package.json', 'apps/mcp/dist/index.js',
   'apps/mcp/node_modules/tsx/dist/loader.mjs',
   'packages/core/package.json', 'packages/core/src/index.ts',
@@ -26,7 +28,8 @@ export const REQUIRED_FILES = [
 ];
 const packagePaths = ['apps/server', 'apps/mcp', 'packages/core', 'packages/protocol', 'packages/module-api'];
 const sourceRoots = [
-  'LICENSE', 'NOTICE.md', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/web/package.json',
+  'LICENSE', 'NOTICE.md', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml',
+  'apps/web/package.json', 'packages/ui/package.json',
   ...packagePaths.map(path => `${path}/package.json`),
   'apps/server/src', 'packages/core/src', 'packages/protocol/src', 'packages/module-api/src',
   'scripts/export-module-api.mjs',

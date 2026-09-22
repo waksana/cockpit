@@ -27,6 +27,8 @@ import { StateNotice } from './components/StateNotice';
 import { ManagementShell } from './components/ManagementShell';
 import { moduleRuntime } from './lib/moduleRuntime';
 import { observeModuleView } from './lib/moduleView';
+import { PHONE_QUERY } from './lib/layout';
+import { PaneHeader } from './components/PaneHeader';
 
 const ManageWorkspace = lazy(() => import('./components/ManageWorkspace').then((m) => ({ default: m.ManageWorkspace })));
 const DirPicker = lazy(() => import('./components/DirPicker').then((m) => ({ default: m.DirPicker })));
@@ -42,7 +44,6 @@ function ManagementRoute() {
   }><ManageWorkspace section={section} /></Suspense>;
 }
 
-const PHONE_QUERY = '(max-width: 599px)';
 const phoneSnapshot = () => typeof window.matchMedia === 'function' && window.matchMedia(PHONE_QUERY).matches;
 const serverPhoneSnapshot = () => false;
 function subscribePhone(listener: () => void) {
@@ -58,10 +59,10 @@ function Workspace() {
   const sessions = useCockpit(selectMetadata);
   const {
     connState, snapshotReady, newSession,
-    globalModels,
+    globalModels, reloadingSessionIds,
   } = useCockpit(useShallow((s) => ({
     connState: s.connState, snapshotReady: s.snapshotReady, newSession: s.newSession,
-    globalModels: s.globalModels,
+    globalModels: s.globalModels, reloadingSessionIds: s.reloadingSessionIds,
   })));
   const active = useMemo(
     () => sessions.find((s) => s.sessionId === routeId) ?? null,
@@ -69,6 +70,7 @@ function Workspace() {
   );
   const [query, setQuery] = useState('');
   const [detailMenuOpen, setDetailMenuOpen] = useState(false);
+  if (detailMenuOpen && !active) setDetailMenuOpen(false);
   const kebabRef = useRef<HTMLButtonElement | null>(null);
   const [panelTrigger, setPanelTrigger] = useState<{ sessionId: string; element: HTMLElement | null } | null>(null);
   const previousPanel = useRef<{ sessionId: string | null; open: boolean }>({ sessionId: null, open: false });
@@ -76,7 +78,9 @@ function Workspace() {
     if (!panel && previousPanel.current.open && previousPanel.current.sessionId === routeId) {
       const trigger = panelTrigger?.sessionId === routeId ? panelTrigger.element : null;
       const valid = trigger?.isConnected && trigger.getClientRects().length && !trigger.closest('[inert]');
-      (valid ? trigger : kebabRef.current)?.focus();
+      // Native modals already restore their invoker. Only repair a removed
+      // docked-panel control; never pull focus away from an ongoing chat edit.
+      if (document.activeElement === document.body) (valid ? trigger : kebabRef.current)?.focus();
     }
     previousPanel.current = { sessionId: routeId, open: panel !== null };
   }, [panel, routeId, panelTrigger]);
@@ -130,9 +134,8 @@ function Workspace() {
     setDirPicker(true);
   };
   const masterHeader = (
-    <header className="sidebar-header">
-      <GlobalNavigation key={location.key} />
-      <div className="input-search">
+    <PaneHeader className="sidebar-header" leading={<GlobalNavigation key={location.key} />}
+      title={<div className="input-search">
         {connState === 'open' ? (
           <span className="input-search-icon"><Icon name="search" size={20} /></span>
         ) : (
@@ -157,8 +160,7 @@ function Workspace() {
             <Icon name="close" size={20} />
           </button>
         )}
-      </div>
-    </header>
+      </div>} />
   );
 
   const doDelete = (sessionId: string) => {
@@ -168,10 +170,14 @@ function Workspace() {
   };
   const menuHandlers: SessionActionHandlers = {
     openPanel: openDetails,
+    reload: sessionId => {
+      // The store owns pending and request diagnostics beyond this menu/route.
+      void useCockpit.getState().reloadSession(sessionId).catch(() => {});
+    },
     delete: doDelete,
   };
   const getSessionMenuItems = (session: typeof sessions[number]) => (
-    sessionActionItems(session, connState === 'open', menuHandlers)
+    sessionActionItems(session, connState === 'open' && snapshotReady, menuHandlers, reloadingSessionIds.includes(session.sessionId))
   );
 
   const modelLabel = active
@@ -187,8 +193,7 @@ function Workspace() {
   ) : undefined;
 
   return (
-    <Shell ariaLabel="cockpit" infoOpen={panel !== null && !!active}>
-      <MasterPane
+    <Shell ariaLabel="cockpit" master={<MasterPane
         ariaLabel="会话列表"
         mobileVisible={mobileView === 'list'}
         header={masterHeader}
@@ -208,9 +213,8 @@ function Workspace() {
           onSelect={selectSession}
           getMenuItems={getSessionMenuItems}
         />
-      </MasterPane>
-
-      <DetailPane ariaLabel="对话" mobileVisible={mobileView === 'detail'} header={detailHeader}>
+      </MasterPane>}
+      main={<DetailPane ariaLabel="对话" mobileVisible={mobileView === 'detail'} header={detailHeader}>
         {active ? (
           <ConnectedThread
             key={active.sessionId}
@@ -219,20 +223,23 @@ function Workspace() {
         ) : syncing ? (
           <StateNotice kind="loading" placement="pane">正在同步会话…</StateNotice>
         ) : notFound ? (
-          <div className="detail-empty">
+          <StateNotice kind="empty" placement="pane">
             <div>
               <p>这个会话不存在,或已被删除。</p>
-              <button type="button" className="dialog-btn ck-button ck-primary primary rp" onClick={() => navigate('/')}>返回列表</button>
+              <button type="button" className="ck-button ck-primary" onClick={() => navigate('/')}>返回列表</button>
             </div>
-          </div>
+          </StateNotice>
         ) : (
-          <div className="detail-empty">
+          <StateNotice kind="empty" placement="pane">
             <p>选择一个会话，或新建会话。</p>
-          </div>
+          </StateNotice>
         )}
-      </DetailPane>
+      </DetailPane>}
+      inspector={panel && active && <SessionDetails key={active.sessionId} sessionId={active.sessionId} panel={panel} />}
+      overlays={<>
       {detailMenuOpen && active && (
         <AnchoredMenu triggerRef={kebabRef} items={getSessionMenuItems(active)} label={active.title}
+          moduleTarget={{ menu: 'session', sessionId: active.sessionId }}
           onClose={() => setDetailMenuOpen(false)} />
       )}
       {deleteTarget && <SessionDeleteDialog key={`${location.key}:${deleteTarget.sessionId}`}
@@ -252,10 +259,7 @@ function Workspace() {
             onCreated={selectSession} onCancel={() => setDirPicker(false)} />
         </Suspense>
       )}
-      {panel && active && (
-        <SessionDetails key={active.sessionId} sessionId={active.sessionId} panel={panel} />
-      )}
-    </Shell>
+      </>} />
   );
 }
 
@@ -293,7 +297,7 @@ export default function App() {
         <Route key={panel} path={`/session/:sessionId/${panel}`} element={<Workspace />} />
       ))}
       <Route path="*" element={<div className="detail-empty">
-        <div><p>页面不存在。</p><Link className="dialog-btn ck-button ck-primary primary rp" to="/">返回列表</Link></div>
+        <div><p>页面不存在。</p><Link className="ck-button ck-primary" to="/">返回列表</Link></div>
       </div>} />
       </Routes>
   );

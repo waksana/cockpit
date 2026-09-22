@@ -1,0 +1,135 @@
+// Private host compositions, built on ck-* controls. Not Module UI exports.
+.ui-section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--host-space-sm);
+  min-width: 0;
+  margin-bottom: var(--host-space-md);
+}
+.ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--host-space-sm);
+  min-width: 0;
+}
+.ui-field-label { color: var(--secondary-text-color); font-size: var(--host-text-body); }
+.ui-select-wrap {
+  display: flex;
+  position: relative;
+  min-width: 0;
+  > .ck-icon {
+    position: absolute;
+    inset-inline-end: var(--host-space-md);
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    color: var(--secondary-text-color);
+  }
+}
+.ui-select {
+  width: 100%;
+  appearance: none;
+  padding-inline-end: calc(var(--host-space-lg) + 2 * var(--host-space-md));
+  cursor: pointer;
+  text-align: start;
+  text-overflow: ellipsis;
+  option { color: var(--primary-text-color); background: var(--surface-color); }
+}
+.ui-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.ui-choice-card {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--host-space-md);
+  min-block-size: var(--ck-control-size);
+  padding: var(--host-space-md);
+  border: 1px solid var(--border-color);
+  border-radius: var(--host-radius-control);
+  cursor: pointer;
+  &[data-selected] {
+    border-color: var(--primary-color);
+    background: color-mix(in srgb, var(--primary-color) 8%, var(--surface-color));
+    .ui-choice-check { visibility: visible; }
+  }
+  &:has(input:focus-visible) { outline: 2px solid var(--primary-color); outline-offset: -2px; }
+  &:has(input:disabled) { cursor: not-allowed; opacity: var(--ck-disabled-opacity); }
+}
+.ui-choice-check { flex: none; margin-top: 2px; visibility: hidden; color: var(--primary-color); }
+.ui-choice-content { display: flex; flex-direction: column; min-width: 0; gap: var(--host-space-xs); width: 100%; }
+.switch {
+  flex: none;
+  position: relative;
+  width: max(2.4rem, var(--ck-control-size));
+  height: var(--ck-control-size);
+  padding: 0;
+  border-radius: 1rem;
+  &::before {
+    content: '';
+    position: absolute;
+    top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 2.4rem; height: 1.4rem;
+    border-radius: 1rem;
+    background: color-mix(in srgb, var(--primary-text-color) 22%, transparent);
+  }
+  &.is-on::before { background: var(--primary-color); }
+}
+.switch-knob {
+  position: absolute;
+  top: calc(50% - 0.55rem);
+  left: calc(50% - 1.05rem);
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  background: var(--background-color-true);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  .switch.is-on & { transform: translateX(1rem); }
+}
+.ui-badge {
+  gap: var(--host-space-xs);
+  flex: none;
+  &[data-tone='ok'] { color: var(--green-color); background: color-mix(in srgb, var(--green-color) 16%, transparent); }
+  &[data-tone='err'] { color: var(--danger-color); background: color-mix(in srgb, var(--danger-color) 14%, transparent); }
+  &[data-tone='warn'] { color: var(--warning-color); background: color-mix(in srgb, var(--warning-color) 16%, transparent); }
+  &[data-appearance='text'] { padding: 0; border-radius: 0; background: none; }
+}
+.resource-row {
+  display: flex;
+  align-items: center;
+  gap: var(--host-space-sm);
+  padding-block: var(--host-space-md);
+  border-bottom: 1px solid var(--border-color);
+  line-height: var(--host-leading-ui);
+}
+.resource-summary { flex: 1 1 auto; min-width: 0; }
+.resource-name {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--host-space-xs);
+  min-width: 0;
+  font-size: var(--host-text-body);
+  color: var(--primary-text-color);
+  overflow-wrap: anywhere;
+}
+.resource-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--host-space-xs) var(--host-space-sm);
+  min-width: 0;
+  margin-top: var(--host-space-xs);
+  font-size: var(--host-text-meta);
+  color: var(--secondary-text-color);
+  overflow-wrap: anywhere;
+}

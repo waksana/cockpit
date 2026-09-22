@@ -41,6 +41,12 @@ body {
 
 #root { height: 100%; overflow: hidden; }
 
+// Shared announcements keep their existing class and geometry outside chat too.
+.chat-sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
+
 // Re-enable selection on reading surfaces — chat messages, rendered markdown,
 // the info panel content, editable fields, explicitly selectable text. Only the
 // interactive chrome that uses long-press menus (sidebar `.chatlist-chat` rows,
@@ -88,9 +94,4 @@ a { color: var(--link-color); text-decoration: none; }
   text-align: center;
   color: var(--secondary-text-color);
   background: var(--background-color);
-  button {
-    appearance: none; cursor: pointer; font: inherit;
-    padding: 0.5rem 1.1rem; border: none; border-radius: var(--border-radius-medium);
-    background: var(--primary-color); color: #fff;
-  }
 }

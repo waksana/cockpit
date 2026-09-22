@@ -4,7 +4,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { PanelSection } from '@cockpit/protocol';
 import { CockpitError, protocolIntent as intent } from '../cockpit.js';
-import { ResponseFormat, ok, fail, capped, cappedJson, type ToolResult, type PanelItem } from '../shared.js';
+import { ResponseFormat, ok, fail, capped, cappedJson, roleSummary, type ToolResult, type PanelItem } from '../shared.js';
 
 export function registerReadTools(server: McpServer): void {
   // ── cockpit_get_session ──────────────────────────────────────────────────────
@@ -14,7 +14,7 @@ export function registerReadTools(server: McpServer): void {
       title: 'Get session state',
       description:
         'Read one session\'s authoritative state. Default markdown is a compact summary of status, ' +
-        'loaded, current model/reasoning/context tier/mode, schedules, queue item IDs with text previews, ' +
+        'loaded, saved/applied roles and reload state, current model/reasoning/context tier/mode, schedules, queue item IDs with text previews, ' +
         'pending request IDs and todo progress. Use response_format:"json" on the initial read when you need ' +
         'full fields, including availableModels, complete queue text or offered plan actions; markdown omits these. ' +
         'Unknown sessions return an error. Interaction mode is separate from the ' +
@@ -36,6 +36,7 @@ export function registerReadTools(server: McpServer): void {
           `id: ${meta.sessionId}`,
           `status: ${meta.status}${meta.loaded ? '' : ' (unloaded)'}`,
           `cwd: ${meta.cwd || 'unknown (not provided by native metadata)'}`,
+          ...roleSummary(meta),
           `model: ${meta.currentModelId ?? '—'}${meta.currentReasoningEffort ? ` (${meta.currentReasoningEffort})` : ''}` +
             `${meta.currentContextTier ? ` · ${meta.currentContextTier}` : ''}`,
           `interaction mode: ${meta.currentMode ?? '—'} (not a permission policy)`,

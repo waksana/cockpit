@@ -4,6 +4,10 @@ import { test, type TestContext } from 'node:test';
 import type { IntentBody, IntentName, IntentResult } from '@cockpit/protocol';
 import { CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { dismissUxError, getUxErrors } from '../lib/errorReporter';
+import { DraftCache, getDraftSession } from '../lib/draftSelection';
+import { ModuleRuntime } from '../lib/moduleRuntime';
+import type { DraftPurpose, DraftSchemaHandle, ModuleFrontendContext } from '@cockpit/module-api';
+import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';
 import { IntentHttpError, isSessionUnloadedError, SessionUnloadedError } from './client';
 import { createCockpitStore } from './store';
 import type { NativeAttachment, ChatMessage, ServerEvent, SessionMeta } from './types';
@@ -47,6 +51,168 @@ function replaceGlobal(t: TestContext, key: string, value: unknown) {
 }
 
 let now = 1_000_000;
+
+async function capturedFixture(t: TestContext, purpose: DraftPurpose = { kind: 'prompt' }) {
+  const h = setup(t);
+  h.source.open();
+  const native: SessionMeta = { ...meta('captured'),
+    ...(purpose.kind === 'ask' ? { ask: { requestId: purpose.requestId, question: 'Question', choices: [], allowFreeform: true } } : {}),
+    ...(purpose.kind === 'plan' ? { planRequest: { requestId: purpose.requestId, summary: 'Plan' } } : {}),
+  };
+  h.snapshot([], { sessions: [native, meta('elsewhere')] });
+  const cache = new DraftCache();
+  const session = cache.session('captured');
+  cache.observe(useCockpit.getState().sessions, true);
+  t.after(useCockpit.subscribe(state => cache.observe(state.sessions, state.snapshotReady && state.connState === 'open')));
+  const source = session.candidate(purpose);
+  let context!: ModuleFrontendContext, field!: DraftSchemaHandle<FixtureData>;
+  const digest = 'a'.repeat(64);
+  const runtime = new ModuleRuntime({
+    pageUrl: 'https://fixture.invalid',
+    fetch: async () => Response.json({ modules: [{
+      id: 'speech', name: 'Speech', version: '1.0.0', digest, config: {}, styles: [],
+      apiBase: `/_modules/speech/${digest}/api`, entry: `/_modules/assets/speech/${digest}/entry.js`,
+    }], errors: [] }),
+    load: async () => ({ activate: (value: ModuleFrontendContext) => {
+      context = value;
+      field = value.state.registerDraft(fixtureSchema());
+      return { apiVersion: 2, writes: ['text'], sends: ['draft'] };
+    } }),
+    report: () => {},
+    draftSubmission: {
+      check: draft => useCockpit.getState().canSendDraft(draft.reference),
+      send: request => useCockpit.getState().sendDraft(request),
+    },
+  });
+  await runtime.start();
+  t.after(() => runtime.stop());
+  runtime.prepareDraft(source, false);
+  const draft = context.state.bindDraft(source.reference);
+  draft.editText('Provisional');
+  return { h, runtime, cache, source, native, draft, field };
+}
+
+test('captured prompt sends its original full draft through native enqueue while another session and ask are active', async t => {
+  const f = await capturedFixture(t);
+  const field = f.field.forDraft(f.source.reference)!;
+  appendFixture(field, fixtureItem('attachment'));
+  const release = f.draft.block('Transcribing');
+  const intent = f.draft.captureSend();
+  const ask = { requestId: 'later', question: 'Question', choices: ['A'], allowFreeform: true };
+  f.h.source.emit({ type: 'session/patch', sessionId: 'captured', ask });
+  // No active-window callback is involved; target is immutable even if the UI is hidden.
+  useCockpit.setState({ activeId: 'elsewhere' });
+  f.runtime.updateView({ sessionId: 'elsewhere', visible: false, connected: true });
+  release();
+  assert.equal(f.draft.editTextIfRevision('Completed', 1), true);
+  const sending = intent.send(2);
+  await Promise.resolve();
+  f.h.assertPost(0, 'prompt', { sessionId: 'captured', text: 'Completed', attachments: [fixtureItem('attachment').value] });
+  // Omitted mode is the existing native enqueue default, never immediate or an ask reply.
+  await f.h.reply(0, { ok: true });
+  assert.deepEqual(await sending, { status: 'acknowledged' });
+  assert.deepEqual(session('captured').ask, ask);
+  assert.equal(field.getSnapshot().items.length, 0);
+  assert.equal(f.h.requests.length, 1);
+});
+
+for (const kind of ['ask', 'plan'] as const) {
+  test(`captured ${kind} preserves its original live request route across navigation`, async t => {
+    const f = await capturedFixture(t, { kind, requestId: 'original' });
+    const intent = f.draft.captureSend();
+    useCockpit.setState({ activeId: 'elsewhere' });
+    const sending = intent.send(1);
+    await Promise.resolve();
+    if (kind === 'ask') f.h.assertPost(0, 'respondAsk', { sessionId: 'captured', requestId: 'original', answer: 'Provisional', wasFreeform: true });
+    else f.h.assertPost(0, 'planSupersede', { sessionId: 'captured', requestId: 'original', message: 'Provisional' });
+    await f.h.reply(0, { ok: true });
+    assert.deepEqual(await sending, { status: 'acknowledged' });
+    assert.equal(f.h.requests.length, 1);
+  });
+}
+
+test('retired and reused asks never receive a captured answer or reroute it into the prompt', async t => {
+  const f = await capturedFixture(t, { kind: 'ask', requestId: 'original' });
+  const intent = f.draft.captureSend();
+  f.h.source.emit({ type: 'session/patch', sessionId: 'captured', ask: null });
+  f.h.source.emit({ type: 'session/patch', sessionId: 'captured', ask: f.native.ask });
+  assert.deepEqual(await intent.send(1), { status: 'blocked', reason: 'retired' });
+  assert.equal(f.h.requests.length, 0);
+  assert.equal(f.cache.session('captured').prompt.getSnapshot().text, '');
+});
+
+for (const gate of ['disconnect', 'snapshot', 'read-only', 'freeform', 'unloaded', 'deleted', 'compacting'] as const) {
+  test(`native captured-send gate rejects ${gate} without transport dispatch`, async t => {
+    const f = await capturedFixture(t, { kind: 'ask', requestId: 'original' });
+    const intent = f.draft.captureSend();
+    if (gate === 'disconnect') f.h.source.drop();
+    if (gate === 'snapshot') useCockpit.setState({ snapshotReady: false });
+    if (gate === 'read-only') f.runtime.prepareDraft(f.source, true);
+    if (gate === 'freeform') f.h.source.emit({ type: 'session/patch', sessionId: 'captured', ask: { ...f.native.ask!, allowFreeform: false } });
+    if (gate === 'unloaded') f.h.source.emit({ type: 'session/patch', sessionId: 'captured', loaded: false, ask: null });
+    if (gate === 'deleted') f.h.source.emit({ type: 'session/removed', sessionId: 'captured' });
+    if (gate === 'compacting') f.h.source.emit({ type: 'session/patch', sessionId: 'captured', compacting: true });
+    assert.deepEqual(await intent.send(1), { status: 'blocked',
+      reason: gate === 'deleted' ? 'retired' : gate === 'freeform' ? 'unsupported' : gate === 'read-only' ? 'read-only' : 'unavailable' });
+    assert.equal(f.h.requests.length, 0);
+  });
+}
+
+test('malformed native ACK remains unconfirmed and duplicate captured calls never issue a second POST', async t => {
+  const f = await capturedFixture(t);
+  const intent = f.draft.captureSend(), sending = intent.send(1);
+  await Promise.resolve();
+  await f.h.reply(0, { status: 'accepted' });
+  assert.deepEqual(await sending, { status: 'unconfirmed', reason: 'native-unconfirmed' });
+  assert.equal(intent.send(1), sending);
+  assert.equal(f.h.requests.length, 1);
+  assert.equal(f.draft.getSnapshot().text, 'Provisional');
+  assert.equal(f.draft.getSnapshot().unconfirmed, true);
+});
+
+test('native store authority retires cached drafts on confirmed absence but not disconnect or unload', t => {
+  const h = setup(t);
+  const cache = new DraftCache();
+  const session = cache.session('a');
+  t.after(useCockpit.subscribe(state => cache.observe(state.sessions, state.snapshotReady && state.connState === 'open')));
+  h.source.open();
+  assert.equal(session.prompt.getSnapshot().retired, false, 'open alone is not a complete snapshot');
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), ask: { requestId: 'decision', question: 'Question', choices: [] } }] });
+  const answer = session.candidate({ kind: 'ask', requestId: 'decision' });
+  const captured = answer.getSnapshot();
+  assert.deepEqual(captured.askContext, { question: 'Question', choices: [] });
+  h.source.emit({ type: 'session/patch', sessionId: 'a',
+    ask: { requestId: 'decision', question: 'Updated question', choices: ['Choice'] } });
+  assert.deepEqual(answer.getSnapshot().askContext, { question: 'Updated question', choices: ['Choice'] });
+  assert.deepEqual(captured.askContext, { question: 'Question', choices: [] });
+  h.source.drop();
+  assert.equal(answer.getSnapshot().askContext, undefined);
+  h.source.open();
+  assert.equal(answer.getSnapshot().askContext, undefined, 'reconnect is not native confirmation');
+  assert.equal(answer.getSnapshot().retired, false);
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), loaded: false, ask: null }] });
+  assert.equal(answer.getSnapshot().retired, false, 'unloaded metadata does not prove decision completion');
+  assert.equal(answer.getSnapshot().askContext, undefined);
+  assert.equal(session.prompt.getSnapshot().retired, false);
+  h.snapshot([]);
+  assert.equal(answer.getSnapshot().retired, true);
+  assert.equal(session.prompt.getSnapshot().retired, true);
+  const unseen = cache.session('cached-before-observation');
+  h.snapshot([]);
+  assert.equal(unseen.prompt.getSnapshot().retired, true);
+});
+
+test('explicit native removal retires captured drafts even before the first complete snapshot', t => {
+  const h = setup(t);
+  const session = getDraftSession('explicit-delete-before-snapshot');
+  session.synchronize({ ask: { requestId: 'decision' } });
+  const answer = session.candidate({ kind: 'ask', requestId: 'decision' });
+  h.source.open();
+  assert.equal(useCockpit.getState().snapshotReady, false);
+  h.source.emit({ type: 'session/removed', sessionId: session.prompt.sessionId });
+  assert.equal(session.prompt.getSnapshot().retired, true);
+  assert.equal(answer.getSnapshot().retired, true);
+});
 
 function setup(t: TestContext, store: Store = (useCockpit = createCockpitStore())) {
   if (typeof document === 'undefined') replaceGlobal(t, 'document', Object.assign(new EventTarget(), { visibilityState: 'visible' }));
@@ -228,6 +394,32 @@ test('module invalidations reuse control SSE without persistent state or extra r
   assert.deepEqual(received, ['fixture']);
 });
 
+test('module event SSE is immutable, transient and never mutates native metadata or starts reads', t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a']);
+  const state = h.store.getState();
+  const received: unknown[] = [];
+  const bad = state.onModuleEvent((_id, payload) => { (payload as { values: unknown[] }).values.push('changed'); });
+  const unsubscribe = state.onModuleEvent((id, payload) => { received.push({ id, payload }); });
+  const payload = { type: 'session/removed', sessionId: 'a', values: [1] };
+  h.source.emit({ type: 'module/event', moduleId: 'fixture', payload });
+  assert.deepEqual(received, [{ id: 'fixture', payload }]);
+  assert.equal(getUxErrors().length, 1, 'listener failure does not block another consumer');
+  assert.equal(h.store.getState(), state);
+  assert.equal(h.store.getState().sessions, state.sessions);
+  assert.equal(h.store.getState().resourceRevisions, state.resourceRevisions);
+  assert.equal(h.sources.length, 1);
+  assert.equal(h.requests.length, 0);
+  bad();
+  unsubscribe();
+  unsubscribe();
+  h.source.emit({ type: 'module/event', moduleId: 'fixture', payload: null });
+  assert.equal(received.length, 1);
+  const late = state.onModuleEvent(() => assert.fail('No event replay'));
+  late();
+});
+
 test('validated native status events need no unused browser state or additional requests', t => {
   const h = setup(t);
   h.source.open();
@@ -276,9 +468,110 @@ test('removed session pages have no dedicated Web store actions or readers', () 
   for (const name of [
     'forkSession', 'getPlan', 'getPanels', 'getPanel', 'getUsage',
     'scheduleList', 'scheduleAdd', 'scheduleStop', 'compactSession',
-    'rewindSession', 'unloadSession', 'reloadSession', 'setMode',
+    'rewindSession', 'unloadSession', 'setMode',
   ]) assert.equal(name in state, false, name);
 });
+
+for (const loaded of [true, false]) {
+  test(`reload targets the original session and preserves drafts/history (loaded=${loaded})`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot([], { sessions: [{ ...meta('a'), loaded }, meta('b')] });
+    useCockpit.setState({ activeId: 'b' });
+    const draft = getDraftSession('a').prompt;
+    draft.edit('keep original draft');
+    const before = session('a');
+    const reload = useCockpit.getState().reloadSession('a');
+    h.assertPost(0, 'session/reload', { sessionId: 'a' });
+    assert.deepEqual(useCockpit.getState().reloadingSessionIds, ['a']);
+    await assert.rejects(useCockpit.getState().reloadSession('a'), /尚未结束/);
+    assert.deepEqual(useCockpit.getState().reloadingSessionIds, ['a']);
+    useCockpit.setState({ activeId: null });
+    await h.reply(0, { ok: true });
+    await reload;
+    assert.equal(useCockpit.getState().activeId, null);
+    assert.equal(session('a').loaded, loaded, 'ACK does not invent lifecycle state');
+    assert.strictEqual(session('a').messages, before.messages);
+    assert.equal(draft.getSnapshot().text, 'keep original draft');
+    assert.deepEqual(useCockpit.getState().reloadingSessionIds, []);
+    assert.equal(h.requests.length, 1, 'no stop, clear, load, refresh, prompt, or retry');
+  });
+}
+
+for (const patch of [
+  { status: 'running' }, { nativeProcessing: true }, { activeSubagents: 1 },
+  { activeOperations: 1 }, { activeMcpOperations: 1 }, { loading: true },
+  { closing: true }, { cancelling: true }, { compacting: true },
+  { queue: [{ id: 'q', text: 'protected' }] },
+  { ask: { requestId: 'ask', question: 'Choose', choices: [], allowFreeform: true } },
+  { planRequest: { requestId: 'plan', summary: 'Plan' } },
+  { elicitation: { requestId: 'elicit', message: 'Choose' } },
+] satisfies Partial<SessionMeta>[]) {
+  test(`reload rechecks current protected work before dispatch: ${JSON.stringify(patch)}`, async t => {
+    const h = setup(t);
+    h.source.open(); h.snapshot();
+    const reload = useCockpit.getState().reloadSession;
+    h.source.emit({ type: 'session/patch', sessionId: 'a', ...patch });
+    await assert.rejects(reload('a'), /仍有工作/);
+    assert.equal(h.requests.length, 0);
+    assert.deepEqual(useCockpit.getState().reloadingSessionIds, []);
+    assert.match(getUxErrors().at(-1)!.message, /会话 a \(a\)/);
+  });
+}
+
+for (const gate of ['offline', 'snapshot', 'missing'] as const) {
+  test(`reload fresh guard rejects ${gate}`, async t => {
+    const h = setup(t);
+    h.source.open(); h.snapshot();
+    const reload = useCockpit.getState().reloadSession;
+    if (gate === 'offline') h.source.drop();
+    if (gate === 'snapshot') useCockpit.setState({ snapshotReady: false });
+    if (gate === 'missing') h.source.emit({ type: 'session/removed', sessionId: 'a' });
+    await assert.rejects(reload('a'), /尚未就绪|已不存在/);
+    assert.equal(h.requests.length, 0);
+    assert.ok(getUxErrors().length);
+  });
+}
+
+for (const failure of ['busy', 'negative', 'unknown', 'transport'] as const) {
+  test(`reload ${failure} stays visible after navigation and never retries`, async t => {
+    const h = setup(t);
+    h.source.open(); h.snapshot(['a', 'b']);
+    const reload = useCockpit.getState().reloadSession('a');
+    const rejected = assert.rejects(reload);
+    useCockpit.setState({ activeId: 'b' });
+    const response = h.assertPost(0, 'session/reload', { sessionId: 'a' });
+    if (failure === 'transport') response.reject(new TypeError('Unknown reload outcome'));
+    else response.resolve(Response.json(failure === 'busy' ? { error: 'Native protected steering work' }
+      : failure === 'negative' ? { ok: false } : {}, { status: failure === 'busy' ? 409 : 200 }));
+    await rejected;
+    assert.equal(useCockpit.getState().activeId, 'b');
+    assert.equal(session('b').error, null);
+    assert.match(session('a').error!, /重新加载会话失败/);
+    assert.match(getUxErrors().at(-1)!.message, /会话 a \(a\)/);
+    assert.deepEqual(useCockpit.getState().reloadingSessionIds, []);
+    assert.equal(h.requests.length, 1);
+  });
+}
+
+for (const boundary of ['removed', 'reconnect', 'cleanup'] as const) {
+  test(`reload late failure survives ${boundary} without stale writes`, async t => {
+    const h = setup(t);
+    h.source.open(); h.snapshot(['a', 'b']);
+    const reload = useCockpit.getState().reloadSession('a');
+    const rejected = assert.rejects(reload, /uncertain/);
+    if (boundary === 'removed') h.source.emit({ type: 'session/removed', sessionId: 'a' });
+    else if (boundary === 'reconnect') h.reconnect();
+    else h.cleanup();
+    const before = useCockpit.getState().sessions;
+    h.assertPost(0, 'session/reload', { sessionId: 'a' }).reject(new TypeError('uncertain'));
+    await rejected;
+    assert.strictEqual(useCockpit.getState().sessions, before);
+    assert.match(getUxErrors().at(-1)!.message, /会话 a \(a\)/);
+    assert.deepEqual(useCockpit.getState().reloadingSessionIds, []);
+    assert.equal(h.requests.length, 1);
+  });
+}
 
 test('native deletion supports unloaded sessions and failures never retry or remove displayed state', async t => {
   const store = createCockpitStore();
@@ -419,16 +712,49 @@ test('source changes fence narrow requests and clear stale native fields immedia
   const store = createCockpitStore();
   const h = setup(t, store);
   h.source.open();
-  h.snapshot(['a'], { sessions: [{ ...meta('a'), currentModelId: 'old', availableModels: [], scheduleCount: 2 }] });
+  const roles = [{ moduleId: 'fixture', roleId: 'reviewer', moduleName: 'Fixture', name: 'Reviewer' }];
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), currentModelId: 'old', availableModels: [], scheduleCount: 2,
+    roles, appliedRoles: [], rolesNeedReload: true }] });
   h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['model'] });
   await setImmediate();
   h.source.emit({ type: 'session/patch', sessionId: 'a', loaded: false, status: 'unloaded', ask: null });
   assert.equal(h.request(0).init?.signal?.aborted, true);
   assert.equal(session('a', store).availableModels, undefined);
   assert.equal(session('a', store).scheduleCount, undefined);
+  assert.deepEqual(session('a', store).roles, roles);
+  assert.deepEqual(session('a', store).appliedRoles, []);
+  assert.equal(session('a', store).rolesNeedReload, false);
   await h.reply(0, { meta: { sessionId: 'a', loaded: true, currentModelId: 'obsolete' } });
   assert.equal(session('a', store).currentModelId, undefined);
   assert.equal(session('a', store).loaded, false);
+});
+
+test('role identity invalidation fences stale saved/applied roles and tracks explicit reload', async t => {
+  const store = createCockpitStore();
+  const h = setup(t, store);
+  h.source.open();
+  const roles = [{ moduleId: 'fixture', roleId: 'reviewer', moduleName: 'Fixture', name: 'Reviewer' }];
+  h.snapshot(['a'], { sessions: [{ ...meta('a'), roles: [], appliedRoles: [], rolesNeedReload: false }] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['identity', 'model'] });
+  await setImmediate();
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['identity'] });
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, roles, appliedRoles: roles,
+    rolesNeedReload: true, currentModelId: 'fresh' } });
+  assert.deepEqual(session('a', store).roles, []);
+  assert.deepEqual(session('a', store).appliedRoles, []);
+  assert.equal(session('a', store).rolesNeedReload, false);
+  assert.equal(session('a', store).currentModelId, 'fresh');
+  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['identity'] });
+  await h.reply(1, { meta: { sessionId: 'a', loaded: true, roles, appliedRoles: [], rolesNeedReload: true } });
+  assert.deepEqual(session('a', store).roles, roles);
+  assert.deepEqual(session('a', store).appliedRoles, []);
+  assert.equal(session('a', store).rolesNeedReload, true);
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['identity'] });
+  await setImmediate();
+  await h.reply(2, { meta: { sessionId: 'a', loaded: true, roles, appliedRoles: roles, rolesNeedReload: false } });
+  assert.deepEqual(session('a', store).appliedRoles, roles);
+  assert.equal(session('a', store).rolesNeedReload, false);
+  assert.equal(h.requests.length, 3, 'only identity reads, never reload or role polling');
 });
 
 test('queue invalidations discard old selected reads after navigation without reading the hidden queue', async t => {
@@ -1061,6 +1387,7 @@ interface ResourceCase {
   read: (state: State) => Promise<unknown>;
   response: unknown;
   expected: unknown;
+  expectedErrors?: string[];
 }
 
 const projection: IntentResult<'session/resources'>['meta'] = {
@@ -1076,7 +1403,94 @@ const globalSkills: IntentResult<'skills/global'>['skills'] = [{ name: 'fixture-
 const sessionSkills: IntentResult<'skills/session'>['skills'] = [{ name: 'fixture-skill', enabled: true }];
 const skill: IntentResult<'skills/read'> = { name: 'fixture-skill', body: 'fixture body', enabled: false };
 const directory: IntentResult<'fs/listDir'> = { path: '/fixture', parent: '/', entries: [] };
+const roleAddition: IntentResult<'roles/add'> = {
+  sessionId: 'a', status: 'uncertain', roles: [], appliedRoles: [], loaded: false, rolesNeedReload: false,
+  error: 'Synthetic partial outcome', recovery: 'Inspect before retry',
+};
+const roleReadiness: IntentResult<'roles/readiness'> = {
+  sessionId: 'a', roles: [], appliedRoles: [], loaded: false, ready: false, reasons: ['Unloaded'],
+};
+
+for (const loaded of [true, false]) {
+  test(`role refresh only reads identity and updates saved/applied fields while loaded=${loaded}`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot([], { sessions: [{ ...meta('a'), loaded, roles: [], appliedRoles: [] }] });
+    const roles = [{ moduleId: 'fixture', roleId: 'reviewer', moduleName: 'Fixture', name: 'Reviewer' }];
+    const pending = useCockpit.getState().refreshRoles('a', new AbortController().signal);
+    h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['identity'] });
+    const refreshed = { sessionId: 'a', loaded, roles, appliedRoles: [], rolesNeedReload: loaded };
+    await h.reply(0, { meta: refreshed });
+    assert.deepEqual(await pending, refreshed);
+    assert.deepEqual(session().roles, roles);
+    assert.deepEqual(session().appliedRoles, []);
+    assert.equal(session().rolesNeedReload, loaded);
+    assert.equal(session().loaded, loaded);
+    assert.equal(h.requests.length, 1, 'no lifecycle, readiness, catalog or all-panel reads');
+  });
+}
+
+for (const change of ['roles', 'applied', 'identity revision', 'loaded', 'disconnect', 'reconnect', 'delete', 'abort'] as const) {
+  test(`role refresh rejects stale ${change} before publishing or unlocking retry`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot([], { sessions: [{ ...meta('a'), roles: [], appliedRoles: [] }] });
+    const controller = new AbortController();
+    const pending = useCockpit.getState().refreshRoles('a', controller.signal);
+    const rejected = assert.rejects(pending, /连接或会话角色已变化/);
+    if (change === 'roles') useCockpit.setState({ sessions: [{ ...session(), roles: [] }] });
+    if (change === 'applied') useCockpit.setState({ sessions: [{ ...session(), appliedRoles: [] }] });
+    if (change === 'identity revision') useCockpit.setState({ resourceRevisions: { a: { identity: 1 } } });
+    if (change === 'loaded') useCockpit.setState({ sessions: [{ ...session(), loaded: false }] });
+    if (change === 'disconnect') h.source.drop();
+    if (change === 'reconnect') useCockpit.setState(state => ({ connectionGeneration: state.connectionGeneration + 1 }));
+    if (change === 'delete') useCockpit.setState({ sessions: [] });
+    if (change === 'abort') controller.abort();
+    const before = useCockpit.getState().sessions;
+    await h.reply(0, { meta: { sessionId: 'a', loaded: true, roles: [], appliedRoles: [], rolesNeedReload: true } });
+    await rejected;
+    assert.equal(useCockpit.getState().sessions, before);
+    assert.equal(h.requests.length, 1);
+  });
+}
+
+for (const result of [null, { sessionId: 'wrong', loaded: true, roles: [], appliedRoles: [], rolesNeedReload: false },
+  { sessionId: 'a', loaded: true, appliedRoles: [], rolesNeedReload: false },
+  { sessionId: 'a', loaded: true, roles: [], rolesNeedReload: false }]) {
+  test(`role refresh refuses incomplete or mismatched metadata: ${JSON.stringify(result)}`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    const pending = useCockpit.getState().refreshRoles('a', new AbortController().signal);
+    const rejected = assert.rejects(pending, /会话 ID 不匹配|状态未确认/);
+    await h.reply(0, { meta: result });
+    await rejected;
+    assert.equal(session().roles, undefined);
+  });
+}
+
+test('fresh role identity survives an older in-flight summary response', async t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot([], { sessions: [{ ...meta('a'), roles: [], appliedRoles: [] }] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['identity'] });
+  await Promise.resolve();
+  const pending = useCockpit.getState().refreshRoles('a', new AbortController().signal);
+  const roles = [{ moduleId: 'fixture', roleId: 'reviewer', moduleName: 'Fixture', name: 'Reviewer' }];
+  await h.reply(1, { meta: { sessionId: 'a', loaded: true, roles, appliedRoles: [], rolesNeedReload: true } });
+  await pending;
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, roles: [], appliedRoles: [], rolesNeedReload: false } });
+  assert.deepEqual(session().roles, roles);
+  assert.equal(session().rolesNeedReload, true);
+});
+
 const resources: ResourceCase[] = [
+  { label: 'listRoles', name: 'roles/list', body: {}, read: s => s.listRoles(), response: { roles: [] }, expected: [] },
+  { label: 'addRoles', name: 'roles/add', body: { sessionId: 'a', roles: [{ moduleId: 'fixture', roleId: 'reviewer' }] },
+    read: s => s.addRoles('a', [{ moduleId: 'fixture', roleId: 'reviewer' }]), response: roleAddition, expected: roleAddition,
+    expectedErrors: ['接口 roles/add 的变更结果尚未确认；请检查原生状态，不要自动重试。'] },
+  { label: 'roleReadiness', name: 'roles/readiness', body: { sessionId: 'a' },
+    read: s => s.roleReadiness('a'), response: roleReadiness, expected: roleReadiness },
   {
     label: 'getResources', name: 'session/resources', body: { sessionId: 'a', resources: ['model'] },
     read: (s) => s.getResources('a', ['model'], new AbortController().signal),
@@ -1350,7 +1764,7 @@ for (const resource of resources) {
     assert.deepEqual(await pending, resource.expected);
     assert.strictEqual(session(), before);
     assert.equal(h.requests.length, 1);
-    assert.deepEqual(getUxErrors(), []);
+    assert.deepEqual(getUxErrors().map(error => error.message), resource.expectedErrors ?? []);
   });
 
   test(`${resource.label} rejects disconnected reads or mutations instead of returning empty data or success`, async (t) => {
@@ -1384,6 +1798,26 @@ for (const resource of resources) {
       assert.equal(h.requests.length, 1);
     });
   }
+}
+
+for (const status of ['saved', 'unchanged'] as const) {
+  test(`addRoles ${status} returns a known result without an uncertainty warning or projection mutation`, async t => {
+    const h = setup(t);
+    h.source.open();
+    h.snapshot();
+    const before = session();
+    const roles = [{ moduleId: 'fixture', roleId: 'reviewer' }];
+    const result: IntentResult<'roles/add'> = {
+      sessionId: 'a', status, roles: roles.map(role => ({ ...role, moduleName: 'Fixture', name: 'Reviewer' })),
+      appliedRoles: [], loaded: true, rolesNeedReload: true,
+    };
+    const pending = useCockpit.getState().addRoles('a', roles);
+    h.assertPost(0, 'roles/add', { sessionId: 'a', roles }).resolve(Response.json(result));
+    assert.deepEqual(await pending, result);
+    assert.strictEqual(session(), before);
+    assert.equal(h.requests.length, 1);
+    assert.deepEqual(getUxErrors(), []);
+  });
 }
 
 test('attached prompt failures keep the original false acknowledgement and local diagnostic contract', async (t) => {

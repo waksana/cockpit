@@ -15,8 +15,10 @@ import { applyProjection, cleanProjection } from './sessionResources';
 import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
 import { readMessageHistory } from './messageHistory';
 import { describeReason, reportUxError } from '../lib/errorReporter';
+import { sessionReloadBlockReason } from '../lib/sessionReload';
 import type { NativeDraftRequest } from '../lib/draft';
-import { observeDraftDecisions } from '../lib/draftSelection';
+import { observeDraftDecisions, retireDraftSession } from '../lib/draftSelection';
+import type { DraftReference, DraftSendBlockReason, ModuleEventPayload } from '@cockpit/module-api';
 
 // Background tabs release their native chat read.
 const isVisible = () => typeof document !== 'undefined' && document.visibilityState === 'visible';
@@ -29,20 +31,28 @@ interface CockpitState {
   activeId: string | null;
   globalModels: ModelOption[];
   resourceRevisions: Record<string, Partial<Record<SessionResource, number>>>;
+  reloadingSessionIds: string[];
   // lifecycle
   init: () => () => void;
   onModuleInvalidated: (listener: (moduleId: string) => void) => () => void;
+  onModuleEvent: (listener: (moduleId: string, payload: ModuleEventPayload) => void) => () => void;
   // intents
   setActiveId: (id: string | null) => void;
-  newSession: (cwd: string) => Promise<string>;
+  newSession: (cwd: string, roles?: import('@cockpit/protocol').RoleSelection[]) => Promise<string>;
+  listRoles: () => Promise<IntentResult<'roles/list'>['roles']>;
+  addRoles: (sessionId: string, roles: import('@cockpit/protocol').RoleSelection[]) => Promise<IntentResult<'roles/add'>>;
+  roleReadiness: (sessionId: string) => Promise<IntentResult<'roles/readiness'>>;
+  refreshRoles: (sessionId: string, signal?: AbortSignal) => Promise<SessionProjection>;
   loadMore: (sessionId: string) => void;
   retryHistory: (sessionId: string) => void;
   sendDraft: (request: NativeDraftRequest) => Promise<boolean>;
+  canSendDraft: (draft: DraftReference) => DraftSendBlockReason | undefined;
   cancel: (sessionId: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<{ ok: true; interrupted: boolean }>;
   setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => Promise<IntentResult<'setModel'>>;
   deleteSession: (sessionId: string) => Promise<void>;
   loadSession: (sessionId: string) => Promise<void>;
+  reloadSession: (sessionId: string) => Promise<void>;
   getResources: (sessionId: string, resources: MetaResource[], signal?: AbortSignal) => Promise<SessionProjection>;
   // MCP + Skills management
   mcpGlobal: () => Promise<import('@cockpit/protocol').McpServerGlobal[]>;
@@ -67,6 +77,7 @@ interface CockpitState {
 export const createCockpitStore = () => create<CockpitState>((set, get) => {
   let client: NetClient | null = null;
   const moduleListeners = new Set<(moduleId: string) => void>();
+  const moduleEventListeners = new Set<(moduleId: string, payload: ModuleEventPayload) => void>();
   const summaryResources: MetaResource[] = ['identity', 'control', 'model'];
   const metaRequests = new Map<string, {
     dirty: Set<MetaResource>; stale: Set<MetaResource>; controller: AbortController; patches: Partial<SessionMeta>;
@@ -177,6 +188,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
   const releaseSessions = (ids: readonly string[]) => {
     let revisions: CockpitState['resourceRevisions'] | undefined;
     for (const id of ids) {
+      retireDraftSession(id);
       metaRequests.get(id)?.controller.abort();
       metaRequests.delete(id);
       cancelHistory(id);
@@ -224,11 +236,13 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     sid: string | null,
     operation: string,
     send: (net: NetClient) => Promise<{ ok: boolean; applied?: boolean; error?: string }>,
+    beforeSend?: () => void,
   ): Promise<void> => {
     const generation = get().connectionGeneration;
     const origin = sid ? `会话 ${get().sessions.find((s) => s.sessionId === sid)?.title ?? sid} (${sid})：` : '';
     let reportedByTransport = false;
     const promise = (async () => {
+      beforeSend?.();
       const result = await send(connectedClient()).catch((error) => {
         reportedByTransport = !isSessionUnloadedError(error);
         throw error;
@@ -413,6 +427,12 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       case 'module/invalidated':
         for (const listener of [...moduleListeners]) if (moduleListeners.has(listener)) listener(ev.moduleId);
         return;
+      case 'module/event':
+        for (const listener of [...moduleEventListeners]) if (moduleEventListeners.has(listener)) {
+          try { listener(ev.moduleId, ev.payload); }
+          catch (error) { reportUxError(`模块反馈：${describeReason(error, false)}`); }
+        }
+        return;
       case 'session/invalidated': {
         // Late invalidations cannot recreate resources for an absent session.
         if (!get().sessions.some(session => session.sessionId === ev.sessionId)) return;
@@ -476,6 +496,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
               return metaToSession({
                 title: s.title, cwd: s.cwd, createdAt: s.createdAt,
                 lastActivity: s.lastActivity, lastActivitySource: s.lastActivitySource,
+                roles: s.roles, appliedRoles: [], rolesNeedReload: false,
                 loaded: false, status: 'unloaded', ask: null,
                 ...patch,
               }, s);
@@ -526,6 +547,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       moduleListeners.add(listener);
       return () => { moduleListeners.delete(listener); };
     },
+    onModuleEvent(listener) {
+      moduleEventListeners.add(listener);
+      return () => { moduleEventListeners.delete(listener); };
+    },
 
     init() {
       client?.disconnect();
@@ -560,9 +585,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       }
       maybeMaterialize();
     },
-    newSession(cwd) {
+    newSession(cwd, roles) {
       let reportedByTransport = false;
-      const promise = read(net => net.newSession(cwd).catch(error => {
+      const promise = read(net => net.newSession(cwd, roles).catch(error => {
         reportedByTransport = !isSessionUnloadedError(error);
         throw error;
       })).then(result => result.sessionId);
@@ -596,6 +621,21 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     sendDraft(request) {
       return acknowledged(request.body.sessionId, (net) => net.sendDraft(request));
     },
+    canSendDraft(draft) {
+      const state = get();
+      if (!client?.isOpen || state.connState !== 'open' || !state.snapshotReady) return 'unavailable';
+      const session = state.sessions.find(value => value.sessionId === draft.sessionId);
+      if (!session || session.loading || session.closing || (session.compacting && session.status !== 'running')) return 'unavailable';
+      if (draft.getSnapshot().retired) return 'retired';
+      const purpose = draft.purpose;
+      if (purpose.kind === 'prompt') return;
+      if (purpose.kind === 'elicitation') return 'unsupported';
+      if (!session.loaded) return 'unavailable';
+      if (purpose.kind === 'ask') {
+        if (session.ask?.requestId !== purpose.requestId) return 'decision-changed';
+        if (session.ask.allowFreeform === false) return 'unsupported';
+      } else if (session.planRequest?.requestId !== purpose.requestId) return 'decision-changed';
+    },
 
     cancel(sid) { return mutation(sid, '取消', (net) => net.cancel(sid)); },
     interrupt(sid) { return nativeRead(sid, (net) => net.interrupt(sid)); },
@@ -603,6 +643,23 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       // Native ACKs include queued, confirmation and partial-persistence outcomes.
       // They are not void mutations and never become optimistic session state.
       return read(net => net.setModel(sid, modelId, opts));
+    },
+    reloadingSessionIds: [],
+    reloadSession(sid) {
+      let submitted = false;
+      return mutation(sid, '重新加载会话', net => net.reloadSession(sid), () => {
+        const state = get();
+        const reason = sessionReloadBlockReason(
+          state.sessions.find(s => s.sessionId === sid),
+          state.connState === 'open' && state.snapshotReady,
+          state.reloadingSessionIds.includes(sid),
+        );
+        if (reason) throw new Error(reason);
+        submitted = true;
+        set({ reloadingSessionIds: [...state.reloadingSessionIds, sid] });
+      }).finally(() => {
+        if (submitted) set(st => ({ reloadingSessionIds: st.reloadingSessionIds.filter(id => id !== sid) }));
+      });
     },
     deleteSession(sid) { return mutation(sid, '永久删除会话', (net) => net.deleteSession(sid)); },
     loadSession(sid) { return mutation(sid, '恢复会话', (net) => net.loadSession(sid)); },
@@ -635,6 +692,33 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     skillsSession(sid) { return nativeRead(sid, (net) => net.skillsSession(sid)).then((r) => r.skills); },
     skillsToggleSession(sid, name, enabled) { return mutation(sid, `切换技能 ${name}`, (net) => net.skillsToggleSession(sid, name, enabled)); },
     listDir(path) { return read((net) => net.listDir(path)); },
+    listRoles() { return read(net => net.listRoles()).then(result => result.roles); },
+    addRoles(sid, roles) { return read(net => net.addRoles(sid, roles)); },
+    roleReadiness(sid) { return read(net => net.roleReadiness(sid)); },
+    async refreshRoles(sid, signal) {
+      const net = connectedClient();
+      const generation = get().connectionGeneration;
+      const original = get().sessions.find(row => row.sessionId === sid);
+      const revision = get().resourceRevisions[sid]?.identity;
+      const { meta } = await net.getResources(sid, ['identity'], signal);
+      if (!meta || meta.sessionId !== sid) throw new Error('返回的会话 ID 不匹配或会话已不存在');
+      if (!meta.roles || !meta.appliedRoles || meta.rolesNeedReload === undefined) {
+        throw new Error('角色保存或应用状态未确认，请重新刷新');
+      }
+      const current = get().sessions.find(row => row.sessionId === sid);
+      // Do not overwrite newer SSE identity or unlock a retry with an obsolete read.
+      if (signal?.aborted || client !== net || get().connState !== 'open' || get().connectionGeneration !== generation
+        || !original || !current || current.loaded !== meta.loaded || current.loaded !== original.loaded
+        || current.roles !== original.roles || current.appliedRoles !== original.appliedRoles
+        || get().resourceRevisions[sid]?.identity !== revision) {
+        throw new Error('连接或会话角色已变化，请重新刷新');
+      }
+      const fields = { roles: meta.roles, appliedRoles: meta.appliedRoles, rolesNeedReload: meta.rolesNeedReload };
+      const pending = metaRequests.get(sid);
+      if (pending) Object.assign(pending.patches, fields);
+      patchLocal(sid, row => ({ ...row, ...fields }));
+      return meta;
+    },
   };
 });
 

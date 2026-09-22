@@ -211,15 +211,29 @@ export class OfficialRuntime {
   }
 
   private sessionOptions(config: SessionConfig | ResumeSessionConfig): SessionConfig {
+    const base = this.config.sessionConfig;
+    for (const name of Object.keys(config.mcpServers ?? {})) {
+      if (base?.mcpServers && Object.hasOwn(base.mcpServers, name)) {
+        throw new Error(`Conflicting MCP configuration: ${name}`);
+      }
+    }
+    if (base?.systemMessage && config.systemMessage && base.systemMessage.mode !== 'append') {
+      throw new Error('Role instructions cannot replace a custom base system message');
+    }
     return {
       streaming: true, includeSubAgentStreamingEvents: true,
       enableFileChangeTracking: true, manageScheduleEnabled: true,
       ...this.config.sessionConfig, ...config,
+      mcpServers: { ...base?.mcpServers, ...config.mcpServers },
+      ...(base?.systemMessage && config.systemMessage && base.systemMessage.mode === 'append'
+        && config.systemMessage.mode === 'append' ? { systemMessage: {
+          mode: 'append' as const, content: `${base.systemMessage.content}\n\n${config.systemMessage.content}`,
+        } } : {}),
       tools: [...this.config.sessionConfig?.tools ?? [], ...config.tools ?? []],
-      skillDirectories: [
+      skillDirectories: [...new Set([
         ...this.config.sessionConfig?.skillDirectories ?? [],
         ...config.skillDirectories ?? [],
-      ],
+      ])],
       // The product deliberately has no interactive permission policy.
       onPermissionRequest: approveAll,
     };

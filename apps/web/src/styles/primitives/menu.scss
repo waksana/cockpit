@@ -9,10 +9,10 @@
   min-width: 11.25rem;
   width: max-content;
   max-width: calc(100vw - 16px);
-  font-size: 1rem;
+  font-size: var(--host-text-body);
   -webkit-touch-callout: none;
-  padding: 0.25rem 0;
-  border-radius: var(--border-radius-medium);
+  padding: var(--host-space-xs) 0;
+  border-radius: var(--host-radius-dialog);
   background-color: var(--menu-background-color);
   backdrop-filter: var(--menu-backdrop-filter);
   -webkit-backdrop-filter: var(--menu-backdrop-filter);
@@ -21,30 +21,22 @@
 
 .btn-menu-caption {
   max-width: 18rem;
-  padding: 0.5rem 1rem;
+  padding: var(--host-space-sm) var(--host-space-lg);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--secondary-text-color);
-  font-size: var(--font-size-13);
+  font-size: var(--host-text-meta);
 }
 .btn-menu-separator { border-top: 1px solid var(--border-color); margin: 0.25rem 0; }
 
 .btn-menu-item {
-  display: flex;
-  align-items: center;
-  gap: 1.5rem;
-  height: 3rem;
-  padding: 0 2.5rem 0 1rem;
-  font-size: var(--font-size-16);
-  line-height: var(--line-height-16);
-  color: var(--primary-text-color);
-  cursor: pointer;
-  white-space: nowrap;
+  justify-content: flex-start;
+  gap: var(--host-space-lg);
+  padding: var(--host-space-sm) var(--host-space-lg);
+  border-radius: 0;
   position: relative;          // .rp ripple host
   overflow: hidden;
-  border: none;
-  background: transparent;
   width: 100%;
   text-align: start;
 
@@ -53,12 +45,10 @@
     width: 1.5rem; height: 1.5rem;
     display: inline-flex; align-items: center; justify-content: center;
     color: var(--secondary-text-color);
-    font-size: 1.5rem;
   }
-  &-text { flex: 1 1 auto; }
+  &-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 
-  &.danger {
-    color: var(--danger-color);
+  &.ck-danger {
     .btn-menu-item-icon { color: var(--danger-color); }
   }
 }

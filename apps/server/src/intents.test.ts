@@ -50,6 +50,15 @@ const engine: ServerEngine = {
   snapshot: async () => record('snapshot', [], snapshot()),
   busyCount: async () => sessions.filter(sessionMetaBusy).length,
   newSession: async (...args) => record('newSession', args, 'created'),
+  listRoles: (...args) => record('listRoles', args, []),
+  addRoles: async (...args) => record('addRoles', args, {
+    sessionId: 's', status: 'saved' as const, roles: [], appliedRoles: [], loaded: true, rolesNeedReload: false,
+  }),
+  roleReadiness: async (...args) => record('roleReadiness', args, { sessionId: 's', loaded: false, ready: false, roles: [], reasons: ['unloaded'] }),
+  initializeSessionTools: async (...args) => record('initializeSessionTools', args, undefined),
+  prepareSessionResources: async (...args) => record('prepareSessionResources', args, {
+    sessionId: 's', ok: true, skills: [], mcpServers: [], tools: 'unchanged' as const,
+  }),
   forkSession: async (...args) => record('forkSession', args, { sessionId: 'forked' }),
   chat: async (query, signal) => {
     assert.ok(signal instanceof AbortSignal);
@@ -131,6 +140,13 @@ const cases = {
   'system/status': { body: {}, method: 'sessionStatus', args: [] },
   'runtime/snapshot': { body: {}, method: 'snapshot', args: [] },
   'session/new': { body: { cwd: '/fixture' }, method: 'newSession', args: ['/fixture'] },
+  'roles/list': { body: {}, method: 'listRoles', args: [] },
+  'roles/add': { body: { sessionId: 's', roles: [{ moduleId: 'fixture', roleId: 'owner' }] },
+    method: 'addRoles', args: ['s', [{ moduleId: 'fixture', roleId: 'owner' }]] },
+  'roles/readiness': { body: { sessionId: 's' }, method: 'roleReadiness', args: ['s', undefined] },
+  'session/tools-initialize': { body: { sessionId: 's' }, method: 'initializeSessionTools', args: ['s'] },
+  'session/resources-prepare': { body: { sessionId: 's', skills: ['optional'], mcpServers: [{ name: 'tools', tools: ['read'] }] },
+    method: 'prepareSessionResources', args: [{ sessionId: 's', skills: ['optional'], mcpServers: [{ name: 'tools', tools: ['read'] }] }] },
   'session/fork': { body: { sessionId: 's', toEventId: 'user-event', name: 'Child' }, method: 'forkSession', args: ['s', 'user-event', 'Child'] },
   'session/chat': {
     body: Intents['session/chat'].body.parse({ sessionId: 's', cursor: 'native-before', max: 12 }),
@@ -220,6 +236,45 @@ test('session/activity preserves unloaded errors instead of returning idle detai
   assert.equal(response.json().code, 'SESSION_UNLOADED');
   assert.equal(response.json().processing, undefined);
   assert.deepEqual(calls, []);
+});
+
+test('resource HTTP responses preserve contributing roles, module-only and non-module sources', async t => {
+  const module = { id: 'fixture', name: 'Fixture',
+    roles: [{ id: 'executor', name: 'Executor' }, { id: 'owner', name: 'Owner' }] };
+  const sources = [module, { id: 'legacy', name: 'Module only' }, undefined];
+  const servers = sources.map((module, index) => ({
+    name: `native-${index}`, detail: 'native', enabled: false, status: 'disabled' as const, ...(module ? { module } : {}),
+  }));
+  const skills = sources.map((module, index) => ({
+    name: `skill-${index}`, source: 'custom', enabled: true, ...(module ? { module } : {}),
+  }));
+  t.mock.method(engine, 'listSessionMcp', async () => ({ loaded: true, servers }));
+  t.mock.method(engine, 'listSessionSkills', async () => skills);
+  for (const [name, expected] of [['mcp/session', { loaded: true, servers }], ['skills/session', { skills }]] as const) {
+    const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: { sessionId: 's' } });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json(), expected);
+  }
+  assert.deepEqual(calls, [], 'no extra readiness, assembly or session calls');
+});
+
+test('resource preparation preserves partial effects and validates input before guarded work', async t => {
+  const partial = Intents['session/resources-prepare'].result.parse({
+    sessionId: 's', ok: false, skills: [{ name: 'optional', effect: 'enabled', enabled: true }],
+    mcpServers: [{ name: 'tools', effect: 'unconfirmed', enabled: null, status: null, tools: null }],
+    tools: 'not_attempted', error: 'Native readback failed',
+  });
+  const prepare = t.mock.method(engine, 'prepareSessionResources', async () => partial);
+  const response = await app.inject({ method: 'POST', url: '/intent/session/resources-prepare',
+    payload: cases['session/resources-prepare'].body });
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), partial);
+  for (const body of [
+    { sessionId: 's', skills: ['optional', 'optional'] },
+    { sessionId: 's', mcpServers: [{ name: 'tools', tools: ['*'] }] },
+    { sessionId: 's', reload: true },
+  ]) assert.equal((await app.inject({ method: 'POST', url: '/intent/session/resources-prepare', payload: body })).statusCode, 400);
+  assert.equal(prepare.mock.callCount(), 1);
 });
 
 test('session/load surfaces readiness failure without reload, prompt or replacement fallback', async t => {
@@ -549,6 +604,7 @@ test('schema-invalid engine results are 500 INVALID_INTENT_RESULT, not request e
     ['session/chat', 'chat', undefined],
     ['session/list', 'listLive', [{ ...busySession, status: 'not-a-status' }]],
     ['mcp/session-toggle', 'toggleSessionMcp', { ok: false, error: 'missing operation' }],
+    ['session/resources-prepare', 'prepareSessionResources', { ok: true, sessionId: 's' }],
     ['runtime/snapshot', 'snapshot', { ...snapshot(), permissionPolicy: undefined }],
   ] as const;
   for (const [name, method, result] of invalid) {
@@ -895,7 +951,7 @@ test('session/new rejects an obsolete worker label before native creation', asyn
 
 test('unknown, inherited, and retired intent paths are 404 without engine calls', async () => {
   for (const name of [
-    'unknown', 'constructor', '__proto__', 'toString', 'session/purge',
+    'unknown', 'constructor', '__proto__', 'toString', 'session/purge', 'session/advance-queue',
     'hook/add', 'hook/list', 'hook/stop', 'hook/unknown',
     'flow/add', 'flow/list', 'flow/remove', 'flow/write-gate', 'flow/run', 'flow/unknown',
     'flow-schedule/add', 'flow-schedule/list', 'flow-schedule/stop', 'flow-schedule/unknown',
@@ -1018,7 +1074,7 @@ test('health/status and shutdown use only injected state and retain every native
 test('graceful shutdown refuses new work but keeps decisions, queue controls and native reads available', async () => {
   await app.inject({ method: 'POST', url: '/intent/system/shutdown', payload: { confirm: true } });
   calls.length = 0;
-  for (const name of ['prompt', 'session/new', 'session/fork', 'setModel', 'schedule/add', 'mcp/global-default'] as const) {
+  for (const name of ['prompt', 'session/new', 'session/fork', 'session/resources-prepare', 'setModel', 'schedule/add', 'mcp/global-default'] as const) {
     const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: cases[name].body });
     assert.equal(response.statusCode, 503, name);
     assert.equal(response.json().code, 'SERVICE_SHUTTING_DOWN');
@@ -1163,6 +1219,28 @@ test('SSE sends exact snapshot/retry/ping frames on reconnect and enforces the c
   } finally {
     for (const viewer of opened) viewer.close();
   }
+});
+
+test('module payloads reuse control SSE without native calls, shutdown work or reconnect replay', async t => {
+  const first = await openViewer();
+  t.after(() => first.close());
+  const second = await openViewer();
+  t.after(() => second.close());
+  const initial = [...first.frames];
+  const notify = t.mock.method(GracefulShutdown.prototype, 'notify', () => {});
+  calls.length = 0;
+  const event = ServerEvent.parse({ type: 'module/event', moduleId: 'fixture', payload: {
+    type: 'session/removed', sessionId: 's', values: ['界', null, true],
+  } });
+  onEngineEvent(event);
+  await nextTurn();
+  for (const viewer of [first, second]) assert.deepEqual(viewer.frames, [...initial, `data: ${JSON.stringify(event)}`]);
+  assert.deepEqual(calls, []);
+  assert.equal(notify.mock.callCount(), 0);
+  first.close();
+  const reconnected = await openViewer();
+  t.after(() => reconnected.close());
+  assert.deepEqual(reconnected.frames, initial, 'new consumers get no module event history');
 });
 
 test('two simultaneous viewers see no query events and receive exactly one mocked mutation reset', { timeout: 5000 }, async (t) => {

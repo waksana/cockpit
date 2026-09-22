@@ -18,10 +18,61 @@ import {
   type IntentResult,
 } from './index.ts';
 
+test('resource module provenance is explicit optional metadata independent of literal names and native source', () => {
+  const module = { id: 'fixture', name: 'Fixture module' };
+  const mcp = { name: 'fixture-tools', detail: 'user', enabled: true, status: 'failed', error: 'Native error', module };
+  const skill = { name: 'fixture-skill', source: 'custom', enabled: false, module };
+  assert.deepEqual(Intents['mcp/session'].result.parse({ loaded: true, servers: [mcp] }).servers[0], mcp);
+  assert.deepEqual(Intents['skills/session'].result.parse({ skills: [skill] }).skills[0], skill);
+  for (const roles of [[], [{ id: 'owner', name: 'Owner' }],
+    [{ id: 'executor', name: 'Executor' }, { id: 'owner', name: 'Owner' }]]) {
+    const source = { ...module, roles };
+    assert.deepEqual(Intents['mcp/session'].result.parse({ loaded: true, servers: [{ ...mcp, module: source }] }).servers[0]?.module, source);
+    assert.deepEqual(Intents['skills/session'].result.parse({ skills: [{ ...skill, module: source }] }).skills[0]?.module, source);
+  }
+  assert.equal(Object.hasOwn(Protocol.ModuleSource.parse(module), 'roles'), false);
+  assert.equal(Protocol.ModuleSource.safeParse({ ...module, roles: [{ name: 'Missing identity' }] }).success, false);
+  assert.equal(Object.hasOwn(Protocol.McpServerSession.parse({
+    name: 'module_fixture__native', detail: 'native', enabled: true, status: 'connected',
+  }), 'module'), false);
+  assert.equal(Object.hasOwn(Protocol.SkillSession.parse({ name: 'fixture-skill', source: 'custom', enabled: true }), 'module'), false);
+  assert.equal(Intents['session/resources'].body.safeParse({ sessionId: 's', resources: ['skills', 'mcp'] }).success, false,
+    'session/resources is a metadata-only projection; resource lists have dedicated intents');
+});
+
 test('folded-message validators are absent from the production wire entry point', () => {
   for (const name of ['ToolCall', 'ChatRole', 'SubagentInfo', 'ChatMessage']) {
     assert.equal(Object.hasOwn(Protocol, name), false);
   }
+});
+
+test('resource preparation has bounded exact identities, strict bodies and honest partial receipts', () => {
+  const { body, result } = Intents['session/resources-prepare'];
+  const selection = { sessionId: 's', skills: ['optional'], mcpServers: [{ name: 'tools', tools: ['raw_name'] }] };
+  assert.deepEqual(body.parse(selection), selection);
+  assert.deepEqual(body.parse({ sessionId: 's' }), { sessionId: 's' });
+  for (const invalid of [
+    { ...selection, roles: [] }, { ...selection, sessionId: ' ' },
+    { ...selection, skills: ['a', 'a'] }, { ...selection, skills: [' '] },
+    { ...selection, skills: ['a'.repeat(201)] },
+    { ...selection, skills: Array.from({ length: 65 }, (_, i) => `s${i}`) },
+    { ...selection, mcpServers: [{ name: 'a' }, { name: 'a' }] },
+    { ...selection, mcpServers: Array.from({ length: 65 }, (_, i) => ({ name: `s${i}` })) },
+    ...[['*'], ['a', 'a'], [''], [' '], ['a'.repeat(201)],
+      Array.from({ length: 257 }, (_, i) => `t${i}`)].map(tools => ({ ...selection, mcpServers: [{ name: 'a', tools }] })),
+    { ...selection, mcpServers: [{ name: 'a', enabled: true }] },
+  ]) assert.equal(body.safeParse(invalid).success, false, JSON.stringify(invalid));
+  const receipt = {
+    sessionId: 's', ok: false, skills: [{ name: 'optional', effect: 'enabled', enabled: true }],
+    mcpServers: [{ name: 'tools', effect: 'unconfirmed', enabled: null, status: null, tools: null }],
+    tools: 'not_attempted', error: 'Native readback failed',
+  };
+  assert.deepEqual(result.parse(receipt), receipt);
+  assert.equal(result.safeParse({ ...receipt, error: 'x'.repeat(2000) }).success, true);
+  assert.equal(result.safeParse({ ...receipt, error: 'x'.repeat(2001) }).success, false);
+  assert.equal(result.safeParse({ ...receipt, readiness: true }).success, false);
+  assert.equal(result.safeParse({ ...receipt, tools: 'ready' }).success, false);
+  assert.equal(result.safeParse({ ...receipt, mcpServers: [{ ...receipt.mcpServers[0], status: 'unknown' }] }).success, false);
 });
 
 test('response messages retain thought, body and explicit incompleteness without provisional state', () => {
@@ -103,6 +154,32 @@ const minimalMeta = {
   queue: [],
   ask: null,
 } satisfies SessionMeta;
+
+test('role readiness is an explicit result, never a session identity projection', () => {
+  const roles = [{ moduleId: 'fixture', roleId: 'owner', moduleName: 'Fixture', name: 'Owner' }];
+  const roleReadiness = { sessionId: 's1', roles, loaded: true, ready: true, reasons: [] };
+  roundTrip(Intents['roles/readiness'].result, roleReadiness);
+  for (const schema of [SessionMeta, SessionBrief, Protocol.SessionProjection]) {
+    const value = schema.parse({ ...minimalMeta, roles, roleReadiness });
+    assert.deepEqual(value.roles, roles);
+    assert.equal('roleReadiness' in value, false);
+  }
+  assert.deepEqual(ServerEvent.parse({ type: 'session/patch', sessionId: 's1', roles, roleReadiness }), {
+    type: 'session/patch', sessionId: 's1', roles,
+  });
+
+  test('tool initialization accepts only an explicit session identity and does not claim readiness', () => {
+    const intent = Intents['session/tools-initialize'];
+    roundTrip(intent.body, { sessionId: 's' });
+    for (const body of [{}, { sessionId: '' }, { sessionId: 's', reload: true }, { sessionId: 's', prompt: 'bootstrap' }]) {
+      assert.equal(intent.body.safeParse(body).success, false);
+    }
+    assert.equal(intent.result.safeParse({ ok: false }).success, false);
+    assert.match(intent.description, /not role readiness/);
+  });
+  assert.equal('session/advance-queue' in Intents, false);
+  assert.equal('QueueAdvanceOperation' in Protocol, false);
+});
 
 test('retired project identity is stripped from session metadata and SSE patches', () => {
   for (const project of [
@@ -258,6 +335,7 @@ test('E19: every ServerEvent variant parses a representative sample', () => {
   const samples = {
     snapshot,
     'module/invalidated': { type: 'module/invalidated', moduleId: 'synthetic-module' },
+    'module/event': { type: 'module/event', moduleId: 'synthetic-module', payload: { kind: 'delta', items: [1, null, true] } },
     'agent/status': { type: 'agent/status', status: 'up' },
     'session/added': { type: 'session/added', session: fullMeta },
     'session/invalidated': { type: 'session/invalidated', sessionId: 's1' },
@@ -440,6 +518,10 @@ const intentFixtures = {
     shutdown: { phase: 'running', requestedAt: null, error: null }, sessions: [] } },
   'runtime/snapshot': { body: {}, result: snapshot },
   'session/new': { body: { cwd: minimalMeta.cwd }, result: sid },
+  'roles/list': { body: {}, result: { roles: [] } },
+  'roles/add': { body: { ...sid, roles: [{ moduleId: 'fixture', roleId: 'owner' }] },
+    result: { ...sid, status: 'saved', roles: [], appliedRoles: [], loaded: true, rolesNeedReload: false } },
+  'roles/readiness': { body: sid, result: { ...sid, roles: [], loaded: false, ready: false, reasons: ['Session is unloaded'] } },
   'session/fork': { body: { sessionId: 'parent', toEventId: 'user-event', name: 'Child' }, result: sid },
   'session/chat': { body: { ...sid, source: 'persisted', direction: 'backward', max: 64, waitMs: 0, bootstrap: false }, result: nativePage },
   prompt: { body: { ...sid, text: 'continue', mode: 'enqueue',
@@ -455,6 +537,8 @@ const intentFixtures = {
   'session/unload': { body: sid, result: ok },
   'session/load': { body: sid, result: { ok: true, ...sid } },
   'session/reload': { body: sid, result: ok },
+  'session/tools-initialize': { body: sid, result: { ok: true } },
+  'session/resources-prepare': { body: sid, result: { sessionId: 's', ok: true, skills: [], mcpServers: [], tools: 'unchanged' } },
   'session/plan': { body: sid, result: plan },
   'session/usage': { body: sid, result: { ...sid, sampledAt: 1, context: null,
     usage: { sessionStartTime: '2026-09-09T00:00:00Z', totalUserRequests: 0,
@@ -557,9 +641,11 @@ test('session/fork uses strict native fields and never accepts cwd or blank boun
   }
 });
 
-test('session/new accepts only the native cwd and rejects retired module or hidden launch inputs', () => {
+test('session/new accepts cwd and explicit roles while rejecting retired module or hidden launch inputs', () => {
   const schema = Intents['session/new'].body;
-  assert.deepEqual(Object.keys(schema.shape), ['cwd']);
+  assert.deepEqual(Object.keys(schema.shape), ['cwd', 'roles']);
+  roundTrip(schema, { cwd: '/workspace', roles: [{ moduleId: 'board', roleId: 'owner' }, { moduleId: 'board', roleId: 'executor' }] });
+  assert.equal(schema.safeParse({ cwd: '/workspace', roles: [{ moduleId: 'board', roleId: '../escape' }] }).success, false);
   assert.equal(schema.safeParse({ cwd: '/workspace/project', modules: [] }).success, false);
   for (const cwd of ['/workspace/project', 'relative/path']) {
     roundTrip(schema, { cwd });
@@ -980,7 +1066,7 @@ type SlimContractGuards = [
   Expect<Equal<Extract<keyof SessionMeta, RemovedMetaField>, never>>,
   Expect<Equal<Extract<keyof SessionBrief, RemovedMetaField>, never>>,
   Expect<Equal<Extract<keyof Extract<Protocol.ServerEvent, { type: 'session/patch' }>, RemovedMetaField>, never>>,
-  Expect<Equal<IntentBody<'session/new'>, { cwd: string }>>,
+  Expect<Equal<IntentBody<'session/new'>, { cwd: string; roles?: Array<{ moduleId: string; roleId: string }> }>>,
   Expect<Equal<IntentBody<'session/delete'>, { sessionId: string }>>,
   Expect<Equal<IntentBody<'session/chat'>, Protocol.NativeChatRead>>,
   Expect<Equal<IntentBody<'skills/global'>, { cwd?: string }>>,

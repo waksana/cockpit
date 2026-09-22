@@ -30,7 +30,7 @@ test('base drafts contain only text, generic content/leases and native submissio
   assert.equal(saved(values, 'A').unconfirmed, false);
   assert.deepEqual(saved(values, 'A').__cockpitDraft, { version: 1, purpose: { kind: 'prompt' } });
   assert.deepEqual(createSessionDrafts(storage)('A').getSnapshot(), {
-    text: ' Native text\n', hasContent: true, blocks: [], revision: 0, pending: false, unconfirmed: false,
+    text: ' Native text\n', hasContent: true, blocks: [], revision: 0, pending: false, unconfirmed: false, retired: false,
   });
   assert.equal('attachments' in a.getSnapshot(), false);
   assert.equal('appendAttachments' in a, false);
@@ -90,7 +90,7 @@ test('native ACK clears only the captured text revision and removes an otherwise
   assert.equal(await draft.runAction(async () => assert.fail('Concurrent action')), false);
   finish(true);
   assert.equal(await sending, true);
-  assert.deepEqual(draft.getSnapshot(), { text: '', blocks: [], hasContent: false, revision: 2, pending: false, unconfirmed: false });
+  assert.deepEqual(draft.getSnapshot(), { text: '', blocks: [], hasContent: false, revision: 2, pending: false, unconfirmed: false, retired: false });
   assert.equal(values.has(key('A')), false);
 });
 
@@ -160,7 +160,7 @@ test('blank drafts do not send, while choice ACKs preserve unrelated typed text'
   assert.equal(draft.getSnapshot().text, 'Retained');
 });
 
-test('unregistered legacy values and opaque schema namespaces survive text edits and sends but are never payloads', async () => {
+test('unregistered legacy values and opaque schema namespaces survive edits and block every submission route', async () => {
   const { values, drafts } = fixture();
   const unknown = { attachments: Array.from({ length: 25 }, (_, index) => ({ opaque: index })),
     extra: { vendor: ['keep'] }, text: 'Old', unconfirmed: false,
@@ -168,17 +168,80 @@ test('unregistered legacy values and opaque schema namespaces survive text edits
   };
   values.set(key('A'), JSON.stringify(unknown));
   const draft = drafts('A');
+  assert.equal(draft.hasUnclaimedStoredData(), true);
   draft.edit('New');
-  assert.equal(await draft.send(async request => {
-    assert.deepEqual(request.body, { sessionId: 'A', text: 'New' });
-    return true;
-  }), true);
+  const bytes = values.get(key('A'));
+  assert.equal(await draft.send(async () => assert.fail('Opaque data must not be omitted')), false);
+  assert.equal(await draft.runAction(async () => assert.fail('Actions must not bypass recovery')), false);
+  const module = draft.bindModule('speech', ['text'], undefined, undefined, {
+    check: () => undefined, send: async () => assert.fail('Captured module send must not bypass recovery'),
+  });
+  assert.equal((await module.draft.captureSend().send(draft.getSnapshot().revision)).status, 'blocked');
+  module.dispose();
+  assert.equal(values.get(key('A')), bytes);
   const record = saved(values, 'A');
   assert.deepEqual(record.attachments, unknown.attachments);
   assert.deepEqual(record.extra, unknown.extra);
   assert.deepEqual(record.__cockpitDraft.schemas, unknown.__cockpitDraft.schemas);
-  assert.equal(draft.getSnapshot().hasContent, false);
+  assert.equal(draft.getSnapshot().text, 'New');
+  assert.equal(draft.getSnapshot().hasContent, true);
   assert.equal(draft.getSnapshot().blocks.length, 0);
+  draft.retire();
+  assert.equal(values.get(key('A')), bytes, 'retirement does not delete opaque recovery data');
+});
+
+test('clean host metadata is claimed, but unknown metadata and unreadable roots are not', async () => {
+  for (const extra of [{}, { schemas: {} }, { pendingToken: 'old-send' }]) {
+    const { values, drafts } = fixture();
+    values.set(key('A'), JSON.stringify({ text: 'Host', unconfirmed: false,
+      __cockpitDraft: { version: 1, purpose: { kind: 'prompt' }, ...extra } }));
+    const draft = drafts('A');
+    assert.equal(draft.hasUnclaimedStoredData(), false);
+    assert.equal(await draft.send(async () => true), true);
+  }
+  for (const root of [
+    { text: '', unconfirmed: false, attachments: [] },
+    { text: 'Host', unconfirmed: false, __cockpitDraft: { version: 1, purpose: { kind: 'prompt' }, future: {} } },
+    { text: 'Host', unconfirmed: false, __cockpitDraft: { version: 1, purpose: { kind: 'prompt', future: { untouched: true } } } },
+  ]) {
+    const { values, drafts } = fixture();
+    values.set(key('A'), JSON.stringify(root));
+    assert.equal(drafts('A').hasUnclaimedStoredData(), true);
+    drafts('A').edit('Changed text');
+    assert.deepEqual(saved(values, 'A').__cockpitDraft.purpose,
+      root.__cockpitDraft?.purpose ?? { kind: 'prompt' });
+    drafts('A').edit('');
+    assert.equal(drafts('A').hasUnclaimedStoredData(), true, 'clearing host text does not discard opaque data');
+    assert.deepEqual(saved(values, 'A').__cockpitDraft.purpose,
+      root.__cockpitDraft?.purpose ?? { kind: 'prompt' });
+    drafts('A').edit('Replacement text');
+    assert.equal(await drafts('A').send(async () => assert.fail('Opaque data must block the native send')), false);
+  }
+  assert.equal(createSessionDrafts()('clean').hasUnclaimedStoredData(), false);
+});
+
+test('only genuinely unpersisted host text and notices need leave protection', () => {
+  const { storage, values } = memoryDraftStorage();
+  let fails = false;
+  const draft = createSessionDrafts({ ...storage, setItem(name, value) {
+    if (fails) throw new Error('Write unavailable');
+    storage.setItem(name, value);
+  } })('dirty');
+  assert.equal(draft.hasUnpersistedChanges(), false);
+  draft.edit('Saved');
+  assert.equal(draft.hasUnpersistedChanges(), false);
+  fails = true;
+  draft.edit('Memory only');
+  assert.equal(draft.hasUnpersistedChanges(), true);
+  assert.equal(JSON.parse(values.get(key('dirty'))!).text, 'Saved');
+  fails = false;
+  draft.edit('Memory only');
+  assert.equal(draft.hasUnpersistedChanges(), false);
+  const memory = createSessionDrafts()('memory-only');
+  memory.edit('Unsaved');
+  assert.equal(memory.hasUnpersistedChanges(), true);
+  memory.edit('');
+  assert.equal(memory.hasUnpersistedChanges(), false);
 });
 
 test('malformed base records/checkpoints stay untouched and fail explicitly rather than dispatching', async () => {
@@ -262,4 +325,84 @@ test('browser draft creation has no persistent-storage or generated-device-ident
   assert.deepEqual(reads, [key('browser'), 'cockpit:draft-requests:browser']);
   draft.edit('Tab text');
   assert.equal(await draft.send(async () => true), true);
+});
+
+test('guarded completion atomically checks revision, all leases, pending and unconfirmed without changing ordinary edits', async () => {
+  const { drafts, values } = fixture();
+  const source = drafts('guarded');
+  const { draft } = source.bindModule('speech', ['text']);
+  const other = source.bindModule('other', ['text']);
+  draft.editText('Base');
+  const revision = draft.getSnapshot().revision;
+  const unchanged = () => {
+    const snapshot = draft.getSnapshot(), bytes = values.get(key('guarded'));
+    assert.equal(draft.editTextIfRevision('Completion', revision), false);
+    assert.equal(draft.getSnapshot(), snapshot);
+    assert.equal(values.get(key('guarded')), bytes);
+  };
+  const ownRelease = draft.block('Own work'), otherRelease = other.draft.block('Other work');
+  unchanged();
+  ownRelease();
+  unchanged();
+  otherRelease();
+  let finish!: (value: boolean) => void;
+  const sending = source.runAction(() => new Promise(resolve => { finish = resolve; }));
+  unchanged();
+  finish(false);
+  assert.equal(await sending, false);
+  unchanged();
+  source.dismissNotice();
+  assert.equal(draft.getSnapshot().revision, revision, 'gates do not require a text revision change');
+  assert.equal(draft.editTextIfRevision('Completion', revision), true);
+  assert.equal(saved(values, 'guarded').text, 'Completion');
+  assert.equal(draft.getSnapshot().revision, revision + 1);
+  draft.editText('Base');
+  unchanged();
+  assert.equal(draft.getSnapshot().text, 'Base', 'ABA text cannot authorize the captured revision');
+});
+
+test('guarded completion throws on persistence/read/root failures without a success-shaped memory edit', () => {
+  for (const failure of ['write', 'remove', 'read', 'replaced']) {
+    const { storage, values } = memoryDraftStorage();
+    let fail = false;
+    const source = createSessionDrafts({
+      getItem: name => { if (fail && failure === 'read') throw new Error('Read blocked'); return storage.getItem(name); },
+      setItem: (name, value) => { if (fail && failure === 'write') throw new Error('Write blocked'); storage.setItem(name, value); },
+      removeItem: name => { if (fail && failure === 'remove') throw new Error('Remove blocked'); storage.removeItem(name); },
+    })('failure');
+    const { draft } = source.bindModule('speech', ['text']);
+    draft.editText('Base');
+    const before = draft.getSnapshot();
+    if (failure === 'replaced') values.set(key('failure'), '{"text":"Other","unconfirmed":false}');
+    const bytes = values.get(key('failure'));
+    fail = true;
+    assert.throws(() => draft.editTextIfRevision(failure === 'remove' ? '' : 'Result', before.revision));
+    assert.equal(draft.getSnapshot(), before);
+    assert.equal(values.get(key('failure')), bytes);
+    draft.editText('Ordinary memory edit');
+    assert.equal(draft.getSnapshot().text, 'Ordinary memory edit');
+  }
+});
+
+test('guarded completion enforces capability, revocation and observable irreversible retirement before gates', () => {
+  const source = createSessionDrafts()('lifetime');
+  const denied = source.bindModule('denied', []);
+  assert.throws(() => denied.draft.editTextIfRevision('Denied', -1), /cannot write/);
+  const revoked = source.bindModule('revoked', ['text']);
+  let revokedChanges = 0;
+  revoked.draft.subscribe(() => { revokedChanges++; });
+  revoked.dispose();
+  assert.throws(() => revoked.draft.editTextIfRevision('Late', -1), /cannot write/);
+  const binding = source.bindModule('active', ['text']);
+  const snapshots: boolean[] = [];
+  binding.draft.subscribe(() => { snapshots.push(binding.draft.getSnapshot().retired); });
+  const before = source.getSnapshot();
+  source.retire();
+  source.retire();
+  assert.deepEqual(snapshots, [true]);
+  assert.equal(before.retired, false);
+  assert.equal(source.getSnapshot().revision, before.revision);
+  assert.equal(revokedChanges, 0);
+  assert.throws(() => binding.draft.editTextIfRevision('Late', -1), /retired/);
+  assert.throws(() => binding.draft.editText('Late'), /retired/);
 });

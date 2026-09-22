@@ -8,6 +8,32 @@ import { ModuleHost } from './module-host.ts';
 import { installLocalModule } from './module-install.ts';
 import { moduleEntries, moduleFixture } from './test-support/module-fixture.ts';
 
+test('bootstrap exposes independent classic and next entries under the same immutable identity', async t => {
+  const f = await moduleFixture(t);
+  const entries = moduleEntries('dual-ui', undefined, {
+    frontend: {
+      entry: 'web/index.js', styles: ['web/style.css'], assets: ['web'],
+      next: { entry: 'web/next.js', styles: ['web/next.css'] },
+    },
+  });
+  entries.push(
+    { path: 'web/next.js', content: 'export function activate() {}' },
+    { path: 'web/next.css', content: '.dual-ui-next { display: grid; }' },
+  );
+  const installed = await installLocalModule(await f.package(entries), { trustLocalCode: true, enable: true });
+  const app = Fastify();
+  t.after(() => app.close());
+  const host = new ModuleHost({ observer: f.observer });
+  await host.register(app);
+  const bootstrap = (await app.inject('/_modules')).json();
+  const root = `/_modules/assets/dual-ui/${installed.digest}/web`;
+  assert.equal(bootstrap.modules[0].entry, `${root}/index.js`);
+  assert.deepEqual(bootstrap.modules[0].styles, [`${root}/style.css`]);
+  assert.deepEqual(bootstrap.modules[0].next, { entry: `${root}/next.js`, styles: [`${root}/next.css`] });
+  assert.equal((await app.inject(bootstrap.modules[0].next.entry)).statusCode, 200);
+  assert.equal((await app.inject(bootstrap.modules[0].next.styles[0])).statusCode, 200);
+});
+
 test('control observation and invalidation stay scoped and cannot outlive module shutdown', async t => {
   const f = await moduleFixture(t);
   const listeners = new Set<(event: ServerEvent) => void>();

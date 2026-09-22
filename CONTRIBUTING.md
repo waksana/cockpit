@@ -7,16 +7,19 @@ substantial behavior or architecture changes in an issue before implementing the
 ## Before you start
 
 - Read the [current architecture and scope](docs/cockpit-plan.md) and
-  [product requirements](docs/product-requirements.md). Planned modules are not
-  currently installable features.
+  [product requirements](docs/product-requirements.md). The
+  [module catalog](docs/module-catalog.md) distinguishes installable modules
+  from independent projects awaiting integration and future capabilities.
 - For setup, use the [source installation guide](docs/DEPLOY-PORTABLE.md#from-source):
   Node **24.20.0**, pnpm **10.34.5**, and the frozen lockfile.
 - The [development guide](docs/DEVELOPMENT.md) owns engineering commands and
   workflow details. The [testing guide](docs/cockpit-testing.md) owns test selection
   and isolation. Link to these guides rather than duplicating their contracts.
-- Host and module UI changes must follow the
-  [interaction semantics and structural correctness requirement](docs/DEVELOPMENT.md#interaction-semantics-and-structural-correctness):
-  behavior and underlying structure must be coherent, not just visually correct.
+- Before any host or module UI work, read and follow the
+  [frontend guidelines](docs/frontend-guidelines.md): natural, simple, intuitive,
+  native-first presentation and interaction with the least necessary JS.
+  The existing [interaction semantics entry](docs/DEVELOPMENT.md#interaction-semantics-and-structural-correctness)
+  links to the same principles and module integration boundaries.
 
 ## A small pull request
 
@@ -69,6 +72,14 @@ Only Web/backend/MCP from the same release are supported. During 0.x, the baseli
 is a fresh installation, without old API aliases or automatic migration.
 Breaking changes still require a new public version and clear release notes.
 Workspace packages are internal parts of Cockpit, not separately supported SDKs.
+
+Commits do not each need a version bump. Before publishing or deploying changed
+package contents, allocate a new version and follow the
+[immutable delivery version rules](docs/packaging.md#delivery-versions).
+This also applies to installation from a fixed source commit, not only tags.
+Module installers reject a different archive digest for an already installed
+module ID/version; a source SHA or new digest is not a substitute for a new
+version. Never delete an installed version or bypass this guard to replace it.
 
 The [release procedure](docs/packaging.md#versioned-releases) owns version changes,
 tags and publication: green main → `vX.Y.Z` → full checks/native smoke/build/package

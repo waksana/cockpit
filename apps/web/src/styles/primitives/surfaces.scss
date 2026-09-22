@@ -1,0 +1,58 @@
+// Public shared-surfaces v1 (context.uiSurfaceVersion), additive to Module UI v1.
+:root {
+  --ck-text-title: var(--host-text-title);
+  --ck-text-body: var(--host-text-body);
+  --ck-text-meta: var(--host-text-meta);
+  --ck-leading-ui: var(--host-leading-ui);
+  --ck-radius-surface: var(--host-radius-dialog);
+}
+
+:where(.ck-surface) {
+  box-sizing: border-box;
+  min-inline-size: 0;
+  padding: calc(2 * var(--ck-space));
+  border: 1px solid var(--ck-color-border);
+  border-radius: var(--ck-radius-surface);
+  background: var(--ck-color-surface);
+  color: var(--ck-color-text);
+  font-family: inherit;
+  font-size: var(--ck-text-body);
+  line-height: var(--ck-leading-ui);
+}
+
+:where(.ck-heading) {
+  min-inline-size: 0;
+  margin: 0;
+  color: var(--ck-color-text);
+  font-size: var(--ck-text-title);
+  font-weight: 600;
+  line-height: var(--ck-leading-ui);
+  overflow-wrap: anywhere;
+}
+
+:where(.ck-actions) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ck-space);
+}
+
+:where(.ck-badge) {
+  display: inline-flex;
+  align-items: center;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  padding: 0 calc(var(--ck-space) / 2);
+  border-radius: var(--ck-radius);
+  background: var(--ck-color-hover);
+  color: var(--ck-color-muted);
+  font-size: var(--ck-text-meta);
+  line-height: var(--ck-leading-ui);
+  overflow-wrap: anywhere;
+}
+
+.ck-modal::backdrop { background: rgba(0, 0, 0, 0.32); }
+:where(.ck-modal.ck-surface, .ck-modal > .ck-surface) {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
+}

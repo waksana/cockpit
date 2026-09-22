@@ -2,6 +2,7 @@
 // _chatTopbar / _chat / _chatBubble / _input, with cockpit's signature deviation
 // (assistant replies are NOT bubbles — they read as a document).
 @use 'chat-design';
+@use '../responsive';
 
 .chat {
   --chat-placeholder-color: #757570;
@@ -22,7 +23,7 @@
   position: relative;
   :is(button, a, textarea, summary, [tabindex]):focus-visible {
     outline: 2px solid var(--chat-accent-ink);
-    outline-offset: 3px;
+    outline-offset: -2px;
   }
   @media (prefers-color-scheme: dark) {
     --chat-placeholder-color: #92928c;
@@ -32,26 +33,9 @@
     --chat-danger-ink: color-mix(in srgb, var(--danger-color) 20%, var(--primary-text-color));
   }
   button:disabled { cursor: default; }
-  .dialog-btn { color: var(--chat-accent-ink); }
 }
-.chat-sr-only {
-  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
-  overflow: hidden; clip-path: inset(50%); white-space: nowrap;
-}
-
+.chat-history-retry { color: var(--ck-color-accent); }
 // ── Topbar (two-line: title + status/model subtitle, symmetric height) ──────
-.chat-topbar {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  height: var(--header-height);
-  min-height: var(--header-height);
-  padding: 0 0.5rem;
-  border-bottom: 1px solid var(--border-color);
-  background-color: var(--surface-color);
-  button:focus-visible { outline: 2px solid var(--primary-text-color); outline-offset: -3px; }
-}
 .chat-back { flex: none; }
 .chat-topbar-content {
   flex: 1 1 auto;
@@ -62,21 +46,12 @@
   align-items: flex-start;
   gap: 0.05rem;
   padding-inline-start: 0.25rem;
-  // It's a <button> (opens the info panel) — strip chrome.
-  border: none;
-  background: transparent;
   text-align: start;
-  cursor: pointer;
-  font-family: inherit;
-  color: inherit;
   overflow: hidden;
 }
 .chat-topbar-title {
   max-width: 100%;
-  font-size: var(--font-size-16);
-  font-weight: 500;
   line-height: 1.2;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .chat-topbar-subtitle {
   max-width: 100%;
@@ -411,7 +386,6 @@ button.activity-head {
 .subagent-head {
   display: flex; align-items: center; gap: var(--chat-gap-control); width: 100%;
   min-height: 44px; padding: var(--chat-inset-compact) var(--chat-inset-panel);
-  border: none; background: transparent; cursor: pointer;
   font: inherit; color: inherit; text-align: start;
 }
 .subagent-ico { flex: none; display: inline-flex; color: var(--secondary-text-color); }
@@ -449,86 +423,11 @@ button.activity-head {
 }
 .subagent-empty { padding: var(--chat-inset-compact) 0; font-size: var(--chat-text-label); color: var(--secondary-text-color); }
 
-// Markdown body shared (document + bubble).
-.message-body {
-  white-space: normal;
-  overflow-wrap: anywhere;
-  word-break: break-word;
-  font-size: var(--chat-text-body, var(--messages-text-size));
-  line-height: var(--chat-leading-prose, 1.7);
-  p, .markdown-paragraph { margin: var(--chat-gap-prose, 0.65em) 0; white-space: pre-wrap; }
-  ul, ol { margin: var(--chat-gap-prose, 0.65em) 0; padding-inline-start: 1.5rem; white-space: normal; }
-  li { margin: 0.2em 0; }
-  li > p, li > .markdown-paragraph { margin: 0; }
-  li > ul, li > ol { margin: 0.15em 0; }
-  .contains-task-list { list-style: none; padding-inline-start: 0.2rem; }
-  .task-list-item input { margin: 0 0.45rem 0 0; accent-color: var(--primary-color); }
-  a:not(.ck-button, .ck-icon-button) {
-    color: var(--chat-link-ink, var(--link-color));
-    text-decoration: underline; text-underline-offset: 3px;
-  }
-  pre {
-    margin: var(--chat-gap-prose-section, 0.75rem) 0; padding: var(--chat-inset-panel, 0.85rem 1rem);
-    background: color-mix(in srgb, var(--primary-text-color) 8%, transparent);
-    border-radius: var(--border-radius); overflow-x: auto; white-space: pre;
-  }
-  code { font-family: var(--chat-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 0.875em; }
-  :not(pre) > code:not([class^='language-']) {
-    padding: 0.05em 0.3em;
-    background: color-mix(in srgb, var(--primary-text-color) 12%, transparent);
-    border-radius: 0.2rem;
-  }
-  table {
-    border-collapse: collapse; margin: 0; font-size: 0.875em;
-    display: block; overflow-x: auto; max-width: 100%; white-space: normal;
-  }
-  th, td { border: 1px solid var(--border-color); padding: var(--chat-inset-field, 0.55rem 0.75rem); text-align: start; vertical-align: top; min-width: 7rem; }
-  thead th { background: color-mix(in srgb, var(--primary-text-color) 8%, transparent); }
-  blockquote {
-    margin: var(--chat-gap-prose-section, 0.85rem) 0; padding: 0.15rem 0 0.15rem 1rem;
-    border-inline-start: 2px solid var(--primary-color); color: var(--secondary-text-color);
-  }
-  h1, h2, h3, h4, h5, h6 { margin: 1.4em 0 0.5em; font-weight: 600; line-height: var(--chat-leading-heading, 1.4); }
-  h1 { font-size: 1.5em; letter-spacing: -0.02em; }
-  h2 { font-size: 1.25em; }
-  h3 { font-size: 1.1em; }
-  h4 { font-size: 1em; }
-  h5, h6 { font-size: 0.9em; color: var(--secondary-text-color); }
-  hr { border: 0; border-top: 1px solid var(--border-color); margin: 1.25rem 0; }
-  // Class-based paragraphs have the same specificity, so edge rules come last.
-  & > :first-child { margin-top: 0; }
-  & > :last-child { margin-bottom: 0; }
-}
+// Only chat-specific Markdown presentation belongs here.
 .chat .message-body {
   h3 { font-size: 1.125em; }
   h5, h6 { font-size: 0.875em; }
 }
-.chat-table-scroll { margin: var(--chat-gap-prose-section, 0.85rem) 0; max-width: 100%; }
-.chat-code-block {
-  margin: var(--chat-gap-prose-section, 0.85rem) 0; min-width: 0; border: 1px solid var(--border-color);
-  border-radius: var(--border-radius); overflow: hidden;
-  .chat-code-head {
-    display: flex; align-items: center; justify-content: space-between; gap: var(--chat-gap-control, 1rem);
-    padding: var(--chat-gap-meta, 0.25rem) var(--chat-inset-panel, 0.75rem); background: var(--ripple-color);
-    color: var(--secondary-text-color); font-size: var(--chat-text-meta, var(--font-size-12)); line-height: var(--chat-leading-ui, 1.5);
-  }
-  pre { margin: 0; border-radius: 0; background: transparent; line-height: var(--chat-leading-code, 1.65); }
-  pre:focus-visible { outline-offset: -3px; }
-  pre code { font-size: var(--chat-text-label, var(--font-size-13)); }
-}
-.chat-copy { display: inline-flex; align-items: center; gap: var(--host-space-xs); max-width: 100%; }
-.chat-copy-button {
-  gap: var(--host-space-xs);
-  min-block-size: var(--chat-control-compact, 32px);
-  padding: var(--host-space-xs) var(--host-space-sm);
-  color: var(--secondary-text-color);
-  font-size: var(--chat-text-meta, var(--font-size-12)); line-height: var(--chat-leading-ui, 1.5);
-  white-space: nowrap;
-}
-.chat-copy-label { display: grid; text-align: start; }
-.chat-copy-label > span { grid-area: 1 / 1; }
-.chat-copy-label-size { visibility: hidden; }
-.chat-copy-error { color: var(--chat-danger-ink, var(--danger-color)); font-size: var(--chat-text-meta, var(--font-size-12)); line-height: var(--chat-leading-ui, 1.5); }
 
 // Empty / typing / error / loading states.
 .chat-empty-hint, .chat-loading-older {
@@ -559,7 +458,6 @@ button.activity-head {
   border-radius: var(--border-radius);
   background: color-mix(in srgb, var(--danger-color) 12%, transparent);
   color: var(--chat-danger-ink); font-size: var(--chat-text-secondary); line-height: var(--chat-leading-decision); overflow-wrap: anywhere;
-  .dialog-btn { color: var(--primary-text-color); }
 }
 .new-msg-badge {
   position: absolute; bottom: 0.5rem; left: 50%; transform: translateX(-50%);
@@ -594,10 +492,20 @@ button.activity-head {
   &:not([data-header]):has(.chat-readonly-note) { border: 0; background: transparent; }
 }
 .chat-input-card-body {
-  flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  display: flex; flex-direction: column;
+  flex: 0 1 auto; min-height: 0; overflow: hidden; overscroll-behavior: contain;
   scrollbar-width: thin;
   // Classic scrollbars must not resize the editor when long decision content arrives.
   scrollbar-gutter: stable both-edges;
+}
+.chat-input-context {
+  flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin;
+  &:empty { display: none; }
+}
+.chat-input-card[data-question] {
+  .chat-input-card-body { display: block; overflow-y: auto; }
+  .chat-input-context { overflow: visible; }
 }
 .chat-folded-draft {
   display: none; flex: none; font-size: var(--chat-text-meta); color: var(--secondary-text-color);
@@ -621,12 +529,6 @@ button.activity-head {
 .chat-input {
   position: relative;
   flex: 0 0 auto;
-  display: flex;
-  align-items: flex-end;
-  gap: var(--chat-gap-meta);
-  width: 100%;
-  margin: 0;
-  padding: var(--chat-gap-meta);
   background: transparent;
 }
 .message-attachments {
@@ -703,18 +605,12 @@ button.activity-head {
 }
 .chat-ask-choices { flex: none; display: flex; flex-wrap: wrap; gap: var(--chat-gap-control); }
 .chat-ask-choice {
-  appearance: none; cursor: pointer; font: inherit; font-size: var(--chat-text-secondary);
   justify-content: flex-start;
-  min-width: 0; max-width: 100%; min-block-size: var(--ck-control-size);
-  padding: var(--chat-inset-field); border-radius: var(--ck-radius); line-height: var(--chat-leading-ui); text-align: start;
+  min-width: 0; max-width: 100%;
+  padding: var(--chat-inset-field); text-align: start;
   white-space: pre-wrap; overflow-wrap: anywhere;
-  border: 1px solid var(--border-color); background: transparent; color: var(--primary-text-color);
+  border: 1px solid var(--border-color);
   position: relative; overflow: hidden;
-  // The SDK's recommended plan-exit action — filled accent so it reads as primary.
-  &.is-recommended {
-    background: var(--chat-accent-ink);
-    color: var(--surface-color);
-  }
 }
 // Pending card variants (plan / elicitation) reuse the ask card shell.
 .chat-pending-head { flex: none; display: flex; align-items: center; gap: var(--chat-gap-control); font-size: var(--chat-text-label); line-height: var(--chat-leading-ui); font-weight: 600; margin: 0; color: var(--chat-accent-ink); }
@@ -792,16 +688,15 @@ button.activity-head {
   }
 }
 .chat-execution-actions {
+  --ck-disabled-opacity: 0.5;
   display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end;
   min-width: 0; max-width: 100%; margin-inline-start: auto; gap: var(--chat-gap-meta);
   button {
-    min-width: 0; max-width: 100%; min-block-size: var(--chat-control-compact); padding: var(--chat-gap-meta) var(--chat-inset-compact); border: none;
-    border-radius: var(--ck-radius); background: transparent; color: var(--primary-text-color);
-    font: inherit; font-size: var(--chat-text-meta); line-height: var(--chat-leading-ui);
-    white-space: normal; overflow-wrap: anywhere; cursor: pointer;
-    &:disabled, &[aria-disabled='true'] { opacity: 0.5; cursor: default; }
+    min-width: 0; max-width: 100%; min-block-size: var(--chat-control-compact); padding: var(--chat-gap-meta) var(--chat-inset-compact);
+    font-size: var(--chat-text-meta);
+    white-space: normal; overflow-wrap: anywhere;
+    &[aria-disabled='true'] { cursor: default; }
   }
-  .chat-typing-stop { color: var(--chat-danger-ink); }
 }
 .chat-interrupt-status {
   flex: none; margin: 0; font-size: var(--chat-text-label); line-height: var(--chat-leading-ui); overflow-wrap: anywhere;
@@ -809,7 +704,7 @@ button.activity-head {
 }
 .chat-queue-remove { align-self: flex-start; }
 @media (pointer: coarse) {
-  .chat-copy-button.ck-button, .chat-execution-actions .ck-button,
+  .chat-execution-actions .ck-button,
   .chat-execution-head, .chat-pending-detail > summary {
     min-block-size: var(--ck-control-size);
   }
@@ -819,7 +714,7 @@ button.activity-head {
   .process-summary-states { gap: var(--chat-gap-meta); }
   .process-summary time { display: none; }
 }
-@media (max-width: 599px) {
+@media (max-width: responsive.$phone-max) {
   .user-message { max-width: 92%; }
 }
 @container chat-agent (max-width: 36rem) {

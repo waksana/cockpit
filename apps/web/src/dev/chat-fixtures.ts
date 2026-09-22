@@ -22,7 +22,7 @@ const readingMessages: ChatMessage[] = [
 ### 交互原则
 
 1. 保留单一的阅读滚动控制。
-2. 上翻阅读时，不强制跳到最新消息。
+2. 上翻阅读时不被远端更新打断；本页面成功发送后回到底部，之后仍可上翻。
 3. 历史加载失败时，保留已有内容与明确恢复操作。
 
 - 已有能力不变
@@ -166,6 +166,7 @@ export const scenarios = [
   ['elicitation', '同意 / 拒绝 / 取消'],
   ['empty', '空对话'],
   ['loading', '首次加载'],
+  ['initial-history', '异步首次历史 / 绘制定位'],
   ['history', '历史分页 / 阅读锚点'],
   ['history-progressive', '逐页显示 / 首屏补读'],
   ['history-loading', '历史起点提示 / 保留阅读位置'],
@@ -261,8 +262,8 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   if (scenario === 'ask-queued' || scenario === 'decision-stack') session.ask!.question =
     '安装包已准备好。是否允许在当前会话结束后继续完成后续操作，并记录结果？' +
     '这里保留完整条件说明，以检查问题内容和独立队列在窄屏及键盘弹出后的可达性。'.repeat(5);
-  if (scenario === 'empty' || scenario === 'loading' || scenario === 'history-progressive') session.messages = [];
-  if (scenario === 'loading' || scenario === 'history-progressive') Object.assign(session, { materialized: false, loadingHistory: true, hasMore: true });
+  if (scenario === 'empty' || scenario === 'loading' || scenario === 'initial-history' || scenario === 'history-progressive') session.messages = [];
+  if (scenario === 'loading' || scenario === 'initial-history' || scenario === 'history-progressive') Object.assign(session, { materialized: false, loadingHistory: true, hasMore: true });
   if (scenario === 'history') session.hasMore = true;
   if (scenario === 'history-loading') Object.assign(session, { loadingHistory: true, hasMore: true });
   if (scenario === 'history-error') Object.assign(session, { historyError: '合成读取失败：连接已断开', partialHistory: true, incompleteBoundary: true });

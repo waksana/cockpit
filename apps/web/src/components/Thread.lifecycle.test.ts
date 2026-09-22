@@ -1,5 +1,6 @@
-import assert from 'node:assert/strict';
+import assert, { assertIdentityList } from '../test/identityAssert';
 import { test } from 'node:test';
+import { pathToFileURL } from 'node:url';
 import { act, createElement, Fragment, useCallback, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, useLocation } from 'react-router-dom';
@@ -23,8 +24,9 @@ import { GlobalNavigation } from './GlobalNavigation';
 import { ManagementShell } from './ManagementShell';
 import { useLongPress } from '../lib/longpress';
 import { useMenuDismiss } from '../lib/useMenuDismiss';
-import type { ActivateFrontend, ComposerContext, ComponentMiddleware, DraftSchemaHandle, DraftSchemaScope, MessageIdentity, MessageProps, ModuleFrontendContext } from '@cockpit/module-api';
+import type { ActivateFrontend, ComposerContext, ComposerInputProps, ComposerProps, ComponentMiddleware, DraftSchemaHandle, DraftSchemaScope, MessageIdentity, MessageProps, ModuleFrontendContext } from '@cockpit/module-api';
 import { fixtureSession } from '../dev/chat-fixtures';
+import App from '../App';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
 // scroll owner. Each rendered message occupies 100px in a 300px viewport.
@@ -48,6 +50,9 @@ class HostNode extends EventTarget {
   private text = '';
   selected = false;
   private controlValue = '';
+  selectionStart = 0;
+  selectionEnd = 0;
+  setSelectionRange(start: number, end: number) { this.selectionStart = start; this.selectionEnd = end; }
 
   constructor(tag: string, document: HostDocument) {
     super();
@@ -73,10 +78,12 @@ class HostNode extends EventTarget {
     for (const node of this.childNodes) node.parentNode = null;
     this.childNodes = [];
   }
-  get dataset() { return { messageId: this.getAttribute('data-message-id') }; }
+  get dataset() { return { messageId: this.getAttribute('data-message-id'), sessionId: this.getAttribute('data-session-id') }; }
   get options(): HostNode[] { return this.childNodes; }
   get open() { return this.attributes.has('open'); }
   set open(value: boolean) { if (value) this.setAttribute('open', ''); else this.removeAttribute('open'); }
+  showModal() { this.open = true; }
+  close() { this.open = false; }
   get value(): string {
     if (this.tagName === 'OPTION') return this.getAttribute('value') ?? this.textContent;
     if (this.tagName === 'SELECT') return this.options.find(option => option.selected)?.value ?? '';
@@ -193,13 +200,14 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('Lifecycle fixture must not access a backend'); });
   const previousConnection = useCockpit.getState().connState;
   const previousSnapshotReady = useCockpit.getState().snapshotReady;
+  const previousSessions = useCockpit.getState().sessions;
   useCockpit.setState({ connState: 'open', snapshotReady: true });
   const container = document.createElement('div');
   document.body.appendChild(container);
   const root = createRoot(container as unknown as HTMLElement);
   t.after(async () => {
     await act(() => root.unmount());
-    useCockpit.setState({ connState: previousConnection, snapshotReady: previousSnapshotReady });
+    useCockpit.setState({ connState: previousConnection, snapshotReady: previousSnapshotReady, sessions: previousSessions });
     for (const restore of restoreGlobals) restore();
   });
   await t.test('module decorations receive exact speech and host ask identities, and failed modules release their resources', async subtest => {
@@ -335,11 +343,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
         apiBase: `/_modules/navigation/${digest}/api`, entry: `/_modules/assets/navigation/${digest}/entry.js`,
       }], errors: [] }),
       load: async () => ({ activate: (() => ({
-        apiVersion: 2, components: [
-          { id: 'navigation', boundary: 'globalNavigation', wrap: Base => props => createElement(Base, {
-            ...props, children: createElement(Fragment, null, props.children,
-              createElement('button', { type: 'button', 'aria-label': 'Module navigation', onClick: () => { moduleActions++; } }, 'Module')),
-          }) },
+        apiVersion: 2,
+        menus: [{ id: 'navigation', menu: 'global', getState: () => ({ label: 'Module navigation' }),
+          onSelect: () => { moduleActions++; } }],
+        components: [
           { id: 'management', boundary: 'managementHeader', wrap: Base => props => createElement(Base, {
             ...props, actions: createElement(Fragment, null, props.actions,
               createElement('button', { type: 'button', 'aria-label': 'Module list action', onClick: () => { moduleActions++; } }, props.section)),
@@ -391,21 +398,16 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       const trigger = node('[aria-label="全局导航"]');
       assert.equal(trigger.getAttribute('aria-expanded'), 'false');
       assert.equal(container.querySelector('[role="menu"]'), null);
-      if (enhanced) {
-        const action = node('[aria-label="Module navigation"]');
-        assert.equal(action.parentNode, trigger.parentNode, 'the added control is a sibling, not a wrapped button');
-        await click(action);
-        assert.equal(trigger.getAttribute('aria-expanded'), 'false');
-      }
+      assert.equal(container.querySelectorAll('button').length, 1, 'menu extensions do not add a main-view button');
       await click(trigger);
       assert.equal(trigger.getAttribute('aria-expanded'), 'true');
       const items = container.querySelectorAll('[role="menuitem"]');
-      assert.deepEqual(items.map(item => item.textContent), ['全局 MCP', '全局 Skills']);
+      assert.deepEqual(items.map(item => item.textContent), enhanced ? ['全局 MCP', '全局 Skills', 'Module navigation'] : ['全局 MCP', '全局 Skills']);
       assert.equal(document.activeElement, items[0], 'opening focuses the first native menu command');
       const end = new Event('keydown', { bubbles: true, cancelable: true });
       Object.defineProperties(end, { target: { value: items[0] }, key: { value: 'End' } });
       await act(() => container.dispatchEvent(end));
-      assert.equal(document.activeElement, items[1]);
+      assert.equal(document.activeElement, items.at(-1));
       noNestedButtons();
       await act(() => new Promise(resolve => setTimeout(resolve, 1)));
       const escape = new Event('keydown', { cancelable: true });
@@ -415,6 +417,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(trigger.getAttribute('aria-expanded'), 'false');
       assert.equal(container.querySelector('[role="menu"]'), null);
       assert.equal(document.activeElement, trigger);
+      if (enhanced) {
+        await click(trigger);
+        await click(container.querySelectorAll('[role="menuitem"]')[2]);
+        assert.equal(container.querySelector('[role="menu"]'), null);
+        assert.equal(document.activeElement, trigger, 'module actions share native menu close/focus behavior');
+      }
       await click(trigger);
       await click(container.querySelectorAll('[role="menuitem"]')[1]);
       assert.equal(node('.fixture-route').textContent, '/skills');
@@ -423,8 +431,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(node('[aria-label="全局导航"]'), trigger, 'menu changes keep the actual native trigger mounted');
 
       await mount(true, '/skills');
-      assert.equal(document.activeElement, node('[aria-label="返回会话列表"]'));
-      assert.equal(node('.manage-title').textContent, '全局 Skills');
+      assert.equal(document.activeElement, document.body, 'entering management does not move focus to Back');
+      assert.equal(node('.pane-title').textContent, '全局 Skills');
       const refresh = node('[aria-label="刷新"]');
       assert.equal(refresh.attributes.has('disabled'), false);
       await click(refresh);
@@ -435,18 +443,170 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(node('.fixture-route').textContent, '/');
 
       await mount(true, '/skills/resource');
-      assert.equal(node('.manage-detail-headtitle').textContent, 'resource');
-      assert.equal(document.activeElement, node('.manage-detail-headtitle'));
+      assert.equal(node('.manage-detail-header').querySelector('.pane-title')?.textContent, 'resource');
+      assert.equal(document.activeElement, document.body, 'entering a detail does not focus its title');
       if (enhanced) await click(node('[aria-label="Module detail action"]'));
       noNestedButtons();
       await click(node('[aria-label="返回"]'));
       assert.equal(node('.fixture-route').textContent, '/skills');
-      assert.equal(container.querySelector('.manage-detail-headtitle'), null);
-      assert.equal(document.activeElement, node('[aria-label="返回会话列表"]'));
+      assert.equal(container.querySelector('.manage-detail-header'), null);
+      assert.equal(document.activeElement, document.body, 'removing detail Back does not focus another control');
       await act(() => root.render(null));
     }
     assert.equal(moduleActions, 3);
   });
+  await t.test('App session menus share registrations, dynamic focus, exact targets and revoked action lifetimes', async subtest => {
+    const previous = useCockpit.getState();
+    const sessions = ['A', 'B'].map(sessionId => ({ ...fixtureSession('user-time'), sessionId, title: `Session ${sessionId}` }));
+    const reloads: string[] = [];
+    let finishReload!: () => void;
+    useCockpit.setState({
+      sessions, activeId: 'A', connState: 'open', snapshotReady: true,
+      init: () => () => {},
+      setActiveId: activeId => { useCockpit.setState({ activeId }); },
+      reloadSession: async sessionId => {
+        reloads.push(sessionId);
+        useCockpit.setState({ reloadingSessionIds: [sessionId] });
+        await new Promise<void>(resolve => { finishReload = resolve; });
+        useCockpit.setState({ reloadingSessionIds: [] });
+      },
+    });
+    const listeners = new Set<() => void>();
+    const reports: unknown[] = [];
+    const calls: { sessionId: string; signal: AbortSignal }[] = [];
+    const completions: (() => void)[] = [];
+    let disabled = false, visible = true;
+    const digest = 'd'.repeat(64);
+    const runtime = new ModuleRuntime({
+      pageUrl: 'https://fixture.invalid',
+      fetch: async () => Response.json({ modules: ['z', 'a'].map(id => ({
+        id, name: id, version: '1.0.0', digest, config: {}, styles: [],
+        apiBase: `/_modules/${id}/${digest}/api`, entry: `/_modules/assets/${id}/${digest}/entry.js`,
+      })), errors: [] }),
+      load: async () => ({ activate: ((context) => ({
+        apiVersion: 2,
+        menus: [{ id: 'info', menu: 'session', getState: target => ({
+          label: `${context.moduleId}:${target.menu === 'session' ? target.sessionId : 'global'}${disabled ? ':busy' : ''}`,
+          visible, disabled,
+        }), subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+        onSelect: (target, { signal }) => {
+          assert.equal(target.menu, 'session');
+          if (target.menu !== 'session') assert.fail();
+          calls.push({ sessionId: target.sessionId, signal });
+          return new Promise<void>(resolve => { completions.push(resolve); });
+        } }],
+      })) satisfies ActivateFrontend }),
+      report: error => { reports.push(error); },
+    });
+    subtest.after(async () => {
+      await act(() => root.render(null));
+      runtime.stop();
+      useCockpit.setState(previous, true);
+    });
+    const event = async (target: HostNode, type: string, fields: Record<string, unknown> = {}) => {
+      const input = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperties(input, Object.fromEntries(Object.entries({ target, ...fields }).map(([key, value]) => [key, { value }])));
+      await act(() => { container.dispatchEvent(input); });
+    };
+    const click = (target: HostNode) => event(target, 'click', { detail: 0 });
+    const node = (selector: string) => {
+      const value = container.querySelector(selector);
+      assert.ok(value, selector);
+      return value;
+    };
+    const items = () => container.querySelectorAll('[role="menuitem"]');
+    const labels = () => items().map(item => item.textContent);
+    const refresh = () => act(() => { for (const listener of listeners) listener(); });
+    await act(() => root.render(createElement(ModuleRuntimeProvider, { runtime,
+      children: createElement(MemoryRouter, { initialEntries: ['/session/A'] }, createElement(App)),
+    })));
+    const trigger = node('[aria-label="更多操作"]');
+    await click(trigger);
+    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '重新加载会话', '永久删除会话']);
+    assert.ok(items()[3].querySelector('[data-icon="reload"]'));
+    await event(items()[0], 'keydown', { key: 'End' });
+    await event(items()[4], 'keydown', { key: 'ArrowUp' });
+    assert.equal(document.activeElement, items()[3]);
+    await click(items()[3]);
+    assert.deepEqual(reloads, ['A']);
+    assert.equal(container.querySelector('[role="menu"]'), null);
+    assert.equal(document.activeElement, trigger);
+    await click(trigger);
+    assert.equal(items()[3].textContent, '正在重新加载会话…');
+    assert.equal(items()[3].attributes.has('disabled'), true);
+    await click(items()[3]);
+    assert.deepEqual(reloads, ['A']);
+    await act(() => finishReload());
+    assert.equal(items()[3].attributes.has('disabled'), false);
+    await act(() => useCockpit.setState({ sessions: sessions.map(s => s.sessionId === 'A' ? { ...s, activeSubagents: 1 } : s) }));
+    assert.equal(items()[3].attributes.has('disabled'), true, 'live background work disables reload');
+    await act(() => useCockpit.setState({ sessions }));
+    await act(async () => { await runtime.start(); });
+    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '重新加载会话', '永久删除会话', 'a:A', 'z:A']);
+    assert.equal(container.querySelectorAll('[role="separator"]').length, 2);
+    await event(items()[0], 'keydown', { key: 'End' });
+    assert.equal(document.activeElement, items()[6]);
+    await event(items()[6], 'focusin');
+    disabled = true;
+    await refresh();
+    assert.equal(document.activeElement, items()[0], 'a disabled focused module command returns to a valid native command');
+    assert.equal(items()[5].attributes.has('disabled'), true);
+    await event(items()[0], 'keydown', { key: 'End' });
+    assert.equal(document.activeElement, items()[4], 'keyboard skips disabled module commands');
+    visible = false;
+    await refresh();
+    assert.equal(items().length, 5);
+    assert.equal(container.querySelectorAll('[role="separator"]').length, 1);
+    visible = true;
+    disabled = false;
+    await refresh();
+    await click(items()[5]);
+    assert.equal(calls[0].sessionId, 'A');
+    assert.equal(calls[0].signal.aborted, false, 'normal menu close does not cancel accepted work');
+    assert.equal(container.querySelector('[role="menu"]'), null);
+    assert.equal(document.activeElement, trigger);
+    const b = node('[data-session-id="B"]');
+    await event(b, 'contextmenu', { clientX: 40, clientY: 70 });
+    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '重新加载会话', '永久删除会话', 'a:B', 'z:B']);
+    assert.equal(useCockpit.getState().activeId, 'A', 'a row context menu does not select its session');
+    await click(items()[3]);
+    assert.deepEqual(reloads, ['A', 'B']);
+    assert.equal(useCockpit.getState().activeId, 'A', 'background reload does not navigate');
+    assert.equal(document.activeElement, b);
+    await act(() => finishReload());
+    await event(b, 'pointerdown', { pointerType: 'mouse', button: 2, isPrimary: true });
+    await event(b, 'contextmenu', { clientX: 40, clientY: 70 });
+    await click(items()[6]);
+    assert.deepEqual(calls.map(call => call.sessionId), ['A', 'B']);
+    assert.equal(document.activeElement, b);
+    await event(b, 'pointerdown', { pointerType: 'touch', button: 0, isPrimary: true, clientX: 40, clientY: 70 });
+    await act(() => new Promise(resolve => setTimeout(resolve, 470)));
+    await event(b, 'pointerup', { pointerType: 'touch' });
+    assert.deepEqual(labels().slice(-2), ['a:B', 'z:B'], 'long press consumes the same session registry');
+    await event(b, 'click', { detail: 1 });
+    assert.equal(useCockpit.getState().activeId, 'A', 'the trailing touch click does not select B');
+    await event(b, 'keydown', { key: 'F10', shiftKey: true });
+    assert.equal(items().length, 7);
+    await click(node('[data-session-id="A"]'));
+    await click(b);
+    assert.equal(useCockpit.getState().activeId, 'B');
+    assert.equal(container.querySelector('[role="menu"]'), null, 'routing closes the old row menu');
+    assert.equal(calls[0].sessionId, 'A');
+    await act(() => useCockpit.setState({ sessions: [sessions[1]] }));
+    assert.equal(calls[0].signal.aborted, true, 'deleting A invalidates only the A action');
+    assert.equal(calls[1].signal.aborted, false);
+    await click(node('[aria-label="更多操作"]'));
+    await act(() => runtime.unregister(runtime.getSnapshot().find(module => module.asset.id === 'z')!));
+    assert.equal(calls[1].signal.aborted, true);
+    assert.deepEqual(labels().slice(-1), ['a:B']);
+    await act(() => { for (const complete of completions) complete(); });
+    assert.deepEqual(labels().slice(-1), ['a:B'], 'late completion cannot reinstall a removed contribution');
+    await act(() => runtime.stop());
+    assert.equal(listeners.size, 0);
+    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '重新加载会话', '永久删除会话']);
+    assert.deepEqual(reports, []);
+  });
+
   await t.test('long-press timers belong to mounted primary gestures and native contextmenu cannot double-open', async subtest => {
     subtest.mock.timers.enable({ apis: ['setTimeout'] });
     let opens = 0;
@@ -536,6 +696,14 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const answer = group.current(value);
     assert.notEqual(answer.reference.id, prompt.reference.id);
     assert.equal(answer.getSnapshot().text, '');
+    const capturedAsk = answer.getSnapshot();
+    assert.deepEqual(capturedAsk.askContext, { question: 'Question one', choices: ['Choice'] });
+    value = { ...value, ask: { ...value.ask!, question: 'Updated same question', choices: ['Updated choice'] } };
+    await act(show);
+    assert.equal(group.current(value), answer);
+    assert.deepEqual(answer.getSnapshot().askContext, { question: 'Updated same question', choices: ['Updated choice'] });
+    assert.equal(answer.getSnapshot().revision, capturedAsk.revision);
+    assert.deepEqual(capturedAsk.askContext, { question: 'Question one', choices: ['Choice'] });
     assert.equal(container.querySelector('.fixture-prompt-files'), null);
     assert.doesNotMatch(container.textContent, /Cached ordinary prompt|Prompt file|不接受附件/);
     const choice = container.querySelector('.chat-ask-choice')!;
@@ -556,10 +724,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(field.getSnapshot().items.length, 2);
     value = { ...value, ask: { requestId: 'second', question: 'Replacement question', choices: ['Choice'] } };
     await act(show);
+    assert.equal(answer.getSnapshot().askContext, undefined);
     assert.equal(group.current(value).getSnapshot().text, '');
     value = { ...value, ask: { requestId: 'first', question: 'Reused request ID', choices: ['Choice'] } };
     await act(show);
     assert.notEqual(group.current(value), answer);
+    assert.deepEqual(group.current(value).getSnapshot().askContext, { question: 'Reused request ID', choices: ['Choice'] });
     await act(() => staleChoice());
     assert.equal(choices, 0, 'a saved callback cannot answer a reused request occurrence');
     value = { ...value, ask: null };
@@ -669,6 +839,218 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     return { id: row.dataset.messageId, offset: row.getBoundingClientRect().top };
   };
 
+  await t.test('first message commit reaches latest without a RAF, including empty async mounts and cached switches', async () => {
+    const commit = async (value: ChatSession | null) => {
+      await act(() => root.render(value ? createElement(Thread, {
+        session: value, readOnly: true, onLoadMore,
+      }) : null));
+    };
+    for (const initial of ['cached', 'loading', 'empty', 'filtered']) {
+      await commit(null);
+      const value = { ...session(`initial-${initial}`), hasMore: false };
+      if (initial !== 'cached') {
+        await commit({ ...value, messages: initial === 'filtered'
+          ? [{ id: 'whitespace', role: 'assistant', content: ' \n ', timestamp: 0 }] : [],
+        materialized: initial === 'empty', loadingHistory: initial === 'loading' });
+        await flush();
+        assert.equal(viewport().scrollTop, 0);
+        assert.equal(viewport().querySelector('[data-message-frame]'), null,
+          'empty and filtered native pages have no rendered content to position');
+      }
+      await commit(value);
+      assert.equal(viewport().scrollTop, bottom(), `${initial}: layout effect must position before queued frames`);
+      await flush();
+      await act(() => {
+        viewport().clientHeight -= 40;
+        for (const resize of resizes) resize();
+      });
+      assert.equal(viewport().scrollTop, bottom(), 'input/viewport resize must settle before RO returns, not next RAF');
+      await flush();
+      await readAt(225);
+      const reader = anchor();
+      await commit({ ...value, messages: [...value.messages, {
+        id: 'remote-tail', role: 'system', content: 'Remote tail', timestamp: 20,
+      }] });
+      await flush();
+      assert.deepEqual(anchor(), reader);
+
+      await commit({ ...value, sessionId: `${value.sessionId}-switch` });
+      assert.equal(viewport().scrollTop, bottom(), 'same message array in a new session still gets its own initial commit');
+      await flush();
+    }
+    await commit(null);
+    const cold = { ...session('initial-user-intent'), messages: [] };
+    await commit(cold);
+    await flush();
+    await readAt(0);
+    await commit({ ...cold, messages: session(cold.sessionId).messages });
+    assert.equal(viewport().scrollTop, 0, 'a gesture before the first page cancels initial following');
+    await flush();
+    assert.equal(viewport().scrollTop, 0);
+    await commit(null);
+  });
+
+  await t.test('all local submission surfaces follow once on ACK, including captured module sends', async subtest => {
+    let activation!: ModuleFrontendContext;
+    let finish!: (ok: boolean) => void;
+    let requests = 0;
+    const send = async () => {
+      requests++;
+      return new Promise<boolean>(resolve => { finish = resolve; });
+    };
+    const digest = 'd'.repeat(64);
+    const runtime = new ModuleRuntime({
+      pageUrl: 'https://fixture.invalid',
+      fetch: async () => Response.json({ modules: [{
+        id: 'capture-fixture', name: 'Capture fixture', version: '1.0.0', digest, config: {}, styles: [],
+        apiBase: `/_modules/capture-fixture/${digest}/api`, entry: `/_modules/assets/capture-fixture/${digest}/entry.js`,
+      }], errors: [] }),
+      load: async () => ({ activate: (context: ModuleFrontendContext) => {
+        activation = context;
+        return { apiVersion: 2, writes: ['text'], sends: ['draft'] };
+      } }),
+      draftSubmission: { check: () => undefined, send },
+      report: assert.fail,
+    });
+    await runtime.start();
+    subtest.after(async () => { await act(() => root.render(null)); runtime.stop(); });
+    const show = async (value: ChatSession | null, readOnly = false) => {
+      await act(() => root.render(value ? createElement(ModuleRuntimeProvider, { runtime,
+        children: createElement(Thread, { session: value, onSend: send, onLoadMore: () => {},
+          onRespondAsk: send, onRespondPlan: send, onRespondElicitation: send, readOnly }),
+      }) : null));
+      await flush();
+    };
+    const dispatch = async (selector: string, type: string, properties: Record<string, unknown> = {}) => {
+      const target = container.querySelector(selector);
+      assert.ok(target, selector);
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'target', { value: target });
+      for (const [key, value] of Object.entries(properties)) Object.defineProperty(event, key, { value });
+      await act(() => container.dispatchEvent(event));
+    };
+    for (const surface of ['button', 'queued-button', 'enter', 'ctrl-enter', 'meta-enter', 'module',
+      'ask-choice', 'ask-enter', 'ask-module', 'plan-choice', 'plan-enter', 'plan-module', 'elicitation'] as const) {
+      let value: ChatSession = { ...session(`local-${surface}`), hasMore: false,
+        ...(surface === 'queued-button' ? { status: 'running' as const, queue: [{ id: 'existing', text: 'Already queued' }] } : {}),
+        ...(surface.startsWith('ask') ? { ask: { requestId: 'ask', question: 'Question', choices: ['Choice'], allowFreeform: true } } : {}),
+        ...(surface.startsWith('plan') ? { planRequest: { requestId: 'plan', summary: 'Plan', actions: ['interactive'] } } : {}),
+        ...(surface === 'elicitation' ? { elicitation: { requestId: 'tool', message: 'Tool confirmation' } } : {}),
+      };
+      await show(value);
+      const source = getDraftSession(value.sessionId).current(value);
+      await act(() => source.edit('Synthetic local submission'));
+      await readAt(325);
+      let captured: Promise<unknown> | undefined;
+      const before = requests;
+      if (surface.includes('module')) {
+        const bound = activation.state.bindDraft(source.reference);
+        const intent = bound.captureSend();
+        await act(() => { captured = intent.send(bound.getSnapshot().revision); });
+      } else if (surface.endsWith('choice') || surface === 'elicitation') {
+        await dispatch('.chat-ask-choice', 'click');
+      } else if (surface.endsWith('button')) await dispatch('.send', 'click');
+      else {
+        await dispatch('.chat-input-message', 'focusin');
+        await dispatch('.chat-input-message', 'keydown', {
+          key: 'Enter', ctrlKey: surface === 'ctrl-enter', metaKey: surface === 'meta-enter',
+        });
+      }
+      assert.equal(requests, before + 1, surface);
+      await readAt(125);
+      assert.equal(viewport().scrollTop, 125, 'a pending request does not force follow');
+      // Native decision removal can precede the HTTP acknowledgement.
+      if (surface.startsWith('ask') || surface.startsWith('plan') || surface === 'elicitation') {
+        value = { ...value, ask: null, planRequest: null, elicitation: null };
+        await show(value);
+      }
+      await act(async () => { finish(true); await captured; });
+      await flush();
+      assert.equal(viewport().scrollTop, bottom(), `${surface}: ACK overrides pre-ACK reading`);
+      assert.equal(value.messages.length, 12, 'ACK creates no optimistic chat message');
+      value = { ...value, messages: [...value.messages, {
+        id: 'delayed-local', role: 'user', content: 'Delayed native append', timestamp: 30,
+      }] };
+      await show(value);
+      assert.equal(viewport().scrollTop, bottom(), 'the native DOM append may follow the ACK frame');
+      viewport().clientHeight = 250;
+      await act(() => { for (const resize of resizes) resize(); });
+      await flush();
+      assert.equal(viewport().scrollTop, bottom(), 'later input-card layout changes keep following');
+      await readAt(225);
+      value = { ...value, status: 'running', queue: [], messages: [...value.messages, {
+        id: 'remote-user', role: 'user', content: 'Remote user or queued execution', timestamp: 40,
+      }, { id: 'remote-agent', role: 'assistant', content: 'Agent streaming', timestamp: 41, streaming: true }] };
+      await show(value);
+      assert.equal(viewport().scrollTop, 225, 'post-ACK gestures win over remote messages and queue execution');
+      await show(null);
+    }
+    for (const change of ['switch', 'return', 'unmount', 'read-only', 'failed', 'unknown'] as const) {
+      const value = { ...session(`late-module-${change}`), hasMore: false };
+      await show(value);
+      const source = getSessionDraft(value.sessionId);
+      await act(() => source.edit('Original target'));
+      const bound = activation.state.bindDraft(source.reference);
+      const intent = bound.captureSend();
+      let pending!: Promise<unknown>;
+      await act(() => { pending = intent.send(bound.getSnapshot().revision); });
+      await readAt(125);
+      if (change === 'unmount') await show(null);
+      if (change === 'read-only') await show(value, true);
+      if (change === 'switch' || change === 'return') {
+        await show({ ...session('unrelated-local-view'), hasMore: false });
+        if (change === 'return') await show(value);
+        await readAt(225);
+      }
+      await act(async () => { finish(change === 'unknown' ? undefined as unknown as boolean : change !== 'failed'); await pending; });
+      await flush();
+      if (change !== 'unmount') {
+        assert.equal(viewport().scrollTop, change === 'switch' || change === 'return' ? 225 : 125, change);
+      }
+      await show(null);
+    }
+    const value = { ...session('cancelled-module'), hasMore: false };
+    await show(value);
+    const source = getSessionDraft(value.sessionId);
+    const bound = activation.state.bindDraft(source.reference);
+    await readAt(225);
+    await act(() => bound.editText('Dictation only'));
+    await flush();
+    assert.equal(viewport().scrollTop, 225);
+    const intent = bound.captureSend();
+    intent.cancel();
+    const before = requests;
+    await act(async () => {
+      assert.deepEqual(await intent.send(bound.getSnapshot().revision), { status: 'blocked', reason: 'cancelled' });
+    });
+    await flush();
+    assert.equal(requests, before);
+    assert.equal(viewport().scrollTop, 225);
+    const blocked = bound.captureSend();
+    let release!: () => void;
+    await act(() => { release = bound.block('Synthetic recording'); });
+    await act(async () => {
+      assert.deepEqual(await blocked.send(bound.getSnapshot().revision), { status: 'blocked', reason: 'peer-blocked' });
+      release();
+    });
+    await flush();
+    assert.equal(requests, before);
+    assert.equal(viewport().scrollTop, 225);
+
+    const background = bound.captureSend();
+    const other = { ...session('background-visible'), hasMore: false };
+    await show(other);
+    await readAt(225);
+    let pending!: Promise<unknown>;
+    await act(() => { pending = background.send(bound.getSnapshot().revision); });
+    assert.equal(viewport().scrollTop, 225, 'background dispatch neither navigates nor scrolls the current thread');
+    await show(value);
+    await readAt(125);
+    await act(async () => { finish(true); await pending; });
+    await flush();
+    assert.equal(viewport().scrollTop, 125, 'a view opened after dispatch does not inherit its late ACK');
+  });
+
   await render(a);
   assert.equal(viewport().scrollTop, bottom());
   const mounted = viewport();
@@ -743,7 +1125,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   const beforeFill = prefetches;
   await render(short);
   assert.equal(prefetches, beforeFill, 'an open transport cannot consume a fill before its snapshot');
-  await act(() => useCockpit.setState({ snapshotReady: true }));
+  await act(() => useCockpit.setState({ snapshotReady: true, sessions: [short] }));
   await flush();
   assert.equal(prefetches, beforeFill + 1, 'a retained short page is not a completed initial viewport');
   assert.equal(container.querySelector('.chat-message-rows')?.getAttribute('data-preparing'), null,
@@ -998,9 +1380,13 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.deepEqual(copied, [value.queue![0].text, value.queue![0].text]);
     const decision = container.querySelector('.chat-input-card')!;
     assert.equal(decision.getAttribute('data-decision'), 'true');
+    assert.equal(decision.getAttribute('data-question'), 'true');
     assert.equal(execution.parentNode, decision);
-    assert.equal(queue.parentNode?.parentNode, container.querySelector('.chat-input-card-body'));
-    assert.equal(container.querySelector('.chat-composer')?.parentNode, queue.parentNode?.parentNode);
+    const inputContext = container.querySelector('.chat-input-context')!;
+    const cardBody = container.querySelector('.chat-input-card-body')!;
+    assert.equal(queue.parentNode?.parentNode, inputContext);
+    assert.equal(inputContext.parentNode, cardBody);
+    assert.equal(container.querySelector('.chat-composer')?.parentNode, cardBody);
     assert.equal(container.querySelector('.chat-typing-stop')?.textContent, '停止并清空队列');
     decision.open = false;
     await show({ title: 'Updated background metadata' });
@@ -1031,6 +1417,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await show({ ask: null });
     assert.equal(decision.open, true, 'ordinary input is restored after a collapsed question resolves');
     assert.equal(decision.getAttribute('data-decision'), null);
+    assert.equal(decision.getAttribute('data-question'), null);
+    assert.equal(container.querySelector('.chat-input-context'), inputContext);
+    assert.equal(container.querySelector('.chat-composer')?.parentNode, cardBody);
+    assert.equal(inputContext.contains(container.querySelector('.chat-input-message')!), false);
     assert.notEqual(container.querySelector('.chat-input-message'), nextInput);
     assert.equal(getDraftSession(value.sessionId).current({}), promptDraft);
     assert.equal(promptDraft.getSnapshot().text, 'Cached ordinary prompt');
@@ -1203,7 +1593,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       target.value = value;
       await event(target, 'change');
     };
-    const apply = () => node('.dialog-btn');
+    const apply = () => {
+      const button = node('.info-model-current').closest('.info-section')?.querySelector('.primary');
+      assert.ok(button, 'model section has its own Apply action');
+      assert.match(button.textContent, /^(应用配置|正在提交…)$/);
+      return button;
+    };
     const refresh = () => node('[aria-label="刷新"]');
     const invalidate = (revision: number) => act(async () => {
       useCockpit.setState({ resourceRevisions: { [current.sessionId]: { model: revision } } });
@@ -1215,6 +1610,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       }));
       await panel();
       assert.equal(reads.length, 1);
+      const roleEntry = container.querySelectorAll('button').find(button => button.textContent === '追加模块角色…');
+      assert.ok(roleEntry);
+      assert.equal(roleEntry.attributes.has('disabled'), false, 'passive role disclosure is independent of model availability');
       assert.equal(apply().attributes.has('disabled'), true, 'summary metadata cannot authorize Apply');
       assert.equal(container.querySelectorAll('.spinner').length, 1, 'first read has only the body loader');
       assert.equal(refresh().getAttribute('aria-busy'), 'false');
@@ -1419,6 +1817,304 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(container.querySelector('.chat-input-message'), editor);
   });
 
+  await t.test('real input middleware preserves controlled events, refs, IME and captured submit gates', async subtest => {
+    let input!: ComposerInputProps;
+    let preventKey = false;
+    const events: string[] = [];
+    const digest = 'b'.repeat(64);
+    const runtime = new ModuleRuntime({
+      pageUrl: 'https://fixture.invalid',
+      fetch: async () => Response.json({ modules: [{
+        id: 'input-fixture', name: 'Input fixture', version: '1.0.0', digest, config: {}, styles: [],
+        apiBase: `/_modules/input-fixture/${digest}/api`, entry: `/_modules/assets/input-fixture/${digest}/entry.js`,
+      }], errors: [] }),
+      load: async () => ({ activate: (() => ({ apiVersion: 2, components: [{
+        id: 'input', boundary: 'composerInput', wrap: Base => props => {
+          input = props;
+          return createElement(Fragment, null, createElement(Base, { ...props,
+            onChange: event => { events.push('change'); props.onChange(event); },
+            onPaste: event => { events.push(event.currentTarget.tagName); props.onPaste?.(event); },
+            onKeyDown: event => { if (preventKey) event.preventDefault(); props.onKeyDown?.(event); },
+          }), createElement('button', { type: 'button', 'aria-label': 'Microphone', disabled: props.disabled || props.sendBlocked }, 'Microphone'));
+        },
+      }] })) satisfies ActivateFrontend }),
+      report: assert.fail,
+    });
+    subtest.after(async () => { await act(() => root.render(null)); runtime.stop(); });
+    await runtime.start();
+    let draft = getSessionDraft('input-contract');
+    let sends = 0;
+    let finish!: (value: boolean) => void;
+    let sending: Promise<boolean> | undefined;
+    const objectRef = { current: null as HTMLTextAreaElement | null };
+    const renderInput = (options: Partial<Pick<ComposerProps, 'disabled' | 'sendBlocked' | 'editorRef'>> = {}) => act(() => root.render(createElement(Composer, {
+      runtime, draft, onSend: () => { sends++; sending = draft.send(() => new Promise(resolve => { finish = resolve; })); return sending; },
+      editorRef: objectRef, ...options,
+    })));
+    const dispatch = async (type: string, properties: Record<string, unknown> = {}) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'target', { value: container.querySelector('.chat-input-message') });
+      for (const [key, value] of Object.entries(properties)) Object.defineProperty(event, key, { value });
+      await act(() => container.dispatchEvent(event));
+      return event;
+    };
+    await renderInput();
+    const editor = container.querySelector('.chat-input-message')!;
+    assert.equal(objectRef.current, editor);
+    assert.equal(input.draft, draft.reference);
+    await dispatch('focusin');
+    Object.getOwnPropertyDescriptor(HostNode.prototype, 'value')!.set!.call(editor, 'Native edit');
+    await dispatch('keyup', { key: 't' });
+    assert.equal(draft.getSnapshot().text, 'Native edit');
+    assert.deepEqual(events, ['change']);
+    await dispatch('paste');
+    assert.deepEqual(events, ['change', 'TEXTAREA']);
+    for (const keys of [
+      { key: 'Enter', isComposing: true }, { key: 'Enter', keyCode: 229 }, { key: 'Enter', shiftKey: true },
+    ]) assert.equal((await dispatch('keydown', keys)).defaultPrevented, false);
+    preventKey = true;
+    await dispatch('keydown', { key: 'Enter', ctrlKey: true });
+    preventKey = false;
+    assert.equal(sends, 0);
+    await renderInput({ sendBlocked: true });
+    assert.equal(editor.attributes.has('disabled'), false);
+    await dispatch('keydown', { key: 'Enter', metaKey: true });
+    input.onSubmit();
+    assert.equal(sends, 0);
+    await renderInput();
+    await dispatch('keydown', { key: 'Enter', ctrlKey: true });
+    assert.equal(sends, 1);
+    assert.equal(editor.attributes.has('disabled'), false, 'pending submit must not disable native editing');
+    await act(() => draft.edit('Newer edit'));
+    await dispatch('keydown', { key: 'Enter' });
+    assert.equal(sends, 1);
+    await act(async () => { finish(true); await sending; });
+    assert.equal(editor.value, 'Newer edit', 'ACK retains a newer controlled revision');
+    assert.equal(container.querySelector('.chat-input-message'), editor);
+
+    const legacyCalls: (HTMLTextAreaElement | null)[] = [];
+    const legacyRef = (node: HTMLTextAreaElement | null) => { legacyCalls.push(node); };
+    await renderInput({ editorRef: legacyRef });
+    assert.equal(objectRef.current, null);
+    assertIdentityList(legacyCalls, [editor]);
+    let cleaned = 0;
+    const modernCalls: (HTMLTextAreaElement | null)[] = [];
+    const modernRef = (node: HTMLTextAreaElement | null) => { modernCalls.push(node); return () => { cleaned++; }; };
+    await renderInput({ editorRef: modernRef });
+    assertIdentityList(legacyCalls, [editor, null]);
+    assertIdentityList(modernCalls, [editor]);
+    const oldSubmit = input.onSubmit;
+    await act(() => { draft = getSessionDraft('replacement-input'); });
+    await renderInput({ editorRef: modernRef, disabled: true });
+    await act(() => oldSubmit());
+    assert.equal(sends, 1, 'a captured action never submits a replacement draft');
+    await act(() => root.render(null));
+    assert.equal(cleaned, 1);
+    assertIdentityList(modernCalls, [editor], 'React 19 invokes cleanup instead of callback(null)');
+  });
+
+  await t.test('paired speech consumer mounts the real input and keeps feedback, leases, refs and focus scoped', {
+    skip: !process.env.COCKPIT_TEST_SPEECH_ENTRY,
+  }, async subtest => {
+    const { activate } = await import(pathToFileURL(process.env.COCKPIT_TEST_SPEECH_ENTRY!).href);
+    assert.equal(typeof activate, 'function');
+    const fileActivate: ActivateFrontend = context => ({
+      apiVersion: 2, components: [{
+        id: 'file-fixture', boundary: 'composerEditor',
+        wrap: Base => props => createElement(Base, props,
+          props.operation === 'prompt' ? context.react.createElement('button', { type: 'button', 'aria-label': 'File fixture' }, 'File') : null,
+          props.children),
+      }],
+    });
+    let finish!: (text: string) => void;
+    let requests = 0;
+    let captures = 0;
+    let failNext = false;
+    let capturePort: { onmessage: ((event: { data: unknown }) => void) | null } | undefined;
+    const audioGlobals = {
+      isSecureContext: true,
+      navigator: { mediaDevices: { getUserMedia: async () => {
+        captures++;
+        const track = { kind: 'audio', readyState: 'live', enabled: true, stop() { this.readyState = 'ended'; }, onended: null };
+        return { getTracks: () => [track], getAudioTracks: () => [track] };
+      } } },
+      AudioContext: class {
+        currentTime = 0;
+        state = 'running';
+        resume = async () => {};
+        close = async () => {};
+        destination = {};
+        audioWorklet = { addModule: async () => {} };
+        createMediaStreamSource = () => ({
+          connect() { capturePort?.onmessage?.({ data: { type: 'pcm', buffer: new ArrayBuffer(4800) } }); },
+          disconnect() {},
+        });
+      },
+      AudioWorkletNode: class {
+        port = {
+          onmessage: null as ((event: { data: unknown }) => void) | null,
+          postMessage: () => {
+            queueMicrotask(() => this.port.onmessage?.({ data: { type: 'ended', limited: false } }));
+          },
+          close() {},
+        };
+        constructor() { capturePort = this.port; }
+        connect() {}
+        disconnect() {}
+      },
+      WebSocket: class {
+        onopen: (() => void) | null = null;
+        onmessage: ((event: { data: string }) => void) | null = null;
+        bufferedAmount = 0;
+        constructor(url: string) {
+          assert.equal(new URL(url).origin, 'wss://synthetic.openai.azure.com');
+          queueMicrotask(() => this.onopen?.());
+        }
+        send(message: string) {
+          const { type, session } = JSON.parse(message);
+          if (type === 'session.update') {
+            this.onmessage?.({ data: JSON.stringify({ type: 'session.updated', session }) });
+          } else if (type === 'input_audio_buffer.commit') {
+            if (failNext) {
+              failNext = false;
+              this.onmessage?.({ data: JSON.stringify({ type: 'error', error: { code: 'RateLimitReached' } }) });
+              return;
+            }
+            this.onmessage?.({ data: JSON.stringify({ type: 'input_audio_buffer.committed', item_id: 'fixture-item' }) });
+            finish = text => this.onmessage?.({ data: JSON.stringify({
+              type: 'conversation.item.input_audio_transcription.completed', item_id: 'fixture-item', content_index: 0, transcript: text,
+            }) });
+          } else if (type === 'input_audio_buffer.clear') {
+            this.onmessage?.({ data: JSON.stringify({ type: 'input_audio_buffer.cleared' }) });
+          } else assert.equal(type, 'input_audio_buffer.append');
+        }
+        close() {}
+      },
+    };
+    for (const [key, value] of Object.entries(audioGlobals)) {
+      const original = Object.getOwnPropertyDescriptor(globalThis, key);
+      Object.defineProperty(globalThis, key, { configurable: true, value });
+      subtest.after(() => original ? Object.defineProperty(globalThis, key, original) : Reflect.deleteProperty(globalThis, key));
+    }
+    const digest = 'c'.repeat(64);
+    const runtime = new ModuleRuntime({
+      pageUrl: 'https://fixture.invalid',
+      fetch: async url => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/_modules') return Response.json({ modules: [{
+          id: 'cockpit-speech', name: 'Speech fixture', version: '0.2.0', digest, styles: [], config: {},
+          apiBase: `/_modules/cockpit-speech/${digest}/api`, entry: `/_modules/assets/cockpit-speech/${digest}/entry.js`,
+        }, {
+          id: 'file-fixture', name: 'File fixture', version: '1.0.0', digest, styles: [], config: {},
+          apiBase: `/_modules/file-fixture/${digest}/api`, entry: `/_modules/assets/file-fixture/${digest}/entry.js`,
+        }], errors: [] });
+        assert.ok(path.endsWith('/session'), 'module backend only mints a credential');
+        requests++;
+        return Response.json({
+          clientSecret: 'synthetic-ephemeral', expiresAt: Math.floor(Date.now() / 1000) + 600, deployment: 'dictation',
+          socketUrl: 'wss://synthetic.openai.azure.com/openai/v1/realtime?intent=transcription',
+        });
+      },
+      load: async url => ({ activate: url.includes('/file-fixture/') ? fileActivate : activate }), report: assert.fail,
+    });
+    subtest.after(async () => { await act(() => root.render(null)); runtime.stop(); });
+    await runtime.start();
+    runtime.updateView({ sessionId: 'paired-speech', connected: true, visible: true });
+    const draft = getSessionDraft('paired-speech');
+    draft.edit('hello world');
+    let cleaned = 0;
+    const refCalls: (HTMLTextAreaElement | null)[] = [];
+    const editorRef = (node: HTMLTextAreaElement | null) => { refCalls.push(node); return () => { cleaned++; }; };
+    await act(() => root.render(createElement(Composer, { runtime, draft, editorRef, onSend: async () => assert.fail('speech never sends') })));
+    const editor = container.querySelector('.chat-input-message')!;
+    assertIdentityList(refCalls, [editor]);
+    const row = container.querySelector('.chat-input')!;
+    const inputControls = (node: HostNode): HostNode[] => node.childNodes.flatMap(child => [
+      ...(['BUTTON', 'TEXTAREA'].includes(child.tagName) ? [child] : []), ...inputControls(child),
+    ]);
+    const file = row.querySelector('[aria-label="File fixture"]')!;
+    const microphone = row.querySelector('.cockpit-speech-mic')!;
+    const send = row.querySelector('.send')!;
+    assertIdentityList(inputControls(row), [file, editor, microphone, send],
+      'input middleware may wrap the editor without changing control order or duplicating controls');
+    assert.equal(file.parentNode, row);
+    assert.equal(microphone.parentNode, row);
+    assert.equal(send.parentNode, row);
+    assert.match(row.attributes.get('class') ?? '', /ck-input-row/, 'native row owns the shared public layout');
+    const click = async (selector: string) => {
+      const target = container.querySelector(selector);
+      assert.ok(target, selector);
+      const event = new Event('click', { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'target', { value: target });
+      await act(async () => { container.dispatchEvent(event); });
+    };
+    editor.setSelectionRange(6, 11);
+    microphone.focus();
+    await click('.cockpit-speech-mic');
+    assert.equal(draft.getSnapshot().blocks.length, 1);
+    assert.equal(container.querySelector('.send')!.attributes.has('disabled'), true);
+    assert.equal(container.querySelector('.cockpit-speech-panel'), null, 'recording is expressed by the button, not a phase panel');
+    assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.get('aria-label'), '停止录音并收取剩余文字');
+    const status = container.querySelector('.cockpit-speech-status')!;
+    assert.ok(status);
+    assert.equal(row.contains(status), false, 'status wraps the full input row instead of living inside it');
+    assert.equal(status.parentNode, row.parentNode);
+    assert.match(status.textContent, /正在录音/);
+    await click('.cockpit-speech-mic');
+    assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.has('disabled'), true);
+    assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.get('aria-busy'), 'true');
+    assert.match(container.querySelector('.cockpit-speech-status')!.textContent, /正在处理录音/);
+    assert.equal(requests, 1);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); finish('speech'); });
+    assert.equal(editor.value, 'hello speech');
+    assert.notEqual(document.activeElement, editor, 'asynchronous transcription does not take editor focus');
+    assert.equal(editor.selectionStart, 12);
+    assert.equal(editor.selectionEnd, 12);
+    assert.equal(draft.getSnapshot().blocks.length, 0);
+    assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.has('disabled'), false);
+    assert.equal(container.querySelector('.cockpit-speech-panel'), null, 'successful insertion does not lift the editor with a notice');
+    assert.equal(container.querySelector('.chat-input-message'), editor);
+    assert.equal(container.querySelector('.cockpit-speech-status'), null);
+
+    await click('.cockpit-speech-mic');
+    await act(() => draft.edit('manual text'));
+    await click('.cockpit-speech-mic');
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); finish('recovery'); });
+    assert.equal(editor.value, 'manual text');
+    assert.equal(container.querySelectorAll('textarea').length, 2, 'one editor and one read-only recovery field');
+    assert.match(container.querySelector('.cockpit-speech-panel')!.textContent, /识别结果/);
+    const panel = container.querySelector('.cockpit-speech-panel')!;
+    assert.equal(row.contains(panel), false);
+    assert.equal(panel.parentNode, container.querySelector('.chat-composer')!.parentNode);
+    assert.equal(container.querySelector('.cockpit-speech-panel')!.contains(editor), false);
+    const recoveryButton = container.querySelectorAll('button').find(node => node.textContent === '插入原输入框光标处')!;
+    assert.equal(recoveryButton.attributes.has('disabled'), false);
+    editor.setSelectionRange(3, 7);
+    const recoveryClick = new Event('click', { bubbles: true });
+    Object.defineProperty(recoveryClick, 'target', { value: recoveryButton });
+    await act(() => container.dispatchEvent(recoveryClick));
+    assert.equal(editor.value, 'manrecoveryual text');
+    assert.equal(editor.selectionStart, 11);
+    assert.equal(document.activeElement, editor);
+    assert.equal(requests, 1, 'successive recordings reuse an in-memory credential');
+    await click('.cockpit-speech-mic');
+    failNext = true;
+    await click('.cockpit-speech-mic');
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)); });
+    assert.equal(draft.getSnapshot().blocks.length, 0);
+    assert.equal(container.querySelector('.cockpit-speech-panel'), null, 'failure stays on the retry button');
+    assert.match(container.querySelector('.cockpit-speech-mic')!.attributes.get('class')!, /\bck-danger\b/);
+    const capturesBeforeRetry = captures;
+    await click('.cockpit-speech-mic');
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)); finish('replayed'); });
+    assert.equal(captures, capturesBeforeRetry, 'retry does not reopen the microphone');
+    assert.match(editor.value, /replayed/);
+    assert.equal(draft.getSnapshot().blocks.length, 0);
+    await act(() => root.render(null));
+    assert.equal(cleaned, 1);
+    assertIdentityList(refCalls, [editor], 'composed React 19 ref cleans up without a synthetic null call');
+  });
+
   await t.test('module components retain scoped drafts and native send guards while DOM handlers compose on the real editor', async subtest => {
     let mounts = 0;
     let aboveMounts = 0;
@@ -1610,8 +2306,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(container.querySelector('.module-draft-recovery'), null);
       await dispatch('.chat-input-message', 'keydown', { key: 'Enter', ctrlKey: true });
       await dispatch('.send', 'click');
-      assert.equal(sends, 2, 'module loss leaves ordinary core text usable');
-      assert.deepEqual(requests.at(-1)?.body, { sessionId: draft.sessionId, text: 'Crash module action' });
+      assert.equal(sends, 1, 'module loss must not dispatch text while silently omitting persisted module data');
+      assert.equal(draft.getSnapshot().text, 'Crash module action', 'host text stays editable and retained');
+      assert.equal(draft.hasUnclaimedStoredData(), true);
+      assert.equal(field.getSnapshot().items.length, 2, 'unrestored module values remain recoverable');
     } finally {
       restoreConsole.mock.restore();
       await act(() => root.render(null));

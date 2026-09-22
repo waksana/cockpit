@@ -102,14 +102,37 @@ test('native delete sends one canonical request without any module preflight or 
   assertOnlyPost(fetch, 'session/delete', { sessionId: 'session' });
 });
 
+for (const status of ['saved', 'unchanged', 'uncertain'] as const) {
+  test(`role addition sends one explicit request and preserves ${status} details`, async t => {
+    const result = { sessionId: 'session', status, roles: [], appliedRoles: [], loaded: false, rolesNeedReload: false,
+      error: 'Synthetic diagnostic', recovery: 'Inspect before retry' };
+    const { client, fetch } = setup(t, async () => Response.json(result));
+    assert.deepEqual(await client.addRoles('session', [{ moduleId: 'fixture', roleId: 'reviewer' }]), result);
+    assertOnlyPost(fetch, 'roles/add', { sessionId: 'session', roles: [{ moduleId: 'fixture', roleId: 'reviewer' }] });
+  });
+}
+
+test('role readiness is one passive explicit read, without loading or repairing a session', async t => {
+  const result = { sessionId: 'session', roles: [], appliedRoles: [], loaded: false, ready: false, reasons: ['Unloaded'] };
+  const { client, fetch } = setup(t, async () => Response.json(result));
+  assert.deepEqual(await client.roleReadiness('session'), result);
+  assertOnlyPost(fetch, 'roles/readiness', { sessionId: 'session' });
+});
+
 test('removed session pages have no dedicated Web client helpers', t => {
   const { client, fetch } = setup(t, async () => { throw new Error('Unexpected request'); });
   for (const name of [
     'forkSession', 'getSession', 'getPlan', 'getPanels', 'getPanel', 'getUsage',
     'scheduleList', 'scheduleAdd', 'scheduleStop', 'compactSession',
-    'rewindSession', 'unloadSession', 'reloadSession', 'setMode',
+    'rewindSession', 'unloadSession', 'setMode',
   ]) assert.equal(name in client, false, name);
   assert.equal(fetch.mock.callCount(), 0);
+});
+
+test('explicit reload sends only the authorized canonical request', async t => {
+  const { client, fetch } = setup(t, async () => Response.json({ ok: true }));
+  assert.deepEqual(await client.reloadSession('background'), { ok: true });
+  assertOnlyPost(fetch, 'session/reload', { sessionId: 'background' });
 });
 
 test('explicit load sends exactly one non-destructive session/load request', async t => {
@@ -137,6 +160,13 @@ test('native deletion failure or missing acknowledgement is not retried or accep
   await assert.rejects(client.deleteSession('session'));
   assert.equal(fetch.mock.callCount(), 2);
   assert.ok(fetch.mock.calls.every(call => call.arguments[0] === intentUrl('session/delete')));
+});
+
+test('same-module multiselect creation uses only the canonical intent', async t => {
+  const roles = [{ moduleId: 'board', roleId: 'owner' }, { moduleId: 'board', roleId: 'executor' }];
+  const { client, fetch } = setup(t, async () => Response.json({ sessionId: 'native-role-id' }));
+  await client.newSession('/workspace', roles);
+  assertOnlyPost(fetch, 'session/new', { cwd: '/workspace', roles });
 });
 
 test('creation preserves an explicitly reported native identity without automatic retry', async t => {
@@ -580,7 +610,8 @@ for (const failure of failures) {
     const diagnostics = getUxErrors();
     assert.equal(diagnostics.length, 1);
     assert.match(diagnostics[0].message, /^会话 session \(session\)：接口 respondAsk 调用失败：/);
-    assert.match(diagnostics[0].message, failure.diagnostic);
+    assert.match(diagnostics[0].message.replace(/；变更结果尚未确认.*$/, ''), failure.diagnostic);
+    assert.match(diagnostics[0].message, /变更结果尚未确认/);
     assert.deepEqual(events, []);
   });
 
@@ -612,8 +643,17 @@ test('failed explicit load never falls back to reload or creates a replacement s
   assertOnlyPost(fetch, 'session/load', { sessionId: 'session' });
   assert.deepEqual(events, []);
   assert.equal(getUxErrors().length, 1);
-  assert.match(getUxErrors()[0].message, /^会话 session \(session\)：接口 session\/load 调用失败：Original session is unavailable$/);
+  assert.match(getUxErrors()[0].message, /^会话 session \(session\)：接口 session\/load 调用失败：Original session is unavailable；变更结果尚未确认/);
 });
+
+for (const result of [{}, { status: 'future-native-status' }]) {
+  test(`native model uncertainty is returned intact with an explicit local diagnostic: ${JSON.stringify(result)}`, async t => {
+    const { client, fetch } = setup(t, async () => Response.json({ ok: true, result }));
+    assert.deepEqual(await client.setModel('session', 'requested'), { ok: true, result });
+    assert.equal(fetch.mock.callCount(), 1);
+    assert.match(getUxErrors()[0].message, /结果尚未确认/);
+  });
+}
 
 for (const [index, response] of [null, { error: { detail: 'unavailable' } }, 'unavailable'].entries()) {
   test(`history HTTP failure with non-error JSON ${index} preserves status and diagnostics`, async (t) => {
@@ -805,6 +845,28 @@ test('SSE validates native policy and agent status while preserving lifecycle me
   assert.equal(warn.mock.callCount(), 6);
   assert.equal(fetch.mock.callCount(), 0);
   assert.deepEqual(getUxErrors(), []);
+});
+
+test('SSE parses generic module payloads and rejects malformed envelopes or oversized data', t => {
+  const { instances } = mockEventSource(t);
+  const { client, fetch, events } = setup(t, async () => assert.fail('Module events must not POST'));
+  const warn = t.mock.method(console, 'warn', () => {});
+  client.connect();
+  const source = instances[0];
+  const event = { type: 'module/event', moduleId: 'fixture', payload: { nested: ['界', null] } };
+  source.emit(event);
+  source.emit({ ...event, payload: undefined });
+  source.emit({ ...event, moduleId: '../fixture' });
+  source.emit({ ...event, sessionId: 'spoofed' });
+  source.emit({ ...event, payload: 'x'.repeat(65_536) });
+  assert.deepEqual(events, [event]);
+  assert.equal(warn.mock.callCount(), 4);
+  assert.equal(fetch.mock.callCount(), 0);
+  assert.equal(instances.length, 1);
+  const parsed = events[0];
+  if (parsed.type !== 'module/event') assert.fail();
+  assert.ok(Object.isFrozen(parsed.payload));
+  assert.throws(() => ((parsed.payload as Record<string, unknown>).nested as unknown[]).push('changed'), TypeError);
 });
 
 for (const action of ['replace', 'disconnect', 'disconnect-and-connect'] as const) {

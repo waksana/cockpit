@@ -2,13 +2,13 @@
 
 本页维护构建产物和包身份。
 Cockpit 只产生包含前后端与必要依赖的包，由使用者决定放在哪里、何时运行。
-本页对应 0.2.3 发行；运行包以该版本 Release workflow 成功发布的资产为准。
-已有 v0.1.0 包应使用对应 tag 的文档和数据根约定。
+本页面向 0.2.4，**0.2.4 配套 / 发布资产以对应 Release 为准**，不表示发布已完成。
+其他版本应使用对应 tag 的文档。
 
 ## 获取运行包
 
-普通使用者在 [Cockpit v0.2.3 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.3)
-发布完成后下载 `runtime.tar.gz` 和 `runtime.tar.gz.sha256`；不必安装 pnpm 或克隆开发工作树。
+普通使用者确认 [Cockpit v0.2.4 Release](https://github.com/waksana/cockpit/releases/tag/v0.2.4)
+发布成功后，下载 `runtime.tar.gz` 和 `runtime.tar.gz.sha256`；不必安装 pnpm 或克隆开发工作树。
 在下载目录验证摘要，再解压到新目录：
 
 ```sh
@@ -54,11 +54,15 @@ node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js
 ```
 
 这两个入口都直接进入对应 Node 进程；MCP 客户端通过 HTTP 调用后端。
-0.2.3 继续包含本地模块 CLI 和公共 module-api/protocol 类型，
+0.2.4 继续包含本地模块 CLI 和公共 module-api/protocol 类型，
 可以在包根运行 `apps/server/src/module-cli.ts` 或 `scripts/export-module-api.mjs`，
 具体命令见[模块契约](module-contract-draft.md)。
-本次 Web API v2 不兼容旧前端模块；使用文件或通知模块时，必须分别配套
-Cockpit File 0.1.7 / Cockpit Notification 0.1.0，见[发行说明](release-notes.md)。
+包/后端 API v1、Web API v2、UI v1 保持不变，菜单另检查 `menuVersion: 1`；
+本次移除旧 `globalNavigation` HOC。配套模块为
+Cockpit File 0.1.7 / Cockpit Notification 0.1.5，见[发行说明](release-notes.md)。
+File 0.1.7 继续兼容且不重新发行；Notification 0.1.5 的精确兼容 SDK 源码 pin 见
+[模块契约](module-contract-draft.md)，不能只凭开发包版本标签判断。
+历史 0.2.3 → Notification 0.1.0 配套仍以对应 tag/Release 为准。
 模块单独发行，不包含在本体运行包内。
 
 ## 闭包与身份
@@ -102,6 +106,34 @@ COCKPIT_RUNTIME_ARCHIVE="$PWD/runtime-output/runtime.tar.gz" \
 前两者分别覆盖合成闭包与真实离线依赖搬迁，后者才检查指定归档。
 未设置变量时相应 case 跳过，不能把跳过写成实际包/原生运行证明。
 
+<a id="delivery-versions"></a>
+## 开发与部署的版本规则
+
+日常提交和未交付的开发构建不要求每次递增版本。准备发布或部署时，如果包内代码、
+依赖、资源或随包文档相对已交付版本改变，必须先分配新版本；只有包外文档变化则不必
+为它单独发布新运行包。源码安装或固定 SHA 的开发包同样要做这个判断，不能等到安装失败。
+
+模块安装器将同一模块 ID/version 绑定到不可变归档摘要：同摘要可以重复安装，
+不同摘要必须使用新版本。仅换 SHA、重新打包、删除旧安装目录、修改清单或绕过校验，
+都不能作为同版本替换办法。无意产生不同摘要时，先排查可复现构建并取回原已验证产物；
+如仍要交付不同内容，则递增版本并重新构建。保留旧安装与选择记录供明确回退使用。
+
+版本号按各仓库的兼容性约定选择，不默认所有变更都是补丁。当前 0.x 仍须明确记录
+不兼容变化、所需宿主能力及精确配对来源；不能只凭版本大小推断能力。模块独立版本，
+宿主 Web/backend/MCP 与 workspace 元数据则必须同步。已公开版本/tag 不移动或复用。
+
+每次交付前检查：
+
+1. 核对目标机器已安装的版本/摘要及当前选择，确认候选版本未占用且来源是已验证的固定提交。
+2. 同步 package、模块 manifest、运行时自报版本、适用的 lockfile 和本次版本说明；
+   不手改构建后的包清单。宿主普通测试会核对 workspace/MCP/版本说明一致性。
+3. 从同一干净提交构建，执行相关现有检查和消费者配对检查；以最新 head 的 CI 为准。
+4. 核对包摘要和声明身份后才安装；区分安装/下次选择与当前实际加载，重启后核对运行身份。
+   不关闭兼容性或完整性保护，也不靠删除数据制造成功。
+
+开发、merge、发 tag/Release 和部署是不同授权边界。版本递增本身不创建发行，
+已安装新包也不代表运行中的进程已升级。
+
 <a id="versioned-releases"></a>
 ## 版本发行
 
@@ -122,8 +154,8 @@ COCKPIT_RUNTIME_ARCHIVE="$PWD/runtime-output/runtime.tar.gz" \
 
 ```sh
 git fetch origin
-git tag -a v0.2.3 VERIFIED_MAIN_SHA -m "Cockpit v0.2.3"
-git push origin v0.2.3
+git tag -a v0.2.4 VERIFIED_MAIN_SHA -m "Cockpit v0.2.4"
+git push origin v0.2.4
 ```
 
 将 `VERIFIED_MAIN_SHA` 替换成已通过检查的完整 main 提交。

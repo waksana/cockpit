@@ -52,7 +52,7 @@ export function PlanCard({ request, pending, disabled = false, onSelect }: {
     </div>
     <div className="chat-ask-choices">
       {(request.actions ?? []).map(action => <button key={action} type="button"
-        className={`chat-ask-choice ck-button${action === request.recommendedAction ? ' is-recommended' : ''}`}
+        className={`chat-ask-choice ck-button${action === request.recommendedAction ? ' ck-primary' : ''}`}
         disabled={pending || disabled} onClick={() => onSelect(action)}>{PLAN_ACTION_LABEL[action]}</button>)}
     </div>
     {!request.actions?.length && <div className="chat-pending-hint" role="status">

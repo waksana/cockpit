@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router-dom';
 import { compile } from 'sass';
 import { ModuleRuntime } from '../lib/moduleRuntime';
-import { ModuleRuntimeProvider } from './ModuleComponents';
+import { ModuleRuntimeProvider, SessionStatus } from './ModuleComponents';
 import { GlobalNavigation } from './GlobalNavigation';
 import { ManagementShell } from './ManagementShell';
 import { Sidebar } from './Sidebar';
@@ -26,10 +26,6 @@ test('semantic middleware preserves real navigation and management controls with
       components: [
         { id: 'badge', boundary: 'sessionStatus', wrap: Base => props => createElement(Base, {
           ...props, children: createElement('span', { 'data-fixture-session': props.sessionId }, '7', props.children),
-        }) },
-        { id: 'navigation', boundary: 'globalNavigation', wrap: Base => props => createElement(Base, {
-          ...props, children: createElement(Fragment, null, props.children,
-            createElement('button', { type: 'button' }, 'Fixture navigation')),
         }) },
         { id: 'management', boundary: 'managementHeader', wrap: Base => props => createElement(Base, {
           ...props, actions: createElement(Fragment, null, props.actions,
@@ -59,14 +55,14 @@ test('semantic middleware preserves real navigation and management controls with
       onSelect() {}, getMenuItems: () => [],
     }));
     controls(sidebar, 1);
-    assert.match(sidebar, /class="dialog-status" title="需要选择" aria-label="需要选择">选/);
-    if (enhanced) assert.match(sidebar, /class="dialog-meta"><span data-fixture-session="/);
+    assert.match(sidebar, /class="dialog-status" data-tone="waiting">待回答/);
+    assert.doesNotMatch(sidebar, />回复中<|>选</);
+    if (enhanced) assert.match(sidebar, /待回答<\/span><span data-fixture-session="[^"]+">7<\/span><\/span>/);
     else assert.doesNotMatch(sidebar, /data-fixture-session/);
     const navigation = render(createElement(GlobalNavigation));
-    controls(navigation, enhanced ? 2 : 1);
+    controls(navigation, 1);
     assert.match(navigation, /<button[^>]*aria-label="全局导航"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"/);
-    if (enhanced) assert.match(navigation, /<\/button><button type="button">Fixture navigation<\/button>/);
-    else assert.doesNotMatch(navigation, /Fixture navigation/);
+    assert.doesNotMatch(navigation, /Fixture navigation/);
     for (const section of ['mcp', 'skills'] as const) {
       const title = section === 'mcp' ? '全局 MCP' : '全局 Skills';
       const refresh = section === 'mcp' ? '刷新 Copilot MCP 配置缓存' : '刷新';
@@ -75,7 +71,7 @@ test('semantic middleware preserves real navigation and management controls with
       }));
       controls(management, enhanced ? 3 : 2);
       assert.match(management, /<button[^>]*aria-label="返回会话列表"/);
-      assert.match(management, new RegExp(`<span class="manage-title ck-text-primary">${title}</span>`));
+      assert.match(management, new RegExp(`<span class="pane-title ck-text-primary">${title}</span>`));
       assert.match(management, new RegExp(`<button[^>]*aria-label="${refresh}"[^>]*disabled=""`));
       if (enhanced) assert.match(management, new RegExp(`</div><button type="button">Fixture list: ${section}</button><button`));
       else assert.doesNotMatch(management, /Fixture list:/);
@@ -86,7 +82,7 @@ test('semantic middleware preserves real navigation and management controls with
       controls(detail, enhanced ? 5 : 3);
       assert.match(detail, new RegExp(`<button[^>]*aria-label="返回${title}列表"`));
       assert.match(detail, /<button[^>]*class="chat-back ck-icon-button rp lg:hidden"[^>]*aria-label="返回"/);
-      assert.match(detail, /<span tabindex="-1" class="manage-title manage-detail-headtitle">fixture-resource<\/span>/);
+      assert.match(detail, /<span class="pane-title">fixture-resource<\/span>/);
       if (enhanced) assert.match(detail, /<\/div><button type="button">Fixture detail: fixture-resource<\/button><\/header>/);
       else assert.doesNotMatch(detail, /Fixture detail:/);
       assert.doesNotMatch(detail, /<div class="lg:hidden"/);
@@ -94,6 +90,20 @@ test('semantic middleware preserves real navigation and management controls with
   }
 });
 
+test('session native status is singular and module badges remain at the far end of the status row', () => {
+  for (const [status, needsDecision, expected] of [
+    ['running', true, '待回答'], ['idle', true, '待回答'], ['unloaded', true, '待回答'],
+    ['running', false, '回复中'], ['error', true, '出错'], ['error', false, '出错'],
+  ] as const) {
+    const html = renderToStaticMarkup(createElement(SessionStatus, {
+      sessionId: 'fixture', status, needsDecision,
+      children: createElement('span', { 'data-unread': true }, '1'),
+    }));
+    assert.match(html, new RegExp(`>${expected}</span><span data-unread="true">1</span></span>$`));
+    assert.equal((html.match(/class="dialog-status"/g) ?? []).length, 1);
+    assert.doesNotMatch(html, />选</);
+  }
+});
 test('middleware introduces no contribution-placeholder DOM or CSS and leaves scroll ownership in core', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.doesNotMatch(css, /module-message-decorations|module-composer-actions|module-composer-above/);

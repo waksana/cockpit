@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { acknowledge, acknowledgeInView, nativeDraftRequest } from './draft';
+import { nativeDraftRequest } from './draft';
 import { SessionDraft } from './textDraft';
 import { DraftCache } from './draftSelection';
 
@@ -11,35 +11,8 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-for (const outcome of ['unchanged', 'scrolled', 'unmounted', 'failed'] as const) {
-  test(`view acknowledgement only follows an unchanged live view: ${outcome}`, async () => {
-    const scope = { active: true };
-    const post = deferred<boolean>();
-    let revision = 0;
-    let pins = 0;
-    const result = acknowledgeInView(scope, () => post.promise, {
-      scrollRevision: () => revision,
-      onAccepted: () => { pins++; },
-    });
-    if (outcome === 'scrolled') revision++;
-    if (outcome === 'unmounted') scope.active = false;
-    post.resolve(outcome !== 'failed');
-    assert.equal(await result, outcome !== 'failed');
-    assert.equal(pins, outcome === 'unchanged' ? 1 : 0);
-  });
-}
-
-test('an inactive view never dispatches a late event', async () => {
-  let calls = 0;
-  assert.equal(await acknowledgeInView({ active: false }, async () => { calls++; return true; }, {
-    scrollRevision: () => 0,
-    onAccepted: () => { calls++; },
-  }), false);
-  assert.equal(calls, 0);
-});
-
 test('acknowledgement is strict: undefined is not successful', async () => {
-  assert.equal(await acknowledge(() => undefined), false);
+  assert.equal(await new SessionDraft('session').runAction(() => undefined), false);
 });
 
 for (const kind of ['prompt', 'ask', 'plan'] as const) for (const accepted of [true, false]) {

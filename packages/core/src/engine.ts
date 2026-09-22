@@ -13,14 +13,16 @@ import type {
   ModelOption, ScheduleEntry, ServerEvent, SessionMeta, SessionPanels,
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
   MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem, NativeChatEvent,
+  RoleSelection, RoleReadiness, RoleAdditionResult, SkillSession, ResourcePreparationResult,
 } from '@cockpit/protocol';
-import { NativeChatRead, SessionActivity, SessionUsage, MetaResource as MetaResources, cleanSessionTitle } from '@cockpit/protocol';
+import { NativeChatRead, SessionActivity, SessionUsage, MetaResource as MetaResources, cleanSessionTitle, SessionResourcesPrepare, RESOURCE_PREPARATION_ERROR_LIMIT } from '@cockpit/protocol';
 import { NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult } from '@cockpit/protocol';
 import { OfficialRuntime, sessionModelOptions } from './runtime.ts';
 import { normalizeEvent, type RuntimeAttachment } from './sdk-types.ts';
 import { readNativeChat } from './native-chat.ts';
 import { describeMcpServer, redactMcpConfig } from './mcp-config.ts';
 import { validateForkHistory } from './fork.ts';
+import type { RoleProvider, RoleAssembly } from './roles.ts';
 
 export type EngineRuntime = Pick<OfficialRuntime,
   'start' | 'models' | 'listSessions' | 'createSession' | 'resumeSession' |
@@ -77,6 +79,8 @@ function completeMeta(meta: SessionProjection): SessionMeta {
   return { ...meta, title, cwd, lastActivity, status, ask };
 }
 interface State {
+  roleAssembly?: RoleAssembly;
+  creationSubmitted?: boolean;
   id: string;
   observedCwd?: string | null;
   sdk: CopilotSession | null;
@@ -142,6 +146,141 @@ function stateFor(id: string): State {
 }
 
 export class Engine {
+  private roles?: RoleProvider;
+  setRoleProvider(roles: RoleProvider): void {
+    if (this.started || this.sessions.size) throw new Error('Roles must be configured before native startup');
+    this.roles = roles;
+  }
+  listRoles() { return this.roles?.list() ?? []; }
+
+  private roleState(id: string, st?: State, roles = this.roles?.read(id) ?? []) {
+    const appliedRoles = st?.sdk ? st.roleAssembly?.roles ?? [] : [];
+    const rolesNeedReload = !!st?.sdk && (roles.length !== appliedRoles.length
+      || roles.some(role => !appliedRoles.some(applied =>
+        applied.moduleId === role.moduleId && applied.roleId === role.roleId)));
+    return { roles, appliedRoles, rolesNeedReload };
+  }
+
+  async roleReadiness(id: string, requested?: RoleSelection[]): Promise<RoleReadiness> {
+    let roles = this.roles?.read(id) ?? [];
+    const st = this.sessions.get(id);
+    const result: RoleReadiness = { sessionId: id, roles, appliedRoles: [], rolesNeedReload: false, loaded: false, ready: false, reasons: [] };
+    try {
+      if (!await this.untilFatal(() => this.runtime.getSessionMetadata(id)) && !st?.sdk) {
+        result.reasons.push('Session does not exist'); return result;
+      }
+      const sdk = st && await this.liveSession(st);
+      result.loaded = !!sdk;
+      roles = this.roles?.read(id) ?? [];
+      Object.assign(result, this.roleState(id, st, roles));
+      if (!sdk || !st) { result.reasons.push('Session is unloaded'); return result; }
+      if (st.closing || st.load) { result.reasons.push('Session is loading or closing'); return result; }
+      if (result.rolesNeedReload) {
+        result.reasons.push('Saved roles differ from this native handle; explicitly reload when idle to apply them');
+        return result;
+      }
+      const selected = requested ?? roles;
+      if (!selected.length) result.reasons.push('No roles selected');
+      for (const role of selected) {
+        if (!roles.some(value => value.moduleId === role.moduleId && value.roleId === role.roleId)) {
+          result.reasons.push(`Role not selected: ${role.moduleId}/${role.roleId}`);
+        }
+      }
+      const applied = st.roleAssembly;
+      if (!this.roles || !applied) result.reasons.push('Role assembly was not applied to this native handle');
+      if (result.reasons.length) return result;
+      const assembly = await this.roles!.assemble(id, roles);
+      if (assembly.fingerprint !== applied!.fingerprint) result.reasons.push('Current role resources differ from this native handle');
+      const required = await this.roles!.assemble(id, selected);
+      const [skills, mcp, tools] = await this.withSession(st, sdk, () => settled([
+        sdk.rpc.skills.list(), sdk.rpc.mcp.list(), sdk.rpc.tools.getCurrentMetadata(),
+      ] as const));
+      if (tools.tools === null) {
+        result.reasons.push('Native tool metadata is uninitialized; explicitly call session/tools-initialize when idle, then check readiness again');
+      }
+      for (const skill of required.skills) {
+        const expected = applied!.skills.find(value => value.path === skill.path);
+        if (!skills.skills.some(value => value.name === expected?.name && value.enabled && value.path === skill.path)) {
+          result.reasons.push(`Role skill is unavailable or disabled: ${expected?.name ?? skill.name}`);
+        }
+      }
+      for (const [name, config] of Object.entries(required.config.mcpServers ?? {})) {
+        const server = mcp.servers.find(value => value.name === name);
+        if (!server || server.status !== 'connected' || !mcp.host?.mcp3pEnabled
+          || mcp.host.disabledServers.includes(name) || mcp.host.filteredServers.includes(name)) {
+          result.reasons.push(`Role MCP is not connected: ${name}`);
+        }
+        if (tools.tools === null) continue;
+        const offered = tools.tools.filter(tool => tool.mcpServerName === name);
+        for (const tool of config.tools ?? []) {
+          if (tool === '*' ? !offered.length : !offered.some(value => value.mcpToolName === tool)) {
+            result.reasons.push(`Role MCP tool is not currently offered: ${name}/${tool}`);
+          }
+        }
+      }
+      const current = await this.liveSession(st);
+      result.loaded = !!current;
+      Object.assign(result, this.roleState(id, st));
+      if (result.rolesNeedReload) result.reasons.push('Saved roles changed during readiness; reload is required');
+      if (current !== sdk || st.closing || st.roleAssembly !== applied) {
+        result.reasons.push('Native session changed or is closing');
+      }
+    } catch (error) {
+      result.loaded = !!st?.sdk;
+      Object.assign(result, this.roleState(id, st, roles));
+      result.reasons.push(`Readiness unconfirmed: ${messageOf(error)}`);
+    }
+    result.ready = result.reasons.length === 0;
+    return result;
+  }
+
+  async addRoles(id: string, additions: RoleSelection[]): Promise<RoleAdditionResult> {
+    if (!this.roles) throw new Error('Module roles are unavailable');
+    if (!additions.length) throw new Error('At least one additional role is required');
+    const st = await this.state(id);
+    this.assertAdmission(st);
+    if (st.load) throw new Error('Session is loading; save roles after the lifecycle transition completes');
+    try {
+      let selected = this.roles.read(id);
+      const catalog = this.roles.list();
+      const combined = new Map(selected.map(role => [`${role.moduleId}/${role.roleId}`, role]));
+      for (const addition of additions) {
+        const role = catalog.find(value => value.moduleId === addition.moduleId && value.roleId === addition.roleId);
+        if (!role) throw new Error(`Unknown module role: ${addition.moduleId}/${addition.roleId}`);
+        combined.set(`${role.moduleId}/${role.roleId}`, {
+          moduleId: role.moduleId, roleId: role.roleId, moduleName: role.moduleName, name: role.name,
+        });
+      }
+      if (combined.size > 64) throw new Error('A session can select at most 64 roles');
+      if (combined.size === selected.length) {
+        return { sessionId: id, status: 'unchanged', loaded: !!st.sdk, ...this.roleState(id, st, selected) };
+      }
+      // Persistence is synchronous: concurrent saves cannot interleave this read/union/write.
+      try {
+        this.roles.save(id, [...combined.values()]);
+        selected = this.roles.read(id);
+        if (selected.length !== combined.size || selected.some(role => !combined.has(`${role.moduleId}/${role.roleId}`))) {
+          throw new Error('Saved role selection did not confirm the requested additions');
+        }
+      } catch (error) {
+        this.invalidate(st, ['identity']);
+        try { selected = this.roles.read(id); }
+        catch (readError) {
+          throw new AggregateError([error, readError],
+            'Role persistence outcome and saved selection are unconfirmed; inspect session/get before explicitly retrying. No reload, rollback or retry was performed.');
+        }
+        return { sessionId: id, status: 'uncertain', loaded: !!st.sdk, ...this.roleState(id, st, selected),
+          error: messageOf(error),
+          recovery: 'Inspect session/get for saved roles before explicitly retrying. No reload, rollback or retry was performed.' };
+      }
+      const fields = this.roleState(id, st, selected);
+      this.patch(st, fields);
+      this.invalidate(st, ['identity']);
+      return { sessionId: id, status: 'saved', loaded: !!st.sdk, ...fields };
+    } finally {
+      this.release(st);
+    }
+  }
   private readonly runtime: EngineRuntime;
   private readonly sessions = new Map<string, State>();
   private readonly creating = new Set<string>();
@@ -327,6 +466,7 @@ export class Engine {
 
   private listedMeta(row: SessionMetadata): SessionMeta {
     return {
+      ...this.roleState(row.sessionId),
       sessionId: row.sessionId, title: cleanSessionTitle(row.summary) || row.sessionId.slice(0, 8),
       cwd: row.context?.workingDirectory ?? '',
       createdAt: row.startTime.getTime(), lastActivity: row.modifiedTime.getTime(), lastActivitySource: 'native-persisted',
@@ -398,6 +538,7 @@ export class Engine {
         ? sessionModelOptions(models.list, await this.withSession(st, sdk, () => this.runtime.models())) : nativeModels;
       return {
         sessionId: id, loaded: true,
+        ...(wants.has('identity') ? this.roleState(id, st) : {}),
         ...(metadata ? {
           title: cleanSessionTitle(name?.name ?? metadata.summary) || id.slice(0, 8), cwd: metadata.workingDirectory,
           createdAt: Date.parse(metadata.startTime),
@@ -434,6 +575,7 @@ export class Engine {
       sessionId: meta.sessionId, title: meta.title, cwd: meta.cwd, status: meta.status,
       loaded: meta.loaded, lastActivity: meta.lastActivity, currentModelId: meta.currentModelId,
       lastActivitySource: meta.lastActivitySource,
+      roles: meta.roles, appliedRoles: meta.appliedRoles, rolesNeedReload: meta.rolesNeedReload,
     }));
   }
   async status(): Promise<SessionMeta[]> {
@@ -490,9 +632,42 @@ export class Engine {
     );
   }
 
-  private async config(st: State, cwd?: string): Promise<SessionConfig> {
+  private async config(st: State, cwd?: string): Promise<{ config: SessionConfig; assembly?: RoleAssembly }> {
     const disabled = await this.globalDisabledSkills();
-    return {
+    const selected = this.roles?.read(st.id) ?? [];
+    const assembly = selected.length ? await this.roles!.assemble(st.id, selected) : undefined;
+    if (assembly?.skills.length) {
+      const existing = await this.discoverSkills(cwd ?? st.observedCwd ?? undefined);
+      const names = new Map(existing.skills.map(skill => [skill.name, skill.path]));
+      for (const directory of assembly.config.skillDirectories ?? []) {
+        const discovered = await this.untilFatal(() => this.runtime.rpc.skills.discover({
+          projectPaths: [], skillDirectories: [directory],
+        }));
+        if (discovered.errors?.length) throw new Error(`Role skill discovery failed: ${discovered.errors.join('; ')}`);
+        for (const skill of assembly.skills.filter(skill => skill.path.startsWith(`${directory}/`))) {
+          const native = discovered.skills.find(value => value.path === skill.path);
+          if (!native) throw new Error(`Role skill was not discovered by native runtime: ${skill.path}`);
+          if (names.has(native.name) && names.get(native.name) !== skill.path) {
+            throw new Error(`Role skill conflicts with native discovered skill: ${native.name}`);
+          }
+          names.set(native.name, skill.path);
+          skill.name = native.name;
+        }
+      }
+    }
+    if (assembly) {
+      const [configured, discovered] = await this.untilFatal(() => settled([
+        this.runtime.rpc.mcp.config.list(),
+        this.runtime.rpc.mcp.discover({ workingDirectory: cwd ?? st.observedCwd ?? undefined }),
+      ] as const));
+      for (const name of Object.keys(assembly.config.mcpServers ?? {})) {
+        if (Object.hasOwn(configured.servers, name) || discovered.servers.some(server => server.name === name)) {
+          throw new Error(`Role MCP conflicts with native configuration: ${name}`);
+        }
+      }
+    }
+    return { assembly, config: {
+      ...assembly?.config,
       sessionId: st.id, ...(cwd ? { workingDirectory: cwd } : {}), streaming: true,
       enableConfigDiscovery: true,
       // Runtime 1.0.83 discovers skills but does not apply its global disabled
@@ -518,7 +693,7 @@ export class Engine {
           throw new Error('Structured/URL elicitation acceptance is unsupported; decline or cancel the real request');
         }
       }),
-    };
+    } };
   }
 
   private decision<T>(st: State, kind: DecisionKind, fields: object, validate?: (value: T) => void): Promise<T> {
@@ -564,7 +739,7 @@ export class Engine {
     return result.finally(() => { this.births--; this.bus.emit('activity-settled'); });
   }
 
-  async newSession(cwd: string): Promise<string> {
+  async newSession(cwd: string, roles: RoleSelection[] = []): Promise<string> {
     this.assertAvailable();
     if (this.stopped) throw new Error('Engine is stopped; start it before creating sessions');
     if (this.lifecycle) throw new Error('Engine lifecycle transition is in progress');
@@ -573,6 +748,11 @@ export class Engine {
     const id = randomUUID();
     if (this.creating.has(id) || this.sessions.has(id)) throw new Error('Session identity already has an active handle or creation');
     const st = stateFor(id);
+    if (roles.length) {
+      if (!this.roles) throw new Error('Module roles are unavailable');
+      const assembly = await this.roles.assemble(id, roles);
+      this.roles.save(id, assembly.roles);
+    }
     this.creating.add(id);
     try {
       await this.ensureLoaded(st, true, directory);
@@ -582,6 +762,10 @@ export class Engine {
         throw Object.assign(new Error(`Native session ${id} was created, but readiness readback failed: ${messageOf(error)}. Inspect this session; do not create a replacement automatically.`, { cause: error }),
           { sessionId: id, code: 'SESSION_CREATION_INCOMPLETE', statusCode: 409 });
       }
+      if (st.creationSubmitted) throw Object.assign(
+        new Error(`Native session creation ${id} is uncertain: ${messageOf(error)}. Inspect this identity; do not retry blindly.`, { cause: error }),
+        { sessionId: id, code: 'SESSION_CREATION_UNCERTAIN', statusCode: 409 },
+      );
       throw error;
     } finally {
       this.creating.delete(id);
@@ -633,7 +817,8 @@ export class Engine {
       const owner: NonNullable<State['eventOwner']> = {};
       st.eventOwner = owner;
       if (create) st.observedCwd = cwd ?? null;
-      const config: SessionConfig = { ...await this.config(st, cwd), onEvent: event => {
+      const assembled = await this.config(st, cwd);
+      const config: SessionConfig = { ...assembled.config, onEvent: event => {
         if (st.eventOwner !== owner || this.failure) return;
         this.observeNative(st, event);
         try { this.onLive(st, event); }
@@ -642,6 +827,7 @@ export class Engine {
           this.log('native control event failed', { sessionId: st.id, error: messageOf(error) });
         }
       } };
+      if (create) st.creationSubmitted = true;
       const sdk = await this.untilFatal(() => create
         ? this.runtime.createSession(config)
         : this.runtime.resumeSession(st.id, config));
@@ -652,12 +838,14 @@ export class Engine {
       }
       if (st.eventOwner !== owner) throw new Error('Native session closed while loading; explicitly resume to continue');
       st.sdk = sdk;
+      st.roleAssembly = assembled.assembly;
       this.sessions.set(sdk.sessionId, st);
       if (owner.closed?.has(sdk) || (create && !await this.liveSession(st))) {
         this.detach(st);
         throw new Error('Native session closed while loading; explicitly resume to continue');
       }
       delete owner.closed;
+      if (st.roleAssembly) await this.withSession(st, sdk, () => sdk.rpc.tools.initializeAndValidate());
       const meta = await this.getResources(st.id, summaryResources);
       if (!meta) throw new Error('Native session metadata is unavailable after loading');
       if (!owner.contextChanged) st.observedCwd = meta.cwd || null;
@@ -1060,6 +1248,7 @@ export class Engine {
     st.decisions.clear();
     this.patch(st, {
       loaded: false, status: error ? 'error' : 'unloaded', nativeProcessing: false,
+      appliedRoles: [], rolesNeedReload: false,
       activeSubagents: 0, activeMcpOperations: 0, compacting: false,
       queue: [], ask: null, planRequest: null, elicitation: null, intent: null,
       ...(error ? { error: error.message } : {}),
@@ -1099,6 +1288,191 @@ export class Engine {
     const st = await this.state(id);
     await this.transition(st, () => this.close(st));
     await this.ensureLoaded(st);
+  }
+
+  async initializeSessionTools(id: string): Promise<void> {
+    const st = await this.state(id);
+    if (!st.sdk) { this.release(st); throw new SessionUnloadedError(); }
+    await this.transition(st, async () => {
+      const sdk = st.sdk;
+      if (!sdk) throw new SessionUnloadedError();
+      await this.initializeTools(st, sdk);
+    });
+  }
+
+  private async initializeTools(st: State, sdk: CopilotSession) {
+    await this.withSession(st, sdk, () => sdk.rpc.tools.initializeAndValidate());
+    // Configuration changes can invalidate the native table without removing tools.
+    const metadata = await this.withSession(st, sdk, () => sdk.rpc.tools.getCurrentMetadata());
+    if (!Array.isArray(metadata.tools)) throw new Error('Native tool initialization is unconfirmed; metadata is unavailable');
+    return metadata.tools;
+  }
+
+  async prepareSessionResources(input: SessionResourcesPrepare): Promise<ResourcePreparationResult> {
+    const selection = SessionResourcesPrepare.parse(input);
+    const errorMessage = (error: unknown) => {
+      const message = messageOf(error);
+      const suffix = '... [truncated]';
+      return message.length > RESOURCE_PREPARATION_ERROR_LIMIT
+        ? message.slice(0, RESOURCE_PREPARATION_ERROR_LIMIT - suffix.length) + suffix : message;
+    };
+    const st = await this.state(selection.sessionId);
+    if (!st.sdk) { this.release(st); throw new SessionUnloadedError(); }
+    const result: ResourcePreparationResult = {
+      sessionId: selection.sessionId, ok: false,
+      skills: (selection.skills ?? []).map(name => ({ name, effect: 'not_attempted', enabled: null })),
+      mcpServers: (selection.mcpServers ?? []).map(({ name }) =>
+        ({ name, effect: 'not_attempted', enabled: null, status: null, tools: null })),
+      tools: 'not_attempted',
+    };
+    let entered = false;
+    try {
+      return await this.transition(st, async () => {
+        entered = true;
+        const sdk = st.sdk;
+        try {
+          if (!sdk) throw new SessionUnloadedError();
+          const roleState = this.roleState(st.id, st);
+          if (roleState.rolesNeedReload) {
+            throw new Error('Saved roles differ from this native handle; explicitly reload when idle before resource preparation');
+          }
+          const applied = st.roleAssembly;
+          if (roleState.roles.length || applied) {
+            const provider = this.roles;
+            if (!provider || !applied) throw new Error('Current role assembly is unconfirmed for resource preparation');
+            const current = await this.withSession(st, sdk, () => provider.assemble(st.id, roleState.roles));
+            if (current.fingerprint !== applied.fingerprint) {
+              throw new Error('Current role resources differ from this native handle; resource preparation was not attempted');
+            }
+            if (this.roleState(st.id, st).rolesNeedReload || st.roleAssembly !== applied) {
+              throw new Error('Roles changed during resource preparation preflight');
+            }
+          }
+          const readSkills = () => this.withSession(st, sdk, () => sdk.rpc.skills.list());
+          const readMcp = () => this.withSession(st, sdk, () => sdk.rpc.mcp.list());
+          const observeSkill = (value: Awaited<ReturnType<typeof readSkills>>, item: ResourcePreparationResult['skills'][number]) => {
+            const matches = value.skills.filter(skill => skill.name === item.name);
+            if (matches.length !== 1 || typeof matches[0]!.enabled !== 'boolean') {
+              throw new Error(`Native skill is unknown or unconfirmed: ${item.name}`);
+            }
+            item.enabled = matches[0]!.enabled;
+          };
+          const observeMcp = (value: ResourceValues['mcp'], item: ResourcePreparationResult['mcpServers'][number]) => {
+            const matches = value.servers.filter(server => server.name === item.name);
+            if (matches.length !== 1) throw new Error(`Native MCP is unknown or unconfirmed: ${item.name}`);
+            Object.assign(item, this.mcpServerState(value, item.name, matches[0]));
+            if (typeof value.host?.mcp3pEnabled !== 'boolean'
+              || !Array.isArray(value.host.disabledServers) || !Array.isArray(value.host.filteredServers)) {
+              throw new Error(`Native MCP host state is unconfirmed: ${item.name}`);
+            }
+          };
+          const requireMcp = (value: ResourceValues['mcp'], item: ResourcePreparationResult['mcpServers'][number], preflight = false) => {
+            if (!value.host!.mcp3pEnabled || value.host!.filteredServers.includes(item.name)) {
+              throw new Error(`Native MCP is disabled by host policy or filtered: ${item.name}`);
+            }
+            if (item.status !== 'connected' && !(preflight && item.status === 'disabled')) {
+              throw new Error(`Native MCP is ${item.status}: ${item.name}`);
+            }
+            if (!preflight && item.enabled !== true) throw new Error(`Native MCP enablement is unconfirmed: ${item.name}`);
+          };
+
+          // Resolve every selected identity and policy before the first mutation.
+          if (result.skills.length) {
+            const value = await readSkills();
+            for (const item of result.skills) {
+              observeSkill(value, item);
+              if (item.enabled) item.effect = 'unchanged';
+            }
+          }
+          if (result.mcpServers.length) {
+            const value = await readMcp();
+            for (const item of result.mcpServers) {
+              observeMcp(value, item);
+              if (item.enabled) item.effect = 'unchanged';
+            }
+            for (const item of result.mcpServers) requireMcp(value, item, true);
+          }
+          for (const item of result.skills) {
+            if (item.enabled) continue;
+            item.effect = 'unconfirmed'; item.enabled = null;
+            await this.withSession(st, sdk, () => sdk.rpc.skills.enable({ name: item.name }));
+            observeSkill(await readSkills(), item);
+            if (!item.enabled) throw new Error(`Native skill enablement is unconfirmed: ${item.name}`);
+            item.effect = 'enabled';
+          }
+          for (const item of result.mcpServers) {
+            if (item.enabled) continue;
+            item.effect = 'unconfirmed'; item.enabled = null; item.status = null;
+            try {
+              await this.withSession(st, sdk, () => sdk.rpc.mcp.enable({ serverName: item.name }));
+            } catch (error) {
+              // A rejected enable can leave a live connector. Observe once, never retry it.
+              try {
+                observeMcp(await readMcp(), item);
+                if (item.enabled) item.effect = 'enabled';
+              } catch (readError) {
+                throw new Error(`${messageOf(error)}; MCP readback unconfirmed: ${messageOf(readError)}`);
+              }
+              throw error;
+            }
+            const value = await readMcp();
+            observeMcp(value, item);
+            if (item.enabled) item.effect = 'enabled';
+            requireMcp(value, item);
+          }
+          result.tools = 'unconfirmed';
+          const metadata = await this.withSession(st, sdk, () => sdk.rpc.tools.getCurrentMetadata());
+          // MCP enable can retain a non-null stale table; a confirmed change needs one rebuild too.
+          const initialize = metadata.tools === null || result.skills.some(item => item.effect === 'enabled')
+            || result.mcpServers.some(item => item.effect === 'enabled');
+          const tools = initialize ? await this.initializeTools(st, sdk) : metadata.tools;
+          if (!Array.isArray(tools)) throw new Error('Native tool metadata is unconfirmed');
+          result.tools = initialize ? 'initialized' : 'unchanged';
+          for (const [index, item] of result.mcpServers.entries()) {
+            const requested = selection.mcpServers![index]!.tools;
+            const offered = new Set<string>();
+            for (const tool of tools.filter(tool => tool.mcpServerName === item.name)) {
+              const name = tool.mcpToolName;
+              if (typeof name !== 'string' || !name.trim() || name.length > 200) {
+                throw new Error(`Native MCP tool identity is unconfirmed: ${item.name}`);
+              }
+              offered.add(name);
+            }
+            item.tools = requested?.length ? requested.filter(name => offered.has(name)) : [...offered].slice(0, 1);
+          }
+          if (result.skills.length) {
+            const value = await readSkills();
+            for (const item of result.skills) {
+              observeSkill(value, item);
+              if (!item.enabled) throw new Error(`Native skill is no longer enabled: ${item.name}`);
+            }
+          }
+          if (result.mcpServers.length) {
+            const value = await readMcp();
+            for (const item of result.mcpServers) observeMcp(value, item);
+            for (const [index, item] of result.mcpServers.entries()) {
+              requireMcp(value, item);
+              const requested = selection.mcpServers![index]!.tools;
+              if (!item.tools?.length || (requested?.length && item.tools.length !== requested.length)) {
+                throw new Error(`Selected native MCP tools are not currently offered: ${item.name}`);
+              }
+            }
+          }
+          result.ok = true;
+        } catch (error) {
+          result.error = errorMessage(error);
+          this.patch(st, { error: result.error });
+        } finally {
+          this.invalidate(st, ['skills', 'mcp', 'usage']);
+        }
+        return result;
+      });
+    } catch (error) {
+      if (!entered) throw error;
+      result.ok = false;
+      result.error = errorMessage(error);
+      return result;
+    }
   }
 
   async stop(): Promise<void> {
@@ -1326,8 +1700,10 @@ export class Engine {
       return await this.operation(id, async (sdk, st) => {
         const result = await this.withSession(st, sdk, () => sdk.rpc.mcp.list());
         const disabled = new Set(result.host?.disabledServers);
+        const sources = st.roleAssembly?.mcpSources;
         return { loaded: true, servers: result.servers.map(server => ({
           name: server.name, detail: server.sourcePlugin ?? server.source ?? 'native',
+          ...(sources && Object.hasOwn(sources, server.name) ? { module: sources[server.name] } : {}),
           ...this.mcpServerState(result, server.name, server, disabled), error: server.error,
         })) };
       }, 'read');
@@ -1488,9 +1864,12 @@ export class Engine {
     const skill = (await this.globalSkills(cwd)).find(skill => skill.name === name);
     if (!skill || skill.enabled !== enabled) throw new Error('Native global skill state did not confirm the requested change');
   }
-  async listSessionSkills(id: string) {
+  async listSessionSkills(id: string): Promise<SkillSession[]> {
     return this.operation(id, async (sdk, st) => (await this.withSession(st, sdk, () => sdk.rpc.skills.list())).skills.map(
-      ({ name, description, source, enabled }) => ({ name, description, source, enabled })), 'read');
+      ({ name, description, source, enabled, path }) => {
+        const module = st.roleAssembly?.skills.find(skill => skill.name === name && skill.path === path)?.module;
+        return { name, description, source, enabled, ...(module ? { module: { ...module } } : {}) };
+      }), 'read');
   }
   async toggleSessionSkill(id: string, name: string, enabled: boolean): Promise<void> {
     await this.operation(id, async (sdk, st) => {

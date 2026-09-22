@@ -2,12 +2,18 @@ import * as React from 'react';
 import { createPortal } from 'react-dom';
 import type {
   ComponentMiddleware,
-  HostSnapshot, MarkdownNode, MarkdownRenderer, ModuleAsset, ModuleComponentProps,
-  DraftSchemaRegistration, ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
+  HostSnapshot, ChatWindowSnapshot, MarkdownNode, MarkdownRenderer, ModuleAsset, ModuleComponentProps,
+  DraftSchemaRegistration, ModuleEventPayload, ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
+  ModuleFrontendServices, ModuleNextFrontendContext, ModuleUi,
+  ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget,
+  DraftSendBlockReason,
 } from '@cockpit/module-api';
 import { resolveDraft, type SessionDraft } from './textDraft';
 import { RegisteredDraftSchema, type RuntimeDraftSchema } from './draftSchemas';
 import { describeReason, reportUxError } from './errorReporter';
+import { EMPTY_CHAT_WINDOW } from './moduleChatWindow';
+import { useCockpit } from '../net/store';
+import type { NativeDraftRequest } from './draft';
 
 interface RuntimeOptions {
   baseUrl?: string;
@@ -17,6 +23,10 @@ interface RuntimeOptions {
   style?: (url: string) => () => void;
   report?: (error: unknown) => void;
   activationTimeoutMs?: number;
+  draftSubmission?: {
+    check(draft: SessionDraft): DraftSendBlockReason | undefined;
+    send(request: NativeDraftRequest): Promise<boolean>;
+  };
 }
 export interface LoadedModule {
   readonly asset: ModuleAsset;
@@ -28,8 +38,8 @@ export interface LoadedModule {
 }
 export interface RegisteredRenderer { module: LoadedModule; renderer: MarkdownRenderer }
 type Boundary = keyof ModuleComponentProps;
-const BOUNDARIES = new Set<Boundary>(['message', 'sessionStatus', 'composer', 'composerEditor', 'attachment',
-  'globalNavigation', 'managementHeader', 'managementDetailHeader']);
+const BOUNDARIES = new Set<Boundary>(['message', 'sessionStatus', 'composer', 'composerEditor', 'composerInput', 'attachment',
+  'managementHeader', 'managementDetailHeader']);
 const EMPTY_VIEW: HostSnapshot = Object.freeze({ sessionId: null, visible: false, connected: false });
 let moduleSequence = 0;
 
@@ -81,6 +91,17 @@ export function validateModuleAsset(value: unknown, backend: URL): ModuleAsset {
     return url.href;
   };
   let worker: ModuleAsset['worker'];
+  let next: ModuleAsset['next'];
+  if (value.next !== undefined) {
+    if (!record(value.next) || Object.keys(value.next).some(key => key !== 'entry' && key !== 'styles')
+      || !Array.isArray(value.next.styles) || value.next.styles.some(style => typeof style !== 'string')) {
+      throw new Error('Invalid new UI module assets');
+    }
+    next = Object.freeze({
+      entry: resolve(value.next.entry, true),
+      styles: value.next.styles.map(style => resolve(style, true)),
+    });
+  }
   if (value.worker !== undefined) {
     if (!record(value.worker) || Object.keys(value.worker).some(key => key !== 'entry' && key !== 'scope')) throw new Error('Invalid module worker');
     const scope = new URL(`_modules/workers/${value.id}/`, backend);
@@ -93,6 +114,7 @@ export function validateModuleAsset(value: unknown, backend: URL): ModuleAsset {
     id: value.id, name: value.name, version: value.version, digest: value.digest,
     apiBase: resolve(value.apiBase, false), entry: resolve(value.entry, true),
     styles: value.styles.map(style => resolve(style, true)), config: Object.freeze({ ...value.config }),
+    ...(next ? { next } : {}),
     ...(worker ? { worker } : {}),
   });
 }
@@ -106,21 +128,30 @@ function claimId(ids: Set<string>, id: unknown): void {
 }
 function validateFrontend(input: unknown, ids: Set<string>): ModuleFrontend {
   if (!record(input) || input.apiVersion !== 2) throw new Error('Module frontend API v2 is required');
-  const allowed = new Set(['apiVersion', 'writes', 'components', 'markdown', 'dispose']);
+  const allowed = new Set(['apiVersion', 'writes', 'sends', 'components', 'markdown', 'menus', 'dispose']);
   for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`Unsupported module frontend field: ${key}`);
   if (input.writes !== undefined && (!Array.isArray(input.writes)
     || input.writes.some(value => value !== 'text'))) throw new Error('Invalid module writes declaration');
-  for (const key of ['components', 'markdown'] as const) {
+  if (input.sends !== undefined && (!Array.isArray(input.sends)
+    || input.sends.some(value => value !== 'draft'))) throw new Error('Invalid module sends declaration');
+  for (const key of ['components', 'markdown', 'menus'] as const) {
     const entries = input[key];
     if (entries === undefined) continue;
     if (!Array.isArray(entries)) throw new Error(`Invalid module ${key}`);
     for (const entry of entries) {
       if (!record(entry)) throw new Error(`Invalid module ${key} registration`);
       claimId(ids, entry.id);
-      const fields = key === 'components' ? ['id', 'boundary', 'order', 'wrap'] : ['id', 'matches', 'component'];
+      const fields = key === 'components' ? ['id', 'boundary', 'order', 'wrap']
+        : key === 'menus' ? ['id', 'menu', 'order', 'getState', 'subscribe', 'onSelect'] : ['id', 'matches', 'component'];
       if (Object.keys(entry).some(field => !fields.includes(field))) throw new Error(`Unsupported module ${key} registration field`);
       if (key === 'components') {
         if (!BOUNDARIES.has(entry.boundary as Boundary) || typeof entry.wrap !== 'function') throw new Error('Invalid component middleware');
+        if (entry.order !== undefined && (typeof entry.order !== 'number' || !Number.isFinite(entry.order))) throw new Error('Invalid module order');
+      } else if (key === 'menus') {
+        if ((entry.menu !== 'global' && entry.menu !== 'session') || typeof entry.getState !== 'function'
+          || typeof entry.onSelect !== 'function' || (entry.subscribe !== undefined && typeof entry.subscribe !== 'function')) {
+          throw new Error('Invalid module menu registration');
+        }
         if (entry.order !== undefined && (typeof entry.order !== 'number' || !Number.isFinite(entry.order))) throw new Error('Invalid module order');
       } else {
         if (!component(entry.component) || typeof entry.matches !== 'function') throw new Error('Invalid Markdown renderer');
@@ -131,9 +162,30 @@ function validateFrontend(input: unknown, ids: Set<string>): ModuleFrontend {
   return Object.freeze({
     ...input,
     ...(input.writes ? { writes: Object.freeze([...input.writes as string[]]) } : {}),
+    ...(input.sends ? { sends: Object.freeze([...input.sends as string[]]) } : {}),
     components: Object.freeze((input.components as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
     markdown: Object.freeze((input.markdown as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
+    menus: Object.freeze((input.menus as object[] ?? []).map(entry => Object.freeze({ ...entry }))),
   }) as unknown as ModuleFrontend;
+}
+
+export interface MenuTargetSource {
+  isCurrent(): boolean;
+  subscribe(listener: () => void): () => void;
+}
+export interface RegisteredMenuItem extends ModuleMenuState {
+  readonly id: string;
+  onClick(): void;
+}
+
+function menuState(entry: ModuleMenuRegistration, target: ModuleMenuTarget): ModuleMenuState {
+  const state = entry.getState(target);
+  if (!record(state) || !nonempty(state.label)
+    || Object.keys(state).some(key => !['label', 'icon', 'visible', 'disabled', 'destructive', 'separatorBefore'].includes(key))
+    || ['visible', 'disabled', 'destructive', 'separatorBefore'].some(key => state[key] !== undefined && typeof state[key] !== 'boolean')) {
+    throw new Error(`Invalid menu state: ${entry.id}`);
+  }
+  return state;
 }
 
 function installStyle(url: string): () => void {
@@ -144,24 +196,67 @@ function installStyle(url: string): () => void {
   return () => element.remove();
 }
 
+function loadStyle(url: string, signal: AbortSignal): { ready: Promise<void>; dispose(): void } {
+  signal.throwIfAborted();
+  const element = document.createElement('link');
+  element.rel = 'stylesheet';
+  element.href = url;
+  let cancel = () => {};
+  const ready = new Promise<void>((resolve, reject) => {
+    const settle = (error?: Error) => {
+      element.onload = null;
+      element.onerror = null;
+      signal.removeEventListener('abort', cancel);
+      if (error) reject(error);
+      else resolve();
+    };
+    cancel = () => settle(new DOMException('Module styles stopped loading', 'AbortError'));
+    element.onload = () => settle();
+    element.onerror = () => settle(new Error(`Module stylesheet failed: ${url}`));
+    signal.addEventListener('abort', cancel, { once: true });
+    document.head.appendChild(element);
+  });
+  return { ready, dispose() { cancel(); element.remove(); } };
+}
+
+export interface UnavailableModulePresentation {
+  readonly id: string;
+  readonly name: string;
+}
+
 export class ModuleRuntime {
   private readonly options: RuntimeOptions;
   private snapshot: readonly LoadedModule[] = [];
   private readonly listeners = new Set<() => void>();
+  private presentationUi?: ModuleUi;
+  private unavailablePresentations: readonly UnavailableModulePresentation[] = [];
   private view: HostSnapshot = EMPTY_VIEW;
   private readonly viewListeners = new Set<() => void>();
+  private readChatWindow: () => ChatWindowSnapshot = () => EMPTY_CHAT_WINDOW;
+  private readonly chatWindowListeners = new Set<() => void>();
   private readonly invalidationListeners = new Map<string, Set<() => void>>();
+  private readonly eventListeners = new Map<string, Set<(payload: ModuleEventPayload) => void>>();
   private controller?: AbortController;
   private readonly reports = new Set<string>();
   private readonly componentCache = new Map<object, { boundary: Boundary; entries: readonly object[]; component: unknown }>();
   private readonly knownDrafts = new Set<SessionDraft>();
+  private readonly readOnlySessions = new Map<string, boolean>();
+  private menuRevision = 0;
+  private readonly menuListeners = new Set<() => void>();
+  private readonly menuFlights = new Map<ModuleMenuRegistration, Set<string>>();
   constructor(options: RuntimeOptions = {}) {
     if (options.activationTimeoutMs !== undefined
       && (!Number.isFinite(options.activationTimeoutMs) || options.activationTimeoutMs <= 0)) throw new Error('Invalid module activation timeout');
     this.options = options;
   }
   getSnapshot = (): readonly LoadedModule[] => this.snapshot;
+  getUnavailablePresentations = (): readonly UnavailableModulePresentation[] => this.unavailablePresentations;
   getViewSnapshot = (): HostSnapshot => this.view;
+  getChatWindowSnapshot = (): ChatWindowSnapshot => this.readChatWindow();
+  updateChatWindow(read: () => ChatWindowSnapshot): void {
+    this.readChatWindow = read;
+    for (const listener of [...this.chatWindowListeners]) if (this.chatWindowListeners.has(listener)) listener();
+  }
   updateView(view: HostSnapshot): void {
     if (view.sessionId === this.view.sessionId && view.visible === this.view.visible && view.connected === this.view.connected) return;
     this.view = Object.freeze({ ...view });
@@ -171,7 +266,20 @@ export class ModuleRuntime {
     const listeners = this.invalidationListeners.get(moduleId);
     if (listeners) for (const listener of [...listeners]) if (listeners.has(listener)) listener();
   }
+  receiveEvent(moduleId: string, payload: ModuleEventPayload): void {
+    const listeners = this.eventListeners.get(moduleId);
+    if (listeners) for (const listener of [...listeners]) if (listeners.has(listener)) listener(payload);
+  }
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  getMenuRevision = (): number => this.menuRevision;
+  subscribeMenus = (listener: () => void): (() => void) => {
+    this.menuListeners.add(listener);
+    return () => { this.menuListeners.delete(listener); };
+  };
+  private menusChanged = (): void => {
+    this.menuRevision++;
+    for (const listener of this.menuListeners) listener();
+  };
   private publish(modules: readonly LoadedModule[]) {
     this.snapshot = modules;
     const registrations = new Set(modules.flatMap(module => module.frontend.components ?? []));
@@ -179,6 +287,7 @@ export class ModuleRuntime {
       if (cached.entries.some(entry => !registrations.has(entry as NonNullable<ModuleFrontend['components']>[number]))) this.componentCache.delete(base);
     }
     for (const listener of this.listeners) listener();
+    this.menusChanged();
   }
   report = (error: unknown): void => {
     const message = describeReason(error, false);
@@ -193,8 +302,14 @@ export class ModuleRuntime {
     const releases = [...drafts].map(draft => draft.deferNotifications());
     try { change(); } finally { for (const release of releases) release(); }
   }
-  async start(baseUrl = this.options.baseUrl ?? ''): Promise<void> {
-    if (this.controller) return;
+  async start(baseUrl = this.options.baseUrl ?? '', ui?: ModuleUi): Promise<void> {
+    if (this.controller) {
+      if (ui !== this.presentationUi) throw new Error('Changing UI presentation requires a new document');
+      return;
+    }
+    if (ui && ui.version !== 1) throw new Error('Unsupported host component library version');
+    this.presentationUi = ui;
+    this.unavailablePresentations = [];
     const controller = new AbortController();
     this.controller = controller;
     try {
@@ -203,25 +318,35 @@ export class ModuleRuntime {
       const response = await fetcher(new URL('_modules', backend), { credentials: 'include', redirect: 'error', signal: controller.signal });
       if (!response.ok) throw new Error(`Module bootstrap HTTP ${response.status}`);
       const bootstrap: unknown = await response.json();
+      if (controller.signal.aborted || this.controller !== controller) return;
       if (!record(bootstrap) || !Array.isArray(bootstrap.modules) || !Array.isArray(bootstrap.errors)
         || ('apiVersion' in bootstrap && bootstrap.apiVersion !== 1)) throw new Error('Invalid module bootstrap');
       for (const error of bootstrap.errors) this.report(record(error) ? `${String(error.id ?? 'module')}: ${String(error.error ?? error.message ?? 'load failed')}` : error);
       const counts = new Map<string, number>();
       for (const item of bootstrap.modules) if (record(item) && typeof item.id === 'string') counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
       const pending: Promise<void>[] = [];
+      const unavailable: UnavailableModulePresentation[] = [];
       for (const item of bootstrap.modules) {
         if (controller.signal.aborted) break;
         try {
           const asset = validateModuleAsset(item, backend);
           if (counts.get(asset.id) !== 1) throw new Error(`Duplicate module ${asset.id}`);
-          pending.push(this.activate(asset, fetcher, controller.signal)
+          if (ui && !asset.next) {
+            unavailable.push(Object.freeze({ id: asset.id, name: asset.name }));
+            continue;
+          }
+          pending.push(this.activate(asset, fetcher, controller.signal, ui)
             .catch(error => { if (!controller.signal.aborted) this.report(error); }));
         } catch (error) { if (!controller.signal.aborted) this.report(error); }
       }
+      this.unavailablePresentations = Object.freeze(unavailable);
       await Promise.all(pending);
+      if (!controller.signal.aborted) this.publish(this.snapshot);
     } catch (error) { if (!controller.signal.aborted) this.report(error); }
   }
-  private async activate(asset: ModuleAsset, fetcher: typeof fetch, parentSignal: AbortSignal) {
+  private async activate(asset: ModuleAsset, fetcher: typeof fetch, parentSignal: AbortSignal, ui?: ModuleUi) {
+    const presentation = ui ? asset.next : asset;
+    if (!presentation) throw new Error(`Module ${asset.id} does not provide a new UI entry`);
     const controller = new AbortController();
     const owner = `${asset.id}@${asset.digest}:${++moduleSequence}`;
     const bindings: LoadedModule['bindings'] = new Map();
@@ -253,9 +378,9 @@ export class ModuleRuntime {
       frontend = undefined;
       parentSignal.removeEventListener('abort', stop);
     }, bindings.keys());
-    const subscribe = (listeners: Set<() => void>, listener: () => void, onEmpty?: () => void): (() => void) => {
+    const subscribe = <Args extends unknown[]>(listeners: Set<(...args: Args) => void>, listener: (...args: Args) => void, onEmpty?: () => void): (() => void) => {
       if (controller.signal.aborted) return () => {};
-      const notify = () => { try { listener(); } catch (error) { this.report(error); } };
+      const notify = (...args: Args) => { try { listener(...args); } catch (error) { this.report(error); } };
       const unsubscribe = () => {
         if (!subscriptions.has(unsubscribe)) return;
         listeners.delete(notify);
@@ -267,11 +392,19 @@ export class ModuleRuntime {
       return unsubscribe;
     };
     parentSignal.addEventListener('abort', stop, { once: true });
-    const context: ModuleFrontendContext = {
-      apiVersion: 2, uiVersion: 1, moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
+    const servicesContext: ModuleFrontendServices = {
+      apiVersion: 2, menuVersion: 1, chatWindowVersion: 1, composerInputVersion: 1, draftLifecycleVersion: 1, draftSubmissionVersion: 1,
+      moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
       config: asset.config, signal: controller.signal, report: this.report,
       state: Object.freeze({
         host: Object.freeze({ getSnapshot: this.getViewSnapshot, subscribe: (listener: () => void) => subscribe(this.viewListeners, listener) }),
+        chatWindow: Object.freeze({
+          getSnapshot: () => {
+            controller.signal.throwIfAborted();
+            return this.getChatWindowSnapshot();
+          },
+          subscribe: (listener: () => void) => subscribe(this.chatWindowListeners, listener),
+        }),
         register: <Service extends object>(registration: ModuleStateRegistration<Service>) => {
           if (!registering || controller.signal.aborted) throw new Error('Module state registration is activation-only');
           try {
@@ -314,7 +447,15 @@ export class ModuleRuntime {
           let binding = bindings.get(source);
           if (!binding) {
             binding = source.bindModule(owner, frontend.writes ?? [], this.report,
-              () => schemas.some(schema => schema.applies(source) && schema.ready(source)));
+              () => schemas.some(schema => schema.applies(source) && schema.ready(source)),
+              frontend.sends?.includes('draft') ? {
+                check: () => {
+                  if (this.readOnlySessions.get(source.sessionId)) return 'read-only';
+                  if (!this.isDraftPrepared(source) || !this.knownDrafts.has(source) || !this.options.draftSubmission) return 'unavailable';
+                  return this.options.draftSubmission.check(source);
+                },
+                send: request => this.options.draftSubmission!.send(request),
+              } : undefined);
             bindings.set(source, binding);
           }
           return binding.draft;
@@ -325,6 +466,12 @@ export class ModuleRuntime {
         let listeners = this.invalidationListeners.get(asset.id);
         if (!listeners) this.invalidationListeners.set(asset.id, listeners = new Set());
         return subscribe(listeners, listener, () => { this.invalidationListeners.delete(asset.id); });
+      },
+      onEvent: listener => {
+        if (controller.signal.aborted) return () => {};
+        let listeners = this.eventListeners.get(asset.id);
+        if (!listeners) this.eventListeners.set(asset.id, listeners = new Set());
+        return subscribe(listeners, listener, () => { this.eventListeners.delete(asset.id); });
       },
       ...(asset.worker ? { worker: asset.worker } : {}),
       request: async (path, init = {}) => {
@@ -339,8 +486,22 @@ export class ModuleRuntime {
         return fetcher(url, { ...init, headers, signal, credentials: 'include', redirect: 'error', mode: 'cors' });
       },
     };
+    const context: ModuleFrontendContext | ModuleNextFrontendContext = ui
+      ? { ...servicesContext, ui }
+      : { ...servicesContext, uiVersion: 1, uiSurfaceVersion: 1 };
     const prepare = async () => {
-      const imported = await (this.options.load ?? (url => import(/* @vite-ignore */ url)))(asset.entry);
+      if (ui) {
+        for (const url of presentation.styles) {
+          if (this.options.style) styles.push(this.options.style(url));
+          else {
+            const style = loadStyle(url, controller.signal);
+            styles.push(style.dispose);
+            await style.ready;
+          }
+          controller.signal.throwIfAborted();
+        }
+      }
+      const imported = await (this.options.load ?? (url => import(/* @vite-ignore */ url)))(presentation.entry);
       if (controller.signal.aborted || parentSignal.aborted) return;
       if (typeof imported.activate !== 'function') throw new Error(`Module ${asset.id} has no activate export`);
       const activated: unknown = await imported.activate(context);
@@ -352,7 +513,21 @@ export class ModuleRuntime {
       registering = false;
       if (registrationError) throw registrationError;
       frontend = validateFrontend(activated, ids);
-      for (const style of asset.styles) styles.push((this.options.style ?? installStyle)(style));
+      for (const entry of frontend.menus ?? []) {
+        if (!entry.subscribe) continue;
+        let active = true;
+        const unsubscribe = entry.subscribe(() => {
+          if (active && !controller.signal.aborted) this.menusChanged();
+        });
+        if (typeof unsubscribe !== 'function') throw new Error(`Invalid menu unsubscribe: ${entry.id}`);
+        const release = () => {
+          active = false;
+          subscriptions.delete(release);
+          try { unsubscribe(); } catch (error) { this.report(error); }
+        };
+        subscriptions.add(release);
+      }
+      if (!ui) for (const style of presentation.styles) styles.push((this.options.style ?? installStyle)(style));
       for (const schema of schemas) for (const draft of this.knownDrafts) schema.prepare(draft);
       for (const schema of schemas) schema.activate();
       const loaded: LoadedModule = { asset, frontend, bindings, schemas: Object.freeze(schemas), signal: controller.signal, stop };
@@ -377,6 +552,8 @@ export class ModuleRuntime {
     this.batchDraftChanges(() => {
       this.controller?.abort();
       this.controller = undefined;
+      this.presentationUi = undefined;
+      this.unavailablePresentations = [];
       this.publish([]);
     });
   }
@@ -391,10 +568,84 @@ export class ModuleRuntime {
     this.report(error);
     this.unregister(module);
   }
+  menuItems(target: ModuleMenuTarget, source: MenuTargetSource, isOpen: () => boolean): RegisteredMenuItem[] {
+    const captured = Object.freeze({ ...target });
+    const key = JSON.stringify(captured);
+    const entries = this.snapshot.filter(module => !module.signal.aborted).flatMap(module => (module.frontend.menus ?? [])
+      .filter(entry => entry.menu === captured.menu).map(entry => ({ module, entry })))
+      .sort((a, b) => (a.entry.order ?? 0) - (b.entry.order ?? 0)
+        || a.module.asset.id.localeCompare(b.module.asset.id) || a.entry.id.localeCompare(b.entry.id));
+    return entries.flatMap(({ module, entry }) => {
+      try {
+        const state = menuState(entry, captured);
+        if (state.visible === false) return [];
+        return [{
+          ...state, id: JSON.stringify(['module', module.asset.id, entry.id]),
+          disabled: !!state.disabled || !source.isCurrent() || !!this.menuFlights.get(entry)?.has(key),
+          onClick: () => {
+            try {
+              if (!isOpen() || module.signal.aborted || !this.snapshot.includes(module) || !source.isCurrent()) {
+                throw new Error(`Menu target is no longer available: ${module.asset.id}/${entry.id}`);
+              }
+              const latest = menuState(entry, captured);
+              if (latest.visible === false || latest.disabled || this.menuFlights.get(entry)?.has(key)) {
+                throw new Error(`Menu action is unavailable: ${module.asset.id}/${entry.id}`);
+              }
+              this.runMenuAction(module, entry, captured, source, key);
+            } catch (error) { this.reportMenu(module, entry, error); }
+          },
+        }];
+      } catch (error) { this.reportMenu(module, entry, error); return []; }
+    });
+  }
+  private reportMenu(module: LoadedModule, entry: ModuleMenuRegistration, error: unknown): void {
+    this.report(new Error(`Menu ${module.asset.id}/${entry.id}: ${describeReason(error, false)}`, { cause: error }));
+  }
+  private runMenuAction(module: LoadedModule, entry: ModuleMenuRegistration, target: ModuleMenuTarget,
+    source: MenuTargetSource, key: string): void {
+    const controller = new AbortController();
+    let unsubscribe: (() => void) | undefined;
+    let finished = false;
+    const abort = () => controller.abort();
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      module.signal.removeEventListener('abort', abort);
+      try { unsubscribe?.(); } catch (error) { this.report(error); }
+      unsubscribe = undefined;
+      const flights = this.menuFlights.get(entry);
+      flights?.delete(key);
+      if (!flights?.size) this.menuFlights.delete(entry);
+      this.menusChanged();
+    };
+    let flights = this.menuFlights.get(entry);
+    if (!flights) this.menuFlights.set(entry, flights = new Set());
+    flights.add(key);
+    module.signal.addEventListener('abort', abort, { once: true });
+    controller.signal.addEventListener('abort', finish, { once: true });
+    try {
+      unsubscribe = source.subscribe(() => { if (!source.isCurrent()) abort(); });
+      if (finished) { unsubscribe(); unsubscribe = undefined; }
+      if (module.signal.aborted || !source.isCurrent()) abort();
+      controller.signal.throwIfAborted();
+      this.menusChanged();
+      // No await before invocation: browser permission APIs require the gesture.
+      const result = entry.onSelect(target, { signal: controller.signal });
+      void Promise.resolve(result).catch(error => this.reportMenu(module, entry, error)).finally(() => {
+        controller.signal.removeEventListener('abort', finish);
+        finish();
+      });
+    } catch (error) {
+      controller.signal.removeEventListener('abort', finish);
+      finish();
+      this.reportMenu(module, entry, error);
+    }
+  }
   isDraftPrepared(draft: SessionDraft): boolean {
     return !draft.isRetired() && this.snapshot.every(module => module.schemas.every(schema => schema.ready(draft)));
   }
-  prepareDraft(draft: SessionDraft): void {
+  prepareDraft(draft: SessionDraft, readOnly?: boolean): void {
+    if (readOnly !== undefined) this.readOnlySessions.set(draft.sessionId, readOnly);
     if (draft.isRetired()) return;
     this.knownDrafts.add(draft);
     for (const module of [...this.snapshot]) {
@@ -453,4 +704,9 @@ export class ModuleRuntime {
 }
 
 // Importing/rendering components never starts network activity (including Chat Lab).
-export const moduleRuntime = new ModuleRuntime();
+export const moduleRuntime = new ModuleRuntime({
+  draftSubmission: {
+    check: draft => useCockpit.getState().canSendDraft(draft.reference),
+    send: request => useCockpit.getState().sendDraft(request),
+  },
+});

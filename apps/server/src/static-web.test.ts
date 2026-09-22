@@ -6,6 +6,8 @@ import { join } from 'node:path';
 
 const directory = mkdtempSync(join(tmpdir(), 'cockpit-static-'));
 writeFileSync(join(directory, 'index.html'), '<!doctype html><title>Fixture app</title>');
+mkdirSync(join(directory, 'next'));
+writeFileSync(join(directory, 'next/index.html'), '<!doctype html><title>New fixture app</title>');
 mkdirSync(join(directory, 'assets'));
 mkdirSync(join(directory, 'retained'));
 writeFileSync(join(directory, 'assets', 'current-12345678.js'), 'current');
@@ -42,5 +44,18 @@ test('SPA fallback serves only recognized application routes', async () => {
     const response = await app.inject({ method: 'GET', url: path });
     assert.equal(response.statusCode, 404, path);
     assert.deepEqual(response.json(), { error: 'not found' });
+  }
+});
+
+test('new UI deep links serve a separate document without changing classic routes', async () => {
+  for (const path of ['/next/', '/next/session/fixture', '/next/session/fixture/info', '/next/mcp', '/next/skills/project']) {
+    const response = await app.inject({ method: 'GET', url: path });
+    assert.equal(response.statusCode, 200, path);
+    assert.match(response.body, /New fixture app/, path);
+  }
+  const classic = await app.inject({ method: 'GET', url: '/session/fixture' });
+  assert.match(classic.body, /<title>Fixture app<\/title>/);
+  for (const path of ['/next/intent/prompt', '/next/_modules', '/next/assets/missing.js', '/next/files', '/next/unknown']) {
+    assert.equal((await app.inject({ method: 'GET', url: path })).statusCode, 404, path);
   }
 });

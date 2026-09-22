@@ -14,6 +14,7 @@ import { getDraftSession } from '../lib/draftSelection';
 import { existsSync, readFileSync } from 'node:fs';
 import { ActivityHeader } from './ActivityHeader';
 import { ChatHeader } from './ChatHeader';
+import { PlanCard } from './PendingDecision';
 import { useCockpit } from '../net/store';
 
 test('chat header keeps session and model details without any mode display or switch', () => {
@@ -56,7 +57,7 @@ test('Markdown keeps semantic headings and exact code text in a labeled copyable
 });
 
 test('Markdown edge rules follow class-based paragraphs without changing bubble padding or paragraph rhythm', () => {
-  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  const css = compile(new URL('../styles/index.scss', import.meta.url).pathname).css;
   const paragraph = css.indexOf('.message-body .markdown-paragraph {');
   assert.ok(paragraph >= 0);
   assert.ok(css.indexOf('.message-body > :first-child {') > paragraph);
@@ -107,12 +108,16 @@ test('Chat dark theme targets the mounted chat, not an impossible nested chat', 
   assert.doesNotMatch(css, /\.chat \.chat \{/);
 });
 
-test('one CSS height budget contains notices and the native card without nested decision scrollers', () => {
+test('one CSS height budget pins ordinary input but scrolls answer input with its question', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.chat-transcript \{[^}]*flex: 1 1 0;[^}]*min-height: min\(6rem, 20%\)/);
   assert.match(css, /\.chat-input-area \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*max-height: 70%/);
   assert.match(css, /\.chat-input-card::details-content \{[^}]*display: flex;[^}]*min-height: 0;/);
-  assert.match(css, /\.chat-input-card-body \{[^}]*min-height: 0;[^}]*overflow-y: auto/);
+  assert.match(css, /\.chat-input-card-body \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0;[^}]*overflow: hidden/);
+  assert.match(css, /\.chat-input-context \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto/);
+  assert.match(css, /\.chat-input-context:empty \{\s*display: none;/);
+  assert.match(css, /\.chat-input-card\[data-question\] \.chat-input-card-body \{\s*display: block;\s*overflow-y: auto;/);
+  assert.match(css, /\.chat-input-card\[data-question\] \.chat-input-context \{\s*overflow: visible;/);
   assert.match(css, /\.chat-input-notices \{[^}]*flex: none;[^}]*max-height: min\(12rem, 30dvh\)/);
   for (const selector of ['chat-decisions', 'chat-queue', 'chat-composer-context', 'chat-pending-body']) {
     assert.doesNotMatch(css.match(new RegExp(`\\.${selector} \\{([^}]+)\\}`))?.[1] ?? '', /overflow-y: auto|max-height:/);
@@ -125,13 +130,28 @@ test('one card frame retains compact execution/queue typography and independent 
   assert.doesNotMatch(css.match(/\.chat-ask \{([^}]+)\}/)?.[1] ?? '', /border:|background:/);
   assert.match(css, /\.chat-execution-actions button \{[^}]*min-block-size: var\(--chat-control-compact\);[^}]*font-size: var\(--chat-text-meta\)/);
   assert.match(css, /\.chat-queue-item \{[^}]*font-size: var\(--chat-text-meta\)/);
-  assert.match(css, /\.chat-ask-choice \{[^}]*font-size: var\(--chat-text-secondary\)/);
   assert.doesNotMatch(css, /\.chat-queue-label|\.chat-composer-hint/);
   assert.match(css, /\.chat-queue-copy \{[^}]*display: flex;/);
   assert.doesNotMatch(css, /\.chat-queue-entry\[open\] \+ \.chat-queue-copy/);
   assert.match(css, /\.chat-execution-label\[data-running\]::before \{[^}]*width: 5px;[^}]*height: 5px;/);
   assert.match(css, /\.chat-execution-label \{[^}]*flex: 1 1 0;[^}]*min-width: 4em;[^}]*text-overflow: ellipsis;/);
   assert.doesNotMatch(css.match(/\.chat-execution-label\[data-running\]::before \{([^}]+)\}/)?.[1] ?? '', /animation|transition/);
+});
+
+test('only answer drafts opt into the shared question scroller', () => {
+  for (const scene of ['reading', 'idle-queued', 'plan-queued', 'elicitation-queued', 'ask-queued', 'choice-only', 'freeform', 'decision-stack'] as const) {
+    const session = fixtureSession(scene);
+    const html = renderToStaticMarkup(createElement(Thread, { session, onLoadMore() {} }));
+    const card = html.match(/<details class="chat-input-card"[^>]*>/)?.[0];
+    assert.ok(card, scene);
+    assert.equal(card.includes('data-question="true"'), !!session.ask, scene);
+    assert.ok(html.includes('class="chat-input-context"'), scene);
+    assert.equal((html.match(/<textarea/g) ?? []).length, 1, scene);
+  }
+  const readOnly = renderToStaticMarkup(createElement(Thread, {
+    session: fixtureSession('ask-queued'), readOnly: true, onLoadMore() {},
+  }));
+  assert.doesNotMatch(readOnly, /data-question="true"|<textarea/);
 });
 
 test('spacing tokens own visible boundaries and placeholder stays distinct on focus in both themes', () => {
@@ -149,10 +169,16 @@ test('spacing tokens own visible boundaries and placeholder stays distinct on fo
 
 test('all input states share one full-width unframed editor row inside the same card', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  const bar = css.match(/(?:^|\n)\.chat-input \{([^}]+)\}/)![1];
+  const publicCss = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
+  const bar = publicCss.match(/(?:^|\n)\.ck-input-row \{([^}]+)\}/)![1];
   assert.match(bar, /width: 100%;\s*margin: 0;/);
-  assert.match(bar, /padding: var\(--chat-gap-meta\);/);
-  assert.match(bar, /gap: var\(--chat-gap-meta\);/);
+  assert.match(bar, /padding: var\(--host-space-xs\);/);
+  assert.match(bar, /gap: var\(--host-space-xs\);/);
+  assert.match(publicCss, /\.ck-input-hint \{[^}]*font-size: var\(--messages-text-size\);/);
+  assert.match(publicCss, /\.ck-status-text \{[^}]*font-size: var\(--host-text-meta\);/);
+  assert.match(publicCss, /\.ck-input-status \{[^}]*width: 100%;[^}]*height: 32px;/);
+  assert.match(publicCss, /\.ck-status-action \{[^}]*margin-inline-start: auto;/);
+  assert.doesNotMatch(publicCss, /\.chat-/);
   assert.match(css, /\.chat-input-card-body \{[^}]*scrollbar-gutter: stable both-edges;/);
   assert.doesNotMatch(css, /\.chat-input-card\[data-decision\] \.chat-input/);
   assert.doesNotMatch(css, /\.chat-input-card\[data-header\] \.chat-input(?:-message)? \{/);
@@ -178,7 +204,7 @@ test('all input states share one full-width unframed editor row inside the same 
 });
 
 test('dense process rows stay compact on touch without shrinking standalone controls', () => {
-  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  const css = compile(new URL('../styles/index.scss', import.meta.url).pathname).css;
   assert.match(css, /--chat-row-process: 28px;/);
   assert.match(css, /\.activity-head \{[^}]*height: var\(--chat-row-process\);[^}]*min-block-size: var\(--chat-row-process\);/);
   assert.match(css, /\.process-summary \{[^}]*min-height: var\(--chat-row-process\);/);
@@ -227,10 +253,60 @@ test('standalone native disclosures share touch targets and public control geome
   }
   assert.match(coarse, /min-block-size: var\(--ck-control-size\);/);
   assert.match(css, /\.chat-pending-detail summary \{[^}]*align-content: center;/);
-  assert.match(css, /\.chat-ask-choice \{[^}]*min-block-size: var\(--ck-control-size\);[^}]*border-radius: var\(--ck-radius\);/);
-  assert.match(css, /\.chat-execution-actions button \{[^}]*padding: var\(--chat-gap-meta\) var\(--chat-inset-compact\);[^}]*border-radius: var\(--ck-radius\);/);
+  const publicCss = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
+  assert.match(publicCss, /:where\(\.ck-button, \.ck-icon-button\) \{[^}]*min-block-size: var\(--ck-control-size\);[^}]*border-radius: var\(--ck-radius\);/);
+  assert.match(css, /\.chat-execution-actions button \{[^}]*padding: var\(--chat-gap-meta\) var\(--chat-inset-compact\);/);
   assert.match(css, /\.chat-input-card \{[^}]*border-radius: var\(--host-radius-control\);/);
   assert.doesNotMatch(css, /\.module-draft-recovery/);
+});
+
+test('chat buttons consume public appearance and retain only contextual geometry and state exceptions', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  const publicCss = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
+  for (const selector of ['chat-ask-choice', 'chat-execution-actions button']) {
+    const rule = css.match(new RegExp(`\\.${selector} \\{([^}]+)\\}`))?.[1];
+    assert.ok(rule);
+    assert.doesNotMatch(rule, /(?:^|\s)(?:appearance|background|color|border-radius|font|line-height|cursor|opacity):/);
+  }
+  assert.doesNotMatch(css, /\.dialog-btn|\.is-recommended|\.chat-typing-stop/);
+  assert.match(css, /\.chat-history-retry \{\s*color: var\(--ck-color-accent\);/);
+  assert.match(css, /\.chat-execution-actions \{[^}]*--ck-disabled-opacity: 0\.5;/);
+  assert.match(css, /\.chat-execution-actions button\[aria-disabled=true\] \{\s*cursor: default;/);
+  assert.match(publicCss, /\.ck-primary \{[^}]*background: var\(--ck-color-accent\);[^}]*color: var\(--ck-color-on-accent\);/);
+  assert.match(publicCss, /\.ck-danger \{\s*color: var\(--ck-color-danger\);/);
+  assert.match(publicCss, /:is\(:disabled, \[aria-disabled=true\]\) \{[^}]*opacity: var\(--ck-disabled-opacity\);/);
+});
+
+test('only the recommended offered plan action consumes the public primary treatment, including when disabled', () => {
+  const request = fixtureSession('plan').planRequest!;
+  for (const pending of [false, true]) {
+    const html = renderToStaticMarkup(createElement(PlanCard, { request, pending, onSelect() {} }));
+    const buttons = [...html.matchAll(/<button[^>]*>/g)].map(match => match[0]);
+    assert.equal(buttons.length, request.actions!.length);
+    assert.equal(buttons.filter(button => button.includes('ck-primary')).length, 1);
+    assert.equal(buttons[request.actions!.indexOf(request.recommendedAction!)].includes('ck-primary'), true);
+    for (const button of buttons) assert.equal(button.includes('disabled=""'), pending);
+    assert.doesNotMatch(html, /is-recommended/);
+  }
+  const withoutRecommended = renderToStaticMarkup(createElement(PlanCard, {
+    request: { ...request, actions: ['exit_only'] }, pending: false, onSelect() {},
+  }));
+  assert.doesNotMatch(withoutRecommended, /ck-primary/);
+});
+
+test('history retries own their accent intent while session-error retry uses ordinary public text', () => {
+  for (const historyStale of [false, true]) {
+    const html = renderToStaticMarkup(createElement(Thread, {
+      session: { ...fixtureSession('history-error'), historyStale }, onLoadMore() {}, onRetryHistory() {},
+    }));
+    assert.match(html, /class="chat-history-retry ck-button rp"/);
+    assert.doesNotMatch(html, /dialog-btn/);
+  }
+  const html = renderToStaticMarkup(createElement(Thread, {
+    session: { ...fixtureSession('reading'), error: 'Synthetic error' }, onLoadMore() {}, onRetryHistory() {},
+  }));
+  assert.match(html, /class="ck-button rp">重试同步<\/button>/);
+  assert.doesNotMatch(html, /dialog-btn|chat-history-retry/);
 });
 
 test('Chat regions and optional composer context each have a single spacing owner', () => {
@@ -261,7 +337,7 @@ test('the entire input card uses one default-open disclosure without an arrow or
     session: fixtureSession('ask-queued'), onLoadMore() {},
   }));
   assert.equal((html.match(/<textarea/g) ?? []).length, 1);
-  assert.match(html, /<details class="chat-input-card" open="" data-header="true" data-decision="true"><summary class="chat-execution-head"/);
+  assert.match(html, /<details class="chat-input-card" open="" data-header="true" data-decision="true" data-question="true"><summary class="chat-execution-head"/);
   assert.match(html, /aria-label="等待你的回答，展开或收起输入卡片"/);
   assert.match(html, /class="chat-pending-body chat-answer-question" role="group" aria-label="需要你的选择"/);
   assert.ok(html.indexOf('class="chat-queue"') < html.indexOf('class="chat-composer"'));
@@ -289,7 +365,7 @@ test('CSS owns the shell again, with no replacement global JS viewport controlle
 });
 
 test('Chat typography is role-based and narrow layouts follow their own available width', () => {
-  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  const css = compile(new URL('../styles/index.scss', import.meta.url).pathname).css;
   const tokens = compile(new URL('../styles/components/chat-design.scss', import.meta.url).pathname).css;
   assert.doesNotMatch(tokens, /:root|body \{/);
   assert.match(tokens, /--chat-text-body: var\(--messages-text-size\)/);
@@ -371,8 +447,8 @@ test('a native cancelling flag disables duplicate stop clicks without claiming c
   const html = renderToStaticMarkup(createElement(Thread, {
     session: fixtureSession('cancelling'), onLoadMore() {}, onCancel() {},
   }));
-  assert.match(html, /class="chat-typing-stop ck-button" aria-disabled="true" aria-busy="true">[\s\S]*?正在停止…<\/button>/);
-  assert.doesNotMatch(html, /class="chat-typing-stop ck-button"[^>]*>已取消/);
+  assert.match(html, /class="chat-typing-stop ck-button ck-danger" aria-disabled="true" aria-busy="true">[\s\S]*?正在停止…<\/button>/);
+  assert.doesNotMatch(html, /class="chat-typing-stop ck-button ck-danger"[^>]*>已取消/);
 });
 
 test('user time stays outside its bubble without external copy controls on either message role', () => {

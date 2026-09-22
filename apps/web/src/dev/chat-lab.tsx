@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { flushSync } from 'react-dom';
 import { BrowserRouter, MemoryRouter } from 'react-router-dom';
 import type { ChatMessage } from '@cockpit/protocol';
 import { Thread } from '../components/Thread';
@@ -42,8 +43,31 @@ export function Lab() {
   const draft = getDraftSession(session.sessionId).current(session);
   const compact = query.get('compact') === '1';
   const narrow = query.get('pane') === 'narrow';
+  const shortHistory = query.get('short') === '1';
+  const lateFrame = query.get('frame') === '1';
 
   useEffect(() => () => { generation.current++; pending.current.splice(0).forEach(resolve => resolve()); }, []);
+
+  useEffect(() => {
+    if (scenario !== 'initial-history' || session.materialized) return;
+    let frame: number | undefined;
+    const timer = window.setTimeout(() => {
+      const source = fixtureSession(shortHistory ? 'user-time' : 'reading');
+      const deliver = () => setSession(value => ({ ...value, materialized: true, loadingHistory: false, hasMore: false,
+        messages: source.messages.map(message => ({ ...message,
+          origin: message.origin ? { ...message.origin, sessionId: value.sessionId } : undefined,
+        })),
+      }));
+      // Exercise a commit after this frame's RAF callbacks have begun: a newly
+      // queued scroll RAF cannot run before this content's first paint.
+      if (lateFrame) frame = requestAnimationFrame(() => flushSync(deliver));
+      else deliver();
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
+  }, [scenario, session.materialized, shortHistory, lateFrame]);
 
   function choose(value: Scenario) {
     generation.current++;
@@ -54,7 +78,9 @@ export function Lab() {
     setScenario(value);
     ordered.current = null;
     setSession(fixtureSession(value));
-    history.replaceState(null, '', `/chat-lab.html?scene=${value}${compact ? '&compact=1' : ''}${narrow ? '&pane=narrow' : ''}`);
+    const nextQuery = new URLSearchParams(location.search);
+    nextQuery.set('scene', value);
+    history.replaceState(null, '', `/chat-lab.html?${nextQuery}`);
     setReceipt(`场景：${value}。操作不会发送到后端。`);
   }
   function orderedAction(action: 'thought' | 'body' | 'tool' | 'older' | 'duplicate' | 'reconnect' | 'cold' | 'streamStep') {
@@ -84,7 +110,7 @@ export function Lab() {
     const page = ++historyPage.current;
     const progressive = scenario === 'history-progressive';
     setSession(value => ({ ...value, loadingHistory: true }));
-    window.setTimeout(() => {
+    const deliver = () => {
       if (generation.current !== owner) return;
       setSession(value => ({ ...value, loadingHistory: false, materialized: true, hasMore: progressive && page < 8,
         messages: [...Array.from({ length: progressive ? 2 : 6 }, (_, i): ChatMessage => ({
@@ -95,8 +121,12 @@ export function Lab() {
       }));
       setReceipt('一次有界合成历史插入；未读取真实历史。');
       historyBusy.current = false;
+    };
+    window.setTimeout(() => {
+      if (lateFrame) requestAnimationFrame(() => flushSync(deliver));
+      else deliver();
     }, 900);
-  }, [scenario, setSession, setReceipt]);
+  }, [scenario, setSession, setReceipt, lateFrame]);
   return <div className="cockpit-shell chat-lab" data-compact={compact || undefined}>
     <details className="lab-controls" open={!compact}>
       <summary>合成场景控制</summary>
@@ -129,6 +159,7 @@ export function Lab() {
         <option value="reading">空闲</option>
         <option value="streaming">执行与队列</option>
         <option value="ask">问题</option>
+        <option value="choice-only">问题（不允许自由回答）</option>
         <option value="ask-queued">长问题与队列</option>
         <option value="plan-queued">计划</option>
         <option value="elicitation-queued">工具确认</option>
@@ -212,6 +243,7 @@ export function Lab() {
       {moreOpen && <AnchoredMenu triggerRef={moreRef} label={session.title} onClose={() => setMoreOpen(false)}
         items={sessionActionItems(session, true, {
           openPanel: (_id, panel) => setReceipt(`面板入口：${panel ?? 'info'}；这里只展示导航回调。`),
+          reload: () => setReceipt('重新加载入口回调；没有调用原生重新加载。'),
           delete: () => setReceipt('删除入口回调；没有调用原生删除。'),
         })} />}
     </div>
@@ -220,14 +252,35 @@ export function Lab() {
 }
 
 const root = createRoot(document.getElementById('root')!);
-if (new URLSearchParams(location.search).get('scene') === 'workspace') {
+const scene = new URLSearchParams(location.search).get('scene');
+if (scene === 'workspace' || scene === 'resources') {
   const { installWorkspaceFixture, workspaceSessionId, workspaceDraft } = await import('./workspace-fixtures');
   installWorkspaceFixture(useCockpit);
+  if (scene === 'resources') {
+    const { installResourceFixture } = await import('./resource-fixtures');
+    const query = new URLSearchParams(location.search);
+    installResourceFixture(useCockpit, query.get('longNames') === '1', {
+      empty: query.get('empty') === '1',
+      fail: query.get('fail') === '1',
+      beforeRequest: query.get('delay') === '1' ? () => new Promise(resolve => setTimeout(resolve, 1200)) : undefined,
+    });
+  }
   getSessionDraft(workspaceSessionId).edit(workspaceDraft);
   const { default: App } = await import('../App');
-  root.render(<MemoryRouter initialEntries={[`/session/${workspaceSessionId}/info`]}>
+  const page = new URLSearchParams(location.search).get('page');
+  const initialRoute = scene === 'resources' && (page === 'mcp' || page === 'skills')
+    ? `/${page}` : `/session/${workspaceSessionId}/info`;
+  root.render(<MemoryRouter initialEntries={[initialRoute]}>
     <App /><UxErrorNotifications />
   </MemoryRouter>);
 } else {
-  root.render(<BrowserRouter><Lab /></BrowserRouter>);
+  const lab = <BrowserRouter><Lab /></BrowserRouter>;
+  if (new URLSearchParams(location.search).get('cards') === '1') {
+    const { createAsyncCardFixture } = await import('./initial-history-fixture');
+    const { ModuleRuntimeProvider } = await import('../components/ModuleComponents');
+    const runtime = createAsyncCardFixture();
+    await runtime.start();
+    window.addEventListener('pagehide', () => runtime.stop(), { once: true });
+    root.render(<ModuleRuntimeProvider runtime={runtime}>{lab}</ModuleRuntimeProvider>);
+  } else root.render(lab);
 }

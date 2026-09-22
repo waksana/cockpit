@@ -1,109 +1,117 @@
-// Modal dialogs — dimmed scrim and centered card for deletion and directory picking.
+@use '../responsive';
+
+// Modal geometry; shared surfaces own appearance.
 
 .dialog-scrim {
   position: fixed;
   inset: 0;
   z-index: 60;
-  display: flex;
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  border: 0;
+  color: var(--primary-text-color);
+  &[open] { display: flex; }
   align-items: center;
   justify-content: center;
-  padding: 1rem;
-  background: rgba(0, 0, 0, 0.32);
+  padding: 1rem 1rem calc(1rem + var(--ux-error-height, 0px));
+  background: transparent;
+}
+
+.host-modal [data-dialog-focus]:focus-visible {
+  outline: 2px solid transparent;
+  box-shadow: inset 3px 0 0 var(--primary-color);
+  &:dir(rtl) { box-shadow: inset -3px 0 0 var(--primary-color); }
 }
 
 .dialog-card {
   width: 100%;
   max-width: 22rem;
-  padding: 1.1rem 1.2rem 0.9rem;
-  border-radius: var(--host-radius-dialog);
-  background: var(--surface-color);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
+  max-height: 100%;
+  overflow-y: auto;
 }
 
 .dialog-title {
-  margin: 0 0 0.4rem;
-  font-size: var(--font-size-17, 1.0625rem);
-  font-weight: 600;
-  color: var(--primary-text-color);
+  margin: 0 0 var(--host-space-sm);
 }
 
 .dialog-message {
-  margin: 0 0 0.8rem;
-  font-size: var(--font-size-14);
-  line-height: 1.5;
+  margin: 0 0 var(--host-space-md);
+  font-size: var(--host-text-body);
+  line-height: var(--host-leading-ui);
   color: var(--secondary-text-color);
 }
 
 .dialog-input {
   width: 100%;
-  margin: 0.2rem 0 0.9rem;
-  padding: 0.5rem 0.7rem;
-  font-size: var(--font-size-15, 0.9375rem);
+  margin: var(--host-space-xs) 0 var(--host-space-lg);
 }
 
 .dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.5rem;
-  margin-top: 0.2rem;
-}
-
-.dialog-btn {
-  padding: 0.4rem 0.95rem;
-  font-size: var(--font-size-15, 0.9375rem);
-  font-weight: 600;
+  margin-top: var(--host-space-xs);
 }
 
 // ── Folder picker (new-session working directory chooser) ───────────────────
 .directory-modal {
-  bottom: var(--ux-error-height, 0px);
-  padding: 0.5rem;
-  .dialog-card.dirpicker { max-height: 100%; overflow-y: auto; }
+  padding: 0.5rem 0.5rem calc(0.5rem + var(--ux-error-height, 0px));
 }
 .dialog-card.dirpicker {
-  max-width: 26rem;
+  max-width: 38rem;
   display: flex;
   flex-direction: column;
-  max-height: min(34rem, 80vh);
+  max-height: min(48rem, 100%);
+  min-height: 0;
+  overflow: hidden;
+  > .dialog-title, > .dialog-message, > .dialog-actions { flex: none; }
+  > .dialog-actions { padding-top: var(--host-space-md); }
+}
+.dirpicker-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px;
+}
+.dirpicker-section-title {
+  display: block;
+  margin-bottom: var(--host-space-xs);
+  font-size: var(--host-text-body);
+  font-weight: 600;
+  color: var(--primary-text-color);
 }
 .dirpicker-path {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
-  margin: 0.2rem 0 0.6rem;
-  .dialog-input { margin: 0; flex: 1 1 auto; font-size: var(--font-size-13); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+  gap: var(--host-space-xs);
+  margin: var(--host-space-xs) 0 var(--host-space-sm);
+  .dialog-input { margin: 0; flex: 1 1 auto; font-family: var(--host-font-mono); }
 }
 .dirpicker-list {
-  flex: 1 1 auto;
-  min-height: 6rem;
+  max-height: 14rem;
   overflow-y: auto;
   margin-bottom: 0.7rem;
   border-radius: var(--border-radius);
   background: color-mix(in srgb, var(--primary-text-color) 4%, transparent);
 }
+.dirpicker-help {
+  margin-top: var(--host-space-md);
+  color: var(--secondary-text-color);
+  font-size: var(--host-text-meta);
+  line-height: var(--host-leading-ui);
+  summary { cursor: pointer; padding-block: var(--host-space-xs); }
+  p { margin: var(--host-space-xs) 0 var(--host-space-sm); }
+}
+@media (max-width: responsive.$phone-max) {
+  .dirpicker-list { max-height: 10rem; }
+}
 .dirpicker-row {
-  display: flex;
-  align-items: center;
-  gap: 0.55rem;
   width: 100%;
-  padding: 0.55rem 0.7rem;
-  border: none;
-  background: transparent;
-  color: var(--primary-text-color);
-  font-size: var(--font-size-14);
-  font-family: inherit;
   text-align: start;
-  cursor: pointer;
   position: relative;        // ripple host
   overflow: hidden;
   .dirpicker-ico { flex: none; display: inline-flex; color: var(--secondary-text-color); &.folder { color: var(--primary-color); } }
   .dirpicker-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dirpicker-enter { flex: none; color: var(--tertiary-text-color); }
   &.up { color: var(--secondary-text-color); }
-}
-.dirpicker-empty {
-  padding: 1.5rem 1rem;
-  text-align: center;
-  color: var(--tertiary-text-color);
-  font-size: var(--font-size-13);
 }

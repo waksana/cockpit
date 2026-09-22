@@ -36,7 +36,9 @@ let rejectedIntent: string | undefined;
 let intentFailure: number | 'invalid-json' | 'connection' | undefined;
 let invalidPolicy = false;
 let mcpSessionResult: unknown;
+let skillSessionResult: unknown;
 let mcpToggleResult: unknown;
+let resourcePreparationResult: unknown;
 let unconfirmedMcp = false;
 let scheduleEntries: ScheduleEntry[] = [];
 let scheduleStopped = true;
@@ -115,11 +117,15 @@ mockHttp((res, req) => {
       return send({ error: 'Native MCP state is unconfirmed for test-server: unknown status "future-status"' }, 409);
     }
     if (name === 'mcp/session') return send(mcpSessionResult);
+    if (name === 'skills/session') return send(skillSessionResult);
     if (name === 'mcp/session-toggle') return send(mcpToggleResult);
+    if (name === 'session/resources-prepare') return send(resourcePreparationResult);
     if (name === 'runtime/snapshot') return send(invalidPolicy ? { ...snapshot, permissionPolicy: undefined } : snapshot);
     if (name === 'session/list') return send({ sessions: [meta] });
     if (name === 'session/get') return send({ meta });
     if (name === 'session/plan') return send(plan);
+    if (name === 'roles/list') return send({ roles: [{ moduleId: 'board', roleId: 'owner', name: 'Owner', moduleName: 'Board' }] });
+    if (name === 'roles/readiness') return send({ sessionId: 'B', loaded: false, ready: false, roles: [], reasons: ['Session is unloaded'] });
     if (name === 'session/usage') return send({
       sessionId: 'B', sampledAt: 123, context: null,
       usage: { sessionStartTime: '2026-09-09T00:00:00Z', totalUserRequests: 1,
@@ -186,7 +192,9 @@ beforeEach(() => {
   unavailable = large = malformedPreview = mismatchedCapability = false;
   invalidPolicy = false;
   mcpSessionResult = { loaded: true, servers: [] };
+  skillSessionResult = { skills: [] };
   mcpToggleResult = undefined;
+  resourcePreparationResult = { sessionId: 'target', ok: true, skills: [], mcpServers: [], tools: 'unchanged' };
   unconfirmedMcp = false;
   scheduleEntries = [];
   scheduleStopped = true;
@@ -313,6 +321,45 @@ async function json(name: string, args: Record<string, unknown> = {}): Promise<u
   return JSON.parse(result.text);
 }
 
+test('session resource tools retain explicit module metadata without replacing names or native source', async () => {
+  const module = { id: 'fixture', name: 'Fixture module' };
+  const server = { name: 'fixture-tools', detail: 'native', status: 'connected', enabled: true, module };
+  const skill = { name: 'fixture-skill', source: 'custom', enabled: false, description: 'Native description', module };
+  mcpSessionResult = { loaded: true, servers: [server] };
+  skillSessionResult = { skills: [skill] };
+  const mcp = await call('cockpit_list_session_mcp', { session_id: 'B' });
+  assert.match(mcp.text, /fixture-tools.*role-configured module: Fixture module \(fixture; not live connection identity\)/);
+  assert.match(mcp.text, /\n    native/);
+  assert.deepEqual(await json('cockpit_list_session_mcp', { session_id: 'B', response_format: 'json' }),
+    { loaded: true, servers: [server], count: 1 });
+  const skills = await call('cockpit_list_session_skills', { session_id: 'B' });
+  assert.match(skills.text, /fixture-skill \(custom\).*module: Fixture module \(fixture\)/);
+  assert.match(skills.text, /Native description/);
+  assert.deepEqual(await json('cockpit_list_session_skills', { session_id: 'B', response_format: 'json' }),
+    { skills: [skill], count: 1 });
+});
+
+test('resource MCP text and JSON preserve single and shared contributors without inventing missing roles', async () => {
+  for (const roles of [undefined, [], [{ id: 'owner', name: 'Owner' }],
+    [{ id: 'executor', name: 'Executor' }, { id: 'owner', name: 'Owner' }]]) {
+    const module = { id: 'fixture', name: 'Fixture', ...(roles ? { roles } : {}) };
+    const server = { name: 'raw-server', detail: 'user', enabled: false, status: 'failed', module };
+    const skill = { name: 'raw-skill', source: 'custom', enabled: false, module };
+    mcpSessionResult = { loaded: true, servers: [server] };
+    skillSessionResult = { skills: [skill] };
+    for (const tool of ['cockpit_list_session_mcp', 'cockpit_list_session_skills']) {
+      const result = await call(tool, { session_id: 'B' });
+      assert.equal(result.isError, false, result.text);
+      if (roles?.length) assert.ok(result.text.includes(`contributing roles: ${roles.map(role => `${role.name} (${role.id})`).join(', ')}`));
+      else assert.doesNotMatch(result.text, /contributing roles/);
+    }
+    assert.deepEqual(await json('cockpit_list_session_mcp', { session_id: 'B', response_format: 'json' }),
+      { loaded: true, servers: [server], count: 1 });
+    assert.deepEqual(await json('cockpit_list_session_skills', { session_id: 'B', response_format: 'json' }),
+      { skills: [skill], count: 1 });
+  }
+});
+
 for (const status of ['connected', 'failed', 'needs-auth', 'pending', 'disabled', 'stopped', 'not_configured']) {
   test(`MCP tools preserve ${status} independently of enablement in list, panels and toggle output`, async t => {
     const previous = panels.mcpServers;
@@ -369,6 +416,71 @@ for (const status of ['needs_auth', 'future-status']) {
   });
 }
 
+test('role tools route exactly once with public camelCase bodies', async () => {
+  const roles = [{ moduleId: 'board', roleId: 'owner' }, { moduleId: 'board', roleId: 'executor' }];
+  await call('cockpit_new_session', { cwd: '/fixture', roles });
+  assert.deepEqual(requests.at(-1)!.body, { cwd: '/fixture', roles });
+  assert.equal((await json('cockpit_list_roles', { response_format: 'json' }) as { roles: unknown[] }).roles.length, 1);
+  assert.equal((await json('cockpit_role_readiness', { session_id: 'B', roles }) as { ready: boolean }).ready, false);
+  assert.equal(requests.length, 3);
+  assert.deepEqual(requests.at(-1)!.body, { sessionId: 'B', roles });
+});
+
+test('ordinary MCP session reads retain selected roles without a readiness check or status', async () => {
+  meta.roles = [{ moduleId: 'board', roleId: 'owner', moduleName: 'Board', name: 'Owner' }];
+  try {
+    for (const name of ['cockpit_list_sessions', 'cockpit_get_session']) {
+      const args = name === 'cockpit_get_session' ? { session_id: 'B' } : {};
+      const rendered = await call(name, args);
+      assert.match(rendered.text, /roles \(saved selection, not readiness\): board\/owner/);
+      assert.doesNotMatch(rendered.text, /applied roles \(current handle\):|roles need reload:/);
+      assert.doesNotMatch(rendered.text, /role readiness:|ready at read time/);
+      const result = await json(name, { ...args, response_format: 'json' });
+      assert.doesNotMatch(JSON.stringify(result), /roleReadiness/);
+    }
+    assert.doesNotMatch(JSON.stringify(await json('cockpit_get_snapshot')), /roleReadiness/);
+    assert.equal(requests.length, 5);
+    assert.ok(requests.every(request => !request.path.includes('roles/readiness')));
+  } finally { delete meta.roles; }
+});
+
+for (const loaded of [true, false]) {
+  test(`ordinary MCP reads expose saved/applied roles without native work, loaded:${loaded}`, async () => {
+    const originalLoaded = meta.loaded;
+    const originalStatus = meta.status;
+    meta.loaded = loaded;
+    meta.status = loaded ? 'running' : 'unloaded';
+    meta.roles = [{ moduleId: 'board', roleId: 'owner', moduleName: 'Board', name: 'Owner' }];
+    meta.appliedRoles = [];
+    meta.rolesNeedReload = loaded;
+    try {
+      for (const name of ['cockpit_list_sessions', 'cockpit_get_session']) {
+        const args = name === 'cockpit_get_session' ? { session_id: 'B' } : {};
+        const rendered = await call(name, args);
+        assert.match(rendered.text, /roles \(saved selection, not readiness\): board\/owner/);
+        assert.match(rendered.text, /applied roles \(current handle\): none/);
+        assert.match(rendered.text, new RegExp(`roles need reload: ${loaded}`));
+        assert.match(rendered.text, loaded ? /ordinary explicit reload/ : /Saved roles apply on next load/);
+        const result = await json(name, { ...args, response_format: 'json' }) as {
+          sessions?: SessionMeta[]; roles?: SessionMeta['roles']; appliedRoles?: SessionMeta['appliedRoles']; rolesNeedReload?: boolean;
+        };
+        const state = result.sessions?.[0] ?? result;
+        assert.deepEqual(state.roles, meta.roles);
+        assert.deepEqual(state.appliedRoles, []);
+        assert.equal(state.rolesNeedReload, loaded);
+      }
+      assert.equal(requests.length, 4);
+      assert.ok(requests.every(request => ['/intent/session/get', '/intent/session/list'].includes(request.path)));
+    } finally {
+      meta.loaded = originalLoaded;
+      meta.status = originalStatus;
+      delete meta.roles;
+      delete meta.appliedRoles;
+      delete meta.rolesNeedReload;
+    }
+  });
+}
+
 test('registry exposes native controls without parked file, organization or restart tools', async () => {
   const { tools } = await client.listTools();
   const names = tools.map(({ name }) => name);
@@ -386,12 +498,13 @@ test('registry exposes native controls without parked file, organization or rest
     'cockpit_list_global_mcp', 'cockpit_set_global_mcp_default', 'cockpit_refresh_mcp',
     'cockpit_reload_session_mcp', 'cockpit_list_global_skills', 'cockpit_list_session_skills',
     'cockpit_refresh_skills', 'cockpit_list_dir',
+    'cockpit_list_roles', 'cockpit_role_readiness', 'cockpit_add_roles',
   ];
   assert.deepEqual(names.sort(), expected.sort());
   assert.equal(new Set(names).size, names.length);
   assert.equal(names.some((name) => /hook|flow|gate|spawned/.test(name)), false);
   const newSession = tools.find(({ name }) => name === 'cockpit_new_session');
-  assert.deepEqual(Object.keys(newSession?.inputSchema.properties ?? {}), ['cwd']);
+  assert.deepEqual(Object.keys(newSession?.inputSchema.properties ?? {}), ['cwd', 'roles']);
   assert.deepEqual(newSession?.inputSchema.required, ['cwd']);
   assert.equal(requests.length, 0, 'registry construction must not read HTTP or local state');
 });
@@ -616,6 +729,36 @@ test('fork is discoverable and callable through the unified MCP intent entry wit
   assert.deepEqual(await json('cockpit_call_intent', { name: 'session/fork', body }), { sessionId: 'forked-id' });
   assert.deepEqual(requests.map(request => request.path), ['/intent/session/fork']);
   assert.deepEqual(requests[0]?.body, body);
+});
+
+test('tool initialization uses one explicit generic call without a prompt, reload or readiness claim', async () => {
+  const name = 'session/tools-initialize';
+  const body = { sessionId: 'target' };
+  assert.deepEqual(await json('cockpit_call_intent', { name, body }), { ok: true });
+  assert.deepEqual(requests.map(request => [request.path, request.body]), [[`/intent/${name}`, body]]);
+  requests.length = 0;
+  intentFailure = 409;
+  const failure = await call('cockpit_call_intent', { name, body });
+  assert.equal(failure.isError, true);
+  assert.match(failure.text, /HTTP 409/);
+  assert.deepEqual(requests.map(request => request.path), [`/intent/${name}`]);
+});
+
+test('resource preparation generic invocation retains all partial steps and never retries failures', async () => {
+  const name = 'session/resources-prepare';
+  const body = { sessionId: 'target', skills: ['optional'], mcpServers: [{ name: 'tools', tools: ['raw_name'] }] };
+  assert.deepEqual(await json('cockpit_call_intent', { name, body }), resourcePreparationResult);
+  assert.deepEqual(requests.map(request => [request.path, request.body]), [[`/intent/${name}`, body]]);
+  requests.length = 0;
+  resourcePreparationResult = {
+    sessionId: 'target', ok: false, skills: [{ name: 'optional', enabled: true, effect: 'enabled' }],
+    mcpServers: [{ name: 'tools', effect: 'unconfirmed', enabled: null, status: null, tools: null }],
+    tools: 'not_attempted', error: 'Native readback failed',
+  };
+  const failure = await call('cockpit_call_intent', { name, body });
+  assert.equal(failure.isError, true);
+  assert.deepEqual(JSON.parse(failure.text), resourcePreparationResult);
+  assert.deepEqual(requests.map(request => [request.path, request.body]), [[`/intent/${name}`, body]]);
 });
 
 test('generic invocation surfaces authoritative unknown and retired name errors with one POST each', async () => {

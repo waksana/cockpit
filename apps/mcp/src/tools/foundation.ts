@@ -25,7 +25,8 @@ async function capability(name: string) {
 // independent of invocation, so calls need no preflight or local intent catalog.
 export async function invokePublishedIntent(name: string, body: Record<string, unknown>): Promise<unknown> {
   IntentName.parse(name);
-  return assertIntentSuccess(await intent(name, body), name);
+  const result = await intent(name, body);
+  return name === 'session/resources-prepare' ? result : assertIntentSuccess(result, name);
 }
 
 export function registerFoundationTools(server: McpServer): void {

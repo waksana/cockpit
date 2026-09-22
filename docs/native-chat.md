@@ -240,16 +240,21 @@ without module controls retains its normal leading inset.
 The input stays at the bottom through normal flow, not a fixed overlay. A single
 CSS flex budget caps the input area, including external notices, at 70% of the
 available Chat height. Native `::details-content` participates in that flex layout;
-the queue, question, choices, plan/confirmation and original input share one content
-scroller only when they cannot fit. The editor is not separately pinned while a
-long question scrolls. Question text remains selectable independently of the
+ordinary input stays at the card bottom outside the shared queue and
+plan/confirmation scroller. During a question, the queue, question, choices and
+answer input instead share one content scroller only when they cannot fit:
+the answer editor is part of the question, not separately pinned. Both modes
+retain the textarea's own height limit and internal scrolling for long drafts.
+Question text remains selectable independently of the
 header. Questions and choices wrap even continuous identifiers at their own
 component boundary, without clipping the option or widening the card.
 Choice selection still submits the complete original value directly; freeform text uses the existing
 send action, and choice-only questions still block freeform submission.
 
-The same editor and module contribution instances stay mounted while the card
-opens/closes, changes questions or returns to normal composition. Collapse does
+Within one draft identity, the same editor and module contribution instances stay
+mounted while the card opens/closes. A different native request ID or transition
+between a decision and the ordinary prompt uses its own editor and draft identity;
+old callbacks cannot edit or submit the replacement draft. Collapse does
 not discard a draft or answer the request. A new native request ID opens the card;
 ordinary updates to the same request preserve the browser's disclosure state.
 Completion also opens the ordinary composer if the question was collapsed.
@@ -265,8 +270,10 @@ Module upload/recovery and per-item copy feedback remain with their own items.
 Folding preserves the original editor, module instances, draft and attachments.
 Plans and tool confirmations keep distinct native callbacks, including when more
 than one kind is present. A pending decision does not hide Stop.
-Stop retains its native queue-clearing behavior and stays disabled
+Stop retains its native queue-clearing behavior and cannot dispatch again
 while disconnected, closing, cancelling or another protected operation is active.
+A pending focused control can remain focusable with guarded `aria-disabled`
+instead of losing focus when its native request is submitted.
 The execution label takes the space remaining beside its actions rather than
 reserving a large minimum column. Where space permits, the status and both
 queue actions share one line; long status text truncates. When they cannot fit,
@@ -286,8 +293,9 @@ single-line and collapsed messages. It copies
 the complete original text through the same control used by code/tool details,
 without submitting, removing, expanding or collapsing the queued entry.
 Copying is keyboard-accessible without first expanding the text.
-Expanded queue text uses the shared card scroller rather than another independently
-capped queue region. The summary, copy and remove targets retain the explicit
+Expanded queue text uses the content scroller above ordinary input, or the shared
+card scroller during a question, without an independent queue height cap.
+The summary, copy and remove targets retain the explicit
 32px queue density on every pointer type, without a leading expansion arrow.
 Summary text and copy feedback share the metadata line-height role; padding
 adapts to that line box rather than becoming negative with larger text.
@@ -393,9 +401,36 @@ this is not an LRU policy and does not delete Composer drafts or retained files.
 
 Entering a chat view lands at its latest loaded content. Leaving and re-entering
 does not restore the previous cross-view reading position; retained history and
-native cursors still avoid a fresh history read. Within the same mounted view,
+native cursors still avoid a fresh history read. The single scroll owner positions
+the first committed message layout before paint, including an asynchronous first
+page after an empty mount. Empty-layout follow frames do not consume this initial
+positioning; prior user reading intent cancels it. Subsequent DOM notifications
+remain frame-coalesced. When ResizeObserver delivers the resulting layout, the
+same owner corrects the reading position before that layout is painted, canceling
+any superseded RAF. This also covers auto-filled history, asynchronous module
+content and viewport changes: newly measured geometry is not painted with the
+previous scroll offset. No messages are hidden while waiting for module data.
+Within the same mounted view,
 rerenders, live updates and older-page insertion preserve the active reading
 anchor and gestures rather than forcing the reader to the bottom.
+
+A successful submission from this page explicitly resumes bottom-follow: this
+includes the send button, keyboard submission, module captured-draft sends and
+native decision answers/actions. The shared draft submission layer captures the
+target's mounted view at dispatch and notifies it only on a strict native ACK.
+Reading upward while that request waits does not cancel this one follow action.
+Leaving, replacing or making the view read-only revokes its pending view effects;
+returning to the same session does not inherit an earlier request's effect.
+Background sends never switch sessions or scroll an unrelated view.
+
+The existing single scroll owner follows subsequent DOM appends and layout
+changes; a new user reading gesture after acknowledgement stops following normally.
+Failed, blocked, unknown or pre-dispatch-cancelled sends, draft edits, remote
+messages and streaming updates do not initiate follow. A native queue acceptance
+uses the same one-time ACK effect without fabricating a chat message; later queue
+execution does not force follow again. Native success is not undone by a local
+draft-cleanup failure, and captured-send cancellation still only acts before dispatch.
+
 The return-to-latest action appears only when the distance from the bottom is
 at least one current transcript viewport; small upward movements remain quiet.
 This display threshold does not change the existing bottom-follow or anchor
