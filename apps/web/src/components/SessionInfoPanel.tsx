@@ -8,6 +8,7 @@ import type { IntentResult, NativeModelSwitchResult } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
 import { useSessionResource } from '../lib/useSessionResource';
 import { useModelSettings, selectionFrom, type ModelSelection } from '../features/session-settings/useModelSettings';
+import { useSessionReload } from '../features/session-settings/useSessionReload';
 import { ExpandableText, PanelPageShell, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
 import { CopyButton } from './CopyButton';
 import { SectionHeading, SelectField } from './UI';
@@ -181,6 +182,7 @@ export function SessionInfoPanel(props: SessionInfoPanelProps) {
 
 function InfoDetails({ session, onClose, onSetModel }: SessionInfoPanelProps) {
   const sid = session.sessionId;
+  const reload = useSessionReload(sid);
   const load = useCallback((signal: AbortSignal) => useCockpit.getState().getResources(sid, ['model', 'models'], signal), [sid]);
   const resource = useSessionResource(sid, `models:${sid}`, load, 0, ['model', 'models']);
 
@@ -208,6 +210,15 @@ function InfoDetails({ session, onClose, onSetModel }: SessionInfoPanelProps) {
           ...resource, onRefresh: () => { void resource.refresh(); },
           refreshDisabled: !resource.connected || resource.closing,
         }} />}
+      <section className="info-section">
+        <SectionHeading className="info-section-name">会话操作</SectionHeading>
+        <div className="info-section-content ck-actions">
+          <button type="button" className="ck-button rp" disabled={!!reload.blockedReason}
+            aria-busy={reload.pending} title={reload.blockedReason} onClick={reload.reload}>
+            {reload.pending ? '正在重新加载会话…' : '重新加载会话'}
+          </button>
+        </div>
+      </section>
     </PanelPageShell>
   );
 }

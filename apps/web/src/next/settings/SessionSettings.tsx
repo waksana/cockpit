@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { Button } from '@cockpit/ui';
 import { useCockpit } from '../../net/store';
 import { useSessionResource } from '../../lib/useSessionResource';
+import { useSessionReload } from '../../features/session-settings/useSessionReload';
 import type { ChatSession } from '../../net/types';
 import { Notice, ResumeSession } from './SettingsControls';
 import { ModelSettings } from './ModelSettings';
@@ -23,6 +24,7 @@ export function SessionSettings({ sessionId, panel }: { sessionId: string; panel
 
 function SessionInformation({ session }: { session: ChatSession }) {
   const sid = session.sessionId;
+  const reload = useSessionReload(sid);
   const load = useCallback((signal: AbortSignal) => useCockpit.getState().getResources(sid, ['model', 'models'], signal), [sid]);
   const resource = useSessionResource(sid, `models:${sid}`, load, 0, ['model', 'models']);
   return <>
@@ -43,5 +45,11 @@ function SessionInformation({ session }: { session: ChatSession }) {
           onSetModel={(modelId, options) => useCockpit.getState().setModel(sid, modelId, options)} />}
     </section>
     <RoleSettings session={session} />
+    <section className="next-settings-section"><h2>会话操作</h2>
+      <Button variant="outline" disabled={!!reload.blockedReason} aria-busy={reload.pending}
+        title={reload.blockedReason} onClick={reload.reload}>
+        {reload.pending ? '正在重新加载会话…' : '重新加载会话'}
+      </Button>
+    </section>
   </>;
 }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { registerHooks } from 'node:module';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { NativeModelSwitchResult } from '@cockpit/protocol';
@@ -12,6 +13,14 @@ import { SettingSelect } from './SettingsControls';
 import { readSelectValue, selectValue } from './selectValue';
 import { sameModelSelection, selectionFrom } from '../../features/session-settings/useModelSettings';
 
+const styles = registerHooks({
+  load(url, context, nextLoad) {
+    return url.endsWith('.css') ? { format: 'module', source: '', shortCircuit: true } : nextLoad(url, context);
+  },
+});
+const { SessionSettings } = await import('./SessionSettings');
+styles.deregister();
+
 const session: ChatSession = {
   sessionId: 'next-settings', title: 'Synthetic settings', cwd: '/fixture', loaded: true,
   status: 'idle', error: null, queue: [], ask: null, lastActivity: 0, messages: [],
@@ -19,6 +28,25 @@ const session: ChatSession = {
   currentModelId: 'missing-native', currentReasoningEffort: 'future', currentContextTier: 'default',
 };
 const noMutation = async () => assert.fail('Rendering may not dispatch native mutations');
+test('next settings retain reload outside the action menu with the shared pending and busy guards', t => {
+  const initial = useCockpit.getInitialState();
+  const previous = { ...initial };
+  t.after(() => { Object.assign(initial, previous); });
+  for (const [patch, pending, enabled] of [
+    [{}, false, true], [{ activeSubagents: 1 }, false, false], [{}, true, false],
+  ] as const) {
+    Object.assign(initial, {
+      connState: 'open', snapshotReady: true, sessions: [{ ...session, ...patch }],
+      reloadingSessionIds: pending ? [session.sessionId] : [], reloadSession: noMutation,
+    });
+    const html = renderToStaticMarkup(createElement(SessionSettings, { sessionId: session.sessionId, panel: 'info' }));
+    const action = html.match(/<button([^>]*)>(正在重新加载会话…|重新加载会话)<\/button>/);
+    assert.ok(action);
+    assert.equal(action[1].includes('disabled=""'), !enabled);
+    assert.equal(action[1].includes('aria-busy="true"'), pending);
+    assert.match(html, /会话操作/);
+  }
+});
 test('new production model controls retain unavailable native values and empty inventories', () => {
   for (const availableModels of [undefined, []]) {
     const html = renderToStaticMarkup(createElement(ModelSettings, {

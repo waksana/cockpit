@@ -202,6 +202,76 @@ function button(container: HostNode, text: string) {
 }
 function disabled(node: HostNode) { return node.attributes.has('disabled'); }
 
+test('settings reload keeps its exact target and pending state across page changes', async t => {
+  const h = mount(t);
+  const other = { ...session, sessionId: 'other-session', title: 'Other session' };
+  const request = deferred<void>();
+  const calls: string[] = [];
+  useCockpit.setState({
+    sessions: [session, other], activeId: other.sessionId, snapshotReady: true, reloadingSessionIds: [],
+    getResources: async sid => ({ ...modelData, sessionId: sid }),
+    reloadSession: async sid => {
+      calls.push(sid);
+      useCockpit.setState({ reloadingSessionIds: [sid] });
+      await request.promise;
+      useCockpit.setState({ reloadingSessionIds: [] });
+    },
+  });
+  const render = (target = session) => h.render(createElement(SessionInfoPanel, {
+    session: target, open: true, onClose: noop, onSetModel: noMutation,
+  }));
+  await render();
+  const reload = button(h.container, '重新加载会话');
+  assert.equal(disabled(reload), false);
+  await h.event(reload, 'click');
+  assert.deepEqual(calls, [session.sessionId]);
+  assert.equal(useCockpit.getState().activeId, other.sessionId, 'reload does not select or navigate');
+  const pending = button(h.container, '正在重新加载会话…');
+  assert.equal(disabled(pending), true);
+  assert.equal(pending.getAttribute('aria-busy'), 'true');
+  await h.event(pending, 'click');
+  assert.deepEqual(calls, [session.sessionId], 'pending action cannot be repeated');
+  await h.render(null);
+  await render(other);
+  assert.equal(disabled(button(h.container, '重新加载会话')), false, 'pending belongs only to the original target');
+  await render();
+  assert.equal(disabled(button(h.container, '正在重新加载会话…')), true, 'remount retains store-owned pending');
+  await render(other);
+  await act(async () => request.resolve());
+  assert.equal(disabled(button(h.container, '重新加载会话')), false);
+  assert.deepEqual(calls, [session.sessionId], 'late completion does not reload the newly selected session');
+});
+
+test('settings reload follows live connection, pending and native activity guards rather than stale props', async t => {
+  const h = mount(t);
+  useCockpit.setState({
+    snapshotReady: true, reloadingSessionIds: [], getResources: async () => modelData, reloadSession: noMutation,
+  });
+  await h.render(createElement(SessionInfoPanel, { session, open: true, onClose: noop, onSetModel: noMutation }));
+  const reload = () => button(h.container, '重新加载会话');
+  assert.equal(disabled(reload()), false);
+  for (const patch of [
+    { status: 'running' }, { nativeProcessing: true }, { activeSubagents: 1 }, { activeOperations: 1 },
+    { activeMcpOperations: 1 }, { loading: true }, { closing: true }, { cancelling: true }, { compacting: true },
+    { queue: [{ id: 'q', text: 'queued work' }] },
+    { ask: { requestId: 'ask', question: 'Choose', choices: ['yes'], allowFreeform: true } },
+    { planRequest: { requestId: 'plan', summary: 'Plan', actions: ['interactive'] } },
+    { elicitation: { requestId: 'elicit', message: 'Choose' } },
+  ] satisfies Partial<ChatSession>[]) {
+    await act(async () => useCockpit.setState({ sessions: [{ ...session, ...patch }] }));
+    assert.equal(disabled(reload()), true);
+    await h.event(reload(), 'click');
+  }
+  await act(async () => useCockpit.setState({ sessions: [session], connState: 'connecting' }));
+  assert.equal(disabled(reload()), true);
+  await act(async () => useCockpit.setState({ connState: 'open', snapshotReady: false }));
+  assert.equal(disabled(reload()), true);
+  await act(async () => useCockpit.setState({ snapshotReady: true, sessions: [] }));
+  assert.equal(disabled(reload()), true);
+  await act(async () => useCockpit.setState({ sessions: [session] }));
+  assert.equal(disabled(reload()), false);
+});
+
 const roleCatalog = [
   { moduleId: 'fixture', moduleName: 'Fixture', roleId: 'existing', name: 'Existing role' },
   { moduleId: 'fixture', moduleName: 'Fixture', roleId: 'added', name: 'Additional role' },
