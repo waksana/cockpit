@@ -2522,6 +2522,21 @@ test('native invalidations clear sampled activity without eager reads and mid-re
   assert.notEqual((await h.engine.getResources(s.id, ['control']))!.activity, null);
 });
 
+test('unrelated native invalidations do not discard an in-flight activity sample', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const held = deferred<{ tasks: NativeTask[] }>();
+  s.rpc.tasks.list.mock.mockImplementationOnce(() => held.promise);
+  const reading = h.engine.getResources(s.id, ['control']);
+  await nextTurn();
+  h.events.length = 0;
+  s.emit(event('session.todos_changed', {}));
+  held.resolve({ tasks: [] });
+  assert.notEqual((await reading)!.activity, null);
+  assert.ok(h.events.some(e => e.type === 'session/invalidated' && e.resources?.includes('todo')));
+  assert.ok(!h.events.some(e => e.type === 'session/invalidated' && e.resources?.includes('control')));
+});
+
 test('native usage reads exactly two native snapshots, preserves scope, strips sources and never invokes inference', async t => {
   const h = harness(t);
   const s = await h.load();
@@ -3538,11 +3553,32 @@ for (const source of ['runtime callback', 'passive poll'] as const) {
   });
 }
 
-function connectionEvent(state: 'disconnected' | 'reconnecting'): SessionEvent {
+function connectionEvent(state: 'disconnected' | 'reconnecting' | 'connected'): SessionEvent {
   // The native event name is not included in this SDK's generated SessionEvent union.
   return { type: 'session.connection_state_changed', data: { state },
     id: randomUUID(), timestamp, parentId: null } as unknown as SessionEvent;
 }
+
+test('native reconnect invalidates control without polling and fences a pre-disconnect activity sample', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const held = deferred<{ tasks: NativeTask[] }>();
+  s.rpc.tasks.list.mock.mockImplementationOnce(() => held.promise);
+  const reading = h.engine.getResources(s.id, ['control']);
+  await nextTurn();
+  const before = nativeCalls(s);
+  h.events.length = 0;
+  s.emit(connectionEvent('disconnected'));
+  await nextTurn();
+  assert.ok(h.events.some(e => e.type === 'session/patch' && e.activity === null));
+  s.emit(connectionEvent('connected'));
+  assert.deepEqual(nativeCallDelta(s, before), {});
+  assert.equal(h.events.filter(e => e.type === 'session/invalidated' && e.resources?.includes('control')).length, 1);
+  held.resolve({ tasks: [] });
+  assert.equal((await reading)!.activity, null);
+  assert.notEqual((await h.engine.getResources(s.id, ['control']))!.activity, null);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
+});
 
 const closureSignals = [
   ['session.shutdown', () => event('session.shutdown', {

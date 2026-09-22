@@ -100,6 +100,7 @@ interface State {
   eventOwner?: { closed?: WeakSet<CopilotSession>; contextChanged?: boolean };
   sendReceipts: Set<string>;
   revision: number;
+  activityRevision: number;
   scheduleGate: Promise<void>;
   resourceWrites: Map<SessionResource, number>;
   pendingInvalidations: Set<SessionResource>;
@@ -138,7 +139,7 @@ function stateFor(id: string): State {
   return {
     id, sdk: null, closing: false, operations: 0, mcpOperations: 0, sends: 0,
     accepted: new Set(), decisions: new Map(), sendReceipts: new Set(),
-    revision: 0, turnEpoch: 0,
+    revision: 0, activityRevision: 0, turnEpoch: 0,
     scheduleGate: Promise.resolve(),
     resourceWrites: new Map(), pendingInvalidations: new Set(),
     modelGate: Promise.resolve(),
@@ -523,7 +524,7 @@ export class Engine {
             ...this.decisionFields(st) } : {}),
         } : null;
       }
-      const revision = st.revision;
+      const activityRevision = st.activityRevision;
       const wants = new Set(resources);
       const [metadata, name, model, models, mode, todos, schedules, control, queue, row] = await this.withSession(st, sdk, () => settled([
         wants.has('identity') ? sdk.rpc.metadata.snapshot() : Promise.resolve(undefined),
@@ -554,7 +555,7 @@ export class Engine {
         ...(control ? {
           status: control.busy || st.sends > 0 || st.accepted.size > 0 ? 'running' as const : 'idle' as const,
           nativeProcessing: control.busy,
-          activity: revision === st.revision ? control.summary : null,
+          activity: activityRevision === st.activityRevision ? control.summary : null,
           ...(!control.busy && !st.sends && !st.accepted.size ? { intent: null } : {}),
           activeSubagents: control.tasks.tasks.filter(task => activeTask(task.status)).length,
           activeMcpOperations: st.mcpOperations + control.mcpHost.pendingConnections.length,
@@ -932,8 +933,13 @@ export class Engine {
     }
     if (event.type === 'session.shutdown'
       || (event.type === 'session.connection_state_changed' && ['reconnecting', 'disconnected'].includes(String(data.state)))) {
+      st.activityRevision++;
       this.patch(st, { activity: null });
       this.probe(st);
+      return;
+    }
+    if (event.type === 'session.connection_state_changed' && data.state === 'connected') {
+      this.invalidate(st, ['control']);
       return;
     }
     if (root && ['user.message', 'abort', 'session.compaction_start'].includes(event.type)) {
@@ -2079,7 +2085,9 @@ export class Engine {
   private invalidate(st: State, resources?: SessionResource[]): void {
     if (this.sessions.get(st.id) !== st) return;
     if (!resources || resources.some(resource => ['control', 'tasks', 'queue', 'mcp'].includes(resource))) {
+      st.activityRevision++;
       this.patch(st, { activity: null });
+      if (resources && !resources.includes('control')) resources = [...resources, 'control'];
     }
     if (resources) {
       resources = resources.filter(resource => {
