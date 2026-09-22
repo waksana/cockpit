@@ -45,7 +45,7 @@ registerCapabilities(app);
 // any request handler that derefs them can run (boot() runs at module entry).
 export type ServerEngine = Pick<Engine,
   | 'login' | 'snapshot' | 'status' | 'busyCount' | 'newSession' | 'forkSession' | 'chat' | 'stop'
-  | 'prompt' | 'cancel' | 'interrupt' | 'setModel' | 'rename' | 'compact' | 'rewind' | 'setMode'
+  | 'prompt' | 'cancel' | 'interrupt' | 'control' | 'setModel' | 'rename' | 'compact' | 'rewind' | 'setMode'
   | 'deleteSession' | 'unload' | 'load'
   | 'reload' | 'initializeSessionTools' | 'prepareSessionResources' | 'getPlan' | 'getUsage' | 'getPanels' | 'getPanel' | 'getResources' | 'respondAsk' | 'respondPlan'
   | 'planSupersede' | 'respondElicitation' | 'removeQueued' | 'refreshList'
@@ -330,6 +330,7 @@ const handlers: IntentHandlers = {
     return { ok: true };
   },
   'session/interrupt': async (b) => await engine.interrupt(b.sessionId),
+  'session/control': async (b) => await engine.control(b.sessionId, b.token, b.action),
   setModel: async (b) => {
     const result = await engine.setModel(b.sessionId, b.modelId, b.reasoningEffort, b.contextTier);
     return { ok: true, result };
@@ -466,7 +467,7 @@ const readIntents = new Set<IntentName>([
   'schedule/list', 'fs/listDir',
 ]);
 const settlementIntents = new Set<IntentName>([
-  'system/shutdown', 'cancel', 'session/interrupt', 'respondAsk', 'respondPlan',
+  'system/shutdown', 'cancel', 'session/interrupt', 'session/control', 'respondAsk', 'respondPlan',
   'planSupersede', 'respondElicitation', 'queue/remove', 'schedule/stop', 'session/unload',
 ]);
 

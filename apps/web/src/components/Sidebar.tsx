@@ -81,6 +81,7 @@ function SessionRow({ s, active, actions, connected }: {
         {s.roles.map(role => <RoleBadge key={`${role.moduleId}/${role.roleId}`} role={role} session={s} connected={connected} />)}
       </span>}
       <SessionStatus sessionId={s.sessionId} status={s.status} loaded={s.loaded} connected={connected}
+        compacting={s.compacting} error={s.error}
         activityRefreshing={activityRefreshing}
         activityDisplay={s.activityDisplay}
         activity={s.activity} needsDecision={!!(s.ask || s.planRequest || s.elicitation)} />

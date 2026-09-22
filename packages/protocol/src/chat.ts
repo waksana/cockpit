@@ -461,7 +461,7 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       // the `skill.invoked` event instead (CLI-style skill pill), so drop this.
       const source = typeof d.source === 'string' ? d.source : '';
       if (source.startsWith('skill-')) return empty;
-      endTurn(state);
+      if (d.delivery !== 'steering') endTurn(state);
       const id = ev.id ?? `u-${state.messages.length}`;
       upsert(state, { id, role: 'user', content, timestamp: tsOf(ev),
         ...(origin ? { origin } : {}), ...(attachments.length ? { attachments } : {}) });

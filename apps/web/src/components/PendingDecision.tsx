@@ -12,24 +12,31 @@ const PLAN_ACTION_LABEL: Record<ExitPlanModeAction, string> = {
   exit_only: '仅退出计划',
 };
 
-function PendingDecision({ label, title, icon, pending, children, className = '' }: {
+function PendingDecision({ label, title, icon, pending, children, actions, className = '' }: {
   label: string; title: string; icon: ReactNode; pending: boolean;
-  children: ReactNode; className?: string;
+  children: ReactNode; actions?: ReactNode; className?: string;
 }) {
   return <div className={`chat-ask chat-pending ${className}`.trim()} role="group" aria-label={label} aria-busy={pending}>
-    <div className="chat-pending-head">{icon}{title}</div>
+    <div className="chat-pending-head">{icon}{actions ? <>
+      <span>{title}</span><span className="chat-decision-actions">{actions}</span>
+    </> : title}</div>
     <div className="chat-pending-body">
       {children}
     </div>
   </div>;
 }
 
-export function AskContent({ request, sessionId, pending, disabled = false, onChoice, runtime }: {
+export function AskContent({ request, sessionId, pending, disabled = false, onChoice, runtime, actions }: {
   sessionId: string; runtime?: ModuleRuntime;
   request: NonNullable<ChatSession['ask']>; pending: boolean; disabled?: boolean; onChoice: (choice: string) => void;
+  actions?: ReactNode;
 }) {
   const body = <div className="chat-pending-body chat-answer-question" role="group" aria-label="需要你的选择" aria-busy={pending}>
-    <MessagePresentation className="chat-ask-q" identity={{ sessionId, kind: 'ask', id: request.requestId }} complete>{request.question}</MessagePresentation>
+    {actions ? <div className="chat-question-row">
+      <Icon name="decision" size={16} />
+      <MessagePresentation className="chat-ask-q" identity={{ sessionId, kind: 'ask', id: request.requestId }} complete>{request.question}</MessagePresentation>
+      <span className="chat-decision-actions">{actions}</span>
+    </div> : <MessagePresentation className="chat-ask-q" identity={{ sessionId, kind: 'ask', id: request.requestId }} complete>{request.question}</MessagePresentation>}
     {!!request.choices?.length && <div className="chat-ask-choices">
       {request.choices.map(choice => <button key={choice} type="button" className="chat-ask-choice ck-button"
         disabled={pending || disabled} onClick={() => onChoice(choice)}>{choice}</button>)}
@@ -38,11 +45,12 @@ export function AskContent({ request, sessionId, pending, disabled = false, onCh
   return runtime ? <ModuleRuntimeProvider runtime={runtime}>{body}</ModuleRuntimeProvider> : body;
 }
 
-export function PlanCard({ request, pending, disabled = false, onSelect }: {
+export function PlanCard({ request, pending, disabled = false, onSelect, actions }: {
   request: NonNullable<ChatSession['planRequest']>; pending: boolean; disabled?: boolean; onSelect: (action: ExitPlanModeAction) => void;
+  actions?: ReactNode;
 }) {
   return <PendingDecision label="计划待确认" title="计划已就绪" icon={<Icon name="decision" size={16} />}
-    className="chat-plan" pending={pending}>
+    className="chat-plan" pending={pending} actions={actions}>
     <div className="chat-pending-content" role="region" tabIndex={0} aria-label="计划内容">
       <div className="chat-pending-summary"><MessageBody body={request.summary} /></div>
       {request.planContent && <details className="chat-pending-detail">
@@ -61,12 +69,13 @@ export function PlanCard({ request, pending, disabled = false, onSelect }: {
   </PendingDecision>;
 }
 
-export function ElicitationCard({ request, pending, disabled = false, onSelect }: {
+export function ElicitationCard({ request, pending, disabled = false, onSelect, actions }: {
   request: NonNullable<ChatSession['elicitation']>; pending: boolean; disabled?: boolean;
   onSelect: (action: 'accept' | 'decline' | 'cancel') => void;
+  actions?: ReactNode;
 }) {
   return <PendingDecision label="需要你的输入" title="工具请求确认" icon={<Icon name="decision" size={16} />}
-    className="chat-tool-confirm" pending={pending}>
+    className="chat-tool-confirm" pending={pending} actions={actions}>
     <div className="chat-ask-q">{request.message}</div>
     <div className="chat-ask-choices">
       {(request.actions ?? ['accept', 'decline', 'cancel']).map(action => <button key={action} type="button"

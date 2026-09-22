@@ -259,7 +259,15 @@ export function Lab() {
 
 const root = createRoot(document.getElementById('root')!);
 const scene = new URLSearchParams(location.search).get('scene');
-if (scene === 'activity-design') {
+if (scene === 'full-web') {
+  const { installFullWebFixture } = await import('./full-web-fixtures');
+  const id = installFullWebFixture(useCockpit, new URLSearchParams(location.search).get('case') ?? 'mixed');
+  const { default: App } = await import('../App');
+  root.render(<MemoryRouter initialEntries={[`/session/${id}`]}><App /><UxErrorNotifications /></MemoryRouter>);
+} else if (scene === 'control-design') {
+  const { ControlDesignLab } = await import('./control-design-lab');
+  root.render(<BrowserRouter><ControlDesignLab /></BrowserRouter>);
+} else if (scene === 'activity-design') {
   const { ActivityDesignLab } = await import('./activity-design-lab');
   root.render(<BrowserRouter><ActivityDesignLab /></BrowserRouter>);
 } else if (scene === 'workspace' || scene === 'resources') {

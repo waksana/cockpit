@@ -67,6 +67,7 @@ const engine: ServerEngine = {
   prompt: async (...args) => record('prompt', args, { ok: true, queued: true }),
   cancel: (...args) => record('cancel', args, undefined),
   interrupt: async (...args) => record('interrupt', args, { ok: true as const, interrupted: true }),
+  control: async (...args) => record('control', args, { ok: true, outcomes: [] }),
   setModel: async (...args) => record('setModel', args, { status: 'applied', modelId: args[1] }),
   rename: async (...args) => record('rename', args, 'renamed'),
   compact: async (...args) => record('compact', args, { success: true, tokensRemoved: 10, messagesRemoved: 2 }),
@@ -150,6 +151,8 @@ const cases = {
   prompt: { body: { sessionId: 's', text: 'hello', mode: 'enqueue' }, method: 'prompt', args: ['s', 'hello', 'enqueue'] },
   cancel: { body: { sessionId: 's' }, method: 'cancel', args: ['s'] },
   'session/interrupt': { body: { sessionId: 's' }, method: 'interrupt', args: ['s'] },
+  'session/control': { body: { sessionId: 's', token: 'handle', action: { type: 'stop-all' } },
+    method: 'control', args: ['s', 'handle', { type: 'stop-all' }] },
   setModel: { body: { sessionId: 's', modelId: 'model', reasoningEffort: 'high', contextTier: 'long_context' }, method: 'setModel', args: ['s', 'model', 'high', 'long_context'] },
   'session/rename': { body: { sessionId: 's', name: 'renamed' }, method: 'rename', args: ['s', 'renamed'] },
   'session/compact': { body: { sessionId: 's', customInstructions: 'keep context' }, method: 'compact', args: ['s', 'keep context'] },
@@ -193,6 +196,50 @@ const cases = {
 test('dispatch fixtures cover exactly the authoritative Intents, without retired handlers', () => {
   assert.deepEqual(Object.keys(cases).sort(), Object.keys(Intents).sort());
   assert.equal(app.server.listening, false);
+});
+
+test('session/control routes every native action and preserves partial outcomes without wrapping success', async t => {
+  const partial = { ok: false, outcomes: [
+    { operation: 'tasks.cancel', targetId: 'a', state: 'accepted' as const, result: { cancelled: true } },
+    { operation: 'tasks.cancel', targetId: 'b', state: 'unconfirmed' as const, error: 'native unavailable' },
+  ] };
+  t.mock.method(engine, 'control', async (...args) => record('control', args, partial));
+  const actions: IntentBody<'session/control'>['action'][] = [
+    { type: 'stop-all' }, { type: 'stop-task', id: 'a' },
+    { type: 'clear-tasks', kind: 'agent', ids: ['a', 'b'] },
+    { type: 'clear-tasks', kind: 'shell', ids: ['shell'] },
+    { type: 'clear-queue' }, { type: 'remove', id: 'queue' }, { type: 'steer', id: 'queue' },
+    ...(['ask', 'plan', 'elicitation'] as const).map(kind => ({ type: 'cancel-decision' as const, kind, requestId: 'request' })),
+  ];
+  for (const action of actions) {
+    calls.length = 0;
+    const response = await app.inject({ method: 'POST', url: '/intent/session/control',
+      payload: { sessionId: 's', token: 'native-handle', action } });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), partial);
+    assert.deepEqual(calls, [{ method: 'control', args: ['s', 'native-handle', action] }]);
+  }
+});
+
+test('session/control rejects malformed scope, stale ownership and duplicate targets', async t => {
+  for (const action of [
+    { type: 'stop-all', force: true }, { type: 'stop-task', name: 'display name' },
+    { type: 'clear-tasks', kind: 'agent', ids: ['a', 'a'] },
+    { type: 'clear-tasks', kind: 'agent', ids: [] },
+    { type: 'cancel-decision', kind: 'ask' },
+  ]) {
+    const response = await app.inject({ method: 'POST', url: '/intent/session/control',
+      payload: { sessionId: 's', token: 'native-handle', action } });
+    assert.equal(response.statusCode, 400);
+  }
+  assert.deepEqual(calls, []);
+  const control = t.mock.method(engine, 'control', async () => {
+    throw Object.assign(new Error('Controls refer to an old handle'), { statusCode: 409, code: 'STALE_SESSION_CONTROLS' });
+  });
+  const response = await app.inject({ method: 'POST', url: '/intent/session/control', payload: cases['session/control'].body });
+  assert.equal(response.statusCode, 409);
+  assert.equal(response.json().code, 'STALE_SESSION_CONTROLS');
+  assert.equal(control.mock.callCount(), 1);
 });
 
 for (const [name, fixture] of Object.entries(cases)) {
@@ -1110,7 +1157,7 @@ test('graceful shutdown refuses new work but keeps decisions, queue controls and
     assert.equal(response.json().code, 'SERVICE_SHUTTING_DOWN');
   }
   assert.deepEqual(calls, []);
-  for (const name of ['respondAsk', 'respondPlan', 'respondElicitation', 'queue/remove', 'cancel', 'session/interrupt', 'session/get'] as const) {
+  for (const name of ['respondAsk', 'respondPlan', 'respondElicitation', 'queue/remove', 'cancel', 'session/interrupt', 'session/control', 'session/get'] as const) {
     const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload: cases[name].body });
     assert.equal(response.statusCode, 200, `${name}: ${response.body}`);
   }

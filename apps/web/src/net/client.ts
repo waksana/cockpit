@@ -15,7 +15,7 @@ export const HOST_INTENT_MUTATES = {
   'system/shutdown': true, 'system/status': false, 'runtime/snapshot': false,
   'session/chat': false, 'session/new': true, 'roles/list': false, 'roles/add': true,
   'roles/readiness': false, 'session/tools-initialize': true, 'session/resources-prepare': true, 'session/fork': true,
-  prompt: true, cancel: true, 'session/interrupt': true, setModel: true,
+  prompt: true, cancel: true, 'session/interrupt': true, 'session/control': true, setModel: true,
   'session/rename': true, 'session/compact': true, 'session/rewind': true, setMode: true,
   'session/delete': true, 'session/unload': true, 'session/load': true, 'session/reload': true,
   'session/usage': false, 'session/plan': false, 'session/panels': false, 'session/panel': false,
@@ -30,6 +30,7 @@ export const HOST_INTENT_MUTATES = {
 
 function knownMutationResult<K extends IntentName>(name: K, result: IntentResult<K>): boolean {
   switch (name) {
+    case 'session/control': return !(result as IntentResult<'session/control'>).outcomes.some(outcome => outcome.state === 'unconfirmed');
     case 'setModel': return classifyNativeModelSwitchResult((result as IntentResult<'setModel'>).result).state !== 'unknown';
     case 'setMode': return classifyNativeModeSetResult((result as IntentResult<'setMode'>).result).state !== 'unknown';
     case 'session/rewind': return classifyNativeRewindResult((result as IntentResult<'session/rewind'>).result).state !== 'unknown';
@@ -306,6 +307,9 @@ export class NetClient {
   }
   cancel(sessionId: string) { return this.intent('cancel', { sessionId }); }
   interrupt(sessionId: string) { return this.intent('session/interrupt', { sessionId }); }
+  sessionControl(sessionId: string, token: string, action: IntentBody<'session/control'>['action']) {
+    return this.intent('session/control', { sessionId, token, action });
+  }
   setModel(sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) {
     return this.intent('setModel', { sessionId, modelId, ...opts });
   }

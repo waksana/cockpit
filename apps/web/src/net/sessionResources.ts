@@ -3,6 +3,7 @@ import type { MetaResource, SessionMeta, SessionProjection } from '@cockpit/prot
 const fields = {
   identity: ['title', 'cwd', 'createdAt', 'lastActivity', 'lastActivitySource', 'roles', 'appliedRoles', 'rolesNeedReload'],
   control: ['status', 'nativeProcessing', 'activeSubagents', 'activeMcpOperations', 'intent', 'activity'],
+  controls: ['controls'],
   queue: ['queue'],
   model: ['currentModelId', 'currentReasoningEffort', 'currentContextTier'],
   models: ['availableModels'],

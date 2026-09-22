@@ -4,7 +4,7 @@ import { McpServerStatus } from '@cockpit/protocol';
 import { mockHttp } from '../test-support/mock-http.ts';
 mockHttp(() => { throw new Error('Unexpected request in pure helper tests'); });
 const {
-  cappedJson, capped, shrinkList, ok, fail,
+  cappedJson, capped, shrinkList, ok, fail, intentJson,
   McpToggleOperation, McpServerSession, McpSessionResult, McpToggleResult,
 } = await import('./shared.ts');
 const { CHARACTER_LIMIT } = await import('./config.ts');
@@ -13,6 +13,18 @@ test('MCP result helpers return one unchanged text representation', () => {
   const text = '{"message":"line\\nnext","ok":false}';
   assert.deepEqual(ok(text), { content: [{ type: 'text', text }] });
   assert.deepEqual(fail(text), { content: [{ type: 'text', text: `Error: ${text}` }], isError: true });
+});
+
+test('native session controls preserve partial outcomes and mark failure or uncertainty', () => {
+  for (const state of ['accepted', 'unchanged', 'failed', 'unconfirmed'] as const) {
+    const value = { ok: state === 'accepted' || state === 'unchanged', outcomes: [
+      { operation: 'task-cancel', targetId: 'first', state: 'accepted', result: { cancelled: true } },
+      { operation: 'task-cancel', targetId: 'second', state, error: 'Native outcome detail' },
+    ] };
+    const rendered = intentJson('session/control', value);
+    assert.deepEqual(JSON.parse(rendered.content[0].text), value);
+    assert.equal(rendered.isError === true, !value.ok);
+  }
 });
 
 for (const status of ['connected', 'failed', 'needs-auth', 'pending', 'disabled', 'stopped', 'not_configured', 'unloaded']) {

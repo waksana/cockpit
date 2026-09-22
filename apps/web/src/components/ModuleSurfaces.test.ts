@@ -102,6 +102,7 @@ test('concurrent activity and decisions preserve trailing module badges without 
       children: createElement('span', { 'data-unread': true }, '1'),
     }));
     if (status === 'unloaded') assert.doesNotMatch(html, /data-activity=|未加载/);
+    else if (status === 'error') assert.match(html, /data-icon="error"/);
     else assert.match(html, new RegExp(`data-activity="${expected}"`));
     assert.match(html, /<span data-unread="true">1<\/span><\/span>$/);
     if (status !== 'unloaded') for (const type of ['shell', 'agent']) assert.match(html, new RegExp(`data-activity="${type}"`));

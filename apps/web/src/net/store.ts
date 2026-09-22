@@ -73,6 +73,10 @@ interface CockpitState {
   respondElicitation: (sessionId: string, requestId: string, action: 'accept' | 'decline' | 'cancel') => Promise<boolean>;
   removeQueued: (sessionId: string, itemId: string) => Promise<void>;
   refreshList: () => Promise<void>;
+  watchControls: (sessionId: string) => () => void;
+  refreshControls: (sessionId: string) => void;
+  sessionControlAction?: (sessionId: string, action: import('../lib/sessionControls').SessionControlAction) => Promise<void>;
+  readAgentTaskDetails?: import('../lib/sessionControls').ReadAgentTaskDetails;
 }
 
 export const createCockpitStore = () => create<CockpitState>((set, get) => {
@@ -80,8 +84,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
   const moduleListeners = new Set<(moduleId: string) => void>();
   const moduleEventListeners = new Set<(moduleId: string, payload: ModuleEventPayload) => void>();
   const summaryResources: MetaResource[] = ['identity', 'control', 'model'];
+  const controlConsumers = new Map<string, number>();
   const metaRequests = new Map<string, {
-    dirty: Set<MetaResource>; stale: Set<MetaResource>; controller: AbortController; patches: Partial<SessionMeta>;
+    dirty: Set<MetaResource>; stale: Set<MetaResource>; reading: Set<MetaResource>; controller: AbortController; patches: Partial<SessionMeta>;
   }>();
   const refreshMeta = (sessionId: string, resources: readonly SessionResource[] = SessionResource.options) => {
     const session = get().sessions.find(row => row.sessionId === sessionId);
@@ -91,6 +96,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     // A closing transition refuses new native reads. Its settling event will
     // invalidate again; keep the current frontend view in the meantime.
     if (session?.closing) return;
+    if (controlConsumers.has(sessionId) && session.loaded
+      && resources.some(resource => ['control', 'controls', 'queue', 'tasks'].includes(resource))) {
+      resources = [...new Set([...resources, 'controls' as const])];
+    }
     const pending = metaRequests.get(sessionId);
     // Obsolete in-flight fields must be discarded even after their consumer
     // unmounts. Demand decides rereads, not whether an old result is still valid.
@@ -100,26 +109,33 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     }
     const consumed = new Set<SessionResource>(summaryResources);
     if (sessionId === get().activeId) consumed.add('queue');
+    if (controlConsumers.has(sessionId)) consumed.add('controls');
     const needed = resources.filter((resource): resource is MetaResource =>
       MetaResource.safeParse(resource).success && consumed.has(resource));
     if (!needed.length) return;
-    if (client?.isOpen && needed.includes('control')) set(st => ({
+    if (needed.includes('controls')) patchLocal(sessionId, row => ({ ...row, controlsStale: true }));
+    if (client?.isOpen && (needed.includes('control') || needed.includes('controls'))) set(st => ({
       activityRefreshingIds: st.activityRefreshingIds.includes(sessionId)
         ? st.activityRefreshingIds : [...st.activityRefreshingIds, sessionId],
     }));
     if (pending) { for (const resource of needed) pending.dirty.add(resource); return; }
-    const request = { dirty: new Set(needed), stale: new Set<MetaResource>(), controller: new AbortController(), patches: {} as Partial<SessionMeta> };
+    const request = { dirty: new Set(needed), stale: new Set<MetaResource>(), reading: new Set<MetaResource>(),
+      controller: new AbortController(), patches: {} as Partial<SessionMeta> };
     const net = client;
     const generation = get().connectionGeneration;
     if (!net?.isOpen) return;
     metaRequests.set(sessionId, request);
     let readingControl = false;
+    let readingControls = false;
     void Promise.resolve().then(async () => {
       do {
-        const reading = [...request.dirty].filter(resource => resource !== 'queue' || get().activeId === sessionId);
+        const reading = [...request.dirty].filter(resource => (resource !== 'queue' || get().activeId === sessionId)
+          && (resource !== 'controls' || controlConsumers.has(sessionId)));
         request.dirty.clear();
         if (!reading.length) return;
+        request.reading = new Set(reading);
         readingControl = reading.includes('control');
+        readingControls = reading.includes('controls');
         request.stale.clear();
         request.patches = {};
         const { meta: response } = await net.getResources(sessionId, reading, request.controller.signal);
@@ -141,6 +157,11 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
                 ...(full.loaded && full.intent === undefined && s.intent !== undefined ? { intent: s.intent } : {}),
               }, s),
                 activityDisplay: full.loaded && (!readingControl || request.stale.has('control')) ? s.activityDisplay : undefined,
+                controlsStale: full.loaded && readingControls && !request.stale.has('controls')
+                  ? !meta?.controls : s.controlsStale,
+                controlsDisplay: full.loaded && (!readingControls || request.stale.has('controls')) ? s.controlsDisplay : undefined,
+                controlsError: full.loaded && readingControls && !request.stale.has('controls')
+                  ? meta?.controls ? undefined : '原生活动详情暂不可用。' : s.controlsError,
               } : s) : [metaToSession(full), ...st.sessions]
             : st.sessions.filter(s => s.sessionId !== sessionId);
           return { sessions, };
@@ -154,8 +175,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     }).catch(error => {
       if (!request.controller.signal.aborted && client === net && get().connectionGeneration === generation
         && metaRequests.get(sessionId) === request) {
+        if (readingControls && !readingControl && !controlConsumers.has(sessionId)) return;
         const message = describeReason(error, false);
-        if (readingControl) patchLocal(sessionId, s => ({ ...s, activity: null, activityDisplay: { error: message } }));
+        if (readingControl || readingControls) patchLocal(sessionId, s => ({ ...s, activity: null,
+          ...(readingControls ? { controlsStale: true, controlsError: message } : {}), activityDisplay: { error: message } }));
         reportUxError(`读取会话状态失败：${message}`);
       }
     }).finally(() => {
@@ -416,7 +439,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     nativeReadRefresh = null;
     set((st) => ({
       connectionGeneration: st.connectionGeneration + 1,
-      sessions: st.sessions.map(s => ({ ...s, loadingHistory: false, activityDisplay: undefined })),
+      sessions: st.sessions.map(s => ({ ...s, loadingHistory: false, activityDisplay: undefined, controlsDisplay: undefined, controlsError: undefined,
+        controlsStale: s.controls || s.controlsDisplay || s.controlsStale !== undefined ? true : undefined })),
     }));
   };
 
@@ -434,7 +458,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
           return { sessions, snapshotReady: true, globalModels: ev.models };
         });
         const active = get().sessions.find(s => s.sessionId === get().activeId);
-        if (active?.loaded && active.queue === undefined) refreshMeta(active.sessionId, ['queue']);
+        if (active?.loaded && (active.queue === undefined || controlConsumers.has(active.sessionId))) {
+          refreshMeta(active.sessionId, [...(active.queue === undefined ? ['queue' as const] : []), ...(controlConsumers.has(active.sessionId) ? ['controls' as const] : [])]);
+        }
         maybeMaterialize();
         return;
       }
@@ -458,12 +484,15 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
           for (const resource of resources) revisions[resource] = (revisions[resource] ?? 0) + 1;
           return {
             resourceRevisions: { ...st.resourceRevisions, [ev.sessionId]: revisions },
-            ...(resources.includes('control') || (resources.includes('queue') && st.activeId !== ev.sessionId) ? {
+            ...(resources.includes('controls') || resources.includes('control') || (resources.includes('queue') && st.activeId !== ev.sessionId) ? {
               sessions: st.sessions.map(s => s.sessionId === ev.sessionId ? {
                 ...s,
                 ...(resources.includes('control') ? {
                   activity: null,
                   activityDisplay: s.loaded && s.activity ? { previous: { status: s.status, activity: s.activity } } : s.activityDisplay,
+                } : {}),
+                ...(resources.includes('controls') ? {
+                  controls: null, controlsDisplay: s.controls ?? s.controlsDisplay, controlsStale: true,
                 } : {}),
                 ...(resources.includes('queue') && st.activeId !== ev.sessionId ? { queue: undefined } : {}),
               } : s),
@@ -480,12 +509,15 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         set((st) => {
           const exists = st.sessions.some(s => s.sessionId === ev.session.sessionId);
           const sessions = exists ? st.sessions.map(s => s.sessionId === ev.session.sessionId
-            ? { ...metaToSession(ev.session, s), activityDisplay: undefined } : s)
+            ? { ...metaToSession(ev.session, s), activityDisplay: undefined, controlsDisplay: undefined, controlsError: undefined,
+              controlsStale: ev.session.controls ? false : undefined } : s)
             : [metaToSession(ev.session), ...st.sessions];
           return { sessions, };
         });
-        if (get().activeId === ev.session.sessionId && ev.session.loaded && ev.session.queue === undefined) {
-          refreshMeta(ev.session.sessionId, ['queue']);
+        if (get().activeId === ev.session.sessionId && ev.session.loaded
+          && (ev.session.queue === undefined || controlConsumers.has(ev.session.sessionId))) {
+          refreshMeta(ev.session.sessionId, [...(ev.session.queue === undefined ? ['queue' as const] : []),
+            ...(controlConsumers.has(ev.session.sessionId) ? ['controls' as const] : [])]);
         }
         maybeMaterialize();
         return;
@@ -528,6 +560,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
               }, s);
             }
             return { ...s, ...patch,
+              controlsDisplay: 'loaded' in patch || patch.closing || patch.controls
+                ? undefined : patch.controls === null ? s.controls ?? s.controlsDisplay : s.controlsDisplay,
+              controlsStale: patch.controls ? false : patch.controls === null || 'loaded' in patch || patch.closing
+                ? true : s.controlsStale,
               activityDisplay: 'loaded' in patch || patch.closing || patch.activity
                 ? undefined : patch.activity === null && s.loaded && s.activity
                   ? { previous: { status: s.status, activity: s.activity } } : s.activityDisplay,
@@ -539,6 +575,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         });
         if (ev.sessionId === activeId && 'loaded' in ev) {
           if (!ev.loaded) cancelLive(ev.sessionId);
+          else if (controlConsumers.has(ev.sessionId)) refreshMeta(ev.sessionId, ['queue', 'controls']);
           maybeMaterialize();
         }
         return;
@@ -668,7 +705,44 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       } else if (session.planRequest?.requestId !== purpose.requestId) return 'decision-changed';
     },
 
+    watchControls(sid) {
+      controlConsumers.set(sid, (controlConsumers.get(sid) ?? 0) + 1);
+      refreshMeta(sid, ['controls']);
+      return () => {
+        const count = (controlConsumers.get(sid) ?? 1) - 1;
+        if (count > 0) controlConsumers.set(sid, count);
+        else {
+          controlConsumers.delete(sid);
+          const request = metaRequests.get(sid);
+          request?.stale.add('controls');
+          if (request && [...request.reading, ...request.dirty].every(resource => resource === 'controls')) {
+            request.controller.abort();
+            metaRequests.delete(sid);
+            set(state => ({ activityRefreshingIds: state.activityRefreshingIds.filter(id => id !== sid) }));
+          }
+          patchLocal(sid, row => ({ ...row, controlsStale: true }));
+        }
+      };
+    },
+    refreshControls(sid) { refreshMeta(sid, ['control', 'controls', 'queue']); },
     cancel(sid) { return mutation(sid, '取消', (net) => net.cancel(sid)); },
+    async sessionControlAction(sid, action) {
+      const session = get().sessions.find(row => row.sessionId === sid);
+      if (!session?.loaded || !session.controls || session.controlsStale) throw new Error('活动状态尚未同步，请等待刷新后操作。');
+      const token = session.controls.token;
+      try {
+        const result = await nativeRead(sid, net => net.sessionControl(sid, token, action));
+        if (!result.ok) {
+          const details = result.outcomes.filter(outcome => outcome.state === 'failed' || outcome.state === 'unconfirmed')
+            .map(outcome => `${outcome.operation}${outcome.targetId ? ` (${outcome.targetId})` : ''}：${outcome.error ?? outcome.state}`);
+          const message = details.join('；') || '原生操作未确认，请核对当前活动状态。';
+          reportUxError(`会话 ${session.title} (${sid}) 控制操作未完成：${message}`, { deduplicate: false });
+          throw new Error(message);
+        }
+      } finally {
+        refreshMeta(sid, ['control', 'controls', 'queue']);
+      }
+    },
     interrupt(sid) { return nativeRead(sid, (net) => net.interrupt(sid)); },
     setModel(sid, modelId, opts) {
       // Native ACKs include queued, confirmation and partial-persistence outcomes.

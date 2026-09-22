@@ -535,6 +535,8 @@ const intentFixtures = {
     attachments: [{ type: 'file', path: '/fixture/native.txt' }] }, result: { ...ok, queued: true } },
   cancel: { body: sid, result: ok },
   'session/interrupt': { body: sid, result: { ok: true, interrupted: false } },
+  'session/control': { body: { ...sid, token: 'native-handle', action: { type: 'clear-queue' } },
+    result: { ok: true, outcomes: [{ operation: 'queue.clear', state: 'accepted' }] } },
   setModel: { body: { ...sid, modelId: 'gpt-x', reasoningEffort: 'high', contextTier: 'long_context' }, result: { ok: true, result: { status: 'deferred', deferred: true } } },
   'session/rename': { body: { ...sid, name: 'Renamed' }, result: { ...ok, title: 'Renamed' } },
   'session/compact': { body: { ...sid, customInstructions: 'Keep decisions' }, result: { ok: true, result: { success: true, tokensRemoved: 10, messagesRemoved: 2 } } },

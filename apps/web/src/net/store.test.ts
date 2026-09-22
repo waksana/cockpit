@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { setImmediate } from 'node:timers/promises';
 import { test, type TestContext } from 'node:test';
-import type { IntentBody, IntentName, IntentResult } from '@cockpit/protocol';
+import type { IntentBody, IntentName, IntentResult, SessionControls } from '@cockpit/protocol';
 import { CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { dismissUxError, getUxErrors } from '../lib/errorReporter';
 import { DraftCache, getDraftSession } from '../lib/draftSelection';
@@ -34,6 +34,11 @@ function meta(sessionId: string): SessionMeta {
 
 function message(id: string, content = id): ChatMessage {
   return { id, role: 'assistant', content, timestamp: 1 };
+}
+
+function nativeControls(patch: Partial<SessionControls> = {}): SessionControls {
+  return { token: 'handle-a', sampledAt: 1, main: false, compaction: null,
+    tasks: [{ id: 'shell-a', kind: 'shell', title: 'Native command', status: 'running' }], steering: [], ...patch };
 }
 
 function session(id = 'a', store: Store = useCockpit) {
@@ -377,6 +382,73 @@ function observe<T>(promise: Promise<T>): Promise<T> {
   void promise.catch(() => {});
   return promise;
 }
+
+test('controls are view-owned, retain disabled display during refresh and never load chat to get tasks', async t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a']);
+  assert.equal(h.requests.length, 0);
+  const release = useCockpit.getState().watchControls('a');
+  await setImmediate();
+  h.assertPost(0, 'session/resources', { sessionId: 'a', resources: ['controls'] });
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, controls: nativeControls() } });
+  assert.equal(session().controls?.token, 'handle-a');
+  assert.equal(session().controlsStale, false);
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['controls'] });
+  assert.equal(session().controls, null);
+  assert.equal(session().controlsDisplay?.tasks[0].id, 'shell-a');
+  assert.equal(session().controlsStale, true);
+  await assert.rejects(useCockpit.getState().sessionControlAction!('a', { type: 'stop-task', id: 'shell-a' }), /尚未同步/);
+  await setImmediate();
+  h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['controls'] });
+  await h.reply(1, { meta: { sessionId: 'a', loaded: true, controls: nativeControls({ tasks: [] }) } });
+  assert.equal(session().controls?.tasks.length, 0);
+  assert.equal(session().controlsDisplay, undefined);
+  release();
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['controls'] });
+  await setImmediate();
+  assert.equal(h.requests.length, 2, 'no polling, history read or inactive controls request');
+});
+
+test('retired controls reads cannot replace a later view or loaded-handle token', async t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a']);
+  const release = useCockpit.getState().watchControls('a');
+  await setImmediate();
+  release();
+  assert.equal(h.request(0).init?.signal?.aborted, true);
+  const nextRelease = useCockpit.getState().watchControls('a');
+  await setImmediate();
+  await h.reply(1, { meta: { sessionId: 'a', loaded: true, controls: nativeControls({ token: 'new-handle' }) } });
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, controls: nativeControls() } });
+  assert.equal(session().controls?.token, 'new-handle');
+  nextRelease();
+});
+
+test('native controls preserve partial failures and reconcile instead of optimistically hiding work', async t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot(['a']);
+  const release = useCockpit.getState().watchControls('a');
+  await setImmediate();
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, controls: nativeControls() } });
+  const action = observe(useCockpit.getState().sessionControlAction!('a', { type: 'stop-task', id: 'shell-a' }));
+  await setImmediate();
+  h.assertPost(1, 'session/control', { sessionId: 'a', token: 'handle-a', action: { type: 'stop-task', id: 'shell-a' } });
+  assert.equal(session().controls?.tasks.length, 1);
+  await h.reply(1, { ok: false, outcomes: [
+    { operation: 'queue-clear', state: 'accepted' },
+    { operation: 'task-cancel', targetId: 'shell-a', state: 'unconfirmed', error: 'Synthetic acknowledgement lost' },
+  ] });
+  await assert.rejects(action, /task-cancel.*shell-a.*acknowledgement lost/);
+  assert.equal(session().controls?.tasks.length, 1);
+  h.assertPost(2, 'session/resources', { sessionId: 'a', resources: ['control', 'controls'] });
+  await h.reply(2, { meta: { sessionId: 'a', loaded: true, activity: activityFixture(),
+    controls: nativeControls({ tasks: [] }) } });
+  assert.equal(session().controls?.tasks.length, 0);
+  release();
+});
 
 test('module invalidations reuse control SSE without persistent state or extra reads', t => {
   const h = setup(t);

@@ -1,11 +1,14 @@
 // Chat window (detail pane). Reading position and explicit bottom-follow are
 // maintained by one scroll owner; message bodies reuse the markdown renderer.
 
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { MessageBody } from './MessageBody';
 import { MessageContent } from './MessageContent';
 import { hasMessageContent } from '../lib/messageContent';
 import { Composer, ComposerNotices } from './Composer';
+import { SessionControlBar, SessionControlActionButton } from './SessionControlBar';
+import type { SessionControlAction } from '../lib/sessionControls';
+import { useControlComposer } from '../lib/useControlComposer';
 import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
 import type { ChatMessage, ChatSession, ExitPlanModeAction } from '../net/types';
@@ -321,13 +324,19 @@ interface ThreadProps {
   onInterrupt?: () => Promise<{ ok: true; interrupted: boolean }>;
   onLoadMore: () => void;
   onRetryHistory?: () => void;
+  // Alternate activity/queue composition; Thread still owns decisions and drafts.
+  composerControls?: ReactNode;
+  promptBusy?: boolean;
+  onControlAction?: (action: SessionControlAction) => Promise<void>;
+  onRetryControls?: () => void;
   // Read-only transcript: renders the paginated
   // message list but hides the composer and every interactive banner, so the
   // conversation can be browsed but not driven.
   readOnly?: boolean;
 }
 
-export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, readOnly = false }: ThreadProps) {
+export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, composerControls, promptBusy = session.controls?.main ?? session.status === 'running', onControlAction, onRetryControls, readOnly = false }: ThreadProps) {
+  const controls = !readOnly && onControlAction ? session.controls ?? session.controlsDisplay : undefined;
   const connected = useCockpit((s) => s.connState === 'open');
   const snapshotReady = useCockpit((s) => s.snapshotReady);
   const interruptAction = useKeyedAction(`interrupt:${session.sessionId}`);
@@ -338,13 +347,13 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const queueCount = session.activity
     ? session.activity.queue.pendingCount + session.activity.queue.steeringCount
     : session.queue?.length ?? 0;
-  const showStop = !readOnly && session.status === 'running' && !session.compacting;
+  const showStop = !readOnly && !onControlAction && session.status === 'running' && !session.compacting;
   const stopPending = !!session.cancelling || stopAction.busy;
   const notAbortable = connected && snapshotReady && session.loaded && session.activity?.abortable === false && queueCount === 0
     && !session.ask && !session.planRequest && !session.elicitation;
   const stopDisabled = !connected || !session.loaded || session.loading || session.closing
     || !snapshotReady || (!stopPending && (!!session.activeOperations || interruptAction.busy || notAbortable)) || !onCancel;
-  const showInterrupt = !readOnly && queueCount > 0 && canInterrupt;
+  const showInterrupt = !readOnly && !onControlAction && queueCount > 0 && canInterrupt;
   const interruptResult = readOnly ? null : interruptAction.error
     ? `打断未确认：${interruptAction.error}。请核对会话状态，不要直接重试。`
     : null;
@@ -459,13 +468,24 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const planRequest = session.planRequest;
   const hasPendingDecision = !readOnly && !!(planRequest || session.elicitation);
   const hasExecution = session.compacting || session.status === 'running' || (!readOnly && queueCount > 0);
-  const hasInputHeader = !!(hasExecution || hasPendingDecision || (!readOnly && ask) || activityItems.length);
+  const hasInputHeader = !controls && composerControls === undefined && !!(hasExecution || hasPendingDecision || (!readOnly && ask) || activityItems.length);
   const inputCardRef = useRef<HTMLDetailsElement | null>(null);
+  const decisionKey = askId ? `ask:${askId}` : planId ? `plan:${planId}` : elicitationId ? `elicitation:${elicitationId}` : undefined;
+  const [controlsDisclosure, setControlsDisclosure] = useState<{ decision?: string; open: boolean }>({ open: true });
+  const controlsOpen = decisionKey && decisionKey !== controlsDisclosure.decision ? true : controlsDisclosure.open;
+  const releaseEditorSize = useControlComposer(inputCardRef, !!controls, draft.reference.id, decisionKey);
   useLayoutEffect(() => {
     // Native disclosure survives ordinary updates; a new request or idle input opens afresh.
     if (inputCardRef.current) inputCardRef.current.open = true;
   }, [session.sessionId, ask?.requestId, planRequest?.requestId, session.elicitation?.requestId, hasInputHeader]);
   const executionControlRef = useRemovedControlFocus(session.sessionId, inputCardRef);
+  const cancelDecision = (kind: 'ask' | 'plan' | 'elicitation', requestId: string, pending: boolean) =>
+    controls && onControlAction ? <SessionControlActionButton
+      identity={JSON.stringify([session.sessionId, session.controls?.token ?? session.controlsDisplay?.token, 'cancel-decision', kind, requestId])}
+      label={kind === 'ask' ? '取消问题并中断当前回合' : kind === 'plan' ? '取消计划确认（仅退出计划）' : '取消工具确认'}
+      icon="close" waiting="取消中…" disabled={!authoritative || pending || !session.loaded || !!session.closing || !!session.loading
+        || !!session.controlsStale || activityRefreshing}
+      controlRef={executionControlRef} onAction={() => onControlAction({ type: 'cancel-decision', kind, requestId })} /> : undefined;
   const operation = draft.reference.purpose.kind;
   const runAction = useCallback((target: SessionDraft, send: () => Promise<boolean> | undefined): Promise<boolean> => (
     target.runAction(send, () => canAct.current && drafts.isLive(target))
@@ -534,6 +554,11 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
 
       <div className="chat-input-area">
         <div className="chat-input-notices">
+          {!readOnly && session.controlsError && <p className="chat-error" role="alert">
+            活动列表读取失败：{session.controlsError}
+            {onRetryControls && <button type="button" className="ck-button" disabled={!authoritative || activityRefreshing}
+              onClick={onRetryControls}>重试</button>}
+          </p>}
           {session.error && <p className="chat-error" role="alert">错误: {session.error}
             {onRetryHistory && session.materialized && !session.historyStale && <button type="button"
               className="ck-button rp" onClick={onRetryHistory}>重试同步</button>}
@@ -547,6 +572,8 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           {!readOnly && <ComposerNotices draft={draft} />}
         </div>
         <details className="chat-input-card" ref={inputCardRef} open
+          data-controls={!!controls || undefined} data-controls-open={controls ? controlsOpen : undefined}
+          onChange={controls ? event => { if (event.target instanceof HTMLTextAreaElement) releaseEditorSize(); } : undefined}
           data-header={hasInputHeader || undefined} data-decision={!!(!readOnly && (ask || hasPendingDecision)) || undefined}
           data-question={(!readOnly && operation === 'ask') || undefined}>
           <summary className="chat-execution-head" hidden={!hasInputHeader} aria-label={`${executionLabel}，展开或收起输入卡片`}>
@@ -577,8 +604,13 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
             </span>}
           </summary>
           <div className="chat-input-card-body">
+            {controls && onControlAction && <SessionControlBar session={session} controls={controls} connected={authoritative}
+              expanded={controlsOpen} disabled={!authoritative || !session.loaded || !!session.loading || !!session.closing || activityRefreshing || !!session.controlsStale}
+              controlRef={executionControlRef} onAction={onControlAction}
+              onToggle={() => { setControlsDisclosure({ decision: decisionKey, open: !controlsOpen }); }} />}
+            {!readOnly && composerControls}
             <div className="chat-input-context">
-              {!readOnly && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
+              {!readOnly && !onControlAction && composerControls === undefined && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
                 {session.queue?.map((q) => (
                   <div key={q.id} className="chat-queue-item">
                     <details className="chat-queue-entry">
@@ -595,11 +627,13 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
               {hasPendingDecision && <div className="chat-decisions">
                 {planRequest && planDraft && <PlanCard request={planRequest}
                   pending={planDraft.getSnapshot().pending}
+                  actions={cancelDecision('plan', planRequest.requestId, planDraft.getSnapshot().pending)}
                   disabled={!authoritative || !onRespondPlan}
                   onSelect={action => { void runAction(planDraft,
                     () => onRespondPlan?.(planRequest.requestId, action)); }} />}
                 {session.elicitation && elicitationDraft && <ElicitationCard request={session.elicitation}
                   pending={elicitationDraft.getSnapshot().pending}
+                  actions={cancelDecision('elicitation', session.elicitation.requestId, elicitationDraft.getSnapshot().pending)}
                   disabled={!authoritative || !onRespondElicitation}
                   onSelect={action => { void runAction(elicitationDraft,
                     () => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
@@ -609,15 +643,16 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
               <div className="chat-readonly-note" aria-label="只读会话">只读会话</div>
             ) : (
               <Composer
-                key={draft.reference.id}
-                busy={session.status === 'running' && !ask && !planRequest}
+                key={!onControlAction && composerControls === undefined ? draft.reference.id : 'shared-composer'}
+                busy={promptBusy && !ask && !planRequest}
                 submitLabel={ask ? '提交回答' : planRequest ? '发送新指令' : undefined}
                 disabled={!!session.compacting && session.status !== 'running'}
-                placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : operation === 'elicitation' ? '请选择上方操作' : session.status === 'running' ? '加入队列' : '输入消息…'))}
+                placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : operation === 'elicitation' ? '请选择上方操作' : promptBusy ? '加入队列' : '输入消息…'))}
                 draft={draft}
                 editorRef={executionControlRef}
                 statusInHeader={hasInputHeader}
-                ask={ask ? { request: ask, disabled: !authoritative || !onRespondAsk, onChoice: choice => { void handleChoice(choice); } } : undefined}
+                ask={ask ? { request: ask, disabled: !authoritative || !onRespondAsk, onChoice: choice => { void handleChoice(choice); },
+                  actions: cancelDecision('ask', ask.requestId, actionPending) } : undefined}
                 onSend={handleSend}
                 sendBlocked={!connected || !snapshotReady || ask?.allowFreeform === false || operation === 'elicitation' || !onSend}
               />

@@ -84,6 +84,8 @@ export function installWorkspaceFixture(store: ReturnType<typeof createCockpitSt
   };
   store.setState({
     connState: 'open', snapshotReady: true, sessions, activeId: workspaceSessionId,
+    sessionControlAction: undefined,
+    watchControls: () => () => {},
     globalModels: models,
     init: () => () => {},
     setActiveId: activeId => { store.setState({ activeId }); },

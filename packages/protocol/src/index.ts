@@ -101,6 +101,7 @@ export function summarizeMessage(message: ChatMessage): ChatMessage {
 export const QueuedItem = z.object({
   id: z.string(),
   text: z.string(),
+  canSteer: z.boolean().optional().describe('Native queue item can be individually steered; absence is not permission.'),
 });
 export type QueuedItem = z.infer<typeof QueuedItem>;
 
@@ -417,6 +418,45 @@ export const SessionActivity = z.object({
 });
 export type SessionActivity = z.infer<typeof SessionActivity>;
 
+export const SessionControls = z.object({
+  token: z.string().min(1).describe('Identity of the loaded native handle; not a permission or a revision.'),
+  sampledAt: z.number().int().nonnegative(),
+  main: z.boolean(),
+  compaction: z.enum(['manual', 'auto', 'unknown']).nullable(),
+  tasks: z.array(z.object({
+    id: z.string().min(1), kind: z.enum(['agent', 'shell']), title: z.string(),
+    status: z.enum(['running', 'idle', 'completed', 'failed', 'cancelled']),
+  })),
+  steering: z.array(z.object({
+    id: z.string().describe('Display-only key, never a native action target.'),
+    text: z.string(),
+  })).describe('Only steering messages not yet folded into the current turn.'),
+});
+export type SessionControls = z.infer<typeof SessionControls>;
+export const SessionControlAction = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('stop-all') }).strict(),
+  z.object({ type: z.literal('stop-task'), id: z.string().min(1) }).strict(),
+  z.object({ type: z.literal('clear-tasks'), kind: z.enum(['agent', 'shell']),
+    ids: z.array(z.string().min(1)).min(1).refine(ids => new Set(ids).size === ids.length, 'Duplicate task IDs') }).strict(),
+  z.object({ type: z.literal('clear-queue') }).strict(),
+  z.object({ type: z.literal('remove'), id: z.string().min(1) }).strict(),
+  z.object({ type: z.literal('steer'), id: z.string().min(1) }).strict(),
+  z.object({ type: z.literal('cancel-decision'), kind: z.enum(['ask', 'plan', 'elicitation']),
+    requestId: z.string().min(1) }).strict(),
+]);
+export type SessionControlAction = z.infer<typeof SessionControlAction>;
+export const SessionControlResult = z.object({
+  ok: z.boolean(),
+  outcomes: z.array(z.object({
+    operation: z.string(),
+    targetId: z.string().optional(),
+    state: z.enum(['accepted', 'unchanged', 'failed', 'unconfirmed']),
+    result: z.record(z.unknown()).optional(),
+    error: z.string().optional(),
+  })),
+});
+export type SessionControlResult = z.infer<typeof SessionControlResult>;
+
 export const SessionMeta = z.object({
   roles: z.array(SessionRole).optional(),
   appliedRoles: z.array(SessionRole).optional(),
@@ -474,12 +514,13 @@ export const SessionMeta = z.object({
   activeOperations: z.number().int().nonnegative().optional(),
   nativeProcessing: z.boolean().optional().describe('Legacy aggregate busy flag, not the raw native isProcessing result. Use activity.processing for the native flag.'),
   activity: SessionActivity.nullable().optional().describe('Control summary. Null means unavailable or invalidated, not idle; omission means not requested.'),
+  controls: SessionControls.nullable().optional().describe('Active task/steering details requested through the controls resource only.'),
 });
 export type SessionMeta = z.infer<typeof SessionMeta>;
 
 // Resource names describe read dependencies, not cached native state. Omission
 // in a projection means "not requested", never an empty/default value.
-export const MetaResource = z.enum(['identity', 'control', 'queue', 'model', 'models', 'mode', 'todo', 'schedule']);
+export const MetaResource = z.enum(['identity', 'control', 'controls', 'queue', 'model', 'models', 'mode', 'todo', 'schedule']);
 export type MetaResource = z.infer<typeof MetaResource>;
 export const SessionResource = z.enum([...MetaResource.options, 'plan', 'skills', 'mcp', 'tasks', 'instructions', 'usage']);
 export type SessionResource = z.infer<typeof SessionResource>;
@@ -658,6 +699,11 @@ export const Intents = {
     body: z.object({ sessionId: z.string().min(1) }).strict(),
     result: z.object({ ok: z.literal(true), interrupted: z.boolean() }),
   },
+  'session/control': {
+    description: 'Apply one explicit operation to an already-loaded native handle. The controls resource supplies the handle token and native task/queue IDs. Supports scoped task cancellation/group clearing, queue removal/clearing/steering, request-bound decision cancellation and global Stop. Outcomes preserve native acceptance, no-ops, partial failures and uncertainty; acceptance is not proof that all work ended. Does not load a session, delete chat history, kill arbitrary processes or retry.',
+    body: z.object({ sessionId: z.string().min(1), token: z.string().min(1), action: SessionControlAction }).strict(),
+    result: SessionControlResult,
+  },
   setModel: {
     description: 'Submit a complete native model selection. Omitted effort/context options retain their native meaning; the backend never backfills previous or queued settings. Genuine user changes join the native FIFO. ok acknowledges a returned native result, not application: inspect result status, deferred, confirmation, persistenceError and warnings; missing or unknown status is not proof of application. No automatic retry or follow-up is sent.',
     body: z.object({
@@ -766,7 +812,7 @@ export const Intents = {
     result: z.object({ meta: SessionMeta.nullable() }),
   },
   'session/resources': {
-    description: 'Read only requested metadata resources, without loading a session. Control includes sampled native activity flags and typed task/queue/MCP counts, not task descriptions or queue text. activity:null is unavailable/invalidated, not idle; omitted activity means control was not requested. Other omitted fields were not requested, not cleared. loaded:false invalidates all previous native fields; meta:null means unknown session. Control display is not permission to delete, unload or restart; mutations independently confirm fresh safety.',
+    description: 'Read only requested metadata resources, without loading a session. Control includes sampled native activity flags and typed task/queue/MCP counts, not task descriptions or queue text. The separate controls resource adds active native task IDs/titles, unconsumed steering and the loaded-handle token for session/control; queue provides addressable queued items and canSteer. Null activity/controls is unavailable or invalidated, not idle; omission means not requested. loaded:false invalidates previous native fields; meta:null means unknown session. Display and tokens are not permission to delete, unload or restart; mutations independently confirm fresh safety.',
     body: z.object({ sessionId: z.string(), resources: z.array(MetaResource).min(1).max(MetaResource.options.length) }),
     result: z.object({ meta: SessionProjection.nullable() }),
   },

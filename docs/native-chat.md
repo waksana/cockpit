@@ -21,7 +21,8 @@ notifications.
 `{"sessionId":"synthetic-shell","resources":["control"]}` includes `meta.activity`.
 The same summary is included by `session/get`, `session/list`, `runtime/snapshot`
 and the global SSE snapshot/`session/added` projections. There is no separate
-`session/activity` intent or new resource/detail API.
+`session/activity` intent. Actionable task details use the optional `controls`
+resource described below rather than enlarging these summary reads.
 
 One existing control pass reads `metadata.isProcessing`, `metadata.activity`,
 `tasks.list`, `queue.pendingItems` and `mcp.list`. Requesting both `control` and
@@ -135,6 +136,56 @@ Content-Type: application/json
 ```json
 {"meta":null}
 ```
+
+## Native activity controls
+
+The classic control area consumes `session/resources` with `controls` only while
+its conversation is mounted. Sidebar summaries still consume `control`, not task
+descriptions. A combined `control` / `controls` / `queue` read reuses the native
+activity pass. The controls projection includes the current loaded-handle token,
+active native agent/shell IDs and titles, and only steering messages not yet
+folded into the turn. It never scans the loaded chat window for task identity.
+Queue batches retain their canonical queue item ID; `canSteer` is explicit,
+not inferred from arbitrary text or a busy aggregate.
+
+`POST /intent/session/control` takes `{sessionId, token, action}`. The token is
+the identity of the loaded native handle, not an authorization credential.
+Operations never implicitly resume a session. The native target is rechecked;
+unload/reload, an obsolete handle, an ended task or a replaced decision cannot
+silently redirect an action to different work.
+
+| Action | Scope |
+| --- | --- |
+| `stop-task` with `id` | Cancel that native task. Its transcript and output remain. |
+| `clear-tasks` with `kind` and `ids` | Cancel the captured IDs in that group. Remove tracking only where native terminal state allows it; never delete chat history. |
+| `clear-queue` | Clear native pending queued work, not messages already consumed into context. |
+| `remove` with `id` | Remove one canonical pending queue item. |
+| `steer` with `id` | Move an eligible queued message into the live main turn's steering lane, without resending it as another prompt. |
+| `cancel-decision` with `kind` and `requestId` | Resolve the identified native decision through its appropriate cancel/exit/interrupt path. Ask interruption preserves queued prompts and background work; the runtime controls subsequent queue execution. |
+| `stop-all` | Request cancellation of this session's current work and queue, including background tasks and compaction through public native APIs. It is not a process-wide kill or a runtime restart. |
+
+The result contains every attempted operation's native outcome, including partial
+failure and uncertainty. Acceptance is not proof that tasks have finished.
+Buttons do not optimistically hide rows: native invalidation and fresh resource
+reads determine what remains active. Confirmed errors stay visible even if their
+original row disappears; uncertain writes are never automatically retried.
+The legacy `cancel` endpoint keeps its existing queue-clear plus abort semantics;
+the new `stop-all` action does not silently redefine existing MCP tools.
+
+Ordinary control refreshes retain the previous appearance separately from current
+native facts and disable stale operations. Disconnect, handle replacement and
+unmounted readers cannot publish late results into another view. Read failure
+has an explicit retry, not an endless success-shaped spinner or empty list.
+
+Steering acceptance does not create a local user bubble. The native
+`user.message` with `delivery: "steering"` does that when the message is consumed;
+the fold preserves the current response association rather than inventing a new
+turn. In-flight steering is not counted again as a waiting queue row.
+Host prompt acceptance and control writes share a short per-session gate (only
+the send acknowledgement, not the model's running turn). Clearing pending
+steering retires its tracked acceptance receipts without deleting newer prompts.
+Global Stop binds its original main-turn identity before asynchronous preparation;
+a newer turn that starts during that preparation is not retargeted.
 
 ## `POST /intent/session/chat`
 
@@ -380,17 +431,30 @@ activity line. Terminal means shell, Wrench means a general tool, Bot means agen
 and CircleHelp means a real pending decision. Process/tool rows, agent cards and
 decision cards use those same semantic icons; execution-result icons remain
 separate. Concurrent facts use separate icons/counts, not an exclusive busy reason.
-The native processing icon means a turn or background continuation, never proven
-model generation. It and unknown/unclassified activity use one rotating fallback
-glyph, suppressed whenever a concrete activity or decision icon is present.
+The leading overall icon means session activity, never proven model generation.
+It keeps rotating alongside concrete shell, agent, queue or decision icons while
+work remains. The sidebar and input bar share the same activity projection and
+`SessionActivity` renderer; unknown/unclassified activity uses the same single
+overall glyph with explicit accessible wording, not an additional spinner.
 Ordinary reconciliation retains the last sampled appearance (including empty
 idle), labeled as a previous sample in accessible text, until a fresh response.
 This browser-only `activityDisplay` never replaces native `activity` or authorizes
 actions. Read failures display an error; disconnection remains explicit. Unload,
 removal and reconnect discard retained presentation.
 Unloaded rows retain their muted appearance without a redundant activity badge.
-An aggregate `running` value alone cannot produce a replying indicator.
-Activity adds no disclosure, detail area or task-management page. Existing input
+An aggregate `running` value can keep overall activity visible but cannot claim
+that the model is replying. The opt-in grouped controls move agent, terminal and
+queue icons into section headings (icon, name, count) while expanded. The question
+icon moves directly before the question, without a separate waiting heading.
+Collapsed controls return these icons to the bar. The overall indicator stays in
+place while active; confirmed idle hides the input bar. There is no disclosure
+triangle; `aria-expanded`, keyboard activation and focus treatment remain.
+Active task rows only expose an X to cancel. Group clear cancels that group's
+captured work, not history; confirmed stopped tasks leave the active list.
+Queue rows retain copy and immediate-send actions. Compaction remains in the
+status bar rather than creating a separate manual-compaction row.
+Actions are named icon buttons and retain visible error behavior.
+Existing input
 and transcript disclosures are unchanged. The independent next UI is not redesigned.
 Stop/interrupt acknowledgement produces no success banner or toast; pending state
 stays on the action button and failures remain visible. Remaining shell/agent facts

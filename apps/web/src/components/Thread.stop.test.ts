@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { createElement } from 'react';
+import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatSession } from '../net/types';
 import { Thread } from './Thread';
@@ -31,9 +31,10 @@ const session: ChatSession = {
   messages: [], materialized: true, historyStale: false, hasMore: false, loadingHistory: false,
 };
 
-function render(patch: Partial<ChatSession> = {}) {
+function render(patch: Partial<ChatSession> = {}, composerControls?: ReactNode) {
   const current = { ...session, ...patch };
   return renderToStaticMarkup(createElement(Thread, {
+    composerControls,
     session: { ...current, activity: 'activity' in patch ? patch.activity : activityFixture({
       processing: current.status === 'running', hasActiveWork: current.status === 'running',
       abortable: current.status === 'running',
@@ -51,9 +52,32 @@ test('Stop exposes queue-clearing semantics in visible text and its native acces
   assert.equal((html.match(/class="chat-typing-stop ck-button ck-danger"/g) ?? []).length, 1);
 });
 
+test('alternate controls sit above the native composer and replace only activity and queue presentation', () => {
+  const html = render({ queue: [{ id: 'q', text: 'Original queue item' }],
+    ask: { requestId: 'ask', question: 'Still a real question', choices: ['Continue'], allowFreeform: true } },
+  createElement('section', { 'aria-label': 'Alternate controls' }, 'Separate queue and activity'));
+  assert.ok(html.indexOf('class="chat-input-card"') < html.indexOf('Alternate controls'));
+  assert.ok(html.indexOf('Alternate controls') < html.indexOf('class="chat-composer"'));
+  assert.match(html, /Still a real question/);
+  assert.match(html, /Continue/);
+  assert.doesNotMatch(html, /aria-label="排队中的消息"/);
+  assert.match(html, /class="chat-execution-head" hidden=""/);
+});
+
 test('Stop stays concise when the authoritative queue is empty', () => {
   assert.match(render(), /<button type="button" class="chat-typing-stop ck-button ck-danger">[\s\S]*?停止<\/button>/);
   assert.doesNotMatch(render(), /停止并清空队列/);
+});
+
+test('missing native controls never exposes legacy queue actions without a handle token', () => {
+  const html = renderToStaticMarkup(createElement(Thread, {
+    session: { ...session, controls: null, controlsStale: true, queue: [{ id: 'queued', text: 'Pending' }] },
+    onControlAction: async () => {},
+    onRemoveQueued() { assert.fail('Must not use the legacy queue mutation'); },
+    onCancel() { assert.fail('Must not use the legacy cancellation'); },
+    onLoadMore() {},
+  }));
+  assert.doesNotMatch(html, /chat-queue-remove|chat-typing-stop|打断并处理队列/);
 });
 
 test('retained activity affects presentation only, never Stop or interrupt eligibility', () => {
@@ -67,7 +91,7 @@ test('retained activity affects presentation only, never Stop or interrupt eligi
 });
 
 test('execution indicators follow raw activity, not aggregate running or historical intent', () => {
-  assert.match(render(), /data-activity="processing"/);
+  assert.match(render(), /data-activity="overall"/);
   assert.match(render({ intent: 'Reading source' }), /chat-execution-progress">Reading source/);
   assert.match(render({ cancelling: true }), /chat-execution-progress">正在停止…/);
   const shell = render({ intent: 'Stale turn intent', activity: activityFixture({
@@ -75,7 +99,8 @@ test('execution indicators follow raw activity, not aggregate running or histori
   }) });
   assert.match(shell, /data-activity="shell"/);
   assert.match(shell, /当前不可中断/);
-  assert.doesNotMatch(shell, /data-activity="processing"|Stale turn intent|回复中/);
+  assert.match(shell, /data-activity="overall"/);
+  assert.doesNotMatch(shell, /Stale turn intent|回复中/);
   for (const status of ['idle', 'unloaded', 'error'] as const) {
     assert.doesNotMatch(render({ status, queue: [{ id: 'q', text: 'Waiting' }] }), /data-activity="processing"/);
   }
@@ -143,7 +168,7 @@ test('a pending question shares the card below its only status and action header
   assert.match(html, /Which option\?/);
   assert.doesNotMatch(region, /Which option\?|class="chat-ask/);
   assert.match(region, /data-activity="decision"/);
-  assert.doesNotMatch(region, /data-activity="processing"/);
+  assert.match(region, /data-activity="overall"/);
   assert.match(region, /class="chat-typing-stop ck-button ck-danger">[\s\S]*?停止/);
   assert.doesNotMatch(html, /输入内容将回答当前问题|chat-composer-hint/);
 });

@@ -324,6 +324,8 @@ button.activity-head {
   &[data-status='in_progress'] .activity-icon { color: var(--chat-accent-ink); }
 }
 .tool-state-icon { display: block; flex: none; }
+// An inline SVG leaves a line box whose rotated overflow changes scrollHeight.
+.tool-state-icon > svg { display: block; }
 .tool-state-icon[data-status='in_progress'] {
   animation: spinner-rotate 0.7s linear infinite;
   @media (prefers-reduced-motion: reduce) { animation-duration: 1.6s; }
@@ -486,10 +488,11 @@ button.activity-head {
   > * + * { margin-block-start: var(--chat-gap-region); }
 }
 .chat-input-card {
+  --chat-input-surface: color-mix(in srgb, var(--primary-text-color) 2%, var(--surface-color));
   display: flex; flex-direction: column;
   flex: 0 1 auto; min-height: 0; min-width: 0;
   border: 1px solid var(--border-color); border-radius: var(--host-radius-control); overflow: hidden;
-  background: color-mix(in srgb, var(--primary-text-color) 2%, var(--surface-color));
+  background: var(--chat-input-surface);
   // Native disclosure keeps the editor mounted; flex shares the available height with notices.
   &::details-content { display: flex; flex-direction: column; min-height: 0; }
   &[data-header] .chat-input-card-body { border-top: 1px solid var(--border-color); }
@@ -513,6 +516,53 @@ button.activity-head {
 }
 .chat-folded-draft {
   display: none; flex: none; font-size: var(--chat-text-meta); color: var(--secondary-text-color);
+}
+.chat-controls { display: contents; font-size: var(--chat-text-meta); }
+.chat-controls-header { position: sticky; top: 0; z-index: 2; background: var(--chat-input-surface); cursor: default; }
+.chat-controls-toggle.ck-button {
+  flex: 1; min-width: 0; justify-content: flex-start; gap: var(--chat-gap-control);
+  min-height: var(--chat-control-compact); padding: 0; border: 0; border-radius: 0;
+  font-size: var(--chat-text-meta); background: transparent;
+}
+.chat-controls-title {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--chat-gap-control);
+  min-height: var(--chat-control-compact); color: var(--secondary-text-color);
+}
+.chat-controls-actions { display: flex; align-items: center; gap: var(--chat-gap-control); }
+.chat-controls-heading { display: inline-flex; align-items: center; gap: var(--chat-gap-control); }
+.chat-controls .chat-controls-task { align-items: center; }
+.chat-controls-task-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.chat-control-entry + .chat-control-entry { border-top: 1px solid color-mix(in srgb, var(--border-color) 45%, transparent); }
+.chat-agent-detail { overflow-wrap: anywhere; }
+.chat-agent-detail h4 { margin-block: var(--chat-gap-control); font-size: var(--chat-text-label); }
+.chat-agent-metadata {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--chat-gap-meta) var(--chat-gap-control);
+  color: var(--secondary-text-color);
+  dd { margin: 0; }
+}
+.chat-controls-muted { color: var(--secondary-text-color); }
+.chat-control-action { display: flex; flex-direction: column; align-items: flex-start; }
+.chat-controls .chat-controls-actions { gap: var(--chat-gap-meta); }
+.chat-controls .chat-controls-header { --ck-control-size: var(--chat-control-compact); }
+.chat-control-action [role='alert'] { max-width: 240px; color: var(--chat-danger-ink); overflow-wrap: anywhere; }
+.chat-question-row { display: flex; align-items: flex-start; gap: var(--chat-gap-control); }
+.chat-question-row > .ck-icon { margin-block-start: var(--chat-gap-meta); }
+.chat-question-row > .chat-ask-q { flex: 1; min-width: 0; }
+.chat-decision-actions { flex: none; margin-inline-start: auto; }
+.chat-controls .chat-copy { align-self: flex-start; flex-direction: column; }
+.chat-controls .chat-copy-error { max-width: 12rem; }
+.chat-input-card[data-controls] {
+  .chat-input-card-body { display: block; overflow-y: auto; }
+  .chat-input-context { overflow: visible; }
+  .chat-composer, .chat-composer-body { display: contents; }
+  .chat-input { position: sticky; bottom: 0; z-index: 1; background: var(--chat-input-surface); }
+  &[data-controls-open='false'][data-decision] {
+    .chat-input-context, .chat-composer-context, .chat-input { display: none; }
+  }
+  &[data-editor-sized] .chat-input-message { min-height: var(--control-editor-height); }
+  &[data-editor-fixed] .chat-input-message {
+    field-sizing: fixed; height: var(--control-editor-height); max-height: var(--control-editor-height);
+  }
 }
 .chat-input-card:not([open]) .chat-folded-draft { display: inline; }
 .chat-composer {

@@ -4,6 +4,9 @@ export function metaToSession(meta: SessionMeta, previous?: ChatSession): ChatSe
   return {
     ...meta,
     activityDisplay: meta.loaded && !meta.activity ? previous?.activityDisplay : undefined,
+    controlsStale: meta.loaded && !!meta.controls ? previous?.controlsStale : undefined,
+    controlsDisplay: meta.loaded && !meta.controls ? previous?.controlsDisplay : undefined,
+    controlsError: meta.loaded ? previous?.controlsError : undefined,
     messages: previous?.messages ?? [],
     materialized: previous?.materialized ?? false,
     historyStale: previous?.historyStale ?? false,

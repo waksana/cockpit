@@ -339,7 +339,7 @@ test('the entire input card uses one default-open disclosure without an arrow or
   }));
   assert.equal((html.match(/<textarea/g) ?? []).length, 1);
   assert.match(html, /<details class="chat-input-card" open="" data-header="true" data-decision="true" data-question="true"><summary class="chat-execution-head"/);
-  assert.match(html, /aria-label="活动待同步，展开或收起输入卡片"/);
+  assert.match(html, /aria-label="总状态：活动待同步，展开或收起输入卡片"/);
   assert.match(html, /class="chat-pending-body chat-answer-question" role="group" aria-label="需要你的选择"/);
   assert.ok(html.indexOf('class="chat-queue"') < html.indexOf('class="chat-composer"'));
   assert.doesNotMatch(html, /class="chat-decisions"|class="chat-ask chat-pending/);

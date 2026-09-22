@@ -8,7 +8,7 @@ import { getSessionDraft } from '../lib/textDraft';
 import { getDraftSession } from '../lib/draftSelection';
 import type { NativeDraftRequest } from '../lib/draft';
 import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';
-import { useCockpit } from '../net/store';
+import { createCockpitStore, useCockpit } from '../net/store';
 import type { ChatSession } from '../net/types';
 import type { IntentResult, SessionProjection } from '@cockpit/protocol';
 import { MessageProcess, Thread } from './Thread';
@@ -27,6 +27,11 @@ import { useMenuDismiss } from '../lib/useMenuDismiss';
 import type { ActivateFrontend, ComposerContext, ComposerInputProps, ComposerProps, ComponentMiddleware, DraftSchemaHandle, DraftSchemaScope, MessageIdentity, MessageProps, ModuleFrontendContext } from '@cockpit/module-api';
 import { fixtureSession } from '../dev/chat-fixtures';
 import { activityFixture } from '../dev/activity-fixtures';
+import { ControlDesignLab } from '../dev/control-design-lab';
+import { installFullWebFixture } from '../dev/full-web-fixtures';
+import { ConnectedThread } from './ConnectedThread';
+import { SessionControlBar } from './SessionControlBar';
+import { workspaceSessionId } from '../dev/workspace-fixtures';
 import App from '../App';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
@@ -811,6 +816,135 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const row = rows.find(node => node.getBoundingClientRect().bottom > 1);
     assert.ok(row);
     return { id: row.dataset.messageId, offset: row.getBoundingClientRect().top };
+  };
+
+  await t.test('control preview separates steering acceptance, history, task cancellation and queue clearing', async () => {
+    await act(() => root.render(createElement(ControlDesignLab)));
+    await flush();
+    const click = async (label: string, scope = container) => {
+      const target = scope.querySelectorAll('button').find(node => node.textContent === label);
+      assert.ok(target, label);
+      const event = new Event('click', { bubbles: true });
+      Object.defineProperty(event, 'target', { value: target });
+      await act(() => container.dispatchEvent(event));
+      await flush();
+    };
+    assert.equal(container.querySelectorAll('.control-lab-queued').length, 2);
+    assert.equal(container.querySelectorAll('.subagent-head').length, 1);
+    container.querySelector('.control-design-options')!.open = true;
+    await click('立即发送');
+    assert.match(container.textContent, /等待纳入当前回合/);
+    assert.equal(container.querySelector('[data-message-id="event-preview-q1"]'), null);
+    await click('模拟纳入回合');
+    assert.ok(container.querySelector('[data-message-id="event-preview-q1"]'));
+    assert.match(container.querySelector('.control-lab-events')!.textContent, /"delivery": "steering"/);
+    await click('停止', container.querySelector('[data-task-id="preview-build"]')!);
+    assert.equal(container.querySelectorAll('.control-lab-task').length, 3, 'finished rows stay in place while the list is open');
+    assert.match(container.querySelector('[data-task-id="preview-build"]')!.textContent, /已停止/);
+    assert.equal(container.querySelectorAll('.control-lab-queued').length, 1);
+    await click('清空队列');
+    assert.equal(container.querySelector('.control-lab-queue'), null);
+    assert.ok(container.querySelector('[data-message-id="event-preview-q1"]'));
+    const draft = getSessionDraft('control-design-mixed');
+    await act(() => draft.edit('保留这份普通消息草稿'));
+    const editor = container.querySelector('.chat-input-message')!;
+    editor.focus();
+    await click('出现问卷（不换会话）');
+    assert.equal(container.querySelectorAll('.chat-input-message').length, 1);
+    assert.equal(container.querySelector('.chat-input-message'), editor, 'question uses the same physical textarea');
+    assert.equal(document.activeElement, editor);
+    assert.equal(editor.value, '', 'answer and prompt keep distinct drafts');
+    await click('继续');
+    assert.equal(container.querySelector('.chat-input-message'), editor);
+    assert.equal(editor.value, '保留这份普通消息草稿');
+    await click('停止', container.querySelector('.control-lab-header')!);
+    assert.equal(container.querySelector('.chat-input-message')?.getAttribute('placeholder'), '输入消息…');
+    assert.equal(container.querySelector('.send')?.getAttribute('aria-label'), '发送');
+    await act(() => root.render(null));
+  });
+
+  const checkCompleteControls = async () => {
+    const previous = useCockpit.getState();
+    const fixture = createCockpitStore();
+    installFullWebFixture(fixture);
+    const mirror = () => useCockpit.setState({ ...fixture.getState(), sessions: [...previous.sessions, ...fixture.getState().sessions] });
+    const unsubscribe = fixture.subscribe(mirror);
+    try {
+      mirror();
+      await act(() => root.render(createElement(ConnectedThread, { sessionId: workspaceSessionId })));
+      await flush();
+      const click = async (selector: string, scope = container) => {
+        const target = scope.querySelector(selector);
+        assert.ok(target, selector);
+        const event = new Event('click', { bubbles: true });
+        Object.defineProperty(event, 'target', { value: target });
+        await act(() => container.dispatchEvent(event));
+        await flush();
+      };
+      const indicators = container.querySelector('.chat-controls-header')!.querySelectorAll('.session-activity-item');
+      assert.equal(indicators[0].getAttribute('data-activity'), 'overall');
+      assert.equal(indicators.length, 1, 'task and queue summaries live in headings while expanded');
+      assert.ok(indicators[0].querySelector('.spinner'));
+      assert.ok(container.querySelector('[aria-label="Agent 列表"]'));
+      assert.ok(container.querySelector('[aria-label="Terminal 列表"]'));
+      const editor = container.querySelector('.chat-input-message')!;
+      await act(() => getSessionDraft(workspaceSessionId).edit('普通消息草稿'));
+      editor.focus();
+      await click('.chat-controls-toggle');
+      assert.equal(container.querySelector('.chat-controls-header')!.querySelectorAll('.session-activity-item').length, 4);
+      assert.equal(container.querySelector('.chat-controls-list')?.getAttribute('hidden'), '');
+      assert.equal(container.querySelector('.chat-input-message'), editor, 'normal input never folds with activities');
+      await act(() => fixture.setState(state => ({ sessions: state.sessions.map(session => session.sessionId === workspaceSessionId
+        ? { ...session, ask: { requestId: 'fresh-question', question: '继续吗？', choices: ['继续'], allowFreeform: true } } : session) })));
+      await flush();
+      assert.equal(container.querySelector('.chat-controls-toggle')?.getAttribute('aria-expanded'), 'true');
+      assert.equal(container.querySelector('.chat-input-message'), editor);
+      assert.equal(editor.value, '');
+      assert.equal(document.activeElement, editor);
+      assert.ok(container.querySelector('[data-activity="overall"]')?.querySelector('.spinner'));
+      assert.ok(container.querySelector('[data-activity="decision"]'));
+      assert.equal(container.querySelector('.chat-controls-header')?.querySelector('[data-activity="decision"]'), null);
+      assert.equal(container.querySelector('.chat-controls-decisions'), null);
+      assert.equal(container.querySelector('.chat-question-row')?.firstChild?.getAttribute('data-icon'), 'decision');
+      assert.ok(container.querySelector('[aria-label="取消问题并中断当前回合"]'));
+      await click('.chat-ask-choice');
+      assert.equal(container.querySelector('.chat-input-message'), editor);
+      assert.equal(editor.value, '普通消息草稿');
+      if (container.querySelector('.chat-controls-toggle')?.getAttribute('aria-expanded') !== 'true') await click('.chat-controls-toggle');
+      assert.equal(container.querySelector('[aria-label="查看 Agent 详情：独立代码审查"]'), null);
+      await click('[aria-label="取消任务：构建项目"]', container.querySelector('[data-task-id="preview-build"]')!);
+      assert.equal(container.querySelectorAll('.chat-controls-task').length, 2);
+      assert.equal(container.querySelector('[data-task-id="preview-build"]'), null);
+      await click('[aria-label="清空 Agent（取消该组任务）"]');
+      assert.equal(container.querySelector('[aria-label="Agent 列表"]'), null);
+      await click('[aria-label="清空 Terminal（取消该组任务）"]');
+      assert.equal(container.querySelector('[aria-label="Terminal 列表"]'), null);
+      await click('[aria-label="清空队列"]');
+      await act(() => fixture.setState(state => ({ sessions: state.sessions.map(session => session.sessionId === workspaceSessionId
+        ? { ...session, ask: { requestId: 'cancel-question', question: '取消这个问题？', allowFreeform: true } } : session) })));
+      await click('[aria-label="取消问题并中断当前回合"]');
+      assert.equal(container.querySelector('.chat-controls-header'), null, 'confirmed idle has no status bar');
+      assert.equal(container.querySelector('.chat-input-message'), editor);
+      assert.equal(editor.value, '普通消息草稿');
+      let rejectOld!: (error: Error) => void;
+      const controls = { token: 'old-handle', sampledAt: 1, main: false, compaction: null,
+        tasks: [{ id: 'same-task-id', kind: 'shell' as const, title: 'Native task', status: 'running' as const }], steering: [] };
+      const renderHandle = (token: string) => root.render(createElement(SessionControlBar, {
+        session: { ...session('handle-owned-actions'), status: 'running', controls: { ...controls, token } },
+        controls, connected: true, expanded: true, disabled: false, onToggle() {}, controlRef() {},
+        onAction: async () => new Promise<void>((_resolve, reject) => { rejectOld = reject; }),
+      }));
+      await act(() => renderHandle('old-handle'));
+      await click('[aria-label="取消任务：Native task"]');
+      await act(() => renderHandle('replacement-handle'));
+      assert.ok(container.querySelector('[aria-label="取消任务：Native task"]'));
+      await act(() => rejectOld(new Error('Old handle operation failure')));
+      assert.doesNotMatch(container.textContent, /Old handle operation failure/);
+    } finally {
+      await act(() => root.render(null));
+      unsubscribe();
+      useCockpit.setState(previous, true);
+    }
   };
 
   await t.test('first message commit reaches latest without a RAF, including empty async mounts and cached switches', async () => {
@@ -2329,4 +2463,5 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       runtime.stop();
     }
   });
+  await t.test('complete App thread applies grouped controls, retains the leading spinner and reuses the answer editor', checkCompleteControls);
 });

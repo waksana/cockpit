@@ -59,6 +59,7 @@ test('missing tool metadata remains explicit and a name-equivalent title is not 
 test('tool headers reserve separate grid cells for identity, content and outcome', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.tool-head \{[^}]*grid-template-columns: 1rem minmax\(0, 1fr\) 1rem;/);
+  assert.match(css, /\.tool-state-icon > svg \{[^}]*display: block;/);
   for (const [selector, column] of [['activity-icon', 1], ['tool-heading-content', 2], ['tool-state-icon', 3]]) {
     assert.match(css, new RegExp(`\\.tool-head > \\.${selector} \\{[^}]*grid-area: 1\\s*/\\s*${column};`));
   }
