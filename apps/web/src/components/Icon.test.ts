@@ -3,6 +3,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { FileTerminal, SquareTerminal } from 'lucide-react';
 import { compile } from 'sass';
 import { Icon, type IconName } from './Icon';
 
@@ -23,9 +24,21 @@ test('every semantic icon is a decorative local Lucide SVG with the same complet
 });
 
 test('activity semantics use one consistent glyph, distinct from outcome and unknown icons', () => {
-  for (const [name, glyph] of [['shell', 'terminal'], ['tool', 'wrench'], ['agent', 'bot'],
+  for (const [name, glyph] of [['shell', 'square-terminal'], ['tool', 'wrench'], ['agent', 'bot'],
     ['decision', 'circle-help'], ['unknown', 'circle-dashed'], ['compress', 'file-archive']] as const) {
     assert.match(renderToStaticMarkup(createElement(Icon, { name })), new RegExp(`lucide-${glyph}`));
+  }
+});
+
+test('shell uses the complete SquareTerminal glyph while shell output retains FileTerminal', () => {
+  for (const [name, Glyph] of [['shell', SquareTerminal], ['shell_output', FileTerminal]] as const) {
+    const html = renderToStaticMarkup(createElement(Icon, {
+      name, size: 16, className: 'activity-icon', style: { color: 'var(--ck-text-secondary)' },
+    }));
+    const glyph = renderToStaticMarkup(createElement(Glyph, {
+      width: '100%', height: '100%', 'aria-hidden': true, focusable: 'false',
+    }));
+    assert.equal(html, `<span class="ck-icon activity-icon" data-icon="${name}" aria-hidden="true" style="width:16px;height:16px;color:var(--ck-text-secondary)">${glyph}</span>`);
   }
 });
 
