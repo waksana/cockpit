@@ -6,8 +6,8 @@ import { MessageBody } from './MessageBody';
 import { MessageContent } from './MessageContent';
 import { hasMessageContent } from '../lib/messageContent';
 import { Composer, ComposerNotices } from './Composer';
-import { SessionControlBar } from './SessionControlBar';
-import type { ReadAgentTaskDetails, SessionControlAction } from '../lib/sessionControls';
+import { SessionControlBar, SessionControlActionButton } from './SessionControlBar';
+import type { SessionControlAction } from '../lib/sessionControls';
 import { useControlComposer } from '../lib/useControlComposer';
 import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
@@ -328,14 +328,13 @@ interface ThreadProps {
   composerControls?: ReactNode;
   promptBusy?: boolean;
   onControlAction?: (action: SessionControlAction) => Promise<void>;
-  readAgentDetails?: ReadAgentTaskDetails;
   // Read-only transcript: renders the paginated
   // message list but hides the composer and every interactive banner, so the
   // conversation can be browsed but not driven.
   readOnly?: boolean;
 }
 
-export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, composerControls, promptBusy = session.controls?.main ?? session.status === 'running', onControlAction, readAgentDetails, readOnly = false }: ThreadProps) {
+export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, composerControls, promptBusy = session.controls?.main ?? session.status === 'running', onControlAction, readOnly = false }: ThreadProps) {
   const controls = !readOnly && onControlAction ? session.controls : undefined;
   const connected = useCockpit((s) => s.connState === 'open');
   const snapshotReady = useCockpit((s) => s.snapshotReady);
@@ -479,6 +478,12 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
     if (inputCardRef.current) inputCardRef.current.open = true;
   }, [session.sessionId, ask?.requestId, planRequest?.requestId, session.elicitation?.requestId, hasInputHeader]);
   const executionControlRef = useRemovedControlFocus(session.sessionId, inputCardRef);
+  const cancelDecision = (kind: 'ask' | 'plan' | 'elicitation', requestId: string, pending: boolean) =>
+    controls && onControlAction ? <SessionControlActionButton
+      identity={JSON.stringify([session.sessionId, 'cancel-decision', kind, requestId])}
+      label={kind === 'ask' ? '取消问题并中断当前回合' : kind === 'plan' ? '取消计划确认（仅退出计划）' : '取消工具确认'}
+      icon="close" waiting="取消中…" disabled={!authoritative || pending || !session.loaded || !!session.closing || !!session.loading}
+      controlRef={executionControlRef} onAction={() => onControlAction({ type: 'cancel-decision', kind, requestId })} /> : undefined;
   const operation = draft.reference.purpose.kind;
   const runAction = useCallback((target: SessionDraft, send: () => Promise<boolean> | undefined): Promise<boolean> => (
     target.runAction(send, () => canAct.current && drafts.isLive(target))
@@ -595,8 +600,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
             {controls && onControlAction && <SessionControlBar session={session} controls={controls} connected={authoritative}
               expanded={controlsOpen} disabled={!authoritative || !session.loaded || !!session.loading || !!session.closing || activityRefreshing}
               controlRef={executionControlRef} onAction={onControlAction}
-              onToggle={() => { setControlsDisclosure({ decision: decisionKey, open: !controlsOpen }); }}
-              readAgentDetails={readAgentDetails} />}
+              onToggle={() => { setControlsDisclosure({ decision: decisionKey, open: !controlsOpen }); }} />}
             {!readOnly && composerControls}
             <div className="chat-input-context">
               {!readOnly && !controls && composerControls === undefined && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
@@ -616,11 +620,13 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
               {hasPendingDecision && <div className="chat-decisions">
                 {planRequest && planDraft && <PlanCard request={planRequest}
                   pending={planDraft.getSnapshot().pending}
+                  actions={cancelDecision('plan', planRequest.requestId, planDraft.getSnapshot().pending)}
                   disabled={!authoritative || !onRespondPlan}
                   onSelect={action => { void runAction(planDraft,
                     () => onRespondPlan?.(planRequest.requestId, action)); }} />}
                 {session.elicitation && elicitationDraft && <ElicitationCard request={session.elicitation}
                   pending={elicitationDraft.getSnapshot().pending}
+                  actions={cancelDecision('elicitation', session.elicitation.requestId, elicitationDraft.getSnapshot().pending)}
                   disabled={!authoritative || !onRespondElicitation}
                   onSelect={action => { void runAction(elicitationDraft,
                     () => onRespondElicitation?.(session.elicitation!.requestId, action)); }} />}
@@ -638,7 +644,8 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                 draft={draft}
                 editorRef={executionControlRef}
                 statusInHeader={hasInputHeader}
-                ask={ask ? { request: ask, disabled: !authoritative || !onRespondAsk, onChoice: choice => { void handleChoice(choice); } } : undefined}
+                ask={ask ? { request: ask, disabled: !authoritative || !onRespondAsk, onChoice: choice => { void handleChoice(choice); },
+                  actions: cancelDecision('ask', ask.requestId, actionPending) } : undefined}
                 onSend={handleSend}
                 sendBlocked={!connected || !snapshotReady || ask?.allowFreeform === false || operation === 'elicitation' || !onSend}
               />

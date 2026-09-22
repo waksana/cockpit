@@ -32,7 +32,10 @@ export type ReadAgentTaskDetails = (sessionId: string, taskId: string, signal: A
 
 export type SessionControlAction =
   | { type: 'stop-all' | 'clear-queue' | 'cancel-compaction' | 'prune-tasks' }
-  | { type: 'stop-task' | 'remove-task' | 'remove' | 'steer'; id: string };
+  | { type: 'stop-task' | 'remove-task' | 'remove' | 'steer'; id: string }
+  | { type: 'clear-tasks'; kind: 'agent' | 'shell'; ids: string[] }
+  | { type: 'cancel-decision'; kind: 'ask' | 'plan' | 'elicitation'; requestId: string }
+  | { type: 'clear-decisions'; requests: { kind: 'ask' | 'plan' | 'elicitation'; requestId: string }[] };
 
 export function controlIndicators(session: ChatSession, controls: SessionControls, connected: boolean): ActivityIndicator[] {
   return sessionActivityIndicators({ ...session, compacting: !!controls.compaction,

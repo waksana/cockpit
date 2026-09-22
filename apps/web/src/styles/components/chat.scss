@@ -545,6 +545,9 @@ button.activity-head {
 .chat-controls .chat-controls-actions { gap: var(--chat-gap-meta); }
 .chat-controls .chat-controls-header { --ck-control-size: var(--chat-control-compact); }
 .chat-control-action [role='alert'] { max-width: 240px; color: var(--chat-danger-ink); overflow-wrap: anywhere; }
+.chat-question-row { display: flex; align-items: flex-start; gap: var(--chat-gap-control); }
+.chat-question-row > .chat-ask-q { flex: 1; min-width: 0; }
+.chat-decision-actions { flex: none; margin-inline-start: auto; }
 .chat-controls .chat-copy { align-self: flex-start; flex-direction: column; }
 .chat-controls .chat-copy-error { max-width: 12rem; }
 .chat-input-card[data-controls] {

@@ -31,7 +31,6 @@ import { ControlDesignLab } from '../dev/control-design-lab';
 import { installFullWebFixture } from '../dev/full-web-fixtures';
 import { ConnectedThread } from './ConnectedThread';
 import { workspaceSessionId } from '../dev/workspace-fixtures';
-import type { AgentTaskDetails } from '../lib/sessionControls';
 import App from '../App';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
@@ -903,45 +902,27 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(document.activeElement, editor);
       assert.ok(container.querySelector('[data-activity="overall"]')?.querySelector('.spinner'));
       assert.ok(container.querySelector('[data-activity="decision"]'));
+      assert.equal(container.querySelector('.chat-controls-header')?.querySelector('[data-activity="decision"]'), null);
+      assert.ok(container.querySelector('[aria-label="清空待回答并中断当前回合"]'));
       await click('.chat-ask-choice');
       assert.equal(container.querySelector('.chat-input-message'), editor);
       assert.equal(editor.value, '普通消息草稿');
       if (container.querySelector('.chat-controls-toggle')?.getAttribute('aria-expanded') !== 'true') await click('.chat-controls-toggle');
-      const taskDetail = await fixture.getState().readAgentTaskDetails!(workspaceSessionId, 'preview-agent', new AbortController().signal);
-      assert.ok(taskDetail);
-      const reads: { sessionId: string; taskId: string; signal: AbortSignal; resolve: (detail: AgentTaskDetails | null) => void }[] = [];
-      await act(() => fixture.setState(state => ({
-        sessions: state.sessions.map(session => session.sessionId === workspaceSessionId
-          ? { ...session, messages: session.messages.filter(message => message.subtype !== 'subagent') } : session),
-        readAgentTaskDetails: (sessionId, taskId, signal) => new Promise(resolve => { reads.push({ sessionId, taskId, signal, resolve }); }),
-      })));
-      const parentMessages = fixture.getState().sessions.find(session => session.sessionId === workspaceSessionId)!.messages;
-      assert.equal(container.querySelector('.subagent-head'), null);
-      await click('[aria-label="查看 Agent 详情：独立代码审查"]');
-      assert.equal(reads.length, 1);
-      assert.equal(reads[0].sessionId, workspaceSessionId);
-      assert.equal(reads[0].taskId, 'preview-agent');
-      assert.match(container.querySelector('.chat-agent-detail')!.textContent, /正在读取/);
-      await click('[aria-label="收起 Agent 详情：独立代码审查"]');
-      assert.equal(reads[0].signal.aborted, true, 'closing a task detail releases its request');
-      await act(() => reads[0].resolve({ ...taskDetail, latestResponse: 'Retired response must not appear' }));
-      assert.equal(container.querySelector('.chat-agent-detail'), null);
-      await click('[aria-label="查看 Agent 详情：独立代码审查"]');
-      await act(() => reads[1].resolve(taskDetail));
-      assert.match(container.querySelector('.chat-agent-detail')!.textContent, /任务 ID|近期进度/);
-      assert.doesNotMatch(container.textContent, /Retired response must not appear/);
-      assert.equal(fixture.getState().sessions.find(session => session.sessionId === workspaceSessionId)!.messages, parentMessages);
-      await click('[aria-label="刷新 Agent 详情：独立代码审查"]');
-      await act(() => reads[2].resolve({ ...taskDetail, taskId: 'other-agent' }));
-      assert.match(container.querySelector('.chat-agent-detail')!.textContent, /返回了不同的会话或任务/);
-      await click('[aria-label="收起 Agent 详情：独立代码审查"]');
-      await click('[aria-label="停止任务：构建项目"]', container.querySelector('[data-task-id="preview-build"]')!);
-      assert.equal(container.querySelectorAll('.chat-controls-task').length, 3);
-      assert.match(container.querySelector('[data-task-id="preview-build"]')!.textContent, /已停止/);
-      await click('.chat-controls-toggle');
+      assert.equal(container.querySelector('[aria-label="查看 Agent 详情：独立代码审查"]'), null);
+      await click('[aria-label="取消任务：构建项目"]', container.querySelector('[data-task-id="preview-build"]')!);
+      assert.equal(container.querySelectorAll('.chat-controls-task').length, 2);
       assert.equal(container.querySelector('[data-task-id="preview-build"]'), null);
-      await click('button', container.querySelector('.chat-controls-header')!.querySelector('.chat-control-action')!);
-      assert.equal(container.querySelector('[data-activity="overall"]')?.querySelector('.spinner'), null);
+      await click('[aria-label="清空 Agent（取消该组任务）"]');
+      assert.equal(container.querySelector('[aria-label="Agent 列表"]'), null);
+      await click('[aria-label="清空 Terminal（取消该组任务）"]');
+      assert.equal(container.querySelector('[aria-label="Terminal 列表"]'), null);
+      await click('[aria-label="清空队列"]');
+      await act(() => fixture.setState(state => ({ sessions: state.sessions.map(session => session.sessionId === workspaceSessionId
+        ? { ...session, ask: { requestId: 'cancel-question', question: '取消这个问题？', allowFreeform: true } } : session) })));
+      await click('[aria-label="取消问题并中断当前回合"]');
+      assert.equal(container.querySelector('.chat-controls-header'), null, 'confirmed idle has no status bar');
+      assert.equal(container.querySelector('.chat-input-message'), editor);
+      assert.equal(editor.value, '普通消息草稿');
     } finally {
       await act(() => root.render(null));
       unsubscribe();

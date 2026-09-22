@@ -11,7 +11,6 @@ export const ConnectedThread = memo(function ConnectedThread({ sessionId }: { se
     respondElicitation: s.respondElicitation,
     removeQueued: s.removeQueued, cancel: s.cancel, interrupt: s.interrupt, loadMore: s.loadMore, retryHistory: s.retryHistory,
     sessionControlAction: s.sessionControlAction,
-    readAgentDetails: s.readAgentTaskDetails,
   })));
   const callbacks = useMemo<Omit<ComponentProps<typeof Thread>, 'session'>>(() => ({
     onSend: request => {
@@ -27,7 +26,6 @@ export const ConnectedThread = memo(function ConnectedThread({ sessionId }: { se
     onLoadMore: () => actions.loadMore(sessionId),
     onRetryHistory: () => actions.retryHistory(sessionId),
     onControlAction: actions.sessionControlAction ? action => actions.sessionControlAction!(sessionId, action) : undefined,
-    readAgentDetails: actions.readAgentDetails,
   }), [actions, sessionId]);
 
   return active && session ? <Thread key={sessionId} session={session} {...callbacks} /> : null;

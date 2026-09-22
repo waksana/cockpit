@@ -274,7 +274,7 @@ renders `SessionControlBar` when the fixture supplies browser-only `controls` an
 `sessionControlAction`. Only this input dock changes; the full App remains the
 same. The leading indicator is an independent overall state: a spinner coexists
 with question, agent, terminal, queue and compaction icons whenever activity
-remains. Idle, offline and errors retain distinct overall indicators. Browser storage
+remains. Confirmed idle hides the input status bar; offline and errors stay explicit. Browser storage
 and application transports remain isolated before imports. Use
 `/chat-lab.html?scene=full-web` for this scene in the development Lab;
 `case=tool-loading` selects the last-tool reproduction in either entry.
@@ -302,22 +302,23 @@ changes. This alternate composition is opt-in; the production composer stays unc
 Full-Web steering first shows acceptance, then a 700ms synthetic runtime event
 places the same message in history; Stop/clear/disposal fence delayed events.
 The backend has no new mutation API and never receives these fixture actions.
-Agent "view" is a task-scoped read, keyed by session ID and task ID. It opens
-independent details (task metadata, recent progress, latest response/result)
-inside the activity list, not a jump to a loaded transcript card. Its reader
-does not scan, page or mutate the parent chat window. Only an expanded entry
-owns a read; collapse/removal/session changes release it, and stale or mismatched
-responses cannot populate another task. Native task invalidation or a changed
-task status refreshes the expanded view; there is no polling. Unavailable, empty
-and failed reads remain distinct. The synthetic `case=agent-unloaded` session
-retains a running agent while omitting its startup card from the chat window.
-The intended native source is task metadata/progress, not an assertion that this
-preview already exposes a new backend task-detail endpoint or full agent history.
+The activity bar now contains active work only. Confirmed stopped tasks disappear
+immediately, without deleting their recorded output. Agent/terminal rows only
+have a cancel X; only queue rows retain copy and immediate-send actions. The bar
+does not read or navigate agent history. `case=agent-unloaded` still demonstrates
+that task listing/cancellation do not require a startup card in the chat window.
+Every group header has a trash action. Agent/terminal clear cancels the captured
+task IDs in that group and removes their list records, preserving peer groups and
+history. Pending-question clear is request-bound and interrupts the current main
+turn without cancelling unrelated background work. Cancelling ask stops its main
+turn; plan uses exit-only semantics; elicitation uses cancellation. These remain
+synthetic scenarios, not additional native endpoints.
 The sidebar uses the same shared projection and icon renderer as the input bar.
 Expanded controls keep the overall icon in the bar and relocate agent/terminal/
-queue icons with their counts into section headings; collapsed controls reunite
-them without a chevron. Row actions use accessible icon buttons, including the
-existing CopyButton's icon variant. Sticky surfaces use the input card's existing
+queue and decision icons into section headings ordered icon, name, count;
+collapsed controls reunite them without a chevron. Compaction stays in the bar,
+not a separate manual-compaction row. Row actions use accessible icon buttons,
+including the existing CopyButton's icon variant for queued messages. Sticky surfaces use the input card's existing
 mixed background instead of a separate preview fill.
 
 Use `?scene=control-design&case=tool-loading` in Chat Lab, or `?case=tool-loading`

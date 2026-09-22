@@ -126,3 +126,38 @@ test('new prompts queue during a main turn and start one when only background ta
   assert.equal(background.tasks.length, 3);
   assert.equal(background.main, true);
 });
+
+test('clearing one task group cancels the addressed work and keeps peers, queue and transcript', () => {
+  const initial = controlDesignState('mixed');
+  const shellIds = initial.tasks.filter(task => task.kind === 'shell').map(task => task.id);
+  const next = applyControlAction(initial, { type: 'clear-tasks', kind: 'shell', ids: shellIds });
+  assert.equal(next.tasks.length, 1);
+  assert.equal(next.tasks[0].kind, 'agent');
+  assert.equal(next.tasks[0].status, 'running');
+  assert.strictEqual(next.queue, initial.queue);
+  assert.equal(next.main, initial.main);
+  assert.deepEqual(next.session.messages, initial.session.messages, 'shell output remains in history');
+  assert.throws(() => applyControlAction(initial, { type: 'clear-tasks', kind: 'shell', ids: ['preview-agent'] }), /任务列表已变化/);
+  assert.throws(() => applyControlAction(next, { type: 'clear-tasks', kind: 'shell', ids: shellIds }), /任务列表已变化/);
+  const all = applyControlAction(next, { type: 'clear-tasks', kind: 'agent', ids: ['preview-agent'] });
+  assert.equal(all.tasks.length, 0);
+  assert.equal(all.session.messages.find(message => message.subagent)?.subagent?.status, 'cancelled');
+});
+
+test('question cancellation is request-bound, stops its main turn, and preserves background work and drafts data', () => {
+  const initial = controlDesignState('ask');
+  const requestId = initial.session.ask!.requestId;
+  const next = applyControlAction(initial, { type: 'cancel-decision', kind: 'ask', requestId });
+  assert.equal(next.session.ask, null);
+  assert.equal(next.main, false);
+  assert.strictEqual(next.tasks, initial.tasks);
+  assert.strictEqual(next.queue, initial.queue);
+  assert.strictEqual(next.session.messages, initial.session.messages);
+  assert.throws(() => applyControlAction(next, { type: 'cancel-decision', kind: 'ask', requestId }), /原问题已结束/);
+  assert.throws(() => applyControlAction(initial, { type: 'clear-decisions', requests: [{ kind: 'ask', requestId: 'old' }] }), /已变化/);
+  assert.equal(applyControlAction(initial, { type: 'clear-decisions', requests: [{ kind: 'ask', requestId }] }).main, false);
+  const plan = controlDesignState('plan');
+  assert.equal(applyControlAction(plan, { type: 'cancel-decision', kind: 'plan', requestId: plan.session.planRequest!.requestId }).session.planRequest, null);
+  const tool = controlDesignState('elicitation');
+  assert.equal(applyControlAction(tool, { type: 'cancel-decision', kind: 'elicitation', requestId: tool.session.elicitation!.requestId }).session.elicitation, null);
+});

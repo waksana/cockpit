@@ -392,11 +392,16 @@ actions. Read failures display an error; disconnection remains explicit. Unload,
 removal and reconnect discard retained presentation.
 Unloaded rows retain their muted appearance without a redundant activity badge.
 An aggregate `running` value can keep overall activity visible but cannot claim
-that the model is replying. The opt-in grouped controls move agent, terminal and
-queue icons/counts into their section headings while expanded and back into the
-bar when collapsed. The overall indicator stays in place. There is no disclosure
+that the model is replying. The opt-in grouped controls move agent, terminal,
+queue and pending-decision icons into section headings (icon, name, count) while
+expanded and back into the bar when collapsed. The overall indicator stays in
+place while active; confirmed idle hides the input bar. There is no disclosure
 triangle; `aria-expanded`, keyboard activation and focus treatment remain.
-Actions are named icon buttons and retain the existing copy/error behavior.
+Active task rows only expose an X to cancel. Group clear cancels that group's
+captured work, not history; confirmed stopped tasks leave the active list.
+Queue rows retain copy and immediate-send actions. Compaction remains in the
+status bar rather than creating a separate manual-compaction row.
+Actions are named icon buttons and retain visible error behavior.
 Existing input
 and transcript disclosures are unchanged. The independent next UI is not redesigned.
 Stop/interrupt acknowledgement produces no success banner or toast; pending state

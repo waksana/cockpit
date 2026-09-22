@@ -5,15 +5,15 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { compile } from 'sass';
 import { SessionControlBar } from './SessionControlBar';
 import { CopyButton } from './CopyButton';
-import { controlDesignState, controlSession } from '../dev/control-design-state';
+import { applyControlAction, controlDesignState, controlSession, type ControlScene } from '../dev/control-design-state';
 import { sessionActivityIndicators } from '../lib/sessionActivity';
 import { controlIndicators } from '../lib/sessionControls';
 
-function render(expanded: boolean) {
-  const state = controlDesignState('mixed');
+function render(expanded: boolean, scene: ControlScene = 'mixed') {
+  const state = controlDesignState(scene);
   return renderToStaticMarkup(createElement(SessionControlBar, {
     session: controlSession(state), controls: state, connected: true, expanded, disabled: false,
-    onToggle() {}, onAction: async () => {}, readAgentDetails: async () => null, controlRef() {},
+    onToggle() {}, onAction: async () => {}, controlRef() {},
   }));
 }
 
@@ -37,14 +37,17 @@ test('expansion relocates activity icons and counts from status to group heading
   assert.match(closed, /aria-expanded="false"/);
 });
 
-test('all actions are named icon buttons, including queue and task copying', () => {
+test('tasks only expose cancellation, group headers clear, and queue retains copy and send', () => {
   const html = render(true);
   assert.match(html, /aria-label="复制排队消息：先不要提交"/);
-  assert.match(html, /aria-label="复制任务名称：构建项目"/);
+  assert.doesNotMatch(html, /复制任务名称|查看 Agent 详情|data-icon="view"/);
   assert.match(html, /aria-label="立即发送：先不要提交"/);
   assert.match(html, /aria-label="清空队列"/);
-  assert.match(html, /aria-label="停止任务：构建项目"/);
-  assert.match(html, /aria-label="查看 Agent 详情：独立代码审查"/);
+  assert.match(html, /aria-label="取消任务：构建项目"/);
+  assert.match(html, /aria-label="清空 Agent（取消该组任务）"/);
+  assert.match(html, /aria-label="清空 Terminal（取消该组任务）"/);
+  const cancel = html.match(/aria-label="取消任务：构建项目"[\s\S]*?<\/button>/)?.[0] ?? '';
+  assert.match(cancel, /data-icon="close"/);
   assert.doesNotMatch(html, />停止<\/button>|>移除<\/button>|>立即发送<\/button>|chat-copy-label/);
   const copy = renderToStaticMarkup(createElement(CopyButton, { text: 'Exact queued text', label: '复制排队消息', variant: 'icon' }));
   assert.match(copy, /class="chat-copy-icon ck-icon-button"/);
@@ -52,14 +55,33 @@ test('all actions are named icon buttons, including queue and task copying', () 
   assert.match(copy, /role="status"/);
 });
 
-test('agent detail availability is independent of loaded chat messages', () => {
-  const state = controlDesignState('mixed');
+test('stopped tasks vanish immediately without requiring collapse and no idle bar is rendered', () => {
+  const state = applyControlAction(controlDesignState('mixed'), { type: 'stop-task', id: 'preview-agent' });
   const html = renderToStaticMarkup(createElement(SessionControlBar, {
     session: { ...controlSession(state), messages: [] }, controls: state, connected: true, expanded: true, disabled: false,
-    onToggle() {}, onAction: async () => {}, readAgentDetails: async () => null, controlRef() {},
+    onToggle() {}, onAction: async () => {}, controlRef() {},
   }));
-  assert.match(html, /aria-label="查看 Agent 详情：独立代码审查"/);
-  assert.doesNotMatch(html.match(/<button[^>]*aria-label="查看 Agent 详情：独立代码审查"[^>]*>/)?.[0] ?? '', /disabled/);
+  assert.doesNotMatch(html, /data-task-id="preview-agent"|aria-label="Agent 列表"/);
+  assert.equal(render(true, 'idle'), '');
+  assert.equal(render(false, 'idle'), '');
+});
+
+test('headings use icon then name then count, and the question moves into its own group', () => {
+  const html = render(true, 'ask');
+  const top = html.slice(0, html.indexOf('class="chat-controls-list"'));
+  assert.doesNotMatch(top, /data-activity="decision"/);
+  assert.match(render(false, 'ask').slice(0, render(false, 'ask').indexOf('class="chat-controls-list"')), /data-activity="decision"/);
+  const headers: string[] = html.match(/<header[^>]*>[\s\S]*?<\/header>/g) ?? [];
+  for (const [icon, label, count] of [['agent', 'Agent', '1'], ['shell', 'Terminal', '2'], ['queue', '队列', '2'], ['decision', '待回答', '1']]) {
+    const header = headers.find(value => value.includes(`data-icon="${icon}"`));
+    assert.ok(header, label);
+    assert.ok(header.indexOf(`data-icon="${icon}"`) < header.indexOf(`>${label}<`));
+    assert.ok(header.indexOf(`>${label}<`) < header.indexOf(`>${count}<`));
+    assert.match(header, /data-icon="delete"/);
+  }
+  const compact = render(true, 'manual');
+  assert.match(compact.slice(0, compact.indexOf('class="chat-controls-list"')), /data-icon="compress"/);
+  assert.doesNotMatch(compact, /手动压缩上下文|chat-queue-item/);
 });
 
 test('sidebar and control bar derive their busy indicators from the same native activity projection', () => {

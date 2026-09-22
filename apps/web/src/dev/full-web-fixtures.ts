@@ -31,7 +31,7 @@ export function installFullWebFixture(store: ReturnType<typeof createCockpitStor
   };
   const project = (model: ControlDesignState): ChatSession => model.session.loaded
     ? { ...controlSession(model), controls: {
-      main: model.main, compaction: model.compaction, tasks: model.tasks, steering: model.steering,
+      main: model.main, compaction: model.compaction, tasks: model.tasks.filter(task => task.status === 'running'), steering: model.steering,
     } }
     : { ...model.session, controls: undefined, status: 'unloaded', activity: null, nativeProcessing: false };
   for (const [scene] of controlScenes) {
@@ -188,7 +188,7 @@ export function installFullWebFixture(store: ReturnType<typeof createCockpitStor
     removeQueued: async (id, itemId) => { change(id, { type: 'remove', id: itemId }); },
     cancel: async id => {
       const model = current(id);
-      const stopped = applyControlAction(model, { type: model.tasks.length ? 'stop-main' : 'stop-all' });
+      const stopped = applyControlAction(model, { type: model.tasks.some(task => task.status === 'running') ? 'stop-main' : 'stop-all' });
       publish(id, applyControlAction(stopped, { type: 'clear-queue' }));
     },
     interrupt: async id => {

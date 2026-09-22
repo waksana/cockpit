@@ -2,6 +2,7 @@ import type { ChatMessage, NativeChatEvent } from '@cockpit/protocol';
 import type { ChatSession } from '../net/types';
 import { activityFixture } from './activity-fixtures';
 import { activityDesignSessions } from './activity-design-fixtures';
+import type { SessionControlAction } from '../lib/sessionControls';
 
 export const controlScenes = [
   ['mixed', '主回合 + shell + agent + 队列'],
@@ -33,9 +34,9 @@ export interface ControlDesignState {
   steering: PreviewQueued[];
   events: NativeChatEvent[];
 }
-export type ControlAction =
-  | { type: 'stop-main' | 'stop-all' | 'clear-queue' | 'cancel-compaction' | 'finish-compaction' | 'consume' | 'prune-tasks' | 'finish-tool' }
-  | { type: 'stop-task' | 'remove-task' | 'remove' | 'steer' | 'question'; id: string }
+export type ControlAction = SessionControlAction
+  | { type: 'stop-main' | 'finish-compaction' | 'consume' | 'finish-tool' }
+  | { type: 'question'; id: string }
   | { type: 'send'; id: string; text: string }
   | { type: 'answer'; id: string; text: string; kind: 'ask' | 'plan' | 'elicitation'; requestId: string; resume?: boolean; record?: boolean };
 
@@ -112,6 +113,36 @@ function appendUser(state: ControlDesignState, item: PreviewQueued, delivery: 'i
 // This is a deterministic UI scenario, not an implementation of the SDK methods.
 export function applyControlAction(state: ControlDesignState, action: ControlAction): ControlDesignState {
   switch (action.type) {
+    case 'clear-tasks': {
+      const ids = new Set(action.ids);
+      if (!ids.size || ids.size !== action.ids.length || action.ids.some(id =>
+        !state.tasks.some(task => task.id === id && task.kind === action.kind && task.status === 'running'))) {
+        throw new Error('任务列表已变化，请核对后再清空。');
+      }
+      let next = state;
+      for (const id of ids) next = applyControlAction(next, { type: 'stop-task', id });
+      return { ...next, tasks: next.tasks.filter(task => !ids.has(task.id)) };
+    }
+    case 'cancel-decision': {
+      const current = action.kind === 'ask' ? state.session.ask
+        : action.kind === 'plan' ? state.session.planRequest : state.session.elicitation;
+      if (current?.requestId !== action.requestId) throw new Error('原问题已结束或被替换，未取消新的问题。');
+      if (action.kind === 'ask') return applyControlAction(state, { type: 'stop-main' });
+      return applyControlAction(state, { type: 'answer', kind: action.kind, requestId: action.requestId,
+        id: `cancel-${action.requestId}`, text: 'cancel', record: false, resume: action.kind === 'elicitation' });
+    }
+    case 'clear-decisions': {
+      const current = [
+        ...(state.session.ask ? [{ kind: 'ask', requestId: state.session.ask.requestId }] : []),
+        ...(state.session.planRequest ? [{ kind: 'plan', requestId: state.session.planRequest.requestId }] : []),
+        ...(state.session.elicitation ? [{ kind: 'elicitation', requestId: state.session.elicitation.requestId }] : []),
+      ];
+      if (!current.length || current.length !== action.requests.length
+        || current.some(request => !action.requests.some(value => value.kind === request.kind && value.requestId === request.requestId))) {
+        throw new Error('待回答内容已变化，未中断新的回合。');
+      }
+      return applyControlAction(state, { type: 'stop-main' });
+    }
     case 'question':
       return { ...state, main: true, session: { ...state.session, ask: {
         requestId: action.id, question: '是否继续调整这个界面？也可以在下面补充具体要求。',

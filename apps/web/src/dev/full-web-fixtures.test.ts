@@ -78,13 +78,13 @@ test('new, load, reload and delete use synthetic models independent of the initi
   await assert.rejects(store.getState().getResources(id, ['model']), /Unknown synthetic session/);
 });
 
-test('the full App control source stops one task, retains rows until collapse and stops the rest explicitly', async () => {
+test('the full App control source removes confirmed stopped work from the active list immediately', async () => {
   const store = createCockpitStore();
   installFullWebFixture(store);
   const act = store.getState().sessionControlAction!;
   const current = () => store.getState().sessions.find(value => value.sessionId === workspaceSessionId)!;
   await act(workspaceSessionId, { type: 'stop-task', id: 'preview-build' });
-  assert.equal(current().controls?.tasks.length, 3);
+  assert.equal(current().controls?.tasks.length, 2);
   assert.equal(current().activity?.tasks.activeShells, 1);
   assert.equal(current().controls?.main, true);
   await act(workspaceSessionId, { type: 'prune-tasks' });
@@ -92,7 +92,7 @@ test('the full App control source stops one task, retains rows until collapse an
   await act(workspaceSessionId, { type: 'stop-all' });
   assert.equal(current().activity?.hasActiveWork, false);
   assert.equal(current().queue?.length, 0);
-  assert.ok(current().controls?.tasks.every(task => task.status === 'cancelled'));
+  assert.equal(current().controls?.tasks.length, 0);
   assert.ok(current().messages.some(message => message.subtype === 'subagent'));
 });
 
