@@ -882,6 +882,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       };
       const indicators = container.querySelector('.chat-controls-header')!.querySelectorAll('.session-activity-item');
       assert.equal(indicators[0].getAttribute('data-activity'), 'overall');
+      assert.equal(indicators.length, 1, 'task and queue summaries live in headings while expanded');
       assert.ok(indicators[0].querySelector('.spinner'));
       assert.ok(container.querySelector('[aria-label="Agent 列表"]'));
       assert.ok(container.querySelector('[aria-label="Terminal 列表"]'));
@@ -889,6 +890,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await act(() => getSessionDraft(workspaceSessionId).edit('普通消息草稿'));
       editor.focus();
       await click('.chat-controls-toggle');
+      assert.equal(container.querySelector('.chat-controls-header')!.querySelectorAll('.session-activity-item').length, 4);
       assert.equal(container.querySelector('.chat-controls-list')?.getAttribute('hidden'), '');
       assert.equal(container.querySelector('.chat-input-message'), editor, 'normal input never folds with activities');
       await act(() => fixture.setState(state => ({ sessions: state.sessions.map(session => session.sessionId === workspaceSessionId
@@ -904,7 +906,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(container.querySelector('.chat-input-message'), editor);
       assert.equal(editor.value, '普通消息草稿');
       if (container.querySelector('.chat-controls-toggle')?.getAttribute('aria-expanded') !== 'true') await click('.chat-controls-toggle');
-      await click('button', container.querySelector('[data-task-id="preview-build"]')!);
+      await click('[aria-label="停止任务：构建项目"]', container.querySelector('[data-task-id="preview-build"]')!);
       assert.equal(container.querySelectorAll('.chat-controls-task').length, 3);
       assert.match(container.querySelector('[data-task-id="preview-build"]')!.textContent, /已停止/);
       await click('.chat-controls-toggle');

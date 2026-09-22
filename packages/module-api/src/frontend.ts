@@ -474,6 +474,8 @@ export interface SessionStatusProps {
   readonly sessionId: string;
   readonly status: SessionStatus;
   readonly needsDecision: boolean;
+  readonly compacting?: boolean;
+  readonly error?: string | null;
   /** Missing activity is unknown, not idle. Legacy status remains a safety aggregate. */
   readonly activity?: ReadonlyData<SessionMeta['activity']>;
   /** A browser-owned control read is pending; not evidence of native processing. */

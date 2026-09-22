@@ -14,5 +14,6 @@
   align-items: center;
   gap: 0.15rem;
   &[data-activity='decision'], &[data-activity='processing'] { color: var(--primary-color); }
-  &[data-activity='error'] { color: var(--danger-color); }
+  &[data-activity='overall'] > .spinner { color: var(--primary-color); }
+  &[data-activity='error'], &:has([data-icon='error']) { color: var(--danger-color); }
 }

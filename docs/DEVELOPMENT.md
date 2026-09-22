@@ -302,6 +302,12 @@ changes. This alternate composition is opt-in; the production composer stays unc
 Full-Web steering first shows acceptance, then a 700ms synthetic runtime event
 places the same message in history; Stop/clear/disposal fence delayed events.
 The backend has no new mutation API and never receives these fixture actions.
+The sidebar uses the same shared projection and icon renderer as the input bar.
+Expanded controls keep the overall icon in the bar and relocate agent/terminal/
+queue icons with their counts into section headings; collapsed controls reunite
+them without a chevron. Row actions use accessible icon buttons, including the
+existing CopyButton's icon variant. Sticky surfaces use the input card's existing
+mixed background instead of a separate preview fill.
 
 Use `?scene=control-design&case=tool-loading` in Chat Lab, or `?case=tool-loading`
 on the full Web static review, for a final active tool after scrollable static

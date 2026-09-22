@@ -380,17 +380,24 @@ activity line. Terminal means shell, Wrench means a general tool, Bot means agen
 and CircleHelp means a real pending decision. Process/tool rows, agent cards and
 decision cards use those same semantic icons; execution-result icons remain
 separate. Concurrent facts use separate icons/counts, not an exclusive busy reason.
-The native processing icon means a turn or background continuation, never proven
-model generation. It and unknown/unclassified activity use one rotating fallback
-glyph, suppressed whenever a concrete activity or decision icon is present.
+The leading overall icon means session activity, never proven model generation.
+It keeps rotating alongside concrete shell, agent, queue or decision icons while
+work remains. The sidebar and input bar share the same activity projection and
+`SessionActivity` renderer; unknown/unclassified activity uses the same single
+overall glyph with explicit accessible wording, not an additional spinner.
 Ordinary reconciliation retains the last sampled appearance (including empty
 idle), labeled as a previous sample in accessible text, until a fresh response.
 This browser-only `activityDisplay` never replaces native `activity` or authorizes
 actions. Read failures display an error; disconnection remains explicit. Unload,
 removal and reconnect discard retained presentation.
 Unloaded rows retain their muted appearance without a redundant activity badge.
-An aggregate `running` value alone cannot produce a replying indicator.
-Activity adds no disclosure, detail area or task-management page. Existing input
+An aggregate `running` value can keep overall activity visible but cannot claim
+that the model is replying. The opt-in grouped controls move agent, terminal and
+queue icons/counts into their section headings while expanded and back into the
+bar when collapsed. The overall indicator stays in place. There is no disclosure
+triangle; `aria-expanded`, keyboard activation and focus treatment remain.
+Actions are named icon buttons and retain the existing copy/error behavior.
+Existing input
 and transcript disclosures are unchanged. The independent next UI is not redesigned.
 Stop/interrupt acknowledgement produces no success banner or toast; pending state
 stays on the action button and failures remain visible. Remaining shell/agent facts

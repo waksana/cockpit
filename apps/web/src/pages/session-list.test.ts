@@ -100,7 +100,7 @@ test('running state and pending decisions remain without schedule indicators or 
     session('elicit', { elicitation: { requestId: 'e', message: 'Confirm' } }),
   ]);
   assert.doesNotMatch(html, /dialog-schedule|定时任务/);
-  assert.match(html, /data-activity="processing"/);
+  assert.match(html, /data-activity="overall"/);
   assert.equal((html.match(/data-activity="decision"/g) ?? []).length, 3);
   assert.doesNotMatch(html, />选</);
   assert.doesNotMatch(html, /未读|已读|dialog-unread|dialog-pinned/);
@@ -112,6 +112,20 @@ test('sidebar preserves its basic grid, native cwd label and empty-state distinc
   assert.match(html, /<span class="dialog-subtitle">项目<\/span><span class="dialog-meta"><span class="session-activity"><\/span><\/span>/);
   assert.match(render([]), /服务器上没有 session/);
   assert.match(render([session('one')], { query: 'missing' }), /没有匹配的会话/);
+});
+
+test('busy session rows retain the leading overall spinner alongside specific activities', () => {
+  for (const tasks of [
+    { activeAgents: 1, activeShells: 0, unknown: 0 }, { activeAgents: 0, activeShells: 1, unknown: 0 },
+  ]) {
+    const html = render([session('background', { status: 'running',
+      activity: activityFixture({ processing: false, hasActiveWork: true, tasks,
+        queue: { pendingCount: 2, steeringCount: 0, inFlightSteeringCount: 0 } }),
+    })]);
+    assert.ok(html.indexOf('data-activity="overall"') < html.indexOf('data-activity="queue"'));
+    assert.match(html, /class="ck-icon spinner" data-icon="loading"/);
+    assert.match(html, new RegExp(`data-activity="${tasks.activeAgents ? 'agent' : 'shell'}"`));
+  }
 });
 
 test('session rows own their spacing rather than inheriting the shared button gap', () => {

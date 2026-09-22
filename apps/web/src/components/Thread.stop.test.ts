@@ -80,7 +80,7 @@ test('retained activity affects presentation only, never Stop or interrupt eligi
 });
 
 test('execution indicators follow raw activity, not aggregate running or historical intent', () => {
-  assert.match(render(), /data-activity="processing"/);
+  assert.match(render(), /data-activity="overall"/);
   assert.match(render({ intent: 'Reading source' }), /chat-execution-progress">Reading source/);
   assert.match(render({ cancelling: true }), /chat-execution-progress">正在停止…/);
   const shell = render({ intent: 'Stale turn intent', activity: activityFixture({
@@ -88,7 +88,8 @@ test('execution indicators follow raw activity, not aggregate running or histori
   }) });
   assert.match(shell, /data-activity="shell"/);
   assert.match(shell, /当前不可中断/);
-  assert.doesNotMatch(shell, /data-activity="processing"|Stale turn intent|回复中/);
+  assert.match(shell, /data-activity="overall"/);
+  assert.doesNotMatch(shell, /Stale turn intent|回复中/);
   for (const status of ['idle', 'unloaded', 'error'] as const) {
     assert.doesNotMatch(render({ status, queue: [{ id: 'q', text: 'Waiting' }] }), /data-activity="processing"/);
   }
@@ -156,7 +157,7 @@ test('a pending question shares the card below its only status and action header
   assert.match(html, /Which option\?/);
   assert.doesNotMatch(region, /Which option\?|class="chat-ask/);
   assert.match(region, /data-activity="decision"/);
-  assert.doesNotMatch(region, /data-activity="processing"/);
+  assert.match(region, /data-activity="overall"/);
   assert.match(region, /class="chat-typing-stop ck-button ck-danger">[\s\S]*?停止/);
   assert.doesNotMatch(html, /输入内容将回答当前问题|chat-composer-hint/);
 });
