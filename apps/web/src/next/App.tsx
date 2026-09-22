@@ -93,7 +93,6 @@ export default function App({ moduleBootstrap }: { moduleBootstrap: 'loading' | 
       const destination = detailsNavigation(location.pathname, id, panel);
       void navigate(destination.to, { replace: destination.replace });
     },
-    reload: id => { void useCockpit.getState().reloadSession(id).catch(() => {}); },
     delete: id => {
       const session = useCockpit.getState().sessions.find(value => value.sessionId === id);
       if (session) setDeletion({ id, name: session.title, routeKey: location.key });

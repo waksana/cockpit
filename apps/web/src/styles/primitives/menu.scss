@@ -6,7 +6,6 @@
 .btn-menu {
   position: fixed;
   z-index: 100;
-  min-width: 11.25rem;
   width: max-content;
   max-width: calc(100vw - 16px);
   font-size: var(--host-text-body);
@@ -20,7 +19,8 @@
 }
 
 .btn-menu-caption {
-  max-width: 18rem;
+  // The caption follows the action width rather than sizing the whole menu.
+  contain: inline-size;
   padding: var(--host-space-sm) var(--host-space-lg);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -31,6 +31,7 @@
 .btn-menu-separator { border-top: 1px solid var(--border-color); margin: 0.25rem 0; }
 
 .btn-menu-item {
+  display: flex;
   justify-content: flex-start;
   gap: var(--host-space-lg);
   padding: var(--host-space-sm) var(--host-space-lg);

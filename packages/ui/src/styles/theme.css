@@ -105,6 +105,11 @@
   }
 }
 
+/* Keep touch-capable fields out of iOS focus zoom, including wide tablet layouts. */
+@media (any-pointer: coarse) {
+  :root { --input-font-min: 16px; }
+}
+
 @media (pointer: coarse) {
   [data-slot="input"],
   [data-slot="select-trigger"],

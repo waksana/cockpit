@@ -76,10 +76,10 @@ test('resource compositions keep navigation content valid and actions outside id
   assert.doesNotMatch(row, /manage-row-description|aria-busy/);
 });
 
-test('controls retain one 14px baseline, inset focus and coarse targets; pages stop restyling them', () => {
+test('controls retain the desktop baseline, touch input floor, inset focus and coarse targets', () => {
   const css = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
   assert.match(css, /:where\(\.ck-button, \.ck-icon-button\) \{[^}]*font-size: var\(--host-text-body\)/);
-  assert.match(css, /:where\(\.ck-input\) \{[^}]*font-size: var\(--host-text-body\)/);
+  assert.match(css, /:where\(\.ck-input\) \{[^}]*font-size: max\(var\(--ck-input-font-min\), var\(--host-text-body\)\)/);
   assert.match(css, /@media \(pointer: coarse\)[\s\S]*--ck-control-size: 44px/);
   assert.match(css, /:is\(\.ck-button, \.ck-icon-button, \.ck-input\):focus-visible \{[^}]*outline: 2px solid var\(--ck-color-accent\);[^}]*outline-offset: -2px/);
   assert.match(css, /\.ui-choice-card:has\(input:focus-visible\) \{[^}]*outline-offset: -2px/);

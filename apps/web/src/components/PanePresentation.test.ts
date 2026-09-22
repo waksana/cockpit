@@ -10,6 +10,17 @@ import { ResourceStatus, PanelPageShell } from './SessionPanelKit';
 import { ManagementShell } from './ManagementShell';
 import { Icon } from './Icon';
 
+test('menus size to action content without a minimum width or caption contribution', () => {
+  const css = compile(new URL('../styles/primitives/menu.scss', import.meta.url).pathname).css;
+  const menu = css.match(/\.btn-menu \{([^}]*)\}/)?.[1];
+  assert.ok(menu);
+  assert.match(menu, /width: max-content;/);
+  assert.match(menu, /max-width: calc\(100vw - 16px\);/);
+  assert.doesNotMatch(menu, /min-width:/);
+  assert.match(css, /\.btn-menu-item \{[^}]*display: flex;/);
+  assert.match(css, /\.btn-menu-caption \{[^}]*contain: inline-size;[^}]*text-overflow: ellipsis;/);
+});
+
 test('shared state presentation distinguishes actual loading, errors, offline and empty', () => {
   const render = (props: Parameters<typeof ResourceStatus>[0]) => renderToStaticMarkup(createElement(ResourceStatus, props));
   const loading = render({ status: '加载中…', pending: true });

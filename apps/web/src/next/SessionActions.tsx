@@ -13,8 +13,7 @@ function ActionItems({ session, handlers, context = false }: {
   session: SessionMeta; handlers: SessionActionHandlers; context?: boolean;
 }) {
   const connected = useCockpit(state => state.connState === 'open' && state.snapshotReady);
-  const reloading = useCockpit(state => state.reloadingSessionIds.includes(session.sessionId));
-  const items = useRegisteredMenu(sessionActionItems(session, connected, handlers, reloading),
+  const items = useRegisteredMenu(sessionActionItems(session, connected, handlers),
     { menu: 'session', sessionId: session.sessionId });
   const Item = context ? ContextMenuItem : DropdownMenuItem;
   const Separator = context ? ContextMenuSeparator : DropdownMenuSeparator;

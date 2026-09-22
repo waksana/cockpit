@@ -175,7 +175,7 @@ test('all input states share one full-width unframed editor row inside the same 
   assert.match(bar, /width: 100%;\s*margin: 0;/);
   assert.match(bar, /padding: var\(--host-space-xs\);/);
   assert.match(bar, /gap: var\(--host-space-xs\);/);
-  assert.match(publicCss, /\.ck-input-hint \{[^}]*font-size: var\(--messages-text-size\);/);
+  assert.match(publicCss, /\.ck-input-hint \{[^}]*font-size: max\(var\(--ck-input-font-min\), var\(--messages-text-size\)\);/);
   assert.match(publicCss, /\.ck-status-text \{[^}]*font-size: var\(--host-text-meta\);/);
   assert.match(publicCss, /\.ck-input-status \{[^}]*width: 100%;[^}]*height: 32px;/);
   assert.match(publicCss, /\.ck-status-action \{[^}]*margin-inline-start: auto;/);
@@ -376,7 +376,7 @@ test('Chat typography is role-based and narrow layouts follow their own availabl
     assert.ok(tokens.includes(`--chat-text-${role}: var(--host-text-${hostRole})`));
     assert.ok(foundations.includes(`--host-text-${hostRole}: var(--font-size-${size})`));
   }
-  assert.match(css, /\.chat-input-message \{[^}]*font-size: var\(--chat-text-body\)/);
+  assert.match(css, /\.chat-input-message \{[^}]*font-size: max\(var\(--ck-input-font-min\), var\(--chat-text-body\)\)/);
   assert.match(css, /\.chat-ask-q \{[^}]*font-size: var\(--chat-text-body\)/);
   assert.match(css, /\.subagent-prompt \.message-body \{[^}]*font-size: var\(--chat-text-secondary\)/);
   assert.match(css, /\.message-time, \.doc-time \{[^}]*font-size: var\(--chat-text-meta\);[^}]*line-height: var\(--chat-leading-ui\);[^}]*font-variant-numeric: tabular-nums/);

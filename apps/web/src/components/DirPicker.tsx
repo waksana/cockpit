@@ -99,11 +99,6 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
     {roleResource.valid && !rolesAvailable && <StateNotice kind="error">所选角色已不可用，请关闭窗口后重新选择。</StateNotice>}
     {!!roleResource.data?.length && <RolePicker roles={roleResource.data} selected={selectedRoles}
       disabled={locked || !roleResource.valid} onChange={setSelectedRoles} />}
-    <details className="dirpicker-help">
-      <summary>创建说明</summary>
-      <p>角色提供模块的指令、技能和工具，不改变会话的业务身份，也不代表当前能力就绪。创建后暂不支持追加角色。</p>
-      <p>会话使用工作目录的原生配置，创建时不会发送消息。从未发送消息的空会话可能在卸载后消失。</p>
-    </details>
     {action.error && <StateNotice kind="error">
       创建未完成：{action.error}。不会自动重建或发送消息；请先检查原生会话列表。
     </StateNotice>}

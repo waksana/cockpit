@@ -459,18 +459,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   await t.test('App session menus share registrations, dynamic focus, exact targets and revoked action lifetimes', async subtest => {
     const previous = useCockpit.getState();
     const sessions = ['A', 'B'].map(sessionId => ({ ...fixtureSession('user-time'), sessionId, title: `Session ${sessionId}` }));
-    const reloads: string[] = [];
-    let finishReload!: () => void;
     useCockpit.setState({
       sessions, activeId: 'A', connState: 'open', snapshotReady: true,
       init: () => () => {},
       setActiveId: activeId => { useCockpit.setState({ activeId }); },
-      reloadSession: async sessionId => {
-        reloads.push(sessionId);
-        useCockpit.setState({ reloadingSessionIds: [sessionId] });
-        await new Promise<void>(resolve => { finishReload = resolve; });
-        useCockpit.setState({ reloadingSessionIds: [] });
-      },
     });
     const listeners = new Set<() => void>();
     const reports: unknown[] = [];
@@ -523,61 +515,42 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     })));
     const trigger = node('[aria-label="更多操作"]');
     await click(trigger);
-    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '重新加载会话', '永久删除会话']);
-    assert.ok(items()[3].querySelector('[data-icon="reload"]'));
+    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '永久删除会话']);
     await event(items()[0], 'keydown', { key: 'End' });
-    await event(items()[4], 'keydown', { key: 'ArrowUp' });
     assert.equal(document.activeElement, items()[3]);
-    await click(items()[3]);
-    assert.deepEqual(reloads, ['A']);
-    assert.equal(container.querySelector('[role="menu"]'), null);
-    assert.equal(document.activeElement, trigger);
-    await click(trigger);
-    assert.equal(items()[3].textContent, '正在重新加载会话…');
-    assert.equal(items()[3].attributes.has('disabled'), true);
-    await click(items()[3]);
-    assert.deepEqual(reloads, ['A']);
-    await act(() => finishReload());
-    assert.equal(items()[3].attributes.has('disabled'), false);
-    await act(() => useCockpit.setState({ sessions: sessions.map(s => s.sessionId === 'A' ? { ...s, activeSubagents: 1 } : s) }));
-    assert.equal(items()[3].attributes.has('disabled'), true, 'live background work disables reload');
-    await act(() => useCockpit.setState({ sessions }));
+    await event(items()[3], 'keydown', { key: 'ArrowUp' });
+    assert.equal(document.activeElement, items()[2]);
     await act(async () => { await runtime.start(); });
-    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '重新加载会话', '永久删除会话', 'a:A', 'z:A']);
+    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '永久删除会话', 'a:A', 'z:A']);
     assert.equal(container.querySelectorAll('[role="separator"]').length, 2);
     await event(items()[0], 'keydown', { key: 'End' });
-    assert.equal(document.activeElement, items()[6]);
-    await event(items()[6], 'focusin');
+    assert.equal(document.activeElement, items()[5]);
+    await event(items()[5], 'focusin');
     disabled = true;
     await refresh();
     assert.equal(document.activeElement, items()[0], 'a disabled focused module command returns to a valid native command');
-    assert.equal(items()[5].attributes.has('disabled'), true);
+    assert.equal(items()[4].attributes.has('disabled'), true);
     await event(items()[0], 'keydown', { key: 'End' });
-    assert.equal(document.activeElement, items()[4], 'keyboard skips disabled module commands');
+    assert.equal(document.activeElement, items()[3], 'keyboard skips disabled module commands');
     visible = false;
     await refresh();
-    assert.equal(items().length, 5);
+    assert.equal(items().length, 4);
     assert.equal(container.querySelectorAll('[role="separator"]').length, 1);
     visible = true;
     disabled = false;
     await refresh();
-    await click(items()[5]);
+    await click(items()[4]);
     assert.equal(calls[0].sessionId, 'A');
     assert.equal(calls[0].signal.aborted, false, 'normal menu close does not cancel accepted work');
     assert.equal(container.querySelector('[role="menu"]'), null);
     assert.equal(document.activeElement, trigger);
     const b = node('[data-session-id="B"]');
     await event(b, 'contextmenu', { clientX: 40, clientY: 70 });
-    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '重新加载会话', '永久删除会话', 'a:B', 'z:B']);
+    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '永久删除会话', 'a:B', 'z:B']);
     assert.equal(useCockpit.getState().activeId, 'A', 'a row context menu does not select its session');
-    await click(items()[3]);
-    assert.deepEqual(reloads, ['A', 'B']);
-    assert.equal(useCockpit.getState().activeId, 'A', 'background reload does not navigate');
-    assert.equal(document.activeElement, b);
-    await act(() => finishReload());
     await event(b, 'pointerdown', { pointerType: 'mouse', button: 2, isPrimary: true });
     await event(b, 'contextmenu', { clientX: 40, clientY: 70 });
-    await click(items()[6]);
+    await click(items()[5]);
     assert.deepEqual(calls.map(call => call.sessionId), ['A', 'B']);
     assert.equal(document.activeElement, b);
     await event(b, 'pointerdown', { pointerType: 'touch', button: 0, isPrimary: true, clientX: 40, clientY: 70 });
@@ -587,7 +560,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await event(b, 'click', { detail: 1 });
     assert.equal(useCockpit.getState().activeId, 'A', 'the trailing touch click does not select B');
     await event(b, 'keydown', { key: 'F10', shiftKey: true });
-    assert.equal(items().length, 7);
+    assert.equal(items().length, 6);
     await click(node('[data-session-id="A"]'));
     await click(b);
     assert.equal(useCockpit.getState().activeId, 'B');
@@ -604,7 +577,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.deepEqual(labels().slice(-1), ['a:B'], 'late completion cannot reinstall a removed contribution');
     await act(() => runtime.stop());
     assert.equal(listeners.size, 0);
-    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '重新加载会话', '永久删除会话']);
+    assert.deepEqual(labels(), ['会话设置', '本会话 MCP', '本会话 Skills', '永久删除会话']);
     assert.deepEqual(reports, []);
   });
 

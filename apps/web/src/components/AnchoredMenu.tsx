@@ -30,7 +30,7 @@ export function AnchoredMenu({ triggerRef, items: nativeItems, onClose, align = 
   // the position is always correct regardless of prior layout shifts. Anchoring an
   // edge to the on-screen trigger makes overflow on that side structurally
   // impossible.
-  const [style, setStyle] = useState<{ left?: number; right?: number; top: number; maxHeight: number } | null>(null);
+  const [style, setStyle] = useState<{ left?: number; right?: number; top: number; maxHeight: number; maxWidth: number } | null>(null);
 
   useLayoutEffect(() => {
     const trigger = triggerRef.current;
@@ -40,10 +40,14 @@ export function AnchoredMenu({ triggerRef, items: nativeItems, onClose, align = 
     const pad = 8;
     const top = r.bottom + gap;
     const maxHeight = window.innerHeight - r.bottom - gap - pad;
-    const next = align === 'left' ? { left: Math.max(pad, r.left), top, maxHeight }
-      : { right: Math.max(pad, window.innerWidth - r.right), top, maxHeight };
+    const inset = Math.max(pad, align === 'left' ? r.left : window.innerWidth - r.right);
+    const next = {
+      left: align === 'left' ? inset : undefined, right: align === 'right' ? inset : undefined,
+      top, maxHeight, maxWidth: window.innerWidth - inset - pad,
+    };
     setStyle(previous => previous?.left === next.left && previous?.right === next.right
-      && previous?.top === next.top && previous?.maxHeight === next.maxHeight ? previous : next);
+      && previous?.top === next.top && previous?.maxHeight === next.maxHeight
+      && previous?.maxWidth === next.maxWidth ? previous : next);
   }, [triggerRef, items, align]);
   const visible = style !== null;
   useLayoutEffect(() => {
@@ -76,6 +80,7 @@ export function AnchoredMenu({ triggerRef, items: nativeItems, onClose, align = 
         ...(style?.left != null ? { left: style.left, right: 'auto' } : {}),
         top: style?.top ?? 0,
         maxHeight: style?.maxHeight,
+        maxWidth: style?.maxWidth,
         overflowY: 'auto',
         visibility: style ? 'visible' : 'hidden',
       }}

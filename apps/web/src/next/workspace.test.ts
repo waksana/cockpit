@@ -29,7 +29,7 @@ test('compact rows keep complete names, saved roles and independent menu control
   const noAction = () => assert.fail('Render must not perform an action');
   const html = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(SessionList, {
     sessions: [session], activeId: session.sessionId, snapshotReady: true,
-    handlers: { openPanel: noAction, reload: noAction, delete: noAction },
+    handlers: { openPanel: noAction, delete: noAction },
   })));
   assert.match(html, /Synthetic complete long title/);
   assert.match(html, /long-project/);
