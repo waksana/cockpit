@@ -249,6 +249,9 @@ test('directory picker without an initial path has no hardcoded home and cannot 
   }));
   assert.match(html, /<dialog[^>]*class="dialog-scrim directory-modal host-modal ck-modal"[^>]*aria-labelledby="[^"]+"/);
   assert.match(html, /<h3[^>]*tabindex="-1"[^>]*data-dialog-focus="true">新建会话<\/h3>/);
+  assert.match(html, /选择工作目录，按需添加模块角色。/);
+  assert.match(html, /aria-label="当前路径"/);
+  assert.doesNotMatch(html, /dirpicker-help|创建说明|创建后暂不支持追加角色/);
   assert.doesNotMatch(html, /\/home\/honglai|没有子文件夹/);
   assert.match(html, /class="dialog-btn ck-button ck-primary primary rp" disabled=""[^>]*>创建会话/);
   assert.match(html, /等待连接/);
