@@ -5,7 +5,6 @@
 // (App); this component receives the query string read-only.
 
 import { useMemo, useRef, useState } from 'react';
-import type { CSSProperties } from 'react';
 import type { ChatSession, SessionMeta } from '../net/types';
 import { ContextMenu, type MenuItem } from './ContextMenu';
 import { useLongPress } from '../lib/longpress';
@@ -17,14 +16,6 @@ import { useCockpit } from '../net/store';
 
 function cwdBasename(cwd: string): string {
   return cwd.split('/').filter(Boolean).pop() ?? cwd;
-}
-function cwdChip(cwd: string): { mono: string; hue: number } {
-  const base = cwdBasename(cwd);
-  let hash = 0;
-  for (let i = 0; i < cwd.length; i++) hash = (hash * 31 + cwd.charCodeAt(i)) >>> 0;
-  const cjk = base.match(/[\u4e00-\u9fff]/);
-  const mono = cjk ? cjk[0] : (base.replace(/[^a-z0-9]/gi, '').slice(0, 2).toUpperCase() || '·');
-  return { mono, hue: hash % 360 };
 }
 function relTime(ts: number): string {
   const d = Date.now() - ts;
@@ -46,8 +37,6 @@ function SessionRow({ s, active, actions, connected }: {
   const firedRef = useRef(false);
   const activityRefreshing = useCockpit(state => state.activityRefreshingIds.includes(s.sessionId));
   const lp = useLongPress(actions.onMenu, firedRef);
-
-  const { mono, hue } = cwdChip(s.cwd);
 
   return (
     <li><button
@@ -73,13 +62,12 @@ function SessionRow({ s, active, actions, connected }: {
       onPointerUp={lp.onPointerUp}
       onPointerCancel={lp.onPointerCancel}
     >
-      <span className="dialog-avatar" style={{ '--chip-h': hue } as CSSProperties} aria-hidden="true">{mono}</span>
-      <span className="session-row-title">{s.title}</span>
-      <span className="dialog-time">{relTime(s.lastActivity)}</span>
-      <span className="dialog-subtitle">{cwdBasename(s.cwd)}</span>
       {!!s.roles?.length && <span className="dialog-roles session-role-badges">
         {s.roles.map(role => <RoleBadge key={`${role.moduleId}/${role.roleId}`} role={role} session={s} connected={connected} />)}
       </span>}
+      <span className="session-row-title">{s.title}</span>
+      <span className="dialog-time">{relTime(s.lastActivity)}</span>
+      <span className="dialog-subtitle">{cwdBasename(s.cwd)}</span>
       <SessionStatus sessionId={s.sessionId} status={s.status} loaded={s.loaded} connected={connected}
         compacting={s.compacting} error={s.error}
         activityRefreshing={activityRefreshing}

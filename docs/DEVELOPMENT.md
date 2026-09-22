@@ -151,6 +151,17 @@ callbacks, without initializing a native client or creating sessions. Normal
 production builds do not include the entry. The lab exercises
 native text, tools, decisions, queue and reading behavior.
 
+`/chat-lab.html?scene=sidebar` mounts the classic App with short, long Chinese,
+unbroken English, unloaded, role and activity fixtures plus synthetic module unread
+badges. The list has no directory avatar: titles use at most two natural-height
+lines, the actual cwd basename is secondary, and compact module/role labels occupy
+the first row above the title (no empty row for sessions without roles).
+Run `await import('/src/dev/sidebar-checks.ts').then(m => m.runSidebarChecks())`
+with the list visible at desktop and narrow touch widths, in both themes.
+The checks measure title, directory, role and status geometry; use the real list
+buttons to exercise navigation and keyboard/right-click/long-press menus.
+All App operations remain on the workspace fixture's synthetic store.
+
 Use `/chat-lab.html?ui=next&scene=workspace` for the independent new host, or
 `?ui=next&scene=ask&compact=1` for its conversation flow. The small lab entry
 loads only the selected presentation and its styles. The next fixture replaces

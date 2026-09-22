@@ -270,9 +270,13 @@ if (scene === 'full-web') {
 } else if (scene === 'activity-design') {
   const { ActivityDesignLab } = await import('./activity-design-lab');
   root.render(<BrowserRouter><ActivityDesignLab /></BrowserRouter>);
-} else if (scene === 'workspace' || scene === 'resources') {
+} else if (scene === 'workspace' || scene === 'resources' || scene === 'sidebar') {
   const { installWorkspaceFixture, workspaceSessionId, workspaceDraft } = await import('./workspace-fixtures');
   installWorkspaceFixture(useCockpit);
+  if (scene === 'sidebar') {
+    const { sidebarSessions } = await import('./sidebar-fixtures');
+    useCockpit.setState({ sessions: sidebarSessions(), activityRefreshingIds: ['demo-tests'] });
+  }
   if (scene === 'resources') {
     const { installResourceFixture } = await import('./resource-fixtures');
     const query = new URLSearchParams(location.search);
@@ -285,11 +289,19 @@ if (scene === 'full-web') {
   getSessionDraft(workspaceSessionId).edit(workspaceDraft);
   const { default: App } = await import('../App');
   const page = new URLSearchParams(location.search).get('page');
-  const initialRoute = scene === 'resources' && (page === 'mcp' || page === 'skills')
+  const initialRoute = scene === 'sidebar' ? '/' : scene === 'resources' && (page === 'mcp' || page === 'skills')
     ? `/${page}` : `/session/${workspaceSessionId}/info`;
-  root.render(<MemoryRouter initialEntries={[initialRoute]}>
+  const app = <MemoryRouter initialEntries={[initialRoute]}>
     <App /><UxErrorNotifications />
-  </MemoryRouter>);
+  </MemoryRouter>;
+  if (scene === 'sidebar') {
+    const { createSidebarModuleFixture } = await import('./sidebar-fixtures');
+    const { ModuleRuntimeProvider } = await import('../components/ModuleComponents');
+    const runtime = createSidebarModuleFixture();
+    await runtime.start();
+    window.addEventListener('pagehide', () => runtime.stop(), { once: true });
+    root.render(<ModuleRuntimeProvider runtime={runtime}>{app}</ModuleRuntimeProvider>);
+  } else root.render(app);
 } else {
   const lab = <BrowserRouter><Lab /></BrowserRouter>;
   if (new URLSearchParams(location.search).get('cards') === '1') {
