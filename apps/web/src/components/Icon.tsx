@@ -3,7 +3,7 @@ import {
   ArrowLeft, ArrowUp, BookOpen, Check, ChevronDown, ChevronRight, ChevronUp, Circle,
   Bot, CircleAlert, CircleCheck, CircleDashed, CircleHelp, ClipboardList, Clock, Copy, File,
   Folder, Lightbulb, Link, LoaderCircle, Menu, MessageSquare, MoreVertical, Play, RotateCw,
-  ListOrdered, Search, Square, SquarePen, Terminal, Trash2, Wrench, X,
+  ListOrdered, Search, Square, SquarePen, SquareTerminal, Trash2, Wrench, X,
   FileText, FileSearch, FilePenLine, FileTerminal, ListTree, MessagesSquare, Send,
   Database, Globe, SearchCheck, CalendarClock, Users, FileArchive, Eye,
 } from 'lucide-react';
@@ -53,7 +53,7 @@ const icons = {
   folder: Folder, mode_plan: ClipboardList, radiooff: Circle, copy: Copy,
   stop: Square, clock: Clock, unknown: CircleDashed, chevron_right: ChevronRight,
   play: Play, success: CircleCheck, loading: LoaderCircle, compress: FileArchive, view: Eye,
-  shell: Terminal, tool: Wrench, agent: Bot, decision: CircleHelp, queue: ListOrdered,
+  shell: SquareTerminal, tool: Wrench, agent: Bot, decision: CircleHelp, queue: ListOrdered,
   read_file: FileText, find_file: FileSearch, edit_file: FilePenLine, shell_output: FileTerminal,
   shell_list: ListTree, agent_result: MessagesSquare, agent_message: Send, agent_list: Users,
   database: Database, web: Globe, web_search: SearchCheck, schedule: CalendarClock,
