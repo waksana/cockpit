@@ -1,6 +1,5 @@
 // Left column (master pane) — ported from tweb _leftSidebar / _chatlist / _row /
-// _inputSearch. Real structure + values; Solarized colors via tokens. cockpit
-// maps Telegram's person-avatar to a project-colored cwd monogram.
+// _inputSearch. Solarized colors via tokens.
 
 .sidebar-hamburger { flex: none; }
 // ── Input-search (pill, leading icon ↔ spinner on loading, clear) ───────────
@@ -55,16 +54,17 @@
   -webkit-touch-callout: none;
 }
 
-// One session row — tweb .row 3-col grid (avatar | title/subtitle | time/meta).
+// Compact roles lead identity and auxiliary information on their own row.
 .chatlist-chat {
   position: relative;
   width: 100%;
   text-align: start;
   display: grid;
-  grid-template-columns: 3.375rem minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   grid-template-rows: auto auto;
-  grid-template-areas: 'avatar title  time' 'avatar subtitle meta';
+  grid-template-areas: 'title title time' 'subtitle meta meta';
   align-items: center;
+  align-content: center;
   column-gap: 0.6rem;
   row-gap: 0;
   min-height: 4.25rem;
@@ -79,31 +79,25 @@
   // Attention badges (.dialog-meta) stay full strength — an unloaded session
   // can still be waiting on you.
   &.is-unloaded {
-    .dialog-avatar, .session-row-title, .dialog-time, .dialog-subtitle { opacity: 0.45; }
+    .session-row-title, .dialog-time, .dialog-subtitle { opacity: 0.45; }
   }
 
-  .dialog-avatar {
-    grid-area: avatar;
-    width: 3.375rem; height: 3.375rem;
-    border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 1.25rem; font-weight: 600;
-    color: #fff;
-    user-select: none;
-    // hue set inline via --chip-h
-    background: oklch(58% 0.11 calc(var(--chip-h, 220) * 1deg));
-  }
   .session-row-title {
     grid-area: title;
-    align-self: flex-end;
+    align-self: start;
     min-width: 0;
     font-size: var(--font-size-16);
     font-weight: 500;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    overflow: hidden;
   }
   .dialog-time {
     grid-area: time;
-    align-self: flex-end;
+    align-self: start;
     justify-self: end;
     font-size: var(--font-size-12);
     color: var(--tertiary-text-color);
@@ -114,8 +108,8 @@
     align-self: flex-start;
     min-width: 0;
     margin-top: 0.1rem;
-    font-size: var(--font-size-14);
-    color: var(--secondary-text-color);
+    font-size: var(--font-size-12);
+    color: var(--tertiary-text-color);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
@@ -132,12 +126,12 @@
 
   &:has(.dialog-roles) {
     grid-template-rows: auto auto auto;
-    grid-template-areas: 'avatar title time' 'avatar subtitle meta' 'avatar roles roles';
+    grid-template-areas: 'roles roles roles' 'title title time' 'subtitle meta meta';
     padding-block: 0.5rem;
   }
   .dialog-roles {
     grid-area: roles;
-    margin-top: var(--host-space-xs);
+    margin-bottom: var(--host-space-xs);
   }
   .dialog-status {
     font-size: var(--font-size-12);

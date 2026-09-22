@@ -66,6 +66,6 @@ test('page controls inherit equivalent public defaults without losing their own 
   assert.doesNotMatch(row, /(?:^|\s)(?:color|cursor):/);
   assert.doesNotMatch(subagent, /(?:^|\s)(?:border|background|cursor):/);
   assert.match(search, /border-radius: calc\(var\(--height\) \/ 2\);/);
-  assert.match(row, /grid-template-columns: 3\.375rem minmax\(0, 1fr\) auto;/);
+  assert.match(row, /grid-template-columns: minmax\(0, 1fr\) auto auto;/);
   assert.match(subagent, /min-height: 44px;[^}]*font: inherit;[^}]*color: inherit;/);
 });

@@ -108,7 +108,8 @@ test('running state and pending decisions remain without schedule indicators or 
 
 test('sidebar preserves its basic grid, native cwd label and empty-state distinction', () => {
   const html = render([session('cwd', { cwd: '/work/项目/' })]);
-  assert.match(html, /<span class="dialog-avatar" style="--chip-h:\d+" aria-hidden="true">项<\/span><span class="session-row-title">Session cwd<\/span>/);
+  assert.doesNotMatch(html, /dialog-avatar|--chip-h/);
+  assert.match(html, /<span class="session-row-title">Session cwd<\/span>/);
   assert.match(html, /<span class="dialog-subtitle">项目<\/span><span class="dialog-meta"><span class="session-activity"><\/span><\/span>/);
   assert.match(render([]), /服务器上没有 session/);
   assert.match(render([session('one')], { query: 'missing' }), /没有匹配的会话/);
@@ -134,6 +135,10 @@ test('session rows own their spacing rather than inheriting the shared button ga
   assert.match(css, /\.chatlist-chat \{[^}]*row-gap: 0;/);
   assert.match(css, /\.chatlist-chat \{[^}]*min-height: 4\.25rem;/);
   assert.match(css, /\.chatlist-chat \.dialog-subtitle \{[^}]*margin-top: 0\.1rem;/);
+  assert.match(css, /grid-template-columns: minmax\(0, 1fr\) auto auto;/);
+  assert.match(css, /grid-template-areas: "roles roles roles" "title title time" "subtitle meta meta";/);
+  assert.match(css, /\.session-row-title \{[^}]*-webkit-line-clamp: 2;[^}]*overflow-wrap: anywhere;/);
+  assert.doesNotMatch(css, /dialog-avatar|--chip-h/);
 });
 
 test('session role badges are separate from cwd and preserve all literal names', () => {
@@ -141,7 +146,9 @@ test('session role badges are separate from cwd and preserve all literal names',
     { moduleId: 'cockpit-task', moduleName: 'Task', roleId: 'owner', name: 'Owner' },
     { moduleId: 'other', moduleName: 'module_Original__Name', roleId: 'owner', name: 'cockpit-Exact-role' },
   ] })]);
-  assert.match(html, /class="dialog-subtitle">project<\/span><span class="dialog-roles session-role-badges"/);
+  assert.match(html, /<button[^>]*><span class="dialog-roles session-role-badges"/);
+  assert.ok(html.indexOf('dialog-roles') < html.indexOf('session-row-title'));
+  assert.match(html, /class="dialog-subtitle">project<\/span><span class="dialog-meta"/);
   assert.equal((html.match(/class="role-badge"/g) ?? []).length, 2);
   assert.match(html, /class="module-label-name">Task</);
   assert.match(html, /class="module-label-name">module_Original__Name</);
