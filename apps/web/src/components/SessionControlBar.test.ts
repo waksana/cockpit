@@ -13,7 +13,7 @@ function render(expanded: boolean) {
   const state = controlDesignState('mixed');
   return renderToStaticMarkup(createElement(SessionControlBar, {
     session: controlSession(state), controls: state, connected: true, expanded, disabled: false,
-    onToggle() {}, onAction: async () => {}, onView() {}, controlRef() {},
+    onToggle() {}, onAction: async () => {}, readAgentDetails: async () => null, controlRef() {},
   }));
 }
 
@@ -44,12 +44,22 @@ test('all actions are named icon buttons, including queue and task copying', () 
   assert.match(html, /aria-label="立即发送：先不要提交"/);
   assert.match(html, /aria-label="清空队列"/);
   assert.match(html, /aria-label="停止任务：构建项目"/);
-  assert.match(html, /aria-label="查看任务记录：独立代码审查"/);
+  assert.match(html, /aria-label="查看 Agent 详情：独立代码审查"/);
   assert.doesNotMatch(html, />停止<\/button>|>移除<\/button>|>立即发送<\/button>|chat-copy-label/);
   const copy = renderToStaticMarkup(createElement(CopyButton, { text: 'Exact queued text', label: '复制排队消息', variant: 'icon' }));
   assert.match(copy, /class="chat-copy-icon ck-icon-button"/);
   assert.match(copy, /data-icon="copy"/);
   assert.match(copy, /role="status"/);
+});
+
+test('agent detail availability is independent of loaded chat messages', () => {
+  const state = controlDesignState('mixed');
+  const html = renderToStaticMarkup(createElement(SessionControlBar, {
+    session: { ...controlSession(state), messages: [] }, controls: state, connected: true, expanded: true, disabled: false,
+    onToggle() {}, onAction: async () => {}, readAgentDetails: async () => null, controlRef() {},
+  }));
+  assert.match(html, /aria-label="查看 Agent 详情：独立代码审查"/);
+  assert.doesNotMatch(html.match(/<button[^>]*aria-label="查看 Agent 详情：独立代码审查"[^>]*>/)?.[0] ?? '', /disabled/);
 });
 
 test('sidebar and control bar derive their busy indicators from the same native activity projection', () => {

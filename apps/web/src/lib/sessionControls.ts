@@ -9,10 +9,26 @@ export interface SessionControls {
     kind: 'shell' | 'agent';
     title: string;
     status: 'running' | 'cancelled';
-    messageId?: string;
   }[];
   steering: { id: string; text: string }[];
 }
+
+export interface AgentTaskDetails {
+  sessionId: string;
+  taskId: string;
+  title: string;
+  status: 'running' | 'idle' | 'completed' | 'failed' | 'cancelled';
+  description?: string;
+  prompt?: string;
+  model?: string;
+  latestIntent?: string;
+  recentActivity: { message: string; timestamp: string }[];
+  latestResponse?: string;
+  result?: string;
+  error?: string;
+}
+
+export type ReadAgentTaskDetails = (sessionId: string, taskId: string, signal: AbortSignal) => Promise<AgentTaskDetails | null>;
 
 export type SessionControlAction =
   | { type: 'stop-all' | 'clear-queue' | 'cancel-compaction' | 'prune-tasks' }

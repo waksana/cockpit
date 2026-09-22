@@ -302,6 +302,17 @@ changes. This alternate composition is opt-in; the production composer stays unc
 Full-Web steering first shows acceptance, then a 700ms synthetic runtime event
 places the same message in history; Stop/clear/disposal fence delayed events.
 The backend has no new mutation API and never receives these fixture actions.
+Agent "view" is a task-scoped read, keyed by session ID and task ID. It opens
+independent details (task metadata, recent progress, latest response/result)
+inside the activity list, not a jump to a loaded transcript card. Its reader
+does not scan, page or mutate the parent chat window. Only an expanded entry
+owns a read; collapse/removal/session changes release it, and stale or mismatched
+responses cannot populate another task. Native task invalidation or a changed
+task status refreshes the expanded view; there is no polling. Unavailable, empty
+and failed reads remain distinct. The synthetic `case=agent-unloaded` session
+retains a running agent while omitting its startup card from the chat window.
+The intended native source is task metadata/progress, not an assertion that this
+preview already exposes a new backend task-detail endpoint or full agent history.
 The sidebar uses the same shared projection and icon renderer as the input bar.
 Expanded controls keep the overall icon in the bar and relocate agent/terminal/
 queue icons with their counts into section headings; collapsed controls reunite

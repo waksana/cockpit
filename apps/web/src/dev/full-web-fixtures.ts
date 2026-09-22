@@ -2,6 +2,7 @@ import { SessionProjection, type McpServerSession, type SkillSession } from '@co
 import type { createCockpitStore } from '../net/store';
 import type { ChatSession } from '../net/types';
 import { retireDraftSession } from '../lib/draftSelection';
+import type { AgentTaskDetails } from '../lib/sessionControls';
 import { installResourceFixture } from './resource-fixtures';
 import { workspaceSessionId } from './workspace-fixtures';
 import { applyControlAction, canSteer, controlDesignState, controlScenes, controlSession,
@@ -47,6 +48,27 @@ export function installFullWebFixture(store: ReturnType<typeof createCockpitStor
   unloaded.session = { ...unloaded.session, title: '归档中的调研', cwd: '/workspace/cockpit',
     loaded: false, status: 'unloaded', activity: null, lastActivity: Date.now() - 86_400_000 };
   models.set(unloaded.session.sessionId, unloaded);
+  const outsideWindow = controlDesignState('background', 'agent-unloaded');
+  outsideWindow.session = { ...template, ...outsideWindow.session, title: 'Agent 记录未载入聊天窗口',
+    messages: outsideWindow.session.messages.filter(message => message.subtype !== 'subagent'),
+    lastActivity: Date.now() - 10 * 60_000, cwd: '/workspace/cockpit' };
+  models.set(outsideWindow.session.sessionId, outsideWindow);
+  const agentDetails = new Map<string, Omit<AgentTaskDetails, 'status'>>();
+  for (const [sessionId, model] of models) {
+    for (const task of model.tasks.filter(task => task.kind === 'agent')) {
+      agentDetails.set(JSON.stringify([sessionId, task.id]), {
+        sessionId, taskId: task.id, title: task.title,
+        description: `独立复核「${model.session.title}」，任务详情不依赖主会话已加载的消息。`,
+        prompt: '只读检查组件状态、任务归属和窄屏布局，报告有证据的问题。',
+        model: 'GPT-5.4',
+        recentActivity: [
+          { message: '读取会话状态组件', timestamp: '2026-09-22T08:00:00.000Z' },
+          { message: '核对后台任务与消息窗口的独立生命周期', timestamp: '2026-09-22T08:01:00.000Z' },
+        ],
+        latestResponse: '已读取相关组件。任务 ID 与会话 ID 用于关联详情；聊天窗口是否加载过启动消息不影响读取。',
+      });
+    }
+  }
   const publish = (id: string, model: ControlDesignState) => {
     models.set(id, model);
     store.setState(state => ({ sessions: state.sessions.map(session => session.sessionId === id ? project(model) : session) }));
@@ -80,6 +102,18 @@ export function installFullWebFixture(store: ReturnType<typeof createCockpitStor
     init: () => {
       active = true;
       return () => { active = false; for (const timer of timers) clearTimeout(timer); timers.clear(); };
+    },
+    readAgentTaskDetails: async (sessionId, taskId, signal) => {
+      signal.throwIfAborted();
+      if (!active || store.getState().connState !== 'open' || !store.getState().snapshotReady) throw new Error('合成会话连接已失效。');
+      const model = current(sessionId);
+      if (!model.session.loaded) throw new Error('合成会话尚未加载，不能读取任务详情。');
+      const task = model.tasks.find(value => value.id === taskId && value.kind === 'agent');
+      if (!task) return null;
+      const detail = agentDetails.get(JSON.stringify([sessionId, taskId]));
+      if (!detail) throw new Error('这个合成任务没有独立详情记录。');
+      return { ...detail, title: task.title, status: task.status,
+        latestIntent: task.status === 'running' ? '核对状态与交互边界' : undefined };
     },
     sessionControlAction: async (id, action) => {
       if (!active || store.getState().connState !== 'open' || !store.getState().snapshotReady) throw new Error('合成会话连接已失效。');

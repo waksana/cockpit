@@ -31,6 +31,7 @@ import { ControlDesignLab } from '../dev/control-design-lab';
 import { installFullWebFixture } from '../dev/full-web-fixtures';
 import { ConnectedThread } from './ConnectedThread';
 import { workspaceSessionId } from '../dev/workspace-fixtures';
+import type { AgentTaskDetails } from '../lib/sessionControls';
 import App from '../App';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
@@ -906,6 +907,34 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(container.querySelector('.chat-input-message'), editor);
       assert.equal(editor.value, '普通消息草稿');
       if (container.querySelector('.chat-controls-toggle')?.getAttribute('aria-expanded') !== 'true') await click('.chat-controls-toggle');
+      const taskDetail = await fixture.getState().readAgentTaskDetails!(workspaceSessionId, 'preview-agent', new AbortController().signal);
+      assert.ok(taskDetail);
+      const reads: { sessionId: string; taskId: string; signal: AbortSignal; resolve: (detail: AgentTaskDetails | null) => void }[] = [];
+      await act(() => fixture.setState(state => ({
+        sessions: state.sessions.map(session => session.sessionId === workspaceSessionId
+          ? { ...session, messages: session.messages.filter(message => message.subtype !== 'subagent') } : session),
+        readAgentTaskDetails: (sessionId, taskId, signal) => new Promise(resolve => { reads.push({ sessionId, taskId, signal, resolve }); }),
+      })));
+      const parentMessages = fixture.getState().sessions.find(session => session.sessionId === workspaceSessionId)!.messages;
+      assert.equal(container.querySelector('.subagent-head'), null);
+      await click('[aria-label="查看 Agent 详情：独立代码审查"]');
+      assert.equal(reads.length, 1);
+      assert.equal(reads[0].sessionId, workspaceSessionId);
+      assert.equal(reads[0].taskId, 'preview-agent');
+      assert.match(container.querySelector('.chat-agent-detail')!.textContent, /正在读取/);
+      await click('[aria-label="收起 Agent 详情：独立代码审查"]');
+      assert.equal(reads[0].signal.aborted, true, 'closing a task detail releases its request');
+      await act(() => reads[0].resolve({ ...taskDetail, latestResponse: 'Retired response must not appear' }));
+      assert.equal(container.querySelector('.chat-agent-detail'), null);
+      await click('[aria-label="查看 Agent 详情：独立代码审查"]');
+      await act(() => reads[1].resolve(taskDetail));
+      assert.match(container.querySelector('.chat-agent-detail')!.textContent, /任务 ID|近期进度/);
+      assert.doesNotMatch(container.textContent, /Retired response must not appear/);
+      assert.equal(fixture.getState().sessions.find(session => session.sessionId === workspaceSessionId)!.messages, parentMessages);
+      await click('[aria-label="刷新 Agent 详情：独立代码审查"]');
+      await act(() => reads[2].resolve({ ...taskDetail, taskId: 'other-agent' }));
+      assert.match(container.querySelector('.chat-agent-detail')!.textContent, /返回了不同的会话或任务/);
+      await click('[aria-label="收起 Agent 详情：独立代码审查"]');
       await click('[aria-label="停止任务：构建项目"]', container.querySelector('[data-task-id="preview-build"]')!);
       assert.equal(container.querySelectorAll('.chat-controls-task').length, 3);
       assert.match(container.querySelector('[data-task-id="preview-build"]')!.textContent, /已停止/);

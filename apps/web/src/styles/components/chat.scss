@@ -532,6 +532,14 @@ button.activity-head {
 .chat-controls-heading { display: inline-flex; align-items: center; gap: var(--chat-gap-control); }
 .chat-controls .chat-controls-task { align-items: center; }
 .chat-controls-task-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.chat-control-entry + .chat-control-entry { border-top: 1px solid color-mix(in srgb, var(--border-color) 45%, transparent); }
+.chat-agent-detail { overflow-wrap: anywhere; }
+.chat-agent-detail h4 { margin-block: var(--chat-gap-control); font-size: var(--chat-text-label); }
+.chat-agent-metadata {
+  display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--chat-gap-meta) var(--chat-gap-control);
+  color: var(--secondary-text-color);
+  dd { margin: 0; }
+}
 .chat-controls-muted { color: var(--secondary-text-color); }
 .chat-control-action { display: flex; flex-direction: column; align-items: flex-start; }
 .chat-controls .chat-controls-actions { gap: var(--chat-gap-meta); }

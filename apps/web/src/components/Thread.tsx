@@ -7,7 +7,7 @@ import { MessageContent } from './MessageContent';
 import { hasMessageContent } from '../lib/messageContent';
 import { Composer, ComposerNotices } from './Composer';
 import { SessionControlBar } from './SessionControlBar';
-import type { SessionControlAction } from '../lib/sessionControls';
+import type { ReadAgentTaskDetails, SessionControlAction } from '../lib/sessionControls';
 import { useControlComposer } from '../lib/useControlComposer';
 import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
@@ -328,13 +328,14 @@ interface ThreadProps {
   composerControls?: ReactNode;
   promptBusy?: boolean;
   onControlAction?: (action: SessionControlAction) => Promise<void>;
+  readAgentDetails?: ReadAgentTaskDetails;
   // Read-only transcript: renders the paginated
   // message list but hides the composer and every interactive banner, so the
   // conversation can be browsed but not driven.
   readOnly?: boolean;
 }
 
-export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, composerControls, promptBusy = session.controls?.main ?? session.status === 'running', onControlAction, readOnly = false }: ThreadProps) {
+export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespondElicitation, onRemoveQueued, onCancel, onInterrupt, onLoadMore, onRetryHistory, composerControls, promptBusy = session.controls?.main ?? session.status === 'running', onControlAction, readAgentDetails, readOnly = false }: ThreadProps) {
   const controls = !readOnly && onControlAction ? session.controls : undefined;
   const connected = useCockpit((s) => s.connState === 'open');
   const snapshotReady = useCockpit((s) => s.snapshotReady);
@@ -595,14 +596,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
               expanded={controlsOpen} disabled={!authoritative || !session.loaded || !!session.loading || !!session.closing || activityRefreshing}
               controlRef={executionControlRef} onAction={onControlAction}
               onToggle={() => { setControlsDisclosure({ decision: decisionKey, open: !controlsOpen }); }}
-              onView={messageId => {
-                const target = contentRef.current?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
-                if (!target) throw new Error('这条任务记录尚未加载。');
-                target.scrollIntoView({ block: 'center' });
-                const toggle = target.querySelector<HTMLButtonElement>('button[aria-expanded]');
-                if (toggle?.getAttribute('aria-expanded') === 'false') toggle.click();
-                toggle?.focus({ preventScroll: true });
-              }} />}
+              readAgentDetails={readAgentDetails} />}
             {!readOnly && composerControls}
             <div className="chat-input-context">
               {!readOnly && !controls && composerControls === undefined && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">

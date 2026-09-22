@@ -1,10 +1,11 @@
-import { useId, type RefCallback } from 'react';
+import { useId, useState, type RefCallback } from 'react';
 import type { ChatSession } from '../net/types';
-import { controlIndicators, type SessionControlAction, type SessionControls } from '../lib/sessionControls';
+import { controlIndicators, type ReadAgentTaskDetails, type SessionControlAction, type SessionControls } from '../lib/sessionControls';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { Icon, type IconName } from './Icon';
 import { SessionActivity } from './SessionActivity';
 import { CopyButton } from './CopyButton';
+import { AgentTaskDetails } from './AgentTaskDetails';
 
 function ControlAction({ identity, label, icon, waiting = '请求中…', disabled, controlRef, onAction }: {
   identity: string; label: string; icon: IconName; waiting?: string; disabled: boolean;
@@ -21,10 +22,40 @@ function ControlAction({ identity, label, icon, waiting = '请求中…', disabl
   </div>;
 }
 
-export function SessionControlBar({ session, controls, connected, expanded, disabled, onToggle, onAction, onView, controlRef }: {
+function TaskEntry({ task, sessionId, expanded, available, disabled, controlRef, onAction, readAgentDetails }: {
+  task: SessionControls['tasks'][number]; sessionId: string; expanded: boolean; available: boolean; disabled: boolean;
+  controlRef: RefCallback<HTMLElement>; onAction: (action: SessionControlAction) => Promise<void>;
+  readAgentDetails?: ReadAgentTaskDetails;
+}) {
+  const [open, setOpen] = useState(false);
+  const detailId = useId();
+  const stopped = task.status === 'cancelled';
+  return <div className="chat-control-entry" data-task-id={task.id}>
+    <div className="chat-queue-item chat-controls-task">
+      <span className="chat-controls-task-name">{task.title}{stopped && <span className="chat-controls-muted"> · 已停止</span>}</span>
+      <div className="chat-controls-actions">
+        <CopyButton text={task.title} label={`复制任务名称：${task.title}`} variant="icon" />
+        {task.kind === 'agent' && <button ref={controlRef} type="button" className="ck-icon-button"
+          aria-label={`${open ? '收起' : '查看'} Agent 详情：${task.title}`}
+          title={readAgentDetails ? `${open ? '收起' : '查看'} Agent 详情` : 'Agent 详情读取暂不可用'}
+          aria-expanded={open} aria-controls={detailId} disabled={!readAgentDetails}
+          onClick={() => setOpen(value => !value)}><Icon name="view" size={16} /></button>}
+        <ControlAction identity={`${sessionId}:controls:${task.id}`} label={`${stopped ? '移除任务记录' : '停止任务'}：${task.title}`}
+          icon={stopped ? 'close' : 'stop'} waiting={stopped ? '移除中…' : '停止中…'} disabled={disabled} controlRef={controlRef}
+          onAction={() => onAction({ type: stopped ? 'remove-task' : 'stop-task', id: task.id })} />
+      </div>
+    </div>
+    {expanded && open && readAgentDetails && <div id={detailId}>
+      <AgentTaskDetails sessionId={sessionId} taskId={task.id} status={task.status} title={task.title}
+        available={available} read={readAgentDetails} />
+    </div>}
+  </div>;
+}
+
+export function SessionControlBar({ session, controls, connected, expanded, disabled, onToggle, onAction, readAgentDetails, controlRef }: {
   session: ChatSession; controls: SessionControls; connected: boolean; expanded: boolean; disabled: boolean;
   onToggle: () => void; onAction: (action: SessionControlAction) => Promise<void>;
-  onView: (messageId: string) => void; controlRef: RefCallback<HTMLElement>;
+  readAgentDetails?: ReadAgentTaskDetails; controlRef: RefCallback<HTMLElement>;
 }) {
   const listId = useId();
   const prune = useKeyedAction(`${session.sessionId}:controls:prune`);
@@ -61,17 +92,10 @@ export function SessionControlBar({ session, controls, connected, expanded, disa
               key: kind, icon: kind, count: 0, label: kind === 'agent' ? '活动 agent 0' : '后台 shell 0',
             }]} /><span>{kind === 'agent' ? 'Agent' : 'Terminal'}</span>
           </span></header>
-          {entries.map(task => <div className="chat-queue-item chat-controls-task" key={task.id} data-task-id={task.id}>
-            <span className="chat-controls-task-name">{task.title}{task.status === 'cancelled' && <span className="chat-controls-muted"> · 已停止</span>}</span>
-            <div className="chat-controls-actions">
-              <CopyButton text={task.title} label={`复制任务名称：${task.title}`} variant="icon" />
-              {task.messageId && session.messages.some(message => message.id === task.messageId) &&
-                <ControlAction identity={`${session.sessionId}:view:${task.id}`} label={`查看任务记录：${task.title}`} icon="view" disabled={false}
-                  controlRef={controlRef} onAction={() => onView(task.messageId!)} />}
-              {task.status === 'running' ? action(task.id, `停止任务：${task.title}`, 'stop', { type: 'stop-task', id: task.id }, false, '停止中…')
-                : action(task.id, `移除任务记录：${task.title}`, 'close', { type: 'remove-task', id: task.id })}
-            </div>
-          </div>)}
+          {entries.map(task => <TaskEntry key={JSON.stringify([session.sessionId, task.id])} task={task} sessionId={session.sessionId}
+            expanded={expanded} available={connected && !!session.loaded && !session.loading && !session.closing}
+            disabled={disabled} controlRef={controlRef}
+            onAction={onAction} readAgentDetails={readAgentDetails} />)}
         </section> : null;
       })}
       {controls.compaction === 'manual' && <section className="chat-queue">

@@ -74,6 +74,7 @@ interface CockpitState {
   removeQueued: (sessionId: string, itemId: string) => Promise<void>;
   refreshList: () => Promise<void>;
   sessionControlAction?: (sessionId: string, action: import('../lib/sessionControls').SessionControlAction) => Promise<void>;
+  readAgentTaskDetails?: import('../lib/sessionControls').ReadAgentTaskDetails;
 }
 
 export const createCockpitStore = () => create<CockpitState>((set, get) => {

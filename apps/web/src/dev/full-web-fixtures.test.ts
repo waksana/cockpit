@@ -120,3 +120,29 @@ test('steering has distinct acceptance and consumption, with stop, session and d
   dispose();
   await assert.rejects(act(workspaceSessionId, { type: 'clear-queue' }), /已失效/);
 });
+
+test('agent details are task-owned even when their chat message is outside the loaded window', async t => {
+  const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('No fixture may use HTTP'); });
+  const store = createCockpitStore();
+  const id = installFullWebFixture(store, 'agent-unloaded');
+  assert.equal(id, 'control-design-agent-unloaded');
+  const before = store.getState().sessions.find(session => session.sessionId === id)!;
+  assert.equal(before.messages.some(message => message.subtype === 'subagent'), false);
+  const read = store.getState().readAgentTaskDetails!;
+  const signal = new AbortController().signal;
+  const detail = await read(id, 'preview-agent', signal);
+  assert.equal(detail?.taskId, 'preview-agent');
+  assert.equal(detail?.sessionId, id);
+  assert.ok(detail?.recentActivity.length);
+  assert.strictEqual(store.getState().sessions.find(session => session.sessionId === id)?.messages, before.messages);
+  const peer = await read(workspaceSessionId, 'preview-agent', signal);
+  assert.notEqual(peer?.description, detail?.description, 'same task IDs in different sessions never alias');
+  await store.getState().sessionControlAction!(id, { type: 'stop-task', id: 'preview-agent' });
+  assert.equal((await read(id, 'preview-agent', signal))?.status, 'cancelled');
+  await store.getState().sessionControlAction!(id, { type: 'remove-task', id: 'preview-agent' });
+  assert.equal(await read(id, 'preview-agent', signal), null);
+  const cancelled = new AbortController();
+  cancelled.abort();
+  await assert.rejects(read(workspaceSessionId, 'preview-agent', cancelled.signal), /abort/i);
+  assert.equal(fetch.mock.callCount(), 0);
+});
