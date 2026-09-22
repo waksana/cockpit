@@ -31,6 +31,7 @@ interface CockpitState {
   activeId: string | null;
   globalModels: ModelOption[];
   resourceRevisions: Record<string, Partial<Record<SessionResource, number>>>;
+  activityRefreshingIds: string[];
   reloadingSessionIds: string[];
   // lifecycle
   init: () => () => void;
@@ -102,6 +103,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     const needed = resources.filter((resource): resource is MetaResource =>
       MetaResource.safeParse(resource).success && consumed.has(resource));
     if (!needed.length) return;
+    if (client?.isOpen && needed.includes('control')) set(st => ({
+      activityRefreshingIds: st.activityRefreshingIds.includes(sessionId)
+        ? st.activityRefreshingIds : [...st.activityRefreshingIds, sessionId],
+    }));
     if (pending) { for (const resource of needed) pending.dirty.add(resource); return; }
     const request = { dirty: new Set(needed), stale: new Set<MetaResource>(), controller: new AbortController(), patches: {} as Partial<SessionMeta> };
     const net = client;
@@ -151,6 +156,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       metaRequests.delete(sessionId);
       if (request.dirty.size && !request.controller.signal.aborted && client === net && get().connectionGeneration === generation) {
         refreshMeta(sessionId, [...request.dirty]);
+      } else {
+        set(st => ({ activityRefreshingIds: st.activityRefreshingIds.filter(id => id !== sessionId) }));
       }
     });
   };
@@ -187,6 +194,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
   // Only authoritative absence releases a view; unloading and partial resource
   // responses must preserve its cursor, nested projection and unsent draft.
   const releaseSessions = (ids: readonly string[]) => {
+    set(st => ({ activityRefreshingIds: st.activityRefreshingIds.filter(id => !ids.includes(id)) }));
     let revisions: CockpitState['resourceRevisions'] | undefined;
     for (const id of ids) {
       retireDraftSession(id);
@@ -394,7 +402,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
   const invalidateRequests = () => {
     for (const request of metaRequests.values()) request.controller.abort();
     metaRequests.clear();
-    set({ snapshotReady: false });
+    set({ snapshotReady: false, activityRefreshingIds: [] });
     cancelHistory();
     cancelLive();
     for (const window of windows.values()) window.disconnect();
@@ -458,6 +466,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       case 'session/added':
         metaRequests.get(ev.session.sessionId)?.controller.abort();
         metaRequests.delete(ev.session.sessionId);
+        set(st => ({ activityRefreshingIds: st.activityRefreshingIds.filter(id => id !== ev.session.sessionId) }));
         set((st) => {
           const exists = st.sessions.some(s => s.sessionId === ev.session.sessionId);
           const sessions = exists ? st.sessions.map(s => s.sessionId === ev.session.sessionId ? metaToSession(ev.session, s) : s)
@@ -492,6 +501,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
           if ('loaded' in patch || patch.closing) {
             pending.controller.abort();
             metaRequests.delete(ev.sessionId);
+            set(st => ({ activityRefreshingIds: st.activityRefreshingIds.filter(id => id !== ev.sessionId) }));
           } else Object.assign(pending.patches, patch);
         }
         set((st) => {
@@ -548,6 +558,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     activeId: null,
     globalModels: [],
     resourceRevisions: {},
+    activityRefreshingIds: [],
     onModuleInvalidated(listener) {
       moduleListeners.add(listener);
       return () => { moduleListeners.delete(listener); };

@@ -13,18 +13,21 @@ export function sessionActivityIndicators(session: {
   status: SessionMeta['status'];
   loaded?: boolean;
   activity?: SessionMeta['activity'];
+  activityRefreshing?: boolean;
   needsDecision: boolean;
 }, connected: boolean): ActivityIndicator[] {
-  if (!connected) return [{ key: 'offline', icon: 'unknown', label: '活动待同步', text: '待同步' }];
   if (session.loaded === false || session.status === 'unloaded') {
-    return [{ key: 'unloaded', icon: 'unknown', label: '未加载，活动不可用', text: '未加载' }];
+    return [];
   }
+  if (!connected) return [{ key: 'offline', icon: 'unknown', label: '活动待同步', text: '待同步' }];
   const items: ActivityIndicator[] = [];
   if (session.status === 'error') items.push({ key: 'error', icon: 'error', label: '会话出错', text: '出错' });
   if (session.needsDecision) items.push({ key: 'decision', icon: 'decision', label: '等待你的回答或确认' });
   const activity = session.activity;
   if (!activity) {
-    items.push({ key: 'unknown', icon: 'unknown', label: '当前活动未知', text: '未知' });
+    items.push(session.activityRefreshing
+      ? { key: 'refreshing', icon: 'loading', label: '正在刷新活动状态' }
+      : { key: 'unknown', icon: 'unknown', label: '当前活动未知', text: '未知' });
     return items;
   }
   if (activity.processing) items.push({

@@ -22,6 +22,7 @@ test('shell, agents, decisions and native processing coexist without generation 
   assert.match(html, /aria-label="后台 shell 1"/);
   assert.match(html, /aria-label="活动 agent 2"/);
   assert.match(html, /不代表模型正在生成/);
+  assert.match(html, /class="ck-icon spinner" data-icon="loading"/);
   assert.doesNotMatch(html, /回复中|<button|<details|<summary/);
 });
 
@@ -45,7 +46,21 @@ test('missing, unloaded, disconnected and unclassified activity never imply idle
   for (const activity of [undefined, null]) assert.equal(indicators(activity)[0].key, 'unknown');
   const active = { ...session, activity: activityFixture({ processing: true }), needsDecision: true };
   assert.deepEqual(sessionActivityIndicators(active, false).map(item => item.key), ['offline']);
-  assert.deepEqual(sessionActivityIndicators({ ...active, loaded: false }, true).map(item => item.key), ['unloaded']);
+  for (const connected of [true, false]) {
+    assert.deepEqual(sessionActivityIndicators({ ...active, loaded: false }, connected), []);
+    assert.deepEqual(sessionActivityIndicators({ ...active, status: 'unloaded' }, connected), []);
+  }
   assert.equal(indicators(activityFixture({ hasActiveWork: true }))[0].key, 'other');
   assert.equal(indicators(activityFixture({ tasks: { activeAgents: 0, activeShells: 0, unknown: 1 } }))[0].key, 'unknown-tasks');
+});
+
+test('pending control reads show refreshing rather than unknown or stale native activity', () => {
+  const items = sessionActivityIndicators({ ...session, activity: null, activityRefreshing: true }, true);
+  assert.deepEqual(items.map(item => item.key), ['refreshing']);
+  const html = renderToStaticMarkup(createElement(SessionActivity, { items }));
+  assert.match(html, /正在刷新活动状态/);
+  assert.match(html, /class="ck-icon spinner" data-icon="loading"/);
+  assert.doesNotMatch(html, /未知|原生处理中/);
+  assert.deepEqual(sessionActivityIndicators({ ...session, activityRefreshing: true }, false).map(item => item.key), ['offline']);
+  assert.deepEqual(indicators(null).map(item => item.key), ['unknown']);
 });

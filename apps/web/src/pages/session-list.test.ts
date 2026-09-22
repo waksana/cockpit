@@ -88,6 +88,7 @@ test('sidebar is a single list and keeps unloaded rows focusable and selectable'
   assert.doesNotMatch(html, /<li[^>]*role="button"/);
   assert.equal((html.match(/aria-current="true"/g) ?? []).length, 1);
   assert.doesNotMatch(html, /chatlist-group-title|dialog-pinned|dialog-unread/);
+  assert.doesNotMatch(html, /data-activity="unloaded"|未加载/);
 });
 
 test('running state and pending decisions remain without schedule indicators or an inbox', () => {

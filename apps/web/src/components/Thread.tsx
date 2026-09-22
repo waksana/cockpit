@@ -377,8 +377,9 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
     return () => { canAct.current = false; };
   }, [session.sessionId, authoritative, readOnly]);
   const { pending: actionPending, hasContent } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
+  const activityRefreshing = useCockpit(state => state.activityRefreshingIds.includes(session.sessionId));
   const activityItems = sessionActivityIndicators({
-    ...session, needsDecision: !!(session.ask || session.planRequest || session.elicitation),
+    ...session, activityRefreshing, needsDecision: !!(session.ask || session.planRequest || session.elicitation),
   }, connected && snapshotReady);
   const executionProgress = connected && snapshotReady && session.cancelling ? '正在停止…'
     : connected && snapshotReady && session.compacting ? '正在压缩上下文…'
