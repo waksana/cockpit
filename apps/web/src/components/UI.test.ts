@@ -86,7 +86,9 @@ test('controls retain the desktop baseline, touch input floor, inset focus and c
   assert.match(css, /\.ui-choice-card:has\(input:disabled\)/);
   const info = readFileSync(new URL('../styles/components/info-panel.scss', import.meta.url), 'utf8');
   const dialog = readFileSync(new URL('../styles/components/dialog.scss', import.meta.url), 'utf8');
-  assert.doesNotMatch(info + dialog, /outline:\s*none|\.info-select\b|^\.dialog-btn\s*\{/m);
+  const pointerOnly = /:root \[data-native-dialog-pointer-focus\]:focus-visible \{\s*outline: none;\s*\}/;
+  assert.match(dialog, pointerOnly);
+  assert.doesNotMatch(info + dialog.replace(pointerOnly, ''), /outline:\s*none|\.info-select\b|^\.dialog-btn\s*\{/m);
   assert.match(dialog, /\[data-dialog-focus\]:focus-visible \{[^}]*box-shadow: inset 3px 0 0 var\(--primary-color\)/);
   assert.doesNotMatch(dialog.match(/\[data-dialog-focus\]:focus-visible \{([^}]*)\}/)![1], /text-decoration|padding|margin|border:/);
 });

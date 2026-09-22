@@ -9,6 +9,7 @@ import { AnchoredMenu } from '../components/AnchoredMenu';
 import { sessionActionItems } from '../lib/sessionActions';
 import { UxErrorNotifications } from '../components/UxErrorNotifications';
 import { getDraftSession, getSessionDraft } from '../lib/draftSelection';
+import { installNativeDialogFocus } from '../lib/nativeDialogFocus';
 import { useCockpit } from '../net/store';
 import { fixtureSession, scenarios, type Scenario } from './chat-fixtures';
 import { orderedFixture } from './ordered-fixtures';
@@ -20,6 +21,8 @@ import './chat-lab.scss';
 if (!import.meta.env.DEV || import.meta.env.COCKPIT_CHAT_LAB !== true) {
   throw new Error('Start the isolated chat lab with COCKPIT_CHAT_LAB=1.');
 }
+const removeDialogFocus = installNativeDialogFocus(document);
+import.meta.hot?.dispose(removeDialogFocus);
 
 // Component scenes have no transport. The workspace scene below mounts the real
 // App with an isolated store; unhandled HTTP is rejected by the Vite lab server too.
@@ -259,7 +262,19 @@ export function Lab() {
 
 const root = createRoot(document.getElementById('root')!);
 const scene = new URLSearchParams(location.search).get('scene');
-if (scene === 'full-web') {
+if (scene === 'dialog-focus') {
+  const { DialogFocusLab } = await import('./dialog-focus-lab');
+  const modules = new URLSearchParams(location.search).get('modules') === '1';
+  if (modules) {
+    const { moduleRuntime } = await import('../lib/moduleRuntime');
+    await moduleRuntime.start('');
+    if (!moduleRuntime.getSnapshot().some(module => module.asset.id === 'cockpit-file')) {
+      throw new Error('The dialog focus scene requires COCKPIT_LAB_FILE_ROOT when modules=1.');
+    }
+    window.addEventListener('pagehide', () => moduleRuntime.stop(), { once: true });
+  }
+  root.render(<DialogFocusLab modules={modules} />);
+} else if (scene === 'full-web') {
   const { installFullWebFixture } = await import('./full-web-fixtures');
   const id = installFullWebFixture(useCockpit, new URLSearchParams(location.search).get('case') ?? 'mixed');
   const { default: App } = await import('../App');

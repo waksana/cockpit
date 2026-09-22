@@ -26,6 +26,15 @@
   &:dir(rtl) { box-shadow: inset -3px 0 0 var(--primary-color); }
 }
 
+// Private host marker, also applied to module-owned native .ck-modal dialogs.
+// Keyboard input removes it before navigation; ordinary focus-visible is intact.
+:root [data-native-dialog-pointer-focus]:focus-visible {
+  outline: none;
+}
+.host-modal [data-dialog-focus][data-native-dialog-pointer-focus]:focus-visible {
+  box-shadow: none;
+}
+
 .dialog-card {
   width: 100%;
   max-width: 22rem;
