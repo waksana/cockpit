@@ -1,3 +1,21 @@
+# Cockpit 0.4.0
+
+Deployment preparation for the native session controls in #119. The classic
+conversation now exposes active agent/terminal groups, scoped cancellation and
+group clearing, native queue steering, request-bound decision cancellation and
+an explicit global Stop. Sidebar and input controls share the overall activity
+indicator; native partial outcomes, loaded-handle identity and newer-turn
+ownership remain explicit.
+
+This is a compatible capability addition, with unchanged native SDK 1.0.13 /
+runtime 1.0.83, module backend API v1, Web API v2 and existing UI capabilities.
+All host workspaces and MCP self-report 0.4.0. Module selections, credentials,
+native session data and module versions are not changed by this preparation.
+The versioned source can be packaged for the authorized deployment; this change
+does not create a tag or GitHub Release or itself restart a service.
+
+---
+
 # Cockpit 0.3.1
 
 Current-source delivery version for the compact next workspace in #103.
