@@ -1,3 +1,19 @@
+# Cockpit 0.4.1
+
+Current-source deployment version for the list layouts in #122, the
+SquareTerminal app icon in #124 and classic dialog focus fixes in #127.
+These presentation fixes retain classic at `/` and the independent `/next/`
+entry without changing native session controls or module business behavior.
+
+All host workspaces and MCP self-report 0.4.1. Native SDK 1.0.13 / runtime
+1.0.83, module backend API v1, Web API v2 and existing UI capabilities are
+unchanged. Existing module selections, parameters, credentials and user data
+are not migrated by this version preparation. Changed runtime contents use
+this new version rather than replacing the installed 0.4.0 identity.
+This preparation does not create a tag or GitHub Release or restart a service.
+
+---
+
 # Cockpit 0.4.0
 
 Deployment preparation for the native session controls in #119. The classic
