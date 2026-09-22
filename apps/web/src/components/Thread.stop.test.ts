@@ -56,6 +56,16 @@ test('Stop stays concise when the authoritative queue is empty', () => {
   assert.doesNotMatch(render(), /停止并清空队列/);
 });
 
+test('retained activity affects presentation only, never Stop or interrupt eligibility', () => {
+  const html = render({ activity: null, nativeProcessing: false,
+    activityDisplay: { previous: { status: 'running', activity: activityFixture({
+      processing: true, abortable: true, queue: { pendingCount: 3, steeringCount: 0, inFlightSteeringCount: 0 },
+    }) } } });
+  assert.match(html, /data-activity="queue"/);
+  assert.match(html, /上次采样，等待更新/);
+  assert.doesNotMatch(html, /停止并清空队列|打断并处理队列/);
+});
+
 test('execution indicators follow raw activity, not aggregate running or historical intent', () => {
   assert.match(render(), /data-activity="processing"/);
   assert.match(render({ intent: 'Reading source' }), /chat-execution-progress">Reading source/);
@@ -133,7 +143,7 @@ test('a pending question shares the card below its only status and action header
   assert.match(html, /Which option\?/);
   assert.doesNotMatch(region, /Which option\?|class="chat-ask/);
   assert.match(region, /data-activity="decision"/);
-  assert.match(region, /data-activity="processing"/);
+  assert.doesNotMatch(region, /data-activity="processing"/);
   assert.match(region, /class="chat-typing-stop ck-button ck-danger">[\s\S]*?停止/);
   assert.doesNotMatch(html, /输入内容将回答当前问题|chat-composer-hint/);
 });

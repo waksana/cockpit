@@ -381,16 +381,26 @@ and CircleHelp means a real pending decision. Process/tool rows, agent cards and
 decision cards use those same semantic icons; execution-result icons remain
 separate. Concurrent facts use separate icons/counts, not an exclusive busy reason.
 The native processing icon means a turn or background continuation, never proven
-model generation. Processing and pending activity reads use the rotating loading
-glyph; a pending read is labeled as refreshing, not native processing or unknown.
-Failed or unavailable reads remain unknown, and disconnection remains explicit.
+model generation. It and unknown/unclassified activity use one rotating fallback
+glyph, suppressed whenever a concrete activity or decision icon is present.
+Ordinary reconciliation retains the last sampled appearance (including empty
+idle), labeled as a previous sample in accessible text, until a fresh response.
+This browser-only `activityDisplay` never replaces native `activity` or authorizes
+actions. Read failures display an error; disconnection remains explicit. Unload,
+removal and reconnect discard retained presentation.
 Unloaded rows retain their muted appearance without a redundant activity badge.
 An aggregate `running` value alone cannot produce a replying indicator.
 Activity adds no disclosure, detail area or task-management page. Existing input
 and transcript disclosures are unchanged. The independent next UI is not redesigned.
-Stop acknowledgement reports only acceptance; remaining shell/agent facts stay
-visible. A sampled non-abortable state disables interruption without asserting
+Stop/interrupt acknowledgement produces no success banner or toast; pending state
+stays on the action button and failures remain visible. Remaining shell/agent facts
+stay visible. A sampled non-abortable state disables interruption without asserting
 that all work ended, and queued-message clearing remains available when applicable.
+Built-in tools use action-specific icons and native descriptions, with the exact
+tool name retained in expanded details. Unknown/extension tools keep the Wrench
+and their original names in the header. Matching is exact, optionally stripping
+the native `functions.` prefix, never guessing from MCP tool-name substrings.
+Subagent messages remain independent cards, not ordinary tool rows.
 Queue entries always expose a small copy button beside removal, including
 single-line and collapsed messages. It copies
 the complete original text through the same control used by code/tool details,

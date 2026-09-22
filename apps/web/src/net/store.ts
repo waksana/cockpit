@@ -113,11 +113,13 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     const generation = get().connectionGeneration;
     if (!net?.isOpen) return;
     metaRequests.set(sessionId, request);
+    let readingControl = false;
     void Promise.resolve().then(async () => {
       do {
         const reading = [...request.dirty].filter(resource => resource !== 'queue' || get().activeId === sessionId);
         request.dirty.clear();
         if (!reading.length) return;
+        readingControl = reading.includes('control');
         request.stale.clear();
         request.patches = {};
         const { meta: response } = await net.getResources(sessionId, reading, request.controller.signal);
@@ -133,11 +135,13 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
           const full = meta ? applyProjection(meta, existing) : null;
           const sessions = full
             ? existing ? st.sessions.map(s => s.sessionId === sessionId
-              ? metaToSession({ ...full,
+              ? { ...metaToSession({ ...full,
                 ...(full.error === undefined && s.error !== undefined ? { error: s.error } : {}),
                 ...(full.loaded && full.compacting === undefined && s.compacting !== undefined ? { compacting: s.compacting } : {}),
                 ...(full.loaded && full.intent === undefined && s.intent !== undefined ? { intent: s.intent } : {}),
-              }, s) : s) : [metaToSession(full), ...st.sessions]
+              }, s),
+                activityDisplay: full.loaded && (!readingControl || request.stale.has('control')) ? s.activityDisplay : undefined,
+              } : s) : [metaToSession(full), ...st.sessions]
             : st.sessions.filter(s => s.sessionId !== sessionId);
           return { sessions, };
         });
@@ -148,8 +152,11 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         if (!meta) return;
       } while (request.dirty.size);
     }).catch(error => {
-      if (!request.controller.signal.aborted && client === net && get().connectionGeneration === generation) {
-        reportUxError(`读取会话状态失败：${describeReason(error, false)}`);
+      if (!request.controller.signal.aborted && client === net && get().connectionGeneration === generation
+        && metaRequests.get(sessionId) === request) {
+        const message = describeReason(error, false);
+        if (readingControl) patchLocal(sessionId, s => ({ ...s, activity: null, activityDisplay: { error: message } }));
+        reportUxError(`读取会话状态失败：${message}`);
       }
     }).finally(() => {
       if (metaRequests.get(sessionId) !== request) return;
@@ -409,7 +416,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     nativeReadRefresh = null;
     set((st) => ({
       connectionGeneration: st.connectionGeneration + 1,
-      sessions: st.sessions.map(s => ({ ...s, loadingHistory: false })),
+      sessions: st.sessions.map(s => ({ ...s, loadingHistory: false, activityDisplay: undefined })),
     }));
   };
 
@@ -454,7 +461,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
             ...(resources.includes('control') || (resources.includes('queue') && st.activeId !== ev.sessionId) ? {
               sessions: st.sessions.map(s => s.sessionId === ev.sessionId ? {
                 ...s,
-                ...(resources.includes('control') ? { activity: null } : {}),
+                ...(resources.includes('control') ? {
+                  activity: null,
+                  activityDisplay: s.loaded && s.activity ? { previous: { status: s.status, activity: s.activity } } : s.activityDisplay,
+                } : {}),
                 ...(resources.includes('queue') && st.activeId !== ev.sessionId ? { queue: undefined } : {}),
               } : s),
             } : {}),
@@ -469,7 +479,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         set(st => ({ activityRefreshingIds: st.activityRefreshingIds.filter(id => id !== ev.session.sessionId) }));
         set((st) => {
           const exists = st.sessions.some(s => s.sessionId === ev.session.sessionId);
-          const sessions = exists ? st.sessions.map(s => s.sessionId === ev.session.sessionId ? metaToSession(ev.session, s) : s)
+          const sessions = exists ? st.sessions.map(s => s.sessionId === ev.session.sessionId
+            ? { ...metaToSession(ev.session, s), activityDisplay: undefined } : s)
             : [metaToSession(ev.session), ...st.sessions];
           return { sessions, };
         });
@@ -516,7 +527,11 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
                 ...patch,
               }, s);
             }
-            return { ...s, ...patch };
+            return { ...s, ...patch,
+              activityDisplay: 'loaded' in patch || patch.closing || patch.activity
+                ? undefined : patch.activity === null && s.loaded && s.activity
+                  ? { previous: { status: s.status, activity: s.activity } } : s.activityDisplay,
+            };
           });
           return {
             sessions,

@@ -1337,7 +1337,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       if (switchTarget) {
         assert.doesNotMatch(container.textContent, /停止请求已受理/);
       } else {
-        assert.match(container.textContent, /停止请求已受理；后台任务可能继续/);
+        assert.doesNotMatch(container.textContent, /停止请求已受理|已请求打断/);
         assert.ok(container.querySelector('[data-activity="shell"]'));
         assert.ok(container.querySelector('[data-activity="agent"]'));
         assert.equal(container.querySelector('[data-activity="processing"]'), null);

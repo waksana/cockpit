@@ -25,8 +25,8 @@ const renderProcess = (value = items, latest = false) =>
   }));
 
 test('classic process rows and decision cards share activity semantic icons', () => {
-  for (const [name, icon] of [['bash', 'shell'], ['functions.read_bash', 'shell'], ['task', 'agent'],
-    ['read_agent', 'agent'], ['view', 'tool'], ['ask_user', 'decision']] as const) {
+  for (const [name, icon] of [['bash', 'shell'], ['functions.read_bash', 'shell_output'], ['task', 'agent'],
+    ['read_agent', 'agent_result'], ['view', 'read_file'], ['ask_user', 'decision']] as const) {
     const html = renderToStaticMarkup(createElement(ToolCallRow, {
       sessionId: 'fixture', tc: { toolCallId: name, name, title: name, status: 'completed' },
     }));

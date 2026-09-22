@@ -6,7 +6,7 @@
 
 import { useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import type { SessionMeta } from '../net/types';
+import type { ChatSession, SessionMeta } from '../net/types';
 import { ContextMenu, type MenuItem } from './ContextMenu';
 import { useLongPress } from '../lib/longpress';
 import { filterSessions } from '../pages/session-list';
@@ -41,7 +41,7 @@ interface RowActions {
 }
 
 function SessionRow({ s, active, actions, connected }: {
-  s: SessionMeta; active: boolean; actions: RowActions; connected: boolean;
+  s: SessionMeta & Pick<ChatSession, 'activityDisplay'>; active: boolean; actions: RowActions; connected: boolean;
 }) {
   const firedRef = useRef(false);
   const activityRefreshing = useCockpit(state => state.activityRefreshingIds.includes(s.sessionId));
@@ -82,6 +82,7 @@ function SessionRow({ s, active, actions, connected }: {
       </span>}
       <SessionStatus sessionId={s.sessionId} status={s.status} loaded={s.loaded} connected={connected}
         activityRefreshing={activityRefreshing}
+        activityDisplay={s.activityDisplay}
         activity={s.activity} needsDecision={!!(s.ask || s.planRequest || s.elicitation)} />
     </button></li>
   );

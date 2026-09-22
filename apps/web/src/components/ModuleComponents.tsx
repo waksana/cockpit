@@ -30,8 +30,8 @@ export function MessagePresentation(props: MessageProps) {
   return useModuleElement('message', MessageBase, props);
 }
 
-function SessionStatusBase({ status, needsDecision, activity, activityRefreshing, loaded, connected = false, children }: SessionStatusProps) {
-  const items = sessionActivityIndicators({ status, needsDecision, activity, activityRefreshing, loaded }, connected);
+function SessionStatusBase({ status, needsDecision, activity, activityRefreshing, activityDisplay, loaded, connected = false, children }: SessionStatusProps) {
+  const items = sessionActivityIndicators({ status, needsDecision, activity, activityRefreshing, activityDisplay, loaded }, connected);
   return <span className="dialog-meta">
     <SessionActivity items={items} />
     {children}

@@ -460,6 +460,15 @@ export interface MessageProps extends React.HTMLAttributes<HTMLDivElement> {
   readonly adornment?: React.ReactNode;
 }
 
+/** Browser-only presentation memory. Never use these fields to authorize actions. */
+export interface SessionActivityDisplay {
+  readonly previous?: {
+    readonly status: SessionStatus;
+    readonly activity: ReadonlyData<NonNullable<SessionMeta['activity']>>;
+  };
+  readonly error?: string;
+}
+
 /** Base renders concurrent native activity facts followed by children. */
 export interface SessionStatusProps {
   readonly sessionId: string;
@@ -469,6 +478,8 @@ export interface SessionStatusProps {
   readonly activity?: ReadonlyData<SessionMeta['activity']>;
   /** A browser-owned control read is pending; not evidence of native processing. */
   readonly activityRefreshing?: boolean;
+  /** Retains the previous appearance during reconciliation, separate from native facts. */
+  readonly activityDisplay?: SessionActivityDisplay;
   readonly loaded?: boolean;
   /** False until the current connection has received its snapshot. */
   readonly connected?: boolean;

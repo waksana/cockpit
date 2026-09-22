@@ -63,3 +63,18 @@ test('tool headers reserve separate grid cells for identity, content and outcome
     assert.match(css, new RegExp(`\\.tool-head > \\.${selector} \\{[^}]*grid-area: 1\\s*/\\s*${column};`));
   }
 });
+
+test('builtins use action icons and keep the exact native name in expanded details', () => {
+  const tc = { ...tool, name: 'functions.view', title: '读取组件源码' };
+  const header = render(tc).split('</button>')[0];
+  assert.match(header, /data-icon="read_file"/);
+  assert.match(header, /读取组件源码/);
+  assert.doesNotMatch(header, /class="tool-label"/);
+  assert.match(render(tc, true), /class="tool-full-name">functions\.view/);
+  const missingTitle = render({ ...tc, title: '' });
+  assert.match(missingTitle, /读取文件/);
+  const extension = render({ ...tc, name: 'third_party_view' });
+  assert.match(extension, /data-icon="tool"/);
+  assert.match(extension, /class="tool-label"/);
+  assert.match(extension, /third_party_view/);
+});
