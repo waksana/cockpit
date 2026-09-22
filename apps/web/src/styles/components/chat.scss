@@ -33,8 +33,8 @@
     --chat-danger-ink: color-mix(in srgb, var(--danger-color) 20%, var(--primary-text-color));
   }
   button:disabled { cursor: default; }
-  .dialog-btn { color: var(--chat-accent-ink); }
 }
+.chat-history-retry { color: var(--ck-color-accent); }
 .chat-sr-only {
   position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
   overflow: hidden; clip-path: inset(50%); white-space: nowrap;
@@ -539,7 +539,6 @@ button.activity-head {
   border-radius: var(--border-radius);
   background: color-mix(in srgb, var(--danger-color) 12%, transparent);
   color: var(--chat-danger-ink); font-size: var(--chat-text-secondary); line-height: var(--chat-leading-decision); overflow-wrap: anywhere;
-  .dialog-btn { color: var(--primary-text-color); }
 }
 .new-msg-badge {
   position: absolute; bottom: 0.5rem; left: 50%; transform: translateX(-50%);
@@ -687,18 +686,12 @@ button.activity-head {
 }
 .chat-ask-choices { flex: none; display: flex; flex-wrap: wrap; gap: var(--chat-gap-control); }
 .chat-ask-choice {
-  appearance: none; cursor: pointer; font: inherit; font-size: var(--chat-text-secondary);
   justify-content: flex-start;
-  min-width: 0; max-width: 100%; min-block-size: var(--ck-control-size);
-  padding: var(--chat-inset-field); border-radius: var(--ck-radius); line-height: var(--chat-leading-ui); text-align: start;
+  min-width: 0; max-width: 100%;
+  padding: var(--chat-inset-field); text-align: start;
   white-space: pre-wrap; overflow-wrap: anywhere;
-  border: 1px solid var(--border-color); background: transparent; color: var(--primary-text-color);
+  border: 1px solid var(--border-color);
   position: relative; overflow: hidden;
-  // The SDK's recommended plan-exit action — filled accent so it reads as primary.
-  &.is-recommended {
-    background: var(--chat-accent-ink);
-    color: var(--surface-color);
-  }
 }
 // Pending card variants (plan / elicitation) reuse the ask card shell.
 .chat-pending-head { flex: none; display: flex; align-items: center; gap: var(--chat-gap-control); font-size: var(--chat-text-label); line-height: var(--chat-leading-ui); font-weight: 600; margin: 0; color: var(--chat-accent-ink); }
@@ -776,16 +769,15 @@ button.activity-head {
   }
 }
 .chat-execution-actions {
+  --ck-disabled-opacity: 0.5;
   display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; justify-content: flex-end;
   min-width: 0; max-width: 100%; margin-inline-start: auto; gap: var(--chat-gap-meta);
   button {
-    min-width: 0; max-width: 100%; min-block-size: var(--chat-control-compact); padding: var(--chat-gap-meta) var(--chat-inset-compact); border: none;
-    border-radius: var(--ck-radius); background: transparent; color: var(--primary-text-color);
-    font: inherit; font-size: var(--chat-text-meta); line-height: var(--chat-leading-ui);
-    white-space: normal; overflow-wrap: anywhere; cursor: pointer;
-    &:disabled, &[aria-disabled='true'] { opacity: 0.5; cursor: default; }
+    min-width: 0; max-width: 100%; min-block-size: var(--chat-control-compact); padding: var(--chat-gap-meta) var(--chat-inset-compact);
+    font-size: var(--chat-text-meta);
+    white-space: normal; overflow-wrap: anywhere;
+    &[aria-disabled='true'] { cursor: default; }
   }
-  .chat-typing-stop { color: var(--chat-danger-ink); }
 }
 .chat-interrupt-status {
   flex: none; margin: 0; font-size: var(--chat-text-label); line-height: var(--chat-leading-ui); overflow-wrap: anywhere;

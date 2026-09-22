@@ -482,7 +482,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                 {session.loadingHistory ? null : session.historyStale || !session.materialized ? (
                   <StateNotice className="chat-loading-older" kind={session.historyError ? 'error' : 'info'}>
                     {session.historyError ? `历史加载失败：${session.historyError}` : '对话历史尚未同步。'}
-                    {onRetryHistory && <button type="button" className="dialog-btn ck-button rp" onClick={() => {
+                    {onRetryHistory && <button type="button" className="chat-history-retry ck-button rp" onClick={() => {
                       scrollOwnerRef.current?.follow();
                       onRetryHistory();
                     }}>
@@ -491,7 +491,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                   </StateNotice>
                 ) : session.historyError ? <StateNotice className="chat-loading-older" kind="error">
                   历史加载失败：{session.historyError}
-                  {onRetryHistory && <button type="button" className="dialog-btn ck-button rp" onClick={onRetryHistory}>重试加载历史</button>}
+                  {onRetryHistory && <button type="button" className="chat-history-retry ck-button rp" onClick={onRetryHistory}>重试加载历史</button>}
                 </StateNotice> : null}
               </div>
               {session.partialHistory && <p className="chat-history-note" role="status">
@@ -525,7 +525,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
         <div className="chat-input-notices">
           {session.error && <p className="chat-error" role="alert">错误: {session.error}
             {onRetryHistory && session.materialized && !session.historyStale && <button type="button"
-              className="dialog-btn ck-button rp" onClick={onRetryHistory}>重试同步</button>}
+              className="ck-button rp" onClick={onRetryHistory}>重试同步</button>}
           </p>}
           {interruptResult && <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
             {interruptResult}
@@ -553,7 +553,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                     ? '已请求打断；队列由 Copilot 接着处理。'
                     : '当前没有可打断的主回合；队列未改动。' }));
                 }}>{interruptAction.busy ? '正在请求…' : '打断并处理队列'}</button>}
-              {showStop && <button ref={executionControlRef} type="button" className="chat-typing-stop ck-button" disabled={stopDisabled}
+              {showStop && <button ref={executionControlRef} type="button" className="chat-typing-stop ck-button ck-danger" disabled={stopDisabled}
                 aria-disabled={stopPending || undefined} aria-busy={stopPending || undefined}
                 onClick={() => { if (!stopDisabled && !stopPending) onCancel?.(); }}>
                 <Icon name="stop" size={16} />
