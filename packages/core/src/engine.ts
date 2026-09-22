@@ -1499,7 +1499,8 @@ export class Engine {
               assertOriginalTurn();
               outcome.state = 'unchanged';
             });
-            if (outcomes.at(-1)?.state !== 'unchanged') break;
+            if (st.turnEpoch !== admittedTurn.epoch || st.interactionId !== admittedTurn.interactionId
+              || st.sdk !== sdk || st.controlToken !== token) break;
             const target = admittedTurn;
             await clearQueue();
             await settled([

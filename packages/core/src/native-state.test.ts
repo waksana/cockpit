@@ -517,6 +517,26 @@ test('Stop binds the main turn at admission, before its asynchronous task snapsh
   await answer;
 });
 
+test('a failed task snapshot does not suppress independent Stop operations on the same turn', async t => {
+  const h = await controlsFixture(t);
+  h.native.busy = true;
+  h.native.tasks = [runningAgent('unread-task')];
+  h.native.queue = [queuedMessage('pending')];
+  h.rpc.tasks.list.mock.mockImplementationOnce(async () => { throw new Error('Task snapshot unavailable'); });
+  const result = await h.engine.control('native-id', h.token, { type: 'stop-all' });
+  assert.equal(result.ok, false);
+  assert.equal(result.outcomes[0]?.state, 'failed');
+  assert.match(result.outcomes[0]?.error ?? '', /Task snapshot unavailable/);
+  assert.equal(h.rpc.queue.clear.mock.callCount(), 1);
+  assert.equal(h.rpc.abort.mock.callCount(), 1);
+  assert.equal(h.rpc.history.abortManualCompaction.mock.callCount(), 1);
+  assert.equal(h.rpc.history.cancelBackgroundCompaction.mock.callCount(), 1);
+  assert.equal(h.rpc.tasks.cancel.mock.callCount(), 0);
+  assert.equal(h.native.busy, false);
+  assert.equal(h.native.queue.length, 0);
+  assert.deepEqual((await h.controls()).tasks.map(task => task.id), ['unread-task']);
+});
+
 function fixture(t: TestContext) {
   const root = mkdtempSync(join(tmpdir(), 'cockpit-native-state-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
