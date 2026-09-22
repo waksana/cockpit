@@ -14,5 +14,7 @@
     "@types/react": "^19.2.18",
     "typescript": "^5.9.3"
   },
-  "scripts": { "build": "tsc --noEmit" }
+  "scripts": {
+    "build": "tsc --noEmit"
+  }
 }
