@@ -332,8 +332,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const snapshotReady = useCockpit((s) => s.snapshotReady);
   const interruptAction = useKeyedAction(`interrupt:${session.sessionId}`);
   const stopAction = useKeyedAction(`stop:${session.sessionId}`);
-  const [stopNotice, setStopNotice] = useState<{ sessionId: string; text: string } | null>(null);
-  const [interruptNotice, setInterruptNotice] = useState<{ sessionId: string; text: string } | null>(null);
   const canInterrupt = !!onInterrupt && session.loaded && session.status === 'running'
     && !session.loading && !session.closing && !session.cancelling && !session.compacting
     && session.nativeProcessing !== false && session.activity?.abortable !== false;
@@ -349,7 +347,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const showInterrupt = !readOnly && queueCount > 0 && canInterrupt;
   const interruptResult = readOnly ? null : interruptAction.error
     ? `打断未确认：${interruptAction.error}。请核对会话状态，不要直接重试。`
-    : interruptNotice?.sessionId === session.sessionId ? interruptNotice.text : null;
+    : null;
   const drafts = useMemo(() => getDraftSession(session.sessionId), [session.sessionId]);
   const runtime = useModuleRuntime();
   useLayoutEffect(() => { runtime.prepareDraft(drafts.prompt, readOnly); }, [runtime, drafts, readOnly]);
@@ -543,9 +541,8 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           {interruptResult && <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
             {interruptResult}
           </p>}
-          {(stopAction.error || stopNotice?.sessionId === session.sessionId) && <p className="chat-interrupt-status"
-            role={stopAction.error ? 'alert' : 'status'}>
-            {stopAction.error ? `停止结果未确认：${stopAction.error}` : stopNotice?.text}
+          {stopAction.error && <p className="chat-interrupt-status" role="alert">
+            停止结果未确认：{stopAction.error}
           </p>}
           {!readOnly && <ComposerNotices draft={draft} />}
         </div>
@@ -565,20 +562,14 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                 disabled={!interruptAction.connected || (!!session.activeOperations && !interruptAction.busy)}
                 aria-disabled={interruptAction.busy || undefined}
                 onClick={() => {
-                  let interrupted = false;
                   void interruptAction.run(async () => {
-                    const result = await onInterrupt!();
-                    interrupted = result.interrupted;
-                  }, () => setInterruptNotice({ sessionId: session.sessionId, text: interrupted
-                    ? '已请求打断；队列由 Copilot 接着处理。'
-                    : '当前没有可打断的主回合；队列未改动。' }));
+                    await onInterrupt!();
+                  });
                 }}>{interruptAction.busy ? '正在请求…' : '打断并处理队列'}</button>}
               {showStop && <button ref={executionControlRef} type="button" className="chat-typing-stop ck-button ck-danger" disabled={stopDisabled}
                 aria-disabled={stopPending || undefined} aria-busy={stopPending || undefined}
                 onClick={() => {
-                  if (!stopDisabled && !stopPending) void stopAction.run(async () => { await onCancel?.(); },
-                    () => setStopNotice({ sessionId: session.sessionId,
-                      text: '停止请求已受理；后台任务可能继续，当前活动以原生状态为准。' }));
+                  if (!stopDisabled && !stopPending) void stopAction.run(async () => { await onCancel?.(); });
                 }}>
                 <Icon name="stop" size={16} />
                 {stopPending ? '正在停止…' : notAbortable ? '当前不可中断' : queueCount > 0 ? '停止并清空队列' : '停止'}

@@ -236,7 +236,6 @@ export function Lab() {
                 hasActiveWork: !!(value.activity.tasks.activeShells || value.activity.tasks.activeAgents),
                 queue: { pendingCount: 0, steeringCount: 0, inFlightSteeringCount: 0 } } : null,
             }));
-            append('停止请求已受理，后台任务未被自动取消（合成记录）。', 'system');
           }); } finally {
             if (owner === generation.current) setSession(value => ({ ...value, cancelling: false }));
           }
@@ -260,7 +259,10 @@ export function Lab() {
 
 const root = createRoot(document.getElementById('root')!);
 const scene = new URLSearchParams(location.search).get('scene');
-if (scene === 'workspace' || scene === 'resources') {
+if (scene === 'activity-design') {
+  const { ActivityDesignLab } = await import('./activity-design-lab');
+  root.render(<BrowserRouter><ActivityDesignLab /></BrowserRouter>);
+} else if (scene === 'workspace' || scene === 'resources') {
   const { installWorkspaceFixture, workspaceSessionId, workspaceDraft } = await import('./workspace-fixtures');
   installWorkspaceFixture(useCockpit);
   if (scene === 'resources') {

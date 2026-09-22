@@ -245,8 +245,25 @@ component tests consume the same fixtures; visual interaction review uses this
 single opt-in entry. Neither the Lab nor its fixtures are runtime-package inputs.
 
 For focused input-bar review, open `/chat-lab.html?scene=ask&compact=1`
+or `/chat-lab.html?scene=activity-design` for the classic activity/tool design preview.
+The latter uses synthetic session rows and the production Thread: compare concrete
+activity icons with the fallback spinner, inspect built-in tool icons and extension
+names, and expand the independent subagent card. Its explicit refresh hold/result
+controls demonstrate retained presentation without a native transport; operation
+hold/failure controls exercise Stop and interrupt feedback. This is a design preview,
+not evidence of live native refresh integration.
+
+For the existing input scenes, choose `ask`
 or choose `plan` / `user-time`. Stop temporary previews after review; do not leave resident
 background work, open native sessions or publish user screenshots.
+For a separately authorized static activity-design review, use
+`COCKPIT_ACTIVITY_DESIGN_REVIEW=1 COCKPIT_REVIEW_OUTPUT=/absolute/separate/output pnpm --filter @cockpit/web exec vite build --config activity-design-review.config.ts`.
+This explicit build has only the synthetic design entry, no public directory or
+source maps, and uses `/review/activity-design-20260922/` as its asset base.
+Its bootstrap installs memory-only storage and disables application transports
+before importing components. Publish only that output behind the existing review
+authentication and a `connect-src 'none'` CSP; do not expose Vite or the worktree,
+replace another review, or change the production application entry.
 Add `&pane=narrow` to constrain the actual Chat pane to 456px while keeping a
 desktop viewport. This reproduces the space available beside docked settings:
 decisions and process rows must adapt to their own width, not the window width.

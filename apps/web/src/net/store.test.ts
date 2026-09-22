@@ -714,6 +714,8 @@ test('activity uses control invalidation once, rejects old reads and keeps the o
   h.source.open();
   const shell = activityFixture({ hasActiveWork: true, tasks: { activeAgents: 0, activeShells: 1, unknown: 0 } });
   h.snapshot([], { sessions: [{ ...meta('a'), activity: shell }, { ...meta('b'), activity: activityFixture() }] });
+  h.source.emit({ type: 'session/patch', sessionId: 'a', activity: null });
+  assert.deepEqual(session('a').activityDisplay?.previous?.activity, shell, 'the invalidation patch retains display before the read starts');
   h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['control', 'tasks'] });
   assert.equal(session('a').activity, null, 'invalidated facts are not presented as current');
   assert.deepEqual(useCockpit.getState().activityRefreshingIds, ['a']);
@@ -723,11 +725,13 @@ test('activity uses control invalidation once, rejects old reads and keeps the o
   h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['control'] });
   await h.reply(0, { meta: { sessionId: 'a', loaded: true, activity: shell } });
   assert.equal(session('a').activity, null, 'superseded activity is discarded');
+  assert.deepEqual(session('a').activityDisplay?.previous?.activity, shell);
   assert.deepEqual(useCockpit.getState().activityRefreshingIds, ['a']);
   assert.deepEqual(session('b').activity, activityFixture());
   h.assertPost(1, 'session/resources', { sessionId: 'a', resources: ['control'] });
   await h.reply(1, { meta: { sessionId: 'a', loaded: true, activity: activityFixture() } });
   assert.deepEqual(session('a').activity, activityFixture());
+  assert.equal(session('a').activityDisplay, undefined);
   assert.deepEqual(useCockpit.getState().activityRefreshingIds, []);
   assert.equal(h.requests.length, 2, 'no separate activity/task read or polling');
 });
@@ -742,19 +746,60 @@ test('failed, unloaded and pre-reconnect activity reads cannot retain or restore
   h.requests[0].response.resolve(Response.json({ error: 'Synthetic control failure' }, { status: 500 }));
   await setImmediate();
   assert.equal(session('a').activity, null);
+  assert.ok(session('a').activityDisplay?.error);
+  assert.equal(session('a').activityDisplay?.previous, undefined);
   assert.deepEqual(useCockpit.getState().activityRefreshingIds, []);
   assert.ok(getUxErrors().length);
   h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['control'] });
   await setImmediate();
   h.source.drop();
   assert.deepEqual(useCockpit.getState().activityRefreshingIds, []);
+  assert.equal(session('a').activityDisplay, undefined);
   h.source.open();
   h.snapshot([], { sessions: [{ ...meta('a'), activity: activityFixture() }] });
   await h.reply(1, { meta: { sessionId: 'a', loaded: true, activity: active } });
   assert.deepEqual(session('a').activity, activityFixture());
   h.source.emit({ type: 'session/patch', sessionId: 'a', loaded: false, status: 'unloaded' });
   assert.equal(session('a').activity, undefined);
+  assert.equal(session('a').activityDisplay, undefined);
   assert.deepEqual(useCockpit.getState().activityRefreshingIds, []);
+});
+
+test('activity display memory is session-owned and ends on a fresh unavailable response, unload or removal', async t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot([], { sessions: [{ ...meta('a'), activity: activityFixture() },
+    { ...meta('b'), activity: activityFixture({ processing: true }) }] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['control'] });
+  assert.deepEqual(session('a').activityDisplay?.previous, { status: 'idle', activity: activityFixture() });
+  assert.equal(session('b').activityDisplay, undefined);
+  await setImmediate();
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, activity: null } });
+  assert.equal(session('a').activityDisplay, undefined, 'an explicit unavailable result replaces the old appearance');
+
+  h.source.emit({ type: 'session/invalidated', sessionId: 'b', resources: ['control'] });
+  assert.ok(session('b').activityDisplay?.previous);
+  await setImmediate();
+  h.source.emit({ type: 'session/patch', sessionId: 'b', loaded: false, status: 'unloaded' });
+  await h.reply(1, { meta: { sessionId: 'b', loaded: true, activity: activityFixture({ processing: true }) } });
+  assert.equal(session('b').activityDisplay, undefined);
+  assert.equal(session('b').loaded, false);
+  h.source.emit({ type: 'session/removed', sessionId: 'a' });
+  assert.equal(useCockpit.getState().sessions.find(value => value.sessionId === 'a'), undefined);
+});
+
+test('a replacement session drops retained activity and fences its retired control read', async t => {
+  const h = setup(t);
+  h.source.open();
+  h.snapshot([], { sessions: [{ ...meta('a'), activity: activityFixture({ processing: true }) }] });
+  h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['control'] });
+  await setImmediate();
+  assert.ok(session('a').activityDisplay?.previous);
+  h.source.emit({ type: 'session/added', session: { ...meta('a'), activity: null } });
+  assert.equal(session('a').activityDisplay, undefined);
+  await h.reply(0, { meta: { sessionId: 'a', loaded: true, activity: activityFixture({ processing: true }) } });
+  assert.equal(session('a').activityDisplay, undefined);
+  assert.equal(session('a').activity, null);
 });
 
 test('source changes fence narrow requests and clear stale native fields immediately', async t => {

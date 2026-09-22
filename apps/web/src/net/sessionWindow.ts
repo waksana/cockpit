@@ -3,6 +3,7 @@ import type { ChatSession, SessionMeta } from './types';
 export function metaToSession(meta: SessionMeta, previous?: ChatSession): ChatSession {
   return {
     ...meta,
+    activityDisplay: meta.loaded && !meta.activity ? previous?.activityDisplay : undefined,
     messages: previous?.messages ?? [],
     materialized: previous?.materialized ?? false,
     historyStale: previous?.historyStale ?? false,

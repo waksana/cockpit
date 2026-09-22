@@ -558,7 +558,7 @@ test('expanded tools keep their header geometry and show full metadata only when
   assert.match(css, /\.tool-description \{[^}]*white-space: nowrap;[^}]*text-overflow: ellipsis/);
   assert.match(css, /\.activity-detail\.tool-detail \{[^}]*border-inline-start: 0/);
   const source = readFileSync(new URL('./ToolCallRow.tsx', import.meta.url), 'utf8');
-  assert.match(source, /nameClipped &&/);
+  assert.match(source, /presentation\.builtin \|\| nameClipped/);
   assert.match(source, /descriptionClipped && description/);
   assert.doesNotMatch(source, /activity-chevron|activity-status/);
 });

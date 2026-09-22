@@ -20,7 +20,16 @@
 .lab-receipt { flex: none; padding: 6px 16px; font-size: 12px; color: var(--secondary-text-color); overflow-wrap: anywhere; }
 .lab-stage { flex: 1; min-height: 0; min-width: 0; display: flex; flex-direction: column; }
 .lab-stage[data-narrow] { width: min(100%, 28.5rem); }
+.activity-design-layout { display: flex; flex: 1; min-height: 0; }
+.activity-design-list {
+  flex: 0 0 320px; min-height: 0; overflow: auto; border-inline-end: 1px solid var(--border-color);
+  > p { padding: var(--host-space-md); font-size: var(--host-text-meta); }
+}
+.activity-design-chat { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 @media (max-width: responsive.$phone-max) {
   .lab-toolbar { max-height: 150px; overflow: auto; padding: 8px; }
   .lab-receipt { padding: 4px 8px; }
+  .activity-design-layout { flex-direction: column; }
+  .activity-design-list { flex: 0 0 160px; border-inline-end: 0; border-bottom: 1px solid var(--border-color); }
+  .activity-design-list > p { display: none; }
 }

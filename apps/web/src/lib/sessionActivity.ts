@@ -1,5 +1,6 @@
 import type { SessionMeta } from '@cockpit/protocol';
 import type { IconName } from '../components/Icon';
+import type { SessionActivityDisplay } from '@cockpit/module-api';
 
 export interface ActivityIndicator {
   key: string;
@@ -14,6 +15,7 @@ export function sessionActivityIndicators(session: {
   loaded?: boolean;
   activity?: SessionMeta['activity'];
   activityRefreshing?: boolean;
+  activityDisplay?: SessionActivityDisplay;
   needsDecision: boolean;
 }, connected: boolean): ActivityIndicator[] {
   if (session.loaded === false || session.status === 'unloaded') {
@@ -22,12 +24,16 @@ export function sessionActivityIndicators(session: {
   if (!connected) return [{ key: 'offline', icon: 'unknown', label: '活动待同步', text: '待同步' }];
   const items: ActivityIndicator[] = [];
   if (session.status === 'error') items.push({ key: 'error', icon: 'error', label: '会话出错', text: '出错' });
+  else if (session.activityDisplay?.error) items.push({
+    key: 'read-error', icon: 'error', label: `活动状态读取失败：${session.activityDisplay.error}`, text: '读取失败',
+  });
   if (session.needsDecision) items.push({ key: 'decision', icon: 'decision', label: '等待你的回答或确认' });
-  const activity = session.activity;
+  const previous = !session.activity ? session.activityDisplay?.previous : undefined;
+  const activity = session.activity ?? previous?.activity;
   if (!activity) {
-    items.push(session.activityRefreshing
+    if (!items.length) items.push(session.activityRefreshing
       ? { key: 'refreshing', icon: 'loading', label: '正在刷新活动状态' }
-      : { key: 'unknown', icon: 'unknown', label: '当前活动未知', text: '未知' });
+      : { key: 'unknown', icon: 'loading', label: '等待活动状态，不代表模型正在生成' });
     return items;
   }
   if (activity.processing) items.push({
@@ -49,15 +55,19 @@ export function sessionActivityIndicators(session: {
     label: `MCP 等待连接 ${activity.mcp.pendingConnectionCount}`,
   });
   if (activity.tasks.unknown) items.push({
-    key: 'unknown-tasks', icon: 'unknown', label: `${activity.tasks.unknown} 项任务的原生状态未知`, text: '任务未知',
+    key: 'unknown-tasks', icon: 'loading', label: `${activity.tasks.unknown} 项任务的原生状态未知`,
   });
   if (activity.hasActiveWork && !activity.processing
     && !activity.tasks.activeAgents && !activity.tasks.activeShells
     && !pendingCount && !steeringCount && !inFlightSteeringCount && !activity.mcp.pendingConnectionCount) {
-    items.push({ key: 'other', icon: 'unknown', label: '存在无法进一步分类的原生活动', text: '未分类' });
+    items.push({ key: 'other', icon: 'loading', label: '存在无法进一步分类的原生活动' });
   }
-  if (!items.length && session.status === 'running') {
-    items.push({ key: 'other', icon: 'unknown', label: '综合状态仍忙碌，采样未提供具体活动原因', text: '未分类' });
+  if (!items.length && (previous?.status ?? session.status) === 'running') {
+    items.push({ key: 'other', icon: 'loading', label: '综合状态仍忙碌，采样未提供具体活动原因' });
   }
-  return items;
+  const concrete = items.filter(item => item.icon !== 'loading');
+  const shown = concrete.length ? concrete : items.length ? [{ ...items[0], label: items.map(item => item.label).join('；') }] : [];
+  return previous ? shown.map(item => ['decision', 'error', 'read-error'].includes(item.key) ? item : {
+    ...item, label: `上次采样，等待更新：${item.label}`,
+  }) : shown;
 }
