@@ -14,6 +14,7 @@ import { getDraftSession } from '../lib/draftSelection';
 import { existsSync, readFileSync } from 'node:fs';
 import { ActivityHeader } from './ActivityHeader';
 import { ChatHeader } from './ChatHeader';
+import { PlanCard } from './PendingDecision';
 import { useCockpit } from '../net/store';
 
 test('chat header keeps session and model details without any mode display or switch', () => {
@@ -129,7 +130,6 @@ test('one card frame retains compact execution/queue typography and independent 
   assert.doesNotMatch(css.match(/\.chat-ask \{([^}]+)\}/)?.[1] ?? '', /border:|background:/);
   assert.match(css, /\.chat-execution-actions button \{[^}]*min-block-size: var\(--chat-control-compact\);[^}]*font-size: var\(--chat-text-meta\)/);
   assert.match(css, /\.chat-queue-item \{[^}]*font-size: var\(--chat-text-meta\)/);
-  assert.match(css, /\.chat-ask-choice \{[^}]*font-size: var\(--chat-text-secondary\)/);
   assert.doesNotMatch(css, /\.chat-queue-label|\.chat-composer-hint/);
   assert.match(css, /\.chat-queue-copy \{[^}]*display: flex;/);
   assert.doesNotMatch(css, /\.chat-queue-entry\[open\] \+ \.chat-queue-copy/);
@@ -253,10 +253,60 @@ test('standalone native disclosures share touch targets and public control geome
   }
   assert.match(coarse, /min-block-size: var\(--ck-control-size\);/);
   assert.match(css, /\.chat-pending-detail summary \{[^}]*align-content: center;/);
-  assert.match(css, /\.chat-ask-choice \{[^}]*min-block-size: var\(--ck-control-size\);[^}]*border-radius: var\(--ck-radius\);/);
-  assert.match(css, /\.chat-execution-actions button \{[^}]*padding: var\(--chat-gap-meta\) var\(--chat-inset-compact\);[^}]*border-radius: var\(--ck-radius\);/);
+  const publicCss = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
+  assert.match(publicCss, /:where\(\.ck-button, \.ck-icon-button\) \{[^}]*min-block-size: var\(--ck-control-size\);[^}]*border-radius: var\(--ck-radius\);/);
+  assert.match(css, /\.chat-execution-actions button \{[^}]*padding: var\(--chat-gap-meta\) var\(--chat-inset-compact\);/);
   assert.match(css, /\.chat-input-card \{[^}]*border-radius: var\(--host-radius-control\);/);
   assert.doesNotMatch(css, /\.module-draft-recovery/);
+});
+
+test('chat buttons consume public appearance and retain only contextual geometry and state exceptions', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  const publicCss = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
+  for (const selector of ['chat-ask-choice', 'chat-execution-actions button']) {
+    const rule = css.match(new RegExp(`\\.${selector} \\{([^}]+)\\}`))?.[1];
+    assert.ok(rule);
+    assert.doesNotMatch(rule, /(?:^|\s)(?:appearance|background|color|border-radius|font|line-height|cursor|opacity):/);
+  }
+  assert.doesNotMatch(css, /\.dialog-btn|\.is-recommended|\.chat-typing-stop/);
+  assert.match(css, /\.chat-history-retry \{\s*color: var\(--ck-color-accent\);/);
+  assert.match(css, /\.chat-execution-actions \{[^}]*--ck-disabled-opacity: 0\.5;/);
+  assert.match(css, /\.chat-execution-actions button\[aria-disabled=true\] \{\s*cursor: default;/);
+  assert.match(publicCss, /\.ck-primary \{[^}]*background: var\(--ck-color-accent\);[^}]*color: var\(--ck-color-on-accent\);/);
+  assert.match(publicCss, /\.ck-danger \{\s*color: var\(--ck-color-danger\);/);
+  assert.match(publicCss, /:is\(:disabled, \[aria-disabled=true\]\) \{[^}]*opacity: var\(--ck-disabled-opacity\);/);
+});
+
+test('only the recommended offered plan action consumes the public primary treatment, including when disabled', () => {
+  const request = fixtureSession('plan').planRequest!;
+  for (const pending of [false, true]) {
+    const html = renderToStaticMarkup(createElement(PlanCard, { request, pending, onSelect() {} }));
+    const buttons = [...html.matchAll(/<button[^>]*>/g)].map(match => match[0]);
+    assert.equal(buttons.length, request.actions!.length);
+    assert.equal(buttons.filter(button => button.includes('ck-primary')).length, 1);
+    assert.equal(buttons[request.actions!.indexOf(request.recommendedAction!)].includes('ck-primary'), true);
+    for (const button of buttons) assert.equal(button.includes('disabled=""'), pending);
+    assert.doesNotMatch(html, /is-recommended/);
+  }
+  const withoutRecommended = renderToStaticMarkup(createElement(PlanCard, {
+    request: { ...request, actions: ['exit_only'] }, pending: false, onSelect() {},
+  }));
+  assert.doesNotMatch(withoutRecommended, /ck-primary/);
+});
+
+test('history retries own their accent intent while session-error retry uses ordinary public text', () => {
+  for (const historyStale of [false, true]) {
+    const html = renderToStaticMarkup(createElement(Thread, {
+      session: { ...fixtureSession('history-error'), historyStale }, onLoadMore() {}, onRetryHistory() {},
+    }));
+    assert.match(html, /class="chat-history-retry ck-button rp"/);
+    assert.doesNotMatch(html, /dialog-btn/);
+  }
+  const html = renderToStaticMarkup(createElement(Thread, {
+    session: { ...fixtureSession('reading'), error: 'Synthetic error' }, onLoadMore() {}, onRetryHistory() {},
+  }));
+  assert.match(html, /class="ck-button rp">重试同步<\/button>/);
+  assert.doesNotMatch(html, /dialog-btn|chat-history-retry/);
 });
 
 test('Chat regions and optional composer context each have a single spacing owner', () => {
@@ -397,8 +447,8 @@ test('a native cancelling flag disables duplicate stop clicks without claiming c
   const html = renderToStaticMarkup(createElement(Thread, {
     session: fixtureSession('cancelling'), onLoadMore() {}, onCancel() {},
   }));
-  assert.match(html, /class="chat-typing-stop ck-button" aria-disabled="true" aria-busy="true">[\s\S]*?正在停止…<\/button>/);
-  assert.doesNotMatch(html, /class="chat-typing-stop ck-button"[^>]*>已取消/);
+  assert.match(html, /class="chat-typing-stop ck-button ck-danger" aria-disabled="true" aria-busy="true">[\s\S]*?正在停止…<\/button>/);
+  assert.doesNotMatch(html, /class="chat-typing-stop ck-button ck-danger"[^>]*>已取消/);
 });
 
 test('user time stays outside its bubble without external copy controls on either message role', () => {
