@@ -1,4 +1,6 @@
 import type { McpServerGlobal, McpServerSession, SessionRole, SkillGlobal, SkillSession } from '@cockpit/protocol';
+import { SKILL_NOT_FOUND } from '@cockpit/protocol';
+import { IntentHttpError } from '../net/client';
 import type { createCockpitStore } from '../net/store';
 import { installWorkspaceFixture, workspaceSessionId } from './workspace-fixtures';
 
@@ -172,8 +174,9 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
     skillsRead: async name => {
       await request();
       const row = globalSkills.find(row => row.name === name);
-      if (!row) throw new Error('Unknown synthetic global skill');
-      return { ...row, body: `# ${row.name}\n\nSynthetic skill body, not an installed skill.\n\n${'Long content remains readable. '.repeat(60)}` };
+      if (!row) throw new IntentHttpError('Unknown synthetic global skill', 404, SKILL_NOT_FOUND);
+      const frontmatter = `---\nname: ${row.name}\ndescription: ${row.description ?? ''}\n---\n`;
+      return { ...row, body: `${frontmatter}# ${row.name}\n\nSynthetic skill body, not an installed skill.\n\n---\n\n${'Long content remains readable. '.repeat(60)}` };
     },
     skillsSetGlobal: async (name, enabled) => {
       await mutation();

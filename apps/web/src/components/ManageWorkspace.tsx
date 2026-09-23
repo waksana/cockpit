@@ -3,6 +3,8 @@ import { useCallback, type ReactNode } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import type { McpServerGlobal, ModuleSource, SkillGlobal } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
+import { isSkillNotFoundError } from '../net/client';
+import { skillBodyContent } from '../lib/skillBody';
 import { useKeyedAction, useKeyedResource } from '../lib/useKeyedResource';
 import { ManagementShell, type ManageSection } from './ManagementShell';
 import { StateNotice } from './StateNotice';
@@ -74,13 +76,15 @@ function McpDetail({ name, catalog }: { name: string; catalog: Catalog<McpServer
   if (!row) return status ? <ResourceStatus status={status} failed={failed} pending={pending} placement="pane" />
     : <StateNotice kind="empty" placement="pane">未找到该 MCP 服务器。</StateNotice>;
   return <PaneBody className="manage-detail">
-    <ResourceStatus status={status} failed={failed} pending={pending} />
-    <div className="manage-detail-meta">{mcpConnectionLabel(row.connection)}</div>
-    <section className="manage-config-section">
-      <SectionHeading level={2}>连接配置</SectionHeading>
-      {row.config ? <pre className="manage-config">{JSON.stringify(row.config, null, 2)}</pre>
-        : <StateNotice kind="info">未提供连接配置</StateNotice>}
-    </section>
+    <div className="manage-detail-column">
+      <ResourceStatus status={status} failed={failed} pending={pending} />
+      <div className="manage-detail-meta">{mcpConnectionLabel(row.connection)}</div>
+      <section className="manage-config-section">
+        <SectionHeading level={2}>连接配置</SectionHeading>
+        {row.config ? <pre className="manage-config">{JSON.stringify(row.config, null, 2)}</pre>
+          : <StateNotice kind="info">未提供连接配置</StateNotice>}
+      </section>
+    </div>
   </PaneBody>;
 }
 
@@ -95,20 +99,32 @@ function SkillsList({ selected, catalog, onChange }: {
   </ListBody>;
 }
 
+type SkillRead = Awaited<ReturnType<ReturnType<typeof useCockpit.getState>['skillsRead']>>;
+type SkillResource = Pick<ReturnType<typeof useKeyedResource<SkillRead>>, 'data' | 'status' | 'failed' | 'pending' | 'errorCause'>;
+
+export function SkillDetailContent({ resource }: { resource: SkillResource }) {
+  const { data, status, failed, pending, errorCause } = resource;
+  const notFound = <StateNotice kind="empty" placement="pane">未找到该 Skill。</StateNotice>;
+  // A structured not-found supersedes any retained earlier read.
+  if (failed && isSkillNotFoundError(errorCause)) return notFound;
+  if (!data) return status ? <ResourceStatus status={status} failed={failed} pending={pending} placement="pane" /> : notFound;
+  const meta = [skillSourceLabel(data.source), data.userInvocable ? '可手动调用' : null].filter(Boolean).join(' · ');
+  const body = data.body === undefined ? '' : skillBodyContent(data.body);
+  return <PaneBody className="manage-detail">
+    <div className="manage-detail-column">
+      <ResourceStatus status={status} failed={failed} pending={pending} />
+      {meta && <div className="manage-detail-meta">{meta}</div>}
+      {data.description && <p className="manage-detail-line">{data.description}</p>}
+      {body.trim() ? <div className="manage-detail-body"><MessageBody body={body} /></div>
+        : <StateNotice kind="empty">{data.body?.trim() ? 'SKILL.md 没有正文' : '没有 SKILL.md 内容'}</StateNotice>}
+    </div>
+  </PaneBody>;
+}
+
 function SkillDetail({ name, revision }: { name: string; revision: number }) {
   const skillsRead = useCockpit(s => s.skillsRead);
   const load = useCallback(() => skillsRead(name), [skillsRead, name]);
-  const { data, status, failed, pending } = useKeyedResource(`global:skill:${name}`, load, revision);
-  if (!data) return status ? <ResourceStatus status={status} failed={failed} pending={pending} placement="pane" />
-    : <StateNotice kind="empty" placement="pane">未找到该 skill。</StateNotice>;
-  const meta = [skillSourceLabel(data.source), data.userInvocable ? '可手动调用' : null].filter(Boolean).join(' · ');
-  return <PaneBody className="manage-detail">
-    <ResourceStatus status={status} failed={failed} pending={pending} />
-    {meta && <div className="manage-detail-meta">{meta}</div>}
-    {data.description && <p className="manage-detail-line">{data.description}</p>}
-    {data.body ? <div className="manage-detail-body"><MessageBody body={data.body} /></div>
-      : <StateNotice kind="empty" placement="pane">没有 SKILL.md 内容</StateNotice>}
-  </PaneBody>;
+  return <SkillDetailContent resource={useKeyedResource(`global:skill:${name}`, load, revision)} />;
 }
 
 // Routes: /mcp, /skills and each section's optional /:item detail.

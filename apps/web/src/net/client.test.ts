@@ -3,7 +3,7 @@ import { beforeEach, test, type Mock, type TestContext } from 'node:test';
 import type { NativeAttachment, NativeChatPage, IntentBody, IntentName, ServerEvent } from '@cockpit/protocol';
 import { EVENTS_URL, intentUrl } from '../lib/config';
 import { dismissUxError, getUxErrors } from '../lib/errorReporter';
-import { IntentHttpError, isSessionUnloadedError, NetClient, SessionUnloadedError, type ConnState } from './client';
+import { IntentHttpError, isSessionUnloadedError, isSkillNotFoundError, NetClient, SessionUnloadedError, type ConnState } from './client';
 import { readDirectory } from '../lib/directoryResource';
 import { createKeyedAsync } from '../lib/keyedAsync';
 import type { NativeDraftRequest } from '../lib/draft';
@@ -992,3 +992,36 @@ for (const source of ['persisted', 'live'] as const) {
     await assert.rejects(pending, /instead of "original"/);
   });
 }
+
+test('structured skills/read not-found stays local without a global error notice', async t => {
+  const { client, fetch } = setup(t, async () => Response.json(
+    { error: 'Unknown skill in this working directory', code: 'SKILL_NOT_FOUND' }, { status: 404 }));
+  await assert.rejects(client.skillsRead('github-coding'), error => isSkillNotFoundError(error));
+  assertOnlyPost(fetch, 'skills/read', { name: 'github-coding' });
+  assert.deepEqual(getUxErrors(), []);
+});
+
+for (const [status, body] of [
+  [500, { error: 'native discovery failed' }],
+  [404, { error: 'Unknown skill in this working directory' }],
+  [404, { error: 'not here', code: 'OTHER_NOT_FOUND' }],
+] as const) {
+  test(`genuine skills/read failure ${status} ${'code' in body ? body.code : '(no code)'} is still reported`, async t => {
+    const { client } = setup(t, async () => Response.json(body, { status }));
+    await assert.rejects(client.skillsRead('x'), error => !isSkillNotFoundError(error));
+    assert.equal(getUxErrors().length, 1);
+    assert.ok(getUxErrors()[0].message.includes(body.error));
+  });
+}
+
+test('skills/read transport failure is still reported', async t => {
+  const { client } = setup(t, async () => { throw new TypeError('Failed to fetch'); });
+  await assert.rejects(client.skillsRead('x'), TypeError);
+  assert.equal(getUxErrors().length, 1);
+});
+
+test('SKILL_NOT_FOUND on another intent is not silenced', async t => {
+  const { client } = setup(t, async () => Response.json({ error: 'Unknown skill', code: 'SKILL_NOT_FOUND' }, { status: 404 }));
+  await assert.rejects(client.skillsGlobal());
+  assert.equal(getUxErrors().length, 1);
+});
