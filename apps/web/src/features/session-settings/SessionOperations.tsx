@@ -5,10 +5,16 @@ import { sessionSettingsBlockReason, type SessionSettingsAction } from '../../li
 import { sessionNavigation } from '../../lib/routeOwnership';
 import { useSessionReload } from './useSessionReload';
 import { Dialog } from '../../components/Dialog';
-import { SectionHeading } from '../../components/UI';
+import { ActionList, ActionRow, SectionHeading } from '../../components/UI';
+import type { IconName } from '../../components/Icon';
 import { StateNotice } from '../../components/StateNotice';
 
 const labels = { unload: '卸载会话', compact: '压缩上下文', fork: '分叉会话' };
+const rows: Record<SessionSettingsAction, { icon: IconName; name: string; description: string }> = {
+  unload: { icon: 'unload', name: '卸载', description: '释放运行资源，保留聊天历史' },
+  compact: { icon: 'compress', name: '压缩上下文', description: '汇总模型上下文，无法撤销' },
+  fork: { icon: 'fork', name: '分叉', description: '复制历史到新会话，共享工作目录' },
+};
 const messages = {
   unload: '释放会话运行资源，不删除已持久化的聊天历史。定时任务会暂停；冷恢复使用原生默认配置，临时 MCP / Skill 选择可能不保留。从未发消息的空会话可能消失，不会自动创建替代会话。',
   compact: '汇总模型上下文，不删除页面或已持久化的聊天历史。此操作无法撤销。可选填写希望重点保留的内容，但不能保证文字或事实一定保留。',
@@ -54,24 +60,20 @@ export function SessionOperations({ sessionId }: { sessionId: string }) {
   const operation = useCockpit(s => s.sessionSettingsOperations[sessionId]);
   const reload = useSessionReload(sessionId);
   const reason = sessionSettingsBlockReason(session, connected, operation?.pending || reload.pending);
+  const pending = !!operation?.pending || reload.pending;
   const outcome = operation?.outcome;
   return <section className="info-section">
     <SectionHeading className="info-section-name">会话操作</SectionHeading>
-    <div className="info-section-content">
-      <div className="ck-actions">
-        {(session?.loaded || reload.pending) && <button type="button" className="ck-button rp"
-          disabled={!!reload.blockedReason || !!reason} aria-busy={reload.pending}
-          title={reload.blockedReason || reason} onClick={reload.reload}>
-          {reload.pending ? '正在重新加载会话…' : '重新加载会话'}
-        </button>}
-        {(Object.keys(labels) as SessionSettingsAction[]).map(action => <button key={action} type="button"
-          className="ck-button rp" disabled={!!reason} title={reason}
-          aria-busy={operation?.pending && operation.action === action}
-          onClick={() => setDialog(action)}>
-          {operation?.pending && operation.action === action ? `${labels[action]}处理中…` : labels[action]}
-        </button>)}
-      </div>
-      {reason && !operation?.pending && !reload.pending && <StateNotice>{reason}</StateNotice>}
+    <div className="info-section-content info-controls">
+      {reason && !pending && <StateNotice>{reason}</StateNotice>}
+      <ActionList label="会话操作" disabled={!!reason && !pending}>
+        {(session?.loaded || reload.pending) && <ActionRow icon="session_reload" name="重新加载"
+          description="重新读取原生配置并应用角色" busyDescription="正在重新加载…"
+          disabled={!!reload.blockedReason || !!reason} busy={reload.pending} onClick={reload.reload} />}
+        {(Object.keys(rows) as SessionSettingsAction[]).map(action => <ActionRow key={action} {...rows[action]}
+          disabled={!!reason} busy={operation?.pending && operation.action === action}
+          onClick={() => setDialog(action)} />)}
+      </ActionList>
       {operation?.error && <StateNotice kind="error">
         {labels[operation.action]}结果未确认：{operation.error}。请先核对会话列表和原生记录，不要盲目重试。
       </StateNotice>}

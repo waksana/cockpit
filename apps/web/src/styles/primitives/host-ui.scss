@@ -7,6 +7,64 @@
   min-width: 0;
   margin-bottom: var(--host-space-md);
 }
+.ui-section-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--host-space-xs);
+}
+.ui-heading-action {
+  gap: var(--host-space-xs);
+  color: var(--link-color);
+  &[aria-expanded='true'] { background: var(--ck-color-hover); }
+}
+.ui-action-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-color);
+  border-radius: var(--host-radius-control);
+  background: var(--surface-color);
+}
+.ui-action-row {
+  justify-content: flex-start;
+  gap: var(--host-space-md);
+  width: 100%;
+  min-block-size: max(44px, var(--ck-control-size));
+  padding: var(--host-space-sm) var(--host-space-md);
+  border-radius: 0;
+  text-align: start;
+  & + & { border-top: 1px solid var(--border-color); }
+  // The group, not each row, carries the muted disabled presentation.
+  .ui-action-list[data-disabled] &:disabled { opacity: 1; }
+  // Beats the public disabled rule so progress stays readable on the busy row.
+  &[aria-busy='true'], &[aria-busy='true']:disabled { opacity: 1; }
+  &[aria-busy='true'] > .ui-action-trailing { color: var(--primary-color); }
+}
+.ui-action-list[data-disabled] { opacity: var(--ck-disabled-opacity); }
+.ui-action-row > .ui-action-icon { color: var(--primary-color); }
+.ui-action-text { display: flex; flex: 1 1 auto; flex-direction: column; min-width: 0; }
+.ui-action-name { color: var(--primary-text-color); font-size: var(--host-text-body); overflow-wrap: anywhere; }
+.ui-action-description {
+  color: var(--secondary-text-color);
+  font-size: var(--host-text-meta);
+  overflow-wrap: anywhere;
+}
+.ui-action-row > .ui-action-trailing { color: var(--tertiary-text-color); }
+.ui-pending-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--host-space-sm);
+  min-width: 0;
+  padding: var(--host-space-xs) var(--host-space-xs) var(--host-space-xs) var(--host-space-md);
+  border-radius: var(--host-radius-control);
+  background: color-mix(in srgb, var(--primary-color) 12%, var(--surface-color));
+  > .ck-actions { margin-inline-start: auto; }
+}
+.ui-pending-message { min-width: 0; color: var(--primary-text-color); font-size: var(--host-text-body); overflow-wrap: anywhere; }
 .ui-field {
   display: flex;
   flex-direction: column;

@@ -1,6 +1,6 @@
 // Private semantic compositions; native controls consume the public UI baseline.
-import type { ComponentProps, ReactNode } from 'react';
-import { Icon } from './Icon';
+import { useId, type ComponentProps, type ReactNode } from 'react';
+import { Icon, type IconName } from './Icon';
 
 export function SectionHeading({ children, actions, className = '', level = 3 }: {
   children: ReactNode; actions?: ReactNode; className?: string; level?: 2 | 3;
@@ -8,7 +8,54 @@ export function SectionHeading({ children, actions, className = '', level = 3 }:
   const Heading = level === 2 ? 'h2' : 'h3';
   return <div className={`ui-section-heading ${className}`.trim()}>
     <Heading className="ck-heading">{children}</Heading>
-    {actions}
+    {actions && <div className="ui-section-actions">{actions}</div>}
+  </div>;
+}
+
+// A compact text action placed beside a section heading's icon actions.
+export function HeadingAction({ icon, children, className = '', ...props }: Omit<ComponentProps<'button'>, 'type'> & {
+  icon?: IconName;
+}) {
+  return <button {...props} type="button" className={`ui-heading-action ck-button rp ${className}`.trim()}>
+    {icon && <Icon name={icon} size={16} />}
+    {children}
+  </button>;
+}
+
+// A bordered group of full-row actions. Callers disable each row; the group
+// only mutes the presentation and names the collection.
+export function ActionList({ label, disabled, children }: {
+  label: string; disabled?: boolean; children: ReactNode;
+}) {
+  return <div className="ui-action-list" role="group" aria-label={label} data-disabled={disabled || undefined}>
+    {children}
+  </div>;
+}
+
+export function ActionRow({ icon, name, description, busy, busyDescription = '处理中…', ...props }:
+  Omit<ComponentProps<'button'>, 'type' | 'children' | 'name'> & {
+    icon: IconName; name: string; description: string; busy?: boolean; busyDescription?: string;
+  }) {
+  const id = useId();
+  return <button {...props} type="button" className="ui-action-row ck-button rp"
+    aria-labelledby={`${id}-name`} aria-describedby={`${id}-description`} aria-busy={busy || undefined}>
+    <Icon name={icon} size={20} className="ui-action-icon" />
+    <span className="ui-action-text">
+      <span id={`${id}-name`} className="ui-action-name">{name}</span>
+      <span id={`${id}-description`} className="ui-action-description">{busy ? busyDescription : description}</span>
+    </span>
+    {busy ? <Icon name="loading" size={16} className="ui-action-trailing spinner" />
+      : <Icon name="chevron_right" size={16} className="ui-action-trailing" />}
+  </button>;
+}
+
+// Shown only while local edits or an unconfirmed submission exist; results stay
+// with their owner outside this bar.
+export function PendingChangesBar({ message, children }: { message: ReactNode; children: ReactNode }) {
+  const id = useId();
+  return <div className="ui-pending-bar" role="group" aria-labelledby={id}>
+    <span id={id} className="ui-pending-message">{message}</span>
+    <div className="ck-actions">{children}</div>
   </div>;
 }
 

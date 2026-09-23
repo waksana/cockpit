@@ -68,7 +68,6 @@
   font-size: var(--host-text-body); line-height: var(--host-leading-ui); color: var(--secondary-text-color);
 }
 .session-settings summary:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; }
-.info-model-actions { justify-content: flex-start; }
 .info-model-result {
   display: flex;
   flex-direction: column;

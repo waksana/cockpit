@@ -1653,7 +1653,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await event(node, 'change');
     };
     const apply = async () => {
-      const button = container.querySelectorAll('.dialog-btn').find(node => node.textContent === '应用配置');
+      const button = container.querySelector('.ui-pending-bar')?.querySelectorAll('.dialog-btn').find(node => node.textContent === '应用');
       assert.ok(button);
       await event(button, 'click');
     };
@@ -1675,7 +1675,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.match(container.textContent, /已接受，等待原生应用/);
     assert.doesNotMatch(container.textContent, /上次原生返回：已应用/);
     assert.match(container.querySelector('.info-model-details')?.textContent ?? '', /Model changed/);
-    assert.equal(container.querySelector('.info-model-name')?.textContent, 'Alpha');
+    assert.equal(container.querySelector('.info-model-current'), null, 'selects present the known native value');
+    assert.match(container.querySelector('.ui-pending-bar')?.textContent ?? '', /有未应用的修改/);
     current = { ...current, currentModelId: 'b' };
     await editor();
     assert.equal(control('思考力度').value, 'high', 'native current updates are not desired editor state');
@@ -1741,9 +1742,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await event(target, 'change');
     };
     const apply = () => {
-      const button = node('.info-model-current').closest('.info-section')?.querySelector('.primary');
+      const button = node('.ui-pending-bar').querySelector('.primary');
       assert.ok(button, 'model section has its own Apply action');
-      assert.match(button.textContent, /^(应用配置|正在提交…)$/);
+      assert.match(button.textContent, /^(应用|正在提交…)$/);
       return button;
     };
     const refresh = () => node('[aria-label="刷新"]');
@@ -1757,16 +1758,20 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       }));
       await panel();
       assert.equal(reads.length, 1);
-      const roleEntry = container.querySelectorAll('button').find(button => button.textContent === '追加模块角色…');
+      const roleEntry = container.querySelector('.ui-section-actions')?.querySelector('[aria-label="追加模块角色"]');
       assert.ok(roleEntry);
       assert.equal(roleEntry.attributes.has('disabled'), false, 'passive role disclosure is independent of model availability');
-      assert.equal(apply().attributes.has('disabled'), true, 'summary metadata cannot authorize Apply');
+      assert.equal(container.querySelector('.ui-pending-bar'), null, 'summary metadata cannot authorize Apply');
+      assert.equal(node('[aria-label="选择模型"]').attributes.has('disabled'), true);
       assert.equal(container.querySelectorAll('.spinner').length, 1, 'first read has only the body loader');
       assert.equal(refresh().getAttribute('aria-busy'), 'false');
       assert.equal(refresh().attributes.has('disabled'), true);
       assert.ok(node('[aria-label="复制 session ID"]'), 'ID copying is directly available');
       await act(() => reads[0].resolve(native));
-      assert.match(node('.info-model-current').textContent, /高.*标准上下文/);
+      assert.equal(node('[aria-label="思考力度"]').value, 'high', 'selects show the native current value');
+      assert.equal(node('[aria-label="上下文长度"]').value, 'default');
+      assert.equal(container.querySelector('.info-model-current'), null);
+      assert.equal(container.querySelector('.ui-pending-bar'), null, 'no bar until the draft differs');
       await change('选择模型', 'b');
       await change('思考力度', 'max');
       await change('上下文长度', 'long_context');
