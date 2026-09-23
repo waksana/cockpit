@@ -6,6 +6,7 @@ import { SessionMeta } from '@cockpit/protocol';
 import { Sidebar } from '../components/Sidebar';
 import { ModuleRuntimeProvider } from '../components/ModuleComponents';
 import { createSidebarModuleFixture, sidebarSessions } from './sidebar-fixtures';
+import { sessionRowOutline } from '../test/sessionRowOutline';
 
 test('classic sidebar preserves full identity, independent roles, activity and module unread without avatars', async t => {
   const sessions = sidebarSessions(1_789_441_200_000);
@@ -21,18 +22,24 @@ test('classic sidebar preserves full identity, independent roles, activity and m
   }));
   assert.doesNotMatch(html, /dialog-avatar|--chip-h/);
   assert.equal((html.match(/<button\b/g) ?? []).length, sessions.length);
-  assert.equal((html.match(/class="dialog-roles session-role-badges"/g) ?? []).length, 2);
-  assert.equal((html.match(/class="role-badge"/g) ?? []).length, 3);
+  const rows = sessionRowOutline(html);
+  assert.equal(rows.filter(row => row.roles.length).length, 4);
+  assert.equal(rows.reduce((count, row) => count + row.roles.length, 0), 3 + 3 + 5);
   assert.match(html, /active[^"]*"[^>]*aria-current="true"/);
   assert.match(html, /is-unloaded/);
   for (const session of sessions) {
-    assert.ok(html.includes(`<span class="session-row-title">${session.title}</span>`));
-    assert.ok(html.includes(`data-sidebar-unread="${session.sessionId}"`));
+    const row = rows.find(value => value.id === session.sessionId)!;
+    assert.deepEqual(row.lines, ['session-row-title', 'dialog-time', 'session-row-details']);
+    assert.deepEqual(row.title, { text: session.title, hover: session.title });
+    assert.deepEqual(row.directory, { text: session.cwd.split('/').filter(Boolean).at(-1), hover: session.cwd });
+    assert.equal(row.unread, 1);
   }
+  assert.deepEqual(rows.find(row => row.id === 'demo-extreme')!.status,
+    ['overall', 'decision', 'compaction', 'agent', 'shell', 'queue', 'mcp']);
+  assert.deepEqual(rows.find(row => row.id === 'demo-plain')!.details, ['dialog-subtitle', 'dialog-meta']);
   for (const state of ['decision', 'shell', 'agent']) assert.ok(html.includes(`data-activity="${state}"`));
   assert.match(html, /data-icon="error"/);
   assert.match(html, /已应用/);
   assert.match(html, /未应用/);
   assert.match(html, /不代表当前能力就绪/);
-  assert.doesNotMatch(html, /\/workspace\//);
 });

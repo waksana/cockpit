@@ -7,6 +7,7 @@ import type { ChatSession } from '../net/types';
 import { Sidebar } from '../components/Sidebar';
 import { filterSessions } from './session-list';
 import { activityFixture } from '../dev/activity-fixtures';
+import { sessionRowOutline } from '../test/sessionRowOutline';
 
 function session(sessionId: string, overrides: Partial<ChatSession> = {}): ChatSession {
   return {
@@ -75,7 +76,7 @@ function render(sessions: ChatSession[], overrides: Partial<ComponentProps<typeo
     sessions, activeId: null, query: '', snapshotReady: true, connected: true, onSelect: noAction, getMenuItems: () => [], ...overrides,
   }));
 }
-const titles = (html: string) => [...html.matchAll(/<span class="session-row-title">([^<]*)<\/span>/g)].map(match => match[1]);
+const titles = (html: string) => sessionRowOutline(html).map(row => row.title.text);
 
 test('sidebar is a single list and keeps unloaded rows focusable and selectable', () => {
   const rows = [
@@ -106,13 +107,38 @@ test('running state and pending decisions remain without schedule indicators or 
   assert.doesNotMatch(html, /未读|已读|dialog-unread|dialog-pinned/);
 });
 
-test('sidebar preserves its basic grid, native cwd label and empty-state distinction', () => {
-  const html = render([session('cwd', { cwd: '/work/项目/' })]);
-  assert.doesNotMatch(html, /dialog-avatar|--chip-h/);
-  assert.match(html, /<span class="session-row-title">Session cwd<\/span>/);
-  assert.match(html, /<span class="dialog-subtitle">项目<\/span><span class="dialog-meta"><span class="session-activity"><\/span><\/span>/);
+test('each row renders two lines: title with time, then roles, directory and status', () => {
+  const [row] = sessionRowOutline(render([session('cwd', { cwd: '/work/项目/', title: 'A very long title '.repeat(8) })]));
+  assert.deepEqual(row.lines, ['session-row-title', 'dialog-time', 'session-row-details']);
+  assert.deepEqual(row.details, ['dialog-subtitle', 'dialog-meta']);
+  assert.deepEqual(row.title, { text: 'A very long title '.repeat(8), hover: 'A very long title '.repeat(8) });
+  assert.deepEqual(row.directory, { text: '项目', hover: '/work/项目/' });
+  assert.deepEqual(row.status, []);
   assert.match(render([]), /服务器上没有 session/);
   assert.match(render([session('one')], { query: 'missing' }), /没有匹配的会话/);
+});
+
+test('roles, a long directory and every status indicator share the second line in reading order', () => {
+  const roles = [
+    { moduleId: 'cockpit-task', moduleName: 'Task', roleId: 'executor', name: 'Executor' },
+    { moduleId: 'review', moduleName: 'SyntheticReviewModuleWithLongName', roleId: 'reviewer', name: 'IndependentReviewer' },
+  ];
+  const cwd = `/work/${'long-directory-'.repeat(10)}`;
+  const [row] = sessionRowOutline(render([session('extreme', {
+    status: 'running', compacting: true, roles, appliedRoles: [roles[0]], cwd,
+    planRequest: { requestId: 'p', summary: 'Plan' },
+    activity: activityFixture({ processing: true, hasActiveWork: true,
+      tasks: { activeAgents: 12, activeShells: 9, unknown: 1 },
+      queue: { pendingCount: 23, steeringCount: 0, inFlightSteeringCount: 0 },
+      mcp: { pendingConnectionCount: 4 } }),
+  })]));
+  assert.deepEqual(row.lines, ['session-row-title', 'dialog-time', 'session-row-details']);
+  assert.deepEqual(row.details, ['dialog-roles session-role-badges', 'dialog-subtitle', 'dialog-meta']);
+  assert.equal(row.directory.hover, cwd);
+  assert.equal(row.roles.length, 2);
+  assert.ok(row.roles.every(title => title?.includes('不代表当前能力就绪')));
+  assert.deepEqual(row.status, ['overall', 'decision', 'compaction', 'agent', 'shell', 'queue', 'mcp']);
+  assert.ok(row.text.indexOf('Session extreme') < row.text.indexOf('Task') && row.text.indexOf('Task') < row.text.indexOf('long-directory'));
 });
 
 test('busy session rows retain the leading overall spinner alongside specific activities', () => {
@@ -129,15 +155,16 @@ test('busy session rows retain the leading overall spinner alongside specific ac
   }
 });
 
-test('session rows own their spacing rather than inheriting the shared button gap', () => {
+test('second-line space yields directory first, then roles, never status', () => {
   const css = compile(new URL('../styles/components/sidebar.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.chatlist-chat \{[^}]*column-gap: 0\.6rem;/);
-  assert.match(css, /\.chatlist-chat \{[^}]*row-gap: 0;/);
-  assert.match(css, /\.chatlist-chat \{[^}]*min-height: 4\.25rem;/);
-  assert.match(css, /\.chatlist-chat \.dialog-subtitle \{[^}]*margin-top: 0\.1rem;/);
-  assert.match(css, /grid-template-columns: minmax\(0, 1fr\) auto auto;/);
-  assert.match(css, /grid-template-areas: "roles roles roles" "title title time" "subtitle meta meta";/);
-  assert.match(css, /\.session-row-title \{[^}]*-webkit-line-clamp: 2;[^}]*overflow-wrap: anywhere;/);
+  const rule = (selector: string) => css.match(new RegExp(`${selector.replace(/[.*]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? '';
+  assert.match(rule('.chatlist-chat'), /grid-template-areas: "title time" "details details";/);
+  assert.match(rule('.chatlist-chat .session-row-title'), /white-space: nowrap;[^]*text-overflow: ellipsis;/);
+  assert.match(rule('.chatlist-chat .dialog-time'), /white-space: nowrap;/);
+  const shrink = (selector: string) => Number(rule(selector).match(/flex: \S+ (\S+)/)?.[1]);
+  assert.ok(shrink('.chatlist-chat .dialog-subtitle') > 100 * shrink('.chatlist-chat .dialog-roles'));
+  assert.match(rule('.chatlist-chat .dialog-meta'), /flex: none;/);
+  assert.match(rule('.chatlist-chat .dialog-roles'), /flex-wrap: nowrap;/);
   assert.doesNotMatch(css, /dialog-avatar|--chip-h/);
 });
 
@@ -146,9 +173,9 @@ test('session role badges are separate from cwd and preserve all literal names',
     { moduleId: 'cockpit-task', moduleName: 'Task', roleId: 'owner', name: 'Owner' },
     { moduleId: 'other', moduleName: 'module_Original__Name', roleId: 'owner', name: 'cockpit-Exact-role' },
   ] })]);
-  assert.match(html, /<button[^>]*><span class="dialog-roles session-role-badges"/);
-  assert.ok(html.indexOf('dialog-roles') < html.indexOf('session-row-title'));
-  assert.match(html, /class="dialog-subtitle">project<\/span><span class="dialog-meta"/);
+  const [row] = sessionRowOutline(html);
+  assert.deepEqual(row.details, ['dialog-roles session-role-badges', 'dialog-subtitle', 'dialog-meta']);
+  assert.equal(row.directory.text, 'project');
   assert.equal((html.match(/class="role-badge"/g) ?? []).length, 2);
   assert.match(html, /class="module-label-name">Task</);
   assert.match(html, /class="module-label-name">module_Original__Name</);

@@ -54,21 +54,21 @@
   -webkit-touch-callout: none;
 }
 
-// Compact roles lead identity and auxiliary information on their own row.
+// Two lines: title + time, then roles + directory + status. Line 2 yields in a
+// fixed order: the directory shrinks first, then role badges; status never shrinks.
 .chatlist-chat {
   position: relative;
   width: 100%;
   text-align: start;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  grid-template-rows: auto auto;
-  grid-template-areas: 'title title time' 'subtitle meta meta';
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'title time' 'details details';
   align-items: center;
   align-content: center;
   column-gap: 0.6rem;
-  row-gap: 0;
-  min-height: 4.25rem;
-  padding: 0.25rem 0.6rem;
+  row-gap: 0.15rem;
+  min-height: 3.5rem;
+  padding: 0.4rem 0.6rem;
   border-radius: var(--border-radius-medium);
   overflow: hidden;             // clip content to the rounded row
 
@@ -84,54 +84,65 @@
 
   .session-row-title {
     grid-area: title;
-    align-self: start;
     min-width: 0;
     font-size: var(--font-size-16);
     font-weight: 500;
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 2;
-    white-space: normal;
-    overflow-wrap: anywhere;
+    white-space: nowrap;
     overflow: hidden;
+    text-overflow: ellipsis;
   }
   .dialog-time {
     grid-area: time;
-    align-self: start;
     justify-self: end;
     font-size: var(--font-size-12);
     color: var(--tertiary-text-color);
     white-space: nowrap;
   }
-  .dialog-subtitle {
-    grid-area: subtitle;
-    align-self: flex-start;
+  .session-row-details {
+    grid-area: details;
+    display: flex;
+    align-items: center;
+    gap: var(--host-space-sm);
     min-width: 0;
-    margin-top: 0.1rem;
+    // One role-badge height (meta text + padding + border), so rows with and
+    // without roles or status share one two-line height.
+    min-height: calc(var(--host-text-meta) * var(--host-leading-ui) + 4px);
+  }
+  // Roles keep their natural width until the directory is gone. Then the space
+  // is shared equally: short badges stay whole, the longest ellipsize first, and
+  // at the extreme every badge remains an outlined stub with its full title.
+  .dialog-roles {
+    flex: 0 1 auto;
+    flex-wrap: nowrap;
+    align-items: center;
+    min-width: 0;
+    overflow: hidden;
+    .role-badge { flex: 1 1 0; min-width: 0.75rem; max-width: max-content; }
+    .module-label-name, .role-badge-name {
+      display: block;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+  .dialog-subtitle {
+    // A dominant shrink factor makes the directory absorb the overflow first
+    // (flex factors below 1 would leave overflow undistributed).
+    flex: 1 1000 3rem;
+    min-width: 0;
     font-size: var(--font-size-12);
     color: var(--tertiary-text-color);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
+  // Status is never shrunk; if it alone exceeds line 2 it clips at the end,
+  // where the lowest-priority indicators are ordered.
   .dialog-meta {
-    grid-area: meta;
-    align-self: flex-start;
-    justify-self: end;
-    display: flex; align-items: center; gap: 0.35rem;
-    margin-top: 0.1rem;
-    min-width: 0;
+    flex: none;
+    display: flex; align-items: center; gap: var(--host-space-xs);
     max-width: 100%;
     overflow: hidden;
-  }
-
-  &:has(.dialog-roles) {
-    grid-template-rows: auto auto auto;
-    grid-template-areas: 'roles roles roles' 'title title time' 'subtitle meta meta';
-    padding-block: 0.5rem;
-  }
-  .dialog-roles {
-    grid-area: roles;
-    margin-bottom: var(--host-space-xs);
+    .session-activity { flex: none; }
   }
   .dialog-status {
     font-size: var(--font-size-12);
