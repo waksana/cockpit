@@ -104,7 +104,7 @@ ordinary reads. Native:
 (from the root) — existing native ID/history/cwd, unchanged capabilities while saving,
 and composed instructions with the minimal tool subset after explicit reload or cold
 resume; temporary resource switches follow native global defaults. Role cases in
-`packages/core/src/engine.test.ts` cover saving during busy/pending/queue/schedules,
+`packages/core/src/engine-roles.test.ts` cover saving during busy/pending/queue/schedules,
 unloaded staying unloaded, repeated saves, uncertain persistence, lifecycle
 concurrency and load-time resource validation. Mock injection is not production
 failure evidence.
