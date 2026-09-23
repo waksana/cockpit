@@ -18,6 +18,9 @@ substantial behavior or architecture changes in an issue before implementing the
 - Before any host or module UI work, read and follow the
   [frontend guidelines](docs/frontend-guidelines.md): natural, simple, intuitive,
   native-first presentation and interaction with the least necessary JS.
+  UI requests default to the primary classic `/` UI; experimental `/next/` work
+  requires explicit scope, not automatic parity. See the
+  [UI scope policy](docs/frontend-guidelines.md#classic-primary-ui).
   The existing [interaction semantics entry](docs/DEVELOPMENT.md#interaction-semantics-and-structural-correctness)
   links to the same principles and module integration boundaries.
 
