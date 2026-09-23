@@ -1,3 +1,21 @@
+# Cockpit 0.4.2
+
+Current-source deployment version for the classic MCP and Skills resource
+redesign in #131 and compact process summaries in #133. Global resources use
+compact master/detail lists; global and session resources share provenance
+badges, with global module attribution only where identity is verified.
+Classic chat process headers use distinct icon/count pairs for tools, thoughts
+and Skills while retaining accessible labels, status and full nested details.
+
+All host workspaces and MCP self-report 0.4.2. Native SDK 1.0.13 / runtime
+1.0.83, module backend API v1, Web API v2 and existing UI capability versions
+are unchanged; resource provenance and the titlePrefix extension are additive.
+Classic remains at `/` and the independent `/next/` entry remains available.
+This new immutable version does not replace installed 0.4.1 contents, migrate
+user data, change module selections or create a tag, GitHub Release or restart.
+
+---
+
 # Cockpit 0.4.1
 
 Current-source deployment version for the list layouts in #122, the
