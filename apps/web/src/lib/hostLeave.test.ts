@@ -160,7 +160,7 @@ test('pre-dispatch validation, serialization, and already aborted calls do not c
   await assert.rejects(net.prompt('id', '', [{ type: 'file', path: '' }]));
   const controller = new AbortController();
   controller.abort();
-  await assert.rejects(net.intent('cancel', { sessionId: 'id' }, controller.signal));
+  await assert.rejects(net.intent('cancel', { sessionId: 'id' }, { signal: controller.signal }));
   const cyclic = { sessionId: 'id' } as { sessionId: string; extra?: unknown };
   cyclic.extra = cyclic;
   await assert.rejects(net.intent('cancel', cyclic));
@@ -211,12 +211,12 @@ test('aborting after dispatch keeps uncertainty across disconnect and guard remo
   const fetch = t.mock.method(globalThis, 'fetch', (_url, init) => new Promise<Response>((_resolve, reject) => {
     init?.signal?.addEventListener('abort', () => reject(new DOMException('Stopped waiting', 'AbortError')));
   }));
-  const request = net.intent('cancel', { sessionId: 'unknown' }, controller.signal);
+  const request = net.intent('cancel', { sessionId: 'unknown' }, { signal: controller.signal });
   controller.abort();
   await assert.rejects(request, /Stopped waiting/);
   net.disconnect();
   assert.equal(view.handlers.size, 1);
-  assert.ok(getUxErrors().some(error => JSON.stringify(error).includes('尚未确认')));
+  assert.ok(getUxErrors().some(error => error.message.includes('结果未知：已停止等待')));
   view.cleanup();
   assert.equal(view.handlers.size, 0);
   const remounted = fixture(t);
@@ -237,11 +237,11 @@ test('unconfirmed resource preparation receipts keep protection and report uncer
     { ...base, tools: 'unconfirmed' },
   ]) {
     fetch.mock.mockImplementation(async () => Response.json(result));
-    const before = getUxErrors().filter(error => error.message.includes('session/resources-prepare')).length;
     const calls = fetch.mock.callCount();
     assert.deepEqual(await net.intent('session/resources-prepare', { sessionId: 'prepare' }), result);
     assert.equal(fetch.mock.callCount(), calls + 1);
     assert.equal(view.handlers.size, 1);
-    assert.equal(getUxErrors().filter(error => error.message.includes('session/resources-prepare')).length, before + 1);
+    // Identical unowned uncertainty is one deduplicated global notice.
+    assert.equal(getUxErrors().filter(error => error.message.includes('session/resources-prepare：结果未知')).length, 1);
   }
 });

@@ -43,7 +43,8 @@ function NavRow({ section, name, summary, modules, selected, enabled, disabled, 
         onChange={next => { setDesired(next); void action.run(() => onChange(name, next)); }} />
     </span>}
     feedback={action.error && !action.busy
-      && <ResourceError key={JSON.stringify([section, name, action.error])} error={action.error} name={name} />} />;
+      && <ResourceError key={JSON.stringify([section, name, action.error])} error={action.error} name={name}
+        cause={action.errorCause} action={`${desired ? '启用' : '停用'}全局默认 ${name}`} />} />;
 }
 
 function ListBody({ status, failed, pending, empty, children }: {

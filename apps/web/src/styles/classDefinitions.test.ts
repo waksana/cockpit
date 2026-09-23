@@ -25,7 +25,6 @@ const allowed = new Map<string, string>([
   ['chat-controls-list', hook],
   ['chat-interrupt', hook],
   ['chat-typing-stop', hook],
-  ['manage-error-summary', hook],
   ['thought-toggle', hook],
   ['tool-toggle', hook],
   ['msg-thought', hook],

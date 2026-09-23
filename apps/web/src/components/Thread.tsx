@@ -26,6 +26,7 @@ import { ToolCallRow, ToolStatusIcon } from './ToolCallRow';
 import { toolStatusLabel } from '../lib/toolStatus';
 import { ActivityHeader } from './ActivityHeader';
 import { DisclosureChoices } from './DisclosureChoices';
+import { Disclosure, DisclosureChevron, TextClamp } from './Disclosure';
 import { useDisclosureChoice } from '../lib/disclosureChoice';
 import { groupTranscript, transcriptGap, type TranscriptRow, type ProcessItem } from '../lib/transcriptRows';
 import { PlanCard, ElicitationCard } from './PendingDecision';
@@ -83,10 +84,9 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
   const timestamp = items[0].message.timestamp;
   const time = clock(timestamp);
   return <section className="message-process" data-failed={states[0][0] > 0 || undefined}>
-    <div data-message-id={JSON.stringify([sessionId, identity])}><Button className="process-summary" aria-expanded={open} aria-controls={contentId}
-      aria-label={`${open ? '收起' : '展开'}过程：${description} · ${time}`} title={description}
-      onClick={toggle}>
-      <span className="process-summary-chevron"><Icon name="down" size={16} /></span>
+    <div data-message-id={JSON.stringify([sessionId, identity])}><Disclosure className="process-summary" open={open} controls={contentId}
+      name={`过程：${description} · ${time}`} title={description} onToggle={toggle}
+      leading={<span className="process-summary-chevron"><DisclosureChevron open={open} /></span>}>
       <span className="process-summary-counts">
         {visibleCategories.map(({ icon, count, label }) => <span key={icon} className="process-summary-count" title={label}>
           <Icon name={icon} size={16} />{count}
@@ -100,7 +100,7 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
         {thoughts.some(item => item.message.incomplete) && <span title="思考归属未确认"><Icon name="error" size={16} /></span>}
       </span>
       <MessageTimestamp timestamp={timestamp} />
-    </Button></div>
+    </Disclosure></div>
     <div id={contentId} className="message-process-content" hidden={!open} data-child-history>
       {(mounted || open) && items.map(item => <div key={item.key} data-child-message-frame={item.key}>
         <div data-message-id={JSON.stringify([sessionId, item.key])}>
@@ -151,14 +151,14 @@ function SubagentCard({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
   return (
     <div className="subagent-card" data-status={sa.status}>
       <div className="subagent-overview">
-        <Button className="subagent-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
-          <span className="subagent-ico"><Icon name="agent" size={20} /></span>
+        <Disclosure className="subagent-head" open={open} onToggle={() => setOpen((v) => !v)}
+          name={`子代理：${sa.displayName}`} leading={<span className="subagent-ico"><Icon name="agent" size={20} /></span>}>
           <span className="subagent-name">{sa.displayName}</span>
           <span className="subagent-status" title="根据已加载的子代理事件记录，不代表当前仍在运行或任务目标已完成。">
             记录：{status}{!connected && ' · 待同步'}
           </span>
-          <span className="subagent-chevron"><Icon name={open ? 'up' : 'down'} size={16} /></span>
-        </Button>
+          <span className="subagent-chevron"><DisclosureChevron open={open} /></span>
+        </Disclosure>
         {sa.description && !open && <div className="subagent-desc">{sa.description}</div>}
       </div>
       {open && <SubagentDetails key={JSON.stringify([sessionId, sa.toolCallId])} m={m} sessionId={sessionId} />}
@@ -474,15 +474,16 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const hasPendingDecision = !readOnly && !!(planRequest || session.elicitation);
   const hasExecution = session.compacting || session.status === 'running' || (!readOnly && queueCount > 0);
   const hasInputHeader = !controls && composerControls === undefined && !!(hasExecution || hasPendingDecision || (!readOnly && ask) || activityItems.length);
-  const inputCardRef = useRef<HTMLDetailsElement | null>(null);
+  const inputCardRef = useRef<HTMLDivElement | null>(null);
+  const inputBodyId = useId();
+  // The fold survives ordinary updates; a new request or idle input opens afresh.
+  const inputFoldKey = JSON.stringify([session.sessionId, ask?.requestId, planRequest?.requestId, session.elicitation?.requestId, hasInputHeader]);
+  const [foldedInputKey, setFoldedInputKey] = useState<string | null>(null);
+  const inputOpen = foldedInputKey !== inputFoldKey;
   const decisionKey = askId ? `ask:${askId}` : planId ? `plan:${planId}` : elicitationId ? `elicitation:${elicitationId}` : undefined;
   const [controlsDisclosure, setControlsDisclosure] = useState<{ decision?: string; open: boolean }>({ open: true });
   const controlsOpen = decisionKey && decisionKey !== controlsDisclosure.decision ? true : controlsDisclosure.open;
   const releaseEditorSize = useControlComposer(inputCardRef, !!controls, draft.reference.id, decisionKey);
-  useLayoutEffect(() => {
-    // Native disclosure survives ordinary updates; a new request or idle input opens afresh.
-    if (inputCardRef.current) inputCardRef.current.open = true;
-  }, [session.sessionId, ask?.requestId, planRequest?.requestId, session.elicitation?.requestId, hasInputHeader]);
   const executionControlRef = useRemovedControlFocus(session.sessionId, inputCardRef);
   const cancelDecision = (kind: 'ask' | 'plan' | 'elicitation', requestId: string, pending: boolean) =>
     controls && onControlAction ? <SessionControlActionButton
@@ -531,7 +532,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                 </StateNotice> : null}
               </div>
               {session.partialHistory && <p className="chat-history-note" role="status">
-                断线期间的临时片段可能不完整；已保留现有文字，以原生保存后的完整消息为准。
+                断线期间的临时片段可能不完整；已保留现有文字，以保存后的完整消息为准。
               </p>}
               {session.incompleteBoundary && !session.hasMore && <p className="chat-history-note">
                 部分工具记录缺少对应的发起消息，现有历史无法补齐。
@@ -576,20 +577,22 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           </p>}
           {!readOnly && <ComposerNotices draft={draft} />}
         </div>
-        <details className="chat-input-card" ref={inputCardRef} open
+        <div className="chat-input-card" ref={inputCardRef} data-open={inputOpen}
           data-controls={!!controls || undefined} data-controls-open={controls ? controlsOpen : undefined}
           onChange={controls ? event => { if (event.target instanceof HTMLTextAreaElement) releaseEditorSize(); } : undefined}
           data-header={hasInputHeader || undefined} data-decision={!!(!readOnly && (ask || hasPendingDecision)) || undefined}
           data-question={(!readOnly && operation === 'ask') || undefined}>
-          <summary className="chat-execution-head" hidden={!hasInputHeader} aria-label={`${executionLabel}，展开或收起输入卡片`}>
-            <span className="chat-execution-label" role="status" title={executionLabel}
-              aria-label={executionLabel}>
-              {executionProgress && <span className="chat-execution-progress">{executionProgress}</span>}
-              <SessionActivity items={activityItems} />
-            </span>
-            {!readOnly && hasContent && <span className="chat-folded-draft">有草稿</span>}
-            {(showStop || showInterrupt) && <span className="chat-execution-actions" role="group" aria-label="执行操作"
-              onClick={event => event.stopPropagation()}>
+          <div className="chat-execution-head" hidden={!hasInputHeader}>
+            <Disclosure className="chat-execution-toggle" open={inputOpen} onToggle={() => setFoldedInputKey(inputOpen ? inputFoldKey : null)}
+              controls={inputBodyId} name={`输入卡片：${executionLabel}`}>
+              <span className="chat-execution-label" role="status" title={executionLabel}
+                aria-label={executionLabel}>
+                {executionProgress && <span className="chat-execution-progress">{executionProgress}</span>}
+                <SessionActivity items={activityItems} />
+              </span>
+              {!readOnly && hasContent && !inputOpen && <span className="chat-folded-draft">有草稿</span>}
+            </Disclosure>
+            {(showStop || showInterrupt) && <span className="chat-execution-actions" role="group" aria-label="执行操作">
               {showInterrupt && <Button ref={executionControlRef} className="chat-interrupt"
                 disabled={!interruptAction.connected || (!!session.activeOperations && !interruptAction.busy)}
                 aria-disabled={interruptAction.busy || undefined}
@@ -607,8 +610,8 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                 {stopPending ? '正在停止…' : notAbortable ? '当前不可中断' : queueCount > 0 ? '停止并清空队列' : '停止'}
               </Button>}
             </span>}
-          </summary>
-          <div className="chat-input-card-body">
+          </div>
+          <div id={inputBodyId} className="chat-input-card-body" hidden={!inputOpen}>
             {controls && onControlAction && <SessionControlBar session={session} controls={controls} connected={authoritative}
               expanded={controlsOpen} disabled={!authoritative || !session.loaded || !!session.loading || !!session.closing || activityRefreshing || !!session.controlsStale}
               controlRef={executionControlRef} onAction={onControlAction}
@@ -618,11 +621,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
               {!readOnly && !onControlAction && composerControls === undefined && queueCount > 0 && <div className="chat-queue" aria-label="排队中的消息">
                 {session.queue?.map((q) => (
                   <div key={q.id} className="chat-queue-item">
-                    <details className="chat-queue-entry">
-                      <summary className="chat-queue-text" aria-label={`查看排队消息：${q.text}`}>
-                        {q.text}
-                      </summary>
-                    </details>
+                    <TextClamp className="chat-queue-entry" text={q.text} label="排队消息" lines={1} />
                     <div className="chat-queue-copy"><CopyButton text={q.text} label="复制排队消息" /></div>
                     <IconButton ref={executionControlRef} className="chat-queue-remove" icon="close" iconSize={16} disabled={!connected || !onRemoveQueued}
                       label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)} />
@@ -663,7 +662,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
               />
             )}
           </div>
-        </details>
+        </div>
       </div>
     </main></DisclosureChoices>
   );

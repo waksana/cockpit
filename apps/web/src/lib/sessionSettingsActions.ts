@@ -11,6 +11,7 @@ export interface SessionSettingsOperation {
   pending: boolean;
   outcome?: SessionSettingsOutcome;
   error?: string;
+  errorState?: 'failed' | 'unknown';
   refreshError?: string;
 }
 
@@ -20,7 +21,7 @@ export function sessionSettingsBlockReason(session: SessionMeta | undefined, con
   if (reason) return reason;
   if (!session?.loaded) return '请先显式恢复会话';
   const activity = session.activity;
-  if (!activity) return '原生活动状态尚未确认，请刷新会话状态';
+  if (!activity) return '活动状态尚未确认，请刷新会话状态';
   if (activity.processing || activity.hasActiveWork || activity.tasks.activeAgents
     || activity.tasks.activeShells || activity.tasks.unknown || activity.queue.pendingCount
     || activity.queue.steeringCount || activity.queue.inFlightSteeringCount || activity.mcp.pendingConnectionCount) {

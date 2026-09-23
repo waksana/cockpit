@@ -6,6 +6,7 @@ import { useKeyedAction, useKeyedResource } from '../lib/useKeyedResource';
 import { readDirectory } from '../lib/directoryResource';
 import { Button, IconButton } from './Button';
 import { DirectoryModal } from './Dialog';
+import { OperationErrorResult } from './OperationResult';
 import { StateNotice } from './StateNotice';
 import { ActionRow } from './UI';
 import type { RoleSelection } from '@cockpit/protocol';
@@ -90,10 +91,8 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
     {roleResource.valid && !rolesAvailable && <StateNotice kind="error">所选角色已不可用，请关闭窗口后重新选择。</StateNotice>}
     {!!roleResource.data?.length && <RolePicker roles={roleResource.data} selected={selectedRoles}
       disabled={locked || !roleResource.valid} onChange={setSelectedRoles} />}
-    {action.error && <StateNotice kind="error">
-      创建未完成：{action.error}。不会自动重建或发送消息；请先检查原生会话列表。
-    </StateNotice>}
-    {incompleteSessionId && <p>已确认创建、后续状态尚待核对的原生会话：
+    {action.error && <OperationErrorResult label="创建会话" error={action.error} cause={action.errorCause} />}
+    {incompleteSessionId && <p>已创建、状态待核对的会话：
       <Button onClick={() => { onCreated(incompleteSessionId); onCancel(); }}>
         {incompleteSessionId}
       </Button>

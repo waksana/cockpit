@@ -1,10 +1,12 @@
-import { useId, useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { useClippedText } from '../lib/useClippedText';
 import { resourceErrorSummary } from '../lib/resourcePresentation';
+import { copy } from '../lib/copy';
+import { operationErrorState } from '../lib/operationErrors';
 import { Icon } from './Icon';
 import { Badge } from './UI';
-import { Button } from './Button';
+import { TextClamp } from './Disclosure';
+import { OperationResult } from './OperationResult';
 
 // One row for session and global resource lists: badge + name, an optional
 // one-line summary, then status and control on one centered line. Native
@@ -47,32 +49,22 @@ export function ResourceProgress({ children }: { children: ReactNode }) {
   </Badge>;
 }
 
-// A single-line summary. Inside navigation it cannot own a disclosure, so the
+// A clamped summary. Inside navigation it cannot own a disclosure, so the
 // full text is kept in the title and in the selected detail.
 export function ResourceText({ text, label, lines = 1, disclosure = true }: {
   text: string; label: string; lines?: 1 | 2; disclosure?: boolean;
 }) {
-  const id = useId();
-  const { ref, clipped } = useClippedText(text, lines);
-  const [expanded, setExpanded] = useState(false);
-  const content = <span ref={ref} id={id} className="manage-row-text" data-lines={lines}
-    data-expanded={expanded || undefined} title={disclosure ? undefined : text}>{text}</span>;
-  return disclosure && (clipped || expanded)
-    ? <Button className="manage-text-disclosure"
-      aria-label={`${expanded ? '收起' : '展开'}${label}`} aria-expanded={expanded} aria-controls={id}
-      onClick={() => setExpanded(!expanded)}>{content}</Button>
-    : content;
+  return <TextClamp className="manage-row-text" text={text} label={label} lines={lines} expandable={disclosure} />;
 }
 
-export function ResourceError({ error, name, label = '操作未确认' }: { error: string; name: string; label?: string }) {
-  const id = useId();
-  const [expanded, setExpanded] = useState(false);
-  return <div className="manage-row-error">
-    <div id={`${id}-summary`} className="manage-error-summary" role="status">{label}：{resourceErrorSummary(error)}</div>
-    <Button className="manage-error-disclosure"
-      aria-label={`${expanded ? '收起' : '展开'}${name}错误详情`} aria-expanded={expanded} aria-controls={id}
-      aria-describedby={`${id}-summary`}
-      onClick={() => setExpanded(!expanded)}>{expanded ? '收起' : '查看错误详情'}</Button>
-    <div id={id} className="manage-error-full" hidden={!expanded}>{error}</div>
-  </div>;
+// A row's operation or connection result. `label` names a current state (such
+// as a connection error) rather than a failed operation.
+export function ResourceError({ error, name, cause, action = '操作', label }: {
+  error: string; name: string; cause?: unknown; action?: string; label?: string;
+}) {
+  const summary = resourceErrorSummary(error);
+  const state = label ? 'failed' : operationErrorState(cause);
+  const sentence = label ? `${label}：${summary}` : state === 'unknown' ? copy.unknown(summary) : copy.failed(action, summary);
+  return <OperationResult className="manage-row-error" state={state} name={`${name}${label ? '' : '错误'}`}
+    details={error.trim() !== summary ? error : null}>{sentence}</OperationResult>;
 }

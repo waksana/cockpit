@@ -9,7 +9,9 @@ import { useCockpit } from '../net/store';
 import { useSessionResource } from '../lib/useSessionResource';
 import { useModelSettings, selectionFrom, type ModelSelection } from '../features/session-settings/useModelSettings';
 import { SessionOperations } from '../features/session-settings/SessionOperations';
-import { ExpandableText } from './ExpandableText';
+import { DisclosureSection, TextClamp } from './Disclosure';
+import { OperationErrorResult, OperationResult, type OperationResultState } from './OperationResult';
+import { copy } from '../lib/copy';
 import { PanelPageShell } from './PanelPage';
 import { Button, RefreshButton } from './Button';
 import { SessionResume } from './SessionResume';
@@ -40,7 +42,7 @@ function CurrentModel({ session }: { session: ChatSession }) {
   const effort = currentReasoningEffort ? EFFORT_LABEL[currentReasoningEffort] ?? currentReasoningEffort : null;
   const context = currentContextTier ? CONTEXT_LABEL[currentContextTier] ?? currentContextTier : null;
   return <div className="info-model-current" aria-label="当前模型">
-    <span className="info-model-eyebrow">当前原生值：</span>
+    <span className="info-model-eyebrow">当前值：</span>
     <span className="info-model-name" title={currentModelId ?? undefined}>{name}</span>
     {(effort || context) && <div className="info-model-specs">
       {effort && <span aria-label={`思考力度：${effort}`}>{effort}</span>}
@@ -49,37 +51,29 @@ function CurrentModel({ session }: { session: ChatSession }) {
   </div>;
 }
 
-function ModelSubmissionDetails({ selection }: { selection?: ModelSelection }) {
-  return selection && <details className="info-model-details">
-    <summary>提交详情</summary>
-    <div>上次提交：{selectionLabel(selection)}</div>
-  </details>;
-}
+const submissionDetails = (selection?: ModelSelection) => selection ? `上次提交：${selectionLabel(selection)}` : null;
 
 export function ModelOutcome({ result, selection }: { result: NativeModelSwitchResult; selection?: ModelSelection }) {
   const classification = classifyNativeModelSwitchResult(result);
-  const status = {
-    applied: '已应用',
-    unchanged: '原生设置未变',
-    queued: '已接受，等待原生应用',
-    failed: '原生报告失败或拒绝，请核对当前设置',
-    'needs-action': '原生要求确认或后续操作，尚未确认应用',
-    unknown: `应用结果未确认${result.status ? `（${result.status}）` : '（原生未提供状态）'}`,
-  }[classification.state];
+  const reason = result.message?.trim() ?? '';
+  const [state, sentence]: [OperationResultState, string] = {
+    applied: ['done', copy.done('应用模型设置')],
+    unchanged: ['done', '模型设置未变'],
+    queued: ['info', '已接受，等待生效'],
+    failed: ['failed', copy.failed('应用模型设置', reason || '请核对当前设置')],
+    'needs-action': ['info', `需要确认后才能应用${reason ? `：${reason}` : ''}`],
+    unknown: ['unknown', copy.unknown(result.status ? `状态为 ${result.status}` : '未收到应用状态')],
+  }[classification.state] as [OperationResultState, string];
   const persistence = classification.persistenceFailed
-    ? `${classification.state === 'applied' ? '，但' : '；'}原生持久化失败：${result.persistenceError || '原生未提供错误详情'}` : '';
-  const message = (classification.state === 'failed' || classification.state === 'needs-action') && result.message
-    ? `：${result.message}` : '';
+    ? copy.failed('保存模型设置', result.persistenceError || '未提供原因') : null;
   return <div className="info-model-result">
-    <StateNotice className="info-model-status" kind={classification.isError ? 'error' : 'info'}>
-      {status + persistence + message}
-    </StateNotice>
+    <OperationResult className="info-model-status" state={state} details={submissionDetails(selection)}>{sentence}</OperationResult>
+    {persistence && <OperationResult className="info-model-status" state="failed">{persistence}</OperationResult>}
     {result.confirmation && <div>
       目标：{result.confirmation.targetModelDisplayName}；当前令牌：{result.confirmation.currentTokens}；目标上限：{result.confirmation.targetLimit}。
       本页不会自动确认或继续执行。
     </div>}
     {result.warning && <div>{result.warning}</div>}
-    <ModelSubmissionDetails selection={selection} />
   </div>;
 }
 
@@ -117,20 +111,22 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
       failed={resource.failed} pending={resource.pending} />}
   </>;
   const resultView = <>
-    {action.error && <StateNotice className="info-model-status" kind="error">
-      应用结果未确认：{action.error}。请核对原生状态；不会自动重试。
-    </StateNotice>}
+    {action.error && <OperationErrorResult className="info-model-status" label="应用模型设置" error={action.error} cause={action.errorCause}
+      details={submissionDetails(submission?.selection)} />}
     {submission && !action.busy && !action.error && !outcome
-      && <StateNotice className="info-model-status">提交结果尚未确认，请核对原生状态；不会自动重试。</StateNotice>}
-    {outcome ? <ModelOutcome result={outcome.result} selection={submission?.selection} />
-      : submission && <ModelSubmissionDetails selection={submission.selection} />}
+      && <OperationResult className="info-model-status" state="unknown"
+        details={submissionDetails(submission.selection)}>{copy.unknown('')}</OperationResult>}
+    {action.busy && submission && <DisclosureSection className="info-model-status" label="提交详情">
+      {submissionDetails(submission.selection)}
+    </DisclosureSection>}
+    {outcome && <ModelOutcome result={outcome.result} selection={submission?.selection} />}
   </>;
   if (!list || list.length === 0) return <section className="info-section">
     {heading}
     <div className="info-section-content info-controls">
       <CurrentModel session={session} />
-      <StateNotice kind="empty">{list ? '原生可选模型列表为空' : '原生可选模型列表不可用'}</StateNotice>
-      {action.busy && <StateNotice kind="loading" className="info-model-status">正在提交…</StateNotice>}
+      <StateNotice kind="empty">{list ? '可选模型列表为空' : '可选模型列表不可用'}</StateNotice>
+      {action.busy && <OperationResult className="info-model-status" state="busy">{copy.busy('应用模型设置')}</OperationResult>}
       {resultView}
     </div>
   </section>;
@@ -207,10 +203,10 @@ function InfoDetails({ session, onClose, onSetModel }: SessionInfoPanelProps) {
   const resource = useSessionResource(sid, `models:${sid}`, load, 0, ['model', 'models']);
 
   return (
-    <PanelPageShell title="会话设置" onClose={onClose} bodyClassName="session-settings">
+    <PanelPageShell title="会话设置" onClose={onClose}>
       <section className="info-section">
-        <ExpandableText className="info-summary-title" text={session.title} label="会话标题" />
-        <div className="info-section-content info-meta-cwd">{session.cwd || '工作目录：原生未提供'}</div>
+        <TextClamp className="info-summary-title" text={session.title} label="会话标题" />
+        <div className="info-section-content info-meta-cwd">{session.cwd || '工作目录：未提供'}</div>
         <div className="info-section-content info-session-id">
           <div className="info-session-id-heading">
             <span className="info-meta-id-label">Session ID</span>

@@ -30,7 +30,7 @@ test('plan cards render only native actions in offered order, including no actio
   for (const actions of [undefined, []]) {
     const html = plan(actions);
     assert.doesNotMatch(html, /开始执行（交互）|自动执行|并行执行（fleet）|仅退出计划/);
-    assert.match(html, actions ? /原生未提供可用的计划操作/ : /原生计划操作列表不可用/);
+    assert.match(html, actions ? /Copilot 未提供可用的计划操作/ : /计划操作列表不可用/);
     assert.match(html, /placeholder="输入新指令…"/);
     assert.match(html, /aria-label="发送新指令"/);
     assert.doesNotMatch(html, /先照做|回到计划/);

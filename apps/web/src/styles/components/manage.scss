@@ -23,33 +23,11 @@
   .manage-row-source { display: block; margin: 0; }
 }
 .resource-title-text { min-width: 0; overflow-wrap: anywhere; }
-.manage-row-text {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
-  min-width: 0;
+.manage-row-text .ui-text-clamp-text {
   min-height: 1lh;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-  &[data-lines='2'] { -webkit-line-clamp: 2; min-height: 2lh; }
-  &[data-expanded] { display: block; overflow: visible; }
+  &[data-lines='2'] { min-height: 2lh; }
 }
-.manage-text-disclosure, .manage-error-disclosure {
-  min-block-size: 1lh;
-  padding: 0;
-  color: inherit;
-  font-size: inherit;
-  text-align: start;
-}
-.manage-text-disclosure { display: block; width: 100%; min-width: 0; }
-.manage-error-disclosure { color: var(--host-color-danger); text-decoration: underline; text-underline-offset: 0.2em; }
-.manage-row-error {
-  grid-column: 1 / -1;
-  color: var(--host-color-danger); overflow-wrap: anywhere;
-  font-size: var(--host-text-meta);
-}
-.manage-error-full { margin-top: var(--host-space-xs); white-space: pre-wrap; }
+.manage-row-error { grid-column: 1 / -1; }
 // The existing list owns loading/empty state; no duplicate resource for the placeholder.
 .cockpit-shell:not(:has(.manage-list .manage-row)) .manage-selection-hint { visibility: hidden; }
 .manage-row-status {

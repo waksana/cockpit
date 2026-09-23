@@ -13,6 +13,7 @@ import { createCockpitStore } from './store';
 import type { NativeAttachment, ChatMessage, ServerEvent, SessionMeta } from './types';
 import { activityFixture } from '../dev/activity-fixtures';
 import { createCockpitApi } from './api';
+import { OperationRejected, operationErrorState, operationFailure, reportOrphanedOperation } from '../lib/operationErrors';
 type HistoryFixture = { sessionId: string; messages: ChatMessage[]; hasMore: boolean; latest?: boolean };
 
 type Store = ReturnType<typeof createCockpitStore>;
@@ -761,7 +762,9 @@ for (const patch of [
     await assert.rejects(reload('a'), /仍有工作/);
     assert.equal(h.requests.length, 0);
     assert.deepEqual(useCockpit.getState().reloadingSessionIds, []);
-    assert.match(getUxErrors().at(-1)!.message, /会话 a \(a\)/);
+    // The disabled reload row already explains the guard; nothing was sent.
+    assert.deepEqual(useCockpit.getState().sessionReloadResults, {});
+    assert.deepEqual(getUxErrors(), []);
   });
 }
 
@@ -775,7 +778,7 @@ for (const gate of ['offline', 'snapshot', 'missing'] as const) {
     if (gate === 'missing') h.source.emit({ type: 'session/removed', sessionId: 'a' });
     await assert.rejects(reload('a'), /尚未就绪|已不存在/);
     assert.equal(h.requests.length, 0);
-    assert.ok(getUxErrors().length);
+    assert.deepEqual(getUxErrors(), []);
   });
 }
 
@@ -793,8 +796,10 @@ for (const failure of ['busy', 'negative', 'unknown', 'transport'] as const) {
     await rejected;
     assert.equal(useCockpit.getState().activeId, 'b');
     assert.equal(session('b').error, null);
-    assert.match(session('a').error!, /重新加载会话失败/);
-    assert.match(getUxErrors().at(-1)!.message, /会话 a \(a\)/);
+    assert.equal(session('a').error, null);
+    // Session settings own the session-keyed result; only a negative ACK is a definite failure.
+    assert.deepEqual(useCockpit.getState().sessionReloadResults.a?.state, failure === 'negative' ? 'failed' : 'unknown');
+    assert.deepEqual(getUxErrors(), []);
     assert.deepEqual(useCockpit.getState().reloadingSessionIds, []);
     assert.equal(h.requests.length, 1);
   });
@@ -813,7 +818,9 @@ for (const boundary of ['removed', 'reconnect', 'cleanup'] as const) {
     h.assertPost(0, 'session/reload', { sessionId: 'a' }).reject(new TypeError('uncertain'));
     await rejected;
     assert.strictEqual(useCockpit.getState().sessions, before);
-    assert.match(getUxErrors().at(-1)!.message, /会话 a \(a\)/);
+    // Nothing can show this session's result any more, so it becomes one global notice.
+    assert.equal(getUxErrors().length, 1);
+    assert.match(getUxErrors()[0].message, /会话 a \(a\)：接口 session\/reload：结果未知/);
     assert.deepEqual(useCockpit.getState().reloadingSessionIds, []);
     assert.equal(h.requests.length, 1);
   });
@@ -833,7 +840,9 @@ test('native deletion supports unloaded sessions and failures never retry or rem
   assert.equal(h.requests.length, 1);
   assert.equal(session('a', store).sessionId, 'a');
   assert.equal(session('a', store).loaded, false);
-  assert.match(session('a', store).error ?? '', /Native protected work/);
+  // The deletion dialog owns the failure; the chat and global notices stay quiet.
+  assert.ok(!session('a', store).error);
+  assert.deepEqual(getUxErrors(), []);
 });
 
 test('late load and delete failures cannot resurrect an authoritatively removed session', async t => {
@@ -852,7 +861,8 @@ test('late load and delete failures cannot resurrect an authoritatively removed 
   assert.strictEqual(useCockpit.getState().sessions, before);
   assert.deepEqual(before.map(row => row.sessionId), ['b']);
   assert.equal(session('b').error, null);
-  assert.equal(getUxErrors().length, 2);
+  // Their keyed actions report an orphaned outcome; the store itself reports nothing.
+  assert.deepEqual(getUxErrors(), []);
   assert.equal(h.requests.length, 2);
 });
 
@@ -872,7 +882,7 @@ for (const boundary of ['snapshot', 'reconnect', 'cleanup'] as const) {
     await setImmediate();
     assert.strictEqual(session(), before);
     assert.equal(session().error, null);
-    assert.equal(getUxErrors().length, 1);
+    assert.deepEqual(getUxErrors(), []);
     assert.equal(h.requests.length, 1);
   });
 }
@@ -994,7 +1004,8 @@ test('failed, unloaded and pre-reconnect activity reads cannot retain or restore
   assert.ok(session('a').activityDisplay?.error);
   assert.equal(session('a').activityDisplay?.previous, undefined);
   assert.deepEqual(useCockpit.getState().activityRefreshingIds, []);
-  assert.ok(getUxErrors().length);
+  // The session row's activity indicator owns this failure.
+  assert.deepEqual(getUxErrors(), []);
   h.source.emit({ type: 'session/invalidated', sessionId: 'a', resources: ['control'] });
   await setImmediate();
   h.source.drop();
@@ -1256,7 +1267,7 @@ test('native getters without an error projection do not erase a live frontend er
   assert.equal(session('a', store).error, null);
 });
 
-test('one late mutation failure retains its dispatch source and one global report after navigation', async t => {
+test('one late mutation failure retains its dispatch source for an orphan report after navigation', async t => {
   const h = setup(t);
   h.source.open();
   h.snapshot(['a', 'b'], { sessions: [{ ...meta('a'), title: 'Original A' }, meta('b')] });
@@ -1269,16 +1280,19 @@ test('one late mutation failure retains its dispatch source and one global repor
   response.reject(failure);
   await rejected;
   await setImmediate();
-  assert.equal(getUxErrors().length, 1);
-  assert.match(getUxErrors()[0].message, /Original A.*\(a\).*original-tool.*mcp\/session-toggle.*held tool update denied/);
-  assert.doesNotMatch(getUxErrors()[0].message, /New A title/);
+  // The toggle row owns the result; the store raises no notice of its own.
+  assert.deepEqual(getUxErrors(), []);
+  const record = operationFailure(failure);
+  assert.match(record?.message ?? '', /Original A.*\(a\).*original-tool.*mcp\/session-toggle.*held tool update denied/);
+  assert.doesNotMatch(record?.message ?? '', /New A title/);
+  assert.equal(record?.mutation, true);
   assert.equal(useCockpit.getState().activeId, 'b');
   assert.equal(session('b').error, null);
-  assert.match(session('a').error ?? '', /Original A.*original-tool.*held tool update denied/);
+  assert.ok(!session('a').error);
   assert.equal(h.requests.length, 2, 'one mutation plus B history; no automatic retry');
 });
 
-test('two distinct commands with identical rejection text each produce one global notice', async t => {
+test('two distinct commands with identical rejection text each keep their own failure for their owner', async t => {
   const h = setup(t);
   h.source.open();
   h.snapshot();
@@ -1286,14 +1300,17 @@ test('two distinct commands with identical rejection text each produce one globa
   const second = useCockpit.getState().mcpToggleSession('a', 'fixture-tool', false);
   const rejected = [assert.rejects(first, /independent failure/), assert.rejects(second, /independent failure/)];
   for (const request of h.requests) request.response.resolve(Response.json({ error: 'independent failure' }, { status: 500 }));
-  await Promise.all(rejected);
+  const errors: unknown[] = [];
+  await Promise.all([first.catch(error => errors.push(error)), second.catch(error => errors.push(error)), ...rejected]);
   await setImmediate();
-  assert.equal(getUxErrors().length, 2);
-  assert.equal(getUxErrors()[0].message, getUxErrors()[1].message);
+  assert.deepEqual(getUxErrors(), []);
+  assert.equal(errors.length, 2);
+  assert.notEqual(errors[0], errors[1]);
+  for (const error of errors) assert.equal(operationErrorState(error), 'unknown');
   assert.equal(h.requests.length, 2);
 });
 
-function expectRejection(promise: Promise<unknown>, matcher?: RegExp) {
+function expectRejection(promise: Promise<unknown>, matcher?: RegExp | ((error: unknown) => boolean)) {
   return observe(matcher ? assert.rejects(promise, matcher) : assert.rejects(promise));
 }
 
@@ -1385,9 +1402,8 @@ for (const submission of submissions) {
       assert.match(session().error ?? '', /草稿已保留/);
       assert.deepEqual(session(), { ...before, error: session().error });
       assert.strictEqual(session('b'), other);
-      const diagnostics = getUxErrors();
-      assert.equal(diagnostics.length, failure === 'ok:false' ? 0 : 1);
-      if (diagnostics.length) assert.ok(diagnostics[0].message.includes(submission.name));
+      // The chat keeps the draft and shows the failure; there is no second global notice.
+      assert.deepEqual(getUxErrors(), []);
       t.mock.timers.tick(60_000);
       await setImmediate();
       assert.equal(h.requests.length, 1);
@@ -1465,6 +1481,8 @@ interface MutationCase {
   send: (state: State) => Promise<void>;
   success: unknown;
   sessionId?: string;
+  // Who shows the failure: the calling view, the session's chat, or the global notice.
+  owner: 'caller' | 'chat' | 'global';
 }
 
 const mcpSuccess: IntentResult<'mcp/session-toggle'> = {
@@ -1473,29 +1491,29 @@ const mcpSuccess: IntentResult<'mcp/session-toggle'> = {
 };
 
 const mutations: MutationCase[] = [
-  { name: 'cancel', body: { sessionId: 'a' }, send: (s) => s.cancel('a'), success: { ok: true }, sessionId: 'a' },
-  { name: 'session/delete', body: { sessionId: 'a' }, send: (s) => s.deleteSession('a'), success: { ok: true }, sessionId: 'a' },
+  { owner: 'caller', name: 'cancel', body: { sessionId: 'a' }, send: (s) => s.cancel('a'), success: { ok: true }, sessionId: 'a' },
+  { owner: 'caller', name: 'session/delete', body: { sessionId: 'a' }, send: (s) => s.deleteSession('a'), success: { ok: true }, sessionId: 'a' },
   {
-    name: 'session/load', body: { sessionId: 'a' }, send: (s) => s.loadSession('a'),
+    owner: 'caller', name: 'session/load', body: { sessionId: 'a' }, send: (s) => s.loadSession('a'),
     success: { ok: true, sessionId: 'a' }, sessionId: 'a',
   },
   {
-    name: 'queue/remove', body: { sessionId: 'a', itemId: 'queued' }, send: (s) => s.removeQueued('a', 'queued'),
+    owner: 'chat', name: 'queue/remove', body: { sessionId: 'a', itemId: 'queued' }, send: (s) => s.removeQueued('a', 'queued'),
     success: { ok: true }, sessionId: 'a',
   },
-  { name: 'session/refresh', body: {}, send: (s) => s.refreshList(), success: { ok: true } },
-  { name: 'mcp/global-default', body: { name: 'fixture-mcp', on: true }, send: () => api().mcpSetDefault('fixture-mcp', true), success: { ok: true } },
-  { name: 'mcp/refresh', body: {}, send: () => api().mcpRefresh(), success: { ok: true } },
+  { owner: 'global', name: 'session/refresh', body: {}, send: (s) => s.refreshList(), success: { ok: true } },
+  { owner: 'caller', name: 'mcp/global-default', body: { name: 'fixture-mcp', on: true }, send: () => api().mcpSetDefault('fixture-mcp', true), success: { ok: true } },
+  { owner: 'caller', name: 'mcp/refresh', body: {}, send: () => api().mcpRefresh(), success: { ok: true } },
   {
-    name: 'skills/global-toggle', body: { name: 'fixture-skill', enabled: false },
+    owner: 'caller', name: 'skills/global-toggle', body: { name: 'fixture-skill', enabled: false },
     send: () => api().skillsSetGlobal('fixture-skill', false), success: { ok: true },
   },
   {
-    name: 'mcp/session-toggle', body: { sessionId: 'a', name: 'fixture-mcp', on: true },
+    owner: 'caller', name: 'mcp/session-toggle', body: { sessionId: 'a', name: 'fixture-mcp', on: true },
     send: (s) => s.mcpToggleSession('a', 'fixture-mcp', true), success: mcpSuccess, sessionId: 'a',
   },
   {
-    name: 'skills/session-toggle', body: { sessionId: 'a', name: 'fixture-skill', enabled: false },
+    owner: 'caller', name: 'skills/session-toggle', body: { sessionId: 'a', name: 'fixture-skill', enabled: false },
     send: (s) => s.skillsToggleSession('a', 'fixture-skill', false), success: { ok: true }, sessionId: 'a',
   },
 ];
@@ -1538,7 +1556,7 @@ test('a model-only selection omits options instead of backfilling current snapsh
 
 for (const kind of ['MCP', 'Skill'] as const) {
   for (const failure of ['ok:false', 'HTTP', 'rejected'] as const) {
-    test(`global ${kind} late ${failure} keeps complete dispatch name and one report after selecting Q`, async t => {
+    test(`global ${kind} late ${failure} keeps complete dispatch name for its orphan report after selecting Q`, async t => {
       const h = setup(t);
       h.source.open();
       h.snapshot(['a', 'b']);
@@ -1554,35 +1572,38 @@ for (const kind of ['MCP', 'Skill'] as const) {
       const original = new Error('original transport failure');
       const rejected = assert.rejects(pending, error => failure === 'rejected'
         ? error === original
-        : error instanceof Error && error.message === (failure === 'HTTP' ? 'permission denied' : '服务器未确认操作'));
+        : error instanceof Error && error.message === (failure === 'HTTP' ? 'permission denied' : '服务器未接受操作'));
       if (failure === 'rejected') response.reject(original);
       else if (failure === 'HTTP') response.resolve(Response.json({ error: 'permission denied' }, { status: 500 }));
       else response.resolve(Response.json({ ok: false }));
+      const error = await pending.catch((value: unknown) => value);
       await rejected;
+      // The resource row owns the failure; only an orphaned owner would report it.
+      assert.deepEqual(getUxErrors(), []);
+      const record = operationFailure(error);
+      assert.ok(record?.message.includes(name));
+      if (failure === 'ok:false') assert.equal(record?.message, `设置 Copilot 全局 ${kind} ${name}失败：服务器未接受操作`);
+      else assert.ok(record?.message.startsWith(`${name}：接口 `));
+      reportOrphanedOperation(error);
       assert.equal(getUxErrors().length, 1);
-      assert.ok(getUxErrors()[0].message.includes(name));
-      if (failure === 'ok:false') assert.equal(getUxErrors()[0].message, `设置 Copilot 全局 ${kind} ${name}失败：服务器未确认操作`);
-      else assert.ok(getUxErrors()[0].message.startsWith(`${name}：接口 `));
       assert.strictEqual(session('b'), other);
       assert.equal(useCockpit.getState().activeId, 'b');
       assert.equal(h.requests.length, 1);
     });
   }
-  test(`global ${kind} separate void negative acknowledgements each report their dispatch name once`, async t => {
+  test(`global ${kind} separate void negative acknowledgements stay with their owners`, async t => {
     const h = setup(t);
     h.source.open();
     h.snapshot();
     for (const name of ['P-文档工具', 'Q-其它工具']) {
-      if (kind === 'MCP') void api().mcpSetDefault(name, true);
-      else void api().skillsSetGlobal(name, false);
+      if (kind === 'MCP') void api().mcpSetDefault(name, true).catch(() => {});
+      else void api().skillsSetGlobal(name, false).catch(() => {});
     }
     for (let i = 0; i < 2; i++) h.assertPost(i, kind === 'MCP' ? 'mcp/global-default' : 'skills/global-toggle',
       kind === 'MCP' ? { name: i === 0 ? 'P-文档工具' : 'Q-其它工具', on: true }
         : { name: i === 0 ? 'P-文档工具' : 'Q-其它工具', enabled: false }).resolve(Response.json({ ok: false }));
     await setImmediate();
-    assert.equal(getUxErrors().length, 2);
-    assert.ok(getUxErrors().some(e => e.message.includes('P-文档工具')));
-    assert.ok(getUxErrors().some(e => e.message.includes('Q-其它工具')));
+    assert.deepEqual(getUxErrors(), []);
     assert.equal(h.requests.length, 2);
   });
 }
@@ -1653,7 +1674,7 @@ for (const mutation of mutations) {
   });
 
   for (const failure of ['rejected', 'transport', 'HTTP', 'ok:false', 'invalid acknowledgement'] as const) {
-    test(`${mutation.name} rejects its original promise on ${failure} and reports local diagnostics`, async (t) => {
+    test(`${mutation.name} rejects its original promise on ${failure} and shows it only through its ${mutation.owner} owner`, async (t) => {
       const h = setup(t);
       h.source.open();
       h.snapshot(['a', 'b']);
@@ -1669,8 +1690,8 @@ for (const mutation of mutations) {
       else response.resolve(Response.json({ ...mutation.success as object, ok: failure === 'ok:false' ? false : 'true' }));
       await rejected;
       await setImmediate();
-      assert.ok(getUxErrors().length > 0);
-      if (mutation.sessionId) assert.ok(session().error);
+      assert.equal(getUxErrors().length, mutation.owner === 'global' ? 1 : 0);
+      assert.equal(!!session().error, mutation.owner === 'chat');
       assert.deepEqual(session().messages, before.messages);
       assert.equal(session().title, before.title);
       assert.equal(session().loadingHistory, false);
@@ -1687,8 +1708,9 @@ for (const mutation of mutations) {
     h.assertPost(0, mutation.name, mutation.body).reject(new Error('void-call denied'));
     await setImmediate();
     await setImmediate();
-    assert.ok(getUxErrors().some((error) => error.message.includes('void-call denied')));
-    if (mutation.sessionId) assert.match(session().error ?? '', /void-call denied/);
+    assert.equal(getUxErrors().some((error) => error.message.includes('void-call denied')), mutation.owner === 'global');
+    if (mutation.owner === 'chat') assert.match(session().error ?? '', /void-call denied/);
+    else assert.ok(!session().error);
     assert.equal(h.requests.length, 1);
   });
 
@@ -1707,16 +1729,17 @@ for (const mutation of mutations) {
   });
 }
 
-test('MCP toggle ok:true with applied:false still rejects and surfaces the operation error', async (t) => {
+test('MCP toggle ok:true with applied:false rejects as a definite failure for its row to show', async (t) => {
   const h = setup(t);
   h.source.open();
   h.snapshot();
   const pending = useCockpit.getState().mcpToggleSession('a', 'fixture-mcp', true);
-  const rejected = expectRejection(pending, /not applied/);
+  const rejected = expectRejection(pending, (error: unknown) => error instanceof OperationRejected
+    && operationErrorState(error) === 'failed' && /not applied/.test(error.message));
   await h.reply(0, { ...mcpSuccess, applied: false, error: 'not applied' });
   await rejected;
-  assert.match(session().error ?? '', /not applied/);
-  assert.ok(getUxErrors().some((error) => error.message.includes('not applied')));
+  assert.ok(!session().error);
+  assert.deepEqual(getUxErrors(), []);
 });
 
 interface ResourceCase {
@@ -1726,7 +1749,6 @@ interface ResourceCase {
   read: (state: State) => Promise<unknown>;
   response: unknown;
   expected: unknown;
-  expectedErrors?: string[];
 }
 
 const projection: IntentResult<'session/resources'>['meta'] = {
@@ -1826,8 +1848,8 @@ test('fresh role identity survives an older in-flight summary response', async t
 const resources: ResourceCase[] = [
   { label: 'listRoles', name: 'roles/list', body: {}, read: () => api().listRoles(), response: { roles: [] }, expected: [] },
   { label: 'addRoles', name: 'roles/add', body: { sessionId: 'a', roles: [{ moduleId: 'fixture', roleId: 'reviewer' }] },
-    read: () => api().addRoles('a', [{ moduleId: 'fixture', roleId: 'reviewer' }]), response: roleAddition, expected: roleAddition,
-    expectedErrors: ['接口 roles/add 的变更结果尚未确认；请检查原生状态，不要自动重试。'] },
+    // An uncertain result is shown by the roles section, not by a global notice.
+    read: () => api().addRoles('a', [{ moduleId: 'fixture', roleId: 'reviewer' }]), response: roleAddition, expected: roleAddition },
   { label: 'roleReadiness', name: 'roles/readiness', body: { sessionId: 'a' },
     read: () => api().roleReadiness('a'), response: roleReadiness, expected: roleReadiness },
   {
@@ -1999,7 +2021,8 @@ for (const { status, code } of [
     await checked;
     assert.strictEqual(session(), before);
     assert.equal(h.requests.length, 1);
-    assert.equal(getUxErrors().length, 1);
+    // The resource page owns and shows its read failure.
+    assert.deepEqual(getUxErrors(), []);
   });
 }
 
@@ -2103,7 +2126,7 @@ for (const resource of resources) {
     assert.deepEqual(await pending, resource.expected);
     assert.strictEqual(session(), before);
     assert.equal(h.requests.length, 1);
-    assert.deepEqual(getUxErrors().map(error => error.message), resource.expectedErrors ?? []);
+    assert.deepEqual(getUxErrors(), []);
   });
 
   test(`${resource.label} rejects disconnected reads or mutations instead of returning empty data or success`, async (t) => {
@@ -2173,8 +2196,7 @@ test('attached prompt failures keep the original false acknowledgement and local
   assert.match(session().error ?? '', /草稿已保留/);
   assert.deepEqual(session(), { ...before, error: session().error });
   assert.strictEqual(session('b'), other);
-  assert.equal(getUxErrors().length, 1);
-  assert.match(getUxErrors()[0].message, /prompt/);
+  assert.deepEqual(getUxErrors(), []);
   assert.equal(h.requests.length, 1);
 });
 
@@ -2221,8 +2243,9 @@ test('newSession rejects original failures and disconnected attempts without cha
   const errorsBefore = getUxErrors().length;
   h.assertPost(1, 'session/new', { cwd: '.' }).reject(failure);
   await assert.rejects(pending, error => error === failure);
-  assert.equal(getUxErrors().length, errorsBefore + 1);
-  assert.match(getUxErrors().at(-1)!.message, /接口 session\/new.*creation denied/);
+  // The directory dialog owns the failure; an orphaned dialog reports this record.
+  assert.equal(getUxErrors().length, errorsBefore);
+  assert.match(operationFailure(failure)?.message ?? '', /接口 session\/new.*creation denied/);
   assert.equal(useCockpit.getState().activeId, 'a');
   h.source.drop();
   await expectOffline(h, () => useCockpit.getState().newSession('.'));
@@ -2231,7 +2254,7 @@ test('newSession rejects original failures and disconnected attempts without cha
   assert.equal(h.requests.length, 2);
 });
 
-test('newSession HTTP failure stays rejected with its actionable reason and one report for each independent attempt', async t => {
+test('newSession HTTP failure stays rejected with its actionable reason for the dialog to show', async t => {
   const h = setup(t);
   h.source.open();
   h.snapshot();
@@ -2239,7 +2262,7 @@ test('newSession HTTP failure stays rejected with its actionable reason and one 
     const pending = useCockpit.getState().newSession('/P');
     h.assertPost(i, 'session/new', { cwd: '/P' }).resolve(Response.json({ error: 'P is not accessible; choose another directory' }, { status: 500 }));
     await assert.rejects(pending, /P is not accessible; choose another directory/);
-    assert.equal(getUxErrors().length, i + 1);
+    assert.deepEqual(getUxErrors(), []);
   }
   assert.equal(h.requests.length, 2);
 });
@@ -2248,14 +2271,13 @@ test('void newSession failures are observed without hiding rejection or retrying
   const h = setup(t);
   void useCockpit.getState().newSession('/P');
   await setImmediate();
-  assert.equal(getUxErrors().length, 1);
-  assert.match(getUxErrors()[0].message, /新建会话失败.*未连接/);
+  assert.deepEqual(getUxErrors(), []);
   assert.equal(h.requests.length, 0);
   h.source.open();
   h.snapshot();
   void useCockpit.getState().newSession('/P');
   h.assertPost(0, 'session/new', { cwd: '/P' }).resolve(Response.json({ error: 'denied' }, { status: 500 }));
   await setImmediate();
-  assert.equal(getUxErrors().length, 2);
+  assert.deepEqual(getUxErrors(), []);
   assert.equal(h.requests.length, 1);
 });

@@ -17,15 +17,17 @@ function render(expanded: boolean, scene: ControlScene = 'mixed') {
   }));
 }
 
-test('expansion relocates activity icons and counts from status to group headings without an arrow', () => {
+test('expansion relocates activity icons and counts from status to group headings behind a leading chevron', () => {
   const open = render(true);
   const closed = render(false);
   for (const html of [open, closed]) {
     const header = html.slice(0, html.indexOf('class="chat-controls-list"'));
     assert.match(header, /data-activity="overall"/);
     assert.match(header, /class="ck-icon spinner"/);
-    assert.doesNotMatch(header, /data-icon="down"|data-icon="chevron_right"|<summary/);
+    assert.doesNotMatch(header, /<summary/);
   }
+  assert.match(open, /class="chat-controls-toggle ui-disclosure ck-button" aria-expanded="true" aria-controls="[^"]+" aria-label="收起会话状态列表：[^"]+"><span class="ck-icon ui-disclosure-chevron" data-icon="down"/);
+  assert.match(closed, /class="chat-controls-toggle ui-disclosure ck-button" aria-expanded="false" aria-controls="[^"]+" aria-label="展开会话状态列表：[^"]+"><span class="ck-icon ui-disclosure-chevron" data-icon="chevron_right"/);
   const openHeader = open.slice(0, open.indexOf('class="chat-controls-list"'));
   const closedHeader = closed.slice(0, closed.indexOf('class="chat-controls-list"'));
   for (const key of ['agent', 'shell', 'queue']) {

@@ -588,7 +588,7 @@ for (const success of [true, false]) {
     if (success) assert.equal(h.state().error, null);
     else assert.equal(h.state().error, 'compaction failed');
     assert.equal(h.state().compacting, false);
-    assert.doesNotMatch(h.state().error ?? '', /原生历史已变更|重新同步/);
+    assert.doesNotMatch(h.state().error ?? '', /历史已变更|重新同步/);
   });
 }
 

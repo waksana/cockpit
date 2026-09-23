@@ -8,10 +8,10 @@ export function SessionDeleteDialog({ sessionId, name, onCancel, onSuccess }: {
   const deleteSession = useCockpit(s => s.deleteSession);
   const submitted = useRef(false);
   return <Dialog title="永久删除会话"
-    message={`永久删除「${name}」及其 Copilot 会话历史，此操作不可恢复。托管文件、工作目录和外部应用数据不会删除。只执行原生删除，不调用外部业务流程。`}
+    message={`永久删除「${name}」及其 Copilot 会话历史，无法恢复。工作目录、托管文件和外部数据不会删除。`}
     confirmLabel="永久删除" destructive actionKey={`delete:${sessionId}`}
     onConfirm={async () => {
-      if (submitted.current) throw new Error('删除结果尚未确认，请先核对原生会话状态；不会重复发送。');
+      if (submitted.current) throw new Error('上次删除仍在确认');
       submitted.current = true;
       await deleteSession(sessionId);
     }}

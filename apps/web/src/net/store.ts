@@ -3,7 +3,7 @@
 // Loaded pages, cursors and drafts are local. init() owns this tab's transport lifecycle.
 
 import { create } from 'zustand';
-import { isSessionUnloadedError, isTransportError, NetClient, SessionUnloadedError } from './client';
+import { isSessionUnloadedError, isTransportError, NetClient, OWNED, SessionUnloadedError, type IntentOptions } from './client';
 import type { ConnState } from './client';
 import type {
   ChatSession, ModelOption, ServerEvent,
@@ -15,6 +15,8 @@ import { applyProjection, cleanProjection } from './sessionResources';
 import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
 import { readMessageHistory } from './messageHistory';
 import { describeReason, reportUxError } from '../lib/errorReporter';
+import { OperationNotSent, OperationRejected, OperationUnconfirmed, operationErrorState, recordOperationFailure, reportOrphanedOperation } from '../lib/operationErrors';
+import { copy } from '../lib/copy';
 import { sessionReloadBlockReason } from '../lib/sessionReload';
 import { sessionSettingsBlockReason, type SessionSettingsAction, type SessionSettingsOperation } from '../lib/sessionSettingsActions';
 import type { NativeDraftRequest } from '../lib/draft';
@@ -22,6 +24,7 @@ import { observeDraftDecisions, retireDraftSession } from '../lib/draftSelection
 import type { DraftReference, DraftSendBlockReason, ModuleEventPayload } from '@cockpit/module-api';
 
 // Background tabs release their native chat read.
+type MutationOwner = 'caller' | 'chat' | 'global';
 const isVisible = () => typeof document !== 'undefined' && document.visibilityState === 'visible';
 
 interface CockpitState {
@@ -34,6 +37,8 @@ interface CockpitState {
   resourceRevisions: Record<string, Partial<Record<SessionResource, number>>>;
   activityRefreshingIds: string[];
   reloadingSessionIds: string[];
+  // Session-keyed result of the last reload, shown by session operations.
+  sessionReloadResults: Record<string, { state: 'done' | 'failed' | 'unknown'; reason?: string }>;
   sessionSettingsOperations: Record<string, SessionSettingsOperation>;
   runSessionSettingsAction: (sessionId: string, action: SessionSettingsAction, customInstructions?: string) => Promise<void>;
   // lifecycle
@@ -121,6 +126,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     metaRequests.set(sessionId, request);
     let readingControl = false;
     let readingControls = false;
+    let readingOther = false;
     void Promise.resolve().then(async () => {
       do {
         const reading = [...request.dirty].filter(resource => (resource !== 'queue' || get().activeId === sessionId)
@@ -130,9 +136,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         request.reading = new Set(reading);
         readingControl = reading.includes('control');
         readingControls = reading.includes('controls');
+        readingOther = reading.some(resource => resource !== 'control' && resource !== 'controls');
         request.stale.clear();
         request.patches = {};
-        const { meta: response } = await net.getResources(sessionId, reading, request.controller.signal);
+        const { meta: response } = await net.getResources(sessionId, reading, { signal: request.controller.signal, owned: true });
         if (client !== net || get().connectionGeneration !== generation || metaRequests.get(sessionId) !== request) return;
         if (response && response.sessionId !== sessionId) throw new Error('Session projection returned a different session');
         // A late invalidation only dirties its own dependencies; keep other
@@ -155,7 +162,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
                   ? !meta?.controls : s.controlsStale,
                 controlsDisplay: full.loaded && (!readingControls || request.stale.has('controls')) ? s.controlsDisplay : undefined,
                 controlsError: full.loaded && readingControls && !request.stale.has('controls')
-                  ? meta?.controls ? undefined : '原生活动详情暂不可用。' : s.controlsError,
+                  ? meta?.controls ? undefined : '活动详情暂不可用。' : s.controlsError,
               } : s) : [metaToSession(full), ...st.sessions]
             : st.sessions.filter(s => s.sessionId !== sessionId);
           return { sessions, };
@@ -173,7 +180,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         const message = describeReason(error, false);
         if (readingControl || readingControls) patchLocal(sessionId, s => ({ ...s, activity: null,
           ...(readingControls ? { controlsStale: true, controlsError: message } : {}), activityDisplay: { error: message } }));
-        reportUxError(`读取会话状态失败：${message}`);
+        // Activity and control reads are shown by their row and Thread; other projections have no owner.
+        if (readingOther) reportUxError(copy.failed('读取会话状态', message));
       }
     }).finally(() => {
       if (metaRequests.get(sessionId) !== request) return;
@@ -236,7 +244,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
   };
 
   const connectedClient = () => {
-    if (!client?.isOpen) throw new Error('未连接');
+    if (!client?.isOpen) throw new OperationNotSent('未连接');
     return client;
   };
   const read = async <T,>(send: (net: NetClient) => Promise<T>): Promise<T> => send(connectedClient());
@@ -263,45 +271,51 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     }
   };
 
-  // Observe the original promise, not a swallowed replacement: legacy void callers
-  // get diagnostics, while awaiting dialogs still receive the rejection.
+  // Observe the original promise, not a swallowed replacement. The owner decides
+  // where a failure appears: the calling view, the session's chat, or globally.
   const mutation = (
     sid: string | null,
     operation: string,
-    send: (net: NetClient) => Promise<{ ok: boolean; applied?: boolean; error?: string }>,
+    owner: MutationOwner,
+    send: (net: NetClient, options: IntentOptions) => Promise<{ ok: boolean; applied?: boolean; error?: string }>,
     beforeSend?: () => void,
   ): Promise<void> => {
     const generation = get().connectionGeneration;
     const origin = sid ? `会话 ${get().sessions.find((s) => s.sessionId === sid)?.title ?? sid} (${sid})：` : '';
-    let reportedByTransport = false;
     const promise = (async () => {
       beforeSend?.();
-      const result = await send(connectedClient()).catch((error) => {
-        reportedByTransport = !isSessionUnloadedError(error);
-        throw error;
-      });
-      if (!result.ok || result.applied === false) throw new Error(result.error || '服务器未确认操作');
+      const result = await send(connectedClient(), OWNED);
+      if (!result.ok || result.applied === false) throw new OperationRejected(result.error || '服务器未接受操作');
     })();
     void promise.catch((error) => {
-      const message = `${origin}${operation}失败：${describeReason(error, false)}`;
-      // HTTP/transport/schema errors have one request-owned global notice.
-      // Offline and negative acknowledgements originate here instead.
-      if (!reportedByTransport) reportUxError(message, { deduplicate: false });
-      if (sid && get().sessions.some(s => s.sessionId === sid)
+      const reason = describeReason(error, false);
+      const message = `${origin}${operationErrorState(error) === 'unknown'
+        ? `${operation}${copy.unknown(reason)}` : copy.failed(operation, reason)}`;
+      if (error instanceof OperationRejected) recordOperationFailure(error, { message, mutation: true, uncertain: false });
+      if (owner === 'caller') return;
+      if (owner === 'chat' && sid && get().sessions.some(s => s.sessionId === sid)
         && generation === get().connectionGeneration) {
         patchLocal(sid, (s) => ({ ...s, error: message }));
-      }
+      } else reportUxError(message);
     });
     return promise;
   };
 
-  const acknowledged = async (sid: string, send: (net: NetClient) => Promise<{ ok: boolean }>): Promise<boolean> => {
+  // Session-keyed results are shown by session settings; once the session or
+  // connection is gone nothing can show them, so a mutation outcome goes global.
+  const reportIfOrphaned = (sid: string, generation: number, error: unknown) => {
+    if (get().connectionGeneration !== generation || !get().sessions.some(s => s.sessionId === sid)) {
+      reportOrphanedOperation(error);
+    }
+  };
+
+  const acknowledged = async (sid: string, send: (net: NetClient, options: IntentOptions) => Promise<{ ok: boolean }>): Promise<boolean> => {
     if (!client?.isOpen) {
       patchLocal(sid, (s) => ({ ...s, error: '未连接，消息未发送，草稿已保留' }));
       return false;
     }
     try {
-      const result = await send(client);
+      const result = await send(client, OWNED);
       if (!result.ok) throw new Error('服务器未确认发送，草稿已保留');
       return true;
     } catch (error) {
@@ -349,7 +363,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       ? read(net => net.chatStream({
         sessionId: sid, cursor: window.live!.cursor ?? '', max: 64, agentScope: 'all',
       }, receive, request.controller.signal))
-      : read(net => net.chat(query, request.controller.signal)).then(page => {
+      : read(net => net.chat(query, { signal: request.controller.signal, owned: true })).then(page => {
         if (!current()) return;
         receive(page);
         if (!current()) return;
@@ -390,7 +404,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     patchLocal(sid, (s) => ({ ...s, loadingHistory: true, historyError: undefined }));
     const current = () => historyRequest === request && get().activeId === sid
       && request.generation === get().connectionGeneration && windows.get(sid) === window;
-    void readMessageHistory(window, query, (next, signal) => read(net => net.chat(next, signal)),
+    void readMessageHistory(window, query, (next, signal) => read(net => net.chat(next, { signal, owned: true })),
       request.controller.signal, current).then(() => {
       if (!current()) return;
       patchLocal(sid, (s) => ({
@@ -580,7 +594,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         cancelHistory(ev.sessionId);
         cancelLive(ev.sessionId);
         windows.get(ev.sessionId)?.invalidate();
-        patchLocal(ev.sessionId, s => ({ ...invalidateWindow(s), error: '原生历史已变更；当前画面已保留，请重新同步。' }));
+        patchLocal(ev.sessionId, s => ({ ...invalidateWindow(s), error: '历史已变更；当前画面已保留，请重新同步。' }));
         return;
       }
       default:
@@ -649,14 +663,9 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       maybeMaterialize();
     },
     newSession(cwd, roles) {
-      let reportedByTransport = false;
-      const promise = read(net => net.newSession(cwd, roles).catch(error => {
-        reportedByTransport = !isSessionUnloadedError(error);
-        throw error;
-      })).then(result => result.sessionId);
-      void promise.catch(error => {
-        if (!reportedByTransport) reportUxError(`新建会话失败：${describeReason(error, false)}`, { deduplicate: false });
-      });
+      // The directory dialog shows the result; orphaned outcomes use its keyed action.
+      const promise = read(net => net.newSession(cwd, roles, OWNED)).then(result => result.sessionId);
+      void promise.catch(() => {});
       return promise;
     },
 
@@ -682,7 +691,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     },
 
     sendDraft(request) {
-      return acknowledged(request.body.sessionId, (net) => net.sendDraft(request));
+      return acknowledged(request.body.sessionId, (net, options) => net.sendDraft(request, options));
     },
     canSendDraft(draft) {
       const state = get();
@@ -720,26 +729,31 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       };
     },
     refreshControls(sid) { refreshMeta(sid, ['control', 'controls', 'queue']); },
-    cancel(sid) { return mutation(sid, '取消', (net) => net.cancel(sid)); },
+    cancel(sid) { return mutation(sid, '停止', 'caller', (net, options) => net.cancel(sid, options)); },
     async sessionControlAction(sid, action) {
       const session = get().sessions.find(row => row.sessionId === sid);
       if (!session?.loaded || !session.controls || session.controlsStale) throw new Error('活动状态尚未同步，请等待刷新后操作。');
       const token = session.controls.token;
       try {
-        const result = await nativeRead(sid, net => net.sessionControl(sid, token, action));
+        const result = await nativeRead(sid, net => net.sessionControl(sid, token, action, OWNED));
         if (!result.ok) {
           const details = result.outcomes.filter(outcome => outcome.state === 'failed' || outcome.state === 'unconfirmed')
             .map(outcome => `${outcome.operation}${outcome.targetId ? ` (${outcome.targetId})` : ''}：${outcome.error ?? outcome.state}`);
-          const message = details.join('；') || '原生操作未确认，请核对当前活动状态。';
-          reportUxError(`会话 ${session.title} (${sid}) 控制操作未完成：${message}`, { deduplicate: false });
-          throw new Error(message);
+          const message = details.join('；') || '未收到确认，请核对当前活动状态';
+          const error = result.outcomes.some(outcome => outcome.state === 'unconfirmed')
+            ? new OperationUnconfirmed(message) : new OperationRejected(message);
+          const sentence = error instanceof OperationRejected ? copy.failed('控制操作', message) : `控制操作${copy.unknown(message)}`;
+          recordOperationFailure(error, { message: `会话 ${session.title} (${sid})：${sentence}`, mutation: true,
+            uncertain: !(error instanceof OperationRejected) });
+          throw error;
         }
       } finally {
         refreshMeta(sid, ['control', 'controls', 'queue']);
       }
     },
-    interrupt(sid) { return nativeRead(sid, (net) => net.interrupt(sid)); },
+    interrupt(sid) { return nativeRead(sid, (net) => net.interrupt(sid, OWNED)); },
     reloadingSessionIds: [],
+    sessionReloadResults: {},
     sessionSettingsOperations: {},
     async runSessionSettingsAction(sid, action, customInstructions) {
       const state = get();
@@ -758,16 +772,16 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         if (action === 'compact') {
           const { result } = await net.intent('session/compact', {
             sessionId: sid, ...(customInstructions?.trim() ? { customInstructions } : {}),
-          });
+          }, OWNED);
           update({ outcome: { action, result } });
         } else if (action === 'fork') {
-          const result = await net.intent('session/fork', { sessionId: sid });
+          const result = await net.intent('session/fork', { sessionId: sid }, OWNED);
           update({ outcome: { action, sessionId: result.sessionId } });
         } else {
-          const result = await net.intent('session/unload', { sessionId: sid });
-          if (!result.ok) throw new Error('服务器未确认卸载');
-          const { meta } = await net.intent('session/get', { sessionId: sid });
-          if (meta && meta.sessionId !== sid) throw new Error('原生返回了其他会话，卸载状态未确认');
+          const result = await net.intent('session/unload', { sessionId: sid }, OWNED);
+          if (!result.ok) throw new OperationRejected('服务器未接受卸载');
+          const { meta } = await net.intent('session/get', { sessionId: sid }, OWNED);
+          if (meta && meta.sessionId !== sid) throw new Error('Copilot 返回了其他会话，卸载状态未确认');
           update({ outcome: { action, present: meta !== null, loaded: meta?.loaded === true } });
           // Only a same-connection authoritative read changes presence/loading.
           // Preserve the rendered history and drafts of an unloaded session.
@@ -780,15 +794,16 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
           }
         }
       } catch (error) {
-        update({ error: describeReason(error, false) });
+        update({ error: describeReason(error, false), errorState: operationErrorState(error) });
+        reportIfOrphaned(sid, generation, error);
         throw error;
       } finally {
         // Reconcile even uncertain mutations, without resuming or replaying them.
         if (client !== net || get().connectionGeneration !== generation || !net.isOpen) {
-          update({ refreshError: '连接已变化，请重新核对会话列表与原生状态' });
+          update({ refreshError: '连接已变化，请重新核对会话列表与状态' });
         } else {
           try {
-            await net.refresh();
+            await net.refresh(OWNED);
             refreshMeta(sid);
           } catch (error) {
             update({ refreshError: describeReason(error, false) });
@@ -799,7 +814,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
     },
     reloadSession(sid) {
       let submitted = false;
-      return mutation(sid, '重新加载会话', net => net.reloadSession(sid), () => {
+      const promise = mutation(sid, '重新加载会话', 'caller', (net, options) => net.reloadSession(sid, options), () => {
         const state = get();
         const reason = sessionReloadBlockReason(
           state.sessions.find(s => s.sessionId === sid),
@@ -808,41 +823,51 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         );
         if (reason) throw new Error(reason);
         submitted = true;
-        set({ reloadingSessionIds: [...state.reloadingSessionIds, sid] });
-      }).finally(() => {
-        if (submitted) set(st => ({ reloadingSessionIds: st.reloadingSessionIds.filter(id => id !== sid) }));
+        const results = { ...state.sessionReloadResults };
+        delete results[sid];
+        set({ reloadingSessionIds: [...state.reloadingSessionIds, sid], sessionReloadResults: results });
+      });
+      const generation = get().connectionGeneration;
+      const settle = (result: CockpitState['sessionReloadResults'][string]) => {
+        if (submitted) set(st => ({ reloadingSessionIds: st.reloadingSessionIds.filter(id => id !== sid),
+          sessionReloadResults: { ...st.sessionReloadResults, [sid]: result } }));
+      };
+      return promise.then(() => settle({ state: 'done' }), error => {
+        settle({ state: operationErrorState(error), reason: describeReason(error, false) });
+        if (submitted) reportIfOrphaned(sid, generation, error);
+        throw error;
       });
     },
-    deleteSession(sid) { return mutation(sid, '永久删除会话', (net) => net.deleteSession(sid)); },
-    loadSession(sid) { return mutation(sid, '恢复会话', (net) => net.loadSession(sid)); },
-    respondAsk(sid, requestId, answer, wasFreeform) { return acknowledged(sid, (net) => net.respondAsk(sid, requestId, answer, wasFreeform)); },
-    respondPlan(sid, requestId, action) { return acknowledged(sid, (net) => net.respondPlan(sid, requestId, action)); },
-    planSupersede(sid, requestId, message) { return acknowledged(sid, (net) => net.planSupersede(sid, requestId, message)); },
-    respondElicitation(sid, requestId, action) { return acknowledged(sid, (net) => net.respondElicitation(sid, requestId, action)); },
-    removeQueued(sid, itemId) { return mutation(sid, '移除排队消息', (net) => net.removeQueued(sid, itemId)); },
-    refreshList() { return mutation(null, '刷新会话列表', (net) => net.refresh()); },
+    deleteSession(sid) { return mutation(sid, '永久删除会话', 'caller', (net, options) => net.deleteSession(sid, options)); },
+    loadSession(sid) { return mutation(sid, '恢复会话', 'caller', (net, options) => net.loadSession(sid, options)); },
+    respondAsk(sid, requestId, answer, wasFreeform) { return acknowledged(sid, (net, options) => net.respondAsk(sid, requestId, answer, wasFreeform, options)); },
+    respondPlan(sid, requestId, action) { return acknowledged(sid, (net, options) => net.respondPlan(sid, requestId, action, options)); },
+    planSupersede(sid, requestId, message) { return acknowledged(sid, (net, options) => net.planSupersede(sid, requestId, message, options)); },
+    respondElicitation(sid, requestId, action) { return acknowledged(sid, (net, options) => net.respondElicitation(sid, requestId, action, options)); },
+    removeQueued(sid, itemId) { return mutation(sid, '移除排队消息', 'chat', (net, options) => net.removeQueued(sid, itemId, options)); },
+    refreshList() { return mutation(null, '刷新会话列表', 'global', (net, options) => net.refresh(options)); },
     getResources(sid, resources, signal) {
-      return nativeRead(sid, net => net.getResources(sid, resources, signal)).then(({ meta }) => {
+      return nativeRead(sid, net => net.getResources(sid, resources, { signal, owned: true })).then(({ meta }) => {
         if (!meta?.loaded) throw new SessionUnloadedError();
         return meta;
       });
     },
     mcpSession(sid) {
       return nativeRead(sid, async (net) => {
-        const result = await net.mcpSession(sid);
+        const result = await net.mcpSession(sid, OWNED);
         if (!result.loaded) throw new SessionUnloadedError();
         return result.servers;
       });
     },
-    mcpToggleSession(sid, name, on) { return mutation(sid, `切换 MCP ${name}`, (net) => net.mcpToggleSession(sid, name, on)); },
-    skillsSession(sid) { return nativeRead(sid, (net) => net.skillsSession(sid)).then((r) => r.skills); },
-    skillsToggleSession(sid, name, enabled) { return mutation(sid, `切换技能 ${name}`, (net) => net.skillsToggleSession(sid, name, enabled)); },
+    mcpToggleSession(sid, name, on) { return mutation(sid, `切换 MCP ${name}`, 'caller', (net, options) => net.mcpToggleSession(sid, name, on, options)); },
+    skillsSession(sid) { return nativeRead(sid, (net) => net.skillsSession(sid, OWNED)).then((r) => r.skills); },
+    skillsToggleSession(sid, name, enabled) { return mutation(sid, `切换技能 ${name}`, 'caller', (net, options) => net.skillsToggleSession(sid, name, enabled, options)); },
     async refreshRoles(sid, signal) {
       const net = connectedClient();
       const generation = get().connectionGeneration;
       const original = get().sessions.find(row => row.sessionId === sid);
       const revision = get().resourceRevisions[sid]?.identity;
-      const { meta } = await net.getResources(sid, ['identity'], signal);
+      const { meta } = await net.getResources(sid, ['identity'], { signal, owned: true });
       if (!meta || meta.sessionId !== sid) throw new Error('返回的会话 ID 不匹配或会话已不存在');
       if (!meta.roles || !meta.appliedRoles || meta.rolesNeedReload === undefined) {
         throw new Error('角色保存或应用状态未确认，请重新刷新');

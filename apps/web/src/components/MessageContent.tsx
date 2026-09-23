@@ -16,7 +16,7 @@ export function MessageContent({ message, elementRef }: { message: ChatMessage; 
     const target = 'path' in attachment ? attachment.path : attachment.type === 'selection' ? attachment.filePath : undefined;
     const label = attachment.displayName || target || '附件';
     const unavailable = attachment.type === 'blob' && (attachment.data === undefined || !!attachment.omittedReason);
-    const reason = attachment.type === 'blob' && attachment.omittedReason === 'too_large' ? '超出大小限制' : '原生资源不可用';
+    const reason = attachment.type === 'blob' && attachment.omittedReason === 'too_large' ? '超出大小限制' : '资源不可用';
     return <Attachment key={index} origin={message.origin} index={index} attachment={attachment} label={label}>
       <span className="message-attachment">{label}{unavailable && ` · 附件不可用（${reason}）`}</span>
     </Attachment>;

@@ -1,7 +1,7 @@
 import { useCallback, useLayoutEffect, useRef, type RefObject } from 'react';
 
 // One editor survives purpose changes, while its draft remains purpose-owned.
-export function useControlComposer(cardRef: RefObject<HTMLDetailsElement | null>, enabled: boolean,
+export function useControlComposer(cardRef: RefObject<HTMLElement | null>, enabled: boolean,
   purpose: string, decision: string | undefined) {
   const geometry = useRef<{ purpose: string; height: number; width: number } | undefined>(undefined);
   const previousDecision = useRef<string | undefined>(undefined);

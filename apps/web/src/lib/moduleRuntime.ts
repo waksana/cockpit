@@ -250,7 +250,7 @@ export class ModuleRuntime {
     if (this.reports.has(message)) return;
     this.reports.add(message);
     if (this.options.report) this.options.report(error);
-    else reportUxError(`模块反馈：${message}。原生聊天仍可使用。`);
+    else reportUxError(`模块反馈：${message}。Copilot 聊天仍可使用。`);
   };
   private batchDraftChanges(change: () => void, additional: Iterable<SessionDraft> = []): void {
     const drafts = new Set([...this.knownDrafts, ...additional,

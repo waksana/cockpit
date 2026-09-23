@@ -26,7 +26,7 @@ export function useRemovedControlFocus(ownerKey: string, containerRef: RefObject
     const next = [
       ...previous.nearby,
       container.querySelector<HTMLElement>('.chat-input-message'),
-      container.querySelector<HTMLElement>('.chat-execution-head'),
+      container.querySelector<HTMLElement>('.chat-execution-toggle'),
     ].find(available);
     next?.focus();
   });
