@@ -8,6 +8,10 @@ and native attachment delivery. Before any host or module UI work, read and foll
 the [frontend guidelines](frontend-guidelines.md). They own the shared principles;
 this guide owns the public styling, icon and composition contract, not a second
 theme or a claim that existing modules already conform.
+Classic UI at `/` is primary, including module UI work. Requests default to classic;
+the independent `/next/` UI is experimental and requires explicit scope, not
+automatic adaptation or parity. See the
+[UI scope and shared-contract policy](frontend-guidelines.md#classic-primary-ui).
 For available methods and exactly which host data they expose, use the
 [public API map](module-contract-draft.md#public-api-map) and
 [data boundaries](module-contract-draft.md#public-data-boundaries).
@@ -16,8 +20,10 @@ host store. Read the explicit `state.chatWindow` capability where needed.
 
 ## Independent new UI
 
-Classic and new presentation are separate document entries, not two themes
-applied to the same component tree. A module may provide both:
+Classic and experimental new presentation are separate document entries, not two
+themes applied to the same component tree. The following contract applies when
+experimental support is explicitly in scope; providing `frontend.next` is optional,
+not a requirement for classic module changes. A module may provide both:
 
 ```json
 {

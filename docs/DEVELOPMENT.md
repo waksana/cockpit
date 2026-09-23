@@ -107,7 +107,11 @@ See [release notes](release-notes.md); no tag, publication or deployment is impl
 ## Interaction semantics and structural correctness
 
 Before any host Web or module UI work, read and follow the
-[frontend guidelines](frontend-guidelines.md). They are the single home for
+[frontend guidelines](frontend-guidelines.md). Classic `/` is the primary UI;
+UI requests default to it unless experimental `/next/` is explicitly in scope.
+The [UI scope policy](frontend-guidelines.md#classic-primary-ui) distinguishes
+shared-contract correctness from optional experimental adaptation and duplicate UI acceptance.
+These guidelines are the single home for
 native-first semantics, valid structure, focus/event ownership, minimal JS,
 reading behavior, truthful state and the lightweight review checklist.
 These are ordinary engineering requirements, not a separate accessibility feature
@@ -209,7 +213,8 @@ The checks measure title, directory, role and status geometry; use the real list
 buttons to exercise navigation and keyboard/right-click/long-press menus.
 All App operations remain on the workspace fixture's synthetic store.
 
-Use `/chat-lab.html?ui=next&scene=workspace` for the independent new host, or
+For explicitly scoped experimental UI work, use
+`/chat-lab.html?ui=next&scene=workspace` for the independent new host, or
 `?ui=next&scene=ask&compact=1` for its conversation flow. The small lab entry
 loads only the selected presentation and its styles. The next fixture replaces
 browser storage with in-memory storage before importing the real App, disables
