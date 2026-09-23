@@ -34,7 +34,7 @@ export interface ModuleRole {
   mcpServers?: Record<string, { type: 'http'; path: string; tools: string[] }>;
 }
 
-export type ModuleHostIntent = 'session/new' | 'session/get' | 'roles/readiness' | 'session/resources-prepare' | 'prompt';
+export type ModuleHostIntent = 'session/new' | 'session/get' | 'session/rename' | 'roles/readiness' | 'session/resources-prepare' | 'prompt';
 export interface ModuleHostApi {
   /** Check before resource-aware creation/preparation; absent on older hosts. */
   readonly resourcePreparationVersion?: 1;

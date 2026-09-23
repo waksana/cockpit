@@ -2917,7 +2917,8 @@ test('resource reads count the real Engine paths without a native cache or list 
         + h.runtime.models.mock.callCount() - models };
   };
   const full = await measure(() => h.engine.getMeta(s.id));
-  assert.equal(full.count, 13, 'previous full getter: 14; metadata.snapshot replaces mode.get');
+  assert.equal(full.count, 14, 'previous full getter: 13; plus one workspace name-provenance read');
+  assert.equal(full.native['workspaces.getWorkspace'], 1);
   assert.equal(full.native['mode.get'], undefined);
   const meta = (await h.engine.getMeta(s.id))!;
   assert.equal(meta.currentMode, 'plan');
@@ -2927,7 +2928,7 @@ test('resource reads count the real Engine paths without a native cache or list 
   const list = await measure(() => h.engine.listLive());
   assert.equal(list.count, 10, 'previous brief path: 15');
   assert.equal(list.metadata, 0, 'reuse this request list record, not another single-ID metadata read');
-  for (const read of ['model.list', 'plan.readSqlTodos', 'schedule.list', 'mode.get']) assert.equal(list.native[read], undefined, read);
+  for (const read of ['model.list', 'plan.readSqlTodos', 'schedule.list', 'mode.get', 'workspaces.getWorkspace']) assert.equal(list.native[read], undefined, read);
   assert.equal((await h.engine.listLive())[0]?.title, 'Live title');
   const snapshot = await measure(() => h.engine.snapshot());
   assert.equal(snapshot.count, 12, 'previous snapshot path: 16');
@@ -5133,6 +5134,30 @@ test('model, mode, and name success publish authoritative native read-back rathe
   assert.equal((await h.engine.getMeta(s.id))?.title, 'normalized title');
 });
 
+test('identity exposes native name and user-named provenance without guessing', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const identity = async () => {
+    const meta = await h.engine.getMeta(s.id);
+    return { title: meta?.title, nativeName: meta?.nativeName, nativeNameUserSet: meta?.nativeNameUserSet };
+  };
+  s.state.name = null;
+  s.state.userNamed = false;
+  assert.deepEqual(await identity(), { title: 'indexed title', nativeName: null, nativeNameUserSet: false });
+  await s.rpc.name.setAuto({ summary: 'auto summary' });
+  assert.deepEqual(await identity(), { title: 'auto summary', nativeName: 'auto summary', nativeNameUserSet: false });
+  await h.engine.rename(s.id, 'explicit title');
+  assert.deepEqual(await identity(), { title: 'explicit title', nativeName: 'explicit title', nativeNameUserSet: true });
+  s.rpc.workspaces.getWorkspace.mock.mockImplementation(async () => ({ workspace: { id: s.id, name: 'raced title', user_named: false } }));
+  assert.deepEqual(await identity(), { title: 'explicit title', nativeName: 'explicit title', nativeNameUserSet: undefined });
+  s.rpc.workspaces.getWorkspace.mock.mockImplementation(async () => ({ workspace: { id: s.id, name: 'explicit title' } }));
+  assert.equal((await identity()).nativeNameUserSet, undefined);
+  s.rpc.workspaces.getWorkspace.mock.mockImplementation(async () => ({ workspace: null }));
+  assert.equal((await identity()).nativeNameUserSet, undefined);
+  s.rpc.workspaces.getWorkspace.mock.mockImplementation(async () => { throw new Error('workspace unavailable'); });
+  assert.deepEqual(await identity(), { title: 'explicit title', nativeName: 'explicit title', nativeNameUserSet: undefined });
+});
+
 for (const cleared of [false, true]) {
   test(`native model-change events ${cleared ? 'clear nullable' : 'refresh selected'} effort and context tier`, async t => {
     const h = harness(t);
@@ -5153,8 +5178,10 @@ for (const cleared of [false, true]) {
     assert.equal(meta.currentReasoningEffort, reasoningEffort);
     assert.equal(meta.currentContextTier, contextTier);
     const summary = (await h.engine.snapshot()).sessions.find(session => session.sessionId === s.id)!;
-    const { queue: _queue, availableModels: _models, todo: _todo, controls: _controls, ...summaryMeta } = meta;
+    const { queue: _queue, availableModels: _models, todo: _todo, controls: _controls,
+      nativeName: _name, nativeNameUserSet: _userSet, ...summaryMeta } = meta;
     assertSameControlFacts(summary, summaryMeta);
+    assert.equal('nativeName' in summary, false, 'name provenance is read by full session/get only');
     assert.ok(h.events.some(event => event.type === 'session/invalidated' && event.sessionId === s.id));
     assert.equal(s.rpc.model.switchTo.mock.callCount(), 0);
     assert.equal(s.sdk.send.mock.callCount(), 0);

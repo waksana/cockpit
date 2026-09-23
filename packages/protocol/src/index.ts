@@ -474,6 +474,8 @@ export const SessionMeta = z.object({
   rolesNeedReload: z.boolean().optional(),
   sessionId: z.string(),
   title: z.string(),
+  nativeName: z.string().nullable().optional().describe('Loaded full session/get only: native friendly name (user-set or auto-applied); null means none is set and title comes from the native summary or ID fallback. Omitted when not read, including while unloaded; omission is unknown, not absence.'),
+  nativeNameUserSet: z.boolean().optional().describe('Loaded full session/get only: native workspace user_named provenance for nativeName: true after an explicit name set (including session/rename), false for no name or an auto-applied summary. Omitted when unavailable; omission is unknown, not auto.'),
   cwd: z.string(),
   createdAt: z.number().optional(),
   lastActivity: z.number().describe('Native persisted-state modification time, not a live activity clock.'),
