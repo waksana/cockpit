@@ -2,7 +2,7 @@
 // It reads identifying summary fields and on-demand model state; MCP and Skills
 // resources are owned by their dedicated pages.
 
-import { useCallback } from 'react';
+import { useCallback, useLayoutEffect, useRef } from 'react';
 import { classifyNativeModelSwitchResult } from '@cockpit/protocol';
 import type { IntentResult, NativeModelSwitchResult } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
@@ -11,7 +11,7 @@ import { useModelSettings, selectionFrom, type ModelSelection } from '../feature
 import { SessionOperations } from '../features/session-settings/SessionOperations';
 import { ExpandableText, PanelPageShell, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
 import { CopyButton } from './CopyButton';
-import { SectionHeading, SelectField } from './UI';
+import { PendingChangesBar, SectionHeading, SelectField } from './UI';
 import { StateNotice } from './StateNotice';
 import { SessionRoles } from './SessionRoles';
 import type { ChatSession } from '../net/types';
@@ -29,6 +29,7 @@ const selectionLabel = (selection: ModelSelection) => [
   `上下文：${selection.contextTier ? CONTEXT_LABEL[selection.contextTier] ?? selection.contextTier : '未指定'}`,
 ].join(' · ');
 
+// Only rendered when the selects cannot present the complete native current value.
 function CurrentModel({ session }: { session: ChatSession }) {
   const { currentModelId, currentReasoningEffort, currentContextTier } = session;
   const name = session.availableModels?.find(model => model.modelId === currentModelId)?.name
@@ -92,11 +93,23 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
   };
 }) {
   const { draft, submission, outcome, action, selection, revision, edit, apply,
-    list, currentModel, efforts, supportsLong, invalid } = useModelSettings(session, onSetModel, disabled);
+    list, currentModel, efforts, supportsLong, invalid, dirty } = useModelSettings(session, onSetModel, disabled);
+  // The bar follows unapplied edits and unconfirmed submissions; results remain below it.
+  const unconfirmed = !!submission && submission.revision === revision && !action.busy && !outcome;
+  const showBar = dirty || action.busy || unconfirmed;
+  const controlsRef = useRef<HTMLDivElement>(null);
+  const barShown = useRef(showBar);
+  useLayoutEffect(() => {
+    // Hiding the bar removes the focused Reset/Apply button; keep keyboard focus in the section.
+    if (barShown.current && !showBar && (!document.activeElement || document.activeElement === document.body)) {
+      controlsRef.current?.querySelector<HTMLElement>('select:not(:disabled)')?.focus();
+    }
+    barShown.current = showBar;
+  }, [showBar]);
   const heading = <>
     <SectionHeading className="info-section-name" actions={resource && <RefreshButton onClick={resource.onRefresh}
         disabled={resource.refreshDisabled || resource.pending || action.busy}
-        pending={resource.pending && resource.usable && !action.busy} />}>模型配置</SectionHeading>
+        pending={resource.pending && resource.usable && !action.busy} />}>模型</SectionHeading>
     {resource && <ResourceStatus
       status={resource.pending && (resource.usable || action.busy) ? null : resource.status}
       failed={resource.failed} pending={resource.pending} />}
@@ -121,14 +134,19 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
   </section>;
 
   const current = selection.modelId;
+  // Selects present the native value only when the list can express all of it.
+  const nativeModel = list.find(model => model.modelId === session.currentModelId);
+  const nativeHidden = !nativeModel
+    || !!session.currentReasoningEffort && !nativeModel.supportedReasoningEfforts?.length
+    || !!session.currentContextTier && !nativeModel.supportsLongContext;
   const curEffort = selection.reasoningEffort ?? '';
   const curTier = selection.contextTier ?? '';
 
   return (
     <section className="info-section">
       {heading}
-      <div className="info-section-content info-controls">
-        <CurrentModel session={session} />
+      <div ref={controlsRef} className="info-section-content info-controls">
+        {nativeHidden && <CurrentModel session={session} />}
         <SelectField label="模型" disabled={disabled} value={current}
               onChange={(e) => edit({ modelId: e.target.value })} aria-label="选择模型">
               {current === '' && <option value="" disabled>选择模型…</option>}
@@ -153,14 +171,16 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
                 <option value="long_context">长上下文</option>
           </SelectField>
         )}
-        <div className="info-model-actions ck-actions">
+        {showBar && <PendingChangesBar
+          message={action.busy ? '正在提交修改'
+            : unconfirmed ? '提交结果未确认' : '有未应用的修改'}>
+          <button type="button" className="dialog-btn ck-button rp"
+            disabled={disabled || !draft} onClick={() => edit(selectionFrom(session))}>重置</button>
           <button type="button" className="dialog-btn ck-button ck-primary primary rp"
             disabled={disabled || invalid || action.busy || submission?.revision === revision}
             aria-busy={action.busy}
-            onClick={apply}>{action.busy ? '正在提交…' : '应用配置'}</button>
-          <button type="button" className="dialog-btn ck-button rp" aria-label="使用当前原生值"
-            disabled={disabled || !draft} onClick={() => edit(selectionFrom(session))}>重置</button>
-        </div>
+            onClick={apply}>{action.busy ? '正在提交…' : '应用'}</button>
+        </PendingChangesBar>}
         {resultView}
       </div>
     </section>

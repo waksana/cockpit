@@ -11,7 +11,8 @@ test('every semantic icon is a decorative local Lucide SVG with the same complet
   const names: IconName[] = ['search', 'compose', 'newchat', 'delete', 'back', 'close', 'check',
     'arrow_up', 'more', 'down', 'up', 'reload', 'sending', 'error', 'menu', 'skills', 'thought', 'mcp',
     'file', 'folder', 'mode_plan', 'radiooff', 'copy', 'stop', 'clock', 'unknown',
-    'chevron_right', 'play', 'success', 'loading', 'compress', 'shell', 'tool', 'agent', 'decision', 'queue'];
+    'chevron_right', 'play', 'success', 'loading', 'compress', 'shell', 'tool', 'agent', 'decision', 'queue',
+    'add', 'session_reload', 'unload', 'fork'];
   for (const name of names) {
     const html = renderToStaticMarkup(createElement(Icon, { name }));
     assert.match(html, /class="ck-icon"/);
