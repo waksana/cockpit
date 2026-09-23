@@ -31,7 +31,7 @@ test('model outcomes distinguish actual application, pending, rejection and unkn
   }
 });
 
-test('confirmation and persistence diagnostics preserve partial effects and native details', () => {
+test('confirmation and persistence diagnostics preserve partial effects', () => {
   const confirmation = render({
     status: 'confirmation_required',
     confirmation: { targetModelDisplayName: 'Small target', currentTokens: 120, targetLimit: 80 },
@@ -46,14 +46,13 @@ test('confirmation and persistence diagnostics preserve partial effects and nati
     modelState: { modelId: 'target', reasoningEffort: 'high' }, extraNativeDetail: 'Preserved',
   });
   assert.match(applied, /已应用，但原生持久化失败.*Read-only config/);
-  for (const detail of ['Runtime changed', 'Native warning', 'Retired model', 'extraNativeDetail', 'Preserved']) {
-    assert.ok(applied.includes(detail), detail);
-  }
+  assert.match(applied, /Native warning/);
+  assert.doesNotMatch(applied, /Runtime changed|Retired model|extraNativeDetail|<pre/, 'raw native JSON is not rendered');
   assert.doesNotMatch(render({ persistenceError: 'Unknown application' }), /已应用/);
   assert.match(render({ status: 'applied', persistenceError: '' }), /已应用，但原生持久化失败：原生未提供错误详情/);
 });
 
-test('one primary outcome leaves native diagnostics and the translated submitted combination in closed details', () => {
+test('one primary outcome keeps the translated submitted combination in closed details without raw native JSON', () => {
   const result = {
     status: 'applied', message: 'Runtime changed', warning: 'Native warning',
     deprecationWarnings: ['Retired model'], nativeExtension: { intact: true },
@@ -69,9 +68,7 @@ test('one primary outcome leaves native diagnostics and the translated submitted
   assert.match(details, /<summary>提交详情<\/summary>/);
   assert.doesNotMatch(details, /\bopen=/);
   assert.match(details, /思考力度：极高.*上下文：长上下文/);
-  const raw = /<pre>(.*?)<\/pre>/s.exec(details)![1]
-    .replaceAll('&quot;', '"').replaceAll('&#x27;', "'").replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&amp;', '&');
-  assert.deepEqual(JSON.parse(raw), result, 'all native fields survive unchanged');
+  assert.doesNotMatch(html, /<pre|nativeExtension|Runtime changed/, 'raw native JSON is not rendered');
 });
 
 test('refusal, persistence failure and required confirmation stay visible without opening diagnostics', () => {

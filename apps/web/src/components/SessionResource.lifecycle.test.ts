@@ -23,6 +23,7 @@ import { intentUrl } from '../lib/config';
 import type { SessionSettingsAction } from '../lib/sessionSettingsActions';
 import { InspectorPane } from './Shell';
 import { recordLocation } from '../lib/nav';
+import { cockpitApi, type CockpitApi } from '../net/api';
 
 // The same deterministic React DOM host as Thread.lifecycle, limited to the
 // controls these panels use. Reads and mutations stay in fixture-owned stores.
@@ -130,6 +131,15 @@ class HostDocument extends EventTarget {
   }
 }
 
+type StoreAndApiPatch = Partial<ReturnType<typeof useCockpit.getState>> & Partial<CockpitApi>;
+// Fixtures patch store state and stateless API methods together; mount restores both.
+function setStoreAndApi(patch: StoreAndApiPatch) {
+  const api: Partial<CockpitApi> = {}, state: Partial<ReturnType<typeof useCockpit.getState>> = {};
+  for (const [key, value] of Object.entries(patch)) Object.assign(key in cockpitApi ? api : state, { [key]: value });
+  Object.assign(cockpitApi, api);
+  useCockpit.setState(state);
+}
+
 function mount(t: TestContext) {
   const document = new HostDocument();
   const observers = new Set<() => void>();
@@ -155,12 +165,14 @@ function mount(t: TestContext) {
   }
   t.mock.method(globalThis, 'fetch', async () => assert.fail('Resource fixtures must not access a backend'));
   const state = useCockpit.getState();
+  const api = { ...cockpitApi };
   useCockpit.setState({ connState: 'open', connectionGeneration: 1, sessions: [session], resourceRevisions: {} });
   const container = document.createElement('div');
   const root = createRoot(container as unknown as HTMLElement);
   t.after(async () => {
     await act(async () => root.unmount());
     useCockpit.setState(state, true);
+    Object.assign(cockpitApi, api);
     for (const reset of restore) reset();
   });
   return {
@@ -422,6 +434,7 @@ for (const action of ['unload', 'compact', 'fork'] satisfies SessionSettingsActi
     assert.ok(useCockpit.getState().connectionGeneration > generation, 'fixture delivers real refresh snapshot semantics');
     assert.equal(h.document.nativeModal, null, 'confirmed operation must not leave a stale modal over its result');
     assert.match(h.container.textContent, action === 'unload' ? /已卸载/ : action === 'fork' ? /real-child/ : /压缩完成/);
+    assert.equal(h.container.querySelector('pre'), null, 'native results are summarized, not dumped as JSON');
   });
 }
 
@@ -498,7 +511,7 @@ function roleFixture(t: TestContext, overrides: Partial<ChatSession> = {}) {
   let inspections = 0;
   let refreshes = 0;
   const calls: Array<{ id: string; roles: unknown }> = [];
-  useCockpit.setState({
+  setStoreAndApi({
     sessions: [target],
     snapshotReady: true,
     listRoles: async () => { catalogs++; return roleCatalog; },
@@ -607,7 +620,7 @@ test('unloaded role addition uses one same-ID add request, without a preliminary
 
 test('saved roles never imply application or capability readiness', async t => {
   const h = roleFixture(t);
-  useCockpit.setState({ addRoles: async id => ({
+  setStoreAndApi({ addRoles: async id => ({
     sessionId: id, status: 'saved', roles: roleCatalog, appliedRoles: [roleCatalog[0]],
     loaded: true, rolesNeedReload: true,
   }) });
@@ -623,7 +636,7 @@ test('saved roles never imply application or capability readiness', async t => {
 for (const mode of ['unavailable', 'empty', 'all-selected'] as const) {
   test(`role catalog ${mode} cannot enable mutation or imply success`, async t => {
     const h = roleFixture(t);
-    useCockpit.setState({ listRoles: async () => {
+    setStoreAndApi({ listRoles: async () => {
       if (mode === 'unavailable') throw new Error('Catalog unavailable');
       return mode === 'empty' ? [] : [roleCatalog[0]];
     } });
@@ -666,7 +679,7 @@ for (const status of ['uncertain'] as const) {
       appliedRoles: [roleCatalog[0]], loaded: true, rolesNeedReload: true,
       error: 'Synthetic persistence uncertainty', recovery: 'Inspect before retry',
     };
-    useCockpit.setState({
+    setStoreAndApi({
       addRoles: async (id, roles) => {
         calls++;
         assert.equal(id, h.target.sessionId);
@@ -751,7 +764,7 @@ for (const leave of ['target', 'unmount', 'reconnect', 'offline'] as const) {
     const h = roleFixture(t);
     const pending = deferred<IntentResult<'roles/add'>>();
     let calls = 0;
-    useCockpit.setState({ addRoles: async id => {
+    setStoreAndApi({ addRoles: async id => {
       calls++;
       assert.equal(id, h.target.sessionId);
       return pending.promise;
@@ -779,7 +792,7 @@ for (const leave of ['target', 'unmount', 'reconnect', 'offline'] as const) {
 
 test('role addition rejects mismatched response IDs instead of displaying wrong-target success', async t => {
   const h = roleFixture(t);
-  useCockpit.setState({ addRoles: async () => ({
+  setStoreAndApi({ addRoles: async () => ({
     sessionId: 'wrong-target', status: 'saved', roles: roleCatalog, appliedRoles: [], loaded: true, rolesNeedReload: true,
   }) });
   await h.open();
@@ -793,7 +806,7 @@ test('role addition rejects mismatched response IDs instead of displaying wrong-
 test('transport uncertainty keeps the draft and requires a matching explicit inspection before retry', async t => {
   const h = roleFixture(t);
   let calls = 0;
-  useCockpit.setState({
+  setStoreAndApi({
     addRoles: async () => { calls++; throw new Error('Synthetic lost acknowledgement'); },
     refreshRoles: async () => ({
       sessionId: 'wrong-target', roles: [], loaded: false, appliedRoles: [], rolesNeedReload: false,
@@ -828,7 +841,7 @@ test('double save is exclusive; disconnect preserves the uncertain-save lock unt
   const h = roleFixture(t);
   const pending = deferred<IntentResult<'roles/add'>>();
   let calls = 0;
-  useCockpit.setState({ addRoles: async () => { calls++; return pending.promise; } });
+  setStoreAndApi({ addRoles: async () => { calls++; return pending.promise; } });
   await h.open();
   await h.choose();
   await h.submit();
@@ -853,7 +866,7 @@ test('double save is exclusive; disconnect preserves the uncertain-save lock unt
 for (const failure of ['missing roles', 'read failure'] as const) {
   test(`refresh ${failure} never unlocks an uncertain save`, async t => {
     const h = roleFixture(t);
-    useCockpit.setState({
+    setStoreAndApi({
       addRoles: async () => { throw new Error('Unconfirmed save'); },
       refreshRoles: async () => {
         if (failure === 'read failure') throw new Error('Cannot read persisted selection');
@@ -872,7 +885,7 @@ for (const failure of ['missing roles', 'read failure'] as const) {
 
 test('refresh reconciles a saved-but-unacknowledged role without resubmitting it', async t => {
   const h = roleFixture(t);
-  useCockpit.setState({
+  setStoreAndApi({
     addRoles: async () => { throw new Error('Lost acknowledgement'); },
     refreshRoles: async id => {
       const next = { ...h.target, roles: roleCatalog, rolesNeedReload: true };
@@ -1060,7 +1073,7 @@ for (const section of ['mcp', 'skills'] as const) {
       const pending = deferred<void>();
       const values: Record<string, boolean> = { A: false, B: false };
       let reads = 0;
-      useCockpit.setState({
+      setStoreAndApi({
         mcpGlobal: async () => { reads++; return Object.entries(values).map(([name, defaultOn]) => ({ name, defaultOn, detail: name })); },
         skillsGlobal: async () => { reads++; return Object.entries(values).map(([name, enabled]) => ({ name, enabled, description: name })); },
         skillsRead: async name => ({ name, enabled: values[name], body: '', description: name }),
@@ -1101,7 +1114,7 @@ for (const section of ['mcp', 'skills'] as const) {
       const requests = [deferred<void>(), deferred<void>()];
       let writes = 0;
       let reads = 0;
-      useCockpit.setState({
+      setStoreAndApi({
         mcpGlobal: async () => { reads++; return ['A', 'B'].map(name => ({ name, defaultOn: false, detail: name })); },
         skillsGlobal: async () => { reads++; return ['A', 'B'].map(name => ({ name, enabled: false, description: name })); },
         skillsRead: async name => ({ name, enabled: false, body: '', description: name }),
@@ -1141,7 +1154,7 @@ for (const section of ['mcp', 'skills'] as const) {
   function navigationFixture(t: TestContext, desktop: boolean, initialEntries: string[]) {
     const h = mount(t);
     t.mock.method(window, 'matchMedia', () => Object.assign(new EventTarget(), { matches: desktop }) as MediaQueryList);
-    useCockpit.setState({
+    setStoreAndApi({
       mcpGlobal: async () => ['A', 'B'].map(name => ({ name, defaultOn: false, detail: name })),
       skillsGlobal: async () => ['A', 'B'].map(name => ({ name, enabled: false, description: name })),
       skillsRead: async name => ({ name, body: '', description: name }),
@@ -1234,7 +1247,7 @@ for (const section of ['mcp', 'skills'] as const) {
     let bodyReads = 0;
     const calls: Array<[string, boolean]> = [];
     const mutate = async (name: string, value: boolean) => { calls.push([name, value]); enabled = value; };
-    useCockpit.setState({
+    setStoreAndApi({
       mcpGlobal: async () => [
         { name: 'known', modules, defaultOn: enabled, detail: 'synthetic configuration', config: { env: { TOKEN: '[REDACTED]' } } },
         { name: 'fixture-lookalike', defaultOn: false, detail: 'native' },
@@ -1797,7 +1810,7 @@ test('native MCP error revisions are discoverable but never inherit another erro
       { name: 'personal', source: 'personal-copilot', enabled: false },
       { name: 'project', source: 'project', enabled: false },
     ];
-    useCockpit.setState({
+    setStoreAndApi({
       skillsSession: async () => rows,
       skillsGlobal: async () => rows,
       skillsRead: async name => ({ name, source: 'builtin', body: 'Use native and builtin as literal user content.' }),
@@ -1862,7 +1875,7 @@ test('session MCP has no transport presentation while retaining actual operation
   const h = mount(t);
   let status: McpServerStatus = 'connected';
   let revision = 0;
-  useCockpit.setState({
+  setStoreAndApi({
     mcpSession: async () => [{ name: 'one', detail: 'native', enabled: true, status,
       error: status === 'failed' ? 'Synthetic connection refused' : undefined }],
     mcpGlobal: async () => assert.fail('session presentation must not probe global transport'),
@@ -1923,7 +1936,7 @@ for (const section of ['mcp', 'skills'] as const) {
     const h = mount(t);
     const pending = deferred<void>();
     let reads = 0;
-    useCockpit.setState({
+    setStoreAndApi({
       mcpGlobal: async () => { reads++; return [
         { name: 'A', defaultOn: false, detail: 'A', connection: { method: 'stdio', target: 'node' } },
         { name: 'B', defaultOn: true, detail: 'B' },

@@ -2,7 +2,7 @@
 import { useCallback, useState, type ReactNode } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import type { McpServerGlobal, ModuleSource, SkillGlobal } from '@cockpit/protocol';
-import { useCockpit } from '../net/store';
+import { cockpitApi, loadGlobalMcp, loadGlobalSkills, type CockpitApi } from '../net/api';
 import { isSkillNotFoundError } from '../net/client';
 import { skillBodyContent } from '../lib/skillBody';
 import { useKeyedAction, useKeyedResource } from '../lib/useKeyedResource';
@@ -96,7 +96,7 @@ function SkillsList({ selected, catalog, onChange }: {
   </ListBody>;
 }
 
-type SkillRead = Awaited<ReturnType<ReturnType<typeof useCockpit.getState>['skillsRead']>>;
+type SkillRead = Awaited<ReturnType<CockpitApi['skillsRead']>>;
 type SkillResource = Pick<ReturnType<typeof useKeyedResource<SkillRead>>, 'data' | 'status' | 'failed' | 'pending' | 'errorCause'>;
 
 export function SkillDetailContent({ resource }: { resource: SkillResource }) {
@@ -119,8 +119,7 @@ export function SkillDetailContent({ resource }: { resource: SkillResource }) {
 }
 
 function SkillDetail({ name, revision }: { name: string; revision: number }) {
-  const skillsRead = useCockpit(s => s.skillsRead);
-  const load = useCallback(() => skillsRead(name), [skillsRead, name]);
+  const load = useCallback(() => cockpitApi.skillsRead(name), [name]);
   return <SkillDetailContent resource={useKeyedResource(`global:skill:${name}`, load, revision)} />;
 }
 
@@ -135,11 +134,8 @@ export function ManageWorkspace({ section: selectedSection }: { section?: Manage
 
 function ManagementContent({ section, item }: { section: ManageSection; item: string | null }) {
   const { refreshNonce, refresh, onChange } = useGlobalResourceMutations(section);
-  const mcpGlobal = useCockpit(s => s.mcpGlobal);
-  const skillsGlobal = useCockpit(s => s.skillsGlobal);
-  const loadSkills = useCallback(() => skillsGlobal(), [skillsGlobal]);
-  const mcpCatalog = useKeyedResource('global:mcp', mcpGlobal, refreshNonce, section === 'mcp');
-  const skillCatalog = useKeyedResource('global:skills', loadSkills, refreshNonce, section === 'skills');
+  const mcpCatalog = useKeyedResource('global:mcp', loadGlobalMcp, refreshNonce, section === 'mcp');
+  const skillCatalog = useKeyedResource('global:skills', loadGlobalSkills, refreshNonce, section === 'skills');
   const catalog = section === 'mcp' ? mcpCatalog : skillCatalog;
   const modules = catalog.data?.find(row => row.name === item)?.modules;
   return <ManagementShell section={section} item={item} onRefresh={refresh}

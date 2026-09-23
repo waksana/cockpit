@@ -91,11 +91,11 @@ test('both global toggles refresh authoritative detail and list after success or
 test('MCP parent owns one route-independent catalog and disables it outside MCP', () => {
   const parent = source.slice(source.indexOf('function ManagementContent'));
   assert.equal(source.match(/useKeyedResource\('global:mcp'/g)?.length, 1);
-  assert.match(parent, /useKeyedResource\('global:mcp', mcpGlobal, refreshNonce, section === 'mcp'\)/);
+  assert.match(parent, /useKeyedResource\('global:mcp', loadGlobalMcp, refreshNonce, section === 'mcp'\)/);
   assert.match(source, /<ManagementContent key=\{section\} section=\{section\} item=\{item\}/);
   for (const [start, end] of [['function McpList', 'function McpDetail'], ['function McpDetail', 'function SkillsList']]) {
     const consumer = source.slice(source.indexOf(start), source.indexOf(end));
-    assert.doesNotMatch(consumer, /useKeyedResource|mcpGlobal|revision:|useState/);
+    assert.doesNotMatch(consumer, /useKeyedResource|loadGlobalMcp|mcpGlobal|revision:|useState/);
     assert.match(consumer, /data: rows, status, failed.* = catalog/);
   }
 });
@@ -112,7 +112,7 @@ test('MCP detail derives the route target from shared catalog and never owns a t
 });
 
 test('global MCP refresh invalidates configuration cache without invoking session lifecycle', () => {
-  assert.match(shell, /if \(section === 'mcp'\) await mcpRefresh\(\);/);
+  assert.match(shell, /if \(section === 'mcp'\) await cockpitApi\.mcpRefresh\(\);/);
   assert.doesNotMatch(source + shell, /reloadSession|unloadSession|mcpToggleSession/);
   assert.match(source, /不改变已加载会话的连接/);
   assert.match(source, /用于新建或卸载后重新加载的会话，不改变当前已加载会话/);

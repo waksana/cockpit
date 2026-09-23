@@ -5,6 +5,7 @@ import { ChatMessage } from '@cockpit/protocol/validation';
 import { createCockpitStore } from '../net/store';
 import { groupTranscript } from '../lib/transcriptRows';
 import { installWorkspaceFixture, workspaceSessionId, workspaceSessions } from './workspace-fixtures';
+import { cockpitApi } from '../net/api';
 
 test('workspace scene has realistic contract-valid input, nested work and both old and latest tool groups', () => {
   const sessions = workspaceSessions(1_789_441_200_000);
@@ -36,7 +37,7 @@ test('workspace App lifecycle, settings and sends use only local synthetic state
   const secondId = store.getState().sessions[1].sessionId;
   store.getState().setActiveId(secondId);
   assert.equal(store.getState().activeId, secondId);
-  await store.getState().setModel(workspaceSessionId, 'gpt-5.4-mini', { reasoningEffort: 'medium' });
+  await cockpitApi.setModel(workspaceSessionId, 'gpt-5.4-mini', { reasoningEffort: 'medium' });
   const active = () => store.getState().sessions.find(session => session.sessionId === workspaceSessionId)!;
   assert.equal(active().currentModelId, 'gpt-5.4-mini');
   await store.getState().sendDraft({ intent: 'prompt', body: { sessionId: workspaceSessionId, text: 'Synthetic user input' } });

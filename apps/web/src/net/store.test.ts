@@ -12,11 +12,13 @@ import { IntentHttpError, isSessionUnloadedError, SessionUnloadedError } from '.
 import { createCockpitStore } from './store';
 import type { NativeAttachment, ChatMessage, ServerEvent, SessionMeta } from './types';
 import { activityFixture } from '../dev/activity-fixtures';
+import { createCockpitApi } from './api';
 type HistoryFixture = { sessionId: string; messages: ChatMessage[]; hasMore: boolean; latest?: boolean };
 
 type Store = ReturnType<typeof createCockpitStore>;
 type State = ReturnType<Store['getState']>;
 let useCockpit = createCockpitStore();
+const api = () => createCockpitApi(useCockpit);
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -1482,11 +1484,11 @@ const mutations: MutationCase[] = [
     success: { ok: true }, sessionId: 'a',
   },
   { name: 'session/refresh', body: {}, send: (s) => s.refreshList(), success: { ok: true } },
-  { name: 'mcp/global-default', body: { name: 'fixture-mcp', on: true }, send: (s) => s.mcpSetDefault('fixture-mcp', true), success: { ok: true } },
-  { name: 'mcp/refresh', body: {}, send: (s) => s.mcpRefresh(), success: { ok: true } },
+  { name: 'mcp/global-default', body: { name: 'fixture-mcp', on: true }, send: () => api().mcpSetDefault('fixture-mcp', true), success: { ok: true } },
+  { name: 'mcp/refresh', body: {}, send: () => api().mcpRefresh(), success: { ok: true } },
   {
     name: 'skills/global-toggle', body: { name: 'fixture-skill', enabled: false },
-    send: (s) => s.skillsSetGlobal('fixture-skill', false), success: { ok: true },
+    send: () => api().skillsSetGlobal('fixture-skill', false), success: { ok: true },
   },
   {
     name: 'mcp/session-toggle', body: { sessionId: 'a', name: 'fixture-mcp', on: true },
@@ -1511,7 +1513,7 @@ for (const result of [
     h.source.open();
     h.snapshot(['a', 'b']);
     const beforeA = session('a'), beforeB = session('b');
-    const sent = useCockpit.getState().setModel('a', 'model', { reasoningEffort: 'high', contextTier: 'long_context' });
+    const sent = api().setModel('a', 'model', { reasoningEffort: 'high', contextTier: 'long_context' });
     h.assertPost(0, 'setModel', { sessionId: 'a', modelId: 'model', reasoningEffort: 'high', contextTier: 'long_context' });
     useCockpit.setState({ activeId: 'b' });
     await h.reply(0, { ok: true, result });
@@ -1526,7 +1528,7 @@ test('a model-only selection omits options instead of backfilling current snapsh
   const h = setup(t);
   h.source.open();
   h.snapshot(['a'], { sessions: [{ ...meta('a'), currentModelId: 'old', currentReasoningEffort: 'max', currentContextTier: 'long_context' }] });
-  const sent = useCockpit.getState().setModel('a', 'new');
+  const sent = api().setModel('a', 'new');
   h.assertPost(0, 'setModel', { sessionId: 'a', modelId: 'new' });
   await h.reply(0, { ok: true, result: { status: 'queued' } });
   await sent;
@@ -1543,8 +1545,8 @@ for (const kind of ['MCP', 'Skill'] as const) {
       const name = 'P-项目中文长名称/review-source & <tools> "目录"';
       const cwd = '/original/discovery';
       const pending = kind === 'MCP'
-        ? useCockpit.getState().mcpSetDefault(name, true)
-        : useCockpit.getState().skillsSetGlobal(name, false, cwd);
+        ? api().mcpSetDefault(name, true)
+        : api().skillsSetGlobal(name, false, cwd);
       const response = h.assertPost(0, kind === 'MCP' ? 'mcp/global-default' : 'skills/global-toggle',
         kind === 'MCP' ? { name, on: true } : { name, enabled: false, cwd });
       useCockpit.setState({ activeId: 'b' });
@@ -1571,8 +1573,8 @@ for (const kind of ['MCP', 'Skill'] as const) {
     h.source.open();
     h.snapshot();
     for (const name of ['P-文档工具', 'Q-其它工具']) {
-      if (kind === 'MCP') void useCockpit.getState().mcpSetDefault(name, true);
-      else void useCockpit.getState().skillsSetGlobal(name, false);
+      if (kind === 'MCP') void api().mcpSetDefault(name, true);
+      else void api().skillsSetGlobal(name, false);
     }
     for (let i = 0; i < 2; i++) h.assertPost(i, kind === 'MCP' ? 'mcp/global-default' : 'skills/global-toggle',
       kind === 'MCP' ? { name: i === 0 ? 'P-文档工具' : 'Q-其它工具', on: true }
@@ -1822,26 +1824,26 @@ test('fresh role identity survives an older in-flight summary response', async t
 });
 
 const resources: ResourceCase[] = [
-  { label: 'listRoles', name: 'roles/list', body: {}, read: s => s.listRoles(), response: { roles: [] }, expected: [] },
+  { label: 'listRoles', name: 'roles/list', body: {}, read: () => api().listRoles(), response: { roles: [] }, expected: [] },
   { label: 'addRoles', name: 'roles/add', body: { sessionId: 'a', roles: [{ moduleId: 'fixture', roleId: 'reviewer' }] },
-    read: s => s.addRoles('a', [{ moduleId: 'fixture', roleId: 'reviewer' }]), response: roleAddition, expected: roleAddition,
+    read: () => api().addRoles('a', [{ moduleId: 'fixture', roleId: 'reviewer' }]), response: roleAddition, expected: roleAddition,
     expectedErrors: ['接口 roles/add 的变更结果尚未确认；请检查原生状态，不要自动重试。'] },
   { label: 'roleReadiness', name: 'roles/readiness', body: { sessionId: 'a' },
-    read: s => s.roleReadiness('a'), response: roleReadiness, expected: roleReadiness },
+    read: () => api().roleReadiness('a'), response: roleReadiness, expected: roleReadiness },
   {
     label: 'getResources', name: 'session/resources', body: { sessionId: 'a', resources: ['model'] },
     read: (s) => s.getResources('a', ['model'], new AbortController().signal),
     response: { meta: projection }, expected: projection,
   },
-  { label: 'mcpGlobal', name: 'mcp/global', body: {}, read: (s) => s.mcpGlobal(), response: { servers: globalMcp }, expected: globalMcp },
+  { label: 'mcpGlobal', name: 'mcp/global', body: {}, read: () => api().mcpGlobal(), response: { servers: globalMcp }, expected: globalMcp },
   { label: 'mcpSession', name: 'mcp/session', body: { sessionId: 'a' }, read: (s) => s.mcpSession('a'), response: { loaded: true, servers: sessionMcp }, expected: sessionMcp },
-  { label: 'skillsGlobal()', name: 'skills/global', body: {}, read: (s) => s.skillsGlobal(), response: { skills: globalSkills }, expected: globalSkills },
-  { label: 'skillsGlobal(cwd)', name: 'skills/global', body: { cwd: './fixture' }, read: (s) => s.skillsGlobal('./fixture'), response: { skills: globalSkills }, expected: globalSkills },
-  { label: 'skillsRead', name: 'skills/read', body: { name: 'fixture-skill' }, read: (s) => s.skillsRead('fixture-skill'), response: skill, expected: skill },
-  { label: 'skillsRead(cwd)', name: 'skills/read', body: { name: 'fixture-skill', cwd: './fixture' }, read: (s) => s.skillsRead('fixture-skill', './fixture'), response: skill, expected: skill },
+  { label: 'skillsGlobal()', name: 'skills/global', body: {}, read: () => api().skillsGlobal(), response: { skills: globalSkills }, expected: globalSkills },
+  { label: 'skillsGlobal(cwd)', name: 'skills/global', body: { cwd: './fixture' }, read: () => api().skillsGlobal('./fixture'), response: { skills: globalSkills }, expected: globalSkills },
+  { label: 'skillsRead', name: 'skills/read', body: { name: 'fixture-skill' }, read: () => api().skillsRead('fixture-skill'), response: skill, expected: skill },
+  { label: 'skillsRead(cwd)', name: 'skills/read', body: { name: 'fixture-skill', cwd: './fixture' }, read: () => api().skillsRead('fixture-skill', './fixture'), response: skill, expected: skill },
   { label: 'skillsSession', name: 'skills/session', body: { sessionId: 'a' }, read: (s) => s.skillsSession('a'), response: { skills: sessionSkills }, expected: sessionSkills },
-  { label: 'listDir()', name: 'fs/listDir', body: {}, read: (s) => s.listDir(), response: directory, expected: directory },
-  { label: 'listDir(path)', name: 'fs/listDir', body: { path: '/fixture' }, read: (s) => s.listDir('/fixture'), response: directory, expected: directory },
+  { label: 'listDir()', name: 'fs/listDir', body: {}, read: () => api().listDir(), response: directory, expected: directory },
+  { label: 'listDir(path)', name: 'fs/listDir', body: { path: '/fixture' }, read: () => api().listDir('/fixture'), response: directory, expected: directory },
 ];
 
 const nativeResources = resources.filter((r) =>
@@ -2047,10 +2049,10 @@ test('global MCP and Skills remain readable and mutable without any session or o
   h.source.open();
   h.snapshot([]);
   const before = useCockpit.getState().sessions;
-  const mcp = useCockpit.getState().mcpGlobal();
-  const skills = useCockpit.getState().skillsGlobal();
-  const detail = useCockpit.getState().skillsRead('fixture-skill');
-  const toggle = useCockpit.getState().skillsSetGlobal('fixture-skill', true);
+  const mcp = api().mcpGlobal();
+  const skills = api().skillsGlobal();
+  const detail = api().skillsRead('fixture-skill');
+  const toggle = api().skillsSetGlobal('fixture-skill', true);
   h.assertPost(0, 'mcp/global', {}).resolve(Response.json({ servers: globalMcp }));
   h.assertPost(1, 'skills/global', {}).resolve(Response.json({ skills: globalSkills }));
   h.assertPost(2, 'skills/read', { name: 'fixture-skill' }).resolve(Response.json(skill));
@@ -2148,7 +2150,7 @@ for (const status of ['saved', 'unchanged'] as const) {
       sessionId: 'a', status, roles: roles.map(role => ({ ...role, moduleName: 'Fixture', name: 'Reviewer' })),
       appliedRoles: [], loaded: true, rolesNeedReload: true,
     };
-    const pending = useCockpit.getState().addRoles('a', roles);
+    const pending = api().addRoles('a', roles);
     h.assertPost(0, 'roles/add', { sessionId: 'a', roles }).resolve(Response.json(result));
     assert.deepEqual(await pending, result);
     assert.strictEqual(session(), before);
