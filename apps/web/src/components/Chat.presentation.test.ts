@@ -593,7 +593,7 @@ test('host controls do not add decorative hover while selection and keyboard foc
   assert.match(primitives, /--ck-color-hover: var\(--ripple-color\)/, 'retain the public token for module compatibility');
   assert.match(primitives, /:is\(\.ck-button, \.ck-icon-button, \.ck-input\):focus-visible \{[^}]*outline: 2px/);
   assert.match(all, /\.chatlist-chat\.active \{[^}]*background-color: var\(--selected-fill\)/);
-  assert.match(all, /\.manage-row\.is-clickable\.is-active \{[^}]*background: color-mix/);
+  assert.match(all, /\.manage-global-row\.is-active \{[^}]*background: color-mix/);
   assert.match(primitives, /\.ck-primary \{[^}]*background: var\(--ck-color-accent\)/);
 });
 
