@@ -115,7 +115,7 @@ test('one resource row: badge + name, one-line summary, then status and switch o
   assert.match(linked, /<a class="manage-resource-identity ck-button" aria-current="page" href="\/skills\/a"[^>]*>/);
   const anchor = linked.slice(linked.indexOf('<a '), linked.indexOf('</a>'));
   assert.doesNotMatch(anchor, /<button|<div|role="switch"/, 'navigation holds only phrasing identity content');
-  assert.match(anchor, /class="manage-row-text" data-lines="1" title="A long summary/);
+  assert.match(anchor, /class="ui-text-clamp manage-row-text" data-lines="1"><span id="[^"]+" class="ui-text-clamp-text" data-lines="1" title="A long summary/);
   assert.match(linked, /<\/a><div class="manage-resource-controls"><button/, 'no empty status slot');
   assert.match(linked, /<\/div><div class="manage-row-error">failure<\/div><\/div>$/, 'feedback follows as a full-width row');
   const unselected = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ResourceRow, {

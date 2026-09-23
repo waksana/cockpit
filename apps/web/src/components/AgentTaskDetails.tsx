@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import type { ReadAgentTaskDetails } from '../lib/sessionControls';
 import { useKeyedResource } from '../lib/useKeyedResource';
+import { DisclosureSection } from './Disclosure';
 import { useCockpit } from '../net/store';
 import { StateNotice } from './StateNotice';
 import { MessageBody } from './MessageBody';
@@ -27,14 +28,14 @@ export function AgentTaskDetails({ sessionId, taskId, status, title, read, avail
     {!available && <StateNotice>详情暂不可用，请等待会话连接恢复。</StateNotice>}
     {available && resource.error && <StateNotice kind="error">读取 Agent 详情失败：{resource.error}</StateNotice>}
     {resource.pending && <StateNotice kind="loading">正在读取 Agent 详情…</StateNotice>}
-    {resource.valid && detail === null && <StateNotice>这个 Agent 已不在原生任务列表中，详情不可用。</StateNotice>}
+    {resource.valid && detail === null && <StateNotice>这个 Agent 已不在任务列表中，详情不可用。</StateNotice>}
     {detail && <>
       <dl className="chat-agent-metadata">
         <dt>任务 ID</dt><dd>{detail.taskId}</dd>
         {detail.model && <><dt>模型</dt><dd>{detail.model}</dd></>}
       </dl>
       {detail.description && <p>{detail.description}</p>}
-      {detail.prompt && <details><summary>任务要求</summary><MessageBody body={detail.prompt} /></details>}
+      {detail.prompt && <DisclosureSection label="任务要求"><MessageBody body={detail.prompt} /></DisclosureSection>}
       {detail.latestIntent && <p>{detail.latestIntent}</p>}
       {detail.recentActivity.length > 0 && <section aria-label="近期进度">
         <h4>近期进度</h4>

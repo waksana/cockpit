@@ -1,3 +1,5 @@
+import { reportOrphanedOperation } from './operationErrors';
+
 export interface ResourceConnection {
   connState: string;
   connectionGeneration: number;
@@ -94,7 +96,8 @@ export function createKeyedAsync<T>(getConnection: () => ResourceConnection) {
         if (owns()) onSuccess?.(data);
         return owns();
       } catch (error) {
-        if (!owns()) return false;
+        // An owner that left can no longer show a mutation outcome.
+        if (!owns()) { reportOrphanedOperation(error); return false; }
         publish({ ...snapshot, pending: false, error: resourceError(error), errorCause: error, generation });
         return false;
       } finally {

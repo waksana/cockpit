@@ -39,7 +39,7 @@ export function sessionActivityIndicators(session: {
     ? '总状态：正在刷新活动状态' : '总状态：等待活动状态，不代表模型正在生成' });
   else if (busy) {
     const overall: ActivityIndicator = { key: 'overall', icon: 'loading',
-      label: `总状态：会话有活动，不代表模型正在生成${activity.tasks.unknown ? `；${activity.tasks.unknown} 项任务的原生状态未知` : ''}` };
+      label: `总状态：会话有活动，不代表模型正在生成${activity.tasks.unknown ? `；${activity.tasks.unknown} 项任务状态未知` : ''}` };
     items.push(session.needsDecision || session.compacting ? overall : retained(overall));
   } else if (showIdle) items.push(retained({ key: 'overall', icon: 'radiooff', label: '总状态：空闲' }));
   if (session.needsDecision) items.push({ key: 'decision', icon: 'decision', label: '等待你的回答或确认' });

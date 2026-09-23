@@ -48,5 +48,6 @@ export function useKeyedAction(key: string) {
     run, connected,
     busy: snapshot.pending && snapshot.generation === generation,
     error: snapshot.generation === generation ? snapshot.error : null,
+    errorCause: snapshot.generation === generation ? snapshot.errorCause : undefined,
   };
 }

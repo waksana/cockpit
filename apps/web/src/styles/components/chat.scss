@@ -280,7 +280,6 @@
   font: inherit; font-family: var(--chat-font-mono);
   font-size: var(--chat-text-label); line-height: var(--chat-leading-ui); text-align: start; cursor: pointer;
   time { flex: none; font-size: var(--chat-text-meta); font-variant-numeric: tabular-nums; }
-  &[aria-expanded='false'] .process-summary-chevron { transform: rotate(-90deg); }
 }
 .process-summary-chevron { display: inline-flex; flex: 0 0 16px; }
 .process-summary-counts { display: flex; flex: 1; flex-wrap: wrap; min-width: 0; align-items: center; gap: var(--chat-gap-control); }
@@ -495,8 +494,6 @@ button.activity-head {
   flex: 0 1 auto; min-height: 0; min-width: 0;
   border: 1px solid var(--border-color); border-radius: var(--host-radius-control); overflow: hidden;
   background: var(--chat-input-surface);
-  // Native disclosure keeps the editor mounted; flex shares the available height with notices.
-  &::details-content { display: flex; flex-direction: column; min-height: 0; }
   &[data-header] .chat-input-card-body { border-top: 1px solid var(--border-color); }
   &:not([data-header]):has(.chat-readonly-note) { border: 0; background: transparent; }
 }
@@ -517,7 +514,7 @@ button.activity-head {
   .chat-input-context { overflow: visible; }
 }
 .chat-folded-draft {
-  display: none; flex: none; font-size: var(--chat-text-meta); color: var(--secondary-text-color);
+  flex: none; font-size: var(--chat-text-meta); color: var(--secondary-text-color);
 }
 .chat-controls { display: contents; font-size: var(--chat-text-meta); }
 .chat-controls-header { position: sticky; top: 0; z-index: 2; background: var(--chat-input-surface); cursor: default; }
@@ -566,7 +563,8 @@ button.activity-head {
     field-sizing: fixed; height: var(--control-editor-height); max-height: var(--control-editor-height);
   }
 }
-.chat-input-card:not([open]) .chat-folded-draft { display: inline; }
+// A folded card keeps the editor mounted, so the draft survives.
+.chat-input-card > .chat-input-card-body[hidden] { display: none; }
 .chat-composer {
   display: block;
   flex: none; min-width: 0; min-height: 0;
@@ -681,7 +679,7 @@ button.activity-head {
 }
 .chat-pending-detail {
   margin: 0; font-size: var(--chat-text-label); line-height: var(--chat-leading-ui);
-  summary { cursor: pointer; min-block-size: var(--chat-control-compact); align-content: center; padding: var(--chat-gap-meta) 0; color: var(--secondary-text-color); }
+  > .ui-disclosure.ck-button { min-block-size: var(--chat-control-compact); padding-block: var(--chat-gap-meta); font-size: inherit; color: var(--secondary-text-color); }
 }
 .chat-pending-pre {
   margin: var(--chat-gap-meta) 0 0; padding: var(--chat-inset-compact);
@@ -705,16 +703,15 @@ button.activity-head {
   padding-inline-start: var(--chat-gap-meta); font-size: var(--chat-text-meta);
   + .chat-queue-item { border-top: 1px solid color-mix(in srgb, var(--border-color) 45%, transparent); }
 }
-.chat-queue-entry { flex: 1; min-width: 0; }
-.chat-queue-text {
-  display: block; min-width: 0; cursor: pointer; list-style: none;
-  min-block-size: var(--ck-control-size);
+.chat-queue-entry, .chat-queue-text {
+  min-width: 0; min-block-size: var(--ck-control-size);
   line-height: var(--chat-leading-ui);
   padding-block: max(0px, calc((var(--ck-control-size) - 1lh) / 2));
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--secondary-text-color);
-  &::-webkit-details-marker { display: none; }
+  color: var(--secondary-text-color);
 }
-.chat-queue-entry[open] .chat-queue-text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-queue-entry { flex: 1; }
+.chat-queue-entry .ui-text-clamp-toggle { font-size: inherit; }
+.chat-queue-text { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .chat-queue-copy {
   // The button sets the column width; longer failure feedback wraps beneath it.
   display: flex; flex: none; min-width: 0; inline-size: min-content; max-width: 100%;
@@ -728,9 +725,12 @@ button.activity-head {
 .chat-execution-head {
   flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--chat-gap-meta);
   min-block-size: var(--chat-control-compact); padding-inline: var(--chat-inset-compact);
-  cursor: pointer; list-style: none;
   &[hidden] { display: none; }
-  &::-webkit-details-marker { display: none; }
+}
+.chat-execution-toggle.ck-button {
+  flex: 1 1 0; min-width: 4em; min-block-size: var(--chat-control-compact);
+  gap: var(--chat-gap-control); border-radius: 0;
+  font-size: var(--chat-text-meta); line-height: var(--chat-leading-ui);
   &:focus-visible { outline-offset: -3px; }
 }
 .chat-execution-label {
@@ -758,7 +758,7 @@ button.activity-head {
 .chat-queue-remove { align-self: flex-start; }
 @media (pointer: coarse) {
   .chat-execution-actions .ck-button,
-  .chat-execution-head, .chat-pending-detail > summary {
+  .chat-execution-head, .chat-execution-toggle.ck-button, .chat-pending-detail > .ui-disclosure {
     min-block-size: var(--ck-control-size);
   }
 }

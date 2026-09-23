@@ -96,8 +96,8 @@ test('latest tool overview exposes explicit recorded failure and unknown states'
   }));
   assert.match(html, /1 项状态未知/);
   assert.match(html, /1 项失败/);
-  assert.match(html, /class="process-summary ck-button"/);
-  assert.match(html, /class="activity-head tool-head tool-toggle ck-button"/);
+  assert.match(html, /class="process-summary ui-disclosure ck-button"/);
+  assert.match(html, /class="activity-head tool-head tool-toggle ui-disclosure ck-button"/);
   assert.match(html, /记录：本次执行已结束/);
   assert.doesNotMatch(html, /任务目标已完成<\/span>|🤖/);
 });
@@ -112,7 +112,8 @@ test('one CSS height budget pins ordinary input but scrolls answer input with it
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.chat-transcript \{[^}]*flex: 1 1 0;[^}]*min-height: min\(6rem, 20%\)/);
   assert.match(css, /\.chat-input-area \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*max-height: 70%/);
-  assert.match(css, /\.chat-input-card::details-content \{[^}]*display: flex;[^}]*min-height: 0;/);
+  assert.match(css, /\.chat-input-card \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0;/);
+  assert.match(css, /\.chat-input-card > \.chat-input-card-body\[hidden\] \{\s*display: none;/, 'a folded card hides its mounted body');
   assert.match(css, /\.chat-input-card-body \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0;[^}]*overflow: hidden/);
   assert.match(css, /\.chat-input-context \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto/);
   assert.match(css, /\.chat-input-context:empty \{\s*display: none;/);
@@ -143,7 +144,7 @@ test('only answer drafts opt into the shared question scroller', () => {
   for (const scene of ['reading', 'idle-queued', 'plan-queued', 'elicitation-queued', 'ask-queued', 'choice-only', 'freeform', 'decision-stack'] as const) {
     const session = fixtureSession(scene);
     const html = renderToStaticMarkup(createElement(Thread, { session, onLoadMore() {} }));
-    const card = html.match(/<details class="chat-input-card"[^>]*>/)?.[0];
+    const card = html.match(/<div class="chat-input-card"[^>]*>/)?.[0];
     assert.ok(card, scene);
     assert.equal(card.includes('data-question="true"'), !!session.ask, scene);
     assert.ok(html.includes('class="chat-input-context"'), scene);
@@ -249,11 +250,11 @@ test('execution actions wrap within the card rather than shrinking text or clipp
 test('standalone native disclosures share touch targets and public control geometry', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   const coarse = [...css.matchAll(/@media \(pointer: coarse\) \{([\s\S]*?)\n\}/g)].map(match => match[1]).join('\n');
-  for (const selector of ['.chat-execution-head', '.chat-pending-detail > summary']) {
+  for (const selector of ['.chat-execution-head', '.chat-execution-toggle.ck-button', '.chat-pending-detail > .ui-disclosure']) {
     assert.ok(coarse.includes(selector), `${selector} follows the coarse target`);
   }
   assert.match(coarse, /min-block-size: var\(--ck-control-size\);/);
-  assert.match(css, /\.chat-pending-detail summary \{[^}]*align-content: center;/);
+  assert.match(css, /\.chat-pending-detail > \.ui-disclosure\.ck-button \{[^}]*min-block-size: var\(--chat-control-compact\);/);
   const publicCss = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
   assert.match(publicCss, /:where\(\.ck-button, \.ck-icon-button\) \{[^}]*min-block-size: var\(--ck-control-size\);[^}]*border-radius: var\(--ck-radius\);/);
   assert.match(css, /\.chat-execution-actions button \{[^}]*padding: var\(--chat-gap-meta\) var\(--chat-inset-compact\);/);
@@ -282,7 +283,8 @@ test('only the recommended offered plan action consumes the public primary treat
   const request = fixtureSession('plan').planRequest!;
   for (const pending of [false, true]) {
     const html = renderToStaticMarkup(createElement(PlanCard, { request, pending, onSelect() {} }));
-    const buttons = [...html.matchAll(/<button[^>]*>/g)].map(match => match[0]);
+    const buttons = [...html.matchAll(/<button[^>]*>/g)].map(match => match[0]).filter(button => button.includes('chat-ask-choice'));
+    assert.match(html, /aria-expanded="false"[^>]*aria-label="展开完整计划"/, 'the full plan is one closed disclosure');
     assert.equal(buttons.length, request.actions!.length);
     assert.equal(buttons.filter(button => button.includes('ck-primary')).length, 1);
     assert.equal(buttons[request.actions!.indexOf(request.recommendedAction!)].includes('ck-primary'), true);
@@ -333,22 +335,23 @@ test('Chat regions and optional composer context each have a single spacing owne
   assert.doesNotMatch(thread, /readySession|preparingHistory|data-preparing/);
 });
 
-test('the entire input card uses one default-open disclosure without an arrow or nested question frame', () => {
+test('the entire input card uses one default-open disclosure row without a nested question frame', () => {
   const html = renderToStaticMarkup(createElement(Thread, {
     session: fixtureSession('ask-queued'), onLoadMore() {},
   }));
   assert.equal((html.match(/<textarea/g) ?? []).length, 1);
-  assert.match(html, /<details class="chat-input-card" open="" data-header="true" data-decision="true" data-question="true"><summary class="chat-execution-head"/);
-  assert.match(html, /aria-label="总状态：活动待同步，展开或收起输入卡片"/);
+  assert.match(html, /<div class="chat-input-card" data-open="true" data-header="true" data-decision="true" data-question="true"><div class="chat-execution-head"><button type="button" class="chat-execution-toggle ui-disclosure ck-button" aria-expanded="true" aria-controls="([^"]+)" aria-label="收起输入卡片：总状态：活动待同步">/);
+  const bodyId = html.match(/class="chat-execution-toggle[^>]*aria-controls="([^"]+)"/)![1];
+  assert.match(html, new RegExp(`<div id="${bodyId}" class="chat-input-card-body">`), 'the open card body is not hidden');
+  assert.match(html, /data-icon="down"[^>]*>.*?<span class="chat-execution-label"/, 'the head leads with the shared expanded chevron');
   assert.match(html, /class="chat-pending-body chat-answer-question" role="group" aria-label="需要你的选择"/);
   assert.ok(html.indexOf('class="chat-queue"') < html.indexOf('class="chat-composer"'));
   assert.doesNotMatch(html, /class="chat-decisions"|class="chat-ask chat-pending/);
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.chat-execution-head \{[^}]*min-block-size: var\(--chat-control-compact\);/);
   assert.doesNotMatch(css, /\.chat-input-card:not\(\[open\]\) \.chat-execution-head/, 'folding does not introduce a different control size');
-  assert.match(css, /\.chat-execution-head \{[^}]*cursor: pointer;[^}]*list-style: none;/);
   assert.match(css, /\.chat-execution-head\[hidden\] \{[^}]*display: none;/);
-  assert.match(css, /\.chat-execution-head::-webkit-details-marker \{[^}]*display: none;/);
+  assert.match(css, /\.chat-execution-toggle\.ck-button \{[^}]*flex: 1 1 0;[^}]*min-block-size: var\(--chat-control-compact\);/);
   assert.match(css, /\.chat-ask-q \{[^}]*user-select: text/);
   assert.doesNotMatch(html, /chat-answer-toggle|chat-answer-chevron/);
   const source = readFileSync(new URL('./Composer.tsx', import.meta.url), 'utf8');
@@ -526,9 +529,9 @@ test('tool and thought rows stay single-line while expanded skill records can sh
   assert.doesNotMatch(css, /\.tool-name|\.skill-label|\.tool-title/);
   assert.match(css, /\.message-process-content\[hidden\] \{[^}]*display: none/);
   const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession('process'), readOnly: true, onLoadMore() {} }));
-  assert.match(html, /class="process-summary ck-button"/);
-  assert.doesNotMatch(html, /class="activity-head ck-button thought-toggle"/);
-  assert.match(html, /class="activity-head tool-head tool-toggle ck-button"/);
+  assert.match(html, /class="process-summary ui-disclosure ck-button"/);
+  assert.doesNotMatch(html, /class="activity-head thought-toggle ui-disclosure ck-button"/);
+  assert.match(html, /class="activity-head tool-head tool-toggle ui-disclosure ck-button"/);
   assert.doesNotMatch(html, /class="tool-detail-name"|class="msg-thought"/);
   const skillSession = fixtureSession('empty');
   skillSession.messages = [{ id: 'skill', role: 'system', subtype: 'skill', content: 'example', timestamp: 1 }];

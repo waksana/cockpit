@@ -255,13 +255,13 @@ export class NativeWindow {
 
   accept(page: NativeChatPage, request: NativeChatRead): ChatMessage[] {
     if (page.sessionId !== request.sessionId || page.source !== request.source || page.direction !== request.direction) {
-      throw new Error('原生历史响应与当前请求不匹配。');
+      throw new Error('历史响应与当前请求不匹配。');
     }
-    if (this.nativeSessionId && this.nativeSessionId !== request.sessionId) throw new Error('原生历史窗口不能跨会话复用。');
+    if (this.nativeSessionId && this.nativeSessionId !== request.sessionId) throw new Error('历史窗口不能跨会话复用。');
     this.nativeSessionId = request.sessionId;
     if (page.cursorStatus === 'expired') {
       this.invalidate();
-      throw new Error('原生历史定位已失效。已保留当前内容，请明确重新同步。');
+      throw new Error('历史定位已失效。已保留当前内容，请重新同步。');
     }
     const position: ChatPosition = {
       source: request.source, cursor: page.cursor || undefined,
@@ -286,7 +286,7 @@ export class NativeWindow {
       const adoptingLive = request.bootstrap && this.materialized;
       if (adoptingLive && this.history.size && page.events.length && !page.events.some(event => this.ids.has(event.id))) {
         this.invalidate();
-        throw new Error('恢复后的原生页面与已加载历史没有重叠；请重新同步，不会自动扫描旧历史。');
+        throw new Error('恢复后的历史页面与已加载历史没有重叠；请重新同步，不会自动扫描旧历史。');
       }
       if (!adoptingLive) {
         this.older = position;

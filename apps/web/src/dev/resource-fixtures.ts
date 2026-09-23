@@ -3,6 +3,7 @@ import { SKILL_NOT_FOUND } from '@cockpit/protocol';
 import { IntentHttpError } from '../net/client';
 import type { createCockpitStore } from '../net/store';
 import { cockpitApi, type CockpitApi } from '../net/api';
+import { OperationRejected } from '../lib/operationErrors';
 import { installWorkspaceFixture, workspaceSessionId } from './workspace-fixtures';
 
 export interface ResourceFixtureOptions {
@@ -23,7 +24,7 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
   };
   const mutation = async () => {
     await request();
-    if (options.failMutations) throw new Error('Synthetic mutation failure; no backend request was sent.');
+    if (options.failMutations) throw new OperationRejected('Synthetic mutation failure; no backend request was sent.');
   };
   const module = { id: 'cockpit-task', name: longNames ? 'Original_module-name-with-a-very-long-unbroken-identifier' : 'Task' };
   const roles = [

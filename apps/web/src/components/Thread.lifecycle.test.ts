@@ -1296,7 +1296,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.notEqual(node('.chat-input-message'), editor, 'ending the plan restores a distinct prompt composer');
     editor = node('.chat-input-message');
     assert.equal(document.activeElement, editor, 'stopping into idle focuses the current prompt editor');
-    assert.equal(node('.chat-input-card').open, true);
+    assert.equal(node('.chat-input-card').getAttribute('data-open'), 'true');
 
     value = { ...value, queue: [{ id: 'first', text: 'First queued' }, { id: 'second', text: 'Second queued' }] };
     await act(show);
@@ -1308,11 +1308,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
 
     value = { ...value, status: 'running', compacting: false };
     await act(show);
+    await click(node('.chat-execution-toggle'));
+    assert.equal(node('.chat-input-card-body').getAttribute('hidden'), '');
     node('.chat-typing-stop').focus();
-    node('.chat-input-card').open = false;
     value = { ...value, compacting: true };
     await act(show);
-    assert.equal(document.activeElement, node('.chat-execution-head'), 'hidden or disabled editor falls back to the visible summary');
+    assert.equal(document.activeElement, node('.chat-execution-toggle'), 'hidden or disabled editor falls back to the visible fold toggle');
 
     const outside = document.createElement('button');
     document.body.appendChild(outside);
@@ -1473,11 +1474,11 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.deepEqual(copied, [value.queue![0].text]);
     assert.deepEqual(removed, []);
     assert.equal(stops, 0);
-    assert.equal(queueEntry.attributes.has('open'), false, 'copying does not require or trigger expansion');
+    assert.equal(queueEntry.attributes.has('data-expanded'), false, 'copying does not require or trigger expansion');
     assert.equal(queueCopy.querySelector('.chat-copy-label-text')?.textContent, '已复制');
-    queueEntry.setAttribute('open', '');
+    queueEntry.setAttribute('data-expanded', '');
     await click(queueCopy);
-    assert.equal(queueEntry.attributes.has('open'), true, 'expanded copying does not collapse the entry');
+    assert.equal(queueEntry.attributes.has('data-expanded'), true, 'expanded copying does not collapse the entry');
     assert.deepEqual(copied, [value.queue![0].text, value.queue![0].text]);
     const decision = container.querySelector('.chat-input-card')!;
     assert.equal(decision.getAttribute('data-decision'), 'true');
@@ -1489,34 +1490,36 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(inputContext.parentNode, cardBody);
     assert.equal(container.querySelector('.chat-composer')?.parentNode, cardBody);
     assert.equal(container.querySelector('.chat-typing-stop')?.textContent, '停止并清空队列');
-    decision.open = false;
+    const folded = () => decision.getAttribute('data-open') === 'false';
+    await click(container.querySelector('.chat-execution-toggle')!);
     await show({ title: 'Updated background metadata' });
-    assert.equal(decision.open, false, 'ordinary updates preserve native question collapse');
+    assert.equal(folded(), true, 'ordinary updates preserve question collapse');
     assert.equal(container.querySelector('.chat-input-message'), input);
     let finishReply!: (accepted: boolean) => void;
     let reply!: Promise<boolean>;
     await act(() => { reply = localDraft.runAction(() => new Promise(resolve => { finishReply = resolve; })); });
-    assert.equal(decision.open, false, 'submission feedback does not reopen a manually folded card');
+    assert.equal(folded(), true, 'submission feedback does not reopen a manually folded card');
     assert.equal(container.querySelector('.chat-execution-progress')?.textContent, '正在提交回答…');
     assert.equal(container.querySelector('.chat-pending-hint'), null, 'progress belongs to the header, not the answer body');
     assert.equal(container.querySelector('.chat-ask-choice')?.attributes.has('disabled'), true);
     assert.equal(container.querySelector('.send')?.getAttribute('aria-busy'), 'true');
     await act(async () => { finishReply(false); await reply; });
-    assert.equal(decision.open, false);
+    assert.equal(folded(), true);
     assert.equal(container.querySelector('[data-activity="decision"]')?.getAttribute('aria-label'), '等待你的回答或确认');
     const error = container.querySelector('.chat-input-notice')!;
     assert.ok(container.querySelector('.chat-input-notices')?.contains(error));
-    assert.equal(decision.contains(error), false, 'an unconfirmed result remains outside native disclosure');
+    assert.equal(decision.contains(error), false, 'an unconfirmed result remains outside the card disclosure');
     assert.equal(localDraft.getSnapshot().text, 'Keep typing');
     await act(() => localDraft.dismissNotice());
     await show({ ask: { ...value.ask!, requestId: 'next-question' } });
-    assert.equal(decision.open, true, 'a different native question opens its own answer composer');
+    assert.equal(folded(), false, 'a different native question opens its own answer composer');
     const nextInput = container.querySelector('.chat-input-message');
     assert.notEqual(nextInput, input);
     assert.equal(getDraftSession(value.sessionId).current({ ask: { requestId: 'next-question' } }).getSnapshot().text, '');
-    decision.open = false;
+    await click(container.querySelector('.chat-execution-toggle')!);
+    assert.equal(folded(), true);
     await show({ ask: null });
-    assert.equal(decision.open, true, 'ordinary input is restored after a collapsed question resolves');
+    assert.equal(folded(), false, 'ordinary input is restored after a collapsed question resolves');
     assert.equal(decision.getAttribute('data-decision'), null);
     assert.equal(decision.getAttribute('data-question'), null);
     assert.equal(container.querySelector('.chat-input-context'), inputContext);
@@ -1544,12 +1547,15 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await click(container.querySelector('.chat-queue-remove')!);
     assert.deepEqual(removed, ['next']);
     assert.deepEqual(copied, [value.queue![0].text, value.queue![0].text]);
-    decision.open = false;
+    await click(container.querySelector('.chat-execution-toggle')!);
+    assert.equal(folded(), true);
     await show({ status: 'idle', ask: null, queue: [], activity: activityFixture() });
-    assert.equal(decision.open, true);
+    assert.equal(folded(), false);
     assert.equal(execution.attributes.has('hidden'), true, 'idle input has no folding control or extra status row');
     assert.equal(getDraftSession(value.sessionId).current({}), promptDraft);
     assert.equal(container.querySelector('.chat-input-message')?.value, 'Cached ordinary prompt');
+    await show({ ask: null });
+    assert.equal(folded(), false, 'the next run opens afresh even though its fold key recurs');
   });
 
   for (const hasMore of [false, true]) {
@@ -1626,7 +1632,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       modelState: { modelId: 'a', reasoningEffort: 'low', contextTier: 'default' },
     } }));
     assert.equal(control('思考力度').value, 'high', 'queued ACK preserves the newer unsent edit');
-    assert.match(container.textContent, /已接受，等待原生应用/);
+    assert.match(container.textContent, /已接受，等待生效/);
     assert.doesNotMatch(container.textContent, /上次原生返回：已应用/);
     assert.doesNotMatch(container.textContent, /Model changed/, 'raw native result fields are not rendered');
     assert.equal(container.querySelector('.info-model-current'), null, 'selects present the known native value');
@@ -1640,12 +1646,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await change('上下文长度', '');
     await act(() => calls[1].resolve({ ok: true, result: { status: 'applied', persistenceError: 'Fixture save failed' } }));
     assert.equal(control('上下文长度').value, '');
-    assert.match(container.textContent, /已应用，但原生持久化失败：Fixture save failed/);
+    assert.match(container.textContent, /已应用模型设置.*保存模型设置失败：Fixture save failed/);
     await apply();
     assert.equal(calls.length, 3);
     assert.deepEqual(calls[2].opts, { reasoningEffort: 'high' }, 'unselected context is omitted for native handling');
     await act(() => calls[2].reject(new Error('Uncertain HTTP result')));
-    assert.match(container.textContent, /应用结果未确认：Uncertain HTTP result/);
+    assert.match(container.textContent, /结果未知：Uncertain HTTP result/);
     await apply();
     assert.equal(calls.length, 3, 'the same uncertain submission is not silently retried');
     await change('思考力度', 'max');
@@ -1749,9 +1755,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await panel({ ...current, title: 'Background metadata', currentReasoningEffort: 'max' });
       await act(() => reads[1].resolve({ ...native, currentModelId: 'b', currentReasoningEffort: 'max' }));
       assert.equal(node('[aria-label="思考力度"]').value, 'high', 'metadata and accepted rereads never reset a local draft');
-      assert.match(node('.info-model-details').textContent, /上次提交：b.*思考力度：最大.*上下文：长上下文/);
+      assert.match(node('.info-model-status').textContent, /上次提交：b.*思考力度：最大.*上下文：长上下文/);
       await act(() => mutations[0].resolve({ ok: true, result: { status: 'applied', deferred: true } }));
-      assert.match(node('.info-model-status').textContent, /已接受，等待原生应用/);
+      assert.match(node('.info-model-status').textContent, /已接受，等待生效/);
       assert.doesNotMatch(node('.info-model-status').textContent, /已应用/);
       assert.equal(apply().attributes.has('disabled'), false, 'the newer draft can be submitted explicitly');
       await event(apply(), 'click');
@@ -1761,8 +1767,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await change('上下文长度', 'default');
       assert.equal(container.querySelectorAll('.spinner').length, 0);
       await act(() => mutations[1].resolve({ ok: true, result: { status: 'applied', persistenceError: 'Native save failed' } }));
-      assert.match(node('.info-model-status').textContent, /已应用，但原生持久化失败：Native save failed/);
-      assert.equal(node('.info-model-status').getAttribute('role'), 'alert');
+      assert.match(node('.info-model-result').textContent, /已应用模型设置.*保存模型设置失败：Native save failed/);
+      assert.match(node('.info-model-result').querySelector('[role="alert"]')!.textContent, /保存模型设置失败/,
+        'the partial failure is announced, the applied part is not');
       assert.equal(container.querySelectorAll('.spinner').length, 1, 'unfinished reread resumes its own indicator');
       await act(() => reads[2].reject(new Error('Native read unavailable')));
       assert.match(container.textContent, /加载失败：Native read unavailable/);

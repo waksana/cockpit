@@ -39,9 +39,10 @@ function SessionToggleRow({ identity, name, summary, module, status, enabled, di
       {status ? desired ? '连接中' : '断开中' : desired ? '启用中' : '停用中'}</ResourceProgress> : status}
     feedback={<>
       {nativeError && <ResourceError key={JSON.stringify([identity, 'native', nativeError])}
-        error={nativeError} name={name} label="连接错误" />}
+        error={nativeError} name={`${name}连接错误`} label="连接错误" />}
       {action.error && !action.busy && action.error !== nativeError
-        && <ResourceError key={JSON.stringify([identity, 'action', action.error])} error={action.error} name={name} />}
+        && <ResourceError key={JSON.stringify([identity, 'action', action.error])} error={action.error} name={name}
+          cause={action.errorCause} action={`${desired ? '启用' : '停用'} ${name}`} />}
     </>} />;
 }
 

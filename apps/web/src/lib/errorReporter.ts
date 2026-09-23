@@ -81,8 +81,10 @@ export function describeReason(reason: unknown, includeStack = true): string {
   return `[${ctor}]`;
 }
 
-// Publish a UX/API failure to the console and local notification UI. Never throws.
-export function reportUxError(raw: string, { deduplicate = true }: { deduplicate?: boolean } = {}): void {
+// Publish an ownerless failure to the console and local notification UI. Owned
+// failures are shown where they started (docs/frontend-guidelines.md#error-ownership).
+// Identical text is shown once per window. Never throws.
+export function reportUxError(raw: string): void {
   if (publishing) return;
   publishing = true;
   try {
@@ -94,8 +96,8 @@ export function reportUxError(raw: string, { deduplicate = true }: { deduplicate
     for (const [key, ts] of recent) {
       if (now - ts >= DEDUP_WINDOW_MS) recent.delete(key);
     }
-    if (deduplicate && recent.has(sig)) return;
-    if (deduplicate) recent.set(sig, now);
+    if (recent.has(sig)) return;
+    recent.set(sig, now);
     for (const key of recent.keys()) {
       if (recent.size <= MAX_RECENT) break;
       recent.delete(key);

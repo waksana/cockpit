@@ -192,3 +192,60 @@
   color: var(--host-color-muted);
   overflow-wrap: anywhere;
 }
+
+// Disclosure rows (components/Disclosure.tsx): leading › collapsed, ⌄ expanded.
+.ui-disclosure {
+  justify-content: flex-start;
+  gap: var(--host-space-xs);
+  min-width: 0;
+  padding-inline: 0;
+  text-align: start;
+}
+.ui-disclosure-chevron { flex: none; }
+.ui-disclosure[aria-expanded='false'] .ui-disclosure-chevron:dir(rtl) { transform: scaleX(-1); }
+.ui-disclosure-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ui-disclosure-meta {
+  flex: none; margin-inline-start: auto;
+  color: var(--host-color-muted); font-size: var(--host-text-meta);
+}
+.ui-disclosure-section { min-width: 0; }
+.ui-disclosure-region { min-width: 0; }
+
+// Clamped text (TextClamp): the toggle exists only when the text overflows.
+.ui-text-clamp { display: block; min-width: 0; overflow-wrap: anywhere; }
+// A one-line clamp keeps its toggle at the end of the same line.
+.ui-text-clamp[data-lines='1'] {
+  display: flex; align-items: baseline; gap: var(--host-space-xs);
+  > .ui-text-clamp-text { flex: 1 1 auto; }
+  > .ui-text-clamp-toggle { flex: none; }
+}
+.ui-text-clamp-text {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  min-width: 0; overflow: hidden; white-space: pre-wrap;
+  &[data-lines='1'] { -webkit-line-clamp: 1; }
+  &[data-lines='3'] { -webkit-line-clamp: 3; }
+}
+.ui-text-clamp[data-expanded] .ui-text-clamp-text { display: block; overflow: visible; }
+.ui-text-clamp-toggle {
+  min-block-size: 1lh; padding: 0;
+  color: var(--host-color-link); font-size: var(--host-text-meta); font-weight: 400;
+}
+
+// Operation results (components/OperationResult.tsx).
+.operation-result {
+  display: flex; flex-direction: column; gap: var(--host-space-xs);
+  min-width: 0; font-size: var(--host-text-meta); line-height: var(--host-leading-ui);
+  overflow-wrap: anywhere;
+}
+.operation-result-line { display: flex; align-items: flex-start; gap: var(--host-space-xs); min-width: 0; }
+.operation-result-icon { flex: none; margin-block-start: 0.1em; }
+.operation-result-text { min-width: 0; }
+.operation-result[data-state='done'] .operation-result-icon { color: var(--host-color-success); }
+.operation-result[data-state='failed'] { color: var(--host-color-danger); }
+.operation-result[data-state='unknown'] .operation-result-icon { color: var(--host-color-warning); }
+.operation-result[data-state='busy'], .operation-result[data-state='info'] { color: var(--host-color-muted); }
+.operation-result-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--host-space-sm); }
+.operation-result-action, .operation-result-disclosure {
+  min-block-size: 1lh; padding: 0; font-size: inherit; color: var(--host-color-link);
+}
+.operation-result-details { white-space: pre-wrap; color: var(--host-color-muted); }

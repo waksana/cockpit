@@ -74,14 +74,10 @@ test('does not suppress distinct API failures arriving together or sharing a lon
   assert.deepEqual(getUxErrors().map((error) => error.message), [`${prefix}one`, `${prefix}two`]);
 });
 
-test('independent request failures are not collapsed by the diagnostic text deduplicator', () => {
-  reportUxError('Same operation failed', { deduplicate: false });
-  reportUxError('Same operation failed', { deduplicate: false });
-  const errors = getUxErrors();
-  assert.equal(errors.length, 2);
-  assert.notEqual(errors[0].id, errors[1].id);
-  dismissUxError(errors[0].id);
-  assert.equal(getUxErrors()[0].id, errors[1].id);
+test('global notices are always deduplicated, so a repeated ownerless failure appears once', () => {
+  reportUxError('Same operation failed');
+  reportUxError('Same operation failed');
+  assert.equal(getUxErrors().length, 1);
 });
 
 test('bounds visible notifications and duplicate history during an error storm', (t) => {

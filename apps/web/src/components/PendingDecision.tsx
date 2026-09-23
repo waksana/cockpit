@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import type { ChatSession, ExitPlanModeAction } from '../net/types';
 import { Icon } from './Icon';
 import { Button } from './Button';
+import { DisclosureSection } from './Disclosure';
 import { MessageBody } from './MessageBody';
 import { MessagePresentation, ModuleRuntimeProvider } from './ModuleComponents';
 import type { ModuleRuntime } from '../lib/moduleRuntime';
@@ -54,10 +55,9 @@ export function PlanCard({ request, pending, disabled = false, onSelect, actions
     className="chat-plan" pending={pending} actions={actions}>
     <div className="chat-pending-content" role="region" tabIndex={0} aria-label="计划内容">
       <div className="chat-pending-summary"><MessageBody body={request.summary} /></div>
-      {request.planContent && <details className="chat-pending-detail">
-        <summary>查看完整计划</summary>
+      {request.planContent && <DisclosureSection className="chat-pending-detail" label="查看完整计划" name="完整计划">
         <pre className="chat-pending-pre">{request.planContent}</pre>
-      </details>}
+      </DisclosureSection>}
     </div>
     <div className="chat-ask-choices">
       {(request.actions ?? []).map(action => <Button key={action} className="chat-ask-choice"
@@ -65,7 +65,7 @@ export function PlanCard({ request, pending, disabled = false, onSelect, actions
         disabled={pending || disabled} onClick={() => onSelect(action)}>{PLAN_ACTION_LABEL[action]}</Button>)}
     </div>
     {!request.actions?.length && <div className="chat-pending-hint" role="status">
-      {request.actions ? '原生未提供可用的计划操作。' : '原生计划操作列表不可用。'}
+      {request.actions ? 'Copilot 未提供可用的计划操作。' : '计划操作列表不可用。'}
     </div>}
   </PendingDecision>;
 }

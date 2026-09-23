@@ -20,7 +20,7 @@ export async function readMessageHistory(
     hasMessage ||= window.snapshot().messages.some(message => !before.has(message.id));
     window.boundaryPending = window.hasMore && (window.unresolved || (!hasMessage && !adoptingLive));
     if (!window.boundaryPending || adoptingLive) return;
-    if (!page.cursor || page.cursor === query.cursor) throw new Error('原生历史游标未前进，已停止加载。');
+    if (!page.cursor || page.cursor === query.cursor) throw new Error('历史游标未前进，已停止加载。');
     query = { ...initial, ...window.older, bootstrap: false };
   }
 }

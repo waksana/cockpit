@@ -29,9 +29,9 @@ APIs, extension mechanisms and lifecycle in the [module contract](module-contrac
 ## Semantics and native interaction
 
 Actions are `button`s; navigation and downloads are `a[href]`; forms use `form`,
-labelled `input`, `select` and so on. Prefer `details`/`summary` and `dialog` for
-disclosure and modals when they match the behavior and browser support; do not
-replace proven components wholesale. Native-first does not forbid React,
+labelled `input`, `select` and so on. Modals use `dialog`; host disclosure uses the
+shared [disclosure primitives](#disclosure) rather than `details`/`summary`, so every
+fold looks and announces the same; do not replace proven components wholesale. Native-first does not forbid React,
 controlled inputs or necessary JS.
 
 Keep the HTML content model valid: independent actions are siblings; never nest an
@@ -118,6 +118,44 @@ blocking duplicate mutations. Async results bind to their original resource/sess
 and never write into a target switched to later; cancellation and late results follow
 the owning operation's contract — closing a menu or changing page does not cancel
 accepted work.
+
+<a id="error-ownership"></a>
+### Error ownership
+
+Each failure is shown once. A caller that renders its own result passes ownership
+(`OWNED` for `NetClient`, `'caller'` for store mutations) and the global notice stays
+silent; unowned failures fall back to the global notice. A mutation whose owner has
+unmounted is reported globally once, instead of vanishing. Identical global notices
+within a short window are merged.
+
+<a id="operation-feedback"></a>
+### Operation feedback
+
+In-place results use `OperationResult`: icon, one sentence and at most one action,
+with long causes folded into 详情. Wording comes from `lib/copy.ts`:
+
+| State | Sentence |
+| --- | --- |
+| busy | 正在{动作}… |
+| done | 已{动作} |
+| failed (known not applied) | {动作}失败：{原因} |
+| unknown (may have applied) | 结果未知：{原因}。刷新后确认，不会自动重试。 |
+
+Only rejections and pre-send errors are *failed*; anything after a mutation was
+sent, or unclassified, is *unknown* (`lib/operationErrors.ts`). Failed and unknown
+results are alerts; the others are polite status. Visible copy says “Copilot” when
+the source matters and never “原生”.
+
+<a id="disclosure"></a>
+### Disclosure
+
+Two primitives in `components/Disclosure.tsx` cover folding:
+
+- `Disclosure` / `DisclosureSection`: a row with a leading chevron (› collapsed,
+  ⌄ expanded, or an owner icon) that shows or hides one region, with
+  `aria-expanded`, `aria-controls` and a 展开/收起 name.
+- `TextClamp`: clips text to 1–3 lines and offers 展开全文 only when the text is
+  actually clipped; a one-line clamp keeps the toggle at the end of the line.
 
 ## Reuse components, icons and visual language
 
