@@ -15,7 +15,7 @@ import { ResourceError, ResourceRow, ResourceText } from './ResourceRow';
 import { Badge, Toggle } from './UI';
 import { StateNotice } from './StateNotice';
 import { useToggleRequests } from '../features/session-settings/useToggleRequests';
-import { mcpConnectionLabel, skillSourceLabel } from '../lib/resourcePresentation';
+import { skillSourceLabel } from '../lib/resourcePresentation';
 
 function SessionToggleRow({ identity, name, description, source = '', module, status, enabled, disabled, disabledReason, nativeError, onChange }: {
   identity: string; name: string; description?: string; source?: string; status?: ReactNode; enabled: boolean;
@@ -89,7 +89,7 @@ export function SessionMcp({ session, onClose }: SessionManageProps) {
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
     {resource.data?.map(server => <SessionToggleRow key={JSON.stringify([sessionId, server.name])}
       identity={JSON.stringify(['mcp', sessionId, server.name])} name={server.name}
-      source={mcpConnectionLabel(server.connection)} module={server.module} nativeError={server.error} status={<McpStatusPill status={server.status} appearance="text" />}
+      module={server.module} nativeError={server.error} status={<McpStatusPill status={server.status} appearance="text" />}
       enabled={server.enabled} disabled={!resource.usable || busy}
       disabledReason={busy ? 'MCP 正在切换或连接，请等待完成后再修改。' : undefined} onChange={action.run} />)}
   </ManageShell>;

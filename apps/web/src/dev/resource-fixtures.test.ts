@@ -18,7 +18,7 @@ test('design scenarios cover short authoritative summaries, missing config and r
   assert.equal(global.find(row => row.name === 'custom-transport')?.connection?.method, 'unknown');
   assert.equal(global.find(row => row.name === 'missing-config')?.config, undefined);
   const session = await store.getState().mcpSession(workspaceSessionId);
-  assert.ok(session.every(row => !row.connection), 'same global names must not invent live session transport');
+  assert.ok(session.every(row => !('connection' in row)), 'session transport is not provided, including for same global names');
   assert.deepEqual(session.slice(3).map(row => row.status), ['failed', 'needs-auth', 'stopped', 'not_configured']);
   assert.match(session[3].error!, /^Connection refused by synthetic host\n/);
   const skills = await store.getState().skillsSession(workspaceSessionId);

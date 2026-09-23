@@ -3,7 +3,7 @@ import { test, type TestContext } from 'node:test';
 import { act, createElement, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
-import type { IntentResult, SessionProjection } from '@cockpit/protocol';
+import type { IntentResult, McpServerStatus, SessionProjection } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
 import { IntentHttpError } from '../net/client';
 import type { ChatSession } from '../net/types';
@@ -1307,8 +1307,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.equal(h.container.querySelector('.manage-note'), null);
     assert.match(row.textContent, /断开中|停用中/);
     if (Component === SessionMcp) {
-      assert.equal(source!.textContent, '未知方式');
-      assert.equal(source!.getAttribute('aria-hidden'), null);
+      assert.equal(source, null, 'absent transport has no subtitle even while pending');
       assert.equal(row.querySelector('.mcp-operation-status')?.textContent, '断开中');
       assert.doesNotMatch(row.querySelector('.manage-row-name')!.textContent, /已连接/);
     }
@@ -1323,7 +1322,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.ok(!disabled(first) && !disabled(second));
     assert.equal(h.container.querySelector('.spinner'), null);
     if (Component === SessionMcp) {
-      assert.equal(source!.textContent, '未知方式');
+      assert.equal(row.querySelector('.manage-row-source'), null);
       assert.match(row.querySelector('.manage-row-status')!.textContent, /已连接/);
     }
     assert.deepEqual(calls, ['one']);
@@ -1551,8 +1550,36 @@ test('native MCP error revisions are discoverable but never inherit another erro
       assert.equal(full.getAttribute('hidden'), null);
     }
   });
+test('session MCP has no transport presentation while retaining actual operational states', async t => {
+  const h = mount(t);
+  let status: McpServerStatus = 'connected';
+  let revision = 0;
+  useCockpit.setState({
+    mcpSession: async () => [{ name: 'one', detail: 'native', enabled: true, status,
+      error: status === 'failed' ? 'Synthetic connection refused' : undefined }],
+    mcpGlobal: async () => assert.fail('session presentation must not probe global transport'),
+  });
+  await h.render(createElement(SessionMcp, { session, onClose: noop }));
+  const cases: Array<[McpServerStatus, string]> = [
+    ['connected', '已连接'], ['failed', '失败'], ['needs-auth', '待授权'],
+    ['pending', '连接中'], ['stopped', '已停止'], ['not_configured', '未配置'],
+  ];
+  for (const [nextStatus, label] of cases) {
+    status = nextStatus;
+    await act(async () => useCockpit.setState({ resourceRevisions: { [session.sessionId]: { mcp: ++revision } } }));
+    const row = h.container.querySelector('[data-resource-name="one"]')!;
+    const identity = row.querySelector('.manage-resource-identity')!;
+    assert.equal(row.querySelector('.manage-row-source'), null);
+    assert.equal(identity.childNodes.length, 1, 'only the name, without a reserved subtitle slot or empty line');
+    assert.equal(row.querySelector('.manage-row-status')!.textContent, label);
+    assert.equal(row.querySelector('.manage-row-status')!.parentNode, row.querySelector('[role="switch"]')!.parentNode);
+    if (status === 'failed') assert.match(row.querySelector('.manage-error-summary')!.textContent, /Synthetic connection refused/);
+    assert.doesNotMatch(row.textContent, /未知方式|native|HTTP|SSE|STDIO|本地进程/);
+  }
+});
+
 for (const initiallyEnabled of [false, true]) {
-  test(`MCP ${initiallyEnabled ? 'disable' : 'enable'} replaces connection status, never its source`, async t => {
+  test(`MCP ${initiallyEnabled ? 'disable' : 'enable'} keeps name-only identity and compact status`, async t => {
     const h = mount(t);
     const mutation = deferred<void>();
     let enabled = initiallyEnabled;
@@ -1563,21 +1590,20 @@ for (const initiallyEnabled of [false, true]) {
     });
     await h.render(createElement(SessionMcp, { session, onClose: noop }));
     const row = h.container.querySelector('[data-resource-name="native-server"]')!;
-    const source = row.querySelector('.manage-row-source')!;
-    assert.equal(source.parentNode, row.querySelector('.manage-resource-identity'), 'MCP name and source form an independent compact left column');
-    assert.equal(row.querySelector('.manage-row-name')!.parentNode, source.parentNode);
+    const identity = row.querySelector('.manage-resource-identity')!;
+    assert.equal(identity.childNodes.length, 1);
+    assert.equal(row.querySelector('.manage-row-name')!.parentNode, identity);
     assert.equal(row.querySelector('.manage-row-status')!.parentNode, row.querySelector('[role="switch"]')!.parentNode,
       'MCP connection status and switch share one independent vertical group');
     await h.event(row.querySelector('[role="switch"]')!, 'click');
-    assert.equal(source.textContent, '未知方式');
-    assert.equal(source.getAttribute('aria-hidden'), null);
+    assert.equal(row.querySelector('.manage-row-source'), null);
     assert.equal(row.querySelector('.mcp-operation-status')?.textContent, initiallyEnabled ? '断开中' : '连接中');
     assert.equal(row.querySelector('.manage-row-pending'), null);
     assert.equal(h.container.querySelectorAll('.spinner').length, 1);
     await act(async () => mutation.resolve());
     assert.equal(row.querySelector('.manage-row-status')?.textContent, initiallyEnabled ? '已关闭' : '已连接');
-    assert.equal(row.querySelector('.manage-row-source'), source);
-    assert.equal(source.textContent, '未知方式');
+    assert.equal(row.querySelector('.manage-row-source'), null);
+    assert.equal(identity.childNodes.length, 1);
   });
 }
 

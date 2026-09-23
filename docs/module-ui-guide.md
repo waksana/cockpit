@@ -188,6 +188,9 @@ Only explicit activation expands full text or error details inline; replacement
 text/errors start collapsed. These dense reading/status disclosures keep their
 line-height targets and visible focus, while switches retain 40px/44px targets.
 Expanded content has no fixed height or clipping.
+Session MCP has no connection-method presentation: the native session API does not
+provide that data. There is no conditional transport subtitle, placeholder, empty
+line or disclosure. Actual native connection states and errors remain visible.
 
 Classic global MCP and Skills use the shared master/detail shell. Default
 switches appear only on list rows, as siblings of navigation links, with native
