@@ -1,6 +1,6 @@
 // URL-driven master-detail management; Shell keeps list/detail navigation responsive.
-import { useCallback, type ReactNode } from 'react';
-import { Link, useLocation, useParams } from 'react-router-dom';
+import { useCallback, useState, type ReactNode } from 'react';
+import { useLocation, useParams } from 'react-router-dom';
 import type { McpServerGlobal, ModuleSource, SkillGlobal } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
 import { useKeyedAction, useKeyedResource } from '../lib/useKeyedResource';
@@ -9,11 +9,11 @@ import { StateNotice } from './StateNotice';
 import { MessageBody } from './MessageBody';
 import { ResourceStatus } from './SessionPanelKit';
 import { PaneBody } from './PaneHeader';
-import { ResourceSummary } from './ResourceRow';
+import { ResourceError, ResourceList, ResourceProgress, ResourceRow, ResourceText } from './ResourceRow';
 import { ModuleSourceBadge } from './ModuleLabel';
 import { SectionHeading, Toggle } from './UI';
 import { useGlobalResourceMutations } from '../features/session-settings/useGlobalResources';
-import { mcpConnectionLabel, skillSourceLabel } from '../lib/resourcePresentation';
+import { mcpConnectionLabel, skillSourceLabel, skillSummary } from '../lib/resourcePresentation';
 
 type Catalog<T> = ReturnType<typeof useKeyedResource<T[]>>;
 type GlobalToggle = (name: string, enabled: boolean) => Promise<void>;
@@ -22,29 +22,27 @@ function Provenance({ modules }: { modules?: ModuleSource[] }) {
   return modules?.map(module => <ModuleSourceBadge key={module.id} module={module} />);
 }
 
-function NavRow({ section, name, sub, modules, selected, enabled, disabled, onChange }: {
-  section: ManageSection; name: string; sub?: string; modules?: ModuleSource[]; selected: string | null;
+function NavRow({ section, name, summary, modules, selected, enabled, disabled, onChange }: {
+  section: ManageSection; name: string; summary?: string; modules?: ModuleSource[]; selected: string | null;
   enabled?: boolean; disabled: boolean; onChange: GlobalToggle;
 }) {
   const action = useKeyedAction(`global:${section}:${name}`);
+  const [desired, setDesired] = useState(enabled);
   const help = section === 'mcp' ? '不改变已加载会话的连接。'
     : '用于新建或卸载后重新加载的会话，不改变当前已加载会话。';
-  return <div className={`resource-row manage-row manage-global-row${selected === name ? ' is-active' : ''}`}
-    data-resource-name={name}>
-    <Link className="manage-resource-link ck-button rp" to={`/${section}/${encodeURIComponent(name)}`}
-      replace={selected !== null} aria-current={selected === name ? 'page' : undefined}>
-      <ResourceSummary name={name} source={sub} badge={<Provenance modules={modules} />} />
-    </Link>
-    {typeof enabled === 'boolean'
-      ? <span className="manage-global-control" title={help}>
-        <Toggle label={`全局默认启用 ${name}`} on={enabled} busy={action.busy}
-          disabled={disabled || !action.connected || action.busy}
-          onChange={next => { void action.run(() => onChange(name, next)); }} />
-      </span>
-      : <span className="manage-global-unknown">Copilot 未提供全局启用状态</span>}
-    {action.busy && <StateNotice kind="loading" className="manage-row-feedback">正在提交…</StateNotice>}
-    {action.error && <StateNotice kind="error" className="manage-row-feedback">设置失败：{action.error}</StateNotice>}
-  </div>;
+  return <ResourceRow name={name} badge={<Provenance modules={modules} />}
+    link={{ to: `/${section}/${encodeURIComponent(name)}`, replace: selected !== null, selected: selected === name }}
+    summary={summary && <ResourceText key={summary} text={summary} label={`${name}摘要`} disclosure={false} />}
+    status={action.busy ? <ResourceProgress>{desired ? '启用中' : '停用中'}</ResourceProgress>
+      : typeof enabled !== 'boolean'
+        && <span className="manage-global-unknown" title="Copilot 未提供全局启用状态">未提供全局启用状态</span>}
+    control={typeof enabled === 'boolean' && <span className="manage-global-control" title={help}>
+      <Toggle label={`全局默认启用 ${name}`} on={enabled} busy={action.busy}
+        disabled={disabled || !action.connected || action.busy}
+        onChange={next => { setDesired(next); void action.run(() => onChange(name, next)); }} />
+    </span>}
+    feedback={action.error && !action.busy
+      && <ResourceError key={JSON.stringify([section, name, action.error])} error={action.error} name={name} />} />;
 }
 
 function ListBody({ status, failed, pending, empty, children }: {
@@ -53,7 +51,7 @@ function ListBody({ status, failed, pending, empty, children }: {
   const hasRows = children && (!Array.isArray(children) || children.length > 0);
   return <>
     <ResourceStatus status={status} failed={failed} pending={pending} placement={hasRows ? 'inline' : 'pane'} />
-    {hasRows ? <div className="manage-list">{children}</div>
+    {hasRows ? <ResourceList hint="开关：新会话默认启用">{children}</ResourceList>
       : !status && <StateNotice kind="empty" placement="pane">{empty}</StateNotice>}
   </>;
 }
@@ -63,7 +61,7 @@ function McpList({ selected, catalog, onChange }: {
 }) {
   const { data: rows, status, failed, pending, valid } = catalog;
   return <ListBody status={status} failed={failed} pending={pending} empty="没有配置 MCP 服务器">
-    {rows?.map(server => <NavRow key={server.name} section="mcp" name={server.name} sub={mcpConnectionLabel(server.connection)}
+    {rows?.map(server => <NavRow key={server.name} section="mcp" name={server.name} summary={mcpConnectionLabel(server.connection)}
       modules={server.modules} selected={selected} enabled={server.defaultOn} disabled={!valid} onChange={onChange} />)}
   </ListBody>;
 }
@@ -90,7 +88,7 @@ function SkillsList({ selected, catalog, onChange }: {
   const { data: rows, status, failed, pending, valid } = catalog;
   return <ListBody status={status} failed={failed} pending={pending} empty="没有可用的 skill">
     {rows?.map(skill => <NavRow key={skill.name} section="skills" name={skill.name}
-      sub={skill.description || skillSourceLabel(skill.source)} modules={skill.modules} selected={selected}
+      summary={skillSummary(skill.source, skill.description)} modules={skill.modules} selected={selected}
       enabled={skill.enabled} disabled={!valid} onChange={onChange} />)}
   </ListBody>;
 }

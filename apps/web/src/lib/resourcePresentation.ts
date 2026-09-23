@@ -18,6 +18,11 @@ export function skillSourceLabel(source?: string): string | undefined {
   }
 }
 
+// Skill rows summarize provenance and description in one line.
+export function skillSummary(source?: string, description?: string): string | undefined {
+  return [skillSourceLabel(source), description].filter(Boolean).join(' · ') || undefined;
+}
+
 export function resourceErrorSummary(error: string): string {
   const firstLine = error.trim().split(/\r?\n/, 1)[0];
   const characters = [...firstLine];

@@ -2,31 +2,26 @@
 // Global pages use ManagementShell; per-session pages use the info-panel slot.
 
 .manage-action { flex: none; }
-.manage-row-sub {
-  display: block;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.manage-session-row {
+// One resource row for session and global lists (components/ResourceRow.tsx).
+.manage-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) fit-content(35%);
+  grid-template-columns: minmax(0, 1fr) fit-content(40%);
+  align-items: center;
   column-gap: var(--host-space-md); row-gap: var(--host-space-xs);
   padding-block: var(--host-space-sm);
 }
 .manage-resource-controls {
-  display: flex; flex-direction: column; align-items: flex-end;
-  gap: var(--host-space-xs);
-  align-self: start;
+  display: flex; align-items: center; justify-content: flex-end;
+  gap: var(--host-space-sm);
   min-width: 0;
   .manage-row-status { justify-content: flex-end; text-align: end; overflow-wrap: anywhere; }
   .mcp-status { min-width: 0; white-space: normal; }
 }
 .manage-resource-identity {
-  display: flex; flex-direction: column; justify-content: center;
+  display: flex; flex-direction: column; justify-content: center; align-items: stretch;
   min-width: 0; gap: var(--host-space-xs);
   .manage-row-name { font-weight: 500; }
-  .manage-row-source { margin: 0; }
+  .manage-row-source { display: block; margin: 0; }
 }
 .resource-title-text { min-width: 0; overflow-wrap: anywhere; }
 .manage-row-text {
@@ -56,7 +51,6 @@
   font-size: var(--host-text-meta);
 }
 .manage-error-full { margin-top: var(--host-space-xs); white-space: pre-wrap; }
-.manage-row-description { font-size: var(--host-text-meta); color: var(--secondary-text-color); }
 // The existing list owns loading/empty state; no duplicate resource for the placeholder.
 .cockpit-shell:not(:has(.manage-list .manage-row)) .manage-selection-hint { visibility: hidden; }
 .manage-row-status {
@@ -80,27 +74,28 @@
 // ── Master-detail sections (components/ManageWorkspace.tsx) ──────────────────────
 .manage-list { padding: var(--host-space-sm); }
 
-.manage-global-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 0 var(--host-space-xs);
-  padding: 0 var(--host-space-xs) 0 0;
+.manage-list-hint {
+  margin: 0;
+  padding: var(--host-space-sm) var(--host-space-lg) 0;
+  font-size: var(--host-text-meta);
+  color: var(--secondary-text-color);
+}
+// Selectable master rows: the identity link is the navigation target and the
+// switch stays a separate control.
+.manage-row[data-selectable] {
+  padding: 0 var(--host-space-sm) 0 0;
   border: 0;
   border-radius: var(--host-radius-control);
-  &.is-active { background: color-mix(in srgb, var(--primary-color) 16%, var(--surface-color)); }
-}
-.manage-resource-link {
-  display: flex;
-  min-width: 0;
-  padding: var(--host-space-sm);
-  text-align: start;
-  text-decoration: none;
-  color: inherit;
-  .manage-row-name { font-weight: 500; }
-  .manage-row-sub { margin-top: 2px; }
+  &[data-selected] { background: color-mix(in srgb, var(--primary-color) 16%, var(--surface-color)); }
+  > .manage-resource-identity {
+    padding: var(--host-space-sm);
+    text-align: start;
+    text-decoration: none;
+    color: inherit;
+  }
+  > .manage-row-error { padding: 0 var(--host-space-sm) var(--host-space-sm); }
 }
 .manage-global-control { display: flex; }
-.manage-global-unknown, .manage-row-feedback { grid-column: 1 / -1; padding: 0 var(--host-space-sm) var(--host-space-sm); overflow-wrap: anywhere; }
 .manage-global-unknown { font-size: var(--host-text-meta); color: var(--secondary-text-color); }
 .manage-detail-header {
   height: auto;

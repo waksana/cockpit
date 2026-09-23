@@ -8,46 +8,39 @@ import { useSessionResource } from '../lib/useSessionResource';
 import { McpStatusPill } from './McpStatus';
 import { PanelCloseButton, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
 import { PaneBody, PaneHeader } from './PaneHeader';
-import { Icon } from './Icon';
 import { ModuleSourceBadge } from './ModuleLabel';
 import type { ModuleSource } from '@cockpit/protocol';
-import { ResourceError, ResourceRow, ResourceText } from './ResourceRow';
-import { Badge, Toggle } from './UI';
+import { ResourceError, ResourceProgress, ResourceRow, ResourceText } from './ResourceRow';
+import { Toggle } from './UI';
 import { StateNotice } from './StateNotice';
 import { useToggleRequests } from '../features/session-settings/useToggleRequests';
-import { skillSourceLabel } from '../lib/resourcePresentation';
+import { skillSummary } from '../lib/resourcePresentation';
 
-function SessionToggleRow({ identity, name, description, source = '', module, status, enabled, disabled, disabledReason, nativeError, onChange }: {
-  identity: string; name: string; description?: string; source?: string; status?: ReactNode; enabled: boolean;
+function SessionToggleRow({ identity, name, summary, module, status, enabled, disabled, disabledReason, nativeError, onChange }: {
+  identity: string; name: string; summary?: string; status?: ReactNode; enabled: boolean;
   module?: ModuleSource;
   disabled: boolean; disabledReason?: string; nativeError?: string; onChange: (name: string, enabled: boolean) => Promise<void>;
 }) {
   const action = useKeyedAction(identity);
   const [desired, setDesired] = useState(enabled);
-  const progress = <><Icon name="loading" className="spinner" size={10} />
-    {status ? desired ? '连接中' : '断开中' : desired ? '启用中' : '停用中'}</>;
   return <ResourceRow name={name} connection={Boolean(status)} title={disabled ? disabledReason : undefined}
     badge={module && <ModuleSourceBadge module={module}
       description={status ? '角色配置来源，不代表当前连接身份；无法核验后续同名配置替换' : undefined} />}
-    source={source && <ResourceText key={source} text={source} label={`${name}来源`} />}
+    summary={summary && <ResourceText key={summary} text={summary} label={`${name}摘要`} />}
     control={<Toggle label={`本会话启用 ${name}`} disabled={disabled || action.busy} busy={action.busy} on={enabled}
       onChange={next => {
         if (disabled || action.busy) return;
         setDesired(next);
         void action.run(() => onChange(name, next));
       }} />}
-    status={(action.busy || status) && <div className="manage-row-status" role="status">
-        {action.busy ? <Badge className="mcp-status mcp-operation-status" tone="pending" appearance="text">{progress}</Badge>
-          : status}
-      </div>}
+    status={action.busy ? <ResourceProgress>
+      {status ? desired ? '连接中' : '断开中' : desired ? '启用中' : '停用中'}</ResourceProgress> : status}
     feedback={<>
       {nativeError && <ResourceError key={JSON.stringify([identity, 'native', nativeError])}
         error={nativeError} name={name} label="连接错误" />}
       {action.error && !action.busy && action.error !== nativeError
         && <ResourceError key={JSON.stringify([identity, 'action', action.error])} error={action.error} name={name} />}
-    </>}
-    description={!status && description ? <ResourceText key={description} text={description}
-      lines={2} label={`${name}说明`} /> : undefined} />;
+    </>} />;
 }
 
 function ManageShell({ title, onClose, refresh, status, failed, pending, hasData, working, blocked, empty, children }: {
@@ -110,7 +103,7 @@ export function SessionSkills({ session, onClose }: SessionManageProps) {
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
     {resource.data?.map(skill => <SessionToggleRow key={JSON.stringify([sessionId, skill.name])}
       identity={JSON.stringify(['skills', sessionId, skill.name])} name={skill.name}
-      description={skill.description} source={skillSourceLabel(skill.source)} module={skill.module}
+      summary={skillSummary(skill.source, skill.description)} module={skill.module}
       enabled={skill.enabled} disabled={!resource.usable} onChange={action.run} />)}
   </ManageShell>;
 }

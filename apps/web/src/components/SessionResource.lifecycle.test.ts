@@ -1708,7 +1708,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
     const other = h.container.querySelector('[data-resource-name="other"]')!;
     const otherText = other.textContent;
     if (Component === SessionSkills) assert.equal(row.querySelector('.manage-row-source'), null);
-    assert.equal(row.querySelector('.manage-row-description'), null);
+    assert.equal(row.querySelector('.manage-resource-identity')!.childNodes.length, 1, 'an empty summary reserves no line');
     assert.equal(row.querySelector('.resource-title-text')?.textContent, name, 'names wrap without a disclosure');
     if (Component === SessionSkills) {
       assert.equal(row.querySelector('.manage-row-status'), null, 'enable state is not repeated');
@@ -1726,23 +1726,23 @@ for (const Component of [SessionMcp, SessionSkills]) {
     };
     description = long;
     await revise();
-    if (Component === SessionSkills) assert.equal(row.querySelector('.manage-row-description')?.querySelector('.manage-row-text')?.getAttribute('data-lines'), '2');
+    if (Component === SessionSkills) assert.equal(row.querySelector('.manage-row-source')?.querySelector('.manage-row-text')?.getAttribute('data-lines'), '1', 'the summary is one line');
     assert.equal(row.querySelector('[data-expanded]'), null, 'late text never opens itself');
-    for (const field of Component === SessionSkills ? ['说明'] : []) {
+    for (const field of Component === SessionSkills ? ['摘要'] : []) {
       await open(field);
       await h.resize();
       await h.event(disclosure(`收起${name}${field}`), 'click');
       assert.equal(disclosure(`展开${name}${field}`).getAttribute('aria-expanded'), 'false');
     }
     if (Component === SessionSkills) {
-      await open('说明');
+      await open('摘要');
       description = 'replacement description';
       await revise();
       description = long;
       await revise();
-      assert.equal(disclosure(`展开${name}说明`).getAttribute('aria-expanded'), 'false',
+      assert.equal(disclosure(`展开${name}摘要`).getAttribute('aria-expanded'), 'false',
         'an earlier expanded value cannot reopen when it returns');
-      await open('说明');
+      await open('摘要');
     }
     for (let attempt = 0; attempt < 2; attempt++) {
       await h.event(row.querySelector('[role="switch"]')!, 'click');
@@ -1757,7 +1757,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
       assert.equal(error.getAttribute('hidden'), null);
       assert.equal(error.textContent, long);
       if (Component === SessionSkills) {
-        assert.equal(disclosure(`收起${name}说明`).getAttribute('aria-expanded'), 'true',
+        assert.equal(disclosure(`收起${name}摘要`).getAttribute('aria-expanded'), 'true',
           'pending and errors must not discard an explicitly expanded description');
       }
       assert.equal(other.textContent, otherText);
@@ -1803,7 +1803,7 @@ test('native MCP error revisions are discoverable but never inherit another erro
       skillsRead: async name => ({ name, source: 'builtin', body: 'Use native and builtin as literal user content.' }),
     });
     await h.render(createElement(SessionSkills, { session, onClose: noop }));
-    const sessionRows = h.container.querySelectorAll('.manage-session-row');
+    const sessionRows = h.container.querySelectorAll('.manage-row');
     for (const row of sessionRows.slice(0, 3)) {
       assert.equal(row.querySelector('.manage-row-source'), null);
       assert.equal(row.querySelector('.resource-title-text')!.textContent, row.getAttribute('data-resource-name'));
@@ -1811,8 +1811,11 @@ test('native MCP error revisions are discoverable but never inherit another erro
     assert.deepEqual(sessionRows.slice(3).map(row => row.querySelector('.manage-row-source')!.textContent), ['个人', '项目']);
     await h.render(createElement(MemoryRouter, { initialEntries: ['/skills/native'] },
       createElement(Routes, null, createElement(Route, { path: '/:section/:item?', element: createElement(ManageWorkspace) }))));
-    for (const row of h.container.querySelectorAll('.manage-global-row').slice(0, 3)) {
-      assert.equal(row.querySelector('.manage-row-sub'), null);
+    const globalRows = h.container.querySelectorAll('.manage-row').filter(row => row.getAttribute('data-selectable'));
+    assert.equal(globalRows.length, 5);
+    assert.deepEqual(globalRows.slice(3).map(row => row.querySelector('.manage-row-source')!.textContent), ['个人', '项目']);
+    for (const row of globalRows.slice(0, 3)) {
+      assert.equal(row.querySelector('.manage-row-source'), null);
     }
     const detail = h.container.querySelector('.manage-detail')!;
     assert.equal(detail.querySelector('.manage-detail-meta'), null);
@@ -1868,6 +1871,7 @@ test('session MCP has no transport presentation while retaining actual operation
   const cases: Array<[McpServerStatus, string]> = [
     ['connected', '已连接'], ['failed', '失败'], ['needs-auth', '待授权'],
     ['pending', '连接中'], ['stopped', '已停止'], ['not_configured', '未配置'],
+    ['disabled', '已关闭'], ['unloaded', '未加载'],
   ];
   for (const [nextStatus, label] of cases) {
     status = nextStatus;
@@ -1882,6 +1886,94 @@ test('session MCP has no transport presentation while retaining actual operation
     assert.doesNotMatch(row.textContent, /未知方式|native|HTTP|SSE|STDIO|本地进程/);
   }
 });
+
+test('session Skills rows show source · description as one summary line beside a status-free switch', async t => {
+  const h = mount(t);
+  const module = { id: 'cockpit-task', name: 'Task', roles: [{ id: 'owner', name: 'Owner' }] };
+  const long = 'Use when authorized work requires changing version-controlled repository files. '.repeat(4);
+  h.document.textHeights.set(`个人 · ${long}`, 84);
+  useCockpit.setState({
+    skillsSession: async () => [
+      { name: 'github-coding', module, source: 'personal-agents', description: long, enabled: true },
+      { name: 'plain', source: 'project', description: '', enabled: false },
+      { name: 'bare', source: 'builtin', enabled: true },
+    ],
+  });
+  await h.render(createElement(SessionSkills, { session, onClose: noop }));
+  const row = (name: string) => h.container.querySelector(`[data-resource-name="${name}"]`)!;
+  const first = row('github-coding');
+  const identity = first.querySelector('.manage-resource-identity')!;
+  assert.equal(identity.tagName, 'DIV', 'session rows never navigate to details');
+  assert.equal(first.querySelector('a'), null);
+  assert.equal(first.querySelector('.manage-row-name')!.firstChild?.getAttribute('class'), 'role-badge', 'badge precedes the name');
+  const summary = first.querySelector('.manage-row-source')!.querySelector('.manage-row-text')!;
+  assert.equal(summary.textContent, `个人 · ${long}`);
+  assert.equal(summary.getAttribute('data-lines'), '1');
+  assert.ok(first.querySelector('[aria-label="展开github-coding摘要"]'), 'a clipped summary stays readable through its own disclosure');
+  const controls = first.querySelector('.manage-resource-controls')!;
+  assert.equal(controls.querySelector('[role="switch"]')!.getAttribute('aria-label'), '本会话启用 github-coding');
+  assert.equal(controls.querySelector('.manage-row-status'), null, 'enabled state is not repeated as text');
+  assert.equal(row('plain').querySelector('.manage-row-source')!.textContent, '项目');
+  assert.equal(row('bare').querySelector('.manage-resource-identity')!.childNodes.length, 1);
+  assert.equal(h.container.querySelector('.manage-list-hint'), null, 'the default-state hint is global only');
+});
+
+for (const section of ['mcp', 'skills'] as const) {
+  test(`global ${section}: one list hint, in-flight status beside the switch and full-width error disclosure`, async t => {
+    const h = mount(t);
+    const pending = deferred<void>();
+    let reads = 0;
+    useCockpit.setState({
+      mcpGlobal: async () => { reads++; return [
+        { name: 'A', defaultOn: false, detail: 'A', connection: { method: 'stdio', target: 'node' } },
+        { name: 'B', defaultOn: true, detail: 'B' },
+      ]; },
+      skillsGlobal: async () => { reads++; return [
+        { name: 'A', enabled: false, source: 'personal-copilot', description: 'First skill' },
+        { name: 'B', enabled: true, description: 'Second skill' },
+      ]; },
+      skillsRead: async name => ({ name, body: '', description: name }),
+      mcpSetDefault: () => pending.promise, skillsSetGlobal: () => pending.promise,
+    });
+    await h.render(createElement(MemoryRouter, { initialEntries: [`/${section}`] },
+      createElement(Routes, null, createElement(Route, { path: '/:section/:item?', element: createElement(ManageWorkspace) }))));
+    assert.equal(h.container.textContent.match(/开关：新会话默认启用/g)?.length, 1);
+    const hint = h.container.querySelector('.manage-list-hint')!;
+    const siblings = hint.parentNode!.childNodes;
+    assert.equal(siblings[siblings.indexOf(hint) + 1].getAttribute('class'), 'manage-list', 'the hint sits above the list');
+    const row = (name: string) => h.container.querySelector(`[data-resource-name="${name}"]`)!;
+    assert.equal(row('A').querySelector('.manage-row-source')!.textContent, section === 'mcp' ? '本地进程 · node' : '个人 · First skill');
+    assert.equal(row('B').querySelector('.manage-row-source')!.textContent, section === 'mcp' ? '未知方式' : 'Second skill');
+    const toggle = row('A').querySelector('[role="switch"]')!;
+    assert.equal(toggle.getAttribute('aria-label'), '全局默认启用 A');
+    assert.equal(row('A').querySelector('.manage-row-status'), null);
+    await h.event(toggle, 'click');
+    const controls = row('A').querySelector('.manage-resource-controls')!;
+    assert.equal(controls.querySelector('.manage-row-status')!.textContent, '启用中');
+    const order = controls.childNodes.map(node => node.getAttribute('class'));
+    assert.deepEqual(order, ['manage-row-status', 'manage-global-control'], 'status precedes the switch');
+    assert.equal(h.container.querySelectorAll('.spinner').length, 1);
+    assert.equal(toggle.getAttribute('aria-checked'), 'false', 'no optimistic default');
+    assert.equal(row('A').querySelector('a')!.getAttribute('aria-current'), null, 'the switch never selects the row');
+    const before = reads;
+    await act(async () => pending.reject(new Error('Default write was not acknowledged\n    at native.write (synthetic:3)')));
+    assert.ok(reads > before);
+    assert.equal(row('A').querySelector('.manage-row-status'), null);
+    const error = row('A').querySelector('.manage-row-error')!;
+    assert.equal(error.parentNode, row('A'), 'errors expand under the row, outside the navigation link');
+    assert.equal(row('A').querySelector('a')!.querySelector('.manage-row-error'), null);
+    assert.equal(error.querySelector('.manage-error-summary')!.textContent, '操作未确认：Default write was not acknowledged');
+    const disclosure = row('A').querySelector('[aria-label="展开A错误详情"]')!;
+    await h.event(disclosure, 'click');
+    assert.match(row('A').querySelector('.manage-error-full')!.textContent, /at native.write/);
+    assert.equal(row('B').querySelector('.manage-row-error'), null);
+    await h.event(row('B').querySelector('a')!, 'click');
+    assert.equal(row('B').querySelector('a')!.getAttribute('aria-current'), 'page');
+    assert.equal(row('B').getAttribute('data-selected'), 'true');
+    assert.equal(row('B').querySelector('[role="switch"]')!.getAttribute('aria-checked'), 'true', 'selection never toggles');
+    assert.equal(row('A').getAttribute('data-selected'), null);
+  });
+}
 
 for (const initiallyEnabled of [false, true]) {
   test(`MCP ${initiallyEnabled ? 'disable' : 'enable'} keeps name-only identity and compact status`, async t => {
