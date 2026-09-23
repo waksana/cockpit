@@ -19,7 +19,7 @@ import { existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Engine, OfficialRuntime } from '@cockpit/core';
-import { Intents, type IntentBody, type IntentName, type IntentResult, type ServerEvent, type SessionMeta, type Snapshot } from '@cockpit/protocol';
+import { Intents, type IntentBody, type IntentName, type IntentResult, type ServerEvent, type Snapshot } from '@cockpit/protocol';
 import { isIntentName, registerCapabilities } from './capabilities.ts';
 import { GracefulShutdown } from './shutdown.ts';
 import { registerChatStream } from './chat-stream.ts';

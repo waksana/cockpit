@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open, readdir, realpath, rename, rm } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve, win32 } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { z } from 'zod';
 import { cockpitHome } from '@cockpit/core';
@@ -310,9 +310,15 @@ async function removeUnpublishedStaging(staging: string): Promise<void> {
   await rm(staging, { recursive: true, force: true });
 }
 
+/** Rejects URI-like inputs; a Windows drive-letter path is local only on win32. */
+export function isLocalPackagePath(packagePath: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (platform === 'win32' && /^[A-Za-z]:[\\/]/.test(packagePath) && win32.isAbsolute(packagePath)) return true;
+  return !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(packagePath);
+}
+
 export async function installLocalModule(packagePath: string, options: { trustLocalCode: boolean; enable?: boolean; hostRoot?: string }): Promise<ModuleInstallation> {
   if (options.trustLocalCode !== true) throw new Error('Installing executable local code requires --trust-local-code');
-  if (!packagePath.endsWith('.tgz') || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(packagePath)) throw new Error('Only an explicitly chosen local .tgz module package is supported');
+  if (!packagePath.endsWith('.tgz') || !isLocalPackagePath(packagePath)) throw new Error('Only an explicitly chosen local .tgz module package is supported');
   const archive = await regularBytes(resolve(packagePath), MODULE_LIMITS.archive);
   const inspected = inspectModuleArchive(archive);
   const hostRoot = options.hostRoot ?? cockpitHome();
@@ -347,6 +353,8 @@ export async function installLocalModule(packagePath: string, options: { trustLo
       } catch (error) {
         try { await removeUnpublishedStaging(staging); }
         catch (cleanup) {
+          // The publication failure is the primary cause; errors[] retains the cleanup failure.
+          // eslint-disable-next-line preserve-caught-error
           throw new AggregateError([error, cleanup], 'Module installation failed and unpublished staging cleanup failed', { cause: error });
         }
         throw error;

@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { MOCK_ORIGIN, mockHttp, type MockResponse, type ReceivedRequest } from '../test-support/mock-http.ts';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { Readable } from 'node:stream';
 
 const requests: ReceivedRequest[] = [];
 let respond: (response: MockResponse, request: ReceivedRequest) => void;
@@ -28,7 +27,7 @@ after(() => {
 // Config is initialized once at import time; never point these tests at a live backend.
 const { COCKPIT_URL, requestTimeoutMs } = await import('./config.ts');
 assert.equal(COCKPIT_URL, MOCK_ORIGIN);
-const { CockpitError, MAX_TRANSFER_BYTES, MAX_ERROR_BYTES, backendJson, backendRequest, intent, readBoundedBody, assertIntentSuccess } =
+const { CockpitError, MAX_TRANSFER_BYTES, MAX_ERROR_BYTES, backendJson, backendRequest, intent, readBoundedBody } =
   await import('./cockpit.ts');
 const { McpToggleResult } = await import('./shared.ts');
 const runNode = promisify(execFile);

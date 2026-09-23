@@ -64,8 +64,11 @@ test('module publish captures immutable data with host-owned routing and stops w
   assert.deepEqual(events, [{ id: 'publisher', payload: {
     moduleId: 'another-module', type: 'session/removed', nested: [{ value: 1 }],
   } }]);
-  assert.ok(Object.isFrozen(events[0]!.payload));
-  const snapshot = events[0]!.payload as typeof payload;
+  const event = firstEvent(events);
+  assert.ok(event);
+  assert.ok(Object.isFrozen(event.payload));
+  const snapshot = event.payload as typeof payload;
+  assert.ok(snapshot.nested[0]);
   assert.ok(Object.isFrozen(snapshot.nested[0]));
   assert.throws(() => { snapshot.nested[0]!.value = 3; }, TypeError);
   assert.equal(f.listeners.size, 0, 'publication never subscribes to native history');
@@ -74,6 +77,12 @@ test('module publish captures immutable data with host-owned routing and stops w
   publish(undefined);
   assert.equal(events.length, 1);
 });
+
+function firstEvent(events: readonly { id: string; payload: ModuleEventPayload }[]) {
+  const event = events[0];
+  assert.ok(event);
+  return event;
+}
 
 test('module publish rejects malformed, nonfinite, resource and oversized payloads and reports errors', async t => {
   const f = await moduleFixture(t);
@@ -184,6 +193,9 @@ test('cold-loaded modules expose only successful bootstrap assets and scoped dig
   const missingMutationDigest = await app.inject({ method: 'POST', url: `${apiBase}/json`, payload: { hello: true } });
   assert.equal(missingMutationDigest.statusCode, 409);
   assert.equal(missingMutationDigest.json().code, 'MODULE_VERSION_MISMATCH');
+  assert.equal((await app.inject({ url: `${apiBase}/unknown-error`, headers })).statusCode, 500);
+  assert.equal((await app.inject({ url: `${apiBase}/known-error`, headers })).statusCode, 404);
+  assert.deepEqual((await app.inject('/_modules')).json().errors, [], 'request failures are not activation or runtime failures');
   const asset = await app.inject(value.modules[0].entry);
   assert.match(asset.headers['content-type'] ?? '', /^text\/javascript/);
   assert.match(asset.headers['cache-control'] ?? '', /immutable/);

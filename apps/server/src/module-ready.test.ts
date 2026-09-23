@@ -51,7 +51,6 @@ test('onReady waits for listening, not activation, injection or agent up; invoke
   t.after(() => app.close());
   const listeners = new Set<(event: ServerEvent) => void>();
   let runtimeStarted = false;
-  let origin: string;
   const host = new ModuleHost({
     observer: { ...f.observer, onEvent(handler) {
       listeners.add(handler); return () => { listeners.delete(handler); };
@@ -81,7 +80,7 @@ test('onReady waits for listening, not activation, injection or agent up; invoke
   for (const listener of listeners) listener({ type: 'agent/status', status: 'up' });
   assert.equal(backend.state.up, 1);
   assert.equal(backend.state.calls, 0, 'agent up is not service readiness');
-  origin = await app.listen({ host: '127.0.0.1', port: 0 });
+  const origin = await app.listen({ host: '127.0.0.1', port: 0 });
   backend.setOrigin(origin);
   host.ready();
   host.ready();
@@ -125,6 +124,8 @@ test('ready throws and rejections are reported locally, without retries or unloa
     assert.equal(backend.calls, ['d-invalid', 'e-legacy'].includes(module.manifest.id) ? 0 : 1);
   }
   const bootstrap = (await app.inject('/_modules')).json();
+  assert.deepEqual(bootstrap.errors.map((error: { id: string; stage: string; error: string }) => [error.id, error.stage]),
+    [['d-invalid', 'activation'], ['a-sync', 'runtime'], ['b-async', 'runtime']]);
   assert.deepEqual(bootstrap.errors.slice(1).map((error: { error: string }) => error.error), ['sync ready failed', 'async ready failed']);
   assert.equal((await app.inject(`/_modules/a-sync/${installed[0]!.digest}/api/probe`)).body, 'healthy');
 });

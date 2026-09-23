@@ -21,7 +21,7 @@ export interface RoleProvider {
   globalMcpSources?(config: object): ModuleSource[] | undefined;
   globalSkillSources?(path: string): Promise<ModuleSource[] | undefined>;
   list(): Array<SessionRole & { description?: string }>;
-  read(sessionId: string): SessionRole[];
+  read(sessionId: string): SessionRole[] | Promise<SessionRole[]>;
   save(sessionId: string, roles: SessionRole[]): void;
   assemble(sessionId: string, roles: RoleSelection[]): Promise<RoleAssembly>;
   /** Compose module defaults, the applied role instructions and user instructions. */

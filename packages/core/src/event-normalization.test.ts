@@ -127,7 +127,7 @@ for (const withStart of [true, false]) {
     }
     const fallback = fold([user, final]).state.messages;
     assert.deepEqual(fallback.map(message => message.id), ['u', 'answer-id']);
-    assert.equal(fallback[1].thought, stream.state.messages[1].thought);
+    assert.equal(fallback[1]!.thought, stream.state.messages[1]!.thought);
   });
 }
 
@@ -415,7 +415,7 @@ test('ask tool start can correlate a persisted completion without a preceding as
   assert.equal(fold(events).state.messages[1]?.content, 'yes');
   const unknown = fold([events[1]!]).state.messages;
   assert.equal(unknown.length, 1);
-  assert.equal(unknown[0]?.toolCalls?.[0].title, '缺少工具开始记录');
+  assert.equal(unknown[0]?.toolCalls?.[0]!.title, '缺少工具开始记录');
   assert.equal(unknown[0]?.role, 'assistant', 'unknown tool output is not a user answer');
 });
 

@@ -58,6 +58,8 @@ test('strict JSON rejects coercion, accessors, hidden data and unsafe structures
     Object.defineProperty({}, 'hidden', { value: 1 }), { [Symbol('key')]: 1 },
     { toJSON() { invoked++; return {}; } }, new Date(), new Map(), new Set(),
     new Uint8Array([1]), new Number(1), new Blob(['resource']), Promise.resolve(),
+    // A sparse array is the deliberate invalid payload here.
+    // eslint-disable-next-line no-sparse-arrays
     Object.create({ inherited: true }), new Array(2), [1, , 2],
     Object.assign([], { extra: 1 }), deep,
   ]) {

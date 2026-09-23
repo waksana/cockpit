@@ -1083,9 +1083,9 @@ test('skills/global accepts an optional nonempty cwd without a session selector'
   roundTrip(schema, {});
   for (const cwd of ['/workspace/project', 'relative/project', '/']) {
     roundTrip(schema, { cwd });
-    assert.deepEqual(schema.parse({ cwd, sessionId: 'not-a-global-selector' }), { cwd });
+    assert.equal(schema.safeParse({ cwd, sessionId: 'not-a-global-selector' }).success, false);
   }
-  assert.deepEqual(schema.parse({ sessionId: 'not-a-global-selector' }), {});
+  assert.equal(schema.safeParse({ sessionId: 'not-a-global-selector' }).success, false);
   for (const cwd of ['', null, false, 0, [], {}]) {
     assert.equal(schema.safeParse({ cwd }).success, false, `cwd=${JSON.stringify(cwd)}`);
   }
@@ -1098,7 +1098,7 @@ const _chatMessageParity: Equal<z.infer<typeof ChatMessage>, ChatMessage> = true
 void _chatMessageParity;
 
 type Expect<T extends true> = T;
-type SlimContractGuards = [
+type _SlimContractGuards = [
   Expect<Equal<Extract<IntentName, RemovedIntentName>, never>>,
   Expect<Equal<Extract<keyof typeof Protocol, typeof removedExports[number]>, never>>,
   Expect<Equal<Extract<keyof SessionMeta, RemovedMetaField>, never>>,
@@ -1120,3 +1120,34 @@ type SlimContractGuards = [
   Expect<Equal<IntentResult<'session/get'>, { meta: SessionMeta | null }>>,
   Expect<Equal<keyof SessionPanels, 'skills' | 'mcpServers' | 'tasks' | 'instructionSources' | 'schedules'>>,
 ];
+
+function nonStrictObjects(schema: z.ZodTypeAny, path: string, out: string[], seen = new Set<z.ZodTypeAny>()): string[] {
+  if (seen.has(schema)) return out;
+  seen.add(schema);
+  if (schema instanceof z.ZodObject) {
+    if (schema._def.unknownKeys !== 'strict') out.push(path);
+    for (const [key, value] of Object.entries(schema.shape as z.ZodRawShape)) nonStrictObjects(value, `${path}.${key}`, out, seen);
+  } else if (schema instanceof z.ZodEffects) nonStrictObjects(schema.innerType(), path, out, seen);
+  else if (schema instanceof z.ZodOptional || schema instanceof z.ZodNullable) nonStrictObjects(schema.unwrap(), path, out, seen);
+  else if (schema instanceof z.ZodDefault) nonStrictObjects(schema.removeDefault(), path, out, seen);
+  else if (schema instanceof z.ZodArray) nonStrictObjects(schema.element, `${path}[]`, out, seen);
+  else if (schema instanceof z.ZodUnion || schema instanceof z.ZodDiscriminatedUnion) {
+    (schema.options as readonly z.ZodTypeAny[]).forEach((option, index) => nonStrictObjects(option, `${path}|${index}`, out, seen));
+  } else if (schema instanceof z.ZodIntersection) {
+    nonStrictObjects(schema._def.left, `${path}&`, out, seen);
+    nonStrictObjects(schema._def.right, `${path}&`, out, seen);
+  } else if (schema instanceof z.ZodLazy) nonStrictObjects(schema.schema, path, out, seen);
+  else if (schema instanceof z.ZodRecord) nonStrictObjects(schema.valueSchema, `${path}{}`, out, seen);
+  return out;
+}
+
+test('every intent body rejects unknown keys at every object level', () => {
+  const names = Object.keys(Intents) as IntentName[];
+  assert.ok(names.length > 40);
+  const loose = names.flatMap((name) => nonStrictObjects(Intents[name].body, name, []));
+  assert.deepEqual(loose, []);
+  // A misspelled optional field must fail instead of silently applying the default.
+  const typo = Intents.setModel.body.safeParse({ sessionId: 's', modelId: 'm', reasoning_effort: 'high' });
+  assert.equal(typo.success, false);
+  assert.equal(Intents['runtime/snapshot'].body.safeParse({ extra: 1 }).success, false);
+});

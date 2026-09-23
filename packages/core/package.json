@@ -17,7 +17,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "node --import tsx --test \"src/**/*.test.ts\"",
-    "regress": "node --import tsx test-support/regress.mts"
+    "regress": "node --import tsx test-support/regress.mts",
+    "typecheck:test": "tsc -p tsconfig.test.json"
   },
   "dependencies": {
     "@cockpit/protocol": "workspace:*",
