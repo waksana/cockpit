@@ -1,6 +1,9 @@
 # 模块接入协议
 
-**0.3.0 开发源码：经典界面仍为默认入口，独立新版通过 `frontend.next` 选择模块展示。**
+**经典界面（`/`）是主要界面；独立 `/next/` 仅为实验界面。**
+模块 UI 请求默认针对经典版，不要求同步新版适配；范围与共享契约边界见
+[前端规范](frontend-guidelines.md#classic-primary-ui)。
+0.3.0 开发源码新增的实验入口通过可选 `frontend.next` 选择模块展示。
 新版使用 `ModuleNextFrontendContext.ui.version === 1` 的实际宿主 React 组件，
 不声明经典 `uiVersion` / `uiSurfaceVersion` CSS 能力。配套 SDK 源码为
 `0fa433d99c053df2caf80770f0f8762b9ed7002e`；这是可获取的开发提交，不是已发行或已部署的证明。
