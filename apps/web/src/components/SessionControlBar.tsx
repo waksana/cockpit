@@ -3,7 +3,9 @@ import type { ChatSession } from '../net/types';
 import { controlIndicators, type SessionControlAction, type SessionControls } from '../lib/sessionControls';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import type { IconName } from './Icon';
-import { Button, IconButton } from './Button';
+import { IconButton } from './Button';
+import { Disclosure, TextClamp } from './Disclosure';
+import { OperationErrorResult } from './OperationResult';
 import { SessionActivity } from './SessionActivity';
 import { CopyButton } from './CopyButton';
 
@@ -16,7 +18,7 @@ export function SessionControlActionButton({ identity, label, icon, waiting = '�
     <IconButton ref={controlRef} icon={icon} iconSize={16} busy={action.busy || undefined} disabled={disabled || action.busy}
       label={action.busy ? waiting : label} title={action.busy ? waiting : label}
       onClick={() => { void action.run(onAction); }} />
-    {action.error && <span role="alert">{action.error}</span>}
+    {action.error && <OperationErrorResult label={label} error={action.error} cause={action.errorCause} />}
   </div>;
 }
 
@@ -58,10 +60,10 @@ export function SessionControlBar({ session, controls, connected, expanded, disa
   if (!items.length || items.length === 1 && items[0].icon === 'radiooff') return null;
   return <section className="chat-controls" aria-label="会话控制区">
     <div className="chat-execution-head chat-controls-header">
-      <Button className="chat-controls-toggle" aria-expanded={expanded} aria-controls={listId}
-        aria-label={`展开或收起会话状态列表：${items.map(item => item.label).join('，')}`} onClick={onToggle}>
+      <Disclosure className="chat-controls-toggle" open={expanded} onToggle={onToggle} controls={listId}
+        name={`会话状态列表：${items.map(item => item.label).join('，')}`}>
         <SessionActivity items={headerItems} />
-      </Button>
+      </Disclosure>
       {active && action('all', '停止本会话当前工作并清空队列', 'stop', { type: 'stop-all' }, false, '停止中…')}
     </div>
     <div id={listId} className="chat-controls-list" hidden={!expanded}>
@@ -88,7 +90,7 @@ export function SessionControlBar({ session, controls, connected, expanded, disa
         </span>
           {action('clear', '清空队列', 'delete', { type: 'clear-queue' }, false, '清空中…')}</header>
         {session.queue?.map(item => <div className="chat-queue-item" key={item.id}>
-          <details className="chat-queue-entry"><summary className="chat-queue-text">{item.text}</summary></details>
+          <TextClamp className="chat-queue-entry" text={item.text} label="排队消息" lines={1} />
           <div className="chat-controls-actions" title={canSteer ? '送入当前回合，不打断当前任务' : '当前没有可接收补充消息的主回合'}>
             <CopyButton text={item.text} label={`复制排队消息：${item.text}`} variant="icon" />
             {action(`steer:${item.id}`, `立即发送：${item.text}`, 'agent_message', { type: 'steer', id: item.id }, !canSteer || item.canSteer !== true, '发送中…')}

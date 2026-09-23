@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { useCockpit } from '../../net/store';
+import { OperationUnconfirmed } from '../../lib/operationErrors';
 
 // MCP owns one serial lane; skills own independent named lanes. Late writes
 // must not launch reads after their session, connection or view is replaced.
@@ -33,7 +34,7 @@ export function useToggleRequests(
       finally {
         if (current.active && owner.current === current) refreshed = await refresh();
       }
-      if (current.active && !refreshed) throw new Error('操作已返回，但未能读取最新状态；请刷新核对，不要直接重试');
+      if (current.active && !refreshed) throw new OperationUnconfirmed('操作已返回，但未能读取最新状态');
     } finally {
       current.names.delete(name);
       if (current.active && owner.current === current) setPending({ sessionId, generation, count: current.names.size });

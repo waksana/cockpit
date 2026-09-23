@@ -3,12 +3,16 @@ import { beforeEach, test, type Mock, type TestContext } from 'node:test';
 import type { NativeAttachment, NativeChatPage, IntentBody, IntentName, ServerEvent } from '@cockpit/protocol';
 import { EVENTS_URL, intentUrl } from '../lib/config';
 import { dismissUxError, getUxErrors } from '../lib/errorReporter';
-import { IntentHttpError, isSessionUnloadedError, isSkillNotFoundError, NetClient, SessionUnloadedError, type ConnState } from './client';
+import { IntentHttpError, isSessionUnloadedError, isSkillNotFoundError, NetClient, OWNED, SessionUnloadedError, type ConnState } from './client';
 import { readDirectory } from '../lib/directoryResource';
 import { createKeyedAsync } from '../lib/keyedAsync';
 import type { NativeDraftRequest } from '../lib/draft';
 
+// Global notices deduplicate identical text; each test runs in a fresh window.
+let now = 0;
 beforeEach((t: TestContext) => {
+  now += 60_000;
+  t.mock.method(Date, 'now', () => now);
   t.mock.method(console, 'error', () => {});
   const clearDiagnostics = () => {
     for (const error of getUxErrors()) dismissUxError(error.id);
@@ -199,7 +203,7 @@ test('native resources client validates the projection, forwards cancellation an
     ? Response.json({ error: 'Unloaded', code: 'SESSION_UNLOADED' }, { status: 409 })
     : Response.json(resources));
   const controller = new AbortController();
-  assert.deepEqual(await client.getResources('session', ['model'], controller.signal), resources);
+  assert.deepEqual(await client.getResources('session', ['model'], { signal: controller.signal }), resources);
   assert.equal(fetch.mock.calls[0].arguments[1]?.signal, controller.signal);
   cold = true;
   await assert.rejects(client.getResources('session', ['model']), isSessionUnloadedError);
@@ -225,7 +229,7 @@ for (const path of [undefined, '/P', './P', '', '   ']) {
     await assert.rejects(pending, error => error === original);
     assertOnlyPost(fetch, 'fs/listDir', path === undefined ? {} : { path });
     assert.equal(getUxErrors().length, 1);
-    assert.equal(getUxErrors()[0].message, `目录 ${path ?? '服务器主目录（未指定路径）'}：接口 fs/listDir 调用失败：directory denied`);
+    assert.equal(getUxErrors()[0].message, `目录 ${path ?? '服务器主目录（未指定路径）'}：接口 fs/listDir：调用失败：directory denied`);
   });
 }
 
@@ -335,7 +339,7 @@ for (const source of ['persisted', 'live'] as const) {
         init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
       });
     });
-    const pending = client.chat({ sessionId: 'session', ...chatRead, source }, controller.signal);
+    const pending = client.chat({ sessionId: 'session', ...chatRead, source }, { signal: controller.signal });
     controller.abort();
     await assert.rejects(pending, { name: 'AbortError' });
     assert.equal(fetch.mock.callCount(), 1);
@@ -609,9 +613,8 @@ for (const failure of failures) {
     });
     const diagnostics = getUxErrors();
     assert.equal(diagnostics.length, 1);
-    assert.match(diagnostics[0].message, /^会话 session \(session\)：接口 respondAsk 调用失败：/);
-    assert.match(diagnostics[0].message.replace(/；变更结果尚未确认.*$/, ''), failure.diagnostic);
-    assert.match(diagnostics[0].message, /变更结果尚未确认/);
+    assert.match(diagnostics[0].message, /^会话 session \(session\)：接口 respondAsk：结果未知：/);
+    assert.match(diagnostics[0].message.replace(/。刷新后确认，不会自动重试。$/, ''), failure.diagnostic);
     assert.deepEqual(events, []);
   });
 
@@ -628,7 +631,7 @@ for (const failure of failures) {
     });
     const diagnostics = getUxErrors();
     assert.equal(diagnostics.length, 1);
-    assert.match(diagnostics[0].message, /^会话 session \(session\)：接口 prompt 调用失败：/);
+    assert.match(diagnostics[0].message, /^会话 session \(session\)：接口 prompt：结果未知：/);
     assert.deepEqual(events, []);
   });
 }
@@ -643,7 +646,7 @@ test('failed explicit load never falls back to reload or creates a replacement s
   assertOnlyPost(fetch, 'session/load', { sessionId: 'session' });
   assert.deepEqual(events, []);
   assert.equal(getUxErrors().length, 1);
-  assert.match(getUxErrors()[0].message, /^会话 session \(session\)：接口 session\/load 调用失败：Original session is unavailable；变更结果尚未确认/);
+  assert.match(getUxErrors()[0].message, /^会话 session \(session\)：接口 session\/load：结果未知：Original session is unavailable。刷新后确认/);
 });
 
 for (const result of [{}, { status: 'future-native-status' }]) {
@@ -651,7 +654,7 @@ for (const result of [{}, { status: 'future-native-status' }]) {
     const { client, fetch } = setup(t, async () => Response.json({ ok: true, result }));
     assert.deepEqual(await client.setModel('session', 'requested'), { ok: true, result });
     assert.equal(fetch.mock.callCount(), 1);
-    assert.match(getUxErrors()[0].message, /结果尚未确认/);
+    assert.match(getUxErrors()[0].message, /结果未知/);
   });
 }
 
@@ -662,15 +665,15 @@ for (const [index, response] of [null, { error: { detail: 'unavailable' } }, 'un
     await assert.rejects(client.chat({ sessionId: 'session', ...chatRead }), { message: `intent session/chat failed (${status})` });
     assertOnlyPost(fetch, 'session/chat', { sessionId: 'session', ...chatRead });
     assert.equal(getUxErrors().length, 1);
-    assert.match(getUxErrors()[0].message, /^会话 session \(session\)：接口 session\/chat 调用失败：intent session\/chat failed/);
+    assert.match(getUxErrors()[0].message, /^会话 session \(session\)：接口 session\/chat：调用失败：intent session\/chat failed/);
   });
 }
 
-test('history transport failures are rethrown without diagnostics, retries or prompts', async (t) => {
+test('owned history transport failures are rethrown without diagnostics, retries or prompts', async (t) => {
   const failure = new TypeError('History connection lost');
   const { client, fetch } = setup(t, async () => { throw failure; });
   await assert.rejects(
-    client.chat({ sessionId: 'session', ...chatRead, direction: 'forward', cursor: 'native-forward', max: 80 }),
+    client.chat({ sessionId: 'session', ...chatRead, direction: 'forward', cursor: 'native-forward', max: 80 }, OWNED),
     (error: unknown) => error === failure,
   );
   assertOnlyPost(fetch, 'session/chat', {
@@ -704,7 +707,7 @@ for (const failure of [
     });
     const diagnostics = getUxErrors();
     assert.equal(diagnostics.length, 1);
-    assert.match(diagnostics[0].message, /^会话 session \(session\)：接口 session\/chat 调用失败：/);
+    assert.match(diagnostics[0].message, /^会话 session \(session\)：接口 session\/chat：调用失败：/);
     assert.match(diagnostics[0].message, failure.diagnostic);
   });
 }
@@ -993,10 +996,10 @@ for (const source of ['persisted', 'live'] as const) {
   });
 }
 
-test('structured skills/read not-found stays local without a global error notice', async t => {
+test('an owned skills/read not-found stays with its detail page without a global error notice', async t => {
   const { client, fetch } = setup(t, async () => Response.json(
     { error: 'Unknown skill in this working directory', code: 'SKILL_NOT_FOUND' }, { status: 404 }));
-  await assert.rejects(client.skillsRead('github-coding'), error => isSkillNotFoundError(error));
+  await assert.rejects(client.skillsRead('github-coding', undefined, OWNED), error => isSkillNotFoundError(error));
   assertOnlyPost(fetch, 'skills/read', { name: 'github-coding' });
   assert.deepEqual(getUxErrors(), []);
 });
@@ -1006,7 +1009,7 @@ for (const [status, body] of [
   [404, { error: 'Unknown skill in this working directory' }],
   [404, { error: 'not here', code: 'OTHER_NOT_FOUND' }],
 ] as const) {
-  test(`genuine skills/read failure ${status} ${'code' in body ? body.code : '(no code)'} is still reported`, async t => {
+  test(`unowned skills/read failure ${status} ${'code' in body ? body.code : '(no code)'} is reported globally`, async t => {
     const { client } = setup(t, async () => Response.json(body, { status }));
     await assert.rejects(client.skillsRead('x'), error => !isSkillNotFoundError(error));
     assert.equal(getUxErrors().length, 1);

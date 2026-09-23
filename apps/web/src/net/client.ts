@@ -6,6 +6,8 @@ import { ServerEvent, Intents, NativeChatStreamRequest, classifyNativeModelSwitc
 import type { NativeAttachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction, NativeChatPage } from '@cockpit/protocol';
 import { EVENTS_URL, CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { reportUxError, describeReason } from '../lib/errorReporter';
+import { recordOperationFailure } from '../lib/operationErrors';
+import { copy } from '../lib/copy';
 import { consumeChatStream } from './chatStream';
 import type { NativeDraftRequest } from '../lib/draft';
 import { beginHostMutation } from '../lib/hostLeave';
@@ -84,7 +86,7 @@ export class IntentHttpError extends Error {
 
 export class SessionUnloadedError extends Error {
   constructor() {
-    super('会话尚未加载，无法读取原生会话数据；请先显式恢复会话。');
+    super('会话尚未加载，无法读取会话数据；请先恢复会话。');
     this.name = 'SessionUnloadedError';
   }
 }
@@ -99,6 +101,13 @@ export function isSessionUnloadedError(e: unknown): e is SessionUnloadedError | 
 export function isSkillNotFoundError(e: unknown): e is IntentHttpError {
   return e instanceof IntentHttpError && e.status === 404 && e.code === SKILL_NOT_FOUND;
 }
+
+export interface IntentOptions {
+  signal?: AbortSignal;
+  // The calling UI shows this result in place, so no global notice is raised.
+  owned?: boolean;
+}
+export const OWNED: IntentOptions = Object.freeze({ owned: true });
 
 interface NetClientCallbacks {
   onEvent: (ev: ServerEvent) => void;
@@ -205,7 +214,9 @@ export class NetClient {
   }
 
   // Fire an intent. Throws on transport/HTTP error; returns the typed result.
-  async intent<K extends IntentName>(name: K, body: IntentBody<K>, signal?: AbortSignal): Promise<IntentResult<K>> {
+  // An `owned` caller shows the result itself; only unowned calls report here.
+  async intent<K extends IntentName>(name: K, body: IntentBody<K>, options: IntentOptions = {}): Promise<IntentResult<K>> {
+    const { signal, owned = false } = options;
     const sessionId = 'sessionId' in body && typeof body.sessionId === 'string' ? body.sessionId : undefined;
     const target = sessionId ? `会话 ${this.cb.sessionTitle?.(sessionId) ?? sessionId} (${sessionId})` : undefined;
     const resource = name === 'fs/listDir'
@@ -241,28 +252,31 @@ export class NetClient {
       }
       const known = knownMutationResult(name, result as IntentResult<K>);
       settle?.(known);
-      if (settle && !known) reportUxError(`接口 ${name} 的变更结果尚未确认；请检查原生状态，不要自动重试。`, { deduplicate: false });
+      if (settle && !known && !owned) reportUxError(`${source ? `${source}：` : ''}接口 ${name}：${copy.unknown('服务器未确认变更')}`);
       return result as IntentResult<K>;
     } catch (e) {
       settle?.(false);
       // Diagnostics stay local. Never execute a prompt or retry an uncertain POST.
-      if (!signal?.aborted && !isSessionUnloadedError(e)
-        && (name !== 'session/chat' || !isTransportError(e))
-        && (name !== 'skills/read' || !isSkillNotFoundError(e))) {
-        reportUxError(`${source ? `${source}：` : ''}接口 ${name} 调用失败：${describeReason(e, false)}${settle ? '；变更结果尚未确认，请检查原生状态，不要自动重试。' : ''}`, { deduplicate: false });
-      } else if (settle) {
-        reportUxError(`接口 ${name} 的变更结果尚未确认；停止等待不代表原生操作已取消，请检查后再操作。`, { deduplicate: false });
-      }
+      const message = `${source ? `${source}：` : ''}接口 ${name}：${settle
+        ? copy.unknown(signal?.aborted ? '已停止等待，这不代表操作已取消' : describeReason(e, false))
+        : copy.failed('调用', describeReason(e, false))}`;
+      recordOperationFailure(e, { message, mutation: !!settle, uncertain: !!settle });
+      if (!owned && (settle || (!signal?.aborted && !isSessionUnloadedError(e)))) reportUxError(message);
       throw e;
     }
   }
 
   // --- typed intent helpers --------------------------------------------------
-  newSession(cwd: string, roles?: IntentBody<'session/new'>['roles']) { return this.intent('session/new', { cwd, ...(roles ? { roles } : {}) }); }
-  listRoles() { return this.intent('roles/list', {}); }
-  addRoles(sessionId: string, roles: IntentBody<'roles/add'>['roles']) { return this.intent('roles/add', { sessionId, roles }); }
-  roleReadiness(sessionId: string) { return this.intent('roles/readiness', { sessionId }); }
-  chat(body: IntentBody<'session/chat'>, signal?: AbortSignal) { return this.intent('session/chat', body, signal); }
+  // Every helper takes the same trailing options; see `intent` for ownership.
+  newSession(cwd: string, roles?: IntentBody<'session/new'>['roles'], options?: IntentOptions) {
+    return this.intent('session/new', { cwd, ...(roles ? { roles } : {}) }, options);
+  }
+  listRoles(options?: IntentOptions) { return this.intent('roles/list', {}, options); }
+  addRoles(sessionId: string, roles: IntentBody<'roles/add'>['roles'], options?: IntentOptions) {
+    return this.intent('roles/add', { sessionId, roles }, options);
+  }
+  roleReadiness(sessionId: string, options?: IntentOptions) { return this.intent('roles/readiness', { sessionId }, options); }
+  chat(body: IntentBody<'session/chat'>, options?: IntentOptions) { return this.intent('session/chat', body, options); }
   async chatStream(
     body: NativeChatStreamRequest, receive: (page: NativeChatPage) => void, signal: AbortSignal,
   ): Promise<void> {
@@ -300,60 +314,67 @@ export class NetClient {
       controller.abort();
     }
   }
-  prompt(sessionId: string, text: string, attachments?: NativeAttachment[], mode?: 'enqueue' | 'immediate') {
+  prompt(sessionId: string, text: string, attachments?: NativeAttachment[], mode?: 'enqueue' | 'immediate', options?: IntentOptions) {
     return this.intent('prompt', { sessionId, text,
-      ...(attachments?.length ? { attachments } : {}), ...(mode ? { mode } : {}) });
+      ...(attachments?.length ? { attachments } : {}), ...(mode ? { mode } : {}) }, options);
   }
-  sendDraft(request: NativeDraftRequest) {
+  sendDraft(request: NativeDraftRequest, options?: IntentOptions) {
     switch (request.intent) {
-      case 'prompt': return this.intent('prompt', Intents.prompt.body.strict().parse(request.body));
-      case 'respondAsk': return this.intent('respondAsk', Intents.respondAsk.body.strict().parse(request.body));
-      case 'planSupersede': return this.intent('planSupersede', Intents.planSupersede.body.strict().parse(request.body));
+      case 'prompt': return this.intent('prompt', Intents.prompt.body.strict().parse(request.body), options);
+      case 'respondAsk': return this.intent('respondAsk', Intents.respondAsk.body.strict().parse(request.body), options);
+      case 'planSupersede': return this.intent('planSupersede', Intents.planSupersede.body.strict().parse(request.body), options);
       default: throw new Error('Unsupported native draft route');
     }
   }
-  cancel(sessionId: string) { return this.intent('cancel', { sessionId }); }
-  interrupt(sessionId: string) { return this.intent('session/interrupt', { sessionId }); }
-  sessionControl(sessionId: string, token: string, action: IntentBody<'session/control'>['action']) {
-    return this.intent('session/control', { sessionId, token, action });
+  cancel(sessionId: string, options?: IntentOptions) { return this.intent('cancel', { sessionId }, options); }
+  interrupt(sessionId: string, options?: IntentOptions) { return this.intent('session/interrupt', { sessionId }, options); }
+  sessionControl(sessionId: string, token: string, action: IntentBody<'session/control'>['action'], options?: IntentOptions) {
+    return this.intent('session/control', { sessionId, token, action }, options);
   }
-  setModel(sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) {
-    return this.intent('setModel', { sessionId, modelId, ...opts });
+  setModel(sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' },
+    options?: IntentOptions) {
+    return this.intent('setModel', { sessionId, modelId, ...opts }, options);
   }
-  deleteSession(sessionId: string) {
-    return this.intent('session/delete', { sessionId });
+  deleteSession(sessionId: string, options?: IntentOptions) { return this.intent('session/delete', { sessionId }, options); }
+  loadSession(sessionId: string, options?: IntentOptions) { return this.intent('session/load', { sessionId }, options); }
+  reloadSession(sessionId: string, options?: IntentOptions) { return this.intent('session/reload', { sessionId }, options); }
+  getResources(sessionId: string, resources: import('@cockpit/protocol').MetaResource[], options?: IntentOptions) {
+    return this.intent('session/resources', { sessionId, resources }, options);
   }
-  loadSession(sessionId: string) { return this.intent('session/load', { sessionId }); }
-  reloadSession(sessionId: string) { return this.intent('session/reload', { sessionId }); }
-  getResources(sessionId: string, resources: import('@cockpit/protocol').MetaResource[], signal?: AbortSignal) {
-    return this.intent('session/resources', { sessionId, resources }, signal);
+  respondAsk(sessionId: string, requestId: string, answer: string, wasFreeform: boolean, options?: IntentOptions) {
+    return this.intent('respondAsk', { sessionId, requestId, answer, wasFreeform }, options);
   }
-  respondAsk(sessionId: string, requestId: string, answer: string, wasFreeform: boolean) {
-    return this.intent('respondAsk', { sessionId, requestId, answer, wasFreeform });
+  respondPlan(sessionId: string, requestId: string, action: ExitPlanModeAction, options?: IntentOptions) {
+    return this.intent('respondPlan', { sessionId, requestId, action }, options);
   }
-  respondPlan(sessionId: string, requestId: string, action: ExitPlanModeAction) {
-    return this.intent('respondPlan', { sessionId, requestId, action });
+  planSupersede(sessionId: string, requestId: string, message: string, options?: IntentOptions) {
+    return this.intent('planSupersede', { sessionId, requestId, message }, options);
   }
-  planSupersede(sessionId: string, requestId: string, message: string) {
-    return this.intent('planSupersede', { sessionId, requestId, message });
+  respondElicitation(sessionId: string, requestId: string, action: 'accept' | 'decline' | 'cancel', options?: IntentOptions) {
+    return this.intent('respondElicitation', { sessionId, requestId, action }, options);
   }
-  respondElicitation(sessionId: string, requestId: string, action: 'accept' | 'decline' | 'cancel') {
-    return this.intent('respondElicitation', { sessionId, requestId, action });
+  removeQueued(sessionId: string, itemId: string, options?: IntentOptions) {
+    return this.intent('queue/remove', { sessionId, itemId }, options);
   }
-  removeQueued(sessionId: string, itemId: string) { return this.intent('queue/remove', { sessionId, itemId }); }
-  refresh() { return this.intent('session/refresh', {}); }
+  refresh(options?: IntentOptions) { return this.intent('session/refresh', {}, options); }
   // MCP + Skills management
-  mcpGlobal() { return this.intent('mcp/global', {}); }
-  mcpSetDefault(name: string, on: boolean) { return this.intent('mcp/global-default', { name, on }); }
-  mcpRefresh() { return this.intent('mcp/refresh', {}); }
-  mcpSession(sessionId: string) { return this.intent('mcp/session', { sessionId }); }
-  mcpToggleSession(sessionId: string, name: string, on: boolean) { return this.intent('mcp/session-toggle', { sessionId, name, on }); }
-  skillsGlobal(cwd?: string) { return this.intent('skills/global', cwd === undefined ? {} : { cwd }); }
-  skillsRead(name: string, cwd?: string) { return this.intent('skills/read', { name, ...(cwd ? { cwd } : {}) }); }
-  skillsSetGlobal(name: string, enabled: boolean, cwd?: string) {
-    return this.intent('skills/global-toggle', { name, enabled, ...(cwd === undefined ? {} : { cwd }) });
+  mcpGlobal(options?: IntentOptions) { return this.intent('mcp/global', {}, options); }
+  mcpSetDefault(name: string, on: boolean, options?: IntentOptions) { return this.intent('mcp/global-default', { name, on }, options); }
+  mcpRefresh(options?: IntentOptions) { return this.intent('mcp/refresh', {}, options); }
+  mcpSession(sessionId: string, options?: IntentOptions) { return this.intent('mcp/session', { sessionId }, options); }
+  mcpToggleSession(sessionId: string, name: string, on: boolean, options?: IntentOptions) {
+    return this.intent('mcp/session-toggle', { sessionId, name, on }, options);
   }
-  skillsSession(sessionId: string) { return this.intent('skills/session', { sessionId }); }
-  skillsToggleSession(sessionId: string, name: string, enabled: boolean) { return this.intent('skills/session-toggle', { sessionId, name, enabled }); }
-  listDir(path?: string) { return this.intent('fs/listDir', path === undefined ? {} : { path }); }
+  skillsGlobal(cwd?: string, options?: IntentOptions) { return this.intent('skills/global', cwd === undefined ? {} : { cwd }, options); }
+  skillsRead(name: string, cwd?: string, options?: IntentOptions) {
+    return this.intent('skills/read', { name, ...(cwd ? { cwd } : {}) }, options);
+  }
+  skillsSetGlobal(name: string, enabled: boolean, cwd?: string, options?: IntentOptions) {
+    return this.intent('skills/global-toggle', { name, enabled, ...(cwd === undefined ? {} : { cwd }) }, options);
+  }
+  skillsSession(sessionId: string, options?: IntentOptions) { return this.intent('skills/session', { sessionId }, options); }
+  skillsToggleSession(sessionId: string, name: string, enabled: boolean, options?: IntentOptions) {
+    return this.intent('skills/session-toggle', { sessionId, name, enabled }, options);
+  }
+  listDir(path?: string, options?: IntentOptions) { return this.intent('fs/listDir', path === undefined ? {} : { path }, options); }
 }

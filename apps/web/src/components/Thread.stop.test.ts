@@ -130,9 +130,9 @@ test('interrupt action keeps its context without the removed persistent hint or 
 
 test('stop and interrupt share one execution action group outside the scrolling transcript', () => {
   const html = render({ intent: 'Working on the response', queue: [{ id: 'q', text: 'Next request' }] });
-  const section = html.slice(html.indexOf('<details class="chat-input-card"'));
+  const section = html.slice(html.indexOf('<div class="chat-input-card"'));
   assert.ok(section);
-  const actions = section.match(/class="chat-execution-actions"[^>]*>([\s\S]+?)<\/summary>/)?.[1];
+  const actions = section.match(/class="chat-execution-actions"[^>]*>([\s\S]+?)<div id="[^"]+" class="chat-input-card-body"/)?.[1];
   assert.ok(actions);
   assert.match(actions, /打断并处理队列/);
   assert.match(actions, /停止并清空队列/);
@@ -140,12 +140,12 @@ test('stop and interrupt share one execution action group outside the scrolling 
   assert.match(section, /aria-label="排队中的消息"/);
   assert.doesNotMatch(section, /chat-queue-label|排队消息 · 1/);
   assert.ok(section.indexOf('chat-execution-actions') < section.indexOf('chat-queue-item'));
-  assert.doesNotMatch(html.slice(0, html.indexOf('<details class="chat-input-card"')), /chat-typing-stop|class="chat-interrupt ck-button"/);
+  assert.doesNotMatch(html.slice(0, html.indexOf('<div class="chat-input-card"')), /chat-typing-stop|class="chat-interrupt ck-button"/);
 });
 
 test('idle queues show their messages without inventing a running operation, and read-only views have no controls', () => {
   const html = render({ status: 'idle', queue: [{ id: 'q', text: 'Next request' }] });
-  assert.match(html, /<summary class="chat-queue-text" aria-label="查看排队消息：Next request">Next request<\/summary>/);
+  assert.match(html, /<span class="ui-text-clamp chat-queue-entry" data-lines="1"><span id="[^"]+" class="ui-text-clamp-text" data-lines="1">Next request<\/span><\/span>/);
   assert.doesNotMatch(html, /queue-chevron/);
   assert.match(html, /data-activity="queue"/);
   assert.doesNotMatch(html, /chat-execution-actions/);
@@ -159,7 +159,7 @@ test('a pending question shares the card below its only status and action header
   const html = render({ intent: 'Generic running intent', ask: {
     requestId: 'question', question: 'Which option?', choices: ['A', 'B'], allowFreeform: true,
   } });
-  const region = html.match(/<summary class="chat-execution-head"[\s\S]+?<\/summary>/)![0];
+  const region = html.match(/<div class="chat-execution-head"[\s\S]+?(?=<div id="[^"]+" class="chat-input-card-body")/)![0];
   assert.match(html, /<div class="chat-composer" data-question="true"/);
   assert.doesNotMatch(html, /class="chat-decisions"/);
   assert.ok(html.indexOf('class="chat-execution-head"') < html.indexOf('class="chat-composer"'));
@@ -254,7 +254,7 @@ test('each decision keeps queue-clearing controls outside its answer options', (
     { elicitation: { requestId: 'elicit', message: 'Confirm' } },
   ]) {
     const html = render({ queue, ...patch });
-    const execution = html.match(/<summary class="chat-execution-head"[\s\S]+?<\/summary>/)![0];
+    const execution = html.match(/<div class="chat-execution-head"[\s\S]+?(?=<div id="[^"]+" class="chat-input-card-body")/)![0];
     assert.match(execution, /停止并清空队列/);
     assert.match(execution, /打断并处理队列/);
     assert.match(html, /Queued text/);
@@ -266,15 +266,14 @@ test('idle and read-only views do not reserve empty dock regions', () => {
   assert.doesNotMatch(render({ status: 'idle' }), /class="chat-dock"|class="chat-execution"/);
   const idleQuestion = render({ status: 'idle', ask: { requestId: 'ask', question: 'Question' } });
   assert.match(idleQuestion, /class="chat-composer" data-question="true"/);
-  assert.match(render({ status: 'idle' }), /<summary class="chat-execution-head" hidden=""/);
+  assert.match(render({ status: 'idle' }), /<div class="chat-execution-head" hidden=""/);
   assert.doesNotMatch(idleQuestion, /class="chat-decisions"/);
   assert.doesNotMatch(idleQuestion, /class="chat-execution"/);
 });
 
 test('queue text has a keyboard-readable expansion with separate copy and removal actions', () => {
   const html = render({ queue: [{ id: 'q', text: 'A long queued request' }] });
-  assert.match(html, /<details class="chat-queue-entry"><summary class="chat-queue-text"/);
-  assert.match(html, /<\/details><div class="chat-queue-copy"><span class="chat-copy"><button type="button" class="chat-copy-button ck-button" aria-label="复制排队消息"/);
+  assert.match(html, /<span class="ui-text-clamp chat-queue-entry" data-lines="1"><span id="[^"]+" class="ui-text-clamp-text" data-lines="1">A long queued request<\/span><\/span><div class="chat-queue-copy"><span class="chat-copy"><button type="button" class="chat-copy-button ck-button" aria-label="复制排队消息"/);
   assert.match(html, /<\/div><button type="button" class="chat-queue-remove ck-icon-button"/);
   assert.equal((html.match(/aria-label="复制排队消息"/g) ?? []).length, 1);
   assert.match(html, /placeholder="加入队列"/);
@@ -307,7 +306,7 @@ test('submitting uses an existing header without adding an idle header or duplic
       assert.match(html, /class="chat-input-btn send ck-icon-button" disabled=""[^>]*aria-label="正在提交" aria-busy="true"/);
       if (draft.reference.purpose.kind === 'prompt') {
         const idle = render({ status: 'idle' });
-        assert.match(idle, /<summary class="chat-execution-head" hidden=""/);
+        assert.match(idle, /<div class="chat-execution-head" hidden=""/);
         assert.match(idle, /data-icon="sending"/);
         assert.doesNotMatch(idle, /data-header="true"/);
       }
@@ -317,7 +316,7 @@ test('submitting uses an existing header without adding an idle header or duplic
     }
     const failure = render(patch);
     assert.ok(failure.indexOf('chat-input-notice" role="alert"') >= 0);
-    assert.ok(failure.indexOf('chat-input-notice" role="alert"') < failure.indexOf('<details class="chat-input-card"'));
+    assert.ok(failure.indexOf('chat-input-notice" role="alert"') < failure.indexOf('<div class="chat-input-card"'));
     assert.match(failure, /Retained answer<\/textarea>/);
     draft.dismissNotice(); draft.edit('');
   }

@@ -131,16 +131,17 @@ test('session pages share flat density and multiline settings without changing c
   assert.doesNotMatch(info.match(/\.info-session-id-value \{([^}]*)\}/)![1], /ellipsis|hidden|sticky|line-clamp/);
   assert.match(publicUi, /\.ui-field \{[^}]*flex-direction: column;/);
   assert.match(publicUi, /\.ui-select \{[^}]*width: 100%;/);
-  assert.match(info, /\.panel-expandable-text \{[^}]*-webkit-line-clamp: 2;/);
 });
 
 test('resource rows reserve collapsed text budgets and only user disclosures can grow inline', () => {
   const css = compile(new URL('../styles/components/manage.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.manage-row-text \{[^}]*-webkit-line-clamp: 1;[^}]*min-height: 1lh;/);
-  assert.match(css, /\.manage-row-text\[data-lines="2"\] \{[^}]*-webkit-line-clamp: 2;[^}]*min-height: 2lh;/);
-  assert.match(css, /\.manage-row-text\[data-expanded\] \{[^}]*display: block;[^}]*overflow: visible;/);
-  assert.match(css, /\.manage-text-disclosure, \.manage-error-disclosure \{[^}]*min-block-size: 1lh;[^}]*padding: 0;/);
-  assert.match(css, /\.manage-error-disclosure \{[^}]*text-decoration: underline;/);
+  const ui = compile(new URL('../styles/primitives/host-ui.scss', import.meta.url).pathname).css;
+  assert.match(ui, /\.ui-text-clamp-text \{[^}]*-webkit-line-clamp: 2;/);
+  assert.match(ui, /\.ui-text-clamp-text\[data-lines="1"\] \{[^}]*-webkit-line-clamp: 1;/);
+  assert.match(ui, /\.ui-text-clamp\[data-expanded\] \.ui-text-clamp-text \{[^}]*display: block;[^}]*overflow: visible;/);
+  assert.match(ui, /\.ui-text-clamp-toggle \{[^}]*min-block-size: 1lh;[^}]*padding: 0;/);
+  assert.match(css, /\.manage-row-text \.ui-text-clamp-text \{[^}]*min-height: 1lh;/);
+  assert.match(css, /\.manage-row-text \.ui-text-clamp-text\[data-lines="2"\] \{[^}]*min-height: 2lh;/);
   assert.match(css, /\.manage-detail-header \{[^}]*height: auto;/);
   assert.match(css, /\.manage-row-error \{[^}]*grid-column: 1\/-1;/);
   assert.doesNotMatch(css.match(/\.manage-row-error \{([^}]*)\}/)![1], /max-height|overflow: hidden/);

@@ -3,7 +3,7 @@ import { useId } from 'react';
 import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { Button } from './Button';
-import { ResourceStatus } from './StateNotice';
+import { OperationErrorResult } from './OperationResult';
 
 export function SessionResume({ sessionId, required, onResumed }: {
   sessionId: string; required: boolean; onResumed?: () => void;
@@ -32,7 +32,7 @@ export function SessionResume({ sessionId, required, onResumed }: {
         aria-busy={action.busy}
         aria-describedby={descriptionId}
         onClick={() => { void resume(); }}>{action.busy ? '恢复中…' : '恢复会话'}</Button>
-      {action.error && <ResourceStatus status={`恢复失败：${action.error}`} failed />}
+      {action.error && <OperationErrorResult label="恢复会话" error={action.error} cause={action.errorCause} />}
     </div>
   );
 }

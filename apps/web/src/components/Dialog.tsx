@@ -8,6 +8,7 @@ import { useKeyedAction } from '../lib/useKeyedResource';
 import { useNativeDialog } from '../lib/useNativeDialog';
 import { UxErrorNotifications } from './UxErrorNotifications';
 import { StateNotice } from './StateNotice';
+import { OperationErrorResult, OperationResult } from './OperationResult';
 import { Button } from './Button';
 
 // Both the lazy placeholder and the loaded picker own the same modal boundary.
@@ -39,7 +40,9 @@ interface DialogProps {
   // handler receives the entered text.
   input?: { placeholder?: string; initial?: string; optional?: boolean };
   confirmDisabled?: boolean;
+  // A caller-owned result sentence (already worded with lib/copy) and its state.
   error?: string;
+  errorState?: 'failed' | 'unknown';
   pending?: boolean;
   confirmLabel?: string;
   destructive?: boolean;
@@ -55,7 +58,7 @@ export function Dialog(props: DialogProps) {
 }
 
 function DialogContent({
-  title, message, input, confirmLabel = '确定', destructive, confirmDisabled, error, pending = false,
+  title, message, input, confirmLabel = '确定', destructive, confirmDisabled, error, errorState = 'unknown', pending = false,
   actionKey, onConfirm, onSuccess, onCancel,
 }: DialogProps) {
   const [value, setValue] = useState(input?.initial ?? '');
@@ -101,7 +104,8 @@ function DialogContent({
             }}
           />
         )}
-        {(error || action.error) && <StateNotice kind="error">{error || `操作失败：${action.error}`}</StateNotice>}
+        {error ? <OperationResult state={errorState}>{error}</OperationResult>
+          : action.error && <OperationErrorResult label={confirmLabel} error={action.error} cause={action.errorCause} />}
         {!action.connected && (
           <StateNotice>等待连接…请在连接恢复后核对操作结果。</StateNotice>
         )}

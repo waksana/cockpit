@@ -3,6 +3,8 @@ import { test } from 'node:test';
 import { createKeyedAsync, type ResourceConnection } from './keyedAsync';
 import { IntentHttpError } from '../net/client';
 import { canAutoRefreshSessionResource } from './useSessionResource';
+import { recordOperationFailure } from './operationErrors';
+import { dismissUxError, getUxErrors } from './errorReporter';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -340,4 +342,29 @@ test('only unloaded failures block automatic detail refresh; disabling clears th
   task.deactivate(true);
   task.activate();
   assert.equal(canAutoRefreshSessionResource(task.getSnapshot()), true);
+});
+
+test('an owner that leaves reports its orphaned mutation outcome once, while orphaned reads stay silent', async t => {
+  t.mock.method(console, 'error', () => {});
+  let now = 10_000_000;
+  t.mock.method(Date, 'now', () => now);
+  for (const leave of ['stay', 'unmount', 'reconnect'] as const) {
+    for (const kind of ['mutation', 'read'] as const) {
+      now += 60_000;
+      for (const error of getUxErrors()) dismissUxError(error.id);
+      const h = setup<void>();
+      const held = deferred<void>();
+      const result = h.task.run(() => held.promise, undefined, true);
+      if (leave === 'unmount') h.task.deactivate();
+      if (leave === 'reconnect') h.reconnect();
+      const failure = new Error(`${kind} failed`);
+      recordOperationFailure(failure, { message: `${leave} ${kind} outcome`, mutation: kind === 'mutation', uncertain: true });
+      held.reject(failure);
+      await result;
+      const expected = leave !== 'stay' && kind === 'mutation' ? [`${leave} ${kind} outcome`] : [];
+      assert.deepEqual(getUxErrors().map(error => error.message), expected, `${leave}/${kind}`);
+      // A mounted owner shows the failure itself.
+      assert.equal(h.task.getSnapshot().error, leave === 'stay' ? `${kind} failed` : null, `${leave}/${kind}`);
+    }
+  }
 });

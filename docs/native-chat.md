@@ -185,12 +185,13 @@ first/last Markdown blocks have no outside margins. Right-click uses the browser
 code/tool copy buttons remain.
 
 Execution status/actions, queue, decisions and composer share one default-open input card
-when a header is needed. The header is native `details`/`summary` with focus feedback;
-header clicks fold content below but leave status and Stop/interrupt controls. Header
+when a header is needed. The header is a shared [disclosure](frontend-guidelines.md#disclosure)
+row with a leading chevron; it folds content below but leaves status and Stop/interrupt
+controls as siblings. Header
 minimum is 32px desktop and 44px coarse pointer. Idle input has no header; long content
 and streaming do not auto-fold. The input stays in normal flow at the bottom with one flex
-budget capping notices/queue/questions/answers at 70% of Chat height, and native
-`::details-content` participates in that flex layout. Questions and choices wrap
+budget capping notices/queue/questions/answers at 70% of Chat height; the card body
+participates in that flex layout. Questions and choices wrap
 continuous identifiers at their component boundary without clipping or widening. Choices
 submit the complete original value; freeform uses existing send; choice-only questions
 block freeform. Module action rows use a 4px row gap plus 4px icon-facing text inset, with

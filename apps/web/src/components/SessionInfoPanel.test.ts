@@ -9,24 +9,25 @@ import { ModelControls, ModelOutcome } from './SessionInfoPanel';
 const render = (result: NativeModelSwitchResult) => renderToStaticMarkup(createElement(ModelOutcome, { result }));
 
 test('model outcomes distinguish actual application, pending, rejection and unknown status', () => {
-  assert.match(render({ status: 'applied' }), /已应用/);
+  assert.match(render({ status: 'applied' }), /已应用模型设置/);
   for (const result of [
     { status: 'queued' }, { status: 'deferred' }, { status: 'applied', deferred: true },
     { status: 'rejected', deferred: true },
   ]) {
     const html = render(result);
-    assert.match(html, /已接受，等待原生应用/);
+    assert.match(html, /已接受，等待生效/);
     assert.doesNotMatch(html, /已应用/);
-    assert.doesNotMatch(html, /原生报告失败/);
+    assert.doesNotMatch(html, /失败|role="alert"/);
   }
   for (const status of ['rejected', 'failed', 'cancelled']) {
-    assert.match(render({ status, message: 'Native refusal' }), /原生报告失败或拒绝.*Native refusal/);
+    assert.match(render({ status, message: 'Native refusal' }), /应用模型设置失败：Native refusal/);
     assert.match(render({ status }), /role="alert"/);
   }
-  assert.match(render({ status: 'unchanged' }), /原生设置未变/);
+  assert.match(render({ status: 'unchanged' }), /模型设置未变/);
   for (const result of [{}, { status: 'future-outcome' }]) {
     const html = render(result);
-    assert.match(html, /应用结果未确认/);
+    assert.match(html, /结果未知：.*刷新后确认，不会自动重试。/);
+    assert.match(html, /role="alert"/);
     assert.doesNotMatch(html, /已应用|设置成功/);
   }
 });
@@ -36,7 +37,8 @@ test('confirmation and persistence diagnostics preserve partial effects', () => 
     status: 'confirmation_required',
     confirmation: { targetModelDisplayName: 'Small target', currentTokens: 120, targetLimit: 80 },
   });
-  assert.match(confirmation, /原生要求确认或后续操作，尚未确认应用/);
+  assert.match(confirmation, /需要确认后才能应用/);
+  assert.doesNotMatch(confirmation, /role="alert"|失败/, 'a required confirmation is information, not a failure');
   assert.match(confirmation, /Small target.*120.*80/);
   assert.match(confirmation, /不会自动确认或继续执行/);
   assert.doesNotMatch(confirmation, /<button/);
@@ -45,11 +47,11 @@ test('confirmation and persistence diagnostics preserve partial effects', () => 
     message: 'Runtime changed', warning: 'Native warning', deprecationWarnings: ['Retired model'],
     modelState: { modelId: 'target', reasoningEffort: 'high' }, extraNativeDetail: 'Preserved',
   });
-  assert.match(applied, /已应用，但原生持久化失败.*Read-only config/);
+  assert.match(applied, /已应用模型设置.*保存模型设置失败：Read-only config/);
   assert.match(applied, /Native warning/);
   assert.doesNotMatch(applied, /Runtime changed|Retired model|extraNativeDetail|<pre/, 'raw native JSON is not rendered');
   assert.doesNotMatch(render({ persistenceError: 'Unknown application' }), /已应用/);
-  assert.match(render({ status: 'applied', persistenceError: '' }), /已应用，但原生持久化失败：原生未提供错误详情/);
+  assert.match(render({ status: 'applied', persistenceError: '' }), /保存模型设置失败：未提供原因/);
 });
 
 test('one primary outcome keeps the translated submitted combination in closed details without raw native JSON', () => {
@@ -60,13 +62,15 @@ test('one primary outcome keeps the translated submitted combination in closed d
   const html = renderToStaticMarkup(createElement(ModelOutcome, {
     result, selection: { modelId: 'native-model', reasoningEffort: 'xhigh', contextTier: 'long_context' },
   }));
-  const [primary, details] = html.split('<details');
+  const details = html.match(/<div class="operation-result-actions">.*?<div id="[^"]+" class="operation-result-details"[^>]*>[^<]*<\/div>/)![0];
+  const primary = html.replace(details, '');
   assert.equal((primary.match(/role="status"/g) ?? []).length, 1);
   assert.match(primary, /已应用/);
   assert.match(primary, /Native warning/);
   assert.doesNotMatch(primary, /Runtime changed|上次提交|Retired model/);
-  assert.match(details, /<summary>提交详情<\/summary>/);
-  assert.doesNotMatch(details, /\bopen=/);
+  assert.match(details, /aria-expanded="false"[^>]*aria-label="展开详情"/);
+  assert.match(details, /class="operation-result-details" hidden="">上次提交：/);
+  assert.doesNotMatch(details, /Native warning/);
   assert.match(details, /思考力度：极高.*上下文：长上下文/);
   assert.doesNotMatch(html, /<pre|nativeExtension|Runtime changed/, 'raw native JSON is not rendered');
 });
@@ -78,7 +82,7 @@ test('refusal, persistence failure and required confirmation stay visible withou
     { status: 'confirmation_required', message: 'Review target capacity',
       confirmation: { targetModelDisplayName: 'Small target', currentTokens: 120, targetLimit: 80 } },
   ]) {
-    const primary = render(result).split('<details')[0];
+    const primary = render(result).split('operation-result-details')[0];
     assert.match(primary, new RegExp(result.message ?? result.persistenceError!));
     if (result.confirmation) {
       assert.match(primary, /Small target.*120.*80/);
@@ -100,13 +104,13 @@ test('model controls retain missing native choices and translate known current v
   }));
   const unknown = editor(session);
   assert.match(unknown, /unknown-native-model（当前值，列表未提供）/);
-  assert.match(unknown, /当前原生值：.*思考力度：高.*上下文：标准上下文/, 'selects cannot express this native value');
+  assert.match(unknown, /当前值：.*思考力度：高.*上下文：标准上下文/, 'selects cannot express this native value');
   assert.doesNotMatch(unknown, /<button|有未应用的修改/, 'no pending bar without local edits');
   assert.doesNotMatch(unknown, /正在提交|先选择完整组合/);
   const futureEffort = editor({ ...session, currentModelId: 'known', currentReasoningEffort: 'future-effort' });
   assert.match(futureEffort, /future-effort（当前值，列表未提供）/);
   assert.match(futureEffort, /<h3 class="ck-heading">模型<\/h3>/);
-  assert.doesNotMatch(futureEffort, /当前原生值|info-model-current/, 'selects already show the native value');
+  assert.doesNotMatch(futureEffort, /当前值：|info-model-current/, 'selects already show the native value');
   assert.doesNotMatch(futureEffort, /<button|有未应用的修改/);
   assert.equal((futureEffort.match(/class="ui-select-wrap"/g) ?? []).length, 3);
   assert.equal((futureEffort.match(/data-icon="down"/g) ?? []).length, 3, 'each full-width select has the existing decorative chevron');
@@ -114,7 +118,7 @@ test('model controls retain missing native choices and translate known current v
   for (const availableModels of [undefined, []]) {
     const missing = editor({ ...session, availableModels });
     assert.match(missing, /unknown-native-model.*思考力度：高.*上下文：标准上下文/);
-    assert.match(missing, availableModels ? /原生可选模型列表为空/ : /原生可选模型列表不可用/);
+    assert.match(missing, availableModels ? /可选模型列表为空/ : /可选模型列表不可用/);
     assert.doesNotMatch(missing, /<select|<button/);
   }
 });
