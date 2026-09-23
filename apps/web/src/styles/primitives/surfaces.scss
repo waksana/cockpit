@@ -52,7 +52,9 @@
   overflow-wrap: anywhere;
 }
 
+// stylelint-disable-next-line function-disallowed-list -- literal: ::backdrop does not inherit custom properties in older engines
 .ck-modal::backdrop { background: rgba(0, 0, 0, 0.32); }
 :where(.ck-modal.ck-surface, .ck-modal > .ck-surface) {
+  // stylelint-disable-next-line function-disallowed-list -- theme-independent neutral modal shadow
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.22);
 }
