@@ -3,10 +3,10 @@
 ## Supported versions
 
 Cockpit is experimental **0.x** software. Security fixes target the latest
-[Cockpit service release](https://github.com/waksana/cockpit/releases/latest),
-starting with **v0.1.0**. Older releases, old module packages and mixed-version
+[Cockpit service release](https://github.com/waksana/cockpit/releases/latest).
+Older releases, old module packages and mixed-version
 Web/backend/MCP combinations are not supported. See the
-[version policy](docs/packaging.md#versioned-releases).
+[version policy](docs/releasing.md#versioned-releases).
 
 ## Report privately
 
@@ -54,7 +54,7 @@ or project instructions.
   A checksum downloaded with an archive detects corruption, not a compromised
   publisher or an independently authenticated signature.
 
-See [installation and remote access](docs/DEPLOY-PORTABLE.md) and the
-[architecture's authentication boundary](docs/cockpit-plan.md#authentication).
+See [installation and remote access](docs/install.md#remote-access) and the
+[architecture's authentication boundary](docs/architecture.md#authentication).
 These boundaries describe intended use, not a claim that every implementation
 error is acceptable or that the project has passed a security audit.

@@ -31,8 +31,14 @@ export function checkSourceVersion(repository = resolve(fileURLToPath(new URL('.
   // apps/mcp/package.json is checked above and is the handshake's only version source.
   assert.ok(mcp.includes("new McpServer({ name: 'cockpit-mcp-server', version: MCP_SERVER_VERSION })"),
     'MCP self-reported version must come from apps/mcp/package.json');
-  const notes = readFileSync(resolve(repository, 'docs/release-notes.md'), 'utf8');
-  assert.equal(notes.split(/\r?\n/)[0], `# Cockpit ${version}`, 'Release notes must match the workspace version');
+  const notes = readFileSync(resolve(repository, 'docs/release-notes.md'), 'utf8').split(/\r?\n/);
+  assert.equal(notes[0], `# Cockpit ${version}`, 'Release notes must match the workspace version');
+  let fenced = false;
+  const extra = notes.slice(1).find(line => {
+    if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+    return !fenced && (/^#\s/.test(line) || /^#{1,6}\s+(Cockpit\s+)?(v?\d+\.\d+\.\d+|unreleased)\b/i.test(line));
+  });
+  assert.equal(extra, undefined, 'Release notes must describe only the current version; earlier notes belong in GitHub Releases');
   return version;
 }
 
