@@ -94,11 +94,11 @@ test('module roles union shared HTTP tools, label raw instructions and persist i
   assert.deepEqual(single.mcpSources?.['board-tools']?.roles, [{ id: 'owner', name: 'Owner' }]);
   host.roles.save('native-id', value.roles);
   const replacement = new ModuleHost({ observer: f.observer });
-  assert.deepEqual(replacement.roles.read('native-id'), value.roles);
+  assert.deepEqual(await replacement.roles.read('native-id'), value.roles);
   assert.deepEqual(await host.roles.assemble('empty', []), { roles: [], config: {}, skills: [], mcpSources: {},
     fingerprint: (await host.roles.assemble('empty', [])).fingerprint });
   host.close();
-  assert.deepEqual(host.roles.read('native-id'), value.roles);
+  assert.deepEqual(await host.roles.read('native-id'), value.roles);
   await assert.rejects(host.roles.assemble('native-id', [owner]), /unavailable/);
 });
 
@@ -125,9 +125,9 @@ test('shared skills retain only actual contributors through overlapping roots, d
   assert.deepEqual(await provider.assemble('id', [...selections].reverse()), value);
   provider.save('id', value.roles);
   const cold = new ModuleRoles(f.hostRoot, 'http://127.0.0.1', () => [installed]);
-  assert.deepEqual(await cold.assemble('id', cold.read('id')), value);
+  assert.deepEqual(await cold.assemble('id', await cold.read('id')), value);
   installed.manifest.roles!.find(role => role.id === 'owner')!.name = 'Current Owner';
-  assert.deepEqual((await cold.assemble('id', cold.read('id'))).skills[0]!.module?.roles,
+  assert.deepEqual((await cold.assemble('id', await cold.read('id'))).skills[0]!.module?.roles,
     [{ id: 'executor', name: 'Executor' }, { id: 'owner', name: 'Current Owner' }]);
 });
 
@@ -156,9 +156,9 @@ test('persisted role identities read current installed labels without assembling
   roles.save('unloaded-session', [selection]);
   installed.manifest.name = 'Current module';
   installed.manifest.roles![0]!.name = 'Current worker';
-  assert.deepEqual(roles.read('unloaded-session'), [{ ...selection, moduleName: 'Current module', name: 'Current worker' }]);
+  assert.deepEqual(await roles.read('unloaded-session'), [{ ...selection, moduleName: 'Current module', name: 'Current worker' }]);
   available = false;
-  assert.deepEqual(roles.read('unloaded-session'), [selection], 'missing identities retain persisted attribution, not readiness');
+  assert.deepEqual(await roles.read('unloaded-session'), [selection], 'missing identities retain persisted attribution, not readiness');
   await assert.rejects(roles.assemble('unloaded-session', [selection]), /unavailable/);
 });
 

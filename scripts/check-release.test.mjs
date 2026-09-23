@@ -18,7 +18,7 @@ function fixture(t) {
   mkdirSync(join(root, 'docs'));
   mkdirSync(join(root, 'apps/mcp/src'));
   writeFileSync(join(root, 'apps/mcp/src/index.ts'),
-    "const server = new McpServer({ name: 'cockpit-mcp-server', version: '0.1.0' });\n");
+    "const server = new McpServer({ name: 'cockpit-mcp-server', version: MCP_SERVER_VERSION });\n");
   writeFileSync(join(root, 'docs/release-notes.md'), '# Cockpit 0.1.0\n');
   const manifest = { format: 1, product: 'cockpit', version: '0.1.0', sourceSha: 'a'.repeat(40),
     node: process.versions.node, platform: 'linux', arch: 'x64' };
@@ -50,10 +50,10 @@ test('release notes keep only the current version', t => {
   }
 });
 
-test('delivery rejects a stale MCP self-reported version', t => {
+test('delivery rejects a hard-coded MCP self-reported version', t => {
   const f = fixture(t);
   writeFileSync(join(f.root, 'apps/mcp/src/index.ts'),
-    "const server = new McpServer({ name: 'cockpit-mcp-server', version: '0.0.9' });\n");
+    "const server = new McpServer({ name: 'cockpit-mcp-server', version: '0.1.0' });\n");
   assert.throws(f.check, /MCP self-reported version/);
 });
 

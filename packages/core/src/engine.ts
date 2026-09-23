@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { randomUUID } from 'node:crypto';
-import { accessSync, constants, readdirSync, readFileSync, statSync } from 'node:fs';
+import { constants, statSync } from 'node:fs';
+import { access, readdir, readFile, stat } from 'node:fs/promises';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
 import type {
@@ -10,10 +11,10 @@ import type {
 import type {
   AgentStatus, DirListing, ExitPlanModeAction,
   McpServerGlobal, McpServerSession, McpToggleOperation, McpToggleResult,
-  ModelOption, ScheduleEntry, ServerEvent, SessionMeta, SessionPanels,
+  ScheduleEntry, ServerEvent, SessionMeta, SessionPanels,
   SessionBrief, SessionPlan, Snapshot, TodoItem, IntentResult, NativeChatPage,
   MetaResource, SessionResource, SessionProjection, PanelSection, PanelItem, NativeChatEvent,
-  RoleSelection, RoleReadiness, RoleAdditionResult, SkillSession, ResourcePreparationResult,
+  RoleSelection, RoleReadiness, RoleAdditionResult, SessionRole, SkillSession, ResourcePreparationResult,
   SessionControls, SessionControlAction, SessionControlResult, QueuedItem,
 } from '@cockpit/protocol';
 import { NativeChatRead, SessionActivity, SessionUsage, MetaResource as MetaResources, cleanSessionTitle, SessionResourcesPrepare, RESOURCE_PREPARATION_ERROR_LIMIT, SKILL_NOT_FOUND } from '@cockpit/protocol';
@@ -100,6 +101,9 @@ interface State {
   interruptedEpoch?: number;
   interactionId?: string;
   operations: number;
+  // Read-only resource leases retain the handle like operations but are not
+  // published as activeOperations, so passive reads emit no SSE frames.
+  readLeases: number;
   mcpOperations: number;
   sends: number;
   accepted: Set<string>;
@@ -152,9 +156,13 @@ async function settled<T extends readonly unknown[]>(work: { [K in keyof T]: Pro
   return results.map(result => (result as PromiseFulfilledResult<unknown>).value) as unknown as T;
 }
 
+function activeOperations(st: State): number {
+  return st.operations - st.readLeases;
+}
+
 function stateFor(id: string): State {
   return {
-    id, sdk: null, closing: false, operations: 0, mcpOperations: 0, sends: 0,
+    id, sdk: null, closing: false, operations: 0, readLeases: 0, mcpOperations: 0, sends: 0,
     accepted: new Set(), steeringAccepted: new Set(), decisions: new Map(), sendReceipts: new Set(),
     revision: 0, activityRevision: 0, turnEpoch: 0,
     scheduleGate: Promise.resolve(),
@@ -172,7 +180,11 @@ export class Engine {
   }
   listRoles() { return this.roles?.list() ?? []; }
 
-  private roleState(id: string, st?: State, roles = this.roles?.read(id) ?? []) {
+  private async savedRoles(id: string): Promise<SessionRole[]> {
+    return await this.roles?.read(id) ?? [];
+  }
+
+  private roleState(st: State | undefined, roles: SessionRole[]) {
     const appliedRoles = st?.sdk ? st.roleAssembly?.roles ?? [] : [];
     const rolesNeedReload = !!st?.sdk && (roles.length !== appliedRoles.length
       || roles.some(role => !appliedRoles.some(applied =>
@@ -181,7 +193,7 @@ export class Engine {
   }
 
   async roleReadiness(id: string, requested?: RoleSelection[]): Promise<RoleReadiness> {
-    let roles = this.roles?.read(id) ?? [];
+    let roles = await this.savedRoles(id);
     const st = this.sessions.get(id);
     const result: RoleReadiness = { sessionId: id, roles, appliedRoles: [], rolesNeedReload: false, loaded: false, ready: false, reasons: [] };
     try {
@@ -190,8 +202,8 @@ export class Engine {
       }
       const sdk = st && await this.liveSession(st);
       result.loaded = !!sdk;
-      roles = this.roles?.read(id) ?? [];
-      Object.assign(result, this.roleState(id, st, roles));
+      roles = await this.savedRoles(id);
+      Object.assign(result, this.roleState(st, roles));
       if (!sdk || !st) { result.reasons.push('Session is unloaded'); return result; }
       if (st.closing || st.load) { result.reasons.push('Session is loading or closing'); return result; }
       if (result.rolesNeedReload) {
@@ -239,28 +251,38 @@ export class Engine {
       }
       const current = await this.liveSession(st);
       result.loaded = !!current;
-      Object.assign(result, this.roleState(id, st));
+      Object.assign(result, this.roleState(st, await this.savedRoles(id)));
       if (result.rolesNeedReload) result.reasons.push('Saved roles changed during readiness; reload is required');
       if (current !== sdk || st.closing || st.roleAssembly !== applied) {
         result.reasons.push('Native session changed or is closing');
       }
     } catch (error) {
       result.loaded = !!st?.sdk;
-      Object.assign(result, this.roleState(id, st, roles));
+      Object.assign(result, this.roleState(st, roles));
       result.reasons.push(`Readiness unconfirmed: ${messageOf(error)}`);
     }
     result.ready = result.reasons.length === 0;
     return result;
   }
 
+  // Serialize each session's read/union/write so concurrent additions cannot drop one another.
   async addRoles(id: string, additions: RoleSelection[]): Promise<RoleAdditionResult> {
+    const previous = this.roleWrites.get(id) ?? Promise.resolve();
+    const run = previous.then(() => this.saveRoleAdditions(id, additions));
+    const tail = run.then(() => {}, () => {});
+    this.roleWrites.set(id, tail);
+    try { return await run; }
+    finally { if (this.roleWrites.get(id) === tail) this.roleWrites.delete(id); }
+  }
+
+  private async saveRoleAdditions(id: string, additions: RoleSelection[]): Promise<RoleAdditionResult> {
     if (!this.roles) throw new Error('Module roles are unavailable');
     if (!additions.length) throw new Error('At least one additional role is required');
     const st = await this.state(id);
     this.assertAdmission(st);
     if (st.load) throw new Error('Session is loading; save roles after the lifecycle transition completes');
     try {
-      let selected = this.roles.read(id);
+      let selected = await this.roles.read(id);
       const catalog = this.roles.list();
       const combined = new Map(selected.map(role => [`${role.moduleId}/${role.roleId}`, role]));
       for (const addition of additions) {
@@ -272,27 +294,27 @@ export class Engine {
       }
       if (combined.size > 64) throw new Error('A session can select at most 64 roles');
       if (combined.size === selected.length) {
-        return { sessionId: id, status: 'unchanged', loaded: !!st.sdk, ...this.roleState(id, st, selected) };
+        return { sessionId: id, status: 'unchanged', loaded: !!st.sdk, ...this.roleState(st, selected) };
       }
-      // Persistence is synchronous: concurrent saves cannot interleave this read/union/write.
       try {
         this.roles.save(id, [...combined.values()]);
-        selected = this.roles.read(id);
+        selected = await this.roles.read(id);
         if (selected.length !== combined.size || selected.some(role => !combined.has(`${role.moduleId}/${role.roleId}`))) {
           throw new Error('Saved role selection did not confirm the requested additions');
         }
       } catch (error) {
         this.invalidate(st, ['identity']);
-        try { selected = this.roles.read(id); }
+        try { selected = await this.roles.read(id); }
         catch (readError) {
           throw new AggregateError([error, readError],
-            'Role persistence outcome and saved selection are unconfirmed; inspect session/get before explicitly retrying. No reload, rollback or retry was performed.');
+            'Role persistence outcome and saved selection are unconfirmed; inspect session/get before explicitly retrying. No reload, rollback or retry was performed.',
+            { cause: readError });
         }
-        return { sessionId: id, status: 'uncertain', loaded: !!st.sdk, ...this.roleState(id, st, selected),
+        return { sessionId: id, status: 'uncertain', loaded: !!st.sdk, ...this.roleState(st, selected),
           error: messageOf(error),
           recovery: 'Inspect session/get for saved roles before explicitly retrying. No reload, rollback or retry was performed.' };
       }
-      const fields = this.roleState(id, st, selected);
+      const fields = this.roleState(st, selected);
       this.patch(st, fields);
       this.invalidate(st, ['identity']);
       return { sessionId: id, status: 'saved', loaded: !!st.sdk, ...fields };
@@ -304,6 +326,7 @@ export class Engine {
   private readonly sessions = new Map<string, State>();
   private readonly creating = new Set<string>();
   private readonly removing = new Set<string>();
+  private readonly roleWrites = new Map<string, Promise<void>>();
   private readonly bus = new EventEmitter().setMaxListeners(0);
   private readonly nativeObservers = new Map<(event: NativeObservation) => void | Promise<void>, ReadonlySet<string> | undefined>();
   private agentStatus: AgentStatus = 'starting';
@@ -483,9 +506,9 @@ export class Engine {
     };
   }
 
-  private listedMeta(row: SessionMetadata): SessionMeta {
+  private async listedMeta(row: SessionMetadata): Promise<SessionMeta> {
     return {
-      ...this.roleState(row.sessionId),
+      ...this.roleState(undefined, await this.savedRoles(row.sessionId)),
       sessionId: row.sessionId, title: cleanSessionTitle(row.summary) || row.sessionId.slice(0, 8),
       cwd: row.context?.workingDirectory ?? '',
       createdAt: row.startTime.getTime(), lastActivity: row.modifiedTime.getTime(), lastActivitySource: 'native-persisted',
@@ -506,7 +529,7 @@ export class Engine {
       const st = this.sessions.get(id);
       const row = byId.get(id);
       const meta = st ? await this.getResources(id, resources, row) : row ? {
-        ...this.listedMeta(row), ...(resources.includes('control') ? { activity: null } : {}),
+        ...await this.listedMeta(row), ...(resources.includes('control') ? { activity: null } : {}),
       } : await this.getResources(id, resources);
       if (meta) result.push(completeMeta(meta));
     }
@@ -529,7 +552,7 @@ export class Engine {
     this.assertReadable(st);
     if (st) {
       st.operations++;
-      this.patch(st, { activeOperations: st.operations });
+      st.readLeases++;
     }
     try {
       const sdk = st && await this.liveSession(st);
@@ -537,11 +560,11 @@ export class Engine {
       if (!st || !sdk) {
         const row = listedRow ?? await this.untilFatal(() => this.runtime.getSessionMetadata(id));
         return row ? {
-          ...this.listedMeta(row),
+          ...await this.listedMeta(row),
           ...(resources.includes('control') ? { activity: null } : {}),
           ...(resources.includes('controls') ? { controls: null } : {}),
           ...(st ? { loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling,
-            activeOperations: Math.max(0, st.operations - 1), activeMcpOperations: st.mcpOperations,
+            activeOperations: activeOperations(st), activeMcpOperations: st.mcpOperations,
             ...this.decisionFields(st) } : {}),
         } : null;
       }
@@ -569,7 +592,7 @@ export class Engine {
         ? sessionModelOptions(models.list, await this.withSession(st, sdk, () => this.runtime.models())) : nativeModels;
       return {
         sessionId: id, loaded: true,
-        ...(wants.has('identity') ? this.roleState(id, st) : {}),
+        ...(wants.has('identity') ? this.roleState(st, await this.savedRoles(id)) : {}),
         ...(metadata ? {
           title: cleanSessionTitle(name?.name ?? metadata.summary) || id.slice(0, 8), cwd: metadata.workingDirectory,
           ...(name && nameProvenance ? { nativeName: name.name ?? null } : {}),
@@ -598,7 +621,7 @@ export class Engine {
           ? { queue: this.queueProjection((control?.queue ?? queue)!) } : {}),
         ...(todos ? { todo: this.todoSummary(todos) } : {}),
         ...(schedules ? { scheduleCount: schedules.entries.length } : {}),
-        activeOperations: Math.max(0, st.operations - 1),
+        activeOperations: activeOperations(st),
         loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling,
         ...this.decisionFields(st),
       };
@@ -609,7 +632,7 @@ export class Engine {
     } finally {
       if (st) {
         st.operations--;
-        this.patch(st, { activeOperations: st.operations });
+        st.readLeases--;
         this.release(st);
       }
     }
@@ -680,7 +703,7 @@ export class Engine {
 
   private async config(st: State, cwd?: string): Promise<{ config: SessionConfig; assembly?: RoleAssembly }> {
     const disabled = await this.globalDisabledSkills();
-    const selected = this.roles?.read(st.id) ?? [];
+    const selected = await this.savedRoles(st.id);
     const assembly = selected.length ? await this.roles!.assemble(st.id, selected) : undefined;
     if (assembly?.skills.length) {
       const existing = await this.discoverSkills(cwd ?? st.observedCwd ?? undefined);
@@ -1183,7 +1206,7 @@ export class Engine {
     this.assertAdmission(st);
     if (st.cancelling) throw new Error('Session cancellation is in progress');
     st.operations++;
-    this.patch(st, { activeOperations: st.operations });
+    this.patch(st, { activeOperations: activeOperations(st) });
     // Merge a mutation's native resource event with its readback notification.
     // Control/queue hints still flow immediately while the operation is busy.
     const held = changes.filter(resource => resource !== 'control' && resource !== 'controls' && resource !== 'queue');
@@ -1201,7 +1224,7 @@ export class Engine {
       throw error;
     } finally {
       st.operations--;
-      this.patch(st, { activeOperations: st.operations });
+      this.patch(st, { activeOperations: activeOperations(st) });
       if (changes.length) this.invalidate(st, changes);
       for (const resource of held) {
         const count = st.resourceWrites.get(resource)! - 1;
@@ -1249,7 +1272,7 @@ export class Engine {
     const st = await this.state(id);
     this.assertAdmission(st);
     if (st.cancelling) return st.cancelling;
-    if (st.load || st.operations) return Promise.reject(new Error('Session operation is still in progress'));
+    if (st.load || activeOperations(st)) return Promise.reject(new Error('Session operation is still in progress'));
     this.patch(st, { cancelling: true, error: null });
     st.cancelling = this.untilFatal(async () => {
       const sdk = await this.liveSession(st);
@@ -1292,7 +1315,7 @@ export class Engine {
   async interrupt(id: string): Promise<IntentResult<'session/interrupt'>> {
     const st = await this.state(id);
     if (st.interrupting) return st.interrupting;
-    if (st.load || st.operations || st.cancelling) return Promise.reject(new Error('Session operation is still in progress'));
+    if (st.load || activeOperations(st) || st.cancelling) return Promise.reject(new Error('Session operation is still in progress'));
     const pending = this.operation(id, async (sdk) => {
       const target = { epoch: st.turnEpoch, interactionId: st.interactionId, decisions: new Map(st.decisions) };
       st.interruptTurn = target;
@@ -1342,7 +1365,7 @@ export class Engine {
     assertOwner();
     const admittedTurn = { epoch: st.turnEpoch, interactionId: st.interactionId, decisions: new Map(st.decisions) };
     st.operations++;
-    this.patch(st, { activeOperations: st.operations });
+    this.patch(st, { activeOperations: activeOperations(st) });
     try {
       return await this.serializeMutation(st, 'controlGate', async () => {
         assertOwner();
@@ -1555,7 +1578,7 @@ export class Engine {
       });
     } finally {
       st.operations--;
-      this.patch(st, { activeOperations: st.operations });
+      this.patch(st, { activeOperations: activeOperations(st) });
       this.invalidate(st, ['control', 'queue', 'tasks']);
       this.release(st);
     }
@@ -1702,7 +1725,7 @@ export class Engine {
         const sdk = st.sdk;
         try {
           if (!sdk) throw new SessionUnloadedError();
-          const roleState = this.roleState(st.id, st);
+          const roleState = this.roleState(st, await this.savedRoles(st.id));
           if (roleState.rolesNeedReload) {
             throw new Error('Saved roles differ from this native handle; explicitly reload when idle before resource preparation');
           }
@@ -1714,7 +1737,7 @@ export class Engine {
             if (current.fingerprint !== applied.fingerprint) {
               throw new Error('Current role resources differ from this native handle; resource preparation was not attempted');
             }
-            if (this.roleState(st.id, st).rolesNeedReload || st.roleAssembly !== applied) {
+            if (this.roleState(st, await this.savedRoles(st.id)).rolesNeedReload || st.roleAssembly !== applied) {
               throw new Error('Roles changed during resource preparation preflight');
             }
           }
@@ -1781,7 +1804,7 @@ export class Engine {
                 observeMcp(await readMcp(), item);
                 if (item.enabled) item.effect = 'enabled';
               } catch (readError) {
-                throw new Error(`${messageOf(error)}; MCP readback unconfirmed: ${messageOf(readError)}`);
+                throw new Error(`${messageOf(error)}; MCP readback unconfirmed: ${messageOf(readError)}`, { cause: readError });
               }
               throw error;
             }
@@ -1959,7 +1982,7 @@ export class Engine {
     if (st.closing || this.lifecycle) throw new Error('Session lifecycle transition is in progress');
     // Protect these reads from close without loading or creating new work.
     st.operations++;
-    this.patch(st, { activeOperations: st.operations });
+    this.patch(st, { activeOperations: activeOperations(st) });
     try {
       const sdk = await this.liveSession(st);
       if (!sdk) throw new SessionUnloadedError();
@@ -1972,7 +1995,7 @@ export class Engine {
       return SessionUsage.parse({ sessionId: id, sampledAt: Date.now(), context: context.contextAttribution ?? null, usage });
     } finally {
       st.operations--;
-      this.patch(st, { activeOperations: st.operations });
+      this.patch(st, { activeOperations: activeOperations(st) });
       this.release(st);
     }
   }
@@ -2131,7 +2154,7 @@ export class Engine {
         }
         catch (readError) {
           this.assertAvailable();
-          throw new Error(`${operation.error}; MCP state is unknown: ${messageOf(readError)}`);
+          throw new Error(`${operation.error}; MCP state is unknown: ${messageOf(readError)}`, { cause: readError });
         }
         operation.status = actual.status;
         if (result.host?.pendingConnections.length) operation.state = 'settling';
@@ -2211,8 +2234,9 @@ export class Engine {
     if (!skill) throw new SkillNotFoundError();
     if (!skill.path) return unsupported('Skill body without a public local path');
     const modules = await this.roles?.globalSkillSources?.(skill.path);
+    const body = await readFile(skill.path, 'utf8');
     return { name: skill.name, description: skill.description, source: skill.source,
-      userInvocable: skill.userInvocable, enabled: skill.enabled, body: readFileSync(skill.path, 'utf8'),
+      userInvocable: skill.userInvocable, enabled: skill.enabled, body,
       ...(modules?.length ? { modules } : {}) };
   }
   async setGlobalSkill(name: string, enabled: boolean, cwd?: string): Promise<void> {
@@ -2401,7 +2425,7 @@ export class Engine {
     });
   }
 
-  listDir(path?: string): DirListing {
+  async listDir(path?: string): Promise<DirListing> {
     let target = path === undefined ? homedir() : path.trim();
     if (!target) throw Object.assign(new Error('Directory path must not be empty; omit path to list the home directory.'), {
       statusCode: 400, code: 'INVALID_DIRECTORY_PATH',
@@ -2410,9 +2434,9 @@ export class Engine {
     target = resolve(target);
     let names: string[];
     try {
-      names = readdirSync(target);
+      names = await readdir(target);
       // Readable names without search permission would otherwise look like an empty directory.
-      accessSync(target, constants.R_OK | constants.X_OK);
+      await access(target, constants.R_OK | constants.X_OK);
     } catch (error) {
       if (error instanceof Error && 'code' in error) {
         const statusCode = error.code === 'ENOENT' ? 404 : error.code === 'ENOTDIR' ? 400
@@ -2421,10 +2445,11 @@ export class Engine {
       }
       throw error;
     }
-    const entries = names.filter(name => !name.startsWith('.')).flatMap(name => {
-      try { return [{ name, isDir: statSync(join(target, name)).isDirectory() }]; }
+    const directory = target;
+    const entries = (await Promise.all(names.filter(name => !name.startsWith('.')).map(async name => {
+      try { return [{ name, isDir: (await stat(join(directory, name))).isDirectory() }]; }
       catch { return []; }
-    }).sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name));
+    }))).flat().sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name));
     return { path: target, parent: dirname(target) === target ? null : dirname(target), entries };
   }
 

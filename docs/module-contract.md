@@ -338,7 +338,7 @@ GET /_modules
 /_modules/assets/<id>/<digest>/<declared-path>
 /_modules/workers/<id>/worker.js
 ```
-`/_modules` returns successfully activated frontend modules, backend-only active state, and errors/diagnostics. Errors do not automatically mean a module stopped; actual runtime identity is in active/modules. API and asset URLs are digest-bound. Frontend entry/styles/assets must be declared roots. Old digest paths do
+`/_modules` returns successfully activated frontend modules, backend-only active state, and errors. `errors[].stage` is `activation` (not loaded) or `runtime` (lifecycle/background failures of a loaded module, such as `onReady`, event handlers or `context.report`); only the latest error per module and stage is kept. Module HTTP request failures (such as a 409 digest mismatch or a handler exception) are already returned to the caller, so they are only logged and not listed. Errors do not automatically mean a module stopped; actual runtime identity is in active/modules. API and asset URLs are digest-bound. Frontend entry/styles/assets must be declared roots. Old digest paths do
 not fall back to newer packages.
 
 Browser `context.request(path, init)` sends relative module API requests with host credentials and `x-cockpit-module-digest`. Mutating methods require the matching digest header. GET/HEAD may omit it for image/video-style fetches, but the URL still contains the digest; a wrong header is rejected. Digest binding is not

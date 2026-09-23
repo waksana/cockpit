@@ -10,6 +10,7 @@ import { mockHttp } from '../../test-support/mock-http.ts';
 
 type Readers = Parameters<typeof readNativeChat>[1];
 type Event = Awaited<ReturnType<Readers['persisted']>>['events'][number];
+type PageEvent = NativeChatPage['events'][number];
 type ReadParams = Parameters<NonNullable<Readers['live']>['read']>[0];
 const event = (id: string, content = id): Event => ({
   id, parentId: null, timestamp: '2026-09-10T00:00:00.000Z',
@@ -23,6 +24,7 @@ const nativeCalls: { method: 'persisted' | 'read' | 'tail'; params?: unknown }[]
 const requests: NativeChatRead[] = [];
 const deliveredPages: NativeChatPage[] = [];
 const unused = async (): Promise<never> => { throw new Error('Unexpected native method'); };
+const pageEvent = (item: Event): PageEvent => ({ ...item, data: item.data as unknown as Record<string, unknown> });
 
 function nativePage(params: ReadParams) {
   const selected = events.filter(item =>
@@ -324,7 +326,7 @@ for (const changed of [
 }
 
 test('all-agent and explicit child filters reach the native reader unchanged', async () => {
-  events = [event('parent'), { ...event('child'), agentId: 'child-agent', parentToolCallId: 'parent-tool' }];
+  events = [event('parent'), { ...event('child'), agentId: 'child-agent', parentToolCallId: 'parent-tool' } as unknown as Event];
   const page = NativeChatPage.parse(await json({ source: 'live' }));
   assert.equal(page.events.length, 2);
   assert.equal(page.events[1]!.agentId, 'child-agent');
@@ -404,7 +406,7 @@ test('unloaded live sources do not resume or fall back to persisted reads', asyn
 
 for (const mismatch of [
   { sessionId: 'wrong' }, { source: 'live' as const }, { direction: 'forward' as const },
-  { events: [event('a'), event('b')] },
+  { events: [pageEvent(event('a')), pageEvent(event('b'))] },
 ]) {
   test(`mismatched backend page fails without retry: ${JSON.stringify(mismatch)}`, async () => {
     override = mismatch;

@@ -8,8 +8,8 @@ stated otherwise. First-party test files are not runtime dependencies.
 ## Fast path
 
 ```sh
-pnpm test     # every workspace suite + scripts/*.test.mjs (what CI runs)
-pnpm lint     # Web ESLint + Stylelint
+pnpm test     # every workspace suite + scripts/*.test.mjs + backend test typecheck (what CI runs)
+pnpm lint     # backend/scripts ESLint (root config), then Web ESLint + Stylelint
 pnpm build    # current build, including Web typecheck
 ```
 
@@ -24,6 +24,8 @@ Pick the smallest scope that covers the change:
 | MCP mapping, attachments, paging, transport | `pnpm --filter @cockpit/mcp test` |
 | Web native window, drafts, interaction | `pnpm --filter @cockpit/web test` |
 | Web types / lint | `pnpm --filter @cockpit/web typecheck` / `pnpm --filter @cockpit/web lint` |
+| Backend test types | `pnpm typecheck:test` (per package: `pnpm --filter <pkg> typecheck:test`) |
+| Backend / scripts lint | `pnpm exec eslint .` |
 | Release and package checks | `node --test scripts/*.test.mjs` ([releasing](releasing.md)) |
 
 To target files, use each package's existing Node test/tsx runner; do not add a test

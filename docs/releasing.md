@@ -93,8 +93,8 @@ Before each delivery:
 
 1. Check the target's installed versions/digests and selection; the candidate
    version must be unused and built from a verified commit.
-2. Update all workspace versions, the MCP self-reported version
-   (`apps/mcp/src/index.ts`), the lockfile if needed and `docs/release-notes.md`.
+2. Update all workspace versions (the MCP self-reported version is read from
+   `apps/mcp/package.json`), the lockfile if needed and `docs/release-notes.md`.
    `pnpm test` (via `scripts/check-release.test.mjs`) checks that they agree.
 3. Build from one clean commit, run relevant checks and consumer pairing checks,
    and use CI on the latest head.

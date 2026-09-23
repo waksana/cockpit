@@ -204,19 +204,37 @@ test('app shutdown aborts streams without waiting for a non-cancellable native r
   assert.equal(calls, 1);
 });
 
-class FakeRaw extends EventEmitter {
+type TestStreamRaw = Parameters<typeof writeChatStreamFrame>[0];
+type TestStreamReturn = ReturnType<TestStreamRaw['off']>;
+
+class FakeRaw {
+  private readonly events = new EventEmitter();
   destroyed = false;
   writableEnded = false;
   chunks: Buffer[] = [];
   writable = false;
+  once(eventName: string | symbol, listener: (...args: unknown[]) => void): TestStreamReturn {
+    this.events.once(eventName, listener);
+    return this as unknown as TestStreamReturn;
+  }
+  off(eventName: string | symbol, listener: (...args: unknown[]) => void): TestStreamReturn {
+    this.events.off(eventName, listener);
+    return this as unknown as TestStreamReturn;
+  }
+  emit(eventName: string | symbol, ...args: unknown[]) {
+    return this.events.emit(eventName, ...args);
+  }
+  listenerCount(eventName: string | symbol) {
+    return this.events.listenerCount(eventName);
+  }
   write(chunk: string): boolean {
     this.chunks.push(Buffer.from(chunk));
     return this.writable;
   }
-  destroy(): this {
+  destroy(): TestStreamReturn {
     this.destroyed = true;
     this.emit('close');
-    return this;
+    return this as unknown as TestStreamReturn;
   }
 }
 
@@ -274,7 +292,7 @@ test('index registration uses lazy test engine and existing CSRF gate without sn
       throw new Error(`stream must not access engine.${String(name)}`);
     },
   }) as Parameters<typeof setTestDependencies>[0]['engine'];
-  setTestDependencies({ engine, push: {} as Parameters<typeof setTestDependencies>[0]['push'] });
+  setTestDependencies({ engine });
   try {
     const rejected = await app.inject({
       method: 'POST', url: '/chat/stream',

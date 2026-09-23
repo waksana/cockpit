@@ -654,7 +654,7 @@ export const Intents = {
   },
   'runtime/snapshot': {
     description: 'Read global models, readiness, permission policy (always auto-approve), and session metadata in one passive query. Interaction modes do not change permissions.',
-    body: z.object({}),
+    body: z.object({}).strict(),
     result: Snapshot,
   },
   'session/new': {
@@ -704,7 +704,7 @@ export const Intents = {
     result: z.object({ ok: z.boolean(), queued: z.boolean().optional() }),
   },
   cancel: {
-    body: z.object({ sessionId: z.string() }),
+    body: z.object({ sessionId: z.string() }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   'session/interrupt': {
@@ -724,11 +724,11 @@ export const Intents = {
       modelId: z.string(),
       reasoningEffort: z.string().optional(),
       contextTier: ContextTier.optional(),
-    }),
+    }).strict(),
     result: z.object({ ok: z.literal(true), result: NativeModelSwitchResult }),
   },
   'session/rename': {
-    body: z.object({ sessionId: z.string(), name: z.string() }),
+    body: z.object({ sessionId: z.string(), name: z.string() }).strict(),
     result: z.object({ ok: z.boolean(), title: z.string().optional() }),
   },
   'session/compact': {
@@ -743,7 +743,7 @@ export const Intents = {
   },
   setMode: {
     description: 'Set interaction mode: interactive, plan, or autopilot. Permissions remain always auto-approved (allow-all) in every mode. ok acknowledges the returned native result, not application; inspect result.status, confirmation, deferImplementation and armInteractiveContinuation. Required native follow-up is reported, never automatically sent.',
-    body: z.object({ sessionId: z.string(), mode: AgentMode }),
+    body: z.object({ sessionId: z.string(), mode: AgentMode }).strict(),
     result: z.object({ ok: z.literal(true), result: NativeModeSetResult }),
   },
   'session/delete': {
@@ -753,7 +753,7 @@ export const Intents = {
   },
   'session/unload': {
     description: 'Unload an idle native session without deleting persisted history. Empty never-messaged sessions may disappear; session/get reports actual presence. Never creates a replacement or cancels busy work.',
-    body: z.object({ sessionId: z.string() }),
+    body: z.object({ sessionId: z.string() }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   'session/load': {
@@ -763,57 +763,57 @@ export const Intents = {
   },
   'session/reload': {
     description: 'Explicitly resume an unloaded session, or close and resume an existing idle loaded session using native configuration discovery. Never creates another ID or sends a message. An empty never-messaged session may disappear on close and then fail to resume; no automatic replacement. Native relative schedule delays restart on resume.',
-    body: z.object({ sessionId: z.string() }),
+    body: z.object({ sessionId: z.string() }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   'session/usage': {
     description: 'Read native context attribution and accumulated usage on an already-loaded session. Never resumes, infers, compacts or scans history. Context is native tokenization of current system/messages/tool definitions; promptTokenLimit is from that same native snapshot. Last-call input/output are the latest main-agent call, not current context. Model totals are the native available aggregate; persistence and auxiliary-call coverage are not guaranteed by this adapter. Null context means uninitialized, not zero.',
-    body: z.object({ sessionId: z.string().min(1) }),
+    body: z.object({ sessionId: z.string().min(1) }).strict(),
     result: SessionUsage,
   },
   'session/plan': {
-    body: z.object({ sessionId: z.string() }),
+    body: z.object({ sessionId: z.string() }).strict(),
     result: SessionPlan,
   },
   'session/panels': {
-    body: z.object({ sessionId: z.string() }),
+    body: z.object({ sessionId: z.string() }).strict(),
     result: SessionPanels,
   },
   'session/panel': {
     description: 'Read one native panel section on an already-loaded session. Other sections are not read. Use session/panels to read all five sections.',
-    body: z.object({ sessionId: z.string(), section: PanelSection }),
+    body: z.object({ sessionId: z.string(), section: PanelSection }).strict(),
     result: z.object({ items: z.array(PanelItem) }),
   },
   respondAsk: {
-    body: z.object({ sessionId: z.string(), requestId: z.string(), answer: z.string(), wasFreeform: z.boolean() }),
+    body: z.object({ sessionId: z.string(), requestId: z.string(), answer: z.string(), wasFreeform: z.boolean() }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   respondPlan: {
-    body: z.object({ sessionId: z.string(), requestId: z.string(), action: ExitPlanModeAction }),
+    body: z.object({ sessionId: z.string(), requestId: z.string(), action: ExitPlanModeAction }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   planSupersede: {
     description: 'Return approved:false and feedback:message to the native pending plan callback. Cockpit sends no separate prompt or mode change; subsequent behavior is controlled by the native runtime.',
-    body: z.object({ sessionId: z.string(), requestId: z.string(), message: z.string() }),
+    body: z.object({ sessionId: z.string(), requestId: z.string(), message: z.string() }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   respondElicitation: {
-    body: z.object({ sessionId: z.string(), requestId: z.string(), action: z.enum(['accept', 'decline', 'cancel']) }),
+    body: z.object({ sessionId: z.string(), requestId: z.string(), action: z.enum(['accept', 'decline', 'cancel']) }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   'queue/remove': {
-    body: z.object({ sessionId: z.string(), itemId: z.string() }),
+    body: z.object({ sessionId: z.string(), itemId: z.string() }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   'session/refresh': {
-    body: z.object({}),
+    body: z.object({}).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   // Synchronous authoritative list of existing sessions. Unlike
   // session/refresh (which only nudges the SSE snapshot), this returns the data
   // in the result so the cockpit MCP can read it over plain HTTP.
   'session/list': {
-    body: z.object({}),
+    body: z.object({}).strict(),
     result: z.object({ sessions: z.array(SessionBrief) }),
   },
   // Full authoritative metadata for ONE session, unlike the narrowed SSE
@@ -821,81 +821,81 @@ export const Intents = {
   // act (queue itemId, ask/plan/elicitation requestId), the live model/mode/status,
   // todo + attention, etc. Returns meta:null if the id isn't a known live session.
   'session/get': {
-    body: z.object({ sessionId: z.string() }),
+    body: z.object({ sessionId: z.string() }).strict(),
     result: z.object({ meta: SessionMeta.nullable() }),
   },
   'session/resources': {
     description: 'Read only requested metadata resources, without loading a session. Control includes sampled native activity flags and typed task/queue/MCP counts, not task descriptions or queue text. The separate controls resource adds active native task IDs/titles, unconsumed steering and the loaded-handle token for session/control; queue provides addressable queued items and canSteer. Null activity/controls is unavailable or invalidated, not idle; omission means not requested. loaded:false invalidates previous native fields; meta:null means unknown session. Display and tokens are not permission to delete, unload or restart; mutations independently confirm fresh safety.',
-    body: z.object({ sessionId: z.string(), resources: z.array(MetaResource).min(1).max(MetaResource.options.length) }),
+    body: z.object({ sessionId: z.string(), resources: z.array(MetaResource).min(1).max(MetaResource.options.length) }).strict(),
     result: z.object({ meta: SessionProjection.nullable() }),
   },
   'mcp/global': {
     description: 'Read Copilot native user MCP configuration and defaults without activating a session.',
-    body: z.object({}),
+    body: z.object({}).strict(),
     result: z.object({ servers: z.array(McpServerGlobal) }),
   },
   'mcp/global-default': {
     description: 'Enable or disable a server in Copilot native user configuration for future sessions. Active session connections are unchanged.',
-    body: z.object({ name: z.string(), on: z.boolean() }),
+    body: z.object({ name: z.string(), on: z.boolean() }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   'mcp/refresh': {
     description: 'Invalidate the native MCP configuration cache. Does not restart sessions or replay Cockpit preferences.',
-    body: z.object({}),
+    body: z.object({}).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   // Native reload updates one loaded session and re-applies global defaults.
   'mcp/reload-session': {
     description: 'Reload MCP connections on an idle loaded session through native MCP reload. Temporary session choices may revert to native global defaults. Does not load, close or replace the session.',
-    body: z.object({ sessionId: z.string() }),
+    body: z.object({ sessionId: z.string() }).strict(),
     result: z.object({ ok: z.boolean(), reconnected: z.number() }),
   },
   'mcp/session': {
-    body: z.object({ sessionId: z.string() }),
+    body: z.object({ sessionId: z.string() }).strict(),
     result: z.object({
       loaded: z.boolean(),
       servers: z.array(McpServerSession),
     }),
   },
   'mcp/session-toggle': {
-    body: z.object({ sessionId: z.string(), name: z.string(), on: z.boolean() }),
+    body: z.object({ sessionId: z.string(), name: z.string(), on: z.boolean() }).strict(),
     result: McpToggleResult,
   },
   'skills/global': {
     description: 'List global skills using optional cwd; omitted cwd uses the server home directory, never an arbitrary session.',
-    body: z.object({ cwd: z.string().min(1).optional() }),
+    body: z.object({ cwd: z.string().min(1).optional() }).strict(),
     result: z.object({ skills: z.array(SkillGlobal) }),
   },
   // Read one skill's full detail incl. the raw SKILL.md file (lazy — only when its
   // detail pane opens), so the list payload stays lean. A name absent from the
   // discovered catalog fails with HTTP 404 and code SKILL_NOT_FOUND.
   'skills/read': {
-    body: z.object({ name: z.string(), cwd: z.string().min(1).optional() }),
+    body: z.object({ name: z.string(), cwd: z.string().min(1).optional() }).strict(),
     result: SkillGlobal.extend({
       body: z.string().optional(),
     }),
   },
   'skills/session': {
-    body: z.object({ sessionId: z.string() }),
+    body: z.object({ sessionId: z.string() }).strict(),
     result: z.object({ skills: z.array(SkillSession) }),
   },
   'skills/session-toggle': {
-    body: z.object({ sessionId: z.string(), name: z.string(), enabled: z.boolean() }),
+    body: z.object({ sessionId: z.string(), name: z.string(), enabled: z.boolean() }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   'skills/global-toggle': {
     description: 'Enable or disable a skill in Copilot native global configuration. Optional cwd selects discovery context for project skills; persistence remains global. Does not create sessions or store a Cockpit override.',
-    body: z.object({ name: z.string().min(1), enabled: z.boolean(), cwd: z.string().min(1).optional() }),
+    body: z.object({ name: z.string().min(1), enabled: z.boolean(), cwd: z.string().min(1).optional() }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   'skills/refresh': {
     description: 'Reload native skill definitions without restarting Cockpit.',
-    body: z.object({}),
+    body: z.object({}).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   'fs/listDir': {
     description: 'List a backend directory, directories first, with its resolved path and parent. Omit path for home. Explicit empty, missing, non-directory or inaccessible paths fail without falling back to home; errors retain their code and message (400 for empty/non-directory, 404 for missing, 403 for denied access).',
-    body: z.object({ path: z.string().optional() }),
+    body: z.object({ path: z.string().optional() }).strict(),
     result: DirListing,
   },
   // Native after/every supports relative delays and one-shot absolute times.
@@ -923,12 +923,12 @@ export const Intents = {
   },
   'schedule/stop': {
     description: 'Stop one native schedule by its id, including self-paced entries. ok reflects whether the native stop result contained the stopped entry; false means none was returned. No list read is used to infer success and errors propagate. This does not rearm or replace the schedule.',
-    body: z.object({ sessionId: z.string(), id: z.number() }),
+    body: z.object({ sessionId: z.string(), id: z.number() }).strict(),
     result: z.object({ ok: z.boolean() }),
   },
   'schedule/list': {
     description: 'Read native recurring, one-shot and self-paced schedules on an already-loaded session. selfPaced:true means the model controls each next run, with no fixed cadence; optional timing fields describe returned native entries, not additional creation options. No self-paced creation or rearming is exposed. Unloaded reads require explicit resume. Schedules do not keep sessions loaded or provide an always-on scheduler.',
-    body: z.object({ sessionId: z.string() }),
+    body: z.object({ sessionId: z.string() }).strict(),
     result: z.object({ entries: z.array(ScheduleEntry) }),
   },
 } as const;
