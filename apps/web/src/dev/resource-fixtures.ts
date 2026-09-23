@@ -32,6 +32,9 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
   const additionalRole = { moduleId: 'fixture-notes', moduleName: 'Notes', roleId: 'reviewer',
     name: 'Reviewer', description: '合成追加角色：保留原有会话 ID、历史和工作目录。' };
   const catalog = [...roles, additionalRole];
+  if (longNames) {
+    for (const role of catalog) role.description += ' LongUnbrokenRoleDescriptionForWrapping'.repeat(6);
+  }
   const roleSummary = ({ moduleId, moduleName, roleId, name }: SessionRole): SessionRole =>
     ({ moduleId, moduleName, roleId, name });
   const source = (contributors: typeof roles) => ({ ...module,

@@ -288,6 +288,13 @@ resource callbacks. Session creation and toggles affect only the fixture store.
 It includes multiple roles and similarly named non-module resources so visual
 review can distinguish explicit module metadata from name-based inference.
 Check desktop/mobile, native checkbox keyboard use, long names and both themes.
+With either the new-session or existing-session role picker open, run
+`await import('/src/dev/role-picker-checks.ts').then(m => m.runRolePickerChecks())`.
+It measures the shared left text edge, right checkmark, wrapping and touch targets,
+and checks native selection, label references and keyboard focus indication.
+Repeat selected/unselected and disabled states at narrow widths and in both themes;
+`&longNames=1` also supplies long role descriptions. Use real label clicks and
+Tab/Space to exercise interaction, not only the read-only geometry checks.
 It is not evidence of native role assembly or production resource readiness.
 This scene also exercises the real global MCP/Skills management pages: use the
 global menu or `&page=mcp` / `&page=skills`. The fixture owns both global defaults

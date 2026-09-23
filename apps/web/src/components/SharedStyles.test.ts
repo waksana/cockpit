@@ -56,6 +56,19 @@ test('shared Markdown retains fallback typography and chat keeps its deliberate 
   assert.match(shared, /\.chat-code-block pre:focus-visible \{\s*outline-offset: -3px;/);
 });
 
+test('role cards put the check after left-aligned wrapping content without changing other choice cards', () => {
+  const roles = css('components/role-picker');
+  const shared = css('primitives/host-ui');
+  assert.match(roles, /\.role-option > \.ui-choice-check \{\s*order: 1;\s*\}/);
+  assert.match(roles, /\.role-option-heading \{[^}]*display: flex;[^}]*flex-wrap: wrap;/);
+  assert.doesNotMatch(roles, /justify-content: space-between|padding-inline-start|margin-inline-start/);
+  assert.match(roles, /\.role-option-name \{[^}]*overflow-wrap: anywhere;/);
+  assert.match(roles, /\.role-option-description \{[^}]*overflow-wrap: anywhere;/);
+  assert.match(shared, /\.ui-choice-check \{[^}]*flex: none;[^}]*visibility: hidden;/);
+  assert.match(shared, /\.ui-choice-card\[data-selected\] \.ui-choice-check \{\s*visibility: visible;/);
+  assert.doesNotMatch(shared, /(?:^|\s)order:|row-reverse/);
+});
+
 test('page controls inherit equivalent public defaults without losing their own geometry', () => {
   const sidebar = css('components/sidebar');
   const search = sidebar.match(/\.input-search-input \{([^}]+)\}/)?.[1];
