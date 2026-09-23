@@ -1,3 +1,23 @@
+# Cockpit 0.4.3
+
+Current-source deployment version for classic resource presentation updates
+(#139), the role picker (#141), removal of session connection-method display
+(#143), one-click exit from global management (#146), and session settings
+reload, unload, compaction and full-history fork controls (#147).
+Classic `/` is the primary UI as documented in #138; `/next/` remains
+experimental and its existing entry is retained, without new feature parity.
+
+All host workspaces and MCP self-report 0.4.3. Native SDK 1.0.13 / runtime
+1.0.83 and module API capability versions are unchanged. Session operations
+retain native lifecycle protections and do not expand backend capabilities.
+This preparation does not migrate host data or replace installed 0.4.2
+contents. Modules are independently versioned; in particular, the separately
+prepared Task schema v5 upgrade is not reversible by selecting Task 0.1.9.
+No tag, GitHub Release, installation or service restart is performed by this
+version-preparation change.
+
+---
+
 # Cockpit 0.4.2
 
 Current-source deployment version for the classic MCP and Skills resource
