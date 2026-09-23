@@ -2,7 +2,7 @@ import assert from '../test/identityAssert';
 import { test, type TestContext } from 'node:test';
 import { act, createElement, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { MemoryRouter, Route, Routes, useNavigate } from 'react-router-dom';
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes, useNavigate } from 'react-router-dom';
 import type { IntentResult, McpServerStatus, SessionProjection } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
 import { IntentHttpError } from '../net/client';
@@ -22,6 +22,7 @@ import { activityFixture } from '../dev/activity-fixtures';
 import { intentUrl } from '../lib/config';
 import type { SessionSettingsAction } from '../lib/sessionSettingsActions';
 import { InspectorPane } from './Shell';
+import { recordLocation } from '../lib/nav';
 
 // The same deterministic React DOM host as Thread.lifecycle, limited to the
 // controls these panels use. Reads and mutations stay in fixture-owned stores.
@@ -1108,6 +1109,92 @@ for (const section of ['mcp', 'skills'] as const) {
 }
 
 for (const section of ['mcp', 'skills'] as const) {
+  function navigationFixture(t: TestContext, desktop: boolean, initialEntries: string[]) {
+    const h = mount(t);
+    t.mock.method(window, 'matchMedia', () => Object.assign(new EventTarget(), { matches: desktop }) as MediaQueryList);
+    useCockpit.setState({
+      mcpGlobal: async () => ['A', 'B'].map(name => ({ name, defaultOn: false, detail: name })),
+      skillsGlobal: async () => ['A', 'B'].map(name => ({ name, enabled: false, description: name })),
+      skillsRead: async name => ({ name, body: '', description: name }),
+    });
+    const router = createMemoryRouter([
+      { path: '/', element: createElement('div', null, 'Conversation workspace') },
+      { path: `/${section}/:item?`, element: createElement(ManageWorkspace) },
+    ], { initialEntries });
+    t.after(() => router.dispose());
+    return {
+      ...h, router,
+      open: () => h.render(createElement(RouterProvider, { router })),
+      select: (name: string) => h.event(h.container.querySelector(`[data-resource-name="${name}"]`)!.querySelector('a')!, 'click'),
+      exit: () => {
+        const back = h.container.querySelector('.master-pane')!.querySelector('button')!;
+        assert.equal(back.getAttribute('aria-label'), '返回会话列表');
+        return h.event(back, 'click');
+      },
+    };
+  }
+
+  for (const selection of ['list', 'A', 'B', 'deep-link'] as const) {
+    test(`global ${section}: desktop outer back exits in one click from ${selection} without pushing history`, async t => {
+      const h = navigationFixture(t, true, [selection === 'deep-link' ? `/${section}/name%2Fpart` : `/${section}`]);
+      await h.open();
+      if (selection === 'A' || selection === 'B') {
+        await h.select('A');
+        assert.equal(h.router.state.historyAction, 'PUSH');
+      }
+      if (selection === 'B') {
+        await h.select('B');
+        assert.equal(h.router.state.historyAction, 'REPLACE', 'switching detail does not grow history');
+      }
+      assert.equal(h.router.state.location.pathname, selection === 'list' ? `/${section}`
+        : `/${section}/${selection === 'deep-link' ? 'name%2Fpart' : selection}`);
+      assert.equal(h.container.querySelector('.master-pane')!.getAttribute('aria-hidden'), null);
+      await h.exit();
+      assert.equal(h.router.state.location.pathname, '/');
+      assert.equal(h.router.state.historyAction, 'REPLACE', 'missing immediate parent is replaced, not pushed');
+      assert.equal(h.container.textContent, 'Conversation workspace');
+    });
+  }
+
+  for (const selected of [false, true]) {
+    test(`global ${section}: outer back pops the existing workspace behind ${selected ? 'detail' : 'list'}`, async t => {
+      const h = navigationFixture(t, true, ['/', selected ? `/${section}/A` : `/${section}`]);
+      Object.assign(window.history, { state: { idx: 0 } });
+      recordLocation('/');
+      Object.assign(window.history, { state: { idx: 1 } });
+      await h.open();
+      await h.exit();
+      assert.equal(h.router.state.location.pathname, '/');
+      assert.equal(h.router.state.historyAction, 'POP', 'reuse the real workspace entry');
+      assert.equal(h.container.textContent, 'Conversation workspace');
+    });
+  }
+
+  for (const deepLink of [false, true]) {
+    test(`global ${section}: mobile ${deepLink ? 'deep link' : 'selection'} back returns to list before outer exit`, async t => {
+      const h = navigationFixture(t, false, [deepLink ? `/${section}/name%2Fpart` : `/${section}`]);
+      await h.open();
+      if (!deepLink) {
+        Object.assign(window.history, { state: { idx: 0 } });
+        recordLocation(`/${section}`);
+        await h.select('A');
+        Object.assign(window.history, { state: { idx: 1 } });
+      }
+      assert.equal(h.container.querySelector('.master-pane')!.getAttribute('aria-hidden'), 'true');
+      assert.equal(h.container.querySelector('.detail-pane')!.getAttribute('aria-hidden'), null);
+      await h.event(h.container.querySelector('.manage-detail-header')!.querySelector('[aria-label="返回"]')!, 'click');
+      assert.equal(h.router.state.location.pathname, `/${section}`);
+      assert.equal(h.router.state.historyAction, deepLink ? 'REPLACE' : 'POP');
+      Object.assign(window.history, { state: { idx: 0 } });
+      assert.equal(h.container.querySelector('.master-pane')!.getAttribute('aria-hidden'), null);
+      assert.equal(h.container.querySelector('.manage-detail-header'), null);
+      await h.exit();
+      assert.equal(h.router.state.location.pathname, '/');
+      assert.equal(h.router.state.historyAction, 'REPLACE');
+      assert.equal(h.container.textContent, 'Conversation workspace');
+    });
+  }
+
   test(`global ${section}: inline verified provenance, independent list switches and deep-link details`, async t => {
     const h = mount(t);
     const modules = [
