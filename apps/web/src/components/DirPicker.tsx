@@ -5,7 +5,7 @@ import { IntentHttpError } from '../net/client';
 import { useKeyedAction, useKeyedResource } from '../lib/useKeyedResource';
 import { readDirectory } from '../lib/directoryResource';
 import { Icon } from './Icon';
-import { Button, RefreshButton } from './Button';
+import { Button, IconButton } from './Button';
 import { DirectoryModal } from './Dialog';
 import { StateNotice } from './StateNotice';
 import type { RoleSelection } from '@cockpit/protocol';
@@ -74,7 +74,7 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
         }}
         disabled={locked} placeholder="服务器主目录" spellCheck={false} autoCapitalize="off" autoCorrect="off"
         aria-label="当前路径" />
-      <RefreshButton label="前往" title="前往" pending={resource.pending}
+      <IconButton icon="reload" iconSize={20} label="前往" title="前往"
         disabled={!resource.connected || resource.pending || locked} onClick={() => load(edit.trim() || undefined)} />
     </div>
     <div className="dirpicker-list scrollable">

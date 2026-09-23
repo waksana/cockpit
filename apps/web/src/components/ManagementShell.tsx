@@ -25,7 +25,7 @@ function MasterHeaderBase({ section, onRefresh, actions }: ManagementHeaderProps
       leading={<IconButton icon="back" label="返回会话列表" onClick={() => up('/')} />}
       title={<span className="pane-title ck-text-primary">{SECTION_TITLE[section]}</span>}
       actions={<>{actions}<RefreshButton label={section === 'mcp' ? '刷新 Copilot MCP 配置缓存' : '刷新'}
-        disabled={!onRefresh || connState !== 'open'} pending={busy} onClick={() => {
+        disabled={!onRefresh || connState !== 'open' || busy} pending={busy} onClick={() => {
           void run(async () => { if (section === 'mcp') await mcpRefresh(); }, onRefresh);
         }} /></>} />
     {error && <StateNotice kind="error">刷新失败：{error}</StateNotice>}

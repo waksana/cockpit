@@ -4,7 +4,7 @@ import { useKeyedResource } from '../lib/useKeyedResource';
 import { useCockpit } from '../net/store';
 import { StateNotice } from './StateNotice';
 import { MessageBody } from './MessageBody';
-import { RefreshButton } from './Button';
+import { IconButton } from './Button';
 
 export function AgentTaskDetails({ sessionId, taskId, status, title, read, available }: {
   sessionId: string; taskId: string; status: string; title: string; read: ReadAgentTaskDetails; available: boolean;
@@ -21,8 +21,8 @@ export function AgentTaskDetails({ sessionId, taskId, status, title, read, avail
   return <section className="chat-agent-detail activity-detail" aria-label={`Agent 详情：${title}`} aria-busy={resource.pending}>
     <header className="chat-controls-title">
       <span>{detail ? `${resource.pending ? '上次读取：' : ''}${statusLabels[detail.status]}` : 'Agent 详情'}</span>
-      <RefreshButton label={`刷新 Agent 详情：${title}`} title="刷新 Agent 详情"
-        pending={resource.pending} disabled={!available || resource.pending} onClick={() => { void resource.refresh(); }} />
+      <IconButton icon="reload" iconSize={16} label={`刷新 Agent 详情：${title}`} title="刷新 Agent 详情"
+        disabled={!available || resource.pending} onClick={() => { void resource.refresh(); }} />
     </header>
     {!available && <StateNotice>详情暂不可用，请等待会话连接恢复。</StateNotice>}
     {available && resource.error && <StateNotice kind="error">读取 Agent 详情失败：{resource.error}</StateNotice>}
