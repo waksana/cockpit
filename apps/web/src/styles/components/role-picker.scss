@@ -13,11 +13,11 @@
   }
 }
 .role-picker-options { display: grid; gap: var(--host-space-sm); }
+.role-option > .ui-choice-check { order: 1; }
 .role-option-heading {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
   gap: var(--host-space-xs) var(--host-space-sm);
   > span { min-width: 0; max-width: 100%; }
 }
