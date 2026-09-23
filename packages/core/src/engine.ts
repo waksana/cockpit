@@ -155,6 +155,30 @@ async function settled<T extends readonly unknown[]>(work: { [K in keyof T]: Pro
   return results.map(result => (result as PromiseFulfilledResult<unknown>).value) as unknown as T;
 }
 
+const readConcurrency = 4;
+
+/**
+ * Maps in input order with at most `limit` calls in flight. After a failure no
+ * new calls start; started siblings settle before the first failure in input
+ * order is thrown, so no read outlives the aggregate result.
+ */
+export async function boundedMap<T, R>(items: readonly T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<PromiseSettledResult<R> | undefined>(items.length);
+  let next = 0;
+  let failed = false;
+  const lane = async () => {
+    while (!failed && next < items.length) {
+      const index = next++;
+      try { results[index] = { status: 'fulfilled', value: await work(items[index]!) }; }
+      catch (reason) { results[index] = { status: 'rejected', reason }; failed = true; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
+  const failure = results.find(result => result?.status === 'rejected');
+  if (failure?.status === 'rejected') throw failure.reason;
+  return results.map(result => (result as PromiseFulfilledResult<R>).value);
+}
+
 function activeOperations(st: State): number {
   return st.operations - st.readLeases;
 }
@@ -522,17 +546,16 @@ export class Engine {
     const byId = new Map(rows.map(row => [row.sessionId, row]));
     const ids = new Set(rows.filter(row => !this.creating.has(row.sessionId) || this.sessions.get(row.sessionId)?.sdk).map(row => row.sessionId));
     for (const id of this.sessions.keys()) ids.add(id);
-    const result: SessionMeta[] = [];
     // Bound concurrent native reads independently of the size of the session index.
-    for (const id of ids) {
+    const metas = await boundedMap([...ids], readConcurrency, async id => {
       const st = this.sessions.get(id);
       const row = byId.get(id);
       const meta = st ? await this.getResources(id, resources, row) : row ? {
         ...await this.listedMeta(row), ...(resources.includes('control') ? { activity: null } : {}),
       } : await this.getResources(id, resources);
-      if (meta) result.push(completeMeta(meta));
-    }
-    return result;
+      return meta ? completeMeta(meta) : null;
+    });
+    return metas.filter(meta => meta !== null);
   }
 
   async getMeta(id: string): Promise<SessionMeta | null> {

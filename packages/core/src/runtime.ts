@@ -62,7 +62,22 @@ export class OfficialRuntime {
   private readonly closed = new Set<string>();
   private readonly subscriptions = new Map<RuntimeSession, () => void>();
   private readonly bus = new EventEmitter();
-  private gate: Promise<void> = Promise.resolve();
+  // Gates (SDK 1.0.13 contract):
+  // - Client transitions (connect/stop) are exclusive: the SDK has one connection
+  //   and stop() tears it down, so they wait for in-flight calls to drain and new
+  //   calls wait for them. Everything else shares the connected client; JSON-RPC
+  //   requests are multiplexed and safe to issue concurrently.
+  // - Per-session gates order create/resume/attach/close/delete on one session ID:
+  //   the SDK registry and this.live are keyed by ID, so each must observe the
+  //   ownership change of the previous one (e.g. attach not_found vs. a resume).
+  // - Different sessions' lifecycles need no mutual exclusion from the SDK client:
+  //   its registries are keyed per session/registration. Engine.birth still
+  //   serializes create/resume/fork globally as Engine admission policy.
+  // Read-only probes (metadata, auth, list, models) take no gate beyond sharing.
+  private transition?: Promise<void>;
+  private inFlight = 0;
+  private drained?: () => void;
+  private readonly sessionGates = new Map<string, Promise<void>>();
   private failedStop?: Error;
   private fatalError?: Error;
   private stopping = false;
@@ -96,9 +111,42 @@ export class OfficialRuntime {
     return this.client.rpc;
   }
 
-  private exclusive<T>(work: () => Promise<T>): Promise<T> {
-    const next = this.gate.then(() => this.untilFatal(work));
-    this.gate = next.then(() => {}, () => {});
+  private clientTransition<T>(work: () => Promise<T>): Promise<T> {
+    const next = (this.transition ?? Promise.resolve()).then(async () => {
+      while (this.inFlight) await new Promise<void>(resolve => { this.drained = resolve; });
+      return this.untilFatal(work);
+    });
+    const tail = next.then(() => {}, () => {});
+    this.transition = tail;
+    void tail.then(() => { if (this.transition === tail) this.transition = undefined; });
+    return next;
+  }
+
+  /** Runs on the connected client, concurrently with other shared calls. */
+  private shared<T>(work: () => Promise<T>): Promise<T> {
+    if (this.failure) return Promise.reject(this.failure);
+    // A failed stop keeps the SDK client object, but its connection is gone; SDK
+    // create/resume would silently spawn an unmonitored child. It stays terminal.
+    if (this.failedStop) return Promise.reject(this.failedStop);
+    if (this.transition || !this.client) {
+      return (async () => {
+        while (this.transition) await this.transition;
+        if (!this.client) await this.start();
+        return this.shared(work);
+      })();
+    }
+    this.inFlight++;
+    return this.untilFatal(work).finally(() => {
+      if (--this.inFlight === 0) { const drained = this.drained; this.drained = undefined; drained?.(); }
+    });
+  }
+
+  private perSession<T>(id: string | undefined, work: () => Promise<T>): Promise<T> {
+    if (id === undefined) return work();
+    const next = (this.sessionGates.get(id) ?? Promise.resolve()).then(work);
+    const tail = next.then(() => {}, () => {});
+    this.sessionGates.set(id, tail);
+    void tail.then(() => { if (this.sessionGates.get(id) === tail) this.sessionGates.delete(id); });
     return next;
   }
 
@@ -110,7 +158,11 @@ export class OfficialRuntime {
     finally { unsubscribe(); }
   }
 
-  start(): Promise<void> { return this.exclusive(() => this.connect()); }
+  start(): Promise<void> {
+    if (this.failure) return Promise.reject(this.failure);
+    if (this.client && !this.transition && !this.failedStop) return Promise.resolve();
+    return this.clientTransition(() => this.connect());
+  }
 
   private async connect(): Promise<void> {
     if (this.failure) throw this.failure;
@@ -163,40 +215,33 @@ export class OfficialRuntime {
     this.bus.emit('fatal', error);
   }
 
-  async models(): Promise<ModelOption[]> {
-    await this.start();
-    // The SDK convenience listModels() caches its first result. Use the public
-    // request instead; catalog enrichment must not become a native-state copy.
-    const models = this.config.clientOptions?.onListModels
-      ? await this.config.clientOptions.onListModels()
-      : (await this.rpc.models.list({})).models;
-    return sessionModelOptions(models);
+  models(): Promise<ModelOption[]> {
+    return this.shared(async () => {
+      // The SDK convenience listModels() caches its first result. Use the public
+      // request instead; catalog enrichment must not become a native-state copy.
+      const models = this.config.clientOptions?.onListModels
+        ? await this.config.clientOptions.onListModels()
+        : (await this.rpc.models.list({})).models;
+      return sessionModelOptions(models);
+    });
   }
 
-  async listSessions() {
-    await this.start();
-    return this.client!.listSessions();
+  listSessions() {
+    return this.shared(() => this.client!.listSessions());
   }
 
   getSessionMetadata(id: string) {
-    return this.exclusive(async () => {
-      await this.connect();
-      return this.client!.getSessionMetadata(id);
-    });
+    return this.shared(() => this.client!.getSessionMetadata(id));
   }
 
   /** Public SDK auth status; BYOK does not require a GitHub login. */
   getAuthStatus(): Promise<GetAuthStatusResponse> {
-    return this.exclusive(async () => {
-      await this.connect();
-      return this.client!.getAuthStatus();
-    });
+    return this.shared(() => this.client!.getAuthStatus());
   }
 
   /** Permanently deletes persisted data only after Engine has safely closed ownership. */
   deleteSession(id: string): Promise<void> {
-    return this.exclusive(async () => {
-      await this.connect();
+    return this.shared(() => this.perSession(id, async () => {
       if (this.live.has(id)) throw new Error('Cannot delete a live session; Engine must safely close it first');
       try { await this.client!.deleteSession(id); }
       catch (error) {
@@ -207,7 +252,7 @@ export class OfficialRuntime {
         catch (lookup) { throw new AggregateError([error, lookup], 'Native deletion failed; session absence could not be confirmed', { cause: lookup }); }
         if (remaining) throw error;
       }
-    });
+    }));
   }
 
   private sessionOptions(config: SessionConfig | ResumeSessionConfig): SessionConfig {
@@ -240,23 +285,21 @@ export class OfficialRuntime {
   }
 
   createSession(config: SessionConfig): Promise<RuntimeSession> {
-    return this.exclusive(async () => {
-      await this.connect();
+    return this.shared(() => this.perSession(config.sessionId, async () => {
       if (config.sessionId && this.live.has(config.sessionId)) throw new Error('Session is already owned by this runtime');
       const session = await this.client!.createSession(this.sessionOptions(config));
       this.own(session);
       return session;
-    });
+    }));
   }
 
   resumeSession(id: string, config: ResumeSessionConfig): Promise<RuntimeSession> {
-    return this.exclusive(async () => {
+    return this.shared(() => this.perSession(id, async () => {
       if (this.live.has(id)) throw new Error('Session is already owned by this runtime');
-      await this.connect();
       const session = await this.client!.resumeSession(id, this.sessionOptions(config));
       this.own(session);
       return session;
-    });
+    }));
   }
 
   private own(session: RuntimeSession): void {
@@ -273,7 +316,7 @@ export class OfficialRuntime {
 
   /** A passive native attach probe, not activity, resume, or an idle heartbeat. */
   isSessionLive(session: RuntimeSession): Promise<boolean> {
-    return this.exclusive(async () => {
+    return this.shared(() => this.perSession(session.sessionId, async () => {
       if (this.live.get(session.sessionId) !== session) return false;
       const result = await this.rpc.sessions.open({ kind: 'attach', sessionId: session.sessionId });
       if (result.status === 'not_found') {
@@ -283,7 +326,7 @@ export class OfficialRuntime {
       }
       if (result.status !== 'resumed') throw new Error(`Native attach did not confirm session liveness: ${result.status}`);
       return true;
-    });
+    }));
   }
 
   private async release(session: RuntimeSession): Promise<void> {
@@ -296,7 +339,7 @@ export class OfficialRuntime {
   }
 
   closeSession(session: RuntimeSession): Promise<void> {
-    return this.exclusive(async () => {
+    return this.shared(() => this.perSession(session.sessionId, async () => {
       if (this.live.get(session.sessionId) !== session) throw new Error('Session is not owned by this runtime');
       // Keep ownership on either failure, allowing a retry without claiming release.
       if (!this.closed.has(session.sessionId)) {
@@ -304,12 +347,12 @@ export class OfficialRuntime {
         this.closed.add(session.sessionId);
       }
       await this.release(session);
-    });
+    }));
   }
 
   stop(): Promise<void> {
     if (this.failure) return this.disconnectClient();
-    return this.exclusive(async () => {
+    return this.clientTransition(async () => {
       if (this.live.size) throw new Error('Runtime still owns live sessions; close only confirmed idle sessions before stopping');
       await this.disconnectClient();
     });
