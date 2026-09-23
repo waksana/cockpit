@@ -78,7 +78,7 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
     <div className="dirpicker-list scrollable">
       {resource.status && <StateNotice kind={resource.failed ? 'error' : resource.pending ? 'loading' : 'info'}
         placement={entries?.length ? 'inline' : 'pane'}>{resource.status}</StateNotice>}
-      {parent && <ActionRow icon="back" name="上级目录" trailing={false}
+      {parent && <ActionRow icon="back" name="上级目录" trailing={false} data-parent
         disabled={!resource.valid || locked} onClick={() => load(parent)} />}
       {resource.valid && entries?.length === 0 ? <StateNotice kind="empty" placement="pane">（没有子文件夹）</StateNotice>
         : entries?.map(entry => <ActionRow key={entry.name} icon="folder" name={entry.name}

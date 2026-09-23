@@ -106,3 +106,9 @@
 @media (max-width: responsive.$phone-max) {
   .dirpicker-list { max-height: 10rem; }
 }
+// Directory rows keep a compact single-line listing; the parent row stays secondary.
+.dirpicker-list .ui-action-row {
+  & + & { border-top: 0; }
+  .ui-action-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  &[data-parent] > .ui-action-icon, &[data-parent] .ui-action-name { color: var(--host-color-muted); }
+}
