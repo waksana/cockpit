@@ -3,28 +3,26 @@ import { useClippedText } from '../lib/useClippedText';
 
 export function ResourceSummary({ name, source, badge }: { name: ReactNode; source?: ReactNode; badge?: ReactNode }) {
   return <span className="resource-summary manage-row-main">
-    <span className="resource-name manage-row-name">{name}{badge}</span>
+    <span className="resource-name manage-row-name">{badge}<span>{name}</span></span>
     {source && <span className="resource-source manage-row-sub">{source}</span>}
   </span>;
 }
 
 // Native resource actions and their lifecycle stay with the caller.
-export function ResourceRow({ name, source, control, status, description, connection = false, title }: {
+export function ResourceRow({ name, source, badge, control, status, description, connection = false, title }: {
   name: string; source: ReactNode; control: ReactNode; status: ReactNode;
-  description?: ReactNode; connection?: boolean; title?: string;
+  badge?: ReactNode; description?: ReactNode; connection?: boolean; title?: string;
 }) {
   const identity = <>
-    <div className="resource-name manage-row-name"><ResourceText key={name} text={name} label={`${name}名称`} /></div>
-    <div className="resource-source manage-row-source">{source}</div>
+    <div className="resource-name manage-row-name">{badge}<span className="resource-title-text">{name}</span></div>
+    {source && <div className="resource-source manage-row-source">{source}</div>}
+    {description !== undefined && <div className="manage-row-description">{description}</div>}
   </>;
   return <div className="resource-row manage-row manage-session-row" data-mcp={connection || undefined}
     data-resource-name={name} title={title}>
-    {connection ? <div className="manage-mcp-identity">{identity}</div> : identity}
+    <div className="manage-resource-identity">{identity}</div>
     {control}
     {status}
-    {description !== undefined && <div className="resource-summary manage-row-main">
-      <div className="manage-row-description">{description}</div>
-    </div>}
   </div>;
 }
 

@@ -355,6 +355,17 @@ UI 提示和 Agent MCP 文本明确这个含义，连接状态仍独立取自原
 该字段不是 readiness，也不使用缓存就绪状态或额外后台查询。冷恢复重建声明来源。
 `session/resources` 当前只投影 metadata，不包含 MCP/skill 列表；Web 使用上述专用读取。
 `session/panel(s)` 保留既有原生标签，不增加来源推断。
+
+全局 `mcp/global`、`skills/global` 与 `skills/read` 使用可选 `modules: ModuleSource[]`，
+支持多个已核验模块来源；会话资源继续使用单个 `module` 结构。
+只标注原生目录已经返回的资源，不把角色专属资源加入全局目录，不另造全局默认开关。
+MCP 仅在原生 HTTP 配置 URL 与当前已加载模块声明的完整 origin、安装 digest 和端点完全一致时
+标注模块；不靠 MCP 名称、原生 `source` 或已选角色判断。Skill 仅在原生路径的真实路径命中
+当前已加载模块安装清单中的 `SKILL.md`，且实际字节的 SHA-256 与清单一致时标注模块。
+详情重新使用相同核验，不保留跨请求来源缓存；原生字段及 MCP 脱敏不变。
+这些全局证据无法证明哪个角色实际贡献了原生全局配置，因此省略 `roles`，不把声明此资源的
+全部角色冒充贡献者。未加载/旧版本、未知端点或无法核验的文件不标注；不代表它们不是模块资源。
+模块来源仍不是连接、原生启用或 readiness 的证明。
 角色选择不是就绪：只有显式 `roles/readiness` / `cockpit_role_readiness` /
 `context.host.call('roles/readiness', ...)` 检查该 native handle 的装配、skill 路径/启用状态、
 MCP 连接/策略状态及当前原生工具 metadata。普通列表、snapshot、detail、identity 与 Web

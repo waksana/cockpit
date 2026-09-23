@@ -206,9 +206,18 @@ export const DirListing = z.object({
 export type DirListing = z.infer<typeof DirListing>;
 
 // ── MCP + Skills management (dedicated pages, not the info panel) ─────────────
+export const ModuleSource = z.object({
+  id: z.string(),
+  name: z.string(),
+  roles: z.array(z.object({ id: z.string(), name: z.string() })).optional()
+    .describe('Actual contributing roles, deduplicated and sorted by role ID. Omitted when unproven; never inferred from selected session roles or a global resource matching a role declaration. Provenance is not authorization, enablement or readiness.'),
+});
+export type ModuleSource = z.infer<typeof ModuleSource>;
+
 // Native Copilot MCP configuration and its default for future sessions.
 export const McpServerGlobal = z.object({
   name: z.string(),
+  modules: z.array(ModuleSource).optional().describe('Modules verified against the native global configuration endpoint and currently loaded digest-pinned module declarations. Does not identify contributing roles or prove connectivity. Omitted when attribution is unproven.'),
   detail: z.string(),       // command / url summary
   defaultOn: z.boolean(),
   // Full (redacted) config for the detail pane — env/header VALUES are masked to
@@ -251,14 +260,6 @@ export const McpToggleOperation = z.object({
 });
 export type McpToggleOperation = z.infer<typeof McpToggleOperation>;
 
-export const ModuleSource = z.object({
-  id: z.string(),
-  name: z.string(),
-  roles: z.array(z.object({ id: z.string(), name: z.string() })).optional()
-    .describe('Actual contributing roles within this module in the current handle assembly, deduplicated and sorted by role ID. Omitted when unproven; never inferred from selected session roles. Provenance is not authorization, enablement or readiness.'),
-});
-export type ModuleSource = z.infer<typeof ModuleSource>;
-
 export const McpServerSession = z.object({
   name: z.string(),
   module: ModuleSource.optional().describe('Module and known contributing roles that declared this MCP name in this session handle role configuration. Not proof of the live connection identity; same-name native replacements cannot be verified.'),
@@ -284,6 +285,7 @@ export type McpToggleResult = z.infer<typeof McpToggleResult>;
 
 export const SkillGlobal = z.object({
   name: z.string(),
+  modules: z.array(ModuleSource).optional().describe('Modules verified against the native discovered skill path and installed file digest of currently loaded modules. Contributing roles remain unknown. Omitted when attribution is unproven.'),
   description: z.string().optional(),
   source: z.string().optional(),
   userInvocable: z.boolean().optional(),
@@ -857,12 +859,7 @@ export const Intents = {
   // detail pane opens), so the list payload stays lean.
   'skills/read': {
     body: z.object({ name: z.string(), cwd: z.string().min(1).optional() }),
-    result: z.object({
-      name: z.string(),
-      description: z.string().optional(),
-      source: z.string().optional(),
-      userInvocable: z.boolean().optional(),
-      enabled: z.boolean().optional(),
+    result: SkillGlobal.extend({
       body: z.string().optional(),
     }),
   },

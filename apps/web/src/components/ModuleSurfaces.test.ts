@@ -79,11 +79,12 @@ test('semantic middleware preserves real navigation and management controls with
 
       const detail = render(createElement(ManagementShell, {
         section, item: 'fixture-resource', master: null, detail: null,
+        titlePrefix: createElement('span', { 'data-provenance': true }, 'Verified module'),
       }));
       controls(detail, enhanced ? 5 : 3);
       assert.match(detail, new RegExp(`<button[^>]*aria-label="返回${title}列表"`));
       assert.match(detail, /<button[^>]*class="chat-back ck-icon-button rp lg:hidden"[^>]*aria-label="返回"/);
-      assert.match(detail, /<span class="pane-title">fixture-resource<\/span>/);
+      assert.match(detail, /<span class="pane-title resource-name"><span data-provenance="true">Verified module<\/span><span>fixture-resource<\/span><\/span>/);
       if (enhanced) assert.match(detail, /<\/div><button type="button">Fixture detail: fixture-resource<\/button><\/header>/);
       else assert.doesNotMatch(detail, /Fixture detail:/);
       assert.doesNotMatch(detail, /<div class="lg:hidden"/);

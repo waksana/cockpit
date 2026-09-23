@@ -163,8 +163,9 @@ function mount(t: TestContext) {
     resize: () => act(async () => { observers.forEach(callback => callback()); }),
     render: (children: ReactNode) => act(async () => root.render(children)),
     event: (node: HostNode, type: string) => act(async () => {
-      const event = new Event(type, { bubbles: true });
+      const event = new Event(type, { bubbles: true, cancelable: true });
       Object.defineProperty(event, 'target', { value: node });
+      if (type === 'click') Object.defineProperty(event, 'button', { value: 0 });
       container.dispatchEvent(event);
     }),
   };
@@ -733,7 +734,8 @@ for (const Component of [SessionMcp, SessionSkills]) {
     });
     await h.render(createElement(Component, { session, onClose: noop }));
     const rows = h.container.querySelectorAll('.manage-row');
-    assert.equal(rows[0].querySelector('.manage-row-name')?.textContent, name);
+    assert.equal(rows[0].querySelector('.resource-title-text')?.textContent, name);
+    assert.equal(rows[0].querySelector('.manage-row-name')?.firstChild?.getAttribute('class'), 'role-badge');
     assert.equal(rows[0].querySelector('.module-label-name')?.textContent, 'Task');
     assert.equal(rows.length, 2, 'shared resources still have one row');
     assert.equal(rows[0].querySelector('.role-badge-name')?.textContent, 'Executor、Owner');
@@ -834,7 +836,7 @@ test('global navigation does not take focus on entry or route remount', async t 
 
 for (const section of ['mcp', 'skills'] as const) {
   for (const outcome of ['success', 'failure'] as const) {
-    test(`global ${section}: A → B → late ${outcome} → A reads catalog without leaking feedback`, async t => {
+    test(`global ${section}: list mutation survives detail navigation and retains its own ${outcome}`, async t => {
       const h = mount(t);
       const pending = deferred<void>();
       const values: Record<string, boolean> = { A: false, B: false };
@@ -847,27 +849,30 @@ for (const section of ['mcp', 'skills'] as const) {
       });
       await h.render(createElement(MemoryRouter, { initialEntries: [`/${section}/A`] },
         createElement(Routes, null, createElement(Route, { path: '/:section/:item?', element: createElement(ManageWorkspace) }))));
-      const toggle = () => {
-        const control = h.container.querySelector('[role="switch"]');
+      const row = (name: string) => h.container.querySelector(`[data-resource-name="${name}"]`)!;
+      const toggle = (name: string) => {
+        const control = row(name).querySelector('[role="switch"]');
         assert.ok(control);
         return control;
       };
-      assert.equal(toggle().getAttribute('aria-checked'), 'false');
-      await h.event(toggle(), 'click');
-      await h.event(h.container.querySelectorAll('.manage-row').find(row => row.textContent === 'BB')!, 'click');
+      assert.equal(toggle('A').getAttribute('aria-checked'), 'false');
+      assert.equal(h.container.querySelector('.manage-detail')?.querySelector('[role="switch"]'), null);
+      await h.event(toggle('A'), 'click');
+      await h.event(row('B').querySelector('a')!, 'click');
+      assert.equal(row('B').querySelector('a')!.getAttribute('aria-current'), 'page');
       const before = reads;
       await act(async () => {
         // A failed acknowledgement can still follow a committed native write.
         values.A = true;
         if (outcome === 'success') pending.resolve();
-        else pending.reject(new Error('obsolete A failure'));
+        else pending.reject(new Error('A acknowledgement failure'));
       });
       assert.ok(reads > before, 'the still-mounted catalog reads back either outcome');
-      assert.equal(toggle().getAttribute('aria-checked'), 'false', 'B retains its own value');
-      assert.doesNotMatch(h.container.textContent, /obsolete A failure|设置失败/);
-      await h.event(h.container.querySelectorAll('.manage-row').find(row => row.textContent.startsWith('A'))!, 'click');
-      assert.equal(toggle().getAttribute('aria-checked'), 'true', 'returning A sees authoritative readback');
-      assert.doesNotMatch(h.container.textContent, /obsolete A failure|设置失败/);
+      assert.equal(toggle('B').getAttribute('aria-checked'), 'false', 'B retains its own value');
+      assert.doesNotMatch(row('B').textContent, /A acknowledgement failure|设置失败/);
+      if (outcome === 'failure') assert.match(row('A').textContent, /A acknowledgement failure/);
+      await h.event(row('A').querySelector('a')!, 'click');
+      assert.equal(toggle('A').getAttribute('aria-checked'), 'true', 'A sees authoritative readback');
     });
   }
 
@@ -887,9 +892,10 @@ for (const section of ['mcp', 'skills'] as const) {
         createElement(Routes, null, createElement(Route, { path: '/:section/:item?', element: createElement(ManageWorkspace) })));
       await h.render(workspace());
       await h.event(h.container.querySelector('[role="switch"]')!, 'click');
-      await h.event(h.container.querySelectorAll('.manage-row').find(row => row.textContent === 'BB')!, 'click');
-      await h.event(h.container.querySelector('[role="switch"]')!, 'click');
-      assert.equal(writes, 2, 'different detail mutations may overlap');
+      const rowB = h.container.querySelector('[data-resource-name="B"]')!;
+      await h.event(rowB.querySelector('a')!, 'click');
+      await h.event(rowB.querySelector('[role="switch"]')!, 'click');
+      assert.equal(writes, 2, 'different list mutations may overlap');
       if (leave === 'unmount') {
         await h.render(null);
         await h.render(workspace());
@@ -910,6 +916,66 @@ for (const section of ['mcp', 'skills'] as const) {
       }
     });
   }
+}
+
+for (const section of ['mcp', 'skills'] as const) {
+  test(`global ${section}: inline verified provenance, independent list switches and deep-link details`, async t => {
+    const h = mount(t);
+    const modules = [
+      { id: 'fixture', name: 'Fixture', roles: [{ id: 'owner', name: 'Owner' }, { id: 'executor', name: 'Executor' }] },
+      { id: 'another', name: 'Another module' },
+    ];
+    let enabled = true;
+    let bodyReads = 0;
+    const calls: Array<[string, boolean]> = [];
+    const mutate = async (name: string, value: boolean) => { calls.push([name, value]); enabled = value; };
+    useCockpit.setState({
+      mcpGlobal: async () => [
+        { name: 'known', modules, defaultOn: enabled, detail: 'synthetic configuration', config: { env: { TOKEN: '[REDACTED]' } } },
+        { name: 'fixture-lookalike', defaultOn: false, detail: 'native' },
+      ],
+      skillsGlobal: async () => [
+        { name: 'known', modules, enabled, description: 'synthetic description' },
+        { name: 'fixture-lookalike', description: 'unknown default' },
+      ],
+      skillsRead: async name => { bodyReads++; return { name, modules, enabled, body: 'Full synthetic body', description: 'synthetic description' }; },
+      mcpSetDefault: mutate, skillsSetGlobal: mutate,
+    });
+    await h.render(createElement(MemoryRouter, { initialEntries: [`/${section}/known`] },
+      createElement(Routes, null, createElement(Route, { path: '/:section/:item?', element: createElement(ManageWorkspace) }))));
+    const row = h.container.querySelector('[data-resource-name="known"]')!;
+    const link = row.querySelector('a')!;
+    const toggle = row.querySelector('[role="switch"]')!;
+    assert.equal(link.querySelector('button'), null, 'navigation never contains actions');
+    assert.equal(link.getAttribute('href'), `/${section}/known`);
+    assert.equal(toggle.getAttribute('aria-label'), '全局默认启用 known');
+    const identity = row.querySelector('.manage-row-name')!;
+    assert.equal(identity.firstChild?.getAttribute('class'), 'role-badge');
+    assert.equal(identity.childNodes.at(-1)?.textContent, 'known');
+    assert.equal(row.querySelectorAll('.module-label').length, 2);
+    assert.equal(row.querySelector('[data-unapplied]'), null);
+    const unknown = h.container.querySelector('[data-resource-name="fixture-lookalike"]')!;
+    assert.equal(unknown.querySelector('.module-label'), null);
+    if (section === 'skills') {
+      assert.equal(unknown.querySelector('[role="switch"]'), null);
+      assert.match(unknown.textContent, /未提供全局启用状态/);
+    }
+    const header = h.container.querySelector('.manage-detail-header')!;
+    assert.equal(header.querySelectorAll('.module-label').length, 2);
+    assert.equal(header.querySelector('[role="switch"]'), null);
+    const detail = h.container.querySelector('.manage-detail')!;
+    assert.equal(detail.querySelector('[role="switch"]'), null);
+    assert.equal(detail.querySelector('h2'), null);
+    assert.match(detail.textContent, section === 'mcp' ? /REDACTED/ : /Full synthetic body/);
+    await h.event(toggle, 'click');
+    assert.deepEqual(calls, [['known', false]]);
+    assert.equal(link.getAttribute('aria-current'), 'page', 'toggle does not navigate');
+    assert.equal(toggle.getAttribute('aria-checked'), 'false');
+    if (section === 'skills') assert.equal(bodyReads, 2, 'detail refreshes after list mutation');
+    await h.event(header.querySelector('[aria-label="返回"]')!, 'click');
+    assert.equal(h.container.querySelector('.manage-detail-header'), null, 'deep-link Up returns to the catalog');
+    assert.equal(link.getAttribute('aria-current'), null);
+  });
 }
 
 for (const desktop of [true, false]) {
@@ -1334,12 +1400,11 @@ for (const Component of [SessionMcp, SessionSkills]) {
     const row = h.container.querySelector(`[data-resource-name="${name}"]`)!;
     const other = h.container.querySelector('[data-resource-name="other"]')!;
     const otherText = other.textContent;
-    const sourceSlot = row.querySelector('.manage-row-source')!;
-    const descriptionSlot = row.querySelector('.manage-row-description');
-    assert.equal(sourceSlot.querySelector('.manage-row-text')!.getAttribute('data-lines'), '1');
+    assert.equal(row.querySelector('.manage-row-source'), null);
+    assert.equal(row.querySelector('.manage-row-description'), null);
+    assert.equal(row.querySelector('.resource-title-text')?.textContent, name, 'names wrap without a disclosure');
     if (Component === SessionSkills) {
-      assert.equal(descriptionSlot?.querySelector('.manage-row-text')?.getAttribute('data-lines'), '2');
-      assert.equal(row.querySelector('.manage-row-status')?.textContent, '已启用');
+      assert.equal(row.querySelector('.manage-row-status'), null, 'enable state is not repeated');
     }
     const revise = () => act(async () => {
       useCockpit.setState({ resourceRevisions: { [session.sessionId]: { mcp: ++revision, skills: revision } } });
@@ -1354,10 +1419,10 @@ for (const Component of [SessionMcp, SessionSkills]) {
     };
     source = description = long;
     await revise();
-    assert.equal(row.querySelector('.manage-row-source'), sourceSlot);
-    assert.equal(row.querySelector('.manage-row-description'), descriptionSlot);
+    assert.equal(row.querySelector('.manage-row-source')?.querySelector('.manage-row-text')?.getAttribute('data-lines'), '1');
+    if (Component === SessionSkills) assert.equal(row.querySelector('.manage-row-description')?.querySelector('.manage-row-text')?.getAttribute('data-lines'), '2');
     assert.equal(row.querySelector('[data-expanded]'), null, 'late text never opens itself');
-    for (const field of ['名称', '来源', ...(Component === SessionSkills ? ['说明'] : [])]) {
+    for (const field of ['来源', ...(Component === SessionSkills ? ['说明'] : [])]) {
       await open(field);
       await h.resize();
       await h.event(disclosure(`收起${name}${field}`), 'click');
@@ -1427,7 +1492,7 @@ for (const initiallyEnabled of [false, true]) {
     await h.render(createElement(SessionMcp, { session, onClose: noop }));
     const row = h.container.querySelector('[data-resource-name="native-server"]')!;
     const source = row.querySelector('.manage-row-source')!;
-    assert.equal(source.parentNode, row.querySelector('.manage-mcp-identity'), 'MCP name and source form an independent compact left column');
+    assert.equal(source.parentNode, row.querySelector('.manage-resource-identity'), 'MCP name and source form an independent compact left column');
     assert.equal(row.querySelector('.manage-row-name')!.parentNode, source.parentNode);
     assert.equal(row.querySelector('.manage-row-status')!.parentNode, row, 'MCP connection status shares the switch column');
     await h.event(row.querySelector('[role="switch"]')!, 'click');

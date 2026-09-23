@@ -46,6 +46,21 @@ test('folded-message validators are absent from the production wire entry point'
   }
 });
 
+test('global catalog and skill detail preserve optional provenance without inventing roles or defaults', () => {
+  for (const modules of [
+    undefined, [{ id: 'fixture', name: 'Fixture' }],
+    [{ id: 'fixture', name: 'Fixture', roles: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] },
+      { id: 'another', name: 'Another' }],
+  ]) {
+    const metadata = modules ? { modules } : {};
+    const mcp = { name: 'native-literal', detail: 'native', defaultOn: false, ...metadata };
+    const skill = { name: 'native-literal', source: 'custom', ...metadata };
+    assert.deepEqual(Intents['mcp/global'].result.parse({ servers: [mcp] }).servers, [mcp]);
+    assert.deepEqual(Intents['skills/global'].result.parse({ skills: [skill] }).skills, [skill]);
+    assert.deepEqual(Intents['skills/read'].result.parse({ ...skill, body: '# Native' }), { ...skill, body: '# Native' });
+  }
+});
+
 test('resource preparation has bounded exact identities, strict bodies and honest partial receipts', () => {
   const { body, result } = Intents['session/resources-prepare'];
   const selection = { sessionId: 's', skills: ['optional'], mcpServers: [{ name: 'tools', tools: ['raw_name'] }] };

@@ -27,12 +27,10 @@ function SessionToggleRow({ identity, name, description, source = '', module, st
   const progress = <><Icon name="loading" className="spinner" size={10} />
     {status ? desired ? '连接中' : '断开中' : desired ? '启用中' : '停用中'}</>;
   return <ResourceRow name={name} connection={Boolean(status)} title={disabled ? disabledReason : undefined}
-    source={<>
-      {module && <ModuleSourceBadge module={module}
-        description={status ? '角色配置来源，不代表当前连接身份；无法核验后续同名配置替换' : undefined} />}
-      <ResourceText key={source} text={source} label={`${name}来源`} />
-    </>}
-    control={<Toggle label={`启用 ${name}`} disabled={disabled || action.busy} busy={action.busy} on={enabled}
+    badge={module && <ModuleSourceBadge module={module}
+      description={status ? '角色配置来源，不代表当前连接身份；无法核验后续同名配置替换' : undefined} />}
+    source={source && <ResourceText key={source} text={source} label={`${name}来源`} />}
+    control={<Toggle label={`本会话启用 ${name}`} disabled={disabled || action.busy} busy={action.busy} on={enabled}
       onChange={next => {
         if (disabled || action.busy) return;
         setDesired(next);
@@ -40,11 +38,11 @@ function SessionToggleRow({ identity, name, description, source = '', module, st
       }} />}
     status={error && !action.busy
       ? <ResourceError key={JSON.stringify([identity, error])} error={error} name={name} />
-      : <div className="manage-row-status" role="status">
+      : (action.busy || status) && <div className="manage-row-status" role="status">
         {action.busy ? <Badge className="mcp-status mcp-operation-status" tone="pending" appearance="text">{progress}</Badge>
-          : status ?? <Badge className="mcp-status" tone="off" appearance="text">{enabled ? '已启用' : '已关闭'}</Badge>}
+          : status}
       </div>}
-    description={!status ? <ResourceText key={description ?? ''} text={description ?? ''}
+    description={!status && description ? <ResourceText key={description} text={description}
       lines={2} label={`${name}说明`} /> : undefined} />;
 }
 

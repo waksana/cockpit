@@ -5625,6 +5625,54 @@ test('global MCP inventory combines native user definitions and native enabled s
   assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
 });
 
+test('global provenance annotates only native inventory identities and preserves detail, redaction and defaults', async t => {
+  const h = harness(t, { mcpServers: {
+    native: { type: 'http', url: 'http://127.0.0.1/module', headers: { Authorization: 'private-header' } },
+    'module_fixture__lookalike': { command: 'unrelated' },
+  } });
+  const path = join(h.cwd, 'SKILL.md');
+  writeFileSync(path, '# Native body');
+  const module = { id: 'fixture', name: 'Fixture' };
+  const provider: RoleProvider = {
+    list: () => { throw new Error('Global catalog must not list roles'); },
+    read: () => { throw new Error('Global catalog must not read session selections'); },
+    save: () => { throw new Error('Global catalog must not save roles'); },
+    assemble: async () => { throw new Error('Global catalog must not assemble roles'); },
+    globalMcpSources: config => 'url' in config && config.url === 'http://127.0.0.1/module' ? [module] : [],
+    globalSkillSources: async value => value === path ? [module] : undefined,
+  };
+  h.engine.setRoleProvider(provider);
+  h.discoveredMcp[0]!.enabled = false;
+  h.discoveredMcp.push({ name: 'role-only', source: 'workspace', enabled: true });
+  h.discoveredSkills.push(
+    { name: 'native', description: 'Native description', source: 'custom', path, userInvocable: false } as ServerSkill,
+    { name: 'module_fixture__lookalike', source: 'custom', path: '/unrelated/SKILL.md' } as ServerSkill,
+    { name: 'pathless', source: 'custom' } as ServerSkill,
+  );
+  h.userSettings.settings.disabledSkills!.value = ['native'];
+  const original = structuredClone(h.discoveredSkills);
+  const mcp = await h.engine.listGlobalMcp();
+  assert.deepEqual(mcp.map(server => [server.name, server.defaultOn, server.modules]), [
+    ['native', false, [module]], ['module_fixture__lookalike', true, undefined],
+  ]);
+  assert.ok(!JSON.stringify(mcp).includes('private-header'));
+  assert.equal(Object.hasOwn(mcp[1]!, 'modules'), false);
+  const skills = await h.engine.listGlobalSkills(h.cwd);
+  assert.deepEqual(skills[0], {
+    name: 'native', description: 'Native description', source: 'custom', userInvocable: false, enabled: false, modules: [module],
+  });
+  assert.deepEqual(await h.engine.readSkillBody('native', h.cwd), { ...skills[0], body: '# Native body' });
+  assert.ok(skills.slice(1).every(skill => !Object.hasOwn(skill, 'modules')));
+  assert.deepEqual(h.discoveredSkills, original);
+  h.discoveredSkills[0]!.path = '/replacement/SKILL.md';
+  assert.equal(Object.hasOwn((await h.engine.listGlobalSkills(h.cwd))[0]!, 'modules'), false);
+  h.mcpDefinitions.native = { type: 'http', url: 'http://127.0.0.1/replacement' };
+  assert.equal(Object.hasOwn((await h.engine.listGlobalMcp())[0]!, 'modules'), false);
+  assert.equal(h.runtime.createSession.mock.callCount(), 0);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+  assert.equal(h.runtime.rpc.skills.config.setSkillDisabled.mock.callCount(), 0);
+});
+
 for (const failure of ['unknown', 'ignored', 'shadowed', 'missing-enabled', 'readback'] as const) {
   test(`global MCP ${failure} state cannot silently confirm a configuration mutation`, async t => {
     const h = harness(t, { mcpServers: { fixture: { command: 'native-fixture' } } });

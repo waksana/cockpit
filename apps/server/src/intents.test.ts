@@ -128,6 +128,31 @@ beforeEach(() => {
   calls.length = 0;
 });
 afterEach(() => { setTestDependencies({ engine }); });
+
+test('global resource HTTP list and detail preserve verified module metadata without adding provenance', async () => {
+  const module = { id: 'fixture', name: 'Fixture' };
+  const servers = [
+    { name: 'native', detail: 'http://fixture/mcp', defaultOn: false, modules: [module] },
+    { name: 'module_fixture__lookalike', detail: 'native', defaultOn: true },
+  ];
+  const skills = [
+    { name: 'native', source: 'custom', enabled: false, modules: [module] },
+    { name: 'module_fixture__lookalike', source: 'custom', enabled: true },
+  ];
+  setTestDependencies({ engine: {
+    ...engine, listGlobalMcp: async () => servers, listGlobalSkills: async () => skills,
+    readSkillBody: async name => ({ ...skills.find(skill => skill.name === name)!, body: '# Native' }),
+  } });
+  for (const [name, payload, expected] of [
+    ['mcp/global', {}, { servers }],
+    ['skills/global', {}, { skills }],
+    ...skills.map(skill => ['skills/read', { name: skill.name }, { ...skill, body: '# Native' }]),
+  ] as const) {
+    const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), expected);
+  }
+});
 after(() => app.close());
 
 type Case = { body: unknown; method: string | null; args: unknown[] };

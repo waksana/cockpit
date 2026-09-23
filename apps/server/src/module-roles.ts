@@ -18,6 +18,41 @@ export class ModuleRoles implements RoleProvider {
     }))).sort((a, b) => `${a.moduleId}/${a.roleId}`.localeCompare(`${b.moduleId}/${b.roleId}`));
   }
 
+  globalMcpSources(config: object): ModuleSource[] | undefined {
+    if (!('type' in config) || config.type !== 'http' || !('url' in config) || typeof config.url !== 'string') return;
+    for (const { manifest, digest } of this.installations()) {
+      const matches = (manifest.roles ?? []).some(role => Object.values(role.mcpServers ?? {}).some(server =>
+        config.url === new URL(`/_modules/${manifest.id}/${digest}/api${server.path}`, this.origin).href));
+      if (matches) return [{ id: manifest.id, name: manifest.name }];
+    }
+  }
+
+  async globalSkillSources(path: string): Promise<ModuleSource[] | undefined> {
+    let canonical: string;
+    try { canonical = await realpath(path); }
+    catch (error) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
+      throw error;
+    }
+    for (const { manifest, root, files } of this.installations()) {
+      const prefix = `${resolve(root)}${sep}`;
+      if (!canonical.startsWith(prefix)) continue;
+      const relative = canonical.slice(prefix.length);
+      if (relative !== 'SKILL.md' && !relative.endsWith('/SKILL.md')) return;
+      const record = Object.hasOwn(files, relative) ? files[relative] : undefined;
+      if (!record) return;
+      try {
+        const bytes = await readFile(canonical);
+        if (createHash('sha256').update(bytes).digest('hex') === record.sha256) {
+          return [{ id: manifest.id, name: manifest.name }];
+        }
+      } catch (error) {
+        if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;
+      }
+      return;
+    }
+  }
+
   private file(sessionId: string) {
     if (!/^[A-Za-z0-9_-]{1,200}$/.test(sessionId)) throw new Error('Invalid role session identity');
     return join(this.root, 'session-roles', `${sessionId}.json`);

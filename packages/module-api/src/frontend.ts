@@ -422,6 +422,8 @@ export interface ManagementHeaderProps {
 /** Existing resource-detail header with back navigation and its focused title. */
 export interface ManagementDetailHeaderProps {
   readonly item: string;
+  /** Optional resource provenance before the unchanged item title. */
+  readonly titlePrefix?: React.ReactNode;
   readonly actions?: React.ReactNode;
 }
 

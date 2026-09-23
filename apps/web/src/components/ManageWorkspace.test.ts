@@ -56,21 +56,20 @@ test('desktop master and narrow detail return one level without duplicate visibl
 
 test('global skill toggles render only authoritative booleans and never assume unknown means enabled', () => {
   assert.match(source,
-    /typeof data.enabled === 'boolean' \? <SkillGlobalToggle name=\{data.name\} enabled=\{data.enabled\} disabled=\{!valid\} onChange=\{onChange\} \/>/);
+    /typeof enabled === 'boolean'/);
   assert.match(source, /Copilot 未提供全局启用状态/);
   assert.match(source,
-    /<Toggle label="全局默认启用" on=\{enabled\} busy=\{action.busy\} disabled=\{disabled \|\| !action.connected \|\| action.busy\}/);
+    /<Toggle label=\{`全局默认启用 \$\{name\}`\} on=\{enabled\} busy=\{action.busy\} disabled=\{disabled \|\| !action.connected \|\| action.busy\}/);
   assert.doesNotMatch(source, /enabled\s*\?\?\s*true|localStorage|sessionStorage/);
 });
 
 test('both global toggles refresh authoritative detail and list after success or failure', () => {
-  assert.match(source, /run\(\(\) => onChange\(name, next\)\)/);
   assert.match(source, /action.run\(\(\) => onChange\(name, next\)\)/);
   assert.match(source, /<McpList catalog=\{mcpCatalog\}/);
-  assert.match(source, /<SkillsList revision=\{refreshNonce\}/);
-  assert.match(source, /<McpDetail catalog=\{mcpCatalog\} name=\{item\} onChange=\{onChange\}/);
-  assert.match(source, /<SkillDetail revision=\{refreshNonce\} name=\{item\} onChange=\{onChange\}/);
-  assert.match(source, /<StateNotice kind="error">设置失败：\{action.error\}/);
+  assert.match(source, /<SkillsList catalog=\{skillCatalog\}/);
+  assert.match(source, /<McpDetail catalog=\{mcpCatalog\} name=\{item\}/);
+  assert.match(source, /<SkillDetail revision=\{refreshNonce\} name=\{item\}/);
+  assert.match(source, /<StateNotice kind="error" className="manage-row-feedback">设置失败：\{action.error\}/);
 });
 
 test('MCP parent owns one route-independent catalog and disables it outside MCP', () => {
@@ -78,21 +77,21 @@ test('MCP parent owns one route-independent catalog and disables it outside MCP'
   assert.equal(source.match(/useKeyedResource\('global:mcp'/g)?.length, 1);
   assert.match(parent, /useKeyedResource\('global:mcp', mcpGlobal, refreshNonce, section === 'mcp'\)/);
   assert.match(source, /<ManagementContent key=\{section\} section=\{section\} item=\{item\}/);
-  for (const [start, end] of [['function McpList', 'function McpDefault'], ['function McpDetail', 'function SkillsList']]) {
+  for (const [start, end] of [['function McpList', 'function McpDetail'], ['function McpDetail', 'function SkillsList']]) {
     const consumer = source.slice(source.indexOf(start), source.indexOf(end));
     assert.doesNotMatch(consumer, /useKeyedResource|mcpGlobal|revision:|useState/);
     assert.match(consumer, /data: rows, status, failed.* = catalog/);
   }
 });
 
-test('MCP detail derives the route target and write validity from the shared accepted catalog', () => {
+test('MCP detail derives the route target from shared catalog and never owns a toggle', () => {
   const detail = source.slice(source.indexOf('function McpDetail'), source.indexOf('function SkillsList'));
-  assert.match(detail, /data: rows, status, failed, valid, pending \} = catalog/);
-  assert.match(detail, /rows\?\.find\(\(server\) => server.name === name\)/);
+  assert.match(detail, /data: rows, status, failed, pending \} = catalog/);
+  assert.match(detail, /rows\?\.find\(server => server.name === name\)/);
   assert.match(detail, /if \(!row\) return status \? <ResourceStatus/);
   assert.match(detail, /未找到该 MCP 服务器/);
-  assert.match(detail, /<McpDefault name=\{row.name\} on=\{row.defaultOn\} disabled=\{!valid\}/);
-  assert.match(source, /useKeyedAction\(`global:mcp:\$\{name\}`\)/);
+  assert.doesNotMatch(detail, /Toggle|SectionHeading|<h2/);
+  assert.match(source, /useKeyedAction\(`global:\$\{section\}:\$\{name\}`\)/);
 });
 
 test('global MCP refresh invalidates configuration cache without invoking session lifecycle', () => {

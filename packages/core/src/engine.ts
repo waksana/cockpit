@@ -2015,7 +2015,9 @@ export class Engine {
       if (!server || typeof server.enabled !== 'boolean') {
         throw new Error(`Native global MCP state is unconfirmed for ${name}`);
       }
-      return { name, detail: describeMcpServer(config), defaultOn: server.enabled, config: redactMcpConfig(config) };
+      const modules = this.roles?.globalMcpSources?.(config);
+      return { name, detail: describeMcpServer(config), defaultOn: server.enabled, config: redactMcpConfig(config),
+        ...(modules?.length ? { modules } : {}) };
     });
   }
   async setMcpDefault(name: string, on: boolean): Promise<void> {
@@ -2181,14 +2183,19 @@ export class Engine {
   }
   async listGlobalSkills(cwd?: string) {
     const skills = await this.globalSkills(cwd);
-    return skills.map(({ name, description, source, userInvocable, enabled }) => ({ name, description, source, userInvocable, enabled }));
+    return Promise.all(skills.map(async ({ name, description, source, userInvocable, enabled, path }) => {
+      const modules = path ? await this.roles?.globalSkillSources?.(path) : undefined;
+      return { name, description, source, userInvocable, enabled, ...(modules?.length ? { modules } : {}) };
+    }));
   }
   async readSkillBody(name: string, cwd?: string) {
     const skill = (await this.globalSkills(cwd)).find(skill => skill.name === name);
     if (!skill) throw new Error('Unknown skill in this working directory');
     if (!skill.path) return unsupported('Skill body without a public local path');
+    const modules = await this.roles?.globalSkillSources?.(skill.path);
     return { name: skill.name, description: skill.description, source: skill.source,
-      userInvocable: skill.userInvocable, enabled: skill.enabled, body: readFileSync(skill.path, 'utf8') };
+      userInvocable: skill.userInvocable, enabled: skill.enabled, body: readFileSync(skill.path, 'utf8'),
+      ...(modules?.length ? { modules } : {}) };
   }
   async setGlobalSkill(name: string, enabled: boolean, cwd?: string): Promise<void> {
     if (!(await this.globalSkills(cwd)).some(skill => skill.name === name)) throw new Error('Unknown skill in this working directory');

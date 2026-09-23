@@ -298,6 +298,7 @@ if (scene === 'dialog-focus') {
     installResourceFixture(useCockpit, query.get('longNames') === '1', {
       empty: query.get('empty') === '1',
       fail: query.get('fail') === '1',
+      failMutations: query.get('failMutations') === '1',
       beforeRequest: query.get('delay') === '1' ? () => new Promise(resolve => setTimeout(resolve, 1200)) : undefined,
     });
   }

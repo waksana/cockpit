@@ -42,22 +42,22 @@ function MasterHeaderBase({ section, item, onRefresh, actions }: ManagementHeade
 function DetailHeader(props: ManagementDetailHeaderProps) {
   return useModuleElement('managementDetailHeader', DetailHeaderBase, props);
 }
-function DetailHeaderBase({ item, actions }: ManagementDetailHeaderProps) {
+function DetailHeaderBase({ item, titlePrefix, actions }: ManagementDetailHeaderProps) {
   const up = useUp();
   return <PaneHeader className="chat-topbar manage-detail-header"
     leading={<button className="chat-back ck-icon-button rp lg:hidden" type="button" aria-label="返回" onClick={() => up()}>
       <Icon name="back" size={24} />
     </button>}
-    title={<span className="pane-title">{item}</span>}
+    title={<span className="pane-title resource-name">{titlePrefix}<span>{item}</span></span>}
     actions={actions} />;
 }
 
-export function ManagementShell({ section, item, master, detail, onRefresh }: {
-  section: ManageSection; item: string | null; master: ReactNode; detail: ReactNode; onRefresh?: () => void;
+export function ManagementShell({ section, item, master, detail, titlePrefix, onRefresh }: {
+  section: ManageSection; item: string | null; master: ReactNode; detail: ReactNode; titlePrefix?: ReactNode; onRefresh?: () => void;
 }) {
   return <Shell ariaLabel="管理"
     master={<MasterPane ariaLabel={SECTION_TITLE[section]} mobileVisible={item === null}
       header={<MasterHeader section={section} item={item} onRefresh={onRefresh} />}>{master}</MasterPane>}
     main={<DetailPane ariaLabel="详情" mobileVisible={item !== null}
-      header={item !== null ? <DetailHeader item={item} /> : undefined}>{detail}</DetailPane>} />;
+      header={item !== null ? <DetailHeader item={item} titlePrefix={titlePrefix} /> : undefined}>{detail}</DetailPane>} />;
 }
