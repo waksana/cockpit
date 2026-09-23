@@ -181,10 +181,6 @@ export class SessionKernel {
     this.invalidate(st, resources);
   }
 
-  patchMcpPending(st: SessionHandle): void {
-    this.invalidate(st, ['control', 'mcp']);
-  }
-
   async readResource<K extends Resource>(
     st: SessionHandle, sdk: CopilotSession, resource: K,
   ): Promise<ResourceValues[K]> {
