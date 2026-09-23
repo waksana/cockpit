@@ -4,7 +4,6 @@ import type {
   ComponentMiddleware,
   HostSnapshot, ChatWindowSnapshot, MarkdownNode, MarkdownRenderer, ModuleAsset, ModuleComponentProps,
   DraftSchemaRegistration, ModuleEventPayload, ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
-  ModuleFrontendServices,
   ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget,
   DraftSendBlockReason,
 } from '@cockpit/module-api';
@@ -335,8 +334,8 @@ export class ModuleRuntime {
       return unsubscribe;
     };
     parentSignal.addEventListener('abort', stop, { once: true });
-    const servicesContext: ModuleFrontendServices = {
-      apiVersion: 2, menuVersion: 1, chatWindowVersion: 1, composerInputVersion: 1, draftLifecycleVersion: 1, draftSubmissionVersion: 1,
+    const context: ModuleFrontendContext = {
+      apiVersion: 2, uiVersion: 1, uiSurfaceVersion: 1, menuVersion: 1, chatWindowVersion: 1, composerInputVersion: 1, draftLifecycleVersion: 1, draftSubmissionVersion: 1,
       moduleId: asset.id, react: React, createPortal, apiBase: asset.apiBase,
       config: asset.config, signal: controller.signal, report: this.report,
       state: Object.freeze({
@@ -429,7 +428,6 @@ export class ModuleRuntime {
         return fetcher(url, { ...init, headers, signal, credentials: 'include', redirect: 'error', mode: 'cors' });
       },
     };
-    const context: ModuleFrontendContext = { ...servicesContext, uiVersion: 1, uiSurfaceVersion: 1 };
     const prepare = async () => {
       const imported = await (this.options.load ?? (url => import(/* @vite-ignore */ url)))(asset.entry);
       if (controller.signal.aborted || parentSignal.aborted) return;

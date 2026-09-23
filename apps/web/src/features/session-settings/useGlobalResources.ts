@@ -1,13 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { useCockpit } from '../../net/store';
-import { cockpitApi, loadGlobalMcp } from '../../net/api';
-import { useKeyedResource } from '../../lib/useKeyedResource';
-
-export function useGlobalResources(section: 'mcp' | 'skills') {
-  const controller = useGlobalResourceMutations(section);
-  const mcpCatalog = useKeyedResource('global:mcp', loadGlobalMcp, controller.refreshNonce, section === 'mcp');
-  return { ...controller, mcpCatalog };
-}
+import { cockpitApi } from '../../net/api';
 
 export function useGlobalResourceMutations(section: 'mcp' | 'skills') {
   const [refreshNonce, setRefreshNonce] = useState(0);
