@@ -12,7 +12,7 @@
   max-width: none;
   max-height: none;
   border: 0;
-  color: var(--primary-text-color);
+  color: var(--host-color-text);
   &[open] { display: flex; }
   align-items: center;
   justify-content: center;
@@ -22,8 +22,8 @@
 
 .host-modal [data-dialog-focus]:focus-visible {
   outline: 2px solid transparent;
-  box-shadow: inset 3px 0 0 var(--primary-color);
-  &:dir(rtl) { box-shadow: inset -3px 0 0 var(--primary-color); }
+  box-shadow: inset 3px 0 0 var(--host-color-accent);
+  &:dir(rtl) { box-shadow: inset -3px 0 0 var(--host-color-accent); }
 }
 
 // Private host marker, also applied to module-owned native .ck-modal dialogs.
@@ -50,7 +50,7 @@
   margin: 0 0 var(--host-space-md);
   font-size: var(--host-text-body);
   line-height: var(--host-leading-ui);
-  color: var(--secondary-text-color);
+  color: var(--host-color-muted);
 }
 
 .dialog-input {
@@ -87,7 +87,7 @@
   margin-bottom: var(--host-space-xs);
   font-size: var(--host-text-body);
   font-weight: 600;
-  color: var(--primary-text-color);
+  color: var(--host-color-text);
 }
 .dirpicker-path {
   display: flex;
@@ -100,8 +100,8 @@
   max-height: 14rem;
   overflow-y: auto;
   margin-bottom: 0.7rem;
-  border-radius: var(--border-radius);
-  background: color-mix(in srgb, var(--primary-text-color) 4%, transparent);
+  border-radius: var(--host-radius-control);
+  background: color-mix(in srgb, var(--host-color-text) 4%, transparent);
 }
 @media (max-width: responsive.$phone-max) {
   .dirpicker-list { max-height: 10rem; }
@@ -109,10 +109,10 @@
 .dirpicker-row {
   width: 100%;
   text-align: start;
-  position: relative;        // ripple host
+  position: relative;
   overflow: hidden;
-  .dirpicker-ico { flex: none; display: inline-flex; color: var(--secondary-text-color); &.folder { color: var(--primary-color); } }
+  .dirpicker-ico { flex: none; display: inline-flex; color: var(--host-color-muted); &.folder { color: var(--host-color-accent); } }
   .dirpicker-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .dirpicker-enter { flex: none; color: var(--tertiary-text-color); }
-  &.up { color: var(--secondary-text-color); }
+  .dirpicker-enter { flex: none; color: var(--host-color-faint); }
+  &.dirpicker-up { color: var(--host-color-muted); }
 }

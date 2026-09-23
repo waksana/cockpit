@@ -4,10 +4,12 @@
 // The tweb structural namespace preserves Telegram Web K's original values
 // (src/scss/variables.scss + base.scss). Host-owned semantic roles below share
 // these foundations across chat and settings without changing the vendor scale.
-// Ported tweb component CSS references tweb's own
-// custom-property NAMES (--primary-color, --surface-color, --secondary-text-
-// color, …); we define those names here pointing at Solarized values, so the
-// vendored component rules resolve to our palette for free.
+// The --host-color-* roles hold the Solarized palette. Host-owned styles and the
+// public --ck-* variables (public-ui.scss) use these roles. Ported tweb
+// component CSS references tweb's own custom-property NAMES (--primary-color,
+// --surface-color, --secondary-text-color, …); those legacy names alias the
+// host roles so vendored rules and existing consumers resolve unchanged. Do not
+// use the legacy names in new host styles, and do not remove them.
 //
 // Keep tweb scalars faithful to their source. Evolve host roles here, not in
 // individual pages. --host-* is internal CSS, not the public Module UI API.
@@ -74,35 +76,50 @@ $sol-green:  #859900;  // ok
   --host-font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
 
   // Motion is limited to functional loading feedback (.spinner in preloader.scss).
-  --disabled-opacity: 0.3;
+  --host-opacity-disabled: 0.3;
+  --disabled-opacity: var(--host-opacity-disabled);
   --menu-backdrop-filter: none;
 
-  // ── Color tokens: tweb NAMES → Solarized VALUES (light theme defaults) ─────
-  --primary-color: #{$sol-yellow};
+  // ── Host color roles → Solarized VALUES (light theme defaults) ────────────
+  --host-color-text: #{$sol-base01};
+  --host-color-muted: #{$sol-base00};
+  --host-color-faint: #{$sol-base1};
+  --host-color-surface: #{$sol-base3};
+  --host-color-border: rgba(#{$sol-base00-rgb}, 0.18);
+  --host-color-accent: #{$sol-yellow};
+  --host-color-on-accent: #{$sol-base3};
+  --host-color-link: #{$sol-blue};
+  --host-color-danger: #{$sol-red};
+  --host-color-success: #{$sol-green};
+  --host-color-warning: #{$sol-orange};
+  --host-color-hover: rgba(#{$sol-base00-rgb}, #{$hover-alpha});
+
+  // ── Legacy tweb color NAMES → host roles (vendored rules, compatibility) ──
+  --primary-color: var(--host-color-accent);
   --light-primary-color: rgba(#{$sol-yellow-rgb}, 0.16);
-  --primary-text-color: #{$sol-base01};
-  --secondary-text-color: #{$sol-base00};
-  --tertiary-text-color: #{$sol-base1};
+  --primary-text-color: var(--host-color-text);
+  --secondary-text-color: var(--host-color-muted);
+  --tertiary-text-color: var(--host-color-faint);
 
-  --surface-color: #{$sol-base3};
-  --body-background-color: #{$sol-base3};
-  --background-color: #{$sol-base3};
-  --background-color-true: #{$sol-base3};
+  --surface-color: var(--host-color-surface);
+  --body-background-color: var(--host-color-surface);
+  --background-color: var(--host-color-surface);
+  --background-color-true: var(--host-color-surface);
 
-  --border-color: rgba(#{$sol-base00-rgb}, 0.18);
-  --link-color: #{$sol-blue};
-  --danger-color: #{$sol-red};
-  --green-color: #{$sol-green};
-  --warning-color: #{$sol-orange};
+  --border-color: var(--host-color-border);
+  --link-color: var(--host-color-link);
+  --danger-color: var(--host-color-danger);
+  --green-color: var(--host-color-success);
+  --warning-color: var(--host-color-warning);
 
-  --ripple-color: rgba(#{$sol-base00-rgb}, #{$hover-alpha});
-  --badge-text-color: #{$sol-base3};
+  --ripple-color: var(--host-color-hover);
+  --badge-text-color: var(--host-color-on-accent);
 
   --input-search-background-color: rgba(#{$sol-base00-rgb}, 0.08);
   --input-placeholder-color: rgba(#{$sol-base00-rgb}, 0.5);
 
   --scrollbar-color: rgba(#{$sol-base00-rgb}, 0.25);
-  --menu-background-color: #{$sol-base3};
+  --menu-background-color: var(--host-color-surface);
   --menu-box-shadow-color: rgba(#{$sol-base03-rgb}, 0.16);
   --menu-box-shadow: 0 0 10px var(--menu-box-shadow-color);
 
@@ -112,21 +129,16 @@ $sol-green:  #859900;  // ok
 // ── Dark theme (Solarized dark) ─────────────────────────────────────────────
 @media (prefers-color-scheme: dark) {
   :root {
-    --primary-text-color: #{$sol-base1};
-    --secondary-text-color: #{$sol-base0};
-    --tertiary-text-color: #{$sol-base01};
+    --host-color-text: #{$sol-base1};
+    --host-color-muted: #{$sol-base0};
+    --host-color-faint: #{$sol-base01};
+    --host-color-surface: #{$sol-base03};
+    --host-color-border: rgba(#{$sol-base0-rgb}, 0.18);
+    --host-color-on-accent: #{$sol-base03};
+    --host-color-hover: rgba(#{$sol-base0-rgb}, #{$hover-alpha});
 
-    --surface-color: #{$sol-base03};
-    --body-background-color: #{$sol-base03};
-    --background-color: #{$sol-base03};
-    --background-color-true: #{$sol-base03};
-
-    --border-color: rgba(#{$sol-base0-rgb}, 0.18);
-    --ripple-color: rgba(#{$sol-base0-rgb}, #{$hover-alpha});
     --input-search-background-color: rgba(#{$sol-base0-rgb}, 0.08);
     --input-placeholder-color: rgba(#{$sol-base0-rgb}, 0.5);
     --scrollbar-color: rgba(#{$sol-base0-rgb}, 0.25);
-    --menu-background-color: #{$sol-base03};
-    --badge-text-color: #{$sol-base03};
   }
 }

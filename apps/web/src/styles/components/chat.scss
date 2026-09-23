@@ -7,14 +7,18 @@
 .chat {
   --chat-placeholder-color: #757570;
   // Keep Solarized's palette, but give small interactive text sufficient contrast.
-  --primary-text-color: color-mix(in srgb, #586e75 82%, #002b36);
-  --secondary-text-color: #586e75;
-  --tertiary-text-color: #586e75;
+  --host-color-text: color-mix(in srgb, #586e75 82%, #002b36);
+  --host-color-muted: #586e75;
+  --host-color-faint: #586e75;
+  // Root aliases resolve at :root; re-resolve the legacy names for ported chat rules.
+  --primary-text-color: var(--host-color-text);
+  --secondary-text-color: var(--host-color-muted);
+  --tertiary-text-color: var(--host-color-faint);
   --chat-accent-ink: color-mix(in srgb, var(--primary-color) 20%, var(--primary-text-color));
   --chat-link-ink: color-mix(in srgb, var(--link-color) 20%, var(--primary-text-color));
   --chat-danger-ink: color-mix(in srgb, var(--danger-color) 60%, var(--primary-text-color));
-  --ck-color-text: var(--primary-text-color);
-  --ck-color-muted: var(--secondary-text-color);
+  --ck-color-text: var(--host-color-text);
+  --ck-color-muted: var(--host-color-muted);
   --ck-color-accent: var(--chat-accent-ink);
   --ck-color-danger: var(--chat-danger-ink);
   --ck-color-on-accent: var(--surface-color);
@@ -27,9 +31,9 @@
   }
   @media (prefers-color-scheme: dark) {
     --chat-placeholder-color: #92928c;
-    --primary-text-color: color-mix(in srgb, #93a1a1 85%, #fdf6e3);
-    --secondary-text-color: #93a1a1;
-    --tertiary-text-color: #93a1a1;
+    --host-color-text: color-mix(in srgb, #93a1a1 85%, #fdf6e3);
+    --host-color-muted: #93a1a1;
+    --host-color-faint: #93a1a1;
     --chat-danger-ink: color-mix(in srgb, var(--danger-color) 20%, var(--primary-text-color));
   }
   button:disabled { cursor: default; }
@@ -620,7 +624,7 @@ button.activity-head {
 }
 .chat-input-btn {
   width: var(--ck-control-size); height: var(--ck-control-size);
-  position: relative; overflow: hidden;     // ripple host
+  position: relative; overflow: hidden;
 }
 .chat-input-btn.send {
   color: var(--ck-color-accent);

@@ -6,7 +6,8 @@ import { MemoryRouter } from 'react-router-dom';
 import { compile } from 'sass';
 import { PaneHeader } from './PaneHeader';
 import { StateNotice } from './StateNotice';
-import { ResourceStatus, PanelPageShell } from './SessionPanelKit';
+import { PanelPageShell } from './PanelPage';
+import { ResourceStatus } from './StateNotice';
 import { ManagementShell } from './ManagementShell';
 import { Icon } from './Icon';
 
@@ -60,7 +61,7 @@ test('lazy management and panel loads retain their navigation shell and announce
   assert.match(html, /全局 Skills/);
   assert.match(html, /skill-one/);
   assert.match(html, /aria-label="返回"/);
-  assert.match(html, /aria-label="刷新" disabled=""/);
+  assert.match(html, /<button[^>]*disabled=""[^>]*aria-label="刷新"/);
   assert.equal((html.match(/data-icon="loading"/g) ?? []).length, 2);
   const panel = renderToStaticMarkup(createElement(PanelPageShell, { title: 'Session settings', onClose() {}, loading: true }));
   assert.match(panel, /Session settings/);

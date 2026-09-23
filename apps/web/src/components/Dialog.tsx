@@ -8,6 +8,7 @@ import { useKeyedAction } from '../lib/useKeyedResource';
 import { useNativeDialog } from '../lib/useNativeDialog';
 import { UxErrorNotifications } from './UxErrorNotifications';
 import { StateNotice } from './StateNotice';
+import { Button } from './Button';
 
 // Both the lazy placeholder and the loaded picker own the same modal boundary.
 export function DirectoryModal({ children, busy = false, onCancel }: {
@@ -105,15 +106,15 @@ function DialogContent({
           <StateNotice>等待连接…请在连接恢复后核对操作结果。</StateNotice>
         )}
         <div className="dialog-actions ck-actions">
-          <button type="button" className="dialog-btn ck-button rp" disabled={busy} onClick={cancel}>取消</button>
-          <button
-            type="button"
-            className={`dialog-btn ck-button ck-primary primary rp${destructive ? ' danger ck-danger' : ''}`}
+          <Button disabled={busy} onClick={cancel}>取消</Button>
+          <Button
+            variant="primary"
+            danger={destructive}
             disabled={busy || !action.connected || confirmDisabled || inputInvalid}
             onClick={() => { void confirm(); }}
           >
             {busy ? '处理中…' : confirmLabel}
-          </button>
+          </Button>
         </div>
       </div>
       <UxErrorNotifications withinDialog />

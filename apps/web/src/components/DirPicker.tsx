@@ -5,6 +5,7 @@ import { IntentHttpError } from '../net/client';
 import { useKeyedAction, useKeyedResource } from '../lib/useKeyedResource';
 import { readDirectory } from '../lib/directoryResource';
 import { Icon } from './Icon';
+import { Button, IconButton } from './Button';
 import { DirectoryModal } from './Dialog';
 import { StateNotice } from './StateNotice';
 import type { RoleSelection } from '@cockpit/protocol';
@@ -73,29 +74,27 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
         }}
         disabled={locked} placeholder="服务器主目录" spellCheck={false} autoCapitalize="off" autoCorrect="off"
         aria-label="当前路径" />
-      <button type="button" className="ck-icon-button rp" aria-label="前往" title="前往"
-        disabled={!resource.connected || resource.pending || locked} onClick={() => load(edit.trim() || undefined)}>
-        <Icon name="reload" size={20} />
-      </button>
+      <IconButton icon="reload" iconSize={20} label="前往" title="前往"
+        disabled={!resource.connected || resource.pending || locked} onClick={() => load(edit.trim() || undefined)} />
     </div>
     <div className="dirpicker-list scrollable">
       {resource.status && <StateNotice kind={resource.failed ? 'error' : resource.pending ? 'loading' : 'info'}
         placement={entries?.length ? 'inline' : 'pane'}>{resource.status}</StateNotice>}
-      {parent && <button type="button" className="dirpicker-row ck-button up rp" disabled={!resource.valid || locked} onClick={() => load(parent)}>
+      {parent && <Button className="dirpicker-row dirpicker-up" disabled={!resource.valid || locked} onClick={() => load(parent)}>
         <span className="dirpicker-ico"><Icon name="back" size={20} /></span>
         <span className="dirpicker-name">上级目录</span>
-      </button>}
+      </Button>}
       {resource.valid && entries?.length === 0 ? <StateNotice kind="empty" placement="pane">（没有子文件夹）</StateNotice>
-        : entries?.map(entry => <button key={entry.name} type="button" className="dirpicker-row ck-button rp"
+        : entries?.map(entry => <Button key={entry.name} className="dirpicker-row"
           disabled={!resource.valid || locked} onClick={() => load(`${path === '/' ? '' : path}/${entry.name}`)}>
           <span className="dirpicker-ico folder"><Icon name="folder" size={20} /></span>
           <span className="dirpicker-name">{entry.name}</span>
           <span className="dirpicker-enter"><Icon name="chevron_right" size={16} /></span>
-        </button>)}
+        </Button>)}
     </div>
     {roleResource.status && <StateNotice kind={roleResource.failed ? 'error' : 'loading'}>{roleResource.status}</StateNotice>}
-    {roleResource.failed && <button type="button" className="dialog-btn ck-button" disabled={locked}
-      onClick={() => void roleResource.refresh()}>重试加载角色</button>}
+    {roleResource.failed && <Button disabled={locked}
+      onClick={() => void roleResource.refresh()}>重试加载角色</Button>}
     {roleResource.valid && !rolesAvailable && <StateNotice kind="error">所选角色已不可用，请关闭窗口后重新选择。</StateNotice>}
     {!!roleResource.data?.length && <RolePicker roles={roleResource.data} selected={selectedRoles}
       disabled={locked || !roleResource.valid} onChange={setSelectedRoles} />}
@@ -103,16 +102,16 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
       创建未完成：{action.error}。不会自动重建或发送消息；请先检查原生会话列表。
     </StateNotice>}
     {incompleteSessionId && <p>已确认创建、后续状态尚待核对的原生会话：
-      <button type="button" className="dialog-btn ck-button" onClick={() => { onCreated(incompleteSessionId); onCancel(); }}>
+      <Button onClick={() => { onCreated(incompleteSessionId); onCancel(); }}>
         {incompleteSessionId}
-      </button>
+      </Button>
     </p>}
     </div>
     <div className="dialog-actions ck-actions">
-      <button type="button" className="dialog-btn ck-button rp" disabled={action.busy} onClick={onCancel}>取消</button>
-      <button type="button" className="dialog-btn ck-button ck-primary primary rp" disabled={!canCreate} onClick={create}>
+      <Button disabled={action.busy} onClick={onCancel}>取消</Button>
+      <Button variant="primary" disabled={!canCreate} onClick={create}>
         {action.busy ? '创建中…' : '创建会话'}
-      </button>
+      </Button>
     </div>
   </DirectoryModal>;
 }

@@ -6,7 +6,9 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ChatSession, ModelOption } from '../net/types';
 import { SessionMcp, SessionSkills } from '../components/Manage';
-import { PanelPageShell, ResourceStatus, SessionResume } from '../components/SessionPanelKit';
+import { PanelPageShell } from '../components/PanelPage';
+import { SessionResume } from '../components/SessionResume';
+import { ResourceStatus } from '../components/StateNotice';
 import { useCockpit } from '../net/store';
 import { useSessionResource } from './useSessionResource';
 
@@ -253,7 +255,7 @@ test('directory picker without an initial path has no hardcoded home and cannot 
   assert.match(html, /aria-label="当前路径"/);
   assert.doesNotMatch(html, /dirpicker-help|创建说明|创建后暂不支持追加角色/);
   assert.doesNotMatch(html, /\/home\/honglai|没有子文件夹/);
-  assert.match(html, /class="dialog-btn ck-button ck-primary primary rp" disabled=""[^>]*>创建会话/);
+  assert.match(html, /class="ck-button ck-primary" disabled=""[^>]*>创建会话/);
   assert.match(html, /等待连接/);
 });
 
@@ -264,7 +266,7 @@ test('a supplied but unvalidated directory cannot enable session creation', t =>
     onCreated: noop, onCancel: noop,
   }));
   assert.match(html, /value="\/unvalidated"/);
-  assert.match(html, /class="dialog-btn ck-button ck-primary primary rp" disabled=""[^>]*>创建会话/);
+  assert.match(html, /class="ck-button ck-primary" disabled=""[^>]*>创建会话/);
   assert.doesNotMatch(html, /没有子文件夹/);
 });
 
@@ -277,7 +279,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.match(html, Component === SessionMcp ? /title="本会话 MCP"/ : /title="本会话 Skills"/);
     assert.doesNotMatch(html, /Resource test/, 'the standalone header does not append the session title');
     assert.doesNotMatch(html, /<nav|info-panel-more|role="tab"/);
-    assert.match(html, /aria-label="刷新" disabled=""/);
+    assert.match(html, /<button[^>]*disabled=""[^>]*aria-label="刷新"/);
     assert.doesNotMatch(html, /没有配置 MCP|本会话没有可用的 MCP|未发现技能/);
   });
 }
@@ -315,10 +317,10 @@ for (const page of nativePages) {
     const html = renderToStaticMarkup(page.render());
     assert.match(html, /会话未加载。恢复后可查看这些设置/);
     assert.match(html, /聊天历史仍可直接查看/);
-    assert.match(html, /class="dialog-btn ck-button rp" aria-busy="false" aria-describedby="[^"]+">恢复会话<\/button>/);
+    assert.match(html, /class="session-resume-action ck-button" aria-busy="false" aria-describedby="[^"]+">恢复会话<\/button>/);
     assert.match(html, /class="session-resume ck-surface" role="group" aria-label="会话未加载"/);
     assert.doesNotMatch(html, /没有可用的 skill|本会话没有可用的 MCP|没有配置 MCP/);
-    assert.match(html, /aria-label="刷新" disabled=""/);
+    assert.match(html, /<button[^>]*disabled=""[^>]*aria-label="刷新"/);
   });
 
   test(`${page.name} keeps loaded details available without an unnecessary resume prompt`, (t) => {
@@ -375,7 +377,7 @@ test('resume is disabled offline and after session removal without changing auth
 });
 
 test('retained settings resume without the removed close-and-reload operation', () => {
-  const controls = readFileSync(new URL('../components/SessionPanelKit.tsx', import.meta.url), 'utf8');
+  const controls = readFileSync(new URL('../components/SessionResume.tsx', import.meta.url), 'utf8');
   assert.match(controls, /await loadSession\(sessionId\)/);
   assert.doesNotMatch(controls, /reloadSession|unloadSession|compactSession|rewindSession/);
 });

@@ -3,9 +3,9 @@ import type { ChatSession } from '../net/types';
 import { useSessionRoles } from '../features/session-settings/useSessionRoles';
 import { RoleBadge } from './ModuleLabel';
 import { RolePicker } from './RolePicker';
-import { RefreshButton, ResourceStatus } from './SessionPanelKit';
+import { Button, RefreshButton } from './Button';
 import { HeadingAction, SectionHeading } from './UI';
-import { StateNotice } from './StateNotice';
+import { ResourceStatus, StateNotice } from './StateNotice';
 
 function RolesSection({ session }: { session: ChatSession }) {
   const { open, setOpen, opened, setOpened, catalog, action, setSelected, result, needsInspection,
@@ -45,18 +45,18 @@ function RolesSection({ session }: { session: ChatSession }) {
       {opened && <div id={pickerId} hidden={!open}><div className="info-controls">
         {blocked && <StateNotice className="info-model-status">当前不可保存：请等待连接及会话加载或关闭完成。</StateNotice>}
         <ResourceStatus status={catalog.status} failed={catalog.failed} pending={catalog.pending} />
-        {catalog.failed && <button type="button" className="dialog-btn ck-button rp"
+        {catalog.failed && <Button
           disabled={!catalog.connected || catalog.pending || action.busy}
-          onClick={() => { void catalog.refresh(); }}>重试读取角色目录</button>}
+          onClick={() => { void catalog.refresh(); }}>重试读取角色目录</Button>}
         {catalog.usable && (!catalog.data?.length ? <StateNotice kind="empty">没有可用的模块角色。</StateNotice>
           : !available.length ? <StateNotice kind="empty">目录中的角色均已选择，无法重复追加。</StateNotice>
             : <RolePicker roles={available} selected={additions} disabled={blocked || action.busy || needsInspection}
               onChange={setSelected} />)}
         {additions.length > 64 && <StateNotice kind="error">每次最多追加 64 个角色。</StateNotice>}
         <div className="ck-actions">
-          <button type="button" className="dialog-btn ck-button ck-primary primary rp"
+          <Button variant="primary"
             disabled={blocked || action.busy || needsInspection || !catalog.usable || !additions.length || additions.length > 64}
-            aria-busy={action.busy && operation === 'save'} onClick={submit}>保存追加角色</button>
+            aria-busy={action.busy && operation === 'save'} onClick={submit}>保存追加角色</Button>
         </div>
         {action.busy && operation === 'save' && <StateNotice kind="loading">正在保存…</StateNotice>}
       </div></div>}

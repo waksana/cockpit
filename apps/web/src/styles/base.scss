@@ -63,11 +63,6 @@ input, textarea, [contenteditable='true'],
 button { font-family: inherit; }
 a { color: var(--link-color); text-decoration: none; }
 
-// `.rp` — press-host utility (formerly the ripple host). The ripple animation
-// was removed (owner directive: no motion); the class is retained only so the
-// elements that carry it keep clipping their content to a relative box.
-.rp { position: relative; overflow: hidden; }
-
 // Thin, faint scrollbar for internal scroll containers (matches tweb's quiet
 // chrome). Only the thumb is tinted; track is transparent.
 * {

@@ -304,7 +304,7 @@ test('submitting uses an existing header without adding an idle header or duplic
       const html = render(patch);
       assert.match(html, /chat-execution-progress">正在提交(?:回答)?…<\/span>/);
       assert.doesNotMatch(html, /chat-pending-hint[^>]*>正在提交|data-icon="sending"/);
-      assert.match(html, /class="chat-input-btn ck-icon-button send rp" disabled="" aria-label="正在提交" aria-busy="true"/);
+      assert.match(html, /class="chat-input-btn send ck-icon-button" disabled=""[^>]*aria-label="正在提交" aria-busy="true"/);
       if (draft.reference.purpose.kind === 'prompt') {
         const idle = render({ status: 'idle' });
         assert.match(idle, /<summary class="chat-execution-head" hidden=""/);

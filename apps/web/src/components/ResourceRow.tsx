@@ -4,6 +4,7 @@ import { useClippedText } from '../lib/useClippedText';
 import { resourceErrorSummary } from '../lib/resourcePresentation';
 import { Icon } from './Icon';
 import { Badge } from './UI';
+import { Button } from './Button';
 
 // One row for session and global resource lists: badge + name, an optional
 // one-line summary, then status and control on one centered line. Native
@@ -22,7 +23,7 @@ export function ResourceRow({ name, summary, badge, control, status, feedback, t
     data-selectable={link ? true : undefined} data-selected={link?.selected || undefined}
     data-resource-name={name} title={title}>
     {link
-      ? <Link className="manage-resource-identity ck-button rp" to={link.to} replace={link.replace}
+      ? <Link className="manage-resource-identity ck-button" to={link.to} replace={link.replace}
         aria-current={link.selected ? 'page' : undefined}>{identity}</Link>
       : <div className="manage-resource-identity">{identity}</div>}
     <div className="manage-resource-controls">
@@ -57,9 +58,9 @@ export function ResourceText({ text, label, lines = 1, disclosure = true }: {
   const content = <span ref={ref} id={id} className="manage-row-text" data-lines={lines}
     data-expanded={expanded || undefined} title={disclosure ? undefined : text}>{text}</span>;
   return disclosure && (clipped || expanded)
-    ? <button type="button" className="manage-text-disclosure ck-button"
+    ? <Button className="manage-text-disclosure"
       aria-label={`${expanded ? '收起' : '展开'}${label}`} aria-expanded={expanded} aria-controls={id}
-      onClick={() => setExpanded(!expanded)}>{content}</button>
+      onClick={() => setExpanded(!expanded)}>{content}</Button>
     : content;
 }
 
@@ -68,10 +69,10 @@ export function ResourceError({ error, name, label = '操作未确认' }: { erro
   const [expanded, setExpanded] = useState(false);
   return <div className="manage-row-error">
     <div id={`${id}-summary`} className="manage-error-summary" role="status">{label}：{resourceErrorSummary(error)}</div>
-    <button type="button" className="manage-error-disclosure ck-button"
+    <Button className="manage-error-disclosure"
       aria-label={`${expanded ? '收起' : '展开'}${name}错误详情`} aria-expanded={expanded} aria-controls={id}
       aria-describedby={`${id}-summary`}
-      onClick={() => setExpanded(!expanded)}>{expanded ? '收起' : '查看错误详情'}</button>
+      onClick={() => setExpanded(!expanded)}>{expanded ? '收起' : '查看错误详情'}</Button>
     <div id={id} className="manage-error-full" hidden={!expanded}>{error}</div>
   </div>;
 }

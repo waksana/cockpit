@@ -2,7 +2,8 @@ import { useId, type RefCallback } from 'react';
 import type { ChatSession } from '../net/types';
 import { controlIndicators, type SessionControlAction, type SessionControls } from '../lib/sessionControls';
 import { useKeyedAction } from '../lib/useKeyedResource';
-import { Icon, type IconName } from './Icon';
+import type { IconName } from './Icon';
+import { Button, IconButton } from './Button';
 import { SessionActivity } from './SessionActivity';
 import { CopyButton } from './CopyButton';
 
@@ -12,11 +13,9 @@ export function SessionControlActionButton({ identity, label, icon, waiting = '�
 }) {
   const action = useKeyedAction(identity);
   return <div className="chat-control-action">
-    <button ref={controlRef} type="button" className="ck-icon-button" disabled={disabled || action.busy}
-      aria-label={action.busy ? waiting : label} title={action.busy ? waiting : label}
-      aria-busy={action.busy || undefined} onClick={() => { void action.run(onAction); }}>
-      <Icon name={action.busy ? 'loading' : icon} className={action.busy ? 'spinner' : undefined} size={16} />
-    </button>
+    <IconButton ref={controlRef} icon={icon} iconSize={16} busy={action.busy || undefined} disabled={disabled || action.busy}
+      label={action.busy ? waiting : label} title={action.busy ? waiting : label}
+      onClick={() => { void action.run(onAction); }} />
     {action.error && <span role="alert">{action.error}</span>}
   </div>;
 }
@@ -59,10 +58,10 @@ export function SessionControlBar({ session, controls, connected, expanded, disa
   if (!items.length || items.length === 1 && items[0].icon === 'radiooff') return null;
   return <section className="chat-controls" aria-label="会话控制区">
     <div className="chat-execution-head chat-controls-header">
-      <button className="ck-button chat-controls-toggle" type="button" aria-expanded={expanded} aria-controls={listId}
+      <Button className="chat-controls-toggle" aria-expanded={expanded} aria-controls={listId}
         aria-label={`展开或收起会话状态列表：${items.map(item => item.label).join('，')}`} onClick={onToggle}>
         <SessionActivity items={headerItems} />
-      </button>
+      </Button>
       {active && action('all', '停止本会话当前工作并清空队列', 'stop', { type: 'stop-all' }, false, '停止中…')}
     </div>
     <div id={listId} className="chat-controls-list" hidden={!expanded}>

@@ -5,6 +5,7 @@ import { CopyButton } from './CopyButton';
 import { useClippedText } from '../lib/useClippedText';
 import { toolStatusLabel } from '../lib/toolStatus';
 import { Icon } from './Icon';
+import { Button } from './Button';
 import { toolPresentation } from '../lib/toolPresentation';
 
 export function ToolStatusIcon({ status }: { status: ToolCall['status'] }) {
@@ -24,7 +25,7 @@ export function ToolCallRow({ tc, sessionId }: { tc: ToolCall; sessionId: string
   const status = toolStatusLabel(tc.status);
   const label = [name, description, status].filter(Boolean).join(' · ');
   return <div className="msg-tool" data-status={tc.status ?? 'unknown'} data-open={open || undefined}>
-    <button type="button" className="activity-head tool-head tool-toggle ck-button" aria-expanded={open}
+    <Button className="activity-head tool-head tool-toggle" aria-expanded={open}
       aria-controls={contentId} aria-label={`${open ? '收起' : '展开'}细节：${label}`} title={label} onClick={toggle}>
       <span className="activity-icon"><Icon name={presentation.icon} size={16} /></span>
       <span className="tool-heading-content">
@@ -32,7 +33,7 @@ export function ToolCallRow({ tc, sessionId }: { tc: ToolCall; sessionId: string
         {!presentation.builtin && <span ref={nameRef} className="tool-label" data-clipped={nameClipped || undefined}><bdi dir="ltr">{name}</bdi></span>}
       </span>
       <ToolStatusIcon status={tc.status} />
-    </button>
+    </Button>
     {open && <div id={contentId} className="activity-detail tool-detail">
       {(presentation.builtin || nameClipped) && <section><div className="tool-detail-label">工具名</div><div className="tool-full-name">{name}</div></section>}
       {descriptionClipped && description && <section><div className="tool-detail-label">说明</div><div>{description}</div></section>}

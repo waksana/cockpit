@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { ChatSession, ExitPlanModeAction } from '../net/types';
 import { Icon } from './Icon';
+import { Button } from './Button';
 import { MessageBody } from './MessageBody';
 import { MessagePresentation, ModuleRuntimeProvider } from './ModuleComponents';
 import type { ModuleRuntime } from '../lib/moduleRuntime';
@@ -38,8 +39,8 @@ export function AskContent({ request, sessionId, pending, disabled = false, onCh
       <span className="chat-decision-actions">{actions}</span>
     </div> : <MessagePresentation className="chat-ask-q" identity={{ sessionId, kind: 'ask', id: request.requestId }} complete>{request.question}</MessagePresentation>}
     {!!request.choices?.length && <div className="chat-ask-choices">
-      {request.choices.map(choice => <button key={choice} type="button" className="chat-ask-choice ck-button"
-        disabled={pending || disabled} onClick={() => onChoice(choice)}>{choice}</button>)}
+      {request.choices.map(choice => <Button key={choice} className="chat-ask-choice"
+        disabled={pending || disabled} onClick={() => onChoice(choice)}>{choice}</Button>)}
     </div>}
   </div>;
   return runtime ? <ModuleRuntimeProvider runtime={runtime}>{body}</ModuleRuntimeProvider> : body;
@@ -59,9 +60,9 @@ export function PlanCard({ request, pending, disabled = false, onSelect, actions
       </details>}
     </div>
     <div className="chat-ask-choices">
-      {(request.actions ?? []).map(action => <button key={action} type="button"
-        className={`chat-ask-choice ck-button${action === request.recommendedAction ? ' ck-primary' : ''}`}
-        disabled={pending || disabled} onClick={() => onSelect(action)}>{PLAN_ACTION_LABEL[action]}</button>)}
+      {(request.actions ?? []).map(action => <Button key={action} className="chat-ask-choice"
+        variant={action === request.recommendedAction ? 'primary' : 'default'}
+        disabled={pending || disabled} onClick={() => onSelect(action)}>{PLAN_ACTION_LABEL[action]}</Button>)}
     </div>
     {!request.actions?.length && <div className="chat-pending-hint" role="status">
       {request.actions ? '原生未提供可用的计划操作。' : '原生计划操作列表不可用。'}
@@ -78,10 +79,10 @@ export function ElicitationCard({ request, pending, disabled = false, onSelect, 
     className="chat-tool-confirm" pending={pending} actions={actions}>
     <div className="chat-ask-q">{request.message}</div>
     <div className="chat-ask-choices">
-      {(request.actions ?? ['accept', 'decline', 'cancel']).map(action => <button key={action} type="button"
-        className="chat-ask-choice ck-button" disabled={pending || disabled} onClick={() => onSelect(action)}>
+      {(request.actions ?? ['accept', 'decline', 'cancel']).map(action => <Button key={action}
+        className="chat-ask-choice" disabled={pending || disabled} onClick={() => onSelect(action)}>
         {{ accept: '同意', decline: '拒绝', cancel: '取消' }[action]}
-      </button>)}
+      </Button>)}
     </div>
   </PendingDecision>;
 }

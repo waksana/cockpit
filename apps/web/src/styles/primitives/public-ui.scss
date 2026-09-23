@@ -3,22 +3,22 @@
 
 // Public Module UI v1. Business layout stays with the consuming component.
 :root {
-  --ck-color-text: var(--primary-text-color);
-  --ck-color-muted: var(--secondary-text-color);
-  --ck-color-surface: var(--surface-color);
-  --ck-color-border: var(--border-color);
-  --ck-color-accent: var(--primary-color);
-  --ck-color-on-accent: var(--badge-text-color);
-  --ck-color-danger: var(--danger-color);
-  --ck-color-success: var(--green-color);
-  --ck-color-hover: var(--ripple-color);
+  --ck-color-text: var(--host-color-text);
+  --ck-color-muted: var(--host-color-muted);
+  --ck-color-surface: var(--host-color-surface);
+  --ck-color-border: var(--host-color-border);
+  --ck-color-accent: var(--host-color-accent);
+  --ck-color-on-accent: var(--host-color-on-accent);
+  --ck-color-danger: var(--host-color-danger);
+  --ck-color-success: var(--host-color-success);
+  --ck-color-hover: var(--host-color-hover);
   --ck-icon-size: 24px;
   --ck-icon-stroke: 2;
   --ck-control-size: 40px;
   --ck-input-font-min: 0px;
   --ck-space: var(--host-space-sm);
   --ck-radius: var(--host-radius-control);
-  --ck-disabled-opacity: var(--disabled-opacity);
+  --ck-disabled-opacity: var(--host-opacity-disabled);
 }
 
 @media (pointer: coarse) {

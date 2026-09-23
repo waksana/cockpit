@@ -16,6 +16,7 @@ import { Sidebar } from './components/Sidebar';
 import { ConnectedThread } from './components/ConnectedThread';
 import { NewSessionFab } from './components/NewSessionFab';
 import { Icon } from './components/Icon';
+import { Button, IconButton } from './components/Button';
 import { ChatHeader } from './components/ChatHeader';
 import { AnchoredMenu } from './components/AnchoredMenu';
 import { DirectoryModal } from './components/Dialog';
@@ -156,9 +157,7 @@ function Workspace() {
           aria-label="搜索会话"
         />
         {query && (
-          <button type="button" className="input-search-clear ck-icon-button" aria-label="清除" onClick={() => setQuery('')}>
-            <Icon name="close" size={20} />
-          </button>
+          <IconButton className="input-search-clear" icon="close" iconSize={20} label="清除" onClick={() => setQuery('')} />
         )}
       </div>} />
   );
@@ -222,7 +221,7 @@ function Workspace() {
           <StateNotice kind="empty" placement="pane">
             <div>
               <p>这个会话不存在,或已被删除。</p>
-              <button type="button" className="ck-button ck-primary" onClick={() => navigate('/')}>返回列表</button>
+              <Button variant="primary" onClick={() => navigate('/')}>返回列表</Button>
             </div>
           </StateNotice>
         ) : (
@@ -248,7 +247,7 @@ function Workspace() {
         <Suspense fallback={
           <DirectoryModal onCancel={() => setDirPicker(false)}>
               <StateNotice kind="loading" placement="pane">加载目录选择器…</StateNotice>
-              <button type="button" className="dialog-btn ck-button rp" onClick={() => setDirPicker(false)}>取消</button>
+              <Button onClick={() => setDirPicker(false)}>取消</Button>
           </DirectoryModal>
         }>
           <DirPicker key={location.key} onCreate={newSession}

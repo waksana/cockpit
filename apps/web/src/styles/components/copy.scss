@@ -4,14 +4,14 @@
   gap: var(--host-space-xs);
   min-block-size: var(--chat-control-compact, 32px);
   padding: var(--host-space-xs) var(--host-space-sm);
-  color: var(--secondary-text-color);
+  color: var(--host-color-muted);
   font-size: var(--chat-text-meta, var(--font-size-12)); line-height: var(--chat-leading-ui, 1.5);
   white-space: nowrap;
 }
 .chat-copy-label { display: grid; text-align: start; }
 .chat-copy-label > span { grid-area: 1 / 1; }
 .chat-copy-label-size { visibility: hidden; }
-.chat-copy-error { color: var(--chat-danger-ink, var(--danger-color)); font-size: var(--chat-text-meta, var(--font-size-12)); line-height: var(--chat-leading-ui, 1.5); }
+.chat-copy-error { color: var(--chat-danger-ink, var(--host-color-danger)); font-size: var(--chat-text-meta, var(--font-size-12)); line-height: var(--chat-leading-ui, 1.5); }
 
 .copy-value {
   display: flex; flex-direction: column; align-items: flex-start;
@@ -19,7 +19,7 @@
 .copy-value-button {
   display: grid; min-width: 0; max-width: 100%;
   padding: 0; border-radius: 4px;
-  color: var(--secondary-text-color); text-align: start;
+  color: var(--host-color-muted); text-align: start;
   font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
 }

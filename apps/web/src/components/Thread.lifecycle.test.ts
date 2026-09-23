@@ -1653,7 +1653,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await event(node, 'change');
     };
     const apply = async () => {
-      const button = container.querySelector('.ui-pending-bar')?.querySelectorAll('.dialog-btn').find(node => node.textContent === '应用');
+      const button = container.querySelector('.ui-pending-bar')?.querySelectorAll('.ck-button').find(node => node.textContent === '应用');
       assert.ok(button);
       await event(button, 'click');
     };
@@ -1742,7 +1742,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await event(target, 'change');
     };
     const apply = () => {
-      const button = node('.ui-pending-bar').querySelector('.primary');
+      const button = node('.ui-pending-bar').querySelector('.ck-primary');
       assert.ok(button, 'model section has its own Apply action');
       assert.match(button.textContent, /^(应用|正在提交…)$/);
       return button;

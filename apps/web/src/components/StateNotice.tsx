@@ -11,3 +11,10 @@ export function StateNotice({ children, kind = 'info', placement = 'inline', cla
     <div className="state-notice-content">{children}</div>
   </div>;
 }
+
+// A resource's current status line; nothing renders when there is no status.
+export function ResourceStatus({ status, failed, pending, placement = 'inline' }: {
+  status: string | null; failed?: boolean; pending?: boolean; placement?: 'inline' | 'pane';
+}) {
+  return status ? <StateNotice kind={failed ? 'error' : pending ? 'loading' : 'info'} placement={placement}>{status}</StateNotice> : null;
+}

@@ -62,7 +62,7 @@ test('semantic middleware preserves real navigation and management controls with
     else assert.doesNotMatch(sidebar, /data-fixture-session/);
     const navigation = render(createElement(GlobalNavigation));
     controls(navigation, 1);
-    assert.match(navigation, /<button[^>]*aria-label="全局导航"[^>]*aria-haspopup="menu"[^>]*aria-expanded="false"/);
+    assert.match(navigation, /<button(?=[^>]*aria-label="全局导航")(?=[^>]*aria-haspopup="menu")[^>]*aria-expanded="false"/);
     assert.doesNotMatch(navigation, /Fixture navigation/);
     for (const section of ['mcp', 'skills'] as const) {
       const title = section === 'mcp' ? '全局 MCP' : '全局 Skills';
@@ -73,7 +73,7 @@ test('semantic middleware preserves real navigation and management controls with
       controls(management, enhanced ? 3 : 2);
       assert.match(management, /<button[^>]*aria-label="返回会话列表"/);
       assert.match(management, new RegExp(`<span class="pane-title ck-text-primary">${title}</span>`));
-      assert.match(management, new RegExp(`<button[^>]*aria-label="${refresh}"[^>]*disabled=""`));
+      assert.match(management, new RegExp(`<button[^>]*disabled=""[^>]*aria-label="${refresh}"`));
       if (enhanced) assert.match(management, new RegExp(`</div><button type="button">Fixture list: ${section}</button><button`));
       else assert.doesNotMatch(management, /Fixture list:/);
 
@@ -83,7 +83,7 @@ test('semantic middleware preserves real navigation and management controls with
       }));
       controls(detail, enhanced ? 5 : 3);
       assert.match(detail, /<button[^>]*aria-label="返回会话列表"/);
-      assert.match(detail, /<button[^>]*class="chat-back ck-icon-button rp lg:hidden"[^>]*aria-label="返回"/);
+      assert.match(detail, /<button[^>]*class="chat-back lg:hidden ck-icon-button"[^>]*aria-label="返回"/);
       assert.match(detail, /<span class="pane-title resource-name"><span data-provenance="true">Verified module<\/span><span>fixture-resource<\/span><\/span>/);
       if (enhanced) assert.match(detail, /<\/div><button type="button">Fixture detail: fixture-resource<\/button><\/header>/);
       else assert.doesNotMatch(detail, /Fixture detail:/);

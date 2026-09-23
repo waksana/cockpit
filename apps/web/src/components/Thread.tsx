@@ -11,6 +11,7 @@ import type { SessionControlAction } from '../lib/sessionControls';
 import { useControlComposer } from '../lib/useControlComposer';
 import { CopyButton } from './CopyButton';
 import { Icon } from './Icon';
+import { Button, IconButton } from './Button';
 import type { ChatMessage, ChatSession, ExitPlanModeAction } from '../net/types';
 import type { NativeDraftRequest } from '../lib/draft';
 import { observeLocalSubmissions } from '../lib/localSubmission';
@@ -82,7 +83,7 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
   const timestamp = items[0].message.timestamp;
   const time = clock(timestamp);
   return <section className="message-process" data-failed={states[0][0] > 0 || undefined}>
-    <div data-message-id={JSON.stringify([sessionId, identity])}><button type="button" className="process-summary ck-button" aria-expanded={open} aria-controls={contentId}
+    <div data-message-id={JSON.stringify([sessionId, identity])}><Button className="process-summary" aria-expanded={open} aria-controls={contentId}
       aria-label={`${open ? '收起' : '展开'}过程：${description} · ${time}`} title={description}
       onClick={toggle}>
       <span className="process-summary-chevron"><Icon name="down" size={16} /></span>
@@ -99,7 +100,7 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
         {thoughts.some(item => item.message.incomplete) && <span title="思考归属未确认"><Icon name="error" size={16} /></span>}
       </span>
       <MessageTimestamp timestamp={timestamp} />
-    </button></div>
+    </Button></div>
     <div id={contentId} className="message-process-content" hidden={!open} data-child-history>
       {(mounted || open) && items.map(item => <div key={item.key} data-child-message-frame={item.key}>
         <div data-message-id={JSON.stringify([sessionId, item.key])}>
@@ -150,14 +151,14 @@ function SubagentCard({ m, sessionId }: { m: ChatMessage; sessionId: string }) {
   return (
     <div className="subagent-card" data-status={sa.status}>
       <div className="subagent-overview">
-        <button type="button" className="subagent-head ck-button rp" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+        <Button className="subagent-head" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
           <span className="subagent-ico"><Icon name="agent" size={20} /></span>
           <span className="subagent-name">{sa.displayName}</span>
           <span className="subagent-status" title="根据已加载的子代理事件记录，不代表当前仍在运行或任务目标已完成。">
             记录：{status}{!connected && ' · 待同步'}
           </span>
           <span className="subagent-chevron"><Icon name={open ? 'up' : 'down'} size={16} /></span>
-        </button>
+        </Button>
         {sa.description && !open && <div className="subagent-desc">{sa.description}</div>}
       </div>
       {open && <SubagentDetails key={JSON.stringify([sessionId, sa.toolCallId])} m={m} sessionId={sessionId} />}
@@ -517,16 +518,16 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                 {session.loadingHistory ? null : session.historyStale || !session.materialized ? (
                   <StateNotice className="chat-loading-older" kind={session.historyError ? 'error' : 'info'}>
                     {session.historyError ? `历史加载失败：${session.historyError}` : '对话历史尚未同步。'}
-                    {onRetryHistory && <button type="button" className="chat-history-retry ck-button rp" onClick={() => {
+                    {onRetryHistory && <Button className="chat-history-retry" onClick={() => {
                       scrollOwnerRef.current?.follow();
                       onRetryHistory();
                     }}>
                       重新读取最新历史
-                    </button>}
+                    </Button>}
                   </StateNotice>
                 ) : session.historyError ? <StateNotice className="chat-loading-older" kind="error">
                   历史加载失败：{session.historyError}
-                  {onRetryHistory && <button type="button" className="chat-history-retry ck-button rp" onClick={onRetryHistory}>重试加载历史</button>}
+                  {onRetryHistory && <Button className="chat-history-retry" onClick={onRetryHistory}>重试加载历史</Button>}
                 </StateNotice> : null}
               </div>
               {session.partialHistory && <p className="chat-history-note" role="status">
@@ -550,9 +551,9 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
         </div>
 
         {awayFromBottom && (
-          <button className="new-msg-badge ck-button" type="button" onClick={jumpToBottom}>
+          <Button className="new-msg-badge" onClick={jumpToBottom}>
             {hasNewContent ? '有新内容 · 回到最新' : '回到最新'}
-          </button>
+          </Button>
         )}
       </div>
 
@@ -560,12 +561,12 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
         <div className="chat-input-notices">
           {!readOnly && session.controlsError && <p className="chat-error" role="alert">
             活动列表读取失败：{session.controlsError}
-            {onRetryControls && <button type="button" className="ck-button" disabled={!authoritative || activityRefreshing}
-              onClick={onRetryControls}>重试</button>}
+            {onRetryControls && <Button disabled={!authoritative || activityRefreshing}
+              onClick={onRetryControls}>重试</Button>}
           </p>}
           {session.error && <p className="chat-error" role="alert">错误: {session.error}
-            {onRetryHistory && session.materialized && !session.historyStale && <button type="button"
-              className="ck-button rp" onClick={onRetryHistory}>重试同步</button>}
+            {onRetryHistory && session.materialized && !session.historyStale && <Button
+              onClick={onRetryHistory}>重试同步</Button>}
           </p>}
           {interruptResult && <p className="chat-interrupt-status" tabIndex={0} aria-label="打断结果" role={interruptAction.error ? 'alert' : 'status'}>
             {interruptResult}
@@ -589,22 +590,22 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
             {!readOnly && hasContent && <span className="chat-folded-draft">有草稿</span>}
             {(showStop || showInterrupt) && <span className="chat-execution-actions" role="group" aria-label="执行操作"
               onClick={event => event.stopPropagation()}>
-              {showInterrupt && <button ref={executionControlRef} type="button" className="chat-interrupt ck-button"
+              {showInterrupt && <Button ref={executionControlRef} className="chat-interrupt"
                 disabled={!interruptAction.connected || (!!session.activeOperations && !interruptAction.busy)}
                 aria-disabled={interruptAction.busy || undefined}
                 onClick={() => {
                   void interruptAction.run(async () => {
                     await onInterrupt!();
                   });
-                }}>{interruptAction.busy ? '正在请求…' : '打断并处理队列'}</button>}
-              {showStop && <button ref={executionControlRef} type="button" className="chat-typing-stop ck-button ck-danger" disabled={stopDisabled}
+                }}>{interruptAction.busy ? '正在请求…' : '打断并处理队列'}</Button>}
+              {showStop && <Button ref={executionControlRef} className="chat-typing-stop" danger disabled={stopDisabled}
                 aria-disabled={stopPending || undefined} aria-busy={stopPending || undefined}
                 onClick={() => {
                   if (!stopDisabled && !stopPending) void stopAction.run(async () => { await onCancel?.(); });
                 }}>
                 <Icon name="stop" size={16} />
                 {stopPending ? '正在停止…' : notAbortable ? '当前不可中断' : queueCount > 0 ? '停止并清空队列' : '停止'}
-              </button>}
+              </Button>}
             </span>}
           </summary>
           <div className="chat-input-card-body">
@@ -623,8 +624,8 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                       </summary>
                     </details>
                     <div className="chat-queue-copy"><CopyButton text={q.text} label="复制排队消息" /></div>
-                    <button ref={executionControlRef} type="button" className="chat-queue-remove ck-icon-button" disabled={!connected || !onRemoveQueued}
-                      aria-label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)}><Icon name="close" size={16} /></button>
+                    <IconButton ref={executionControlRef} className="chat-queue-remove" icon="close" iconSize={16} disabled={!connected || !onRemoveQueued}
+                      label={`移除排队消息：${q.text}`} onClick={() => onRemoveQueued?.(q.id)} />
                   </div>
                 ))}
               </div>}

@@ -51,7 +51,7 @@ test('action rows are named full-row buttons in a group; busy replaces the chevr
     createElement(ActionRow, { key: 'b', icon: 'fork', name: 'Fork', description: 'Copies history', busy: true, busyDescription: 'Working…' }),
   ] }));
   assert.match(html, /^<div class="ui-action-list" role="group" aria-label="Operations" data-disabled="true">/);
-  const rows = html.match(/<button[^>]*class="ui-action-row ck-button rp"[^>]*>/g) ?? [];
+  const rows = html.match(/<button[^>]*class="ui-action-row ck-button"[^>]*>/g) ?? [];
   assert.equal(rows.length, 2);
   for (const row of rows) {
     assert.match(row, /type="button"/);
@@ -70,7 +70,7 @@ test('pending bar is a labelled group and heading actions keep their own names',
   const bar = renderToStaticMarkup(createElement(PendingChangesBar, { message: 'Unsaved', children: createElement('button', { type: 'button' }, 'Apply') }));
   assert.match(bar, /^<div class="ui-pending-bar" role="group" aria-labelledby="([^"]+)"><span id="\1" class="ui-pending-message">Unsaved<\/span><div class="ck-actions"><button type="button">Apply<\/button><\/div><\/div>$/);
   const action = renderToStaticMarkup(createElement(HeadingAction, { icon: 'add', 'aria-expanded': false, children: 'Add' }));
-  assert.match(action, /^<button aria-expanded="false" type="button" class="ui-heading-action ck-button rp"><span class="ck-icon" data-icon="add"/);
+  assert.match(action, /^<button type="button" class="ui-heading-action ck-button" aria-expanded="false"><span class="ck-icon" data-icon="add"/);
   assert.match(action, /Add<\/button>$/);
 });
 
@@ -112,7 +112,7 @@ test('one resource row: badge + name, one-line summary, then status and switch o
     feedback: createElement('div', { className: 'manage-row-error' }, 'failure'),
   })));
   assert.match(linked, /data-selectable="true" data-selected="true"/);
-  assert.match(linked, /<a class="manage-resource-identity ck-button rp" aria-current="page" href="\/skills\/a"[^>]*>/);
+  assert.match(linked, /<a class="manage-resource-identity ck-button" aria-current="page" href="\/skills\/a"[^>]*>/);
   const anchor = linked.slice(linked.indexOf('<a '), linked.indexOf('</a>'));
   assert.doesNotMatch(anchor, /<button|<div|role="switch"/, 'navigation holds only phrasing identity content');
   assert.match(anchor, /class="manage-row-text" data-lines="1" title="A long summary/);
@@ -141,6 +141,6 @@ test('controls retain the desktop baseline, touch input floor, inset focus and c
   const pointerOnly = /:root \[data-native-dialog-pointer-focus\]:focus-visible \{\s*outline: none;\s*\}/;
   assert.match(dialog, pointerOnly);
   assert.doesNotMatch(info + dialog.replace(pointerOnly, ''), /outline:\s*none|\.info-select\b|^\.dialog-btn\s*\{/m);
-  assert.match(dialog, /\[data-dialog-focus\]:focus-visible \{[^}]*box-shadow: inset 3px 0 0 var\(--primary-color\)/);
+  assert.match(dialog, /\[data-dialog-focus\]:focus-visible \{[^}]*box-shadow: inset 3px 0 0 var\(--host-color-accent\)/);
   assert.doesNotMatch(dialog.match(/\[data-dialog-focus\]:focus-visible \{([^}]*)\}/)![1], /text-decoration|padding|margin|border:/);
 });

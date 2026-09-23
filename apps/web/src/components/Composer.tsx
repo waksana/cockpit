@@ -2,7 +2,7 @@
 // revisions protect edits made while an earlier native send is settling.
 import { useCallback, useLayoutEffect, useRef, useSyncExternalStore, type ComponentProps } from 'react';
 import type { SessionDraft } from '../lib/textDraft';
-import { Icon } from './Icon';
+import { IconButton } from './Button';
 import type { ComposerProps as PublicComposerProps, ComposerEditorProps, ComposerInputProps } from '@cockpit/module-api';
 import { ModuleRuntimeProvider, useModuleElement, useModuleRuntime } from './ModuleComponents';
 import type { ModuleRuntime } from '../lib/moduleRuntime';
@@ -17,7 +17,7 @@ export function ComposerNotices({ draft }: { draft: SessionDraft }) {
   return <>
     {unconfirmed && <div className="chat-input-notice" role="alert" tabIndex={0}>
       <span>发送或草稿确认尚未完整完成，重发前请先检查会话。</span>
-      <button type="button" className="ck-icon-button" onClick={draft.dismissNotice} aria-label="关闭发送提示"><Icon name="close" size={20} /></button>
+      <IconButton icon="close" iconSize={20} label="关闭发送提示" onClick={draft.dismissNotice} />
     </div>}
   </>;
 }
@@ -107,11 +107,10 @@ function ComposerEditorBase({ draft, operation, disabled, busy, placeholder, sub
           editorRef={editorRef} className="chat-input-message ck-input" aria-label="消息输入" value={text}
           disabled={disabled} onChange={event => onTextChange(event.target.value)} placeholder={placeholder ?? '输入消息…'} rows={1}
         />
-        <button type="button" className="chat-input-btn ck-icon-button send rp" disabled={!canSend} onClick={submit}
-          aria-label={pending ? '正在提交' : submitLabel ?? (busy ? '排队发送' : '发送')} aria-busy={pending}
-          title={pending ? '正在提交，草稿仍可编辑' : blockedReason || (submitLabel ?? (busy ? '加入队列' : '发送'))}>
-          <Icon name={pending && !statusInHeader ? 'sending' : 'arrow_up'} size={24} />
-        </button>
+        <IconButton className="chat-input-btn send" disabled={!canSend} onClick={submit}
+          label={pending ? '正在提交' : submitLabel ?? (busy ? '排队发送' : '发送')} aria-busy={pending}
+          title={pending ? '正在提交，草稿仍可编辑' : blockedReason || (submitLabel ?? (busy ? '加入队列' : '发送'))}
+          icon={pending && !statusInHeader ? 'sending' : 'arrow_up'} />
   </div>;
 }
 

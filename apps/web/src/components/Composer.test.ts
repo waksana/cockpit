@@ -111,13 +111,13 @@ test('the module owns the full draft list directly above the editor without a ho
   assert.match(html, /<\/section><\/div><div class="chat-input ck-input-row">/);
   assert.match(html, /<div class="chat-input ck-input-row"><button type="button" aria-label="Add item">Add item<\/button><textarea/);
   assert.equal((html.match(/<textarea\b/g) ?? []).length, 1);
-  assert.equal((html.match(/class="chat-input-btn ck-icon-button send rp"/g) ?? []).length, 1);
+  assert.equal((html.match(/class="chat-input-btn send ck-icon-button"/g) ?? []).length, 1);
   assert.doesNotMatch(html, /<button\b[^>]*>(?:(?!<\/button>)[\s\S])*<button\b/);
-  assert.match(html, /class="chat-input-btn ck-icon-button send rp" disabled=""/);
+  assert.match(html, /class="chat-input-btn send ck-icon-button" disabled=""/);
   assert.match(html, /title="Module work pending"/);
   assert.equal(await f.draft.send(async () => assert.fail('Active module blocker')), false);
   release();
-  assert.doesNotMatch(f.render(), /class="chat-input-btn ck-icon-button send rp" disabled=""/);
+  assert.doesNotMatch(f.render(), /class="chat-input-btn send ck-icon-button" disabled=""/);
 });
 
 test('module loss removes field UI/blockers but blocks text-only sends until retained schema data is restored', async t => {

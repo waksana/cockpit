@@ -5,7 +5,7 @@ import { useCockpit } from '../net/store';
 import { Shell, MasterPane, DetailPane } from './Shell';
 import { PaneHeader } from './PaneHeader';
 import { StateNotice } from './StateNotice';
-import { Icon } from './Icon';
+import { IconButton, RefreshButton } from './Button';
 import type { ManagementHeaderProps, ManagementDetailHeaderProps } from '@cockpit/module-api';
 import { useModuleElement } from './ModuleComponents';
 
@@ -22,19 +22,12 @@ function MasterHeaderBase({ section, onRefresh, actions }: ManagementHeaderProps
   const { run, busy, error } = useKeyedAction(`global:refresh:${section}`);
   return <>
     <PaneHeader
-      leading={<button className="ck-icon-button rp" type="button"
-        aria-label="返回会话列表"
-        onClick={() => up('/')}>
-        <Icon name="back" size={24} />
-      </button>}
+      leading={<IconButton icon="back" label="返回会话列表" onClick={() => up('/')} />}
       title={<span className="pane-title ck-text-primary">{SECTION_TITLE[section]}</span>}
-      actions={<>{actions}<button className="ck-icon-button rp manage-action" type="button"
-        aria-label={section === 'mcp' ? '刷新 Copilot MCP 配置缓存' : '刷新'}
-        disabled={!onRefresh || connState !== 'open' || busy} aria-busy={busy} onClick={() => {
+      actions={<>{actions}<RefreshButton label={section === 'mcp' ? '刷新 Copilot MCP 配置缓存' : '刷新'}
+        disabled={!onRefresh || connState !== 'open' || busy} pending={busy} onClick={() => {
           void run(async () => { if (section === 'mcp') await mcpRefresh(); }, onRefresh);
-        }}>
-        {busy ? <Icon name="loading" className="spinner" size={16} /> : <Icon name="reload" size={20} />}
-      </button></>} />
+        }} /></>} />
     {error && <StateNotice kind="error">刷新失败：{error}</StateNotice>}
   </>;
 }
@@ -45,9 +38,7 @@ function DetailHeader(props: ManagementDetailHeaderProps) {
 function DetailHeaderBase({ item, titlePrefix, actions }: ManagementDetailHeaderProps) {
   const up = useUp();
   return <PaneHeader className="chat-topbar manage-detail-header"
-    leading={<button className="chat-back ck-icon-button rp lg:hidden" type="button" aria-label="返回" onClick={() => up()}>
-      <Icon name="back" size={24} />
-    </button>}
+    leading={<IconButton className="chat-back lg:hidden" icon="back" label="返回" onClick={() => up()} />}
     title={<span className="pane-title resource-name">{titlePrefix}<span>{item}</span></span>}
     actions={actions} />;
 }

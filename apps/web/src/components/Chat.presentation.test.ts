@@ -104,7 +104,7 @@ test('latest tool overview exposes explicit recorded failure and unknown states'
 
 test('Chat dark theme targets the mounted chat, not an impossible nested chat', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*\.chat \{[^}]*--primary-text-color:/);
+  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*\.chat \{[^}]*--host-color-text:/);
   assert.doesNotMatch(css, /\.chat \.chat \{/);
 });
 
@@ -300,13 +300,13 @@ test('history retries own their accent intent while session-error retry uses ord
     const html = renderToStaticMarkup(createElement(Thread, {
       session: { ...fixtureSession('history-error'), historyStale }, onLoadMore() {}, onRetryHistory() {},
     }));
-    assert.match(html, /class="chat-history-retry ck-button rp"/);
+    assert.match(html, /class="chat-history-retry ck-button"/);
     assert.doesNotMatch(html, /dialog-btn/);
   }
   const html = renderToStaticMarkup(createElement(Thread, {
     session: { ...fixtureSession('reading'), error: 'Synthetic error' }, onLoadMore() {}, onRetryHistory() {},
   }));
-  assert.match(html, /class="ck-button rp">重试同步<\/button>/);
+  assert.match(html, /class="ck-button">重试同步<\/button>/);
   assert.doesNotMatch(html, /dialog-btn|chat-history-retry/);
 });
 
@@ -431,7 +431,7 @@ test('a choice-only request keeps the draft editable but does not offer a freefo
   prompt.edit('Cached prompt not an answer');
   getDraftSession(session.sessionId).candidate({ kind: 'ask', requestId: session.ask!.requestId }).edit('Retained draft');
   const html = renderToStaticMarkup(createElement(Thread, { session, onLoadMore() {} }));
-  assert.match(html, /class="chat-input-btn ck-icon-button send rp" disabled="" aria-label="提交回答"/);
+  assert.match(html, /class="chat-input-btn send ck-icon-button" disabled=""[^>]*aria-label="提交回答"/);
   assert.match(html, /<textarea[^>]*aria-label="消息输入"[^>]*>Retained draft<\/textarea>/);
   assert.doesNotMatch(html, /<textarea[^>]*disabled/);
   assert.doesNotMatch(html, /Cached prompt not an answer/);
@@ -504,7 +504,7 @@ test('elicitation selects a separate draft and cannot send its text as an ordina
   assert.doesNotMatch(html, /当前回答或确认操作不接受附件/);
   assert.doesNotMatch(html, /CACHED_PROMPT_NOT_AN_ANSWER/);
   assert.equal(draft.getSnapshot().text, 'CACHED_PROMPT_NOT_AN_ANSWER');
-  const send = html.match(/<button[^>]*class="chat-input-btn ck-icon-button send rp"[^>]*>/)?.[0];
+  const send = html.match(/<button[^>]*class="chat-input-btn send ck-icon-button"[^>]*>/)?.[0];
   assert.ok(send);
   assert.match(send, /disabled/);
   assert.doesNotMatch(html, /普通消息不会代替确认|chat-composer-hint/);
@@ -599,7 +599,7 @@ test('host controls do not add decorative hover while selection and keyboard foc
   assert.doesNotMatch(all, /:hover/);
   assert.match(css, /\.chat :is\(button, a, textarea, summary, \[tabindex\]\):focus-visible \{[^}]*outline: 2px/);
   const primitives = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
-  assert.match(primitives, /--ck-color-hover: var\(--ripple-color\)/, 'retain the public token for module compatibility');
+  assert.match(primitives, /--ck-color-hover: var\(--host-color-hover\)/, 'retain the public token for module compatibility');
   assert.match(primitives, /:is\(\.ck-button, \.ck-icon-button, \.ck-input\):focus-visible \{[^}]*outline: 2px/);
   assert.match(all, /\.chatlist-chat\.active \{[^}]*background-color: var\(--selected-fill\)/);
   assert.match(all, /\.manage-row\[data-selectable\]\[data-selected\] \{[^}]*background: color-mix/);

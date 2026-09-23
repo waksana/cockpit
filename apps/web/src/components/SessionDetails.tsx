@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback } from 'react';
 import { useCockpit } from '../net/store';
 import { useUp } from '../lib/nav';
 import { SESSION_PANEL_LABELS, type SessionPanel } from '../lib/routeOwnership';
-import { PanelPageShell } from './SessionPanelKit';
+import { PanelPageShell } from './PanelPage';
 import { InspectorPane } from './Shell';
 import { UxErrorNotifications } from './UxErrorNotifications';
 import type { SessionInfoPanelProps } from './SessionInfoPanel';

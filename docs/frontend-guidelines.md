@@ -164,15 +164,20 @@ ARIA 用于补足原生/可见内容未能表达的名称、说明或状态，�
 公共外观的唯一来源仍是 `styles/primitives/public-ui.scss`，宿主也消费
 `ck-button` / `ck-icon-button` / `ck-input`；私有组件负责可复用的语义组合，
 不再建立一套按钮外观。模块不能导入这些私有 React 组件。
+宿主按钮统一使用 `components/Button.tsx`：`Button`（`variant="primary"`、`danger`）、
+`IconButton`（必填可访问名称、16/20/24 图标尺寸、真实 `busy` 时显示 spinner）
+与唯一的刷新控件 `RefreshButton`；它们只选择 `ck-*` 类与原生语义，
+所有者类只补上下文布局。不要再手写 `ck-button` 类串或新增无样式的标记类。
+具有特殊角色的原生按钮（`role=switch` 开关、菜单项、带长按/右键的会话行）仍由各自所有者维护。
 
 | 层 | 维护位置与职责 |
 | --- | --- |
-| 基础 | `tokens.scss` 的字体角色、间距、圆角、语义色；公共 `ck-*` 控件、原生 disabled、内收 focus-visible。Lucide 与公共尺寸仍由模块 UI 指南维护。 |
+| 基础 | `tokens.scss` 的字体角色、间距、圆角与 `--host-color-*` 语义色（tweb 旧名只是它们的别名，留给移植样式）；公共 `ck-*` 控件、原生 disabled、内收 focus-visible；`Button.tsx` 的按钮组件。Lucide 与公共尺寸仍由模块 UI 指南维护。 |
 | 页面骨架 | `Shell` 的 `master`、`main`、`inspector`、`overlays` 槽；不读取 URL、会话或资源状态。只需主页面时省略其余槽。 |
 | 列表与主内容 | `MasterPane` / `DetailPane` 负责窄屏可见性及 inert；`PaneHeader` 组合 leading/title/actions，`PaneBody` 声明滚动与内边距。 |
 | 配置/详情 | `InspectorPane` 是可停靠的详情框，不是任意页面包装器；`SessionDetails` 选择业务内容，`ManagementShell` 组合管理页。 |
-| 表单与内容 | `UI.tsx` 的字段、选择卡、开关、section heading 与 `Badge`；`ResourceRow.tsx` 组合名称/来源/开关/状态、完整文本及错误披露，不拥有资源请求。 |
-| 状态与浮层 | `StateNotice` 区分 empty/loading/info/error；`Dialog` / `DirectoryModal` 使用原生模态，菜单沿用既有键盘和关闭所有者。 |
+| 表单与内容 | `UI.tsx` 的字段、选择卡、开关、section heading 与 `Badge`；`ResourceRow.tsx` 组合名称/来源/开关/状态、完整文本及错误披露，不拥有资源请求；`ExpandableText` 展开被截断的完整文本。 |
+| 状态与浮层 | `StateNotice` 区分 empty/loading/info/error，`ResourceStatus` 是其行内状态；`PanelPage` 提供会话面板页框与关闭按钮，`SessionResume` 负责未加载会话的显式恢复；`Dialog` / `DirectoryModal` 使用原生模态，菜单沿用既有键盘和关闭所有者。 |
 
 宿主与模块的普通表面、标题、动作行和非交互 badge 共用
 `ck-surface` / `ck-heading` / `ck-actions` / `ck-badge`；原生模态外观使用 `ck-modal`。

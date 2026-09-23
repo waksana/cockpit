@@ -1,6 +1,7 @@
 // Private semantic compositions; native controls consume the public UI baseline.
 import { useId, type ComponentProps, type ReactNode } from 'react';
 import { Icon, type IconName } from './Icon';
+import { Button } from './Button';
 
 export function SectionHeading({ children, actions, className = '', level = 3 }: {
   children: ReactNode; actions?: ReactNode; className?: string; level?: 2 | 3;
@@ -16,10 +17,10 @@ export function SectionHeading({ children, actions, className = '', level = 3 }:
 export function HeadingAction({ icon, children, className = '', ...props }: Omit<ComponentProps<'button'>, 'type'> & {
   icon?: IconName;
 }) {
-  return <button {...props} type="button" className={`ui-heading-action ck-button rp ${className}`.trim()}>
+  return <Button {...props} className={`ui-heading-action ${className}`.trim()}>
     {icon && <Icon name={icon} size={16} />}
     {children}
-  </button>;
+  </Button>;
 }
 
 // A bordered group of full-row actions. Callers disable each row; the group
@@ -37,7 +38,7 @@ export function ActionRow({ icon, name, description, busy, busyDescription = 'å¤
     icon: IconName; name: string; description: string; busy?: boolean; busyDescription?: string;
   }) {
   const id = useId();
-  return <button {...props} type="button" className="ui-action-row ck-button rp"
+  return <Button {...props} className="ui-action-row"
     aria-labelledby={`${id}-name`} aria-describedby={`${id}-description`} aria-busy={busy || undefined}>
     <Icon name={icon} size={20} className="ui-action-icon" />
     <span className="ui-action-text">
@@ -46,7 +47,7 @@ export function ActionRow({ icon, name, description, busy, busyDescription = 'å¤
     </span>
     {busy ? <Icon name="loading" size={16} className="ui-action-trailing spinner" />
       : <Icon name="chevron_right" size={16} className="ui-action-trailing" />}
-  </button>;
+  </Button>;
 }
 
 // Shown only while local edits or an unconfirmed submission exist; results stay

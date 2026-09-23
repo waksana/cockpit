@@ -33,7 +33,7 @@ test('the documented module example extends the real editor and preserves named 
   assert.match(render(false), /<div class="chat-input ck-input-row"><button[^>]*example-draft-action/);
   assert.match(render(false), /<\/button><textarea[^>]*aria-label="消息输入"/);
   assert.equal((render(false).match(/<textarea\b/g) ?? []).length, 1);
-  assert.equal((render(false).match(/class="chat-input-btn ck-icon-button send rp"/g) ?? []).length, 1);
+  assert.equal((render(false).match(/class="chat-input-btn send ck-icon-button"/g) ?? []).length, 1);
   assert.doesNotMatch(render(false), /module-composer-actions|<button\b[^>]*>(?:(?!<\/button>)[\s\S])*<button\b/);
   assert.doesNotMatch(render(false).match(/<button[^>]+example-draft-action[^>]+>/)?.[0] ?? '', /disabled=""/);
   assert.match(render(true).match(/<button[^>]+example-draft-action[^>]+>/)?.[0] ?? '', /disabled=""/);
@@ -48,5 +48,5 @@ test('the documented module example extends the real editor and preserves named 
   runtime.stop();
   assert.doesNotMatch(render(false), /example-draft-action/);
   assert.match(render(false), /<div class="chat-input ck-input-row"><textarea/);
-  assert.match(render(false), /class="chat-input-btn ck-icon-button send rp" aria-label="发送"/);
+  assert.match(render(false), /class="chat-input-btn send ck-icon-button"[^>]*aria-label="发送"/);
 });
