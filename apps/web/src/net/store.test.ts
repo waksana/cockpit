@@ -705,6 +705,21 @@ test('fork acknowledgement survives list-refresh failure without losing the chil
   assert.equal(h.requests.length, 2);
 });
 
+test('an accepted unload whose readback fails is unknown, never failed', async t => {
+  const h = setup(t);
+  h.source.open(); h.snapshot([], { sessions: [settingsMeta()] });
+  const request = useCockpit.getState().runSessionSettingsAction('a', 'unload');
+  await h.reply(0, { ok: true });
+  h.request(1).response.reject(new TypeError('Read unavailable'));
+  await new Promise(resolve => setTimeout(resolve, 0));
+  h.request(2).response.reject(new TypeError('Refresh unavailable'));
+  await assert.rejects(request, /已接受卸载，状态读取失败：Read unavailable/);
+  const operation = useCockpit.getState().sessionSettingsOperations.a;
+  assert.equal(operation.errorState, 'unknown');
+  assert.equal(operation.outcome, undefined);
+  assert.deepEqual(getUxErrors(), [], 'the owning settings page shows it');
+});
+
 test('late unload read after reconnect cannot overwrite the new connection loaded state', async t => {
   const h = setup(t);
   h.source.open(); h.snapshot([], { sessions: [settingsMeta()] });
@@ -762,8 +777,9 @@ for (const patch of [
     await assert.rejects(reload('a'), /仍有工作/);
     assert.equal(h.requests.length, 0);
     assert.deepEqual(useCockpit.getState().reloadingSessionIds, []);
-    // The disabled reload row already explains the guard; nothing was sent.
-    assert.deepEqual(useCockpit.getState().sessionReloadResults, {});
+    // Nothing was sent; a stale enabled row still learns why in place.
+    assert.equal(useCockpit.getState().sessionReloadResults.a?.state, 'failed');
+    assert.match(useCockpit.getState().sessionReloadResults.a?.reason ?? '', /仍有工作/);
     assert.deepEqual(getUxErrors(), []);
   });
 }

@@ -478,8 +478,9 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const inputBodyId = useId();
   // The fold survives ordinary updates; a new request or idle input opens afresh.
   const inputFoldKey = JSON.stringify([session.sessionId, ask?.requestId, planRequest?.requestId, session.elicitation?.requestId, hasInputHeader]);
-  const [foldedInputKey, setFoldedInputKey] = useState<string | null>(null);
-  const inputOpen = foldedInputKey !== inputFoldKey;
+  const [inputFold, setInputFold] = useState({ key: inputFoldKey, folded: false });
+  if (inputFold.key !== inputFoldKey) setInputFold({ key: inputFoldKey, folded: false });
+  const inputOpen = inputFold.key !== inputFoldKey || !inputFold.folded;
   const decisionKey = askId ? `ask:${askId}` : planId ? `plan:${planId}` : elicitationId ? `elicitation:${elicitationId}` : undefined;
   const [controlsDisclosure, setControlsDisclosure] = useState<{ decision?: string; open: boolean }>({ open: true });
   const controlsOpen = decisionKey && decisionKey !== controlsDisclosure.decision ? true : controlsDisclosure.open;
@@ -583,7 +584,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           data-header={hasInputHeader || undefined} data-decision={!!(!readOnly && (ask || hasPendingDecision)) || undefined}
           data-question={(!readOnly && operation === 'ask') || undefined}>
           <div className="chat-execution-head" hidden={!hasInputHeader}>
-            <Disclosure className="chat-execution-toggle" open={inputOpen} onToggle={() => setFoldedInputKey(inputOpen ? inputFoldKey : null)}
+            <Disclosure className="chat-execution-toggle" open={inputOpen} onToggle={() => setInputFold({ key: inputFoldKey, folded: inputOpen })}
               controls={inputBodyId} name={`输入卡片：${executionLabel}`}>
               <span className="chat-execution-label" role="status" title={executionLabel}
                 aria-label={executionLabel}>

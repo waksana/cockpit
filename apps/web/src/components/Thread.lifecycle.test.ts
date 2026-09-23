@@ -1554,6 +1554,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(execution.attributes.has('hidden'), true, 'idle input has no folding control or extra status row');
     assert.equal(getDraftSession(value.sessionId).current({}), promptDraft);
     assert.equal(container.querySelector('.chat-input-message')?.value, 'Cached ordinary prompt');
+    await show({ ask: null });
+    assert.equal(folded(), false, 'the next run opens afresh even though its fold key recurs');
   });
 
   for (const hasMore of [false, true]) {

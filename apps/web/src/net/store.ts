@@ -780,8 +780,15 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         } else {
           const result = await net.intent('session/unload', { sessionId: sid }, OWNED);
           if (!result.ok) throw new OperationRejected('服务器未接受卸载');
-          const { meta } = await net.intent('session/get', { sessionId: sid }, OWNED);
-          if (meta && meta.sessionId !== sid) throw new Error('Copilot 返回了其他会话，卸载状态未确认');
+          // The unload was accepted; any later read failure leaves its effect unknown.
+          const meta = await net.intent('session/get', { sessionId: sid }, OWNED).then(({ meta }) => {
+            if (meta && meta.sessionId !== sid) throw new Error('Copilot 返回了其他会话');
+            return meta;
+          }).catch((cause: unknown) => {
+            const error = new OperationUnconfirmed(`已接受卸载，状态读取失败：${describeReason(cause, false)}`);
+            recordOperationFailure(error, { message: copy.unknown(error.message), mutation: true, uncertain: true });
+            throw error;
+          });
           update({ outcome: { action, present: meta !== null, loaded: meta?.loaded === true } });
           // Only a same-connection authoritative read changes presence/loading.
           // Preserve the rendered history and drafts of an unloaded session.
@@ -833,8 +840,14 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
           sessionReloadResults: { ...st.sessionReloadResults, [sid]: result } }));
       };
       return promise.then(() => settle({ state: 'done' }), error => {
-        settle({ state: operationErrorState(error), reason: describeReason(error, false) });
-        if (submitted) reportIfOrphaned(sid, generation, error);
+        if (submitted) {
+          settle({ state: operationErrorState(error), reason: describeReason(error, false) });
+          reportIfOrphaned(sid, generation, error);
+        } else {
+          // A fresh-state guard can block an enabled row; say so in place.
+          set(st => ({ sessionReloadResults: { ...st.sessionReloadResults,
+            [sid]: { state: 'failed', reason: describeReason(error, false) } } }));
+        }
         throw error;
       });
     },
