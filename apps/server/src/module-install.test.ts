@@ -62,26 +62,12 @@ test('worker entries must be packaged JavaScript under declared asset roots', ()
   assert.throws(() => inspectModuleArchive(archive(large)), /worker exceeds/);
 });
 
-test('new UI entry and styles are independently validated packaged assets', () => {
-  const frontend = {
-    entry: 'web/index.js', assets: ['web'],
-    next: { entry: 'web/next/index.js', styles: ['web/next/styles.css'] },
-  };
-  const nextFiles = [
-    { path: 'web/next/index.js', content: 'export function activate() {}' },
-    { path: 'web/next/styles.css', content: '.fixture-next { display: flex; }' },
-  ];
-  const valid = [...moduleEntries('next-fixture', undefined, { frontend }), ...nextFiles];
-  assert.deepEqual(inspectModuleArchive(archive(valid)).manifest.frontend?.next, frontend.next);
-  for (const next of [
-    { entry: 'web/next/missing.js' },
-    { entry: 'backend.mjs' },
-    { entry: 'web/next/styles.css' },
-    { entry: 'web/next/index.js', styles: ['web/next/index.js'] },
-    { entry: 'web/next/index.js', styles: ['web/missing.css'] },
-  ]) {
-    const entries = [...moduleEntries('next-fixture', undefined, { frontend: { ...frontend, next } }), ...nextFiles];
-    assert.throws(() => inspectModuleArchive(archive(entries)), /declared asset|JavaScript\/CSS/);
+test('frontend declarations are strict: undeclared presentation fields are rejected', () => {
+  const frontend = { entry: 'web/index.js', assets: ['web'] };
+  assert.equal(inspectModuleArchive(archive(moduleEntries('strict-frontend', undefined, { frontend }))).manifest.frontend?.entry, 'web/index.js');
+  for (const extra of [{ layout: { entry: 'web/index.js' } }, { entries: ['web/index.js'] }]) {
+    const entries = moduleEntries('strict-frontend', undefined, { frontend: { ...frontend, ...extra } });
+    assert.throws(() => inspectModuleArchive(archive(entries)), /Unrecognized key/);
   }
 });
 

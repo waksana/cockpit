@@ -4,7 +4,7 @@ import type {
   ComponentMiddleware,
   HostSnapshot, ChatWindowSnapshot, MarkdownNode, MarkdownRenderer, ModuleAsset, ModuleComponentProps,
   DraftSchemaRegistration, ModuleEventPayload, ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
-  ModuleFrontendServices, ModuleNextFrontendContext, ModuleUi,
+  ModuleFrontendServices,
   ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget,
   DraftSendBlockReason,
 } from '@cockpit/module-api';
@@ -91,17 +91,6 @@ export function validateModuleAsset(value: unknown, backend: URL): ModuleAsset {
     return url.href;
   };
   let worker: ModuleAsset['worker'];
-  let next: ModuleAsset['next'];
-  if (value.next !== undefined) {
-    if (!record(value.next) || Object.keys(value.next).some(key => key !== 'entry' && key !== 'styles')
-      || !Array.isArray(value.next.styles) || value.next.styles.some(style => typeof style !== 'string')) {
-      throw new Error('Invalid new UI module assets');
-    }
-    next = Object.freeze({
-      entry: resolve(value.next.entry, true),
-      styles: value.next.styles.map(style => resolve(style, true)),
-    });
-  }
   if (value.worker !== undefined) {
     if (!record(value.worker) || Object.keys(value.worker).some(key => key !== 'entry' && key !== 'scope')) throw new Error('Invalid module worker');
     const scope = new URL(`_modules/workers/${value.id}/`, backend);
@@ -114,7 +103,6 @@ export function validateModuleAsset(value: unknown, backend: URL): ModuleAsset {
     id: value.id, name: value.name, version: value.version, digest: value.digest,
     apiBase: resolve(value.apiBase, false), entry: resolve(value.entry, true),
     styles: value.styles.map(style => resolve(style, true)), config: Object.freeze({ ...value.config }),
-    ...(next ? { next } : {}),
     ...(worker ? { worker } : {}),
   });
 }
@@ -196,40 +184,10 @@ function installStyle(url: string): () => void {
   return () => element.remove();
 }
 
-function loadStyle(url: string, signal: AbortSignal): { ready: Promise<void>; dispose(): void } {
-  signal.throwIfAborted();
-  const element = document.createElement('link');
-  element.rel = 'stylesheet';
-  element.href = url;
-  let cancel = () => {};
-  const ready = new Promise<void>((resolve, reject) => {
-    const settle = (error?: Error) => {
-      element.onload = null;
-      element.onerror = null;
-      signal.removeEventListener('abort', cancel);
-      if (error) reject(error);
-      else resolve();
-    };
-    cancel = () => settle(new DOMException('Module styles stopped loading', 'AbortError'));
-    element.onload = () => settle();
-    element.onerror = () => settle(new Error(`Module stylesheet failed: ${url}`));
-    signal.addEventListener('abort', cancel, { once: true });
-    document.head.appendChild(element);
-  });
-  return { ready, dispose() { cancel(); element.remove(); } };
-}
-
-export interface UnavailableModulePresentation {
-  readonly id: string;
-  readonly name: string;
-}
-
 export class ModuleRuntime {
   private readonly options: RuntimeOptions;
   private snapshot: readonly LoadedModule[] = [];
   private readonly listeners = new Set<() => void>();
-  private presentationUi?: ModuleUi;
-  private unavailablePresentations: readonly UnavailableModulePresentation[] = [];
   private view: HostSnapshot = EMPTY_VIEW;
   private readonly viewListeners = new Set<() => void>();
   private readChatWindow: () => ChatWindowSnapshot = () => EMPTY_CHAT_WINDOW;
@@ -250,7 +208,6 @@ export class ModuleRuntime {
     this.options = options;
   }
   getSnapshot = (): readonly LoadedModule[] => this.snapshot;
-  getUnavailablePresentations = (): readonly UnavailableModulePresentation[] => this.unavailablePresentations;
   getViewSnapshot = (): HostSnapshot => this.view;
   getChatWindowSnapshot = (): ChatWindowSnapshot => this.readChatWindow();
   updateChatWindow(read: () => ChatWindowSnapshot): void {
@@ -302,14 +259,8 @@ export class ModuleRuntime {
     const releases = [...drafts].map(draft => draft.deferNotifications());
     try { change(); } finally { for (const release of releases) release(); }
   }
-  async start(baseUrl = this.options.baseUrl ?? '', ui?: ModuleUi): Promise<void> {
-    if (this.controller) {
-      if (ui !== this.presentationUi) throw new Error('Changing UI presentation requires a new document');
-      return;
-    }
-    if (ui && ui.version !== 1) throw new Error('Unsupported host component library version');
-    this.presentationUi = ui;
-    this.unavailablePresentations = [];
+  async start(baseUrl = this.options.baseUrl ?? ''): Promise<void> {
+    if (this.controller) return;
     const controller = new AbortController();
     this.controller = controller;
     try {
@@ -325,28 +276,20 @@ export class ModuleRuntime {
       const counts = new Map<string, number>();
       for (const item of bootstrap.modules) if (record(item) && typeof item.id === 'string') counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
       const pending: Promise<void>[] = [];
-      const unavailable: UnavailableModulePresentation[] = [];
       for (const item of bootstrap.modules) {
         if (controller.signal.aborted) break;
         try {
           const asset = validateModuleAsset(item, backend);
           if (counts.get(asset.id) !== 1) throw new Error(`Duplicate module ${asset.id}`);
-          if (ui && !asset.next) {
-            unavailable.push(Object.freeze({ id: asset.id, name: asset.name }));
-            continue;
-          }
-          pending.push(this.activate(asset, fetcher, controller.signal, ui)
+          pending.push(this.activate(asset, fetcher, controller.signal)
             .catch(error => { if (!controller.signal.aborted) this.report(error); }));
         } catch (error) { if (!controller.signal.aborted) this.report(error); }
       }
-      this.unavailablePresentations = Object.freeze(unavailable);
       await Promise.all(pending);
       if (!controller.signal.aborted) this.publish(this.snapshot);
     } catch (error) { if (!controller.signal.aborted) this.report(error); }
   }
-  private async activate(asset: ModuleAsset, fetcher: typeof fetch, parentSignal: AbortSignal, ui?: ModuleUi) {
-    const presentation = ui ? asset.next : asset;
-    if (!presentation) throw new Error(`Module ${asset.id} does not provide a new UI entry`);
+  private async activate(asset: ModuleAsset, fetcher: typeof fetch, parentSignal: AbortSignal) {
     const controller = new AbortController();
     const owner = `${asset.id}@${asset.digest}:${++moduleSequence}`;
     const bindings: LoadedModule['bindings'] = new Map();
@@ -486,22 +429,9 @@ export class ModuleRuntime {
         return fetcher(url, { ...init, headers, signal, credentials: 'include', redirect: 'error', mode: 'cors' });
       },
     };
-    const context: ModuleFrontendContext | ModuleNextFrontendContext = ui
-      ? { ...servicesContext, ui }
-      : { ...servicesContext, uiVersion: 1, uiSurfaceVersion: 1 };
+    const context: ModuleFrontendContext = { ...servicesContext, uiVersion: 1, uiSurfaceVersion: 1 };
     const prepare = async () => {
-      if (ui) {
-        for (const url of presentation.styles) {
-          if (this.options.style) styles.push(this.options.style(url));
-          else {
-            const style = loadStyle(url, controller.signal);
-            styles.push(style.dispose);
-            await style.ready;
-          }
-          controller.signal.throwIfAborted();
-        }
-      }
-      const imported = await (this.options.load ?? (url => import(/* @vite-ignore */ url)))(presentation.entry);
+      const imported = await (this.options.load ?? (url => import(/* @vite-ignore */ url)))(asset.entry);
       if (controller.signal.aborted || parentSignal.aborted) return;
       if (typeof imported.activate !== 'function') throw new Error(`Module ${asset.id} has no activate export`);
       const activated: unknown = await imported.activate(context);
@@ -527,7 +457,7 @@ export class ModuleRuntime {
         };
         subscriptions.add(release);
       }
-      if (!ui) for (const style of presentation.styles) styles.push((this.options.style ?? installStyle)(style));
+      for (const style of asset.styles) styles.push((this.options.style ?? installStyle)(style));
       for (const schema of schemas) for (const draft of this.knownDrafts) schema.prepare(draft);
       for (const schema of schemas) schema.activate();
       const loaded: LoadedModule = { asset, frontend, bindings, schemas: Object.freeze(schemas), signal: controller.signal, stop };
@@ -552,8 +482,6 @@ export class ModuleRuntime {
     this.batchDraftChanges(() => {
       this.controller?.abort();
       this.controller = undefined;
-      this.presentationUi = undefined;
-      this.unavailablePresentations = [];
       this.publish([]);
     });
   }

@@ -53,7 +53,7 @@ test('full Web prompt, queue and decisions mutate only the addressed synthetic s
   assert.equal(current().queue?.length, 2);
   await store.getState().cancel(workspaceSessionId);
   assert.equal(current().activity?.processing, false);
-  assert.equal(current().activity?.tasks.activeShells, 2, 'classic abort does not claim all background work ended');
+  assert.equal(current().activity?.tasks.activeShells, 2, 'abort does not claim all background work ended');
   assert.equal(current().queue?.length, 0);
   const id = 'control-design-ask';
   const ask = store.getState().sessions.find(value => value.sessionId === id)!.ask!;

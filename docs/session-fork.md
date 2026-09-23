@@ -9,7 +9,7 @@ This is the canonical fork behavior guide. See the [documentation index](README.
 ## Call paths
 
 Fork is available through HTTP, the generic MCP caller, and **Session settings →
-Session operations** in the classic Web UI. The Web action forks the full current
+Session operations** in the Web UI. The Web action forks the full current
 history; it does not offer a per-message boundary or alter Task responsibility.
 Its confirmation explains the shared workspace and cold-resume configuration.
 The backend creates an **unloaded** child and emits
@@ -17,7 +17,7 @@ the normal `session/added` event; it sends no prompt. The child can subsequently
 be selected from the ordinary session list or the explicit **Open new session**
 link after a confirmed result. Settings stay on the parent until that selection.
 An unconfirmed response retains a warning instead of claiming creation or
-automatically retrying. The experimental `/next/` UI is unchanged.
+automatically retrying.
 
 API discovery: `GET /capabilities?name=session/fork`.
 

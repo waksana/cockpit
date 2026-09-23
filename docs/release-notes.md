@@ -1,12 +1,10 @@
 # Cockpit 0.4.4
 
-Current-source deployment version for classic global MCP/Skills detail fixes
+Current-source deployment version for global MCP/Skills detail fixes
 (#153), session settings layout (#156), unified resource rows and global-default
 hints (#157), shared base controls and tokens (#160), Stylelint and class-name
 guardrails (#161), native MCP server tags on tool rows (#162), and two-line
 session cards with explicit overflow priority (#163).
-Classic `/` remains primary; the experimental `/next/` entry is retained without
-new feature parity.
 
 The module host bridge now allows the existing `session/rename` intent (#165).
 Full loaded-session reads expose optional `nativeName`; `nativeNameUserSet` is
@@ -24,12 +22,10 @@ modules, create a tag or GitHub Release, or install/restart a service.
 
 # Cockpit 0.4.3
 
-Current-source deployment version for classic resource presentation updates
+Current-source deployment version for resource presentation updates
 (#139), the role picker (#141), removal of session connection-method display
 (#143), one-click exit from global management (#146), and session settings
 reload, unload, compaction and full-history fork controls (#147).
-Classic `/` is the primary UI as documented in #138; `/next/` remains
-experimental and its existing entry is retained, without new feature parity.
 
 All host workspaces and MCP self-report 0.4.3. Native SDK 1.0.13 / runtime
 1.0.83 and module API capability versions are unchanged. Session operations
@@ -44,17 +40,16 @@ version-preparation change.
 
 # Cockpit 0.4.2
 
-Current-source deployment version for the classic MCP and Skills resource
+Current-source deployment version for the MCP and Skills resource
 redesign in #131 and compact process summaries in #133. Global resources use
 compact master/detail lists; global and session resources share provenance
 badges, with global module attribution only where identity is verified.
-Classic chat process headers use distinct icon/count pairs for tools, thoughts
+Chat process headers use distinct icon/count pairs for tools, thoughts
 and Skills while retaining accessible labels, status and full nested details.
 
 All host workspaces and MCP self-report 0.4.2. Native SDK 1.0.13 / runtime
 1.0.83, module backend API v1, Web API v2 and existing UI capability versions
 are unchanged; resource provenance and the titlePrefix extension are additive.
-Classic remains at `/` and the independent `/next/` entry remains available.
 This new immutable version does not replace installed 0.4.1 contents, migrate
 user data, change module selections or create a tag, GitHub Release or restart.
 
@@ -63,9 +58,8 @@ user data, change module selections or create a tag, GitHub Release or restart.
 # Cockpit 0.4.1
 
 Current-source deployment version for the list layouts in #122, the
-SquareTerminal app icon in #124 and classic dialog focus fixes in #127.
-These presentation fixes retain classic at `/` and the independent `/next/`
-entry without changing native session controls or module business behavior.
+SquareTerminal app icon in #124 and dialog focus fixes in #127.
+These presentation fixes do not change native session controls or module business behavior.
 
 All host workspaces and MCP self-report 0.4.1. Native SDK 1.0.13 / runtime
 1.0.83, module backend API v1, Web API v2 and existing UI capabilities are
@@ -78,7 +72,7 @@ This preparation does not create a tag or GitHub Release or restart a service.
 
 # Cockpit 0.4.0
 
-Deployment preparation for the native session controls in #119. The classic
+Deployment preparation for the native session controls in #119. The
 conversation now exposes active agent/terminal groups, scoped cancellation and
 group clearing, native queue steering, request-bound decision cancellation and
 an explicit global Stop. Sidebar and input controls share the overall activity
@@ -91,52 +85,6 @@ All host workspaces and MCP self-report 0.4.0. Module selections, credentials,
 native session data and module versions are not changed by this preparation.
 The versioned source can be packaged for the authorized deployment; this change
 does not create a tag or GitHub Release or itself restart a service.
-
----
-
-# Cockpit 0.3.1
-
-Current-source delivery version for the compact next workspace in #103.
-The `/next/` entry uses compact session navigation and a single conversation
-header, contextual settings that retain their form across responsive changes,
-and a smaller idle composer with accessible compact timestamps. Desktop settings
-keep the chat mounted; full-page phone settings release hidden reading while
-retaining drafts. Select popups stay inside the native settings dialog.
-
-Classic remains the default at `/`. Shared native transport, draft ownership,
-module APIs and user data are unchanged. Existing File 0.2.0 and Speech 0.9.0
-presentations remain paired; Task and Notification remain classic-only.
-This delivery does not include the subsequent responsive-layout proposals.
-All host workspace and MCP versions are 0.3.1; modules need no version change.
-This version preparation does not itself publish a tag or GitHub Release.
-
----
-
-# Cockpit 0.3.0
-
-Source preparation for the independent shadcn-based Web presentation in #99.
-Classic remains the default. The shared UI workspace contains host-used source
-components, and modules can declare separate `frontend.next` assets under their
-existing immutable archive. `ModuleNextFrontendContext.ui` supplies actual host
-components without claiming classic CSS support or adding a second React runtime.
-This capability is not present in released 0.2.7 archives.
-
-The independent `/next/` entry provides a conversation-first workspace, dedicated
-session settings, global MCP/Skills resources, native decisions, queue controls
-and shared dialogs/menus. It reuses native transport/history, reading anchors and
-draft ownership instead of creating another backend or persisted state authority.
-Classic remains directly available at `/`; switching documents does not undo
-business actions or transfer in-memory uploads/recordings. Both entries protect
-unfinished native work, and unknown module draft fields cannot silently become a
-text-only submission.
-
-The paired new module presentations are File 0.2.0 and Speech 0.9.0, built against
-the host SDK source `0fa433d99c053df2caf80770f0f8762b9ed7002e`.
-Task and Notification remain classic-only; this delivery does not claim that
-every installed module has migrated. The isolated Chat Lab supports actual
-compiled File/Speech presentation integration with synthetic uploads/audio.
-This source preparation does not publish a tag or Release, deploy any service,
-switch the default UI, or authorize data migration.
 
 ---
 

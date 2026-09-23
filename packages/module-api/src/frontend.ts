@@ -1,6 +1,5 @@
 import type * as React from 'react';
 import type { ModuleEventPayload, NativeAttachmentDescriptor, SessionMeta, SessionStatus } from '@cockpit/protocol';
-import type { ModuleUi } from './ui.ts';
 
 type ReadonlyData<T> = { readonly [Key in keyof T]: ReadonlyData<T[Key]> };
 
@@ -590,12 +589,8 @@ export interface ModuleFrontendServices {
 
 export interface ModuleFrontendContext extends ModuleFrontendServices {
   readonly uiVersion: 1;
-  /** Classic shared surfaces, independent of the new React component library. */
+  /** Shared surface/heading/actions/badge/modal CSS. Check separately from base UI v1. */
   readonly uiSurfaceVersion: 1;
-}
-
-export interface ModuleNextFrontendContext extends ModuleFrontendServices {
-  readonly ui: ModuleUi;
 }
 
 /**
@@ -628,4 +623,3 @@ export interface ModuleFrontend {
 }
 
 export type ActivateFrontend = (context: ModuleFrontendContext) => ModuleFrontend | Promise<ModuleFrontend>;
-export type ActivateNextFrontend = (context: ModuleNextFrontendContext) => ModuleFrontend | Promise<ModuleFrontend>;

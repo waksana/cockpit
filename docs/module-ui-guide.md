@@ -1,6 +1,6 @@
 # Module UI guide
 
-This is the authoritative guide to module presentation contracts. The classic
+This is the authoritative guide to module presentation contracts. The
 **Module UI v1** styling source of truth is
 [`public-ui.scss`](../apps/web/src/styles/primitives/public-ui.scss); the
 [module contract](module-contract-draft.md) owns loading, contributions, drafts
@@ -8,85 +8,14 @@ and native attachment delivery. Before any host or module UI work, read and foll
 the [frontend guidelines](frontend-guidelines.md). They own the shared principles;
 this guide owns the public styling, icon and composition contract, not a second
 theme or a claim that existing modules already conform.
-Classic UI at `/` is primary, including module UI work. Requests default to classic;
-the independent `/next/` UI is experimental and requires explicit scope, not
-automatic adaptation or parity. See the
-[UI scope and shared-contract policy](frontend-guidelines.md#classic-primary-ui).
 For available methods and exactly which host data they expose, use the
 [public API map](module-contract-draft.md#public-api-map) and
 [data boundaries](module-contract-draft.md#public-data-boundaries).
 Registering module state does not itself inject chat data or expose the private
 host store. Read the explicit `state.chatWindow` capability where needed.
 
-## Independent new UI
-
-Classic and experimental new presentation are separate document entries, not two
-themes applied to the same component tree. The following contract applies when
-experimental support is explicitly in scope; providing `frontend.next` is optional,
-not a requirement for classic module changes. A module may provide both:
-
-```json
-{
-  "frontend": {
-    "entry": "web/index.js",
-    "styles": ["web/styles.css"],
-    "assets": ["web"],
-    "next": {
-      "entry": "web/next/index.js",
-      "styles": ["web/next/styles.css"]
-    }
-  }
-}
-```
-
-The installer validates both entries and their styles against the same immutable
-archive and declared asset roots. Classic loads only `entry`/`styles`; the new
-runtime loads only `next.entry`/`next.styles`. Missing `next` means the module
-does not provide this presentation: it is listed as classic-only, not silently
-rendered with legacy CSS. This affects frontend presentation, not whether the
-module backend is running.
-
-The new entry exports `activate(context: ModuleNextFrontendContext)`. It uses
-`context.ui.version === 1` and the actual React components in `context.ui`.
-The available names and supported props are defined by
-[`ModuleUi`](../packages/module-api/src/ui.ts). It does not receive classic
-`uiVersion` or `uiSurfaceVersion` claims. `ModuleFrontendServices` contains the
-shared state/draft/request/menu capabilities so business logic need not depend
-on either presentation. Both entries return the same Web API v2 declaration.
-The new runtime waits for declared styles to load before activating or
-publishing module components; failed styles disable that presentation locally.
-
-The host sources live in `packages/ui`: only components actually used by the
-host belong there. Modules reuse those public components first. A component
-needed only by a module belongs in that module's own component directory, with
-its upstream license and intentional local modifications maintained there.
-Do not make the host bundle a module-only widget or import private host paths.
-
-Module-local components use the host React and inherited new-UI theme variables,
-such as `--background`, `--foreground`, `--muted`, `--muted-foreground`,
-`--border`, `--primary` and `--destructive`. Their business CSS keeps a unique
-module prefix. Do not ship a second global Tailwind preflight, redefine the
-host theme, or rely on the host scanning external module source for utility
-classes. Any local utility CSS must be built into the module's own stylesheet
-without global resets and with isolation from peer modules.
-
-Composite component parts (for example Dialog root/content/close) must come
-from one implementation instance. Copying one part from another dependency
-instance does not share its context. Public component reuse does not grant
-access to private stores or change business-state ownership.
-
-Switching entries replaces the document. Persisted drafts share their existing
-encoding, but browser Files, uploads, recording/recovery resources and pending
-operations do not transfer. Each activation protects its own nonpersisted work,
-including hidden drafts, with a conditional native `beforeunload` handler and
-releases that handler on disposal. The host protects its native pending/unsaved
-work separately. Leave confirmation must not itself cancel or mutate work.
-Do not promise that browser teardown can always be prevented or that mobile OS
-termination preserves in-memory resources.
-
 ## Compatibility and ownership
 
-The following sections describe classic Module UI v1.
 
 Hosts implementing this style contract pass **`context.uiVersion === 1`**
 to frontend activation. The package version alone is not sufficient evidence.
@@ -148,7 +77,7 @@ These are CSS compositions, not a public React component SDK. They provide no
 dialog lifecycle, focus trap, routing, loading state or optimistic mutation.
 Keep native dialog/portal ownership in the existing consumer. A normal panel
 using `ck-surface` does not become modal.
-The classic host observes native `ck-modal` focus entry/return to avoid WebKit's
+The host observes native `ck-modal` focus entry/return to avoid WebKit's
 pointer-only focus outlines, while retaining keyboard and editing indication.
 Consumers keep their existing dialog lifecycle; no extra module capability or
 focus call is required. The host's temporary DOM marker is private, not a class
@@ -194,7 +123,7 @@ Session MCP has no connection-method presentation: the native session API does n
 provide that data. There is no conditional transport subtitle, placeholder, empty
 line or disclosure. Actual native connection states and errors remain visible.
 
-Classic global MCP and Skills use the shared master/detail shell. Default
+Global MCP and Skills use the shared master/detail shell. Default
 switches appear only on list rows, as siblings of navigation links, with native
 unknown states left explicit. Detail headers retain `item` and `actions` and
 accept an optional `titlePrefix` for provenance; middleware should forward these

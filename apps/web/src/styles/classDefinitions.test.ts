@@ -6,17 +6,14 @@ import { test } from 'node:test';
 import { compile } from 'sass';
 import ts from 'typescript';
 
-// Classic UI guardrail (docs/frontend-guidelines.md#style-guardrails): every
-// static class token written in classic TSX must be styled somewhere in the
-// classic stylesheets, or be listed below with a reason. This keeps unstyled
+// UI guardrail (docs/frontend-guidelines.md#style-guardrails): every
+// static class token written in TSX must be styled somewhere in the
+// host stylesheets, or be listed below with a reason. This keeps unstyled
 // marker classes such as the retired `dialog-btn` from reappearing.
 
 const src = fileURLToPath(new URL('..', import.meta.url));
 
-// The experimental /next/ UI and its lab use their own Tailwind/shadcn stack.
-const excluded = (path: string) => /^(next\/|dev\/next-)/.test(relative(src, path).replaceAll('\\', '/'));
-
-const classicStyles = ['styles/index.scss', 'components/UxErrorNotifications.scss', 'dev/chat-lab.scss'];
+const hostStyles = ['styles/index.scss', 'components/UxErrorNotifications.scss', 'dev/chat-lab.scss'];
 
 // Classes the host styles nowhere on purpose. Keep each entry justified.
 // Prefer styling or deleting a class over adding it here.
@@ -52,7 +49,6 @@ const retired = ['dialog-btn', 'rp', 'primary'];
 const walk = (dir: string, out: string[] = []) => {
   for (const name of readdirSync(dir)) {
     const path = join(dir, name);
-    if (excluded(path)) continue;
     if (statSync(path).isDirectory()) walk(path, out);
     else out.push(path);
   }
@@ -61,7 +57,7 @@ const walk = (dir: string, out: string[] = []) => {
 
 function definedClasses() {
   const defined = new Set<string>();
-  for (const file of classicStyles) {
+  for (const file of hostStyles) {
     const css = compile(join(src, file)).css.replace(/\/\*[\s\S]*?\*\//g, '');
     for (const [, prelude] of css.matchAll(/([^{};]+)\{/g)) {
       if (prelude.trim().startsWith('@')) continue;
@@ -146,24 +142,24 @@ function scanClasses(text: string, file: string): Use[] {
   return uses;
 }
 
-const classicTsx = () => walk(src).filter((path) => path.endsWith('.tsx'));
+const hostTsx = () => walk(src).filter((path) => path.endsWith('.tsx'));
 
-test('every static class used in classic TSX is styled or explicitly allowed', () => {
+test('every static class used in TSX is styled or explicitly allowed', () => {
   const defined = definedClasses();
   const missing = new Map<string, string[]>();
-  for (const file of classicTsx()) {
+  for (const file of hostTsx()) {
     for (const { token, file: name, line } of usedClasses(file)) {
       if (defined.has(token) || allowed.has(token)) continue;
       missing.set(token, [...(missing.get(token) ?? []), `${name}:${line}`]);
     }
   }
   const report = [...missing].map(([token, where]) => `  ${token}  (${where.join(', ')})`).join('\n');
-  assert.equal(missing.size, 0, `Unstyled class names in classic TSX. Style them, remove them, or allow them with a reason in ${relative(src, fileURLToPath(import.meta.url))}:\n${report}`);
+  assert.equal(missing.size, 0, `Unstyled class names in TSX. Style them, remove them, or allow them with a reason in ${relative(src, fileURLToPath(import.meta.url))}:\n${report}`);
 });
 
 test('the class allowlist only lists classes that are still used and still unstyled', () => {
   const defined = definedClasses();
-  const used = new Set(classicTsx().flatMap((file) => usedClasses(file).map((use) => use.token)));
+  const used = new Set(hostTsx().flatMap((file) => usedClasses(file).map((use) => use.token)));
   for (const [token, reason] of allowed) {
     assert.ok(reason.trim(), `${token} needs a reason`);
     assert.ok(used.has(token), `${token} is no longer used; remove it from the allowlist`);
@@ -183,7 +179,7 @@ test('the class scanner sees literal, conditional, template and local-list class
   assert.ok(definedClasses().has('lg:hidden'), 'escaped selectors such as .lg\\:hidden count as definitions');
 });
 
-test('classic host sources no longer use the retired dialog-btn, primary or rp classes', () => {
+test('host sources no longer use the retired dialog-btn, primary or rp classes', () => {
   for (const file of walk(src).filter((path) => /\.(tsx|scss)$/.test(path))) {
     if (file.endsWith('.tsx')) {
       const tokens = usedClasses(file).map((use) => use.token);

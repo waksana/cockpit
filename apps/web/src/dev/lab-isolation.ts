@@ -10,19 +10,13 @@ export function fixtureStorage(): Storage {
   };
 }
 
-export function isLabDocumentLink(href: string, current: string): boolean {
-  const url = new URL(href, current);
-  const page = new URL(current);
-  return url.origin === page.origin && url.pathname === '/chat-lab.html';
-}
-
 // The loopback CSP permits same-origin connections (including /intent). Block
 // application transports before importing App, without blocking Vite's HMR socket
 // or module/style loading. Never read or clear the user's browser storage.
-export function isolateNextLab(target: object): void {
+export function isolateLab(target: object): void {
   const local = fixtureStorage();
   const session = fixtureStorage();
-  const blocked = () => { throw new Error('Synthetic next lab: application transport is disabled.'); };
+  const blocked = () => { throw new Error('Synthetic lab: application transport is disabled.'); };
   Object.defineProperties(target, {
     fetch: { configurable: true, value: async () => blocked() },
     XMLHttpRequest: { configurable: true, value: class { constructor() { blocked(); } } },

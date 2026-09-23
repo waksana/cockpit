@@ -8,7 +8,7 @@ import { ModuleRuntimeProvider } from '../components/ModuleComponents';
 import { createSidebarModuleFixture, sidebarSessions } from './sidebar-fixtures';
 import { sessionRowOutline } from '../test/sessionRowOutline';
 
-test('classic sidebar preserves full identity, independent roles, activity and module unread without avatars', async t => {
+test('sidebar preserves full identity, independent roles, activity and module unread without avatars', async t => {
   const sessions = sidebarSessions(1_789_441_200_000);
   sessions.forEach(session => SessionMeta.parse(session));
   const runtime = createSidebarModuleFixture();

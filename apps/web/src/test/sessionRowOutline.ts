@@ -1,4 +1,4 @@
-// Reads the rendered structure of classic sidebar rows from static markup, so
+// Reads the rendered structure of sidebar rows from static markup, so
 // tests can assert the two-line reading order without a DOM implementation.
 interface Node { tag: string; attrs: Record<string, string>; children: Node[]; text: string }
 

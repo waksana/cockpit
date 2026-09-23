@@ -62,8 +62,8 @@ existing control resource after relevant invalidations and reconnect, not after
 `activeOperations`-only read-lease patches. There is no background retry.
 
 The summary contains no task IDs, descriptions, prompts/results, shell commands,
-queue text or MCP names. Classic UI uses only a one-line icon summary, with no
-new activity disclosure/details or next-UI changes. Existing on-demand
+queue text or MCP names. The UI uses only a one-line icon summary, with no
+new activity disclosure/details. Existing on-demand
 `session/panel` (`section:"tasks"`), queue and MCP reads remain separate and may
 contain their existing details. MCP list/get Markdown spells out the sampled
 facts, unavailable state and steering subset rather than calling all work
@@ -139,7 +139,7 @@ Content-Type: application/json
 
 ## Native activity controls
 
-The classic control area consumes `session/resources` with `controls` only while
+The control area consumes `session/resources` with `controls` only while
 its conversation is mounted. Sidebar summaries still consume `control`, not task
 descriptions. A combined `control` / `controls` / `queue` read reuses the native
 activity pass. The controls projection includes the current loaded-handle token,
@@ -371,7 +371,7 @@ The outer frame, fill and original input row are identical in idle, running and
 decision states. A question does not add another editor frame or lateral inset.
 With the same draft, viewport and module controls, the editor keeps the same width
 and height across state changes, focus and submission; height still grows with
-multiline content. Stable symmetric scrollbar gutters prevent classic scrollbars
+multiline content. Stable symmetric scrollbar gutters prevent classic (non-overlay) scrollbars
 from narrowing the editor when a long question starts scrolling. Module actions
 retain their own hit targets; the host uses a 4px row gap plus a 4px text inset on
 both icon-facing sides, instead of stacking an 8px gap and 12px inset. Text has
@@ -428,7 +428,7 @@ text remains distinct from entered text, including on focus. Existing attachment
 and unconfirmed-send notices remain explicit. Queue items can be expanded to read
 their full text independently of removal; there is no editing, reordering or new
 steering mode.
-Classic session rows and the input header share one compact, noninteractive
+Session rows and the input header share one compact, noninteractive
 activity line. Terminal means shell, Wrench means a general tool, Bot means agent,
 and CircleHelp means a real pending decision. Process/tool rows, agent cards and
 decision cards use those same semantic icons; execution-result icons remain
@@ -457,7 +457,7 @@ Queue rows retain copy and immediate-send actions. Compaction remains in the
 status bar rather than creating a separate manual-compaction row.
 Actions are named icon buttons and retain visible error behavior.
 Existing input
-and transcript disclosures are unchanged. The independent next UI is not redesigned.
+and transcript disclosures are unchanged.
 Stop/interrupt acknowledgement produces no success banner or toast; pending state
 stays on the action button and failures remain visible. Remaining shell/agent facts
 stay visible. A sampled non-abortable state disables interruption without asserting
