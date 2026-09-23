@@ -612,9 +612,13 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       }
       const args = start ? projection?.toolArgs ?? toolArgsOf(name, d.arguments) : undefined;
       const metadata = state.toolMetadata.get(toolCallId);
+      const mcpServerName = start ? stringOf(d.mcpServerName) : undefined;
+      const mcpToolName = start ? stringOf(d.mcpToolName) : undefined;
       const tc: ToolCall = start ? {
         toolCallId, title: metadata?.executionTitle ?? metadata?.title ?? name ?? '缺少工具名称',
         ...(name ? { name } : {}),
+        ...(mcpServerName ? { mcpServerName } : {}),
+        ...(mcpToolName ? { mcpToolName } : {}),
         ...(args ? { args } : {}),
         status: oldTool?.status === 'completed' || oldTool?.status === 'failed' ? oldTool.status : 'in_progress',
         ...(oldTool?.output ? { output: oldTool.output } : {}),

@@ -79,3 +79,50 @@ test('builtins use action icons and keep the exact native name in expanded detai
   assert.match(extension, /class="tool-label"/);
   assert.match(extension, /third_party_view/);
 });
+
+test('MCP rows tag the native server and move the complete tool identity into details', () => {
+  const mcp: ToolCall = { toolCallId: 'mcp', name: 'cockpit-task-task_read', title: 'task_read',
+    mcpServerName: 'cockpit-task', mcpToolName: 'task_read', status: 'completed' };
+  const header = render(mcp).split('</button>')[0];
+  assert.match(header, /class="tool-description"[^>]*>task_read</);
+  assert.match(header, /class="tool-label" data-server=""[^>]*><bdi dir="ltr">cockpit-task<\/bdi>/);
+  assert.doesNotMatch(header, />cockpit-task-task_read</);
+  assert.match(header, /aria-label="展开细节：cockpit-task-task_read · task_read · 服务器 cockpit-task · 已完成"/);
+  const detail = render(mcp, true).split('</button>')[1];
+  assert.match(detail, /工具名<\/div><div class="tool-full-name">cockpit-task-task_read/);
+  assert.match(detail, /MCP 工具名<\/div>\s*<div class="tool-full-name">task_read/);
+  assert.match(detail, /MCP 服务器<\/div><div class="tool-full-name">cockpit-task</);
+
+  // Human titles stay on the left; unprefixed github-mcp-server names are not repeated.
+  const github: ToolCall = { toolCallId: 'gh', name: 'get_file_contents', title: 'Get file contents',
+    mcpServerName: 'github-mcp-server', mcpToolName: 'get_file_contents', status: 'failed' };
+  const ghHeader = render(github).split('</button>')[0];
+  assert.match(ghHeader, /class="tool-description"[^>]*>Get file contents</);
+  assert.match(ghHeader, /<bdi dir="ltr">github-mcp-server<\/bdi>/);
+  assert.match(ghHeader, /aria-label="展开细节：get_file_contents · Get file contents · 服务器 github-mcp-server · 失败"/);
+  const ghDetail = render(github, true).split('</button>')[1];
+  assert.match(ghDetail, /class="tool-full-name">get_file_contents/);
+  assert.doesNotMatch(ghDetail, /MCP 工具名/);
+  assert.match(ghDetail, /MCP 服务器<\/div><div class="tool-full-name">github-mcp-server</);
+
+  // A title equal to the full name still identifies the tool on the left once the server is the tag.
+  const sameTitle = render({ ...github, title: 'get_file_contents', status: 'in_progress' }).split('</button>')[0];
+  assert.match(sameTitle, /class="tool-description"[^>]*>get_file_contents</);
+  assert.match(sameTitle, /<bdi dir="ltr">github-mcp-server<\/bdi>/);
+});
+
+test('tools without a native server name keep the truthful full-name tag', () => {
+  for (const tc of [tool, { ...tool, mcpServerName: '' }]) {
+    const header = render(tc).split('</button>')[0];
+    assert.match(header, /class="tool-label"><bdi dir="ltr">custom_tool<\/bdi>/);
+    assert.doesNotMatch(header, /data-server|服务器/);
+  }
+  const builtin = render({ ...tool, name: 'bash', title: 'list', mcpServerName: 'ignored' }).split('</button>')[0];
+  assert.doesNotMatch(builtin, /tool-label|ignored/);
+});
+
+test('server tags read from their start instead of the full-name end truncation', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.tool-label \{[^}]*direction: rtl;/);
+  assert.match(css, /\.tool-label\[data-server\] \{[^}]*direction: ltr;/);
+});
