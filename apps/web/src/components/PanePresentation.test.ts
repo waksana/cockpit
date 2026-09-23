@@ -120,10 +120,9 @@ test('session pages share flat density and multiline settings without changing c
   assert.match(publicUi, /\.resource-row \{[^}]*border-bottom: 1px solid/);
   assert.match(manage, /\.manage-session-row \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto;/);
   assert.match(manage, /\.manage-row-status \{[^}]*min-height: calc/);
-  assert.match(manage, /\.manage-session-row > \.manage-row-source \{[^}]*grid-column: 1;[^}]*grid-row: 2;/);
   assert.match(manage, /\.manage-session-row > \.manage-row-status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[^}]*justify-content: flex-end;/);
-  assert.match(manage, /\.manage-session-row\[data-mcp\] \{[^}]*padding-block: var\(--host-space-sm\);/);
-  assert.match(manage, /\.manage-mcp-identity \{[^}]*grid-row: 1\/3;[^}]*flex-direction: column;[^}]*justify-content: center;[^}]*gap: var\(--host-space-xs\);/);
+  assert.match(manage, /\.manage-session-row \{[^}]*padding-block: var\(--host-space-sm\);/);
+  assert.match(manage, /\.manage-resource-identity \{[^}]*grid-row: 1\/3;[^}]*flex-direction: column;[^}]*justify-content: center;[^}]*gap: var\(--host-space-xs\);/);
   assert.match(info, /\.info-session-id-value \{[^}]*overflow-wrap: anywhere;[^}]*user-select: text;/);
   assert.doesNotMatch(info.match(/\.info-session-id-value \{([^}]*)\}/)![1], /ellipsis|hidden|sticky|line-clamp/);
   assert.match(publicUi, /\.ui-field \{[^}]*flex-direction: column;/);
@@ -138,6 +137,7 @@ test('resource rows reserve collapsed text budgets and only user disclosures can
   assert.match(css, /\.manage-row-text\[data-expanded\] \{[^}]*display: block;[^}]*overflow: visible;/);
   assert.match(css, /\.manage-text-disclosure, \.manage-error-disclosure \{[^}]*min-block-size: 1lh;[^}]*padding: 0;/);
   assert.match(css, /\.manage-error-disclosure \{[^}]*text-decoration: underline;/);
-  assert.doesNotMatch(css, /\.manage-row-(?:feedback|pending)\b/);
+  assert.match(css, /\.manage-detail-header \{[^}]*height: auto;/);
+  assert.match(css, /\.manage-global-unknown, \.manage-row-feedback \{[^}]*grid-column: 1\/-1;/);
   assert.doesNotMatch(css.match(/\.manage-row-error \{([^}]*)\}/)![1], /max-height|overflow: hidden/);
 });

@@ -171,13 +171,23 @@ unavailable-session recovery remain visible. Reconnecting an individual MCP uses
 its existing off/on switch, not an additional reload-all action.
 MCP and Skills reuse their status slot for connection/disconnection or
 enable/disable progress and a discoverable, underlined failure action. No progress
-line or error box opens automatically. Names and sources occupy one line; Skills
-reserve two description lines even before descriptions arrive. Overflowing text
+line or error box opens automatically. Resource provenance uses the Session
+module/role badge style before the name, inline and naturally wrapping; it does
+not imply an applied role or readiness. Names wrap in full. Nonempty sources
+occupy one collapsed line and Skill descriptions up to two lines. Overflowing text
 itself is a keyboard-accessible disclosure, without an extra arrow or button row.
 Only explicit activation expands full text or error details inline; replacement
 text/errors start collapsed. These dense reading/status disclosures keep their
 line-height targets and visible focus, while switches retain 40px/44px targets.
 Expanded content has no fixed height or clipping.
+
+Classic global MCP and Skills use the shared master/detail shell. Default
+switches appear only on list rows, as siblings of navigation links, with native
+unknown states left explicit. Detail headers retain `item` and `actions` and
+accept an optional `titlePrefix` for provenance; middleware should forward these
+props. Details render redacted configuration or Skill Markdown directly without
+an additional resource heading. List mutations retain row-local feedback across
+detail navigation and invalidate both catalog and detail reads on settlement.
 
 The host loads its base stylesheet; a module declares its business stylesheet in
 `frontend.styles`. Both live in the **same document**, without Shadow DOM or a

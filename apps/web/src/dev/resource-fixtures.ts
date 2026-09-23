@@ -1,10 +1,11 @@
-import type { McpServerSession, SessionRole, SkillSession } from '@cockpit/protocol';
+import type { McpServerGlobal, McpServerSession, SessionRole, SkillGlobal, SkillSession } from '@cockpit/protocol';
 import type { createCockpitStore } from '../net/store';
 import { installWorkspaceFixture, workspaceSessionId } from './workspace-fixtures';
 
 export interface ResourceFixtureOptions {
   empty?: boolean;
   fail?: boolean;
+  failMutations?: boolean;
   beforeRequest?: () => Promise<void>;
 }
 
@@ -14,6 +15,10 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
   const request = async () => {
     await options.beforeRequest?.();
     if (options.fail) throw new Error('Synthetic resource failure; no backend request was sent.');
+  };
+  const mutation = async () => {
+    await request();
+    if (options.failMutations) throw new Error('Synthetic mutation failure; no backend request was sent.');
   };
   const module = { id: 'cockpit-task', name: longNames ? 'Original_module-name-with-a-very-long-unbroken-identifier' : 'Task' };
   const roles = [
@@ -42,12 +47,15 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
     { name: 'shared-skill', module: source(roles), source: 'custom', enabled: true },
     { name: 'module-only-skill', module, source: 'custom', enabled: false },
   ];
-  let globalMcp = mcp.map(({ name, detail, enabled }) => ({
-    name, detail, defaultOn: enabled, config: { command: 'synthetic-command', args: ['fixture-only'] },
+  // Explicit synthetic catalog attribution is presentation evidence only.
+  let globalMcp: McpServerGlobal[] = mcp.map(({ name, detail, enabled, module }) => ({
+    name, detail, defaultOn: enabled, modules: module ? [module] : undefined,
+    config: { command: 'synthetic-command', args: ['fixture-only'], env: { TOKEN: '[REDACTED]' } },
   }));
-  let globalSkills = skills.map(({ name, source, description, enabled }) => ({
-    name, source, description, enabled, userInvocable: true,
+  let globalSkills: SkillGlobal[] = skills.map(({ name, source, description, enabled, module }) => ({
+    name, source, description, enabled, userInvocable: true, modules: module ? [module] : undefined,
   }));
+  globalSkills.push({ name: 'unknown-default', source: 'personal-copilot', description: 'Synthetic unavailable global enabled state.' });
   if (options.empty) { mcp = []; skills = []; globalMcp = []; globalSkills = []; }
   const find = (id: string) => {
     const session = store.getState().sessions.find(row => row.sessionId === id);
@@ -122,7 +130,7 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
     mcpGlobal: async () => { await request(); return globalMcp; },
     mcpRefresh: async () => { await request(); },
     mcpSetDefault: async (name, defaultOn) => {
-      await request();
+      await mutation();
       if (!globalMcp.some(row => row.name === name)) throw new Error('Unknown synthetic global MCP');
       globalMcp = globalMcp.map(row => row.name === name ? { ...row, defaultOn } : row);
     },
@@ -134,20 +142,20 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
       return { ...row, body: `# ${row.name}\n\nSynthetic skill body, not an installed skill.\n\n${'Long content remains readable. '.repeat(60)}` };
     },
     skillsSetGlobal: async (name, enabled) => {
-      await request();
+      await mutation();
       if (!globalSkills.some(row => row.name === name)) throw new Error('Unknown synthetic global skill');
       globalSkills = globalSkills.map(row => row.name === name ? { ...row, enabled } : row);
     },
     mcpSession: async id => { await request(); find(id); return mcp; },
     skillsSession: async id => { await request(); find(id); return skills; },
     mcpToggleSession: async (id, name, enabled) => {
-      await request();
+      await mutation();
       find(id);
       if (!mcp.some(server => server.name === name)) throw new Error('Unknown synthetic MCP server');
       mcp = mcp.map(server => server.name === name ? { ...server, enabled, status: enabled ? 'connected' : 'disabled' } : server);
     },
     skillsToggleSession: async (id, name, enabled) => {
-      await request();
+      await mutation();
       find(id);
       if (!skills.some(skill => skill.name === name)) throw new Error('Unknown synthetic skill');
       skills = skills.map(skill => skill.name === name ? { ...skill, enabled } : skill);

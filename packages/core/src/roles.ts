@@ -10,6 +10,8 @@ export interface RoleAssembly {
 }
 
 export interface RoleProvider {
+  globalMcpSources?(config: object): ModuleSource[] | undefined;
+  globalSkillSources?(path: string): Promise<ModuleSource[] | undefined>;
   list(): Array<SessionRole & { description?: string }>;
   read(sessionId: string): SessionRole[];
   save(sessionId: string, roles: SessionRole[]): void;

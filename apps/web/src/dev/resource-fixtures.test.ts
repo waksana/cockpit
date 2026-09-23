@@ -97,11 +97,15 @@ test('global resource fixtures use native contracts, isolated mutations and expl
   const state = store.getState();
   const mcp = await state.mcpGlobal();
   Intents['mcp/global'].result.parse({ servers: mcp });
+  assert.deepEqual(mcp[0].modules?.[0].roles?.map(role => role.id), ['executor', 'owner']);
+  assert.equal(mcp[1].modules, undefined);
+  assert.equal(mcp[2].modules?.[0].roles, undefined);
   await state.mcpSetDefault(mcp[0].name, false);
   assert.equal((await state.mcpGlobal())[0].defaultOn, false);
   assert.equal((await state.mcpSession(workspaceSessionId))[0].enabled, true);
   const skills = await state.skillsGlobal();
   Intents['skills/global'].result.parse({ skills });
+  assert.equal(skills.find(skill => skill.name === 'unknown-default')?.enabled, undefined);
   await state.skillsSetGlobal(skills[0].name, false);
   const skill = await state.skillsRead(skills[0].name);
   Intents['skills/read'].result.parse(skill);
@@ -123,5 +127,9 @@ test('global resource fixtures use native contracts, isolated mutations and expl
   assert.equal(settled, false);
   release();
   assert.ok((await pending).length > 0);
+  installResourceFixture(store, false, { failMutations: true });
+  assert.ok((await store.getState().mcpGlobal()).length > 0);
+  await assert.rejects(store.getState().mcpSetDefault('cockpit-task', false), /Synthetic mutation failure/);
+  assert.equal((await store.getState().mcpGlobal())[0].defaultOn, true);
   assert.equal(fetch.mock.callCount(), 0);
 });

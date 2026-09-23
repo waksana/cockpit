@@ -71,7 +71,7 @@ test('resource compositions keep navigation content valid and actions outside id
     status: createElement('div', { role: 'status' }, 'Not connected'),
   }));
   assert.match(row, /data-resource-name="Server"/);
-  assert.match(row, /class="manage-mcp-identity"/);
+  assert.match(row, /class="manage-resource-identity"/);
   assert.match(row, /Saved config<\/div><\/div><button/);
   assert.doesNotMatch(row, /manage-row-description|aria-busy/);
 });

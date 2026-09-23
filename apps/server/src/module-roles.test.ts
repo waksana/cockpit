@@ -5,6 +5,50 @@ import { ModuleHost } from './module-host.ts';
 import { installLocalModule, manifestSchema } from './module-install.ts';
 import { moduleEntries, moduleFixture } from './test-support/module-fixture.ts';
 import { ModuleRoles } from './module-roles.ts';
+import { chmod, symlink, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
+test('global provenance verifies loaded module endpoints and file digests without inferring declaring roles', async t => {
+  const f = await moduleFixture(t);
+  const entries = moduleEntries('global', undefined, { roles: [
+    { id: 'first', name: 'First', skillDirectories: ['skills'],
+      mcpServers: { declared: { type: 'http', path: '/mcp', tools: ['read'] } } },
+    { id: 'second', name: 'Second', skillDirectories: ['skills'],
+      mcpServers: { another: { type: 'http', path: '/mcp', tools: ['write'] } } },
+  ] });
+  entries.push({ path: 'skills/shared/SKILL.md', content: '---\nname: native-name\n---\nNative body' });
+  const installed = await installLocalModule(await f.package(entries), { trustLocalCode: true, enable: true });
+  let active = true;
+  const provider = new ModuleRoles(f.hostRoot, 'http://127.0.0.1:12345', () => active ? [installed] : []);
+  const module = { id: 'global', name: 'Fixture global' };
+  const url = `http://127.0.0.1:12345/_modules/global/${installed.digest}/api/mcp`;
+  const config = { type: 'http', url, tools: ['unrelated'], headers: { Authorization: 'native-secret' } };
+  assert.deepEqual(provider.globalMcpSources(config), [module]);
+  for (const invalid of [
+    { ...config, type: 'stdio' }, { command: 'global' }, { ...config, url: `${url}/other` },
+    { ...config, url: url.replace(installed.digest, 'old-digest') },
+    { ...config, url: url.replace(':12345', ':23456') }, { ...config, url: `${url}?unverified=1` },
+  ]) assert.equal(provider.globalMcpSources(invalid), undefined);
+  const path = join(installed.root, 'skills/shared/SKILL.md');
+  assert.deepEqual(await provider.globalSkillSources(path), [module]);
+  const alias = join(f.root, 'SKILL.md');
+  await symlink(path, alias);
+  assert.deepEqual(await provider.globalSkillSources(alias), [module], 'canonical installed identity, not path spelling');
+  const cyclic = join(f.root, 'cyclic-skill');
+  await symlink(cyclic, cyclic);
+  await assert.rejects(provider.globalSkillSources(cyclic), /ELOOP/, 'operational read failures must remain explicit');
+  assert.equal(await provider.globalSkillSources(join(installed.root, 'backend.mjs')), undefined);
+  assert.equal(await provider.globalSkillSources(join(installed.root, 'missing/SKILL.md')), undefined);
+  const unrelated = join(f.root, 'unrelated.md');
+  await writeFile(unrelated, '---\nname: native-name\n---\nNative body');
+  assert.equal(await provider.globalSkillSources(unrelated), undefined, 'matching bytes outside installation do not prove ownership');
+  await chmod(path, 0o600);
+  await writeFile(path, '---\nname: native-name\n---\nChanged');
+  assert.equal(await provider.globalSkillSources(path), undefined, 'inventory identity requires matching bytes');
+  active = false;
+  assert.equal(provider.globalMcpSources(config), undefined, 'unloaded versions are not attributed');
+  assert.equal(await provider.globalSkillSources(alias), undefined);
+});
 
 test('module roles union shared HTTP tools, label raw instructions and persist identities across hosts', async t => {
   const f = await moduleFixture(t);
