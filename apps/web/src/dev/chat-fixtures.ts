@@ -142,6 +142,31 @@ const processHistoryMessages: ChatMessage[] = [
   }),
 ];
 
+const summarySkill = message('summary-skill', 'system', `compact-overview-${'long-skill-name-'.repeat(12)}`, { subtype: 'skill' });
+const summaryThought = message('summary-thought', 'assistant', '', { thought: 'Original thinking remains available in the detail.' });
+const summaryTool = message('summary-tool', 'assistant', '', {
+  toolCalls: [{ toolCallId: 'summary-read', name: 'view', title: 'Read synthetic source', status: 'completed',
+    args: '{ "path": "/synthetic/source.ts" }', output: 'Original tool output.' }],
+});
+const processSummaryMessages: ChatMessage[] = [
+  summaryTool,
+  message('summary-tool-boundary', 'assistant', 'Tool-only overview.'),
+  summaryThought,
+  message('summary-thought-boundary', 'assistant', 'Thought-only overview.'),
+  summarySkill,
+  message('summary-skill-boundary', 'assistant', 'Single Skill overview; the long name belongs in its detail.'),
+  { ...summarySkill, id: 'summary-skill-one' }, { ...summarySkill, id: 'summary-skill-two', content: 'second-skill' },
+  message('summary-skills-boundary', 'assistant', 'Multiple Skills overview.'),
+  { ...summarySkill, id: 'summary-mixed-skill' },
+  message('summary-states', 'assistant', '', { toolCalls: [
+    { toolCallId: 'summary-failed', name: 'bash', title: 'Synthetic failure', status: 'failed', output: 'Exact synthetic error.' },
+    { toolCallId: 'summary-running', name: 'view', title: 'Synthetic running', status: 'in_progress' },
+    { toolCallId: 'summary-pending', name: 'task', title: 'Synthetic pending', status: 'pending' },
+    { toolCallId: 'summary-unknown', name: 'view', title: 'Synthetic unknown' },
+  ] }),
+  { ...summaryThought, id: 'summary-mixed-thought', incomplete: 'Synthetic incomplete association; no ownership was guessed.' },
+];
+
 export const scenarios = [
   ['all', '完整组件对话'],
   ['reading', '正文 / Markdown / 代码'],
@@ -150,6 +175,7 @@ export const scenarios = [
   ['process', '思考 / 工具 / 子代理'],
   ['thought-markdown', '思考 Markdown / 流式 / 代码复制'],
   ['process-history', '连续过程 / 无正文 / 最新展开'],
+  ['process-summary', '过程图标计数 / Skill / 非成功状态'],
   ['ordered-events', '原生事件 / 连续概览 / 重连补全'],
   ['streaming', '流式 / 队列 / 停止'],
   ['activity-processing', '活动 / 原生处理'],
@@ -221,6 +247,7 @@ export function fixtureSession(scenario: Scenario): ChatSession {
     })];
   }
   if (scenario === 'process-history') session.messages = [...processHistoryMessages];
+  if (scenario === 'process-summary') session.messages = [...processSummaryMessages];
   if (scenario === 'user-time') session.messages = [
     message('time-short', 'user', '收到。'),
     message('time-long', 'user', '这是一段合成的多行用户消息。\n请把时间放在气泡外，并紧贴对应气泡。\n保留文字、代码复制和时间的自然归属。'),

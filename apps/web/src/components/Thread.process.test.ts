@@ -46,17 +46,41 @@ test('skill and thought icons stay distinct without changing process grouping or
   const skill: ChatMessage = { ...message, id: 'skill', subtype: 'skill', content: 'fixture-skill' };
   const html = renderProcess([skill, ...items], true);
   assert.equal((html.match(/class="process-summary ck-button"/g) ?? []).length, 1);
-  assert.match(html, /3 次工具调用 · 1 次思考 · Skill · fixture-skill/);
+  assert.match(html, /3 次工具调用 · 1 次思考 · 1 次 Skill 使用/);
   assert.match(html, /class="activity-head skill-activity"><span class="activity-icon"><span class="ck-icon" data-icon="skills"/);
   assert.match(html, /class="activity-head ck-button thought-toggle" aria-expanded="false"[^>]*><span class="activity-icon"><span class="ck-icon" data-icon="thought"/);
   assert.match(html, /lucide-book-open/);
   assert.match(html, /lucide-lightbulb/);
-  assert.ok(html.indexOf('data-icon="skills"') < html.indexOf('data-icon="thought"'));
   for (const latest of [false, true]) {
     const single = renderProcess([skill], latest);
-    assert.match(single, /process-summary-title">Skill · fixture-skill/);
+    assert.match(single, /class="process-summary-count" title="1 次 Skill 使用"/);
     assert.ok(single.includes(`class="process-summary ck-button" aria-expanded="${latest}"`));
     assert.equal(single.includes('class="activity-head skill-activity"'), latest);
+  }
+});
+
+test('overview categories show only distinct icons and actual counts, collapsed or expanded', () => {
+  const skill: ChatMessage = { ...message, id: 'skill', subtype: 'skill', content: 'long-skill-name-'.repeat(40) };
+  const cases: { messages: ChatMessage[]; counts: [string, number][] }[] = [
+    { messages: [items[1]], counts: [['tool', 1]] },
+    { messages: [{ ...message, toolCalls: items.flatMap(item => item.toolCalls ?? []) }], counts: [['tool', 3]] },
+    { messages: [items[0], { ...items[0], id: 'second-thought' }], counts: [['thought', 2]] },
+    { messages: [skill], counts: [['skills', 1]] },
+    { messages: [skill, { ...skill, id: 'second-skill' }], counts: [['skills', 2]] },
+    { messages: [skill, ...items], counts: [['tool', 3], ['thought', 1], ['skills', 1]] },
+  ];
+  for (const { messages, counts } of cases) for (const latest of [false, true]) {
+    const html = renderProcess([...messages], latest);
+    const header = html.slice(0, html.indexOf('</button>'));
+    const categoryMarkup = header.match(/class="process-summary-counts">([\s\S]*?)<span class="process-summary-states">/)?.[1];
+    assert.ok(categoryMarkup);
+    assert.deepEqual([...categoryMarkup.matchAll(/data-icon="([^"]+)"/g)].map(match => match[1]), counts.map(([icon]) => icon));
+    assert.equal(categoryMarkup.replace(/<[^>]+>/g, ''), counts.map(([, count]) => count).join(''));
+    assert.doesNotMatch(header, /long-skill-name-|process-summary-title/);
+    assert.doesNotMatch(html, /process-expanded-summary/);
+    if (messages.includes(skill)) {
+      assert.equal(html.includes(`skill · ${skill.content}`), latest, 'the full skill name belongs only to expanded detail');
+    }
   }
 });
 
@@ -137,13 +161,14 @@ test('response reasoning is placed before its body without a provisional region 
 
 test('thought-only and incomplete states have literal counts, never invented success or duration', () => {
   const thought = renderProcess([items[0], { ...items[0], id: 'second-thought' }]);
-  assert.match(thought, /process-summary-title">2 次思考/);
+  assert.match(thought, /class="process-summary-count" title="2 次思考"/);
   assert.doesNotMatch(thought, /0 次工具|已完成|耗时/);
   for (const [status, summary] of [
-    ['in_progress', '1 项执行中'], ['pending', '1 项待执行'], [undefined, '1 项状态未知'],
+    ['failed', '1 项失败'], ['in_progress', '1 项执行中'], ['pending', '1 项待执行'], [undefined, '1 项状态未知'],
   ] as const) {
     const html = renderProcess([{ ...message, toolCalls: [{ toolCallId: 'one', title: 'Tool', status }] }]);
     assert.ok(html.includes(summary));
+    assert.ok(html.includes(`class="process-summary-status" title="${summary}" data-status="${status ?? 'unknown'}"`));
     assert.doesNotMatch(html, /含思考|已完成/);
   }
 });
