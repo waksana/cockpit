@@ -372,9 +372,9 @@ MCP 仅在原生 HTTP 配置 URL 与当前已加载模块声明的完整 origin�
 自定义、未知或有歧义的配置保持 `unknown`，不解析既有展示字符串猜测类型。
 `target` 仅为 HTTP/SSE hostname 或本地 executable basename，不包含 URL 用户信息、
 端口、路径、query、fragment 或命令参数；既有完整脱敏 `detail`/`config` 保留。
-`mcp/session` schema 允许相同字段，但当前 SDK 1.0.13 的 `mcp.list` 只公开
-source/status 和 server-advertised instructions，`McpHostState` 没有当前配置，
-所以当前会话响应省略 `connection`。`detail` 仍是 source/plugin，而不是连接方式；
+`mcp/session` 不声明 `connection` 字段；SDK 1.0.13 的 `mcp.list` 只公开
+source/status 和 server-advertised instructions，`McpHostState` 没有当前配置。
+会话 MCP 因此没有连接方式展示。`detail` 仍是 source/plugin，而不是连接方式；
 `session.mcp_servers_loaded` 事件虽有 transport，但不是当前读取时的连接配置权威，
 不能用历史事件、同名全局项或角色装配配置补造会话 transport。
 这些全局证据无法证明哪个角色实际贡献了原生全局配置，因此省略 `roles`，不把声明此资源的

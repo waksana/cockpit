@@ -271,7 +271,6 @@ export const McpServerSession = z.object({
   name: z.string(),
   module: ModuleSource.optional().describe('Module and known contributing roles that declared this MCP name in this session handle role configuration. Not proof of the live connection identity; same-name native replacements cannot be verified.'),
   detail: z.string(),
-  connection: McpConnection.optional().describe('Only authoritative current session transport metadata. Omitted when unavailable; detail is configuration source, not transport. Global names and role declarations cannot establish live transport.'),
   status: McpServerStatus,
   enabled: z.boolean().describe('Configured and not explicitly disabled; does not imply connected or permitted to restart.'),
   error: z.string().optional(),
