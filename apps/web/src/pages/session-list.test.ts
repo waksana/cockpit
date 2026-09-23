@@ -161,8 +161,8 @@ test('second-line space yields directory first, then roles, never status', () =>
   assert.match(rule('.chatlist-chat'), /grid-template-areas: "title time" "details details";/);
   assert.match(rule('.chatlist-chat .session-row-title'), /white-space: nowrap;[^]*text-overflow: ellipsis;/);
   assert.match(rule('.chatlist-chat .dialog-time'), /white-space: nowrap;/);
-  const shrink = (selector: string) => Number(rule(selector).match(/flex: \S+ (\S+)/)?.[1]);
-  assert.ok(shrink('.chatlist-chat .dialog-subtitle') > 100 * shrink('.chatlist-chat .dialog-roles'));
+  assert.match(rule('.chatlist-chat .dialog-subtitle'), /flex: 1 1 0;/);
+  assert.match(rule('.chatlist-chat .dialog-roles'), /flex: 0 1 auto;/);
   assert.match(rule('.chatlist-chat .dialog-meta'), /flex: none;/);
   assert.match(rule('.chatlist-chat .dialog-roles'), /flex-wrap: nowrap;/);
   assert.doesNotMatch(css, /dialog-avatar|--chip-h/);

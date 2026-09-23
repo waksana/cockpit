@@ -64,6 +64,9 @@ export function runSidebarChecks() {
       check(rolesBox.right <= directoryBox.left + 0.5, 'roles precede the directory without overlap');
       // Below a 320px viewport the last stubs may clip at the end; status still wins.
       if (innerWidth >= 320) check(roles.scrollWidth <= roles.clientWidth + 0.5, 'every role badge remains visible');
+      const truncated = Array.from(roles.querySelectorAll<HTMLElement>('.module-label-name, .role-badge-name'))
+        .some(part => part.scrollWidth > part.clientWidth);
+      check(!truncated || directoryBox.width < 0.5, 'directory yields entirely before roles ellipsize');
       for (const badge of badges) {
         const badgeBox = badge.getBoundingClientRect();
         check(badgeBox.width >= 11.5 - 0.5 && badgeBox.top >= rolesBox.top - 0.5 && badgeBox.bottom <= rolesBox.bottom + 0.5,

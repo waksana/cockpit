@@ -126,9 +126,9 @@
     }
   }
   .dialog-subtitle {
-    // A dominant shrink factor makes the directory absorb the overflow first
-    // (flex factors below 1 would leave overflow undistributed).
-    flex: 1 1000 3rem;
+    // A zero basis means the directory only takes leftover space: it yields
+    // entirely before the role badges start to shrink.
+    flex: 1 1 0;
     min-width: 0;
     font-size: var(--font-size-12);
     color: var(--tertiary-text-color);
