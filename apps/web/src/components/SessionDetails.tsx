@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback } from 'react';
 import { useCockpit } from '../net/store';
+import { cockpitApi } from '../net/api';
 import { useUp } from '../lib/nav';
 import { SESSION_PANEL_LABELS, type SessionPanel } from '../lib/routeOwnership';
 import { PanelPageShell } from './PanelPage';
@@ -13,11 +14,10 @@ const SessionSkills = lazy(() => import('./Manage').then((m) => ({ default: m.Se
 
 export function SessionDetails({ sessionId, panel }: { sessionId: string; panel: SessionPanel }) {
   const session = useCockpit((s) => s.sessions.find((item) => item.sessionId === sessionId));
-  const setModel = useCockpit((s) => s.setModel);
   const up = useUp();
   const onClose = useCallback(() => up(), [up]);
   const onSetModel = useCallback<SessionInfoPanelProps['onSetModel']>(
-    (model, options) => setModel(sessionId, model, options), [setModel, sessionId],
+    (model, options) => cockpitApi.setModel(sessionId, model, options), [sessionId],
   );
   if (!session) return null;
   const title = `${SESSION_PANEL_LABELS[panel]} · ${session.title}`;

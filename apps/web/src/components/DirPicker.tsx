@@ -1,13 +1,13 @@
 // Directory selection is a form. Only session/new creates a native identity.
 import { useCallback, useId, useState } from 'react';
-import { useCockpit } from '../net/store';
+import { cockpitApi, loadRoleCatalog } from '../net/api';
 import { IntentHttpError } from '../net/client';
 import { useKeyedAction, useKeyedResource } from '../lib/useKeyedResource';
 import { readDirectory } from '../lib/directoryResource';
-import { Icon } from './Icon';
 import { Button, IconButton } from './Button';
 import { DirectoryModal } from './Dialog';
 import { StateNotice } from './StateNotice';
+import { ActionRow } from './UI';
 import type { RoleSelection } from '@cockpit/protocol';
 import { RolePicker } from './RolePicker';
 
@@ -23,15 +23,13 @@ export function DirPicker(props: DirPickerProps) {
 }
 
 function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPickerProps) {
-  const listDir = useCockpit(s => s.listDir);
-  const listRoles = useCockpit(s => s.listRoles);
-  const roleResource = useKeyedResource('module-roles', listRoles);
+  const roleResource = useKeyedResource('module-roles', loadRoleCatalog);
   const [selectedRoles, setSelectedRoles] = useState<RoleSelection[]>([]);
   const [requestedPath, setRequestedPath] = useState(initialPath);
   const [editedPath, setEditedPath] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [incompleteSessionId, setIncompleteSessionId] = useState<string>();
-  const read = useCallback(() => readDirectory(listDir, requestedPath), [listDir, requestedPath]);
+  const read = useCallback(() => readDirectory(cockpitApi.listDir, requestedPath), [requestedPath]);
   const resource = useKeyedResource(JSON.stringify(['directory', requestedPath]), read);
   const identity = useId();
   const action = useKeyedAction(`create-session:${identity}`);
@@ -80,17 +78,11 @@ function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPick
     <div className="dirpicker-list scrollable">
       {resource.status && <StateNotice kind={resource.failed ? 'error' : resource.pending ? 'loading' : 'info'}
         placement={entries?.length ? 'inline' : 'pane'}>{resource.status}</StateNotice>}
-      {parent && <Button className="dirpicker-row dirpicker-up" disabled={!resource.valid || locked} onClick={() => load(parent)}>
-        <span className="dirpicker-ico"><Icon name="back" size={20} /></span>
-        <span className="dirpicker-name">上级目录</span>
-      </Button>}
+      {parent && <ActionRow icon="back" name="上级目录" trailing={false} data-parent
+        disabled={!resource.valid || locked} onClick={() => load(parent)} />}
       {resource.valid && entries?.length === 0 ? <StateNotice kind="empty" placement="pane">（没有子文件夹）</StateNotice>
-        : entries?.map(entry => <Button key={entry.name} className="dirpicker-row"
-          disabled={!resource.valid || locked} onClick={() => load(`${path === '/' ? '' : path}/${entry.name}`)}>
-          <span className="dirpicker-ico folder"><Icon name="folder" size={20} /></span>
-          <span className="dirpicker-name">{entry.name}</span>
-          <span className="dirpicker-enter"><Icon name="chevron_right" size={16} /></span>
-        </Button>)}
+        : entries?.map(entry => <ActionRow key={entry.name} icon="folder" name={entry.name}
+          disabled={!resource.valid || locked} onClick={() => load(`${path === '/' ? '' : path}/${entry.name}`)} />)}
     </div>
     {roleResource.status && <StateNotice kind={roleResource.failed ? 'error' : 'loading'}>{roleResource.status}</StateNotice>}
     {roleResource.failed && <Button disabled={locked}

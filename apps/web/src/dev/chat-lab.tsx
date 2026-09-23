@@ -279,12 +279,6 @@ if (scene === 'dialog-focus') {
   const id = installFullWebFixture(useCockpit, new URLSearchParams(location.search).get('case') ?? 'mixed');
   const { default: App } = await import('../App');
   root.render(<MemoryRouter initialEntries={[`/session/${id}`]}><App /><UxErrorNotifications /></MemoryRouter>);
-} else if (scene === 'control-design') {
-  const { ControlDesignLab } = await import('./control-design-lab');
-  root.render(<BrowserRouter><ControlDesignLab /></BrowserRouter>);
-} else if (scene === 'activity-design') {
-  const { ActivityDesignLab } = await import('./activity-design-lab');
-  root.render(<BrowserRouter><ActivityDesignLab /></BrowserRouter>);
 } else if (scene === 'workspace' || scene === 'resources' || scene === 'sidebar') {
   const { installWorkspaceFixture, workspaceSessionId, workspaceDraft } = await import('./workspace-fixtures');
   installWorkspaceFixture(useCockpit);

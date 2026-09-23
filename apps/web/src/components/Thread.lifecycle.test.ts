@@ -27,7 +27,6 @@ import { useMenuDismiss } from '../lib/useMenuDismiss';
 import type { ActivateFrontend, ComposerContext, ComposerInputProps, ComposerProps, ComponentMiddleware, DraftSchemaHandle, DraftSchemaScope, MessageIdentity, MessageProps, ModuleFrontendContext } from '@cockpit/module-api';
 import { fixtureSession } from '../dev/chat-fixtures';
 import { activityFixture } from '../dev/activity-fixtures';
-import { ControlDesignLab } from '../dev/control-design-lab';
 import { installFullWebFixture } from '../dev/full-web-fixtures';
 import { ConnectedThread } from './ConnectedThread';
 import { SessionControlBar } from './SessionControlBar';
@@ -817,51 +816,6 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.ok(row);
     return { id: row.dataset.messageId, offset: row.getBoundingClientRect().top };
   };
-
-  await t.test('control preview separates steering acceptance, history, task cancellation and queue clearing', async () => {
-    await act(() => root.render(createElement(ControlDesignLab)));
-    await flush();
-    const click = async (label: string, scope = container) => {
-      const target = scope.querySelectorAll('button').find(node => node.textContent === label);
-      assert.ok(target, label);
-      const event = new Event('click', { bubbles: true });
-      Object.defineProperty(event, 'target', { value: target });
-      await act(() => container.dispatchEvent(event));
-      await flush();
-    };
-    assert.equal(container.querySelectorAll('.control-lab-queued').length, 2);
-    assert.equal(container.querySelectorAll('.subagent-head').length, 1);
-    container.querySelector('.control-design-options')!.open = true;
-    await click('立即发送');
-    assert.match(container.textContent, /等待纳入当前回合/);
-    assert.equal(container.querySelector('[data-message-id="event-preview-q1"]'), null);
-    await click('模拟纳入回合');
-    assert.ok(container.querySelector('[data-message-id="event-preview-q1"]'));
-    assert.match(container.querySelector('.control-lab-events')!.textContent, /"delivery": "steering"/);
-    await click('停止', container.querySelector('[data-task-id="preview-build"]')!);
-    assert.equal(container.querySelectorAll('.control-lab-task').length, 3, 'finished rows stay in place while the list is open');
-    assert.match(container.querySelector('[data-task-id="preview-build"]')!.textContent, /已停止/);
-    assert.equal(container.querySelectorAll('.control-lab-queued').length, 1);
-    await click('清空队列');
-    assert.equal(container.querySelector('.control-lab-queue'), null);
-    assert.ok(container.querySelector('[data-message-id="event-preview-q1"]'));
-    const draft = getSessionDraft('control-design-mixed');
-    await act(() => draft.edit('保留这份普通消息草稿'));
-    const editor = container.querySelector('.chat-input-message')!;
-    editor.focus();
-    await click('出现问卷（不换会话）');
-    assert.equal(container.querySelectorAll('.chat-input-message').length, 1);
-    assert.equal(container.querySelector('.chat-input-message'), editor, 'question uses the same physical textarea');
-    assert.equal(document.activeElement, editor);
-    assert.equal(editor.value, '', 'answer and prompt keep distinct drafts');
-    await click('继续');
-    assert.equal(container.querySelector('.chat-input-message'), editor);
-    assert.equal(editor.value, '保留这份普通消息草稿');
-    await click('停止', container.querySelector('.control-lab-header')!);
-    assert.equal(container.querySelector('.chat-input-message')?.getAttribute('placeholder'), '输入消息…');
-    assert.equal(container.querySelector('.send')?.getAttribute('aria-label'), '发送');
-    await act(() => root.render(null));
-  });
 
   const checkCompleteControls = async () => {
     const previous = useCockpit.getState();
@@ -1674,7 +1628,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(control('思考力度').value, 'high', 'queued ACK preserves the newer unsent edit');
     assert.match(container.textContent, /已接受，等待原生应用/);
     assert.doesNotMatch(container.textContent, /上次原生返回：已应用/);
-    assert.match(container.querySelector('.info-model-details')?.textContent ?? '', /Model changed/);
+    assert.doesNotMatch(container.textContent, /Model changed/, 'raw native result fields are not rendered');
     assert.equal(container.querySelector('.info-model-current'), null, 'selects present the known native value');
     assert.match(container.querySelector('.ui-pending-bar')?.textContent ?? '', /有未应用的修改/);
     current = { ...current, currentModelId: 'b' };

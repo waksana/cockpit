@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { useUp } from '../lib/nav';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { useCockpit } from '../net/store';
+import { cockpitApi } from '../net/api';
 import { Shell, MasterPane, DetailPane } from './Shell';
 import { PaneHeader } from './PaneHeader';
 import { StateNotice } from './StateNotice';
@@ -18,7 +19,6 @@ function MasterHeader(props: ManagementHeaderProps) {
 function MasterHeaderBase({ section, onRefresh, actions }: ManagementHeaderProps) {
   const up = useUp();
   const connState = useCockpit((s) => s.connState);
-  const mcpRefresh = useCockpit((s) => s.mcpRefresh);
   const { run, busy, error } = useKeyedAction(`global:refresh:${section}`);
   return <>
     <PaneHeader
@@ -26,7 +26,7 @@ function MasterHeaderBase({ section, onRefresh, actions }: ManagementHeaderProps
       title={<span className="pane-title ck-text-primary">{SECTION_TITLE[section]}</span>}
       actions={<>{actions}<RefreshButton label={section === 'mcp' ? '刷新 Copilot MCP 配置缓存' : '刷新'}
         disabled={!onRefresh || connState !== 'open' || busy} pending={busy} onClick={() => {
-          void run(async () => { if (section === 'mcp') await mcpRefresh(); }, onRefresh);
+          void run(async () => { if (section === 'mcp') await cockpitApi.mcpRefresh(); }, onRefresh);
         }} /></>} />
     {error && <StateNotice kind="error">刷新失败：{error}</StateNotice>}
   </>;

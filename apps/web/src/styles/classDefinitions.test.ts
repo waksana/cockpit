@@ -37,9 +37,6 @@ const allowed = new Map<string, string>([
   ['info-section-name', 'semantic hook on SectionHeading; the ck-heading appearance is shared'],
   ['info-section-content', 'semantic hook; layout comes from the sibling info-controls/info-meta-* classes'],
   ['info-model-eyebrow', 'semantic label inside the styled info-model-current row'],
-  ['activity-design-lab', 'dev-only lab root; chat-lab carries the layout'],
-  ['control-lab-list', 'dev-only lab disclosure target (aria-controls id twin)'],
-  ['control-lab-queue', 'dev-only lab hook asserted by Thread.lifecycle.test'],
   ['lab-async-card', 'dev-only fixture hook; ck-surface carries the style'],
 ]);
 

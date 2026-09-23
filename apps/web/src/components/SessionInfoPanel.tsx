@@ -49,11 +49,10 @@ function CurrentModel({ session }: { session: ChatSession }) {
   </div>;
 }
 
-function ModelSubmissionDetails({ selection, result }: { selection?: ModelSelection; result?: NativeModelSwitchResult }) {
-  return <details className="info-model-details">
+function ModelSubmissionDetails({ selection }: { selection?: ModelSelection }) {
+  return selection && <details className="info-model-details">
     <summary>提交详情</summary>
-    {selection && <div>上次提交：{selectionLabel(selection)}</div>}
-    {result && <pre>{JSON.stringify(result, null, 2)}</pre>}
+    <div>上次提交：{selectionLabel(selection)}</div>
   </details>;
 }
 
@@ -80,7 +79,7 @@ export function ModelOutcome({ result, selection }: { result: NativeModelSwitchR
       本页不会自动确认或继续执行。
     </div>}
     {result.warning && <div>{result.warning}</div>}
-    <ModelSubmissionDetails selection={selection} result={result} />
+    <ModelSubmissionDetails selection={selection} />
   </div>;
 }
 

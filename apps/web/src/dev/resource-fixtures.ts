@@ -2,6 +2,7 @@ import type { McpServerGlobal, McpServerSession, SessionRole, SkillGlobal, Skill
 import { SKILL_NOT_FOUND } from '@cockpit/protocol';
 import { IntentHttpError } from '../net/client';
 import type { createCockpitStore } from '../net/store';
+import { cockpitApi, type CockpitApi } from '../net/api';
 import { installWorkspaceFixture, workspaceSessionId } from './workspace-fixtures';
 
 export interface ResourceFixtureOptions {
@@ -15,6 +16,7 @@ export interface ResourceFixtureOptions {
 export function installResourceFixture(store: ReturnType<typeof createCockpitStore>, longNames = false, options: ResourceFixtureOptions = {}) {
   installWorkspaceFixture(store);
   const workspace = store.getState();
+  const workspaceApi = { ...cockpitApi };
   const request = async () => {
     await options.beforeRequest?.();
     if (options.fail) throw new Error('Synthetic resource failure; no backend request was sent.');
@@ -106,14 +108,45 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
       ...(index === 0 ? { title: '模块角色与资源（合成）', status: 'idle' as const, nativeProcessing: false, intent: null } : {}),
     })),
     getResources: async (id, resources, signal) => { await request(); return workspace.getResources(id, resources, signal); },
-    setModel: async (id, model, settings) => { await request(); return workspace.setModel(id, model, settings); },
-    listRoles: async () => { await request(); return options.empty ? [] : catalog; },
     refreshRoles: async id => {
       await request();
       const session = find(id);
       return { sessionId: id, roles: session.roles, appliedRoles: session.appliedRoles,
         rolesNeedReload: session.rolesNeedReload, loaded: session.loaded };
     },
+    newSession: async (cwd, selected = []) => {
+      await request();
+      if (!['/workspace', '/workspace/cockpit'].includes(cwd)) throw new Error('Unknown synthetic directory');
+      const selectedRoles: SessionRole[] = selected.map(selection => {
+        const role = catalog.find(role => role.moduleId === selection.moduleId && role.roleId === selection.roleId);
+        if (!role) throw new Error('Unknown synthetic role');
+        return roleSummary(role);
+      });
+      const sessionId = `synthetic-role-session-${store.getState().sessions.length}`;
+      const session = { ...find(workspaceSessionId), sessionId, title: '新建角色会话（合成）', cwd,
+        roles: selectedRoles, appliedRoles: selectedRoles, rolesNeedReload: false, loaded: true,
+        messages: [], lastActivity: Date.now() };
+      store.setState(state => ({ sessions: [session, ...state.sessions] }));
+      return sessionId;
+    },
+    mcpSession: async id => { await request(); find(id); return mcp; },
+    skillsSession: async id => { await request(); find(id); return skills; },
+    mcpToggleSession: async (id, name, enabled) => {
+      await mutation();
+      find(id);
+      if (!mcp.some(server => server.name === name)) throw new Error('Unknown synthetic MCP server');
+      mcp = mcp.map(server => server.name === name ? { ...server, enabled, status: enabled ? 'connected' : 'disabled' } : server);
+    },
+    skillsToggleSession: async (id, name, enabled) => {
+      await mutation();
+      find(id);
+      if (!skills.some(skill => skill.name === name)) throw new Error('Unknown synthetic skill');
+      skills = skills.map(skill => skill.name === name ? { ...skill, enabled } : skill);
+    },
+  }));
+  Object.assign(cockpitApi, {
+    setModel: async (id, model, settings) => { await request(); return workspaceApi.setModel(id, model, settings); },
+    listRoles: async () => { await request(); return options.empty ? [] : catalog; },
     roleReadiness: async id => {
       const session = find(id);
       return { sessionId: id, roles: session.roles ?? [], appliedRoles: session.appliedRoles ?? [],
@@ -148,21 +181,6 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
       return { path, parent: path === '/workspace' ? null : '/workspace',
         entries: path === '/workspace' ? [{ name: 'cockpit', isDir: true }] : [] };
     },
-    newSession: async (cwd, selected = []) => {
-      await request();
-      if (!['/workspace', '/workspace/cockpit'].includes(cwd)) throw new Error('Unknown synthetic directory');
-      const selectedRoles: SessionRole[] = selected.map(selection => {
-        const role = catalog.find(role => role.moduleId === selection.moduleId && role.roleId === selection.roleId);
-        if (!role) throw new Error('Unknown synthetic role');
-        return roleSummary(role);
-      });
-      const sessionId = `synthetic-role-session-${store.getState().sessions.length}`;
-      const session = { ...find(workspaceSessionId), sessionId, title: '新建角色会话（合成）', cwd,
-        roles: selectedRoles, appliedRoles: selectedRoles, rolesNeedReload: false, loaded: true,
-        messages: [], lastActivity: Date.now() };
-      store.setState(state => ({ sessions: [session, ...state.sessions] }));
-      return sessionId;
-    },
     mcpGlobal: async () => { await request(); return globalMcp; },
     mcpRefresh: async () => { await request(); },
     mcpSetDefault: async (name, defaultOn) => {
@@ -183,19 +201,5 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
       if (!globalSkills.some(row => row.name === name)) throw new Error('Unknown synthetic global skill');
       globalSkills = globalSkills.map(row => row.name === name ? { ...row, enabled } : row);
     },
-    mcpSession: async id => { await request(); find(id); return mcp; },
-    skillsSession: async id => { await request(); find(id); return skills; },
-    mcpToggleSession: async (id, name, enabled) => {
-      await mutation();
-      find(id);
-      if (!mcp.some(server => server.name === name)) throw new Error('Unknown synthetic MCP server');
-      mcp = mcp.map(server => server.name === name ? { ...server, enabled, status: enabled ? 'connected' : 'disabled' } : server);
-    },
-    skillsToggleSession: async (id, name, enabled) => {
-      await mutation();
-      find(id);
-      if (!skills.some(skill => skill.name === name)) throw new Error('Unknown synthetic skill');
-      skills = skills.map(skill => skill.name === name ? { ...skill, enabled } : skill);
-    },
-  }));
+  } satisfies Partial<CockpitApi>);
 }

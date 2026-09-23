@@ -268,80 +268,31 @@ Do not add one-off HTML pages or copies of production components. Normal
 component tests consume the same fixtures; visual interaction review uses this
 single opt-in entry. Neither the Lab nor its fixtures are runtime-package inputs.
 
-For focused input-bar review, open `/chat-lab.html?scene=ask&compact=1`
-or `/chat-lab.html?scene=activity-design` for the activity/tool design preview.
-The latter uses synthetic session rows and the production Thread: compare concrete
-activity icons with the fallback spinner, inspect built-in tool icons and extension
-names, and expand the independent subagent card. Its explicit refresh hold/result
-controls demonstrate retained presentation without a native transport; operation
-hold/failure controls exercise Stop and interrupt feedback. This is a design preview,
-not evidence of live native refresh integration.
-
-For the existing input scenes, choose `ask`
+For focused input-bar review, open `/chat-lab.html?scene=ask&compact=1`,
 or choose `plan` / `user-time`. Stop temporary previews after review; do not leave resident
 background work, open native sessions or publish user screenshots.
-For a separately authorized static activity-design review, use
-`COCKPIT_ACTIVITY_DESIGN_REVIEW=1 COCKPIT_REVIEW_OUTPUT=/absolute/separate/output pnpm --filter @cockpit/web exec vite build --config activity-design-review.config.ts`.
-This explicit build has only the synthetic design entry, no public directory or
-source maps, and uses `/review/activity-design-20260922/` as its asset base.
-Its bootstrap installs memory-only storage and disables application transports
-before importing components. Publish only that output behind the existing review
-authentication and a `connect-src 'none'` CSP; do not expose Vite or the worktree,
-replace another review, or change the production application entry.
 
-The published static control-review entry now mounts the complete production
-`App` with a `MemoryRouter` and `installFullWebFixture`. It does not import
-`chat-lab.scss`, override components, or construct a separate preview shell.
-The same sidebar, routing, conversation, settings, global menus and resource
-pages consume synthetic data and local callbacks. The real Thread now optionally
-renders `SessionControlBar` when the fixture supplies browser-only `controls` and
-`sessionControlAction`. Production obtains those values through its view-owned
-controls resource and native action adapter; the fixture replaces that data source
-with local synthetic state. Only this input dock changes; the full App remains the
-same. The leading indicator is an independent overall state: a spinner coexists
-with question, agent, terminal, queue and compaction icons whenever activity
-remains. Confirmed idle hides the input status bar; offline and errors stay explicit. Browser storage
-and application transports remain isolated before imports. Use
-`/chat-lab.html?scene=full-web` for this scene in the development Lab;
-`case=tool-loading` selects the last-tool reproduction in either entry.
+`/chat-lab.html?scene=full-web` mounts the complete production `App` with a
+`MemoryRouter` and `installFullWebFixture`, without overriding components or
+constructing a separate preview shell. The same sidebar, routing, conversation,
+settings, global menus and resource pages consume synthetic data and local callbacks.
+The real Thread optionally renders `SessionControlBar` when the fixture supplies
+browser-only `controls` and `sessionControlAction`. Production obtains those values
+through its view-owned controls resource and native action adapter; the fixture
+replaces that data source with local synthetic state. The leading indicator is an
+independent overall state: a spinner coexists with question, agent, terminal, queue
+and compaction icons whenever activity remains. Confirmed idle hides the input status
+bar; offline and errors stay explicit. Browser storage and application transports
+remain isolated before imports.
 
-The earlier proposed separated control area remains an opt-in component scene at
-`/chat-lab.html?scene=control-design`. It reuses Thread's transcript, native
-decision cards and composer through an alternate activity/queue composition.
-Task cancellation, independent main-turn stopping, queue clearing and immediate
-steering are local scenario transitions, not connected SDK commands. Use
-`模拟纳入回合` to move accepted steering into a synthetic `user.message` with
-`delivery: steering`; the event inspector distinguishes acceptance from history.
-Hold/failure, reconnect, refresh, manual/background compaction and decision
-scenarios remain explicit. For the separately authorized static preview, add
-`COCKPIT_REVIEW_SCENE=control` to the build command above and use a new output
-directory; its asset base is `/review/activity-design-20260922/control/`.
-Do not overwrite the previous activity preview or deploy the main application.
-
-The control scene now keeps a single native input-card frame: one status toggle,
+The control area keeps a single native input-card frame: one status toggle,
 grouped agent/terminal/queue rows, native question/decision content, and a bottom
 editor. The normal editor is never collapsed with the task list. A new question
 opens the list and positions its answer at the bottom once, before paint; later
-task updates do not repeat that navigation. The preview retains the same textarea,
+task updates do not repeat that navigation. It retains the same textarea,
 preserves separate prompt/answer drafts and carries editor geometry across purpose
-changes. The production conversation and the isolated preview use the same
-control composition once their activity details are available.
-Full-Web steering first shows acceptance, then a 700ms synthetic runtime event
+changes. Full-Web steering first shows acceptance, then a 700ms synthetic runtime event
 places the same message in history; Stop/clear/disposal fence delayed events.
-The fixture never calls the backend; production operations use `session/control`
-with the loaded-handle token returned by `session/resources`.
-The activity bar now contains active work only. Confirmed stopped tasks disappear
-immediately, without deleting their recorded output. Agent/terminal rows only
-have a cancel X; only queue rows retain copy and immediate-send actions. The bar
-does not read or navigate agent history. `case=agent-unloaded` still demonstrates
-that task listing/cancellation do not require a startup card in the chat window.
-Every group header has a trash action. Agent/terminal clear cancels the captured
-task IDs in that group and removes their list records, preserving peer groups and
-history. Question cancellation is request-bound and does not cancel unrelated
-background work. Cancelling ask stops its main
-turn; plan uses exit-only semantics; elicitation uses cancellation. These remain
-synthetic scenarios, not additional native endpoints.
-The sidebar uses the same shared projection and icon renderer as the input bar.
 Expanded controls keep the overall icon in the bar and relocate agent/terminal/
 queue icons into section headings ordered icon, name, count. The question icon
 sits directly before its question, without a separate "waiting for answer" heading;
@@ -350,10 +301,8 @@ not a separate manual-compaction row. Row actions use accessible icon buttons,
 including the existing CopyButton's icon variant for queued messages. Sticky surfaces use the input card's existing
 mixed background instead of a separate preview fill.
 
-Use `?scene=control-design&case=tool-loading` in Chat Lab, or `?case=tool-loading`
-on the full Web static review, for a final active tool after scrollable static
-history. Only the earlier component scene's `对比修复前图标` toggle restores the old inline SVG display.
-The inline line box rotated with the tool status wrapper and changed scrollable
+Use `?scene=full-web&case=tool-loading` for a final active tool after scrollable
+static history. The inline line box rotated with the tool status wrapper and changed scrollable
 overflow, even while the message content height stayed fixed. A block SVG removes
 that line box; keep the animation and the existing scroll owner, rather than
 masking the jitter with timers or repeated scroll writes.

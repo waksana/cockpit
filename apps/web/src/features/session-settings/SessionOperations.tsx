@@ -81,13 +81,10 @@ export function SessionOperations({ sessionId }: { sessionId: string }) {
         {!outcome.present ? '原生会话已不存在，未创建替代会话。'
           : outcome.loaded ? '原生仍报告会话已加载，未确认卸载。' : '会话已卸载，已持久化的聊天历史仍可查看。'}
       </StateNotice>}
-      {outcome?.action === 'compact' && <>
-        <StateNotice kind={outcome.result.success ? 'info' : 'error'}>
-          {outcome.result.success ? '原生上下文压缩完成' : '原生报告压缩未成功，请核对可能的部分变化'}；
-          移除 {outcome.result.tokensRemoved} 个令牌、{outcome.result.messagesRemoved} 条上下文消息。聊天历史未删除。
-        </StateNotice>
-        <details className="info-model-details"><summary>原生压缩结果</summary><pre>{JSON.stringify(outcome.result, null, 2)}</pre></details>
-      </>}
+      {outcome?.action === 'compact' && <StateNotice kind={outcome.result.success ? 'info' : 'error'}>
+        {outcome.result.success ? '原生上下文压缩完成' : '原生报告压缩未成功，请核对可能的部分变化'}；
+        移除 {outcome.result.tokensRemoved} 个令牌、{outcome.result.messagesRemoved} 条上下文消息。聊天历史未删除。
+      </StateNotice>}
       {outcome?.action === 'fork' && <StateNotice>
         已创建新会话：{outcome.sessionId}。未发送消息。{' '}
         <ForkLink sessionId={outcome.sessionId} />

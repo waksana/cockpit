@@ -556,7 +556,7 @@ export interface MarkdownRenderer {
   readonly component: React.ComponentType<MarkdownRendererProps>;
 }
 
-export interface ModuleFrontendServices {
+export interface ModuleFrontendContext {
   /** Web contract only. Module manifest, backend context and route API remain v1. */
   readonly apiVersion: 2;
   /** Declarative global/session menu capability; not a component boundary. */
@@ -585,9 +585,6 @@ export interface ModuleFrontendServices {
   onEvent(listener: (payload: ModuleEventPayload) => void): () => void;
   /** Unchanged narrow module-worker metadata; never authority over the page/root scope. */
   readonly worker?: { entry: string; scope: string };
-}
-
-export interface ModuleFrontendContext extends ModuleFrontendServices {
   readonly uiVersion: 1;
   /** Shared surface/heading/actions/badge/modal CSS. Check separately from base UI v1. */
   readonly uiSurfaceVersion: 1;
