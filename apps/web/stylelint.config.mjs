@@ -1,7 +1,6 @@
-// Classic UI style guardrails (docs/frontend-guidelines.md#style-guardrails).
-// Only classic sources are linted: the experimental /next/ UI and its lab keep
-// their own Tailwind/shadcn stack. tokens.scss is the single place that defines
-// raw colors and the legacy tweb aliases, so it is exempt.
+// UI style guardrails (docs/frontend-guidelines.md#style-guardrails).
+// tokens.scss is the single place that defines raw colors and the legacy tweb
+// aliases, so it is exempt.
 import stylelint from 'stylelint';
 
 // tweb names kept in tokens.scss only as aliases of the --host-color-* roles.
@@ -39,7 +38,7 @@ const portedTweb = ['src/styles/base.scss', 'src/styles/primitives/button.scss',
 // chat.scss (#159) and sidebar.scss (#158) are being changed in parallel; migrate
 // their legacy names, raw spacing and chat contrast hex overrides in a follow-up.
 const inFlight = ['src/styles/components/chat.scss', 'src/styles/components/sidebar.scss'];
-// Dev-only Chat Lab chrome, never loaded by the shipped classic entry.
+// Dev-only Chat Lab chrome, never loaded by the shipped entry.
 const devLab = ['src/dev/chat-lab.scss'];
 
 export default {
@@ -48,7 +47,7 @@ export default {
   reportDescriptionlessDisables: true,
   reportNeedlessDisables: true,
   reportInvalidScopeDisables: true,
-  ignoreFiles: ['src/next/**', 'src/dev/next-lab.css', 'next/**', 'dist/**', 'dist-review/**', 'src/styles/tokens.scss'],
+  ignoreFiles: ['dist/**', 'dist-review/**', 'src/styles/tokens.scss'],
   rules: {
     'color-no-hex': [true, { message: 'Use a --host-color-* role (tokens.scss) instead of a hex color' }],
     'color-named': ['never', { message: 'Use a --host-color-* role (tokens.scss) instead of a named color' }],

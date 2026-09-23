@@ -122,9 +122,6 @@ export class ModuleHost {
         return [{
           id: manifest.id, name: manifest.name, version: manifest.version, digest, apiBase: module.apiBase,
           entry: asset(manifest.frontend.entry), styles: (manifest.frontend.styles ?? []).map(asset),
-          ...(manifest.frontend.next ? { next: {
-            entry: asset(manifest.frontend.next.entry), styles: (manifest.frontend.next.styles ?? []).map(asset),
-          } } : {}),
           config: module.backend.publicConfig ?? {},
           ...(manifest.frontend.worker ? { worker: {
             entry: `/_modules/workers/${manifest.id}/worker.js`, scope: `/_modules/workers/${manifest.id}/`,

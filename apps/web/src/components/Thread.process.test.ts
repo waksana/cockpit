@@ -24,7 +24,7 @@ const renderProcess = (value = items, latest = false) =>
     items: groupTranscript(value).flatMap(row => row.kind === 'process' ? row.items : []), sessionId: 'fixture', latest,
   }));
 
-test('classic process rows and decision cards share activity semantic icons', () => {
+test('process rows and decision cards share activity semantic icons', () => {
   for (const [name, icon] of [['bash', 'shell'], ['functions.read_bash', 'shell_output'], ['task', 'agent'],
     ['read_agent', 'agent_result'], ['view', 'read_file'], ['ask_user', 'decision']] as const) {
     const html = renderToStaticMarkup(createElement(ToolCallRow, {

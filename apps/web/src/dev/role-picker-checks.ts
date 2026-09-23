@@ -1,5 +1,5 @@
 function check(value: unknown, message: string): asserts value {
-  if (!value) throw new Error(`Classic role picker regression: ${message}`);
+  if (!value) throw new Error(`Role picker regression: ${message}`);
 }
 
 export function runRolePickerChecks() {

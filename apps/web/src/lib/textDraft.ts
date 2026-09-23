@@ -452,7 +452,7 @@ export class SessionDraft {
     const token = `action-${draftIdentity()}`;
     try {
       if (!this.allowed(check)) return false;
-      if (this.hasUnclaimedStoredData()) throw new Error('草稿包含尚未由当前界面模块恢复的数据；请切换到经典界面恢复后再提交。');
+      if (this.hasUnclaimedStoredData()) throw new Error('草稿包含尚未由已加载模块恢复的数据；请启用对应模块恢复后再提交。');
       this.begin(token, new Map());
       if (!check()) throw new Error('The native decision has changed');
       if (this.hasUnclaimedStoredData()) throw new Error('Draft schema ownership changed before dispatch');
@@ -479,7 +479,7 @@ export class SessionDraft {
       if (blocked) return blockedSend(blocked);
       if (!this.allowed(check)) return blockedSend('pending');
       if (this.hasUnclaimedStoredData()) {
-        throw new Error('草稿包含尚未由当前界面模块恢复的数据；请切换到经典界面恢复后再提交。');
+        throw new Error('草稿包含尚未由已加载模块恢复的数据；请启用对应模块恢复后再提交。');
       }
       if (this.snapshot.blocks.length) return blockedSend('peer-blocked');
       if (!this.snapshot.hasContent) return blockedSend('empty');

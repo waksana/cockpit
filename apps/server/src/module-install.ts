@@ -40,9 +40,6 @@ export const manifestSchema = z.object({
   frontend: z.object({
     entry: pathSchema, styles: z.array(pathSchema).max(64).optional(), assets: z.array(pathSchema).min(1).max(128),
     worker: pathSchema.optional(),
-    next: z.object({
-      entry: pathSchema, styles: z.array(pathSchema).max(64).optional(),
-    }).strict().optional(),
   }).strict().optional(),
 }).strict();
 const selectionSchema = z.object({
@@ -197,20 +194,12 @@ function validateManifestFiles(manifest: ModuleManifest, paths: Iterable<string>
   const files = new Set(paths);
   if (!files.has(manifest.backend) || !/\.(?:mjs|cjs|js)$/.test(manifest.backend)) throw new Error('Backend entry must be a packaged JavaScript file');
   if (!manifest.frontend) return;
-  const presentations = [manifest.frontend, ...manifest.frontend.next ? [manifest.frontend.next] : []];
-  for (const presentation of presentations) {
-    for (const path of [presentation.entry, ...presentation.styles ?? []]) {
-      if (!files.has(path) || !isDeclaredAsset(manifest, path)) throw new Error('Frontend entry/styles must exist under declared asset roots');
-    }
-    if (!/\.(?:mjs|js)$/.test(presentation.entry)
-      || presentation.styles?.some(path => !path.endsWith('.css'))) throw new Error('Invalid frontend JavaScript/CSS entry');
+  for (const path of [manifest.frontend.entry, ...manifest.frontend.styles ?? [], ...manifest.frontend.worker ? [manifest.frontend.worker] : []]) {
+    if (!files.has(path) || !isDeclaredAsset(manifest, path)) throw new Error('Frontend entry/styles must exist under declared asset roots');
   }
-  if (manifest.frontend.worker) {
-    if (!files.has(manifest.frontend.worker) || !isDeclaredAsset(manifest, manifest.frontend.worker)) {
-      throw new Error('Frontend worker must exist under declared asset roots');
-    }
-    if (!/\.js$/.test(manifest.frontend.worker)) throw new Error('Invalid frontend JavaScript/CSS entry');
-  }
+  if (!/\.(?:mjs|js)$/.test(manifest.frontend.entry)
+    || manifest.frontend.styles?.some(path => !path.endsWith('.css'))
+    || (manifest.frontend.worker && !/\.js$/.test(manifest.frontend.worker))) throw new Error('Invalid frontend JavaScript/CSS entry');
   if (manifest.frontend.worker && (workerBytes === undefined || workerBytes > MODULE_WORKER_LIMIT)) {
     throw new Error('Module worker exceeds its 1 MiB limit');
   }

@@ -1,5 +1,5 @@
 import type { Plugin } from 'vite';
-import { labModuleHandler, loadLabModules } from './next-lab-modules.ts';
+import { labModuleHandler, loadLabModules } from './lab-modules.ts';
 
 // Explicit opt-in, loopback-only, dev-only. No backend connection or proxy.
 export function chatLabPlugin(): Plugin {
@@ -16,7 +16,6 @@ export function chatLabPlugin(): Plugin {
     async configureServer(server) {
       const modules = labModuleHandler(await loadLabModules({
         file: process.env.COCKPIT_LAB_FILE_ROOT,
-        speech: process.env.COCKPIT_LAB_SPEECH_ROOT,
       }));
       server.httpServer?.once('close', () => modules.dispose());
       server.middlewares.use((request, response, next) => {

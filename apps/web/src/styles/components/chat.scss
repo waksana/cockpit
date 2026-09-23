@@ -504,7 +504,7 @@ button.activity-head {
   display: flex; flex-direction: column;
   flex: 0 1 auto; min-height: 0; overflow: hidden; overscroll-behavior: contain;
   scrollbar-width: thin;
-  // Classic scrollbars must not resize the editor when long decision content arrives.
+  // Classic (non-overlay) scrollbars must not resize the editor when long decision content arrives.
   scrollbar-gutter: stable both-edges;
 }
 .chat-input-context {

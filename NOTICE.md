@@ -28,15 +28,7 @@ no icon font, external CDN or runtime icon lookup is used.
 Retained dependencies keep their respective licenses and notices.
 This document does not relicense third-party packages.
 
-## New UI components
-
-The independent new interface uses shadcn/ui source components, copyright
-2023 shadcn, under MIT. Their source is maintained in `packages/ui`, with the
-upstream permission notice in `packages/ui/LICENSE.shadcn`. The built Web
-distributes that notice at `licenses/shadcn.txt`.
+## Bundled Web dependencies
 
 The build emits bundled JavaScript dependency licenses to
-`licenses/frontend.txt`, including the React/Radix component dependencies.
-The CSS animation package's MIT notice is distributed separately at
-`licenses/tw-animate-css.txt`. These notices do not change Cockpit's GPLv3
-license or the attribution of the retained classic interface.
+`licenses/frontend.txt`. These notices do not change Cockpit's GPLv3 license.

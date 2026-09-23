@@ -1,12 +1,12 @@
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter, MemoryRouter } from 'react-router-dom';
-import { isolateNextLab } from './next-lab-isolation';
+import { isolateLab } from './lab-isolation';
 import '../styles/index.scss';
 import '../components/UxErrorNotifications.scss';
 
 // Install memory-only storage and reject application transports before any
 // production component imports can inspect this authenticated origin.
-isolateNextLab(window);
+isolateLab(window);
 Object.defineProperty(window, 'WebSocket', {
   configurable: true,
   value: class { constructor() { throw new Error('Synthetic review: WebSocket is disabled.'); } },

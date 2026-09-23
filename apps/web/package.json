@@ -14,7 +14,6 @@
   "dependencies": {
     "@cockpit/module-api": "workspace:*",
     "@cockpit/protocol": "workspace:*",
-    "@cockpit/ui": "workspace:*",
     "lucide-react": "1.46.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
@@ -25,7 +24,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@tailwindcss/vite": "4.3.3",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
@@ -36,7 +34,6 @@
     "postcss-scss": "^4.0.9",
     "sass": "^1.104.0",
     "stylelint": "^17.15.0",
-    "tailwindcss": "4.3.3",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.70.0",

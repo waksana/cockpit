@@ -573,10 +573,8 @@ export async function registerStaticWeb(): Promise<void> {
   await app.register(fastifyStatic, { root: WEB_DIR, index: ['index.html'] });
   app.setNotFoundHandler((req, reply) => {
     const path = req.url.split('?')[0]!;
-    const next = path === '/next' || path.startsWith('/next/');
-    const route = next ? path.slice('/next'.length) || '/' : path;
-    const webRoute = /^\/(?:session\/[^/]+(?:\/[^/]+)?|(?:mcp|skills)(?:\/[^/]+)?)?\/?$/.test(route);
-    if (req.method === 'GET' && webRoute) return reply.sendFile(next ? 'next/index.html' : 'index.html');
+    const webRoute = /^\/(?:session\/[^/]+(?:\/[^/]+)?|(?:mcp|skills)(?:\/[^/]+)?)?\/?$/.test(path);
+    if (req.method === 'GET' && webRoute) return reply.sendFile('index.html');
     reply.code(404).send({ error: 'not found' });
   });
   app.log.info(`serving web SPA from ${WEB_DIR}`);

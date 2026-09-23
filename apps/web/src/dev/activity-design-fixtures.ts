@@ -76,7 +76,7 @@ export function activityDesignSessions(): ChatSession[] {
     make('mcp', 'MCP 等待：不转圈', { ...running,
       activity: activityFixture({ processing: true, mcp: { pendingConnectionCount: 1 } }) }),
     make('plan', '计划确认：只显示问号', { ...running, activity: activityFixture({ processing: true }),
-      planRequest: { requestId: 'design-plan', summary: '只调整经典版显示，不改变原生任务执行。', actions: ['interactive', 'exit_only'] } }),
+      planRequest: { requestId: 'design-plan', summary: '只调整界面显示，不改变原生任务执行。', actions: ['interactive', 'exit_only'] } }),
     make('elicitation', '工具确认：只显示问号', { ...running, activity: activityFixture({ processing: true }),
       elicitation: { requestId: 'design-confirm', message: '允许合成工具继续吗？' } }),
     make('compact', '正在压缩：转圈', { compacting: true, activity: activityFixture({ processing: true, hasActiveWork: true }) }),

@@ -21,7 +21,7 @@ export function sidebarSessions(now = Date.now()) {
     ...session,
     title: [
       'Short',
-      '这是用于确认经典会话列表标题最多显示两行的合成长中文标题以及完整名称保留',
+      '这是用于确认会话列表标题最多显示两行的合成长中文标题以及完整名称保留',
       'SyntheticContinuousEnglishTitleWithoutSpacesForNarrowSidebarLayout'.repeat(2),
       'Unloaded',
       'Refreshing activity',

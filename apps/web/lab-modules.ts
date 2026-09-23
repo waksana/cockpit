@@ -5,7 +5,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { ModuleAsset } from '@cockpit/module-api';
 
 const maxFileBytes = 1024 * 1024;
-const nativePrefix = '/synthetic/next-lab/files/';
+const nativePrefix = '/synthetic/lab/files/';
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 const safePath = (value: unknown): value is string => typeof value === 'string'
@@ -22,7 +22,7 @@ export interface LabModules {
   assets: ReadonlyMap<string, Asset>;
 }
 
-export async function loadLabModules(roots: { file?: string; speech?: string }): Promise<LabModules> {
+export async function loadLabModules(roots: { file?: string }): Promise<LabModules> {
   const modules: ModuleAsset[] = [];
   const assets = new Map<string, Asset>();
   for (const [kind, requested] of Object.entries(roots)) {
@@ -39,7 +39,7 @@ export async function loadLabModules(roots: { file?: string; speech?: string }):
       || !record(manifest) || manifest.id !== id || typeof manifest.name !== 'string'
       || typeof manifest.version !== 'string' || receipt.version !== manifest.version
       || !record(manifest.frontend) || !Array.isArray(manifest.frontend.assets)
-      || !manifest.frontend.assets.every(safePath) || !record(manifest.frontend.next)) {
+      || !manifest.frontend.assets.every(safePath)) {
       throw new Error(`Invalid clean synthetic module package: ${id}`);
     }
     const frontend = manifest.frontend;
@@ -83,12 +83,9 @@ export async function loadLabModules(roots: { file?: string; speech?: string }):
       if (!Array.isArray(value)) throw new Error('Invalid lab styles');
       return value.map(entry);
     };
-    const next = frontend.next;
-    if (!record(next)) throw new Error('Missing lab next presentation');
     modules.push({
       id, name: manifest.name, version: manifest.version, digest, apiBase,
       entry: entry(frontend.entry), styles: styles(frontend.styles),
-      next: { entry: entry(next.entry), styles: styles(next.styles) },
       config: kind === 'file' ? { nativePathPrefix: nativePrefix, maxBytes: maxFileBytes } : {},
     });
   }
@@ -114,9 +111,6 @@ async function body(request: IncomingMessage): Promise<Buffer> {
 
 export function labModuleHandler(loaded: LabModules) {
   const files = new Map<string, { bytes: Buffer; mime: string; name: string; operation: string }>();
-  const attempts = new Set<string>();
-  const pending = new Set<(fail: boolean) => void>();
-  let hold = false;
   const fileModule = loaded.modules.find(module => module.id === 'cockpit-file');
   const handle = async (request: IncomingMessage, response: ServerResponse): Promise<boolean> => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1');
@@ -133,14 +127,6 @@ export function labModuleHandler(loaded: LabModules) {
       response.end(method === 'HEAD' ? undefined : asset.bytes);
       return true;
     }
-    if (path === '/__next_lab__/files' && method === 'POST') {
-      const control: unknown = JSON.parse((await body(request)).toString('utf8'));
-      if (!record(control) || typeof control.hold !== 'boolean') throw new Error('Invalid synthetic upload control');
-      hold = control.hold;
-      if (!hold) for (const release of [...pending]) release(control.fail === true);
-      json(response, 200, { pending: pending.size, files: files.size, hold });
-      return true;
-    }
     if (!fileModule || !path.startsWith(`${fileModule.apiBase}/`)) return false;
     const action = path.slice(fileModule.apiBase.length);
     if (action === '/upload' && method === 'POST') {
@@ -148,23 +134,6 @@ export function labModuleHandler(loaded: LabModules) {
       const operation = url.searchParams.get('operationId') ?? '';
       if (!name || name.length > 512 || !/^[a-zA-Z0-9_-]{1,128}$/.test(operation)) throw new Error('Invalid synthetic upload');
       const bytes = await body(request);
-      if (hold) await new Promise<void>((resolve, reject) => {
-        const release = (fail: boolean) => {
-          pending.delete(release);
-          response.off('close', closed);
-          if (fail) reject(new Error('Synthetic held upload failure'));
-          else resolve();
-        };
-        const closed = () => release(false);
-        pending.add(release);
-        response.once('close', closed);
-      });
-      if (response.destroyed) return true;
-      if (name.startsWith('fail-once') && !attempts.has(operation)) {
-        attempts.add(operation);
-        json(response, 503, { error: 'Synthetic first upload failure; explicit retry succeeds.' });
-        return true;
-      }
       const id = `f_${hash(operation)}`;
       const requestedMime = request.headers['x-file-mime'];
       const mime = typeof requestedMime === 'string' && /^(?:image\/(?:png|jpeg|gif|webp)|audio\/(?:wav|mpeg|ogg)|video\/(?:mp4|webm))$/.test(requestedMime)
@@ -194,9 +163,7 @@ export function labModuleHandler(loaded: LabModules) {
   return {
     handle,
     dispose() {
-      for (const release of [...pending]) release(true);
       files.clear();
-      attempts.clear();
     },
   };
 }

@@ -1,7 +1,7 @@
 import { sidebarSessions } from './sidebar-fixtures';
 
 function check(value: unknown, message: string): asserts value {
-  if (!value) throw new Error(`Classic sidebar regression: ${message}`);
+  if (!value) throw new Error(`Sidebar regression: ${message}`);
 }
 
 const allStatus = ['overall', 'decision', 'compaction', 'agent', 'shell', 'queue', 'mcp'];

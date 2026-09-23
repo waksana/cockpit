@@ -107,11 +107,7 @@ See [release notes](release-notes.md); no tag, publication or deployment is impl
 ## Interaction semantics and structural correctness
 
 Before any host Web or module UI work, read and follow the
-[frontend guidelines](frontend-guidelines.md). Classic `/` is the primary UI;
-UI requests default to it unless experimental `/next/` is explicitly in scope.
-The [UI scope policy](frontend-guidelines.md#classic-primary-ui) distinguishes
-shared-contract correctness from optional experimental adaptation and duplicate UI acceptance.
-These guidelines are the single home for
+[frontend guidelines](frontend-guidelines.md). These guidelines are the single home for
 native-first semantics, valid structure, focus/event ownership, minimal JS,
 reading behavior, truthful state and the lightweight review checklist.
 These are ordinary engineering requirements, not a separate accessibility feature
@@ -142,16 +138,16 @@ move. The persistent reading surface is the native autofocus target, so lazy
 content replacement does not remove initial focus. The browser owns isolation, Tab and modal
 return; errors from the shared local error store remain reachable inside host
 modals. No body mutation observer or focus-in trap supplements native behavior.
-The classic document entry additionally owns a small native-dialog **indicator**
+The document entry additionally owns a small native-dialog **indicator**
 policy. WebKit can match `:focus-visible` after pointer-driven `showModal()` and
-native close restoration, unlike the script-focus path in the new UI. The host
+native close restoration. The host
 observes pointer/key input and modal focus transitions, marking only the focused
 non-editing element in an open `dialog.ck-modal` or its immediate return target.
 Keyboard input clears that private presentation marker before navigation;
 unknown input and editing controls retain normal indication. It never moves focus,
 changes modal isolation, intercepts keys, or tracks application dialog state.
 The same policy covers independently implemented module `ck-modal` dialogs without
-a module update. It does not restyle ordinary nonmodal focus or the new UI.
+a module update. It does not restyle ordinary nonmodal focus.
 Menus retain their command selection/arrow navigation and close restoration;
 removed execution controls and dismissed errors retain scoped recovery only when
 they owned focus. Management headers no longer focus themselves on navigation.
@@ -165,7 +161,7 @@ callbacks, without initializing a native client or creating sessions. Normal
 production builds do not include the entry. The lab exercises
 native text, tools, decisions, queue and reading behavior.
 
-`/chat-lab.html?scene=process-summary` covers classic process overviews with
+`/chat-lab.html?scene=process-summary` covers process overviews with
 tools only, thoughts only, one long-named Skill, multiple Skills and mixed
 categories with failed/running/pending/unknown tools and an incomplete thought.
 Collapsed and expanded overview headers show one icon/count pair per nonempty
@@ -177,8 +173,7 @@ both themes and narrow widths; expanding must not restore a duplicate text summa
 `/chat-lab.html?scene=dialog-focus` mounts the real confirmation/input,
 `DirectoryModal` and persistent `InspectorPane` boundaries. Use 1000x800 for the
 modal inspector, then resize above 1200px to confirm the same form stays docked.
-Add `&modules=1` with the receipt-verified `COCKPIT_LAB_FILE_ROOT` described below
-to include the **unmodified** File module's synthetic PNG attachment and inline
+Add `&modules=1` with a receipt-verified `COCKPIT_LAB_FILE_ROOT` to include the **unmodified** File module's synthetic PNG attachment and inline
 reference (the latter intentionally returns a synthetic unavailable response).
 No module backend or user image is read.
 
@@ -199,10 +194,9 @@ directory content without moving its heading focus. `replaceTrigger()` and
 The directory contains a nested confirmation; native isolation and return must
 remain within its parent. “Hold confirmation” plus `dialogFocusLab.release()`
 exercises delayed completion. Confirm no private marker remains on blurred or
-detached targets and ordinary outside controls remain unchanged. The new UI's
-existing module scene remains the script-focus comparison.
+detached targets and ordinary outside controls remain unchanged.
 
-`/chat-lab.html?scene=sidebar` mounts the classic App with short, long Chinese,
+`/chat-lab.html?scene=sidebar` mounts the App with short, long Chinese,
 unbroken English, unloaded, role and activity fixtures, an all-status/many-long-roles
 extreme, a role-heavy row and a plain row, plus synthetic module unread badges.
 Every row has exactly two lines and one height, without a directory avatar. Line 1
@@ -221,67 +215,18 @@ The checks measure title, directory, role and status geometry; use the real list
 buttons to exercise navigation and keyboard/right-click/long-press menus.
 All App operations remain on the workspace fixture's synthetic store.
 
-For explicitly scoped experimental UI work, use
-`/chat-lab.html?ui=next&scene=workspace` for the independent new host, or
-`?ui=next&scene=ask&compact=1` for its conversation flow. The small lab entry
-loads only the selected presentation and its styles. The next fixture replaces
-browser storage with in-memory storage before importing the real App, disables
-application transports, and uses a `MemoryRouter`. No production bootstrap or
-user session data is read. Its toolbar and typed `window.nextLab` controls hold,
-fail or release synthetic operations, replace native decisions, navigate settings,
-and deliver history in a late animation frame. `firstContent` records the first
-content commit after the production layout effects, before paint.
-On an App scene, run `await import('/src/dev/next-lab-checks.ts').then(m => m.runNextLabChecks())`
-for maintained real-DOM focus, pending, request-identity and reading regressions;
-use a 1440x960 desktop viewport and repeat at a 390x844 touch viewport.
-Run `await import('/src/dev/next-workspace-checks.ts').then(m => m.runNextWorkspaceChecks())`
-at 1440x960, 1000x800 and 390x844 to cover compact rows/headers, contextual
-settings, mounted desktop chat versus released phone chat, in-dialog Select
-portals, title-trigger focus restoration and retained drafts. Also resize with
-an unapplied model selection open: call `prepareNextWorkspaceResizeCheck()` from
-that module, retain its returned check function, and invoke it after resizing to
-each of the three widths. The same inspector form must stay mounted.
-`?ui=next&view=conversation&scene=readonly`
-mounts the production conversation component without the App shell.
-
-For combined File/Speech presentation review, first build and verify each module's
-clean package with its own repository tooling, then extract the archives into
-separate temporary directories. Start the same lab with their absolute package
-roots (the directory containing `cockpit.module.json` and `module-build.json`):
+`COCKPIT_LAB_FILE_ROOT` is the absolute root of a clean File package extracted into
+a temporary directory (the directory containing `cockpit.module.json` and
+`module-build.json`); build and verify it with the File repository's own tooling:
 
 ```sh
 COCKPIT_CHAT_LAB=1 \
 COCKPIT_LAB_FILE_ROOT=/absolute/extracted/file/package \
-COCKPIT_LAB_SPEECH_ROOT=/absolute/extracted/speech/package \
 pnpm --filter @cockpit/web dev --host 127.0.0.1 --port 47831 --strictPort
 ```
 
-Open `/chat-lab.html?ui=next&modules=1&compact=1&path=/session/fixture-next-workspace-0`.
-The actual module runtime mounts the compiled new presentations with host components.
 Only receipt-inventoried frontend assets are served; module backends never execute.
-Uploads use a bounded in-memory File API. Names starting with `fail-once` fail once,
-then permit explicit retry; `nextLab.modules.files(true/false)` holds/releases
-uploads. Speech uses generated oscillator audio, the real recorder/AudioWorklet,
-and a local synthetic protocol adapter, never a microphone, speaker, provider or
-credential service. Its controls expose transcript, next-credential-failure,
-held-final and resource diagnostics. Recognition/VAD and real provider behavior
-are outside this fixture's coverage.
-
-In a fresh document, run
-`await import('/src/dev/next-lab-module-checks.ts').then(m => m.runNextModuleChecks())`
-for actual module paste/drop/retry, preview/modal focus, F8 isolation, hidden-draft
-leave protection, capture and original-draft attachment submission. Run with both
-light/desktop and dark/touch layouts. A browser may require a user gesture to allow
-the generated AudioContext; no actual media permission is needed. Reload between
-the host and module checks, which intentionally leave different synthetic states.
-`nextLab.draftRequests()` records the exact synthetic native submission bodies;
-it is not a backend acknowledgement or provider integration test.
-For first-input geometry, a browser driver can hold the synthetic `/_modules`
-response before entry execution, then pass its release callback to
-`runNextBootstrapCheck(release)`. This checks actual input position/size within
-1px before and after bootstrap with a retained multiline-width draft, while
-native reading remains visible. Repeat in fresh documents with empty text and
-explicit newlines; do not substitute a settled screenshot for this transition.
+Uploads use a bounded in-memory File API.
 
 Chat Lab is a maintained developer harness, not a product page, alternate chat
 implementation or saved screenshot gallery. It imports the production components
@@ -324,7 +269,7 @@ component tests consume the same fixtures; visual interaction review uses this
 single opt-in entry. Neither the Lab nor its fixtures are runtime-package inputs.
 
 For focused input-bar review, open `/chat-lab.html?scene=ask&compact=1`
-or `/chat-lab.html?scene=activity-design` for the classic activity/tool design preview.
+or `/chat-lab.html?scene=activity-design` for the activity/tool design preview.
 The latter uses synthetic session rows and the production Thread: compare concrete
 activity icons with the fallback spinner, inspect built-in tool icons and extension
 names, and expand the independent subagent card. Its explicit refresh hold/result
@@ -505,8 +450,7 @@ push subscriptions. A trusted module may declare a packaged worker served at a
 stable module-specific URL with a narrow scope; registration, notification and
 badge behavior belong to that module. Existing browser registrations do not
 vanish on server shutdown. See the [module contract](module-contract-draft.md).
-Production builds have independent classic `index.html` and new `next/index.html`
-entries. Chat Lab is not a production entry.
+Production builds have a single `index.html` entry. Chat Lab is not a production entry.
 
 ## Web presentation boundaries
 
@@ -514,31 +458,14 @@ Apply the required [frontend guidelines](frontend-guidelines.md); the following
 describes the current host component and resource ownership, not another set of
 general UI principles.
 
-### Independent new host
-
-`src/next/App.tsx` owns the conversation-first shell, session navigation, dedicated
-session settings, and explicit global MCP/Skills pages. `next/conversation`,
-`next/settings` and `next/resources` compose the shared shadcn components; classic
-presentation and styles remain on the default entry. There is no new System page.
-Both presentations reuse native transport/projection, draft/schema ownership,
-keyed resources/actions and the single transcript scroll controller. Shared
-settings controllers live in `features/session-settings`; they do not store a
-second authoritative model or resource inventory.
-
-Only the entry starts the module runtime. App initializes native transport and
-observes the module view; its `moduleBootstrap` prop gates module-sensitive input,
-not readable native history. Settlement is not a claim that every module loaded.
-Missing next presentations remain explicitly classic-only, never activate classic
-UI as a fallback, and do not imply that their module backends are disabled.
+### Shared host ownership
 
 Unknown persisted draft namespaces (including data from an absent or failed
 module) block native submission until the owning schema can restore them. Text
-edits, empty-text updates and retirement preserve opaque recovery data. This is
-a shared draft safety rule, including classic: a missing module cannot silently
-turn an attachment submission into a text-only send. The next composer provides
-an explicit classic recovery link.
+edits, empty-text updates and retirement preserve opaque recovery data. A missing
+module cannot silently turn an attachment submission into a text-only send.
 
-The next document entry must call `installHostLeaveProtection(window)` from
+The document entry must call `installHostLeaveProtection(window)` from
 `src/lib/hostLeave.ts` before its first render, outside React and its error boundary.
 Keep the returned disposer until entry teardown/HMR; do not call it when App
 unmounts or startup switches to an error fallback. This installs conditional
@@ -548,10 +475,9 @@ whose original view has unmounted. Known outcomes release their pending ownershi
 uncertain outcomes retain conservative protection for the document lifetime.
 The handler only requests browser confirmation and never cancels, retries or
 changes work. Module activations separately protect their own in-memory work.
-Ordinary in-app navigation does not cancel accepted native work; full-document
-classic links use the browser's leave confirmation rather than a second router.
+Ordinary in-app navigation does not cancel accepted native work.
 
-### Classic presentation
+### Presentation
 
 `PaneHeader` and `StateNotice` share presentation, not routing or resource state.
 The management route keeps its header and back control during lazy loading.
