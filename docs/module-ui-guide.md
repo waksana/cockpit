@@ -166,18 +166,20 @@ Skills remain separate pages with flat sections; they share visual roles, not
 navigation or mutation policy. **`--host-*` and `--chat-*` are not module APIs**;
 modules continue to use only the public `--ck-*` variables below.
 
-Session MCP rows pair name/source on the left with switch/connection status on
-the right. Name/source form a compact, vertically centered group independent of
-the switch's height; MCP rows use 8px top/bottom insets without shrinking the
+Session MCP rows pair identity/connection method on the left with a single
+switch/connection-status column on the right. The control column uses the shared
+4px gap regardless of left-side wrapping or expanded error details; MCP rows use 8px top/bottom insets without shrinking the
 40px/44px switch target. Only the operated row shows switching progress; other switches remain
 disabled during native serialization without repeated explanatory notices.
 The three session pages omit static instructional text, and an empty Skills
 page only reports that no skills were found. Actual failures, native results and
 unavailable-session recovery remain visible. Reconnecting an individual MCP uses
 its existing off/on switch, not an additional reload-all action.
-MCP and Skills reuse their status slot for connection/disconnection or
-enable/disable progress and a discoverable, underlined failure action. No progress
-line or error box opens automatically. Resource provenance uses the Session
+MCP and Skills use the control status slot for connection/disconnection or
+enable/disable progress. Failures show the actual first-line summary (at most
+160 characters), with full errors available through a keyboard/touch disclosure.
+Operation failures do not replace native connection status or hide a separate
+native error. Resource provenance uses the Session
 module/role badge style before the name, inline and naturally wrapping; it does
 not imply an applied role or readiness. Names wrap in full. Nonempty sources
 occupy one collapsed line and Skill descriptions up to two lines. Overflowing text
@@ -191,8 +193,13 @@ Classic global MCP and Skills use the shared master/detail shell. Default
 switches appear only on list rows, as siblings of navigation links, with native
 unknown states left explicit. Detail headers retain `item` and `actions` and
 accept an optional `titlePrefix` for provenance; middleware should forward these
-props. Details render redacted configuration or Skill Markdown directly without
-an additional resource heading. List mutations retain row-local feedback across
+props. MCP subtitles use structured connection method and a concise target,
+never a source enum or parsing the legacy display string. Unknown method remains
+explicit. Skill sources show meaningful personal/project provenance, not internal
+`native`/`builtin`/`custom` labels; names and body text are unchanged.
+Details render a connection summary and a `连接配置` heading with full redacted
+configuration, or Skill Markdown directly, without an additional resource title.
+List mutations retain row-local feedback across
 detail navigation and invalidate both catalog and detail reads on settlement.
 
 The host loads its base stylesheet; a module declares its business stylesheet in

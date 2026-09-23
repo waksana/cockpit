@@ -90,7 +90,8 @@ test('MCP detail derives the route target from shared catalog and never owns a t
   assert.match(detail, /rows\?\.find\(server => server.name === name\)/);
   assert.match(detail, /if \(!row\) return status \? <ResourceStatus/);
   assert.match(detail, /未找到该 MCP 服务器/);
-  assert.doesNotMatch(detail, /Toggle|SectionHeading|<h2/);
+  assert.doesNotMatch(detail, /Toggle/);
+  assert.match(detail, /<SectionHeading level=\{2\}>连接配置<\/SectionHeading>/);
   assert.match(source, /useKeyedAction\(`global:\$\{section\}:\$\{name\}`\)/);
 });
 

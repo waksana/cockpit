@@ -6,6 +6,7 @@ export interface ResourceFixtureOptions {
   empty?: boolean;
   fail?: boolean;
   failMutations?: boolean;
+  designCases?: boolean;
   beforeRequest?: () => Promise<void>;
 }
 
@@ -50,12 +51,42 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
   // Explicit synthetic catalog attribution is presentation evidence only.
   let globalMcp: McpServerGlobal[] = mcp.map(({ name, detail, enabled, module }) => ({
     name, detail, defaultOn: enabled, modules: module ? [module] : undefined,
+    connection: { method: 'stdio', target: 'synthetic-command' },
     config: { command: 'synthetic-command', args: ['fixture-only'], env: { TOKEN: '[REDACTED]' } },
   }));
   let globalSkills: SkillGlobal[] = skills.map(({ name, source, description, enabled, module }) => ({
     name, source, description, enabled, userInvocable: true, modules: module ? [module] : undefined,
   }));
   globalSkills.push({ name: 'unknown-default', source: 'personal-copilot', description: 'Synthetic unavailable global enabled state.' });
+  if (options.designCases) {
+    const stack = '\n    at synthetic.connect (fixture:42)'.repeat(12);
+    mcp.push(
+      { name: 'refused-connection', detail: 'builtin', enabled: true, status: 'failed',
+        error: `Connection refused by synthetic host${stack}` },
+      { name: 'authentication-required', detail: 'native', enabled: true, status: 'needs-auth' },
+      { name: 'stopped-connection', detail: 'builtin', enabled: true, status: 'stopped' },
+      { name: 'unconfigured', detail: 'native', enabled: false, status: 'not_configured' },
+    );
+    globalMcp.push(
+      { name: 'http-long-endpoint', detail: 'https://fixture.example/a/long/endpoint?token=[REDACTED]',
+        defaultOn: true, connection: { method: 'http', target: 'fixture.example' },
+        config: { type: 'http', url: `https://fixture.example/${'long-path/'.repeat(15)}?token=[REDACTED]`,
+          headers: { Authorization: '[REDACTED]' } } },
+      { name: 'local-long-command', detail: '/synthetic/long/path/node fixture arguments', defaultOn: false,
+        connection: { method: 'stdio', target: 'node' },
+        config: { command: '/synthetic/long/path/node', args: ['--token', '[REDACTED]', 'long-argument'.repeat(20)] } },
+      { name: 'sse-endpoint', detail: 'https://fixture.example/sse', defaultOn: true,
+        connection: { method: 'sse', target: 'fixture.example' }, config: { type: 'sse', url: 'https://fixture.example/sse' } },
+      { name: 'custom-transport', detail: 'custom', defaultOn: false, connection: { method: 'unknown' },
+        config: { type: 'custom', url: 'https://not-http.example/native' } },
+      { name: 'missing-config', detail: 'builtin', defaultOn: false },
+    );
+    for (const source of ['native', 'builtin', 'custom', 'personal-copilot', 'personal-agents', 'project', 'inherited', 'plugin']) {
+      const row = { name: `source-${source}`, source, enabled: true };
+      skills.push(row);
+      globalSkills.push(row);
+    }
+  }
   if (options.empty) { mcp = []; skills = []; globalMcp = []; globalSkills = []; }
   const find = (id: string) => {
     const session = store.getState().sessions.find(row => row.sessionId === id);

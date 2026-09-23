@@ -1397,6 +1397,8 @@ test(`session provenance with known roles=${provenRoles} uses assembled identity
   await h.engine.reloadSessionMcp(id);
   assert.deepEqual((await h.engine.listSessionMcp(id)).servers[0]!.module, module,
     'role configuration declaration remains, without claiming to verify a same-name native replacement');
+  assert.equal(Object.hasOwn((await h.engine.listSessionMcp(id)).servers[0]!, 'connection'), false,
+    'assembled HTTP role config cannot establish the transport of a same-name native replacement');
   assert.doesNotMatch(JSON.stringify(await h.engine.getResources(id, ['identity'])), /roleReadiness/);
   await h.engine.unload(id);
   assert.deepEqual(await h.engine.listSessionMcp(id), { loaded: false, servers: [] });
@@ -5613,6 +5615,7 @@ test('global MCP inventory combines native user definitions and native enabled s
   const before = readFileSync(h.prefsFile, 'utf8');
   const servers = await h.engine.listGlobalMcp();
   assert.deepEqual(servers.map(({ name, defaultOn }) => ({ name, defaultOn })), [{ name: 'fixture', defaultOn: true }]);
+  assert.deepEqual(servers[0]!.connection, { method: 'http', target: 'example.invalid' });
   assert.ok(!/username|password|private-token|private-header/.test(JSON.stringify(servers)));
   assert.deepEqual(h.runtime.rpc.mcp.discover.mock.calls[0]!.arguments, [{ workingDirectory: homedir() }]);
   await h.engine.setMcpDefault('fixture', false);
@@ -5621,6 +5624,26 @@ test('global MCP inventory combines native user definitions and native enabled s
   assert.deepEqual(h.runtime.rpc.mcp.config.disable.mock.calls[0]!.arguments, [{ names: ['fixture'] }]);
   assert.deepEqual(h.runtime.rpc.mcp.config.enable.mock.calls[0]!.arguments, [{ names: ['fixture'] }]);
   assert.equal(readFileSync(h.prefsFile, 'utf8'), before);
+  assert.equal(h.runtime.createSession.mock.callCount(), 0);
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
+});
+
+test('global MCP connection metadata follows current native config without adding entries or changing legacy detail', async t => {
+  const h = harness(t, { mcpServers: {
+    remote: { type: 'sse', url: 'https://events.invalid:8443/mcp?token=fixture-token' },
+    local: { type: 'local', command: '/opt/tools/node', args: ['server.js', '--token', 'fixture-token', 'x'.repeat(4000)] },
+  } });
+  const servers = await h.engine.listGlobalMcp();
+  assert.deepEqual(servers.map(({ name, connection }) => ({ name, connection })), [
+    { name: 'remote', connection: { method: 'sse', target: 'events.invalid' } },
+    { name: 'local', connection: { method: 'stdio', target: 'node' } },
+  ]);
+  assert.ok(servers[0]!.detail.includes('/mcp?token='));
+  assert.ok(servers[1]!.detail.includes('server.js'));
+  assert.ok(servers[1]!.detail.includes('x'.repeat(4000)));
+  assert.ok(!JSON.stringify(servers).includes('fixture-token'));
+  h.mcpDefinitions.remote = { command: 'replacement', args: ['--quiet'] };
+  assert.deepEqual((await h.engine.listGlobalMcp())[0]!.connection, { method: 'stdio', target: 'replacement' });
   assert.equal(h.runtime.createSession.mock.callCount(), 0);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
 });
@@ -5716,6 +5739,23 @@ test('session MCP inventory uses resident workspace/plugin truth and never borro
   assert.deepEqual(await h.engine.listSessionMcp(s.id), { loaded: false, servers: [] });
   assert.equal(h.runtime.resumeSession.mock.callCount(), resumes);
   assert.equal((await h.engine.getMeta(s.id))?.loaded, false);
+});
+
+test('session MCP source, server metadata and global name collisions cannot establish current transport', async t => {
+  const h = harness(t, { mcpServers: { collision: { type: 'http', url: 'https://global.invalid/mcp' } } });
+  const s = await h.load();
+  s.state.mcp = mcpState([
+    { name: 'collision', source: 'builtin', status: 'connected', serverMetadata: { instructions: 'Use HTTP tools.' } },
+    { name: 'source-http', source: 'plugin', sourcePlugin: 'http', status: 'connected' },
+    { name: 'source-local', source: 'custom', status: 'connected' },
+  ]);
+  const reads = s.rpc.mcp.list.mock.callCount();
+  const inventory = await h.engine.listSessionMcp(s.id);
+  assert.deepEqual(inventory.servers.map(({ detail }) => detail), ['builtin', 'http', 'custom']);
+  assert.ok(inventory.servers.every(server => !Object.hasOwn(server, 'connection')));
+  assert.equal(h.runtime.rpc.mcp.config.list.mock.callCount(), 0);
+  assert.equal(h.runtime.rpc.mcp.discover.mock.callCount(), 0);
+  assert.equal(s.rpc.mcp.list.mock.callCount(), reads + 1);
 });
 
 test('unknown native MCP names reject before mutation without stranding later valid toggles', async t => {

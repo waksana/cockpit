@@ -6,6 +6,27 @@ import { createCockpitStore } from '../net/store';
 import { installResourceFixture } from './resource-fixtures';
 import { workspaceSessionId } from './workspace-fixtures';
 
+test('design scenarios cover short authoritative summaries, missing config and real native failures without a backend', async t => {
+  const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('Fixture must not use HTTP'); });
+  const store = createCockpitStore();
+  installResourceFixture(store, true, { designCases: true });
+  const global = await store.getState().mcpGlobal();
+  Intents['mcp/global'].result.parse({ servers: global });
+  assert.deepEqual(global.find(row => row.name === 'http-long-endpoint')?.connection, { method: 'http', target: 'fixture.example' });
+  assert.equal(global.find(row => row.name === 'local-long-command')?.connection?.target, 'node');
+  assert.equal(global.find(row => row.name === 'sse-endpoint')?.connection?.method, 'sse');
+  assert.equal(global.find(row => row.name === 'custom-transport')?.connection?.method, 'unknown');
+  assert.equal(global.find(row => row.name === 'missing-config')?.config, undefined);
+  const session = await store.getState().mcpSession(workspaceSessionId);
+  assert.ok(session.every(row => !row.connection), 'same global names must not invent live session transport');
+  assert.deepEqual(session.slice(3).map(row => row.status), ['failed', 'needs-auth', 'stopped', 'not_configured']);
+  assert.match(session[3].error!, /^Connection refused by synthetic host\n/);
+  const skills = await store.getState().skillsSession(workspaceSessionId);
+  assert.ok(['native', 'builtin', 'custom', 'personal-copilot', 'personal-agents', 'project', 'inherited', 'plugin']
+    .every(source => skills.some(row => row.source === source)));
+  assert.equal(fetch.mock.callCount(), 0);
+});
+
 test('the maintained lab compiles shared styles instead of redefining its button controls', () => {
   const css = compile(new URL('./chat-lab.scss', import.meta.url).pathname).css;
   assert.match(css, /@media \(max-width: 599px\)/);
