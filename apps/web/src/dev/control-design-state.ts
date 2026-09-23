@@ -1,7 +1,7 @@
 import type { ChatMessage, NativeChatEvent } from '@cockpit/protocol';
 import type { ChatSession } from '../net/types';
 import { activityFixture } from './activity-fixtures';
-import { activityDesignSessions } from './activity-design-fixtures';
+import { fixtureSession } from './chat-fixtures';
 import type { SessionControlAction } from '../lib/sessionControls';
 
 export const controlScenes = [
@@ -42,10 +42,25 @@ export type ControlAction = SessionControlAction
   | { type: 'send'; id: string; text: string }
   | { type: 'answer'; id: string; text: string; kind: 'ask' | 'plan' | 'elicitation'; requestId: string; resume?: boolean; record?: boolean };
 
+const agentMessage: ChatMessage = {
+  id: 'design-agent', role: 'assistant', timestamp: 1_790_000_000_000, content: '', subtype: 'subagent',
+  subagent: { toolCallId: 'design-agent-task', agentId: 'synthetic-reviewer',
+    name: 'code-review', displayName: '独立代码审查', status: 'running',
+    description: '独立消息卡片，不是工具行。展开可看这个 agent 的合成过程。',
+    prompt: '只读审查活动图标和工具行布局。' },
+  subMessages: [{ id: 'design-agent-read', role: 'assistant', timestamp: 1_790_000_000_000,
+    content: '正在检查组件的真实状态来源和布局。',
+    toolCalls: [{ toolCallId: 'design-agent-view', name: 'view', title: '读取活动状态组件',
+      status: 'completed', output: 'Synthetic component source.' }] }],
+};
+const decisions: Partial<Record<ControlScene, Partial<ChatSession>>> = {
+  ask: { ask: { requestId: 'design-question', question: '你希望采用这组工具图标吗？', choices: ['采用', '继续调整'], allowFreeform: true } },
+  plan: { planRequest: { requestId: 'design-plan', summary: '只调整界面显示，不改变原生任务执行。', actions: ['interactive', 'exit_only'] } },
+  elicitation: { elicitation: { requestId: 'design-confirm', message: '允许合成工具继续吗？' } },
+};
+
 export function controlDesignState(scene: ControlScene, identity: string = scene): ControlDesignState {
-  const source = activityDesignSessions().find(value => value.sessionId === `design-${
-    ['ask', 'plan', 'elicitation'].includes(scene) ? scene : 'idle'
-  }`)!;
+  const source: ChatSession = { ...fixtureSession('reading'), activity: activityFixture(), ...decisions[scene] };
   const tasks: PreviewTask[] = ['mixed', 'background', 'ask'].includes(scene) ? [
     { id: 'preview-build', kind: 'shell', title: '构建项目', status: 'running' },
     { id: 'preview-check', kind: 'shell', title: '运行测试', status: 'running' },
@@ -61,7 +76,7 @@ export function controlDesignState(scene: ControlScene, identity: string = scene
         toolCallId: task.id, name: 'bash', title: task.title, status: 'completed' as const,
         output: `合成命令已转入后台：${task.id}。这是启动记录，不代表后台任务已经结束。`,
       })),
-    }, ...source.messages.filter(message => message.subtype === 'subagent')] : []),
+    }, agentMessage] : []),
   ];
   if (scene === 'tool-loading') {
     messages.push(...Array.from({ length: 24 }, (_, index): ChatMessage => ({

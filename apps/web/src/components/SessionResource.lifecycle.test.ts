@@ -422,6 +422,7 @@ for (const action of ['unload', 'compact', 'fork'] satisfies SessionSettingsActi
     assert.ok(useCockpit.getState().connectionGeneration > generation, 'fixture delivers real refresh snapshot semantics');
     assert.equal(h.document.nativeModal, null, 'confirmed operation must not leave a stale modal over its result');
     assert.match(h.container.textContent, action === 'unload' ? /已卸载/ : action === 'fork' ? /real-child/ : /压缩完成/);
+    assert.equal(h.container.querySelector('pre'), null, 'native results are summarized, not dumped as JSON');
   });
 }
 

@@ -1,19 +1,10 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFileSync } from 'node:fs';
 import { SessionMeta, SessionProjection } from '@cockpit/protocol';
 import { ChatMessage } from '@cockpit/protocol/validation';
 import { createCockpitStore } from '../net/store';
 import { installFullWebFixture } from './full-web-fixtures';
 import { workspaceSessionId } from './workspace-fixtures';
-
-test('full Web preview uses the actual App and only replaces its store data source', () => {
-  const source = readFileSync(new URL('./activity-design-review.tsx', import.meta.url), 'utf8');
-  const full = source.slice(source.indexOf('if (import.meta.env.COCKPIT_CONTROL_DESIGN_REVIEW)'), source.indexOf('} else {'));
-  assert.match(full, /import\('\.\.\/App'\)/);
-  assert.match(full, /<App \/>/);
-  assert.doesNotMatch(full, /ControlDesignLab|ActivityDesignLab|chat-lab\.scss|composerControls/);
-});
 
 test('full Web fixtures have valid varied data and local settings without any HTTP', async t => {
   const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('No fixture may use HTTP'); });

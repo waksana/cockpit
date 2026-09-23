@@ -106,13 +106,3 @@
 @media (max-width: responsive.$phone-max) {
   .dirpicker-list { max-height: 10rem; }
 }
-.dirpicker-row {
-  width: 100%;
-  text-align: start;
-  position: relative;
-  overflow: hidden;
-  .dirpicker-ico { flex: none; display: inline-flex; color: var(--host-color-muted); &.folder { color: var(--host-color-accent); } }
-  .dirpicker-name { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .dirpicker-enter { flex: none; color: var(--host-color-faint); }
-  &.dirpicker-up { color: var(--host-color-muted); }
-}
