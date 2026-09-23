@@ -107,6 +107,7 @@ svg.ck-icon, .ck-icon > svg {
 }
 .ck-status-marker {
   flex: none; display: flex; align-items: center; justify-content: center;
+  // stylelint-disable-next-line declaration-property-value-disallowed-list -- centers the 12px marker under the control; geometry, not spacing
   width: 12px; height: 100%; margin-inline-start: calc(var(--ck-control-size) / 2 - 6px);
 }
 .ck-status-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
