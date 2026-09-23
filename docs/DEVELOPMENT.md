@@ -161,6 +161,15 @@ callbacks, without initializing a native client or creating sessions. Normal
 production builds do not include the entry. The lab exercises
 native text, tools, decisions, queue and reading behavior.
 
+`/chat-lab.html?scene=process-summary` covers classic process overviews with
+tools only, thoughts only, one long-named Skill, multiple Skills and mixed
+categories with failed/running/pending/unknown tools and an incomplete thought.
+Collapsed and expanded overview headers show one icon/count pair per nonempty
+category, never category words or Skill names; accessible labels and tooltips
+retain category/count semantics. Status indicators, timestamps, disclosure
+choices and full nested details remain separate. Exercise Enter/Space and touch,
+both themes and narrow widths; expanding must not restore a duplicate text summary.
+
 `/chat-lab.html?scene=dialog-focus` mounts the real confirmation/input,
 `DirectoryModal` and persistent `InspectorPane` boundaries. Use 1000x800 for the
 modal inspector, then resize above 1200px to confirm the same form stays docked.

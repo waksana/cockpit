@@ -30,7 +30,6 @@ import { groupTranscript, transcriptGap, type TranscriptRow, type ProcessItem } 
 import { PlanCard, ElicitationCard } from './PendingDecision';
 import { StateNotice } from './StateNotice';
 import { useModuleRuntime } from './ModuleComponents';
-import { useClippedText } from '../lib/useClippedText';
 import { hasNewTranscriptContent } from '../lib/transcriptActivity';
 import { useRemovedControlFocus } from '../lib/useRemovedControlFocus';
 import { sessionActivityIndicators } from '../lib/sessionActivity';
@@ -65,9 +64,12 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
   const skills = items.filter(item => item.kind === 'skill');
   const latestThoughtId = latest && items.at(-1)?.key === latestItemId && items.at(-1)?.kind === 'thought'
     ? latestItemId : undefined;
-  const title = [tools.length ? `${tools.length} 次工具调用` : '', thoughts.length ? `${thoughts.length} 次思考` : '',
-    skills.length ? skills.length === 1 ? `Skill · ${skills[0].message.content}` : `${skills.length} 次 Skill 使用` : ''].filter(Boolean).join(' · ');
-  const { ref: titleRef, clipped: titleClipped } = useClippedText(title);
+  const categories = [
+    { icon: 'tool', count: tools.length, label: `${tools.length} 次工具调用` },
+    { icon: 'thought', count: thoughts.length, label: `${thoughts.length} 次思考` },
+    { icon: 'skills', count: skills.length, label: `${skills.length} 次 Skill 使用` },
+  ] as const;
+  const visibleCategories = categories.filter(category => category.count > 0);
   const states = [
     [tools.filter(tool => tool.status === 'failed').length, 'failed'],
     [tools.filter(tool => tool.status === 'in_progress').length, 'in_progress'],
@@ -76,7 +78,7 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
   ] as const;
   const notices = states.filter(([count]) => count > 0).map(([count, status]) => `${count} 项${toolStatusLabel(status)}`);
   if (thoughts.some(item => item.message.incomplete)) notices.push('思考归属未确认');
-  const description = [title, ...notices].join(' · ');
+  const description = [...visibleCategories.map(category => category.label), ...notices].join(' · ');
   const timestamp = items[0].message.timestamp;
   const time = clock(timestamp);
   return <section className="message-process" data-failed={states[0][0] > 0 || undefined}>
@@ -84,8 +86,11 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
       aria-label={`${open ? '收起' : '展开'}过程：${description} · ${time}`} title={description}
       onClick={toggle}>
       <span className="process-summary-chevron"><Icon name="down" size={16} /></span>
-      {!!tools.length && <Icon name="tool" size={16} />}
-      <span ref={titleRef} className="process-summary-title">{title}</span>
+      <span className="process-summary-counts">
+        {visibleCategories.map(({ icon, count, label }) => <span key={icon} className="process-summary-count" title={label}>
+          <Icon name={icon} size={16} />{count}
+        </span>)}
+      </span>
       <span className="process-summary-states">
         {states.filter(([count]) => count > 0).map(([count, status]) => <span key={status ?? 'unknown'}
           className="process-summary-status" title={`${count} 项${toolStatusLabel(status)}`} data-status={status ?? 'unknown'}>
@@ -96,7 +101,6 @@ export function MessageProcess({ items, sessionId, latest = false, identity = it
       <MessageTimestamp timestamp={timestamp} />
     </button></div>
     <div id={contentId} className="message-process-content" hidden={!open} data-child-history>
-      {open && titleClipped && <div className="process-expanded-summary">{title}</div>}
       {(mounted || open) && items.map(item => <div key={item.key} data-child-message-frame={item.key}>
         <div data-message-id={JSON.stringify([sessionId, item.key])}>
           {item.kind === 'thought' && <Thought message={item.message} latest={item.key === latestThoughtId} sessionId={sessionId} />}

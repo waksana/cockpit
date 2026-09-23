@@ -533,12 +533,21 @@ test('tool and thought rows stay single-line while expanded skill records can sh
   const skillSession = fixtureSession('empty');
   skillSession.messages = [{ id: 'skill', role: 'system', subtype: 'skill', content: 'example', timestamp: 1 }];
   const skills = renderToStaticMarkup(createElement(Thread, { session: skillSession, readOnly: true, onLoadMore() {} }));
-  assert.match(skills, /Skill · example/);
+  assert.match(skills, /class="process-summary-count" title="1 次 Skill 使用"/);
   assert.match(skills, /<div class="activity-head /);
   assert.match(skills, /skill · example/);
   assert.doesNotMatch(skills, /次工具调用/);
   const staticHeader = renderToStaticMarkup(createElement(ActivityHeader, { icon: 'icon', title: 'skill · long skill name' }));
   assert.doesNotMatch(staticHeader, /<button|aria-expanded|activity-chevron/);
+});
+
+test('process overview icon counts wrap without truncating counts or restoring a text summary', () => {
+  const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
+  assert.match(css, /\.process-summary \{[^}]*flex-wrap: wrap/);
+  assert.match(css, /\.process-summary-counts \{[^}]*flex-wrap: wrap;[^}]*gap: var\(--chat-gap-control\)/);
+  assert.match(css, /\.process-summary-count \{[^}]*gap: var\(--chat-gap-meta\);[^}]*white-space: nowrap/);
+  assert.match(css, /\.process-summary-states \{[^}]*flex-wrap: wrap;[^}]*max-width: 100%/);
+  assert.doesNotMatch(css, /\.process-summary-title|\.process-expanded-summary/);
 });
 
 test('activity disclosure labels retain the full title, state and keyboard button semantics', () => {
