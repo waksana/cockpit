@@ -125,6 +125,9 @@ export class OfficialRuntime {
   /** Runs on the connected client, concurrently with other shared calls. */
   private shared<T>(work: () => Promise<T>): Promise<T> {
     if (this.failure) return Promise.reject(this.failure);
+    // A failed stop keeps the SDK client object, but its connection is gone; SDK
+    // create/resume would silently spawn an unmonitored child. It stays terminal.
+    if (this.failedStop) return Promise.reject(this.failedStop);
     if (this.transition || !this.client) {
       return (async () => {
         while (this.transition) await this.transition;

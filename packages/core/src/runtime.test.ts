@@ -227,6 +227,15 @@ test('shutdown Error[] is not success and prevents silently starting another cli
   f.stopErrors([new Error('owned PID did not exit')]);
   await assert.rejects(f.runtime.stop(), /shutdown did not complete/);
   await assert.rejects(f.runtime.start(), /shutdown did not complete/);
+  const configs = f.configs.length;
+  const sdk = { sessionId: 'kept' } as CopilotSession;
+  for (const call of [
+    () => f.runtime.createSession({ sessionId: 'x' }), () => f.runtime.resumeSession('y', {}),
+    () => f.runtime.listSessions(), () => f.runtime.getAuthStatus(), () => f.runtime.getSessionMetadata('x'),
+    () => f.runtime.models(), () => f.runtime.deleteSession('x'), () => f.runtime.isSessionLive(sdk),
+    () => f.runtime.closeSession(sdk),
+  ]) await assert.rejects(call(), /shutdown did not complete/);
+  assert.equal(f.configs.length, configs, 'No native create/resume reached the disconnected SDK client');
   assert.equal(f.clients.length, 1);
 });
 
