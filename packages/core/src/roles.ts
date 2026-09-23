@@ -6,7 +6,15 @@ export interface RoleAssembly {
   config: Pick<SessionConfig, 'systemMessage' | 'skillDirectories' | 'mcpServers'>;
   skills: Array<{ name: string; path: string; module?: ModuleSource }>;
   mcpSources?: Record<string, ModuleSource>;
+  /** Display-only provenance for role instruction sections; not part of the fingerprint. */
+  instructionSources?: SessionInstructions['sources'];
   fingerprint: string;
+}
+
+/** Cockpit-composed text appended to the native system prompt at create/resume. */
+export interface SessionInstructions {
+  content: string;
+  sources: Array<{ label: string; sublabel?: string }>;
 }
 
 export interface RoleProvider {
@@ -16,4 +24,6 @@ export interface RoleProvider {
   read(sessionId: string): SessionRole[];
   save(sessionId: string, roles: SessionRole[]): void;
   assemble(sessionId: string, roles: RoleSelection[]): Promise<RoleAssembly>;
+  /** Compose module defaults, the applied role instructions and user instructions. */
+  sessionInstructions?(sessionId: string, assembly?: RoleAssembly): Promise<SessionInstructions | undefined>;
 }

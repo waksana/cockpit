@@ -5,7 +5,7 @@ import { ModuleHost } from './module-host.ts';
 import { installLocalModule, manifestSchema } from './module-install.ts';
 import { moduleEntries, moduleFixture } from './test-support/module-fixture.ts';
 import { ModuleRoles } from './module-roles.ts';
-import { chmod, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 test('global provenance verifies loaded module endpoints and file digests without inferring declaring roles', async t => {
@@ -95,11 +95,78 @@ test('module roles union shared HTTP tools, label raw instructions and persist i
   host.roles.save('native-id', value.roles);
   const replacement = new ModuleHost({ observer: f.observer });
   assert.deepEqual(replacement.roles.read('native-id'), value.roles);
-  assert.deepEqual(await host.roles.assemble('empty', []), { roles: [], config: {}, skills: [], mcpSources: {},
+  assert.deepEqual(await host.roles.assemble('empty', []), { roles: [], config: {}, skills: [], mcpSources: {}, instructionSources: [],
     fingerprint: (await host.roles.assemble('empty', [])).fingerprint });
   host.close();
   assert.deepEqual(host.roles.read('native-id'), value.roles);
   await assert.rejects(host.roles.assemble('native-id', [owner]), /unavailable/);
+});
+
+test('session instructions compose enabled module defaults, applied roles and user instructions in order', async t => {
+  const f = await moduleFixture(t);
+  const alpha = moduleEntries('alpha', undefined, { instructions: 'defaults.md', roles: [
+    { id: 'worker', name: 'Worker', instructions: 'roles/worker.md' },
+  ] });
+  alpha.push({ path: 'defaults.md', content: 'ALPHA default' }, { path: 'roles/worker.md', content: 'WORKER guidance' });
+  const beta = moduleEntries('beta', undefined, { instructions: 'docs/beta.md' });
+  beta.push({ path: 'docs/beta.md', content: 'BETA default' });
+  const plain = moduleEntries('plain');
+  const installed = [];
+  for (const entries of [beta, plain, alpha]) installed.push(await installLocalModule(await f.package(entries), { trustLocalCode: true, enable: true }));
+  const app = Fastify(); t.after(() => app.close());
+  const host = new ModuleHost({ observer: f.observer }); await host.register(app);
+  const [betaRoot, , alphaRoot] = installed.map(value => value.root);
+  const defaults = '## Module alpha (Fixture alpha)\nALPHA default\n\n## Module beta (Fixture beta)\nBETA default';
+  const defaultSources = [
+    { label: 'Module alpha (Fixture alpha)', sublabel: join(alphaRoot!, 'defaults.md') },
+    { label: 'Module beta (Fixture beta)', sublabel: join(betaRoot!, 'docs/beta.md') },
+  ];
+  assert.deepEqual(await host.roles.sessionInstructions('native-id'), { content: defaults, sources: defaultSources },
+    'defaults apply without role selection, ordered by module ID');
+  const assembly = await host.roles.assemble('native-id', [{ moduleId: 'alpha', roleId: 'worker' }]);
+  const userFile = join(f.hostRoot, 'instructions.md');
+  await writeFile(userFile, 'Prefer Chinese with the user.\n');
+  const composed = await host.roles.sessionInstructions('native-id', assembly);
+  assert.equal(composed!.content, `${defaults}\n\n## Module alpha / role worker (Worker)\nNative session ID: native-id\nWORKER guidance`
+    + '\n\n## Cockpit user instructions\nPrefer Chinese with the user.\n');
+  assert.deepEqual(composed!.sources, [...defaultSources,
+    { label: 'Module alpha / role worker (Worker)', sublabel: join(alphaRoot!, 'roles/worker.md') },
+    { label: 'Cockpit user instructions', sublabel: userFile }]);
+  assert.equal((await host.roles.assemble('native-id', [{ moduleId: 'alpha', roleId: 'worker' }])).fingerprint, assembly.fingerprint,
+    'defaults and user instructions do not affect role readiness fingerprints');
+  await writeFile(userFile, '  \n');
+  assert.deepEqual(await host.roles.sessionInstructions('native-id'), { content: defaults, sources: defaultSources }, 'blank file is none');
+  await writeFile(userFile, 'x'.repeat(16 * 1024 + 1));
+  await assert.rejects(host.roles.sessionInstructions('native-id'), /exceed 16 KiB/);
+  await rm(userFile);
+  await mkdir(userFile);
+  await assert.rejects(host.roles.sessionInstructions('native-id'), /regular file/);
+  await rm(userFile, { recursive: true });
+  const defaultsFile = join(alphaRoot!, 'defaults.md');
+  await chmod(defaultsFile, 0o600);
+  await writeFile(defaultsFile, 'tampered');
+  await assert.rejects(host.roles.sessionInstructions('native-id'), /Role resource changed: defaults\.md/);
+  host.close();
+  assert.equal(await host.roles.sessionInstructions('native-id'), undefined, 'disabled or unloaded modules are omitted');
+  const alone = new ModuleRoles(f.hostRoot, 'http://127.0.0.1:1', () => []);
+  await writeFile(userFile, 'Only user text');
+  assert.deepEqual(await alone.sessionInstructions('id'), { content: '## Cockpit user instructions\nOnly user text',
+    sources: [{ label: 'Cockpit user instructions', sublabel: userFile }] });
+});
+
+test('module default instructions must be a packaged file within the size limit', async t => {
+  const f = await moduleFixture(t);
+  const missing = moduleEntries('missing', undefined, { instructions: 'defaults.md' });
+  await assert.rejects(installLocalModule(await f.package(missing), { trustLocalCode: true }), /default instructions must be a packaged file/);
+  const large = moduleEntries('large', undefined, { instructions: 'defaults.md' });
+  large.push({ path: 'defaults.md', content: 'x'.repeat(16 * 1024 + 1) });
+  await assert.rejects(installLocalModule(await f.package(large), { trustLocalCode: true }), /exceed 16 KiB/);
+  const manifest = JSON.parse(String(missing[0]!.content));
+  manifest.instructions = '../outside.md';
+  assert.equal(manifestSchema.safeParse(manifest).success, false);
+  manifest.instructions = 'defaults.md';
+  manifest.instructionFiles = ['extra.md'];
+  assert.equal(manifestSchema.safeParse(manifest).success, false, 'the manifest schema stays strict');
 });
 
 test('shared skills retain only actual contributors through overlapping roots, deduplication and cold assembly', async t => {

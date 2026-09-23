@@ -1825,6 +1825,38 @@ test('native creation returns the actual ID without product roles or a hidden fi
   assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 1);
 });
 
+test('Cockpit session instructions are composed once per create/resume and never change a loaded handle', async t => {
+  const h = harness(t);
+  let text = 'default v1';
+  const calls: Array<{ id: string; roles?: string }> = [];
+  const provider: RoleProvider = {
+    list: () => [], read: () => [], save: () => {},
+    assemble: async () => { throw new Error('no roles selected'); },
+    sessionInstructions: async (id, assembly) => {
+      calls.push({ id, roles: assembly?.config.systemMessage && 'content' in assembly.config.systemMessage ? assembly.config.systemMessage.content : undefined });
+      return text ? { content: `## Module fixture (Fixture)\n${text}`, sources: [{ label: 'Module fixture (Fixture)', sublabel: '/fixture/instructions.md' }] } : undefined;
+    },
+  };
+  h.engine.setRoleProvider(provider);
+  const id = await h.engine.newSession(h.cwd);
+  assert.deepEqual(h.configs.get(id)!.systemMessage, { mode: 'append', content: '## Module fixture (Fixture)\ndefault v1' });
+  assert.deepEqual(calls, [{ id, roles: undefined }], 'no role selection is required');
+  assert.deepEqual(await h.engine.getPanel(id, 'instructionSources'), [{ label: 'Module fixture (Fixture)', sublabel: '/fixture/instructions.md' }]);
+  text = 'default v2';
+  await h.engine.getPanels(id);
+  await h.engine.getMeta(id);
+  assert.equal(calls.length, 1, 'reads never recompose instructions');
+  assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 0, 'no reload hint or startup message');
+  await h.engine.unload(id);
+  await h.engine.load(id);
+  assert.deepEqual(h.configs.get(id)!.systemMessage, { mode: 'append', content: '## Module fixture (Fixture)\ndefault v2' });
+  assert.equal(calls.length, 2);
+  text = '';
+  await h.engine.reload(id);
+  assert.equal(Object.hasOwn(h.configs.get(id)!, 'systemMessage'), false, 'removed instructions are omitted on the next load');
+  assert.deepEqual(await h.engine.getPanel(id, 'instructionSources'), []);
+});
+
 test('creation readback failure retains only the actual acknowledged native ID and never sends', async t => {
   const h = harness(t), create = h.runtime.createSession;
   t.mock.method(h.runtime, 'createSession', async config => {

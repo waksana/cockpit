@@ -109,7 +109,14 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     });
     engine = new Engine({ runtime });
     let filterReport = false;
+    let userText = 'Synthetic user instructions v1';
     const roles: RoleProvider = {
+      sessionInstructions: async (_id, assembly) => {
+        const role = assembly?.config.systemMessage;
+        return { sources: [], content: ['## Module fixture (Fixture)\nSynthetic module default',
+          ...role && 'content' in role && role.content ? [role.content] : [],
+          `## Cockpit user instructions\n${userText}`].join('\n\n') };
+      },
       list: () => selected, read: id => metadata.get(id) ?? [], save: (id, values) => { metadata.set(id, values); },
       assemble: async (id, choices) => ({ roles: selected.filter(role => choices.some(choice => choice.roleId === role.roleId)),
         skills: skills.filter(skill => choices.some(choice => skill.name === `fixture-${choice.roleId}`)),
@@ -209,6 +216,10 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     const deadline = Date.now() + 20_000;
     while (await engine.busyCount()) { assert.ok(Date.now() < deadline); await setTimeout(20); }
     assert.match(JSON.stringify(captured), new RegExp(`Native session ID: ${id}`));
+    const system = JSON.stringify(captured.at(-1));
+    const order = ['</system_notifications>', 'Synthetic module default', 'Synthetic role source fixture/owner+fixture/executor',
+      'Synthetic user instructions v1'].map(text => system.indexOf(text));
+    assert.ok(order.every((index, i) => index >= 0 && (i === 0 || index > order[i - 1]!)), `appended after the native system prompt in order: ${order}`);
     assert.match(JSON.stringify((captured[0] as { tools: unknown }).tools), /module_fixture__tools-report/);
     assert.doesNotMatch(JSON.stringify((captured[0] as { tools: unknown }).tools), /not-selected/);
     await engine.unload(id);
@@ -228,6 +239,7 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     assert.equal((await engine.listSessionSkills(id)).find(skill => skill.name === 'fixture-professional')?.enabled, true);
     assert.equal(captured.length, beforeReuse, 'reuse is repaired without another message');
     const existing = await engine.newSession(dirs.work!);
+    userText = 'Synthetic user instructions v2';
     await engine.rename(existing, 'Synthetic existing responsibility');
     const emptySaved = await engine.addRoles(existing, [selected[1]!]);
     assert.equal(emptySaved.status, 'saved');
@@ -236,6 +248,9 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     await engine.prompt(existing, 'Synthetic prior user history');
     while (await engine.busyCount()) { assert.ok(Date.now() < deadline); await setTimeout(20); }
     assert.doesNotMatch(JSON.stringify(captured.at(-1)), /fixture\/executor/, 'saving does not change the live system prompt');
+    assert.match(JSON.stringify(captured.at(-1)), /Synthetic module default/, 'defaults apply without any role selection');
+    assert.match(JSON.stringify(captured.at(-1)), /Synthetic user instructions v1/);
+    assert.doesNotMatch(JSON.stringify(captured.at(-1)), /Synthetic user instructions v2/, 'a loaded session keeps its creation-time instructions');
     await engine.toggleSessionMcp(existing, 'synthetic-unrelated', true);
     const before = captured.length;
     const first = await engine.addRoles(existing, [selected[1]!]);
@@ -279,6 +294,8 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
     assert.equal(enabled.ready, true, JSON.stringify(enabled));
     const after = JSON.stringify(captured.at(-1));
     assert.match(after, /Synthetic prior user history/);
+    assert.match(after, /Synthetic user instructions v2/, 'reload applies current user instructions');
+    assert.doesNotMatch(after, /Synthetic user instructions v1/);
     assert.match(after, /fixture\/owner/);
     assert.match(after, /fixture\/executor/);
     assert.doesNotMatch(JSON.stringify((captured.at(-1) as { tools: unknown }).tools), /not-selected/);

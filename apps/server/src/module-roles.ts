@@ -3,9 +3,22 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { SessionRole, type ModuleSource, type RoleSelection } from '@cockpit/protocol';
-import type { RoleAssembly, RoleProvider } from '@cockpit/core';
+import type { RoleAssembly, RoleProvider, SessionInstructions } from '@cockpit/core';
 import type { ModuleInstallation } from './module-install.ts';
-import { safeModulePath } from './module-install.ts';
+import { MODULE_INSTRUCTIONS_LIMIT, safeModulePath } from './module-install.ts';
+
+export const USER_INSTRUCTIONS_FILE = 'instructions.md';
+export const USER_INSTRUCTIONS_LIMIT = 16 * 1024;
+
+async function verifiedResource(installation: ModuleInstallation, relative: string): Promise<string> {
+  const { root } = installation;
+  const path = join(root, safeModulePath(relative));
+  if (!(await realpath(path)).startsWith(`${resolve(root)}${sep}`)) throw new Error('Role resource escapes module');
+  const record = installation.files[relative];
+  const bytes = await readFile(path);
+  if (!record || createHash('sha256').update(bytes).digest('hex') !== record.sha256) throw new Error(`Role resource changed: ${relative}`);
+  return bytes.toString('utf8');
+}
 
 export class ModuleRoles implements RoleProvider {
   constructor(private readonly root: string, private readonly origin: string,
@@ -53,6 +66,53 @@ export class ModuleRoles implements RoleProvider {
     }
   }
 
+  /**
+   * The single composition point for Cockpit-appended instructions, in order:
+   * enabled module defaults (by module ID), applied role instructions, then the
+   * user's COCKPIT_HOME/instructions.md. Read only when a session is created or resumed.
+   */
+  async sessionInstructions(_sessionId: string, assembly?: RoleAssembly): Promise<SessionInstructions | undefined> {
+    const sections: string[] = [];
+    const sources: SessionInstructions['sources'] = [];
+    const modules = [...this.installations()].sort((a, b) => a.manifest.id.localeCompare(b.manifest.id));
+    for (const installation of modules) {
+      const { manifest, root } = installation;
+      if (!manifest.instructions) continue;
+      const text = await verifiedResource(installation, manifest.instructions);
+      if (Buffer.byteLength(text) > MODULE_INSTRUCTIONS_LIMIT) throw new Error(`Module default instructions exceed 16 KiB: ${manifest.id}`);
+      if (!text.trim()) continue;
+      const header = `Module ${manifest.id} (${manifest.name})`;
+      sections.push(`## ${header}\n${text}`);
+      sources.push({ label: header, sublabel: join(root, manifest.instructions) });
+    }
+    const roles = assembly?.config.systemMessage;
+    if (roles && 'content' in roles && roles.content) {
+      sections.push(roles.content);
+      sources.push(...assembly.instructionSources ?? []);
+    }
+    const user = await this.userInstructions();
+    if (user) {
+      sections.push(`## Cockpit user instructions\n${user.text}`);
+      sources.push({ label: 'Cockpit user instructions', sublabel: user.path });
+    }
+    return sections.length ? { content: sections.join('\n\n'), sources } : undefined;
+  }
+
+  private async userInstructions(): Promise<{ path: string; text: string } | undefined> {
+    const path = join(this.root, USER_INSTRUCTIONS_FILE);
+    let info;
+    try { info = await stat(path); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    if (!info.isFile()) throw new Error(`Cockpit user instructions must be a regular file: ${path}`);
+    if (info.size > USER_INSTRUCTIONS_LIMIT) throw new Error(`Cockpit user instructions exceed 16 KiB: ${path}`);
+    const text = await readFile(path, 'utf8');
+    if (Buffer.byteLength(text) > USER_INSTRUCTIONS_LIMIT) throw new Error(`Cockpit user instructions exceed 16 KiB: ${path}`);
+    return text.trim() ? { path, text } : undefined;
+  }
+
   private file(sessionId: string) {
     if (!/^[A-Za-z0-9_-]{1,200}$/.test(sessionId)) throw new Error('Invalid role session identity');
     return join(this.root, 'session-roles', `${sessionId}.json`);
@@ -86,6 +146,7 @@ export class ModuleRoles implements RoleProvider {
     const skills = new Map<string, { name: string; path: string; hash: string; module: ModuleSource }>();
     const directories = new Set<string>();
     const instructions = new Map<string, { headers: string[]; text: string }>();
+    const instructionSources: SessionInstructions['sources'] = [];
     const servers: NonNullable<RoleAssembly['config']['mcpServers']> = {};
     const mcpSources: Record<string, ModuleSource> = {};
     const selected = [...new Map(selections.map(role => [`${role.moduleId}/${role.roleId}`, role])).values()]
@@ -101,14 +162,7 @@ export class ModuleRoles implements RoleProvider {
         roles: [...new Map([...previous?.roles ?? [], { id: role.id, name: role.name }]
           .map(source => [source.id, source])).values()],
       });
-      const verified = async (relative: string) => {
-        const path = join(root, safeModulePath(relative));
-        if (!(await realpath(path)).startsWith(`${resolve(root)}${sep}`)) throw new Error('Role resource escapes module');
-        const record = installation.files[relative];
-        const bytes = await readFile(path);
-        if (!record || createHash('sha256').update(bytes).digest('hex') !== record.sha256) throw new Error(`Role resource changed: ${relative}`);
-        return bytes.toString('utf8');
-      };
+      const verified = (relative: string) => verifiedResource(installation, relative);
       roles.push({ ...selection, moduleName: manifest.name, name: role.name });
       const text = role.instructions ? await verified(role.instructions) : '';
       if (Buffer.byteLength(text) > 64 * 1024) throw new Error(`Role instructions exceed 64 KiB: ${manifest.id}/${role.id}`);
@@ -116,6 +170,8 @@ export class ModuleRoles implements RoleProvider {
       const group = instructions.get(source) ?? { headers: [], text };
       group.headers.push(`## Module ${manifest.id} / role ${role.id} (${role.name})\nNative session ID: ${sessionId}`);
       instructions.set(source, group);
+      instructionSources.push({ label: `Module ${manifest.id} / role ${role.id} (${role.name})`,
+        ...(role.instructions ? { sublabel: source } : {}) });
       for (const directory of role.skillDirectories ?? []) {
         const absolute = join(root, safeModulePath(directory));
         if (!await stat(absolute).then(value => value.isDirectory())) throw new Error(`Role skill root missing: ${directory}`);
@@ -156,7 +212,7 @@ export class ModuleRoles implements RoleProvider {
       systemMessage: { mode: 'append', content: [...instructions.values()].map(group => `${group.headers.join('\n')}\n${group.text}`).join('\n\n') },
       skillDirectories: [...directories], mcpServers: servers,
     } : {};
-    return { roles, config, skills: [...skills.values()], mcpSources,
+    return { roles, config, skills: [...skills.values()], mcpSources, instructionSources,
       fingerprint: createHash('sha256').update(JSON.stringify(config)).digest('hex') };
   }
 }

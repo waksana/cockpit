@@ -23,7 +23,7 @@ import { normalizeEvent, type RuntimeAttachment } from './sdk-types.ts';
 import { readNativeChat } from './native-chat.ts';
 import { describeMcpServer, mcpConnection, redactMcpConfig } from './mcp-config.ts';
 import { validateForkHistory } from './fork.ts';
-import type { RoleProvider, RoleAssembly } from './roles.ts';
+import type { RoleProvider, RoleAssembly, SessionInstructions } from './roles.ts';
 
 export type EngineRuntime = Pick<OfficialRuntime,
   'start' | 'models' | 'listSessions' | 'createSession' | 'resumeSession' |
@@ -83,6 +83,7 @@ function completeMeta(meta: SessionProjection): SessionMeta {
 }
 interface State {
   roleAssembly?: RoleAssembly;
+  instructionSources?: SessionInstructions['sources'];
   creationSubmitted?: boolean;
   id: string;
   observedCwd?: string | null;
@@ -678,7 +679,7 @@ export class Engine {
     );
   }
 
-  private async config(st: State, cwd?: string): Promise<{ config: SessionConfig; assembly?: RoleAssembly }> {
+  private async config(st: State, cwd?: string): Promise<{ config: SessionConfig; assembly?: RoleAssembly; instructions?: SessionInstructions }> {
     const disabled = await this.globalDisabledSkills();
     const selected = this.roles?.read(st.id) ?? [];
     const assembly = selected.length ? await this.roles!.assemble(st.id, selected) : undefined;
@@ -712,8 +713,10 @@ export class Engine {
         }
       }
     }
-    return { assembly, config: {
-      ...assembly?.config,
+    const instructions = await this.roles?.sessionInstructions?.(st.id, assembly);
+    const systemMessage = instructions ? { mode: 'append' as const, content: instructions.content } : assembly?.config.systemMessage;
+    return { assembly, instructions, config: {
+      ...assembly?.config, ...(systemMessage ? { systemMessage } : {}),
       sessionId: st.id, ...(cwd ? { workingDirectory: cwd } : {}), streaming: true,
       enableConfigDiscovery: true,
       // Runtime 1.0.83 discovers skills but does not apply its global disabled
@@ -887,6 +890,7 @@ export class Engine {
       st.sdk = sdk;
       st.controlToken = randomUUID();
       st.roleAssembly = assembled.assembly;
+      st.instructionSources = assembled.instructions?.sources;
       this.sessions.set(sdk.sessionId, st);
       if (owner.closed?.has(sdk) || (create && !await this.liveSession(st))) {
         this.detach(st);
@@ -2015,7 +2019,10 @@ export class Engine {
           });
         }
         case 'tasks': return (await sdk.rpc.tasks.list()).tasks.map(t => ({ label: t.description || t.id, sublabel: t.status }));
-        case 'instructionSources': return (await sdk.rpc.instructions.getSources()).sources.map(s => ({ label: s.label, sublabel: s.sourcePath }));
+        case 'instructionSources': return [
+          ...(await sdk.rpc.instructions.getSources()).sources.map(s => ({ label: s.label, sublabel: s.sourcePath })),
+          ...(st.instructionSources ?? []).map(source => ({ ...source })),
+        ];
         case 'schedules': return (await sdk.rpc.schedule.list()).entries.map(s => ({ label: s.displayPrompt || s.prompt,
           sublabel: s.selfPaced ? `Self-paced (model-controlled) · next ${s.nextRunAt}` : s.nextRunAt }));
       }

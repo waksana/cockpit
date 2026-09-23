@@ -32,6 +32,7 @@ A package root contains `cockpit.module.json`:
 
 All module-relative paths are nonempty, below 1024 characters, not absolute, and must not contain backslashes, drive separators, control characters, URL query or fragment characters, empty segments, `.`, or `..`. The package must include its runtime dependencies; the host does not run package-manager install scripts.
 `frontend.worker` is a narrow optional worker file under an asset root and is limited to 1 MiB.
+Optional top-level `instructions` names a packaged Markdown file (at most 16 KiB) with the module's [default instructions](#default-instructions).
 
 The installer accepts plain tar archives and npm archives with a single `package/` prefix. It rejects symlinks, hard links, special files, path escape, duplicate entries, parent/file shadowing, mixed package roots, unsupported tar formats, invalid checksums, unterminated archives, and extended headers. Limits: 32 MiB
 compressed archive, 128 MiB expanded archive, 32 MiB per file, 8,192 entries, and a 64 KiB manifest.
@@ -96,6 +97,7 @@ boot. Different roots are independent. The CLI rejects non-Linux migration befor
     installed/<id>/<version>/<digest>/package/
     data/<id>/                     module business data
   session-roles/<sessionId>.json    saved role selection; not a native capability cache
+  instructions.md                  optional user-written Cockpit user instructions
 ```
 Native Copilot data is outside that tree. The host does not override native `baseDirectory` or `configDirectory`; `~/.copilot` and native configuration keep their ordinary ownership. Authentication and service setup are documented in [install](install.md).
 
@@ -200,6 +202,26 @@ names are manifest keys. The host generates
 `http://127.0.0.1:<host-port>/_modules/<moduleId>/<digest>/api<path>` and sets
 `X-Cockpit-Module-Digest`. Same-module roles with the same endpoint union tool
 lists; `['*']` means all tools and `[]` means none.
+
+<a id="default-instructions"></a>
+#### Default instructions
+
+A manifest may set top-level `"instructions": "instructions.md"`. While the module
+is enabled, that file is appended to every Cockpit-created or resumed session
+without any role selection. Cockpit composes one appended system message section
+in this order: enabled module defaults sorted by module ID (header
+`## Module <id> (<name>)`), then selected role instructions, then the optional
+[Cockpit user instructions](install.md#user-instructions) file. It follows the
+native system prompt and native instructions such as `AGENTS.md`, never replaces
+them, writes no global configuration and does not affect the Copilot CLI. Each
+section is listed in the session instruction sources panel.
+
+The text is read and verified against the installed digest only at session
+creation or resume (new session, reload, unload and load, host restart cold
+resume). Loaded sessions are not changed mid-conversation and are not told to
+reload; after disabling a module, its instructions are omitted from the next load.
+Default instructions do not affect role readiness. Hosts that predate this field
+reject such manifests, because the manifest schema is strict.
 
 | Intent | Shape |
 | --- | --- |
