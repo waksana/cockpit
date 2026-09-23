@@ -16,6 +16,7 @@ import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
 import { readMessageHistory } from './messageHistory';
 import { describeReason, reportUxError } from '../lib/errorReporter';
 import { sessionReloadBlockReason } from '../lib/sessionReload';
+import { sessionSettingsBlockReason, type SessionSettingsAction, type SessionSettingsOperation } from '../lib/sessionSettingsActions';
 import type { NativeDraftRequest } from '../lib/draft';
 import { observeDraftDecisions, retireDraftSession } from '../lib/draftSelection';
 import type { DraftReference, DraftSendBlockReason, ModuleEventPayload } from '@cockpit/module-api';
@@ -33,6 +34,8 @@ interface CockpitState {
   resourceRevisions: Record<string, Partial<Record<SessionResource, number>>>;
   activityRefreshingIds: string[];
   reloadingSessionIds: string[];
+  sessionSettingsOperations: Record<string, SessionSettingsOperation>;
+  runSessionSettingsAction: (sessionId: string, action: SessionSettingsAction, customInstructions?: string) => Promise<void>;
   // lifecycle
   init: () => () => void;
   onModuleInvalidated: (listener: (moduleId: string) => void) => () => void;
@@ -750,6 +753,63 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       return read(net => net.setModel(sid, modelId, opts));
     },
     reloadingSessionIds: [],
+    sessionSettingsOperations: {},
+    async runSessionSettingsAction(sid, action, customInstructions) {
+      const state = get();
+      const reason = sessionSettingsBlockReason(state.sessions.find(s => s.sessionId === sid),
+        state.connState === 'open' && state.snapshotReady,
+        state.reloadingSessionIds.includes(sid) || state.sessionSettingsOperations[sid]?.pending);
+      if (reason) throw new Error(reason);
+      const net = connectedClient();
+      const generation = state.connectionGeneration;
+      const update = (patch: Partial<SessionSettingsOperation>) => set(st => ({
+        sessionSettingsOperations: { ...st.sessionSettingsOperations,
+          [sid]: { ...st.sessionSettingsOperations[sid], action, ...patch } },
+      }));
+      set(st => ({ sessionSettingsOperations: { ...st.sessionSettingsOperations, [sid]: { action, pending: true } } }));
+      try {
+        if (action === 'compact') {
+          const { result } = await net.intent('session/compact', {
+            sessionId: sid, ...(customInstructions?.trim() ? { customInstructions } : {}),
+          });
+          update({ outcome: { action, result } });
+        } else if (action === 'fork') {
+          const result = await net.intent('session/fork', { sessionId: sid });
+          update({ outcome: { action, sessionId: result.sessionId } });
+        } else {
+          const result = await net.intent('session/unload', { sessionId: sid });
+          if (!result.ok) throw new Error('服务器未确认卸载');
+          const { meta } = await net.intent('session/get', { sessionId: sid });
+          if (meta && meta.sessionId !== sid) throw new Error('原生返回了其他会话，卸载状态未确认');
+          update({ outcome: { action, present: meta !== null, loaded: meta?.loaded === true } });
+          // Only a same-connection authoritative read changes presence/loading.
+          // Preserve the rendered history and drafts of an unloaded session.
+          if (client === net && get().connectionGeneration === generation) {
+            if (!meta) releaseSessions([sid]);
+            else if (!meta.loaded) cancelLive(sid);
+            set(st => ({ sessions: meta
+              ? st.sessions.map(row => row.sessionId === sid ? metaToSession(meta, row) : row)
+              : st.sessions.filter(row => row.sessionId !== sid) }));
+          }
+        }
+      } catch (error) {
+        update({ error: describeReason(error, false) });
+        throw error;
+      } finally {
+        // Reconcile even uncertain mutations, without resuming or replaying them.
+        if (client !== net || get().connectionGeneration !== generation || !net.isOpen) {
+          update({ refreshError: '连接已变化，请重新核对会话列表与原生状态' });
+        } else {
+          try {
+            await net.refresh();
+            refreshMeta(sid);
+          } catch (error) {
+            update({ refreshError: describeReason(error, false) });
+          }
+        }
+        update({ pending: false });
+      }
+    },
     reloadSession(sid) {
       let submitted = false;
       return mutation(sid, '重新加载会话', net => net.reloadSession(sid), () => {
@@ -757,7 +817,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         const reason = sessionReloadBlockReason(
           state.sessions.find(s => s.sessionId === sid),
           state.connState === 'open' && state.snapshotReady,
-          state.reloadingSessionIds.includes(sid),
+          state.reloadingSessionIds.includes(sid) || state.sessionSettingsOperations[sid]?.pending,
         );
         if (reason) throw new Error(reason);
         submitted = true;

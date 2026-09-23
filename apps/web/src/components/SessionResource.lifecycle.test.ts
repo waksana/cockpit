@@ -18,6 +18,10 @@ import { ManageWorkspace } from './ManageWorkspace';
 import { SessionDetails } from './SessionDetails';
 import { ExpandableText } from './SessionPanelKit';
 import { GlobalNavigation } from './GlobalNavigation';
+import { activityFixture } from '../dev/activity-fixtures';
+import { intentUrl } from '../lib/config';
+import type { SessionSettingsAction } from '../lib/sessionSettingsActions';
+import { InspectorPane } from './Shell';
 
 // The same deterministic React DOM host as Thread.lifecycle, limited to the
 // controls these panels use. Reads and mutations stay in fixture-owned stores.
@@ -166,14 +170,16 @@ function mount(t: TestContext) {
       const event = new Event(type, { bubbles: true, cancelable: true });
       Object.defineProperty(event, 'target', { value: node });
       if (type === 'click') Object.defineProperty(event, 'button', { value: 0 });
-      container.dispatchEvent(event);
+      let eventRoot = node;
+      while (eventRoot.parentNode) eventRoot = eventRoot.parentNode;
+      eventRoot.dispatchEvent(event);
     }),
   };
 }
 
 const session: ChatSession = {
   sessionId: 'resource-lifecycle', title: 'Fixture session', cwd: '/fixture', loaded: true,
-  status: 'idle', error: null, queue: [], ask: null, lastActivity: 0, messages: [],
+  status: 'idle', activity: activityFixture(), error: null, queue: [], ask: null, lastActivity: 0, messages: [],
   materialized: true, historyStale: false, hasMore: false, loadingHistory: false,
   currentModelId: 'metadata-model', availableModels: [{ modelId: 'metadata-model', name: 'Metadata model' }],
 };
@@ -268,9 +274,192 @@ test('settings reload follows live connection, pending and native activity guard
   await act(async () => useCockpit.setState({ connState: 'open', snapshotReady: false }));
   assert.equal(disabled(reload()), true);
   await act(async () => useCockpit.setState({ snapshotReady: true, sessions: [] }));
-  assert.equal(disabled(reload()), true);
+  assert.equal(h.container.querySelectorAll('button').some(node => node.textContent === '重新加载会话'), false);
   await act(async () => useCockpit.setState({ sessions: [session] }));
   assert.equal(disabled(reload()), false);
+});
+
+function settingsFixture(t: TestContext) {
+  const h = mount(t);
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const request = deferred<Response>();
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'EventSource');
+  const sources: FakeEventSource[] = [];
+  class FakeEventSource {
+    static readonly OPEN = 1;
+    readyState = 1;
+    onopen: (() => void) | null = null;
+    onmessage: ((event: { data: string }) => void) | null = null;
+    close() { this.readyState = 2; }
+    constructor() { sources.push(this); }
+  }
+  Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: FakeEventSource });
+  const snapshot = () => sources[0].onmessage?.({ data: JSON.stringify({
+    type: 'snapshot', agentStatus: 'up', permissionPolicy: 'allow-all', models: [],
+    sessions: useCockpit.getState().sessions,
+  }) });
+  t.mock.method(globalThis, 'fetch', async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    calls.push({ url, body });
+    if (['unload', 'compact', 'fork'].some(name => url === intentUrl(`session/${name}`))) return request.promise;
+    if (url === intentUrl('session/refresh')) {
+      snapshot();
+      return Response.json({ ok: true });
+    }
+    if (url === intentUrl('session/get')) return Response.json({ meta: { ...session, loaded: false } });
+    if (url === intentUrl('session/resources')) {
+      return Response.json({ meta: useCockpit.getState().sessions.find(row => row.sessionId === body.sessionId) ?? null });
+    }
+    assert.fail(`Unexpected request: ${url}`);
+  });
+  const stop = useCockpit.getState().init();
+  sources[0].onopen?.();
+  useCockpit.setState({
+    sessions: [session, { ...session, sessionId: 'other-settings' }], snapshotReady: true,
+    getResources: async sid => ({ ...modelData, sessionId: sid }),
+    sessionSettingsOperations: {}, reloadingSessionIds: [],
+  });
+  t.after(() => {
+    stop();
+    if (original) Object.defineProperty(globalThis, 'EventSource', original);
+    else Reflect.deleteProperty(globalThis, 'EventSource');
+  });
+  const render = (sid = session.sessionId) => h.render(createElement(MemoryRouter, {
+    initialEntries: [`/session/${sid}/info`],
+  }, createElement(SessionInfoPanel, {
+    session: { ...session, sessionId: sid }, open: true, onClose: noop, onSetModel: noMutation,
+  })));
+  const open = async (label: string) => {
+    await render();
+    await h.event(button(h.container, label), 'click');
+    assert.ok(h.document.nativeModal);
+  };
+  const confirm = (label: string) => h.event(button(h.document.body, label), 'click');
+  const resolve = (result: unknown) => act(async () => { request.resolve(Response.json(result)); });
+  return { ...h, calls, request, render, open, confirm, resolve, snapshot };
+}
+
+for (const action of ['unload', 'compact', 'fork'] satisfies SessionSettingsAction[]) {
+  test(`settings ${action} click confirms once, posts to its original session and isolates late results`, async t => {
+    const h = settingsFixture(t);
+    const labels = { unload: '卸载会话', compact: '压缩上下文', fork: '分叉会话' };
+    await h.open(labels[action]);
+    const warning = h.document.body.textContent;
+    if (action === 'unload') assert.match(warning, /不删除.*定时任务.*MCP.*Skill.*空会话可能消失/);
+    if (action === 'compact') assert.match(warning, /不删除.*无法撤销.*可选.*不能保证/);
+    if (action === 'fork') assert.match(warning, /完整.*不发送消息.*共享工作目录和文件.*不是隔离.*不是完整.*不创建.*Task/);
+    assert.equal(h.calls.length, 0, 'opening confirmation does not execute');
+    assert.equal(disabled(button(h.document.body, labels[action])), false, 'optional compact input may be empty');
+    await h.confirm(labels[action]);
+    assert.deepEqual(h.calls, [{ url: intentUrl(`session/${action}`), body: { sessionId: session.sessionId } }]);
+    assert.equal(disabled(button(h.document.body, '处理中…')), true);
+    await h.confirm('处理中…');
+      assert.equal(h.calls.length, 1);
+    await h.render('other-settings');
+    assert.equal(h.document.nativeModal, null, 'target change closes old confirmation');
+    await h.resolve(action === 'unload' ? { ok: true } : action === 'fork' ? { sessionId: 'real-child' }
+      : { ok: true, result: { success: false, tokensRemoved: 8, messagesRemoved: 1 } });
+    assert.doesNotMatch(h.container.textContent, /已卸载|real-child|压缩未成功/);
+    await h.render();
+    if (action === 'unload') {
+      assert.match(h.container.textContent, /会话已卸载/);
+      assert.match(h.container.textContent, /恢复会话/);
+      assert.doesNotMatch(h.container.textContent, /重新加载会话/);
+    } else if (action === 'compact') {
+      assert.match(h.container.textContent, /原生报告压缩未成功.*8.*1/);
+      assert.doesNotMatch(h.container.textContent, /压缩完成/);
+    } else {
+      assert.match(h.container.textContent, /已创建新会话：real-child/);
+      assert.equal(h.container.querySelector('a')?.getAttribute('href'), '/session/real-child');
+    }
+    assert.equal(h.calls.filter(call => call.url === intentUrl(`session/${action}`)).length, 1);
+    assert.equal(h.calls.some(call => /\/(?:prompt|session\/(?:new|load|reload))$/.test(call.url)), false);
+  });
+}
+
+test('fork unknown result leaves a visible warning and blocks repeat confirmation, including after disconnect', async t => {
+  const h = settingsFixture(t);
+  await h.open('分叉会话');
+  await h.confirm('分叉会话');
+  await act(async () => useCockpit.setState({ connState: 'connecting', snapshotReady: false, connectionGeneration: 2 }));
+  await h.resolve({ ok: true });
+  assert.match(h.container.textContent, /分叉会话结果未确认.*不要盲目重试/s);
+  assert.doesNotMatch(h.container.textContent, /已创建新会话|打开新会话/);
+  await act(async () => useCockpit.setState({ connState: 'open', snapshotReady: true }));
+  await h.confirm('分叉会话');
+  assert.match(h.document.body.textContent, /不会重复发送/);
+  assert.equal(h.calls.filter(call => call.url === intentUrl('session/fork')).length, 1);
+});
+
+for (const action of ['unload', 'compact', 'fork'] satisfies SessionSettingsAction[]) {
+  test(`${action} confirmation closes on its session-owned result even when refresh emits a snapshot before HTTP resolves`, async t => {
+    const h = settingsFixture(t);
+    const label = { unload: '卸载会话', compact: '压缩上下文', fork: '分叉会话' }[action];
+    await h.open(label);
+    await h.confirm(label);
+    const generation = useCockpit.getState().connectionGeneration;
+    await h.resolve(action === 'unload' ? { ok: true } : action === 'fork' ? { sessionId: 'real-child' }
+      : { ok: true, result: { success: true, tokensRemoved: 12, messagesRemoved: 2 } });
+    assert.ok(useCockpit.getState().connectionGeneration > generation, 'fixture delivers real refresh snapshot semantics');
+    assert.equal(h.document.nativeModal, null, 'confirmed operation must not leave a stale modal over its result');
+    assert.match(h.container.textContent, action === 'unload' ? /已卸载/ : action === 'fork' ? /real-child/ : /压缩完成/);
+  });
+}
+
+test('store-owned pending keeps dialog input and confirmation busy across a snapshot and disconnect', async t => {
+  const h = settingsFixture(t);
+  await h.open('压缩上下文');
+  await h.confirm('压缩上下文');
+  await act(async () => h.snapshot());
+  assert.equal(h.document.nativeModal?.getAttribute('aria-busy'), 'true');
+  assert.equal(disabled(button(h.document.body, '处理中…')), true);
+  assert.equal(disabled(button(h.document.body, '取消')), true);
+  assert.equal(disabled(h.document.body.querySelector('input')!), true);
+  await act(async () => useCockpit.setState({ connState: 'connecting', snapshotReady: false }));
+  await h.confirm('处理中…');
+  assert.equal(h.calls.length, 1);
+  await h.resolve({ ok: true, result: { success: true, tokensRemoved: 3, messagesRemoved: 1 } });
+  assert.equal(h.document.nativeModal, null);
+});
+
+test('cancelling an operation portal does not also close its settings inspector', async t => {
+  const h = mount(t);
+  let parentCloses = 0;
+  useCockpit.setState({ snapshotReady: true, getResources: async () => modelData });
+  await h.render(createElement(InspectorPane, {
+    ariaLabel: 'Settings inspector', onClose: () => { parentCloses++; },
+    children: createElement(SessionInfoPanel, { session, open: true, onClose: noop, onSetModel: noMutation }),
+  }));
+  const parent = h.document.nativeModal!;
+  await h.event(button(h.container, '卸载会话'), 'click');
+  const confirmation = h.document.nativeModal!;
+  assert.ok(confirmation !== parent);
+  await act(async () => { confirmation.dispatchEvent(new Event('cancel', { cancelable: true })); });
+  assert.equal(parentCloses, 0, 'React portal cancel must not propagate to the parent inspector');
+  assert.equal(parent.open, true);
+  assert.equal(confirmation.open, false);
+  assert.equal(h.document.body.querySelector('dialog'), null);
+});
+
+test('all settings controls react to unknown activity, background work and decisions while confirmation is open', async t => {
+  const h = settingsFixture(t);
+  await h.open('分叉会话');
+  for (const patch of [
+    { activity: null }, { activity: activityFixture({ tasks: { activeAgents: 0, activeShells: 1, unknown: 0 } }) },
+    { activity: activityFixture({ queue: { pendingCount: 0, steeringCount: 1, inFlightSteeringCount: 1 } }) },
+    { ask: { requestId: 'a', question: 'Choose', choices: [], allowFreeform: true } },
+    { planRequest: { requestId: 'p', summary: 'Plan' } },
+    { elicitation: { requestId: 'e', message: 'Confirm' } },
+  ] satisfies Partial<ChatSession>[]) {
+    await act(async () => useCockpit.setState({ sessions: [{ ...session, ...patch }] }));
+    assert.equal(disabled(button(h.document.body, '分叉会话')), true);
+    for (const label of ['重新加载会话', '卸载会话', '压缩上下文', '分叉会话']) {
+      assert.equal(disabled(button(h.container, label)), true);
+    }
+    await h.confirm('分叉会话');
+  }
+  assert.equal(h.calls.length, 0);
 });
 
 const roleCatalog = [

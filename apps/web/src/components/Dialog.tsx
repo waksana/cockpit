@@ -36,7 +36,10 @@ interface DialogProps {
   message?: string;
   // When provided, renders a text input seeded with this value; the confirm
   // handler receives the entered text.
-  input?: { placeholder?: string; initial?: string };
+  input?: { placeholder?: string; initial?: string; optional?: boolean };
+  confirmDisabled?: boolean;
+  error?: string;
+  pending?: boolean;
   confirmLabel?: string;
   destructive?: boolean;
   actionKey?: string;
@@ -51,7 +54,7 @@ export function Dialog(props: DialogProps) {
 }
 
 function DialogContent({
-  title, message, input, confirmLabel = '确定', destructive,
+  title, message, input, confirmLabel = '确定', destructive, confirmDisabled, error, pending = false,
   actionKey, onConfirm, onSuccess, onCancel,
 }: DialogProps) {
   const [value, setValue] = useState(input?.initial ?? '');
@@ -59,24 +62,26 @@ function DialogContent({
   useNativeDialog(dialogRef);
   const identity = useId();
   const action = useKeyedAction(`dialog:${identity}:${actionKey ?? ''}`);
+  const busy = action.busy || pending;
   const hasInput = input !== undefined;
+  const inputInvalid = hasInput && !input.optional && !value.trim();
 
   const confirm = async () => {
-    if (action.busy) return;
-    if (!action.connected || (hasInput && !value.trim())) return;
+    if (busy) return;
+    if (!action.connected || confirmDisabled || inputInvalid) return;
     await action.run(() => onConfirm(value), () => {
       onSuccess?.();
       onCancel();
     });
   };
   const cancel = () => {
-    if (!action.busy) onCancel();
+    if (!busy) onCancel();
   };
 
   return (
-    <dialog ref={dialogRef} className="dialog-scrim host-modal ck-modal" aria-label={title} aria-busy={action.busy}
+    <dialog ref={dialogRef} className="dialog-scrim host-modal ck-modal" aria-label={title} aria-busy={busy}
       aria-describedby={message ? `${identity}-message` : undefined}
-      onCancel={event => { event.preventDefault(); cancel(); }}
+      onCancel={event => { event.preventDefault(); event.stopPropagation(); cancel(); }}
       onClick={event => { if (event.target === event.currentTarget) cancel(); }}>
       <div className="dialog-card ck-surface">
         <h3 className="dialog-title ck-heading" data-dialog-focus>{title}</h3>
@@ -88,26 +93,26 @@ function DialogContent({
             aria-label={input.placeholder || title}
             value={value}
             placeholder={input.placeholder}
-            disabled={action.busy}
+            disabled={busy}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.nativeEvent.isComposing && e.keyCode !== 229) { e.preventDefault(); void confirm(); }
             }}
           />
         )}
-        {action.error && <StateNotice kind="error">操作失败：{action.error}</StateNotice>}
+        {(error || action.error) && <StateNotice kind="error">{error || `操作失败：${action.error}`}</StateNotice>}
         {!action.connected && (
-          <StateNotice>等待连接…连接恢复后可重试。</StateNotice>
+          <StateNotice>等待连接…请在连接恢复后核对操作结果。</StateNotice>
         )}
         <div className="dialog-actions ck-actions">
-          <button type="button" className="dialog-btn ck-button rp" disabled={action.busy} onClick={cancel}>取消</button>
+          <button type="button" className="dialog-btn ck-button rp" disabled={busy} onClick={cancel}>取消</button>
           <button
             type="button"
             className={`dialog-btn ck-button ck-primary primary rp${destructive ? ' danger ck-danger' : ''}`}
-            disabled={action.busy || !action.connected || (hasInput && !value.trim())}
+            disabled={busy || !action.connected || confirmDisabled || inputInvalid}
             onClick={() => { void confirm(); }}
           >
-            {action.busy ? '处理中…' : confirmLabel}
+            {busy ? '处理中…' : confirmLabel}
           </button>
         </div>
       </div>
