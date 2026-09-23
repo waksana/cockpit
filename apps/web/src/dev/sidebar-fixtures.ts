@@ -10,8 +10,14 @@ export function sidebarSessions(now = Date.now()) {
     { moduleId: 'fixture', moduleName: 'Fixture', roleId: 'owner', name: 'Owner' },
     { moduleId: 'fixture', moduleName: 'Fixture', roleId: 'executor', name: 'Executor' },
   ];
+  const longRoles: SessionRole[] = [
+    { moduleId: 'cockpit-task', moduleName: 'Task', roleId: 'executor', name: 'Executor' },
+    { moduleId: 'fixture-review', moduleName: 'SyntheticReviewModuleWithLongName', roleId: 'reviewer',
+      name: 'IndependentReadOnlyReviewer' },
+    { moduleId: 'fixture-docs', moduleName: '文档模块', roleId: 'writer', name: '长名称的文档维护角色' },
+  ];
   const sessions = workspaceSessions(now);
-  return sessions.map((session, index) => ({
+  const base = sessions.map((session, index) => ({
     ...session,
     title: [
       'Short',
@@ -36,6 +42,32 @@ export function sidebarSessions(now = Date.now()) {
     } : undefined,
     error: index === 5 ? 'Synthetic activity failure' : null,
   }));
+  const template = base[5];
+  // Extreme two-line cases: every built-in status at once, many long roles, and neither.
+  return [...base, {
+    ...template, sessionId: 'demo-extreme', lastActivity: now - 90_000_000,
+    title: '所有极端情况同时出现：超长标题 SyntheticExtremelyLongTitleThatMustEllipsizeBeforeTheTime',
+    cwd: `/workspace/${'extremely-long-directory-name-'.repeat(4)}`,
+    status: 'running' as const, error: null, compacting: true,
+    roles: longRoles, appliedRoles: [longRoles[0]],
+    activity: activityFixture({
+      processing: true, hasActiveWork: true,
+      tasks: { activeAgents: 12, activeShells: 9, unknown: 1 },
+      queue: { pendingCount: 23, steeringCount: 2, inFlightSteeringCount: 0 },
+      mcp: { pendingConnectionCount: 4 },
+    }),
+    ask: null, planRequest: { requestId: 'sidebar-plan', summary: 'Synthetic plan' },
+  }, {
+    ...template, sessionId: 'demo-roles', lastActivity: now - 7_200_000,
+    title: 'Many long roles', cwd: `/workspace/${'role-heavy-directory-'.repeat(3)}`,
+    status: 'running' as const, error: null,
+    roles: [...longRoles, ...roles], appliedRoles: [...longRoles, roles[0]],
+    activity: activityFixture({ hasActiveWork: true, tasks: { activeAgents: 3, activeShells: 0, unknown: 0 } }),
+  }, {
+    ...template, sessionId: 'demo-plain', lastActivity: now - 200_000_000,
+    title: 'Plain', cwd: '/workspace/plain', status: 'idle' as const, error: null,
+    roles: [], appliedRoles: [], activity: activityFixture(),
+  }];
 }
 
 export function createSidebarModuleFixture() {

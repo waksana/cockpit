@@ -203,10 +203,18 @@ detached targets and ordinary outside controls remain unchanged. The new UI's
 existing module scene remains the script-focus comparison.
 
 `/chat-lab.html?scene=sidebar` mounts the classic App with short, long Chinese,
-unbroken English, unloaded, role and activity fixtures plus synthetic module unread
-badges. The list has no directory avatar: titles use at most two natural-height
-lines, the actual cwd basename is secondary, and compact module/role labels occupy
-the first row above the title (no empty row for sessions without roles).
+unbroken English, unloaded, role and activity fixtures, an all-status/many-long-roles
+extreme, a role-heavy row and a plain row, plus synthetic module unread badges.
+Every row has exactly two lines and one height, without a directory avatar. Line 1
+is the single-line ellipsized title (full text on hover and in the accessible name)
+and the always fully visible time. Line 2 is role badges, the cwd basename (full
+path on hover) and status. When line 2 is short of space, the directory yields
+first, down to nothing. Role badges then share the remaining space equally: short
+badges stay whole and long ones ellipsize both module and role, down to outlined
+stubs that keep their full hover title. Below a 320px viewport the last stubs may
+clip at the end. Status never shrinks, wraps or overlaps. If status alone exceeded
+line 2 (only possible with module adornments), it clips at the end. Host attention
+indicators (overall, then decision) come first, so they stay visible.
 Run `await import('/src/dev/sidebar-checks.ts').then(m => m.runSidebarChecks())`
 with the list visible at desktop and narrow touch widths, in both themes.
 The checks measure title, directory, role and status geometry; use the real list

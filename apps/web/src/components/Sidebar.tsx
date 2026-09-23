@@ -62,17 +62,19 @@ function SessionRow({ s, active, actions, connected }: {
       onPointerUp={lp.onPointerUp}
       onPointerCancel={lp.onPointerCancel}
     >
-      {!!s.roles?.length && <span className="dialog-roles session-role-badges">
-        {s.roles.map(role => <RoleBadge key={`${role.moduleId}/${role.roleId}`} role={role} session={s} connected={connected} />)}
-      </span>}
-      <span className="session-row-title">{s.title}</span>
+      <span className="session-row-title" title={s.title}>{s.title}</span>
       <span className="dialog-time">{relTime(s.lastActivity)}</span>
-      <span className="dialog-subtitle">{cwdBasename(s.cwd)}</span>
-      <SessionStatus sessionId={s.sessionId} status={s.status} loaded={s.loaded} connected={connected}
-        compacting={s.compacting} error={s.error}
-        activityRefreshing={activityRefreshing}
-        activityDisplay={s.activityDisplay}
-        activity={s.activity} needsDecision={!!(s.ask || s.planRequest || s.elicitation)} />
+      <span className="session-row-details">
+        {!!s.roles?.length && <span className="dialog-roles session-role-badges">
+          {s.roles.map(role => <RoleBadge key={`${role.moduleId}/${role.roleId}`} role={role} session={s} connected={connected} />)}
+        </span>}
+        <span className="dialog-subtitle" title={s.cwd}>{cwdBasename(s.cwd)}</span>
+        <SessionStatus sessionId={s.sessionId} status={s.status} loaded={s.loaded} connected={connected}
+          compacting={s.compacting} error={s.error}
+          activityRefreshing={activityRefreshing}
+          activityDisplay={s.activityDisplay}
+          activity={s.activity} needsDecision={!!(s.ask || s.planRequest || s.elicitation)} />
+      </span>
     </button></li>
   );
 }
