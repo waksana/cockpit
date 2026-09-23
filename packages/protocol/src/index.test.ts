@@ -18,6 +18,23 @@ import {
   type IntentResult,
 } from './index.ts';
 
+test('MCP connection metadata is additive, typed, and distinct from session source', () => {
+  const global = { name: 'fixture', detail: 'legacy full detail', defaultOn: false, config: { command: 'node' } };
+  const session = { name: 'fixture', detail: 'native-plugin', status: 'connected', enabled: true };
+  for (const method of ['http', 'sse', 'stdio', 'unknown'] as const) {
+    const connection = { method, ...(method === 'unknown' ? {} : { target: 'fixture' }) };
+    assert.deepEqual(Intents['mcp/global'].result.parse({ servers: [{ ...global, connection }] }).servers[0],
+      { ...global, connection });
+    assert.deepEqual(Intents['mcp/session'].result.parse({ loaded: true, servers: [{ ...session, connection }] }).servers[0],
+      { ...session, connection });
+  }
+  assert.deepEqual(Protocol.McpServerGlobal.parse(global), global);
+  assert.deepEqual(Protocol.McpServerSession.parse(session), session);
+  for (const method of ['user', 'workspace', 'plugin', 'builtin', 'custom', 'future']) {
+    assert.equal(Protocol.McpConnection.safeParse({ method }).success, false);
+  }
+});
+
 test('resource module provenance is explicit optional metadata independent of literal names and native source', () => {
   const module = { id: 'fixture', name: 'Fixture module' };
   const mcp = { name: 'fixture-tools', detail: 'user', enabled: true, status: 'failed', error: 'Native error', module };

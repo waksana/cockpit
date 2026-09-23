@@ -15,6 +15,7 @@ import { ResourceError, ResourceRow, ResourceText } from './ResourceRow';
 import { Badge, Toggle } from './UI';
 import { StateNotice } from './StateNotice';
 import { useToggleRequests } from '../features/session-settings/useToggleRequests';
+import { mcpConnectionLabel, skillSourceLabel } from '../lib/resourcePresentation';
 
 function SessionToggleRow({ identity, name, description, source = '', module, status, enabled, disabled, disabledReason, nativeError, onChange }: {
   identity: string; name: string; description?: string; source?: string; status?: ReactNode; enabled: boolean;
@@ -23,7 +24,6 @@ function SessionToggleRow({ identity, name, description, source = '', module, st
 }) {
   const action = useKeyedAction(identity);
   const [desired, setDesired] = useState(enabled);
-  const error = action.error ?? nativeError;
   const progress = <><Icon name="loading" className="spinner" size={10} />
     {status ? desired ? '连接中' : '断开中' : desired ? '启用中' : '停用中'}</>;
   return <ResourceRow name={name} connection={Boolean(status)} title={disabled ? disabledReason : undefined}
@@ -36,12 +36,16 @@ function SessionToggleRow({ identity, name, description, source = '', module, st
         setDesired(next);
         void action.run(() => onChange(name, next));
       }} />}
-    status={error && !action.busy
-      ? <ResourceError key={JSON.stringify([identity, error])} error={error} name={name} />
-      : (action.busy || status) && <div className="manage-row-status" role="status">
+    status={(action.busy || status) && <div className="manage-row-status" role="status">
         {action.busy ? <Badge className="mcp-status mcp-operation-status" tone="pending" appearance="text">{progress}</Badge>
           : status}
       </div>}
+    feedback={<>
+      {nativeError && <ResourceError key={JSON.stringify([identity, 'native', nativeError])}
+        error={nativeError} name={name} label="连接错误" />}
+      {action.error && !action.busy && action.error !== nativeError
+        && <ResourceError key={JSON.stringify([identity, 'action', action.error])} error={action.error} name={name} />}
+    </>}
     description={!status && description ? <ResourceText key={description} text={description}
       lines={2} label={`${name}说明`} /> : undefined} />;
 }
@@ -85,7 +89,7 @@ export function SessionMcp({ session, onClose }: SessionManageProps) {
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
     {resource.data?.map(server => <SessionToggleRow key={JSON.stringify([sessionId, server.name])}
       identity={JSON.stringify(['mcp', sessionId, server.name])} name={server.name}
-      source={server.detail} module={server.module} nativeError={server.error} status={<McpStatusPill status={server.status} appearance="text" />}
+      source={mcpConnectionLabel(server.connection)} module={server.module} nativeError={server.error} status={<McpStatusPill status={server.status} appearance="text" />}
       enabled={server.enabled} disabled={!resource.usable || busy}
       disabledReason={busy ? 'MCP 正在切换或连接，请等待完成后再修改。' : undefined} onChange={action.run} />)}
   </ManageShell>;
@@ -106,7 +110,7 @@ export function SessionSkills({ session, onClose }: SessionManageProps) {
     <SessionResume sessionId={sessionId} required={resource.requiresResume} onResumed={() => { void resource.refresh(); }} />
     {resource.data?.map(skill => <SessionToggleRow key={JSON.stringify([sessionId, skill.name])}
       identity={JSON.stringify(['skills', sessionId, skill.name])} name={skill.name}
-      description={skill.description} source={skill.source} module={skill.module}
+      description={skill.description} source={skillSourceLabel(skill.source)} module={skill.module}
       enabled={skill.enabled} disabled={!resource.usable} onChange={action.run} />)}
   </ManageShell>;
 }

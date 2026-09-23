@@ -21,7 +21,7 @@ import { NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, Nati
 import { OfficialRuntime, sessionModelOptions } from './runtime.ts';
 import { normalizeEvent, type RuntimeAttachment } from './sdk-types.ts';
 import { readNativeChat } from './native-chat.ts';
-import { describeMcpServer, redactMcpConfig } from './mcp-config.ts';
+import { describeMcpServer, mcpConnection, redactMcpConfig } from './mcp-config.ts';
 import { validateForkHistory } from './fork.ts';
 import type { RoleProvider, RoleAssembly } from './roles.ts';
 
@@ -2016,7 +2016,8 @@ export class Engine {
         throw new Error(`Native global MCP state is unconfirmed for ${name}`);
       }
       const modules = this.roles?.globalMcpSources?.(config);
-      return { name, detail: describeMcpServer(config), defaultOn: server.enabled, config: redactMcpConfig(config),
+      return { name, detail: describeMcpServer(config), connection: mcpConnection(config),
+        defaultOn: server.enabled, config: redactMcpConfig(config),
         ...(modules?.length ? { modules } : {}) };
     });
   }

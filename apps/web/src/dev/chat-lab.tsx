@@ -299,6 +299,7 @@ if (scene === 'dialog-focus') {
       empty: query.get('empty') === '1',
       fail: query.get('fail') === '1',
       failMutations: query.get('failMutations') === '1',
+      designCases: query.get('case') === 'design',
       beforeRequest: query.get('delay') === '1' ? () => new Promise(resolve => setTimeout(resolve, 1200)) : undefined,
     });
   }
@@ -306,7 +307,8 @@ if (scene === 'dialog-focus') {
   const { default: App } = await import('../App');
   const page = new URLSearchParams(location.search).get('page');
   const initialRoute = scene === 'sidebar' ? '/' : scene === 'resources' && (page === 'mcp' || page === 'skills')
-    ? `/${page}` : `/session/${workspaceSessionId}/info`;
+    ? `/${page}` : scene === 'resources' && (page === 'session-mcp' || page === 'session-skills')
+      ? `/session/${workspaceSessionId}/${page.slice('session-'.length)}` : `/session/${workspaceSessionId}/info`;
   const app = <MemoryRouter initialEntries={[initialRoute]}>
     <App /><UxErrorNotifications />
   </MemoryRouter>;

@@ -72,7 +72,7 @@ test('resource compositions keep navigation content valid and actions outside id
   }));
   assert.match(row, /data-resource-name="Server"/);
   assert.match(row, /class="manage-resource-identity"/);
-  assert.match(row, /Saved config<\/div><\/div><button/);
+  assert.match(row, /Saved config<\/div><\/div><div class="manage-resource-controls"><button/);
   assert.doesNotMatch(row, /manage-row-description|aria-busy/);
 });
 

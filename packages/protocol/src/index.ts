@@ -214,11 +214,18 @@ export const ModuleSource = z.object({
 });
 export type ModuleSource = z.infer<typeof ModuleSource>;
 
+export const McpConnection = z.object({
+  method: z.enum(['http', 'sse', 'stdio', 'unknown']),
+  target: z.string().optional().describe('HTTP/SSE hostname or local executable basename only; never URL credentials, path, query, fragment or command arguments.'),
+});
+export type McpConnection = z.infer<typeof McpConnection>;
+
 // Native Copilot MCP configuration and its default for future sessions.
 export const McpServerGlobal = z.object({
   name: z.string(),
   modules: z.array(ModuleSource).optional().describe('Modules verified against the native global configuration endpoint and currently loaded digest-pinned module declarations. Does not identify contributing roles or prove connectivity. Omitted when attribution is unproven.'),
   detail: z.string(),       // command / url summary
+  connection: McpConnection.optional().describe('Connection method and short target from native global configuration. Custom or unrecognized configurations remain unknown.'),
   defaultOn: z.boolean(),
   // Full (redacted) config for the detail pane — env/header VALUES are masked to
   // their keys so secrets never reach the client.
@@ -264,6 +271,7 @@ export const McpServerSession = z.object({
   name: z.string(),
   module: ModuleSource.optional().describe('Module and known contributing roles that declared this MCP name in this session handle role configuration. Not proof of the live connection identity; same-name native replacements cannot be verified.'),
   detail: z.string(),
+  connection: McpConnection.optional().describe('Only authoritative current session transport metadata. Omitted when unavailable; detail is configuration source, not transport. Global names and role declarations cannot establish live transport.'),
   status: McpServerStatus,
   enabled: z.boolean().describe('Configured and not explicitly disabled; does not imply connected or permitted to restart.'),
   error: z.string().optional(),

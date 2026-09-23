@@ -1,5 +1,6 @@
 import { useId, useState, type ReactNode } from 'react';
 import { useClippedText } from '../lib/useClippedText';
+import { resourceErrorSummary } from '../lib/resourcePresentation';
 
 export function ResourceSummary({ name, source, badge }: { name: ReactNode; source?: ReactNode; badge?: ReactNode }) {
   return <span className="resource-summary manage-row-main">
@@ -9,9 +10,9 @@ export function ResourceSummary({ name, source, badge }: { name: ReactNode; sour
 }
 
 // Native resource actions and their lifecycle stay with the caller.
-export function ResourceRow({ name, source, badge, control, status, description, connection = false, title }: {
+export function ResourceRow({ name, source, badge, control, status, feedback, description, connection = false, title }: {
   name: string; source: ReactNode; control: ReactNode; status: ReactNode;
-  badge?: ReactNode; description?: ReactNode; connection?: boolean; title?: string;
+  badge?: ReactNode; feedback?: ReactNode; description?: ReactNode; connection?: boolean; title?: string;
 }) {
   const identity = <>
     <div className="resource-name manage-row-name">{badge}<span className="resource-title-text">{name}</span></div>
@@ -21,8 +22,8 @@ export function ResourceRow({ name, source, badge, control, status, description,
   return <div className="resource-row manage-row manage-session-row" data-mcp={connection || undefined}
     data-resource-name={name} title={title}>
     <div className="manage-resource-identity">{identity}</div>
-    {control}
-    {status}
+    <div className="manage-resource-controls">{control}{status}</div>
+    {feedback}
   </div>;
 }
 
@@ -40,16 +41,15 @@ export function ResourceText({ text, label, lines = 1 }: { text: string; label: 
     : content;
 }
 
-export function ResourceError({ error, name }: { error: string; name: string }) {
+export function ResourceError({ error, name, label = '操作未确认' }: { error: string; name: string; label?: string }) {
   const id = useId();
   const [expanded, setExpanded] = useState(false);
-  return <>
-    <div className="manage-row-status" role="status">
-      <button type="button" className="manage-error-disclosure ck-button"
-        aria-label={`${expanded ? '收起' : '展开'}${name}错误详情`} aria-expanded={expanded} aria-controls={id}
-        title={expanded ? '收起错误详情' : '查看错误详情'}
-        onClick={() => setExpanded(!expanded)}>{expanded ? '收起' : '失败'}</button>
-    </div>
-    <div id={id} className="manage-row-error" hidden={!expanded}>未确认：{error}</div>
-  </>;
+  return <div className="manage-row-error">
+    <div id={`${id}-summary`} className="manage-error-summary" role="status">{label}：{resourceErrorSummary(error)}</div>
+    <button type="button" className="manage-error-disclosure ck-button"
+      aria-label={`${expanded ? '收起' : '展开'}${name}错误详情`} aria-expanded={expanded} aria-controls={id}
+      aria-describedby={`${id}-summary`}
+      onClick={() => setExpanded(!expanded)}>{expanded ? '收起' : '查看错误详情'}</button>
+    <div id={id} className="manage-error-full" hidden={!expanded}>{error}</div>
+  </div>;
 }

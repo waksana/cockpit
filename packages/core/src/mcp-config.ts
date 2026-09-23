@@ -1,3 +1,5 @@
+import type { McpConnection } from '@cockpit/protocol';
+
 // Display only. Copilot owns discovery, validation and persisted configuration.
 const hidden = '••••••';
 const sensitive = /token|secret|password|authorization|credential|api[-_]?key/i;
@@ -48,4 +50,32 @@ export function describeMcpServer(config: object): string {
     return [cfg.command, ...args].join(' ');
   }
   return 'custom';
+}
+
+export function mcpConnection(config: object): McpConnection {
+  const cfg = config as Record<string, unknown>;
+  const hasUrl = typeof cfg.url === 'string';
+  const hasCommand = typeof cfg.command === 'string';
+  // Native remote/local configs allow an omitted type; ambiguous or future
+  // discriminators must not be classified from whichever field happens to exist.
+  const type = cfg.type === undefined
+    ? (hasUrl && !hasCommand ? 'http' : hasCommand && !hasUrl ? 'stdio' : undefined) : cfg.type;
+  if (type === 'http' || type === 'sse') {
+    let target: string | undefined;
+    if (hasUrl) {
+      try {
+        const url = new URL(cfg.url as string);
+        if (url.protocol === 'http:' || url.protocol === 'https:') target = url.hostname || undefined;
+      } catch { /* Invalid URLs have no safe short target. */ }
+    }
+    return { method: type, ...(target ? { target } : {}) };
+  }
+  if (type === 'local' || type === 'stdio') {
+    // Validate the entire command first: an embedded argument may itself end
+    // in a path whose basename would otherwise look like a safe executable.
+    const command = typeof cfg.command === 'string' && /^[\w.@+:/\\-]+$/.test(cfg.command) ? cfg.command : undefined;
+    const target = command?.split(/[\\/]/).at(-1);
+    return { method: 'stdio', ...(target && /^[\w.@+-]+$/.test(target) ? { target } : {}) };
+  }
+  return { method: 'unknown' };
 }

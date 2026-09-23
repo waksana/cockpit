@@ -363,6 +363,17 @@ MCP 仅在原生 HTTP 配置 URL 与当前已加载模块声明的完整 origin�
 标注模块；不靠 MCP 名称、原生 `source` 或已选角色判断。Skill 仅在原生路径的真实路径命中
 当前已加载模块安装清单中的 `SKILL.md`，且实际字节的 SHA-256 与清单一致时标注模块。
 详情重新使用相同核验，不保留跨请求来源缓存；原生字段及 MCP 脱敏不变。
+`mcp/global` 另提供可选 `connection: {method, target?}`：`method` 为
+`http | sse | stdio | unknown`；依据原生配置类型区分 HTTP/SSE，本地 `local`
+归一为 `stdio`，无类型的原生 URL/command 配置分别采用原生 HTTP/stdio 默认。
+自定义、未知或有歧义的配置保持 `unknown`，不解析既有展示字符串猜测类型。
+`target` 仅为 HTTP/SSE hostname 或本地 executable basename，不包含 URL 用户信息、
+端口、路径、query、fragment 或命令参数；既有完整脱敏 `detail`/`config` 保留。
+`mcp/session` schema 允许相同字段，但当前 SDK 1.0.13 的 `mcp.list` 只公开
+source/status 和 server-advertised instructions，`McpHostState` 没有当前配置，
+所以当前会话响应省略 `connection`。`detail` 仍是 source/plugin，而不是连接方式；
+`session.mcp_servers_loaded` 事件虽有 transport，但不是当前读取时的连接配置权威，
+不能用历史事件、同名全局项或角色装配配置补造会话 transport。
 这些全局证据无法证明哪个角色实际贡献了原生全局配置，因此省略 `roles`，不把声明此资源的
 全部角色冒充贡献者。未加载/旧版本、未知端点或无法核验的文件不标注；不代表它们不是模块资源。
 模块来源仍不是连接、原生启用或 readiness 的证明。

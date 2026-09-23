@@ -118,11 +118,12 @@ test('session pages share flat density and multiline settings without changing c
   assert.match(tokens, /--host-text-title: var\(--font-size-16\);[^}]*--host-text-body: var\(--font-size-14\);[^}]*--host-text-meta: var\(--font-size-12\)/);
   assert.match(publicUi, /--ck-radius: var\(--host-radius-control\)/);
   assert.match(publicUi, /\.resource-row \{[^}]*border-bottom: 1px solid/);
-  assert.match(manage, /\.manage-session-row \{[^}]*grid-template-columns: minmax\(0, 1fr\) auto;/);
+  assert.match(manage, /\.manage-session-row \{[^}]*grid-template-columns: minmax\(0, 1fr\) fit-content\(35%\);/);
   assert.match(manage, /\.manage-row-status \{[^}]*min-height: calc/);
-  assert.match(manage, /\.manage-session-row > \.manage-row-status \{[^}]*grid-column: 2;[^}]*grid-row: 2;[^}]*justify-content: flex-end;/);
+  assert.match(manage, /\.manage-resource-controls \{[^}]*flex-direction: column;[^}]*gap: var\(--host-space-xs\);[^}]*align-self: start;/);
+  assert.doesNotMatch(manage, /\.manage-session-row > \.(?:switch|manage-row-status)/);
   assert.match(manage, /\.manage-session-row \{[^}]*padding-block: var\(--host-space-sm\);/);
-  assert.match(manage, /\.manage-resource-identity \{[^}]*grid-row: 1\/3;[^}]*flex-direction: column;[^}]*justify-content: center;[^}]*gap: var\(--host-space-xs\);/);
+  assert.match(manage, /\.manage-resource-identity \{[^}]*flex-direction: column;[^}]*justify-content: center;[^}]*gap: var\(--host-space-xs\);/);
   assert.match(info, /\.info-session-id-value \{[^}]*overflow-wrap: anywhere;[^}]*user-select: text;/);
   assert.doesNotMatch(info.match(/\.info-session-id-value \{([^}]*)\}/)![1], /ellipsis|hidden|sticky|line-clamp/);
   assert.match(publicUi, /\.ui-field \{[^}]*flex-direction: column;/);

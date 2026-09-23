@@ -11,8 +11,9 @@ import { ResourceStatus } from './SessionPanelKit';
 import { PaneBody } from './PaneHeader';
 import { ResourceSummary } from './ResourceRow';
 import { ModuleSourceBadge } from './ModuleLabel';
-import { Toggle } from './UI';
+import { SectionHeading, Toggle } from './UI';
 import { useGlobalResourceMutations } from '../features/session-settings/useGlobalResources';
+import { mcpConnectionLabel, skillSourceLabel } from '../lib/resourcePresentation';
 
 type Catalog<T> = ReturnType<typeof useKeyedResource<T[]>>;
 type GlobalToggle = (name: string, enabled: boolean) => Promise<void>;
@@ -62,7 +63,7 @@ function McpList({ selected, catalog, onChange }: {
 }) {
   const { data: rows, status, failed, pending, valid } = catalog;
   return <ListBody status={status} failed={failed} pending={pending} empty="没有配置 MCP 服务器">
-    {rows?.map(server => <NavRow key={server.name} section="mcp" name={server.name} sub={server.detail}
+    {rows?.map(server => <NavRow key={server.name} section="mcp" name={server.name} sub={mcpConnectionLabel(server.connection)}
       modules={server.modules} selected={selected} enabled={server.defaultOn} disabled={!valid} onChange={onChange} />)}
   </ListBody>;
 }
@@ -74,8 +75,12 @@ function McpDetail({ name, catalog }: { name: string; catalog: Catalog<McpServer
     : <StateNotice kind="empty" placement="pane">未找到该 MCP 服务器。</StateNotice>;
   return <PaneBody className="manage-detail">
     <ResourceStatus status={status} failed={failed} pending={pending} />
-    <div className="manage-detail-meta">{row.detail}</div>
-    {row.config && <pre className="manage-config">{JSON.stringify(row.config, null, 2)}</pre>}
+    <div className="manage-detail-meta">{mcpConnectionLabel(row.connection)}</div>
+    <section className="manage-config-section">
+      <SectionHeading level={2}>连接配置</SectionHeading>
+      {row.config ? <pre className="manage-config">{JSON.stringify(row.config, null, 2)}</pre>
+        : <StateNotice kind="info">未提供连接配置</StateNotice>}
+    </section>
   </PaneBody>;
 }
 
@@ -85,7 +90,7 @@ function SkillsList({ selected, catalog, onChange }: {
   const { data: rows, status, failed, pending, valid } = catalog;
   return <ListBody status={status} failed={failed} pending={pending} empty="没有可用的 skill">
     {rows?.map(skill => <NavRow key={skill.name} section="skills" name={skill.name}
-      sub={skill.description || skill.source} modules={skill.modules} selected={selected}
+      sub={skill.description || skillSourceLabel(skill.source)} modules={skill.modules} selected={selected}
       enabled={skill.enabled} disabled={!valid} onChange={onChange} />)}
   </ListBody>;
 }
@@ -96,7 +101,7 @@ function SkillDetail({ name, revision }: { name: string; revision: number }) {
   const { data, status, failed, pending } = useKeyedResource(`global:skill:${name}`, load, revision);
   if (!data) return status ? <ResourceStatus status={status} failed={failed} pending={pending} placement="pane" />
     : <StateNotice kind="empty" placement="pane">未找到该 skill。</StateNotice>;
-  const meta = [data.source, data.userInvocable ? '可手动调用' : null].filter(Boolean).join(' · ');
+  const meta = [skillSourceLabel(data.source), data.userInvocable ? '可手动调用' : null].filter(Boolean).join(' · ');
   return <PaneBody className="manage-detail">
     <ResourceStatus status={status} failed={failed} pending={pending} />
     {meta && <div className="manage-detail-meta">{meta}</div>}
