@@ -13,7 +13,7 @@ export function SessionControlActionButton({ identity, label, icon, waiting = 'è
 }) {
   const action = useKeyedAction(identity);
   return <div className="chat-control-action">
-    <IconButton ref={controlRef} icon={icon} iconSize={16} busy={action.busy} disabled={disabled || action.busy}
+    <IconButton ref={controlRef} icon={icon} iconSize={16} busy={action.busy || undefined} disabled={disabled || action.busy}
       label={action.busy ? waiting : label} title={action.busy ? waiting : label}
       onClick={() => { void action.run(onAction); }} />
     {action.error && <span role="alert">{action.error}</span>}
