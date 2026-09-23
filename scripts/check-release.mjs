@@ -32,7 +32,11 @@ export function checkSourceVersion(repository = resolve(fileURLToPath(new URL('.
     'MCP self-reported version must match the workspace');
   const notes = readFileSync(resolve(repository, 'docs/release-notes.md'), 'utf8').split(/\r?\n/);
   assert.equal(notes[0], `# Cockpit ${version}`, 'Release notes must match the workspace version');
-  const extra = notes.slice(1).find(line => /^#\s/.test(line) || /^#{1,6}\s.*(\bunreleased\b|\bv?\d+\.\d+\.\d+\b)/i.test(line));
+  let fenced = false;
+  const extra = notes.slice(1).find(line => {
+    if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+    return !fenced && (/^#\s/.test(line) || /^#{1,6}\s+(Cockpit\s+)?(v?\d+\.\d+\.\d+|unreleased)\b/i.test(line));
+  });
   assert.equal(extra, undefined, 'Release notes must describe only the current version; earlier notes belong in GitHub Releases');
   return version;
 }

@@ -77,10 +77,16 @@ Copilot's defaults (normally `~/.copilot`, or `COPILOT_HOME`); `COCKPIT_HOME`
 does not affect it.
 
 - If this OS user already uses Copilot CLI, nothing else is needed.
-- Otherwise sign in once as described in the upstream
+- Otherwise save a credential once, following the upstream
   [authentication guide](https://github.com/github/copilot-sdk/blob/main/docs/auth/authenticate.md)
-  (for example `/login` in Copilot CLI). Keep tokens out of shell history,
-  repository files and chat.
+  (its `main` may be ahead of the pinned SDK). No separate CLI is required: the
+  bundled SDK's experimental `account.login` RPC validates and stores a token
+  without creating a session. While saving, run no other Cockpit/SDK host on the
+  same native directory. `storedInVault: false` means nothing was saved; `true` does
+  not prove encrypted storage (native config may allow plaintext), and do not
+  disable secure storage for convenience. GitHub Enterprise follows its own native
+  auth docs. Keep tokens out of command arguments, shell history, repository files,
+  logs and chat.
 - Do not set `COPILOT_CLI_PATH` or replace the bundled runtime with a global CLI.
   The service checks the pinned runtime/protocol at startup and refuses others.
 - Custom model providers (BYOK) are not configurable through Cockpit; see

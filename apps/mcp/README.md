@@ -270,8 +270,9 @@ whole file or discard other servers:
 ```
 `type:"local"`, `command`, `args`, `tools:["*"]` and `env` match `copilot mcp add --json` output.
 Omit `COCKPIT_API_TOKEN` only when the backend/gateway does not require it. The built entry mirrors
-root `start:mcp`; `apps/mcp/package.json` exposes the `cockpit-mcp-server` bin at `dist/index.js`
-and `pnpm start:mcp` runs `node --import tsx dist/index.js` from `apps/mcp`.
+root `pnpm start:mcp` (`node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js`
+from the repository root); `apps/mcp/package.json` exposes the `cockpit-mcp-server` bin at
+`dist/index.js`, and `pnpm --filter @cockpit/mcp start` runs `node --import tsx dist/index.js`.
 
 After editing user configuration, new sessions pick it up through native MCP discovery. For a
 running backend, `cockpit_refresh_mcp` (`mcp/refresh`) rereads native MCP definitions, and
@@ -288,6 +289,7 @@ action forks the full current history and explains shared workspace/cold-resume 
 an unloaded child, emits `session/added`, sends no prompt, and leaves Web settings on the parent
 until the child is selected from the session list or explicit **Open new session** link. An
 unconfirmed response keeps a warning instead of claiming creation or retrying.
+Inherited history is conversation context, not a new instruction or authorization to act.
 
 API discovery: `GET /capabilities?name=session/fork`.
 
@@ -326,7 +328,7 @@ hot update.
 | Model/mode | Restored from native persisted history at the chosen boundary, not copied from the sidebar. |
 | cwd/files | Same working directory; no Git branch/worktree/filesystem snapshot/credential sandbox. `cwd` overrides are rejected; use `session/new` in a prepared worktree for isolation. |
 | Skills/MCP | Cold-resume discovery/config applies. Session-only disabled choices do not carry over; global config still applies. |
-| Plans/todos | Current `plan.md` is copied even if the boundary predates it; fixture SQL todos do not carry over. |
+| Plans/todos | Current `plan.md` is copied even if the boundary predates it; fixture SQL todos do not carry over. Treat inherited plans as context, not a new assignment or a point-in-time filesystem snapshot. |
 | Tasks/queue | Active tasks, queued prompts, callbacks and decisions do not enter child registries; parent registries are unchanged. |
 | Schedules | Prefixes containing `session.schedule_created` and currently active timers are rejected; a boundary before schedule creation is allowed once no live timers remain. |
 
