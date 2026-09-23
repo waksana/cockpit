@@ -4,10 +4,13 @@
 // validate against them, so the frontend and backend can never drift.
 
 import { z } from 'zod';
+export { ErrorCodes, errorCode, isErrorCode } from './errors.ts';
+export type { ErrorCode } from './errors.ts';
 import { snapshotModuleEventPayload } from './module-event.ts';
 export { MAX_MODULE_EVENT_BYTES, snapshotModuleEventPayload } from './module-event.ts';
 export type { ModuleEventPayload } from './module-event.ts';
 import type { ChatMessage } from './validation.ts';
+import type { ErrorCode } from './errors.ts';
 export type { ChatMessage, ChatRole, SubagentInfo, ToolCall } from './validation.ts';
 
 export { CHAT_EVENT_TYPES, NativeChatEvent, NativeChatRead, NativeChatPage, NativeChatStreamRequest, NativeChatStreamEvent } from './native-chat.ts';
@@ -323,7 +326,7 @@ export type SessionResourcesPrepare = z.infer<typeof SessionResourcesPrepare>;
 const ResourcePreparationEffect = z.enum(['not_attempted', 'unchanged', 'enabled', 'unconfirmed']);
 export const RESOURCE_PREPARATION_ERROR_LIMIT = 2000;
 // skills/read error code for a name absent from the discovered skill catalog.
-export const SKILL_NOT_FOUND = 'SKILL_NOT_FOUND';
+export const SKILL_NOT_FOUND = 'SKILL_NOT_FOUND' satisfies ErrorCode;
 export const ResourcePreparationResult = z.object({
   sessionId: ResourceName,
   ok: z.boolean(),

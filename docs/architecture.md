@@ -85,6 +85,31 @@ with their request or connection.
 - Schedule creation validates the raw single-line prompt first; if creation
   cannot be confirmed, the result says it may have been created and is never retried.
 
+<a id="error-codes"></a>
+## Error codes
+
+A failed intent responds `{ error, code? }`. `error` is human-readable and may
+change; clients branch on `code` and the HTTP status. Every code and its status
+live in `ErrorCodes` (`packages/protocol/src/errors.ts`); Engine throws
+`CockpitError` (`packages/core/src/errors.ts`), whose status comes from that table.
+
+| Status | Codes | Meaning |
+|---|---|---|
+| 400 | `INVALID_REQUEST`, `INVALID_INTENT_BODY`, `INVALID_DIRECTORY_PATH` | Invalid input; nothing was attempted. |
+| 404 | `SESSION_NOT_FOUND`, `SKILL_NOT_FOUND`, `MCP_NOT_FOUND`, `ROLE_NOT_FOUND`, `QUEUE_ITEM_NOT_FOUND`, `UNKNOWN_INTENT` | The addressed item does not exist. |
+| 409 | `SESSION_BUSY`, `SESSION_TRANSITION`, `SESSION_UNLOADED`, `REQUEST_NOT_PENDING`, `STALE_SESSION_CONTROLS`, `STATE_CONFLICT` | Current state rejects the request; retry only after it changes. |
+| 409 | `SESSION_CREATION_INCOMPLETE`, `SESSION_CREATION_UNCERTAIN` | Creation effect is uncertain; the body carries `sessionId`. Inspect it, never retry blindly. |
+| 499 | `REQUEST_ABORTED` | The client disconnected during a read. |
+| 500 | `INVALID_INTENT_RESULT` | Cockpit's result failed its own schema. |
+| 501 | `UNSUPPORTED` | The public SDK adapter cannot do this; nothing changed. |
+| 503 | `ENGINE_STOPPED`, `UNAVAILABLE`, `SERVICE_CLOSING`, `SERVICE_SHUTTING_DOWN` | Engine, roles or service cannot accept work now. |
+
+A 500 without a code is an unexpected or native-unconfirmed failure: read state
+before acting. Intent results that already report uncertainty (for example
+`possiblyCreated`, `unconfirmed`) are unchanged. `fs/listDir` filesystem failures
+keep their errno code (`ENOENT` 404, `ENOTDIR` 400, `EACCES`/`EPERM` 403), and
+module routes use their own `MODULE_*` codes.
+
 <a id="authentication"></a>
 ## Authentication and trust
 

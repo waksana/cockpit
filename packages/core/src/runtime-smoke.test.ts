@@ -10,6 +10,7 @@ import type { CopilotClient, CopilotSession, GetAuthStatusResponse, SessionConfi
 import { NativeChatRead } from '@cockpit/protocol';
 import type { Engine, EngineRuntime, NativeObservation } from './engine.ts';
 import { CHAT_EVENT_TYPES } from './native-chat.ts';
+import { errorWithCode } from '../test-support/errors.ts';
 
 type PersistedPage = Awaited<ReturnType<CopilotClient['rpc']['sessions']['readPersistedEvents']>>;
 const draftModels = ['confirmed-model', 'unconfirmed-model', 'first-model', 'last-model'].map(id => ({
@@ -563,7 +564,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
     assert.deepEqual(page.read, { rpc: 1, events: page.events.length });
     assert.equal(runtime.liveCount, 0, 'Engine native chat must remain passive');
     assert.equal(requests.length, requestCount);
-    await assert.rejects(bounded(engine.getPlan(a.sessionId)), /unavailable while unloaded/);
+    await assert.rejects(bounded(engine.getPlan(a.sessionId)), errorWithCode('SESSION_UNLOADED'));
     assert.equal(runtime.liveCount, 0);
     assert.equal((await bounded(engine.prompt(a.sessionId, 'SMOKE_RESUME'))).ok, true);
     resumed++;
@@ -1218,7 +1219,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       assert.ok(history.events.some(event => event.type === 'assistant.message' && event.data.content === 'deterministic SMOKE_ENGINE done'));
       for (const read of [() => host.getPlan(id), () => host.getPanels(id),
         () => host.listSessionSkills(id), () => host.listSchedules(id)]) {
-        await assert.rejects(bounded<unknown>(read()), /unavailable while unloaded.*explicitly resume/);
+        await assert.rejects(bounded<unknown>(read()), errorWithCode('SESSION_UNLOADED'));
       }
       assert.deepEqual(await bounded(host.listSessionMcp(id)), { loaded: false, servers: [] });
       const beforeMissingRead = passiveRead.mock.callCount();
@@ -1253,7 +1254,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       await bounded(host.unload(id));
       assert.equal((await host.getMeta(id))?.loaded, false, 'Manual close must not be blocked by a future schedule');
       assert.equal((await host.getMeta(id))?.scheduleCount, undefined, 'Unloaded metadata must not invent cached schedule state');
-      await assert.rejects(host.listSchedules(id), /unavailable while unloaded.*explicitly resume/);
+      await assert.rejects(host.listSchedules(id), errorWithCode('SESSION_UNLOADED'));
       assert.deepEqual(calls.filter(call => call.id === emptyId), [], 'A configured draft must receive no prompt or failed resume');
       assert.equal(createIds.filter(createdId => createdId === emptyId).length, 1);
       const beforeReloadRequests = requests.length;
@@ -1261,7 +1262,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       const beforeReloadMtime = statSync(journal).mtimeMs;
       const prefsPath = join(dirs.state!, 'engine-idle-prefs.json');
       assert.equal(existsSync(prefsPath), false);
-      await assert.rejects(bounded(host.reload(emptyId)), /Unknown session/);
+      await assert.rejects(bounded(host.reload(emptyId)), errorWithCode('SESSION_NOT_FOUND'));
       assert.equal(createIds.filter(createdId => createdId === emptyId).length, 1,
         'Explicit reload must never recreate an absent session');
       assert.equal(watched.get(emptyId), emptyOriginal);
@@ -1273,7 +1274,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       assert.equal(existsSync(prefsPath), false,
         'Draft settings must not gain a parallel preference journal');
       assert.deepEqual(calls.filter(call => call.id === emptyId), []);
-      await assert.rejects(bounded(host.prompt(emptyId, 'SMOKE_ENGINEFIRST')), /Unknown session/);
+      await assert.rejects(bounded(host.prompt(emptyId, 'SMOKE_ENGINEFIRST')), errorWithCode('SESSION_NOT_FOUND'));
       assert.equal(createIds.filter(createdId => createdId === emptyId).length, 1);
       assert.deepEqual(calls.filter(call => call.id === emptyId), []);
       assert.equal(requests.filter(request => request.marker === 'SMOKE_ENGINEFIRST').length, 0);
@@ -1497,7 +1498,7 @@ for (const setting of Object.keys(draftSettings) as (keyof typeof draftSettings)
       if (closure === 'native idle') h.expire(id);
       else await h.engine.unload(id);
       const metadataReads = h.runtime.getSessionMetadata.mock.callCount();
-      await assert.rejects(h.engine.prompt(id, 'first fixture prompt'), /Unknown session/);
+      await assert.rejects(h.engine.prompt(id, 'first fixture prompt'), errorWithCode('SESSION_NOT_FOUND'));
       assert.equal(h.natives.get(id), original);
       assert.deepEqual(h.runtime.createSession.mock.calls.map(call => call.arguments[0].sessionId), [id]);
       assert.equal(h.runtime.getSessionMetadata.mock.callCount(), metadataReads + 1);
@@ -1525,7 +1526,7 @@ test('empty session: absent native chat surfaces read errors without allocation 
   assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
   assert.equal(h.runtime.rpc.sessions.save.mock.callCount(), 0);
   assert.equal(existsSync(h.prefsFile), false);
-  await assert.rejects(h.engine.reload(id), /Unknown session/);
+  await assert.rejects(h.engine.reload(id), errorWithCode('SESSION_NOT_FOUND'));
 });
 
 for (const action of ['chat', 'reload'] as const) {
@@ -1571,7 +1572,7 @@ test('empty session: persisted native settings win over prior handle settings on
   h.expire(id);
   h.rows.delete(id);
   h.saved.delete(id);
-  await assert.rejects(h.engine.reload(id), /Unknown session/);
+  await assert.rejects(h.engine.reload(id), errorWithCode('SESSION_NOT_FOUND'));
   assert.equal(h.runtime.createSession.mock.callCount(), 1, 'A previously persisted session never becomes a recreatable draft again');
 });
 
@@ -1587,7 +1588,7 @@ test('native absence: confirmed missing listed sessions are removed without recr
   await h.engine.refreshList();
   assert.equal((await h.engine.getMeta(id)), null);
   await assert.rejects(h.chat(id), { statusCode: 404 });
-  await assert.rejects(h.engine.prompt(id, 'must not recreate after removal'), /Unknown session/);
+  await assert.rejects(h.engine.prompt(id, 'must not recreate after removal'), errorWithCode('SESSION_NOT_FOUND'));
   assert.equal(h.runtime.createSession.mock.callCount(), 0);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
   assert.equal(h.runtime.rpc.sessions.readPersistedEvents.mock.callCount(), 1);
@@ -1618,8 +1619,8 @@ for (const presence of ['missing', 'unindexed', 'unknown'] as const) {
     if (presence === 'missing') {
       assert.equal((await h.engine.getMeta(id)), null);
       assert.deepEqual((await h.engine.snapshot()).sessions, []);
-      await assert.rejects(h.engine.reload(id), /Unknown session/);
-      await assert.rejects(h.engine.prompt(id, 'must not recreate removed session'), /Unknown session/);
+      await assert.rejects(h.engine.reload(id), errorWithCode('SESSION_NOT_FOUND'));
+      await assert.rejects(h.engine.prompt(id, 'must not recreate removed session'), errorWithCode('SESSION_NOT_FOUND'));
       await assert.rejects(h.chat(id), { statusCode: 404 });
     } else if (presence === 'unindexed') {
       assert.equal((await h.engine.getMeta(id))?.title, 'Persisted native title', 'unindexed metadata is read natively, not restored locally');
@@ -1660,7 +1661,7 @@ for (const direction of ['forward', 'backward'] as const) {
     assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
     h.rows.delete(id);
     h.journals.delete(id);
-    await assert.rejects(h.engine.reload(id), /Unknown session/);
+    await assert.rejects(h.engine.reload(id), errorWithCode('SESSION_NOT_FOUND'));
     assert.equal(h.runtime.createSession.mock.callCount(), 1, 'Observed history permanently disqualifies draft recreation');
   });
 }
@@ -1686,7 +1687,7 @@ for (const mutation of ['send', 'compact', 'schedule'] as const) {
     assert.equal(h.runtime.resumeSession.mock.callCount(), 0, 'A rejected dispatch is not a resume/retry signal');
     assert.equal(h.runtime.createSession.mock.callCount(), 1);
     h.expire(id);
-    await assert.rejects(h.engine.reload(id), /Unknown session/);
+    await assert.rejects(h.engine.reload(id), errorWithCode('SESSION_NOT_FOUND'));
     assert.equal(h.runtime.createSession.mock.callCount(), 1);
     assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
     assert.equal(dispatch.mock.callCount(), 1);
@@ -1719,7 +1720,7 @@ for (const setting of ['rename', 'model', 'mode'] as const) {
     readback.mock.restore();
     assert.notDeepEqual(await draftProjection(h.engine, id), confirmed, 'fresh native state may reflect an uncertain mutation');
     h.expire(id);
-    await assert.rejects(h.engine.reload(id), /Unknown session/);
+    await assert.rejects(h.engine.reload(id), errorWithCode('SESSION_NOT_FOUND'));
     assert.equal(await h.engine.getMeta(id), null);
     assert.equal(h.natives.get(id), native);
     assert.equal(h.runtime.createSession.mock.callCount(), 1);
@@ -1756,7 +1757,7 @@ test('draft recovery: overlapping settings retain the last confirmed native mode
   const confirmed = (await draftProjection(h.engine, id));
   assert.equal(confirmed.model, 'last-model');
   h.expire(id);
-  await assert.rejects(h.engine.reload(id), /Unknown session/);
+  await assert.rejects(h.engine.reload(id), errorWithCode('SESSION_NOT_FOUND'));
   assert.equal(await h.engine.getMeta(id), null, 'closed wrappers do not retain confirmed settings');
   assert.equal(h.runtime.createSession.mock.callCount(), 1);
 });
@@ -1774,7 +1775,7 @@ test('draft recovery: pending MCP configuration still rejects a concurrent toggl
   const toggling = h.engine.toggleSessionMcp(id, 'fixture-mcp', true);
   try {
     await eventually(async () => (await h.engine.getMeta(id))?.activeMcpOperations === 1, 'Native MCP configuration must be pending');
-    await assert.rejects(bounded(h.engine.toggleSessionMcp(id, 'fixture-mcp', false), 500), /already in progress/);
+    await assert.rejects(bounded(h.engine.toggleSessionMcp(id, 'fixture-mcp', false), 500), errorWithCode('SESSION_BUSY'));
   } finally {
     release();
     await toggling;
@@ -1796,7 +1797,7 @@ test('draft recovery: pending MCP configuration still rejects a concurrent toggl
     assert.equal(h.runtime.liveCount, 1);
     assert.equal(native.send.mock.callCount(), 0);
     h.expire(id);
-    await assert.rejects(h.engine.reload(id), /Unknown session/);
+    await assert.rejects(h.engine.reload(id), errorWithCode('SESSION_NOT_FOUND'));
     assert.equal(h.runtime.createSession.mock.callCount(), 1);
     assert.equal(native.rpc.name.set.mock.callCount(), 0);
   });

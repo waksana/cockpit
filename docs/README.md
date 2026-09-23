@@ -31,7 +31,7 @@ work. Suggested path: [public TypeScript contract](module-contract.md#public-api
 
 | Page | Contents |
 | --- | --- |
-| [Architecture](architecture.md) | Repository map, host/SDK/module responsibilities, native authority, auth, shutdown, target gaps. |
+| [Architecture](architecture.md) | Repository map, host/SDK/module responsibilities, native authority, error codes, auth, shutdown, target gaps. |
 | [Product requirements R1–R8](product-requirements.md) | Confirmed positioning, boundaries and accepted costs; not a claim that every target is implemented. |
 | [Native chat](native-chat.md) | Native events, cursors, history/live/reconnect, the Web reading window, media. |
 | [Frontend guidelines](frontend-guidelines.md) | Native-first UI principles, minimal JS, truthful state, review checklist. |
@@ -52,6 +52,7 @@ work. Suggested path: [public TypeScript contract](module-contract.md#public-api
 | What the product should do | Confirmed R1–R8; unconfirmed proposals are never written as requirements. |
 | What the source does | The current commit and its verification; docs are corrected to match. |
 | What the API accepts | [`Intents` and schemas](../packages/protocol/src/index.ts) and a running instance's `GET /capabilities`. |
+| How the API fails | [`ErrorCodes`](../packages/protocol/src/errors.ts); see [error codes](architecture.md#error-codes). |
 | What a package contains | [Releasing](releasing.md), package/lock files and the actual `runtime-manifest.json`. |
 | What an instance runs | Its `/version`, `/health` and package identity. |
 | Which versions pair | [Module catalog](modules.md) and GitHub Releases. |

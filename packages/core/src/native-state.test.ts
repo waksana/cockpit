@@ -6,6 +6,7 @@ import { test, type TestContext } from 'node:test';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import type { CopilotSession, SessionConfig, SessionEvent, SessionMetadata } from '@github/copilot-sdk';
 import { Engine, type EngineRuntime } from './engine.ts';
+import { errorWithCode } from '../test-support/errors.ts';
 
 type Rpc = CopilotSession['rpc'];
 const runningAgent = (id: string): Awaited<ReturnType<Rpc['tasks']['list']>>['tasks'][number] => ({
@@ -200,8 +201,8 @@ test('control writes serialize and retain lifecycle ownership through partial fa
   await nextTurn();
   assert.equal(h.rpc.queue.clear.mock.callCount(), 0);
   assert.equal(await h.engine.busyCount(), 1);
-  await assert.rejects(h.engine.unload('native-id'), /progress|protected/);
-  await assert.rejects(h.engine.stop(), /progress|protected/);
+  await assert.rejects(h.engine.unload('native-id'), errorWithCode('SESSION_BUSY'));
+  await assert.rejects(h.engine.stop(), errorWithCode('SESSION_BUSY'));
   release();
   assert.equal((await clearing).ok, false);
   assert.equal((await second).ok, true);
@@ -216,7 +217,7 @@ test('native handle closure cannot release an outstanding control write lease', 
   await nextTurn();
   h.closeNative();
   assert.equal(await h.engine.busyCount(), 1);
-  await assert.rejects(h.engine.reload('native-id'), /progress|protected/);
+  await assert.rejects(h.engine.reload('native-id'), errorWithCode('SESSION_BUSY'));
   release();
   const result = await clearing;
   assert.equal(result.ok, false);
@@ -827,9 +828,9 @@ test('passive unloaded reads never resume, including failed resource reads', asy
   await h.engine.start();
   await h.engine.getMeta('native-id');
   await h.engine.listLive();
-  await assert.rejects(h.engine.getPlan('native-id'), /unloaded/i);
-  await assert.rejects(h.engine.reloadSessionMcp('native-id'), /unloaded/i);
-  await assert.rejects(h.engine.respondAsk('native-id', 'old-request', 'answer', true), /no longer pending/);
+  await assert.rejects(h.engine.getPlan('native-id'), errorWithCode('SESSION_UNLOADED'));
+  await assert.rejects(h.engine.reloadSessionMcp('native-id'), errorWithCode('SESSION_UNLOADED'));
+  await assert.rejects(h.engine.respondAsk('native-id', 'old-request', 'answer', true), errorWithCode('REQUEST_NOT_PENDING'));
   assert.deepEqual(await h.engine.listSessionMcp('native-id'), { loaded: false, servers: [] });
   assert.equal(h.native.live, false);
   assert.equal(h.retained().size, 0);
@@ -857,10 +858,10 @@ test('safety is read from native even without events and failures prevent closur
   await h.engine.reload('native-id');
   h.native.pendingMcp = ['connecting'];
   assert.equal(await h.engine.busyCount(), 1);
-  await assert.rejects(h.engine.unload('native-id'), /protected/);
+  await assert.rejects(h.engine.unload('native-id'), errorWithCode('SESSION_BUSY'));
   h.native.pendingMcp = [];
   h.native.busy = true;
-  await assert.rejects(h.engine.stop(), /protected/);
+  await assert.rejects(h.engine.stop(), errorWithCode('SESSION_BUSY'));
   h.native.busy = false;
   h.rpc.metadata.activity.mock.mockImplementationOnce(async () => { throw new Error('safety unavailable'); });
   await assert.rejects(h.engine.unload('native-id'), /safety unavailable/);
@@ -877,7 +878,7 @@ test('real decision contacts survive reads and release only after response', asy
   const meta = await h.engine.getMeta('native-id');
   assert.ok(meta?.ask);
   assert.equal(await h.engine.busyCount(), 1);
-  await assert.rejects(h.engine.unload('native-id'), /protected/);
+  await assert.rejects(h.engine.unload('native-id'), errorWithCode('SESSION_BUSY'));
   await assert.rejects(h.engine.respondAsk('native-id', meta.ask.requestId, 'no', false), /offered/);
   assert.equal((await h.engine.getMeta('native-id'))?.ask?.requestId, meta.ask.requestId);
   await h.engine.respondAsk('native-id', meta.ask.requestId, 'yes', false);
@@ -917,7 +918,7 @@ test('a new native event racing the safety read prevents an idle confirmation', 
       parentId: null, data: { turnId: 'new-turn' } });
     return { hasActiveWork: false, abortable: false };
   });
-  await assert.rejects(h.engine.unload('native-id'), /protected/);
+  await assert.rejects(h.engine.unload('native-id'), errorWithCode('SESSION_BUSY'));
   assert.equal(h.native.live, true);
   await h.engine.unload('native-id');
   await h.engine.stop();
@@ -932,7 +933,7 @@ test('fork and metadata reads cannot enter another operation closing lock', asyn
   t.mock.method(h.runtime, 'closeSession', async () => { await hold; h.native.live = false; });
   const unloading = h.engine.unload('native-id');
   await nextTurn();
-  await assert.rejects(h.engine.forkSession('native-id'), /transition|progress/i);
+  await assert.rejects(h.engine.forkSession('native-id'), errorWithCode('SESSION_BUSY', 'SESSION_TRANSITION'));
   await assert.rejects(h.engine.getMeta('native-id'), { code: 'SESSION_TRANSITION' });
   assert.equal(h.retained().get('native-id')?.closing, true);
   release();

@@ -19,7 +19,7 @@ import { existsSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Engine, OfficialRuntime } from '@cockpit/core';
-import { Intents, type IntentBody, type IntentName, type IntentResult, type ServerEvent, type Snapshot } from '@cockpit/protocol';
+import { ErrorCodes, Intents, errorCode, type ErrorCode, type IntentBody, type IntentName, type IntentResult, type ServerEvent, type Snapshot } from '@cockpit/protocol';
 import { isIntentName, registerCapabilities } from './capabilities.ts';
 import { GracefulShutdown } from './shutdown.ts';
 import { registerChatStream } from './chat-stream.ts';
@@ -434,25 +434,31 @@ const handlers: IntentHandlers = {
 };
 
 class IntentBoundaryError extends Error {
-  constructor(message: string, readonly statusCode: number, readonly code: string) {
+  readonly statusCode: number;
+  constructor(message: string, readonly code: ErrorCode) {
     super(message);
+    this.statusCode = ErrorCodes[code];
   }
 }
 
 async function dispatch<K extends IntentName>(name: K, body: unknown, signal?: AbortSignal): Promise<IntentResult<K>> {
   const input = Intents[name].body.safeParse(body === undefined ? {} : body);
-  if (!input.success) throw new IntentBoundaryError(input.error.message, 400, 'INVALID_INTENT_BODY');
+  if (!input.success) throw new IntentBoundaryError(input.error.message, 'INVALID_INTENT_BODY');
   // Zod's indexed schema union loses the key/value correlation; the mapped
   // handlers retain it. Assertions restore that correlation after validation.
   const result = await handlers[name](input.data as IntentBody<K>, signal);
   const output = Intents[name].result.safeParse(result);
   if (!output.success) {
-    throw new IntentBoundaryError(`Invalid result for ${name}: ${output.error.message}`, 500, 'INVALID_INTENT_RESULT');
+    throw new IntentBoundaryError(`Invalid result for ${name}: ${output.error.message}`, 'INVALID_INTENT_RESULT');
   }
   return output.data as IntentResult<K>;
 }
 
+// A protocol code fixes the status; other errors may carry an explicit
+// statusCode (e.g. listDir filesystem errors); anything else is a 500.
 function errorStatus(error: unknown): number {
+  const code = errorCode(error);
+  if (code) return ErrorCodes[code];
   if (error && typeof error === 'object' && 'statusCode' in error
     && typeof error.statusCode === 'number' && Number.isInteger(error.statusCode)
     && error.statusCode >= 400 && error.statusCode <= 599) return error.statusCode;
@@ -493,7 +499,7 @@ function retainResponse(reply: FastifyReply): () => void {
 
 app.post('/intent/*', async (req, reply) => {
   const name = (req.params as Record<string, string>)['*'];
-  if (name === undefined || !isIntentName(name)) { reply.code(404); return { error: `unknown intent: ${name}` }; }
+  if (name === undefined || !isIntentName(name)) { reply.code(404); return { code: 'UNKNOWN_INTENT', error: `unknown intent: ${name}` }; }
   // Body parsing may have overlapped the transition since onRequest ran.
   const phase = shutdown.snapshot().phase;
   if (!['running', 'waiting'].includes(phase)) {

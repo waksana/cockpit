@@ -1,4 +1,5 @@
 import type { CopilotSession, SessionEvent } from '@github/copilot-sdk';
+import { invalid } from './errors.ts';
 
 // Keep this filter aligned with the safety reducer below, not the chat display
 // filter. Required user/tool events still carry their native bodies.
@@ -20,8 +21,8 @@ export async function validateForkHistory(
   const tools = new Set<string>();
   const agents = new Set<string>();
   const settled = () => {
-    if (turn || tools.size || agents.size) throw new Error('Fork boundary contains unfinished work; choose a later settled user-message boundary');
-    if (!messages) throw new Error('Fork requires existing conversation history before the boundary');
+    if (turn || tools.size || agents.size) throw invalid('Fork boundary contains unfinished work; choose a later settled user-message boundary');
+    if (!messages) throw invalid('Fork requires existing conversation history before the boundary');
   };
   for (;;) {
     const page = await read({ cursor, direction: 'forward', max: 1000, types: FORK_HISTORY_TYPES, agentScope: 'all', includeEphemeral: false });
@@ -30,12 +31,12 @@ export async function validateForkHistory(
       const root = !event.agentId && !('agentId' in event.data && event.data.agentId)
         && !('parentToolCallId' in event.data && event.data.parentToolCallId);
       if (event.id === toEventId) {
-        if (event.type !== 'user.message' || !root) throw new Error('toEventId must identify a root user.message event (exclusive boundary)');
+        if (event.type !== 'user.message' || !root) throw invalid('toEventId must identify a root user.message event (exclusive boundary)');
         settled();
         return;
       }
       if (event.type === 'session.schedule_created') {
-        throw new Error('Fork history contains a schedule; choose a boundary before its creation or create a new session instead');
+        throw invalid('Fork history contains a schedule; choose a boundary before its creation or create a new session instead');
       }
       if (event.type === 'user.message' && root) messages++;
       if (event.type === 'assistant.turn_start' && root) turn = true;
@@ -46,7 +47,7 @@ export async function validateForkHistory(
       if (event.type === 'subagent.completed' || event.type === 'subagent.failed') agents.delete(event.data.toolCallId);
     }
     if (!page.hasMore) {
-      if (toEventId) throw new Error('Fork boundary was not found in the source session');
+      if (toEventId) throw invalid('Fork boundary was not found in the source session');
       settled();
       return;
     }

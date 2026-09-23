@@ -1,6 +1,7 @@
 import type { CopilotClient, CopilotSession, SessionEvent } from '@github/copilot-sdk';
 import { CHAT_EVENT_TYPES, NativeChatRead, type NativeChatEvent, type NativeChatPage } from '@cockpit/protocol';
 import { normalizeEvent } from './sdk-types.ts';
+import { CockpitError } from './errors.ts';
 
 type PassiveRead = CopilotClient['rpc']['sessions']['readPersistedEvents'];
 type LiveRead = CopilotSession['rpc']['eventLog']['read'];
@@ -43,9 +44,7 @@ export async function readNativeChat(
   let rpc = 0;
   let liveCursor: string | undefined;
   if (query.source === 'live' && !readers.live) {
-    throw Object.assign(new Error('Native session is unloaded; this cursor requires an active session.'), {
-      statusCode: 409, code: 'SESSION_UNLOADED',
-    });
+    throw new CockpitError('SESSION_UNLOADED', 'Native session is unloaded; this cursor requires an active session.');
   }
   if (query.bootstrap && readers.live && query.source === 'live') {
     liveCursor = (await readers.live.tail()).cursor;

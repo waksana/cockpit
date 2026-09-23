@@ -6,6 +6,7 @@ import { z } from 'zod';
 import * as Protocol from './index.ts';
 import { ChatMessage } from './validation.ts';
 import {
+  ErrorCodes, errorCode, isErrorCode, SKILL_NOT_FOUND,
   SessionMeta,
   SessionBrief,
   SessionPanels,
@@ -1150,4 +1151,18 @@ test('every intent body rejects unknown keys at every object level', () => {
   const typo = Intents.setModel.body.safeParse({ sessionId: 's', modelId: 'm', reasoning_effort: 'high' });
   assert.equal(typo.success, false);
   assert.equal(Intents['runtime/snapshot'].body.safeParse({ extra: 1 }).success, false);
+});
+
+test('error codes publish one HTTP status each and are recognized only by exact code', () => {
+  for (const [code, status] of Object.entries(ErrorCodes)) {
+    assert.match(code, /^[A-Z][A-Z_]+$/);
+    assert.ok(Number.isInteger(status) && status >= 400 && status <= 599, code);
+  }
+  assert.equal(ErrorCodes.SESSION_NOT_FOUND, 404);
+  assert.equal(ErrorCodes.SESSION_BUSY, 409);
+  assert.equal(ErrorCodes[SKILL_NOT_FOUND], 404);
+  assert.equal(errorCode({ code: 'SESSION_TRANSITION', message: 'anything' }), 'SESSION_TRANSITION');
+  assert.equal(errorCode({ code: 'toString' }), undefined);
+  assert.equal(errorCode(new Error('Unknown session')), undefined);
+  assert.equal(isErrorCode('ENOENT'), false);
 });
