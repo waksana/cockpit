@@ -574,7 +574,11 @@ GET /_modules
 /_modules/workers/<id>/worker.js
 ```
 
-bootstrap 返回实际成功的前端模块、backend-only 的 active 状态及错误/诊断。
+bootstrap 返回实际成功的前端模块、backend-only 的 active 状态及错误列表。
+`errors[].stage` 为 `activation`（未加载）或 `runtime`（已加载模块的 onReady、事件处理、
+`context.report` 等生命周期/后台失败），同一模块每类只保留最近一条；
+模块 HTTP 请求级失败（如摘要不匹配 409、handler 异常）已作为 HTTP 错误返回给调用方，
+只记录日志，不进入此列表。
 错误列表不自动等于该模块已经停止；实际运行身份以 active/modules 为准。
 前端 entry/styles 只允许声明的资源根，API 与资源 URL 都绑定包摘要。
 

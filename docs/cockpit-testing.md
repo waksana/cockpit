@@ -16,6 +16,8 @@
 | MCP 映射、附件、分页和传输 | `pnpm --filter @cockpit/mcp test` |
 | Web 原生窗口、文字草稿和交互 | `pnpm --filter @cockpit/web test` |
 | Web 类型 / lint | `pnpm --filter @cockpit/web typecheck` / `pnpm --filter @cockpit/web lint` |
+| 后端测试类型检查 | `pnpm typecheck:test`（也由 `pnpm test` 执行） |
+| 后端 / 脚本 lint | `pnpm exec eslint .`（根配置，`pnpm lint` 同时运行它和 Web lint） |
 | 全仓现有套件 | `pnpm test` |
 | 当前构建 | `pnpm build` |
 | 普通运行包边界 | [产包说明](packaging.md)中的现有 Node test 入口 |

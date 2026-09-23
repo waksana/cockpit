@@ -29,7 +29,7 @@ test('cold and repeated latest reads request exactly one native bounded page wit
     const page = await readNativeChat(q(), { persisted });
     assert.equal(page.events.length, 64);
     assert.deepEqual(page.read, { rpc: 1, events: 64 });
-    assert.equal(page.events[0].id, 'm59936');
+    assert.equal(page.events[0]!.id, 'm59936');
   }
   assert.deepEqual(calls, Array.from({ length: 2 }, () => ({
     sessionId: 'fixture', cursor: undefined, max: 64, direction: 'backward',
@@ -41,8 +41,8 @@ test('older reads pass the original opaque cursor without locating message IDs o
   const persisted: Passive = async params => { calls.push(params); return result([event('older')]); };
   const page = await readNativeChat(q({ cursor: 'opaque/backward/page', max: 17 }), { persisted });
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].cursor, 'opaque/backward/page');
-  assert.equal(calls[0].max, 17);
+  assert.equal(calls[0]!.cursor, 'opaque/backward/page');
+  assert.equal(calls[0]!.max, 17);
   assert.equal(page.cursor, 'native-next');
 });
 
@@ -116,6 +116,7 @@ test('chat omits internal image bytes and locators without mutating or rereading
     source: 'live', direction: 'forward', cursor: 'before-image', agentIds: ['child'], max: 4,
   }), { persisted: unused, live: live(async () => result([event('a'), delta, image])) });
   assert.equal(page.read.rpc, 1);
+  assert.ok(page.events[2]);
   assert.equal(Object.hasOwn(page.events[2], 'images'), false);
   assert.doesNotMatch(JSON.stringify(page), /iVBOR|binaryResultsForLlm/);
   assert.match(JSON.stringify(image), /iVBOR/);

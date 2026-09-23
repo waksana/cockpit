@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { SessionRole, type ModuleSource, type RoleSelection } from '@cockpit/protocol';
@@ -58,9 +58,9 @@ export class ModuleRoles implements RoleProvider {
     return join(this.root, 'session-roles', `${sessionId}.json`);
   }
 
-  read(sessionId: string): SessionRole[] {
+  async read(sessionId: string): Promise<SessionRole[]> {
     try {
-      return SessionRole.array().parse(JSON.parse(readFileSync(this.file(sessionId), 'utf8'))).map(selection => {
+      return SessionRole.array().parse(JSON.parse(await readFile(this.file(sessionId), 'utf8'))).map(selection => {
         const manifest = this.installations().find(value => value.manifest.id === selection.moduleId)?.manifest;
         const role = manifest?.roles?.find(value => value.id === selection.roleId);
         return { ...selection, ...(manifest ? { moduleName: manifest.name } : {}), ...(role ? { name: role.name } : {}) };

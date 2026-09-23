@@ -5,7 +5,7 @@ import { chmod, lstat, mkdir, readFile, readdir, symlink, writeFile } from 'node
 import { syncBuiltinESMExports } from 'node:module';
 import { dirname, join } from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
-import { installLocalModule, inspectModuleArchive, listInstalledModules, MODULE_LIMITS, readModuleInstallation, readModuleSettings, selectModule } from './module-install.ts';
+import { installLocalModule, inspectModuleArchive, isLocalPackagePath, listInstalledModules, MODULE_LIMITS, readModuleInstallation, readModuleSettings, selectModule } from './module-install.ts';
 import { moduleCli } from './module-cli.ts';
 import { archive, moduleEntries, moduleFixture } from './test-support/module-fixture.ts';
 
@@ -212,4 +212,19 @@ test('failed staging cleanup preserves both publication and cleanup errors', asy
     });
   } finally { rename.mock.restore(); chmod.mock.restore(); syncBuiltinESMExports(); }
   assert.equal((await readdir(join(f.hostRoot, 'modules'))).includes('.lock'), false);
+});
+
+test('Windows drive-letter packages are local only on win32; URLs stay remote everywhere', () => {
+  for (const path of ['C:\\modules\\fixture.tgz', 'd:/modules/fixture.tgz']) {
+    assert.equal(isLocalPackagePath(path, 'win32'), true, path);
+    assert.equal(isLocalPackagePath(path, 'linux'), false, path);
+  }
+  for (const path of ['https://synthetic.invalid/file.tgz', 'file:///tmp/file.tgz', 'C:relative.tgz', 'ab:/x.tgz']) {
+    assert.equal(isLocalPackagePath(path, 'win32'), false, path);
+    assert.equal(isLocalPackagePath(path, 'linux'), false, path);
+  }
+  for (const path of ['/tmp/fixture.tgz', 'relative/fixture.tgz', '.\\fixture.tgz']) {
+    assert.equal(isLocalPackagePath(path, 'win32'), true, path);
+    assert.equal(isLocalPackagePath(path, 'linux'), true, path);
+  }
 });

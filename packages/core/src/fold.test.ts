@@ -60,7 +60,7 @@ test('child execution evidence distinguishes cancellation and later activity wit
   const apply = (type: string, data: Record<string, unknown> = {}, agentId?: string) =>
     foldEvent(state, { type, data, agentId });
   apply('subagent.started', { toolCallId: 'spawn', agentId: 'child' });
-  const info = () => state.messages[0].subagent!;
+  const info = () => state.messages[0]!.subagent!;
   assert.equal(info().status, 'running', 'only a real start establishes started evidence');
   apply('subagent.completed', { toolCallId: 'spawn' });
   assert.equal(info().status, 'completed');
@@ -96,7 +96,7 @@ test('existing child message, reasoning and tool events supersede old terminal e
       { type, timestamp: '2026-09-11T12:00:02Z', agentId: 'child', data },
     ];
     const state = replay(events);
-    assert.equal(state.messages[0].subagent?.status, 'activity', type);
+    assert.equal(state.messages[0]!.subagent?.status, 'activity', type);
     assert.deepEqual([...live(events).client.values()], state.messages);
   }
 });
@@ -105,8 +105,8 @@ test('user + assistant message fold', () => {
   const evs = [tStart(), userMsg('hi', 'u1'), asstMsg('a1', 'hello')];
   const st = replay(evs);
   assert.equal(st.messages.length, 2);
-  assert.equal(st.messages[0].role, 'user');
-  assert.equal(st.messages[1].content, 'hello');
+  assert.equal(st.messages[0]!.role, 'user');
+  assert.equal(st.messages[1]!.content, 'hello');
 });
 
 test('dedicated hidden tools index their starts, never ordinary assistant request rows', () => {
@@ -168,7 +168,7 @@ test('streaming deltas accumulate into one message', () => {
   ];
   const st = replay(evs);
   assert.equal(st.messages.length, 1);
-  assert.equal(st.messages[0].content, 'foobar');
+  assert.equal(st.messages[0]!.content, 'foobar');
 });
 
 test('response-local body and thought retain their position beside independent tool starts', () => {
@@ -180,7 +180,7 @@ test('response-local body and thought retain their position beside independent t
   apply('assistant.message_start', { messageId: 'm' });
   assert.deepEqual(st.messages.map(item => item.id), ['tool-t1', 'm']);
   apply('assistant.message_delta', { messageId: 'm', deltaContent: 'Draft' });
-  assert.equal(st.messages[1].thought, 'Partial');
+  assert.equal(st.messages[1]!.thought, 'Partial');
   apply('assistant.message', { messageId: 'm', content: 'Answer', reasoningText: 'Complete' });
   apply('tool.execution_start', { toolCallId: 't2', toolName: 'view' });
   apply('assistant.message', { messageId: 'm', content: 'Updated', reasoningText: 'Different intact snapshot' });
@@ -199,11 +199,11 @@ test('reasoning keeps its own native identity before the following body', () => 
   ];
   const st = replay(evs);
   assert.equal(st.messages.length, 2);
-  assert.equal(st.messages[0].thought, 'thinking…');
-  assert.equal(st.messages[0].id, 'reasoning-r1');
-  assert.equal(st.messages[0].content, '');
-  assert.equal(st.messages[1].content, 'answer');
-  assert.equal(st.messages[1].thought, undefined);
+  assert.equal(st.messages[0]!.thought, 'thinking…');
+  assert.equal(st.messages[0]!.id, 'reasoning-r1');
+  assert.equal(st.messages[0]!.content, '');
+  assert.equal(st.messages[1]!.content, 'answer');
+  assert.equal(st.messages[1]!.thought, undefined);
 });
 
 test('equal explicit text never retires or reanchors an existing durable message snapshot', () => {
@@ -255,7 +255,7 @@ test('H1: cancelled turn does not absorb the next turn (live == replay)', () => 
   assert.equal(liveSt.messages.length, replayed.messages.length, 'live must equal replay');
   const liveSecond = liveSt.messages.find((m) => m.content === 'second turn answer');
   assert.ok(liveSecond, 'second turn is its own message in live');
-  assert.notEqual(liveSt.messages[0].content, 'partial…second turn answer', 'not merged into cancelled bubble');
+  assert.notEqual(liveSt.messages[0]!.content, 'partial…second turn answer', 'not merged into cancelled bubble');
 });
 
 // --- H1b: explicit cancel via resetTurn (mirrors engine.cancel) also separates turns ---
@@ -287,8 +287,8 @@ test('M2: multiple reasoning segments are preserved', () => {
   const st = replay(evs);
   assert.equal(st.messages.length, 3);
   // Both reasoning segments should survive (not just the last).
-  assert.match(st.messages[0].thought ?? '', /first thought/);
-  assert.match(st.messages[1].thought ?? '', /second thought/);
+  assert.match(st.messages[0]!.thought ?? '', /first thought/);
+  assert.match(st.messages[1]!.thought ?? '', /second thought/);
   assert.deepEqual(st.messages.map(message => message.id), ['reasoning-r1', 'reasoning-r2', 'a1']);
 });
 
@@ -317,20 +317,20 @@ test('D1: streaming reasoning survives reload — thought rebuilt from reasoning
   const replayed = replay(replayEvs);
   assert.equal(replayed.messages.length, 1);
   // The headline assertion — fails today, passes with the reasoningText fallback.
-  assert.equal(replayed.messages[0].thought, reasoningText);
-  assert.equal(replayed.messages[0].id, 'a1');
-  assert.equal(replayed.messages[0].content, 'The answer.');
+  assert.equal(replayed.messages[0]!.thought, reasoningText);
+  assert.equal(replayed.messages[0]!.id, 'a1');
+  assert.equal(replayed.messages[0]!.content, 'The answer.');
 
   // Live carries the same thought, accumulated from the streamed reasoning.
   const liveMsgs = liveProjection(liveEvs);
   assert.equal(liveMsgs.length, 1);
-  assert.equal(liveMsgs[0].thought, reasoningText);
-  assert.equal(liveMsgs[0].content, 'The answer.');
+  assert.equal(liveMsgs[0]!.thought, reasoningText);
+  assert.equal(liveMsgs[0]!.content, 'The answer.');
 
   // Live and replay share the canonical anchor, not only visible text.
-  assert.equal(liveMsgs[0].id, replayed.messages[0].id);
-  assert.equal(liveMsgs[0].thought, replayed.messages[0].thought);
-  assert.equal(liveMsgs[0].content, replayed.messages[0].content);
+  assert.equal(liveMsgs[0]!.id, replayed.messages[0]!.id);
+  assert.equal(liveMsgs[0]!.thought, replayed.messages[0]!.thought);
+  assert.equal(liveMsgs[0]!.content, replayed.messages[0]!.content);
 });
 
 test('D1: pure streaming (no reasoning) reloads identically — regression lock', () => {
@@ -349,12 +349,12 @@ test('D1: pure streaming (no reasoning) reloads identically — regression lock'
   assert.equal(replayed.messages.length, 1);
   assert.equal(liveMsgs.length, 1);
   // No reasoning anywhere → no thought on either side, content matches.
-  assert.equal(replayed.messages[0].content, 'Hello');
-  assert.equal(liveMsgs[0].content, 'Hello');
-  assert.equal(replayed.messages[0].thought, undefined);
-  assert.equal(liveMsgs[0].thought, undefined);
+  assert.equal(replayed.messages[0]!.content, 'Hello');
+  assert.equal(liveMsgs[0]!.content, 'Hello');
+  assert.equal(replayed.messages[0]!.thought, undefined);
+  assert.equal(liveMsgs[0]!.thought, undefined);
   // Same id here (no reasoning placeholder), so the whole projection matches.
-  assert.equal(liveMsgs[0].id, replayed.messages[0].id);
+  assert.equal(liveMsgs[0]!.id, replayed.messages[0]!.id);
 });
 
 test('D1: multi-segment reasoning reload — combined reasoningText rebuilds the thought', () => {
@@ -371,15 +371,15 @@ test('D1: multi-segment reasoning reload — combined reasoningText rebuilds the
   const replayed = replay(replayEvs);
   assert.equal(replayed.messages.length, 1);
   // Both segments present after reload.
-  assert.match(replayed.messages[0].thought ?? '', /first thought/);
-  assert.match(replayed.messages[0].thought ?? '', /second thought/);
+  assert.match(replayed.messages[0]!.thought ?? '', /first thought/);
+  assert.match(replayed.messages[0]!.thought ?? '', /second thought/);
 
   const liveMsgs = liveProjection(liveEvs);
   assert.equal(liveMsgs.length, 1);
-  assert.match(String(liveMsgs[0].thought ?? ''), /first thought/);
-  assert.match(String(liveMsgs[0].thought ?? ''), /second thought/);
+  assert.match(String(liveMsgs[0]!.thought ?? ''), /first thought/);
+  assert.match(String(liveMsgs[0]!.thought ?? ''), /second thought/);
   // live == replay on the rebuilt thought.
-  assert.equal(liveMsgs[0].thought, replayed.messages[0].thought);
+  assert.equal(liveMsgs[0]!.thought, replayed.messages[0]!.thought);
 });
 
 test('D1: sub-agent streaming reload — inner thought rebuilt inside the card', () => {
@@ -417,8 +417,8 @@ test('D1: sub-agent streaming reload — inner thought rebuilt inside the card',
   const innerReplay = card!.subMessages ?? [];
   assert.equal(innerReplay.length, 1);
   // Fails today (inner thought dropped); passes with the reasoningText fallback.
-  assert.equal(innerReplay[0].thought, innerThought);
-  assert.equal(innerReplay[0].content, 'inner ans');
+  assert.equal(innerReplay[0]!.thought, innerThought);
+  assert.equal(innerReplay[0]!.content, 'inner ans');
 
   // Live rebuilds the same inner thought from the streamed reasoning.
   const { st: liveSt } = live(liveEvs);
@@ -426,9 +426,9 @@ test('D1: sub-agent streaming reload — inner thought rebuilt inside the card',
   assert.ok(liveCard, 'sub-agent card exists live');
   const innerLive = liveCard!.subMessages ?? [];
   assert.equal(innerLive.length, 1);
-  assert.equal(innerLive[0].thought, innerThought);
-  assert.equal(innerLive[0].content, 'inner ans');
-  assert.equal(innerLive[0].id, innerReplay[0].id);
+  assert.equal(innerLive[0]!.thought, innerThought);
+  assert.equal(innerLive[0]!.content, 'inner ans');
+  assert.equal(innerLive[0]!.id, innerReplay[0]!.id);
 });
 
 // --- tool calls ---
@@ -442,7 +442,7 @@ test('tool call args + output captured; status transitions', () => {
     { type: 'tool.execution_complete', data: { toolCallId: 't1', success: true, result: { content: 'file1\nfile2' } } },
   ];
   const st = replay(evs);
-  const tc = st.messages[0].toolCalls?.[0];
+  const tc = st.messages[0]!.toolCalls?.[0];
   assert.ok(tc);
   assert.equal(tc!.title, 'list files');
   assert.equal(tc!.name, 'bash');
@@ -478,8 +478,9 @@ test('MCP tool rows carry native server and tool names; builtins and older recor
     mcpServerName: 'github-mcp-server', mcpToolName: 'get_file_contents', status: 'failed', output: 'denied' });
   for (const id of ['b1', 'old', 'orphan']) {
     assert.ok(byId.has(id));
-    assert.equal('mcpServerName' in byId.get(id)!, false, `${id} has no server name`);
-    assert.equal('mcpToolName' in byId.get(id)!, false, `${id} has no MCP tool name`);
+    const tool = byId.get(id)! as Record<string, unknown>;
+    assert.equal('mcpServerName' in tool, false, `${id} has no server name`);
+    assert.equal('mcpToolName' in tool, false, `${id} has no MCP tool name`);
   }
   assert.deepEqual(tools([...live(evs).client.values()] as typeof st.messages), tools(st.messages), 'live deltas equal replay');
 });
@@ -501,8 +502,8 @@ test('sub-agent MCP tool rows keep their native server name inside the card', ()
     const card = messages.find(m => m.subtype === 'subagent');
     const inner = (card?.subMessages ?? []).flatMap(m => m.toolCalls ?? []);
     assert.equal(inner.length, 1);
-    assert.equal(inner[0].mcpServerName, 'cockpit-task');
-    assert.equal(inner[0].mcpToolName, 'task_read');
+    assert.equal(inner[0]!.mcpServerName, 'cockpit-task');
+    assert.equal(inner[0]!.mcpToolName, 'task_read');
   }
 });
 
@@ -553,13 +554,13 @@ test('single sub-agent: internal work nests in the card, off the main thread', (
   // No `task` row in the main thread; one sub-agent card instead.
   const cards = st.messages.filter((m) => m.subtype === 'subagent');
   assert.equal(cards.length, 1);
-  assert.equal(cards[0].subagent?.status, 'completed');
-  assert.equal(cards[0].subagent?.toolCount, 1);
-  assert.equal(cards[0].subagent?.prompt, 'do X');
+  assert.equal(cards[0]!.subagent?.status, 'completed');
+  assert.equal(cards[0]!.subagent?.toolCount, 1);
+  assert.equal(cards[0]!.subagent?.prompt, 'do X');
   // The inner bash tool is inside the card, NOT in the main thread.
   const mainTools = st.messages.filter((m) => m.subtype !== 'subagent').flatMap((m) => m.toolCalls ?? []);
   assert.equal(mainTools.length, 0, 'sub-agent tools not on main thread');
-  const innerTools = (cards[0].subMessages ?? []).flatMap((m) => m.toolCalls ?? []);
+  const innerTools = (cards[0]!.subMessages ?? []).flatMap((m) => m.toolCalls ?? []);
   assert.equal(innerTools.length, 1, 'inner tool nested in card');
 });
 
@@ -587,10 +588,10 @@ test('M3: depth-2 sub-agent nests in the outer card (not a top-level sibling)', 
   const topCards = st.messages.filter((m) => m.subtype === 'subagent');
   // Only OUTER is a top-level card; INNER must be nested inside it.
   assert.equal(topCards.length, 1, 'only the outer card is top-level');
-  assert.equal(topCards[0].subagent?.displayName, 'Outer');
-  const innerCards = (topCards[0].subMessages ?? []).filter((m) => m.subtype === 'subagent');
+  assert.equal(topCards[0]!.subagent?.displayName, 'Outer');
+  const innerCards = (topCards[0]!.subMessages ?? []).filter((m) => m.subtype === 'subagent');
   assert.equal(innerCards.length, 1, 'inner card nested inside outer');
-  assert.equal(innerCards[0].subagent?.displayName, 'Inner');
+  assert.equal(innerCards[0]!.subagent?.displayName, 'Inner');
 });
 
 // ── Skill activation (CLI-style pill) ─────────────────────────────────────────

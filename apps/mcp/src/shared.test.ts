@@ -22,7 +22,7 @@ test('native session controls preserve partial outcomes and mark failure or unce
       { operation: 'task-cancel', targetId: 'second', state, error: 'Native outcome detail' },
     ] };
     const rendered = intentJson('session/control', value);
-    assert.deepEqual(JSON.parse(rendered.content[0].text), value);
+    assert.deepEqual(JSON.parse(rendered.content[0]!.text), value);
     assert.equal(rendered.isError === true, !value.ok);
   }
 });
@@ -132,7 +132,7 @@ test('cappedJson shrinks an array payload to as many items as fit, staying valid
   assert.equal(parsed.truncated, true);
   // The kept turns must be byte-identical (no mid-string corruption).
   for (let i = 0; i < parsed.turns.length; i++) {
-    assert.equal(parsed.turns[i].assistant, allTurns[i].assistant);
+    assert.equal(parsed.turns[i].assistant, allTurns[i]!.assistant);
   }
 });
 
@@ -226,7 +226,7 @@ test('shrinkList stage 1 keeps a clipped preview of the verbose field before dro
 // over-budget 26-skill session read must come back as a valid array projection
 // (never the stub) with `enabled` intact on EVERY item. This is the exact bug
 // flow-review #39 reopened.
-function sessionSkills(n, descLen) {
+function sessionSkills(n: number, descLen: number) {
   const skills = Array.from({ length: n }, (_, i) => ({
     name: `session-skill-${i}`,
     enabled: i % 3 !== 0, // a mix of on/off states
@@ -246,7 +246,10 @@ test('shrinkList keeps the per-session `enabled` signal on every item (list_sess
     structured,
     shrinkList(structured.skills, 'skills', { keep: ['name', 'enabled', 'source'], clip: ['description'] }),
   );
-  const parsed = JSON.parse(out); // (a) valid JSON
+  const parsed = JSON.parse(out) as {
+    _truncated?: boolean; _compacted?: string; count: number;
+    skills: { enabled: boolean; name: string }[];
+  }; // (a) valid JSON
   assert.ok(out.length <= CHARACTER_LIMIT, '(a) fits the machine-read budget');
   assert.notEqual(parsed._truncated, true, '(a) a projection, NOT the overflow stub');
   assert.ok(Array.isArray(parsed.skills) && parsed.skills.length >= 1, '(a) kept an array of skills');

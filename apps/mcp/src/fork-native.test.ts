@@ -117,7 +117,7 @@ test('connected MCP uses native fork and graceful shutdown waits for an actual n
   };
   const history = async (sessionId: string) => {
     const page = Intents['session/chat'].result.parse(await intent('session/chat', {
-      sessionId, source: 'persisted', direction: 'backward', max: 256,
+      ...Intents['session/chat'].body.parse({ sessionId, source: 'persisted', direction: 'backward', max: 256 }),
     }));
     assert.equal(page.hasMore, false, 'This small isolated fixture fits one native page');
     assert.equal(page.read.rpc, 1);

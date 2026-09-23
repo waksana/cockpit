@@ -126,7 +126,7 @@ export class OfficialRuntime {
       }
     } catch (error) {
       try { await this.disconnectClient(); }
-      catch (cleanup) { throw new AggregateError([error, cleanup], 'Runtime startup and cleanup failed'); }
+      catch (cleanup) { throw new AggregateError([error, cleanup], 'Runtime startup and cleanup failed', { cause: cleanup }); }
       throw error;
     }
   }
@@ -204,7 +204,7 @@ export class OfficialRuntime {
         // its acknowledgement) failed. Confirm absence through the public API.
         let remaining;
         try { remaining = await this.client!.getSessionMetadata(id); }
-        catch (lookup) { throw new AggregateError([error, lookup], 'Native deletion failed; session absence could not be confirmed'); }
+        catch (lookup) { throw new AggregateError([error, lookup], 'Native deletion failed; session absence could not be confirmed', { cause: lookup }); }
         if (remaining) throw error;
       }
     });

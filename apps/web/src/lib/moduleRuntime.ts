@@ -43,6 +43,13 @@ const BOUNDARIES = new Set<Boundary>(['message', 'sessionStatus', 'composer', 'c
 const EMPTY_VIEW: HostSnapshot = Object.freeze({ sessionId: null, visible: false, connected: false });
 let moduleSequence = 0;
 
+// Backend errors are activation failures or loaded-module runtime failures; request errors are not listed.
+function bootstrapError(error: unknown): unknown {
+  if (!record(error)) return error;
+  const kind = error.stage === 'runtime' ? 'runtime error' : 'load failed';
+  return `${String(error.id ?? 'module')}: ${kind}: ${String(error.error ?? error.message ?? 'unknown error')}`;
+}
+
 export class ModuleErrorBoundary extends React.Component<{
   children: React.ReactNode; fallback: React.ReactNode; onFailure(error: unknown): void;
 }, { failed: boolean }> {
@@ -272,7 +279,7 @@ export class ModuleRuntime {
       if (controller.signal.aborted || this.controller !== controller) return;
       if (!record(bootstrap) || !Array.isArray(bootstrap.modules) || !Array.isArray(bootstrap.errors)
         || ('apiVersion' in bootstrap && bootstrap.apiVersion !== 1)) throw new Error('Invalid module bootstrap');
-      for (const error of bootstrap.errors) this.report(record(error) ? `${String(error.id ?? 'module')}: ${String(error.error ?? error.message ?? 'load failed')}` : error);
+      for (const error of bootstrap.errors) this.report(bootstrapError(error));
       const counts = new Map<string, number>();
       for (const item of bootstrap.modules) if (record(item) && typeof item.id === 'string') counts.set(item.id, (counts.get(item.id) ?? 0) + 1);
       const pending: Promise<void>[] = [];

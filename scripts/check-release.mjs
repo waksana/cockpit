@@ -28,8 +28,9 @@ export function checkSourceVersion(repository = resolve(fileURLToPath(new URL('.
     assert.equal(metadata.version, version, `${name || 'root'} version does not match ${version}`);
   }
   const mcp = readFileSync(resolve(repository, 'apps/mcp/src/index.ts'), 'utf8');
-  assert.ok(mcp.includes(`new McpServer({ name: 'cockpit-mcp-server', version: '${version}' })`),
-    'MCP self-reported version must match the workspace');
+  // apps/mcp/package.json is checked above and is the handshake's only version source.
+  assert.ok(mcp.includes("new McpServer({ name: 'cockpit-mcp-server', version: MCP_SERVER_VERSION })"),
+    'MCP self-reported version must come from apps/mcp/package.json');
   const notes = readFileSync(resolve(repository, 'docs/release-notes.md'), 'utf8');
   assert.equal(notes.split(/\r?\n/)[0], `# Cockpit ${version}`, 'Release notes must match the workspace version');
   return version;
