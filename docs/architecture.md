@@ -31,6 +31,12 @@ checked at startup in [`runtime.ts`](../packages/core/src/runtime.ts); the runti
 is out of process and may spawn MCP and tool subprocesses. Server and core run as
 TypeScript through an explicit loader; Web and MCP are built.
 
+Runtime calls share one connection. Only connect/stop are exclusive; the runtime
+orders create/resume/attach/close/delete per session, and Engine admits one
+create/resume/fork at a time. Read-only probes (list, metadata, auth, models) take
+no lifecycle gate, so a slow resume does not delay snapshot, status or `/health`.
+The reasons live beside the gates in `runtime.ts`.
+
 The backend exposes a chosen subset of native capabilities; the Web UI uses a
 subset of the API, and MCP is another API consumer. Neither needs one-to-one
 coverage. The authoritative API list is the `Intents` registry and a running

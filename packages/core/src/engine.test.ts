@@ -8,7 +8,8 @@ import { setImmediate as nextTurn } from 'node:timers/promises';
 import type { CopilotClient, CopilotSession, SessionConfig, SessionEvent, SessionMetadata } from '@github/copilot-sdk';
 import type { ExitPlanModeAction, ModelOption, ServerEvent } from '@cockpit/protocol';
 import { Intents, NativeChatRead } from '@cockpit/protocol';
-import { Engine, coreCapabilities, type EngineRuntime } from './engine.ts';
+import { Engine, boundedMap, coreCapabilities, type EngineRuntime } from './engine.ts';
+import { OfficialRuntime, type RuntimeClient } from './runtime.ts';
 import { sessionMetaBusy } from '../test-support/lifecycle.ts';
 import { CHAT_EVENT_TYPES } from './native-chat.ts';
 import { validateForkHistory } from './fork.ts';
@@ -7334,4 +7335,98 @@ test('structured native model and mode refusals retain their full outcomes witho
     status: 'cancelled', modelChanged: false, deferImplementation: true,
   });
   assert.equal(s.sdk.send.mock.callCount(), 0);
+});
+
+/** Engine over the real OfficialRuntime gates, delegating native calls to the harness fakes. */
+function gatedEngine(h: Harness) {
+  const fake = h.runtime;
+  const runtime = new OfficialRuntime({
+    clientFactory: () => ({
+      start: async () => {},
+      stop: async () => [],
+      getStatus: async () => ({ version: '1.0.83', protocolVersion: 3 }),
+      getAuthStatus: () => fake.getAuthStatus(),
+      listSessions: () => fake.listSessions(),
+      getSessionMetadata: (id: string) => fake.getSessionMetadata(id),
+      createSession: (config: SessionConfig) => fake.createSession(config),
+      resumeSession: (id: string, config: SessionConfig) => fake.resumeSession(id, config),
+      deleteSession: (id: string) => fake.deleteSession(id),
+      rpc: { ...fake.rpc, models: { list: async () => ({ models: [] }) }, sessions: {
+        ...fake.rpc.sessions,
+        open: async ({ sessionId }: { sessionId: string }) => ({ status: h.attached.has(sessionId) ? 'resumed' : 'not_found' }),
+      } },
+    }) as unknown as RuntimeClient,
+  });
+  return new Engine({ runtime });
+}
+
+test('a slow native resume does not block snapshot, list, status or login through the runtime gates', async t => {
+  const h = harness(t);
+  const engine = gatedEngine(h);
+  await engine.start();
+  const loaded = await engine.newSession(h.cwd);
+  const slow = await h.seed();
+  const held = deferred();
+  h.runtime.resumeSession.mock.mockImplementationOnce(async (id: string, config: SessionConfig) => {
+    await held.promise;
+    h.attached.add(id);
+    if (config.onEvent) h.natives.get(id)!.sdk.on(config.onEvent);
+    return h.natives.get(id)!.sdk as unknown as CopilotSession;
+  });
+  const reloading = engine.reload(slow.id);
+  await nextTurn();
+  assert.equal(h.runtime.resumeSession.mock.callCount(), 1, 'the resume is in flight');
+  const [snapshot, list, status, login] = await promptly(Promise.all([
+    engine.snapshot(), engine.listLive(), engine.status(), engine.login(),
+  ]));
+  assert.equal(login, '');
+  for (const rows of [snapshot.sessions, list, status]) {
+    assert.deepEqual(rows.map(row => row.sessionId).sort(), [loaded, slow.id].sort());
+    assert.equal(rows.find(row => row.sessionId === loaded)?.loaded, true);
+  }
+  assert.equal(status.find(row => row.sessionId === slow.id)?.loading, true);
+  held.resolve();
+  await reloading;
+  assert.equal((await engine.getMeta(slow.id))?.loaded, true);
+});
+
+test('session reads run with bounded concurrency, keep index order and fail as one aggregate', async t => {
+  const h = harness(t);
+  const ids: string[] = [];
+  for (let i = 0; i < 9; i++) ids.push((await h.load(randomUUID())).id);
+  let inFlight = 0;
+  let maxInFlight = 0;
+  const started: string[] = [];
+  const failing = new Set<string>();
+  h.runtime.isSessionLive.mock.mockImplementation(async (sdk: CopilotSession) => {
+    started.push(sdk.sessionId);
+    maxInFlight = Math.max(maxInFlight, ++inFlight);
+    // Later sessions finish first, so ordering cannot come from completion order.
+    for (let i = ids.length - ids.indexOf(sdk.sessionId); i > 0; i--) await nextTurn();
+    inFlight--;
+    if (failing.has(sdk.sessionId)) throw new Error(`native read failed: ${sdk.sessionId}`);
+    return true;
+  });
+  const rows = await h.engine.status();
+  assert.deepEqual(rows.map(row => row.sessionId), ids);
+  assert.equal(maxInFlight, 4);
+  assert.deepEqual(started, ids);
+  started.length = 0;
+  maxInFlight = 0;
+  failing.add(ids[1]!);
+  await assert.rejects(h.engine.listLive(), new RegExp(`native read failed: ${ids[1]}`));
+  assert.equal(inFlight, 0, 'started sibling reads settle before the aggregate failure');
+  assert.ok(started.length < ids.length, 'no new reads start after a failure');
+  assert.ok(maxInFlight <= 4);
+});
+
+test('bounded map preserves input order and reports the first failure in input order', async () => {
+  const order: number[] = [];
+  assert.deepEqual(await boundedMap([3, 1, 2], 2, async n => { for (let i = 0; i < n; i++) await nextTurn(); order.push(n); return n * 10; }), [30, 10, 20]);
+  assert.deepEqual(order, [1, 3, 2]);
+  assert.deepEqual(await boundedMap([], 4, async () => 1), []);
+  await assert.rejects(boundedMap([2, 1], 2, async n => {
+    for (let i = 0; i < n; i++) await nextTurn();
+    throw new Error(`failed ${n}`);
+  }), /failed 2/);
 });

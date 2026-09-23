@@ -328,14 +328,16 @@ test('shutdown notification only triggers confirmation; it cannot evict a still-
   const sdk = await f.runtime.createSession({ sessionId: 'idle' });
   const shutdown = { type: 'session.shutdown', data: { shutdownType: 'routine' } } as SessionEvent;
   f.listeners.get('idle')!(shutdown);
-  await f.runtime.start();
+  // A later probe on the same session queues behind the notification's probe.
+  assert.equal(await f.runtime.isSessionLive(sdk), true);
   assert.equal(f.runtime.liveCount, 1);
   f.attached(false);
+  const attaches = f.trace.filter(entry => entry === 'attach:idle').length;
   f.listeners.get('idle')!(shutdown);
-  await f.runtime.start();
+  assert.equal(await f.runtime.isSessionLive(sdk), false);
+  assert.equal(f.trace.filter(entry => entry === 'attach:idle').length, attaches + 1, 'The notification probe released the session');
   assert.equal(f.runtime.liveCount, 0);
   assert.equal(f.listeners.size, 0);
-  assert.equal(await f.runtime.isSessionLive(sdk), false);
   await f.runtime.stop();
 });
 
@@ -418,6 +420,108 @@ test('completed runtime calls release fatal listeners rather than retaining an u
   await f.runtime.closeSession(sdk);
   await f.runtime.stop();
   assert.equal(listeners, 0);
+});
+
+function deferred<T = void>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((ok, fail) => { resolve = ok; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+async function flush(turns = 20) { for (let i = 0; i < turns; i++) await Promise.resolve(); }
+
+test('a slow resume or create does not block read-only probes or other sessions\' attach', async () => {
+  const f = fixture();
+  const other = await f.runtime.createSession({ sessionId: 'other' });
+  Object.assign(f.clients[0]!.rpc, { models: { list: async () => ({ models: [{ id: 'm', name: 'M' }] }) } });
+  const gate = deferred();
+  const original = f.clients[0]!.resumeSession;
+  f.clients[0]!.resumeSession = async (id, config) => { f.trace.push(`resume-begin:${id}`); await gate.promise; return original(id, config); };
+  const resuming = f.runtime.resumeSession('slow', {});
+  await flush();
+  assert.ok(f.trace.includes('resume-begin:slow'));
+  const [auth, metadata, sessions, models, live] = await Promise.all([
+    f.runtime.getAuthStatus(), f.runtime.getSessionMetadata('slow'), f.runtime.listSessions(),
+    f.runtime.models(), f.runtime.isSessionLive(other),
+  ]);
+  assert.deepEqual(auth, { isAuthenticated: false });
+  assert.equal(metadata, undefined);
+  assert.deepEqual(sessions, []);
+  assert.equal(models[0]?.modelId, 'm');
+  assert.equal(live, true);
+  await f.runtime.start();
+  gate.resolve();
+  const resumed = await resuming;
+  const createGate = deferred();
+  const create = f.clients[0]!.createSession;
+  f.clients[0]!.createSession = async config => { await createGate.promise; return create(config); };
+  const creating = f.runtime.createSession({ sessionId: 'slow-create' });
+  await flush();
+  assert.equal(await f.runtime.isSessionLive(resumed), true);
+  assert.deepEqual(await f.runtime.getAuthStatus(), { isAuthenticated: false });
+  createGate.resolve();
+  const created = await creating;
+  for (const sdk of [other, resumed, created]) await f.runtime.closeSession(sdk);
+  await f.runtime.stop();
+});
+
+test('lifecycle stays serialized per session, and stop runs after in-flight calls', async () => {
+  const f = fixture();
+  await f.runtime.start();
+  let births = 0;
+  let maxBirths = 0;
+  const gates = new Map<string, { promise: Promise<void>; resolve: () => void }>();
+  const create = f.clients[0]!.createSession;
+  const resume = f.clients[0]!.resumeSession;
+  const slow = <A extends unknown[], R>(id: (...args: A) => string, work: (...args: A) => Promise<R>) => async (...args: A) => {
+    maxBirths = Math.max(maxBirths, ++births);
+    const gate = deferred();
+    gates.set(id(...args), gate);
+    try { await gate.promise; return await work(...args); } finally { births--; }
+  };
+  f.clients[0]!.createSession = slow(config => config.sessionId!, create);
+  f.clients[0]!.resumeSession = slow(sessionId => sessionId, resume);
+  const a = f.runtime.createSession({ sessionId: 'a' });
+  const b = f.runtime.resumeSession('b', {});
+  const duplicate = f.runtime.resumeSession('a', {});
+  await flush();
+  // Different sessions need no runtime exclusion (Engine.birth owns global order);
+  // the same session waits and then observes the ownership the create established.
+  assert.deepEqual([...gates.keys()], ['a', 'b']);
+  gates.get('a')!.resolve();
+  const sessionA = await a;
+  await assert.rejects(duplicate, /already owned/);
+  assert.equal(births, 1, 'the duplicate resume never reached the SDK');
+  // Same-session order: close(a) issued before resume(a) completes first; the
+  // resume then succeeds instead of observing a still-owned session.
+  const closing = f.runtime.closeSession(sessionA);
+  const reopening = f.runtime.resumeSession('a', {});
+  gates.get('b')!.resolve();
+  const sessionB = await b;
+  await closing;
+  await flush();
+  gates.get('a')!.resolve();
+  const reopened = await reopening;
+  assert.notEqual(reopened, sessionA);
+  assert.equal(maxBirths, 2);
+  // Stop waits for an in-flight native call, and calls issued meanwhile wait for stop.
+  await f.runtime.closeSession(sessionB);
+  await f.runtime.closeSession(reopened);
+  const auth = deferred<GetAuthStatusResponse>();
+  f.clients[0]!.getAuthStatus = () => { f.trace.push('auth-begin'); return auth.promise; };
+  const pending = f.runtime.getAuthStatus();
+  const stopping = f.runtime.stop();
+  const later = f.runtime.listSessions();
+  await flush();
+  assert.ok(!f.trace.includes('stop:0'), 'Stop drains in-flight calls first');
+  auth.resolve({ isAuthenticated: true });
+  assert.deepEqual(await pending, { isAuthenticated: true });
+  await stopping;
+  assert.deepEqual(await later, []);
+  const order = f.trace.filter(entry => /^(auth-begin|stop:0|start:1)$/.test(entry));
+  assert.deepEqual(order, ['auth-begin', 'stop:0', 'start:1'], 'A call queued behind stop reconnects afterwards');
+  await f.runtime.stop();
 });
 
 test('provider model context tiers are explicit capabilities independent of pricing', () => {
