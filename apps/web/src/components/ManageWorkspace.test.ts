@@ -4,7 +4,9 @@ import { test, type TestContext } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { ManageWorkspace } from './ManageWorkspace';
+import { SKILL_NOT_FOUND } from '@cockpit/protocol';
+import { ManageWorkspace, SkillDetailContent } from './ManageWorkspace';
+import { IntentHttpError } from '../net/client';
 import { useCockpit } from '../net/store';
 import App from '../App';
 
@@ -117,3 +119,50 @@ test('global MCP refresh invalidates configuration cache without invoking sessio
 test('management has no retired trash, restore or transcript consumers', () => {
   assert.doesNotMatch(source, /trash|restoreSession|SessionPreview|openPreview|refreshPreview/);
 });
+
+function renderSkill(t: TestContext, resource: Parameters<typeof SkillDetailContent>[0]['resource']) {
+  const state = useCockpit.getInitialState();
+  const previous = { ...state };
+  Object.assign(state, { connState: 'open' });
+  t.after(() => { Object.assign(state, previous); });
+  return renderToStaticMarkup(createElement(SkillDetailContent, { resource }));
+}
+
+const skillFile = [
+  '---', 'name: learn-by-doing', 'description: Learn a workflow once.', '---',
+  '# Learn by Doing', '', 'Body.', '', '---', '', 'After rule.',
+].join('\n');
+
+test('skill detail shows the description once and never renders its frontmatter', t => {
+  const html = renderSkill(t, { data: { name: 'learn-by-doing', description: 'Learn a workflow once.', source: 'personal',
+    userInvocable: true, body: skillFile }, status: null, failed: false, pending: false, errorCause: undefined });
+  assert.equal(html.match(/Learn a workflow once\./g)?.length, 1);
+  assert.doesNotMatch(html, /name: learn-by-doing/);
+  assert.match(html, /Learn by Doing/);
+  assert.match(html, /After rule\./);
+  assert.match(html, /<hr/);
+  assert.ok(html.indexOf('manage-detail-line') < html.indexOf('manage-detail-body'));
+  assert.match(html, /class="manage-detail-column"/);
+});
+
+test('skill detail with only frontmatter reports the missing body truthfully', t => {
+  const html = renderSkill(t, { data: { name: 'x', description: 'd', body: '---\nname: x\n---\n' },
+    status: null, failed: false, pending: false, errorCause: undefined });
+  assert.match(html, /SKILL.md 没有正文/);
+  assert.doesNotMatch(html, /name: x/);
+});
+
+test('structured not-found skill read is an in-place empty state, not a load failure', t => {
+  const cause = new IntentHttpError('Unknown skill in this working directory', 404, SKILL_NOT_FOUND);
+  const html = renderSkill(t, { data: undefined, status: `加载失败：${cause.message}`, failed: true, pending: false, errorCause: cause });
+  assert.match(html, /未找到该 Skill。/);
+  assert.doesNotMatch(html, /加载失败/);
+});
+
+for (const cause of [new IntentHttpError('native boom', 500), new IntentHttpError('gone', 404, 'OTHER'), new TypeError('Failed to fetch')]) {
+  test(`genuine skill read failure stays visible (${cause.message})`, t => {
+    const html = renderSkill(t, { data: undefined, status: `加载失败：${cause.message}`, failed: true, pending: false, errorCause: cause });
+    assert.match(html, new RegExp(`加载失败：${cause.message}`));
+    assert.doesNotMatch(html, /未找到该 Skill/);
+  });
+}

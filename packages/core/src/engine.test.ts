@@ -6094,7 +6094,9 @@ for (const action of ['listGlobalSkills', 'readSkillBody'] as const) {
     const directory = join('.engine-test-scratch', 'requested-project');
     h.events.length = 0;
     if (action === 'listGlobalSkills') assert.deepEqual(await h.engine.listGlobalSkills(directory), []);
-    else await assert.rejects(h.engine.readSkillBody('fixture', directory), /Unknown skill in this working directory/);
+    else await assert.rejects(h.engine.readSkillBody('fixture', directory), (error: unknown) => error instanceof Error
+      && /Unknown skill in this working directory/.test(error.message)
+      && (error as { statusCode?: unknown }).statusCode === 404 && (error as { code?: unknown }).code === 'SKILL_NOT_FOUND');
     assert.deepEqual(h.runtime.rpc.skills.discover.mock.calls.map(call => call.arguments),
       [[{ projectPaths: [resolve(directory)] }]]);
     assert.equal(h.runtime.createSession.mock.callCount(), 0);

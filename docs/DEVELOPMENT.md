@@ -297,7 +297,8 @@ Repeat selected/unselected and disabled states at narrow widths and in both them
 Tab/Space to exercise interaction, not only the read-only geometry checks.
 It is not evidence of native role assembly or production resource readiness.
 This scene also exercises the real global MCP/Skills management pages: use the
-global menu or `&page=mcp` / `&page=skills`. The fixture owns both global defaults
+global menu or `&page=mcp` / `&page=skills`; add `&item=<name>` to open a detail
+directly (an unknown Skill name returns the structured not-found read). The fixture owns both global defaults
 and per-session switches separately; changing one does not pretend to change
 the other. Add `&empty=1` for empty catalogs, `&fail=1` for explicit resource
 failures, or `&delay=1` for 1.2-second synthetic reads/mutations (initial loading,

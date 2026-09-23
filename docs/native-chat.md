@@ -530,7 +530,7 @@ A boundary has one owner:
 
 | Relationship | Owner and rule |
 | --- | --- |
-| Reading column | 52rem maximum, responsive outer gutter (12px on narrow screens). Transcript scrollbar gutters are symmetric so the column stays centered with the dock and composer; classic scrollbars reserve extra space on both sides at constrained widths. |
+| Reading column | 52rem maximum (`--chat-reading-width` in `tokens.scss`, also reused by global MCP / Skill details), responsive outer gutter (12px on narrow screens). Transcript scrollbar gutters are symmetric so the column stays centered with the dock and composer; classic scrollbars reserve extra space on both sides at constrained widths. |
 | Transcript / dock / composer | The Chat parent owns an 8px region gap. The transcript has a 16px top inset and no bottom padding; neither the dock nor input adds another outside gap. Missing regions reserve no space. |
 | Messages / process / speaker change | Visible row frames own 8 / 12 / 16px respectively. Metadata is separated by 4px. Empty history controls reserve no height. |
 | Message interior | User bubbles retain 0.65rem by 0.85rem padding. Paragraphs/lists use 0.65em rhythm; code, tables and quotes use 0.85em. Headings retain their typographic margins. First/last blocks have no outside margin. Text-to-attachment separation is 12px, absent for attachment-only messages. |

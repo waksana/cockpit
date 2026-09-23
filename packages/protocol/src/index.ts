@@ -322,6 +322,8 @@ export const SessionResourcesPrepare = z.object({
 export type SessionResourcesPrepare = z.infer<typeof SessionResourcesPrepare>;
 const ResourcePreparationEffect = z.enum(['not_attempted', 'unchanged', 'enabled', 'unconfirmed']);
 export const RESOURCE_PREPARATION_ERROR_LIMIT = 2000;
+// skills/read error code for a name absent from the discovered skill catalog.
+export const SKILL_NOT_FOUND = 'SKILL_NOT_FOUND';
 export const ResourcePreparationResult = z.object({
   sessionId: ResourceName,
   ok: z.boolean(),
@@ -862,8 +864,9 @@ export const Intents = {
     body: z.object({ cwd: z.string().min(1).optional() }),
     result: z.object({ skills: z.array(SkillGlobal) }),
   },
-  // Read one skill's full detail incl. the SKILL.md body (lazy — only when its
-  // detail pane opens), so the list payload stays lean.
+  // Read one skill's full detail incl. the raw SKILL.md file (lazy — only when its
+  // detail pane opens), so the list payload stays lean. A name absent from the
+  // discovered catalog fails with HTTP 404 and code SKILL_NOT_FOUND.
   'skills/read': {
     body: z.object({ name: z.string(), cwd: z.string().min(1).optional() }),
     result: SkillGlobal.extend({

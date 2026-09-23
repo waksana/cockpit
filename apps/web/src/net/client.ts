@@ -2,7 +2,7 @@
 // projections remain in the browser; typed POSTs also serve older event pages.
 
 import { ServerEvent, Intents, NativeChatStreamRequest, classifyNativeModelSwitchResult,
-  classifyNativeModeSetResult, classifyNativeRewindResult } from '@cockpit/protocol';
+  classifyNativeModeSetResult, classifyNativeRewindResult, SKILL_NOT_FOUND } from '@cockpit/protocol';
 import type { NativeAttachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction, NativeChatPage } from '@cockpit/protocol';
 import { EVENTS_URL, CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { reportUxError, describeReason } from '../lib/errorReporter';
@@ -92,6 +92,12 @@ export class SessionUnloadedError extends Error {
 export function isSessionUnloadedError(e: unknown): e is SessionUnloadedError | IntentHttpError {
   return e instanceof SessionUnloadedError
     || (e instanceof IntentHttpError && e.status === 409 && e.code === 'SESSION_UNLOADED');
+}
+
+// Structured skills/read result for a name outside the discovered catalog;
+// callers present it in place, like a missing MCP catalog entry.
+export function isSkillNotFoundError(e: unknown): e is IntentHttpError {
+  return e instanceof IntentHttpError && e.status === 404 && e.code === SKILL_NOT_FOUND;
 }
 
 interface NetClientCallbacks {
@@ -241,7 +247,8 @@ export class NetClient {
       settle?.(false);
       // Diagnostics stay local. Never execute a prompt or retry an uncertain POST.
       if (!signal?.aborted && !isSessionUnloadedError(e)
-        && (name !== 'session/chat' || !isTransportError(e))) {
+        && (name !== 'session/chat' || !isTransportError(e))
+        && (name !== 'skills/read' || !isSkillNotFoundError(e))) {
         reportUxError(`${source ? `${source}：` : ''}接口 ${name} 调用失败：${describeReason(e, false)}${settle ? '；变更结果尚未确认，请检查原生状态，不要自动重试。' : ''}`, { deduplicate: false });
       } else if (settle) {
         reportUxError(`接口 ${name} 的变更结果尚未确认；停止等待不代表原生操作已取消，请检查后再操作。`, { deduplicate: false });

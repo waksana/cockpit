@@ -18,7 +18,6 @@
   // Explicit dense-reading exceptions; standalone touch actions still use --ck-control-size.
   --chat-row-process: 28px;
   --chat-control-compact: 32px;
-  --chat-reading-width: 52rem;
   --chat-gutter: clamp(1rem, 4vw, 1.5rem);
   --chat-gap-message: var(--host-space-sm);
   --chat-gap-speaker: var(--host-space-lg);
