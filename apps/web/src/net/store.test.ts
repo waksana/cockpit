@@ -545,6 +545,177 @@ test('removed session pages have no dedicated Web store actions or readers', () 
   ]) assert.equal(name in state, false, name);
 });
 
+const settingsActions = ['unload', 'compact', 'fork'] as const;
+const settingsMeta = (id = 'a'): SessionMeta => ({ ...meta(id), activity: activityFixture() });
+
+for (const action of settingsActions) {
+  test(`${action} settings action requires known idle loaded state and preserves all native protections`, async t => {
+    const h = setup(t);
+    h.source.open();
+    for (const patch of [
+      { loaded: false }, { activity: null }, { activity: undefined },
+      { status: 'running' }, { nativeProcessing: true }, { activeSubagents: 1 },
+      { activeOperations: 1 }, { activeMcpOperations: 1 }, { loading: true },
+      { closing: true }, { cancelling: true }, { compacting: true },
+      { queue: [{ id: 'q', text: 'protected' }] },
+      { ask: { requestId: 'a', question: 'Choose', choices: [], allowFreeform: true } },
+      { planRequest: { requestId: 'p', summary: 'Plan' } },
+      { elicitation: { requestId: 'e', message: 'Confirm' } },
+      ...[
+        { processing: true }, { hasActiveWork: true },
+        { tasks: { activeAgents: 0, activeShells: 1, unknown: 0 } },
+        { tasks: { activeAgents: 0, activeShells: 0, unknown: 1 } },
+        { queue: { pendingCount: 1, steeringCount: 0, inFlightSteeringCount: 0 } },
+        { queue: { pendingCount: 0, steeringCount: 1, inFlightSteeringCount: 1 } },
+        { mcp: { pendingConnectionCount: 1 } },
+      ].map(activity => ({ activity: activityFixture(activity) })),
+    ] satisfies Partial<SessionMeta>[]) {
+      h.snapshot([], { sessions: [{ ...settingsMeta(), ...patch }] });
+      await assert.rejects(useCockpit.getState().runSessionSettingsAction('a', action));
+    }
+    h.snapshot([], { sessions: [settingsMeta()] });
+    for (const patch of [{ snapshotReady: false }, { reloadingSessionIds: ['a'] }, { sessions: [] }]) {
+      const before = useCockpit.getState();
+      useCockpit.setState(patch);
+      await assert.rejects(useCockpit.getState().runSessionSettingsAction('a', action));
+      useCockpit.setState(before, true);
+    }
+    h.source.drop();
+    await assert.rejects(useCockpit.getState().runSessionSettingsAction('a', action));
+    assert.equal(h.requests.length, 0);
+  });
+}
+
+for (const success of [true, false]) {
+  test(`compact preserves native success=${success}, counts, details and displayed history`, async t => {
+    const h = setup(t);
+    h.source.open(); h.snapshot([], { sessions: [settingsMeta(), settingsMeta('b')] });
+    const before = session().messages;
+    const request = useCockpit.getState().runSessionSettingsAction('a', 'compact', 'Keep the decisions');
+    h.assertPost(0, 'session/compact', { sessionId: 'a', customInstructions: 'Keep the decisions' });
+    assert.equal(useCockpit.getState().sessionSettingsOperations.a.pending, true);
+    for (const action of settingsActions) {
+      await assert.rejects(useCockpit.getState().runSessionSettingsAction('a', action), /尚未结束/);
+    }
+    await assert.rejects(useCockpit.getState().reloadSession('a'), /尚未结束/);
+    useCockpit.setState({ activeId: 'b' });
+    const result = { success, tokensRemoved: 100, messagesRemoved: 3, summaryContent: 'Native summary', extra: 'preserved' };
+    await h.reply(0, { ok: true, result });
+    h.assertPost(1, 'session/refresh', {});
+    await h.reply(1, { ok: true });
+    await request;
+    assert.deepEqual(useCockpit.getState().sessionSettingsOperations.a, { action: 'compact', pending: false, outcome: { action: 'compact', result } });
+    assert.equal(useCockpit.getState().sessionSettingsOperations.b, undefined);
+    assert.equal(useCockpit.getState().activeId, 'b');
+    assert.strictEqual(session().messages, before);
+    h.assertPost(2, 'session/resources', { sessionId: 'a', resources: ['identity', 'control', 'model'] });
+    await h.reply(2, { meta: settingsMeta() });
+    assert.equal(h.requests.length, 3);
+  });
+}
+
+test('full-history fork records the real unloaded child without navigation, prompt or configuration cloning', async t => {
+  const h = setup(t);
+  h.source.open(); h.snapshot([], { sessions: [settingsMeta()] });
+  const request = useCockpit.getState().runSessionSettingsAction('a', 'fork');
+  h.assertPost(0, 'session/fork', { sessionId: 'a' });
+  const child = { ...meta('real-child'), loaded: false, status: 'unloaded' as const };
+  h.source.emit({ type: 'session/added', session: child });
+  await h.reply(0, { sessionId: child.sessionId });
+  await h.reply(1, { ok: true });
+  await request;
+  assert.deepEqual(useCockpit.getState().sessionSettingsOperations.a.outcome, { action: 'fork', sessionId: 'real-child' });
+  assert.equal(session('real-child').loaded, false);
+  assert.equal(useCockpit.getState().activeId, null);
+  await h.reply(2, { meta: settingsMeta() });
+  assert.equal(h.requests.length, 3, 'only fork and passive reconciliation');
+});
+
+for (const presence of ['unloaded', 'missing', 'loaded'] as const) {
+  test(`unload uses actual ${presence} presence without inventing success, replacement or transcript deletion`, async t => {
+    const h = setup(t);
+    h.source.open(); h.snapshot([], { sessions: [settingsMeta()] });
+    const messages = session().messages;
+    const request = useCockpit.getState().runSessionSettingsAction('a', 'unload');
+    h.assertPost(0, 'session/unload', { sessionId: 'a' });
+    await h.reply(0, { ok: true });
+    h.assertPost(1, 'session/get', { sessionId: 'a' });
+    const row = presence === 'missing' ? null : { ...settingsMeta(), loaded: presence === 'loaded' };
+    await h.reply(1, { meta: row });
+    await h.reply(2, { ok: true });
+    await request;
+    assert.deepEqual(useCockpit.getState().sessionSettingsOperations.a.outcome, {
+      action: 'unload', present: presence !== 'missing', loaded: presence === 'loaded',
+    });
+    if (presence === 'missing') assert.equal(useCockpit.getState().sessions.length, 0);
+    else {
+      assert.equal(session().loaded, presence === 'loaded');
+      assert.strictEqual(session().messages, messages);
+      await h.reply(3, { meta: row });
+    }
+    assert.equal(h.requests.length, presence === 'missing' ? 3 : 4);
+  });
+}
+
+for (const action of settingsActions) {
+  for (const failure of ['rejected', 'unknown', 'transport'] as const) {
+    test(`${action} ${failure} remains session-owned and never retries`, async t => {
+      const h = setup(t);
+      h.source.open(); h.snapshot([], { sessions: [settingsMeta(), settingsMeta('b')] });
+      const promise = useCockpit.getState().runSessionSettingsAction('a', action);
+      const rejected = assert.rejects(promise);
+      useCockpit.setState({ activeId: 'b' });
+      if (failure === 'transport') h.request(0).response.reject(new TypeError('Uncertain native result'));
+      else h.request(0).response.resolve(Response.json(failure === 'rejected' ? { error: 'Native refusal' } : { ok: true },
+        { status: failure === 'rejected' ? 409 : 200 }));
+      await setImmediate();
+      // unload's ok:true is valid; its presence read must also fail to leave the outcome unknown.
+      let refresh = 1;
+      if (action === 'unload' && failure === 'unknown') {
+        await h.reply(1, {});
+        refresh = 2;
+      }
+      h.assertPost(refresh, 'session/refresh', {});
+      await h.reply(refresh, { ok: true });
+      await rejected;
+      await h.reply(refresh + 1, { meta: settingsMeta() });
+      const operation = useCockpit.getState().sessionSettingsOperations.a;
+      assert.equal(operation.pending, false);
+      assert.ok(operation.error);
+      assert.equal(operation.outcome, undefined);
+      assert.equal(useCockpit.getState().sessionSettingsOperations.b, undefined);
+      assert.equal(h.requests.length, refresh + 2);
+    });
+  }
+}
+
+test('fork acknowledgement survives list-refresh failure without losing the child or resubmitting', async t => {
+  const h = setup(t);
+  h.source.open(); h.snapshot([], { sessions: [settingsMeta()] });
+  const request = useCockpit.getState().runSessionSettingsAction('a', 'fork');
+  await h.reply(0, { sessionId: 'real-child' });
+  h.request(1).response.reject(new TypeError('Refresh unavailable'));
+  await request;
+  assert.deepEqual(useCockpit.getState().sessionSettingsOperations.a, {
+    action: 'fork', pending: false, outcome: { action: 'fork', sessionId: 'real-child' }, refreshError: 'Refresh unavailable',
+  });
+  assert.equal(h.requests.length, 2);
+});
+
+test('late unload read after reconnect cannot overwrite the new connection loaded state', async t => {
+  const h = setup(t);
+  h.source.open(); h.snapshot([], { sessions: [settingsMeta()] });
+  const request = useCockpit.getState().runSessionSettingsAction('a', 'unload');
+  await h.reply(0, { ok: true });
+  h.source.drop();
+  const before = session();
+  await h.reply(1, { meta: { ...settingsMeta(), loaded: false } });
+  await request;
+  assert.strictEqual(session(), before);
+  assert.ok(useCockpit.getState().sessionSettingsOperations.a.refreshError);
+  assert.equal(h.requests.length, 2);
+});
+
 for (const loaded of [true, false]) {
   test(`reload targets the original session and preserves drafts/history (loaded=${loaded})`, async t => {
     const h = setup(t);
