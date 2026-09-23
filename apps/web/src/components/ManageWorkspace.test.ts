@@ -82,7 +82,7 @@ test('both global toggles refresh authoritative detail and list after success or
   assert.match(source, /<SkillsList catalog=\{skillCatalog\}/);
   assert.match(source, /<McpDetail catalog=\{mcpCatalog\} name=\{item\}/);
   assert.match(source, /<SkillDetail revision=\{refreshNonce\} name=\{item\}/);
-  assert.match(source, /<StateNotice kind="error" className="manage-row-feedback">设置失败：\{action.error\}/);
+  assert.match(source, /feedback=\{action.error && !action.busy && <ResourceError /);
 });
 
 test('MCP parent owns one route-independent catalog and disables it outside MCP', () => {

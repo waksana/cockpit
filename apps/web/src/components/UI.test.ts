@@ -5,7 +5,8 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { compile } from 'sass';
 import { ActionList, ActionRow, Badge, CheckboxCard, HeadingAction, PendingChangesBar, SectionHeading, SelectField, Toggle } from './UI';
-import { ResourceRow, ResourceSummary } from './ResourceRow';
+import { MemoryRouter } from 'react-router-dom';
+import { ResourceList, ResourceRow, ResourceText } from './ResourceRow';
 import { McpStatusPill } from './McpStatus';
 
 test('labeled selects preserve native control attributes and own one decorative arrow', () => {
@@ -91,19 +92,40 @@ test('badges share typed text and subtle appearances without inventing status ow
   assert.match(status, /策略允许.*受限策略隔离时不能重启/);
 });
 
-test('resource compositions keep navigation content valid and actions outside identity text', () => {
-  const summary = renderToStaticMarkup(createElement('button', { type: 'button' },
-    createElement(ResourceSummary, { name: 'Resource', source: 'Configuration', badge: createElement(Badge, { children: 'Source' }) })));
-  assert.doesNotMatch(summary, /<div|<button[^>]*>.*<button/s);
-  const row = renderToStaticMarkup(createElement(ResourceRow, {
-    name: 'Server', connection: true, source: 'Saved config',
-    control: createElement('button', { type: 'button', role: 'switch', 'aria-checked': false }, 'Enable'),
-    status: createElement('div', { role: 'status' }, 'Not connected'),
-  }));
-  assert.match(row, /data-resource-name="Server"/);
-  assert.match(row, /class="manage-resource-identity"/);
-  assert.match(row, /Saved config<\/div><\/div><div class="manage-resource-controls"><button/);
-  assert.doesNotMatch(row, /manage-row-description|aria-busy/);
+test('one resource row: badge + name, one-line summary, then status and switch on one line', () => {
+  const control = createElement('button', { type: 'button', role: 'switch', 'aria-checked': false }, 'Enable');
+  const status = createElement('span', null, 'Not connected');
+  const badge = createElement(Badge, { className: 'role-badge', children: 'Source' });
+  const plain = renderToStaticMarkup(createElement(ResourceRow, { name: 'Server', connection: true, control, status, badge }));
+  assert.match(plain, /data-resource-name="Server"/);
+  assert.doesNotMatch(plain, /data-selectable|<a /);
+  assert.match(plain, /^<div class="resource-row manage-row"[^>]*><div class="manage-resource-identity"><span class="resource-name manage-row-name"><span class="ck-badge ui-badge role-badge"[^>]*>Source<\/span><span class="resource-title-text">Server<\/span><\/span><\/div>/,
+    'badge precedes the name, and absent summaries reserve no line');
+  assert.match(plain, /<div class="manage-resource-controls"><div class="manage-row-status" role="status"><span>Not connected<\/span><\/div><button[^>]*role="switch"/,
+    'status precedes the switch inside one control group');
+
+  const long = 'A long summary that must stay on one ellipsized line. '.repeat(6);
+  const linked = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ResourceRow, {
+    name: 'a-very-long-resource-name-that-wraps', control, badge,
+    summary: createElement(ResourceText, { text: long, label: 'summary', disclosure: false }),
+    link: { to: '/skills/a', selected: true },
+    feedback: createElement('div', { className: 'manage-row-error' }, 'failure'),
+  })));
+  assert.match(linked, /data-selectable="true" data-selected="true"/);
+  assert.match(linked, /<a class="manage-resource-identity ck-button rp" aria-current="page" href="\/skills\/a"[^>]*>/);
+  const anchor = linked.slice(linked.indexOf('<a '), linked.indexOf('</a>'));
+  assert.doesNotMatch(anchor, /<button|<div|role="switch"/, 'navigation holds only phrasing identity content');
+  assert.match(anchor, /class="manage-row-text" data-lines="1" title="A long summary/);
+  assert.match(linked, /<\/a><div class="manage-resource-controls"><button/, 'no empty status slot');
+  assert.match(linked, /<\/div><div class="manage-row-error">failure<\/div><\/div>$/, 'feedback follows as a full-width row');
+  const unselected = renderToStaticMarkup(createElement(MemoryRouter, null, createElement(ResourceRow, {
+    name: 'b', control, link: { to: '/skills/b', selected: false },
+  })));
+  assert.doesNotMatch(unselected, /data-selected|aria-current/);
+
+  const list = renderToStaticMarkup(createElement(ResourceList, { hint: '开关：新会话默认启用', children: plain }));
+  assert.equal(list.match(/开关：新会话默认启用/g)?.length, 1);
+  assert.match(list, /^<p class="manage-list-hint">开关：新会话默认启用<\/p><div class="manage-list">/);
 });
 
 test('controls retain the desktop baseline, touch input floor, inset focus and coarse targets', () => {
