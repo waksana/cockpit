@@ -1,6 +1,6 @@
 // Directory selection is a form. Only session/new creates a native identity.
 import { useCallback, useId, useState } from 'react';
-import { useCockpit } from '../net/store';
+import { cockpitApi, loadRoleCatalog } from '../net/api';
 import { IntentHttpError } from '../net/client';
 import { useKeyedAction, useKeyedResource } from '../lib/useKeyedResource';
 import { readDirectory } from '../lib/directoryResource';
@@ -23,15 +23,13 @@ export function DirPicker(props: DirPickerProps) {
 }
 
 function DirectoryDialog({ initialPath, onCreate, onCreated, onCancel }: DirPickerProps) {
-  const listDir = useCockpit(s => s.listDir);
-  const listRoles = useCockpit(s => s.listRoles);
-  const roleResource = useKeyedResource('module-roles', listRoles);
+  const roleResource = useKeyedResource('module-roles', loadRoleCatalog);
   const [selectedRoles, setSelectedRoles] = useState<RoleSelection[]>([]);
   const [requestedPath, setRequestedPath] = useState(initialPath);
   const [editedPath, setEditedPath] = useState<string | null>(null);
   const [submitted, setSubmitted] = useState(false);
   const [incompleteSessionId, setIncompleteSessionId] = useState<string>();
-  const read = useCallback(() => readDirectory(listDir, requestedPath), [listDir, requestedPath]);
+  const read = useCallback(() => readDirectory(cockpitApi.listDir, requestedPath), [requestedPath]);
   const resource = useKeyedResource(JSON.stringify(['directory', requestedPath]), read);
   const identity = useId();
   const action = useKeyedAction(`create-session:${identity}`);

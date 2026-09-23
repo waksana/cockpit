@@ -9,7 +9,7 @@ import type {
   ChatSession, ModelOption, ServerEvent,
 } from './types';
 import { MetaResource, SessionResource, type SessionMeta } from '@cockpit/protocol';
-import type { IntentResult, NativeChatRead, NativeChatPage, SessionProjection } from '@cockpit/protocol';
+import type { NativeChatRead, NativeChatPage, SessionProjection } from '@cockpit/protocol';
 import { invalidateWindow, metaToSession } from './sessionWindow';
 import { applyProjection, cleanProjection } from './sessionResources';
 import { NativeWindow, NATIVE_PAGE, type ChatPosition } from './nativeWindow';
@@ -38,14 +38,13 @@ interface CockpitState {
   runSessionSettingsAction: (sessionId: string, action: SessionSettingsAction, customInstructions?: string) => Promise<void>;
   // lifecycle
   init: () => () => void;
+  // Throws unless this tab's transport is open; stateless requests live in ./api.
+  connectedClient: () => NetClient;
   onModuleInvalidated: (listener: (moduleId: string) => void) => () => void;
   onModuleEvent: (listener: (moduleId: string, payload: ModuleEventPayload) => void) => () => void;
   // intents
   setActiveId: (id: string | null) => void;
   newSession: (cwd: string, roles?: import('@cockpit/protocol').RoleSelection[]) => Promise<string>;
-  listRoles: () => Promise<IntentResult<'roles/list'>['roles']>;
-  addRoles: (sessionId: string, roles: import('@cockpit/protocol').RoleSelection[]) => Promise<IntentResult<'roles/add'>>;
-  roleReadiness: (sessionId: string) => Promise<IntentResult<'roles/readiness'>>;
   refreshRoles: (sessionId: string, signal?: AbortSignal) => Promise<SessionProjection>;
   loadMore: (sessionId: string) => void;
   retryHistory: (sessionId: string) => void;
@@ -53,23 +52,15 @@ interface CockpitState {
   canSendDraft: (draft: DraftReference) => DraftSendBlockReason | undefined;
   cancel: (sessionId: string) => Promise<void>;
   interrupt: (sessionId: string) => Promise<{ ok: true; interrupted: boolean }>;
-  setModel: (sessionId: string, modelId: string, opts?: { reasoningEffort?: string; contextTier?: 'default' | 'long_context' }) => Promise<IntentResult<'setModel'>>;
   deleteSession: (sessionId: string) => Promise<void>;
   loadSession: (sessionId: string) => Promise<void>;
   reloadSession: (sessionId: string) => Promise<void>;
   getResources: (sessionId: string, resources: MetaResource[], signal?: AbortSignal) => Promise<SessionProjection>;
-  // MCP + Skills management
-  mcpGlobal: () => Promise<import('@cockpit/protocol').McpServerGlobal[]>;
-  mcpSetDefault: (name: string, on: boolean) => Promise<void>;
-  mcpRefresh: () => Promise<void>;
+  // Session MCP + Skills
   mcpSession: (sessionId: string) => Promise<import('@cockpit/protocol').McpServerSession[]>;
   mcpToggleSession: (sessionId: string, name: string, on: boolean) => Promise<void>;
-  skillsGlobal: (cwd?: string) => Promise<import('@cockpit/protocol').SkillGlobal[]>;
-  skillsRead: (name: string, cwd?: string) => Promise<IntentResult<'skills/read'>>;
-  skillsSetGlobal: (name: string, enabled: boolean, cwd?: string) => Promise<void>;
   skillsSession: (sessionId: string) => Promise<import('@cockpit/protocol').SkillSession[]>;
   skillsToggleSession: (sessionId: string, name: string, enabled: boolean) => Promise<void>;
-  listDir: (path?: string) => Promise<import('@cockpit/protocol').DirListing>;
   respondAsk: (sessionId: string, requestId: string, answer: string, wasFreeform: boolean) => Promise<boolean>;
   respondPlan: (sessionId: string, requestId: string, action: import('@cockpit/protocol').ExitPlanModeAction) => Promise<boolean>;
   planSupersede: (sessionId: string, requestId: string, message: string) => Promise<boolean>;
@@ -623,6 +614,7 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       return () => { moduleEventListeners.delete(listener); };
     },
 
+    connectedClient,
     init() {
       client?.disconnect();
       const net = new NetClient({ onEvent, onStateChange, sessionTitle: sid => get().sessions.find(s => s.sessionId === sid)?.title });
@@ -747,11 +739,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       }
     },
     interrupt(sid) { return nativeRead(sid, (net) => net.interrupt(sid)); },
-    setModel(sid, modelId, opts) {
-      // Native ACKs include queued, confirmation and partial-persistence outcomes.
-      // They are not void mutations and never become optimistic session state.
-      return read(net => net.setModel(sid, modelId, opts));
-    },
     reloadingSessionIds: [],
     sessionSettingsOperations: {},
     async runSessionSettingsAction(sid, action, customInstructions) {
@@ -840,9 +827,6 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
         return meta;
       });
     },
-    mcpGlobal() { return read((net) => net.mcpGlobal()).then((r) => r.servers); },
-    mcpSetDefault(name, on) { return mutation(null, `设置 Copilot 全局 MCP ${name}`, (net) => net.mcpSetDefault(name, on)); },
-    mcpRefresh() { return mutation(null, '刷新 MCP 配置缓存', (net) => net.mcpRefresh()); },
     mcpSession(sid) {
       return nativeRead(sid, async (net) => {
         const result = await net.mcpSession(sid);
@@ -851,15 +835,8 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       });
     },
     mcpToggleSession(sid, name, on) { return mutation(sid, `切换 MCP ${name}`, (net) => net.mcpToggleSession(sid, name, on)); },
-    skillsGlobal(cwd) { return read((net) => net.skillsGlobal(cwd)).then((r) => r.skills); },
-    skillsRead(name, cwd) { return read((net) => net.skillsRead(name, cwd)); },
-    skillsSetGlobal(name, enabled, cwd) { return mutation(null, `设置 Copilot 全局 Skill ${name}`, (net) => net.skillsSetGlobal(name, enabled, cwd)); },
     skillsSession(sid) { return nativeRead(sid, (net) => net.skillsSession(sid)).then((r) => r.skills); },
     skillsToggleSession(sid, name, enabled) { return mutation(sid, `切换技能 ${name}`, (net) => net.skillsToggleSession(sid, name, enabled)); },
-    listDir(path) { return read((net) => net.listDir(path)); },
-    listRoles() { return read(net => net.listRoles()).then(result => result.roles); },
-    addRoles(sid, roles) { return read(net => net.addRoles(sid, roles)); },
-    roleReadiness(sid) { return read(net => net.roleReadiness(sid)); },
     async refreshRoles(sid, signal) {
       const net = connectedClient();
       const generation = get().connectionGeneration;

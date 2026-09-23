@@ -1,5 +1,6 @@
 import { SessionProjection, type McpServerSession, type SkillSession } from '@cockpit/protocol';
 import type { createCockpitStore } from '../net/store';
+import { cockpitApi } from '../net/api';
 import type { ChatSession } from '../net/types';
 import { retireDraftSession } from '../lib/draftSelection';
 import type { AgentTaskDetails } from '../lib/sessionControls';
@@ -19,6 +20,7 @@ const titles: Record<ControlScene, string> = {
 export function installFullWebFixture(store: ReturnType<typeof createCockpitStore>, selected = 'mixed') {
   installResourceFixture(store);
   const resources = store.getState();
+  const api = { ...cockpitApi };
   const template = resources.sessions[0];
   const models = new Map<string, ControlDesignState>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
@@ -149,13 +151,6 @@ export function installFullWebFixture(store: ReturnType<typeof createCockpitStor
       if (draft.purpose.kind === 'plan' && session.planRequest?.requestId !== draft.purpose.requestId) return 'decision-changed';
     },
     getResources: async id => SessionProjection.parse(find(id)),
-    setModel: async (id, model, options) => {
-      const result = await resources.setModel(id, model, options);
-      store.setState(state => ({ resourceRevisions: { ...state.resourceRevisions,
-        [id]: { ...state.resourceRevisions[id], model: (state.resourceRevisions[id]?.model ?? 0) + 1 },
-      } }));
-      return result;
-    },
     sendDraft: async request => {
       const id = request.body.sessionId;
       if (request.intent === 'prompt') {
@@ -218,8 +213,8 @@ export function installFullWebFixture(store: ReturnType<typeof createCockpitStor
       store.setState(state => ({ sessions: state.sessions.filter(session => session.sessionId !== id) }));
     },
     newSession: async (cwd, selectedRoles = []) => {
-      await resources.listDir(cwd);
-      const catalog = await resources.listRoles();
+      await api.listDir(cwd);
+      const catalog = await api.listRoles();
       const roles = selectedRoles.map(selection => {
         const role = catalog.find(value => value.moduleId === selection.moduleId && value.roleId === selection.roleId);
         if (!role) throw new Error('Unknown synthetic role');
@@ -248,5 +243,12 @@ export function installFullWebFixture(store: ReturnType<typeof createCockpitStor
     },
     refreshList: async () => {},
   });
+  cockpitApi.setModel = async (id, model, options) => {
+    const result = await api.setModel(id, model, options);
+    store.setState(state => ({ resourceRevisions: { ...state.resourceRevisions,
+      [id]: { ...state.resourceRevisions[id], model: (state.resourceRevisions[id]?.model ?? 0) + 1 },
+    } }));
+    return result;
+  };
   return activeId;
 }

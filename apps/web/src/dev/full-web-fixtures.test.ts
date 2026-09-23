@@ -5,6 +5,7 @@ import { ChatMessage } from '@cockpit/protocol/validation';
 import { createCockpitStore } from '../net/store';
 import { installFullWebFixture } from './full-web-fixtures';
 import { workspaceSessionId } from './workspace-fixtures';
+import { cockpitApi } from '../net/api';
 
 test('full Web fixtures have valid varied data and local settings without any HTTP', async t => {
   const fetch = t.mock.method(globalThis, 'fetch', () => { throw new Error('No fixture may use HTTP'); });
@@ -20,7 +21,7 @@ test('full Web fixtures have valid varied data and local settings without any HT
   assert.ok(store.getState().sessions.some(session => session.ask));
   assert.ok(store.getState().sessions.some(session => session.planRequest));
   assert.ok(store.getState().sessions.some(session => session.elicitation));
-  await store.getState().setModel(id, 'gpt-5.4-mini');
+  await cockpitApi.setModel(id, 'gpt-5.4-mini');
   assert.equal(store.getState().resourceRevisions[id]?.model, 1);
   assert.equal((await store.getState().getResources(id, ['model'])).currentModelId, 'gpt-5.4-mini');
   await store.getState().cancel(id);

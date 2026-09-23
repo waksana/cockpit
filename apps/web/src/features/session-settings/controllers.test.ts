@@ -4,6 +4,7 @@ import { act, createElement, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { IntentResult } from '@cockpit/protocol';
 import { useCockpit } from '../../net/store';
+import { cockpitApi } from '../../net/api';
 import type { ChatSession } from '../../net/types';
 import { useModelSettings } from './useModelSettings';
 import { useSessionRoles } from './useSessionRoles';
@@ -80,12 +81,13 @@ test('production roles controller allows busy metadata additions but locks uncer
   let catalogs = 0;
   let writes = 0;
   let inspected = false;
+  t.mock.method(cockpitApi, 'listRoles', async () => { catalogs++; return [role]; });
+  t.mock.method(cockpitApi, 'addRoles', async () => { writes++; return {
+    sessionId: target.sessionId, status: 'uncertain' as const, loaded: true, roles: [], appliedRoles: [], rolesNeedReload: false,
+    error: 'acknowledgement unknown',
+  }; });
   useCockpit.setState({
-    sessions: [target], listRoles: async () => { catalogs++; return [role]; },
-    addRoles: async () => { writes++; return {
-      sessionId: target.sessionId, status: 'uncertain', loaded: true, roles: [], appliedRoles: [], rolesNeedReload: false,
-      error: 'acknowledgement unknown',
-    }; },
+    sessions: [target],
     refreshRoles: async () => { inspected = true; return {
       sessionId: target.sessionId, loaded: true, roles: [], appliedRoles: [], rolesNeedReload: false,
     }; },

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { IntentResult, RoleSelection, SessionProjection } from '@cockpit/protocol';
 import { useCockpit } from '../../net/store';
+import { cockpitApi, loadRoleCatalog } from '../../net/api';
 import type { ChatSession } from '../../net/types';
 import { useKeyedAction, useKeyedResource } from '../../lib/useKeyedResource';
 import { useHostUnsavedChanges } from '../../lib/hostLeave';
@@ -13,9 +14,8 @@ export function useSessionRoles(session: ChatSession) {
   const sid = session.sessionId;
   const [open, setOpen] = useState(false);
   const [opened, setOpened] = useState(false);
-  const listRoles = useCockpit(state => state.listRoles);
   const snapshotReady = useCockpit(state => state.snapshotReady);
-  const catalog = useKeyedResource(`role-catalog:${sid}`, listRoles, 0, opened);
+  const catalog = useKeyedResource(`role-catalog:${sid}`, loadRoleCatalog, 0, opened);
   const action = useKeyedAction(`role-action:${sid}`);
   const [selected, setSelected] = useState<RoleSelection[]>([]);
   const [result, setResult] = useState<IntentResult<'roles/add'> | null>(null);
@@ -58,7 +58,7 @@ export function useSessionRoles(session: ChatSession) {
     setRefreshed(false);
     let next: IntentResult<'roles/add'>;
     void action.run(async () => {
-      next = await useCockpit.getState().addRoles(sid, additions);
+      next = await cockpitApi.addRoles(sid, additions);
       if (next.sessionId !== sid) throw new Error('返回的会话 ID 不匹配，请刷新原会话');
     }, () => {
       setResult(next);
