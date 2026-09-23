@@ -3,6 +3,7 @@
 
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { reportUxError } from '../lib/errorReporter';
+import { Button } from './Button';
 
 interface Props { children: ReactNode }
 interface State { crashed: boolean }
@@ -24,7 +25,7 @@ export class ErrorBoundary extends Component<Props, State> {
       return (
         <div className="crash-fallback">
           <p>界面出错了，错误仅在本地记录，不会自动执行代理。</p>
-          <button type="button" className="ck-button ck-primary" onClick={() => window.location.reload()}>重新加载</button>
+          <Button variant="primary" onClick={() => window.location.reload()}>重新加载</Button>
         </div>
       );
     }

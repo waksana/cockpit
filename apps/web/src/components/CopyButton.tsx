@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { copyText } from '../lib/copyText';
 import { Icon } from './Icon';
+import { Button, IconButton } from './Button';
 
 export function CopyButton({ text, label = '复制', variant = 'button' }: {
   text: string; label?: string; variant?: 'button' | 'value' | 'icon';
@@ -32,21 +33,25 @@ export function CopyButton({ text, label = '复制', variant = 'button' }: {
   }
   const result = pending ? '正在复制…' : state === 'copied' ? '已复制' : state === 'failed' ? '复制失败，请选择文字后复制' : '';
   const valueFeedback = state === 'copied' ? '已复制' : null;
+  const shared = { title: label, 'aria-disabled': pending || undefined, 'aria-busy': pending || undefined,
+    onClick: () => void copy() };
   return <span className={variant === 'value' ? 'chat-copy copy-value' : 'chat-copy'}>
-    <button type="button" className={variant === 'value' ? 'copy-value-button ck-button'
-      : variant === 'icon' ? 'chat-copy-icon ck-icon-button' : 'chat-copy-button ck-button'} aria-label={label} title={label}
-      aria-disabled={pending || undefined} aria-busy={pending || undefined} onClick={() => void copy()}>
-      {variant === 'value' ? <>
-        <span className="copy-value-text" aria-hidden={!!valueFeedback || undefined}>{text}</span>
-        {valueFeedback && <span className="copy-value-feedback">{valueFeedback}</span>}
-      </> : <>
-        <Icon name={state === 'copied' ? 'check' : 'copy'} size={16} />
-        {variant !== 'icon' && <span className="chat-copy-label">
-          <span className="chat-copy-label-size" aria-hidden="true">已复制</span>
-          <span className="chat-copy-label-text">{state === 'copied' ? '已复制' : '复制'}</span>
-        </span>}
-      </>}
-    </button>
+    {variant === 'icon'
+      ? <IconButton className="chat-copy-icon" icon={state === 'copied' ? 'check' : 'copy'} iconSize={16}
+        label={label} {...shared} />
+      : <Button className={variant === 'value' ? 'copy-value-button' : 'chat-copy-button'}
+        aria-label={label} {...shared}>
+        {variant === 'value' ? <>
+          <span className="copy-value-text" aria-hidden={!!valueFeedback || undefined}>{text}</span>
+          {valueFeedback && <span className="copy-value-feedback">{valueFeedback}</span>}
+        </> : <>
+          <Icon name={state === 'copied' ? 'check' : 'copy'} size={16} />
+          <span className="chat-copy-label">
+            <span className="chat-copy-label-size" aria-hidden="true">已复制</span>
+            <span className="chat-copy-label-text">{state === 'copied' ? '已复制' : '复制'}</span>
+          </span>
+        </>}
+      </Button>}
     <span className={state === 'failed' ? 'chat-copy-error' : 'chat-sr-only'} role="status">{result}</span>
   </span>;
 }

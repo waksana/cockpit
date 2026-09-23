@@ -9,10 +9,13 @@ import { useCockpit } from '../net/store';
 import { useSessionResource } from '../lib/useSessionResource';
 import { useModelSettings, selectionFrom, type ModelSelection } from '../features/session-settings/useModelSettings';
 import { SessionOperations } from '../features/session-settings/SessionOperations';
-import { ExpandableText, PanelPageShell, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
+import { ExpandableText } from './ExpandableText';
+import { PanelPageShell } from './PanelPage';
+import { Button, RefreshButton } from './Button';
+import { SessionResume } from './SessionResume';
 import { CopyButton } from './CopyButton';
 import { PendingChangesBar, SectionHeading, SelectField } from './UI';
-import { StateNotice } from './StateNotice';
+import { ResourceStatus, StateNotice } from './StateNotice';
 import { SessionRoles } from './SessionRoles';
 import type { ChatSession } from '../net/types';
 
@@ -174,12 +177,11 @@ export function ModelControls({ session, onSetModel, disabled, resource }: {
         {showBar && <PendingChangesBar
           message={action.busy ? '正在提交修改'
             : unconfirmed ? '提交结果未确认' : '有未应用的修改'}>
-          <button type="button" className="dialog-btn ck-button rp"
-            disabled={disabled || !draft} onClick={() => edit(selectionFrom(session))}>重置</button>
-          <button type="button" className="dialog-btn ck-button ck-primary primary rp"
+          <Button disabled={disabled || !draft} onClick={() => edit(selectionFrom(session))}>重置</Button>
+          <Button variant="primary"
             disabled={disabled || invalid || action.busy || submission?.revision === revision}
             aria-busy={action.busy}
-            onClick={apply}>{action.busy ? '正在提交…' : '应用'}</button>
+            onClick={apply}>{action.busy ? '正在提交…' : '应用'}</Button>
         </PendingChangesBar>}
         {resultView}
       </div>

@@ -1,6 +1,6 @@
 .module-label {
-  background: color-mix(in srgb, var(--link-color) 12%, var(--surface-color));
-  color: var(--primary-text-color);
+  background: color-mix(in srgb, var(--host-color-link) 12%, var(--host-color-surface));
+  color: var(--host-color-text);
   font-family: inherit;
   font-weight: 500;
   vertical-align: middle;
@@ -14,7 +14,7 @@
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--host-color-border);
   border-radius: var(--host-space-xs);
   font-family: inherit;
   font-size: var(--host-text-meta);
@@ -24,8 +24,8 @@
   &[data-unapplied] {
     border-style: dashed;
     .module-label, .role-badge-name {
-      background: var(--surface-color);
-      color: var(--secondary-text-color);
+      background: var(--host-color-surface);
+      color: var(--host-color-muted);
     }
   }
 }
@@ -34,9 +34,9 @@
   align-items: center;
   min-width: 0;
   padding: 1px var(--host-space-xs);
-  border-inline-start: 1px solid var(--border-color);
-  background: color-mix(in srgb, var(--primary-text-color) 6%, var(--surface-color));
-  color: var(--primary-text-color);
+  border-inline-start: 1px solid var(--host-color-border);
+  background: color-mix(in srgb, var(--host-color-text) 6%, var(--host-color-surface));
+  color: var(--host-color-text);
   white-space: normal;
   overflow-wrap: anywhere;
 }

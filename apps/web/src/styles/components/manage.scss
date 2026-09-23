@@ -1,7 +1,6 @@
 // MCP + Skills management pages share header/body/row/switch styling.
 // Global pages use ManagementShell; per-session pages use the info-panel slot.
 
-.manage-action { flex: none; }
 // One resource row for session and global lists (components/ResourceRow.tsx).
 .manage-row {
   display: grid;
@@ -44,10 +43,10 @@
   text-align: start;
 }
 .manage-text-disclosure { display: block; width: 100%; min-width: 0; }
-.manage-error-disclosure { color: var(--danger-color); text-decoration: underline; text-underline-offset: 0.2em; }
+.manage-error-disclosure { color: var(--host-color-danger); text-decoration: underline; text-underline-offset: 0.2em; }
 .manage-row-error {
   grid-column: 1 / -1;
-  color: var(--danger-color); overflow-wrap: anywhere;
+  color: var(--host-color-danger); overflow-wrap: anywhere;
   font-size: var(--host-text-meta);
 }
 .manage-error-full { margin-top: var(--host-space-xs); white-space: pre-wrap; }
@@ -68,7 +67,7 @@
   margin: 0 0 var(--host-space-md);
   font-size: var(--host-text-body);
   line-height: var(--host-leading-ui);
-  color: var(--secondary-text-color);
+  color: var(--host-color-muted);
 }
 
 // ── Master-detail sections (components/ManageWorkspace.tsx) ──────────────────────
@@ -78,7 +77,7 @@
   margin: 0;
   padding: var(--host-space-sm) var(--host-space-lg) 0;
   font-size: var(--host-text-meta);
-  color: var(--secondary-text-color);
+  color: var(--host-color-muted);
 }
 // Selectable master rows: the identity link is the navigation target and the
 // switch stays a separate control.
@@ -86,7 +85,7 @@
   padding: 0 var(--host-space-sm) 0 0;
   border: 0;
   border-radius: var(--host-radius-control);
-  &[data-selected] { background: color-mix(in srgb, var(--primary-color) 16%, var(--surface-color)); }
+  &[data-selected] { background: color-mix(in srgb, var(--host-color-accent) 16%, var(--host-color-surface)); }
   > .manage-resource-identity {
     padding: var(--host-space-sm);
     text-align: start;
@@ -96,7 +95,7 @@
   > .manage-row-error { padding: 0 var(--host-space-sm) var(--host-space-sm); }
 }
 .manage-global-control { display: flex; }
-.manage-global-unknown { font-size: var(--host-text-meta); color: var(--secondary-text-color); }
+.manage-global-unknown { font-size: var(--host-text-meta); color: var(--host-color-muted); }
 .manage-detail-header {
   height: auto;
   padding-block: var(--host-space-sm);
@@ -110,7 +109,7 @@
 }
 .manage-detail-meta {
   font-size: var(--host-text-meta);
-  color: var(--secondary-text-color);
+  color: var(--host-color-muted);
 }
 .manage-detail-line {
   overflow-wrap: anywhere;
@@ -123,8 +122,8 @@
 }
 .manage-detail code {
   padding: 0.05rem 0.3rem;
-  border-radius: calc(var(--border-radius) / 2);
-  background: color-mix(in srgb, var(--primary-text-color) 6%, var(--background-color));
+  border-radius: calc(var(--host-radius-control) / 2);
+  background: color-mix(in srgb, var(--host-color-text) 6%, var(--host-color-surface));
   font-family: var(--font-monospace, ui-monospace, monospace);
   font-size: 0.9em;
   word-break: break-all;
@@ -132,12 +131,12 @@
 .manage-config {
   margin: var(--host-space-lg) 0 0;
   padding: var(--host-space-md);
-  border-radius: var(--border-radius);
-  background: color-mix(in srgb, var(--primary-text-color) 5%, var(--background-color));
+  border-radius: var(--host-radius-control);
+  background: color-mix(in srgb, var(--host-color-text) 5%, var(--host-color-surface));
   font-family: var(--host-font-mono);
   font-size: var(--host-text-meta);
   line-height: var(--host-leading-ui);
-  color: var(--primary-text-color);
+  color: var(--host-color-text);
   white-space: pre-wrap;
   word-break: break-word;
   overflow-x: auto;

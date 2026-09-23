@@ -118,7 +118,7 @@ test('session pages retain a stable native frame without initial focus or a cust
   assert.match(shell, /useNativeDialog\(frame, !wide\)/);
   assert.doesNotMatch(shell, /\.focus\(|event.key [!=]== 'Tab'/);
   assert.match(shell, /event.defaultPrevented/);
-  for (const file of ['./SessionInfoPanel.tsx', './SessionPanelKit.tsx', './Manage.tsx']) {
+  for (const file of ['./SessionInfoPanel.tsx', './PanelPage.tsx', './Manage.tsx']) {
     assert.doesNotMatch(source(file), /navigation[?=:]|info-panel-nav|info-panel-more/);
   }
 });

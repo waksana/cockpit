@@ -158,8 +158,10 @@ for real-component review.
 
 The host's internal visual foundations live in `styles/tokens.scss`: the
 `--host-*` roles own shared spacing (4/8/12/16/24px), UI typography
-(16px title / 14px body / 12px metadata, 1.5 leading), and control/dialog radii.
-They preserve the original tweb structural namespace and Solarized palette.
+(16px title / 14px body / 12px metadata, 1.5 leading), control/dialog radii and
+the `--host-color-*` palette roles that the public `--ck-color-*` variables map to.
+They preserve the original tweb structural namespace and Solarized palette; the
+legacy tweb color names remain aliases of the host roles for ported styles.
 Chat aliases these foundations while retaining its 16px / 1.7 prose role and
 explicit dense-control exceptions. Session settings, session MCP and session
 Skills remain separate pages with flat sections; they share visual roles, not

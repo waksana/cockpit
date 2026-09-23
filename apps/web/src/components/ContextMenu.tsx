@@ -29,7 +29,7 @@ export function MenuItemButton({ item, onClose }: { item: MenuItem; onClose: () 
       <button
         type="button"
         role="menuitem"
-        className={`btn-menu-item ck-button rp${item.destructive ? ' ck-danger' : ''}`}
+        className={`btn-menu-item ck-button${item.destructive ? ' ck-danger' : ''}`}
         disabled={item.disabled}
         onClick={() => {
           if (item.disabled) return;

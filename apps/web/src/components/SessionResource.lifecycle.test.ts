@@ -16,7 +16,7 @@ import { SessionMcp, SessionSkills } from './Manage';
 import { CopyButton } from './CopyButton';
 import { ManageWorkspace } from './ManageWorkspace';
 import { SessionDetails } from './SessionDetails';
-import { ExpandableText } from './SessionPanelKit';
+import { ExpandableText } from './ExpandableText';
 import { GlobalNavigation } from './GlobalNavigation';
 import { activityFixture } from '../dev/activity-fixtures';
 import { intentUrl } from '../lib/config';
@@ -1381,7 +1381,7 @@ for (const page of pages) {
     assert.equal(h.container.querySelector('.spinner'), null, 'closing is not a resource read');
     assert.doesNotMatch(h.container.textContent, /没有可用的|本会话没有|加载失败/);
     for (const node of h.container.querySelectorAll('select')) assert.equal(disabled(node), true);
-    for (const node of h.container.querySelectorAll('.dialog-btn')) {
+    for (const node of h.container.querySelectorAll('button.ck-button:not(.chat-copy-button, .copy-value-button, .panel-expandable-toggle)')) {
       if (node.getAttribute('aria-expanded') !== null) continue; // Passive role-entry disclosure, not a model action.
       assert.equal(disabled(node), true);
       await h.event(node, 'click');

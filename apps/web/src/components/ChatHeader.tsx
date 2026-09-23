@@ -1,5 +1,5 @@
 import type { RefObject } from 'react';
-import { Icon } from './Icon';
+import { Button, IconButton } from './Button';
 import { PaneHeader } from './PaneHeader';
 
 export function ChatHeader({ title, modelLabel, moreRef, moreOpen, onBack, onInfo, onMore }: {
@@ -9,15 +9,11 @@ export function ChatHeader({ title, modelLabel, moreRef, moreOpen, onBack, onInf
   onBack: () => void; onInfo: () => void; onMore: () => void;
 }) {
   return <PaneHeader className="chat-topbar"
-    leading={<button className="chat-back ck-icon-button rp lg:hidden" type="button" aria-label="返回" onClick={onBack}>
-      <Icon name="back" size={24} />
-    </button>}
-    title={<button type="button" className="chat-topbar-content ck-button" aria-label={`查看会话信息：${title}`} onClick={onInfo}>
+    leading={<IconButton className="chat-back lg:hidden" icon="back" label="返回" onClick={onBack} />}
+    title={<Button className="chat-topbar-content" aria-label={`查看会话信息：${title}`} onClick={onInfo}>
       <span className="pane-title chat-topbar-title ck-text-primary" title={title}>{title}</span>
       {modelLabel && <span className="chat-topbar-subtitle ck-text-secondary"><span className="chat-topbar-model" title={modelLabel}>{modelLabel}</span></span>}
-    </button>}
-    actions={<button ref={moreRef} className="chat-topbar-more ck-icon-button rp" type="button" aria-label="更多操作"
-      aria-haspopup="menu" aria-expanded={moreOpen} onClick={onMore}>
-      <Icon name="more" size={24} />
-    </button>} />;
+    </Button>}
+    actions={<IconButton ref={moreRef} className="chat-topbar-more" icon="more" label="更多操作"
+      aria-haspopup="menu" aria-expanded={moreOpen} onClick={onMore} />} />;
 }

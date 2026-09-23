@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import { dismissUxError, getUxErrors, subscribeUxErrors } from '../lib/errorReporter';
+import { Button } from './Button';
 
 export function UxErrorNotifications({ withinDialog = false }: { withinDialog?: boolean }) {
   const errors = useSyncExternalStore(subscribeUxErrors, getUxErrors, getUxErrors);
@@ -28,9 +29,8 @@ export function UxErrorNotifications({ withinDialog = false }: { withinDialog?: 
             <strong>操作或界面出错</strong>
             <p className="user-select-text">{error.message}</p>
           </div>
-          <button
-            type="button"
-            className="ck-button ux-error-notification-dismiss"
+          <Button
+            className="ux-error-notification-dismiss"
             aria-label="关闭错误通知"
             onClick={(event) => dismiss(error.id, event.currentTarget)}
             onKeyDown={(event) => {
@@ -41,7 +41,7 @@ export function UxErrorNotifications({ withinDialog = false }: { withinDialog?: 
             }}
           >
             关闭
-          </button>
+          </Button>
         </div>
       ))}
     </aside>

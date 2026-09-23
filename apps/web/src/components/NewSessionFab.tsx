@@ -1,7 +1,7 @@
 // New-session FAB — tweb .btn-corner compose button (bottom-inline-end of the
 // master pane). Opens App's directory picker to choose a working directory.
 
-import { Icon } from './Icon';
+import { IconButton } from './Button';
 
 export function NewSessionFab({ disabled, onOpen }: {
   disabled: boolean;
@@ -9,15 +9,8 @@ export function NewSessionFab({ disabled, onOpen }: {
 }) {
   return (
     <div className="fab-wrap">
-      <button
-        type="button"
-        className="btn-corner ck-icon-button ck-primary rp is-visible"
-        aria-label="新建会话"
-        disabled={disabled}
-        onClick={onOpen}
-      >
-        <Icon name="compose" size={24} />
-      </button>
+      <IconButton className="btn-corner is-visible" variant="primary" icon="compose" label="新建会话"
+        disabled={disabled} onClick={onOpen} />
     </div>
   );
 }

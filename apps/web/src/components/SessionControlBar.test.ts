@@ -101,5 +101,5 @@ test('sticky control surfaces use the same existing input-card color, not a prev
   assert.match(css, /\.chat-controls-header \{[^}]*background: var\(--chat-input-surface\)/);
   assert.match(css, /\.chat-input-card\[data-controls\] \.chat-input \{[^}]*background: var\(--chat-input-surface\)/);
   const activityCss = compile(new URL('../styles/components/session-activity.scss', import.meta.url).pathname).css;
-  assert.match(activityCss, /\.session-activity-item\[data-activity=overall\] > \.spinner \{[^}]*color: var\(--primary-color\)/);
+  assert.match(activityCss, /\.session-activity-item\[data-activity=overall\] > \.spinner \{[^}]*color: var\(--host-color-accent\)/);
 });

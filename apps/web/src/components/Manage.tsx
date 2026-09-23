@@ -6,13 +6,15 @@ import { useCockpit } from '../net/store';
 import { useKeyedAction } from '../lib/useKeyedResource';
 import { useSessionResource } from '../lib/useSessionResource';
 import { McpStatusPill } from './McpStatus';
-import { PanelCloseButton, RefreshButton, ResourceStatus, SessionResume } from './SessionPanelKit';
+import { PanelCloseButton } from './PanelPage';
+import { RefreshButton } from './Button';
+import { SessionResume } from './SessionResume';
 import { PaneBody, PaneHeader } from './PaneHeader';
 import { ModuleSourceBadge } from './ModuleLabel';
 import type { ModuleSource } from '@cockpit/protocol';
 import { ResourceError, ResourceProgress, ResourceRow, ResourceText } from './ResourceRow';
 import { Toggle } from './UI';
-import { StateNotice } from './StateNotice';
+import { ResourceStatus, StateNotice } from './StateNotice';
 import { useToggleRequests } from '../features/session-settings/useToggleRequests';
 import { skillSummary } from '../lib/resourcePresentation';
 

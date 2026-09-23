@@ -6,14 +6,14 @@
   white-space: nowrap;
   overflow: hidden;
   font-size: var(--font-size-12);
-  color: var(--secondary-text-color);
+  color: var(--host-color-muted);
 }
 .session-activity-item {
   display: inline-flex;
   flex: none;
   align-items: center;
   gap: 0.15rem;
-  &[data-activity='decision'], &[data-activity='processing'] { color: var(--primary-color); }
-  &[data-activity='overall'] > .spinner { color: var(--primary-color); }
-  &[data-activity='error'], &:has([data-icon='error']) { color: var(--danger-color); }
+  &[data-activity='decision'], &[data-activity='processing'] { color: var(--host-color-accent); }
+  &[data-activity='overall'] > .spinner { color: var(--host-color-accent); }
+  &[data-activity='error'], &:has([data-icon='error']) { color: var(--host-color-danger); }
 }

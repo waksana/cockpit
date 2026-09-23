@@ -48,7 +48,7 @@ test('skill and thought icons stay distinct without changing process grouping or
   assert.equal((html.match(/class="process-summary ck-button"/g) ?? []).length, 1);
   assert.match(html, /3 次工具调用 · 1 次思考 · 1 次 Skill 使用/);
   assert.match(html, /class="activity-head skill-activity"><span class="activity-icon"><span class="ck-icon" data-icon="skills"/);
-  assert.match(html, /class="activity-head ck-button thought-toggle" aria-expanded="false"[^>]*><span class="activity-icon"><span class="ck-icon" data-icon="thought"/);
+  assert.match(html, /class="activity-head thought-toggle ck-button" aria-expanded="false"[^>]*><span class="activity-icon"><span class="ck-icon" data-icon="thought"/);
   assert.match(html, /lucide-book-open/);
   assert.match(html, /lucide-lightbulb/);
   for (const latest of [false, true]) {
@@ -102,7 +102,7 @@ test('latest overview starts open even when idle and completed tools do not repe
   const html = renderProcess(items, true);
   assert.match(html, /class="process-summary ck-button" aria-expanded="true"/);
   assert.doesNotMatch(html, /Recorded reasoning/);
-  assert.match(html, /class="activity-head ck-button thought-toggle" aria-expanded="false"/);
+  assert.match(html, /class="activity-head thought-toggle ck-button" aria-expanded="false"/);
   assert.equal((html.match(/class="activity-head tool-head tool-toggle ck-button"/g) ?? []).length, 3);
   assert.match(html, /展开细节：view · Read source · 已完成/);
   assert.doesNotMatch(html, /class="activity-status"/);
@@ -120,7 +120,7 @@ test('reasoning opens by default only when it is the latest visible item, not th
     session.messages = [items[0], next];
     const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
     assert.doesNotMatch(html, /class="activity-detail msg-thought"/);
-    assert.match(html, /class="activity-head ck-button thought-toggle" aria-expanded="false"/);
+    assert.match(html, /class="activity-head thought-toggle ck-button" aria-expanded="false"/);
   }
   session.messages = [items[1], items[0]];
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
