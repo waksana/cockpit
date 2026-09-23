@@ -65,7 +65,8 @@ function definedClasses() {
     const css = compile(join(src, file)).css.replace(/\/\*[\s\S]*?\*\//g, '');
     for (const [, prelude] of css.matchAll(/([^{};]+)\{/g)) {
       if (prelude.trim().startsWith('@')) continue;
-      for (const [, name] of prelude.matchAll(/\.(-?[_a-zA-Z][\w-]*)/g)) defined.add(name);
+      // Read escaped identifiers too, e.g. `.lg\:hidden` defines `lg:hidden`.
+      for (const [, name] of prelude.matchAll(/\.(-?(?:[_a-zA-Z]|\\.)(?:[\w-]|\\.)*)/g)) defined.add(name.replace(/\\(.)/g, '$1'));
     }
   }
   return defined;
@@ -179,6 +180,7 @@ test('the class scanner sees literal, conditional, template and local-list class
   assert.deepEqual(tokens(`<a bodyClassName="body" className={['x', c].filter(Boolean).join(' ')} />`), ['body', 'x']);
   assert.deepEqual(tokens(`const cls = ['message']; if (a) cls.push('is-a'); <a className={cls.join(' ')} />`), ['is-a', 'message']);
   assert.deepEqual(tokens(`<a data-x="not-a-class" title="t" />`), []);
+  assert.ok(definedClasses().has('lg:hidden'), 'escaped selectors such as .lg\\:hidden count as definitions');
 });
 
 test('classic host sources no longer use the retired dialog-btn, primary or rp classes', () => {

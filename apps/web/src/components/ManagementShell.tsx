@@ -38,7 +38,7 @@ function DetailHeader(props: ManagementDetailHeaderProps) {
 function DetailHeaderBase({ item, titlePrefix, actions }: ManagementDetailHeaderProps) {
   const up = useUp();
   return <PaneHeader className="chat-topbar manage-detail-header"
-    leading={<IconButton className="chat-back" icon="back" label="返回" onClick={() => up()} />}
+    leading={<IconButton className="chat-back lg:hidden" icon="back" label="返回" onClick={() => up()} />}
     title={<span className="pane-title resource-name">{titlePrefix}<span>{item}</span></span>}
     actions={actions} />;
 }
