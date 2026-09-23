@@ -1,189 +1,235 @@
-# Cockpit 定位与验收准则
+# Product requirements
 
-本文记录已明确的产品要求和已接受取舍，编号可供设计、审阅与验收引用。
-它不是当前实现清单、发布记录或新增功能授权。实现说明见
-[架构与运行边界](cockpit-plan.md)，接口细节见[原生聊天](native-chat.md)与
-[MCP](../apps/mcp/README.md)。建议只有经明确确认后才能成为要求；不能将现有实现反写成产品决定。
-各主题的唯一维护位置见[文档索引](README.md)。
+Confirmed product requirements and accepted trade-offs, numbered for design,
+review and acceptance. This is not an implementation inventory or a release
+record; see [architecture](architecture.md) for the current implementation and
+[native chat](native-chat.md) / [MCP](../apps/mcp/README.md) for interfaces.
+A suggestion becomes a requirement only after explicit confirmation; existing
+code never retroactively becomes a product decision.
 
-## R1 · 薄底座，扩展保持边界
+<a id="r1"></a>
+## R1 · Thin base, bounded extensions
 
-Cockpit 是原生 agent/session 能力的薄接入与交互底座。
-Copilot 是能力与原生状态的权威；后端将选定的 Copilot 能力忠实转换成 API，
-Web 选择这些 API 的子集实现聊天工具，MCP 是同一 API 的另一种消费者。
-后端不必覆盖全部 Copilot，Web 也不必为每个后端 API 提供入口。
-使用 TypeScript、HTTP POST 和 SSE；Web、API、MCP 共用明确契约。
-本体提供原生操作适配、文字 Web、必要的宿主资源管理和 graceful 退出。
-Copilot 的 `assistant` 消息与 `task` 子代理属于原生能力。
+Cockpit is a thin access and interaction base for native agent/session
+capabilities. Copilot is the authority for capabilities and native state. The
+backend faithfully turns selected Copilot capabilities into an API; the Web UI
+uses a subset of that API for chat; MCP is another consumer of the same API.
+Neither the backend nor the Web UI must cover everything. TypeScript, HTTP POST
+and SSE are used, with one explicit contract for Web, API and MCP. The host
+provides native operation adapters, a text Web UI, necessary host resource
+management and graceful exit. Copilot's `assistant` messages and `task`
+subagents are native capabilities.
 
-增强与业务能力由[模块目录](module-catalog.md)定义，接入遵循
-[基础模块协议](module-contract-draft.md)。前端也通过有版本的公开 UI 组合契约扩展，
-包括输入区文件/语音交互和聊天流的文件展示。菜单动作声明、真实语义组件 middleware、
-state/service/draft 与 Markdown 是四种不同的扩展机制；菜单不包装导航组件，
-也不授权任意页面/router 注册。模块能力逐项实现并验证其共同契约。
+Enhancements and business features are modules ([catalog](modules.md)) that follow
+the [module contract](module-contract.md). The frontend is also extended through a
+versioned public UI composition contract (including composer file/speech
+interaction and file presentation in chat). Menu action declarations, real semantic
+component middleware, state/service/draft and Markdown are four distinct
+mechanisms; menus never wrap navigation and grant no arbitrary page/router
+registration. Each module capability is implemented and verified against the
+shared contract.
 
 <a id="single-service-target"></a>
-### 已确认的目标
+### Confirmed targets
 
-模块宿主已开始分阶段实现；完成状态以[架构](cockpit-plan.md)为准。
+Implementation status is tracked in [architecture](architecture.md#target-gap).
 
-| 已确认目标 | 边界 |
+| Target | Boundary |
 | --- | --- |
-| 一个前后端服务包 | 包含后端入口、built Web 和必要运行依赖；直接启动即可统一 serve。普通构建、测试与产包属于开发工程。 |
-| 安装与启动由宿主管理 | 使用者决定包的安装位置和运行方式，进程退出后的重新启动由人工或宿主设施负责。 |
-| 模块生命周期从属宿主 | 前后端作为一个模块包交付并由宿主统一提供；独立仓库、版本、配置和业务数据可以保留。首版后端采用受信任的主进程 import，不承诺进程级故障隔离。 |
-| 失败模块局部禁用 | 模块启动失败只停用失败模块并报告错误，本体与其他模块继续提供服务；所选承载方式需满足相应故障边界。 |
-| 模块冷加载 | 安装、版本选择及启停选择只改变下次启动加载的内容，当前实际加载版本不变。明确不做模块热加载、热启停或热更新；不为热切换预留业务框架或改变可信主进程 import 模型。 |
-| MCP 分入口 | 同一端口下按模块 path 提供独立 MCP 工具/资源/prompt 集合和协议连接；不是所有 path 指向同一个大工具表。 |
-| graceful 只关注 session | 原生 session 空闲后即可退出；模块业务、后台连接和关闭回执不作为等待条件。 |
-| 可选的下次启动消息 | 模块可通过自己的 MCP 保存一次性接续 prompt，下一次宿主就绪后发给指定原生 session；不是本体隐式欢迎消息、部署回执或原生状态镜像。 |
+| One service package | Backend entry, built Web and runtime dependencies; starting it serves everything. Building, testing and packaging are development engineering. |
+| Host-managed installation and start | The operator chooses where and how the package runs; restarting after exit is manual or up to host facilities. |
+| Modules follow the host lifecycle | Frontend and backend ship as one module package served by the host; separate repositories, versions, configuration and business data may remain. The first backend model is trusted main-process import, with no process-level fault isolation. |
+| Failed modules are disabled locally | A module that fails to start is disabled and reported; the host and other modules keep serving. |
+| Cold module loading | Installation, version and enable choices change only what the next start loads. No hot loading, hot enable/disable or hot update, and no framework reserved for hot switching or changes to the trusted import model. |
+| Per-module MCP entries | Under the same port, each module path offers its own MCP tools/resources/prompts and protocol connection, not one large shared tool table. |
+| Graceful exit waits only for sessions | Exit follows native session idleness; module business, background connections and close receipts are not wait conditions. |
+| Optional next-start message | A module may save a one-time continuation prompt through its own MCP and send it to a chosen native session once the next host is ready. It is not a hidden host welcome, deployment receipt or native state mirror. |
 
-“一个服务进程”不排除 SDK 自身的进程外 Copilot runtime、原生 MCP/工具子进程，
-也不把浏览器前端视为宿主 OS 进程。模块由宿主加载并随宿主结束，
-模块工作可能被退出打断；恢复和未知结果由模块自身处理。
-“一个包”也不表示任意宿主零前提可运行；平台、Node 和原生依赖要求需明确，
-是否将 Node 可执行文件合包尚未在本次决议中确定。
-MCP path 是协议/工具命名空间，不是新的权限系统；现有认证与用户选择仍适用。
-原生 session 的 MCP 开关不是模块代码热加载，继续遵循原生配置语义。
+"One service process" does not exclude the SDK's out-of-process runtime or native
+MCP/tool subprocesses, and the browser is not a host process. Modules load and end
+with the host; exit may interrupt module work, and modules handle recovery and
+unknown results. "One package" does not mean zero prerequisites: platform, Node
+and native dependencies must be stated; bundling Node is undecided. An MCP path is
+a protocol/tool namespace, not a permission system. Native per-session MCP
+switches are not module hot loading.
 
-细节由[模块协议](module-contract-draft.md)维护，当前差距见[架构对照](cockpit-plan.md#target-gap)。
+<a id="r2"></a>
+## R2 · One authority for native state
 
-## R2 · 原生状态只有一个权威
+The backend keeps no short- or long-lived copy of native chat or session state,
+does no background sync, private database traversal or cache fallback.
+Per-request results and local indexes are released after use; SDK internal caches
+are distinct from Cockpit-built copies.
 
-后端不保存原生聊天或会话状态的长短期副本，不后台同步、遍历私库或用缓存兜底。
-请求内结果及局部索引用完释放；SDK 自有内部缓存与 Cockpit 自建副本须分清。
+Necessary, lifecycle-bound control callbacks, connections and in-flight resources
+are allowed; the frontend may hold its current display window. Text drafts and the
+display window are frontend interaction state. Managed files, pinning and
+notifications belong to their modules. Module role content, business identities
+and records belong to modules; the host keeps only load metadata (installation
+selection, actual import references, generic registrations, owned resources).
+Business and native data ownership are explicit; product changes never authorize
+deleting or migrating user data.
 
-允许真实必要、按生命周期释放的控制回调、连接和在途资源；前端可持当前展示窗口。
-文字草稿和当前展示窗口属于前端交互状态，不是后端原生镜像。托管文件、置顶和通知信息
-属于相应模块，不是本体持有原生状态副本的例外。
-模块角色内容、业务身份和业务记录属于模块。宿主只保留安装选择、
-实际 import 引用、通用注册和所拥有资源等必要加载元数据，
-不借此保存原生状态副本。业务数据与原生数据的所有权分别明确；
-产品变更不自动授权删除或迁移用户数据。
+<a id="r3"></a>
+## R3 · Use SDK contracts faithfully
 
-## R3 · 忠实使用 SDK 契约
+Check each capability's calls, adapters and consumers against the installed
+version's public contract; do not rebuild what native already does. Not every SDK
+function must be wired. Choosing not to offer a capability differs from changing
+the meaning of an offered one; the latter cannot hide behind "thin adapter" or
+"simpler UI". Naming, validation, transport and projection may adapt, but must not
+invent decisions, alter native side effects or lose the information that separates
+accepted, applied, failed and unknown.
 
-按安装版本的公开契约核对每类实际能力的调用、适配及消费者；原生能直接完成的，
-不在上层绕路重造。不要求接入每个 SDK 函数。
-选择不提供某项能力与改变已提供能力的含义是两回事：前者可以是产品子集，
-后者不能以“薄适配”或“界面简化”为由掩盖。
-参数命名、输入校验、事件传输和结果投影可以适配，但不能猜补未提供的决策、
-改变原生副作用或丢失区分受理、生效、失败及未知所必需的信息。
+Keep MCP connection/auth/stopped states, schedule kinds, model effort/context tier
+and queue semantics. Missing, unsupported and unknown values stay distinct; model
+tiers and defaults are never hard-coded or guessed, and queued/accepted never means
+applied. An unrelated later read failure must not turn a successful change into a
+reported failure.
 
-保留 MCP 连接/认证/停止状态、调度类型、模型 effort/context tier 和排队语义。
-字段缺失、不支持和未知值分别表达，不硬编码模型档位或猜默认，不将 queued/受理等同生效。
-不因后续无关读取失败而把已经成功的变更误报失败。
+Web, MCP and other consumers share native create/send semantics:
+`session/new(cwd) → real native ID → prompt`. Creation sends no hidden initial
+message, and no virtual session, reserved chat address or first-message lifecycle
+replaces the native object. MCP maps the API directly; renaming and formatting do
+not change semantics, conditions or side effects. Directory selection is only an
+unsubmitted form; an empty native session may vanish after unload and is not recreated.
 
-Web、MCP 和其他 API 消费者使用同一套原生创建和发送语义：
-`session/new(cwd) → 真实原生 ID → prompt`。创建不隐式发送初始化消息，
-不以虚拟 session、预留聊天地址或首消息专用生命周期代替原生对象。
-MCP 直接对应 API，参数名转换和展示格式不改变业务语义、条件或副作用。
-目录选择只是未提交表单；空原生会话卸载后可能消失，不自动重建。
+Confirmation requirements follow installed Copilot's public contract. The Web UI
+may add human anti-mistake confirmations but never turns them into extra API/MCP
+gates. Real native ask/plan/elicitation decisions must be preserved.
 
-原生操作的确认要求跟随已安装 Copilot 的公开契约。
-Web 可以额外提供面向人的防误触确认，但不把它变成 API/MCP 新增的原生确认门槛。
-原生实际产生的 ask/plan/elicitation 等决策必须保留。
+Errors are returned explicitly: no silent home fallback, mixed-source repair,
+swallowed exceptions or faked success. Missing native capabilities are stated;
+significant experience substitutes are agreed with the user first.
 
-错误明确返回，不静默换读 home、混源补救、吞异常或伪造成功。
-原生缺能力时明确说明；重要体验替代先与用户商量。
+<a id="r4"></a>
+## R4 · Read and compute only what consumers need
 
-## R4 · 只读、只算消费者真正需要的内容
+Avoid reading whole panels for a list or single field, full refreshes from
+unrelated invalidation, duplicate requests and repeated whole-window computation.
+Per-request results and local indexes may be reused; cross-request native copies
+may not.
 
-避免为列表或单字段读取整套面板、无关失效引发全量刷新、重复请求和重复全窗口计算。
-可复用请求内结果与局部索引，不恢复跨请求原生副本。
+Account for cost per complete user action or reconnection — no per-batch budget
+resets, bigger pages or treating events as messages to look better. Report
+HTTP/MCP round trips, SDK calls, provable RPCs, events/bytes and repeated CPU work
+separately; do not conflate them with tokens, disk I/O or production latency. When
+the SDK only offers list, a necessary list is not a defect by itself. Optimizations
+must reduce real cost, not just text or code.
 
-按完整用户动作或完整重连累计成本，不按批重置预算，不靠增大页或把 event 当 message 粉饰。
-分开报告 HTTP/MCP 往返、SDK 调用、可证实 RPC、事件/字节及 CPU 重复处理；
-不能混称 token、磁盘 I/O 或现网延迟。SDK 只有 list 时，必要 list 不自动构成缺陷。
-优化须减少真实成本，而非只缩短文字或代码。
+<a id="r5"></a>
+## R5 · Consistent history, live updates and reconnection
 
-## R5 · 历史、实时与断线恢复一致
+Main and sub-agents use one `all` scope from the start of reading, sharing the
+frontend reading window and native cursor. Collapsed subagent views keep updating;
+expanding needs no extra read or refresh. SSE pushes actual content, not
+invalidations followed by cumulative refetches.
 
-主/子 agent 自建立读取起统一 all 范围，共用前端阅读窗口及原生 cursor。
-子视图收起也持续更新，展开不另读、不要求刷新。SSE 推实际内容，不推失效后再重拉累计窗口。
+Ordinary reconnection continues from the valid same-scope cursor, backfilling
+durable messages, tools and lifecycle and showing completed messages promptly.
+Keep event deduplication, real ownership, full-message replacement of partials and
+bootstrap race protection. Expired cursors and rewinds resynchronize explicitly,
+never through a hidden full-history fallback.
 
-普通重连沿同范围有效 cursor 增量补 durable 消息、工具和生命周期，及时展示已补到的完整消息。
-保留事件去重、真实归属、完整消息替换 partial 和 bootstrap 竞态保护。
-expired/rewind 明确重同步，不暗中全历史兜底。
+Lossless token-by-token replay of transient deltas, recoverable unfinished text
+prefixes and permanent cursors are not promised. Cancelling a read must not
+interrupt the main model.
 
-不承诺临时 delta 逐 token 无损重放、未完成文本前缀可恢复或 cursor 永久有效。
-取消读取不能中断主模型。
+<a id="r6"></a>
+## R6 · Natural interaction, explicit product choices
 
-## R6 · 自然交互，产品取舍明确
+The ordinary session list is ordered by native activity; pinning belongs to a
+session-organization module. Natural layout with a single scroll owner: re-entering
+lands at the latest message; scrolling up is never forcibly interrupted. Load by
+message, not whole turn; keep complete messages, auto-fill at least two screens,
+prefetch near the top and show loading explicitly.
 
-普通会话列表按原生活动排序，置顶归会话整理模块。自然布局、单一滚动控制；
-重入最新落底，上翻不强跳。按消息而非整轮加载，保留完整消息、至少两屏自动填充、
-近顶预取与明确加载态。
+First-reply auto-naming belongs to the session-organization module; the backend
+keeps native manual naming and title reads without a title copy. Whether the Web UI
+offers a rename button is its own subset choice. The host provides ordinary text
+input; drafts keep their identity, submission and late-result protection.
 
-首次回复自动命名策略归会话整理模块；后端保留原生手动命名和标题读取，不另建标题副本。
-Web 是否提供手动命名按钮由其选定功能子集决定，不以 API 存在推导必须有 Web 入口。
-本体提供普通文字输入，草稿保持自身身份、提交与晚结果保护。
+HTTP/MCP may pass SDK-native `file/directory/selection/blob` attachments through
+faithfully, but the host offers no browser upload/download, managed file library,
+module reference resolution or file rendering. File paths belong to the Copilot
+runtime side and must not pose as browser or other-machine paths. Deleting a session
+does not clean independently managed files or workspaces. Significant interaction
+trade-offs are confirmed first.
 
-HTTP/MCP 可以忠实传递 SDK 原生 `file/directory/selection/blob` 附件参数，
-但不提供浏览器上传下载、托管文件库、模块引用解析或文件渲染。
-文件路径属于 Copilot 运行侧，不能冒充浏览器或另一台机器的本地路径。
-会话删除不连带清理独立托管文件或工作区。重要交互取舍先确认。
+The confirmed future system page is a full page entered from the host's main menu.
+Its first version shows, read-only, the Cockpit version and every installed module
+with its version and actual load state, with safe exit at the bottom showing
+progress (R7 semantics). It offers no add/disable/configure actions. It is a page
+requirement independent of menu registration and grants modules no page
+registration; it is not implemented yet.
 
-已确认的后续系统页面由本体汉堡菜单的原生入口进入，是完整页面而非仅左栏面板。
-首版只读展示 Cockpit 版本、全部已安装模块及其版本和实际加载状态；
-页底提供安全退出并显示进行中状态，沿用 R7 的退出语义。
-首版不提供添加、停用、配置等模块管理操作。这是独立于菜单注册的页面需求，
-不授权模块注册任意页面，也不表示当前源码已经实现。
+<a id="r7"></a>
+## R7 · Truthful safety and lifecycle
 
-## R7 · 安全和生命周期如实表达
+Keep native decisions, permission/configuration provenance, active work/queue
+protection, late-result isolation, backpressure and release. Permanent deletion
+uses the native API; confirmation follows R3 and the Web UI states it is
+irreversible. Deletion does not depend on module unbinding or callbacks. External
+applications handle stale IDs; unloaded, timeouts and permission errors are not deletion.
 
-保留原生决策、权限/配置来源、活动工作/队列保护、晚结果隔离、背压和释放。
-永久删除使用原生 API，确认交互遵循 R3；Web 明确说明不可恢复。
-删除不以模块解绑或回调为前置。
-外部应用在使用 ID 时自行处理失效引用；unloaded、超时和权限错误不是删除。
+Normal shutdown waits only for native session idleness. Native turns, accepted
+queue items, user decisions and related native work settle by their real state;
+then the host closes the SDK/network and exits. Module activity, sends, background
+connections, busy declarations or close callbacks add no wait condition; work a
+module starts through a native session still belongs to that session. Modules end
+with the host and may be interrupted; recovery is their persistence strategy, not
+host draining or resending. Idle does not mean every saved session disappears from
+the list; pending schedules do not keep sessions alive. During shutdown new
+independent work is closed off while paths needed to finish existing questions and
+in-flight operations remain; queues are not cleared, busy is not erased, and
+completion is not claimed while safety is unknown. The MCP/API request that
+initiated shutdown returns on acceptance and its native turn must be able to end.
+The exit entry is a discoverable public API with existing authentication that
+distinguishes accepted/waiting from completed; see [shutdown](architecture.md#shutdown).
+Graceful control belongs to the host; restarting belongs to the environment or
+operator. Error exit after confirmed native process death is fault handling, not a
+bypass of safety. Documentation changes never authorize restart, reset, module
+enablement or production data migration.
 
-正常关闭的等待条件只关注原生 session 空闲。原生回合、已接纳队列、用户决策及关联
-原生工作按实际状态收敛，随后本体关闭 SDK/网络并退出。
-模块的活动、发送、后台连接、busy 声明或关闭回调均不增加等待条件；
-模块通过原生 session 发起的工作仍属于原生 session，不因调用者是模块而忽略。
-模块随宿主结束，其未完成业务可能被打断。这一成本由模块的持久化与恢复策略处理，
-不会变成本体的业务排空或补发责任。
-空闲不是所有保存的 session 从列表消失；未到期的 schedule 不保活。
-关闭阶段应收口新独立工作，同时保留已有问答/在途操作完成所需通路；不能清空队列、
-抹掉 busy 或在安全状态未知时假报完成。
-发起关闭的 MCP/API 请求返回受理后，原生调用回合必须能结束，不能等自己退出。
-退出入口使用同一可发现的公开 API 和既有认证，区分受理/等待与完成。
-当前 `system/shutdown` / `system/status` 的精确契约见[关闭说明](cockpit-plan.md#shutdown)。
-graceful 控制属于本体，进程重新拉起由外部环境或人工决定。
-已确认原生进程死亡时的错误退出仍属故障处理，不是正常关闭绕过安全保护的入口。
-文档更新不自动授权重启、reset、模块启用或生产数据迁移；实际操作需另有授权。
+Unknown side effects are never replayed automatically. Mode is not permission;
+enabled is not connected; a UI marker is not keep-alive; process idle is not work
+completion.
 
-未知副作用不自动重放。mode 不是 permission；
-enabled 不是 connected；UI 标记不是保活；进程 idle 不是工作完成。
+State the single-user local trust boundary and the separate external authentication
+layer honestly; do not claim strong isolation between same-user agents. Remote
+entry authentication is the installer's; Origin/Referer checks are source
+protection only. Copilot sign-in belongs to the native runtime. Presentation
+features must not bypass permission requirements of pages, APIs or files.
 
-如实说明单用户本机信任边界及独立外部认证层，不宣传可强隔离所有同用户 agent。
-远程入口认证由安装者提供，Origin/Referer 检查只是来源保护。
-Copilot 登录归原生运行时。
-公开页面、API 和文件的权限要求不能被展示功能绕开。
+<a id="r8"></a>
+## R8 · Traceable documentation, versions and delivery
 
-## R8 · 文档、版本和交付可追溯
+Documentation and MCP descriptions match real capabilities and distinguish current
+implementation, confirmed targets and designs under discussion. Current text
+focuses on product and usage contracts; migration history, retirement lists,
+deployment history and old reviews are kept outside the project. Report
+development, commit, integration, deployment and runtime effect separately; a
+healthy `/health` is not SHA proof and finished source is not production.
 
-文档与 MCP 说明对应真实能力，区分当前实现、已确认目标与待讨论设计。
-当前正文聚焦产品和使用契约；迁移经过、退役清单、部署历史与旧审阅在项目外保存。
-分别报告开发、提交、集成、部署及运行生效。
-health 成功不是 SHA 证明，源码完成不是线上完成。
+Use independent worktrees when needed, integrate safely and preserve others'
+work; never force-stop busy sessions or publish from an untidy dirty tree. Keep
+traceable source, build and [package identity](releasing.md). Changing documented
+targets never performs host operations or moves user data.
 
-必要时独立 worktree，安全集成并保留他人成果；不强停忙会话，不从未整理脏树盲目发布。
-保留可追溯的源码、构建和[包身份](packaging.md)。
-文档目标变更不自动执行主机操作或移动用户数据。
+## Accepted costs, deferrals and open items
 
-## 已接受成本、延期及未定事项
-
-| 类别 | 边界 |
+| Kind | Boundary |
 | --- | --- |
-| 已接受 | 完整消息、归属和两屏填充可额外读取事件；整次阅读不设固定页数上限，极端低可见密度不作为优化验收门槛。 |
-| 已接受 | 不逐页 ACK；极端断网或慢消费者少量尾部重读可接受，不承诺严格一页未确认上限。 |
-| 已接受 | 单个巨型 event 允许整读后按 offset/hash 分片；普通多 event 超限显式缩页，不自动二分、缓存、转存或增加 opt-in。 |
-| 已接受 | 收起子 agent 仍传输，是持续更新与完整性的带宽成本。 |
-| 已接受 | graceful 不等待模块业务或关闭回执；模块的未知副作用由模块自身处理。 |
-| 已确认 | 模块只采用冷加载、前后端同包、可信主进程 import；不做热加载/热启停/热更新。独立 MCP path 仍是后续目标。 |
-| 已确认 | 模块启动失败局部禁用，错误可见，本体继续运行。 |
-| 已接受边界 | 下次启动消息只承诺明确记录自动发送尝试与结果；当前 prompt 无接收端幂等键，不能仅靠本地标记保证崩溃下不漏不重。 |
+| Accepted | Complete messages, ownership and two-screen fill may read extra events; a full reading session has no fixed page cap, and extreme low visible density is not an acceptance gate. |
+| Accepted | No per-page ACK; slight tail rereads under extreme disconnection or slow consumers are acceptable, with no strict one-unacknowledged-page limit. |
+| Accepted | A single giant event may be read whole and sliced by offset/hash; ordinary multi-event overflow requires an explicitly smaller page — no automatic bisection, caching, spooling or opt-in. |
+| Accepted | Collapsed subagents still stream: a bandwidth cost of continuous updates and completeness. |
+| Accepted | Graceful exit does not wait for module business or close receipts; modules handle their unknown side effects. |
+| Confirmed | Cold loading only, frontend and backend in one package, trusted main-process import; per-module MCP paths remain a future target. |
+| Confirmed | A module failing to start is disabled locally with a visible error; the host keeps running. |
+| Accepted boundary | The next-start message only promises to record the automatic send attempt and its result; without a receiver idempotency key, local markers cannot guarantee no loss or duplicate across crashes. |
 
-符合性审阅应逐项标注**符合、部分符合、不符合、已接受例外或未知**，给出实际基线、
-证据与未覆盖边界；源码推导、合成测试、真实 SDK 实证和线上事实不能相互冒充。
+Conformance reviews mark each item **conforms, partially conforms, does not
+conform, accepted exception or unknown**, with the actual baseline, evidence and
+uncovered boundaries. Source reasoning, synthetic tests, real SDK evidence and
+production facts cannot stand in for one another.

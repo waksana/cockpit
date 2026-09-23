@@ -1,839 +1,371 @@
 # Native event chat transport
 
-This describes the current event transport. See the
-[source status](cockpit-plan.md#source-status) and [module boundary](module-catalog.md).
+Internal spec for current chat transport. See [architecture](architecture.md) and the
+[module catalog](modules.md) for adjacent boundaries.
 
-Copilot owns durable history and model context. The Cockpit backend does not keep chat
-windows, a live message fold, a message-ID index, resume checkpoints, or a
-second conversation store. The browser owns its loaded messages, tool/agent
-relationships, scroll position, and native cursors.
-
-The global `/events` connection carries session metadata, control state and
-resource invalidations, not chat message upserts. A chat reader exists only for
-an actual consumer request. Ending that request never aborts the agent.
-Native SDK callbacks still handle control/resource events; registering no
-chat handler does not promise that the SDK transport stops receiving all native
-notifications.
+Copilot owns durable history and model context. Cockpit backend has no chat cache, message
+fold/index, resume checkpoints or second conversation store. The browser owns loaded
+display rows, tool/agent relationships, scroll position and native cursors. `/events`
+carries session metadata, control state and resource invalidations, not chat upserts. Chat
+readers exist only for consumers; ending a reader never aborts the agent.
+Native SDK callbacks still handle control/resource events; not registering a chat handler
+does not mean the SDK transport stops receiving native notifications.
 
 ## Native activity in existing control summaries
 
-`POST /intent/session/resources` with
-`{"sessionId":"synthetic-shell","resources":["control"]}` includes `meta.activity`.
-The same summary is included by `session/get`, `session/list`, `runtime/snapshot`
-and the global SSE snapshot/`session/added` projections. There is no separate
-`session/activity` intent. Actionable task details use the optional `controls`
-resource described below rather than enlarging these summary reads.
+`POST /intent/session/resources` with `{"sessionId":"...","resources":["control"]}`
+includes `meta.activity`. The same summary is used by `session/get`, `session/list`,
+`runtime/snapshot` and global SSE snapshot/`session/added`. There is no
+`session/activity`; actionable task details use the `controls` resource below.
 
-One existing control pass reads `metadata.isProcessing`, `metadata.activity`,
-`tasks.list`, `queue.pendingItems` and `mcp.list`. Requesting both `control` and
-`queue` reuses that queue read. No additional native calls, chat scanning,
-inference, implicit loading, polling or cross-request activity cache is involved.
-`sampledAt` is the completion time of those non-atomic reads, not proof that
-their facts remain current when acted upon.
+One control pass reads `metadata.isProcessing`, `metadata.activity`, `tasks.list`,
+`queue.pendingItems` and `mcp.list`; `control` + `queue` reuses the queue read. No chat
+scan, implicit load, polling, inference, cross-request cache or extra native call is
+introduced. `sampledAt` is the completion time of these non-atomic reads.
 
-| Field | Truth boundary |
+| Field | Boundary |
 | --- | --- |
-| `processing` | Native turn **or background continuation**, not a model-generation indicator. |
-| `hasActiveWork` | Broad native flag; it can be true without a more specific explanation. |
-| `abortable` | Sampled native capability, not permission or a promise that a subsequent abort succeeds. |
-| `tasks.activeAgents`, `tasks.activeShells` | Currently tracked tasks of the matching type with native status `running`. |
-| `tasks.unknown` | Unrecognized task types (including client-owned tasks) or statuses; not known active agents/shells. |
-| `queue.pendingCount` | Native pending items, including queued commands/model changes, not just user messages. |
-| `queue.steeringCount` | Immediate steering entries, including already in-flight entries. |
-| `queue.inFlightSteeringCount` | Subset of `steeringCount` already folded into the turn; **never add** these two counts. |
-| `mcp.pendingConnectionCount` | Connecting native MCP entries, not all MCP operations or a readiness assessment. |
+| `processing` | Native turn or background continuation; not model-generation proof. |
+| `hasActiveWork` | Broad native flag; can lack a specific explanation. |
+| `abortable` | Sampled native capability, not a promise an abort succeeds. |
+| `tasks.activeAgents`, `tasks.activeShells` | Tracked matching tasks with native status `running`. |
+| `tasks.unknown` | Unrecognized task types/statuses. |
+| `queue.pendingCount` | Native pending items, including commands/model changes. |
+| `queue.steeringCount` | Immediate steering entries, including in-flight entries. |
+| `queue.inFlightSteeringCount` | Subset of `steeringCount`; never add both. |
+| `mcp.pendingConnectionCount` | Connecting MCP entries, not all MCP operations/readiness. |
 
-SDK 1.0.13's agent/shell `TaskStatus` is `running`, `idle`, `completed`, `failed`,
-or `cancelled`. Idle/terminal tasks may remain tracked but are not counted as
-active. Task counts are not a historical registry. Unknown statuses retain
-conservative legacy busy protection, without inventing known active counts.
-`status`, `nativeProcessing` and `activeSubagents` keep their legacy safety
-semantics: the first two aggregate busy work, and the last conservatively counts
-all non-idle/non-terminal tasks, including shells and unknown statuses. Display
-uses the new typed counts; Task/lifecycle gates independently read fresh state.
+SDK task statuses are `running`, `idle`, `completed`, `failed`, `cancelled`. Idle/terminal
+tracked tasks are not active. Unknown statuses keep legacy busy protection. Legacy
+`status`, `nativeProcessing` and `activeSubagents` keep safety semantics: first two
+aggregate busy work; `activeSubagents` counts all non-idle and non-terminal tasks,
+including shells and unknown statuses. Display uses typed counts; lifecycle gates read
+fresh state.
 
-`activity:null` means unloaded, unavailable or invalidated, **not idle**.
-Omission in a resource projection means control was not requested. An unknown
-session returns `meta:null`. Failed/malformed reads reject explicitly and emit
-an `activity:null` patch rather than returning old facts or fabricated zeros.
-Control/task/queue/MCP invalidations and unload clear the sample. Native events
-during a read invalidate its activity result too. Consumers reconcile the
-existing control resource after relevant invalidations and reconnect, not after
-`activeOperations`-only read-lease patches. There is no background retry.
+`activity:null` means unloaded, unavailable or invalidated. Omission means `control` was
+not requested. Unknown sessions return `meta:null`. Failed/malformed reads reject and emit
+an `activity:null` patch. Control/task/queue/MCP invalidations, unload and native events
+during a read clear the sample. Consumers reconcile control after relevant invalidations
+and reconnect, not after `activeOperations` read-lease patches.
 
-The summary contains no task IDs, descriptions, prompts/results, shell commands,
-queue text or MCP names. The UI uses only a one-line icon summary, with no
-new activity disclosure/details. Existing on-demand
-`session/panel` (`section:"tasks"`), queue and MCP reads remain separate and may
-contain their existing details. MCP list/get Markdown spells out the sampled
-facts, unavailable state and steering subset rather than calling all work
-generation.
+The summary contains no task IDs, descriptions, prompts/results, shell commands, queue
+text or MCP names. UI uses a one-line icon summary. On-demand `session/panel`
+(`section:"tasks"`), queue and MCP reads stay separate and may include details. MCP
+list/get Markdown spells out sampled facts, unavailable state and steering subset.
 
 ### Full synthetic control exchanges
 
-Shell work after the main turn ends:
-
-```http
-POST /intent/session/resources
-Content-Type: application/json
-
-{"sessionId":"synthetic-shell","resources":["control"]}
-```
-
-```json
-{"meta":{"sessionId":"synthetic-shell","loaded":true,"status":"running","nativeProcessing":true,"activity":{"sampledAt":1790000000000,"processing":false,"hasActiveWork":true,"abortable":true,"tasks":{"activeAgents":0,"activeShells":1,"unknown":0},"queue":{"pendingCount":0,"steeringCount":0,"inFlightSteeringCount":0},"mcp":{"pendingConnectionCount":0}},"activeSubagents":1,"activeMcpOperations":0,"activeOperations":0,"loading":false,"closing":false,"cancelling":false,"ask":null,"planRequest":null,"elicitation":null}}
-```
-
-Coexisting native processing, agent/shell work, decision and queue facts are not
-exclusive “reasons”. The decision is the existing control callback, not activity:
-
-```http
-POST /intent/session/resources
-Content-Type: application/json
-
-{"sessionId":"synthetic-coexisting","resources":["control"]}
-```
-
-```json
-{"meta":{"sessionId":"synthetic-coexisting","loaded":true,"status":"running","nativeProcessing":true,"activity":{"sampledAt":1790000000100,"processing":true,"hasActiveWork":true,"abortable":true,"tasks":{"activeAgents":1,"activeShells":1,"unknown":0},"queue":{"pendingCount":2,"steeringCount":3,"inFlightSteeringCount":1},"mcp":{"pendingConnectionCount":1}},"activeSubagents":2,"activeMcpOperations":1,"activeOperations":0,"loading":false,"closing":false,"cancelling":false,"ask":{"requestId":"synthetic-decision","question":"Continue?","choices":["Yes","No"]},"planRequest":null,"elicitation":null}}
-```
-
-Unrecognized task status is unknown rather than a made-up active shell:
-
-```http
-POST /intent/session/resources
-Content-Type: application/json
-
-{"sessionId":"synthetic-unknown-status","resources":["control"]}
-```
-
-```json
-{"meta":{"sessionId":"synthetic-unknown-status","loaded":true,"status":"running","nativeProcessing":true,"activity":{"sampledAt":1790000000200,"processing":false,"hasActiveWork":false,"abortable":false,"tasks":{"activeAgents":0,"activeShells":0,"unknown":1},"queue":{"pendingCount":0,"steeringCount":0,"inFlightSteeringCount":0},"mcp":{"pendingConnectionCount":0}},"activeSubagents":1,"activeMcpOperations":0,"activeOperations":0,"loading":false,"closing":false,"cancelling":false,"ask":null,"planRequest":null,"elicitation":null}}
-```
-
-An indexed unloaded session does not load to provide its activity:
-
-```http
-POST /intent/session/resources
-Content-Type: application/json
-
-{"sessionId":"synthetic-unloaded","resources":["control"]}
-```
-
-```json
-{"meta":{"sessionId":"synthetic-unloaded","title":"Synthetic unloaded","cwd":"/synthetic/work","createdAt":1790000000000,"lastActivity":1790000000000,"lastActivitySource":"native-persisted","roles":[],"appliedRoles":[],"rolesNeedReload":false,"loaded":false,"status":"unloaded","ask":null,"planRequest":null,"elicitation":null,"activity":null}}
-```
-
-An ID absent from the native index is distinct from unloaded:
-
-```http
-POST /intent/session/resources
-Content-Type: application/json
-
-{"sessionId":"synthetic-missing","resources":["control"]}
-```
-
-```json
-{"meta":null}
-```
+Synthetic examples cover these protocol shapes: loaded shell work has `processing:false`,
+`hasActiveWork:true`, `activeShells:1`, `activeSubagents:1`; coexisting processing,
+shell/agent work, decisions, queue and MCP facts are concurrent; unknown task status
+increments `tasks.unknown`; indexed unloaded session returns `loaded:false`,
+`activity:null`; missing ID returns `meta:null`. The JSON shape is the ordinary
+`session/resources` control projection.
 
 ## Native activity controls
 
-The control area consumes `session/resources` with `controls` only while
-its conversation is mounted. Sidebar summaries still consume `control`, not task
-descriptions. A combined `control` / `controls` / `queue` read reuses the native
-activity pass. The controls projection includes the current loaded-handle token,
-active native agent/shell IDs and titles, and only steering messages not yet
-folded into the turn. It never scans the loaded chat window for task identity.
-Queue batches retain their canonical queue item ID; `canSteer` is explicit,
-not inferred from arbitrary text or a busy aggregate.
+Mounted conversations read `session/resources` with `controls`; sidebars use `control`.
+Combined `control` / `controls` / `queue` reads reuse the activity pass. `controls`
+contains the loaded-handle token, active native agent/shell IDs and titles, and only
+steering messages not yet folded into the turn. Queue batches keep canonical queue item
+IDs; `canSteer` is explicit.
 
-`POST /intent/session/control` takes `{sessionId, token, action}`. The token is
-the identity of the loaded native handle, not an authorization credential.
-Operations never implicitly resume a session. The native target is rechecked;
-unload/reload, an obsolete handle, an ended task or a replaced decision cannot
-silently redirect an action to different work.
+`POST /intent/session/control` takes `{sessionId, token, action}`. `token` is the loaded
+native handle identity, not an authorization credential. Operations never implicitly
+resume sessions; targets are rechecked so unload/reload, obsolete handles, ended tasks and
+replaced decisions do not redirect actions.
 
 | Action | Scope |
 | --- | --- |
-| `stop-task` with `id` | Cancel that native task. Its transcript and output remain. |
-| `clear-tasks` with `kind` and `ids` | Cancel the captured IDs in that group. Remove tracking only where native terminal state allows it; never delete chat history. |
-| `clear-queue` | Clear native pending queued work, not messages already consumed into context. |
+| `stop-task` with `id` | Cancel that native task; transcript/output remain. |
+| `clear-tasks` with `kind` and `ids` | Cancel captured IDs; remove tracking only where native terminal state allows; never delete chat history. |
+| `clear-queue` | Clear native pending queued work, not context-consumed messages. |
 | `remove` with `id` | Remove one canonical pending queue item. |
-| `steer` with `id` | Move an eligible queued message into the live main turn's steering lane, without resending it as another prompt. |
-| `cancel-decision` with `kind` and `requestId` | Resolve the identified native decision through its appropriate cancel/exit/interrupt path. Ask interruption preserves queued prompts and background work; the runtime controls subsequent queue execution. |
-| `stop-all` | Request cancellation of this session's current work and queue, including background tasks and compaction through public native APIs. It is not a process-wide kill or a runtime restart. |
+| `steer` with `id` | Move an eligible queued message into live main-turn steering, not another prompt. |
+| `cancel-decision` with `kind` and `requestId` | Resolve the identified native decision through the matching cancel/exit/interrupt path. Ask interruption preserves queued prompts/background work; runtime controls later queue execution. |
+| `stop-all` | Request cancellation of current work and queue, including background tasks and compaction through public native APIs. Not a process kill/restart. |
 
-The result contains every attempted operation's native outcome, including partial
-failure and uncertainty. Acceptance is not proof that tasks have finished.
-Buttons do not optimistically hide rows: native invalidation and fresh resource
-reads determine what remains active. Confirmed errors stay visible even if their
-original row disappears; uncertain writes are never automatically retried.
-The legacy `cancel` endpoint keeps its existing queue-clear plus abort semantics;
-the new `stop-all` action does not silently redefine existing MCP tools.
+Results include every attempted native outcome, partial failure and uncertainty. Rows hide
+only after invalidation and fresh reads. Confirmed errors stay visible; uncertain writes
+are not retried. Legacy `cancel` keeps queue-clear plus abort semantics. Refreshes retain
+previous appearance separately from current facts and disable stale operations.
+Disconnect, handle replacement and unmount block late publication; read failure has
+explicit retry.
 
-Ordinary control refreshes retain the previous appearance separately from current
-native facts and disable stale operations. Disconnect, handle replacement and
-unmounted readers cannot publish late results into another view. Read failure
-has an explicit retry, not an endless success-shaped spinner or empty list.
-
-Steering acceptance does not create a local user bubble. The native
-`user.message` with `delivery: "steering"` does that when the message is consumed;
-the fold preserves the current response association rather than inventing a new
-turn. In-flight steering is not counted again as a waiting queue row.
-Host prompt acceptance and control writes share a short per-session gate (only
-the send acknowledgement, not the model's running turn). Clearing pending
-steering retires its tracked acceptance receipts without deleting newer prompts.
-Global Stop binds its original main-turn identity before asynchronous preparation;
-a newer turn that starts during that preparation is not retargeted.
+Steering acceptance does not create a local user bubble; native `user.message` with
+`delivery:"steering"` does that when consumed. In-flight steering is not counted again as
+queued. Prompt acceptance and control writes share a short per-session ACK gate. Clearing
+pending steering retires receipts without deleting newer prompts. Global Stop binds the
+original main-turn identity before asynchronous preparation.
 
 ## `POST /intent/session/chat`
 
-The published capability schema is authoritative:
+Capability schema:
 
 ```json
-{
-  "sessionId": "session-id",
-  "source": "live",
-  "direction": "backward",
-  "max": 64,
-  "waitMs": 0,
-  "bootstrap": true
-}
+{"sessionId":"session-id","source":"live","direction":"backward","max":64,"waitMs":0,"bootstrap":true}
 ```
 
-- `source:"persisted"` uses `client.rpc.sessions.readPersistedEvents`. It works
-  without loading the target. It cannot filter agents or wait for new events.
-- `source:"live"` uses an existing handle's `rpc.eventLog.read`. Native
-  `agentScope`, `agentIds` and `types` filters are available; the browser uses
-  all-agent scope and delivery consumers can request just their required types.
-  Default live chat types include only events consumed by the message projection,
-  not unused tool-argument deltas or metadata already carried by `/events`.
-  Passive reads reject unsupported filters instead of simulating them by a
-  full read. A read never resumes a session to satisfy the request.
-- `max` counts native events, not display messages: default 64, maximum 256.
-  Each request makes one native page read. No loop fills a fixed message count.
-- `direction` is forward or backward. Preserve it with the opaque cursor;
-  changing the direction argument does not reverse a native cursor.
-  Keep the source/filter information with the reading position.
-- `waitMs` is at most 30000 and only available for live forward reads. It is a
-  bounded request, not a permanent server chat collector.
-- `includeEphemeral:false` makes a live forward read durable-only, suitable for
-  delivery consumers. Otherwise live forward includes ephemeral events; passive
-  and backward reads are always durable-only.
-- Fresh backward `bootstrap:true` on a live source captures `eventLog.tail()`
-  **before** reading the page and returns that additional `liveCursor`.
-  Following it may overlap the page; it must not leave a gap.
+| Input | Rules |
+| --- | --- |
+| `source:"persisted"` | Uses `client.rpc.sessions.readPersistedEvents`; works unloaded; no agent/type filters or wait. |
+| `source:"live"` | Uses existing handle `rpc.eventLog.read`; supports native `agentScope`, `agentIds`, `types`; browser uses all-agent scope. Default live chat types are projection-consumed events only, excluding unused tool-argument deltas and metadata already on `/events`; unsupported passive filters reject; reads never resume sessions. |
+| `max` | Native events, not display messages; default 64, public max 256. One request = one native page read. |
+| `direction` | `forward` or `backward`; keep direction/source/filter data with opaque cursor. |
+| `waitMs` | Max 30000, only live forward. |
+| `includeEphemeral` | Only live forward can include ephemeral events; `false` makes durable-only. Passive/backward are durable-only. |
+| `bootstrap:true` | Fresh live backward only; captures `eventLog.tail()` before the page and returns `liveCursor`. Following it may overlap but must not gap. |
 
-The result contains `sessionId`, `events`, `cursor`, `cursorStatus`, `hasMore`,
-source, direction and `read:{rpc,events}`. Titles, directories and runtime
-metadata belong to `session/get` and the session list, not every chat page.
-An initial request without a live handle or cursor makes one additional native
-metadata lookup to confirm existence. Cursor continuation does not repeat that
-lookup. The counters describe event-log reads (one page, or page plus bootstrap
-tail), not this existence lookup or every transport operation.
-Only native session existence is authoritative; Cockpit does not synthesize a
-missing draft session or its history. Do not send an empty cursor back as a
-nonempty locator.
-
-Backward arrays are chronological within the returned page. Forward reads can
-interleave durable and ephemeral events. Process a whole page before advancing
-the saved cursor. Event IDs deduplicate overlap; assistant `messageId` identifies
-the message to replace on its authoritative full event. UUID lexical order is
-not conversation order.
+Results contain `sessionId`, `events`, `cursor`, `cursorStatus`, `hasMore`, `source`,
+`direction`, `read:{rpc,events}`. Titles/directories/runtime metadata belong to
+`session/get` and lists. Initial request without live handle/cursor makes one existence
+lookup; cursor continuation does not. Counters describe event-log reads. Native session
+existence is authoritative; do not send an empty cursor as a nonempty locator. Backward
+arrays are chronological within the page. Forward reads can interleave durable and
+ephemeral events. Process whole pages before advancing saved cursors. Event IDs
+deduplicate overlap; assistant `messageId` identifies authoritative replacement.
+UUID lexical order is not conversation order.
 
 ## `POST /chat/stream`
 
-The selected visible browser window opens one authenticated, CSRF-protected
-stream with `{sessionId,cursor,max:64,agentScope:"all"}`. The cursor field is
-required; an explicit empty native tail sentinel is distinct from an omitted
-reconnect position. Optional native `agentIds` and `types` filters remain
-available to other consumers.
+The selected visible browser window opens one authenticated, CSRF-protected SSE stream
+with `{sessionId,cursor,max:64,agentScope:"all"}`. `cursor` is required; the explicit
+empty native tail sentinel differs from omitted reconnect position. Other consumers may
+use `agentIds` and `types` filters.
 
-This endpoint sends actual `{type:"page",page:NativeChatPage}` SSE frames, not
-invalidations asking the browser to re-fetch its accumulated history.
-It first drains durable events after the saved cursor with zero wait, then
-continues from that same position with ephemeral events enabled and a native
-wait of up to 30 seconds. It never takes a fresh tail during that transition.
-Cursor-advancing empty pages are delivered; unchanged idle results only send a
-heartbeat. Empty or duplicate pages do not rebuild the browser's message tree
-or publish an unchanged display snapshot.
+The endpoint sends `{type:"page",page:NativeChatPage}` frames. It drains durable events
+after the saved cursor with zero wait, then continues from that cursor with ephemeral
+events and native wait up to 30s. It never takes a fresh tail during transition.
+Cursor-advancing empty pages are delivered; unchanged idle results send heartbeat
+comments. Empty/duplicate pages do not rebuild display snapshots.
 
-The server owns only the connection, its current native read and bounded HTTP
-write buffers. It waits for socket backpressure before starting another page,
-chunks large messages without splitting Unicode pairs, and closes stalled
-consumers. There is no per-page acknowledgement or replay cache. Normal
-reconnection uses the last fully applied page cursor; a disconnect with bytes
-still in flight can re-read an undelivered tail. TCP backpressure is not proof
-that the browser has applied a frame, so this is not a strict one-page
-unacknowledged-read guarantee.
+Server ownership is limited to the connection, current native read and bounded HTTP write
+buffers. It waits for backpressure, chunks large messages without splitting Unicode pairs,
+closes stalled consumers, and keeps no per-page ACK/replay cache. Reconnection uses the
+last fully applied cursor; disconnect with bytes in flight can re-read an undelivered
+tail. TCP backpressure does not prove the browser has applied an SSE frame.
 
-Native errors are terminal error frames; expiry is a terminal expired page.
-Neither silently substitutes another cursor. Failed live reads can passively
-confirm native idle cleanup once and report `SESSION_UNLOADED`; ordinary pages
-do not pay for metadata or liveness checks. Closing a view does not call the
-model's abort method. Native's per-read wait has no cancellation parameter:
-one already-running request can finish after HTTP disconnect, but cannot
-deliver obsolete data or continue reading.
+Native errors are terminal error frames; expiry is a terminal expired page. Failed live
+reads can confirm idle cleanup once and report `SESSION_UNLOADED`. Closing a view does not
+abort the model. Native per-read wait has no cancellation parameter, so a completed
+obsolete response is discarded and cannot trigger another read.
 
 ## Browser reading
 
 ### Ordered presentation
 
-The browser uses one native-event projection for history, streaming and reconnect.
-Within a response, reasoning always precedes text. This is a fixed reading layout,
-not a reconstruction of token-generation order. Text can appear before reasoning
-arrives; later reasoning is inserted above that same response's text, naturally
-moving it down. Missing content has no empty placeholder. Completion does not
-switch to a different layout, create another thought or move tools above speech.
-There is no provisional tail or separate temporary-content region.
+The browser uses one native-event projection for history, stream and reconnect. Within a
+response, reasoning displays before text; late reasoning inserts above that response text,
+while completion never moves tools above speech. Complete snapshots replace increments.
+Native message IDs update text; reasoning IDs update thinking, with response references
+associating thinking to text. Final message `reasoningText` is retained because complete
+`assistant.reasoning` can be ephemeral and absent from history; equal text is never
+ownership or completeness evidence.
 
-Native message IDs identify text updates. Reasoning IDs identify thinking updates;
-their native response references associate thinking with the corresponding text.
-The final message's `reasoningText` must be retained: complete
-`assistant.reasoning` notifications can be ephemeral and absent from history.
-Neither reasoning ownership nor completeness is inferred from equal or similar
-text. A complete snapshot replaces the corresponding incremental content.
+Tool rows come from `tool.execution_start` and update by scoped invocation ID; embedded
+assistant `toolRequests` do not duplicate rows or place them. Bounded windows may lack
+starts/completions, so missing metadata and unknown outcomes stay explicit. Headers are
+one-line disclosures with status glyph, optional native description and right tag
+(`mcpServerName` or clipped tool name). Arguments and output appear only after expansion,
+failures included. The header is keyboard-operable; no trailing arrow, hover fill or
+expanded frame is added.
 
-Tool execution starts create independent rows, with names, native MCP
-server/tool names and arguments from `tool.execution_start`. Results update those rows by scoped invocation ID, without
-moving them to the completion event's position. Ordinary `toolRequests` embedded
-in an assistant message do not create duplicate execution rows or determine tool
-placement. Bounded windows can lack a start or completion; missing metadata and
-unknown outcomes remain explicit. Dedicated decisions, agent lifecycle and
-system events retain their own semantics.
+Process grouping is renderer-only. User speech, assistant text and dedicated system/agent
+records end a group; empty starts and skill activations do not. Groups contain direct
+reasoning/tool/skill rows. Counts describe visible tools and reasoning; skill activations
+are counted separately. Failures and simultaneous active/unknown states keep separate
+glyph/count pairs; no elapsed estimate, round count or generated summary is added.
 
-Tool headers always occupy one line, both collapsed and expanded: one status
-glyph on the left, an optional native description in the middle, and a small
-tag at the far right: the native MCP server name, otherwise the tool name
-(leading ellipsis preserves its suffix). Tool headers
-and overviews use compact 13px monospace text and 28px rows; name tags use 12px
-text. They do not infer an intention from arguments.
-Input and output appear only after expansion, including for failed tools. Only
-actually clipped name/description fields are repeated in full in the details,
-except that server-tagged MCP rows always list their full tool name and server there.
-Complete header fields are not repeated. The whole header is a keyboard-operable
-disclosure without a trailing arrow, hover fill or expanded container frame.
+The last overview defaults open. A reasoning item defaults open only while it is the
+latest visible item in that agent transcript; later tool/body/user content closes that
+automatic selection. User choices win locally for the mounted session view and are not
+native state. Activity disclosures keep fixed header height and icon slots; long titles
+clip in headers and wrap only in details. Thinking uses the safe Markdown renderer;
+first/last Markdown blocks have no outside margins. Right-click uses the browser menu;
+code/tool copy buttons remain.
 
-Consecutive process items are grouped only by the renderer. User speech,
-assistant text and dedicated system/agent records end a process group; empty
-message starts and skill activations do not. A response can contribute thinking
-to the preceding process overview and text to the next speech row. The renderer
-references the same response object rather than maintaining another history.
-A group contains direct reasoning/tool/skill rows, not an extra hierarchy
-of rounds or messages. Its counts describe visible tool and reasoning items;
-skill activations are counted separately and remain discoverable in mixed groups.
-Recorded failures and simultaneous active/unknown states remain visible as
-separate glyph/count pairs in the single-line collapsed summary. There is no elapsed
-time estimate, round count or generated summary.
+Execution status/actions, queue, decisions and composer share one default-open input card
+when a header is needed. The header is native `details`/`summary` with focus feedback;
+header clicks fold content below but leave status and Stop/interrupt controls. Header
+minimum is 32px desktop and 44px coarse pointer. Idle input has no header; long content
+and streaming do not auto-fold. The input stays in normal flow at the bottom with one flex
+budget capping notices/queue/questions/answers at 70% of Chat height, and native
+`::details-content` participates in that flex layout. Questions and choices wrap
+continuous identifiers at their component boundary without clipping or widening. Choices
+submit the complete original value; freeform uses existing send; choice-only questions
+block freeform. Module action rows use a 4px row gap plus 4px icon-facing text inset, with
+8px text clearance from module and send hit areas. Different request IDs or
+ordinary/decision transitions use distinct editor/draft identities; late callbacks cannot
+edit or submit replacements. Collapse preserves drafts and attachments.
 
-The last overview defaults open. A reasoning item defaults open only while it
-is the latest visible item in that agent's transcript, not merely the last thought.
-A subsequent tool, assistant body or user message closes its automatic selection.
-Explicit user choices take priority, including closing the latest item. These
-choices are local to the mounted session view; older-page extension preserves
-the group's mounted identity. They are not a second native state or history store.
-Transcript spacing is derived once per visible boundary: 8px between related
-speech rows, 12px between process and speech, and 16px when the speaker changes.
-User timestamps sit 4px below their bubble. Empty events create no spacing;
-date separators own their boundary. Prose rhythm and compact process-header
-geometry remain distinct from those boundaries. There are no group divider lines, timestamp-source changes or
-additional scroll-position writers.
-Activity disclosure keeps its header height and icon slots fixed. Long tool
-titles do not wrap on expansion; clipped fields wrap only in the details below.
-Process headers share one text column. Expanded tool and thought details share
-a single 24px inset, without accumulated nesting indents or progressively smaller
-text. Thinking uses the same Markdown renderer as message prose: native reasoning
-is text that can contain Markdown, not a separately guaranteed format. Plain
-text remains readable; headings, lists, links and code use the existing safe
-rendering/copy behavior. Reasoning does not gain module file-preview resolution.
-Markdown's first/last blocks have no outside margins, including class-based
-paragraphs used by module renderers; the bubble's own padding is unchanged.
-The history-start hint is a plain, constant notice at the beginning of the
-scrolling content. It stays mounted while the initial history is unread or
-native reports more history; only authoritative exhaustion removes it.
-Individual page requests do not change its text, appearance or height. It is not
-a per-request spinner, an overlay or a hidden spacer. Errors and explicit retry
-remain separate. No JavaScript height control is involved; final removal
-notifies the existing scroll owner, including an empty terminal page.
-Right-clicking chat content uses the browser's native context menu, not a custom
-message-copy menu. Code and tool-detail copy buttons remain available.
+Submission progress shares the status line when present. Busy labels report local
+submission, not native success. Session errors, uncertain sends/answers, attachment
+notices and interrupt results stay outside disclosure. Stop keeps native queue-clearing
+behavior and cannot dispatch while disconnected, closing, cancelling or protected.
+Focusable pending controls may use guarded `aria-disabled`.
 
-Execution status/actions, the queue, native decisions and the original composer
-share one default-open input card. Its status header is a keyboard-operable native
-`details`/`summary`, with keyboard focus feedback but no hover fill or visible folding arrow.
-Clicking the non-action header area folds everything below it; only the status
-and any available Stop/interrupt controls remain. The header has the same 32px
-desktop minimum in both states, expanding to 44px for coarse pointers and growing
-when its actions need another line. Ordinary idle input has no
-header. Neither long content nor streaming updates automatically fold the card.
-The outer frame, fill and original input row are identical in idle, running and
-decision states. A question does not add another editor frame or lateral inset.
-With the same draft, viewport and module controls, the editor keeps the same width
-and height across state changes, focus and submission; height still grows with
-multiline content. Stable symmetric scrollbar gutters prevent classic (non-overlay) scrollbars
-from narrowing the editor when a long question starts scrolling. Module actions
-retain their own hit targets; the host uses a 4px row gap plus a 4px text inset on
-both icon-facing sides, instead of stacking an 8px gap and 12px inset. Text has
-the same 8px clearance from the module and send button hit areas; a composer
-without module controls retains its normal leading inset.
-
-The input stays at the bottom through normal flow, not a fixed overlay. A single
-CSS flex budget caps the input area, including external notices, at 70% of the
-available Chat height. Native `::details-content` participates in that flex layout;
-ordinary input stays at the card bottom outside the shared queue and
-plan/confirmation scroller. During a question, the queue, question, choices and
-answer input instead share one content scroller only when they cannot fit:
-the answer editor is part of the question, not separately pinned. Both modes
-retain the textarea's own height limit and internal scrolling for long drafts.
-Question text remains selectable independently of the
-header. Questions and choices wrap even continuous identifiers at their own
-component boundary, without clipping the option or widening the card.
-Choice selection still submits the complete original value directly; freeform text uses the existing
-send action, and choice-only questions still block freeform submission.
-
-Within one draft identity, the same editor and module contribution instances stay
-mounted while the card opens/closes. A different native request ID or transition
-between a decision and the ordinary prompt uses its own editor and draft identity;
-old callbacks cannot edit or submit the replacement draft. Collapse does
-not discard a draft or answer the request. A new native request ID opens the card;
-ordinary updates to the same request preserve the browser's disclosure state.
-Completion also opens the ordinary composer if the question was collapsed.
-No JavaScript height measurement, collapse state machine or layout animation
-is introduced.
-
-Submission progress shares the single status line with the sampled activity
-indicators when a header already exists; it does not add a second progress line
-in a decision or create an idle header. Idle
-sends retain the button's busy indicator. A busy label reports local submission,
-not native execution success. Session errors, uncertain-send/answer outcomes,
-attachment-route notices and interrupt results stay above and outside disclosure.
-Module upload/recovery and per-item copy feedback remain with their own items.
-Folding preserves the original editor, module instances, draft and attachments.
-Plans and tool confirmations keep distinct native callbacks, including when more
-than one kind is present. A pending decision does not hide Stop.
-Stop retains its native queue-clearing behavior and cannot dispatch again
-while disconnected, closing, cancelling or another protected operation is active.
-A pending focused control can remain focusable with guarded `aria-disabled`
-instead of losing focus when its native request is submitted.
-The execution label takes the space remaining beside its actions rather than
-reserving a large minimum column. Where space permits, the status and both
-queue actions share one line; long status text truncates. When they cannot fit,
-the actions flow onto another line with the same spacing and font size. The
-action group can also wrap its buttons; it never clips Stop or relies on
-JavaScript width calculations. Long action text remains readable when enlarged.
-There is no queue-count heading or repeated composer explanation. The input
-placeholder and submit label identify the active operation; muted placeholder
-text remains distinct from entered text, including on focus. Existing attachment
-and unconfirmed-send notices remain explicit. Queue items can be expanded to read
-their full text independently of removal; there is no editing, reordering or new
-steering mode.
-Session rows and the input header share one compact, noninteractive
-activity line. Terminal means shell, Wrench means a general tool, Bot means agent,
-and CircleHelp means a real pending decision. Process/tool rows, agent cards and
-decision cards use those same semantic icons; execution-result icons remain
-separate. Concurrent facts use separate icons/counts, not an exclusive busy reason.
-The leading overall icon means session activity, never proven model generation.
-It keeps rotating alongside concrete shell, agent, queue or decision icons while
-work remains. The sidebar and input bar share the same activity projection and
-`SessionActivity` renderer; unknown/unclassified activity uses the same single
-overall glyph with explicit accessible wording, not an additional spinner.
-Ordinary reconciliation retains the last sampled appearance (including empty
-idle), labeled as a previous sample in accessible text, until a fresh response.
-This browser-only `activityDisplay` never replaces native `activity` or authorizes
-actions. Read failures display an error; disconnection remains explicit. Unload,
-removal and reconnect discard retained presentation.
-Unloaded rows retain their muted appearance without a redundant activity badge.
-An aggregate `running` value can keep overall activity visible but cannot claim
-that the model is replying. The opt-in grouped controls move agent, terminal and
-queue icons into section headings (icon, name, count) while expanded. The question
-icon moves directly before the question, without a separate waiting heading.
-Collapsed controls return these icons to the bar. The overall indicator stays in
-place while active; confirmed idle hides the input bar. There is no disclosure
-triangle; `aria-expanded`, keyboard activation and focus treatment remain.
-Active task rows only expose an X to cancel. Group clear cancels that group's
-captured work, not history; confirmed stopped tasks leave the active list.
-Queue rows retain copy and immediate-send actions. Compaction remains in the
-status bar rather than creating a separate manual-compaction row.
-Actions are named icon buttons and retain visible error behavior.
-Existing input
-and transcript disclosures are unchanged.
-Stop/interrupt acknowledgement produces no success banner or toast; pending state
-stays on the action button and failures remain visible. Remaining shell/agent facts
-stay visible. A sampled non-abortable state disables interruption without asserting
-that all work ended, and queued-message clearing remains available when applicable.
-Built-in tools use action-specific icons and native descriptions, with the exact
-tool name retained in expanded details. Unknown/extension tools keep the Wrench.
-MCP tools whose execution start carries native `mcpServerName` are tagged with that
-server name (read from its start); the full tool name, server and differing native
-`mcpToolName` are listed in the expanded details, and the header text falls back to the
-tool title when it equals the full name. Without a native server name, the original
-full name remains the tag. Matching is exact, optionally stripping the native
-`functions.` prefix, never guessing a builtin or server from tool-name substrings.
-Subagent messages remain independent cards, not ordinary tool rows.
-Queue entries always expose a small copy button beside removal, including
-single-line and collapsed messages. It copies
-the complete original text through the same control used by code/tool details,
-without submitting, removing, expanding or collapsing the queued entry.
-Copying is keyboard-accessible without first expanding the text.
-Expanded queue text uses the content scroller above ordinary input, or the shared
-card scroller during a question, without an independent queue height cap.
-The summary, copy and remove targets retain the explicit
-32px queue density on every pointer type, without a leading expansion arrow.
-Summary text and copy feedback share the metadata line-height role; padding
-adapts to that line box rather than becoming negative with larger text.
-The copy area follows its content instead of imposing a fixed text-width cap.
-The input header, complete-plan disclosure and unfinished-module recovery action
-are not queue/process density exceptions: each has at least a 44px target for
-coarse pointers.
+Session rows and input headers use the compact `SessionActivity` projection: Terminal
+shell, Wrench tool, Bot agent, CircleHelp decision. Concurrent facts use separate
+icons/counts. Overall activity means session activity, not proven model generation.
+Retained samples are labeled previous until fresh; unload/removal/ reconnect discards
+them. Stop/interrupt acknowledgements have no success banner; remaining shell/agent facts
+and failures stay visible. MCP tools are tagged by exact `mcpServerName`; matching is
+exact, optionally stripping `functions.`, never substring guessing. Expanded MCP details
+list the full tool name, server, and differing native `mcpToolName`. Queue rows expose
+keyboard-accessible copy beside remove; there is no queue-count heading, editing,
+reordering or new steering mode.
 
 ### Chat layout and typography
 
-`styles/components/chat-design.scss` maps Chat-local layout, typography,
-relationship and inset roles to the shared host foundations used by the three
-independent session panels. Buttons and inputs use the public control radius;
-flat process/queue rows do not gain separate rounded cards.
-Type expresses importance rather than shrinking everything to fit:
+`styles/components/chat-design.scss` maps Chat layout, typography, relationships and
+insets to host foundations. Controls use public radius; flat process/queue rows do not
+become cards.
 
 | Role | Treatment |
 | --- | --- |
-| Main content | 16px message prose, reasoning, questions and input. Prose uses 1.7 line height; decision text uses 1.6 and editable controls 1.5. |
-| Secondary content | 14px choices, plan summaries and the task prompt inside an agent card. The agent's actual response remains main content. |
-| Process and labels | 13px labels/code; native tool headers retain 28px rows with the shared 1.5 UI line height. Code uses the existing system monospace stack. |
-| Metadata and compact queue | 12px; timestamps use an 18px line box and tabular numerals. Queue hit targets and density remain independent of the type size. |
-| Markdown hierarchy | At the main 16px size, headings use 24 / 20 / 18 / 16 / 14px; they scale with the local prose context rather than forcing page-sized headings into small cards. |
+| Main content | 16px message prose, reasoning, questions and input. Prose 1.7; decision text 1.6; editable controls 1.5. |
+| Secondary | 14px choices, plan summaries and task prompt inside an agent card; agent response remains main content. |
+| Process/labels | 13px labels/code; tool headers remain 28px rows with UI line height. |
+| Metadata/queue | 12px; timestamps use 18px line box/tabular numerals; queue density independent of type size. |
+| Markdown hierarchy | At 16px context, headings 24 / 20 / 18 / 16 / 14px; scale locally. |
 
-User time stays 4px below the bubble, right-aligned. Assistant time stays at the
-start of its document group, left-aligned with the text and separated by 4px;
-it has no decorative badge. These use the same compact metadata treatment.
-Semantic `time` elements retain the native timestamp, with a full local
-date/time/timezone in their title and accessible label. Grouping and timestamp
-selection are unchanged; streaming does not create a separate moving time row.
-
-The decision dock, process groups and agent overviews use their own inline-size containers.
-A narrow Chat beside desktop settings therefore gets the same stacked choices
-and compact process/agent metadata as a phone, without reducing reading text.
-Neither agent message bodies, the composer nor module contributions gain containment, so their
-viewport-positioned UI and native ownership are not changed.
-
-Copy controls reserve their intrinsic confirmation-label width. Pending writes
-keep the current visible label instead of flashing through a progress label;
-busy state is exposed accessibly. Repeated copies retain the prior confirmation
-until the new outcome, and failures remain explicit. The native code renderer,
-copied text and focus target are not replaced. Session-ID confirmation is centered
-in the original value's space and remains visible without a restoration timer,
-matching code/tool copy feedback. A new value or fresh mount starts unconfirmed;
-old-value results cannot label new content copied.
-
-The role-based approach follows the published
-[Primer typography](https://primer.style/product/primitives/typography/) and
-[Fluent typography](https://fluent2.microsoft.design/typography) guidance;
-it does not import their fonts, palettes or product layouts.
+User time is 4px below the bubble, right-aligned. Assistant time starts its document
+group, left-aligned with text and separated by 4px. `time` keeps native timestamp, full
+local date/time/timezone title and accessible label. Decision dock, process groups and
+agent overviews use their own inline-size containers so narrow desktop Chat behaves like
+phone width without shrinking reading text. Copy controls reserve confirmation width; old
+copy results cannot label new values.
 
 ### Spacing ownership
 
-A boundary has one owner:
+Each boundary has one owner:
 
 | Relationship | Owner and rule |
 | --- | --- |
-| Reading column | 52rem maximum (`--chat-reading-width` in `tokens.scss`, also reused by global MCP / Skill details), responsive outer gutter (12px on narrow screens). Transcript scrollbar gutters are symmetric so the column stays centered with the dock and composer; classic scrollbars reserve extra space on both sides at constrained widths. |
-| Transcript / dock / composer | The Chat parent owns an 8px region gap. The transcript has a 16px top inset and no bottom padding; neither the dock nor input adds another outside gap. Missing regions reserve no space. |
-| Messages / process / speaker change | Visible row frames own 8 / 12 / 16px respectively. Metadata is separated by 4px. Empty history controls reserve no height. |
-| Message interior | User bubbles retain 0.65rem by 0.85rem padding. Paragraphs/lists use 0.65em rhythm; code, tables and quotes use 0.85em. Headings retain their typographic margins. First/last blocks have no outside margin. Text-to-attachment separation is 12px, absent for attachment-only messages. |
-| Expanded process details | Shared 24px inset, 4px after the header and 8px after details. Header dimensions and behavior do not change. |
-| Cards | Ordinary panel inset and content separation are 12px; compact execution panels use 8px inset and 4px row spacing. Controls use an 8px gap. Decision body typography is unchanged. |
-| Composer context | Notices, module-above contributions and native attachment fallback share one bounded, scrollable stack with 8px gaps. During a question it also contains the question and choices. Children have no outside margins. An empty stack is hidden without unmounting module contributions. |
-| Input and safe area | Field inset is 8px by 12px; the send target remains 40px square. The ordinary bottom bar adds 4px plus safe area; in answer mode its single outer card owns that bottom spacing and the input row has no extra outer padding. The read-only footer owns the equivalent inset without a composer. |
+| Reading column | 52rem `--chat-reading-width`; responsive 12px narrow gutter; symmetric scrollbar gutters keep column centered. |
+| Transcript/dock/composer | Parent owns an 8px region gap; transcript top inset is 16px; missing regions reserve no space. |
+| Messages/process/speaker | Visible rows own 8 / 12 / 16px; metadata 4px; empty controls no height. |
+| Message interior | User bubbles 0.65rem × 0.85rem; paragraphs/lists 0.65em; code/tables/quotes 0.85em; first/last blocks no outside margin; text-to-attachment 12px. |
+| Expanded process details | 24px inset, 4px after header, 8px after details; header dimensions unchanged. |
+| Cards | Ordinary panels 12px inset/separation; compact execution 8px inset and 4px rows; controls 8px gap. |
+| Composer context | Notices, module-above contributions and attachment fallback share one bounded stack with 8px gaps; during questions it also contains question/choices. Empty stack hides without unmounting modules. |
+| Input/safe area | Field inset 8px × 12px; send 40px square; ordinary bottom bar adds 4px plus safe area; answer mode outer card owns bottom spacing. |
 
-The host controls contribution placement, not a module's internal visual design.
-Active upload feedback stays with the module's attachment item; only revoked
-module recovery joins the host stack. The native fallback is omitted when an
-active module explicitly renders draft attachments, and attachment controls
-remain disabled during native submission.
-Adding/removing notices or attachments does not replace the editor or scoped
-module instances. No viewport-measurement controller, history reads or scrolling
-compensation is introduced by the spacing system.
-
-Persisted question replies show the original question above the answer in the
-user bubble, without an emoji or a duplicate option list. Association uses
-explicit native invocation references within the agent scope, not the nearest
-question or the current pending card. Missing question records stay explicit;
-older history can enrich the same reply without adding another message.
+Host owns placement, not module internal design. Native fallback is omitted when an active
+module renders draft attachments. Notices/attachments do not replace the editor or module
+instances. Persisted question replies show original question above the answer, using
+explicit native invocation references scoped by agent. Missing question records remain
+explicit.
 
 The opt-in lab's `ordered-events` scenario feeds isolated native inputs through
-the actual `NativeWindow`, including repeated pages, older prefixes, new speech
-and reasoning, disconnected partial text followed by a full event, and a cold
-projection of the same durable events. Its step-by-step stream action replays
-a normalized capture produced by SDK 1.0.13 / native runtime 1.0.83 using an
-isolated synthetic provider: body first, later reasoning, final message, then
-ephemeral complete reasoning. It exposes each transition separately rather than
-batching away intermediate layout changes. It does not initialize a native client.
+`NativeWindow`: repeated pages, older prefixes, speech/reasoning, disconnected partial
+text followed by full event, and cold projection. It replays a normalized SDK/runtime
+capture with body first, later reasoning, final message and ephemeral complete reasoning.
 
 ### Paging and live updates
 
-An authoritative complete session snapshot releases browser reading windows for
-IDs no longer present, including sessions deleted while this browser was offline.
-Opening the control connection alone is not an authoritative session list.
-Before its complete snapshot is applied, the browser shows synchronization rather
-than declaring an absent row deleted.
-An authoritative single-session `meta:null` or removal event releases the same
-window and pending read contacts. Unloaded sessions, partial resource responses,
-filtered lists and transient failures are not deletion signals. Surviving
-windows retain their cursors, nested agent ownership and current reading state;
-this is not an LRU policy and does not delete Composer drafts or retained files.
+Authoritative complete session snapshots release browser windows for removed IDs. Unloaded
+sessions, partial resources, filtered lists and transient failures are not deletion
+signals. Surviving windows keep cursors, nested-agent ownership and reading state; this is
+not LRU and does not delete drafts/files.
 
-Entering a chat view lands at its latest loaded content. Leaving and re-entering
-does not restore the previous cross-view reading position; retained history and
-native cursors still avoid a fresh history read. The single scroll owner positions
-the first committed message layout before paint, including an asynchronous first
-page after an empty mount. Empty-layout follow frames do not consume this initial
-positioning; prior user reading intent cancels it. Subsequent DOM notifications
-remain frame-coalesced. When ResizeObserver delivers the resulting layout, the
-same owner corrects the reading position before that layout is painted, canceling
-any superseded RAF. This also covers auto-filled history, asynchronous module
-content and viewport changes: newly measured geometry is not painted with the
-previous scroll offset. No messages are hidden while waiting for module data.
-Within the same mounted view,
-rerenders, live updates and older-page insertion preserve the active reading
-anchor and gestures rather than forcing the reader to the bottom.
+Entering a chat view lands at latest loaded content. Re-entry does not restore a previous
+cross-view scroll position, though retained history/cursors avoid fresh reads. The single
+scroll owner positions first committed layout before paint, coalesces DOM notifications
+and corrects after `ResizeObserver`. Rerenders, live updates and older-page insertion
+preserve the active reading anchor and gestures.
 
-A successful submission from this page explicitly resumes bottom-follow: this
-includes the send button, keyboard submission, module captured-draft sends and
-native decision answers/actions. The shared draft submission layer captures the
-target's mounted view at dispatch and notifies it only on a strict native ACK.
-Reading upward while that request waits does not cancel this one follow action.
-Leaving, replacing or making the view read-only revokes its pending view effects;
-returning to the same session does not inherit an earlier request's effect.
-Background sends never switch sessions or scroll an unrelated view.
+Successful submissions from the mounted page resume bottom-follow only for the send
+button, keyboard, module captured-draft sends and native decision answers/ actions after
+strict native ACK. Failed, blocked, unknown or pre-dispatch- cancelled sends, edits,
+remote messages and streaming updates do not initiate follow. Return-to-latest appears
+only at least one current transcript viewport from bottom; unchanged pages and older
+prefixes do not mark new content.
 
-The existing single scroll owner follows subsequent DOM appends and layout
-changes; a new user reading gesture after acknowledgement stops following normally.
-Failed, blocked, unknown or pre-dispatch-cancelled sends, draft edits, remote
-messages and streaming updates do not initiate follow. A native queue acceptance
-uses the same one-time ACK effect without fabricating a chat message; later queue
-execution does not force follow again. Native success is not undone by a local
-draft-cleanup failure, and captured-send cancellation still only acts before dispatch.
+Upward reading prefetches older messages at about one viewport remaining. At most one
+older read is in flight per window; exhausted, failed, expired or unresolved- boundary
+windows do not auto-continue. Browser backward reads request 200 events, within the public
+per-page bound 256. Native cursor, `hasMore` and `cursorStatus` are authoritative: event
+limit, not message/byte/height. One API page delegates to one native read plus one-time
+live-tail bootstrap; no full-journal prefetch.
 
-The return-to-latest action appears only when the distance from the bottom is
-at least one current transcript viewport; small upward movements remain quiet.
-This display threshold does not change the existing bottom-follow or anchor
-rules. It reuses the scroll owner's scroll/resize notifications, without another
-listener, timer or position writer. Text
-increments and recorded tool updates can mark new content without requiring a
-new message ID; unchanged pages and older history prefixes do not count as new
-messages. The existing scroll owner remains the only writer of scroll position.
+Initial filling stops after accumulated content reaches two screen heights; one history
+action can cross native pages until it adds visible content and resolves missing
+child/task ownership, but it does not wait for running tools. Result-only windows show
+missing-start metadata instead of reading backward only for owners. Main and child
+messages share one window. Older pages fold as a prefix, not by replaying the loaded
+window; local indexes point into retained display events. New starts/child owners repair
+waiting results in native append order while preserving untouched messages, indexes,
+partials and anchors.
+Thinking that adopts a referenced response identity keeps the native response-parent
+`thoughtKey` so disclosure choices remain stable.
 
-Initial loading fills at least two viewport heights when sufficient history is
-available, not a fixed number of messages. This is a prefetch policy, not a
-visibility gate: every received display row is immediately readable and
-interactive, including the first short page of a cold entry. The browser does
-not hide mounted rows or wait for two screens before showing them.
-Having a materialized page does not mean the current viewport is filled. Re-entering
-with a short retained window continues from its existing cursor when more history
-is available, while keeping that retained content visible.
-Upward reading prefetches older messages when the remaining loaded history above
-the viewport falls to about one current viewport. After insertion, the reading
-anchor is restored before deciding whether another bounded batch is needed.
-There is at most one older read in flight per window; exhausted, failed, expired,
-or unresolved-boundary windows do not automatically continue.
-Browser backward reads explicitly request 200 events, matching the installed
-runtime 1.0.83 default for both `eventLog.read` and `sessions.readPersistedEvents`.
-Native supports 1–1000 events; Cockpit's existing public per-page bound remains
-256. The browser's 200-event history request needs no new API, local cursor,
-adaptive batch controller or larger live SSE batch. The native cursor is passed
-back unchanged and `hasMore`/`cursorStatus` remain authoritative.
+Supported producers link streamed reasoning and final message through shared
+response-parent events; references are scoped per agent, never inferred from adjacency or
+matching text. Unlinked bounded thinking stays with an association warning.
+`reasoningText` is a complete snapshot; repeated pages/late deltas cannot resurrect old
+fragments. Projection work is proportional to new events plus the dependency frontier
+replayed, not the full loaded suffix. Resolving child ownership and filling two screens
+has no universal event ceiling.
 
-This is a native **event** limit, not a visible-message, byte or height limit.
-Collapsed process groups still carry their full native payloads. One API page
-delegates to one native read (plus the existing one-time live-tail bootstrap);
-it does not prefetch the full journal. The native bundle also has a 32-event
-recent-event helper and a 1000-event forward initialization iterator; neither
-is the policy for this tail-first, viewport-driven Chat.
+Incoming rows display progressively while follow/anchor is maintained. Existing windows
+stay visible during older loads; the history-start hint stays normal flow until earliest
+history is reached. Failure retry and rebase are explicit. Child cards use shared nested
+projection; expanding a card makes no request. Child headers display recorded evidence
+(started, ended, failed, cancelled or later activity), not current task registry state;
+cancellation differs from failure. Later durable child activity supersedes older terminal
+labels; failed tools alone and parent turn end do not end a child, and ephemeral fragments
+alone do not establish a new execution boundary.
 
-Initial filling stops once the
-accumulated content reaches two screen heights (a complete batch can exceed
-that minimum). One history action continues across native pages
-until it adds visible content and resolves missing child/task ownership.
-Ordinary tool starts are self-contained. Result-only windows show missing-start
-metadata rather than reading backward just to recover an owning message.
-It does not wait for running tools to finish. Main chat
-and nested child messages share one window; metadata-only pages are not treated
-as a finished message load. The initial live tail is captured only once.
-Hidden tool rows, including skill and plan-mode calls, retain invocation identity;
-suppressing duplicate presentation must not trigger extra history reads.
-
-Older pages are folded as a prefix, not by replaying the entire loaded window.
-Browser-local indexes point into retained display events: message/tool
-dependents, native response references and agent aliases.
-A newly supplied start repairs its waiting results; a newly supplied child owner
-repairs that child's events. Those results merge
-into the existing fold in native append order, preserving untouched message
-objects, ownership indexes, live partials, and reading-anchor IDs. Bootstrap
-adoption appends only events beyond the last overlap; empty/duplicate pages
-advance positions without folding or replacing the view.
-Body rows retain the native message ID. Thinking that arrives before that ID
-uses the reasoning ID temporarily, then adopts the referenced response identity
-without moving. The native response-parent event ID (`thoughtKey`) keeps its
-disclosure choice stable through that adoption. Tool rows retain invocation IDs.
-
-The supported producer links streamed reasoning and the final message through
-their shared response-parent event. A complete reasoning notification references
-the final message event. These references are scoped per agent, never inferred
-from temporal adjacency or matching text. If a bounded record has no supported
-link, its thinking is retained with an explicit association warning, not attached
-to an arbitrary response. No extra history read or guessed content match repairs it.
-
-Message-level `reasoningText` is a complete snapshot, not another delta or another
-thought row. Its associated stream identities are finalized together, so repeated
-pages or late deltas cannot resurrect an earlier fragment. Existing disconnect,
-partial-stream and scoped event-ID guards remain: an unknown suffix after a gap
-is not silently appended to an incomplete prefix. A full native snapshot resolves
-that incomplete stream.
-
-Projection calls are proportional to new events plus the dependency frontier
-actually replayed, not the full loaded suffix on every page. A distant missing
-child owner can still have a large frontier; immutable
-message-array assembly and existing agent routing also have their own costs.
-This is a local projection optimization, not a reduction in all native reads,
-a fixed action budget, a truncated reading window, or a server chat cache.
-
-Resolving child ownership and filling two screens can require
-multiple pages, especially with low visible density or a distant parent task.
-Consequently the whole history action has no universal event
-ceiling; a single bounded native request must not be advertised as one.
-Cancellation, errors, expiry, nonadvancing cursors and authoritative exhaustion
-still terminate automatic reading. Reaching the beginning without an owner is
-reported as missing source history, not a promise that another page exists.
-Forward streaming still drains up to 64 events per request and is not delayed
-for a complete display message.
-
-Initial viewport filling displays incoming rows progressively while the existing
-scroll owner maintains bottom-follow or the reader's chosen anchor. There is
-no separate initial reveal state or invisible measurement-only transcript.
-Existing reading windows remain visible during older-page loads. The normal
-history-start hint remains in normal flow until the earliest history is reached,
-rather than being inserted and removed around every request. There is no normal load-more button;
-explicit failure retry and rebase remain available. Recorded incomplete-history
-notes do not disappear during loading. Child cards
-render the shared nested projection. Expanding a card makes no request, needs
-no refresh button, and automatically shows new messages and lifecycle changes.
-Collapsed children also travel over the all-agent stream; this is the user's
-chosen completeness/bandwidth tradeoff. The parent scroll owner anchors the
-visible child row during a prepend. Switching sessions or hiding the page
-releases the shared read; closing a child card changes presentation only.
-
-Child headers display **recorded execution evidence**, not the native task
-registry's current state: started, this execution ended, failed, cancelled,
-or subsequent activity. A cancellation remains distinct from failure. A later
-durable child message, model-turn boundary, reasoning or tool event supersedes
-an older terminal label; a failed tool alone does not fail the child, and a
-parent turn ending does not end its children. A completed invocation may belong
-to a reusable agent, so the label never means its overall goal is complete.
-Unknown evidence stays unknown. Duplicate events and older-page insertion do
-not overwrite newer execution evidence. These labels add no SDK query, history
-request or poll; they use the same all-agent window even while collapsed.
-They remain historical evidence during disconnect or a missing stream interval,
-not a claim that the child is still running. Ephemeral fragments alone do not
-establish a new execution boundary; normal durable catch-up supplies the record.
-
-Only the selected visible view reads live chat. Disconnecting or changing views cancels
-its request and stops subsequent reads. The public native long-poll RPC has no
-per-call cancellation parameter, so one already-running read can finish within
-its bounded wait; its obsolete response is discarded.
-
-On reconnect, the browser retains its old content and cursor. New durable events
-can be read forward without retransmitting the entire old display window.
-Ordinary reconnect publishes each durable page without waiting for the whole
-gap to drain. Only a fresh bootstrap needs temporary overlap reconciliation
-between its captured tail and backward page.
-Previously received tool ownership remains browser state.
-The browser retains the existing capped tool details rather than duplicating
-large raw outputs/arguments. Accepted user answers and message bodies remain
-complete. This is browser retention, not an additional server chat cache or a
-claim that native JSON-RPC can omit those fields.
-Passive history cannot filter at the source, but the browser discards unrelated
-event bodies rather than retaining another metadata log. Child updates copy
-only changed message/ancestor branches, preserving unrelated message objects.
-
-Ephemeral delta replay is not guaranteed. If message C has a missing interval,
-keep its existing text, indicate that the complete message is pending, and do
-not append unknown-gap deltas as contiguous text. A later durable full
-`assistant.message` replaces C; waiting for the whole task is unnecessary.
-If native never saved that content before interruption, there is no promise
-that the unsaved draft can be recovered.
-
-`cursorStatus:"expired"` is not a successful continuation. The native boundary
-returned with it may overlap or differ from the previous range. Preserve the
-current view and require an explicit rebase rather than silently jumping to
-latest. Rewind emits a `chat/invalidated` metadata signal without embedding a
-history snapshot, because even a still-valid cursor can coexist with deleted
-rows already displayed by the browser.
-
-Context compaction is not a chat-history rewrite. Successful manual and
-automatic compaction on runtime 1.0.83 preserved original event IDs/content and
-same-source backward/forward/tail cursors, including subsequent new replies.
-Compaction therefore updates operation status without invalidating chat or
-cancelling in-flight reads. Actual native cursor expiry is still handled above;
-manual compaction failures remain visible as operation errors.
+Only the selected visible view reads live chat. Disconnect/view change cancels its request
+and stops subsequent reads; a completed obsolete native long-poll is discarded. Reconnect
+keeps content/cursor and reads new durable events forward. Passive history cannot filter
+at source; browser discards unrelated bodies. Ephemeral delta replay is not guaranteed:
+missing intervals keep existing text and wait for a later durable full
+`assistant.message`. `cursorStatus:"expired"` is not continuation; preserve the view and
+require explicit rebase. Rewind emits `chat/invalidated`; compaction is not a chat-history
+rewrite.
 
 ## Media
 
-Native tool binary payloads are removed from chat responses, without generating
-image locators or maintaining a chat/image cache. The current thin Web has no
-file cards, image/video previews or managed download service. Ordinary
-text/Markdown remains; unsupported media syntax is not a reason to fetch,
-retain or republish native images.
+Native tool binary payloads are removed from chat responses without image locators or a
+chat/image cache. Current Web has no file cards, image/video previews or managed download
+service. Text/Markdown remains.
 
-Enhanced file rendering belongs to a future frontend plugin, including both
-new and historical messages in the same shared native event window. There is
-no installed renderer ABI yet. The planned module owns its file references and
-content delivery, as described in the [module catalog](module-catalog.md).
+Enhanced file rendering belongs to a future frontend plugin covering new and historical
+messages in the same event window. No renderer ABI is installed. The planned module owns
+file references and delivery; see the [module catalog](modules.md).
 
-Native prompt attachments are separate from chat presentation. HTTP/MCP can
-forward SDK file/directory/selection/blob inputs; this neither uploads a
-browser-local file nor promises a renderer or model support for every format.
-The exact client shape is documented under
-[native attachment input](../apps/mcp/README.md#native-attachment-input).
+Native prompt attachments are separate from chat presentation. HTTP/MCP can forward SDK
+file/directory/selection/blob inputs; this neither uploads browser-local files nor
+promises renderer/model support for every format. Shape: [native attachment
+input](../apps/mcp/README.md#native-attachment-input).
 
-Native binary results arrive as event JSON/base64, not a public byte stream or
-a confirmed single-part asset getter. The adapter cannot avoid bytes that
-native already included. It must not advertise zero-copy or source-side field
-projection. There is no separate native-image history lookup or tail scan.
+Native binary results arrive as event JSON/base64, not a public byte stream or confirmed
+single-part asset getter. The adapter cannot avoid bytes native already included and must
+not advertise zero-copy/source-side field projection.
 
 ## Native cursor and cost boundaries
 
 Queue, decisions, native tasks and stop protection remain independent of chat display.
 
-An isolated runtime 1.0.83 fixture confirmed forward cursor reuse between live
-and passive readers, including passive continuation after runtime restart,
-without losing the fixture's root/child messages, tools or lifecycle events.
-The cursor advances with consumption; it is not a fixed session identifier.
-Starting with primary scope and later changing to all does not recover child
-events already skipped before that position. The browser starts with all scope.
-`includeSubAgentStreamingEvents:true` controls SDK push forwarding; it is not a
-substitute for `eventLog.read` scope or a replay contract. A real root `task`
-fixture exercised all-agent HTTP/SSE and recovered a completed child response
-after a consumer disconnect. The tested background-child path did not emit
-child text deltas, so it does not establish token-by-token child replay.
-Duplicate system-message
-events need not be present on disk; shutdown adds its own event. The chat reader
-uses this durable forward boundary when native unloads, and still treats native
-expiry as an error rather than inventing a replacement cursor. This is not a
-promise that every native cursor lasts forever or every live event is durable.
+Runtime 1.0.83 fixtures confirmed forward cursor reuse between live/passive readers,
+including passive continuation after restart, without losing root/child messages, tools or
+lifecycle events. Cursor advances with consumption. Starting primary scope then switching
+to all does not recover skipped child events; browser starts all-scope.
+`includeSubAgentStreamingEvents:true` controls SDK push forwarding, not `eventLog.read`
+scope or replay. A root `task` fixture exercised all-agent HTTP/SSE and recovered a
+completed child response after disconnect. The tested background-child path did not emit
+child text deltas, so token-by-token child replay is not established. Duplicate system
+messages need not exist on disk; shutdown adds its own event. Reader uses durable forward
+boundaries on native unload and treats expiry as an error.
 
-Cold native disk indexing and filtering I/O remain native implementation
-properties. A bounded event response does not prove constant-time disk access.
-Cost experiments distinguish native RPC count, returned event/byte volume,
-client projection work and actual I/O.
+Cold disk indexing and filtering I/O are native implementation properties. A bounded event
+response does not prove constant-time disk access. Cost experiments separate native RPC
+count, returned event/byte volume, client projection work and actual I/O. MCP uses a
+smaller output window and explicit single-event JSON fragments; see [MCP
+pagination](../apps/mcp/README.md#native-event-pagination).
 
-MCP adds a smaller output window and explicit single-event JSON fragments,
-not a different native history source or a body-offset API. Its bounds and
-reread cost are maintained only in
-[MCP pagination](../apps/mcp/README.md#native-event-pagination).
-
-Commands and evidence requirements are maintained in the [testing guide](cockpit-testing.md).
-
-This chat transport does not make inherently history-wide operations into
-point queries. For example, existing fork safety preflight checks inherited
-schedules and unfinished work before dispatching the native fork. Such explicit
-control operations remain distinct from opening or paging a chat view.
+Commands and evidence requirements are in the [testing guide](testing.md). History-wide
+operations remain explicit control operations; opening or paging chat does not turn fork
+safety preflight checks into point queries.

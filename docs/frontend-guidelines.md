@@ -1,231 +1,272 @@
-# 前端规范：自然、简单、直观
+# Frontend guidelines: natural, simple, intuitive
 
-本体 Web 与模块 UI 的新工作、改动都必须阅读并遵循本文。目标是让内容容易阅读、
-操作符合预期；展示和交互尽量使用浏览器原生能力，尽量少用 JS 控制。
-简单不是隐藏必要的错误、状态或完整内容，也不是只让截图好看、鼠标能点。
+Read and follow this page for any new or changed host Web or module UI. Content
+should be easy to read and controls should behave as expected, using native
+browser capabilities first and as little JS control as possible. Simple never
+means hiding necessary errors, state or complete content, or only looking good in
+screenshots.
 
-本文是通用前端原则的唯一维护位置，不是现有实现全部合规的认证。
-改动时检查相关交互，不要求借机全仓整改。外部模块作者从
-[模块 UI 指南](module-ui-guide.md)进入；文档和仓库内的 agent 入口不保证所有会话、
-工具或独立模块仓库自动采用。产品边界仍由[产品要求](product-requirements.md)负责，
-主题、尺寸、图标版本和公开样式由[模块 UI 指南](module-ui-guide.md)负责，
-API、扩展机制和生命周期由[模块协议](module-contract-draft.md)负责；本文不另建这些合同。
+This is the single home of general frontend principles, not a certification that
+existing code conforms; check the interactions you touch without a repo-wide
+cleanup. Product boundaries are in [product requirements](product-requirements.md);
+themes, sizes, icon versions and public styles in the [module UI guide](module-ui-guide.md);
+APIs, extension mechanisms and lifecycle in the [module contract](module-contract.md).
 
-## 决策顺序
+## Decision order
 
-1. **先问是否需要。** 用户要读什么、做什么？能否去掉无信息价值的装饰、重复说明、
-   多余按钮或层级，而不损失状态、恢复入口和完整内容？
-2. **先选语义，再排布局。** 用行为匹配的 HTML 和已有组件，以 CSS 完成布局、
-   响应式和展示；不能从画面反推一堆可点击容器。
-3. **不足处才补 JS。** 说清原生能力或 CSS 缺在哪里，状态与事件由谁负责，
-   何时启动、更新和释放；复用已有所有者，不另建一套控制。
-4. **按真实阅读和操作判断。** 检查窄屏、长内容、键盘/触摸和异步变化，
-   不以代码更短或动画更平滑代替正确性。
+1. **Is it needed?** What does the user read or do? Remove decoration, repeated
+   explanations, extra buttons or levels that carry no information — without losing
+   state, recovery paths or complete content.
+2. **Semantics before layout.** Use HTML and existing components matching the
+   behavior; do layout, responsiveness and presentation in CSS. Do not derive
+   clickable containers from a picture.
+3. **JS only for gaps.** State what native/CSS lacks, who owns the state and events,
+   and when they start, update and release. Reuse existing owners.
+4. **Judge by real reading and operation.** Check narrow screens, long content,
+   keyboard/touch and asynchronous changes; shorter code or smoother animation is
+   not correctness.
 
-## 语义与原生交互
+## Semantics and native interaction
 
-动作使用 `button`，导航/下载使用 `a[href]`；表单按需求使用 `form`、
-带关联标签的 `input`、`select` 等。披露和模态场景优先考虑 `details`/`summary`、
-`dialog`，但要匹配具体行为与浏览器支持，不一刀切替换已有组件。
-原生优先不禁止 React、受控输入或必要 JS，也不要求放弃已验证的组合组件。
+Actions are `button`s; navigation and downloads are `a[href]`; forms use `form`,
+labelled `input`, `select` and so on. Prefer `details`/`summary` and `dialog` for
+disclosure and modals when they match the behavior and browser support; do not
+replace proven components wholesale. Native-first does not forbid React,
+controlled inputs or necessary JS.
 
-保持 HTML 内容模型合法：独立动作互为兄弟，不在按钮或链接内嵌另一交互控件。
-Markdown 和模块组合后的 DOM 也适用；外包一层 `span` 或加 ARIA 不能修复非法结构。
-浮层需要合法的挂载位置与明确的组件所有权；进入浏览器 top layer 不会改变 DOM 合法性。
-模块组合的具体做法见[模态与 Markdown](module-ui-guide.md#markdown-and-modal-composition)。
+Keep the HTML content model valid: independent actions are siblings; never nest an
+interactive control in a button or link. This applies to Markdown and composed
+module DOM too; wrapping in a `span` or adding ARIA does not fix invalid structure.
+Overlays need a valid mount point and clear component ownership; the top layer does
+not change DOM validity. See [Markdown and modal composition](module-ui-guide.md#markdown-and-modal-composition).
 
-可见标签、可访问名称与实际结果必须一致。优先让控件直接拥有对应的可见内容；
-ARIA 用于补足原生/可见内容未能表达的名称、说明或状态，不重复朗读装饰，
-也不把装饰变成额外焦点。图标按钮仍须有可访问名称。
+Visible labels, accessible names and actual results must agree. Let controls own
+their visible content; use ARIA only for names, descriptions or states that native
+or visible content cannot express, without announcing decoration or making it
+focusable. Icon buttons still need accessible names.
 
-焦点进入、Tab 顺序和关闭/提交/资源替换后的返回应自然，DOM、视觉和键盘顺序一致。
-保留 `:focus-visible`、原生键盘和触摸行为，不用强制 `blur()`、隐藏焦点或任意抢焦点
-掩盖结构缺陷。键盘、指针和触摸路径表达同一动作；不让关键操作只在 hover 时可用。
-必要的焦点恢复、菜单键盘处理应由既有组件统一负责，不在子组件重复实现。
-透明点击层、`pointer-events`、事件传播控制不是一概禁止，但必须有具体需求，
-不能拿它们补救本可避免的主次动作冲突。
+Focus entry, Tab order and return after closing, submitting or replacing resources
+must be natural, with DOM, visual and keyboard order aligned. Keep `:focus-visible`
+and native keyboard/touch behavior; never force `blur()`, hide focus or steal focus
+to mask structure problems. Keyboard, pointer and touch express the same action;
+critical actions are not hover-only. Focus restoration and menu keyboard handling
+belong to the existing owning components, not repeated in children. Transparent
+click layers, `pointer-events` and propagation control need a concrete reason and
+must not patch avoidable primary/secondary action conflicts.
 
-## CSS 优先，JS 有清晰所有权
+## CSS first; JS with clear ownership
 
-布局、换行、尺寸约束、响应式和普通视觉状态先交给 CSS；按实际容器宽度适配，
-不以 JS 反复量尺寸再写回样式代替正常布局。保持控件在 hover、pending、错误切换时
-几何稳定，复用既有主题与 tokens，而不是逐页面微调出另一套外观。
+Layout, wrapping, size constraints, responsiveness and ordinary visual states go to
+CSS; adapt to the actual container width instead of measuring in JS and writing
+styles back. Keep geometry stable across hover, pending and error states and reuse
+existing themes and tokens.
 
-触摸设备的文字输入控件使用至少 16px 字号，避免 iOS 因小字号在聚焦时自动放大；
-这与控件高度是两回事，横屏和平板也适用。公共输入样式提供下限；
-保留更大字号，不限制 viewport 缩放，
-不通过聚焦后修改 viewport、强制 blur 或缩放变换补救。Chrome 的触摸模拟只能验证
-字号与布局，不能代替真实 iOS 的键盘及自动缩放验收。
+Text inputs on touch devices use at least 16px font size so iOS does not zoom on
+focus — independent of control height, and also in landscape and on tablets. The
+public input style provides the minimum; keep larger sizes, never restrict viewport
+zoom, and do not patch it by changing the viewport after focus, forcing blur or
+scaling. Chrome touch emulation validates font size and layout only, not real iOS
+keyboard and zoom behavior.
 
-异步数据、业务状态、受控编辑、焦点恢复、阅读定位和必要测量可以需要 JS。
-判断依据是具体行为无法仅靠语义/CSS 正确完成，而不是“方便控制”。
-每个控制明确状态来源、目标身份、事件所有者和清理时机；订阅、observer、
-异步回调在替换/卸载时按所属生命周期释放或隔离晚结果。
-本地草稿、展开和 pending 是合理交互状态，不得变成第二份原生状态权威。
+Asynchronous data, business state, controlled editing, focus restoration, reading
+position and necessary measurement may need JS, when semantics/CSS genuinely cannot
+do it. Each control has a clear state source, target identity, event owner and
+cleanup: subscriptions, observers and async callbacks are released or isolated from
+late results on replacement/unmount. Local drafts, expansion and pending are valid
+interaction state, never a second native authority.
 
-同一阅读区域只有一个滚动控制所有者，模块和子组件不得争抢。自动定位遵循真实布局
-就绪的时机，必要的 pre-paint 测量或后续尺寸观察可以保留，但不能覆盖用户已开始的
-上翻阅读。不要用轮询、反复 DOM 操纵或多个 effect 互相纠正来掩盖布局/数据问题。
-真实业务需要的计时或轮询须有明确目的、终止条件和清理，不是排版补丁。
+One reading area has one scroll owner; modules and children must not compete.
+Automatic positioning follows real layout readiness; pre-paint measurement or size
+observation may stay, but must not override a user who started scrolling up. No
+polling, repeated DOM manipulation or effects correcting each other to hide layout
+or data problems. Timers and polling needed for real business have a purpose, end
+condition and cleanup.
 
-**不得用“隐藏内容 → 等一段时间 → 显示”、遮罩或淡入掩盖首屏定位、闪屏或竞态。**
-应修正数据到达、DOM 提交与布局定位的时序；下一帧或最终位置正确不代表首次可见
-内容正确。真实加载占位和用户主动折叠不在此禁令内，但已可展示的内容不能仅为
-“看起来稳定”而被定时扣留。
+**Never hide content, wait, then show it — nor use masks or fade-ins — to cover
+first-screen positioning, flashes or races.** Fix the timing of data arrival, DOM
+commit and layout; a correct next frame or final position does not make the first
+visible content correct. Real loading placeholders and user-initiated collapse are
+fine, but displayable content is never held back just to look stable.
 
-## 阅读优先，状态真实
+## Reading first, truthful state
 
-正文优先于装饰和重复提示；少层级、少按钮不等于删掉必要操作。
-长消息保留完整内容，摘要/截断必须能以键盘和触摸读到全文，不能只靠 `title`。
-窄屏应自然换行或展开，避免裁字、为塞内容缩小字号、无必要的嵌套滚动区。
-用户主动阅读、选择和编辑优先于后台更新；不要在刷新时清空草稿、跳动焦点或强行落底。
-具体聊天跟随/发送规则仍按[原生聊天](native-chat.md)和现有滚动所有者执行。
+Body content comes before decoration and repeated hints; fewer levels and buttons
+never means removing necessary actions. Long messages keep their complete content;
+summaries/truncation must expose the full text to keyboard and touch, not only via
+`title`. Narrow screens wrap or expand naturally instead of clipping text, shrinking
+fonts or nesting scroll areas. The user's reading, selection and editing win over
+background updates: refreshes never clear drafts, move focus or force scrolling to
+the bottom. Chat following/sending rules are in [native chat](native-chat.md).
 
-首次加载没有数据时可以占位；刷新已有内容时保留仍有效的内容，并在所属范围表达进度。
-不能把旧值默认当成当前真相：断线、失败、资源不可用时说明失效/未知边界，
-可否操作使用现有 availability 和实际执行守卫。具体页面策略见
-[Web presentation boundaries](DEVELOPMENT.md#web-presentation-boundaries)。
+A first load without data may show a placeholder; a refresh keeps still-valid
+content and shows progress in its own scope. Old values are never assumed current:
+disconnection, failure and unavailable resources state their stale/unknown boundary,
+and whether an action is allowed uses existing availability and execution guards.
+See [Web presentation boundaries](development.md#web-presentation-boundaries).
 
-区分受理、排队、等待生效、成功、失败、未知和部分成功；不以请求发出或 Promise
-结束推断成功。来源和角色标签不是权限、连接、就绪或能力证明；颜色和图标也不能
-暗示未经证实的状态。不另设一个“显示成功”状态来压住真实错误或伪造乐观启用。
-保留错误、重试所需输入和实际可用的恢复入口，反馈放在操作所属范围而非到处重复。
+Distinguish accepted, queued, awaiting effect, succeeded, failed, unknown and
+partially succeeded; a sent request or settled Promise is not success. Provenance
+and role labels are not proof of permission, connection, readiness or capability;
+colors and icons must not imply unproven states. No "show success" state masking
+real errors or faked optimistic enablement. Keep errors, the input needed to retry
+and real recovery paths, with feedback in the owning scope.
 
-视觉禁用必须与行为一致：原生按钮/字段用真实 `disabled`；刻意保留可聚焦的
-`aria-disabled` 控件仍需执行守卫，链接没有原生 `disabled`。
-`aria-busy` 表达真实等待，不代替禁止重复变更。异步结果绑定原始资源/会话，
-不能写入后来切换到的目标；取消和晚结果遵循所属操作合同，不把关闭菜单或换页
-一概视作取消已受理工作。
+Visual disabling matches behavior: native buttons/fields use real `disabled`;
+intentionally focusable `aria-disabled` controls still need execution guards; links
+have no native `disabled`. `aria-busy` expresses real waiting and does not replace
+blocking duplicate mutations. Async results bind to their original resource/session
+and never write into a target switched to later; cancellation and late results follow
+the owning operation's contract — closing a menu or changing page does not cancel
+accepted work.
 
-## 复用组件、图标和视觉语言
+## Reuse components, icons and visual language
 
-先找已有组件和 tokens，再决定是否新增。本体复用宿主组件和内部视觉角色；
-模块只使用公开 `ck-*` / `--ck-*` 合同与宿主提供的 React，不导入私有宿主组件、
-选择器或另带 React runtime。不要为统一外观另造 UI 框架、主题、运行时服务或模块 API。
-尺寸、触摸目标及已有紧凑阅读例外统一见[公共样式](module-ui-guide.md#public-classes)，
-例外不扩展为所有独立按钮都可以缩小。
+Look for existing components and tokens first. The host reuses host components and
+internal visual roles; modules use only the public `ck-*` / `--ck-*` contract and
+the host-provided React, never private host components or selectors, or another
+React runtime. Do not build another UI framework, theme, runtime service or module
+API for consistency. Sizes, touch targets and the existing compact reading
+exceptions are in [public classes](module-ui-guide.md#public-classes); exceptions do
+not let every standalone button shrink.
 
-**先判断图标是否提供识别价值；没有价值就不用，不要求处处带图标。**
-需要通用 UI 图标时，本体使用已有 Lucide / 宿主 `Icon`，模块按
-[公共图标方式](module-ui-guide.md#icons-and-packaging)使用同一固定版本的 SVG 节点与公共样式。
-版本、路径、打包与许可只在该指南维护，不自绘替代、不引入第二套图标。
-不要用 CSS 双方框等手绘形状、emoji 或私有码点仿通用 UI 图标。
-普通 CSS 边框、圆角、布局几何、进度表现不算图标违规；有独立来源的 logo、
-用户 emoji、缩略图和原生媒体控件也不应被一概替换。
+**Use an icon only when it aids recognition; not everything needs one.** The host
+uses the existing Lucide / host `Icon`; modules use the same pinned SVG nodes and
+public styles described in [icons and packaging](module-ui-guide.md#icons-and-packaging),
+which alone owns version, paths, packaging and license. No hand-drawn replacements,
+second icon set, CSS double-box shapes, emoji or private code points posing as UI
+icons. Ordinary borders, radii, layout geometry and progress visuals are not icon
+violations, and logos, user emoji, thumbnails and native media controls need not be
+replaced.
 
-相同语义保持图标和措辞一致，不同语义避免误共用：例如 Skill 使用书本，
-思考使用灯泡，而不是因“看起来差不多”共用一个标记。
-图标不代替必要文字或可访问名称；状态不能只靠颜色区分。
-复用已有语义色与文字层级，在浅色/深色主题都保持可读；不要用自选亮色、
-额外 badge 或装饰 hover 效果吸引无必要的注意。
+Same meaning, same icon and wording; different meanings, different marks (Skill is
+a book, thinking a light bulb). Icons do not replace needed text or accessible
+names, and state is never color-only. Reuse semantic colors and text levels readable
+in light and dark themes; no self-picked bright colors, extra badges or decorative
+hover effects.
 
-## 宿主组件与页面组合
+<a id="host-components"></a>
+## Host components and page composition
 
-新页面先组合现有层，不再复制页面标题、按钮、字段或滚动容器的样式。
-公共外观的唯一来源仍是 `styles/primitives/public-ui.scss`，宿主也消费
-`ck-button` / `ck-icon-button` / `ck-input`；私有组件负责可复用的语义组合，
-不再建立一套按钮外观。模块不能导入这些私有 React 组件。
-宿主按钮统一使用 `components/Button.tsx`：`Button`（`variant="primary"`、`danger`）、
-`IconButton`（必填可访问名称、16/20/24 图标尺寸、真实 `busy` 时显示 spinner）
-与唯一的刷新控件 `RefreshButton`；它们只选择 `ck-*` 类与原生语义，
-所有者类只补上下文布局。不要再手写 `ck-button` 类串或新增无样式的标记类。
-具有特殊角色的原生按钮（`role=switch` 开关、菜单项、带长按/右键的会话行）仍由各自所有者维护。
+New pages compose existing layers instead of copying header, button, field or
+scroller styles. The single source of public appearance is
+`styles/primitives/public-ui.scss`; the host also consumes `ck-button` /
+`ck-icon-button` / `ck-input`. Private components own reusable semantic compositions,
+not another button look; modules cannot import them. Host buttons use
+`components/Button.tsx`: `Button` (`variant="primary"`, `danger`), `IconButton`
+(required accessible name, 16/20/24 icon sizes, spinner only when really `busy`) and
+the single refresh control `RefreshButton`. They only choose `ck-*` classes and native
+semantics; owner classes add contextual layout. Do not hand-write `ck-button` class
+strings or add unstyled marker classes. Native buttons with special roles
+(`role=switch`, menu items, session rows with long-press/right-click) stay with their owners.
 
-| 层 | 维护位置与职责 |
+| Layer | Location and responsibility |
 | --- | --- |
-| 基础 | `tokens.scss` 的字体角色、间距、圆角与 `--host-color-*` 语义色（tweb 旧名只是它们的别名，留给移植样式）；公共 `ck-*` 控件、原生 disabled、内收 focus-visible；`Button.tsx` 的按钮组件。Lucide 与公共尺寸仍由模块 UI 指南维护。 |
-| 页面骨架 | `Shell` 的 `master`、`main`、`inspector`、`overlays` 槽；不读取 URL、会话或资源状态。只需主页面时省略其余槽。 |
-| 列表与主内容 | `MasterPane` / `DetailPane` 负责窄屏可见性及 inert；`PaneHeader` 组合 leading/title/actions，`PaneBody` 声明滚动与内边距。 |
-| 配置/详情 | `InspectorPane` 是可停靠的详情框，不是任意页面包装器；`SessionDetails` 选择业务内容，`ManagementShell` 组合管理页。 |
-| 表单与内容 | `UI.tsx` 的字段、选择卡、开关、section heading 与 `Badge`；`ResourceRow.tsx` 组合名称/来源/开关/状态、完整文本及错误披露，不拥有资源请求；`ExpandableText` 展开被截断的完整文本。 |
-| 状态与浮层 | `StateNotice` 区分 empty/loading/info/error，`ResourceStatus` 是其行内状态；`PanelPage` 提供会话面板页框与关闭按钮，`SessionResume` 负责未加载会话的显式恢复；`Dialog` / `DirectoryModal` 使用原生模态，菜单沿用既有键盘和关闭所有者。 |
+| Foundation | `tokens.scss` font roles, spacing, radii and `--host-color-*` semantic colors (old tweb names are aliases for ported styles); public `ck-*` controls, native disabled, inset focus-visible; `Button.tsx`. Lucide and public sizes stay in the module UI guide. |
+| Page skeleton | `Shell` with `master`, `main`, `inspector`, `overlays` slots; reads no URL, session or resource state. Omit unused slots. |
+| Lists and main content | `MasterPane` / `DetailPane` own narrow-screen visibility and inert; `PaneHeader` composes leading/title/actions; `PaneBody` declares scrolling and padding. |
+| Settings/details | `InspectorPane` is a dockable detail frame, not a generic page wrapper; `SessionDetails` chooses business content; `ManagementShell` composes management pages. |
+| Forms and content | `UI.tsx` fields, choice cards, switches, section headings and `Badge`; `ResourceRow.tsx` composes name/provenance/switch/status, full text and error disclosure without owning requests; `ExpandableText` expands truncated text. |
+| State and overlays | `StateNotice` separates empty/loading/info/error, `ResourceStatus` is its inline form; `PanelPage` frames session panels with a close button; `SessionResume` explicitly resumes unloaded sessions; `Dialog` / `DirectoryModal` use native modals; menus keep their existing keyboard and closing owners. |
 
-宿主与模块的普通表面、标题、动作行和非交互 badge 共用
-`ck-surface` / `ck-heading` / `ck-actions` / `ck-badge`；原生模态外观使用 `ck-modal`。
-这是[独立声明的公共 CSS 能力](module-ui-guide.md#compatibility-and-ownership)，
-不是让模块导入宿主组件或把普通页面变成模态。组件本身不推断操作成功或资源就绪。
+Host and module surfaces, headings, action rows and non-interactive badges share
+`ck-surface` / `ck-heading` / `ck-actions` / `ck-badge`; native modals use `ck-modal`.
+This is an [independently declared public CSS capability](module-ui-guide.md#compatibility-and-ownership),
+not permission to import host components or turn ordinary pages into modals.
+Components never infer operation success or resource readiness.
 
-`PaneBody` 默认自己滚动并带统一内容内边距。聊天主内容使用
-`scroll={false} padded={false}`，把消息滚动完全交给 Thread；
-列表头、详情头和浮动动作不放入内容滚动区。不能再用页面 CSS 为第三栏预留
-`padding` 或另设固定宽度补偿：停靠的 inspector 本身参与布局。
+`PaneBody` scrolls by default with standard padding. The chat main content uses
+`scroll={false} padded={false}` so Thread owns message scrolling; list headers,
+detail headers and floating actions stay out of the content scroller. Do not reserve
+padding or fixed widths for the third column in page CSS: a docked inspector takes
+part in layout itself.
 
-响应式阈值集中在 `styles/_responsive.scss` 与对应的 `lib/layout.ts` 行为查询，
-由合同用例检查两者一致：925px 起左列表停靠，1200px 起右详情停靠；
-600–1199px 详情为带遮罩的原生模态，低于 600px 占满页面。
-页面决定窄屏显示列表还是主内容及如何返回，Shell 不拥有第二份导航状态。
-断点仍是既有产品策略，不是任意新页面各选一套尺寸。
+Responsive thresholds live in `styles/_responsive.scss` and the matching
+`lib/layout.ts` queries, kept in sync by a contract test: the left list docks from
+925px and the right details from 1200px; 600–1199px details are a native modal with
+backdrop; below 600px they fill the page. Pages decide what narrow screens show and
+how to go back; Shell owns no navigation state. Breakpoints are product policy, not
+per-page choices.
 
-焦点按语义处理：普通控件保留内收可见轮廓，静态初始阅读目标使用阅读标记，
-不伪装成按钮。Inspector 的持久容器是原生 autofocus 目标，避免 lazy 内容替换
-移除已聚焦的临时关闭按钮；宽屏非模态打开不调用 `show()` 或主动移焦。
-目录对话框从静态标题开始，确认/文本对话框仍使用浏览器的默认初始焦点。
-刷新数据不移焦；菜单返回、已移除控件恢复和触摸滑动聊天时的输入 blur 保持各自所有权。
-`:focus-visible` 是浏览器判断，不等于仅 Tab；F8 不需要输入模式跟踪器。
-原生弹窗另有一个有界的提示例外：WebKit 的 `showModal()` / 原生关闭恢复会在
-指针操作后产生真实 `:focus-visible`。文档入口只观察最近的指针/键盘输入及
-`dialog.ck-modal` 的焦点进入/归还，在非编辑焦点元素上放置临时私有样式标记；
-任何键盘输入立即清除，输入控件和未知输入不抑制提示。它不调用 focus/blur、
-不替换原生焦点目标/陷阱、不拦截事件，也不维护第二份弹窗状态。独立模块的
-原生 `ck-modal` 同样覆盖，无需修改模块。
-这是已复现浏览器差异的局部呈现修正，不是全站用 JS 重做 `:focus-visible`。
+Focus follows semantics: ordinary controls keep an inset visible outline; static
+initial reading targets use the reading marker and do not pose as buttons. The
+Inspector's persistent container is the native autofocus target so lazy content
+replacement cannot remove a focused temporary close button; opening non-modally on
+wide screens does not call `show()` or move focus. The directory dialog starts on its
+static heading; confirmation/text dialogs keep the browser's default initial focus.
+Refreshing data never moves focus; menu return, removed-control recovery and input
+blur while touch-scrolling chat keep their own owners. `:focus-visible` is a browser
+decision, not "Tab only"; F8 needs no input-mode tracker. One bounded exception:
+WebKit produces real `:focus-visible` after pointer-driven `showModal()` and native
+close restoration. The document entry observes the latest pointer/keyboard input and
+`dialog.ck-modal` focus entry/return and puts a temporary private style marker on
+non-editing focused elements; any keyboard input clears it, and inputs and unknown
+input keep indication. It never calls focus/blur, replaces native focus targets or
+traps, intercepts events or tracks dialog state, and also covers independent
+modules' native `ck-modal` without module changes. It is a local fix for a
+reproduced browser difference, not a JS reimplementation of `:focus-visible`.
 
-扩展共享层的条件是多个页面的**同一语义**缺少表达，而不是某个截图需要几个像素。
-先增加有类型、被实际消费的变体，再迁移调用者并删除重复声明。
-聊天 prose/code、媒体/波形、原生状态的资源行分区、会话头像与角色来源是内容专用部分，
-可以保留布局，但复用基础字体/颜色/控件，不能重置公共类或缩小独立动作的触摸目标。
+Extend a shared layer only when several pages lack a way to express the **same
+meaning**, not for a few pixels in one screenshot: add a typed, actually consumed
+variant, migrate callers and delete duplicate declarations. Chat prose/code,
+media/waveforms, resource row sections for native state, session avatars and role
+provenance are content-specific and may keep their layout while reusing base
+fonts/colors/controls; they must not reset public classes or shrink standalone
+action targets.
 
-共享组合的样式跟随其实际所有者，不寄存在最早使用它的页面中：
-`CopyButton`、`MessageBody`、`RolePicker` 分别由
-`styles/components/copy.scss`、`markdown.scss`、`role-picker.scss` 维护，
-在入口统一加载；页面仅保留上下文布局与有意差异。
-这些是本体内部共享样式，不新增模块公开接口，也不要求业务内容使用同一种布局。
-现有 [Chat Lab](DEVELOPMENT.md#isolated-chat-component-review) 是组合示例和行为入口，
-不维护第二套 demo 组件。
+Shared composition styles follow their actual owner, not the first page that used
+them: `CopyButton`, `MessageBody` and `RolePicker` are maintained in
+`styles/components/copy.scss`, `markdown.scss` and `role-picker.scss`, loaded at the
+entry; pages keep only contextual layout and intentional differences. These are
+internal host styles, not new public module interfaces. [Chat Lab](development.md#isolated-chat-component-review)
+is the composition example and behavior entry; there is no second demo component set.
 
 <a id="style-guardrails"></a>
-### 样式护栏
+### Style guardrails
 
-`pnpm lint` 用 Stylelint（`apps/web/stylelint.config.mjs`）检查样式；
-`tokens.scss` 是唯一定义原始颜色和 tweb 旧名的位置：
+`pnpm lint` runs Stylelint (`apps/web/stylelint.config.mjs`); `tokens.scss` is the
+only place defining raw colors and old tweb names:
 
-- 禁止 hex、命名色和 `rgb()`/`hsl()` 等颜色函数，使用 `--host-color-*` 角色；
-- 禁止 `var(--primary-color)` 等 tweb 旧名，只对移植的 `base.scss`、`primitives/button.scss`、
-  `primitives/menu.scss` 与仅开发用的 `dev/chat-lab.scss` 放行；
-- `margin`/`padding`/`gap`/`inset` 中 3px 及以上的原始 px 报错，改用 `--host-space-*`、
-  `--ck-*` 或组件 token；0–2px 细线/光学偏移和 rem/em 排版节奏不拦截，避免大量噪音。
+- No hex, named colors or `rgb()`/`hsl()` color functions — use `--host-color-*` roles.
+- No old tweb names such as `var(--primary-color)`, except in the ported `base.scss`,
+  `primitives/button.scss`, `primitives/menu.scss` and the dev-only `dev/chat-lab.scss`.
+- Raw px of 3 or more in `margin`/`padding`/`gap`/`inset` is an error — use
+  `--host-space-*`, `--ck-*` or component tokens. 0–2px hairlines/optical offsets and
+  rem/em typographic rhythm are allowed.
 
-`chat.scss` 与 `sidebar.scss` 暂时整文件放行（并行功能改动中，后续再迁移）。
-单个有意例外用带理由的 `// stylelint-disable-next-line <rule> -- <原因>`，
-无理由或多余的 disable 本身会报错。
+`chat.scss` and `sidebar.scss` are temporarily exempt as whole files. A single
+intentional exception uses `// stylelint-disable-next-line <rule> -- <reason>`;
+disables without a reason or that are unneeded are errors.
 
-`pnpm test` 中的 `styles/classDefinitions.test.ts` 检查 TSX 里每个静态类名
-在宿主样式中都有定义；测试/状态钩子、所有者语义名等例外逐条写明理由列入其允许列表，
-不再使用的条目也会报错。它同时阻止已退役的 `dialog-btn`、`rp`、`primary` 类名回归。
-公共 `ck-*` 由 `public-ui.scss` 定义，因此自然通过，未定义的 `ck-*` 仍会被报出。
-这些检查只覆盖样式文件和 className 字面量，不检查 TSX 行内 style。
+`styles/classDefinitions.test.ts` (in `pnpm test`) checks that every static class
+name in TSX is defined in host styles; exceptions (test/state hooks, owner semantic
+names) are listed with reasons in its allowlist, and stale entries fail. It also
+blocks the retired `dialog-btn`, `rp` and `primary` classes. Public `ck-*` classes
+come from `public-ui.scss`; undefined `ck-*` names are still reported. These checks
+cover style files and className literals only, not inline TSX styles.
 
-## 短正反例
+## Short examples
 
-| 场景 | 优先做法 | 避免 |
+| Scenario | Prefer | Avoid |
 | --- | --- | --- |
-| 可预览且可下载的文件行 | 预览与下载是独立兄弟控件，各自命名 | 外层可点击容器包住下载按钮，再到处阻止冒泡 |
-| 首批历史到达 | 在实际布局就绪时由唯一滚动所有者定位，尊重用户后续上翻 | `opacity: 0` 加 `setTimeout`，等“应该到底了”再显示 |
-| 刷新资源或提交开关 | 保留有效内容，显示真实 pending/结果，失效时明确说明 | 请求发出就画成功勾，或把 enabled 当成 connected |
-| 模块来源已写在名称旁 | 保留简洁来源文字；确需动作图标时复用公共 Lucide 方式 | 再画双方框 badge；反过来给每个标签都强配一个图标 |
+| A file row that previews and downloads | Preview and download as named sibling controls | A clickable container around the download button plus stopPropagation everywhere |
+| First history page arrives | The single scroll owner positions when layout is ready and respects later scrolling up | `opacity: 0` plus `setTimeout` until it "should be at the bottom" |
+| Refreshing a resource or submitting a switch | Keep valid content, show real pending/result, state staleness | Drawing a success tick when the request is sent, or treating enabled as connected |
+| Module provenance is already next to the name | Keep the short provenance text; if an action icon is needed, reuse public Lucide | Another double-box badge — or forcing an icon onto every label |
 
-## 轻量 review 清单
+<a id="review-checklist"></a>
+## Lightweight review checklist
 
-- 是否确实需要每个控件/装饰？标签、实际动作和可访问名称是否一致，完整内容能否读到？
-- 组合后的 DOM 是否合法，主次动作是否分开？键盘、触摸、焦点顺序和返回是否自然？
-- 是否先用语义/CSS/已有组件？必要 JS 的状态来源、目标、生命周期和滚动所有者是否清晰？
-- 加载、刷新、失败、未知、部分成功、disabled 和晚结果是否如实表达？是否保留恢复路径？
-- 是否尊重上翻、选择和编辑，首屏是否真正定位正确，而非隐藏/定时显示掩盖问题？
-- 组件、tokens、图标与公共合同是否复用？窄屏、长内容和双主题是否仍一致可读？
-- `pnpm lint` / `pnpm test` 的[样式护栏](#style-guardrails)是否通过？新增放行或 disable 是否写明原因，而不是为新代码绕过规则？
+- Is every control and decoration needed? Do label, action and accessible name agree, and can the full content be read?
+- Is the composed DOM valid, with primary and secondary actions separate? Are keyboard, touch, focus order and return natural?
+- Semantics/CSS/existing components first? For necessary JS: clear state source, target, lifecycle and scroll owner?
+- Are loading, refresh, failure, unknown, partial success, disabled and late results truthful, with recovery paths kept?
+- Are scrolling up, selection and editing respected, and is the first screen really positioned rather than hidden or delayed?
+- Are components, tokens, icons and public contracts reused? Still readable at narrow widths, with long content and in both themes?
+- Do the `pnpm lint` / `pnpm test` [style guardrails](#style-guardrails) pass, with reasons for any new exemption or disable?
 
-对有意例外说明具体需求、原生方案的不足与取舍即可，不新增审批流程。
-看实际组合 DOM 和相关交互，不只看截图或静态 selector；使用
-[现有验证指南](cockpit-testing.md)、[Chat Lab](DEVELOPMENT.md#isolated-chat-component-review)
-或模块隔离 fixtures，说明实际覆盖与未覆盖边界，不声称全面无障碍/跨平台合规。
-可复现缺陷留在 issue，已接受取舍与结构简化分开描述，不把本文变成过时的组件审计清单。
+For intentional exceptions, state the need, the shortfall of the native option and
+the trade-off; there is no approval process. Review the actual composed DOM and
+interactions, not only screenshots or selectors, using the [testing guide](testing.md),
+[Chat Lab](development.md#isolated-chat-component-review) or module fixtures, and
+state what was and was not covered without claiming full accessibility or
+cross-platform compliance. Reproducible defects go to issues.

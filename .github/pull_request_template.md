@@ -1,13 +1,13 @@
-## Problem and scope / 问题与范围
+## Problem and scope
 
 <!-- Explain why this change is needed. Link a related issue if applicable. -->
 
-## Validation / 验证
+## Validation
 
 <!-- Exact commands and results; list skipped or untested areas.
 For docs-only changes, check links, anchors and factual claims. -->
 
-## Compatibility and documentation / 兼容与文档
+## Compatibility and documentation
 
 <!-- Note any API/configuration change and its release-note implications, or "none". -->
 

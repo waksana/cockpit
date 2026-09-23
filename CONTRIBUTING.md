@@ -6,20 +6,17 @@ substantial behavior or architecture changes in an issue before implementing the
 
 ## Before you start
 
-- Read the [current architecture and scope](docs/cockpit-plan.md) and
+- Read the [architecture](docs/architecture.md) and
   [product requirements](docs/product-requirements.md). The
-  [module catalog](docs/module-catalog.md) distinguishes installable modules
-  from independent projects awaiting integration and future capabilities.
-- For setup, use the [source installation guide](docs/DEPLOY-PORTABLE.md#from-source):
-  Node **24.20.0**, pnpm **10.34.5**, and the frozen lockfile.
-- The [development guide](docs/DEVELOPMENT.md) owns engineering commands and
-  workflow details. The [testing guide](docs/cockpit-testing.md) owns test selection
-  and isolation. Link to these guides rather than duplicating their contracts.
+  [module catalog](docs/modules.md) separates installable modules from
+  independent projects and future directions.
+- Set up with the [development quickstart](docs/development.md#quickstart)
+  (pinned Node and pnpm, frozen lockfile). The [testing guide](docs/testing.md)
+  owns test selection and isolation. Link to these guides rather than duplicating
+  their contracts.
 - Before any host or module UI work, read and follow the
   [frontend guidelines](docs/frontend-guidelines.md): natural, simple, intuitive,
   native-first presentation and interaction with the least necessary JS.
-  The existing [interaction semantics entry](docs/DEVELOPMENT.md#interaction-semantics-and-structural-correctness)
-  links to the same principles and module integration boundaries.
 
 ## A small pull request
 
@@ -46,6 +43,7 @@ Do not weaken a check or bypass these rules to hide a failure. CI uses isolated
 fixtures, read-only PR permissions and no production credentials. A green PR is
 not permission to deploy.
 
+<a id="reports"></a>
 ## Safe development and reports
 
 Use synthetic workspaces, sessions and providers for validation. Never point tests
@@ -56,7 +54,7 @@ reproduction. Keep generated archives, local configuration and review scratch
 files out of commits. Clean up only resources you created.
 
 For Web chat changes, use the maintained
-[Chat Lab](docs/DEVELOPMENT.md#isolated-chat-component-review), which imports the
+[Chat Lab](docs/development.md#isolated-chat-component-review), which imports the
 production components with synthetic inputs. Do not add a parallel chat app.
 
 - **Bug:** use the [bug report form](https://github.com/waksana/cockpit/issues/new?template=bug_report.yml)
@@ -75,13 +73,13 @@ Workspace packages are internal parts of Cockpit, not separately supported SDKs.
 
 Commits do not each need a version bump. Before publishing or deploying changed
 package contents, allocate a new version and follow the
-[immutable delivery version rules](docs/packaging.md#delivery-versions).
+[immutable delivery version rules](docs/releasing.md#delivery-versions).
 This also applies to installation from a fixed source commit, not only tags.
 Module installers reject a different archive digest for an already installed
 module ID/version; a source SHA or new digest is not a substitute for a new
 version. Never delete an installed version or bypass this guard to replace it.
 
-The [release procedure](docs/packaging.md#versioned-releases) owns version changes,
+The [release procedure](docs/releasing.md#versioned-releases) owns version changes,
 tags and publication: green main → `vX.Y.Z` → full checks/native smoke/build/package
 → publish the exact checked archive and checksum. It does **not** deploy to a
 production host. Only maintainers publish releases.
