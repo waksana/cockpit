@@ -6,6 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { ManageWorkspace } from './ManageWorkspace';
 import { useCockpit } from '../net/store';
+import App from '../App';
 
 function renderWorkspace(t: TestContext, path: string, connected: boolean) {
   const state = useCockpit.getInitialState();
@@ -48,8 +49,18 @@ for (const section of ['mcp', 'skills']) {
   });
 }
 
-test('desktop master and narrow detail return one level without duplicate visible controls', () => {
-  assert.match(shell, /up\(item === null \? '\/' : `\/\$\{section\}`\)/);
+for (const section of ['mcp', 'skills']) {
+  test(`${section} lazy route fallback keeps separate exit and detail back controls`, () => {
+    const html = renderToStaticMarkup(createElement(MemoryRouter, {
+      initialEntries: [`/${section}/name%2Fpart`], children: createElement(App),
+    }));
+    assert.match(html, /加载页面/);
+    assert.equal(html.match(/aria-label="返回会话列表"/g)?.length, 1);
+    assert.equal(html.match(/aria-label="返回"/g)?.length, 1);
+  });
+}
+
+test('narrow detail retains its separate hierarchical back control', () => {
   assert.match(shell, /className="chat-back ck-icon-button rp lg:hidden".*onClick=\{\(\) => up\(\)\}/);
   assert.doesNotMatch(shell, /\.focus\(|autoFocus|tabIndex/);
 });
