@@ -140,6 +140,20 @@ not signature verification or a sandbox. Changes apply on the next cold start.
 See the [module catalog](modules.md) for available modules and the
 [module contract](module-contract.md#local-install) for all commands.
 
+<a id="user-instructions"></a>
+### User instructions
+
+Create `$COCKPIT_HOME/instructions.md` (at most 16 KiB) to append your own text to
+every Cockpit session under a `## Cockpit user instructions` header, after native
+and [module instructions](module-contract.md#default-instructions). A missing or
+blank file means none. Cockpit never creates or edits this file. It is read only
+when a session is created or resumed, so reload a session to apply edits; Copilot
+CLI sessions are unaffected. For example, to prefer Chinese replies:
+
+```text
+与用户交流时尽量使用中文；代码、命令、标识符保持原样；仓库文档与提交信息按项目约定（目前英文）。
+```
+
 | Variable | Default and meaning |
 | --- | --- |
 | `COCKPIT_PORT` | `8771`; the server listens on loopback only. |

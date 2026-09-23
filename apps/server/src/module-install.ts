@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { chmod, lstat, mkdir, open, readdir, realpath, rename, rm } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve, win32 } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { z } from 'zod';
 import { cockpitHome } from '@cockpit/core';
@@ -10,6 +10,7 @@ import type { ModuleManifest } from '@cockpit/module-api';
 export const MANIFEST_FILE = 'cockpit.module.json';
 export const MODULE_LIMITS = { archive: 32 * 1024 * 1024, expanded: 128 * 1024 * 1024, file: 32 * 1024 * 1024, entries: 8192 };
 export const MODULE_WORKER_LIMIT = 1024 * 1024;
+export const MODULE_INSTRUCTIONS_LIMIT = 16 * 1024;
 const idSchema = z.string().regex(/^[a-z][a-z0-9-]{0,63}$/);
 const versionSchema = z.string().max(128).regex(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/);
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/);
@@ -27,7 +28,7 @@ const pathSchema = z.string().refine(value => {
 }, 'Invalid module-relative path');
 export const manifestSchema = z.object({
   apiVersion: z.literal(1), id: idSchema, name: z.string().trim().min(1).max(200),
-  version: versionSchema, backend: pathSchema,
+  version: versionSchema, backend: pathSchema, instructions: pathSchema.optional(),
   roles: z.array(z.object({
     id: idSchema, name: z.string().trim().min(1).max(200), description: z.string().max(4000).optional(),
     instructions: pathSchema.optional(), skillDirectories: z.array(pathSchema).max(64).optional(),
@@ -182,7 +183,7 @@ export function inspectModuleArchive(archive: Buffer): { manifest: ModuleManifes
   const manifestFile = files.get(MANIFEST_FILE);
   if (!manifestFile || manifestFile.length > 64 * 1024) throw new Error(`Missing or oversized ${MANIFEST_FILE}`);
   const manifest = manifestSchema.parse(JSON.parse(manifestFile.toString('utf8')));
-  validateManifestFiles(manifest, files.keys(), manifest.frontend?.worker ? files.get(manifest.frontend.worker)?.length : undefined);
+  validateManifestFiles(manifest, files.keys(), path => files.get(path)?.length);
   return { manifest, files, digest: sha256(archive) };
 }
 
@@ -190,10 +191,16 @@ export function isDeclaredAsset(manifest: ModuleManifest, path: string): boolean
   return !!manifest.frontend?.assets.some(root => path === root || path.startsWith(`${root}/`));
 }
 
-function validateManifestFiles(manifest: ModuleManifest, paths: Iterable<string>, workerBytes?: number): void {
+function validateManifestFiles(manifest: ModuleManifest, paths: Iterable<string>, bytes: (path: string) => number | undefined): void {
   const files = new Set(paths);
   if (!files.has(manifest.backend) || !/\.(?:mjs|cjs|js)$/.test(manifest.backend)) throw new Error('Backend entry must be a packaged JavaScript file');
+  if (manifest.instructions !== undefined) {
+    const size = files.has(manifest.instructions) ? bytes(manifest.instructions) : undefined;
+    if (size === undefined) throw new Error('Module default instructions must be a packaged file');
+    if (size > MODULE_INSTRUCTIONS_LIMIT) throw new Error('Module default instructions exceed 16 KiB');
+  }
   if (!manifest.frontend) return;
+  const workerBytes = manifest.frontend.worker ? bytes(manifest.frontend.worker) : undefined;
   for (const path of [manifest.frontend.entry, ...manifest.frontend.styles ?? [], ...manifest.frontend.worker ? [manifest.frontend.worker] : []]) {
     if (!files.has(path) || !isDeclaredAsset(manifest, path)) throw new Error('Frontend entry/styles must exist under declared asset roots');
   }
@@ -240,7 +247,7 @@ export async function readModuleInstallation(id: string, selection: Pick<ModuleS
   if (seen.size !== Object.keys(record.files).length) throw new Error('Installed module file is missing');
   const manifest = manifestSchema.parse(JSON.parse((await regularBytes(join(root, MANIFEST_FILE), 64 * 1024)).toString('utf8')));
   if (JSON.stringify(manifest) !== JSON.stringify(record.manifest)) throw new Error('Installed manifest identity mismatch');
-  validateManifestFiles(manifest, seen, manifest.frontend?.worker ? record.files[manifest.frontend.worker]?.bytes : undefined);
+  validateManifestFiles(manifest, seen, path => record.files[path]?.bytes);
   return { ...record, root };
 }
 
@@ -303,9 +310,15 @@ async function removeUnpublishedStaging(staging: string): Promise<void> {
   await rm(staging, { recursive: true, force: true });
 }
 
+/** Rejects URI-like inputs; a Windows drive-letter path is local only on win32. */
+export function isLocalPackagePath(packagePath: string, platform: NodeJS.Platform = process.platform): boolean {
+  if (platform === 'win32' && /^[A-Za-z]:[\\/]/.test(packagePath) && win32.isAbsolute(packagePath)) return true;
+  return !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(packagePath);
+}
+
 export async function installLocalModule(packagePath: string, options: { trustLocalCode: boolean; enable?: boolean; hostRoot?: string }): Promise<ModuleInstallation> {
   if (options.trustLocalCode !== true) throw new Error('Installing executable local code requires --trust-local-code');
-  if (!packagePath.endsWith('.tgz') || /^[A-Za-z][A-Za-z0-9+.-]*:/.test(packagePath)) throw new Error('Only an explicitly chosen local .tgz module package is supported');
+  if (!packagePath.endsWith('.tgz') || !isLocalPackagePath(packagePath)) throw new Error('Only an explicitly chosen local .tgz module package is supported');
   const archive = await regularBytes(resolve(packagePath), MODULE_LIMITS.archive);
   const inspected = inspectModuleArchive(archive);
   const hostRoot = options.hostRoot ?? cockpitHome();
@@ -340,6 +353,8 @@ export async function installLocalModule(packagePath: string, options: { trustLo
       } catch (error) {
         try { await removeUnpublishedStaging(staging); }
         catch (cleanup) {
+          // The publication failure is the primary cause; errors[] retains the cleanup failure.
+          // eslint-disable-next-line preserve-caught-error
           throw new AggregateError([error, cleanup], 'Module installation failed and unpublished staging cleanup failed', { cause: error });
         }
         throw error;

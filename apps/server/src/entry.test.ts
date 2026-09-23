@@ -39,6 +39,12 @@ registerHooks({ resolve(specifier, context, next) {
 }});
 `)}`;
 
+function jsonObject(value: unknown): Record<string, unknown> {
+  assert.equal(typeof value, 'object');
+  assert.notEqual(value, null);
+  return value as Record<string, unknown>;
+}
+
 for (const method of ['api', 'signal', 'startup', 'listen-failure', 'runtime-failure'] as const) {
   test(`direct entry preserves service readiness and shutdown through ${method}, without a controller or respawn`, {
     timeout: 20_000,
@@ -119,9 +125,9 @@ for (const method of ['api', 'signal', 'startup', 'listen-failure', 'runtime-fai
       return response;
     };
     assert.match(await (await get('/')).text(), /Isolated direct entry/);
-    const version = await (await get('/version')).json();
+    const version = jsonObject(await (await get('/version')).json());
     assert.equal(version.sourceSha, null);
-    const health = await (await get('/health')).json();
+    const health = jsonObject(await (await get('/health')).json());
     assert.equal(health.instanceId, version.instanceId);
     assert.equal(health.login, 'synthetic');
     assert.equal((await fetch(base + '/admin/lifecycle')).status, 404);
@@ -131,7 +137,9 @@ for (const method of ['api', 'signal', 'startup', 'listen-failure', 'runtime-fai
         body: JSON.stringify({ confirm: true }), redirect: 'error', signal: AbortSignal.timeout(3000),
       });
       assert.equal(response.status, 200);
-      assert.equal((await response.json()).shutdown.phase, 'waiting');
+      const body = jsonObject(await response.json());
+      const shutdown = jsonObject(body.shutdown);
+      assert.equal(shutdown.phase, 'waiting');
     } else {
       assert.equal(child.kill('SIGTERM'), true);
     }

@@ -2,6 +2,7 @@ import { after, beforeEach, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { MOCK_ORIGIN, mockHttp } from '../test-support/mock-http.ts';
 import { mkdir, rm, symlink } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -204,6 +205,12 @@ beforeEach(() => {
   largeContent = initialLargeContent;
 });
 
+test('the MCP handshake reports the apps/mcp package version', () => {
+  const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+  assert.equal(client.getServerVersion()?.version, version);
+  assert.equal(client.getServerVersion()?.name, 'cockpit-mcp-server');
+});
+
 const ToolReply = z.object({
   content: z.array(z.object({ type: z.literal('text'), text: z.string() })),
   isError: z.boolean().optional(),
@@ -329,7 +336,7 @@ test('session resource tools retain explicit module metadata without replacing n
   skillSessionResult = { skills: [skill] };
   const mcp = await call('cockpit_list_session_mcp', { session_id: 'B' });
   assert.match(mcp.text, /fixture-tools.*role-configured module: Fixture module \(fixture; not live connection identity\)/);
-  assert.match(mcp.text, /\n    native/);
+  assert.match(mcp.text, /\n {4}native/);
   assert.deepEqual(await json('cockpit_list_session_mcp', { session_id: 'B', response_format: 'json' }),
     { loaded: true, servers: [server], count: 1 });
   const skills = await call('cockpit_list_session_skills', { session_id: 'B' });
@@ -974,7 +981,7 @@ test('list and get expose sampled activity facts without conflating shell work a
       assert.match(rendered.text, /2 steering \(1 in flight, included in steering\)/);
       assert.match(rendered.text, /sampled capability, not a promise/);
       const full = await json(name, { ...args, response_format: 'json' }) as { activity?: unknown; sessions?: { activity: unknown }[] };
-      assert.deepEqual(name === 'cockpit_get_session' ? full.activity : full.sessions![0].activity, activity);
+      assert.deepEqual(name === 'cockpit_get_session' ? full.activity : full.sessions![0]!.activity, activity);
       meta.activity = null;
       assert.match((await call(name, args)).text, /activity: unavailable or invalidated \(not idle\)/);
       meta.activity = activity;
@@ -1002,7 +1009,7 @@ test('default session output is an explicit compact summary and capability consu
     assert.match(summary.text, /requestId decision/);
     assert.doesNotMatch(summary.text, /private-option-|Native option/);
     assert.equal(requests.length, 1);
-    assert.equal(requests[0].path, '/intent/session/get');
+    assert.equal(requests[0]!.path, '/intent/session/get');
     requests.length = 0;
     const full = await json('cockpit_get_session', { session_id: 'B', response_format: 'json' });
     assert.deepEqual(full, meta);

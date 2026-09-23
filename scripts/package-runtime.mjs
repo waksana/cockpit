@@ -162,7 +162,7 @@ async function relocateWorkspace(root, app, name, destination, reuse = false) {
 }
 
 async function runtimePackageJson(path) {
-  const { devDependencies, files, scripts, ...manifest } = await json(path);
+  const { devDependencies: _devDependencies, files: _files, scripts, ...manifest } = await json(path);
   if (scripts?.start) manifest.scripts = { start: scripts.start };
   await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
 }

@@ -41,7 +41,9 @@ const backendSchema = z.object({
   dispose: z.custom<NonNullable<ModuleBackend['dispose']>>(value => typeof value === 'function').optional(),
 }).strict();
 
-export interface ModuleHostError { id: string; code: string; error: string }
+/** activation: the module did not load; runtime: a loaded module's lifecycle/background failure. */
+export interface ModuleHostError { id: string; stage: 'activation' | 'runtime'; code: string; error: string }
+type ReportStage = ModuleHostError['stage'] | 'request';
 interface Loaded {
   installation: ModuleInstallation;
   backend: ModuleBackend;
@@ -107,9 +109,13 @@ export class ModuleHost {
       () => this.closed ? [] : this.loaded.map(module => module.installation));
   }
 
-  private report(id: string, error: unknown): void {
-    const code = failure(error).code;
-    this.errors.set(id, { id, code, error: error instanceof Error ? error.message.slice(0, 2000) : 'Module failed' });
+  // Request-level failures already reach their caller as HTTP errors; they are logged,
+  // never stored with activation/runtime failures in /_modules.errors.
+  private report(id: string, error: unknown, stage: ReportStage = 'runtime'): void {
+    if (stage !== 'request') {
+      const code = failure(error).code;
+      this.errors.set(`${stage}:${id}`, { id, stage, code, error: error instanceof Error ? error.message.slice(0, 2000) : 'Module failed' });
+    }
     try { this.options.report?.(id, error); } catch { /* Reporting never changes native or module lifecycle. */ }
   }
 
@@ -147,7 +153,7 @@ export class ModuleHost {
     const hostRoot = this.options.hostRoot ?? cockpitHome();
     let settings;
     try { settings = await readModuleSettings(hostRoot); }
-    catch (error) { this.report('host', error); return; }
+    catch (error) { this.report('host', error, 'activation'); return; }
     for (const [id, selected] of Object.entries(settings.selected)) {
       if (this.closed) break;
       if (!selected.enabled) continue;
@@ -260,7 +266,7 @@ export class ModuleHost {
         controller.abort(error);
         this.scopes.delete(controller);
         if (activated) this.dispose(id, activated);
-        this.report(id, error);
+        this.report(id, error, 'activation');
       } finally { if (timer) clearTimeout(timer); }
     }
   }
@@ -338,7 +344,7 @@ export class ModuleHost {
       };
       const sourceError = (error: Error) => {
         if (!released) stream.destroy(error);
-        else if (!module.controller.signal.aborted) this.report(id, error);
+        else if (!module.controller.signal.aborted) this.report(id, error, 'request');
         cleanupSource();
       };
       const sourceClosed = () => {
@@ -397,7 +403,7 @@ export class ModuleHost {
       done(null, stream);
     });
     router.setErrorHandler((error, _request, reply) => {
-      this.report(id, error);
+      this.report(id, error, 'request');
       sendFailure(reply, error);
     });
     for (const route of module.backend.routes) {
@@ -453,7 +459,7 @@ export class ModuleHost {
             sentStream = !!responseStream;
             return reply;
           } catch (error) {
-            this.report(id, error);
+            this.report(id, error, 'request');
             sendFailure(reply, error);
             return reply;
           } finally {
@@ -470,7 +476,7 @@ export class ModuleHost {
 
   private trackStream(module: Loaded, stream: Readable): void {
     if (module.streams.has(stream)) return;
-    stream.on('error', error => { if (!module.controller.signal.aborted) this.report(module.installation.manifest.id, error); });
+    stream.on('error', error => { if (!module.controller.signal.aborted) this.report(module.installation.manifest.id, error, 'request'); });
     if (stream.destroyed || module.controller.signal.aborted) { stream.destroy(); return; }
     module.streams.add(stream);
     stream.once('close', () => module.streams.delete(stream));

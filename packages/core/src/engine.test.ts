@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { test, type TestContext } from 'node:test';
-import { setImmediate as nextTurn, setTimeout as sleep } from 'node:timers/promises';
+import { setImmediate as nextTurn } from 'node:timers/promises';
 import type { CopilotClient, CopilotSession, SessionConfig, SessionEvent, SessionMetadata } from '@github/copilot-sdk';
 import type { ExitPlanModeAction, ModelOption, ServerEvent } from '@cockpit/protocol';
-import { Intents, NativeChatRead, unreadSessionCount } from '@cockpit/protocol';
+import { Intents, NativeChatRead } from '@cockpit/protocol';
 import { Engine, coreCapabilities, type EngineRuntime } from './engine.ts';
 import { sessionMetaBusy } from '../test-support/lifecycle.ts';
 import { CHAT_EVENT_TYPES } from './native-chat.ts';
@@ -226,7 +226,7 @@ function fakeSession(t: TestContext, sessionId: string) {
       reload: t.mock.fn(async () => {}),
     },
     commands: {
-      invoke: t.mock.fn(async (_options: Parameters<Rpc['commands']['invoke']>[0]) => ({
+      invoke: t.mock.fn(async (_options: Parameters<Rpc['commands']['invoke']>[0]): Promise<Awaited<ReturnType<Rpc['commands']['invoke']>>> => ({
         kind: 'completed' as const,
       })),
     },
@@ -487,6 +487,14 @@ async function roleAdditionFixture(t: TestContext) {
   return { ...h, id, native, catalog, saved, provider };
 }
 
+test('concurrent role additions with asynchronous reads keep every saved role', async t => {
+  const h = await roleAdditionFixture(t);
+  t.mock.method(h.provider, 'read', async (id: string) => { await nextTurn(); return h.saved.get(id) ?? []; });
+  const results = await Promise.all(h.catalog.map(role => h.engine.addRoles(h.id, [role])));
+  assert.deepEqual(results.map(result => result.status), ['saved', 'saved']);
+  assert.deepEqual(h.saved.get(h.id)?.map(role => role.roleId).sort(), ['executor', 'owner']);
+});
+
 test('role addition only saves metadata; explicit reload applies the union to the same session', async t => {
   const h = await roleAdditionFixture(t);
   const before = structuredClone(h.native.state.events);
@@ -604,7 +612,7 @@ test('role save validates catalog and total role limit, not deferred resource co
 for (const written of [false, true]) {
   test(`role persistence failure afterWrite=${written} returns uncertainty without native effects`, async t => {
     const h = await roleAdditionFixture(t);
-    const save = t.mock.method(h.provider, 'save', (id, roles) => {
+    const save = t.mock.method(h.provider, 'save', (id: Parameters<RoleProvider['save']>[0], roles: Parameters<RoleProvider['save']>[1]) => {
       if (written) h.saved.set(id, roles);
       throw new Error('synthetic write acknowledgement failure');
     });
@@ -626,8 +634,8 @@ test('role save never returns a success-shaped snapshot when persistence readbac
   const h = await roleAdditionFixture(t);
   const read = h.provider.read;
   let written = false;
-  t.mock.method(h.provider, 'save', (id, roles) => { h.saved.set(id, roles); written = true; });
-  t.mock.method(h.provider, 'read', id => {
+  t.mock.method(h.provider, 'save', (id: Parameters<RoleProvider['save']>[0], roles: Parameters<RoleProvider['save']>[1]) => { h.saved.set(id, roles); written = true; });
+  t.mock.method(h.provider, 'read', (id: Parameters<RoleProvider['read']>[0]) => {
     if (written) throw new Error('synthetic unreadable persisted selection');
     return read(id);
   });
@@ -1211,7 +1219,7 @@ test('explicit tool initialization rejects unloaded, busy and concurrent work wi
   }
   s.state.mcp.host!.pendingConnections = [];
   assert.equal(s.rpc.tools.initializeAndValidate.mock.callCount(), 0);
-  const held = deferred<{}>();
+  const held = deferred<object>();
   s.rpc.tools.initializeAndValidate.mock.mockImplementationOnce(() => held.promise);
   const initializing = h.engine.initializeSessionTools(s.id);
   await nextTurn();
@@ -1243,7 +1251,7 @@ for (const stage of ['initialization', 'readback'] as const) {
   test(`explicit tool initialization fails if its native handle closes during ${stage}`, async t => {
     const h = harness(t);
     const s = await h.load();
-    const initialized = deferred<{}>();
+    const initialized = deferred<object>();
     const metadata = deferred<Awaited<ReturnType<Rpc['tools']['getCurrentMetadata']>>>();
     if (stage === 'initialization') s.rpc.tools.initializeAndValidate.mock.mockImplementationOnce(() => initialized.promise);
     else s.rpc.tools.getCurrentMetadata.mock.mockImplementationOnce(() => metadata.promise);
@@ -1388,8 +1396,8 @@ test(`session provenance with known roles=${provenRoles} uses assembled identity
     name: 'fixture-tools', detail: 'user', enabled: true, status: 'failed', error: 'Native error', module,
   }], 'MCP module is role configuration provenance, independent of native source and connection state');
   native.state.mcp = mcpState([
-    { name: 'module_fixture__unrelated', source: 'custom', status: 'connected' },
-    { name: 'constructor', source: 'custom', status: 'connected' },
+    { name: 'module_fixture__unrelated', source: 'custom' as McpState['servers'][number]['source'], status: 'connected' },
+    { name: 'constructor', source: 'custom' as McpState['servers'][number]['source'], status: 'connected' },
   ]);
   assert.ok((await h.engine.listSessionMcp(id)).servers.every(server => !Object.hasOwn(server, 'module')),
     'neither lookalike names nor inherited object properties declare module configuration');
@@ -1489,7 +1497,7 @@ for (const phase of ['close', 'assemble', 'resume', 'initialize', 'success'] as 
 for (const written of [false, true]) {
   test(`uncertain role save afterWrite=${written} preserves previous resource contributors`, async t => {
     const h = await roleProvenanceFixture(t);
-    t.mock.method(h.provider, 'save', (id, roles) => {
+    t.mock.method(h.provider, 'save', (id: Parameters<RoleProvider['save']>[0], roles: Parameters<RoleProvider['save']>[1]) => {
       if (written) h.saved.set(id, roles);
       throw new Error('synthetic persistence acknowledgement failure');
     });
@@ -1686,7 +1694,7 @@ test('readonly native observer reports invalid or throwing SDK workspace as unkn
     get() { throw new Error('Synthetic workspace getter failure'); },
   });
   h.engine.log = (message, data) => {
-    reports.push({ message, data });
+    (reports as Array<{ message: string; data?: Record<string, unknown> }>).push({ message, ...(data === undefined ? {} : { data }) });
     throw new Error('Synthetic observer reporter failure');
   };
   const epoch = activeState(h, session.id).turnEpoch as number;
@@ -1713,7 +1721,7 @@ test('readonly native observer uses the new resumed SDK workspace and never a st
   resumed.state.cwd = h.cwd;
   resumed.sdk.workspacePath = '/different-sdk-root/resumed-handle';
   const resume = h.runtime.resumeSession;
-  t.mock.method(h.runtime, 'resumeSession', async (id, config) => {
+  t.mock.method(h.runtime, 'resumeSession', async (id: Parameters<EngineRuntime['resumeSession']>[0], config: Parameters<EngineRuntime['resumeSession']>[1]) => {
     h.natives.set(id, resumed);
     h.journals.set(id, resumed.state.events);
     previous(delta());
@@ -1825,9 +1833,41 @@ test('native creation returns the actual ID without product roles or a hidden fi
   assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 1);
 });
 
+test('Cockpit session instructions are composed once per create/resume and never change a loaded handle', async t => {
+  const h = harness(t);
+  let text = 'default v1';
+  const calls: Array<{ id: string; roles?: string }> = [];
+  const provider: RoleProvider = {
+    list: () => [], read: () => [], save: () => {},
+    assemble: async () => { throw new Error('no roles selected'); },
+    sessionInstructions: async (id, assembly) => {
+      calls.push({ id, roles: assembly?.config.systemMessage && 'content' in assembly.config.systemMessage ? assembly.config.systemMessage.content : undefined });
+      return text ? { content: `## Module fixture (Fixture)\n${text}`, sources: [{ label: 'Module fixture (Fixture)', sublabel: '/fixture/instructions.md' }] } : undefined;
+    },
+  };
+  h.engine.setRoleProvider(provider);
+  const id = await h.engine.newSession(h.cwd);
+  assert.deepEqual(h.configs.get(id)!.systemMessage, { mode: 'append', content: '## Module fixture (Fixture)\ndefault v1' });
+  assert.deepEqual(calls, [{ id, roles: undefined }], 'no role selection is required');
+  assert.deepEqual(await h.engine.getPanel(id, 'instructionSources'), [{ label: 'Module fixture (Fixture)', sublabel: '/fixture/instructions.md' }]);
+  text = 'default v2';
+  await h.engine.getPanels(id);
+  await h.engine.getMeta(id);
+  assert.equal(calls.length, 1, 'reads never recompose instructions');
+  assert.equal(h.natives.get(id)!.sdk.send.mock.callCount(), 0, 'no reload hint or startup message');
+  await h.engine.unload(id);
+  await h.engine.load(id);
+  assert.deepEqual(h.configs.get(id)!.systemMessage, { mode: 'append', content: '## Module fixture (Fixture)\ndefault v2' });
+  assert.equal(calls.length, 2);
+  text = '';
+  await h.engine.reload(id);
+  assert.equal(Object.hasOwn(h.configs.get(id)!, 'systemMessage'), false, 'removed instructions are omitted on the next load');
+  assert.deepEqual(await h.engine.getPanel(id, 'instructionSources'), []);
+});
+
 test('creation readback failure retains only the actual acknowledged native ID and never sends', async t => {
   const h = harness(t), create = h.runtime.createSession;
-  t.mock.method(h.runtime, 'createSession', async config => {
+  t.mock.method(h.runtime, 'createSession', async (config: Parameters<EngineRuntime['createSession']>[0]) => {
     const sdk = await create(config);
     h.natives.get(sdk.sessionId)!.rpc.metadata.snapshot.mock.mockImplementationOnce(async () => {
       throw new Error('Synthetic native metadata failure');
@@ -2093,8 +2133,8 @@ test('fork structural reads preserve wildcard safety decisions across page and a
     { name: 'nested schedule', prefix: [nested(timer)], allowed: false },
     { name: 'exclusive settled boundary', prefix: [], allowed: true },
     { name: 'nested user boundary', prefix: [], boundary: nested(boundary), allowed: false },
-    { name: 'legacy agent user boundary', prefix: [], boundary: { ...boundary, data: { ...boundary.data, agentId: 'child' } }, allowed: false },
-    { name: 'legacy parent tool user boundary', prefix: [], boundary: { ...boundary, data: { ...boundary.data, parentToolCallId: 'spawn' } }, allowed: false },
+    { name: 'legacy agent user boundary', prefix: [], boundary: { ...boundary, agentId: 'child' }, allowed: false },
+    { name: 'legacy parent tool user boundary', prefix: [], boundary: { ...boundary, data: { ...boundary.data, parentToolCallId: 'spawn' } } as unknown as SessionEvent, allowed: false },
     { name: 'non-user structural boundary', prefix: [], boundary: { ...start, id: boundary.id }, allowed: false },
     { name: 'filtered assistant boundary', prefix: [], boundary: assistant(boundary.id, 'reply'), allowed: false },
   ];
@@ -2132,7 +2172,7 @@ test('fork excludes unrelated bodies without turning required events into ID-onl
   for (const wildcard of [true, false]) {
     const count = { calls: 0, events: 0, bytes: 0 };
     await validateForkHistory(async options => {
-      const { cursor, ...filter } = options;
+      const { cursor: _cursor, ...filter } = options;
       assert.deepEqual(filter, {
         direction: 'forward', max: 1000, agentScope: 'all', includeEphemeral: false,
         types: ['user.message', 'assistant.turn_start', 'assistant.turn_end', 'abort',
@@ -2386,7 +2426,7 @@ test('control activity exposes private counts using exactly the existing five co
   const beforeCombined = nativeCalls(s);
   const projection = (await h.engine.getResources(s.id, ['control', 'queue']))!;
   const current = projection.activity!;
-  assert.equal(s.rpc.queue.pendingItems.mock.callCount() - beforeCombined['queue.pendingItems'], 1);
+  assert.equal(s.rpc.queue.pendingItems.mock.callCount() - beforeCombined['queue.pendingItems']!, 1);
   assert.equal(projection.ask!.question, 'Synthetic decision');
   assert.equal(current.processing, true);
   assert.equal(current.hasActiveWork, true);
@@ -2498,7 +2538,7 @@ test('activity follows list and snapshot control samples without leaking into un
   const s = await h.load();
   s.state.tasks = [{ type: 'shell', id: 'shell', description: 'private build', status: 'running',
     command: 'private-command', attachmentMode: 'attached', startedAt: timestamp }];
-  s.emit(event('assistant.turn_end', {}));
+  s.emit(event('assistant.turn_end', { turnId: 'turn' }));
   const before = nativeCalls(s);
   assert.equal('activity' in (await h.engine.getResources(s.id, ['identity']))!, false);
   assert.equal(s.rpc.metadata.activity.mock.callCount(), before['metadata.activity']);
@@ -2508,8 +2548,8 @@ test('activity follows list and snapshot control samples without leaking into un
     assert.equal(summary!.activity!.processing, false);
     assert.equal(summary!.activity!.tasks.activeShells, 1);
     assert.equal(summary!.activity!.tasks.activeAgents, 0);
-    assert.equal(s.rpc.metadata.activity.mock.callCount() - calls['metadata.activity'], 1);
-    assert.equal(s.rpc.tasks.list.mock.callCount() - calls['tasks.list'], 1);
+    assert.equal(s.rpc.metadata.activity.mock.callCount() - calls['metadata.activity']!, 1);
+    assert.equal(s.rpc.tasks.list.mock.callCount() - calls['tasks.list']!, 1);
     assert.doesNotMatch(JSON.stringify(summary), /private build|private-command/);
   }
 });
@@ -2991,6 +3031,17 @@ test('panel reads emit only lease patches and targeted panel reads use only thei
   assert.deepEqual(nativeCallDelta(s, beforeEvents), {}, 'resource notifications do not collect native state');
 });
 
+test('passive metadata reads publish no frames while overlapping panel operations publish their final zero', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  h.events.length = 0;
+  await h.engine.getResources(s.id, ['identity', 'control', 'model']);
+  await h.engine.getMeta(s.id);
+  await h.engine.listLive();
+  await h.engine.snapshot();
+  assert.deepEqual(h.events.filter(e => e.type === 'session/patch'), []);
+  assert.equal((await h.engine.getResources(s.id, ['control']))?.activeOperations, 0);
+});
 test('overlapping metadata and panel leases publish their final zero without resource invalidation', async t => {
   const h = harness(t);
   const s = await h.load();
@@ -3001,16 +3052,32 @@ test('overlapping metadata and panel leases publish their final zero without res
   await nextTurn();
   await h.engine.getPanel(s.id, 'tasks');
   held.resolve({ entries: [] });
-  assert.equal((await metadata)?.activeOperations, 0);
-  assert.deepEqual(h.events.filter(e => e.type === 'session/patch' && e.activeOperations !== undefined)
-    .map(e => e.activeOperations), [1, 2, 1, 0]);
+  assert.equal((await metadata as { activeOperations: number } | undefined)?.activeOperations, 0);
+  assert.deepEqual(h.events
+    .filter((e): e is Extract<ServerEvent, { type: 'session/patch' }> & { activeOperations: number } =>
+      e.type === 'session/patch' && e.activeOperations !== undefined)
+    .map(e => e.activeOperations), [1, 0], 'the read lease is retained but not published');
   assert.equal(h.events.filter(e => e.type === 'session/invalidated').length, 0);
+});
+test('passive read leases do not block Stop or Interrupt, and still retain the handle', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const held = deferred<{ entries: NativeSchedule[] }>();
+  s.rpc.schedule.list.mock.mockImplementation(() => held.promise);
+  const metadata = h.engine.getResources(s.id, ['schedule']);
+  await nextTurn();
+  assert.deepEqual(await h.engine.interrupt(s.id), { ok: true, interrupted: false });
+  await h.engine.cancel(s.id);
+  assert.equal(s.sdk.abort.mock.callCount(), 1);
+  await assert.rejects(h.engine.unload(s.id), /in progress|busy/i);
+  held.resolve({ entries: [] });
+  await metadata;
 });
 test('native mutation events and readback invalidate the changed resource once, without suppressing control', async t => {
   const h = harness(t);
   const s = await h.load();
   const ack = deferred<void>();
-  s.state.skills = [{ name: 'fixture', source: 'user', enabled: false, description: '', userInvocable: true }];
+  s.state.skills = [{ name: 'fixture', source: 'project', enabled: false, description: '', userInvocable: true }];
   s.rpc.skills.enable.mock.mockImplementation(async () => {
     s.state.skills[0]!.enabled = true;
     s.emit(event('session.skills_loaded', { skills: [] }));
@@ -4840,7 +4907,9 @@ test('interrupt late ACK and old interaction events preserve the queued native t
   s.emit(event('session.idle', {}));
   await nextTurn();
   assert.equal((await h.engine.getMeta(s.id))?.status, 'idle');
-  assert.equal(s.state.events.find(event => event.type === 'assistant.message' && event.data.messageId === 'new-answer')?.data.content, 'A finished');
+  const newAnswer = s.state.events.find((item): item is Extract<SessionEvent, { type: 'assistant.message' }> =>
+    item.type === 'assistant.message' && item.data.messageId === 'new-answer');
+  assert.equal(newAnswer?.data.content, 'A finished');
   assert.equal(s.rpc.ui.ephemeralQuery.mock.callCount(), 0);
   assert.equal(s.sdk.send.mock.callCount(), 0);
 });
@@ -5774,7 +5843,7 @@ test('session MCP source, server metadata and global name collisions cannot esta
   s.state.mcp = mcpState([
     { name: 'collision', source: 'builtin', status: 'connected', serverMetadata: { instructions: 'Use HTTP tools.' } },
     { name: 'source-http', source: 'plugin', sourcePlugin: 'http', status: 'connected' },
-    { name: 'source-local', source: 'custom', status: 'connected' },
+    { name: 'source-local', source: 'custom' as McpState['servers'][number]['source'], status: 'connected' },
   ]);
   const reads = s.rpc.mcp.list.mock.callCount();
   const inventory = await h.engine.listSessionMcp(s.id);

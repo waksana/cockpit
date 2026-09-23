@@ -13,6 +13,8 @@ export interface ModuleManifest {
   name: string;
   version: string;
   backend: string;
+  /** Module-relative Markdown appended to every Cockpit session while the module is enabled (max 16 KiB). */
+  instructions?: string;
   roles?: ModuleRole[];
   frontend?: {
     entry: string;

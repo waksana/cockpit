@@ -1,9 +1,7 @@
 import { after, afterEach, beforeEach, test, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import fs from 'node:fs';
 import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { syncBuiltinESMExports } from 'node:module';
 import { dirname, join, parse, relative } from 'node:path';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import {
@@ -65,7 +63,7 @@ const engine: ServerEngine = {
     return record('chat', [query], { ...historyPage, source: query.source, direction: query.direction });
   },
   prompt: async (...args) => record('prompt', args, { ok: true, queued: true }),
-  cancel: (...args) => record('cancel', args, undefined),
+  cancel: async (...args) => record('cancel', args, undefined),
   interrupt: async (...args) => record('interrupt', args, { ok: true as const, interrupted: true }),
   control: async (...args) => record('control', args, { ok: true, outcomes: [] }),
   setModel: async (...args) => record('setModel', args, { status: 'applied', modelId: args[1] }),
@@ -74,7 +72,7 @@ const engine: ServerEngine = {
   rewind: async (...args) => record('rewind', args, { outcome: 'success' as const, eventsRemoved: 2, restoredFiles: [], skippedFiles: [] }),
   setMode: async (...args) => record('setMode', args, { status: 'applied', modelChanged: false }),
   deleteSession: async (...args) => record('deleteSession', args, undefined),
-  unload: (...args) => record('unload', args, undefined),
+  unload: async (...args) => record('unload', args, undefined),
   load: async (...args) => record('load', args, undefined),
   reload: async (...args) => record('reload', args, undefined),
   getPlan: async (...args) => record('getPlan', args, { planMarkdown: null, todos: [] }),
@@ -89,15 +87,15 @@ const engine: ServerEngine = {
   getPanel: async (...args) => record('getPanel', args, []),
   getResources: async (...args) => record('getResources', args, busySession),
   status: async (...args) => record('sessionStatus', args, sessions),
-  respondAsk: (...args) => record('respondAsk', args, undefined),
-  respondPlan: (...args) => record('respondPlan', args, undefined),
+  respondAsk: async (...args) => record('respondAsk', args, undefined),
+  respondPlan: async (...args) => record('respondPlan', args, undefined),
   planSupersede: async (...args) => record('planSupersede', args, undefined),
-  respondElicitation: (...args) => record('respondElicitation', args, undefined),
-  removeQueued: (...args) => record('removeQueued', args, undefined),
+  respondElicitation: async (...args) => record('respondElicitation', args, undefined),
+  removeQueued: async (...args) => record('removeQueued', args, undefined),
   refreshList: async (...args) => record('refreshList', args, undefined),
-  listLive: (...args) => record('listLive', args, []),
-  getMeta: (...args) => record('getMeta', args, busySession),
-  listGlobalMcp: (...args) => record('listGlobalMcp', args, []),
+  listLive: async (...args) => record('listLive', args, []),
+  getMeta: async (...args) => record('getMeta', args, busySession),
+  listGlobalMcp: async (...args) => record('listGlobalMcp', args, []),
   setMcpDefault: async (...args) => record('setMcpDefault', args, undefined),
   refreshMcp: async (...args) => record('refreshMcp', args, undefined),
   reloadSessionMcp: async (...args) => record('reloadSessionMcp', args, { reconnected: 2 }),
@@ -109,7 +107,9 @@ const engine: ServerEngine = {
   }),
   listGlobalSkills: async (...args) => record('listGlobalSkills', args, []),
   setGlobalSkill: async (...args) => record('setGlobalSkill', args, undefined),
-  readSkillBody: async (...args) => record('readSkillBody', args, { name: 'skill', body: 'manual skill' }),
+  readSkillBody: async (...args) => record('readSkillBody', args, {
+    name: 'skill', description: 'manual skill', source: 'project', userInvocable: true, enabled: true, body: 'manual skill',
+  }),
   refreshSkills: async (...args) => record('refreshSkills', args, undefined),
   listSessionSkills: async (...args) => record('listSessionSkills', args, []),
   toggleSessionSkill: async (...args) => record('toggleSessionSkill', args, undefined),
@@ -118,7 +118,7 @@ const engine: ServerEngine = {
   }),
   stopSchedule: async (...args) => record('stopSchedule', args, true),
   listSchedules: async (...args) => record('listSchedules', args, []),
-  listDir: (...args) => record('listDir', args, { path: '/fixture', parent: '/', entries: [] }),
+  listDir: async (...args) => record('listDir', args, { path: '/fixture', parent: '/', entries: [] }),
 };
 setTestDependencies({ engine });
 
@@ -136,8 +136,8 @@ test('global resource HTTP list and detail preserve verified module metadata wit
     { name: 'module_fixture__lookalike', detail: 'native', defaultOn: true },
   ];
   const skills = [
-    { name: 'native', source: 'custom', enabled: false, modules: [module] },
-    { name: 'module_fixture__lookalike', source: 'custom', enabled: true },
+    { name: 'native', description: 'Native skill', source: 'project' as const, userInvocable: true, enabled: false, modules: [module] },
+    { name: 'module_fixture__lookalike', description: 'Lookalike skill', source: 'project' as const, userInvocable: true, enabled: true },
   ];
   setTestDependencies({ engine: {
     ...engine, listGlobalMcp: async () => servers, listGlobalSkills: async () => skills,
@@ -228,7 +228,7 @@ test('session/control routes every native action and preserves partial outcomes 
     { operation: 'tasks.cancel', targetId: 'a', state: 'accepted' as const, result: { cancelled: true } },
     { operation: 'tasks.cancel', targetId: 'b', state: 'unconfirmed' as const, error: 'native unavailable' },
   ] };
-  t.mock.method(engine, 'control', async (...args) => record('control', args, partial));
+  t.mock.method(engine, 'control', async (...args: unknown[]) => record('control', args, partial));
   const actions: IntentBody<'session/control'>['action'][] = [
     { type: 'stop-all' }, { type: 'stop-task', id: 'a' },
     { type: 'clear-tasks', kind: 'agent', ids: ['a', 'b'] },
@@ -312,7 +312,7 @@ test('activity summary survives existing HTTP lists, control projections and sna
   };
   sessions = [{ ...busySession, activity }];
   t.mock.method(engine, 'listLive', async () => sessions);
-  t.mock.method(engine, 'getResources', async (_id, resources) => ({
+  t.mock.method(engine, 'getResources', async (_id: string, resources: string[]) => ({
     sessionId: 's', loaded: true, ...(resources.includes('control') ? { activity } : {}),
   }));
   for (const name of ['session/list', 'runtime/snapshot']) {
@@ -431,23 +431,13 @@ test('directory listing keeps default home, tilde, relative paths, sorting and p
   const parent = await request(project.json().parent);
   assert.equal(parent.json().path, home);
   const filesystemRoot = parse(home).root;
-  const readdir = t.mock.method(fs, 'readdirSync', (path: fs.PathLike) => {
-    assert.equal(path, filesystemRoot);
-    return [];
-  });
-  const access = t.mock.method(fs, 'accessSync', (path: fs.PathLike) => {
-    assert.equal(path, filesystemRoot);
-  });
-  syncBuiltinESMExports();
-  try {
-    const root = await request(filesystemRoot);
-    assert.equal(root.statusCode, 200, root.body);
-    assert.deepEqual(root.json(), { path: filesystemRoot, parent: null, entries: [] });
-  } finally {
-    readdir.mock.restore();
-    access.mock.restore();
-    syncBuiltinESMExports();
-  }
+  const root = await request(filesystemRoot);
+  assert.equal(root.statusCode, 200, root.body);
+  const rootBody = root.json() as { path: string; parent: string | null; entries: { name: string; isDir: boolean }[] };
+  assert.equal(rootBody.path, filesystemRoot);
+  assert.equal(rootBody.parent, null);
+  assert.ok(rootBody.entries.every(entry => !entry.name.startsWith('.')));
+  assert.deepEqual([...rootBody.entries].sort((a, b) => Number(b.isDir) - Number(a.isDir) || a.name.localeCompare(b.name)), rootBody.entries);
   assert.equal(list.mock.callCount(), 8);
   assert.deepEqual(calls, [], 'browsing must not touch native sessions or other engine methods');
 });
@@ -581,7 +571,10 @@ test('native chat rejects unsupported selectors and invalid page sizes before en
     ]),
   ];
   for (const [name, payload] of invalid) {
-    const response = await app.inject({ method: 'POST', url: `/intent/${name}`, payload });
+    const response = await app.inject({
+      method: 'POST', url: `/intent/${name}`,
+      payload: payload as string | object | Buffer,
+    });
     assert.equal(response.statusCode, 400, `${name}: ${response.body}`);
     assert.equal(response.json().code, 'INVALID_INTENT_BODY');
     assert.deepEqual(calls, []);
@@ -931,7 +924,7 @@ test('unloaded native details return a conflict without loading a session', asyn
 
 test('unsupported file rollback propagates the engine rejection without a successful mutation response', async (t) => {
   let mutated = false;
-  t.mock.method(engine, 'rewind', async (_sessionId, _toMsgId, rollbackFiles) => {
+  t.mock.method(engine, 'rewind', async (_sessionId: string, _toMsgId: string, rollbackFiles: boolean) => {
     if (rollbackFiles) throw new Error('Native file rollback is unsupported');
     mutated = true;
   });
@@ -968,7 +961,8 @@ for (const name of ['cancel', 'session/unload', 'respondAsk', 'respondPlan', 're
       const fixture = cases[name];
       const entered = deferred();
       const pending = deferred();
-      t.mock.method(engine, fixture.method, async (...args: unknown[]) => {
+      const method = fixture.method as keyof ServerEngine;
+      t.mock.method(engine, method, async (...args: unknown[]) => {
         record(fixture.method, args, undefined);
         entered.resolve();
         await pending.promise;

@@ -107,7 +107,7 @@ test('controls invalidation fences old reads and reconnect clears details', asyn
     return e.type === 'session/invalidated' && e.resources?.includes('controls');
   }));
   h.config()!.onEvent!({ type: 'session.connection_state_changed', id: 'disconnect',
-    timestamp: '2026-09-22T00:00:00Z', parentId: null, data: { state: 'reconnecting' } } as SessionEvent);
+    timestamp: '2026-09-22T00:00:00Z', parentId: null, data: { state: 'reconnecting' } } as unknown as SessionEvent);
   assert.ok(events.some(event => (event as { controls?: unknown }).controls === null));
 });
 
@@ -278,8 +278,8 @@ test('plan and elicitation cancellation resolve only the actual offered request'
     { type: 'cancel-decision', kind: 'plan', requestId })).ok, true);
   assert.deepEqual(await plan, { approved: true, selectedAction: 'exit_only' });
   const elicitation = Promise.resolve(h.config()!.onElicitationRequest!({
-    mode: 'form', message: 'Confirm?', requestedSchema: { type: 'object', properties: {} },
-  }, { sessionId: 'native-id' }));
+    sessionId: 'native-id', mode: 'form', message: 'Confirm?', requestedSchema: { type: 'object', properties: {} },
+  }));
   const elicitationId = (await h.engine.getMeta('native-id'))!.elicitation!.requestId;
   await h.engine.control('native-id', h.token, { type: 'cancel-decision', kind: 'elicitation', requestId: elicitationId });
   assert.deepEqual(await elicitation, { action: 'cancel' });
@@ -464,7 +464,7 @@ for (const action of ['clear-queue', 'stop-all'] as const) {
 test('queue clearing cannot discard a prompt accepted after that control operation', async t => {
   const h = await controlsFixture(t);
   h.native.busy = true;
-  const send = t.mock.method(h.sdk, 'send', async ({ prompt }) => {
+  const send = t.mock.method(h.sdk, 'send', async ({ prompt }: { prompt: string }) => {
     const id = prompt === 'first' ? 'first' : 'newer';
     h.native.queue.push(queuedMessage(id, id));
     return id;

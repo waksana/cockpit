@@ -16,14 +16,19 @@
     "start:mcp": "node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js",
     "module": "node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/module-cli.ts",
     "package:runtime": "node scripts/package-runtime.mjs",
-    "test": "pnpm -r --if-present test && node --test scripts/*.test.mjs",
-    "lint": "pnpm --filter @cockpit/web lint",
+    "test": "pnpm -r --if-present test && node --test scripts/*.test.mjs && pnpm typecheck:test",
+    "lint": "eslint . && pnpm --filter @cockpit/web lint",
     "e2e": "node scripts/e2e.mjs",
     "perf": "cd packages/core && node --import tsx ../../scripts/perf.mjs",
-    "regress": "pnpm --filter @cockpit/core regress"
+    "regress": "pnpm --filter @cockpit/core regress",
+    "typecheck:test": "pnpm --filter @cockpit/server typecheck:test && pnpm --filter @cockpit/mcp typecheck:test && pnpm --filter @cockpit/core typecheck:test && pnpm --filter @cockpit/protocol typecheck:test"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^25.9.5",
-    "typescript": "^5.9.3"
+    "eslint": "^10.10.0",
+    "globals": "^17.12.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.70.0"
   }
 }

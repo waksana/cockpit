@@ -361,7 +361,7 @@ export function assertIntentSuccess<T>(result: T, name: string): T {
 
 export async function protocolIntent<K extends IntentName>(
   name: K,
-  ...args: {} extends IntentBody<K> ? [body?: IntentBody<K>] : [body: IntentBody<K>]
+  ...args: object extends IntentBody<K> ? [body?: IntentBody<K>] : [body: IntentBody<K>]
 ): Promise<IntentResult<K>> {
   return assertIntentSuccess(await intent<IntentResult<K>>(name, args[0]), name);
 }

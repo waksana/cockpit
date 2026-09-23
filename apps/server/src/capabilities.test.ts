@@ -361,7 +361,7 @@ test('chat intent returns events with native expiry rather than server-folded me
 test('schedule requires exactly one timing selector although each selector is individually optional in JSON Schema', async () => {
   const { inputSchema } = await detail('schedule/add');
   assert.deepEqual(inputSchema.required, ['sessionId', 'prompt']);
-  for (const [selector, type] of [['interval', 'string'], ['at', 'number']]) {
+  for (const [selector, type] of [['interval', 'string'], ['at', 'number']] as const) {
     assert.equal(schemaAt(inputSchema, 'properties', selector).type, type);
   }
   const selectors = { interval: '5m', at: 1_800_000_000_000 };

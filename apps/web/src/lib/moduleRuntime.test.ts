@@ -980,3 +980,16 @@ test('draft schemas stage initialization and prepare drafts discovered during as
   assert.equal(a.getSnapshot().hasContent, false);
   assert.equal(b.getSnapshot().hasContent, false);
 });
+
+test('bootstrap errors distinguish activation failures from loaded-module runtime failures', async () => {
+  const errors: unknown[] = [];
+  const runtime = new ModuleRuntime({ pageUrl: 'https://fixture.invalid',
+    fetch: async () => Response.json({ modules: [], errors: [
+      { id: 'broken', stage: 'activation', code: 'MODULE_ERROR', error: 'activate threw' },
+      { id: 'loaded', stage: 'runtime', code: 'MODULE_ERROR', error: 'onReady rejected' },
+    ] }),
+    report: error => { errors.push(error); },
+  });
+  await runtime.start();
+  assert.deepEqual(errors, ['broken: load failed: activate threw', 'loaded: runtime error: onReady rejected']);
+});
