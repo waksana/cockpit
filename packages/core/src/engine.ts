@@ -1272,7 +1272,7 @@ export class Engine {
     const st = await this.state(id);
     this.assertAdmission(st);
     if (st.cancelling) return st.cancelling;
-    if (st.load || st.operations) return Promise.reject(new Error('Session operation is still in progress'));
+    if (st.load || activeOperations(st)) return Promise.reject(new Error('Session operation is still in progress'));
     this.patch(st, { cancelling: true, error: null });
     st.cancelling = this.untilFatal(async () => {
       const sdk = await this.liveSession(st);
@@ -1315,7 +1315,7 @@ export class Engine {
   async interrupt(id: string): Promise<IntentResult<'session/interrupt'>> {
     const st = await this.state(id);
     if (st.interrupting) return st.interrupting;
-    if (st.load || st.operations || st.cancelling) return Promise.reject(new Error('Session operation is still in progress'));
+    if (st.load || activeOperations(st) || st.cancelling) return Promise.reject(new Error('Session operation is still in progress'));
     const pending = this.operation(id, async (sdk) => {
       const target = { epoch: st.turnEpoch, interactionId: st.interactionId, decisions: new Map(st.decisions) };
       st.interruptTurn = target;

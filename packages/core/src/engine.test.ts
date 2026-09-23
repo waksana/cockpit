@@ -3027,6 +3027,20 @@ test('overlapping metadata and panel leases publish their final zero without res
     .map(e => e.activeOperations), [1, 0], 'the read lease is retained but not published');
   assert.equal(h.events.filter(e => e.type === 'session/invalidated').length, 0);
 });
+test('passive read leases do not block Stop or Interrupt, and still retain the handle', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const held = deferred<{ entries: NativeSchedule[] }>();
+  s.rpc.schedule.list.mock.mockImplementation(() => held.promise);
+  const metadata = h.engine.getResources(s.id, ['schedule']);
+  await nextTurn();
+  assert.deepEqual(await h.engine.interrupt(s.id), { ok: true, interrupted: false });
+  await h.engine.cancel(s.id);
+  assert.equal(s.sdk.abort.mock.callCount(), 1);
+  await assert.rejects(h.engine.unload(s.id), /in progress|busy/i);
+  held.resolve({ entries: [] });
+  await metadata;
+});
 test('native mutation events and readback invalidate the changed resource once, without suppressing control', async t => {
   const h = harness(t);
   const s = await h.load();
