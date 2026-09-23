@@ -36,6 +36,10 @@ export const ToolCall = z.object({
   // tool (bash/edit/view…) shown as a small badge; `args` + `output` are the
   // collapsible detail (formatted + capped). Detail is shown only when present.
   name: z.string().optional(),
+  // Native MCP identity from the execution start; absent for builtin tools and
+  // older records. Never derived from `name` (not every server prefixes it).
+  mcpServerName: z.string().optional(),
+  mcpToolName: z.string().optional(),
   args: z.string().optional(),
   output: z.string().optional(),
 });

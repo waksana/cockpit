@@ -451,6 +451,61 @@ test('tool call args + output captured; status transitions', () => {
   assert.equal(tc!.status, 'completed');
 });
 
+test('MCP tool rows carry native server and tool names; builtins and older records carry none', () => {
+  const evs: Ev[] = [
+    tStart(),
+    { type: 'assistant.message', data: { messageId: 'a1', content: '', toolRequests: [
+      { toolCallId: 'm1', name: 'cockpit-task-task_read', mcpServerName: 'cockpit-task', mcpToolName: 'task_read', toolTitle: 'task_read' },
+      { toolCallId: 'm2', name: 'get_file_contents', mcpServerName: 'github-mcp-server', mcpToolName: 'get_file_contents' },
+      { toolCallId: 'b1', name: 'bash', intentionSummary: 'list files' },
+    ] }, id: 'a1' },
+    { type: 'tool.execution_start', data: { toolCallId: 'm1', toolName: 'cockpit-task-task_read',
+      mcpServerName: 'cockpit-task', mcpToolName: 'task_read', toolTitle: 'task_read' } },
+    { type: 'tool.execution_start', data: { toolCallId: 'm2', toolName: 'get_file_contents',
+      mcpServerName: 'github-mcp-server', mcpToolName: 'get_file_contents', toolTitle: 'Get file contents' } },
+    { type: 'tool.execution_start', data: { toolCallId: 'b1', toolName: 'bash', intentionSummary: 'list files' } },
+    { type: 'tool.execution_start', data: { toolCallId: 'old', toolName: 'server-legacy_tool', mcpServerName: '' } },
+    { type: 'tool.execution_complete', data: { toolCallId: 'm1', success: true, result: { content: 'ok' } } },
+    { type: 'tool.execution_complete', data: { toolCallId: 'm2', success: false, error: { message: 'denied' } } },
+    { type: 'tool.execution_complete', data: { toolCallId: 'orphan', success: true } },
+  ];
+  const tools = (messages: { toolCalls?: unknown[] }[]) => messages.flatMap(m => m.toolCalls ?? []);
+  const st = replay(evs);
+  const byId = new Map(tools(st.messages).map(tc => [(tc as { toolCallId: string }).toolCallId, tc]));
+  assert.deepEqual(byId.get('m1'), { toolCallId: 'm1', title: 'task_read', name: 'cockpit-task-task_read',
+    mcpServerName: 'cockpit-task', mcpToolName: 'task_read', status: 'completed', output: 'ok' });
+  assert.deepEqual(byId.get('m2'), { toolCallId: 'm2', title: 'Get file contents', name: 'get_file_contents',
+    mcpServerName: 'github-mcp-server', mcpToolName: 'get_file_contents', status: 'failed', output: 'denied' });
+  for (const id of ['b1', 'old', 'orphan']) {
+    assert.ok(byId.has(id));
+    assert.equal('mcpServerName' in byId.get(id)!, false, `${id} has no server name`);
+    assert.equal('mcpToolName' in byId.get(id)!, false, `${id} has no MCP tool name`);
+  }
+  assert.deepEqual(tools([...live(evs).client.values()] as typeof st.messages), tools(st.messages), 'live deltas equal replay');
+});
+
+test('sub-agent MCP tool rows keep their native server name inside the card', () => {
+  const A = 'taskA';
+  const evs: Ev[] = [
+    tStart(),
+    { type: 'assistant.message', data: { messageId: 'a1', content: '', toolRequests: [
+      { toolCallId: A, name: 'task', arguments: { agent_type: 'explore', prompt: 'do X' } },
+    ] }, id: 'a1' },
+    { type: 'subagent.started', agentId: A, data: { toolCallId: A, agentName: 'explore', agentDisplayName: 'Explore' } },
+    { type: 'tool.execution_start', agentId: A, data: { toolCallId: 'sm1', toolName: 'cockpit-task-task_read',
+      mcpServerName: 'cockpit-task', mcpToolName: 'task_read', toolTitle: 'task_read' } },
+    { type: 'tool.execution_complete', agentId: A, data: { toolCallId: 'sm1', success: true } },
+    { type: 'subagent.completed', agentId: A, data: { toolCallId: A, agentDisplayName: 'Explore', totalToolCalls: 1 } },
+  ];
+  for (const messages of [replay(evs).messages, [...live(evs).client.values()] as ReturnType<typeof replay>['messages']]) {
+    const card = messages.find(m => m.subtype === 'subagent');
+    const inner = (card?.subMessages ?? []).flatMap(m => m.toolCalls ?? []);
+    assert.equal(inner.length, 1);
+    assert.equal(inner[0].mcpServerName, 'cockpit-task');
+    assert.equal(inner[0].mcpToolName, 'task_read');
+  }
+});
+
 test('ask_user reply surfaces as a user bubble (prefix stripped)', () => {
   const evs: Ev[] = [
     tStart(),

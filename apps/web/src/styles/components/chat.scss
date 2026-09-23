@@ -348,6 +348,8 @@ button.activity-head {
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
   direction: rtl; text-align: left;
   font-family: var(--chat-font-mono);
+  // Server names read from their start; full tool names keep their distinctive end.
+  &[data-server] { direction: ltr; }
 }
 .tool-description { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .skill-activity {
