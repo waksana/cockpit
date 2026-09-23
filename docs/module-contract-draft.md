@@ -327,10 +327,17 @@ MCP 名称原样采用 manifest 的 `mcpServers` key（例如 `example-tools`）
 - `session/resources-prepare {sessionId,skills?,mcpServers?}` → 请求范围的逐步资源准备回执，精确契约见[资源准备](#session-resource-preparation)。
 - `roles/add {sessionId,roles: [{moduleId,roleId}]}` → 仅追加已保存角色 metadata，结果见下文。
 
-后端 `context.host.call(name,body)` 只接受 `session/new`、`session/get`、
+后端 `context.host.call(name,body)` 只接受 `session/new`、`session/get`、`session/rename`、
 `roles/readiness`、`session/resources-prepare`、`prompt`，参数和结果使用 `@cockpit/protocol` 的 typed intents。
 不暴露 Engine、SDK 或持久层；宿主校验输入、输出和 shutdown admission。
 创建失败若已确认原生 ID，错误保留 `sessionId`，不得盲目重建。
+
+已加载会话的 `session/get` 可带 `nativeName`（原生 `name.get`，`null` 表示尚未设置，
+标题来自摘要或 ID 回退）与 `nativeNameUserSet`（原生 workspace `user_named`：显式 `name.set`，
+包括 `session/rename` 后为 `true`；未命名或自动摘要命名为 `false`；只由完整 `session/get` 读取，
+列表与 `session/resources` 不增加该原生读取）。两次原生读取描述的名称不一致、
+workspace 不可用或未 loaded 时省略；省略表示未知，不代表自动标题。模块只应在已证实非用户命名时
+覆盖标题，并且 `session/rename` 本身会把名称标记为用户命名。旧宿主不带这些字段，也不放行 `session/rename`。
 
 所选角色按 session ID 保存在宿主目录，列表、identity、Web、MCP 在 unloaded
 时仍展示；读取时按原有 moduleId/roleId 更新当前已安装模块与角色的展示名称，不迁移身份，

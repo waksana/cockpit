@@ -514,11 +514,13 @@ export class Engine {
   }
 
   async getMeta(id: string): Promise<SessionMeta | null> {
-    const meta = await this.getResources(id, MetaResources.options);
+    const meta = await this.getResources(id, MetaResources.options, undefined, { nameProvenance: true });
     return meta ? completeMeta(meta) : null;
   }
 
-  async getResources(id: string, resources: readonly MetaResource[], listedRow?: SessionMetadata): Promise<SessionProjection | null> {
+  async getResources(
+    id: string, resources: readonly MetaResource[], listedRow?: SessionMetadata, { nameProvenance = false } = {},
+  ): Promise<SessionProjection | null> {
     this.assertAvailable();
     const st = this.sessions.get(id);
     if (this.creating.has(id) && !st?.sdk) throw Object.assign(
@@ -546,9 +548,11 @@ export class Engine {
       const activityRevision = st.activityRevision;
       const wants = new Set(resources);
       const readsControl = wants.has('control') || wants.has('controls');
-      const [metadata, name, model, models, mode, todos, schedules, control, queue, row] = await this.withSession(st, sdk, () => settled([
+      const [metadata, name, workspace, model, models, mode, todos, schedules, control, queue, row] = await this.withSession(st, sdk, () => settled([
         wants.has('identity') ? sdk.rpc.metadata.snapshot() : Promise.resolve(undefined),
         wants.has('identity') ? sdk.rpc.name.get() : Promise.resolve(undefined),
+        // Full session/get only; optional, so its failure must not hide the rest of identity.
+        wants.has('identity') && nameProvenance ? (async () => (await sdk.rpc.workspaces.getWorkspace()).workspace)().catch(() => undefined) : Promise.resolve(undefined),
         wants.has('model') ? sdk.rpc.model.getCurrent() : Promise.resolve(undefined),
         wants.has('models') ? sdk.rpc.model.list() : Promise.resolve(undefined),
         wants.has('mode') && !wants.has('identity') ? sdk.rpc.mode.get() : Promise.resolve(undefined),
@@ -568,6 +572,10 @@ export class Engine {
         ...(wants.has('identity') ? this.roleState(id, st) : {}),
         ...(metadata ? {
           title: cleanSessionTitle(name?.name ?? metadata.summary) || id.slice(0, 8), cwd: metadata.workingDirectory,
+          ...(name && nameProvenance ? { nativeName: name.name ?? null } : {}),
+          // Two native reads: emit provenance only when both describe the same name.
+          ...(name && typeof workspace?.user_named === 'boolean' && (workspace.name ?? null) === (name.name ?? null)
+            ? { nativeNameUserSet: workspace.user_named } : {}),
           createdAt: Date.parse(metadata.startTime),
           lastActivity: row?.modifiedTime.getTime() ?? Date.parse(metadata.modifiedTime),
           lastActivitySource: row ? 'native-persisted' as const : 'native-construction' as const,

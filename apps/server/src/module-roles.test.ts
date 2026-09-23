@@ -214,9 +214,12 @@ test('module host bridge is allowlisted, lifecycle bound and preserves public ca
   const preparation = { sessionId: 'x', skills: ['optional'], mcpServers: [{ name: 'tools', tools: ['read'] }] };
   assert.equal((await app.inject({ method: 'POST', url, headers, payload: { name: 'session/resources-prepare', body: preparation } })).statusCode, 200);
   assert.deepEqual(calls[1], { name: 'session/resources-prepare', body: preparation });
+  const rename = { sessionId: 'x', name: 'Task title' };
+  assert.equal((await app.inject({ method: 'POST', url, headers, payload: { name: 'session/rename', body: rename } })).statusCode, 200);
+  assert.deepEqual(calls[2], { name: 'session/rename', body: rename });
   for (const name of ['session/delete', 'session/tools-initialize', 'skills/session-toggle', 'mcp/session-toggle', 'arbitrary/intent']) {
     assert.equal((await app.inject({ method: 'POST', url, headers, payload: { name, body: { sessionId: 'x' } } })).statusCode, 500);
   }
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
   assert.equal((await app.inject({ method: 'POST', url, payload: { name: 'session/get', body: {} } })).statusCode, 409);
 });
