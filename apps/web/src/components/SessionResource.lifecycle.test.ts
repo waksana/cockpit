@@ -209,6 +209,18 @@ function button(container: HostNode, text: string) {
   return result;
 }
 function disabled(node: HostNode) { return node.attributes.has('disabled'); }
+function headingAdd(container: HostNode) {
+  const result = container.querySelector('.ui-section-actions')?.querySelector('[aria-label="追加模块角色"]');
+  assert.ok(result, 'role addition belongs to the section heading actions');
+  assert.equal(result.textContent, '追加');
+  return result;
+}
+function actionRows(container: HostNode) { return container.querySelectorAll('.ui-action-row'); }
+function actionRow(container: HostNode, name: string) {
+  const result = actionRows(container).find(node => node.querySelector('.ui-action-name')?.textContent === name);
+  assert.ok(result, `Missing action row: ${name}`);
+  return result;
+}
 
 test('settings reload keeps its exact target and pending state across page changes', async t => {
   const h = mount(t);
@@ -229,24 +241,28 @@ test('settings reload keeps its exact target and pending state across page chang
     session: target, open: true, onClose: noop, onSetModel: noMutation,
   }));
   await render();
-  const reload = button(h.container, '重新加载会话');
+  const reload = actionRow(h.container, '重新加载');
   assert.equal(disabled(reload), false);
+  assert.equal(reload.getAttribute('aria-busy'), null);
+  assert.match(reload.textContent, /重新读取原生配置并应用角色/);
   await h.event(reload, 'click');
   assert.deepEqual(calls, [session.sessionId]);
   assert.equal(useCockpit.getState().activeId, other.sessionId, 'reload does not select or navigate');
-  const pending = button(h.container, '正在重新加载会话…');
+  const pending = actionRow(h.container, '重新加载');
+  assert.match(pending.textContent, /正在重新加载…/);
   assert.equal(disabled(pending), true);
   assert.equal(pending.getAttribute('aria-busy'), 'true');
   await h.event(pending, 'click');
   assert.deepEqual(calls, [session.sessionId], 'pending action cannot be repeated');
   await h.render(null);
   await render(other);
-  assert.equal(disabled(button(h.container, '重新加载会话')), false, 'pending belongs only to the original target');
+  assert.equal(disabled(actionRow(h.container, '重新加载')), false, 'pending belongs only to the original target');
   await render();
-  assert.equal(disabled(button(h.container, '正在重新加载会话…')), true, 'remount retains store-owned pending');
+  assert.equal(actionRow(h.container, '重新加载').getAttribute('aria-busy'), 'true', 'remount retains store-owned pending');
+  assert.equal(disabled(actionRow(h.container, '重新加载')), true);
   await render(other);
   await act(async () => request.resolve());
-  assert.equal(disabled(button(h.container, '重新加载会话')), false);
+  assert.equal(disabled(actionRow(h.container, '重新加载')), false);
   assert.deepEqual(calls, [session.sessionId], 'late completion does not reload the newly selected session');
 });
 
@@ -256,7 +272,7 @@ test('settings reload follows live connection, pending and native activity guard
     snapshotReady: true, reloadingSessionIds: [], getResources: async () => modelData, reloadSession: noMutation,
   });
   await h.render(createElement(SessionInfoPanel, { session, open: true, onClose: noop, onSetModel: noMutation }));
-  const reload = () => button(h.container, '重新加载会话');
+  const reload = () => actionRow(h.container, '重新加载');
   assert.equal(disabled(reload()), false);
   for (const patch of [
     { status: 'running' }, { nativeProcessing: true }, { activeSubagents: 1 }, { activeOperations: 1 },
@@ -275,7 +291,7 @@ test('settings reload follows live connection, pending and native activity guard
   await act(async () => useCockpit.setState({ connState: 'open', snapshotReady: false }));
   assert.equal(disabled(reload()), true);
   await act(async () => useCockpit.setState({ snapshotReady: true, sessions: [] }));
-  assert.equal(h.container.querySelectorAll('button').some(node => node.textContent === '重新加载会话'), false);
+  assert.equal(actionRows(h.container).some(node => node.querySelector('.ui-action-name')?.textContent === '重新加载'), false);
   await act(async () => useCockpit.setState({ sessions: [session] }));
   assert.equal(disabled(reload()), false);
 });
@@ -333,7 +349,7 @@ function settingsFixture(t: TestContext) {
   })));
   const open = async (label: string) => {
     await render();
-    await h.event(button(h.container, label), 'click');
+    await h.event(actionRow(h.container, label), 'click');
     assert.ok(h.document.nativeModal);
   };
   const confirm = (label: string) => h.event(button(h.document.body, label), 'click');
@@ -345,7 +361,7 @@ for (const action of ['unload', 'compact', 'fork'] satisfies SessionSettingsActi
   test(`settings ${action} click confirms once, posts to its original session and isolates late results`, async t => {
     const h = settingsFixture(t);
     const labels = { unload: '卸载会话', compact: '压缩上下文', fork: '分叉会话' };
-    await h.open(labels[action]);
+    await h.open({ unload: '卸载', compact: '压缩上下文', fork: '分叉' }[action]);
     const warning = h.document.body.textContent;
     if (action === 'unload') assert.match(warning, /不删除.*定时任务.*MCP.*Skill.*空会话可能消失/);
     if (action === 'compact') assert.match(warning, /不删除.*无法撤销.*可选.*不能保证/);
@@ -366,7 +382,8 @@ for (const action of ['unload', 'compact', 'fork'] satisfies SessionSettingsActi
     if (action === 'unload') {
       assert.match(h.container.textContent, /会话已卸载/);
       assert.match(h.container.textContent, /恢复会话/);
-      assert.doesNotMatch(h.container.textContent, /重新加载会话/);
+      assert.deepEqual(actionRows(h.container).map(node => node.querySelector('.ui-action-name')?.textContent),
+        ['卸载', '压缩上下文', '分叉'], 'reload is hidden once unloaded');
     } else if (action === 'compact') {
       assert.match(h.container.textContent, /原生报告压缩未成功.*8.*1/);
       assert.doesNotMatch(h.container.textContent, /压缩完成/);
@@ -381,7 +398,7 @@ for (const action of ['unload', 'compact', 'fork'] satisfies SessionSettingsActi
 
 test('fork unknown result leaves a visible warning and blocks repeat confirmation, including after disconnect', async t => {
   const h = settingsFixture(t);
-  await h.open('分叉会话');
+  await h.open('分叉');
   await h.confirm('分叉会话');
   await act(async () => useCockpit.setState({ connState: 'connecting', snapshotReady: false, connectionGeneration: 2 }));
   await h.resolve({ ok: true });
@@ -397,7 +414,7 @@ for (const action of ['unload', 'compact', 'fork'] satisfies SessionSettingsActi
   test(`${action} confirmation closes on its session-owned result even when refresh emits a snapshot before HTTP resolves`, async t => {
     const h = settingsFixture(t);
     const label = { unload: '卸载会话', compact: '压缩上下文', fork: '分叉会话' }[action];
-    await h.open(label);
+    await h.open({ unload: '卸载', compact: '压缩上下文', fork: '分叉' }[action]);
     await h.confirm(label);
     const generation = useCockpit.getState().connectionGeneration;
     await h.resolve(action === 'unload' ? { ok: true } : action === 'fork' ? { sessionId: 'real-child' }
@@ -433,7 +450,7 @@ test('cancelling an operation portal does not also close its settings inspector'
     children: createElement(SessionInfoPanel, { session, open: true, onClose: noop, onSetModel: noMutation }),
   }));
   const parent = h.document.nativeModal!;
-  await h.event(button(h.container, '卸载会话'), 'click');
+  await h.event(actionRow(h.container, '卸载'), 'click');
   const confirmation = h.document.nativeModal!;
   assert.ok(confirmation !== parent);
   await act(async () => { confirmation.dispatchEvent(new Event('cancel', { cancelable: true })); });
@@ -445,7 +462,7 @@ test('cancelling an operation portal does not also close its settings inspector'
 
 test('all settings controls react to unknown activity, background work and decisions while confirmation is open', async t => {
   const h = settingsFixture(t);
-  await h.open('分叉会话');
+  await h.open('分叉');
   for (const patch of [
     { activity: null }, { activity: activityFixture({ tasks: { activeAgents: 0, activeShells: 1, unknown: 0 } }) },
     { activity: activityFixture({ queue: { pendingCount: 0, steeringCount: 1, inFlightSteeringCount: 1 } }) },
@@ -455,9 +472,15 @@ test('all settings controls react to unknown activity, background work and decis
   ] satisfies Partial<ChatSession>[]) {
     await act(async () => useCockpit.setState({ sessions: [{ ...session, ...patch }] }));
     assert.equal(disabled(button(h.document.body, '分叉会话')), true);
-    for (const label of ['重新加载会话', '卸载会话', '压缩上下文', '分叉会话']) {
-      assert.equal(disabled(button(h.container, label)), true);
+    for (const label of ['重新加载', '卸载', '压缩上下文', '分叉']) {
+      assert.equal(disabled(actionRow(h.container, label)), true);
+      assert.equal(actionRow(h.container, label).getAttribute('title'), null, 'the reason is not repeated per row');
     }
+    assert.equal(h.container.querySelector('.ui-action-list')?.getAttribute('data-disabled'), 'true');
+    const list = h.container.querySelector('.ui-action-list')!;
+    const siblings = list.parentNode!.childNodes;
+    assert.equal(siblings.filter(node => node.matches('.state-notice')).length, 1, 'the reason is shown once');
+    assert.ok(siblings[siblings.indexOf(list) - 1].matches('.state-notice'), 'the reason sits directly above the list');
     await h.confirm('分叉会话');
   }
   assert.equal(h.calls.length, 0);
@@ -506,7 +529,7 @@ function roleFixture(t: TestContext, overrides: Partial<ChatSession> = {}) {
   const render = (value = target) => h.render(createElement(CurrentRoles, { value }));
   const open = async () => {
     await render();
-    await h.event(button(h.container, '追加模块角色…'), 'click');
+    await h.event(headingAdd(h.container), 'click');
   };
   const choose = async () => {
     const checkbox = h.container.querySelector('input');
@@ -665,8 +688,10 @@ for (const status of ['uncertain'] as const) {
     assert.match(h.container.textContent, /Synthetic persistence uncertainty.*Inspect before retry/);
     assert.equal(h.container.querySelector('pre'), null);
     assert.equal(disabled(button(h.container, '保存追加角色')), true);
-    await h.event(button(h.container, '收起角色追加'), 'click');
-    await h.event(button(h.container, '追加模块角色…'), 'click');
+    assert.equal(headingAdd(h.container).getAttribute('aria-expanded'), 'true');
+    await h.event(headingAdd(h.container), 'click');
+    assert.equal(headingAdd(h.container).getAttribute('aria-expanded'), 'false');
+    await h.event(headingAdd(h.container), 'click');
     assert.match(h.container.textContent, /Synthetic persistence uncertainty/, 'collapsing retains diagnostics');
     assert.equal(disabled(button(h.container, '保存追加角色')), true);
     await h.refresh();
@@ -985,13 +1010,15 @@ test('model drafts survive queued results and newer native values; reset and app
     session: { ...value, currentModelId }, disabled: false, onSetModel,
   }));
   await render('metadata-model');
+  assert.equal(h.container.querySelector('.ui-pending-bar'), null, 'no bar without local edits');
   const select = h.container.querySelector('select')!;
   select.value = 'draft';
   await h.event(select, 'change');
   assert.deepEqual(calls, []);
   assert.equal(select.value, 'draft');
+  assert.match(h.container.querySelector('.ui-pending-bar')!.textContent, /有未应用的修改/);
   assert.equal(h.container.querySelector('.info-model-hint'), null);
-  await h.event(button(h.container, '应用配置'), 'click');
+  await h.event(button(h.container, '应用'), 'click');
   select.value = 'metadata-model';
   await h.event(select, 'change');
   await render('draft');
@@ -1001,6 +1028,8 @@ test('model drafts survive queued results and newer native values; reset and app
   assert.deepEqual(calls, ['draft']);
   await h.event(button(h.container, '重置'), 'click');
   assert.equal(select.value, 'draft', 'reset uses the latest authoritative value');
+  assert.equal(h.container.querySelector('.ui-pending-bar'), null, 'the bar hides once the draft matches native');
+  assert.match(h.container.textContent, /等待原生应用.*提交详情/, 'the queued result remains visible without the bar');
   assert.deepEqual(calls, ['draft'], 'reset is never a write');
 });
 
@@ -1972,22 +2001,67 @@ test('model Apply has a pending label and busy state while preserving native res
     session, open: true, onClose: noop,
     onSetModel: async () => { mutations++; return result.promise; },
   }));
-  assert.equal(disabled(button(h.container, '应用配置')), true, 'metadata cannot enable Apply before the read');
-  await h.event(button(h.container, '应用配置'), 'click');
+  assert.equal(h.container.querySelector('.ui-pending-bar'), null, 'metadata alone shows no Apply action');
+  assert.equal(disabled(h.container.querySelector('select')!), true, 'metadata cannot enable edits before the read');
   assert.equal(mutations, 0);
   await act(async () => read.resolve(modelData));
-  const apply = button(h.container, '应用配置');
+  const effort = h.container.querySelector('[aria-label="思考力度"]')!;
+  effort.value = 'high';
+  await h.event(effort, 'change');
+  const apply = button(h.container, '应用');
   assert.equal(disabled(apply), false);
   await h.event(apply, 'click');
   const pending = button(h.container, '正在提交…');
   assert.equal(disabled(pending), true);
   assert.equal(pending.getAttribute('aria-busy'), 'true');
+  assert.match(h.container.querySelector('.ui-pending-bar')!.textContent, /正在提交修改/);
+  assert.doesNotMatch(h.container.querySelector('.ui-pending-bar')!.textContent, /有未应用的修改/);
   await h.event(pending, 'click');
   assert.equal(mutations, 1);
   await act(async () => result.resolve({ ok: true, result: { status: 'applied', persistenceError: 'Native save failed' } }));
-  assert.equal(button(h.container, '应用配置').getAttribute('aria-busy'), 'false');
+  assert.equal(h.container.querySelector('.ui-pending-bar'), null,
+    'an accepted revision is not reported as unapplied before the snapshot refreshes');
   assert.match(h.container.textContent, /已应用，但原生持久化失败：Native save failed/);
-  assert.equal(disabled(button(h.container, '应用配置')), true, 'the same revision is not resubmitted');
+});
+
+test('model results remain visible after the pending bar hides; unconfirmed submissions keep it', async t => {
+  const h = mount(t);
+  const value = { ...session, availableModels: [
+    { modelId: 'metadata-model', name: 'Metadata model' }, { modelId: 'draft', name: 'Draft model' },
+  ] };
+  for (const outcome of ['applied', 'unconfirmed'] as const) {
+    const render = (currentModelId: string) => h.render(createElement(ModelControls, {
+      key: outcome, session: { ...value, currentModelId }, disabled: false,
+      onSetModel: async (): Promise<IntentResult<'setModel'>> => {
+        if (outcome === 'unconfirmed') throw new Error('transport closed');
+        return { ok: true as const, result: { status: 'applied', warning: 'Native warning' } };
+      },
+    }));
+    await render('metadata-model');
+    const select = h.container.querySelector('select')!;
+    select.value = 'draft';
+    await h.event(select, 'change');
+    await h.event(button(h.container, '应用'), 'click');
+    await render('draft');
+    if (outcome === 'applied') {
+      assert.equal(h.container.querySelector('.ui-pending-bar'), null, 'native now matches the draft');
+      assert.match(h.container.textContent, /已应用.*Native warning.*提交详情/);
+    } else {
+      const bar = h.container.querySelector('.ui-pending-bar');
+      assert.ok(bar, 'an unconfirmed submission keeps the bar');
+      assert.match(bar.textContent, /提交结果未确认/);
+      assert.doesNotMatch(bar.textContent, /有未应用的修改/, 'the draft already matches native');
+      assert.equal(disabled(button(h.container, '应用')), true, 'the same revision is not resubmitted');
+      assert.match(h.container.textContent, /应用结果未确认：transport closed/);
+      select.value = 'metadata-model';
+      await h.event(select, 'change');
+      assert.match(h.container.querySelector('.ui-pending-bar')!.textContent, /有未应用的修改/, 'a new edit is unapplied');
+      await h.event(button(h.container, '重置'), 'click');
+      assert.equal(h.container.querySelector('.ui-pending-bar'), null, 'reset to native dismisses the bar');
+      assert.match(h.container.textContent, /应用结果未确认：transport closed/, 'the unconfirmed result stays visible');
+    }
+    await h.render(null);
+  }
 });
 
 test('session ID copies its exact value and retains confirmation without a restoration timer', async t => {

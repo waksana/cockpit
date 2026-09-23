@@ -1,18 +1,23 @@
+import { useId } from 'react';
 import type { ChatSession } from '../net/types';
 import { useSessionRoles } from '../features/session-settings/useSessionRoles';
 import { RoleBadge } from './ModuleLabel';
 import { RolePicker } from './RolePicker';
 import { RefreshButton, ResourceStatus } from './SessionPanelKit';
-import { SectionHeading } from './UI';
+import { HeadingAction, SectionHeading } from './UI';
 import { StateNotice } from './StateNotice';
 
 function RolesSection({ session }: { session: ChatSession }) {
   const { open, setOpen, opened, setOpened, catalog, action, setSelected, result, needsInspection,
     operation, refreshed, available, additions, connected, blocked, resultNeedsReload, refresh, submit } = useSessionRoles(session);
+  const pickerId = useId();
   return <section className="info-section">
-    <SectionHeading className="info-section-name" actions={
+    <SectionHeading className="info-section-name" actions={<>
+      <HeadingAction icon="add" aria-label="追加模块角色" aria-expanded={open} aria-controls={opened ? pickerId : undefined}
+        onClick={() => { setOpened(true); setOpen(value => !value); }}>追加</HeadingAction>
       <RefreshButton label="刷新模块角色" pending={action.busy && operation === 'refresh'}
-        disabled={!connected || action.busy} onClick={refresh} />}>模块角色</SectionHeading>
+        disabled={!connected || action.busy} onClick={refresh} />
+    </>}>模块角色</SectionHeading>
     <div className="info-section-content info-controls">
       {session.roles ? session.roles.length ? <div className="session-role-badges" aria-label="已保存的模块角色">
         {session.roles.map(role => <RoleBadge key={`${role.moduleId}/${role.roleId}`}
@@ -37,9 +42,7 @@ function RolesSection({ session }: { session: ChatSession }) {
         {result.recovery && <div>{result.recovery}</div>}
       </StateNotice>}
       {refreshed && <StateNotice>角色状态已刷新；应用不代表能力就绪。</StateNotice>}
-      <button type="button" className="dialog-btn ck-button rp" aria-expanded={open}
-        onClick={() => { setOpened(true); setOpen(value => !value); }}>{open ? '收起角色追加' : '追加模块角色…'}</button>
-      {opened && <div hidden={!open}><div className="info-controls">
+      {opened && <div id={pickerId} hidden={!open}><div className="info-controls">
         {blocked && <StateNotice className="info-model-status">当前不可保存：请等待连接及会话加载或关闭完成。</StateNotice>}
         <ResourceStatus status={catalog.status} failed={catalog.failed} pending={catalog.pending} />
         {catalog.failed && <button type="button" className="dialog-btn ck-button rp"
@@ -50,7 +53,7 @@ function RolesSection({ session }: { session: ChatSession }) {
             : <RolePicker roles={available} selected={additions} disabled={blocked || action.busy || needsInspection}
               onChange={setSelected} />)}
         {additions.length > 64 && <StateNotice kind="error">每次最多追加 64 个角色。</StateNotice>}
-        <div className="info-model-actions ck-actions">
+        <div className="ck-actions">
           <button type="button" className="dialog-btn ck-button ck-primary primary rp"
             disabled={blocked || action.busy || needsInspection || !catalog.usable || !additions.length || additions.length > 64}
             aria-busy={action.busy && operation === 'save'} onClick={submit}>保存追加角色</button>

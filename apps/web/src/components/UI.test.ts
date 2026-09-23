@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { compile } from 'sass';
-import { Badge, CheckboxCard, SectionHeading, SelectField, Toggle } from './UI';
+import { ActionList, ActionRow, Badge, CheckboxCard, HeadingAction, PendingChangesBar, SectionHeading, SelectField, Toggle } from './UI';
 import { ResourceRow, ResourceSummary } from './ResourceRow';
 import { McpStatusPill } from './McpStatus';
 
@@ -36,11 +36,41 @@ test('checkbox cards use native checked and disabled semantics without interacti
 
 test('section actions are siblings of a semantic heading, not part of its name', () => {
   const html = renderToStaticMarkup(createElement(SectionHeading, {
-    children: '模型配置', actions: createElement('button', { type: 'button', 'aria-label': '刷新' }),
+    children: '模型', actions: createElement('button', { type: 'button', 'aria-label': '刷新' }),
   }));
-  assert.match(html, /<h3 class="ck-heading">模型配置<\/h3><button type="button" aria-label="刷新"><\/button>/);
+  assert.match(html, /<h3 class="ck-heading">模型<\/h3><div class="ui-section-actions"><button type="button" aria-label="刷新"><\/button><\/div>/);
+  assert.doesNotMatch(renderToStaticMarkup(createElement(SectionHeading, { children: 'Plain' })), /ui-section-actions/);
   assert.match(renderToStaticMarkup(createElement(SectionHeading, { level: 2, children: 'Global resource' })),
     /<h2 class="ck-heading">Global resource<\/h2>/);
+});
+
+test('action rows are named full-row buttons in a group; busy replaces the chevron and description', () => {
+  const html = renderToStaticMarkup(createElement(ActionList, { label: 'Operations', disabled: true, children: [
+    createElement(ActionRow, { key: 'a', icon: 'unload', name: 'Unload', description: 'Keeps history', disabled: true }),
+    createElement(ActionRow, { key: 'b', icon: 'fork', name: 'Fork', description: 'Copies history', busy: true, busyDescription: 'Working…' }),
+  ] }));
+  assert.match(html, /^<div class="ui-action-list" role="group" aria-label="Operations" data-disabled="true">/);
+  const rows = html.match(/<button[^>]*class="ui-action-row ck-button rp"[^>]*>/g) ?? [];
+  assert.equal(rows.length, 2);
+  for (const row of rows) {
+    assert.match(row, /type="button"/);
+    const [, name] = row.match(/aria-labelledby="([^"]+)"/)!;
+    const [, description] = row.match(/aria-describedby="([^"]+)"/)!;
+    assert.match(html, new RegExp(`id="${name}" class="ui-action-name"`));
+    assert.match(html, new RegExp(`id="${description}" class="ui-action-description"`));
+  }
+  assert.match(rows[0], /disabled=""/);
+  assert.match(rows[1], /aria-busy="true"/);
+  assert.match(html, /Keeps history.*data-icon="chevron_right".*Working….*data-icon="loading"/);
+  assert.doesNotMatch(html, /Copies history|title=/);
+});
+
+test('pending bar is a labelled group and heading actions keep their own names', () => {
+  const bar = renderToStaticMarkup(createElement(PendingChangesBar, { message: 'Unsaved', children: createElement('button', { type: 'button' }, 'Apply') }));
+  assert.match(bar, /^<div class="ui-pending-bar" role="group" aria-labelledby="([^"]+)"><span id="\1" class="ui-pending-message">Unsaved<\/span><div class="ck-actions"><button type="button">Apply<\/button><\/div><\/div>$/);
+  const action = renderToStaticMarkup(createElement(HeadingAction, { icon: 'add', 'aria-expanded': false, children: 'Add' }));
+  assert.match(action, /^<button aria-expanded="false" type="button" class="ui-heading-action ck-button rp"><span class="ck-icon" data-icon="add"/);
+  assert.match(action, /Add<\/button>$/);
 });
 
 test('the shared toggle names and disables its native switch without implying completion', () => {
