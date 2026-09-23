@@ -37,6 +37,19 @@ test('checked-in workspace, MCP and delivery notes use one version', () => {
   checkSourceVersion(fileURLToPath(new URL('..', import.meta.url)));
 });
 
+test('release notes keep only the current version', t => {
+  const f = fixture(t);
+  writeFileSync(join(f.root, 'docs/release-notes.md'), '# Cockpit 0.1.0\n\nChanges.\n\n## Upgrade notes\n\nNone.\n');
+  checkSourceVersion(f.root);
+  writeFileSync(join(f.root, 'docs/release-notes.md'),
+    '# Cockpit 0.1.0\n\n## Upgrading from 0.0.9\n\n## Native SDK 1.0.14\n\n```sh\n# restart the service\n```\n');
+  checkSourceVersion(f.root);
+  for (const stale of ['# Cockpit 0.0.9\n', '## Cockpit 0.0.9\n', '# Unreleased source: feature\n', '### Unreleased\n']) {
+    writeFileSync(join(f.root, 'docs/release-notes.md'), `# Cockpit 0.1.0\n\nChanges.\n\n---\n\n${stale}`);
+    assert.throws(() => checkSourceVersion(f.root), /only the current version/);
+  }
+});
+
 test('delivery rejects a stale MCP self-reported version', t => {
   const f = fixture(t);
   writeFileSync(join(f.root, 'apps/mcp/src/index.ts'),

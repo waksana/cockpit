@@ -1,299 +1,140 @@
 # Module UI guide
 
-This is the authoritative guide to module presentation contracts. The
-**Module UI v1** styling source of truth is
-[`public-ui.scss`](../apps/web/src/styles/primitives/public-ui.scss); the
-[module contract](module-contract-draft.md) owns loading, contributions, drafts
-and native attachment delivery. Before any host or module UI work, read and follow
-the [frontend guidelines](frontend-guidelines.md). They own the shared principles;
-this guide owns the public styling, icon and composition contract, not a second
-theme or a claim that existing modules already conform.
-For available methods and exactly which host data they expose, use the
-[public API map](module-contract-draft.md#public-api-map) and
-[data boundaries](module-contract-draft.md#public-data-boundaries).
-Registering module state does not itself inject chat data or expose the private
-host store. Read the explicit `state.chatWindow` capability where needed.
+Presentation contract for module frontend UI. **Module UI v1** style lives in
+[`public-ui.scss`](../apps/web/src/styles/primitives/public-ui.scss); shared surfaces live
+in [`surfaces.scss`](../apps/web/src/styles/primitives/surfaces.scss). The
+[module contract](module-contract.md) owns loading, contributions, drafts and native
+attachment delivery. Read the [frontend guidelines](frontend-guidelines.md) before UI
+work. For host data, use the [public API map](module-contract.md#public-api-map) and
+[data boundaries](module-contract.md#public-data-boundaries). `state.chatWindow` requires
+its explicit capability.
 
 ## Compatibility and ownership
 
-
-Hosts implementing this style contract pass **`context.uiVersion === 1`**
-to frontend activation. The package version alone is not sufficient evidence.
-A module requiring these
-styles must reject activation explicitly when the field is missing or unsupported:
+Hosts implementing this contract pass **`context.uiVersion === 1`** to activation.
+Modules needing these styles must reject unsupported hosts:
 
 ```ts
 if (context.uiVersion !== 1) throw new Error('This module requires Cockpit Module UI v1');
 ```
 
-This host also exposes `context.createPortal(children, container)` from its
-existing ReactDOM. Modules using it must check that it is a function before
-registering their contributions. Do not bundle a separate ReactDOM implementation.
+Current Web exposes these independent frontend capabilities:
 
-UI v1 is separate from **Web API v2** (`context.apiVersion` and the returned
-declaration are both 2); module manifests and backend API remain v1.
-Menus add the independent **`context.menuVersion === 1`** capability.
-Modules declaring menus must check it explicitly; neither Web v2 nor UI v1
-implies menu support, and no legacy navigation fallback is provided:
+| Capability | Meaning |
+| --- | --- |
+| `apiVersion: 2` | Web frontend declaration/activation. Module manifests, backend API and backend manifests remain v1. |
+| `menuVersion: 1` | Declarative global/session menu actions. Check separately. |
+| `chatWindowVersion: 1` | Read-only current-window text projection; check before `state.chatWindow`. |
+| `composerInputVersion: 1` | Middleware around the actual controlled textarea. |
+| `uiVersion: 1` | Public base classes, variables and control behavior here. |
+| `uiSurfaceVersion: 1` | Public `ck-surface`, `ck-heading`, `ck-actions`, `ck-badge`, `ck-modal`. |
 
-```ts
-if (context.menuVersion !== 1) throw new Error('This module requires Cockpit menu v1');
-```
+Modules declaring menus must reject missing/unsupported `context.menuVersion === 1`; no
+legacy navigation fallback is provided. Consumers of shared surfaces must reject
+missing/unsupported `context.uiSurfaceVersion === 1` before registering contributions.
+`context.createPortal(children, container)` comes from host ReactDOM; check it is a
+function and do not bundle another ReactDOM. For release pairing, use the
+[module catalog](modules.md) and GitHub Releases.
 
-These capabilities are included in the **Cockpit 0.2.4** release preparation;
-**0.2.4 配套 / 发布资产以对应 Release 为准**, not a claim that publication is
-complete. Its pairing is **Cockpit File 0.1.7 / Cockpit Notification 0.1.5**.
-File 0.1.7 does not consume the removed `globalNavigation` HOC, remains compatible
-and is not being rereleased. Historical **0.2.3 / Notification 0.1.0** assets
-are unchanged. See the [module catalog](module-catalog.md) for release-specific downloads.
-Notification's `tooling/host-sdk.json` records its exact compatible SDK source pin.
-That export comes from development source still numbered 0.2.3
-(0.2.3-development); the host's 0.2.4 patch-version change
-does not change those exported API types or retroactively add capabilities to the
-0.2.3 Release. The [module contract](module-contract-draft.md) owns the full SHA
-and authoritative pairing; package labels alone cannot establish capabilities.
-Use the existing explicit cold-start procedure. Building or merging any repository
-does not authorize installation, deployment or restart.
+Public classes/variables are compatibility commitments. Additions may extend v1; removal,
+changed meaning or incompatible structure requires a new UI version and migration. Do not
+infer support from private selectors or ship fallback host CSS.
 
-Public classes and variables below are compatibility commitments. Additions may
-extend v1; removal, changed meaning or incompatible structure requires a new UI
-version and a documented paired migration. Internal stylesheet refactors cannot
-silently break these names. Modules should not infer support from a private
-selector or duplicate a fallback copy of the host stylesheet.
+Shared surfaces are CSS compositions, not a React component SDK. Modules own dialog
+lifecycle, `showModal()`, `close()`, portal mounting and resource binding. Only `--ck-*`
+variables are module APIs; override them locally only for real surface/size variants, with
+foreground/background contrast preserved.
 
-The shared surface compositions additionally expose **`context.uiSurfaceVersion === 1`**.
-This is an independent capability of the current source, not a retroactive claim
-about a released UI-v1 host. Consumers of `ck-surface`, `ck-heading`, `ck-actions`,
-`ck-badge` or `ck-modal` must reject missing/unsupported capability before
-registering contributions, and build against the actual paired host source pin:
+The host loads base CSS; modules declare business CSS in `frontend.styles`. Both run in
+one document: no Shadow DOM/sandbox. Use a unique prefix (`cf-`, `example-`). Do not
+redefine `.ck-*`, reset `html`/`body`, depend on host ancestors, or use private
+`.btn-icon`, `.chat-*`, `.dialog-*` selectors. Loading order is not a theme API.
 
-```ts
-if (context.uiVersion !== 1 || context.uiSurfaceVersion !== 1) {
-  throw new Error('This module requires Cockpit UI v1 and shared surfaces v1');
-}
-```
-
-These are CSS compositions, not a public React component SDK. They provide no
-dialog lifecycle, focus trap, routing, loading state or optimistic mutation.
-Keep native dialog/portal ownership in the existing consumer. A normal panel
-using `ck-surface` does not become modal.
-The host observes native `ck-modal` focus entry/return to avoid WebKit's
-pointer-only focus outlines, while retaining keyboard and editing indication.
-Consumers keep their existing dialog lifecycle; no extra module capability or
-focus call is required. The host's temporary DOM marker is private, not a class
-or attribute for modules to set. See the [frontend guidelines](frontend-guidelines.md)
-for the bounded behavior and the [dialog focus lab](DEVELOPMENT.md#isolated-chat-component-review)
-for real-component review.
-
-The host's internal visual foundations live in `styles/tokens.scss`: the
-`--host-*` roles own shared spacing (4/8/12/16/24px), UI typography
-(16px title / 14px body / 12px metadata, 1.5 leading), control/dialog radii and
-the `--host-color-*` palette roles that the public `--ck-color-*` variables map to.
-They preserve the original tweb structural namespace and Solarized palette; the
-legacy tweb color names remain aliases of the host roles for ported styles.
-Chat aliases these foundations while retaining its 16px / 1.7 prose role and
-explicit dense-control exceptions. Session settings, session MCP and session
-Skills remain separate pages with flat sections; they share visual roles, not
-navigation or mutation policy. **`--host-*` and `--chat-*` are not module APIs**;
-modules continue to use only the public `--ck-*` variables below.
-
-Session MCP rows pair identity/connection method on the left with a single
-switch/connection-status column on the right. The control column uses the shared
-4px gap regardless of left-side wrapping or expanded error details; MCP rows use 8px top/bottom insets without shrinking the
-40px/44px switch target. Only the operated row shows switching progress; other switches remain
-disabled during native serialization without repeated explanatory notices.
-The three session pages omit static instructional text, and an empty Skills
-page only reports that no skills were found. Actual failures, native results and
-unavailable-session recovery remain visible. Reconnecting an individual MCP uses
-its existing off/on switch, not an additional reload-all action.
-MCP and Skills use the control status slot for connection/disconnection or
-enable/disable progress. Failures show the actual first-line summary (at most
-160 characters), with full errors available through a keyboard/touch disclosure.
-Operation failures do not replace native connection status or hide a separate
-native error. Resource provenance uses the Session
-module/role badge style before the name, inline and naturally wrapping; it does
-not imply an applied role or readiness. Names wrap in full. Nonempty sources
-occupy one collapsed line and Skill descriptions up to two lines. Overflowing text
-itself is a keyboard-accessible disclosure, without an extra arrow or button row.
-Only explicit activation expands full text or error details inline; replacement
-text/errors start collapsed. These dense reading/status disclosures keep their
-line-height targets and visible focus, while switches retain 40px/44px targets.
-Expanded content has no fixed height or clipping.
-Session MCP has no connection-method presentation: the native session API does not
-provide that data. There is no conditional transport subtitle, placeholder, empty
-line or disclosure. Actual native connection states and errors remain visible.
-
-Global MCP and Skills use the shared master/detail shell. Default
-switches appear only on list rows, as siblings of navigation links, with native
-unknown states left explicit. Detail headers retain `item` and `actions` and
-accept an optional `titlePrefix` for provenance; middleware should forward these
-props. MCP subtitles use structured connection method and a concise target,
-never a source enum or parsing the legacy display string. Unknown method remains
-explicit. Skill sources show meaningful personal/project provenance, not internal
-`native`/`builtin`/`custom` labels; names and body text are unchanged.
-Details render a connection summary and a `连接配置` heading with full redacted
-configuration, or Skill Markdown directly, without an additional resource title.
-List mutations retain row-local feedback across
-detail navigation and invalidate both catalog and detail reads on settlement.
-
-The host loads its base stylesheet; a module declares its business stylesheet in
-`frontend.styles`. Both live in the **same document**, without Shadow DOM or a
-style sandbox. Modules keep a unique prefix, such as `cf-` or `example-`, for their
-own layout. Do not redefine `.ck-*`, reset `body`/`html`, depend on host page
-ancestors, or use private `.btn-icon`, `.chat-*`, `.dialog-*` selectors. Loading
-order is not a theme API.
+Session MCP/Skills and global MCP/Skills pages keep row-local progress, actual native
+status/error text, 40px/44px switch targets, provenance badges that wrap inline, and
+keyboard/touch disclosures for full errors or overflowing text; individual MCP reconnect
+uses the existing off/on switch, not a reload-all action. Session MCP has no
+connection-method presentation because the native session API does not provide it; errors
+show the actual first-line summary, capped at 160 characters. Global detail headers
+preserve `item`, `actions` and optional `titlePrefix`; MCP details show structured
+connection summary plus redacted `连接配置`, Skills details show Skill Markdown, and
+settled list mutations invalidate both list and detail reads.
 
 ## Public classes
 
 | Class | Supported element / meaning |
 | --- | --- |
-| `ck-button` | Native `button`, or `a[href]` for navigation; text/action baseline, aligned children, padding and keyboard focus. |
-| `ck-icon-button` | Native `button` or `a[href]`; centered icon, round target, muted default ink. Provide an accessible name and tooltip. |
-| `ck-input` | Text-like `input`, `textarea`, `select`; shared field appearance and focus. Not a checkbox/radio/file input reset. Keep native labels and types. |
-| `ck-icon` | Decorative `svg`, or a `span` containing one SVG. Shared dimensions, currentColor, stroke and alignment. |
-| `ck-icon-sm` / `ck-icon-md` / `ck-icon-lg` | On `ck-icon`: 16 / 20 / 24 CSS px. Defaults to 24px. Use the same size within an action group. |
-| `ck-text-primary` / `ck-text-secondary` | Phrasing or flow text elements; primary and secondary theme ink, not a heading or label substitute. |
-| `ck-danger` | Dangerous action ink; combine with `ck-primary` for a filled destructive action. Always retain explanatory text/name. |
-| `ck-primary` | On a button/link: filled accent action with contrasting foreground. |
-| `ck-input-hint` | Input-adjacent hint text, using the host input font size (including the user's message-size setting) and UI leading. |
-| `ck-status-text` | Auxiliary status text with the host metadata size and UI leading; combine with semantic ink classes. |
-| `ck-input-row` | A real input/control row: full width, shared inset and control gap, bottom-aligned children. Used by the native composer itself. |
-| `ck-input-status` | A module-owned, normal-flow status row adjacent to an input row; full width and fixed 32px height. Does not render content or register actions. |
-| `ck-status-marker` | A 12px decorative status icon region aligned to the first input control's center. |
-| `ck-status-label` | Single-line status content with ellipsis; preserve the full accessible text and provide its full title. |
-| `ck-status-action` | On `ck-icon-button`: a trailing status action aligned to the native input row's last control, with a 32px-high target. |
-| `ck-surface` | Flow container or native dialog: common surface ink/background, border, surface radius, body typography and content inset. Consumer owns positioning, available size and scrolling. |
-| `ck-heading` | Native heading: shared title typography, zero margin and full wrapping. Choose the correct heading level for the surrounding content. |
-| `ck-actions` | Flow container for sibling actions: wrapping flex row, shared gap, trailing alignment. Not a role or action dispatcher. |
-| `ck-badge` | Noninteractive status/count text: metadata typography, neutral fill and small inset. Consumer retains the accessible label and truthful semantic state; color alone is not a status. |
-| `ck-modal` | On native `dialog`: shared backdrop and modal-surface shadow. Supports a dialog that is itself `ck-surface` or has a direct `ck-surface` child. Does not call `showModal`, size the dialog or move focus. |
+| `ck-button` | Native `button`, or `a[href]`; text/action baseline, aligned children, padding and keyboard focus. |
+| `ck-icon-button` | Native `button` or `a[href]`; centered round icon target. Provide accessible name and tooltip. |
+| `ck-input` | Text-like `input`, `textarea`, `select`; shared field appearance/focus. Not checkbox/radio/file reset; keep native labels and types. |
+| `ck-icon`; `ck-icon-sm` / `ck-icon-md` / `ck-icon-lg` | Decorative `svg` or `span` with one SVG; `currentColor`, shared stroke/alignment; sizes 16 / 20 / 24px, default 24px; use one size within an action group. |
+| `ck-text-primary` / `ck-text-secondary` | Primary/secondary ink for phrasing or flow text, not heading semantics. |
+| `ck-danger`; `ck-primary` | Danger ink; filled accent action. Combine for filled destructive action and keep explanatory text/name. |
+| `ck-input-hint`; `ck-status-text` | Input hint with input font/UI leading; metadata-sized auxiliary status text. |
+| `ck-input-row`; `ck-input-status` | Full-width input/control row; adjacent module status row with fixed 32px height and no behavior. |
+| `ck-status-marker`; `ck-status-label`; `ck-status-action` | 12px status icon region; single-line ellipsis label with full accessible text/title; trailing 32px-high status icon action. |
+| `ck-surface` | Flow container or native dialog with common ink/background, border, radius, body typography and inset. Consumer owns positioning, size and scrolling. |
+| `ck-heading` | Native heading with shared title typography, zero margin and wrapping. Choose the correct level. |
+| `ck-actions` | Wrapping flex row for sibling actions with shared gap/trailing alignment; not a dispatcher. |
+| `ck-badge` | Noninteractive status/count text with metadata typography and neutral fill; keep accessible label and semantic state. |
+| `ck-modal` | On native `dialog`: backdrop and modal shadow. Dialog may itself be `ck-surface` or have a direct `ck-surface` child; does not call `showModal`, size or focus. |
 
-The input/status classes are additive UI v1 styles introduced in Cockpit 0.2.6.
-Consumers must pair with that host or newer; a previous UI v1 host does not
-retroactively acquire these classes. No additional component slot or host
-business dispatcher is introduced. Modules wrap the existing `composerEditor`
-Base, place their own status row in normal flow, and leave queue/question
-placement, available height and scrolling to the host. Do not copy `.chat-*`
-rules to adjust those ancestors. The status row has no background or state
-policy; content, visibility, icon, elapsed time and actions belong to its module.
-Its dense 32px status action is an explicit exception to ordinary control height;
-its horizontal target remains aligned to the 40px/44px input controls.
+CSS never disables behavior: use real `disabled` where native controls support it, and
+guard focusable `aria-disabled` controls or unavailable links. `aria-busy` announces
+pending work but does not replace mutation guards. Keep failures visible. Default target
+is 40px, 44px for coarse pointers, separate from 16/20/24px drawing. Do not shrink
+targets to SVG size. Density exceptions: process/thought rows (28px), dense queue rows
+(`--ck-control-size` = 32px), queue copy/remove and status actions. Ordinary send, stop,
+delete and standalone actions keep public geometry. Dense row hit areas must not overlap
+adjacent rows; queue text remains clickable without an extra arrow, and narrow execution
+rows wrap actions without changing font, radius or spacing. Shared host controls do not
+add decorative hover fills or recolor text on pointer entry.
 
-`disabled`, `aria-disabled`, `hidden` and focus-visible are styled consistently.
-**CSS does not disable behavior.** Use real `disabled` on native buttons and
-fields. A deliberately focusable `aria-disabled` control still needs an event
-guard. A link has no native `disabled`: remove its action or explicitly guard
-activation when unavailable. `aria-busy` announces actual pending work, but does
-not replace disabling mutations. Keep failures visible and preserve retry input.
-
-The default click target is 40px, at least 44px for coarse pointers; it is separate
-from the 16/20/24px drawing. Business CSS may control layout and geometry but
-must not shrink the target to the SVG size. Dense host tool/thought disclosure
-and process-summary rows are an explicit reading-density exception: their
-single-line height stays 28px for all pointer types, with the whole row clickable.
-Their hit areas do not overlap adjacent rows; this trades touch target height
-for compact process reading. Multiline content can still grow. Dense queue rows
-are another explicit exception: a queue-local `--ck-control-size` resolving to 32px keeps
-message summaries and their copy/remove controls aligned at 32px on all pointers.
-The text remains clickable to expand without an extra arrow. Copy controls
-outside the queue retain 32px desktop geometry and expand to 44px for coarse pointers.
-The input-card header, full-plan disclosure and unfinished-module recovery action
-also expand to 44px for coarse pointers. They do not inherit the dense queue
-exception. Narrow execution rows wrap their actions instead of changing their
-font, radius or spacing scale.
-This private layout is not another public button appearance or a blanket
-exception for send, stop, session deletion, or other standalone actions.
-Public selectors do not depend on a
-host ancestor. Avoid changing border/padding or swapping differently sized icons
-on hover, pending or confirmation.
-
-Host controls do not add decorative hover fills or recolor text on pointer entry.
-Selected rows, primary/destructive action colors, disabled/busy feedback and
-keyboard `:focus-visible` remain distinct. The public `--ck-color-hover` token
-is retained for module compatibility, but the shared controls do not apply it
-automatically.
+`ck-input-status` has no background or state policy: content, visibility, icon, elapsed
+time and actions belong to the module, while its dense 32px status action remains aligned
+to the ordinary 40px/44px input controls.
 
 ## Public variables
 
-| Variable | Default / units | Intended use |
-| --- | --- | --- |
-| `--ck-color-text` | Host primary ink; color | Reading and action foreground. |
-| `--ck-color-muted` | Host secondary ink; color | Supporting text and neutral icons. |
-| `--ck-color-surface` | Host theme surface; color | Module panels and previews. |
-| `--ck-color-border` | Host theme border; color | Business separators and outlines. |
-| `--ck-color-accent` | Host accent; color | Primary action and keyboard focus. |
-| `--ck-color-on-accent` | Host contrasting surface ink; color | Filled-action text. |
-| `--ck-color-danger` | Host danger ink; color | Errors/destructive actions, with text. |
-| `--ck-color-success` | Host success ink; color | Success, with text or a named status. |
-| `--ck-color-hover` | Host translucent hover fill; color | Neutral hover appearance. |
-| `--ck-icon-size` | `24px` | Drawing dimensions; prefer the size classes. |
-| `--ck-icon-stroke` | `2`, unitless SVG units | Lucide line width; do not override per path. |
-| `--ck-control-size` | `40px`, `44px` for coarse pointers | Minimum button/field block size and icon target inline size. |
-| `--ck-input-font-min` | `0px`, `16px` when any coarse pointer is available | Font-size floor for text fields, including wide touch layouts; preserve it in custom input typography to avoid mobile focus zoom. Not a cap on larger text or user zoom. |
-| `--ck-space` | `8px` | Common button gap/padding unit. |
-| `--ck-radius` | `12px` | Common button/field radius; icon targets are round. |
-| `--ck-disabled-opacity` | `0.3`, unitless | Disabled feedback, not state ownership. |
-| `--ck-text-title` / `--ck-text-body` / `--ck-text-meta` | `16px` / `14px` / `12px` | Shared-surfaces v1 title/body/metadata roles; not a prose-size override. |
-| `--ck-leading-ui` | `1.5`, unitless | Shared-surfaces v1 UI line height. |
-| `--ck-radius-surface` | `16px` | Shared-surfaces v1 surface radius, distinct from controls. |
-
-Colors follow the host light/dark palette; Chat supplies its local readable ink
-through the same public names. Modules consume the inherited values, not the
-private tokens they alias. Module-owned surfaces may locally override public
-variables for a genuine surface/size variant, keeping contrasting foreground and
-background together. Do not override root values, override only one theme, shrink
-touch targets, or use different stroke widths to compensate for icon alignment.
+Public variables: `--ck-color-text`, `--ck-color-muted`, `--ck-color-surface`,
+`--ck-color-border`, `--ck-color-accent`, `--ck-color-on-accent`, `--ck-color-danger`,
+`--ck-color-success`, `--ck-color-hover`; `--ck-icon-size` (`24px`),
+`--ck-icon-stroke` (`2`), `--ck-control-size` (`40px`, `44px` coarse),
+`--ck-input-font-min` (`0px`, `16px` with any coarse pointer), `--ck-space` (`8px`),
+`--ck-radius` (`12px`), `--ck-disabled-opacity` (`0.3`), `--ck-text-title` /
+`--ck-text-body` / `--ck-text-meta` (`16px` / `14px` / `12px`), `--ck-leading-ui`
+(`1.5`), and `--ck-radius-surface` (`16px`). Use them for text/surface/border/accent,
+filled-action contrast, danger/success text, compatible hover fill, Lucide drawing,
+control size, mobile input font floor, spacing/radius, disabled feedback, shared surface
+type/leading and surface radius. Do not override root values, single themes, touch-target
+size, or per-path stroke to compensate for alignment.
 
 ## Icons and packaging
 
-The host's thin `Icon` adapter statically imports **Lucide 1.46.0**. Module authors
-use only the necessary SVG nodes from that same fixed release, rendered with
-`context.react.createElement`. Keep `viewBox="0 0 24 24"`, full paths, rounded
-joins/caps and the public stroke. Do not crop, redraw or transform individual
-paths to align them. SVGs are decorative (`aria-hidden="true"`,
-`focusable="false"`); name the containing action. A visible status label must
-still distinguish success, failure and unknown without color.
+The host statically imports **Lucide 1.46.0**. Modules use needed SVG nodes from that
+release with `context.react.createElement`. Keep `viewBox="0 0 24 24"`, full paths,
+rounded joins/caps and public stroke; do not crop, redraw or transform paths. SVGs are
+decorative (`aria-hidden="true"`, `focusable="false"`); name the containing action and
+distinguish success/failure/unknown without color alone.
 
-Do not import a private host component, bring another React runtime, use dynamic
-whole-library icon lookup, load a CDN, or depend on removed tgico codepoints.
-Product/third-party logos, user emoji, file thumbnails and native media controls
-are not generic UI icons and keep their own provenance.
-
-Lucide is **ISC**, with additional **Feather/MIT** provenance for the icons listed
-in its license. Copy the complete exact upstream license into your distributed
-module package and reference it in your notice. The host ships the same license
-in [`public/licenses/lucide.txt`](../apps/web/public/licenses/lucide.txt).
-Replacing Telegram's icon font does not erase the host's remaining tweb-derived
-structural styles or change Cockpit's GPL-3.0-only license.
+Do not import private host components, bring another React runtime, dynamically load whole
+icon libraries, use CDNs, or depend on removed `tgico` codepoints. Product logos, emoji,
+thumbnails and media controls keep their provenance. Copy the exact upstream Lucide
+license into packages and notices; host copy:
+[`public/licenses/lucide.txt`](../apps/web/public/licenses/lucide.txt). Cockpit remains
+GPL-3.0-only. Lucide is ISC, with additional Feather/MIT provenance for the icons listed
+in its license.
 
 ## Executable minimal frontend
 
-[`module-ui-example.ts`](../apps/web/src/dev/module-ui-example.ts) is the complete
-maintained example, typechecked by the existing Web build and exercised through
-the real module runtime by
-[`module-ui-example.test.ts`](../apps/web/src/dev/module-ui-example.test.ts).
-It declares `writes: ['text']`, enhances the actual composer editor row, renders the
-fixed Lucide SquarePen nodes with the host React, and subscribes to the actual
-scoped draft state. Its real `disabled` includes host availability, pending and
-operation; clicking appends text through the scoped draft, never sends a message.
-
-Use that file as your module frontend source and compile it with your normal
-module build. The `@cockpit/module-api` import is type-only; obtain those types
-using the [existing export command](module-contract-draft.md#4-公共-typescript-契约).
-Your package still needs the ordinary backend entry and manifest from the module
-contract. No alternate bootstrap, standalone root or demo application is needed.
-
-The important composition is:
-
-```html
-<button type="button" class="ck-icon-button example-draft-action"
-        aria-label="Append example text" title="Append example text" disabled>
-  <svg class="ck-icon ck-icon-lg" viewBox="0 0 24 24"
-       aria-hidden="true" focusable="false"><!-- exact Lucide paths --></svg>
-</button>
-```
-
-Business classes can add placement, not another copy of baseline button CSS:
+The maintained runnable example is
+[`module-ui-example.ts`](../apps/web/src/dev/module-ui-example.ts), typechecked by the Web
+build and covered by
+[`module-ui-example.test.ts`](../apps/web/src/dev/module-ui-example.test.ts). Package it
+normally per the [module contract](module-contract.md). It exports `activate`, requires
+`context.uiVersion === 1`, uses host React, declares `writes: ['text']`, wraps the real
+`composerEditor`, subscribes to scoped draft state and appends text through that draft. It
+never sends messages or copies baseline button styles. Add only business placement:
 
 ```css
 .example-draft-action { align-self: end; }
@@ -301,116 +142,71 @@ Business classes can add placement, not another copy of baseline button CSS:
 
 ## File module and valid composition
 
-The paired file migration replaces its bespoke action SVGs and generic button
-appearance with pinned Lucide nodes and `ck-icon-button`. File-owned `.cf-*`
-rules retain compact row width/height, columns, inline references, long-name truncation,
-upload progress and message/draft placement. The module still owns upload/resolve/
-download/remove/retry; public CSS does not own file IDs, storage or native ACK.
-The same public variables govern disabled/pending feedback and theme appearance.
+The file module composes public UI with pinned Lucide nodes and `ck-icon-button`.
+File-owned `.cf-*` rules still own row geometry, columns, references, truncation, upload
+progress, placement, operations, IDs, storage and native ACK. Public CSS owns shared
+appearance, variables and disabled/pending feedback.
 
-A row's preview button contains its file icon, name and status.
-Download/remove/retry controls remain **siblings**, never nested interactive
-children. Keep the entire main area clickable without making the secondary
-actions trigger preview. A transparent overlay button is not inherently invalid,
-but should not be retained when direct semantic ownership gives equivalent
-geometry and behavior.
+A row preview button contains file icon, name and status. Download/remove/retry controls
+are siblings, never nested interactive children. Keep the main area clickable without
+triggering secondary actions. Transparent overlays are allowed only when they preserve
+equivalent semantic ownership.
 
-Component middleware wraps React components, not their HTML. Preserve the
-original node structure and public styling; do not introduce module-placeholder
-containers, nested interactive controls, or visual indentation. Real controls
-and adornments compose through the base component's ordinary props/children.
-Markdown link/image replacements use their separate inline renderer contract.
-An empty component inserted only to receive module children is still a slot,
-not enhancement of an existing semantic component. Management-header middleware
-must wrap the actual controls and preserve their original navigation and focus.
-Message middleware retains the real `bodyRef`, including the current ask body;
-reading thresholds, unread marks and red-line policy remain module-owned.
-The other real component boundaries remain session status, composer/editor
-(including ordinary paste/drop events), native attachments and management headers.
-Ordinary DOM event props are public component behavior; file selection and its
-picker/dispatch lifecycle belong entirely to the file module's state services.
+Component middleware wraps React components, not arbitrary HTML. Preserve original node
+structure, props, refs, children, actions, accessibility and scroll anchors; do not add
+placeholder containers, nested interactive controls or visual indentation. Markdown
+replacements use the separate inline renderer. Management-header middleware preserves
+navigation/focus. Message middleware keeps `bodyRef`, ask body, thresholds, unread marks
+and red-line policy. Other boundaries remain session status, composer/editor (including
+paste/drop), native attachments and management headers. File selection, picker and
+dispatch lifecycle belong entirely to the file module's state services.
 
-Cockpit 0.2.5 source exposes `composerInputVersion: 1`. The `composerInput`
-middleware wraps the actual controlled textarea, whose Base owns editing and
-IME/Enter handling. Return Base followed by a microphone sibling; do not duplicate
-the editor, native send, or keyboard implementation. Preserve value/onChange,
-native events, captured draft and editorRef (including React 19 ref cleanup).
-File's existing `composerEditor.children` stays on the left, independently of
-input enhancement. Full-width status/recovery content wraps the existing
-`composer` Base and follows the entire input row, never inside the textarea or
-an interactive control. No placeholder or position slot is provided.
-Keep DOM, keyboard and visual order identical. `disabled` gates editing;
-`sendBlocked`, draft pending and blocks gate submission without disabling typing.
-Speech must also honor native free-text restrictions. This is the breaking
-Speech 0.1.1 pairing, not a capability of the historical 0.2.4 release.
-Data consumers separately check `chatWindowVersion: 1` and use the
-[read-only window state](module-contract-draft.md#chat-window-state), not private
-DOM, React children traversal or a second history reader.
+`composerInput` wraps the actual controlled textarea; Base owns editing, IME, Enter,
+`value`, `onChange`, native events, captured draft and `editorRef`. Return Base plus
+sibling controls; do not duplicate editor, send or keyboard behavior. Full-width
+status/recovery wraps existing `composer` Base and follows the input row. `disabled` gates
+editing; `sendBlocked`, pending and module blocks gate submission. Speech/freeform
+modules honor native free-text restrictions. Data consumers check `chatWindowVersion: 1`
+and use [read-only window state](module-contract.md#chat-window-state). Keep DOM,
+keyboard and visual order identical; no placeholder or position slot is provided.
 
 ## Menu declarations
 
-Menu declarations, semantic component middleware, state/service/draft and
-Markdown rendering are four distinct extension mechanisms. Global/session menu
-actions belong in the returned `ModuleFrontend.menus` array, not in a navigation
-HOC, an empty component boundary or an arbitrary page/router registration.
-The [menu contract](module-contract-draft.md#65-菜单注册) owns exact types,
-ordering, target availability and lifecycle rules.
+Menus, semantic middleware, state/service/draft and Markdown rendering are separate.
+Global/session menu actions belong in `ModuleFrontend.menus`, not navigation HOCs, empty
+component boundaries or router registration. Exact types and lifecycle rules live in the
+[module contract](module-contract.md).
 
-Use `getState(target)` for pure synchronous display state, and subscribe to the
-module's existing service rather than copying native state. Subscriptions belong
-to activation, not each menu opening. The host renders
-labels and decorative icons, retains native actions first, normalizes separators
-and owns keyboard navigation, disabled behavior, closing and trigger focus return.
-Do not put another button, link or menu inside the icon. Menu availability is a
-current frontend-view check, not API authorization. Session module actions require
-an applied current snapshot, an open connection and a target present in that view;
-native navigation keeps its existing offline behavior.
+Use `getState(target)` for synchronous display state and subscribe during activation, not
+each opening. The host renders labels/icons, keeps native actions first, normalizes
+separators, and owns keyboard navigation, disabled behavior, closing and trigger focus
+return. Do not place another button, link or menu inside the icon. Availability is a
+current view check; session actions need an applied snapshot, open connection and visible
+target.
 
-Actions receive the frozen original global/session target and an abort signal.
-Recheck that signal after each `await` before applying module-owned results;
-never redirect an action to whichever session is now active. The host rechecks
-availability and disabled state at selection, rejects stale menu callbacks, and
-aborts accepted work when the module stops, the target disappears or the connection
-becomes unknown. Normal menu closing and route changes do not cancel accepted work.
-Each registration/target pair is busy-guarded. Aborting frees host tracking
-immediately without waiting for the Promise; returned data is not applied by the host.
-
-A failed/malformed state read omits and reports only that command; an icon render
-failure keeps the command without its icon. Ordinary action errors are reported
-without revoking healthy contributions. Subscription setup failure instead rolls
-back activation; unsubscribe errors must not prevent remaining cleanup.
+Actions receive the frozen target and an abort signal. Recheck after each `await`; never
+redirect to the active session. The host rechecks availability at selection, rejects stale
+callbacks, aborts accepted work when module/target/connection disappears, and busy-guards
+each registration-target pair. Route changes do not cancel accepted work. Failed state
+reads omit only that command; icon failures keep the command; action errors do not revoke
+healthy contributions. Subscription setup failure rolls back activation; unsubscribe
+errors must not stop cleanup. Aborting an accepted action frees host busy tracking
+immediately without waiting for its Promise.
 
 ## Markdown and modal composition
 
-Markdown renderers may occur inside paragraphs, emphasis, lists or headings.
-Returning a `span` does not legalize flow-only children such as `dialog`. Modal
-mounting and React ownership must be considered separately; opening a native
-dialog in the browser top layer does not repair an invalid DOM content model.
-The file module uses `context.createPortal(dialog, document.body)`: the DOM mount
-is flow-valid while the dialog remains owned by the original React component.
-It uses native `showModal()`/`close()`, closes on replacement/unmount/abort, and
-keeps preview/download callbacks bound to their original resource. The host
-function does not create another root or supply a focus trap. This is a generic
-presentation capability, not private host DOM or a file-specific exception.
-
-An image embedded in a Markdown link also needs care: a module-rendered image
-may become a card with buttons and download links. The host keeps linked images
-as noninteractive image fallbacks inside their original links rather than
-activating an interactive module card beneath an anchor. Ordinary unlinked
-images can still use module rendering. Modules must return phrasing-compatible
-card content; portals do not relax the content model for anything still
-physically inside the card.
+Markdown renderers can occur inside paragraphs, emphasis, lists or headings. Return
+phrasing-compatible content; `span` does not legalize `dialog`. Mount dialogs with
+`context.createPortal(dialog, document.body)`, own `showModal()`/`close()`, close on
+replacement/unmount/abort, and bind callbacks to the original resource. Linked images
+stay noninteractive fallbacks inside links if module rendering would create an interactive
+card; unlinked images may use module rendering.
 
 ## Author checklist
 
-Use the shared [frontend review checklist](frontend-guidelines.md#轻量-review-清单).
-For modules, also check explicit capability versions, public-only styles and icon
-provenance, the actual host-composed DOM/accessibility tree, drag/drop/paste
-ownership, and original-resource binding across session/resource replacement.
-Exercise Tab/Shift+Tab, Enter/Space, Escape and focus return through the composed
-controls. Use the existing component tests, Chat Lab or module-isolated fixtures,
-never production sessions; report the browsers and input methods actually covered.
-
-Inspect the built assets too: only used icons, no icon fonts/CDN requests, no
-bundled second React, and a complete distributed license. Update the example and
-its tests whenever its public contract changes.
+Use the [frontend review checklist](frontend-guidelines.md). Also check capability
+versions, public-only styles, icon provenance, composed DOM/accessibility,
+drag/drop/paste ownership, and original-resource binding. Exercise Tab/Shift+Tab,
+Enter/Space, Escape and focus return. Use tests, Chat Lab or module-isolated fixtures,
+not production sessions. Inspect assets for used icons only, no icon fonts/CDN, no second
+React and complete licenses. Update example/tests when the contract changes.
