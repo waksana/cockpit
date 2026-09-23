@@ -15,7 +15,7 @@ const SECTION_TITLE: Record<ManageSection, string> = { mcp: '全局 MCP', skills
 function MasterHeader(props: ManagementHeaderProps) {
   return useModuleElement('managementHeader', MasterHeaderBase, props);
 }
-function MasterHeaderBase({ section, item, onRefresh, actions }: ManagementHeaderProps) {
+function MasterHeaderBase({ section, onRefresh, actions }: ManagementHeaderProps) {
   const up = useUp();
   const connState = useCockpit((s) => s.connState);
   const mcpRefresh = useCockpit((s) => s.mcpRefresh);
@@ -23,8 +23,8 @@ function MasterHeaderBase({ section, item, onRefresh, actions }: ManagementHeade
   return <>
     <PaneHeader
       leading={<button className="ck-icon-button rp" type="button"
-        aria-label={item === null ? '返回会话列表' : `返回${SECTION_TITLE[section]}列表`}
-        onClick={() => up(item === null ? '/' : `/${section}`)}>
+        aria-label="返回会话列表"
+        onClick={() => up('/')}>
         <Icon name="back" size={24} />
       </button>}
       title={<span className="pane-title ck-text-primary">{SECTION_TITLE[section]}</span>}
