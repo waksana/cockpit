@@ -75,6 +75,38 @@ test('native request descriptions enrich execution rows without creating or movi
   }
 });
 
+test('native MCP server and tool names survive browser history projection and live forward pages', () => {
+  const history = [
+    event('request', 'assistant.message', { content: '', toolRequests: [
+      { toolCallId: 'mcp', name: 'cockpit-task-task_read', mcpServerName: 'cockpit-task', mcpToolName: 'task_read' },
+    ] }),
+    event('start', 'tool.execution_start', { toolCallId: 'mcp', toolName: 'cockpit-task-task_read',
+      mcpServerName: 'cockpit-task', mcpToolName: 'task_read', toolTitle: 'task_read', arguments: { id: 1 } }),
+    event('builtin', 'tool.execution_start', { toolCallId: 'bash', toolName: 'bash', intentionSummary: 'List' }),
+    event('done', 'tool.execution_complete', { toolCallId: 'mcp', success: true, result: { content: 'Output' } }),
+  ];
+  const check = (window: NativeWindow) => {
+    const tools = window.snapshot().messages.flatMap(message => message.toolCalls ?? []);
+    const mcp = tools.find(tool => tool.toolCallId === 'mcp');
+    assert.equal(mcp?.mcpServerName, 'cockpit-task');
+    assert.equal(mcp?.mcpToolName, 'task_read');
+    assert.equal(mcp?.name, 'cockpit-task-task_read');
+    const builtin = tools.find(tool => tool.toolCallId === 'bash');
+    assert.ok(builtin && !('mcpServerName' in builtin) && !('mcpToolName' in builtin));
+  };
+  for (let split = 0; split <= history.length; split++) {
+    const window = new NativeWindow(undefined, true);
+    accept(window, history.slice(split));
+    accept(window, history.slice(0, split));
+    compare(window, history);
+    check(window);
+  }
+  const live = new NativeWindow(undefined, true);
+  accept(live, history.slice(0, 1));
+  accept(live, history.slice(1), 'forward');
+  check(live);
+});
+
 test('persisted ask questions converge from starts, requests and assistant metadata on every page split', () => {
   for (const source of ['start', 'request', 'assistant']) {
     const question = 'Original question\nwith detail';

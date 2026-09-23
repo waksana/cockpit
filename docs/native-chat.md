@@ -295,8 +295,8 @@ The final message's `reasoningText` must be retained: complete
 Neither reasoning ownership nor completeness is inferred from equal or similar
 text. A complete snapshot replaces the corresponding incremental content.
 
-Tool execution starts create independent rows, with names and arguments from
-`tool.execution_start`. Results update those rows by scoped invocation ID, without
+Tool execution starts create independent rows, with names, native MCP
+server/tool names and arguments from `tool.execution_start`. Results update those rows by scoped invocation ID, without
 moving them to the completion event's position. Ordinary `toolRequests` embedded
 in an assistant message do not create duplicate execution rows or determine tool
 placement. Bounded windows can lack a start or completion; missing metadata and
@@ -305,11 +305,13 @@ system events retain their own semantics.
 
 Tool headers always occupy one line, both collapsed and expanded: one status
 glyph on the left, an optional native description in the middle, and a small
-tool name tag at the far right (leading ellipsis preserves its suffix). Tool headers
+tag at the far right: the native MCP server name, otherwise the tool name
+(leading ellipsis preserves its suffix). Tool headers
 and overviews use compact 13px monospace text and 28px rows; name tags use 12px
 text. They do not infer an intention from arguments.
 Input and output appear only after expansion, including for failed tools. Only
-actually clipped name/description fields are repeated in full in the details.
+actually clipped name/description fields are repeated in full in the details,
+except that server-tagged MCP rows always list their full tool name and server there.
 Complete header fields are not repeated. The whole header is a keyboard-operable
 disclosure without a trailing arrow, hover fill or expanded container frame.
 
@@ -461,9 +463,13 @@ stays on the action button and failures remain visible. Remaining shell/agent fa
 stay visible. A sampled non-abortable state disables interruption without asserting
 that all work ended, and queued-message clearing remains available when applicable.
 Built-in tools use action-specific icons and native descriptions, with the exact
-tool name retained in expanded details. Unknown/extension tools keep the Wrench
-and their original names in the header. Matching is exact, optionally stripping
-the native `functions.` prefix, never guessing from MCP tool-name substrings.
+tool name retained in expanded details. Unknown/extension tools keep the Wrench.
+MCP tools whose execution start carries native `mcpServerName` are tagged with that
+server name (read from its start); the full tool name, server and differing native
+`mcpToolName` are listed in the expanded details, and the header text falls back to the
+tool title when it equals the full name. Without a native server name, the original
+full name remains the tag. Matching is exact, optionally stripping the native
+`functions.` prefix, never guessing a builtin or server from tool-name substrings.
 Subagent messages remain independent cards, not ordinary tool rows.
 Queue entries always expose a small copy button beside removal, including
 single-line and collapsed messages. It copies

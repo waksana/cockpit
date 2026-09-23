@@ -8,7 +8,7 @@
     "build": "pnpm typecheck && vite build",
     "typecheck": "tsc --noEmit -p tsconfig.app.json",
     "test": "tsx --tsconfig tsconfig.app.json --test \"src/**/*.test.ts\"",
-    "lint": "eslint .",
+    "lint": "eslint . && stylelint \"src/**/*.{scss,css}\"",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -33,7 +33,9 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.6",
     "globals": "^17.12.0",
+    "postcss-scss": "^4.0.9",
     "sass": "^1.104.0",
+    "stylelint": "^17.15.0",
     "tailwindcss": "4.3.3",
     "tsx": "^4.23.13",
     "typescript": "^5.9.3",
