@@ -105,8 +105,9 @@ type SkillResource = Pick<ReturnType<typeof useKeyedResource<SkillRead>>, 'data'
 export function SkillDetailContent({ resource }: { resource: SkillResource }) {
   const { data, status, failed, pending, errorCause } = resource;
   const notFound = <StateNotice kind="empty" placement="pane">未找到该 Skill。</StateNotice>;
-  if (!data) return failed && isSkillNotFoundError(errorCause) ? notFound
-    : status ? <ResourceStatus status={status} failed={failed} pending={pending} placement="pane" /> : notFound;
+  // A structured not-found supersedes any retained earlier read.
+  if (failed && isSkillNotFoundError(errorCause)) return notFound;
+  if (!data) return status ? <ResourceStatus status={status} failed={failed} pending={pending} placement="pane" /> : notFound;
   const meta = [skillSourceLabel(data.source), data.userInvocable ? '可手动调用' : null].filter(Boolean).join(' · ');
   const body = data.body === undefined ? '' : skillBodyContent(data.body);
   return <PaneBody className="manage-detail">

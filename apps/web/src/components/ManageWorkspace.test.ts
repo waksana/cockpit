@@ -166,3 +166,11 @@ for (const cause of [new IntentHttpError('native boom', 500), new IntentHttpErro
     assert.doesNotMatch(html, /未找到该 Skill/);
   });
 }
+
+test('structured not-found after an earlier successful read replaces the retained detail', t => {
+  const cause = new IntentHttpError('Unknown skill in this working directory', 404, SKILL_NOT_FOUND);
+  const html = renderSkill(t, { data: { name: 'gone', description: 'old', body: '# Old body' },
+    status: `加载失败：${cause.message}`, failed: true, pending: false, errorCause: cause });
+  assert.match(html, /未找到该 Skill。/);
+  assert.doesNotMatch(html, /Old body|加载失败/);
+});
