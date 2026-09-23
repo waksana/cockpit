@@ -83,7 +83,7 @@ test('semantic middleware preserves real navigation and management controls with
       }));
       controls(detail, enhanced ? 5 : 3);
       assert.match(detail, /<button[^>]*aria-label="返回会话列表"/);
-      assert.match(detail, /<button[^>]*class="chat-back lg:hidden ck-icon-button"[^>]*aria-label="返回"/);
+      assert.match(detail, /<button[^>]*class="chat-back ck-icon-button"[^>]*aria-label="返回"/);
       assert.match(detail, /<span class="pane-title resource-name"><span data-provenance="true">Verified module<\/span><span>fixture-resource<\/span><\/span>/);
       if (enhanced) assert.match(detail, /<\/div><button type="button">Fixture detail: fixture-resource<\/button><\/header>/);
       else assert.doesNotMatch(detail, /Fixture detail:/);

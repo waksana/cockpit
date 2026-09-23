@@ -9,7 +9,7 @@ export function ChatHeader({ title, modelLabel, moreRef, moreOpen, onBack, onInf
   onBack: () => void; onInfo: () => void; onMore: () => void;
 }) {
   return <PaneHeader className="chat-topbar"
-    leading={<IconButton className="chat-back lg:hidden" icon="back" label="返回" onClick={onBack} />}
+    leading={<IconButton className="chat-back" icon="back" label="返回" onClick={onBack} />}
     title={<Button className="chat-topbar-content" aria-label={`查看会话信息：${title}`} onClick={onInfo}>
       <span className="pane-title chat-topbar-title ck-text-primary" title={title}>{title}</span>
       {modelLabel && <span className="chat-topbar-subtitle ck-text-secondary"><span className="chat-topbar-model" title={modelLabel}>{modelLabel}</span></span>}

@@ -1,7 +1,4 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -35,21 +32,4 @@ test('RefreshButton is one 20px reload control whose availability stays with the
   const pending = render(createElement(RefreshButton, { onClick() {}, pending: true, label: '刷新目录', title: 'Reload' }));
   assert.match(pending, /title="Reload" aria-label="刷新目录" aria-busy="true"><span class="ck-icon spinner" data-icon="loading"[^>]*width:16px;height:16px/);
   assert.match(render(createElement(RefreshButton, { onClick() {}, pending: false, disabled: true })), /disabled=""/);
-});
-
-test('classic host sources no longer use the retired dialog-btn, primary or rp classes', () => {
-  const root = fileURLToPath(new URL('..', import.meta.url));
-  const files: string[] = [];
-  const walk = (dir: string) => {
-    for (const name of readdirSync(dir)) {
-      const path = join(dir, name);
-      if (statSync(path).isDirectory()) { if (name !== 'next') walk(path); }
-      else if (/\.(tsx|scss)$/.test(name)) files.push(path);
-    }
-  };
-  walk(root);
-  for (const file of files) {
-    const text = readFileSync(file, 'utf8');
-    assert.doesNotMatch(text, /className=\{?["'`][^"'`\n]*?(?<![\w-])(?:dialog-btn|rp|primary)(?![\w-])|\.(?:dialog-btn|rp)\b(?![\w-])/, file);
-  }
 });

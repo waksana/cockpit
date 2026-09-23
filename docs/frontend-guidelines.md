@@ -222,6 +222,28 @@ ARIA 用于补足原生/可见内容未能表达的名称、说明或状态，�
 现有 [Chat Lab](DEVELOPMENT.md#isolated-chat-component-review) 是组合示例和行为入口，
 不维护第二套 demo 组件。
 
+<a id="style-guardrails"></a>
+### 经典样式护栏
+
+`pnpm lint` 用 Stylelint（`apps/web/stylelint.config.mjs`）检查经典样式，
+`/next/` 及其 lab 不在范围内；`tokens.scss` 是唯一定义原始颜色和 tweb 旧名的位置：
+
+- 禁止 hex、命名色和 `rgb()`/`hsl()` 等颜色函数，使用 `--host-color-*` 角色；
+- 禁止 `var(--primary-color)` 等 tweb 旧名，只对移植的 `base.scss`、`primitives/button.scss`、
+  `primitives/menu.scss` 与仅开发用的 `dev/chat-lab.scss` 放行；
+- `margin`/`padding`/`gap`/`inset` 中 3px 及以上的原始 px 报错，改用 `--host-space-*`、
+  `--ck-*` 或组件 token；0–2px 细线/光学偏移和 rem/em 排版节奏不拦截，避免大量噪音。
+
+`chat.scss` 与 `sidebar.scss` 暂时整文件放行（并行功能改动中，后续再迁移）。
+单个有意例外用带理由的 `// stylelint-disable-next-line <rule> -- <原因>`，
+无理由或多余的 disable 本身会报错。
+
+`pnpm test` 中的 `styles/classDefinitions.test.ts` 检查经典 TSX 里每个静态类名
+在经典样式中都有定义；测试/状态钩子、所有者语义名等例外逐条写明理由列入其允许列表，
+不再使用的条目也会报错。它同时阻止已退役的 `dialog-btn`、`rp`、`primary` 类名回归。
+公共 `ck-*` 由 `public-ui.scss` 定义，因此自然通过，未定义的 `ck-*` 仍会被报出。
+这些检查只覆盖样式文件和 className 字面量，不检查 TSX 行内 style。
+
 ## 短正反例
 
 | 场景 | 优先做法 | 避免 |
@@ -239,6 +261,7 @@ ARIA 用于补足原生/可见内容未能表达的名称、说明或状态，�
 - 加载、刷新、失败、未知、部分成功、disabled 和晚结果是否如实表达？是否保留恢复路径？
 - 是否尊重上翻、选择和编辑，首屏是否真正定位正确，而非隐藏/定时显示掩盖问题？
 - 组件、tokens、图标与公共合同是否复用？窄屏、长内容和双主题是否仍一致可读？
+- `pnpm lint` / `pnpm test` 的[样式护栏](#style-guardrails)是否通过？新增放行或 disable 是否写明原因，而不是为新代码绕过规则？
 
 对有意例外说明具体需求、原生方案的不足与取舍即可，不新增审批流程。
 看实际组合 DOM 和相关交互，不只看截图或静态 selector；使用

@@ -64,7 +64,7 @@ for (const section of ['mcp', 'skills']) {
 
 test('narrow detail retains its separate hierarchical back control', (t) => {
   const back = renderWorkspace(t, '/skills/name%2Fpart', true).match(/<button[^>]*aria-label="返回"[^>]*>/)?.[0];
-  assert.match(back ?? '', /^<button type="button" class="chat-back lg:hidden ck-icon-button"/);
+  assert.match(back ?? '', /^<button type="button" class="chat-back ck-icon-button"/);
   assert.doesNotMatch(back ?? '', /autofocus|tabindex/i);
   assert.match(shell, /label="返回" onClick=\{\(\) => up\(\)\}/);
   assert.doesNotMatch(shell, /\.focus\(|autoFocus|tabIndex/);
