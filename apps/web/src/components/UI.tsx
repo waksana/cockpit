@@ -33,20 +33,21 @@ export function ActionList({ label, disabled, children }: {
   </div>;
 }
 
-export function ActionRow({ icon, name, description, busy, busyDescription = '处理中…', ...props }:
+export function ActionRow({ icon, name, description, busy, busyDescription = '处理中…', trailing = true, ...props }:
   Omit<ComponentProps<'button'>, 'type' | 'children' | 'name'> & {
-    icon: IconName; name: string; description: string; busy?: boolean; busyDescription?: string;
+    icon: IconName; name: string; description?: string; busy?: boolean; busyDescription?: string; trailing?: boolean;
   }) {
   const id = useId();
+  const detail = busy ? busyDescription : description;
   return <Button {...props} className="ui-action-row"
-    aria-labelledby={`${id}-name`} aria-describedby={`${id}-description`} aria-busy={busy || undefined}>
+    aria-labelledby={`${id}-name`} aria-describedby={detail ? `${id}-description` : undefined} aria-busy={busy || undefined}>
     <Icon name={icon} size={20} className="ui-action-icon" />
     <span className="ui-action-text">
       <span id={`${id}-name`} className="ui-action-name">{name}</span>
-      <span id={`${id}-description`} className="ui-action-description">{busy ? busyDescription : description}</span>
+      {detail && <span id={`${id}-description`} className="ui-action-description">{detail}</span>}
     </span>
     {busy ? <Icon name="loading" size={16} className="ui-action-trailing spinner" />
-      : <Icon name="chevron_right" size={16} className="ui-action-trailing" />}
+      : trailing && <Icon name="chevron_right" size={16} className="ui-action-trailing" />}
   </Button>;
 }
 

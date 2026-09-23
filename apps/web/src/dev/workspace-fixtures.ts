@@ -1,5 +1,6 @@
 import type { ChatMessage, ChatSession, ModelOption } from '../net/types';
 import type { createCockpitStore } from '../net/store';
+import { cockpitApi, type CockpitApi } from '../net/api';
 
 export const workspaceSessionId = 'demo-cockpit-install';
 export const workspaceDraft = '再补上首次认证和数据目录的说明。';
@@ -95,14 +96,6 @@ export function installWorkspaceFixture(store: ReturnType<typeof createCockpitSt
         currentReasoningEffort: session.currentReasoningEffort, currentContextTier: session.currentContextTier,
         availableModels: session.availableModels };
     },
-    setModel: async (id, modelId, options) => {
-      const session = find(id);
-      if (!session.availableModels?.some(model => model.modelId === modelId)) throw new Error('Unknown synthetic model');
-      store.setState(state => ({ sessions: state.sessions.map(item => item.sessionId === id
-        ? { ...item, currentModelId: modelId, currentReasoningEffort: options?.reasoningEffort,
-          currentContextTier: options?.contextTier } : item) }));
-      return { ok: true, result: { modelId, status: 'applied' } };
-    },
     sendDraft: async request => {
       if (request.intent !== 'prompt') throw new Error('Unsupported synthetic draft route');
       const { sessionId: id, text } = request.body;
@@ -119,4 +112,14 @@ export function installWorkspaceFixture(store: ReturnType<typeof createCockpitSt
         ? { ...item, status: 'idle', nativeProcessing: false, intent: null, queue: [] } : item) }));
     },
   });
+  Object.assign(cockpitApi, {
+    setModel: async (id, modelId, options) => {
+      const session = find(id);
+      if (!session.availableModels?.some(model => model.modelId === modelId)) throw new Error('Unknown synthetic model');
+      store.setState(state => ({ sessions: state.sessions.map(item => item.sessionId === id
+        ? { ...item, currentModelId: modelId, currentReasoningEffort: options?.reasoningEffort,
+          currentContextTier: options?.contextTier } : item) }));
+      return { ok: true, result: { modelId, status: 'applied' } };
+    },
+  } satisfies Partial<CockpitApi>);
 }

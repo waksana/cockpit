@@ -150,7 +150,6 @@ Select a scene with `?scene=<id>`:
 | `sidebar` | Two-line session rows with long/unbroken titles, roles, statuses and module badges. Run `await import('/src/dev/sidebar-checks.ts').then(m => m.runSidebarChecks())` at desktop and narrow touch widths. |
 | `resources` (`&longNames=1`, `&page=mcp|skills|session-mcp|session-skills`, `&item=`, `&empty=1`, `&fail=1`, `&delay=1`) | Session list, role picker, settings and global/session MCP/Skills pages against a synthetic store. Run `await import('/src/dev/role-picker-checks.ts').then(m => m.runRolePickerChecks())` with a role picker open. Check 1600, 1024 and 390px. |
 | `workspace`, `full-web` (`&case=tool-loading`, `agent-unloaded`) | The complete App on a synthetic store, including the session control bar. |
-| `activity-design`, `control-design` | Design previews of activity/tool icons and the separated control area; synthetic transitions only. |
 
 Use real mouse, touch and keyboard actions, both themes and narrow widths
 (`&pane=narrow` constrains the chat pane to 456px). The checks measure geometry and
@@ -161,12 +160,6 @@ set `COCKPIT_LAB_FILE_ROOT` to an extracted, receipt-verified File package (the
 directory with `cockpit.module.json` and `module-build.json`). Only inventoried
 frontend assets are served, module backends never run, and uploads use a bounded
 in-memory File API.
-
-A separately authorized static design review build exists:
-`COCKPIT_ACTIVITY_DESIGN_REVIEW=1 COCKPIT_REVIEW_OUTPUT=/absolute/output pnpm --filter @cockpit/web exec vite build --config activity-design-review.config.ts`
-(add `COCKPIT_REVIEW_SCENE=control` for the control scene). It has no source maps,
-installs memory-only storage and disables transports before importing components.
-Publish it only behind existing review authentication with `connect-src 'none'`.
 
 Stop temporary previews after review; do not publish user screenshots.
 
