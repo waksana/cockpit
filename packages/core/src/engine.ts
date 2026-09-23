@@ -17,14 +17,21 @@ import type {
   RoleSelection, RoleReadiness, RoleAdditionResult, SessionRole, SkillSession, ResourcePreparationResult,
   SessionControls, SessionControlAction, SessionControlResult, QueuedItem,
 } from '@cockpit/protocol';
-import { NativeChatRead, SessionActivity, SessionUsage, MetaResource as MetaResources, cleanSessionTitle, SessionResourcesPrepare, RESOURCE_PREPARATION_ERROR_LIMIT, SKILL_NOT_FOUND } from '@cockpit/protocol';
+import { NativeChatRead, SessionActivity, SessionUsage, MetaResource as MetaResources, cleanSessionTitle, SessionResourcesPrepare, RESOURCE_PREPARATION_ERROR_LIMIT } from '@cockpit/protocol';
 import { NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult } from '@cockpit/protocol';
 import { OfficialRuntime, sessionModelOptions } from './runtime.ts';
 import { normalizeEvent, type RuntimeAttachment } from './sdk-types.ts';
 import { readNativeChat } from './native-chat.ts';
 import { describeMcpServer, mcpConnection, redactMcpConfig } from './mcp-config.ts';
 import { validateForkHistory } from './fork.ts';
-import { CockpitError, busy, conflict, invalid, notPending, transition, unavailable } from './errors.ts';
+import {
+  CockpitError, SessionUnloadedError, SkillNotFoundError, busy, conflict, engineStopped, invalid, notPending,
+  sessionNotFound, transition, unavailable, unsupported,
+} from './errors.ts';
+import { boundedMap, messageOf, readConcurrency, settled } from './async.ts';
+import { SessionHandle, type Decision, type DecisionKind } from './session-handle.ts';
+
+export { boundedMap } from './async.ts';
 import type { RoleProvider, RoleAssembly, SessionInstructions } from './roles.ts';
 
 export type EngineRuntime = Pick<OfficialRuntime,
@@ -58,16 +65,6 @@ export const coreCapabilities = {
 
 type LiveMeta = SessionMeta & { activeOperations?: number; nativeProcessing?: boolean };
 type UserInputResponse = Awaited<ReturnType<NonNullable<SessionConfig['onUserInputRequest']>>>;
-type DecisionKind = 'ask' | 'planRequest' | 'elicitation';
-interface Decision {
-  kind: DecisionKind;
-  epoch: number;
-  interactionId?: string;
-  value: NonNullable<SessionMeta[DecisionKind]>;
-  answer: (value: unknown) => void;
-  reject: (error: Error) => void;
-  validate?: (value: unknown) => void;
-}
 type ResourceValues = {
   todos: Awaited<ReturnType<CopilotSession['rpc']['plan']['readSqlTodos']>>;
   schedule: Awaited<ReturnType<CopilotSession['rpc']['schedule']['list']>>;
@@ -83,48 +80,9 @@ function completeMeta(meta: SessionProjection): SessionMeta {
   }
   return { ...meta, title, cwd, lastActivity, status, ask };
 }
-interface State {
-  roleAssembly?: RoleAssembly;
-  instructionSources?: SessionInstructions['sources'];
-  creationSubmitted?: boolean;
-  id: string;
-  observedCwd?: string | null;
-  sdk: CopilotSession | null;
-  controlToken?: string;
-  controlGate: Promise<void>;
-  observedCompaction: boolean;
-  manualCompactions: number;
-  load?: Promise<void>;
-  closing: boolean;
-  cancelling?: Promise<void>;
-  interrupting?: Promise<IntentResult<'session/interrupt'>>;
-  interruptTurn?: { epoch: number; interactionId?: string; decisions: Map<string, Decision> };
-  turnEpoch: number;
-  interruptedEpoch?: number;
-  interactionId?: string;
-  operations: number;
-  // Read-only resource leases retain the handle like operations but are not
-  // published as activeOperations, so passive reads emit no SSE frames.
-  readLeases: number;
-  mcpOperations: number;
-  sends: number;
-  accepted: Set<string>;
-  steeringAccepted: Set<string>;
-  decisions: Map<string, Decision>;
-  eventOwner?: { closed?: WeakSet<CopilotSession>; contextChanged?: boolean };
-  sendReceipts: Set<string>;
-  revision: number;
-  activityRevision: number;
-  scheduleGate: Promise<void>;
-  resourceWrites: Map<SessionResource, number>;
-  pendingInvalidations: Set<SessionResource>;
-  modelGate: Promise<void>;
-}
 
 const activeTask = (status: string) => !['idle', 'completed', 'failed', 'cancelled'].includes(status);
 const planActions = new Set<string>(['exit_only', 'interactive', 'autopilot', 'autopilot_fleet']);
-const messageOf = (error: unknown) => error instanceof Error ? error.message : String(error);
-const unsupported = (what: string): never => { throw new CockpitError('UNSUPPORTED', `${what} is unsupported by this public SDK adapter; nothing was changed`); };
 
 const controlEvents = new Set([
   'user.message', 'assistant.turn_start', 'assistant.turn_end', 'assistant.message', 'abort',
@@ -132,68 +90,8 @@ const controlEvents = new Set([
   'subagent.started', 'subagent.completed', 'subagent.failed',
 ]);
 
-class SkillNotFoundError extends CockpitError {
-  constructor() {
-    super(SKILL_NOT_FOUND, 'Unknown skill in this working directory');
-  }
-}
 
-class SessionUnloadedError extends CockpitError {
-  constructor() {
-    super('SESSION_UNLOADED', 'Native session data is unavailable while unloaded; explicitly resume the session first');
-  }
-}
 
-const sessionNotFound = (message = 'Unknown session') => new CockpitError('SESSION_NOT_FOUND', message);
-const engineStopped = (message: string) => new CockpitError('ENGINE_STOPPED', message);
-
-async function settled<T extends readonly unknown[]>(work: { [K in keyof T]: Promise<T[K]> }): Promise<T> {
-  // Teardown cannot race a sibling RPC that is still settling after another fails.
-  const results = await Promise.allSettled(work);
-  const failed = results.find(result => result.status === 'rejected');
-  if (failed?.status === 'rejected') throw failed.reason;
-  return results.map(result => (result as PromiseFulfilledResult<unknown>).value) as unknown as T;
-}
-
-const readConcurrency = 4;
-
-/**
- * Maps in input order with at most `limit` calls in flight. After a failure no
- * new calls start; started siblings settle before the first failure in input
- * order is thrown, so no read outlives the aggregate result.
- */
-export async function boundedMap<T, R>(items: readonly T[], limit: number, work: (item: T) => Promise<R>): Promise<R[]> {
-  const results = new Array<PromiseSettledResult<R> | undefined>(items.length);
-  let next = 0;
-  let failed = false;
-  const lane = async () => {
-    while (!failed && next < items.length) {
-      const index = next++;
-      try { results[index] = { status: 'fulfilled', value: await work(items[index]!) }; }
-      catch (reason) { results[index] = { status: 'rejected', reason }; failed = true; }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, lane));
-  const failure = results.find(result => result?.status === 'rejected');
-  if (failure?.status === 'rejected') throw failure.reason;
-  return results.map(result => (result as PromiseFulfilledResult<R>).value);
-}
-
-function activeOperations(st: State): number {
-  return st.operations - st.readLeases;
-}
-
-function stateFor(id: string): State {
-  return {
-    id, sdk: null, closing: false, operations: 0, readLeases: 0, mcpOperations: 0, sends: 0,
-    accepted: new Set(), steeringAccepted: new Set(), decisions: new Map(), sendReceipts: new Set(),
-    revision: 0, activityRevision: 0, turnEpoch: 0,
-    scheduleGate: Promise.resolve(),
-    resourceWrites: new Map(), pendingInvalidations: new Set(),
-    modelGate: Promise.resolve(),
-    controlGate: Promise.resolve(), observedCompaction: false, manualCompactions: 0,
-  };
-}
 
 export class Engine {
   private roles?: RoleProvider;
@@ -207,7 +105,7 @@ export class Engine {
     return await this.roles?.read(id) ?? [];
   }
 
-  private roleState(st: State | undefined, roles: SessionRole[]) {
+  private roleState(st: SessionHandle | undefined, roles: SessionRole[]) {
     const appliedRoles = st?.sdk ? st.roleAssembly?.roles ?? [] : [];
     const rolesNeedReload = !!st?.sdk && (roles.length !== appliedRoles.length
       || roles.some(role => !appliedRoles.some(applied =>
@@ -346,7 +244,7 @@ export class Engine {
     }
   }
   private readonly runtime: EngineRuntime;
-  private readonly sessions = new Map<string, State>();
+  private readonly sessions = new Map<string, SessionHandle>();
   private readonly creating = new Set<string>();
   private readonly removing = new Set<string>();
   private readonly roleWrites = new Map<string, Promise<void>>();
@@ -408,7 +306,7 @@ export class Engine {
     finally { off(); }
   }
 
-  private async withSession<T>(st: State, sdk: CopilotSession, work: () => Promise<T>): Promise<T> {
+  private async withSession<T>(st: SessionHandle, sdk: CopilotSession, work: () => Promise<T>): Promise<T> {
     return this.untilFatal(async () => {
       if (st.sdk !== sdk) throw new Error('Native session closed during operation; delivery may be uncertain');
       let rejectClosed!: (error: Error) => void;
@@ -433,7 +331,7 @@ export class Engine {
     return () => { this.nativeObservers.delete(handler); };
   }
 
-  private observeNative(st: State, native: SessionEvent): void {
+  private observeNative(st: SessionHandle, native: SessionEvent): void {
     if (native.type === 'session.context_changed') {
       const { data, agentId, parentToolCallId } = normalizeEvent(native);
       if (!agentId && !parentToolCallId && !data.agentId && !data.parentToolCallId) {
@@ -584,8 +482,8 @@ export class Engine {
           ...(resources.includes('control') ? { activity: null } : {}),
           ...(resources.includes('controls') ? { controls: null } : {}),
           ...(st ? { loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling,
-            activeOperations: activeOperations(st), activeMcpOperations: st.mcpOperations,
-            ...this.decisionFields(st) } : {}),
+            activeOperations: st.activeOperations(), activeMcpOperations: st.mcpOperations,
+            ...st.decisionFields() } : {}),
         } : null;
       }
       const activityRevision = st.activityRevision;
@@ -641,9 +539,9 @@ export class Engine {
           ? { queue: this.queueProjection((control?.queue ?? queue)!) } : {}),
         ...(todos ? { todo: this.todoSummary(todos) } : {}),
         ...(schedules ? { scheduleCount: schedules.entries.length } : {}),
-        activeOperations: activeOperations(st),
+        activeOperations: st.activeOperations(),
         loading: !!st.load, closing: st.closing, cancelling: !!st.cancelling,
-        ...this.decisionFields(st),
+        ...st.decisionFields(),
       };
     } catch (error) {
       if (st && resources.includes('control')) this.patch(st, { activity: null });
@@ -675,7 +573,7 @@ export class Engine {
     this.emit(await this.snapshot());
   }
 
-  private async state(id: string): Promise<State> {
+  private async state(id: string): Promise<SessionHandle> {
     this.assertAvailable();
     if (this.stopped) throw engineStopped('Engine is stopped; start it before performing session operations');
     if (this.lifecycle) throw transition('Engine lifecycle transition is in progress');
@@ -690,7 +588,7 @@ export class Engine {
       }
       st = this.sessions.get(id);
       if (!st) {
-        st = stateFor(id);
+        st = new SessionHandle(id);
         st.observedCwd = metadata.context?.workingDirectory || null;
         this.sessions.set(id, st);
       }
@@ -699,13 +597,13 @@ export class Engine {
     return st;
   }
 
-  private release(st: State): void {
+  private release(st: SessionHandle): void {
     if (!st.sdk && !st.load && !st.closing && !st.operations && !st.cancelling
       && !st.decisions.size && this.sessions.get(st.id) === st) this.sessions.delete(st.id);
     this.bus.emit('activity-settled');
   }
 
-  private assertAdmission(st: State): void {
+  private assertAdmission(st: SessionHandle): void {
     this.assertAvailable();
     const current = this.sessions.get(st.id);
     if (this.stopped || this.lifecycle || st.closing || (current && current !== st)) {
@@ -713,12 +611,12 @@ export class Engine {
     }
   }
 
-  private assertReadable(st?: State): void {
+  private assertReadable(st?: SessionHandle): void {
     this.assertAvailable();
     if (this.stopped || this.lifecycle || st?.closing) throw transition('Native session metadata is unavailable during a lifecycle transition');
   }
 
-  private async config(st: State, cwd?: string): Promise<{ config: SessionConfig; assembly?: RoleAssembly; instructions?: SessionInstructions }> {
+  private async config(st: SessionHandle, cwd?: string): Promise<{ config: SessionConfig; assembly?: RoleAssembly; instructions?: SessionInstructions }> {
     const disabled = await this.globalDisabledSkills();
     const selected = await this.savedRoles(st.id);
     const assembly = selected.length ? await this.roles!.assemble(st.id, selected) : undefined;
@@ -784,7 +682,7 @@ export class Engine {
     } };
   }
 
-  private decision<T>(st: State, kind: DecisionKind, fields: object, validate?: (value: T) => void): Promise<T> {
+  private decision<T>(st: SessionHandle, kind: DecisionKind, fields: object, validate?: (value: T) => void): Promise<T> {
     if (this.failure) return Promise.reject(this.failure);
     if (st.closing || st.cancelling || this.lifecycle) return Promise.reject(new Error('Session is closing or cancelling'));
     const requestId = randomUUID();
@@ -799,20 +697,11 @@ export class Engine {
     });
   }
 
-  private decisionFields(st: State) {
-    const decisions = [...st.decisions.values()];
-    return {
-      ask: decisions.find(d => d.kind === 'ask')?.value as SessionMeta['ask'] ?? null,
-      planRequest: decisions.find(d => d.kind === 'planRequest')?.value as SessionMeta['planRequest'] ?? null,
-      elicitation: decisions.find(d => d.kind === 'elicitation')?.value as SessionMeta['elicitation'] ?? null,
-    };
+  private projectDecisions(st: SessionHandle): void {
+    this.patch(st, st.decisionFields());
   }
 
-  private projectDecisions(st: State): void {
-    this.patch(st, this.decisionFields(st));
-  }
-
-  private answer(st: State, requestId: string, kind: DecisionKind, value: unknown): void {
+  private answer(st: SessionHandle, requestId: string, kind: DecisionKind, value: unknown): void {
     const pending = st.decisions.get(requestId);
     if (!pending || pending.kind !== kind) throw notPending('Request is no longer pending');
     pending.validate?.(value);
@@ -836,7 +725,7 @@ export class Engine {
     if (!statSync(directory).isDirectory()) throw invalid('Working directory must be a directory');
     const id = randomUUID();
     if (this.creating.has(id) || this.sessions.has(id)) throw conflict('Session identity already has an active handle or creation');
-    const st = stateFor(id);
+    const st = new SessionHandle(id);
     if (roles.length) {
       if (!this.roles) throw unavailable('Module roles are unavailable');
       const assembly = await this.roles.assemble(id, roles);
@@ -891,7 +780,7 @@ export class Engine {
     });
   }
 
-  private async ensureLoaded(st: State, create = false, cwd?: string): Promise<void> {
+  private async ensureLoaded(st: SessionHandle, create = false, cwd?: string): Promise<void> {
     this.assertAdmission(st);
     if (st.load) return st.load;
     if (!create) this.sessions.set(st.id, st);
@@ -901,7 +790,7 @@ export class Engine {
     this.patch(st, { loading: true });
     st.load = this.untilFatal(() => this.birth(async () => {
       this.assertAvailable();
-      const owner: NonNullable<State['eventOwner']> = {};
+      const owner: NonNullable<SessionHandle['eventOwner']> = {};
       st.eventOwner = owner;
       if (create) st.observedCwd = cwd ?? null;
       const assembled = await this.config(st, cwd);
@@ -953,7 +842,7 @@ export class Engine {
     return st.load;
   }
 
-  private async liveSession(st: State): Promise<CopilotSession | null> {
+  private async liveSession(st: SessionHandle): Promise<CopilotSession | null> {
     this.assertAvailable();
     const sdk = st.sdk;
     if (!sdk) return null;
@@ -967,13 +856,13 @@ export class Engine {
     return sdk;
   }
 
-  private probe(st: State): void {
+  private probe(st: SessionHandle): void {
     void this.liveSession(st).catch(error => {
       if (!this.failure) this.log('session liveness check failed', { sessionId: st.id, error: messageOf(error) });
     });
   }
 
-  private onLive(st: State, native: SessionEvent): void {
+  private onLive(st: SessionHandle, native: SessionEvent): void {
     if ((!st.sdk && !st.eventOwner) || this.failure
       || (!native.type.startsWith('session.') && native.type !== 'pending_messages.modified' && !controlEvents.has(native.type))) return;
     const event = normalizeEvent(native);
@@ -1103,16 +992,16 @@ export class Engine {
     }
   }
 
-  private scheduleSync(st: State, resources: SessionResource[] = ['control', 'queue']): void {
+  private scheduleSync(st: SessionHandle, resources: SessionResource[] = ['control', 'queue']): void {
     this.invalidate(st, resources);
   }
 
-  private patchMcpPending(st: State): void {
+  private patchMcpPending(st: SessionHandle): void {
     this.invalidate(st, ['control', 'mcp']);
   }
 
   private async readResource<K extends Resource>(
-    st: State, sdk: CopilotSession, resource: K,
+    st: SessionHandle, sdk: CopilotSession, resource: K,
   ): Promise<ResourceValues[K]> {
     this.assertAvailable();
     if (st.sdk !== sdk) throw new Error('Native session closed during resource read');
@@ -1128,7 +1017,7 @@ export class Engine {
       total: todos.length, intent: todos.find(todo => todo.status === 'in_progress')?.title ?? null } : null;
   }
 
-  private async readControl(st: State, sdk: CopilotSession) {
+  private async readControl(st: SessionHandle, sdk: CopilotSession) {
     const [processing, activity, queue, tasks, mcp] = await this.withSession(st, sdk, () => settled([
       sdk.rpc.metadata.isProcessing(), sdk.rpc.metadata.activity(), sdk.rpc.queue.pendingItems(),
       sdk.rpc.tasks.list(), sdk.rpc.mcp.list(),
@@ -1187,7 +1076,7 @@ export class Engine {
     }));
   }
 
-  private controlProjection(st: State, control: Awaited<ReturnType<Engine['readControl']>>): SessionControls {
+  private controlProjection(st: SessionHandle, control: Awaited<ReturnType<Engine['readControl']>>): SessionControls {
     return {
       token: st.controlToken!, sampledAt: control.summary.sampledAt,
       main: control.processing.processing,
@@ -1205,7 +1094,7 @@ export class Engine {
     };
   }
 
-  private async syncNative(st: State): Promise<void> {
+  private async syncNative(st: SessionHandle): Promise<void> {
     const sdk = await this.liveSession(st);
     if (!sdk) return;
     const revision = st.revision;
@@ -1216,15 +1105,15 @@ export class Engine {
   }
 
   private async operation<T>(
-    id: string, work: (sdk: CopilotSession, st: State) => Promise<T>,
-    kind: 'work' | 'read' | SessionResource[] = 'work', owner?: State,
+    id: string, work: (sdk: CopilotSession, st: SessionHandle) => Promise<T>,
+    kind: 'work' | 'read' | SessionResource[] = 'work', owner?: SessionHandle,
     changes: SessionResource[] = Array.isArray(kind) ? kind : [],
   ): Promise<T> {
     const st = owner ?? await this.state(id);
     this.assertAdmission(st);
     if (st.cancelling) throw busy('Session cancellation is in progress');
     st.operations++;
-    this.patch(st, { activeOperations: activeOperations(st) });
+    this.patch(st, { activeOperations: st.activeOperations() });
     // Merge a mutation's native resource event with its readback notification.
     // Control/queue hints still flow immediately while the operation is busy.
     const held = changes.filter(resource => resource !== 'control' && resource !== 'controls' && resource !== 'queue');
@@ -1242,7 +1131,7 @@ export class Engine {
       throw error;
     } finally {
       st.operations--;
-      this.patch(st, { activeOperations: activeOperations(st) });
+      this.patch(st, { activeOperations: st.activeOperations() });
       if (changes.length) this.invalidate(st, changes);
       for (const resource of held) {
         const count = st.resourceWrites.get(resource)! - 1;
@@ -1258,7 +1147,7 @@ export class Engine {
 
   async prompt(id: string, text: string, mode: 'enqueue' | 'immediate' = 'enqueue', attachments?: RuntimeAttachment[]): Promise<{ ok: boolean; queued?: boolean }> {
     if (!text.trim() && !attachments?.length) throw invalid('Prompt must not be empty');
-    return this.operation(id, (sdk, st) => this.serializeMutation(st, 'controlGate', async () => {
+    return this.operation(id, (sdk, st) => st.serialize('controlGate', async () => {
       const before = await this.readControl(st, sdk);
       const queued = before.busy && mode === 'enqueue';
       st.sends++;
@@ -1290,7 +1179,7 @@ export class Engine {
     const st = await this.state(id);
     this.assertAdmission(st);
     if (st.cancelling) return st.cancelling;
-    if (st.load || activeOperations(st)) return Promise.reject(busy('Session operation is still in progress'));
+    if (st.load || st.activeOperations()) return Promise.reject(busy('Session operation is still in progress'));
     this.patch(st, { cancelling: true, error: null });
     st.cancelling = this.untilFatal(async () => {
       const sdk = await this.liveSession(st);
@@ -1318,7 +1207,7 @@ export class Engine {
     return st.cancelling;
   }
 
-  private clearInterruptedTurn(st: State, target: NonNullable<State['interruptTurn']>): void {
+  private clearInterruptedTurn(st: SessionHandle, target: NonNullable<SessionHandle['interruptTurn']>): void {
     for (const [id, decision] of target.decisions) {
       if (st.decisions.get(id) !== decision) continue;
       decision.reject(new Error('Native main turn interrupted'));
@@ -1333,7 +1222,7 @@ export class Engine {
   async interrupt(id: string): Promise<IntentResult<'session/interrupt'>> {
     const st = await this.state(id);
     if (st.interrupting) return st.interrupting;
-    if (st.load || activeOperations(st) || st.cancelling) return Promise.reject(busy('Session operation is still in progress'));
+    if (st.load || st.activeOperations() || st.cancelling) return Promise.reject(busy('Session operation is still in progress'));
     const pending = this.operation(id, async (sdk) => {
       const target = { epoch: st.turnEpoch, interactionId: st.interactionId, decisions: new Map(st.decisions) };
       st.interruptTurn = target;
@@ -1380,9 +1269,9 @@ export class Engine {
     assertOwner();
     const admittedTurn = { epoch: st.turnEpoch, interactionId: st.interactionId, decisions: new Map(st.decisions) };
     st.operations++;
-    this.patch(st, { activeOperations: activeOperations(st) });
+    this.patch(st, { activeOperations: st.activeOperations() });
     try {
-      return await this.serializeMutation(st, 'controlGate', async () => {
+      return await st.serialize('controlGate', async () => {
         assertOwner();
         if (!await this.liveSession(st)) throw new SessionUnloadedError();
         assertOwner();
@@ -1593,23 +1482,18 @@ export class Engine {
       });
     } finally {
       st.operations--;
-      this.patch(st, { activeOperations: activeOperations(st) });
+      this.patch(st, { activeOperations: st.activeOperations() });
       this.invalidate(st, ['control', 'queue', 'tasks']);
       this.release(st);
     }
   }
 
-  private localBusy(st: State, ownTransition = false): boolean {
-    return (!ownTransition && st.closing) || st.operations > 0 || !!st.load
-      || !!st.cancelling || st.decisions.size > 0 || st.sends > 0 || st.accepted.size > 0;
-  }
-
-  private async busy(st: State, ownTransition = false): Promise<boolean> {
-    if (this.localBusy(st, ownTransition)) return true;
+  private async busy(st: SessionHandle, ownTransition = false): Promise<boolean> {
+    if (st.localBusy(ownTransition)) return true;
     const revision = st.revision;
     const sdk = await this.liveSession(st);
     const active = !!sdk && (await this.readControl(st, sdk)).busy;
-    return active || this.localBusy(st, ownTransition) || st.revision !== revision;
+    return active || st.localBusy(ownTransition) || st.revision !== revision;
   }
 
   async busyCount(): Promise<number> {
@@ -1619,7 +1503,7 @@ export class Engine {
     return count;
   }
 
-  private async checkIdle(st: State): Promise<void> {
+  private async checkIdle(st: SessionHandle): Promise<void> {
     await this.liveSession(st);
     if (st.load || st.operations || st.cancelling || st.decisions.size || st.sends || st.accepted.size) {
       throw busy('Session has protected work');
@@ -1629,14 +1513,14 @@ export class Engine {
     }
   }
 
-  private async close(st: State): Promise<void> {
+  private async close(st: SessionHandle): Promise<void> {
     if (!st.sdk) return;
     const sdk = st.sdk;
     await this.untilFatal(() => this.runtime.closeSession(sdk));
     if (st.sdk === sdk) this.detach(st);
   }
 
-  private detach(st: State, error?: Error): void {
+  private detach(st: SessionHandle, error?: Error): void {
     const sdk = st.sdk;
     st.eventOwner = undefined;
     st.sdk = null;
@@ -1662,7 +1546,7 @@ export class Engine {
     this.release(st);
   }
 
-  private async transition<T>(st: State, work: () => Promise<T>): Promise<T> {
+  private async transition<T>(st: SessionHandle, work: () => Promise<T>): Promise<T> {
     this.assertAdmission(st);
     if (st.closing || st.load || st.operations || st.cancelling) throw busy('Session operation is in progress');
     st.closing = true;
@@ -1706,7 +1590,7 @@ export class Engine {
     });
   }
 
-  private async initializeTools(st: State, sdk: CopilotSession) {
+  private async initializeTools(st: SessionHandle, sdk: CopilotSession) {
     await this.withSession(st, sdk, () => sdk.rpc.tools.initializeAndValidate());
     // Configuration changes can invalidate the native table without removing tools.
     const metadata = await this.withSession(st, sdk, () => sdk.rpc.tools.getCurrentMetadata());
@@ -1913,7 +1797,7 @@ export class Engine {
   }
 
   async setModel(id: string, modelId: string, reasoningEffort?: string, contextTier?: 'default' | 'long_context') {
-    return this.operation(id, (sdk, st) => this.serializeMutation(st, 'modelGate', async () => {
+    return this.operation(id, (sdk, st) => st.serialize('modelGate', async () => {
       const options = {
         modelId,
         deferIfModelChangeQueued: true,
@@ -1995,7 +1879,7 @@ export class Engine {
     if (st.closing || this.lifecycle) throw transition('Session lifecycle transition is in progress');
     // Protect these reads from close without loading or creating new work.
     st.operations++;
-    this.patch(st, { activeOperations: activeOperations(st) });
+    this.patch(st, { activeOperations: st.activeOperations() });
     try {
       const sdk = await this.liveSession(st);
       if (!sdk) throw new SessionUnloadedError();
@@ -2008,7 +1892,7 @@ export class Engine {
       return SessionUsage.parse({ sessionId: id, sampledAt: Date.now(), context: context.contextAttribution ?? null, usage });
     } finally {
       st.operations--;
-      this.patch(st, { activeOperations: activeOperations(st) });
+      this.patch(st, { activeOperations: st.activeOperations() });
       this.release(st);
     }
   }
@@ -2038,7 +1922,7 @@ export class Engine {
     return this.operation(id, (sdk, st) => this.readPanel(st, sdk, section), 'read');
   }
 
-  private readPanel(st: State, sdk: CopilotSession, section: PanelSection): Promise<PanelItem[]> {
+  private readPanel(st: SessionHandle, sdk: CopilotSession, section: PanelSection): Promise<PanelItem[]> {
     return this.withSession(st, sdk, async () => {
       switch (section) {
         case 'skills': return (await sdk.rpc.skills.list()).skills.map(s => ({ label: s.name, sublabel: s.source, enabled: s.enabled }));
@@ -2314,7 +2198,7 @@ export class Engine {
     if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 86400) throw invalid('Schedule delay must be between 1 second and 24 hours');
     const recurring = options.at === undefined && (options.recurring ?? true);
     let dispatched = false;
-    return this.operation(id, (sdk, st) => this.serializeMutation(st, 'scheduleGate', async () => {
+    return this.operation(id, (sdk, st) => st.serialize('scheduleGate', async () => {
       if (options.at !== undefined) {
         seconds = Math.ceil((options.at - Date.now()) / 1000);
         if (seconds < 1) throw invalid('Absolute schedule time passed while waiting for the runtime');
@@ -2346,11 +2230,6 @@ export class Engine {
       return { possiblyCreated: true, error: `Native schedule operation ended after dispatch; a schedule may have been created: ${messageOf(error)}. Do not retry automatically` };
     });
   }
-  private serializeMutation<T>(st: State, gate: 'scheduleGate' | 'modelGate' | 'controlGate', work: () => Promise<T>): Promise<T> {
-    const next = st[gate].then(work);
-    st[gate] = next.then(() => {}, () => {});
-    return next;
-  }
   private scheduleEntry(raw: Awaited<ReturnType<CopilotSession['rpc']['schedule']['list']>>['entries'][number]): ScheduleEntry {
     const nextRunAt = Date.parse(raw.nextRunAt);
     if (!Number.isFinite(nextRunAt)) throw new Error('Native schedule contains an invalid nextRunAt');
@@ -2364,7 +2243,7 @@ export class Engine {
     }, 'read');
   }
   async stopSchedule(id: string, scheduleId: number): Promise<boolean> {
-    return this.operation(id, (sdk, st) => this.serializeMutation(st, 'scheduleGate', async () => {
+    return this.operation(id, (sdk, st) => st.serialize('scheduleGate', async () => {
       const result = await this.withSession(st, sdk, () => sdk.rpc.schedule.stop({ id: scheduleId }));
       return !!result.entry;
     }), ['schedule']);
@@ -2463,7 +2342,7 @@ export class Engine {
     return { path: target, parent: dirname(target) === target ? null : dirname(target), entries };
   }
 
-  private invalidate(st: State, resources?: SessionResource[]): void {
+  private invalidate(st: SessionHandle, resources?: SessionResource[]): void {
     if (this.sessions.get(st.id) !== st) return;
     if (!resources || resources.some(resource => ['control', 'controls', 'tasks', 'queue', 'mcp'].includes(resource))) {
       st.activityRevision++;
@@ -2482,7 +2361,7 @@ export class Engine {
     this.emit({ type: 'session/invalidated', sessionId: st.id, resources });
   }
 
-  private patch(st: State, fields: Partial<LiveMeta>): void {
+  private patch(st: SessionHandle, fields: Partial<LiveMeta>): void {
     for (const key of ['currentReasoningEffort', 'currentContextTier', 'currentMode'] as const) {
       if (key in fields && fields[key] === undefined) fields[key] = null;
     }
