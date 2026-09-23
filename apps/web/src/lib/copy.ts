@@ -8,7 +8,10 @@ const trimReason = (reason: string) => reason.trim().replace(/[。.；;，,\s]+$
 export const copy = {
   busy: (action: string) => `正在${action}…`,
   done: (action: string) => `已${action}`,
-  failed: (action: string, reason: string) => trimReason(reason) ? `${action}失败：${trimReason(reason)}` : `${action}失败`,
+  failed: (action: string, reason: string) => {
+    const head = `${action}${/[\w)]$/u.test(action) ? ' ' : ''}失败`;
+    return trimReason(reason) ? `${head}：${trimReason(reason)}` : head;
+  },
   unknown: (reason: string) => `结果未知：${trimReason(reason) || '未收到确认'}。刷新后确认，不会自动重试。`,
 };
 

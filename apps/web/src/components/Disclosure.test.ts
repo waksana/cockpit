@@ -57,7 +57,7 @@ test('operation results carry state by icon and words; only failures and unknown
 test('operation results offer one action and fold long causes into details', () => {
   const html = render(createElement(OperationResult, {
     state: 'failed', name: 'A', details: 'Error: stack\n  at native.write',
-    action: { label: '刷新', onClick() {} }, children: '启用 A失败：stack',
+    action: { label: '刷新', onClick() {} }, children: '启用 A 失败：stack',
   }));
   assert.match(html, /<div class="operation-result-actions"><button type="button" class="operation-result-action ck-button">刷新<\/button>/);
   assert.match(html, /aria-expanded="false" aria-controls="([^"]+)" aria-label="展开A详情"/);
