@@ -16,7 +16,7 @@ import type {
   RoleSelection, RoleReadiness, RoleAdditionResult, SkillSession, ResourcePreparationResult,
   SessionControls, SessionControlAction, SessionControlResult, QueuedItem,
 } from '@cockpit/protocol';
-import { NativeChatRead, SessionActivity, SessionUsage, MetaResource as MetaResources, cleanSessionTitle, SessionResourcesPrepare, RESOURCE_PREPARATION_ERROR_LIMIT } from '@cockpit/protocol';
+import { NativeChatRead, SessionActivity, SessionUsage, MetaResource as MetaResources, cleanSessionTitle, SessionResourcesPrepare, RESOURCE_PREPARATION_ERROR_LIMIT, SKILL_NOT_FOUND } from '@cockpit/protocol';
 import { NativeModelSwitchResult, NativeModeSetResult, NativeCompactResult, NativeRewindResult } from '@cockpit/protocol';
 import { OfficialRuntime, sessionModelOptions } from './runtime.ts';
 import { normalizeEvent, type RuntimeAttachment } from './sdk-types.ts';
@@ -125,6 +125,15 @@ const controlEvents = new Set([
   'tool.execution_start', 'tool.execution_complete',
   'subagent.started', 'subagent.completed', 'subagent.failed',
 ]);
+
+class SkillNotFoundError extends Error {
+  readonly statusCode = 404;
+  readonly code = SKILL_NOT_FOUND;
+
+  constructor() {
+    super('Unknown skill in this working directory');
+  }
+}
 
 class SessionUnloadedError extends Error {
   readonly statusCode = 409;
@@ -2191,7 +2200,7 @@ export class Engine {
   }
   async readSkillBody(name: string, cwd?: string) {
     const skill = (await this.globalSkills(cwd)).find(skill => skill.name === name);
-    if (!skill) throw new Error('Unknown skill in this working directory');
+    if (!skill) throw new SkillNotFoundError();
     if (!skill.path) return unsupported('Skill body without a public local path');
     const modules = await this.roles?.globalSkillSources?.(skill.path);
     return { name: skill.name, description: skill.description, source: skill.source,

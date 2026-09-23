@@ -306,8 +306,9 @@ if (scene === 'dialog-focus') {
   getSessionDraft(workspaceSessionId).edit(workspaceDraft);
   const { default: App } = await import('../App');
   const page = new URLSearchParams(location.search).get('page');
+  const item = new URLSearchParams(location.search).get('item');
   const initialRoute = scene === 'sidebar' ? '/' : scene === 'resources' && (page === 'mcp' || page === 'skills')
-    ? `/${page}` : scene === 'resources' && (page === 'session-mcp' || page === 'session-skills')
+    ? `/${page}${item ? `/${encodeURIComponent(item)}` : ''}` : scene === 'resources' && (page === 'session-mcp' || page === 'session-skills')
       ? `/session/${workspaceSessionId}/${page.slice('session-'.length)}` : `/session/${workspaceSessionId}/info`;
   const app = <MemoryRouter initialEntries={[initialRoute]}>
     <App /><UxErrorNotifications />

@@ -56,6 +56,8 @@ $sol-green:  #859900;  // ok
   --line-height: 1.3125;
 
   --messages-text-size: 16px;
+  // Shared prose column: chat transcript and global resource details.
+  --chat-reading-width: 52rem;
 
   // Internal host foundations; public-ui.scss maps its stable API onto these.
   --host-space-xs: 4px;

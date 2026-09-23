@@ -103,6 +103,11 @@
   .pane-title { white-space: normal; overflow: visible; font-size: var(--host-text-title); }
 }
 
+.manage-detail-column {
+  width: 100%;
+  max-width: var(--chat-reading-width);
+  margin-inline: auto;
+}
 .manage-detail-meta {
   font-size: var(--host-text-meta);
   color: var(--secondary-text-color);
