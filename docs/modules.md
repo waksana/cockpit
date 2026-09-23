@@ -7,20 +7,19 @@ pairing**; package format, install commands and APIs are in the
 
 ## Versions and compatibility
 
-Checked 2026-09-23 against GitHub Releases and each repository's `main`.
+Checked 2026-09-24 against GitHub Releases and each repository's `main`.
 
 | Module | Latest release | Paired host release | Status |
 | --- | --- | --- | --- |
-| [Cockpit File](https://github.com/waksana/cockpit-file) | [v0.2.0](https://github.com/waksana/cockpit-file/releases/tag/v0.2.0) | [Cockpit v0.3.0](https://github.com/waksana/cockpit/releases/tag/v0.3.0) | Installable. `main` is 0.2.1. |
-| [Cockpit Notification](https://github.com/waksana/cockpit-notification) | [v0.1.13](https://github.com/waksana/cockpit-notification/releases/tag/v0.1.13) | Cockpit v0.2.4 (per its release notes) | Installable. `main` is 0.1.15. |
-| [Cockpit Speech](https://github.com/waksana/cockpit-speech) | [v0.9.0](https://github.com/waksana/cockpit-speech/releases/tag/v0.9.0) | [Cockpit v0.3.0](https://github.com/waksana/cockpit/releases/tag/v0.3.0) | Installable; needs Azure Speech configuration. |
-| [Cockpit Task](https://github.com/waksana/cockpit-task) | none for the module package (v1.2.7 is a legacy ZIP) | host `main` (unreleased) | `main` 0.1.11 is a `cockpit.module.json` module; build it from source until released. |
+| [Cockpit File](https://github.com/waksana/cockpit-file) | [v0.2.2](https://github.com/waksana/cockpit-file/releases/tag/v0.2.2) | [Cockpit v0.4.5](https://github.com/waksana/cockpit/releases/tag/v0.4.5) | Installable. |
+| [Cockpit Notification](https://github.com/waksana/cockpit-notification) | [v0.1.15](https://github.com/waksana/cockpit-notification/releases/tag/v0.1.15) | [Cockpit v0.4.5](https://github.com/waksana/cockpit/releases/tag/v0.4.5) | Installable. |
+| [Cockpit Speech](https://github.com/waksana/cockpit-speech) | [v0.9.1](https://github.com/waksana/cockpit-speech/releases/tag/v0.9.1) | [Cockpit v0.4.5](https://github.com/waksana/cockpit/releases/tag/v0.4.5) | Installable; needs Azure Speech configuration. |
+| [Cockpit Task](https://github.com/waksana/cockpit-task) | [v0.1.12](https://github.com/waksana/cockpit-task/releases/tag/v0.1.12) | [Cockpit v0.4.5](https://github.com/waksana/cockpit/releases/tag/v0.4.5) | Installable. The older v1.2.7 is a legacy pre-release ZIP. |
 | [Cockpit WeChat Connector](https://github.com/waksana/cockpit-wechat-connector) | [v0.1.6](https://github.com/waksana/cockpit-wechat-connector/releases/tag/v0.1.6) (legacy ZIP) | — | Not yet adapted: uses `module.json` and a separate service protocol; the module CLI cannot install it. |
 
-Host `main` (unreleased, after v0.3.0) removed the `/next` UI and now **rejects**
-manifests that declare `frontend.next`. File v0.2.0 and Speech v0.9.0 declare it,
-so a host built from current `main` needs the modules' current `main` builds
-(which dropped it) until new module releases are published.
+These four releases were deployed and accepted together on Cockpit v0.4.5.
+Cockpit v0.4.5 **rejects** manifests that declare `frontend.next`, so File v0.2.0
+and Speech v0.9.0 (which declare it) need Cockpit v0.3.0.
 
 The running host reports its own version at `/version`. Module capability checks
 (for example `menuVersion`, `chatWindowVersion`, `composerInputVersion`) are

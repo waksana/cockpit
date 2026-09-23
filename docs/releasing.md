@@ -101,7 +101,9 @@ Before each delivery:
 4. Verify digest and identity before installing; after restart confirm the loaded
    identity at `/version`. Do not disable integrity checks or delete data to succeed.
 
-Development, merge, tagging/release and deployment are separate authorizations.
+Development, merge, tagging/release and deployment are separate authorizations,
+except that a joint deployment includes its
+[release step](#release-after-acceptance).
 
 <a id="release-notes"></a>
 ## Release notes
@@ -134,3 +136,21 @@ installs without old API aliases or automatic migration. Only maintainers releas
 `v*` tags cannot be updated or deleted and the publisher never overwrites assets.
 Fix a failed release with the next version, not by moving a tag. Release assets do
 not expire with CI retention. A release does not deploy anything.
+
+<a id="release-after-acceptance"></a>
+## Release after a joint deployment
+
+A joint deployment of the host and modules is complete only after every commit it
+installed and accepted is tagged and released:
+
+1. Tag each accepted `main` SHA with an annotated `vX.Y.Z` tag, following that
+   repository's release procedure (the host's is [above](#versioned-releases)).
+   A repository without a Release workflow publishes the unchanged main CI
+   archive that was deployed.
+2. Compare each Release asset's sha256 with the installed digest recorded at
+   deployment. On a mismatch, stop: publish or replace nothing further and ask
+   the user. Never overwrite assets or move tags.
+3. Confirm each new Release is marked Latest.
+
+Authorizing a joint deployment includes this release step. The deployment itself
+still needs its own authorization; a release never implies one.
