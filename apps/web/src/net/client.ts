@@ -2,7 +2,7 @@
 // projections remain in the browser; typed POSTs also serve older event pages.
 
 import { ServerEvent, Intents, NativeChatStreamRequest, classifyNativeModelSwitchResult,
-  classifyNativeModeSetResult, classifyNativeRewindResult, SKILL_NOT_FOUND } from '@cockpit/protocol';
+  classifyNativeModeSetResult, classifyNativeRewindResult, SKILL_NOT_FOUND, ErrorCodes, isErrorCode } from '@cockpit/protocol';
 import type { NativeAttachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction, NativeChatPage } from '@cockpit/protocol';
 import { EVENTS_URL, CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { reportUxError, describeReason } from '../lib/errorReporter';
@@ -301,7 +301,7 @@ export class NetClient {
       }
       await consumeChatStream(response, event => {
         if (event.type === 'error') throw new IntentHttpError(
-          event.error, event.code === 'SESSION_UNLOADED' ? 409 : 500, event.code,
+          event.error, isErrorCode(event.code) ? ErrorCodes[event.code] : 500, event.code,
         );
         const page = event.page;
         if (page.sessionId !== request.sessionId || page.source !== 'live' || page.direction !== 'forward'

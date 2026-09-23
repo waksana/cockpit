@@ -13,6 +13,7 @@ import { sessionMetaBusy } from '../test-support/lifecycle.ts';
 import { CHAT_EVENT_TYPES } from './native-chat.ts';
 import { validateForkHistory } from './fork.ts';
 import type { RoleProvider } from './roles.ts';
+import { errorWithCode } from '../test-support/errors.ts';
 
 type Rpc = CopilotSession['rpc'];
 type Queue = Awaited<ReturnType<Rpc['queue']['pendingItems']>>;
@@ -31,7 +32,7 @@ type PersistedRead = CopilotClient['rpc']['sessions']['readPersistedEvents'];
 type Mode = Parameters<Rpc['mode']['set']>[0]['mode'];
 type PortRpc = { [K in keyof Rpc]?: Partial<Rpc[K]> };
 const timestamp = '2026-09-07T12:00:00.000Z';
-const protectedWork = /protected|progress|transition|settling/i;
+const protectedWork = errorWithCode('SESSION_BUSY', 'SESSION_TRANSITION');
 const unavailableSession = /unloaded|unavailable|not loaded|not live|expired|closed/i;
 
 function assertSameControlFacts(actual: unknown, expected: unknown, message?: string) {
@@ -1145,7 +1146,7 @@ test('resource preparation requires loaded idle state and excludes all ordinary 
   const h = harness(t);
   const s = await h.seed();
   const input = { sessionId: s.id };
-  await assert.rejects(h.engine.prepareSessionResources({ sessionId: 'missing' }), /Unknown session/);
+  await assert.rejects(h.engine.prepareSessionResources({ sessionId: 'missing' }), errorWithCode('SESSION_NOT_FOUND'));
   await assert.rejects(h.engine.prepareSessionResources(input), unavailableSession);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
   await h.engine.load(s.id);
@@ -1204,7 +1205,7 @@ test('explicit tool initialization preserves the handle and temporary choices wi
 test('explicit tool initialization rejects unloaded, busy and concurrent work without repairing or retrying', async t => {
   const h = harness(t);
   const s = await h.seed();
-  await assert.rejects(h.engine.initializeSessionTools('missing'), /Unknown session/);
+  await assert.rejects(h.engine.initializeSessionTools('missing'), errorWithCode('SESSION_NOT_FOUND'));
   await assert.rejects(h.engine.initializeSessionTools(s.id), unavailableSession);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
   await h.engine.load(s.id);
@@ -1914,7 +1915,7 @@ test('session/load coalesces native cold loading and protects its in-flight work
   const first = h.engine.load(session.id), second = h.engine.load(session.id);
   await entered.promise;
   assert.ok(await h.engine.busyCount() > 0);
-  await assert.rejects(h.engine.unload(session.id), /progress/);
+  await assert.rejects(h.engine.unload(session.id), errorWithCode('SESSION_BUSY'));
   await assert.rejects(h.engine.stop(), protectedWork);
   ready.resolve();
   await Promise.all([first, second]);
@@ -1926,7 +1927,7 @@ test('session/load coalesces native cold loading and protects its in-flight work
 
 test('separate prompt rejects empty content and a missing native acceptance without recreating', async t => {
   const h = harness(t), id = await h.engine.newSession(h.cwd);
-  await assert.rejects(h.engine.prompt(id, ' '), /empty/);
+  await assert.rejects(h.engine.prompt(id, ' '), errorWithCode('INVALID_REQUEST'));
   h.natives.get(id)!.sdk.send.mock.mockImplementation(async () => '');
   await assert.rejects(h.engine.prompt(id, 'Only once'), /receipt is missing/);
   assert.equal(h.runtime.createSession.mock.callCount(), 1);
@@ -1935,7 +1936,7 @@ test('separate prompt rejects empty content and a missing native acceptance with
 
 test('session/load rejects unknown targets and mismatched native resume identities without substituting another session', async t => {
   const h = harness(t);
-  await assert.rejects(h.engine.load('unknown-original'), /Unknown session/);
+  await assert.rejects(h.engine.load('unknown-original'), errorWithCode('SESSION_NOT_FOUND'));
   assert.equal(h.runtime.createSession.mock.callCount(), 0);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
   const target = await h.seed(), other = await h.seed();
@@ -2048,9 +2049,9 @@ test('fork locks the source while dispatching and never retries uncertain creati
   h.runtime.rpc.sessions.fork.mock.mockImplementation(() => gate.promise);
   const pending = h.engine.forkSession(s.id);
   while (!h.runtime.rpc.sessions.fork.mock.callCount()) await nextTurn();
-  await assert.rejects(h.engine.prompt(s.id, 'must not send'), /transition/);
-  await assert.rejects(h.engine.forkSession(s.id), /transition/);
-  await assert.rejects(h.engine.unload(s.id), /transition/);
+  await assert.rejects(h.engine.prompt(s.id, 'must not send'), errorWithCode('SESSION_TRANSITION'));
+  await assert.rejects(h.engine.forkSession(s.id), errorWithCode('SESSION_TRANSITION'));
+  await assert.rejects(h.engine.unload(s.id), errorWithCode('SESSION_TRANSITION'));
   gate.reject(new Error('acknowledgement lost'));
   await assert.rejects(pending, /uncertain.*Do not retry blindly.*acknowledgement lost/);
   assert.equal(h.runtime.rpc.sessions.fork.mock.callCount(), 1);
@@ -2076,7 +2077,7 @@ for (const condition of ['missing', 'assistant', 'nested', 'turn', 'tool', 'sche
     if (condition === 'expired') s.rpc.eventLog.read.mock.mockImplementation(async () => ({
       events: [], cursor: 'expired', hasMore: false, cursorStatus: 'expired',
     }));
-    await assert.rejects(h.engine.forkSession(s.id, boundary), /boundary|root user|schedule|history|cursor/i);
+    await assert.rejects(h.engine.forkSession(s.id, boundary), condition === 'expired' ? /cursor expired/ : errorWithCode('INVALID_REQUEST'));
     assert.equal(h.runtime.rpc.sessions.fork.mock.callCount(), 0);
   });
 }
@@ -2093,7 +2094,7 @@ test('fork scans beyond one native page and permits a boundary before a stopped 
   assert.deepEqual(reads[1]!.arguments[0], {
     ...reads[0]!.arguments[0], cursor: (await reads[0]!.result!).cursor,
   }, 'Keep the same all-agent durable filter and pass the native cursor back unchanged');
-  await assert.rejects(h.engine.forkSession(s.id), /schedule/);
+  await assert.rejects(h.engine.forkSession(s.id), errorWithCode('INVALID_REQUEST'));
   assert.equal(h.runtime.rpc.sessions.fork.mock.callCount(), 1);
 });
 
@@ -2235,8 +2236,8 @@ for (const condition of ['running', 'task', 'queue', 'steering', 'timer', 'close
     const pending = h.engine.forkSession(s.id);
     const rejected = assert.rejects(pending, /protected|timers|closed|fixture fatal/);
     while (!s.rpc.eventLog.read.mock.callCount()) await nextTurn();
-    await assert.rejects(h.engine.prompt(s.id, 'must not send'), /transition/);
-    await assert.rejects(h.engine.unload(s.id), /transition/);
+    await assert.rejects(h.engine.prompt(s.id, 'must not send'), errorWithCode('SESSION_TRANSITION'));
+    await assert.rejects(h.engine.unload(s.id), errorWithCode('SESSION_TRANSITION'));
     if (condition === 'running') s.state.processing = true;
     if (condition === 'task') s.state.tasks = [task()];
     if (condition === 'queue') s.state.queue.items = [queued('queued', 'new work')];
@@ -2268,7 +2269,7 @@ for (const condition of ['running', 'task', 'queue', 'steering', 'timer', 'unloa
       s.state.queue.inFlightSteeringCount = 1;
     }
     if (condition === 'timer') s.state.schedules = [schedule()];
-    await assert.rejects(h.engine.forkSession(s.id), /protected|unloaded|timers/i);
+    await assert.rejects(h.engine.forkSession(s.id), errorWithCode(condition === 'unloaded' ? 'SESSION_UNLOADED' : 'SESSION_BUSY'));
     assert.equal(h.runtime.rpc.sessions.fork.mock.callCount(), 0);
     assert.equal(h.runtime.createSession.mock.callCount(), 0);
     assert.equal(h.runtime.resumeSession.mock.callCount(), condition === 'unloaded' ? 0 : 1);
@@ -2488,7 +2489,7 @@ test('native activity reserves its read before a liveness probe and cannot race 
   h.runtime.isSessionLive.mock.mockImplementationOnce(() => alive.promise);
   const reading = h.engine.getResources(s.id, ['control']);
   await nextTurn();
-  const rejected = assert.rejects(h.engine.unload(s.id), /operation.*progress|protected/i);
+  const rejected = assert.rejects(h.engine.unload(s.id), errorWithCode('SESSION_BUSY'));
   alive.resolve(true);
   await rejected;
   await reading;
@@ -2673,7 +2674,7 @@ test('native usage reserves work before a held liveness probe so unload cannot b
   const reading = h.engine.getUsage(s.id);
   await nextTurn();
   const closing = h.engine.unload(s.id);
-  const rejected = assert.rejects(closing, /operation.*progress|protected/i);
+  const rejected = assert.rejects(closing, errorWithCode('SESSION_BUSY'));
   alive.resolve(true);
   await rejected;
   await reading;
@@ -3223,7 +3224,7 @@ for (const action of ['unload', 'stop'] as const) {
     if (action === 'unload') await h.engine.unload(s.id);
     else await h.engine.stop();
     if (action === 'unload') assert.equal((await h.engine.getMeta(s.id))?.loaded, false);
-    else await assert.rejects(h.engine.getMeta(s.id), /transition/);
+    else await assert.rejects(h.engine.getMeta(s.id), errorWithCode('SESSION_TRANSITION'));
     assert.equal(h.runtime.closeSession.mock.callCount(), 1);
     assert.equal(s.rpc.schedule.stop.mock.callCount(), 0);
     assert.equal(s.sdk.abort.mock.callCount(), 0);
@@ -3735,11 +3736,11 @@ test('new session stays private until native creation succeeds, including concur
   const creating = h.engine.newSession(h.cwd);
   await nextTurn();
   assert.ok(id);
-  await assert.rejects(h.engine.getMeta(id), /awaiting acknowledgement/);
+  await assert.rejects(h.engine.getMeta(id), errorWithCode('SESSION_TRANSITION'));
   assert.deepEqual((await h.engine.snapshot()).sessions, []);
   assert.ok(!h.events.some(value => value.type.startsWith('session/')));
   await h.engine.refreshList();
-  await assert.rejects(h.engine.getMeta(id), /awaiting acknowledgement/);
+  await assert.rejects(h.engine.getMeta(id), errorWithCode('SESSION_TRANSITION'));
   await assert.rejects(h.engine.stop(), protectedWork);
   allocation.resolve();
   assert.equal(await creating, id);
@@ -4192,7 +4193,7 @@ test('attachment-only sends preserve file descriptors without reading the attach
   }]);
   assert.equal(serverChatEvents(h).length, 0);
   await h.engine.cancel(s.id);
-  await assert.rejects(h.engine.prompt(s.id, '  '), /empty/);
+  await assert.rejects(h.engine.prompt(s.id, '  '), errorWithCode('INVALID_REQUEST'));
   assert.equal(s.sdk.send.mock.callCount(), 1);
 });
 
@@ -4345,7 +4346,7 @@ test('failed early allocation discards its callback and never reclassifies recei
   });
   await assert.rejects(h.engine.newSession(h.cwd), /acknowledgement lost/);
   oldCallback(assistant('late-failed-create', 'late-failed-create'));
-  await assert.rejects(h.engine.prompt(id, 'must not recreate'), /Unknown session/);
+  await assert.rejects(h.engine.prompt(id, 'must not recreate'), errorWithCode('SESSION_NOT_FOUND'));
   assert.equal((await h.engine.getMeta(id)), null);
   assert.ok(!h.events.some(value => 'sessionId' in value && value.sessionId === id));
   assert.ok(!h.events.some(value => value.type === 'session/added'));
@@ -4448,7 +4449,7 @@ for (const action of ['unload', 'stop'] as const) {
     s.state.mcp.host!.pendingConnections = [];
     await teardown();
     assert.equal(h.runtime.closeSession.mock.callCount(), 1);
-    if (action === 'stop') await assert.rejects(h.engine.getMeta(s.id), /transition/);
+    if (action === 'stop') await assert.rejects(h.engine.getMeta(s.id), errorWithCode('SESSION_TRANSITION'));
     else {
       assert.equal((await h.engine.getMeta(s.id))?.activeMcpOperations, undefined);
       assert.equal((await h.engine.getMeta(s.id))?.loaded, false);
@@ -4468,11 +4469,11 @@ for (const action of ['unload', 'stop'] as const) {
     const teardown = () => action === 'unload' ? h.engine.unload(s.id) : h.engine[action]();
     const rejected = assert.rejects(teardown(), protectedWork);
     await validating.promise;
-    await assert.rejects(h.engine.getMeta(s.id), /transition/);
+    await assert.rejects(h.engine.getMeta(s.id), errorWithCode('SESSION_TRANSITION'));
     assert.equal(h.runtime.closeSession.mock.callCount(), 0);
     s.state.processing = true;
     s.emit(event('assistant.turn_start', { turnId: 'new-live-turn' }));
-    await assert.rejects(h.engine.getMeta(s.id), /transition/);
+    await assert.rejects(h.engine.getMeta(s.id), errorWithCode('SESSION_TRANSITION'));
     h.events.length = 0;
     readback.resolve(staleIdleMcp);
     await rejected;
@@ -4526,7 +4527,7 @@ test('native validation failure waits for sibling RPCs before releasing the life
   s.rpc.metadata.isProcessing.mock.mockImplementation(async () => { throw new Error('processing lookup failed'); });
   const stopped = assert.rejects(h.engine.stop(), /processing lookup failed/);
   await nextTurn();
-  await assert.rejects(h.engine.getMeta(s.id), /transition/);
+  await assert.rejects(h.engine.getMeta(s.id), errorWithCode('SESSION_TRANSITION'));
   await assert.rejects(h.engine.prompt(s.id, 'must not cross validation'), protectedWork);
   assert.equal(h.runtime.closeSession.mock.callCount(), 0);
   pendingTasks.resolve({ tasks: [] });
@@ -4608,8 +4609,8 @@ test('idle and completed background tasks do not prevent a clean stop', async t 
   await h.engine.stop();
   assert.equal(h.runtime.closeSession.mock.callCount(), 2);
   assert.equal(h.runtime.stop.mock.callCount(), 1);
-  await assert.rejects(h.engine.getMeta(a.id), /transition/);
-  await assert.rejects(h.engine.getMeta(b.id), /transition/);
+  await assert.rejects(h.engine.getMeta(a.id), errorWithCode('SESSION_TRANSITION'));
+  await assert.rejects(h.engine.getMeta(b.id), errorWithCode('SESSION_TRANSITION'));
 });
 
 for (const action of ['create', 'resume'] as const) {
@@ -4762,13 +4763,13 @@ test('closing blocks new operations and competing transitions until close is ack
   h.runtime.closeSession.mock.mockImplementation(async sdk => { await close.promise; h.attached.delete(sdk.sessionId); });
   const unloading = h.engine.unload(s.id);
   await nextTurn();
-  await assert.rejects(h.engine.getMeta(s.id), /transition/);
+  await assert.rejects(h.engine.getMeta(s.id), errorWithCode('SESSION_TRANSITION'));
   for (const operation of [
     () => h.engine.prompt(s.id, 'not sent'), () => h.engine.reload(s.id), () => h.engine.deleteSession(s.id),
     () => h.engine.cancel(s.id), () => h.engine.stop(),
   ]) await assert.rejects(async () => operation(), protectedWork);
   assert.equal(s.sdk.send.mock.callCount(), 0);
-  await assert.rejects(h.engine.getMeta(s.id), /transition/);
+  await assert.rejects(h.engine.getMeta(s.id), errorWithCode('SESSION_TRANSITION'));
   close.resolve();
   await unloading;
   assert.equal((await h.engine.getMeta(s.id))?.loaded, false);
@@ -4832,7 +4833,7 @@ test('interrupt coalesces without cancel or replay and preserves accepted queue 
   const pending = h.engine.interrupt(s.id);
   const repeated = h.engine.interrupt(s.id);
   await nextTurn();
-  await assert.rejects(h.engine.cancel(s.id), /progress/);
+  await assert.rejects(h.engine.cancel(s.id), errorWithCode('SESSION_BUSY'));
   await assert.rejects(h.engine.unload(s.id), protectedWork);
   result.resolve({ interrupted: true });
   assert.deepEqual(await pending, { ok: true, interrupted: true });
@@ -5010,10 +5011,10 @@ test('public user-input callbacks return an actual pending promise and validate 
   let settled = false;
   void answer.then(() => { settled = true; });
   const id = (await h.engine.getMeta(s.id))!.ask!.requestId;
-  await assert.rejects(h.engine.respondAsk(s.id, 'stale-id', 'yes', false), /no longer pending/);
+  await assert.rejects(h.engine.respondAsk(s.id, 'stale-id', 'yes', false), errorWithCode('REQUEST_NOT_PENDING'));
   await assert.rejects(h.engine.respondAsk(s.id, id, 'other', false), /offered choice/);
   await assert.rejects(h.engine.respondAsk(s.id, id, 'free text', true), /Freeform/);
-  await assert.rejects(h.engine.respondPlan(s.id, id, 'interactive'), /no longer pending/);
+  await assert.rejects(h.engine.respondPlan(s.id, id, 'interactive'), errorWithCode('REQUEST_NOT_PENDING'));
   await nextTurn();
   assert.equal(settled, false);
   assert.equal((await h.engine.getMeta(s.id))?.ask?.requestId, id);
@@ -5021,7 +5022,7 @@ test('public user-input callbacks return an actual pending promise and validate 
   await h.engine.respondAsk(s.id, id, 'yes', false);
   assert.deepEqual(await answer, { answer: 'yes', wasFreeform: false });
   assert.equal((await h.engine.getMeta(s.id))?.ask, null);
-  await assert.rejects(h.engine.respondAsk(s.id, id, 'yes', false), /no longer pending/);
+  await assert.rejects(h.engine.respondAsk(s.id, id, 'yes', false), errorWithCode('REQUEST_NOT_PENDING'));
   assert.equal(s.sdk.send.mock.callCount(), 0);
 });
 
@@ -5053,8 +5054,8 @@ test('plan callback rejects unoffered actions without resolving, then returns th
   void result.then(() => { settled = true; }, () => { settled = true; });
   const id = (await h.engine.getMeta(s.id))!.planRequest!.requestId;
   await assert.rejects(h.engine.respondPlan(s.id, id, 'autopilot'), /not offered/);
-  await assert.rejects(h.engine.planSupersede(s.id, 'stale', 'replacement'), /no longer pending/);
-  await assert.rejects(h.engine.planSupersede(s.id, id, ' \n '), /empty/);
+  await assert.rejects(h.engine.planSupersede(s.id, 'stale', 'replacement'), errorWithCode('REQUEST_NOT_PENDING'));
+  await assert.rejects(h.engine.planSupersede(s.id, id, ' \n '), errorWithCode('INVALID_REQUEST'));
   await nextTurn();
   assert.equal(settled, false, 'invalid feedback must leave the real callback pending');
   assert.equal(s.sdk.send.mock.callCount(), 0);
@@ -5065,7 +5066,7 @@ test('plan callback rejects unoffered actions without resolving, then returns th
   await h.engine.respondPlan(s.id, id, 'interactive');
   assert.deepEqual(await result, { approved: true, selectedAction: 'interactive' });
   assert.equal((await h.engine.getMeta(s.id))?.planRequest, null);
-  await assert.rejects(h.engine.respondPlan(s.id, id, 'interactive'), /no longer pending/);
+  await assert.rejects(h.engine.respondPlan(s.id, id, 'interactive'), errorWithCode('REQUEST_NOT_PENDING'));
 });
 
 test('a native plan action outside the supported protocol cannot be accepted through a forged action', async t => {
@@ -5076,7 +5077,7 @@ test('a native plan action outside the supported protocol cannot be accepted thr
   }, { sessionId: s.id });
   const id = (await h.engine.getMeta(s.id))!.planRequest!.requestId;
   assert.deepEqual((await h.engine.getMeta(s.id))?.planRequest?.actions, ['interactive']);
-  await assert.rejects(h.engine.respondPlan(s.id, id, 'future-action' as ExitPlanModeAction), /unsupported|offered|action/i);
+  await assert.rejects(h.engine.respondPlan(s.id, id, 'future-action' as ExitPlanModeAction), errorWithCode('INVALID_REQUEST'));
   assert.equal((await h.engine.getMeta(s.id))?.planRequest?.requestId, id);
   await h.engine.respondPlan(s.id, id, 'interactive');
   assert.deepEqual(await result, { approved: true, selectedAction: 'interactive' });
@@ -5099,8 +5100,8 @@ for (const mode of ['form', 'url'] as const) {
     assert.deepEqual((await h.engine.getMeta(s.id))!.elicitation, {
       requestId: id, message: 'Provide account details', actions: ['decline', 'cancel'],
     });
-    await assert.rejects(h.engine.respondElicitation(s.id, 'stale', 'decline'), /no longer pending/);
-    await assert.rejects(h.engine.respondElicitation(s.id, id, 'accept'), /unsupported/);
+    await assert.rejects(h.engine.respondElicitation(s.id, 'stale', 'decline'), errorWithCode('REQUEST_NOT_PENDING'));
+    await assert.rejects(h.engine.respondElicitation(s.id, id, 'accept'), errorWithCode('UNSUPPORTED'));
     await nextTurn();
     assert.equal(settled, false);
     assert.equal((await h.engine.getMeta(s.id))?.elicitation?.requestId, id);
@@ -5127,7 +5128,7 @@ test('failed abort keeps native decisions pending; successful cancellation rejec
   await h.engine.cancel(s.id);
   await rejection;
   assert.equal((await h.engine.getMeta(s.id))?.ask, null);
-  await assert.rejects(h.engine.respondAsk(s.id, requestId, 'too late', true), /no longer pending/);
+  await assert.rejects(h.engine.respondAsk(s.id, requestId, 'too late', true), errorWithCode('REQUEST_NOT_PENDING'));
 });
 
 for (const stage of ['mutation', 'readback'] as const) {
@@ -5393,7 +5394,7 @@ for (const options of invalidSchedules) {
     const s = await h.seed();
     t.mock.method(Date, 'now', () => Date.parse(timestamp));
     const before = readFileSync(h.prefsFile, 'utf8');
-    await assert.rejects(h.engine.addSchedule(s.id, { prompt: 'check build', ...options }), /unknown|unsupported|required|plain|delay/i);
+    await assert.rejects(h.engine.addSchedule(s.id, { prompt: 'check build', ...options }), errorWithCode('INVALID_REQUEST', 'UNSUPPORTED'));
     assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
     assert.equal(h.runtime.createSession.mock.callCount(), 0);
     assert.equal(s.rpc.commands.invoke.mock.callCount(), 0);
@@ -6075,7 +6076,7 @@ test('MCP enable confirms native state without persistence and blocks a concurre
   await nextTurn();
   assert.equal((await h.engine.getMeta(s.id))?.activeMcpOperations, 1);
   assert.equal(h.prefs().mcpBySession?.[s.id], undefined);
-  await assert.rejects(h.engine.toggleSessionMcp(s.id, 'fixture', false), /already in progress/);
+  await assert.rejects(h.engine.toggleSessionMcp(s.id, 'fixture', false), errorWithCode('SESSION_BUSY'));
   await assert.rejects(h.engine.unload(s.id), protectedWork);
   assert.equal(s.rpc.mcp.disable.mock.callCount(), 0);
   enabled.resolve();
@@ -6738,8 +6739,8 @@ test('stopped engines reject new session work until an explicit start', async t 
   const h = harness(t);
   const s = await h.load();
   await h.engine.stop();
-  await assert.rejects(h.engine.prompt(s.id, 'must not be accepted'), /stopped/);
-  await assert.rejects(h.engine.newSession(h.cwd), /stopped/);
+  await assert.rejects(h.engine.prompt(s.id, 'must not be accepted'), errorWithCode('ENGINE_STOPPED'));
+  await assert.rejects(h.engine.newSession(h.cwd), errorWithCode('ENGINE_STOPPED'));
   assert.equal(s.sdk.send.mock.callCount(), 0);
   assert.equal(h.runtime.resumeSession.mock.callCount(), 1);
   await h.engine.start();
@@ -7113,8 +7114,8 @@ test('thin native session models expose fresh capabilities and complete selectio
     modelId: 'native-model', deferIfModelChangeQueued: true, contextTier: 'default',
   }]);
   s.state.model.contextTier = 'long_context';
-  await assert.rejects(h.engine.setModel(s.id, 'native-model', 'invented'), /does not list reasoning/);
-  await assert.rejects(h.engine.setModel(s.id, 'not-allowed', undefined, 'long_context'), /does not list long-context/);
+  await assert.rejects(h.engine.setModel(s.id, 'native-model', 'invented'), errorWithCode('INVALID_REQUEST'));
+  await assert.rejects(h.engine.setModel(s.id, 'not-allowed', undefined, 'long_context'), errorWithCode('INVALID_REQUEST'));
   assert.equal(s.rpc.model.switchTo.mock.callCount(), 3);
   h.runtime.models.mock.mockImplementation(async () => [{
     modelId: 'native-model', name: 'Global', supportedReasoningEfforts: [], supportsLongContext: false,
@@ -7150,7 +7151,7 @@ test('provider context tiers without pricing drive both metadata and model-setti
   assert.equal(meta.availableModels?.find(row => row.modelId === 'provider/basic')?.supportsLongContext, false);
   await h.engine.setModel(s.id, 'provider/model', undefined, 'long_context');
   assert.equal((await h.engine.getMeta(s.id))?.currentContextTier, 'long_context');
-  await assert.rejects(h.engine.setModel(s.id, 'provider/basic', undefined, 'long_context'), /does not list long-context/);
+  await assert.rejects(h.engine.setModel(s.id, 'provider/basic', undefined, 'long_context'), errorWithCode('INVALID_REQUEST'));
   assert.equal(s.rpc.model.switchTo.mock.callCount(), 1);
   assert.equal(s.sdk.send.mock.callCount(), 0);
 });
@@ -7322,7 +7323,7 @@ test('structured native model and mode refusals retain their full outcomes witho
     await h.engine.deleteSession(s.id);
     assert.deepEqual(h.runtime.deleteSession.mock.calls[0]!.arguments, [s.id]);
     assert.equal(h.runtime.resumeSession.mock.callCount(), 0);
-    await assert.rejects(h.engine.deleteSession('missing-owned-fixture'), /Unknown session/);
+    await assert.rejects(h.engine.deleteSession('missing-owned-fixture'), errorWithCode('SESSION_NOT_FOUND'));
     assert.equal(h.runtime.deleteSession.mock.callCount(), 1);
   });
   assert.equal((await h.engine.getMeta(s.id))?.currentModelId, 'native-model');

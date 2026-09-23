@@ -5,13 +5,14 @@ import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:f
 import { dirname, join, parse, relative } from 'node:path';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import {
-  Intents, SessionMeta, Snapshot, ServerEvent,
+  ErrorCodes, Intents, SessionMeta, Snapshot, ServerEvent,
   type IntentBody, type IntentName,
 } from '@cockpit/protocol';
 import type { ServerEngine } from './index.ts';
 import { isIntentName } from './capabilities.ts';
 import { readNativeChat } from '../../../packages/core/src/native-chat.ts';
 import { Engine } from '../../../packages/core/src/engine.ts';
+import { CockpitError } from '../../../packages/core/src/errors.ts';
 import { sessionMetaBusy } from '../../../packages/core/test-support/lifecycle.ts';
 import { GracefulShutdown } from './shutdown.ts';
 
@@ -293,9 +294,28 @@ for (const [name, fixture] of Object.entries(cases)) {
   });
 }
 
+test('typed engine errors map their protocol code to its HTTP status with a readable message', async (t) => {
+  for (const code of ['SESSION_NOT_FOUND', 'SESSION_BUSY', 'SESSION_TRANSITION', 'REQUEST_NOT_PENDING', 'INVALID_REQUEST', 'ENGINE_STOPPED'] as const) {
+    const prompt = t.mock.method(engine, 'prompt', async () => { throw new CockpitError(code, `readable ${code}`); });
+    const response = await app.inject({ method: 'POST', url: '/intent/prompt', payload: { sessionId: 's', text: 'x' } });
+    assert.equal(response.statusCode, ErrorCodes[code], response.body);
+    assert.deepEqual(response.json(), { error: `readable ${code}`, code });
+    prompt.mock.restore();
+  }
+  const prompt = t.mock.method(engine, 'prompt', async () => { throw new Error('unexpected native failure'); });
+  const response = await app.inject({ method: 'POST', url: '/intent/prompt', payload: { sessionId: 's', text: 'x' } });
+  assert.equal(response.statusCode, 500);
+  assert.deepEqual(response.json(), { error: 'unexpected native failure' }, 'uncoded failures stay code-less 500s');
+  prompt.mock.restore();
+  const invalid = await app.inject({ method: 'POST', url: '/intent/prompt', payload: { sessionId: 's', extra: true } });
+  assert.equal(invalid.statusCode, ErrorCodes.INVALID_INTENT_BODY);
+  assert.equal(invalid.json().code, 'INVALID_INTENT_BODY');
+});
+
 test('retired independent activity intent is absent from HTTP and capabilities', async () => {
   const response = await app.inject({ method: 'POST', url: '/intent/session/activity', payload: { sessionId: 's' } });
   assert.equal(response.statusCode, 404);
+  assert.equal(response.json().code, 'UNKNOWN_INTENT');
   assert.equal(isIntentName('session/activity'), false);
   const capabilities = await app.inject({ method: 'GET', url: '/capabilities' });
   assert.equal(capabilities.statusCode, 200);

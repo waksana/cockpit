@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { errorWithCode } from '../test-support/errors.ts';
 
 test('native model settings: complete queued selections, omitted native options, schedules and cold readback', {
   skip: process.env.COCKPIT_NATIVE_MODEL_SMOKE !== '1', timeout: 60_000,
@@ -97,14 +98,14 @@ test('native model settings: complete queued selections, omitted native options,
     await engine.setModel(id, 'local/reasoner', undefined, 'default');
     assert.equal((await engine.getMeta(id))?.currentContextTier, 'default');
     assert.equal((await engine.getMeta(id))?.currentReasoningEffort, 'high', 'omitted effort follows native behavior, without backend backfill');
-    await assert.rejects(engine.setModel(id, 'local/reasoner', 'invented'), /does not list reasoning/);
+    await assert.rejects(engine.setModel(id, 'local/reasoner', 'invented'), errorWithCode('INVALID_REQUEST'));
     for (const recurring of [false, true]) {
       const spaced = await engine.addSchedule(id, { prompt: '  Local whitespace fixture  ', interval: '1h', recurring });
       assert.equal(spaced.error, undefined);
       assert.ok(spaced.entry);
       assert.equal(spaced.entry.prompt, 'Local whitespace fixture');
       assert.equal(spaced.entry.recurring, recurring);
-      await assert.rejects(engine.addSchedule(id, { prompt: '\nLocal invalid fixture\n', interval: '1h' }), /single-line/);
+      await assert.rejects(engine.addSchedule(id, { prompt: '\nLocal invalid fixture\n', interval: '1h' }), errorWithCode('INVALID_REQUEST'));
       assert.deepEqual((await engine.listSchedules(id)).map(entry => entry.id), [spaced.entry.id]);
       assert.equal(await engine.stopSchedule(id, spaced.entry.id), true);
     }

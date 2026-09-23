@@ -1,4 +1,5 @@
 export { Engine, coreCapabilities } from './engine.ts';
+export { CockpitError } from './errors.ts';
 export { OfficialRuntime, type RuntimeOptions, type RuntimeSession } from './runtime.ts';
 export { cockpitHome } from './paths.ts';
 export type { RoleProvider, RoleAssembly, SessionInstructions } from './roles.ts';

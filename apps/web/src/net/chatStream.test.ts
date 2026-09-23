@@ -110,6 +110,8 @@ for (const invalid of [
 test('SSE unload and HTTP failures remain explicit; only gateway unavailability is a reconnectable transport failure', async t => {
   const replies = [
     response(frame({ type: 'error', error: 'Unloaded', code: 'SESSION_UNLOADED' })),
+    response(frame({ type: 'error', error: 'Gone', code: 'SESSION_NOT_FOUND' })),
+    response(frame({ type: 'error', error: 'Native failure' })),
     Response.json({ error: 'Unauthorized' }, { status: 401 }),
     new Response('Unavailable', { status: 503 }),
   ];
@@ -117,7 +119,9 @@ test('SSE unload and HTTP failures remain explicit; only gateway unavailability 
   const net = client(t);
   const read = () => net.chatStream(request, () => assert.fail('error delivered as content'), new AbortController().signal);
   await assert.rejects(read(), isSessionUnloadedError);
+  await assert.rejects(read(), error => error instanceof IntentHttpError && error.status === 404 && error.code === 'SESSION_NOT_FOUND');
+  await assert.rejects(read(), error => error instanceof IntentHttpError && error.status === 500 && error.code === undefined);
   await assert.rejects(read(), error => error instanceof IntentHttpError && error.status === 401);
   await assert.rejects(read(), TypeError);
-  assert.equal(fetch.mock.callCount(), 3);
+  assert.equal(fetch.mock.callCount(), 5);
 });

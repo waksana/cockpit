@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { test } from 'node:test';
+import { errorWithCode } from '../test-support/errors.ts';
 
 test('native state: isolated public reads, no cached metadata and explicit unloaded values', {
   skip: process.env.COCKPIT_NATIVE_STATE_SMOKE !== '1', timeout: 60_000,
@@ -151,7 +152,7 @@ test('native state: isolated public reads, no cached metadata and explicit unloa
       assert.equal(key in unloaded!, false, key);
     }
     assert.equal(runtime.liveCount, 0);
-    await assert.rejects(engine.listSchedules(id), /unloaded/i);
+    await assert.rejects(engine.listSchedules(id), errorWithCode('SESSION_UNLOADED'));
     assert.equal(runtime.liveCount, 0);
     assert.equal(retained().size, 0);
     await engine.stop();

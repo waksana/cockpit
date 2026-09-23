@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import type { SessionConfig } from '@github/copilot-sdk';
 import { validateForkHistory } from './fork.ts';
+import { errorWithCode } from '../test-support/errors.ts';
 
 test('native fork: isolated history boundaries and independent continuation', {
   skip: process.env.COCKPIT_NATIVE_FORK !== '1', timeout: 90_000,
@@ -268,12 +269,12 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       assert.ok(rows.some(row => row.sessionId === fullResult.sessionId));
       await engine.addSchedule(sourceId, { interval: '1h', prompt: 'FORK_FIXTURE_ENGINE_TIMER' });
       await idle(sourceId);
-      await assert.rejects(engine.forkSession(sourceId), /timers|schedule/);
+      await assert.rejects(engine.forkSession(sourceId), errorWithCode('SESSION_BUSY'));
       for (const entry of await engine.listSchedules(sourceId)) await engine.stopSchedule(sourceId, entry.id);
       await idle(sourceId);
-      await assert.rejects(engine.forkSession(sourceId), /schedule/);
+      await assert.rejects(engine.forkSession(sourceId), errorWithCode('INVALID_REQUEST'));
       await engine.unload(sourceId);
-      await assert.rejects(engine.forkSession(sourceId), /unloaded/);
+      await assert.rejects(engine.forkSession(sourceId), errorWithCode('SESSION_UNLOADED'));
       assert.equal(requests.length, 8);
     } catch (error) {
       t.diagnostic(error instanceof Error ? error.stack! : String(error));
