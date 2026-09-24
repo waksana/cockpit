@@ -334,6 +334,8 @@ export async function packageRuntime({ repository, sourceSha, output = 'runtime-
     for (const path of packagePaths) {
       await runtimePackageJson(join(runtime, path, 'package.json'), ['packages/core', 'packages/protocol'].includes(path));
     }
+    // pnpm always packs a manifest's `main`; core's TypeScript entry is not a runtime input.
+    await rm(join(runtime, 'packages/core/src'), { recursive: true, force: true });
     await copyBuiltTree(join(repository, 'apps/web/dist'), join(runtime, 'apps/web/dist'), 'apps/web/dist');
     await copyFile(join(source, 'LICENSE'), join(runtime, 'LICENSE'));
     await copyFile(join(source, 'NOTICE.md'), join(runtime, 'NOTICE.md'));

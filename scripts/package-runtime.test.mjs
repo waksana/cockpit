@@ -36,7 +36,7 @@ function fakeDeploy(source, target, app, state) {
   cpSync(join(source, `apps/${app}/dist`), join(target, 'dist'), { recursive: true });
   const modules = join(target, 'node_modules');
   // Mirrors each workspace manifest's published `files`: compiled output, plus sources the type export needs.
-  const published = { core: ['dist'], protocol: ['dist', 'src'], 'module-api': ['src'] };
+  const published = { core: ['dist', 'src'], protocol: ['dist', 'src'], 'module-api': ['src'] };
   const workspace = name => {
     const peers = join(modules, '.pnpm', `@cockpit+${name}@file+packages+${name}`, 'node_modules');
     const path = join(peers, '@cockpit', name);
