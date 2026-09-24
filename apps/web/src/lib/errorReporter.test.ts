@@ -10,7 +10,9 @@ import {
 
 let now = 1_000_000;
 
-beforeEach((t: TestContext) => {
+beforeEach((context) => {
+  // A top-level beforeEach runs once per test with that test's context.
+  const t = context as TestContext;
   now += 60_000;
   t.mock.method(Date, 'now', () => now);
   t.mock.method(console, 'error', () => {});

@@ -454,6 +454,7 @@ test('middleware receives the real Base and preserves ordinary callbacks without
       apiVersion: 2,
       components: [{ id: 'editor', boundary: 'composerEditor', wrap: PassedBase => {
         assert.equal(PassedBase, Base, 'middleware is given the original component, not an intercepting proxy');
+        // eslint-disable-next-line @typescript-eslint/no-misused-promises -- deliberately passes a rejecting module callback through
         return props => React.createElement(PassedBase, { ...props, onClick: callback });
       } }],
     });
@@ -665,7 +666,7 @@ test('component middleware validates IDs, boundaries and order and composes stab
   for (const boundary of ['message', 'sessionStatus', 'composer', 'composerEditor', 'composerInput', 'attachment',
     'managementHeader', 'managementDetailHeader'] as const) {
     const supported = fixture([asset()], {
-      apiVersion: 2, components: [{ id: 'supported', boundary, wrap: Base => Base }],
+      apiVersion: 2, components: [{ id: 'supported', boundary, wrap: <Base>(base: Base) => base }],
     } as ModuleFrontend);
     await supported.runtime.start();
     assert.equal(supported.runtime.getSnapshot().length, 1, boundary);

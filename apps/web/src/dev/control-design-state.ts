@@ -214,7 +214,7 @@ export function applyControlAction(state: ControlDesignState, action: ControlAct
     }
     case 'consume':
       if (!canSteer(state)) throw new Error('当前无法纳入回合；消息仍留在等待区域。');
-      return state.steering.reduce((next, item) => appendUser(next, item, 'steering'), { ...state, steering: [] });
+      return state.steering.reduce<ControlDesignState>((next, item) => appendUser(next, item, 'steering'), { ...state, steering: [] });
     case 'send':
       if (state.compaction) throw new Error('正在压缩上下文，请等待压缩结束。');
       return state.main ? { ...state, queue: [...state.queue, { id: action.id, text: action.text }] }

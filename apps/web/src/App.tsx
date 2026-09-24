@@ -108,7 +108,7 @@ function Workspace() {
   const up = useUp();
   const selectSession = (id: string) => {
     const destination = sessionNavigation(location.pathname, id);
-    navigate(destination.to, { replace: destination.replace });
+    void navigate(destination.to, { replace: destination.replace });
   };
   const openDetails = useCallback((id: string, nextPanel: SessionPanel = 'info') => {
     const focused = document.activeElement;
@@ -119,7 +119,7 @@ function Workspace() {
         : document.querySelector<HTMLElement>('.chat-topbar-more');
     setPanelTrigger({ sessionId: id, element });
     const destination = detailsNavigation(location.pathname, id, nextPanel);
-    navigate(destination.to, { replace: destination.replace });
+    void navigate(destination.to, { replace: destination.replace });
   }, [location.pathname, navigate]);
 
   // The detail pane shows the chat, or — when the URL points at a session that
@@ -221,7 +221,7 @@ function Workspace() {
           <StateNotice kind="empty" placement="pane">
             <div>
               <p>这个会话不存在,或已被删除。</p>
-              <Button variant="primary" onClick={() => navigate('/')}>返回列表</Button>
+              <Button variant="primary" onClick={() => void navigate('/')}>返回列表</Button>
             </div>
           </StateNotice>
         ) : (
@@ -241,7 +241,7 @@ function Workspace() {
         sessionId={deleteTarget.sessionId} name={deleteTarget.name}
         onCancel={() => setDeleteTarget(null)}
         onSuccess={() => {
-          if (routeId === deleteTarget.sessionId) navigate('/', { replace: true });
+          if (routeId === deleteTarget.sessionId) void navigate('/', { replace: true });
         }} />}
       {dirPicker && (
         <Suspense fallback={

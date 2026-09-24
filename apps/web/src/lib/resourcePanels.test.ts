@@ -334,7 +334,7 @@ test('unloaded native resource hooks are invalid and explicit refresh cannot iss
   withSession(t, false);
   let resource!: ReturnType<typeof useSessionResource<string[]>>;
   function Probe() {
-    resource = useSessionResource(session.sessionId, 'native:test', async () => assert.fail('must not read native runtime'));
+    resource = useSessionResource<string[]>(session.sessionId, 'native:test', async () => assert.fail('must not read native runtime'));
     return null;
   }
   renderToStaticMarkup(createElement(Probe));

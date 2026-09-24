@@ -62,8 +62,8 @@ export function useUp(): (target?: string) => void {
     (target?: string) => {
       const dest = target ?? parentOf(pathname);
       const idx = historyIdx();
-      if (idx > 0 && seenByIdx.get(idx - 1) === dest) navigate(-1);
-      else navigate(dest, { replace: true });
+      if (idx > 0 && seenByIdx.get(idx - 1) === dest) void navigate(-1);
+      else void navigate(dest, { replace: true });
     },
     [navigate, pathname],
   );

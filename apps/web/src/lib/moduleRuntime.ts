@@ -5,7 +5,7 @@ import type {
   HostSnapshot, ChatWindowSnapshot, MarkdownNode, MarkdownRenderer, ModuleAsset, ModuleComponentProps,
   DraftSchemaRegistration, ModuleEventPayload, ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
   ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget,
-  DraftSendBlockReason,
+  DraftReference, DraftSendBlockReason,
 } from '@cockpit/module-api';
 import { resolveDraft, type SessionDraft } from './textDraft';
 import { RegisteredDraftSchema, type RuntimeDraftSchema } from './draftSchemas';
@@ -390,7 +390,7 @@ export class ModuleRuntime {
             throw error;
           }
         },
-        bindDraft: reference => {
+        bindDraft: (reference: DraftReference) => {
           if (controller.signal.aborted || !frontend) throw new Error('Module draft binding is not active');
           const source = resolveDraft(reference);
           let binding = bindings.get(source);
@@ -601,7 +601,7 @@ export class ModuleRuntime {
     for (const { module, entry } of entries.toReversed()) {
       const Next = Composed;
       try {
-        const Enhanced = (entry.wrap as ComponentMiddleware<ModuleComponentProps[Key]>)(Next);
+        const Enhanced = (entry.wrap as unknown as ComponentMiddleware<ModuleComponentProps[Key]>)(Next);
         if (!component(Enhanced)) throw new Error('Middleware must return a React component');
         Composed = (props: ModuleComponentProps[Key]) => {
           const fallback = React.createElement(Next, props);

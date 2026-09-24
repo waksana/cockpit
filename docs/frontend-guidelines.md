@@ -282,6 +282,16 @@ blocks the retired `dialog-btn`, `rp` and `primary` classes. Public `ck-*` class
 come from `public-ui.scss`; undefined `ck-*` names are still reported. These checks
 cover style files and className literals only, not inline TSX styles.
 
+<a id="type-guardrails"></a>
+### Type guardrails
+
+Web code compiles with TypeScript `strict` (`tsconfig.app.json` and
+`tsconfig.node.json`, both in `pnpm --filter @cockpit/web typecheck`). ESLint is
+type-aware and rejects floating and misused promises: await, return or handle a
+promise, or discard it explicitly with `void` when its failure is already owned
+elsewhere (for example, a store mutation that reports its own error). Top-level
+`node:test` calls are exempt.
+
 ## Short examples
 
 | Scenario | Prefer | Avoid |

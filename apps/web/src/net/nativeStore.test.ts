@@ -55,7 +55,7 @@ function setup(t: TestContext) {
     init?: RequestInit; stream?: ReadableStreamDefaultController<Uint8Array>; ended?: boolean;
     resolve: (response: Response) => void; reject: (error: Error) => void;
   }[] = [];
-  t.mock.method(globalThis, 'fetch', (input, init) => new Promise<Response>((resolve, reject) => {
+  t.mock.method(globalThis, 'fetch', (input: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((resolve, reject) => {
     requests.push({ path: String(input), body: JSON.parse(String(init?.body)), signal: init?.signal, init, resolve, reject });
   }));
   const store = createCockpitStore();

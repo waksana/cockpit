@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createElement as h, Fragment, useSyncExternalStore } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import type { DraftSchemaHandle, DraftSchemaScope, ModuleDraft, ModuleFrontend, ModuleFrontendContext } from '@cockpit/module-api';
+import type {
+  DraftSchemaHandle, DraftSchemaScope, ModuleComponentMiddleware, ModuleDraft, ModuleFrontend, ModuleFrontendContext,
+} from '@cockpit/module-api';
 import { SessionDraft } from '../lib/textDraft';
 import { ModuleRuntime } from '../lib/moduleRuntime';
 import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';
 import { Composer } from './Composer';
+import { failOnReport } from '../test/failOnReport';
 
 async function fixture(withInput = false, withStatus = false) {
   const digest = 'a'.repeat(64);
@@ -57,17 +60,17 @@ async function fixture(withInput = false, withStatus = false) {
           });
         },
       }, ...withStatus ? [{
-        id: 'status', boundary: 'composerEditor' as const,
+        id: 'status', boundary: 'composerEditor',
         wrap: Base => props => h('div', { className: 'fixture-editor' },
           h('div', { className: 'fixture-status', role: 'status' }, 'Recording'), h(Base, props)),
-      }] : [], {
+      } satisfies ModuleComponentMiddleware] : [], {
         id: 'input', boundary: 'composerInput',
         wrap: Base => props => h(Fragment, null, h(Base, props), withInput && h('button', {
           type: 'button', 'aria-label': 'Microphone', disabled: props.disabled || props.sendBlocked,
         }, 'Microphone')),
       }] };
     } }),
-    report: assert.fail,
+    report: failOnReport,
   });
   await runtime.start();
   const draft = new SessionDraft('fixture');

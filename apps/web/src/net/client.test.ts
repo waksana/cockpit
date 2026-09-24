@@ -10,7 +10,9 @@ import type { NativeDraftRequest } from '../lib/draft';
 
 // Global notices deduplicate identical text; each test runs in a fresh window.
 let now = 0;
-beforeEach((t: TestContext) => {
+beforeEach((context) => {
+  // A top-level beforeEach runs once per test with that test's context.
+  const t = context as TestContext;
   now += 60_000;
   t.mock.method(Date, 'now', () => now);
   t.mock.method(console, 'error', () => {});
