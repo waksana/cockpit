@@ -8,7 +8,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import {
-  command, firstPartyRuntimePath, inventoryTree, MCP_START_COMMAND, packageRuntime, REQUIRED_FILES, safeRelativePath, sha256, START_COMMAND,
+  command, firstPartyRuntimePath, inventoryTree, MCP_START_COMMAND, MODULE_COMMAND, packageRuntime, REQUIRED_FILES, safeRelativePath, sha256, START_COMMAND,
 } from './package-runtime.mjs';
 
 const repository = fileURLToPath(new URL('../', import.meta.url)).replace(/\/$/, '');
@@ -33,13 +33,16 @@ function link(target, path) {
 function fakeDeploy(source, target, app, state) {
   mkdirSync(target, { recursive: true });
   cpSync(join(source, `apps/${app}/package.json`), join(target, 'package.json'));
-  cpSync(join(source, `apps/${app}/${app === 'server' ? 'src' : 'dist'}`), join(target, app === 'server' ? 'src' : 'dist'), { recursive: true });
+  cpSync(join(source, `apps/${app}/dist`), join(target, 'dist'), { recursive: true });
   const modules = join(target, 'node_modules');
+  // Mirrors each workspace manifest's published `files`: compiled output, plus sources the type export needs.
+  const published = { core: ['dist', 'src'], protocol: ['dist', 'src'], 'module-api': ['src'] };
   const workspace = name => {
     const peers = join(modules, '.pnpm', `@cockpit+${name}@file+packages+${name}`, 'node_modules');
     const path = join(peers, '@cockpit', name);
-    mkdirSync(dirname(path), { recursive: true });
-    cpSync(join(source, 'packages', name), path, { recursive: true });
+    mkdirSync(path, { recursive: true });
+    cpSync(join(source, 'packages', name, 'package.json'), join(path, 'package.json'));
+    for (const directory of published[name]) cpSync(join(source, 'packages', name, directory), join(path, directory), { recursive: true });
     link(path, join(modules, '@cockpit', name));
     return { path, peers };
   };
@@ -66,8 +69,7 @@ function fakeDeploy(source, target, app, state) {
       put(native, path, `Preserve dependency-owned bytes: ${path}`);
     }
   }
-  put(modules, 'tsx/package.json', { name: 'tsx', version: '4.23.13', type: 'module' });
-  if (!state.missingLoader) put(modules, 'tsx/dist/loader.mjs', 'export {};');
+  if (state.devLoader) put(modules, '.pnpm/tsx@4.23.13/node_modules/tsx/dist/loader.mjs', 'export {};');
   put(modules, '.modules.yaml', 'Must not retain build-machine package-manager metadata');
   put(modules, '.pnpm/lock.yaml', 'Must not retain generated deployment metadata');
   if (state.externalLink) link(state.externalLink, join(modules, 'external-link'));
@@ -106,6 +108,27 @@ export const marker = [Fixture.READY, typeof CopilotClient, protocolMarker];
   track('packages/protocol/src/index.ts', 'export const protocolMarker: string = "synthetic";');
   track('packages/module-api/src/index.ts', 'export interface ModuleFixture { apiVersion: 1 }');
   track('apps/server/src/module-cli.ts', 'console.log("Synthetic local module CLI");');
+  // Build outputs, as `pnpm build` leaves them in the checkout.
+  put(source, 'apps/server/dist/index.js', `
+import Fastify from 'fastify';
+import { marker } from '@cockpit/core';
+import { protocolMarker } from '@cockpit/protocol';
+console.log(JSON.stringify({ pid: process.pid, marker, protocolMarker, fastify: typeof Fastify }));
+//# sourceMappingURL=index.js.map
+`);
+  put(source, 'apps/server/dist/index.js.map', { version: 3, file: 'index.js', sources: ['../src/index.ts'], mappings: '' });
+  put(source, 'apps/server/dist/module-cli.js', 'console.log("Synthetic local module CLI");');
+  put(source, 'apps/server/dist/test-support/module-fixture.js', 'Must not ship compiled test support');
+  put(source, 'packages/core/dist/index.js', `
+import { CopilotClient } from '@github/copilot-sdk';
+import { protocolMarker } from '@cockpit/protocol';
+const Fixture = { READY: 7 };
+export const marker = [Fixture.READY, typeof CopilotClient, protocolMarker];
+`);
+  put(source, 'packages/core/dist/index.js.map', { version: 3, file: 'index.js', sources: ['../src/index.ts'], mappings: '' });
+  for (const name of ['index', 'chat', 'validation']) {
+    put(source, `packages/protocol/dist/${name}.js`, 'export const protocolMarker = "synthetic";');
+  }
   for (const path of ['apps/server/src/example.test.ts', 'apps/server/src/example.test.mjs',
     'apps/server/src/fixtures/payload.ts', 'apps/server/src/__tests__/unit.ts',
     'packages/core/test-support/regress.mts', 'packages/core/src/test-support/helper.ts', 'packages/core/src/consumer/cli.ts',
@@ -128,6 +151,7 @@ console.log(JSON.stringify({ pid: process.pid, server: typeof Server, protocolMa
 `);
   put(source, 'apps/mcp/dist/old.test.js', 'Must not ship stale compiled tests');
   put(source, 'apps/mcp/dist/tools/deploy.js', 'Must not ship stale deployment tooling');
+  put(source, 'apps/web/dist/assets/app.js.map', 'Must not ship Web source maps');
   const state = { head: sourceSha, dirty: false };
   const calls = [];
   const run = (program, args, cwd) => {
@@ -201,20 +225,31 @@ async function unpack(archive, destination) {
   return manifest;
 }
 
-test('the root and server commands enter Node directly with a production loader', () => {
+test('packaged commands run compiled JavaScript directly; tsx stays a development tool', () => {
   const root = JSON.parse(readFileSync(join(repository, 'package.json'), 'utf8'));
   const server = JSON.parse(readFileSync(join(repository, 'apps/server/package.json'), 'utf8'));
   const mcp = JSON.parse(readFileSync(join(repository, 'apps/mcp/package.json'), 'utf8'));
-  assert.equal(root.scripts.start, START_COMMAND);
-  assert.equal(root.scripts['start:mcp'], MCP_START_COMMAND);
-  assert.equal(server.scripts.start, 'node --import tsx src/index.ts');
+  assert.equal(START_COMMAND, 'node --enable-source-maps apps/server/dist/index.js');
+  assert.equal(MCP_START_COMMAND, 'node --enable-source-maps apps/mcp/dist/index.js');
+  assert.equal(MODULE_COMMAND, 'node --enable-source-maps apps/server/dist/module-cli.js');
+  // Source checkouts resolve workspace packages to TypeScript, so their root commands keep the loader.
+  assert.equal(root.scripts.start, 'node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/index.ts');
+  assert.equal(root.scripts['start:mcp'], 'node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js');
   assert.equal(root.packageManager, 'pnpm@10.34.5');
   assert.equal(root.engines.node, '>=22.12.0');
-  assert.ok(server.dependencies.tsx);
-  assert.equal(server.devDependencies?.tsx, undefined);
-  assert.equal(mcp.scripts.start, 'node --import tsx dist/index.js');
-  assert.ok(mcp.dependencies.tsx);
-  assert.equal(mcp.devDependencies?.tsx, undefined);
+  for (const manifest of [server, mcp]) {
+    assert.equal(manifest.dependencies.tsx, undefined);
+    assert.ok(manifest.devDependencies.tsx);
+  }
+  assert.equal(server.scripts.build, 'tsc -p tsconfig.json');
+  for (const path of ['apps/server', 'apps/mcp', 'packages/core', 'packages/protocol']) {
+    const config = JSON.parse(readFileSync(join(repository, path, 'tsconfig.json'), 'utf8'));
+    assert.equal(config.extends, '../../tsconfig.runtime.json', path);
+  }
+  const runtimeConfig = JSON.parse(readFileSync(join(repository, 'tsconfig.runtime.json'), 'utf8')).compilerOptions;
+  assert.equal(runtimeConfig.sourceMap, true);
+  assert.equal(runtimeConfig.rewriteRelativeImportExtensions, true);
+  assert.equal(runtimeConfig.noEmit, undefined);
   const workspace = readFileSync(join(repository, 'pnpm-workspace.yaml'), 'utf8');
   assert.match(workspace, /^injectWorkspacePackages: true$/m);
   assert.match(workspace, /^dedupeInjectedDeps: true$/m);
@@ -326,6 +361,18 @@ test('synthetic packaging inventories its complete closure and preserves depende
   }
   assert.ok(manifest.files.some(file => file.path.endsWith(wrapper) && file.mode === '0755'));
   assert.ok(paths.includes('apps/web/dist/assets/app.js'));
+  for (const path of ['apps/server/dist/index.js.map', 'packages/core/dist/index.js.map']) assert.ok(paths.includes(path), path);
+  assert.equal(paths.some(path => /^(?:apps\/server|packages\/core)\/src\//.test(path) || path.endsWith('app.js.map')
+    || path.includes('test-support') || /node_modules\/(?:\.pnpm\/)?tsx/.test(path)), false);
+  const runtimeRoot = JSON.parse(await readFile(join(f.root, 'unpacked/package.json'), 'utf8'));
+  assert.deepEqual(runtimeRoot.scripts, { start: START_COMMAND, 'start:mcp': MCP_START_COMMAND, module: MODULE_COMMAND });
+  const protocol = JSON.parse(await readFile(join(f.root, 'unpacked/packages/protocol/package.json'), 'utf8'));
+  assert.equal(protocol.main, './dist/index.js');
+  assert.equal(protocol.types, undefined);
+  assert.deepEqual(protocol.exports, { '.': './dist/index.js', './chat': './dist/chat.js', './validation': './dist/validation.js' });
+  assert.ok(paths.includes('packages/protocol/src/index.ts'), 'The type export needs protocol sources');
+  const server = JSON.parse(await readFile(join(f.root, 'unpacked/apps/server/package.json'), 'utf8'));
+  assert.equal(server.scripts, undefined);
   for (const name of ['lucide', 'frontend']) {
     assert.ok(paths.includes(`apps/web/dist/licenses/${name}.txt`));
   }
@@ -363,19 +410,21 @@ test('packaging rejects dirty source, the wrong commit, and unsafe or existing o
 
 test('packaging fails explicitly on missing inputs and dependency failures without retaining partial output', async t => {
   for (const failure of ['tracked', 'web', 'lucide-license', 'frontend-license',
-    'mcp', 'loader', 'native', 'sdk-version', 'deploy', 'dirty-during-deploy']) {
+    'mcp', 'server', 'core', 'loader', 'native', 'sdk-version', 'deploy', 'dirty-during-deploy']) {
     await t.test(failure, async t => {
       const f = await fixture(t);
       if (failure === 'tracked') f.tracked.delete('LICENSE');
       if (failure === 'web') await rm(join(f.source, 'apps/web/dist/index.html'));
       if (failure.endsWith('-license')) await rm(join(f.source, `apps/web/dist/licenses/${failure.slice(0, -8)}.txt`));
       if (failure === 'mcp') await writeFile(join(f.source, 'apps/mcp/dist/index.js'), '');
-      if (failure === 'loader') f.state.missingLoader = true;
+      if (failure === 'server') await rm(join(f.source, 'apps/server/dist/index.js'));
+      if (failure === 'core') await rm(join(f.source, 'packages/core/dist'), { recursive: true });
+      if (failure === 'loader') f.state.devLoader = true;
       if (failure === 'native') f.state.missingNative = true;
       if (failure === 'sdk-version') f.state.sdkVersion = '9.9.9';
       if (failure === 'deploy') f.state.deployFailure = true;
       if (failure === 'dirty-during-deploy') f.state.dirtyDuringDeploy = true;
-      await assert.rejects(f.package(), /Missing tracked|ENOENT|Required runtime file|exact source dependency|deployment failure|dirty tracked/);
+      await assert.rejects(f.package(), /Missing tracked|ENOENT|Required runtime file|exact source dependency|deployment failure|dirty tracked|Development loader/);
       assert.equal(existsSync(join(f.source, 'runtime-output')), false);
     });
   }
@@ -422,7 +471,7 @@ test('real offline pnpm closure needs no registry metadata cache and starts dire
   const result = await f.package();
   const unpacked = join(f.root, 'portable');
   const manifest = await unpack(result.archive, unpacked);
-  assert.equal(manifest.files.some(file => /node_modules\/(?:\.pnpm\/)?(?:typescript|vite|eslint)(?:@|\/)/.test(file.path)), false);
+  assert.equal(manifest.files.some(file => /node_modules\/(?:\.pnpm\/)?(?:typescript|vite|eslint|tsx|esbuild|@esbuild)(?:@|\/)/.test(file.path)), false);
   const env = { NODE_ENV: 'production' };
   for (const key of ['HOME', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'COPILOT_HOME', 'TMPDIR']) {
     env[key] = join(f.root, 'isolated', key);
@@ -456,4 +505,11 @@ test('the real fixed-commit archive has the complete inventoried runtime and no 
   const expected = (await readFile(`${archive}.sha256`, 'utf8')).trim();
   assert.equal(expected, `${await sha256(archive)}  ${basename(archive)}`);
   await unpack(archive, join(root, 'runtime'));
+  // The public type export runs from the package and must resolve its shipped sources.
+  execFileSync(process.execPath, ['scripts/export-module-api.mjs', join(root, 'sdk')], { cwd: join(root, 'runtime') });
+  for (const name of ['protocol', 'module-api']) {
+    const manifest = JSON.parse(await readFile(join(root, 'sdk', name, 'package.json'), 'utf8'));
+    const entries = [manifest.types, manifest.main, ...Object.values(manifest.exports ?? {}).flatMap(value => typeof value === 'string' ? [value] : Object.values(value))];
+    for (const entry of entries.filter(Boolean)) assert.ok((await lstat(join(root, 'sdk', name, entry))).isFile(), `${name} ${entry}`);
+  }
 });

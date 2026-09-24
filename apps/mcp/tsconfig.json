@@ -1,21 +1,6 @@
 {
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "rewriteRelativeImportExtensions": true,
-    "lib": ["ES2024"],
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "outDir": "dist",
-    "rootDir": "src",
-    "types": ["node"],
-    "declaration": false,
-    "sourceMap": false
-  },
+  "extends": "../../tsconfig.runtime.json",
+  "compilerOptions": { "outDir": "dist", "rootDir": "src" },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"]
 }

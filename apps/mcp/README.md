@@ -244,8 +244,7 @@ override. Prefer the CLI where possible:
 copilot mcp add cockpit \
   --env COCKPIT_URL=http://127.0.0.1:8771 \
   --env COCKPIT_API_TOKEN=REPLACE_WITH_GATEWAY_TOKEN \
-  -- node --import /path/to/cockpit/apps/mcp/node_modules/tsx/dist/loader.mjs \
-     /path/to/cockpit/apps/mcp/dist/index.js
+  -- node --enable-source-maps /path/to/cockpit/apps/mcp/dist/index.js
 ```
 For manual edits, merge a server entry into the existing `mcpServers` object; never replace the
 whole file or discard other servers:
@@ -256,7 +255,7 @@ whole file or discard other servers:
       "type": "local",
       "command": "node",
       "args": [
-        "--import", "/path/to/cockpit/apps/mcp/node_modules/tsx/dist/loader.mjs",
+        "--enable-source-maps",
         "/path/to/cockpit/apps/mcp/dist/index.js"
       ],
       "tools": ["*"],
@@ -269,10 +268,14 @@ whole file or discard other servers:
 }
 ```
 `type:"local"`, `command`, `args`, `tools:["*"]` and `env` match `copilot mcp add --json` output.
-Omit `COCKPIT_API_TOKEN` only when the backend/gateway does not require it. The built entry mirrors
-root `pnpm start:mcp` (`node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js`
-from the repository root); `apps/mcp/package.json` exposes the `cockpit-mcp-server` bin at
-`dist/index.js`, and `pnpm --filter @cockpit/mcp start` runs `node --import tsx dist/index.js`.
+Omit `COCKPIT_API_TOKEN` only when the backend/gateway does not require it. `/path/to/cockpit` is an
+extracted runtime package root, whose `start:mcp` script is the same command and which ships no
+TypeScript loader. Registrations made for older packages used
+`--import …/apps/mcp/node_modules/tsx/dist/loader.mjs`; update them when deploying a newer package
+([entry points](../../docs/releasing.md#entry-point-upgrade)). A source checkout resolves
+`@cockpit/protocol` to TypeScript, so there insert
+`"--import", "/path/to/checkout/apps/mcp/node_modules/tsx/dist/loader.mjs"` before the entry, as
+root `pnpm start:mcp` does; `pnpm --filter @cockpit/mcp start` runs `node --import tsx dist/index.js`.
 
 After editing user configuration, new sessions pick it up through native MCP discovery. For a
 running backend, `cockpit_refresh_mcp` (`mcp/refresh`) rereads native MCP definitions, and

@@ -60,8 +60,8 @@ Useful commands:
 | --- | --- |
 | `pnpm --filter <pkg> test` | One workspace's tests (`@cockpit/protocol`, `core`, `server`, `mcp`, `web`). |
 | `pnpm --filter @cockpit/web typecheck` | Web type check (also part of its build). |
-| `pnpm start` | Start the built service like a package (explicit tsx loader). |
-| `pnpm start:mcp` | Start the built stdio MCP client. |
+| `pnpm start` | Start the service from a source checkout (explicit tsx loader; workspace packages resolve to TypeScript). Packages run compiled `dist` instead ([releasing](releasing.md#entry-point-upgrade)). |
+| `pnpm start:mcp` | Start the built stdio MCP client from a source checkout (tsx resolves the protocol sources). |
 | `pnpm module <command>` | Local module CLI: `install`, `enable`, `disable`, `list`, `migrate-id`. |
 | `pnpm package:runtime` | Build a runtime archive ([releasing](releasing.md)). |
 | `pnpm e2e` / `pnpm perf` / `pnpm regress` | Opt-in diagnostics with synthetic fixtures ([testing](testing.md#diagnostics)). |

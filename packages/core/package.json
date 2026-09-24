@@ -3,11 +3,11 @@
   "version": "0.4.5",
   "type": "module",
   "files": [
-    "src",
-    "!src/**/*.test.*",
-    "!src/**/__tests__/**",
-    "!src/**/__fixtures__/**",
-    "!src/**/fixtures/**"
+    "dist",
+    "!dist/**/*.test.*",
+    "!dist/**/__tests__/**",
+    "!dist/**/__fixtures__/**",
+    "!dist/**/fixtures/**"
   ],
   "main": "./src/index.ts",
   "types": "./src/index.ts",

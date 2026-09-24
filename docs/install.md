@@ -46,8 +46,11 @@ credentials or session data; its contents are described in [releasing](releasing
 After [signing in](#native-sign-in), start from the package root:
 
 ```sh
-node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/index.ts
+node --enable-source-maps apps/server/dist/index.js
 ```
+
+Upgrading from a package that started through `tsx/dist/loader.mjs`? Update the
+service and MCP launch commands; see [entry points](releasing.md#entry-point-upgrade).
 
 <a id="from-source"></a>
 ## Install from source
@@ -131,8 +134,8 @@ Install modules from the package root with the local CLI (in a source checkout,
 `pnpm module …` is equivalent):
 
 ```sh
-node --import ./apps/server/node_modules/tsx/dist/loader.mjs \
-  apps/server/src/module-cli.ts install /absolute/path/module.tgz --trust-local-code --enable
+node --enable-source-maps apps/server/dist/module-cli.js \
+  install /absolute/path/module.tgz --trust-local-code --enable
 ```
 
 `--trust-local-code` authorizes the package to run inside the host process; it is
@@ -249,7 +252,8 @@ References: Microsoft's WSL [networking](https://learn.microsoft.com/windows/wsl
 | --- | --- |
 | Node or platform mismatch | `node --version` must equal the manifest `node`; Linux x64/glibc only. Never edit the manifest. |
 | `Unvalidated Copilot runtime` | Unset `COPILOT_CLI_PATH`; use the bundled runtime. |
-| SDK platform asset or `tsx` not found | Download `runtime.tar.gz` (not a source archive), extract fully, start from the package root. Source: `pnpm install --frozen-lockfile`. |
+| SDK platform asset or `dist/index.js` not found | Download `runtime.tar.gz` (not a source archive), extract fully, start from the package root. Source: `pnpm install --frozen-lockfile && pnpm build`. |
+| `…/tsx/dist/loader.mjs` not found in a package | The launch command predates compiled packages; use the [current entry points](releasing.md#entry-point-upgrade). |
 | Web `index.html` missing | Source: run `pnpm build`. Package: re-download and extract. Do not hide it with `COCKPIT_SERVE_WEB=0`. |
 | UI loads but no reply | Native sign-in, Copilot access, quota and network. `/health` does not test models. |
 | `EADDRINUSE` | The port is taken. Do not kill unknown processes; stop the old host gracefully or choose `COCKPIT_PORT` for a separate native home. |

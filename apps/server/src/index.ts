@@ -589,7 +589,7 @@ export async function registerStaticWeb(): Promise<void> {
 // Boot the Engine + transport. Guarded so importing this module for unit tests
 // (COCKPIT_NO_BOOT=1) builds the Fastify app + hooks WITHOUT constructing the
 // Engine (which connects the native runtime) or binding the port. Production
-// (`tsx src/index.ts`) runs with the env unset, so it boots normally.
+// (`node dist/index.js`, or `tsx src/index.ts` from source) runs with the env unset, so it boots normally.
 async function boot(): Promise<void> {
   // Held until process exit, including unsuccessful native/transport shutdown.
   moduleStartupGuard = await guardModuleHostStartup();

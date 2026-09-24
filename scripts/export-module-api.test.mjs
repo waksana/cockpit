@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, readFile, rm, readdir } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { exportModuleApi } from './export-module-api.mjs';
@@ -49,4 +49,30 @@ test('module API export contains its canonical types and local protocol dependen
   await assert.rejects(exportModuleApi(target), { code: 'EEXIST' });
   await mkdir(join(root, 'existing'));
   await assert.rejects(exportModuleApi(join(root, 'existing')), { code: 'EEXIST' });
+});
+
+test('an export from a runtime package points back at the shipped sources', async t => {
+  const parent = new URL('../node_modules/', import.meta.url);
+  const root = await mkdtemp(new URL('module-sdk-runtime-', parent));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const packages = join(root, 'packages');
+  for (const name of ['module-api', 'protocol']) {
+    await cp(new URL(`../packages/${name}/src`, import.meta.url), join(packages, name, 'src'), { recursive: true });
+    await cp(new URL(`../packages/${name}/package.json`, import.meta.url), join(packages, name, 'package.json'));
+  }
+  // As scripts/package-runtime.mjs rewrites it: compiled entries, no `types`.
+  const protocolManifest = join(packages, 'protocol/package.json');
+  const { types: _types, ...runtime } = JSON.parse(await readFile(protocolManifest, 'utf8'));
+  runtime.main = './dist/index.js';
+  runtime.exports = { '.': './dist/index.js', './chat': './dist/chat.js', './validation': './dist/validation.js' };
+  await writeFile(protocolManifest, JSON.stringify(runtime));
+  const target = join(root, 'sdk');
+  await exportModuleApi(target, packages);
+  const protocol = JSON.parse(await readFile(join(target, 'protocol/package.json'), 'utf8'));
+  assert.equal(protocol.types, './src/index.ts');
+  assert.equal(protocol.main, './src/index.ts');
+  assert.deepEqual(protocol.exports, { '.': './src/index.ts', './chat': './src/chat.ts', './validation': './src/validation.ts' });
+  for (const entry of Object.values(protocol.exports)) await readFile(join(target, 'protocol', entry));
+  const api = JSON.parse(await readFile(join(target, 'module-api/package.json'), 'utf8'));
+  assert.deepEqual(api.exports, { '.': { types: './src/index.ts', default: './src/index.ts' } });
 });

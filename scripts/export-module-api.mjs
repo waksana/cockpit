@@ -2,8 +2,14 @@ import { cp, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export async function exportModuleApi(destination) {
-  const source = fileURLToPath(new URL('../packages/', import.meta.url));
+// A runtime package rewrites manifests to compiled `dist`; the export ships only sources.
+const sourceEntry = value => typeof value === 'string'
+  ? value.replace(/^\.\/dist\/(.+)\.js$/, './src/$1.ts')
+  : value && typeof value === 'object'
+    ? Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, sourceEntry(entry)]))
+    : value;
+
+export async function exportModuleApi(destination, source = fileURLToPath(new URL('../packages/', import.meta.url))) {
   const output = resolve(destination);
   await mkdir(output);
   for (const name of ['module-api', 'protocol']) {
@@ -19,8 +25,8 @@ export async function exportModuleApi(destination) {
     });
     await writeFile(join(target, 'package.json'), JSON.stringify({
       name: manifest.name, version: manifest.version, type: manifest.type,
-      license: 'GPL-3.0-only', types: manifest.types, main: manifest.main,
-      exports: manifest.exports, dependencies,
+      license: 'GPL-3.0-only', types: sourceEntry(manifest.types ?? manifest.main), main: sourceEntry(manifest.main),
+      exports: sourceEntry(manifest.exports), dependencies,
     }, null, 2) + '\n');
   }
   await cp(fileURLToPath(new URL('../LICENSE', import.meta.url)), join(output, 'LICENSE'));
