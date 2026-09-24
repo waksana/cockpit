@@ -7,19 +7,24 @@ pairing**; package format, install commands and APIs are in the
 
 ## Versions and compatibility
 
-Checked 2026-09-24 against GitHub Releases and each repository's `main`.
+Checked 2026-09-25 against the accepted joint-deployment sources and their
+versioned releases.
 
 | Module | Latest release | Paired host release | Status |
 | --- | --- | --- | --- |
-| [Cockpit File](https://github.com/waksana/cockpit-file) | [v0.2.2](https://github.com/waksana/cockpit-file/releases/tag/v0.2.2) | [Cockpit v0.4.5](https://github.com/waksana/cockpit/releases/tag/v0.4.5) | Installable. |
-| [Cockpit Notification](https://github.com/waksana/cockpit-notification) | [v0.1.15](https://github.com/waksana/cockpit-notification/releases/tag/v0.1.15) | [Cockpit v0.4.5](https://github.com/waksana/cockpit/releases/tag/v0.4.5) | Installable. |
-| [Cockpit Speech](https://github.com/waksana/cockpit-speech) | [v0.9.1](https://github.com/waksana/cockpit-speech/releases/tag/v0.9.1) | [Cockpit v0.4.5](https://github.com/waksana/cockpit/releases/tag/v0.4.5) | Installable; needs Azure Speech configuration. |
-| [Cockpit Task](https://github.com/waksana/cockpit-task) | [v0.1.12](https://github.com/waksana/cockpit-task/releases/tag/v0.1.12) | [Cockpit v0.4.5](https://github.com/waksana/cockpit/releases/tag/v0.4.5) | Installable. The older v1.2.7 is a legacy pre-release ZIP. |
+| [Cockpit File](https://github.com/waksana/cockpit-file) | [v0.2.4](https://github.com/waksana/cockpit-file/releases/tag/v0.2.4) | [Cockpit v0.4.7](https://github.com/waksana/cockpit/releases/tag/v0.4.7) | Installable. |
+| [Cockpit Notification](https://github.com/waksana/cockpit-notification) | [v0.1.17](https://github.com/waksana/cockpit-notification/releases/tag/v0.1.17) | [Cockpit v0.4.7](https://github.com/waksana/cockpit/releases/tag/v0.4.7) | Installable. |
+| [Cockpit Speech](https://github.com/waksana/cockpit-speech) | [v0.9.2](https://github.com/waksana/cockpit-speech/releases/tag/v0.9.2) | [Cockpit v0.4.7](https://github.com/waksana/cockpit/releases/tag/v0.4.7) | Installable; needs Azure Speech configuration. |
+| [Cockpit Task](https://github.com/waksana/cockpit-task) | [v0.2.0](https://github.com/waksana/cockpit-task/releases/tag/v0.2.0) | [Cockpit v0.4.7](https://github.com/waksana/cockpit/releases/tag/v0.4.7) | Installable. Schema v9 is roll-forward only and requires host-provided MCP invocation identity. The older v1.2.7 is a legacy pre-release ZIP. |
 | [Cockpit WeChat Connector](https://github.com/waksana/cockpit-wechat-connector) | [v0.1.6](https://github.com/waksana/cockpit-wechat-connector/releases/tag/v0.1.6) (legacy ZIP) | — | Not yet adapted: uses `module.json` and a separate service protocol; the module CLI cannot install it. |
 
-These four releases were deployed and accepted together on Cockpit v0.4.5.
-Cockpit v0.4.5 **rejects** manifests that declare `frontend.next`, so File v0.2.0
-and Speech v0.9.0 (which declare it) need Cockpit v0.3.0.
+These four releases were deployed and accepted together on Cockpit v0.4.7.
+Task v0.2.0 renames its public Task vocabulary and migrates schema v7 through
+v8 to v9 in place. Cockpit v0.4.6 and older do not provide the invocation
+metadata required by that module, while Task v0.1.13 and older refuse a v9
+database. Downgrading therefore requires restoring the coordinated pre-upgrade
+database backup and may discard later writes; it is not an automatic package
+rollback.
 
 The running host reports its own version at `/version`. Module capability checks
 (for example `menuVersion`, `chatWindowVersion`, `composerInputVersion`) are
