@@ -505,4 +505,11 @@ test('the real fixed-commit archive has the complete inventoried runtime and no 
   const expected = (await readFile(`${archive}.sha256`, 'utf8')).trim();
   assert.equal(expected, `${await sha256(archive)}  ${basename(archive)}`);
   await unpack(archive, join(root, 'runtime'));
+  // The public type export runs from the package and must resolve its shipped sources.
+  execFileSync(process.execPath, ['scripts/export-module-api.mjs', join(root, 'sdk')], { cwd: join(root, 'runtime') });
+  for (const name of ['protocol', 'module-api']) {
+    const manifest = JSON.parse(await readFile(join(root, 'sdk', name, 'package.json'), 'utf8'));
+    const entries = [manifest.types, manifest.main, ...Object.values(manifest.exports ?? {}).flatMap(value => typeof value === 'string' ? [value] : Object.values(value))];
+    for (const entry of entries.filter(Boolean)) assert.ok((await lstat(join(root, 'sdk', name, entry))).isFile(), `${name} ${entry}`);
+  }
 });
