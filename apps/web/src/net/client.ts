@@ -2,7 +2,8 @@
 // projections remain in the browser; typed POSTs also serve older event pages.
 
 import { ServerEvent, Intents, NativeChatStreamRequest, classifyNativeModelSwitchResult,
-  classifyNativeModeSetResult, classifyNativeRewindResult, SKILL_NOT_FOUND, ErrorCodes, isErrorCode } from '@cockpit/protocol';
+  classifyNativeModeSetResult, classifyNativeRewindResult, MODULE_SKILL_NOT_FOUND, SKILL_NOT_FOUND,
+  ErrorCodes, isErrorCode } from '@cockpit/protocol';
 import type { NativeAttachment, IntentName, IntentBody, IntentResult, ExitPlanModeAction, NativeChatPage } from '@cockpit/protocol';
 import { EVENTS_URL, CHAT_STREAM_URL, intentUrl } from '../lib/config';
 import { reportUxError, describeReason } from '../lib/errorReporter';
@@ -15,7 +16,8 @@ import { beginHostMutation } from '../lib/hostLeave';
 // Exhaustive so adding a host intent requires an explicit read/write decision.
 export const HOST_INTENT_MUTATES = {
   'system/shutdown': true, 'system/status': false, 'runtime/snapshot': false,
-  'session/chat': false, 'session/new': true, 'roles/list': false, 'roles/resources': false, 'roles/add': true,
+  'session/chat': false, 'session/new': true, 'roles/list': false, 'roles/resources': false,
+  'roles/skill-read': false, 'roles/add': true,
   'roles/readiness': false, 'session/tools-initialize': true, 'session/resources-prepare': true, 'session/fork': true,
   prompt: true, cancel: true, 'session/interrupt': true, 'session/control': true, setModel: true,
   'session/rename': true, 'session/compact': true, 'session/rewind': true, setMode: true,
@@ -99,7 +101,8 @@ export function isSessionUnloadedError(e: unknown): e is SessionUnloadedError | 
 // Structured skills/read result for a name outside the discovered catalog;
 // callers present it in place, like a missing MCP catalog entry.
 export function isSkillNotFoundError(e: unknown): e is IntentHttpError {
-  return e instanceof IntentHttpError && e.status === 404 && e.code === SKILL_NOT_FOUND;
+  return e instanceof IntentHttpError && e.status === 404
+    && (e.code === SKILL_NOT_FOUND || e.code === MODULE_SKILL_NOT_FOUND);
 }
 
 export interface IntentOptions {
@@ -273,6 +276,9 @@ export class NetClient {
   }
   listRoles(options?: IntentOptions) { return this.intent('roles/list', {}, options); }
   roleResources(options?: IntentOptions) { return this.intent('roles/resources', {}, options); }
+  roleSkillRead(moduleId: string, resourceId: string, options?: IntentOptions) {
+    return this.intent('roles/skill-read', { moduleId, resourceId }, options);
+  }
   addRoles(sessionId: string, roles: IntentBody<'roles/add'>['roles'], options?: IntentOptions) {
     return this.intent('roles/add', { sessionId, roles }, options);
   }

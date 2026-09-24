@@ -2,7 +2,10 @@ import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, constants, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
-import { SessionRole, type ModuleRoleResources, type ModuleSource, type RoleSelection } from '@cockpit/protocol';
+import {
+  MODULE_SKILL_NOT_FOUND, SessionRole,
+  type ModuleRoleResources, type ModuleRoleSkill, type ModuleSource, type RoleSelection,
+} from '@cockpit/protocol';
 import type { RoleAssembly, RoleProvider, SessionInstructions } from '@cockpit/core';
 import type { ModuleInstallation } from './module-install.ts';
 import { MODULE_INSTRUCTIONS_LIMIT, safeModulePath } from './module-install.ts';
@@ -50,6 +53,14 @@ function skillDescription(body: string): string | undefined {
 const roleSkillFiles = (installation: ModuleInstallation, directory: string) =>
   Object.keys(installation.files).filter(path => path.startsWith(`${directory}/`) && path.endsWith('/SKILL.md'));
 
+const roleSkillId = (installation: ModuleInstallation, relative: string) =>
+  createHash('sha256').update(`${installation.digest}\0${relative}`).digest('hex');
+
+const moduleSkillNotFound = () => Object.assign(
+  new Error('Module Skill is unavailable, disabled, replaced or no longer current'),
+  { code: MODULE_SKILL_NOT_FOUND, statusCode: 404 },
+);
+
 const normalizedTools = (tools: Iterable<string>) => {
   const sorted = [...new Set(tools)].sort();
   return sorted.includes('*') ? ['*'] : sorted;
@@ -72,7 +83,7 @@ export class ModuleRoles implements RoleProvider {
     for (const installation of modules) {
       const { manifest } = installation;
       const roles = [...manifest.roles ?? []].sort((a, b) => a.id.localeCompare(b.id));
-      const skills = new Map<string, { name: string; description?: string; roles: Set<string> }>();
+      const skills = new Map<string, { id: string; name: string; description?: string; roles: Set<string> }>();
       const servers = new Map<string, { name: string; tools: Set<string>; roles: Set<string> }>();
       const bodies = new Map<string, { name: string; description?: string }>();
       for (const role of roles) {
@@ -84,9 +95,10 @@ export class ModuleRoles implements RoleProvider {
               const description = skillDescription(body);
               bodies.set(path, parsed = { name: roleSkillName(body, path), ...(description ? { description } : {}) });
             }
-            const entry = skills.get(parsed.name) ?? { ...parsed, roles: new Set<string>() };
+            const id = roleSkillId(installation, path);
+            const entry = skills.get(id) ?? { id, ...parsed, roles: new Set<string>() };
             entry.roles.add(role.id);
-            skills.set(parsed.name, entry);
+            skills.set(id, entry);
           }
         }
         for (const [name, config] of Object.entries(role.mcpServers ?? {})) {
@@ -108,6 +120,33 @@ export class ModuleRoles implements RoleProvider {
       });
     }
     return result;
+  }
+
+  async readSkill(moduleId: string, resourceId: string): Promise<ModuleRoleSkill> {
+    const installation = this.installations().find(value => value.manifest.id === moduleId);
+    if (!installation) throw moduleSkillNotFound();
+    const roles = [...installation.manifest.roles ?? []].sort((a, b) => a.id.localeCompare(b.id));
+    const paths = [...new Set(roles.flatMap(role =>
+      (role.skillDirectories ?? []).flatMap(directory => roleSkillFiles(installation, directory))))];
+    const path = paths.find(relative => roleSkillId(installation, relative) === resourceId);
+    if (!path) throw moduleSkillNotFound();
+    const body = await verifiedResource(installation, path);
+    const contributors = roles.filter(role => (role.skillDirectories ?? [])
+      .some(directory => path.startsWith(`${directory}/`)));
+    if (!contributors.length) throw moduleSkillNotFound();
+    const all = contributors.length === roles.length;
+    const description = skillDescription(body);
+    return {
+      id: resourceId,
+      name: roleSkillName(body, path),
+      ...(description ? { description } : {}),
+      body,
+      module: {
+        id: installation.manifest.id,
+        name: installation.manifest.name,
+        ...(all ? {} : { roles: contributors.map(role => ({ id: role.id, name: role.name })) }),
+      },
+    };
   }
 
   globalMcpSources(config: object): ModuleSource[] | undefined {

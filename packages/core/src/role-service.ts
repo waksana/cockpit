@@ -17,6 +17,11 @@ export class RoleService {
 
   async listRoleResources() { return await this.k.roles?.resources?.() ?? []; }
 
+  async readRoleSkill(moduleId: string, resourceId: string) {
+    if (!this.k.roles?.readSkill) throw unavailable('Module role Skills are unavailable');
+    return await this.k.roles.readSkill(moduleId, resourceId);
+  }
+
   async savedRoles(id: string): Promise<SessionRole[]> {
     return await this.k.roles?.read(id) ?? [];
   }

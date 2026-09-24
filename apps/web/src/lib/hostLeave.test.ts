@@ -32,7 +32,7 @@ function client(t: TestContext) {
 
 test('every typed intent explicitly classifies reads separately from mutations', () => {
   assert.deepEqual(Object.keys(HOST_INTENT_MUTATES).sort(), Object.keys(Intents).sort());
-  for (const name of ['session/chat', 'session/resources', 'fs/listDir', 'roles/readiness', 'skills/read'] as const) {
+  for (const name of ['session/chat', 'session/resources', 'fs/listDir', 'roles/readiness', 'roles/skill-read', 'skills/read'] as const) {
     assert.equal(HOST_INTENT_MUTATES[name], false, name);
   }
 });

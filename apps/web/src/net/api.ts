@@ -36,6 +36,8 @@ export function createCockpitApi(store: ReturnType<typeof createCockpitStore>) {
     listDir: (path?: string): Promise<DirListing> => read(net => net.listDir(path, OWNED)),
     listRoles: (): Promise<IntentResult<'roles/list'>['roles']> => read(net => net.listRoles(OWNED)).then(result => result.roles),
     roleResources: (): Promise<ModuleRoleResources[]> => read(net => net.roleResources(OWNED)).then(result => result.modules),
+    roleSkillRead: (moduleId: string, resourceId: string): Promise<IntentResult<'roles/skill-read'>> =>
+      read(net => net.roleSkillRead(moduleId, resourceId, OWNED)),
     addRoles: (sessionId: string, roles: RoleSelection[]): Promise<IntentResult<'roles/add'>> => read(net => net.addRoles(sessionId, roles, OWNED)),
     roleReadiness: (sessionId: string): Promise<IntentResult<'roles/readiness'>> => read(net => net.roleReadiness(sessionId, OWNED)),
     // Native ACKs include queued, confirmation and partial-persistence outcomes.

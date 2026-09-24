@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { test } from 'node:test';
 import Fastify from 'fastify';
 import { ModuleHost } from './module-host.ts';
@@ -217,12 +218,13 @@ test('role resource catalog lists loaded modules by contributing role without en
   let loaded = [empty, installed];
   const provider = new ModuleRoles(f.hostRoot, 'http://127.0.0.1', () => loaded);
   const value = await provider.resources();
+  const skillId = (path: string) => createHash('sha256').update(`${installed.digest}\0${path}`).digest('hex');
   assert.deepEqual(value, [{
     id: 'catalog', name: 'Fixture catalog',
     roles: [{ id: 'executor', name: 'Executor' }, { id: 'observer', name: 'Observer' }, { id: 'owner', name: 'Owner' }],
     skills: [
-      { name: 'owner-skill', description: 'Folded owner text', roles: ['owner'] },
-      { name: 'shared-skill', description: 'Shared text', roles: ['executor', 'owner'] },
+      { id: skillId('skills/owner/SKILL.md'), name: 'owner-skill', description: 'Folded owner text', roles: ['owner'] },
+      { id: skillId('skills/shared/SKILL.md'), name: 'shared-skill', description: 'Shared text', roles: ['executor', 'owner'] },
     ],
     mcpServers: [
       { name: 'tools', tools: ['read', 'report'], roles: ['executor', 'owner'] },
@@ -230,12 +232,32 @@ test('role resource catalog lists loaded modules by contributing role without en
     ],
   }], 'modules without role resources are omitted');
   assert.doesNotMatch(JSON.stringify(value), new RegExp(`${installed.digest}|${installed.root}|/_modules/|http`));
+  assert.deepEqual(await provider.readSkill('catalog', skillId('skills/shared/SKILL.md')), {
+    id: skillId('skills/shared/SKILL.md'), name: 'shared-skill', description: 'Shared text',
+    body: '---\nname: shared-skill\ndescription: "Shared text"\n---\nShared',
+    module: { id: 'catalog', name: 'Fixture catalog',
+      roles: [{ id: 'executor', name: 'Executor' }, { id: 'owner', name: 'Owner' }] },
+  });
+  await assert.rejects(provider.readSkill('catalog', skillId('skills/missing/SKILL.md')),
+    (error: Error & { code?: string; statusCode?: number }) =>
+      error.code === 'MODULE_SKILL_NOT_FOUND' && error.statusCode === 404);
+  const outside = join(f.root, 'outside-SKILL.md');
+  await writeFile(outside, '---\nname: shared-skill\n---\nOutside');
   const shared = join(installed.root, 'skills/shared/SKILL.md');
+  await chmod(join(installed.root, 'skills/shared'), 0o700);
+  await rm(shared);
+  await symlink(outside, shared);
+  await assert.rejects(provider.readSkill('catalog', skillId('skills/shared/SKILL.md')), /escapes module/);
+  await rm(shared);
+  await writeFile(shared, '---\nname: shared-skill\ndescription: "Shared text"\n---\nShared');
   await chmod(shared, 0o600);
   await writeFile(shared, 'tampered');
   await assert.rejects(provider.resources(), /Role resource changed/);
+  await assert.rejects(provider.readSkill('catalog', skillId('skills/shared/SKILL.md')), /Role resource changed/);
   loaded = [];
   assert.deepEqual(await provider.resources(), [], 'disabled or unloaded modules are omitted');
+  await assert.rejects(provider.readSkill('catalog', skillId('skills/shared/SKILL.md')),
+    (error: Error & { code?: string }) => error.code === 'MODULE_SKILL_NOT_FOUND');
 });
 
 test('unrelated modules cannot claim the same literal MCP name', async t => {

@@ -476,6 +476,16 @@ for (const enabled of [true, false, undefined]) {
   });
 }
 
+test('roleSkillRead sends only the loaded module and opaque resource identities', async t => {
+  const result = {
+    id: 'opaque-id', name: 'review', body: '# Review',
+    module: { id: 'board', name: 'Board', roles: [{ id: 'owner', name: 'Owner' }] },
+  };
+  const { client, fetch } = setup(t, async () => Response.json(result));
+  assert.deepEqual(await client.roleSkillRead('board', 'opaque-id'), result);
+  assertOnlyPost(fetch, 'roles/skill-read', { moduleId: 'board', resourceId: 'opaque-id' });
+});
+
 for (const cwd of [undefined, '/work/project with spaces', '']) {
   test(`skillsGlobal sends optional cwd ${JSON.stringify(cwd)}`, async (t) => {
     const { client, fetch } = setup(t, async () => Response.json({ skills: [] }));

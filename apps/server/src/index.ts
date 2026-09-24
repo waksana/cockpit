@@ -53,7 +53,7 @@ export type ServerEngine = Pick<Engine,
   | 'refreshMcp' | 'reloadSessionMcp' | 'listSessionMcp' | 'toggleSessionMcp'
   | 'listGlobalSkills' | 'setGlobalSkill' | 'readSkillBody' | 'listSessionSkills' | 'toggleSessionSkill' | 'refreshSkills'
   | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
-  | 'listRoles' | 'listRoleResources' | 'roleReadiness' | 'addRoles'
+  | 'listRoles' | 'listRoleResources' | 'readRoleSkill' | 'roleReadiness' | 'addRoles'
 >;
 let engine: ServerEngine;
 let moduleHost: ModuleHost | undefined;
@@ -314,6 +314,7 @@ const handlers: IntentHandlers = {
   'session/new': async (b) => ({ sessionId: await (b.roles ? engine.newSession(b.cwd, b.roles) : engine.newSession(b.cwd)) }),
   'roles/list': async () => ({ roles: engine.listRoles() }),
   'roles/resources': async () => ({ modules: await engine.listRoleResources() }),
+  'roles/skill-read': async (b) => await engine.readRoleSkill(b.moduleId, b.resourceId),
   'roles/add': b => engine.addRoles(b.sessionId, b.roles),
   'roles/readiness': b => engine.roleReadiness(b.sessionId, b.roles),
   'session/tools-initialize': async b => {
@@ -467,7 +468,7 @@ function errorStatus(error: unknown): number {
 }
 
 const readIntents = new Set<IntentName>([
-  'roles/list', 'roles/resources', 'roles/readiness',
+  'roles/list', 'roles/resources', 'roles/skill-read', 'roles/readiness',
   'system/status', 'runtime/snapshot', 'session/chat', 'session/list', 'session/get', 'session/refresh',
   'session/resources', 'session/usage', 'session/plan', 'session/panels', 'session/panel',
   'mcp/global', 'mcp/session', 'skills/global', 'skills/read', 'skills/session',

@@ -1864,6 +1864,10 @@ test('fresh role identity survives an older in-flight summary response', async t
 const resources: ResourceCase[] = [
   { label: 'listRoles', name: 'roles/list', body: {}, read: () => api().listRoles(), response: { roles: [] }, expected: [] },
   { label: 'roleResources', name: 'roles/resources', body: {}, read: () => api().roleResources(), response: { modules: [] }, expected: [] },
+  { label: 'roleSkillRead', name: 'roles/skill-read', body: { moduleId: 'fixture', resourceId: 'opaque-id' },
+    read: () => api().roleSkillRead('fixture', 'opaque-id'),
+    response: { id: 'opaque-id', name: 'review', body: '# Review', module: { id: 'fixture', name: 'Fixture' } },
+    expected: { id: 'opaque-id', name: 'review', body: '# Review', module: { id: 'fixture', name: 'Fixture' } } },
   { label: 'addRoles', name: 'roles/add', body: { sessionId: 'a', roles: [{ moduleId: 'fixture', roleId: 'reviewer' }] },
     // An uncertain result is shown by the roles section, not by a global notice.
     read: () => api().addRoles('a', [{ moduleId: 'fixture', roleId: 'reviewer' }]), response: roleAddition, expected: roleAddition },

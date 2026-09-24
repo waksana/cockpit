@@ -134,6 +134,11 @@ test('global resource fixtures use native contracts, isolated mutations and expl
   Intents['skills/read'].result.parse(skill);
   assert.equal(skill.enabled, false);
   assert.ok(skill.body?.includes('Synthetic skill body'));
+  const moduleCatalog = await cockpitApi.roleResources();
+  Intents['roles/resources'].result.parse({ modules: moduleCatalog });
+  const moduleSkill = await cockpitApi.roleSkillRead(moduleCatalog[0]!.id, moduleCatalog[0]!.skills[0]!.id);
+  Intents['roles/skill-read'].result.parse(moduleSkill);
+  assert.ok(moduleSkill.body.includes('Synthetic packaged module Skill body'));
   assert.equal((await state.skillsSession(workspaceSessionId))[0].enabled, true);
   installResourceFixture(store, false, { empty: true });
   assert.deepEqual(await cockpitApi.mcpGlobal(), []);

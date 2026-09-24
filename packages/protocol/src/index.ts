@@ -329,6 +329,8 @@ const ResourcePreparationEffect = z.enum(['not_attempted', 'unchanged', 'enabled
 export const RESOURCE_PREPARATION_ERROR_LIMIT = 2000;
 // skills/read error code for a name absent from the discovered skill catalog.
 export const SKILL_NOT_FOUND = 'SKILL_NOT_FOUND' satisfies ErrorCode;
+// roles/skill-read error code for an inactive, replaced or unknown module Skill identity.
+export const MODULE_SKILL_NOT_FOUND = 'MODULE_SKILL_NOT_FOUND' satisfies ErrorCode;
 export const ResourcePreparationResult = z.object({
   sessionId: ResourceName,
   ok: z.boolean(),
@@ -414,7 +416,11 @@ export const ModuleRoleResources = z.object({
   id: z.string(),
   name: z.string(),
   roles: z.array(z.object({ id: z.string(), name: z.string() })).describe('Every role this module declares, sorted by ID.'),
-  skills: z.array(z.object({ name: z.string(), description: z.string().optional(), roles: RoleIds })),
+  skills: z.array(z.object({
+    id: z.string().min(1).max(200)
+      .describe('Opaque identity bound to this loaded module version and packaged SKILL.md; not a filesystem path.'),
+    name: z.string(), description: z.string().optional(), roles: RoleIds,
+  })),
   mcpServers: z.array(z.object({
     name: z.string(),
     tools: z.array(z.string()).describe('Union of declared tool subsets; ["*"] means all tools the module server offers.'),
@@ -422,6 +428,14 @@ export const ModuleRoleResources = z.object({
   })),
 });
 export type ModuleRoleResources = z.infer<typeof ModuleRoleResources>;
+export const ModuleRoleSkill = z.object({
+  id: z.string(),
+  name: z.string(),
+  description: z.string().optional(),
+  body: z.string(),
+  module: ModuleSource,
+});
+export type ModuleRoleSkill = z.infer<typeof ModuleRoleSkill>;
 export const RoleReadiness = z.object({
   sessionId: z.string(), loaded: z.boolean(), ready: z.boolean(),
   roles: z.array(SessionRole), reasons: z.array(z.string()),
@@ -702,6 +716,14 @@ export const Intents = {
     description: 'Read the Skills and MCP servers that currently loaded modules\' roles assemble into sessions selecting those roles, by module and contributing role. Read-only: not native global configuration, enablement, connection or readiness, and it cannot be toggled globally. Omits endpoints, digests and file paths.',
     body: z.object({}).strict(),
     result: z.object({ modules: z.array(ModuleRoleResources) }),
+  },
+  'roles/skill-read': {
+    description: 'Read one packaged SKILL.md by its opaque version-bound identity from a currently loaded module. This never accepts a filesystem path, follows stale identities, or reads related files.',
+    body: z.object({
+      moduleId: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/),
+      resourceId: z.string().min(1).max(200),
+    }).strict(),
+    result: ModuleRoleSkill,
   },
   'roles/add': {
     description: 'Save additional module roles for the same session, including while native work is busy. Does not load, reload, interrupt or send a prompt. Saved roles take effect on an explicit idle reload or the next cold load; ordinary native/global resource defaults apply. rolesNeedReload compares saved roles with the current handle. Saving does not establish capability readiness; inspect uncertain persistence before retrying.',
