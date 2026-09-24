@@ -327,6 +327,9 @@ test('CI runs the same read-only checks for pull requests, main and release call
   assert.match(workflow, /COCKPIT_NATIVE_FORK: '1'/);
   assert.ok(workflow.includes(mcpSmoke));
   assert.ok(build >= 0 && build < workflow.indexOf(mcpSmoke), 'The MCP native smoke requires the compiled MCP client');
+  assert.match(workflow, /name: Chat Lab smoke/);
+  assert.ok(workflow.includes('pnpm --filter @cockpit/web test:smoke'));
+  assert.match(workflow, /name: chat-lab-screenshots-\$\{\{ github\.sha \}\}/);
 });
 
 test('release only publishes the checked fixed-tag artifact and does not deploy a service', () => {

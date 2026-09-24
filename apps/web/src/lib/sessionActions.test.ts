@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFileSync } from 'node:fs';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Icon } from '../components/Icon';
@@ -82,8 +81,6 @@ test('reload, naming and pin actions are absent from every shared catalog', () =
     assert.ok(items.every(item => item.id !== 'reload' && item.id !== 'rename' && item.id !== 'auto-name' && item.id !== 'pin'));
     assert.ok(items.every(item => !/重新加载|重命名|自动命名|生成名称|置顶/.test(item.label)));
   }
-  const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
-  assert.match(app, /getMenuItems=\{getSessionMenuItems\}/);
-  assert.match(app, /items=\{getSessionMenuItems\(active\)\}/);
-  assert.doesNotMatch(app, /AutoNameDialog|autoNameTarget|doRename|renameSession|autoNameSession|forkSession/);
+  // App wiring is covered by Thread.lifecycle.test.ts:
+  // "App session menus share registrations, dynamic focus, exact targets and revoked action lifetimes".
 });

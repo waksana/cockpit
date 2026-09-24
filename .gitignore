@@ -47,3 +47,13 @@ poc/
 # ── Local runtime packaging output and isolated packaging fixtures ──────────
 runtime-output/
 .runtime-package-tests/
+
+# ── Chat Lab browser smoke output (uploaded by CI, never committed) ─────────
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/chat-lab-screenshots/
+
+# ── Chat Lab browser smoke output (uploaded by CI, never committed) ─────────
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/chat-lab-screenshots/

@@ -23,19 +23,21 @@ Pick the smallest scope that covers the change:
 | HTTP handlers, schemas, CSRF, streams, shutdown | `pnpm --filter @cockpit/server test` |
 | MCP mapping, attachments, paging, transport | `pnpm --filter @cockpit/mcp test` |
 | Web native window, drafts, interaction | `pnpm --filter @cockpit/web test` |
+| Web browser smoke and screenshots | `pnpm --filter @cockpit/web test:smoke` ([Chat Lab smoke](#chat-lab-smoke)) |
 | Web types / lint | `pnpm --filter @cockpit/web typecheck` / `pnpm --filter @cockpit/web lint` |
 | Backend test types | `pnpm typecheck:test` (per package: `pnpm --filter <pkg> typecheck:test`) |
 | Backend / scripts lint | `pnpm exec eslint .` |
 | Release and package checks | `node --test scripts/*.test.mjs` ([releasing](releasing.md)) |
 
-To target files, use each package's existing Node test/tsx runner; do not add a test
-framework. Combine related selectors for the same runner in one invocation and widen
+To target files, use each package's existing Node test/tsx runner; do not add another
+test framework (Web real-DOM tests use happy-dom and Testing Library on that runner,
+see [Web interaction tests](#web-interaction-tests)). Combine related selectors for the same runner in one invocation and widen
 only when the change or a result requires it. Documentation changes need link,
 anchor, source and command-path checks, not a product build or test run.
 
 Rules:
 
-- Identity assertions on simulated DOM/React nodes use `src/test/identityAssert.ts`;
+- Identity assertions on DOM/React nodes use `src/test/identityAssert.ts`;
   never hand object graphs with React internals to Node assert's diff formatting, and
   compare node arrays by element identity.
 - On shared machines, give test processes their own cgroup memory limit, no swap and
@@ -45,6 +47,60 @@ Rules:
   probes are not part of ordinary pass counts.
 - server/core/MCP builds exclude their tests; protocol and Web tsconfigs include
   tests under `src`, so their typechecks cover them. Check the actual scripts.
+
+<a id="web-interaction-tests"></a>
+## Web interaction tests
+
+Web component and interaction tests render into a real DOM: import
+`src/test/dom.ts` **first** in the test file. It registers a happy-dom document as
+the process's browser globals (Node keeps its own `fetch`, timers, `Response`,
+`AbortController` and URL, so `t.mock.method(globalThis, 'fetch')` and
+`t.mock.timers` work as elsewhere), re-exports Testing Library (`render`, `screen`,
+`within`, `fireEvent`, `act`, `waitFor`) and `userEvent`, and unmounts after each
+test. Tests that only need `document` for a manual `createRoot` can import
+`src/test/happyDom.ts` alone.
+
+- Drive behavior with `userEvent` (clicks, typing, keyboard) and `fireEvent` for
+  events it cannot express; query by role, label and text where the element has an
+  accessible name. Do not build hand-written fake DOM hosts or force `event.target`.
+- happy-dom does no layout. Stub only the geometry a test needs (`clientHeight`,
+  `getBoundingClientRect`, `matchMedia`) on specific elements or prototypes and
+  restore it; measured layout belongs in the [Chat Lab smoke](#chat-lab-smoke).
+- Registering the DOM also provides `localStorage` and other browser APIs; keep
+  tests that assert no-DOM or no-storage behavior on the plain Node runner.
+- Assert behavior, not product source text. Reading files is reserved for static
+  guardrails such as stylesheets, class definitions, `index.html` and licenses, and
+  for negative architecture guards (a component must not import or measure
+  something) that no rendered behavior can observe.
+- The harness makes `assert.equal`/`strictEqual` and their negations compare DOM
+  nodes by identity with a short failure message; Node's default formatting of a
+  happy-dom node walks the whole window and looks like a hang. Do not
+  `deepEqual` nodes.
+- Static markup (`renderToStaticMarkup`) remains fine for pure presentation checks.
+
+<a id="chat-lab-smoke"></a>
+## Chat Lab smoke
+
+```sh
+pnpm --filter @cockpit/web exec playwright install --only-shell chromium   # once
+pnpm --filter @cockpit/web test:smoke
+```
+
+`apps/web/playwright.config.ts` starts the [Chat Lab](development.md#isolated-chat-component-review)
+Vite server on `127.0.0.1:47851` (`COCKPIT_LAB_SMOKE_PORT` overrides) with a throwaway
+`HOME`, `COCKPIT_HOME` and `COPILOT_HOME` and no lab module roots, then runs
+`apps/web/e2e/chat-lab.spec.ts` in Chromium at desktop (1280×800) and narrow
+(390×844 touch) sizes. Every page blocks requests leaving the lab origin and fails
+on backend paths, page errors, console errors and horizontal overflow. It also runs
+the in-page sidebar geometry and dialog-focus checks, real composer typing and the
+region-failure repair.
+
+Screenshots go to `apps/web/chat-lab-screenshots/<project>/` (git-ignored). CI's
+parallel `Chat Lab smoke` job uploads them with failure traces as the
+`chat-lab-screenshots-<sha>` artifact (30 days): that is the visual regression
+baseline for review — compare a PR's artifact with `main`'s. Screenshots are not
+pixel-compared, so fonts or Chromium updates do not fail CI. The job never contacts
+a real service or session; it is not native, iOS or production evidence.
 
 ## Targeted Web suites
 
@@ -154,7 +210,7 @@ never the development tree. Commands are in [releasing](releasing.md).
 | Synthetic fold | `pnpm regress --synthetic-fixture-root /absolute/synthetic-jsonl` |
 | Isolated HTTP E2E | `pnpm e2e --synthetic-fixture-root /absolute/synthetic-workspace --test-base-url http://127.0.0.1:45678` |
 | Fold / HTTP / SSE performance | `pnpm perf --synthetic-fixture-root /absolute/synthetic-jsonl --test-base-url http://127.0.0.1:45678` |
-| Backend-free component lab | [Chat Lab](development.md#isolated-chat-component-review) |
+| Backend-free component lab | [Chat Lab](development.md#isolated-chat-component-review); automated smoke: [Chat Lab smoke](#chat-lab-smoke) |
 
 Diagnostics refuse to run with missing arguments and never use user history or
 production URLs. `pnpm regress` runs `packages/core/test-support/regress.mts` on

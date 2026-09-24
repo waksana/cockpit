@@ -6,8 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "pnpm typecheck && vite build",
-    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json",
+    "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.e2e.json",
     "test": "tsx --tsconfig tsconfig.app.json --test \"src/**/*.test.ts\"",
+    "test:smoke": "playwright test",
     "lint": "eslint . && stylelint \"src/**/*.{scss,css}\"",
     "preview": "vite preview"
   },
@@ -24,6 +25,10 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@playwright/test": "1.63.0",
+    "@testing-library/dom": "^10.4.2",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
@@ -31,6 +36,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.6",
     "globals": "^17.12.0",
+    "happy-dom": "^20.14.5",
     "postcss-scss": "^4.0.9",
     "sass": "^1.104.0",
     "stylelint": "^17.15.0",
