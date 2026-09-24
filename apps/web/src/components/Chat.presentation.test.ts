@@ -11,7 +11,7 @@ import { copyText } from '../lib/copyText';
 import { compile } from 'sass';
 import { getSessionDraft } from '../lib/textDraft';
 import { getDraftSession } from '../lib/draftSelection';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { ActivityHeader } from './ActivityHeader';
 import { ChatHeader } from './ChatHeader';
 import { PlanCard } from './PendingDecision';
@@ -28,7 +28,7 @@ test('chat header keeps session and model details without any mode display or sw
   assert.match(html, /aria-label="更多操作"/);
   assert.equal((html.match(/aria-haspopup="menu"/g) ?? []).length, 1);
   assert.doesNotMatch(html, /data-mode=|模式|mode-menu|chat-topbar-mode(?:\s|")/);
-  for (const file of ['../App.tsx', '../dev/chat-lab.tsx', './ChatHeader.tsx']) {
+  for (const file of ['../App.tsx', '../features/workspace/Workspace.tsx', '../features/workspace/WorkspaceParts.tsx', '../dev/chat-lab.tsx', './ChatHeader.tsx']) {
     assert.doesNotMatch(readFileSync(new URL(file, import.meta.url), 'utf8'), /ModeMenu|setMode\b|modeRef|modeOpen|onMode\b|currentMode\b/);
   }
   assert.equal(existsSync(new URL('./ModeMenu.tsx', import.meta.url)), false);
@@ -335,8 +335,9 @@ test('Chat regions and optional composer context each have a single spacing owne
   assert.match(css, /\.chat-history-actions:empty \{\s*display: none;/);
   assert.doesNotMatch(css, /--chat-space-/);
   assert.doesNotMatch(css, /data-preparing/);
-  const thread = readFileSync(new URL('./Thread.tsx', import.meta.url), 'utf8');
-  assert.doesNotMatch(thread, /readySession|preparingHistory|data-preparing/);
+  for (const file of ['./Thread.tsx', './Transcript.tsx', ...readdirSync(new URL('../features/thread/', import.meta.url)).map(name => `../features/thread/${name}`)]) {
+    assert.doesNotMatch(readFileSync(new URL(file, import.meta.url), 'utf8'), /readySession|preparingHistory|data-preparing/, file);
+  }
 });
 
 test('the entire input card uses one default-open disclosure row without a nested question frame', () => {
