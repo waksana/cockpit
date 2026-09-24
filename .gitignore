@@ -1,7 +1,7 @@
 # ── Dependencies ────────────────────────────────────────────────────────────
 node_modules/
 
-# ── Build output (rebuilt via pnpm build; the MCP/web run from dist) ─────────
+# ── Build output (rebuilt via pnpm build; packaged runtimes run from dist) ───
 dist/
 dist-review/
 *.tsbuildinfo
