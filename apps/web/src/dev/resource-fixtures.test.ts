@@ -41,6 +41,7 @@ test('resource scene exercises actual names and explicit provenance without HTTP
   const state = store.getState();
   const roles = await cockpitApi.listRoles();
   Intents['roles/list'].result.parse({ roles });
+  Intents['roles/resources'].result.parse({ modules: await cockpitApi.roleResources() });
   const mcp = await state.mcpSession(workspaceSessionId);
   mcp.forEach(server => McpServerSession.parse(server));
   const skills = await state.skillsSession(workspaceSessionId);

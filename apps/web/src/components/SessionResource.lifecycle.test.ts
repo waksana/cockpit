@@ -38,6 +38,8 @@ function mount(t: TestContext) {
   t.mock.method(globalThis, 'fetch', async () => assert.fail('Resource fixtures must not access a backend'));
   const state = useCockpit.getState();
   const api = { ...cockpitApi };
+  // Global pages also read the module role catalog; fixtures opt in to its rows.
+  cockpitApi.roleResources = async () => [];
   useCockpit.setState({ connState: 'open', connectionGeneration: 1, sessions: [session], resourceRevisions: {} });
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -912,8 +914,9 @@ for (const Component of [SessionMcp, SessionSkills]) {
     if (Component === SessionSkills) assert.equal(rows[0].querySelector('.manage-row-source'), null, 'internal source enum is not useful provenance');
     assert.equal(rows[1].querySelector('.manage-row-name')?.textContent, unrelated);
     assert.equal(rows[1].querySelector('.module-label'), null);
-    await h.event(rows[0].querySelector('[role="switch"]')!, 'click');
-    assert.deepEqual(calls, [[session.sessionId, name, false]]);
+    assert.equal(rows[0].querySelector('[role="switch"]'), null, 'module resources have no session switch');
+    await h.event(rows[1].querySelector('[role="switch"]')!, 'click');
+    assert.deepEqual(calls, [[session.sessionId, unrelated, true]]);
     assert.equal(rows[0].querySelector('.module-label-name')?.textContent, 'Task');
     assert.equal(rows[0].querySelector('.role-badge-name')?.textContent, 'Executor、Owner');
   });
@@ -1877,8 +1880,11 @@ test('session Skills rows show source · description as one summary line beside 
   assert.equal(summary.getAttribute('data-lines'), '1');
   assert.ok(first.querySelector('[aria-label="展开github-coding摘要"]'), 'a clipped summary stays readable through its own disclosure');
   const controls = first.querySelector('.manage-resource-controls')!;
-  assert.equal(controls.querySelector('[role="switch"]')!.getAttribute('aria-label'), '本会话启用 github-coding');
-  assert.equal(controls.querySelector('.manage-row-status'), null, 'enabled state is not repeated as text');
+  assert.equal(controls.querySelector('[role="switch"]'), null, 'module resources follow their role');
+  assert.equal(controls.textContent, '随角色启用');
+  const plainControls = row('plain').querySelector('.manage-resource-controls')!;
+  assert.equal(plainControls.querySelector('[role="switch"]')!.getAttribute('aria-label'), '本会话启用 plain');
+  assert.equal(plainControls.querySelector('.manage-row-status'), null, 'enabled state is not repeated as text');
   assert.equal(row('plain').querySelector('.manage-row-source')!.textContent, '项目');
   assert.equal(row('bare').querySelector('.manage-resource-identity')!.childNodes.length, 1);
   assert.equal(h.container.querySelector('.manage-list-hint'), null, 'the default-state hint is global only');

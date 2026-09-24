@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, constants, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
-import { SessionRole, type ModuleSource, type RoleSelection } from '@cockpit/protocol';
+import { SessionRole, type ModuleRoleResources, type ModuleSource, type RoleSelection } from '@cockpit/protocol';
 import type { RoleAssembly, RoleProvider, SessionInstructions } from '@cockpit/core';
 import type { ModuleInstallation } from './module-install.ts';
 import { MODULE_INSTRUCTIONS_LIMIT, safeModulePath } from './module-install.ts';
@@ -20,6 +20,41 @@ async function verifiedResource(installation: ModuleInstallation, relative: stri
   return bytes.toString('utf8');
 }
 
+// The native discovery preflight owns complete frontmatter parsing.
+const roleSkillName = (body: string, path: string) =>
+  /^---\r?\n[\s\S]*?^name:\s*["']?([^"'\r\n]+)["']?\s*$/m.exec(body)?.[1]?.trim() ?? path;
+
+// Display-only description for the read-only catalog; names use the assembly rule.
+function skillDescription(body: string): string | undefined {
+  const header = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(body)?.[1] ?? '';
+  const lines = header.split(/\r?\n/);
+  const scalar = (key: string) => {
+    const index = lines.findIndex(line => line.startsWith(`${key}:`));
+    if (index < 0) return;
+    const inline = lines[index]!.slice(key.length + 1).trim();
+    const continuation: string[] = [];
+    for (const line of lines.slice(index + 1)) {
+      if (line.trim() && !/^\s/.test(line)) break;
+      continuation.push(line.trim());
+    }
+    const block = /^[>|][+-]?$/.test(inline);
+    const text = block ? continuation.join(inline.startsWith('|') ? '\n' : ' ')
+      : [inline, ...continuation].join(' ');
+    const trimmed = text.trim();
+    const unquoted = /^(["']).*\1$/s.test(trimmed) ? trimmed.slice(1, -1) : trimmed;
+    return unquoted.trim() || undefined;
+  };
+  return scalar('description');
+}
+
+const roleSkillFiles = (installation: ModuleInstallation, directory: string) =>
+  Object.keys(installation.files).filter(path => path.startsWith(`${directory}/`) && path.endsWith('/SKILL.md'));
+
+const normalizedTools = (tools: Iterable<string>) => {
+  const sorted = [...new Set(tools)].sort();
+  return sorted.includes('*') ? ['*'] : sorted;
+};
+
 export class ModuleRoles implements RoleProvider {
   constructor(private readonly root: string, private readonly origin: string,
     private readonly installations: () => ModuleInstallation[]) {}
@@ -29,6 +64,50 @@ export class ModuleRoles implements RoleProvider {
       moduleId: manifest.id, moduleName: manifest.name, roleId: role.id, name: role.name,
       ...(role.description ? { description: role.description } : {}),
     }))).sort((a, b) => `${a.moduleId}/${a.roleId}`.localeCompare(`${b.moduleId}/${b.roleId}`));
+  }
+
+  async resources(): Promise<ModuleRoleResources[]> {
+    const modules = [...this.installations()].sort((a, b) => a.manifest.id.localeCompare(b.manifest.id));
+    const result: ModuleRoleResources[] = [];
+    for (const installation of modules) {
+      const { manifest } = installation;
+      const roles = [...manifest.roles ?? []].sort((a, b) => a.id.localeCompare(b.id));
+      const skills = new Map<string, { name: string; description?: string; roles: Set<string> }>();
+      const servers = new Map<string, { name: string; tools: Set<string>; roles: Set<string> }>();
+      const bodies = new Map<string, { name: string; description?: string }>();
+      for (const role of roles) {
+        for (const directory of role.skillDirectories ?? []) {
+          for (const path of roleSkillFiles(installation, directory)) {
+            let parsed = bodies.get(path);
+            if (!parsed) {
+              const body = await verifiedResource(installation, path);
+              const description = skillDescription(body);
+              bodies.set(path, parsed = { name: roleSkillName(body, path), ...(description ? { description } : {}) });
+            }
+            const entry = skills.get(parsed.name) ?? { ...parsed, roles: new Set<string>() };
+            entry.roles.add(role.id);
+            skills.set(parsed.name, entry);
+          }
+        }
+        for (const [name, config] of Object.entries(role.mcpServers ?? {})) {
+          const entry = servers.get(name) ?? { name, tools: new Set<string>(), roles: new Set<string>() };
+          for (const tool of config.tools) entry.tools.add(tool);
+          entry.roles.add(role.id);
+          servers.set(name, entry);
+        }
+      }
+      if (!skills.size && !servers.size) continue;
+      const sortedRoles = (ids: Set<string>) => [...ids].sort();
+      result.push({
+        id: manifest.id, name: manifest.name,
+        roles: roles.map(role => ({ id: role.id, name: role.name })),
+        skills: [...skills.values()].sort((a, b) => a.name.localeCompare(b.name))
+          .map(({ roles: ids, ...skill }) => ({ ...skill, roles: sortedRoles(ids) })),
+        mcpServers: [...servers.values()].sort((a, b) => a.name.localeCompare(b.name))
+          .map(({ name, tools, roles: ids }) => ({ name, tools: normalizedTools(tools), roles: sortedRoles(ids) })),
+      });
+    }
+    return result;
   }
 
   globalMcpSources(config: object): ModuleSource[] | undefined {
@@ -188,12 +267,11 @@ export class ModuleRoles implements RoleProvider {
       for (const directory of role.skillDirectories ?? []) {
         const absolute = join(root, safeModulePath(directory));
         if (!await stat(absolute).then(value => value.isDirectory())) throw new Error(`Role skill root missing: ${directory}`);
-        const files = Object.keys(installation.files).filter(path => path.startsWith(`${directory}/`) && path.endsWith('/SKILL.md'));
+        const files = roleSkillFiles(installation, directory);
         if (!files.length) throw new Error(`Role skill root has no skills: ${directory}`);
         for (const path of files) {
           const body = await verified(path);
-          // The native discovery preflight owns complete frontmatter parsing.
-          const name = /^---\r?\n[\s\S]*?^name:\s*["']?([^"'\r\n]+)["']?\s*$/m.exec(body)?.[1]?.trim() ?? path;
+          const name = roleSkillName(body, path);
           const hash = createHash('sha256').update(body).digest('hex');
           const previous = skills.get(name);
           if (previous && (previous.module.id !== module.id || previous.hash !== hash)) throw new Error(`Conflicting role skill: ${name}`);

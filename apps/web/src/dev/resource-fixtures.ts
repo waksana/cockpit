@@ -183,6 +183,28 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
         entries: path === '/workspace' ? [{ name: 'cockpit', isDir: true }] : [] };
     },
     mcpGlobal: async () => { await request(); return globalMcp; },
+    roleResources: async () => {
+      await request();
+      if (options.empty) return [];
+      const roleIds = roles.map(role => role.roleId).sort();
+      return [
+        { id: module.id, name: module.name,
+          roles: roles.map(role => ({ id: role.roleId, name: role.name })).sort((a, b) => a.id.localeCompare(b.id)),
+          skills: [
+            { name: 'cockpit-task-executor', description: roles[1].description, roles: ['executor'] },
+            { name: 'cockpit-task-owner', description: roles[0].description, roles: ['owner'] },
+            { name: 'task-executor-guide', description: '合成的单角色模块 Skill。', roles: ['executor'] },
+            { name: 'task-tree', description: longNames ? 'LongUnbrokenModuleSkillDescription'.repeat(8) : '合成的全角色模块 Skill。', roles: roleIds },
+          ],
+          mcpServers: [
+            { name: 'cockpit-task', tools: ['*'], roles: roleIds },
+            { name: 'task-review', tools: ['task_read', 'task_report'], roles: ['owner'] },
+          ] },
+        { id: additionalRole.moduleId, name: additionalRole.moduleName,
+          roles: [{ id: additionalRole.roleId, name: additionalRole.name }],
+          skills: [{ name: 'notes-review', roles: [additionalRole.roleId] }], mcpServers: [] },
+      ];
+    },
     mcpRefresh: async () => { await request(); },
     mcpSetDefault: async (name, defaultOn) => {
       await mutation();

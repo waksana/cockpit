@@ -476,6 +476,7 @@ export class Engine {
 
   // Roles and resource preparation
   listRoles() { return this.roleService.listRoles(); }
+  listRoleResources() { return this.roleService.listRoleResources(); }
 
   roleReadiness(id: string, requested?: RoleSelection[]): Promise<RoleReadiness> { return this.roleService.roleReadiness(id, requested); }
 

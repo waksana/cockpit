@@ -15,7 +15,7 @@ import { beginHostMutation } from '../lib/hostLeave';
 // Exhaustive so adding a host intent requires an explicit read/write decision.
 export const HOST_INTENT_MUTATES = {
   'system/shutdown': true, 'system/status': false, 'runtime/snapshot': false,
-  'session/chat': false, 'session/new': true, 'roles/list': false, 'roles/add': true,
+  'session/chat': false, 'session/new': true, 'roles/list': false, 'roles/resources': false, 'roles/add': true,
   'roles/readiness': false, 'session/tools-initialize': true, 'session/resources-prepare': true, 'session/fork': true,
   prompt: true, cancel: true, 'session/interrupt': true, 'session/control': true, setModel: true,
   'session/rename': true, 'session/compact': true, 'session/rewind': true, setMode: true,
@@ -272,6 +272,7 @@ export class NetClient {
     return this.intent('session/new', { cwd, ...(roles ? { roles } : {}) }, options);
   }
   listRoles(options?: IntentOptions) { return this.intent('roles/list', {}, options); }
+  roleResources(options?: IntentOptions) { return this.intent('roles/resources', {}, options); }
   addRoles(sessionId: string, roles: IntentBody<'roles/add'>['roles'], options?: IntentOptions) {
     return this.intent('roles/add', { sessionId, roles }, options);
   }

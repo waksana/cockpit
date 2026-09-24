@@ -15,6 +15,8 @@ export class RoleService {
 
   listRoles() { return this.k.roles?.list() ?? []; }
 
+  async listRoleResources() { return await this.k.roles?.resources?.() ?? []; }
+
   async savedRoles(id: string): Promise<SessionRole[]> {
     return await this.k.roles?.read(id) ?? [];
   }

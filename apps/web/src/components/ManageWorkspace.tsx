@@ -1,8 +1,8 @@
 // URL-driven master-detail management; Shell keeps list/detail navigation responsive.
-import { useCallback, useState, type ReactNode } from 'react';
+import { useCallback, useId, useState, type ReactNode } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
-import type { McpServerGlobal, ModuleSource, SkillGlobal } from '@cockpit/protocol';
-import { cockpitApi, loadGlobalMcp, loadGlobalSkills, type CockpitApi } from '../net/api';
+import type { McpServerGlobal, ModuleRoleResources, ModuleSource, SkillGlobal } from '@cockpit/protocol';
+import { cockpitApi, loadGlobalMcp, loadGlobalSkills, loadRoleResources, type CockpitApi } from '../net/api';
 import { isSkillNotFoundError } from '../net/client';
 import { skillBodyContent } from '../lib/skillBody';
 import { useKeyedAction, useKeyedResource } from '../lib/useKeyedResource';
@@ -10,11 +10,11 @@ import { ManagementShell, type ManageSection } from './ManagementShell';
 import { ResourceStatus, StateNotice } from './StateNotice';
 import { MessageBody } from './MessageBody';
 import { PaneBody } from './PaneHeader';
-import { ResourceError, ResourceList, ResourceProgress, ResourceRow, ResourceText } from './ResourceRow';
+import { ResourceError, ResourceList, ResourceProgress, ResourceRow, ResourceText, RoleEnabled } from './ResourceRow';
 import { ModuleSourceBadge } from './ModuleLabel';
 import { SectionHeading, Toggle } from './UI';
 import { useGlobalResourceMutations } from '../features/session-settings/useGlobalResources';
-import { mcpConnectionLabel, skillSourceLabel, skillSummary } from '../lib/resourcePresentation';
+import { mcpConnectionLabel, moduleProvidedRows, skillSourceLabel, skillSummary } from '../lib/resourcePresentation';
 
 type Catalog<T> = ReturnType<typeof useKeyedResource<T[]>>;
 type GlobalToggle = (name: string, enabled: boolean) => Promise<void>;
@@ -47,25 +47,61 @@ function NavRow({ section, name, summary, modules, selected, enabled, disabled, 
         cause={action.errorCause} action={`${desired ? '启用' : '停用'}全局默认 ${name}`} />} />;
 }
 
-function ListBody({ status, failed, pending, empty, children }: {
-  status: string | null; failed: boolean; pending: boolean; empty: string; children?: ReactNode;
+function ListBody({ status, failed, pending, empty, modules, children }: {
+  status: string | null; failed: boolean; pending: boolean; empty: string; modules?: ReactNode; children?: ReactNode;
 }) {
+  const heading = useId();
   const hasRows = children && (!Array.isArray(children) || children.length > 0);
+  const list = hasRows ? <ResourceList hint="开关：新会话默认启用">{children}</ResourceList>
+    : !status && <StateNotice kind="empty" placement={modules ? 'inline' : 'pane'}>{empty}</StateNotice>;
+  const statusNotice = <ResourceStatus status={status} failed={failed} pending={pending}
+    placement={hasRows || modules ? 'inline' : 'pane'} />;
+  if (!modules) return <>{statusNotice}{list}</>;
   return <>
-    <ResourceStatus status={status} failed={failed} pending={pending} placement={hasRows ? 'inline' : 'pane'} />
-    {hasRows ? <ResourceList hint="开关：新会话默认启用">{children}</ResourceList>
-      : !status && <StateNotice kind="empty" placement="pane">{empty}</StateNotice>}
+    <section className="manage-group" aria-labelledby={heading}>
+      <SectionHeading className="manage-group-heading"><span id={heading}>全局配置</span></SectionHeading>
+      {statusNotice}{list}
+    </section>
+    {modules}
   </>;
 }
 
-function McpList({ selected, catalog, onChange }: {
-  selected: string | null; catalog: Catalog<McpServerGlobal>; onChange: GlobalToggle;
+// Module role resources are assembled only into sessions selecting a role; they
+// have no global switch and are separate from native global configuration.
+function ModuleProvidedGroup({ section, catalog, native }: {
+  section: ManageSection; catalog: Catalog<ModuleRoleResources>;
+  native?: ReadonlyArray<{ name: string; modules?: ModuleSource[] }>;
+}) {
+  const heading = useId();
+  const { data, status, failed, pending } = catalog;
+  const rows = moduleProvidedRows(data ?? [], section, native);
+  if (!rows.length && !failed) return null;
+  return <section className="manage-group manage-module-group" aria-labelledby={heading}>
+    <SectionHeading className="manage-group-heading"><span id={heading}>模块提供</span></SectionHeading>
+    <ResourceStatus status={catalog.connected ? status : null} failed={failed} pending={pending} />
+    {rows.length > 0 && <ResourceList hint="只装配进选了对应角色的会话，不能全局关闭">
+      {rows.map(row => <ResourceRow key={row.key} name={row.name} badge={<ModuleSourceBadge module={row.module} />}
+        summary={row.summary && <ResourceText key={row.summary} text={row.summary} label={`${row.name}摘要`} />}
+        control={<RoleEnabled />} />)}
+    </ResourceList>}
+  </section>;
+}
+
+function McpList({ selected, catalog, modules, onChange }: {
+  selected: string | null; catalog: Catalog<McpServerGlobal>; modules: Catalog<ModuleRoleResources>; onChange: GlobalToggle;
 }) {
   const { data: rows, status, failed, pending, valid } = catalog;
-  return <ListBody status={status} failed={failed} pending={pending} empty="没有配置 MCP 服务器">
+  const group = <ModuleProvidedGroup section="mcp" catalog={modules} native={rows} />;
+  return <ListBody status={status} failed={failed} pending={pending} empty="没有配置 MCP 服务器"
+    modules={moduleGroupVisible(modules, 'mcp', rows) ? group : undefined}>
     {rows?.map(server => <NavRow key={server.name} section="mcp" name={server.name} summary={mcpConnectionLabel(server.connection)}
       modules={server.modules} selected={selected} enabled={server.defaultOn} disabled={!valid} onChange={onChange} />)}
   </ListBody>;
+}
+
+function moduleGroupVisible(catalog: Catalog<ModuleRoleResources>, section: ManageSection,
+  native?: ReadonlyArray<{ name: string; modules?: ModuleSource[] }>) {
+  return catalog.failed || moduleProvidedRows(catalog.data ?? [], section, native).length > 0;
 }
 
 function McpDetail({ name, catalog }: { name: string; catalog: Catalog<McpServerGlobal> }) {
@@ -86,11 +122,13 @@ function McpDetail({ name, catalog }: { name: string; catalog: Catalog<McpServer
   </PaneBody>;
 }
 
-function SkillsList({ selected, catalog, onChange }: {
-  selected: string | null; catalog: Catalog<SkillGlobal>; onChange: GlobalToggle;
+function SkillsList({ selected, catalog, modules, onChange }: {
+  selected: string | null; catalog: Catalog<SkillGlobal>; modules: Catalog<ModuleRoleResources>; onChange: GlobalToggle;
 }) {
   const { data: rows, status, failed, pending, valid } = catalog;
-  return <ListBody status={status} failed={failed} pending={pending} empty="没有可用的 skill">
+  const group = <ModuleProvidedGroup section="skills" catalog={modules} native={rows} />;
+  return <ListBody status={status} failed={failed} pending={pending} empty="没有可用的 skill"
+    modules={moduleGroupVisible(modules, 'skills', rows) ? group : undefined}>
     {rows?.map(skill => <NavRow key={skill.name} section="skills" name={skill.name}
       summary={skillSummary(skill.source, skill.description)} modules={skill.modules} selected={selected}
       enabled={skill.enabled} disabled={!valid} onChange={onChange} />)}
@@ -137,12 +175,13 @@ function ManagementContent({ section, item }: { section: ManageSection; item: st
   const { refreshNonce, refresh, onChange } = useGlobalResourceMutations(section);
   const mcpCatalog = useKeyedResource('global:mcp', loadGlobalMcp, refreshNonce, section === 'mcp');
   const skillCatalog = useKeyedResource('global:skills', loadGlobalSkills, refreshNonce, section === 'skills');
+  const moduleCatalog = useKeyedResource('global:role-resources', loadRoleResources, refreshNonce);
   const catalog = section === 'mcp' ? mcpCatalog : skillCatalog;
   const modules = catalog.data?.find(row => row.name === item)?.modules;
   return <ManagementShell section={section} item={item} onRefresh={refresh}
     titlePrefix={catalog.usable && <Provenance modules={modules} />}
-    master={section === 'mcp' ? <McpList catalog={mcpCatalog} selected={item} onChange={onChange} />
-      : <SkillsList catalog={skillCatalog} selected={item} onChange={onChange} />}
+    master={section === 'mcp' ? <McpList catalog={mcpCatalog} modules={moduleCatalog} selected={item} onChange={onChange} />
+      : <SkillsList catalog={skillCatalog} modules={moduleCatalog} selected={item} onChange={onChange} />}
     detail={item === null ? <StateNotice kind="empty" placement="pane" className="manage-selection-hint">选择左侧的一项查看详情。</StateNotice>
       : section === 'mcp' ? <McpDetail catalog={mcpCatalog} name={item} />
         : <SkillDetail revision={refreshNonce} name={item} />} />;

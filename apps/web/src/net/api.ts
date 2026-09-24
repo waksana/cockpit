@@ -3,7 +3,7 @@
 // its own result, so none of these raise a global notice. Tests and synthetic
 // fixtures replace individual methods on this object.
 
-import type { DirListing, IntentResult, McpServerGlobal, RoleSelection, SkillGlobal } from '@cockpit/protocol';
+import type { DirListing, IntentResult, McpServerGlobal, ModuleRoleResources, RoleSelection, SkillGlobal } from '@cockpit/protocol';
 import { OWNED, type NetClient } from './client';
 import { OperationRejected, recordOperationFailure } from '../lib/operationErrors';
 import { copy } from '../lib/copy';
@@ -35,6 +35,7 @@ export function createCockpitApi(store: ReturnType<typeof createCockpitStore>) {
   return {
     listDir: (path?: string): Promise<DirListing> => read(net => net.listDir(path, OWNED)),
     listRoles: (): Promise<IntentResult<'roles/list'>['roles']> => read(net => net.listRoles(OWNED)).then(result => result.roles),
+    roleResources: (): Promise<ModuleRoleResources[]> => read(net => net.roleResources(OWNED)).then(result => result.modules),
     addRoles: (sessionId: string, roles: RoleSelection[]): Promise<IntentResult<'roles/add'>> => read(net => net.addRoles(sessionId, roles, OWNED)),
     roleReadiness: (sessionId: string): Promise<IntentResult<'roles/readiness'>> => read(net => net.roleReadiness(sessionId, OWNED)),
     // Native ACKs include queued, confirmation and partial-persistence outcomes.
@@ -58,3 +59,4 @@ export const cockpitApi: CockpitApi = createCockpitApi(useCockpit);
 export const loadGlobalMcp = () => cockpitApi.mcpGlobal();
 export const loadGlobalSkills = () => cockpitApi.skillsGlobal();
 export const loadRoleCatalog = () => cockpitApi.listRoles();
+export const loadRoleResources = () => cockpitApi.roleResources();

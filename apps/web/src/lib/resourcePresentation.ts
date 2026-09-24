@@ -1,4 +1,4 @@
-import type { McpConnection } from '@cockpit/protocol';
+import type { McpConnection, ModuleRoleResources, ModuleSource } from '@cockpit/protocol';
 
 export function mcpConnectionLabel(connection?: McpConnection): string {
   if (!connection || connection.method === 'unknown') return '未知方式';
@@ -27,4 +27,29 @@ export function resourceErrorSummary(error: string): string {
   const firstLine = error.trim().split(/\r?\n/, 1)[0];
   const characters = [...firstLine];
   return characters.length > 160 ? `${characters.slice(0, 160).join('')}…` : firstLine;
+}
+
+export interface ModuleProvidedRow { key: string; name: string; summary?: string; module: ModuleSource }
+
+// Module role resources for a global page. The badge names contributing roles
+// unless every role of the module declares the resource. Rows already present
+// in native global configuration with the same verified module stay there only.
+export function moduleProvidedRows(modules: ModuleRoleResources[], kind: 'mcp' | 'skills',
+  native: ReadonlyArray<{ name: string; modules?: ModuleSource[] }> = []): ModuleProvidedRow[] {
+  return modules.flatMap(module => {
+    const resources: Array<{ name: string; roles: string[]; summary?: string }> = kind === 'mcp'
+      ? module.mcpServers.map(server => ({ ...server,
+        summary: server.tools.includes('*') ? '全部工具' : `工具：${server.tools.join('、')}` }))
+      : module.skills.map(skill => ({ ...skill, summary: skill.description }));
+    return resources.filter(resource => !native.some(row => row.name === resource.name
+      && row.modules?.some(source => source.id === module.id))).map(resource => {
+      const all = module.roles.every(role => resource.roles.includes(role.id));
+      const roles = module.roles.filter(role => resource.roles.includes(role.id));
+      return {
+        key: JSON.stringify([module.id, resource.name]), name: resource.name,
+        ...(resource.summary ? { summary: resource.summary } : {}),
+        module: { id: module.id, name: module.name, ...(all ? {} : { roles }) },
+      };
+    });
+  });
 }

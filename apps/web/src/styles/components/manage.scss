@@ -29,7 +29,7 @@
 }
 .manage-row-error { grid-column: 1 / -1; }
 // The existing list owns loading/empty state; no duplicate resource for the placeholder.
-.cockpit-shell:not(:has(.manage-list .manage-row)) .manage-selection-hint { visibility: hidden; }
+.cockpit-shell:not(:has(.manage-list .manage-row[data-selectable])) .manage-selection-hint { visibility: hidden; }
 .manage-row-status {
   display: flex; align-items: center;
   min-height: calc(var(--host-text-meta) * var(--host-leading-ui));
@@ -74,6 +74,16 @@
 }
 .manage-global-control { display: flex; }
 .manage-global-unknown { font-size: var(--host-text-meta); color: var(--host-color-muted); }
+// Module-provided resources: read-only, grouped apart from native configuration.
+.manage-role-enabled {
+  display: inline-flex; align-items: center;
+  min-block-size: var(--ck-control-size); // same row height as a switch
+  font-size: var(--host-text-meta); color: var(--host-color-muted); white-space: nowrap;
+}
+.manage-group + .manage-group { margin-top: var(--host-space-md); }
+.manage-group-heading { padding: var(--host-space-sm) var(--host-space-lg) 0; }
+// Read-only rows align with the selectable rows above them.
+.manage-module-group .manage-row { padding: var(--host-space-sm); border: 0; }
 .manage-detail-header {
   height: auto;
   padding-block: var(--host-space-sm);
