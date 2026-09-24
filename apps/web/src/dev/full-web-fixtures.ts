@@ -3,6 +3,7 @@ import type { createCockpitStore } from '../net/store';
 import { cockpitApi } from '../net/api';
 import type { ChatSession } from '../net/types';
 import { retireDraftSession } from '../lib/draftSelection';
+import { PLAN_ACTION_LABEL } from '../lib/pendingDecisions';
 import type { AgentTaskDetails } from '../lib/sessionControls';
 import { installResourceFixture } from './resource-fixtures';
 import { workspaceSessionId } from './workspace-fixtures';
@@ -161,7 +162,7 @@ export function installFullWebFixture(store: ReturnType<typeof createCockpitStor
       } else {
         change(id, { type: 'answer', kind: request.intent === 'respondAsk' ? 'ask' : 'plan',
           requestId: request.body.requestId, id: `synthetic-answer-${++serial}`,
-          text: request.intent === 'respondAsk' ? request.body.answer : request.body.message });
+          text: request.intent === 'respondAsk' ? request.body.answer : `修改意见：${request.body.message}` });
       }
       return true;
     },
@@ -171,11 +172,11 @@ export function installFullWebFixture(store: ReturnType<typeof createCockpitStor
     },
     respondPlan: async (id, requestId, action) => {
       change(id, { type: 'answer', kind: 'plan', requestId, id: `synthetic-plan-${++serial}`,
-        text: action, record: false, resume: action !== 'exit_only' });
+        text: `已批准：${PLAN_ACTION_LABEL[action]}`, resume: action !== 'exit_only' });
       return true;
     },
     planSupersede: async (id, requestId, text) => {
-      change(id, { type: 'answer', kind: 'plan', requestId, id: `synthetic-plan-${++serial}`, text });
+      change(id, { type: 'answer', kind: 'plan', requestId, id: `synthetic-plan-${++serial}`, text: `修改意见：${text}` });
       return true;
     },
     respondElicitation: async (id, requestId, action) => {

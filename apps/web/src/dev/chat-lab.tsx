@@ -12,6 +12,8 @@ import { getDraftSession, getSessionDraft } from '../lib/draftSelection';
 import { installNativeDialogFocus } from '../lib/nativeDialogFocus';
 import { useCockpit } from '../net/store';
 import { fixtureSession, scenarios, type Scenario } from './chat-fixtures';
+import { pendingDecisions, PLAN_ACTION_LABEL, type PendingDecision } from '../lib/pendingDecisions';
+import type { ChatSession } from '../net/types';
 import { orderedFixture } from './ordered-fixtures';
 import { Sidebar } from '../components/Sidebar';
 import '../styles/index.scss';
@@ -102,6 +104,25 @@ export function Lab() {
     apply();
     return true;
   }
+  // Resolve one synthetic request, keeping the ordered list and singular fields in step.
+  function resolve(kind: PendingDecision['kind'], requestId: string) {
+    setSession(value => {
+      const decisions = pendingDecisions(value).filter(d => d.kind !== kind || d.request.requestId !== requestId);
+      let ask: ChatSession['ask'] = null;
+      let planRequest: ChatSession['planRequest'] = null;
+      let elicitation: ChatSession['elicitation'] = null;
+      for (const d of [...decisions].reverse()) {
+        if (d.kind === 'ask') ask = d.request;
+        else if (d.kind === 'plan') planRequest = d.request;
+        else elicitation = d.request;
+      }
+      return { ...value, decisions, ask, planRequest, elicitation };
+    });
+  }
+  const summaryOf = (requestId: string) => pendingDecisions(session)
+    .find(d => d.kind === 'plan' && d.request.requestId === requestId)?.request as { summary?: string } | undefined;
+  const questionOf = (requestId: string) => (pendingDecisions(session)
+    .find(d => d.kind === 'ask' && d.request.requestId === requestId)?.request as { question?: string } | undefined)?.question;
   function append(text: string, role: ChatMessage['role'] = 'assistant', subtype?: ChatMessage['subtype'], replyQuestion?: string) {
     setSession(value => ({ ...value, messages: [...value.messages, {
       id: `lab-add-${++counter.current}`, role, content: text, timestamp: Date.now(), subtype, replyQuestion,
@@ -214,19 +235,21 @@ export function Lab() {
         onSend={request => action(request.intent, () => {
           if (request.intent === 'prompt') append(request.body.text, 'user');
           if (request.intent === 'respondAsk') {
-            setSession(value => ({ ...value, ask: null }));
-            append(request.body.answer, 'user', 'ask-reply', session.ask?.question);
+            resolve('ask', request.body.requestId);
+            append(request.body.answer, 'user', 'ask-reply', questionOf(request.body.requestId));
           }
           if (request.intent === 'planSupersede') {
-            setSession(value => ({ ...value, planRequest: null }));
-            append(request.body.message, 'user');
+            resolve('plan', request.body.requestId);
+            append(`修改意见：${request.body.message}`, 'user', 'plan-reply', summaryOf(request.body.requestId)?.summary);
           }
         })}
         onRespondAsk={(id, answer, freeform) => action(`${id} / ${answer} / freeform=${freeform}`, () => {
-          setSession(value => ({ ...value, ask: null })); append(answer, 'user', 'ask-reply', session.ask?.question);
+          resolve('ask', id); append(answer, 'user', 'ask-reply', questionOf(id));
         })}
-        onRespondPlan={(id, answer) => action(`${id} / ${answer}`, () => setSession(value => ({ ...value, planRequest: null })))}
-        onRespondElicitation={(id, answer) => action(`${id} / ${answer}`, () => setSession(value => ({ ...value, elicitation: null })))}
+        onRespondPlan={(id, answer) => action(`${id} / ${answer}`, () => {
+          resolve('plan', id); append(`已批准：${PLAN_ACTION_LABEL[answer]}`, 'user', 'plan-reply', summaryOf(id)?.summary);
+        })}
+        onRespondElicitation={(id, answer) => action(`${id} / ${answer}`, () => resolve('elicitation', id))}
         onRemoveQueued={id => { setReceipt(`移除队列项：${id}`); setSession(value => ({ ...value, queue: value.queue?.filter(q => q.id !== id) })); }}
         onCancel={async () => {
           const owner = generation.current;
@@ -234,7 +257,7 @@ export function Lab() {
           try { await action('停止并清空队列（合成）', () => {
             setSession(value => ({
               ...value, cancelling: false, status: value.activity?.tasks.activeShells ? 'running' : 'idle',
-              queue: [], ask: null, planRequest: null, elicitation: null,
+              queue: [], ask: null, planRequest: null, elicitation: null, decisions: [],
               activity: value.activity ? { ...value.activity, processing: false, abortable: false,
                 hasActiveWork: !!(value.activity.tasks.activeShells || value.activity.tasks.activeAgents),
                 queue: { pendingCount: 0, steeringCount: 0, inFlightSteeringCount: 0 } } : null,
@@ -245,7 +268,7 @@ export function Lab() {
         }}
         onInterrupt={async () => {
           await action('打断并保留队列', () => setSession(value => ({
-            ...value, status: 'idle', ask: null, planRequest: null, elicitation: null,
+            ...value, status: 'idle', ask: null, planRequest: null, elicitation: null, decisions: [],
           })));
           return { ok: true, interrupted: true };
         }}

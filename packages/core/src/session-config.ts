@@ -90,7 +90,7 @@ export class SessionConfigurator {
         }
       }),
       onElicitationRequest: request => this.decisions.decision<ElicitationResult>(st, 'elicitation', {
-        message: request.message,
+        message: request.message, ...(request.elicitationSource ? { source: request.elicitationSource } : {}),
         actions: request.mode === 'url' || request.requestedSchema ? ['decline', 'cancel'] : ['accept', 'decline', 'cancel'],
       }, response => {
         if (response.action === 'accept' && (request.mode === 'url' || request.requestedSchema)) {

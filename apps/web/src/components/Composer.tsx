@@ -1,12 +1,11 @@
 // The text editor owns neither file transfer nor dictation. Per-session draft
 // revisions protect edits made while an earlier native send is settling.
-import { useCallback, useLayoutEffect, useRef, useSyncExternalStore, type ComponentProps } from 'react';
+import { useCallback, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 import type { SessionDraft } from '../lib/textDraft';
 import { IconButton } from './Button';
 import type { ComposerProps as PublicComposerProps, ComposerEditorProps, ComposerInputProps } from '@cockpit/module-api';
 import { ModuleRuntimeProvider, useModuleElement, useModuleRuntime } from './ModuleComponents';
 import type { ModuleRuntime } from '../lib/moduleRuntime';
-import { AskContent } from './PendingDecision';
 import { resolveDraft } from '../lib/textDraft';
 
 function shouldSubmitOnEnter(): boolean {
@@ -30,7 +29,6 @@ interface ComposerProps {
   onSend: () => Promise<boolean>;
   sendBlocked?: boolean;
   runtime?: ModuleRuntime;
-  ask?: Omit<ComponentProps<typeof AskContent>, 'pending' | 'sessionId' | 'runtime'>;
   statusInHeader?: boolean;
   editorRef?: PublicComposerProps['editorRef'];
 }
@@ -38,8 +36,7 @@ export function Composer({ runtime, ...props }: ComposerProps) {
   const inherited = useModuleRuntime();
   return <ModuleRuntimeProvider runtime={runtime ?? inherited}><ComposerController {...props} /></ModuleRuntimeProvider>;
 }
-function ComposerController({ disabled = false, busy = false, placeholder, submitLabel, draft, onSend, sendBlocked = false, ask, statusInHeader, editorRef }: ComposerProps) {
-  const { pending } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
+function ComposerController({ disabled = false, busy = false, placeholder, submitLabel, draft, onSend, sendBlocked = false, statusInHeader, editorRef }: ComposerProps) {
   const runtime = useModuleRuntime();
   const prepared = useSyncExternalStore(runtime.subscribe,
     () => runtime.isDraftPrepared(draft), () => runtime.isDraftPrepared(draft));
@@ -64,8 +61,6 @@ function ComposerController({ disabled = false, busy = false, placeholder, submi
   }, [draft]);
   const props: PublicComposerProps = { draft: draft.reference, disabled, busy, placeholder, submitLabel,
     sendBlocked, operation, statusInHeader, editorRef, onTextChange: update, onSubmit: submit,
-    children: ask && draft.reference.purpose.kind === 'ask' && draft.reference.purpose.requestId === ask.request.requestId
-      ? <AskContent {...ask} sessionId={draft.sessionId} pending={pending} /> : undefined,
   };
   return prepared ? <ComposerPresentation {...props} /> : <ComposerBase {...props} />;
 }
@@ -74,7 +69,7 @@ function ComposerPresentation(props: PublicComposerProps) {
 }
 
 function ComposerBase({ children, ...props }: PublicComposerProps) {
-  return <div className="chat-composer" data-question={props.operation === 'ask' || undefined}>
+  return <div className="chat-composer">
     <div className="chat-composer-body">
       <div className="chat-composer-context">{children}</div>
       <ComposerEditor {...props} />

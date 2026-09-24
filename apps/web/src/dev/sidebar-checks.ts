@@ -13,7 +13,7 @@ function titleLineRects(title: HTMLElement) {
   return range.getClientRects();
 }
 
-const allStatus = ['overall', 'decision', 'compaction', 'agent', 'shell', 'queue', 'mcp'];
+const allStatus = ['overall', 'compaction', 'agent', 'shell', 'queue', 'mcp'];
 
 export function runSidebarChecks() {
   check(import.meta.env.DEV && import.meta.env.COCKPIT_CHAT_LAB === true
@@ -108,7 +108,8 @@ export function runSidebarChecks() {
   const titleLine = parseFloat(getComputedStyle(rows[0].querySelector('.session-row-title')!).lineHeight);
   check(twoLineHeights.size >= 1 && [...twoLineHeights].every(height => Math.abs(height - oneLine - titleLine) <= 1),
     `a two-line title adds exactly one title line (${[...twoLineHeights].join(', ')})`);
-  for (const key of ['decision', 'shell', 'agent']) {
+  check(rows[1].querySelector('[data-activity="overall"] [data-icon="decision"]'), 'mixed decision state shown by the overall indicator');
+  for (const key of ['shell', 'agent']) {
     check(rows[1].querySelector(`[data-activity="${key}"]`), `mixed ${key} indicator retained`);
   }
   const extreme = rows.find(row => row.dataset.sessionId === 'demo-extreme')!;

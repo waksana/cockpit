@@ -376,9 +376,19 @@ export type PlanRequest = z.infer<typeof PlanRequest>;
 export const ElicitationRequest = z.object({
   requestId: z.string(),
   message: z.string(),
+  source: z.string().optional().describe('Native elicitation source, such as an MCP server name, when reported.'),
   actions: z.array(z.enum(['accept', 'decline', 'cancel'])).optional(),
 });
 export type ElicitationRequest = z.infer<typeof ElicitationRequest>;
+
+// Every pending decision in native arrival order. The singular ask/planRequest/
+// elicitation fields keep exposing the first pending request of each kind.
+export const PendingDecision = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('ask'), request: AskRequest }),
+  z.object({ kind: z.literal('plan'), request: PlanRequest }),
+  z.object({ kind: z.literal('elicitation'), request: ElicitationRequest }),
+]);
+export type PendingDecision = z.infer<typeof PendingDecision>;
 
 // Agent TODO progress derived from native readSqlTodos rows. `null` = no todos.
 export const TodoProgress = z.object({
@@ -505,6 +515,7 @@ export const SessionMeta = z.object({
   ask: AskRequest.nullable(),
   planRequest: PlanRequest.nullable().optional(),
   elicitation: ElicitationRequest.nullable().optional(),
+  decisions: z.array(PendingDecision).optional().describe('All pending decisions in arrival order; omitted by older hosts. Empty means none pending while loaded.'),
   todo: TodoProgress.nullable().optional(),
   // The agent's current self-reported intent (the `report_intent` tool's `intent`
   // arg) — a short gerund line like "Investigating report_intent flow". Shown as

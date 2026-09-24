@@ -35,12 +35,51 @@ test('chat input uses one disclosure-owned composer without mode controls', asyn
   assert.equal(card.dataset.open, 'true');
   assert.equal(card.dataset.header, 'true');
   assert.equal(card.dataset.decision, 'true');
-  assert.equal(card.dataset.question, 'true');
+  assert.equal(card.dataset.question, undefined, 'the question lives in the transcript card');
+  assert.equal(card.querySelector('.chat-decision-card, .chat-ask-q'), null);
   assert.equal(screen.getAllByRole('textbox', { name: '消息输入' }).length, 1);
   assert.equal(screen.queryByRole('button', { name: /模式|mode/i }), null);
   assert.equal(document.querySelector('.mode-menu, .chat-topbar-mode, .chat-answer-toggle, .chat-answer-chevron'), null);
   await userEvent.setup().click(screen.getByRole('button', { name: /^收起输入卡片：/ }));
   assert.equal(card.dataset.open, 'false');
+});
+
+test('one decision card holds every pending request; the input answers the selected tab', async t => {
+  withConnectedStore(t);
+  const session = { ...fixtureSession('decision-stack'), sessionId: 'decision-tabs' };
+  const sent: unknown[] = [];
+  const planned: string[] = [];
+  render(createElement(Thread, {
+    session, onLoadMore() {},
+    onSend: async request => { sent.push(request); return true; },
+    onRespondAsk: async () => true,
+    onRespondPlan: async (_id, action) => { planned.push(action); return true; },
+    onRespondElicitation: async () => true,
+  }));
+  t.after(() => { for (const kind of ['ask', 'plan', 'elicitation'] as const) {
+    getDraftSession(session.sessionId).candidate({ kind, requestId: `lab-${kind}` }).edit('');
+  } });
+  assert.equal(document.querySelectorAll('.chat-decision-card[data-state=pending]').length, 1);
+  const tabs = screen.getAllByRole('tab');
+  assert.deepEqual(tabs.map(tab => tab.textContent), ['问题 1', '计划', '问题 2', '工具确认']);
+  assert.equal(tabs[0].getAttribute('aria-selected'), 'true');
+  const input = () => screen.getByRole('textbox', { name: '消息输入' });
+  assert.equal(input().getAttribute('placeholder'), '回答上方问题…');
+  const user = userEvent.setup();
+  tabs[0].focus();
+  await user.keyboard('{ArrowRight}');
+  const [, plan] = screen.getAllByRole('tab');
+  assert.equal(plan.getAttribute('aria-selected'), 'true');
+  assert.equal(document.activeElement, plan, 'arrow keys move focus with the selection');
+  assert.equal(input().getAttribute('placeholder'), '输入修改意见…');
+  assert.ok(within(screen.getByRole('tabpanel')).getByText('组件精修计划'));
+  await user.type(input(), 'Change step two');
+  await user.click(screen.getByRole('button', { name: '提交修改意见' }));
+  assert.deepEqual(sent, [{ intent: 'planSupersede', body: { sessionId: session.sessionId, requestId: 'lab-plan', message: 'Change step two' } }]);
+  await user.click(screen.getByRole('button', { name: /开始执行（交互）（推荐）/ }));
+  assert.deepEqual(planned, ['interactive']);
+  await user.click(screen.getAllByRole('tab')[3]);
+  assert.equal(input().getAttribute('placeholder'), '请在上方卡片中选择');
 });
 
 test('CSS shell ownership has no JavaScript viewport controller side effects', t => {

@@ -44,7 +44,7 @@ export class ResourceReader {
       cwd: row.context?.workingDirectory ?? '',
       createdAt: row.startTime.getTime(), lastActivity: row.modifiedTime.getTime(), lastActivitySource: 'native-persisted',
       loaded: false, status: 'unloaded', ask: null,
-      planRequest: null, elicitation: null,
+      planRequest: null, elicitation: null, decisions: [],
     };
   }
 

@@ -32,7 +32,6 @@ const allowed = new Map<string, string>([
   ['master-pane-scroll', owner],
   ['sidebar-header', owner],
   ['manage-body', `${owner}; PanePresentation.test keeps it intentionally unstyled`],
-  ['chat-pending', 'semantic root of the styled chat-pending-* parts'],
   ['info-section-name', 'semantic hook on SectionHeading; the ck-heading appearance is shared'],
   ['info-section-content', 'semantic hook; layout comes from the sibling info-controls/info-meta-* classes'],
   ['info-model-eyebrow', 'semantic label inside the styled info-model-current row'],

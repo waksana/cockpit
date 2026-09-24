@@ -102,7 +102,8 @@ test('running state and pending decisions remain without schedule indicators or 
   ]);
   assert.doesNotMatch(html, /dialog-schedule|定时任务/);
   assert.match(html, /data-activity="overall"/);
-  assert.equal((html.match(/data-activity="decision"/g) ?? []).length, 3);
+  assert.equal((html.match(/data-icon="decision"/g) ?? []).length, 3);
+  assert.doesNotMatch(html, /data-activity="decision"/);
   assert.doesNotMatch(html, />选</);
   assert.doesNotMatch(html, /未读|已读|dialog-unread|dialog-pinned/);
 });
@@ -137,7 +138,7 @@ test('roles, a long directory and every status indicator share the second line i
   assert.equal(row.directory.hover, cwd);
   assert.equal(row.roles.length, 2);
   assert.ok(row.roles.every(title => title?.includes('不代表当前能力就绪')));
-  assert.deepEqual(row.status, ['overall', 'decision', 'compaction', 'agent', 'shell', 'queue', 'mcp']);
+  assert.deepEqual(row.status, ['overall', 'compaction', 'agent', 'shell', 'queue', 'mcp']);
   assert.ok(row.text.indexOf('Session extreme') < row.text.indexOf('Task') && row.text.indexOf('Task') < row.text.indexOf('long-directory'));
 });
 

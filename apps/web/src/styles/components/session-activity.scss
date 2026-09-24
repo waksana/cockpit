@@ -14,6 +14,6 @@
   align-items: center;
   gap: 0.15rem;
   &[data-activity='decision'], &[data-activity='processing'] { color: var(--host-color-accent); }
-  &[data-activity='overall'] > .spinner { color: var(--host-color-accent); }
+  &[data-activity='overall'] > .spinner, &[data-activity='overall']:has([data-icon='decision']) { color: var(--host-color-accent); }
   &[data-activity='error'], &:has([data-icon='error']) { color: var(--host-color-danger); }
 }

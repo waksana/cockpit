@@ -160,15 +160,14 @@ test('a pending question shares the card below its only status and action header
     requestId: 'question', question: 'Which option?', choices: ['A', 'B'], allowFreeform: true,
   } });
   const region = html.match(/<div class="chat-execution-head"[\s\S]+?(?=<div id="[^"]+" class="chat-input-card-body")/)![0];
-  assert.match(html, /<div class="chat-composer" data-question="true"/);
-  assert.doesNotMatch(html, /class="chat-decisions"/);
-  assert.ok(html.indexOf('class="chat-execution-head"') < html.indexOf('class="chat-composer"'));
-  assert.ok(html.indexOf('Which option?') < html.indexOf('class="chat-input ck-input-row"'));
+  const input = html.slice(html.indexOf('class="chat-input-area"'));
+  assert.doesNotMatch(html, /data-question|class="chat-decisions"/);
+  assert.ok(html.indexOf('Which option?') < html.indexOf('class="chat-input-area"'), 'the question is a transcript card');
+  assert.match(html, /<div class="msg-group" data-decision-row="true" data-gap="none"><div class="chat-decision-card" data-state="pending" data-kind="ask"/);
+  assert.doesNotMatch(input, /Which option\?|class="chat-ask/);
   assert.doesNotMatch(html, /chat-answer-toggle|chat-answer-chevron/);
-  assert.match(html, /Which option\?/);
-  assert.doesNotMatch(region, /Which option\?|class="chat-ask/);
-  assert.match(region, /data-activity="decision"/);
-  assert.match(region, /data-activity="overall"/);
+  assert.doesNotMatch(region, /data-activity="decision"/);
+  assert.match(region, /data-activity="overall"[^>]*><span[^>]*data-icon="decision"/);
   assert.match(region, /class="chat-typing-stop ck-button ck-danger">[\s\S]*?停止/);
   assert.doesNotMatch(html, /输入内容将回答当前问题|chat-composer-hint/);
 });
@@ -179,9 +178,12 @@ test('multiple native decisions stay separate from one execution/queue area', ()
     planRequest: { requestId: 'plan', summary: 'Proposed plan', actions: ['exit_only'] },
     elicitation: { requestId: 'confirm', message: 'Tool confirmation' },
   });
+  assert.equal((html.match(/class="chat-decision-card"/g) ?? []).length, 1, 'one card holds every pending request');
+  assert.equal((html.match(/role="tab"/g) ?? []).length, 3);
+  assert.ok(html.indexOf('>问题<') < html.indexOf('>计划<') && html.indexOf('>计划<') < html.indexOf('>工具确认<'));
+  assert.match(html, /aria-selected="true"[^>]*><span[^>]*data-icon="decision"/);
   assert.match(html, /Question\?/);
-  assert.match(html, /Proposed plan/);
-  assert.match(html, /Tool confirmation/);
+  assert.doesNotMatch(html, /Proposed plan|Tool confirmation/, 'only the selected tab is shown');
   assert.equal((html.match(/class="chat-execution-head"/g) ?? []).length, 1);
   assert.equal((html.match(/class="chat-typing-stop ck-button ck-danger"/g) ?? []).length, 1);
 });
@@ -265,7 +267,8 @@ test('each decision keeps queue-clearing controls outside its answer options', (
 test('idle and read-only views do not reserve empty dock regions', () => {
   assert.doesNotMatch(render({ status: 'idle' }), /class="chat-dock"|class="chat-execution"/);
   const idleQuestion = render({ status: 'idle', ask: { requestId: 'ask', question: 'Question' } });
-  assert.match(idleQuestion, /class="chat-composer" data-question="true"/);
+  assert.match(idleQuestion, /class="chat-decision-card" data-state="pending" data-kind="ask"/);
+  assert.doesNotMatch(idleQuestion, /data-question/);
   assert.match(render({ status: 'idle' }), /<div class="chat-execution-head" hidden=""/);
   assert.doesNotMatch(idleQuestion, /class="chat-decisions"/);
   assert.doesNotMatch(idleQuestion, /class="chat-execution"/);
@@ -285,7 +288,11 @@ test('running composer uses only a queue placeholder while idle and questions ke
   assert.match(render(), /placeholder="加入队列"/);
   assert.doesNotMatch(render(), /发送后加入队列|chat-composer-hint/);
   assert.match(render({ status: 'idle' }), /placeholder="输入消息…"/);
-  assert.match(render({ ask: { requestId: 'ask', question: 'Question?' } }), /placeholder="输入回答…"/);
+  assert.match(render({ ask: { requestId: 'ask', question: 'Question?' } }), /placeholder="回答上方问题…"/);
+  assert.match(render({ ask: { requestId: 'ask', question: 'Question?', choices: ['A'], allowFreeform: false } }),
+    /placeholder="请在上方卡片中选择"/);
+  assert.match(render({ planRequest: { requestId: 'plan', summary: 'Plan' } }), /placeholder="输入修改意见…"/);
+  assert.match(render({ elicitation: { requestId: 'confirm', message: 'Confirm' } }), /placeholder="请在上方卡片中选择"/);
 });
 
 test('submitting uses an existing header without adding an idle header or duplicate progress', async () => {

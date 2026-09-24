@@ -801,3 +801,23 @@ test('later unreferenced reasoning never takes ownership through equal text acro
     }
   }
 });
+
+test('plan replies known only from requests leave no stray tool row across page splits', () => {
+  for (const withStart of [false, true]) {
+    const history = [
+      event('request', 'assistant.message', { content: '', toolRequests: [
+        { toolCallId: 'plan', name: 'exit_plan_mode', arguments: { summary: 'Plan summary' } },
+      ] }),
+      ...(withStart ? [event('plan-start', 'tool.execution_start', { toolCallId: 'plan', toolName: 'exit_plan_mode', arguments: { summary: 'Plan summary' } })] : []),
+      event('plan-done', 'tool.execution_complete', { toolCallId: 'plan', success: true, result: { content: 'Plan approved! Exited plan mode.' } }),
+      event('after'),
+    ];
+    for (let split = 0; split <= history.length; split++) {
+      const window = new NativeWindow(undefined, true);
+      accept(window, history.slice(split));
+      accept(window, history.slice(0, split));
+      assert.deepEqual(window.snapshot().messages.map(message => message.id), ['reply-plan', 'after'], `split ${split}`);
+      assert.equal(window.snapshot().messages[0].subtype, 'plan-reply');
+    }
+  }
+});

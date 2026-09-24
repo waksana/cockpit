@@ -72,7 +72,7 @@ test('headings use icon then name then count without a separate waiting-for-answ
   const html = render(true, 'ask');
   const top = html.slice(0, html.indexOf('class="chat-controls-list"'));
   assert.doesNotMatch(top, /data-activity="decision"/);
-  assert.match(render(false, 'ask').slice(0, render(false, 'ask').indexOf('class="chat-controls-list"')), /data-activity="decision"/);
+  assert.match(render(false, 'ask').slice(0, render(false, 'ask').indexOf('class="chat-controls-list"')), /data-activity="overall"[^>]*><span[^>]*data-icon="decision"/);
   const headers: string[] = html.match(/<header[^>]*>[\s\S]*?<\/header>/g) ?? [];
   for (const [icon, label, count] of [['agent', 'Agent', '1'], ['shell', 'Terminal', '2'], ['queue', '队列', '2']]) {
     const header = headers.find(value => value.includes(`data-icon="${icon}"`));
@@ -93,7 +93,7 @@ test('sidebar and control bar derive their busy indicators from the same native 
     assert.deepEqual(controlIndicators(session, model, true), sessionActivityIndicators({
       ...session, needsDecision: !!(session.ask || session.planRequest || session.elicitation),
     }, true));
-    assert.equal(controlIndicators(session, model, true)[0].icon, 'loading');
+    assert.equal(controlIndicators(session, model, true)[0].icon, session.ask || session.planRequest ? 'decision' : 'loading', scene);
   }
 });
 
@@ -105,5 +105,5 @@ test('sticky control surfaces use the same existing input-card color, not a prev
   assert.match(css, /\.chat-input-card\[data-controls\] \.chat-composer-editor \{[^}]*position: sticky;[^}]*background: var\(--chat-input-surface\)/);
   assert.doesNotMatch(css, /\.chat-input-card\[data-controls\] \.chat-input \{[^}]*sticky/);
   const activityCss = compile(new URL('../styles/components/session-activity.scss', import.meta.url).pathname).css;
-  assert.match(activityCss, /\.session-activity-item\[data-activity=overall\] > \.spinner \{[^}]*color: var\(--host-color-accent\)/);
+  assert.match(activityCss, /\.session-activity-item\[data-activity=overall\] > \.spinner, \.session-activity-item\[data-activity=overall\]:has\(\[data-icon=decision\]\) \{[^}]*color: var\(--host-color-accent\)/);
 });

@@ -79,8 +79,6 @@ async function fixture(withInput = false, withStatus = false) {
     runtime.prepareDraft(target);
     return renderToStaticMarkup(h(Composer, {
       draft: target, runtime, onSend: () => target.send(async () => true),
-      ...(target.reference.purpose.kind === 'ask'
-        ? { ask: { request: { requestId: target.reference.purpose.requestId, question: 'Question' }, onChoice() {} } } : {}),
     }));
   };
   return { runtime, draft, context, handle, field: handle.forDraft(draft.reference)!, render };
@@ -178,7 +176,7 @@ test('a request-scoped answer hides the prompt schema without moving or clearing
   const answer = new SessionDraft(f.draft.sessionId, undefined, { kind: 'ask', requestId: 'request' });
   const html = f.render(answer);
   assert.equal(f.handle.forDraft(answer.reference), undefined);
-  assert.match(html, /Question/);
+  assert.doesNotMatch(html, /chat-composer-context"><[^/]/, 'the question is a transcript card, not composer content');
   assert.doesNotMatch(html, /Cached item|Cached prompt|Add item|fixture-list|不接受附件/);
   assert.match(html, /<textarea[^>]*><\/textarea>/);
   assert.equal(f.draft.getSnapshot().text, 'Cached prompt');

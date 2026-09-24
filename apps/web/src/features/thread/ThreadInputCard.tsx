@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import type { ChatSession, ExitPlanModeAction } from '../../net/types';
+import type { ChatSession } from '../../net/types';
 import type { SessionDraft } from '../../lib/textDraft';
 import type { sessionActivityIndicators } from '../../lib/sessionActivity';
 import type { useRemovedControlFocus } from '../../lib/useRemovedControlFocus';
@@ -8,7 +8,6 @@ import { ComposerNotices } from '../../components/Composer';
 import { CopyButton } from '../../components/CopyButton';
 import { Disclosure, TextClamp } from '../../components/Disclosure';
 import { Icon } from '../../components/Icon';
-import { PlanCard, ElicitationCard } from '../../components/PendingDecision';
 import { SessionActivity } from '../../components/SessionActivity';
 import type { ThreadExecution } from './useThreadExecution';
 
@@ -97,34 +96,6 @@ export function QueuedMessages({ queue, connected, controlRef, onRemove }: {
             label={`移除排队消息：${q.text}`} onClick={() => onRemove?.(q.id)} />
         </div>
       ))}
-    </div>
-  );
-}
-
-// Plan and elicitation decisions; an ask is answered through the composer.
-export function PendingDecisions({ session, authoritative, planDraft, elicitationDraft, cancelAction, runAction, onRespondPlan, onRespondElicitation }: {
-  session: ChatSession; authoritative: boolean;
-  planDraft?: SessionDraft; elicitationDraft?: SessionDraft;
-  cancelAction: (kind: 'plan' | 'elicitation', requestId: string, pending: boolean) => ReactNode;
-  runAction: (target: SessionDraft, send: () => Promise<boolean> | undefined) => Promise<boolean>;
-  onRespondPlan?: (requestId: string, action: ExitPlanModeAction) => Promise<boolean>;
-  onRespondElicitation?: (requestId: string, action: 'accept' | 'decline' | 'cancel') => Promise<boolean>;
-}) {
-  const { planRequest, elicitation } = session;
-  return (
-    <div className="chat-decisions">
-      {planRequest && planDraft && <PlanCard request={planRequest}
-        pending={planDraft.getSnapshot().pending}
-        actions={cancelAction('plan', planRequest.requestId, planDraft.getSnapshot().pending)}
-        disabled={!authoritative || !onRespondPlan}
-        onSelect={action => { void runAction(planDraft,
-          () => onRespondPlan?.(planRequest.requestId, action)); }} />}
-      {elicitation && elicitationDraft && <ElicitationCard request={elicitation}
-        pending={elicitationDraft.getSnapshot().pending}
-        actions={cancelAction('elicitation', elicitation.requestId, elicitationDraft.getSnapshot().pending)}
-        disabled={!authoritative || !onRespondElicitation}
-        onSelect={action => { void runAction(elicitationDraft,
-          () => onRespondElicitation?.(elicitation.requestId, action)); }} />}
     </div>
   );
 }

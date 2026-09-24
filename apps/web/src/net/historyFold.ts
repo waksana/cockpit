@@ -201,7 +201,7 @@ export function mergeHistoryFold(
       // into its child. Never remove an independently observed root invocation.
       const messageId = `tool-${id}`;
       if (metadata.legacyOwner && !prefix.byId.has(messageId) && !suffix.toolMsg.has(id)
-        && !suffix.toolMetadata.has(id) && !suffix.askToolIds.has(id)) {
+        && !suffix.toolMetadata.has(id) && !suffix.askToolIds.has(id) && !suffix.planToolIds.has(id)) {
         removed.add(messageId);
       }
     }
@@ -260,6 +260,7 @@ export function mergeHistoryFold(
   for (const [id, owner] of prefix.toolMsg) if (!suffix.toolMsg.has(id) || !owner) suffix.toolMsg.set(id, owner);
   for (const [id, task] of prefix.pendingTask) if (!suffix.pendingTask.has(id)) suffix.pendingTask.set(id, task);
   for (const id of prefix.askToolIds) suffix.askToolIds.add(id);
+  for (const id of prefix.planToolIds) suffix.planToolIds.add(id);
   for (const id of prefix.agentIds) suffix.agentIds.add(id);
   for (const [id, card] of prefix.subCard) suffix.subCard.set(id, card);
   for (const id of prefix.completed) suffix.completed.add(id);

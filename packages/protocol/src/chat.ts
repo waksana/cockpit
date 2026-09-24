@@ -22,6 +22,7 @@ export interface FoldState {
   byId: Map<string, number>; // messageId -> index in messages
   toolMsg: Map<string, string>; // observed start -> tool row ID, or '' for dedicated UI
   askToolIds: Set<string>; // toolCallIds that are ask_user prompts
+  planToolIds: Set<string>; // toolCallIds that are exit_plan_mode confirmations
   // Retained metadata and explicit legacy ownership, scoped to this fold's invocation IDs.
   toolMetadata: Map<string, { title?: string; executionTitle?: string; question?: string; legacyOwner?: true }>;
   // Child folds/cards are keyed by spawning toolCallId. Each child also remembers
@@ -44,7 +45,7 @@ export interface FoldState {
 export function newFoldState(): FoldState {
   return {
     messages: [], byId: new Map(), toolMsg: new Map(),
-    askToolIds: new Set(), toolMetadata: new Map(),
+    askToolIds: new Set(), planToolIds: new Set(), toolMetadata: new Map(),
     subFolds: new Map(), subCard: new Map(), agentIds: new Set(), pendingTask: new Map(),
     responses: new Map(), reasoning: new Map(), completed: new Set(),
   };
@@ -67,6 +68,8 @@ export interface FoldProjection {
   toolArgs?: string;
   askAnswer?: string;
   askQuestion?: string;
+  planAnswer?: string;
+  planSummary?: string;
   scope?: FoldHistoryScope;
   strictOwnership?: boolean;
 }
@@ -202,6 +205,31 @@ export function askAnswerOf(data: Record<string, unknown>): string {
     if (typeof raw !== 'string') continue;
     const answer = /^User (?:responded|selected):\s*([\s\S]*)$/.exec(raw.trim());
     if (answer) return (answer[1] ?? '').trim();
+  }
+  return '';
+}
+
+const PLAN_ACTION_LABEL: [RegExp, string][] = [
+  [/fleet/i, '并行执行（fleet）'], [/autopilot/i, '自动执行'], [/interactive/i, '开始执行（交互）'], [/exit/i, '仅退出计划'],
+];
+
+// exit_plan_mode completion -> the user's decision as display text. Runtime
+// result strings are not a public contract, so unknown text yields nothing.
+export function planAnswerOf(data: Record<string, unknown>): string {
+  if (data.success === false || data.error != null) return '';
+  const r = recordOf(data.result);
+  if (r.error != null || r.isError === true || r.success === false) return '';
+  for (const raw of [r.content, r.detailedContent]) {
+    if (typeof raw !== 'string') continue;
+    const text = raw.trim();
+    const feedback = /^Plan not approved\.\s*User feedback:\s*([\s\S]*?)(?:\s*Please update the plan based on this feedback[\s\S]*)?$/.exec(text);
+    if (feedback?.[1]?.trim()) return `修改意见：${feedback[1].trim()}`;
+    if (/^Plan not approved/.test(text)) return '未批准计划';
+    const approved = /^Plan approved[,!.]?\s*(?:exited plan mode\s*(?:\(([^)]*)\))?)?/i.exec(text);
+    if (approved) {
+      const action = approved[1] ? PLAN_ACTION_LABEL.find(([pattern]) => pattern.test(approved[1]!))?.[1] : undefined;
+      return action ? `已批准：${action}` : '已批准计划';
+    }
   }
   return '';
 }
@@ -569,8 +597,10 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
         if (!r || typeof r.toolCallId !== 'string') continue;
         rememberTask(state, r, projection?.scope);
         if (r.name === 'ask_user') state.askToolIds.add(r.toolCallId);
+        if (r.name === 'exit_plan_mode') state.planToolIds.add(r.toolCallId);
         changed.push(...rememberToolMetadata(state, r.toolCallId, { ...r },
-          r.name === 'ask_user' ? stringOf(recordOf(r.arguments).question) : undefined));
+          r.name === 'ask_user' ? stringOf(recordOf(r.arguments).question)
+            : r.name === 'exit_plan_mode' ? stringOf(recordOf(r.arguments).summary) : undefined));
       }
       endTurn(state);
       return { changed, ...(removed.length ? { removed } : {}),
@@ -594,8 +624,22 @@ function foldLocalEvent(state: FoldState, ev: SdkEvent, projection?: FoldProject
       const start = ev.type === 'tool.execution_start';
       const name = start ? stringOf(d.toolName) : undefined;
       if (name === 'ask_user') state.askToolIds.add(toolCallId);
+      if (name === 'exit_plan_mode') state.planToolIds.add(toolCallId);
       const changed = start ? rememberToolMetadata(state, toolCallId, d,
-        name === 'ask_user' ? projection?.askQuestion ?? stringOf(recordOf(d.arguments).question) : undefined, true) : [];
+        name === 'ask_user' ? projection?.askQuestion ?? stringOf(recordOf(d.arguments).question)
+          : name === 'exit_plan_mode' ? projection?.planSummary ?? stringOf(recordOf(d.arguments).summary) : undefined, true) : [];
+      // exit_plan_mode stays out of tool rows; its decision is a plan reply card.
+      if (!start && state.planToolIds.has(toolCallId)) {
+        // Mark the id as owned by the plan card so a merged newer page drops its stray tool row.
+        state.toolMsg.set(toolCallId, '');
+        const answer = projection?.planAnswer ?? planAnswerOf(d);
+        if (!answer) return empty;
+        const replyId = `reply-${toolCallId}`;
+        const question = state.toolMetadata.get(toolCallId)?.question;
+        upsert(state, { id: replyId, role: 'user', subtype: 'plan-reply', content: answer, timestamp: tsOf(ev),
+          ...(question ? { replyQuestion: question } : {}) });
+        return { changed: [replyId], metaChanged: false };
+      }
       const msgId = `tool-${toolCallId}`;
       const previous = state.messages[state.byId.get(msgId) ?? -1];
       const oldTool = previous?.toolCalls?.[0];

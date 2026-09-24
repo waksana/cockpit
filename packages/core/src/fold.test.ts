@@ -7,7 +7,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { newFoldState, foldEvent, resetTurn } from '@cockpit/protocol/chat';
+import { newFoldState, foldEvent, resetTurn, planAnswerOf } from '@cockpit/protocol/chat';
 import { cleanSessionTitle } from '@cockpit/protocol';
 import { normalizeEvent, type SdkEvent } from './sdk-types.ts';
 
@@ -522,6 +522,41 @@ test('ask_user reply surfaces as a user bubble (prefix stripped)', () => {
   assert.equal(reply!.role, 'user');
   assert.equal(reply!.content, 'my answer');
   assert.equal(reply!.replyQuestion, 'Q?');
+});
+
+test('exit_plan_mode completion becomes a plan reply that keeps the summary', () => {
+  const cases: [string, unknown, string][] = [
+    ['p1', { content: 'Plan not approved. User feedback: Change step two' }, '修改意见：Change step two'],
+    ['p2', { content: 'Plan approved, exited plan mode (autopilot)' }, '已批准：自动执行'],
+    ['p3', { content: 'Plan approved! Exited plan mode.' }, '已批准计划'],
+    ['p4', { content: 'Plan not approved' }, '未批准计划'],
+  ];
+  for (const [id, result, expected] of cases) {
+    const evs: Ev[] = [
+      tStart(),
+      { type: 'assistant.message', data: { messageId: `a-${id}`, content: '', toolRequests: [
+        { toolCallId: id, name: 'exit_plan_mode', arguments: { summary: 'Plan summary' } },
+      ] }, id: `a-${id}` },
+      { type: 'tool.execution_start', data: { toolCallId: id, toolName: 'exit_plan_mode', arguments: { summary: 'Plan summary' } } },
+      { type: 'tool.execution_complete', data: { toolCallId: id, success: true, result } },
+    ];
+    for (const messages of [replay(evs).messages, [...live(evs).client.values()] as ReturnType<typeof replay>['messages']]) {
+      const reply = messages.find(m => m.subtype === 'plan-reply');
+      assert.ok(reply, id);
+      assert.equal(reply.id, `reply-${id}`);
+      assert.equal(reply.role, 'user');
+      assert.equal(reply.content, expected, id);
+      assert.equal(reply.replyQuestion, 'Plan summary');
+      assert.equal(messages.some(m => (m.toolCalls ?? []).some(tc => tc.toolCallId === id)), false, 'the tool row stays hidden');
+    }
+  }
+});
+
+test('planAnswerOf is defensive about unknown runtime text', () => {
+  assert.equal(planAnswerOf({ result: { content: 'Plan approved, exited plan mode (unknown_mode)' } }), '已批准计划');
+  assert.equal(planAnswerOf({ result: { content: 'Something new' } }), '', 'unknown text yields no record');
+  assert.equal(planAnswerOf({ success: false, result: { content: 'Plan approved' } }), '');
+  assert.equal(planAnswerOf({}), '');
 });
 
 test('errors/warnings fold into system messages with level', () => {

@@ -14,8 +14,9 @@ import { getDraftSession } from '../lib/draftSelection';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { ActivityHeader } from './ActivityHeader';
 import { ChatHeader } from './ChatHeader';
-import { PlanCard } from './PendingDecision';
+import { PendingDecisionCard } from './PendingDecision';
 import { useCockpit } from '../net/store';
+import { ThreadTranscript } from '../features/thread/ThreadTranscript';
 
 test('chat header keeps session and model details without any mode display or switch', () => {
   const html = renderToStaticMarkup(createElement(ChatHeader, {
@@ -111,7 +112,7 @@ test('Chat dark theme targets the mounted chat, not an impossible nested chat', 
   assert.match(tokens, /@media \(prefers-color-scheme: dark\) \{\s*:root \{[^}]*--host-color-text-contrast:/);
 });
 
-test('one CSS height budget pins ordinary input but scrolls answer input with its question', () => {
+test('one CSS height budget pins the input card, which never holds a question', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.chat-transcript \{[^}]*flex: 1 1 0;[^}]*min-height: min\(6rem, 20%\)/);
   assert.match(css, /\.chat-input-area \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*max-height: 70%/);
@@ -120,10 +121,9 @@ test('one CSS height budget pins ordinary input but scrolls answer input with it
   assert.match(css, /\.chat-input-card-body \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*min-height: 0;[^}]*overflow: hidden/);
   assert.match(css, /\.chat-input-context \{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto/);
   assert.match(css, /\.chat-input-context:empty \{\s*display: none;/);
-  assert.match(css, /\.chat-input-card\[data-question\] \.chat-input-card-body \{\s*display: block;\s*overflow-y: auto;/);
-  assert.match(css, /\.chat-input-card\[data-question\] \.chat-input-context \{\s*overflow: visible;/);
+  assert.doesNotMatch(css, /data-question/);
   assert.match(css, /\.chat-input-notices \{[^}]*flex: none;[^}]*max-height: min\(12rem, 30dvh\)/);
-  for (const selector of ['chat-decisions', 'chat-queue', 'chat-composer-context', 'chat-pending-body']) {
+  for (const selector of ['chat-queue', 'chat-composer-context', 'chat-decision-card', 'chat-decision-body']) {
     assert.doesNotMatch(css.match(new RegExp(`\\.${selector} \\{([^}]+)\\}`))?.[1] ?? '', /overflow-y: auto|max-height:/);
   }
   assert.doesNotMatch(css, /\.chat-dock \{|\.chat-execution \{/);
@@ -131,7 +131,7 @@ test('one CSS height budget pins ordinary input but scrolls answer input with it
 test('one card frame retains compact execution/queue typography and independent actions', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.chat-input-card \{[^}]*border: 1px solid/);
-  assert.doesNotMatch(css.match(/\.chat-ask \{([^}]+)\}/)?.[1] ?? '', /border:|background:/);
+  assert.doesNotMatch(css, /\.chat-ask \{|\.chat-decisions \{|\.chat-pending-body/);
   assert.match(css, /\.chat-execution-actions button \{[^}]*min-block-size: var\(--chat-control-compact\);[^}]*font-size: var\(--chat-text-meta\)/);
   assert.match(css, /\.chat-queue-item \{[^}]*font-size: var\(--chat-text-meta\)/);
   assert.doesNotMatch(css, /\.chat-queue-label|\.chat-composer-hint/);
@@ -143,20 +143,25 @@ test('one card frame retains compact execution/queue typography and independent 
   assert.match(activity, /\.session-activity \{[^}]*white-space: nowrap/);
 });
 
-test('only answer drafts opt into the shared question scroller', () => {
+test('pending decisions render as one transcript card while the input card keeps only the editor', () => {
   for (const scene of ['reading', 'idle-queued', 'plan-queued', 'elicitation-queued', 'ask-queued', 'choice-only', 'freeform', 'decision-stack'] as const) {
     const session = fixtureSession(scene);
     const html = renderToStaticMarkup(createElement(Thread, { session, onLoadMore() {} }));
     const card = html.match(/<div class="chat-input-card"[^>]*>/)?.[0];
     assert.ok(card, scene);
-    assert.equal(card.includes('data-question="true"'), !!session.ask, scene);
-    assert.ok(html.includes('class="chat-input-context"'), scene);
+    assert.doesNotMatch(html, /data-question/, scene);
+    const decided = !!(session.ask || session.planRequest || session.elicitation);
+    const cards = html.match(/class="chat-decision-card" data-state="pending"/g) ?? [];
+    assert.equal(cards.length, decided ? 1 : 0, scene);
+    if (decided) assert.ok(html.indexOf('chat-decision-card') < html.indexOf('class="chat-input-area"'), scene);
+    const input = html.slice(html.indexOf('class="chat-input-area"'));
+    assert.doesNotMatch(input, /chat-decision|chat-ask-q/, scene);
     assert.equal((html.match(/<textarea/g) ?? []).length, 1, scene);
   }
   const readOnly = renderToStaticMarkup(createElement(Thread, {
     session: fixtureSession('ask-queued'), readOnly: true, onLoadMore() {},
   }));
-  assert.doesNotMatch(readOnly, /data-question="true"|<textarea/);
+  assert.doesNotMatch(readOnly, /data-question|<textarea/);
 });
 
 test('spacing tokens own visible boundaries and placeholder stays distinct on focus in both themes', () => {
@@ -238,7 +243,8 @@ test('decision text wraps at its actual component boundary without clipping long
   assert.ok(html.includes(session.ask!.question));
   assert.ok(html.includes(session.ask!.choices![0]));
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /\.chat-pending-body \{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;/);
+  assert.match(css, /\.chat-decision-card \{[^}]*min-width: 0;[^}]*overflow-wrap: anywhere;/);
+  assert.match(css, /\.chat-decision-body \{[^}]*min-width: 0;/);
   assert.match(css, /\.chat-ask-q \{[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/);
   assert.match(css, /\.chat-ask-choice \{[^}]*min-width: 0;[^}]*max-width: 100%;[^}]*white-space: pre-wrap;[^}]*overflow-wrap: anywhere;/);
 });
@@ -285,19 +291,25 @@ test('chat buttons consume public appearance and retain only contextual geometry
 
 test('only the recommended offered plan action consumes the public primary treatment, including when disabled', () => {
   const request = fixtureSession('plan').planRequest!;
+  const card = (planRequest: typeof request, pending: boolean) => {
+    const decision = { kind: 'plan' as const, request: planRequest };
+    return renderToStaticMarkup(createElement(PendingDecisionCard, {
+      sessionId: 'fixture', pending, disabled: { ask: false, plan: false, elicitation: false },
+      onChoice() {}, onPlan() {}, onElicitation() {}, decisions: [decision], selected: decision, onSelect() {},
+    }));
+  };
   for (const pending of [false, true]) {
-    const html = renderToStaticMarkup(createElement(PlanCard, { request, pending, onSelect() {} }));
+    const html = card(request, pending);
     const buttons = [...html.matchAll(/<button[^>]*>/g)].map(match => match[0]).filter(button => button.includes('chat-ask-choice'));
     assert.match(html, /aria-expanded="false"[^>]*aria-label="展开完整计划"/, 'the full plan is one closed disclosure');
     assert.equal(buttons.length, request.actions!.length);
     assert.equal(buttons.filter(button => button.includes('ck-primary')).length, 1);
     assert.equal(buttons[request.actions!.indexOf(request.recommendedAction!)].includes('ck-primary'), true);
     for (const button of buttons) assert.equal(button.includes('disabled=""'), pending);
+    assert.match(html, /（推荐）/);
     assert.doesNotMatch(html, /is-recommended/);
   }
-  const withoutRecommended = renderToStaticMarkup(createElement(PlanCard, {
-    request: { ...request, actions: ['exit_only'] }, pending: false, onSelect() {},
-  }));
+  const withoutRecommended = card({ ...request, actions: ['exit_only'] }, false);
   assert.doesNotMatch(withoutRecommended, /ck-primary/);
 });
 
@@ -326,8 +338,7 @@ test('Chat regions and optional composer context each have a single spacing owne
   assert.match(css, /\.chat-composer-context:has\(> :not\(:empty\)\) \{\s*display: flex;/);
   assert.match(css, /\.chat-input-notice \{[^}]*margin: 0;/);
   assert.doesNotMatch(css, /\.draft-attachments|\.module-draft-recovery/);
-  assert.match(css, /\.chat-pending-head \{[^}]*margin: 0;/);
-  assert.match(css, /\.chat-pending-body > \* \+ \* \{\s*margin-block-start: var\(--chat-gap-content\);/);
+  assert.match(css, /\.chat-decision-body \{[^}]*display: flex;[^}]*flex-direction: column;[^}]*gap: var\(--chat-gap-content\);/);
   assert.match(css, /\.message-body \+ \.message-attachments \{[^}]*margin-block-start: var\(--chat-gap-content\);/);
   assert.match(css, /\.message-attachments > \* \{[^}]*min-width: 0;[^}]*max-width: 100%;/);
   assert.match(css, /\.message-attachments \{[^}]*flex-direction: column;[^}]*align-items: flex-start;/);
@@ -340,18 +351,19 @@ test('Chat regions and optional composer context each have a single spacing owne
   }
 });
 
-test('the entire input card uses one default-open disclosure row without a nested question frame', () => {
+test('the entire input card uses one default-open disclosure row and the question stays in the transcript', () => {
   const html = renderToStaticMarkup(createElement(Thread, {
     session: fixtureSession('ask-queued'), onLoadMore() {},
   }));
   assert.equal((html.match(/<textarea/g) ?? []).length, 1);
-  assert.match(html, /<div class="chat-input-card" data-open="true" data-header="true" data-decision="true" data-question="true"><div class="chat-execution-head"><button type="button" class="chat-execution-toggle ui-disclosure ck-button" aria-expanded="true" aria-controls="([^"]+)" aria-label="收起输入卡片：总状态：活动待同步">/);
+  assert.match(html, /<div class="chat-input-card" data-open="true" data-header="true" data-decision="true"><div class="chat-execution-head"><button type="button" class="chat-execution-toggle ui-disclosure ck-button" aria-expanded="true" aria-controls="([^"]+)" aria-label="收起输入卡片：总状态：活动待同步">/);
   const bodyId = html.match(/class="chat-execution-toggle[^>]*aria-controls="([^"]+)"/)![1];
   assert.match(html, new RegExp(`<div id="${bodyId}" class="chat-input-card-body">`), 'the open card body is not hidden');
   assert.match(html, /data-icon="down"[^>]*>.*?<span class="chat-execution-label"/, 'the head leads with the shared expanded chevron');
-  assert.match(html, /class="chat-pending-body chat-answer-question" role="group" aria-label="需要你的选择"/);
+  assert.match(html, /class="chat-decision-card" data-state="pending" data-kind="ask" role="group" aria-label="待你处理：Copilot 在问你"/);
+  assert.ok(html.indexOf('class="chat-decision-card"') < html.indexOf('class="chat-input-area"'));
   assert.ok(html.indexOf('class="chat-queue"') < html.indexOf('class="chat-composer"'));
-  assert.doesNotMatch(html, /class="chat-decisions"|class="chat-ask chat-pending/);
+  assert.doesNotMatch(html, /class="chat-decisions"|class="chat-ask chat-pending|chat-answer-question/);
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.chat-execution-head \{[^}]*min-block-size: var\(--chat-control-compact\);/);
   assert.doesNotMatch(css, /\.chat-input-card:not\(\[open\]\) \.chat-execution-head/, 'folding does not introduce a different control size');
@@ -390,7 +402,7 @@ test('Chat typography is role-based and narrow layouts follow their own availabl
   assert.match(css, /\.message\.is-doc \.doc-byline \{[^}]*margin: 0 0 var\(--chat-gap-meta\)/);
   assert.doesNotMatch(css, /\.doc-mark/);
   assert.match(css, /\.chat-input-area \{[^}]*container: chat-dock\/inline-size/);
-  assert.match(css, /@container chat-dock \(max-width: 36rem\)/);
+  assert.match(css, /\.chat-ask-choices\[data-layout=column\] \{\s*flex-direction: column;/, 'decision choices stack by layout, not by input width');
   assert.match(css, /@container chat-process \(max-width: 36rem\)/);
   assert.match(css, /@container chat-agent \(max-width: 36rem\)/);
   assert.match(css, /\.subagent-overview \{[^}]*container: chat-agent\/inline-size/);
@@ -420,10 +432,10 @@ test('decision send semantics stay visible without inflating an empty textarea p
   const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: {} });
   t.after(() => original ? Object.defineProperty(globalThis, 'window', original) : Reflect.deleteProperty(globalThis, 'window'));
-  for (const [scene, placeholder] of [['ask', '输入回答…'], ['plan', '输入新指令…'], ['compacting', '正在压缩…']] as const) {
+  for (const [scene, placeholder] of [['ask', '回答上方问题…'], ['plan', '输入修改意见…'], ['compacting', '正在压缩…']] as const) {
     const html = renderToStaticMarkup(createElement(Thread, { session: fixtureSession(scene), onLoadMore() {} }));
     assert.ok(html.includes(`placeholder="${placeholder}"`), html);
-    if (scene === 'plan') assert.match(html, /aria-label="发送新指令"/);
+    if (scene === 'plan') assert.match(html, /aria-label="提交修改意见"/);
     if (scene === 'ask') assert.match(html, /aria-label="提交回答"/);
     assert.doesNotMatch(html, /chat-composer-hint|aria-describedby=/);
   }
@@ -480,14 +492,16 @@ test('user time stays outside its bubble without external copy controls on eithe
   assert.doesNotMatch(html, /doc-mark|data-icon="compose"/);
 });
 
-test('question replies retain the original question without an emoji or repeated options', () => {
+test('answered questions become done cards that retain the original question without an emoji or repeated options', () => {
   const session = fixtureSession('empty');
   session.messages = [
     { id: 'reply', role: 'user', subtype: 'ask-reply', content: 'Yes', replyQuestion: 'Keep this setting?', timestamp: 1 },
     { id: 'missing', role: 'user', subtype: 'ask-reply', content: 'Unlinked answer', timestamp: 2 },
   ];
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
-  assert.match(html, /class="ask-reply-question" aria-label="回答的问题"/);
+  assert.equal((html.match(/class="chat-decision-card" data-state="done" data-kind="ask"/g) ?? []).length, 2);
+  assert.match(html, /class="chat-ask-q" aria-label="回答的问题">Keep this setting\?/);
+  assert.doesNotMatch(html, /ask-reply-question|user-message/);
   assert.match(html, /Keep this setting\?/);
   assert.match(html, /原问题记录不可用/);
   assert.match(html, /Unlinked answer/);
@@ -617,4 +631,31 @@ test('code copying inside user and assistant Markdown quotes survives removal of
   assert.equal((html.match(/aria-label="复制代码"/g) ?? []).length, 2);
   assert.match(html, /<blockquote>/);
   assert.doesNotMatch(html, /aria-label="复制消息"|class="message-actions"/);
+});
+
+test('answered plans and handled tool confirmations render as done cards in the transcript', () => {
+  const session = fixtureSession('empty');
+  session.messages = [
+    { id: 'reply-p1', role: 'user', subtype: 'plan-reply', content: '修改意见：Change step two', replyQuestion: 'Plan summary', timestamp: 1 },
+    { id: 'reply-p2', role: 'user', subtype: 'plan-reply', content: '已批准：自动执行', timestamp: 2 },
+    { id: 'elicitation-x', role: 'user', subtype: 'elicitation-reply', content: 'Allow reading?', timestamp: 3 },
+  ];
+  const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
+  assert.equal((html.match(/class="chat-decision-card" data-state="done" data-kind="plan"/g) ?? []).length, 2);
+  assert.match(html, /你提交了修改意见[\s\S]*Change step two/);
+  assert.match(html, /计划摘要记录不可用[\s\S]*你选择了[\s\S]*自动执行/);
+  assert.match(html, /class="chat-decision-card" data-state="done" data-kind="elicitation"[\s\S]*已处理[\s\S]*Allow reading\?/);
+  assert.doesNotMatch(html, /user-message/);
+});
+
+test('the new-content badge points back to a pending decision', () => {
+  const props = {
+    session: fixtureSession('reading'), messages: fixtureSession('reading').messages,
+    scrollRef: { current: null }, contentRef: { current: null }, awayFromBottom: true, hasNewContent: false, onFollow() {},
+  };
+  const plain = renderToStaticMarkup(createElement(ThreadTranscript, props));
+  assert.doesNotMatch(plain, /回到问题|data-decision/);
+  const html = renderToStaticMarkup(createElement(ThreadTranscript, { ...props, decision: createElement('div', null, 'Card') }));
+  assert.match(html, /class="new-msg-badge ck-button" data-decision="true"><span class="ck-icon" data-icon="decision"[\s\S]*有问题等你回答 · 回到问题/);
+  assert.ok(html.indexOf('>Card<') > html.lastIndexOf('data-message-id'), 'the pending card is the last transcript row');
 });

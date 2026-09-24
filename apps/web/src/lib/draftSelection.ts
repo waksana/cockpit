@@ -2,21 +2,29 @@ import type { DraftPurpose } from '@cockpit/module-api';
 import { browserDraftStorage, draftIdentity, draftRecord, SessionDraft, type DraftStorage } from './textDraft';
 import { describeReason, reportUxError } from './errorReporter';
 
+type AskContext = { requestId: string; question?: string; choices?: readonly string[] };
+export type NativeDraftDecision = { kind: 'ask'; request: AskContext }
+  | { kind: 'plan' | 'elicitation'; request: { requestId: string } };
 export interface NativeDraftDecisions {
   loaded?: boolean;
-  ask?: { requestId: string; question?: string; choices?: readonly string[] } | null;
+  ask?: AskContext | null;
   planRequest?: { requestId: string } | null;
   elicitation?: { requestId: string } | null;
+  // Every pending decision in arrival order; the singular fields are the fallback.
+  decisions?: readonly NativeDraftDecision[];
 }
 type DecisionPurpose = Exclude<DraftPurpose, { kind: 'prompt' }>;
 interface Occurrence { id: string; retired: boolean }
 const decisionKey = (purpose: DecisionPurpose) => JSON.stringify([purpose.kind, purpose.requestId]);
-export function draftPurposes(decisions: NativeDraftDecisions): DecisionPurpose[] {
-  return [
-    ...(decisions.ask ? [{ kind: 'ask' as const, requestId: decisions.ask.requestId }] : []),
-    ...(decisions.planRequest ? [{ kind: 'plan' as const, requestId: decisions.planRequest.requestId }] : []),
-    ...(decisions.elicitation ? [{ kind: 'elicitation' as const, requestId: decisions.elicitation.requestId }] : []),
+function nativeDecisions(decisions: NativeDraftDecisions): readonly NativeDraftDecision[] {
+  return decisions.decisions ?? [
+    ...(decisions.ask ? [{ kind: 'ask' as const, request: decisions.ask }] : []),
+    ...(decisions.planRequest ? [{ kind: 'plan' as const, request: decisions.planRequest }] : []),
+    ...(decisions.elicitation ? [{ kind: 'elicitation' as const, request: decisions.elicitation }] : []),
   ];
+}
+export function draftPurposes(decisions: NativeDraftDecisions): DecisionPurpose[] {
+  return nativeDecisions(decisions).map(decision => ({ kind: decision.kind, requestId: decision.request.requestId }));
 }
 
 export class DraftSession {
@@ -24,6 +32,9 @@ export class DraftSession {
   private readonly listeners = new Set<() => void>();
   private live = new Set<string>();
   private selected: SessionDraft;
+  // The decision the user chose to answer; a new arrival never takes over.
+  private preferred?: string;
+  private purposes: DecisionPurpose[] = [];
   private revision = 0;
   private occurrences: Record<string, Occurrence> = {};
   private error?: unknown;
@@ -78,10 +89,28 @@ export class DraftSession {
     draft.subscribe(this.notify);
     return draft;
   }
+  private choose(purposes: readonly DecisionPurpose[]): DraftPurpose {
+    const held = this.selected.reference.purpose;
+    const current = held.kind === 'prompt' ? undefined : decisionKey(held);
+    // Keep the chosen decision, else the one already shown, so a new arrival never takes over.
+    return purposes.find(purpose => decisionKey(purpose) === this.preferred)
+      ?? purposes.find(purpose => decisionKey(purpose) === current)
+      ?? purposes[0] ?? { kind: 'prompt' };
+  }
   current(decisions: NativeDraftDecisions, authoritative = true): SessionDraft {
     if (this.prompt.isRetired()) return this.selected;
     if ((!authoritative || decisions.loaded === false) && this.selected.reference.purpose.kind !== 'prompt') return this.selected;
-    return this.candidate(draftPurposes(decisions)[0] ?? { kind: 'prompt' });
+    return this.candidate(this.choose(draftPurposes(decisions)));
+  }
+  // Select which pending decision the input answers. Only a live request can be chosen.
+  select(purpose: DecisionPurpose): void {
+    const key = decisionKey(purpose);
+    if (this.prompt.isRetired() || !this.live.has(key)) return;
+    this.preferred = key;
+    const selected = this.candidate(this.choose(this.purposes));
+    if (selected === this.selected) return;
+    this.selected = selected;
+    this.notify();
   }
   synchronize(decisions: NativeDraftDecisions, authoritative = true): void {
     if (this.prompt.isRetired()) return;
@@ -91,7 +120,9 @@ export class DraftSession {
     }
     const purposes = draftPurposes(decisions);
     const live = new Set(purposes.map(decisionKey));
-    const selected = this.candidate(purposes[0] ?? { kind: 'prompt' });
+    if (this.preferred && !live.has(this.preferred)) this.preferred = undefined;
+    this.purposes = purposes;
+    const selected = this.candidate(this.choose(purposes));
     const next = { ...this.occurrences };
     for (const [key, value] of Object.entries(next)) if (!live.has(key) && !value.retired) next[key] = { ...value, retired: true };
     for (const purpose of purposes) {
@@ -112,8 +143,9 @@ export class DraftSession {
       this.live = live;
       this.selected = selected;
       for (const draft of ended) draft.retire();
-      if (decisions.ask) {
-        const ask = decisions.ask;
+      for (const decision of nativeDecisions(decisions)) {
+        if (decision.kind !== 'ask') continue;
+        const ask = decision.request;
         this.candidate({ kind: 'ask', requestId: ask.requestId }).setAskContext(
           typeof ask.question === 'string' ? { question: ask.question, choices: ask.choices } : undefined,
         );

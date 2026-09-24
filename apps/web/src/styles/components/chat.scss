@@ -131,7 +131,7 @@
   flex: none;
 }
 
-.message-speech, .chat-answer-question { position: relative; }
+.message-speech, .chat-decision-body { position: relative; }
 
 .msg-group { display: flex; flex-direction: column; min-width: 0; }
 .msg-group[data-gap='related'] { padding-block-start: var(--chat-gap-message); }
@@ -180,25 +180,6 @@
   border-radius: var(--border-radius-medium);
   background-color: color-mix(in srgb, var(--host-color-accent) 10%, var(--host-color-surface));
   position: relative;
-}
-
-// ask_user reply — same out-bubble, but a subtle tag marks it as an answer to a
-// prompt (visually consistent with a normal message, semantically distinct).
-.message.is-out.is-ask-reply {
-  .ask-reply-question {
-    margin-bottom: var(--chat-gap-content);
-    color: var(--host-color-muted);
-    font-size: var(--chat-text-secondary);
-    line-height: 1.65;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-  }
-  .ask-reply-label {
-    display: block;
-    font-size: var(--chat-text-meta);
-    font-weight: 600;
-    color: var(--host-color-muted);
-  }
 }
 
 // Assistant → full-width document, NO bubble (cockpit signature).
@@ -468,6 +449,7 @@ button.activity-head {
   padding: 0.3rem 0.8rem; border-radius: 999px; border: none; cursor: pointer;
   background: var(--chat-accent-ink); color: var(--host-color-surface);
   font-size: var(--chat-text-label); box-shadow: var(--host-shadow-menu);
+  &[data-decision] { display: inline-flex; align-items: center; gap: var(--chat-gap-meta); }
 }
 
 // ── Composer ────────────────────────────────────────────────────────────────
@@ -506,10 +488,6 @@ button.activity-head {
   scrollbar-width: thin;
   &:empty { display: none; }
 }
-.chat-input-card[data-question] {
-  .chat-input-card-body { display: block; overflow-y: auto; }
-  .chat-input-context { overflow: visible; }
-}
 .chat-folded-draft {
   flex: none; font-size: var(--chat-text-meta); color: var(--host-color-muted);
 }
@@ -541,10 +519,6 @@ button.activity-head {
 .chat-controls .chat-controls-actions { gap: var(--chat-gap-meta); }
 .chat-controls .chat-controls-header { --ck-control-size: var(--chat-control-compact); }
 .chat-control-action [role='alert'] { max-width: 240px; color: var(--chat-danger-ink); overflow-wrap: anywhere; }
-.chat-question-row { display: flex; align-items: flex-start; gap: var(--chat-gap-control); }
-.chat-question-row > .ck-icon { margin-block-start: var(--chat-gap-meta); }
-.chat-question-row > .chat-ask-q { flex: 1; min-width: 0; }
-.chat-decision-actions { flex: none; margin-inline-start: auto; }
 .chat-controls .chat-copy { align-self: flex-start; flex-direction: column; }
 .chat-controls .chat-copy-error { max-width: 12rem; }
 .chat-input-card[data-controls] {
@@ -552,9 +526,6 @@ button.activity-head {
   .chat-input-context { overflow: visible; }
   .chat-composer, .chat-composer-body { display: contents; }
   .chat-composer-editor { position: sticky; bottom: 0; z-index: var(--host-z-raised); background: var(--chat-input-surface); }
-  &[data-controls-open='false'][data-decision] {
-    .chat-input-context, .chat-composer-context, .chat-input { display: none; }
-  }
   &[data-editor-sized] .chat-input-message { min-height: var(--control-editor-height); }
   &[data-editor-fixed] .chat-input-message {
     field-sizing: fixed; height: var(--control-editor-height); max-height: var(--control-editor-height);
@@ -567,10 +538,6 @@ button.activity-head {
   flex: none; min-width: 0; min-height: 0;
 }
 .chat-composer-body { display: flex; flex-direction: column; gap: var(--chat-gap-region); }
-.chat-composer[data-question] {
-  .chat-answer-question { flex: none; overflow: visible; }
-  .chat-ask-choices { flex-direction: column; }
-}
 .chat-composer-editor { flex: none; min-width: 0; }
 .chat-composer-context {
   width: 100%; margin: 0; padding: var(--chat-inset-panel) var(--chat-inset-panel) 0;
@@ -640,22 +607,72 @@ button.activity-head {
   > button { color: inherit; }
 }
 
-// ── ask_user / queue / permission surfaces ──────────────────────────────────
-.chat-ask {
-  flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 88px;
-  width: 100%; margin: 0; padding: var(--chat-inset-panel); gap: var(--chat-gap-content);
-  overflow-wrap: anywhere;
-  + .chat-ask { border-top: 1px solid var(--host-color-border); }
+// ── Decision cards (ask_user / plan / elicitation) and queue ────────────────
+// Transcript cards: the pending one is accented; answered ones read as records.
+.chat-decision-card {
+  margin: 0; min-width: 0;
+  border: 1px solid var(--host-color-border); border-radius: var(--border-radius);
+  background: color-mix(in srgb, var(--host-color-text) 3%, transparent);
+  overflow: hidden; overflow-wrap: anywhere;
+  &[data-state='pending'] {
+    border-color: color-mix(in srgb, var(--host-color-accent) 60%, var(--host-color-border));
+    background: color-mix(in srgb, var(--host-color-accent) 7%, transparent);
+  }
 }
-.chat-pending-body {
-  min-width: 0; min-height: 0; overflow-wrap: anywhere;
-  > * + * { margin-block-start: var(--chat-gap-content); }
+.chat-decision-tabs {
+  display: flex; flex-wrap: wrap; gap: var(--chat-gap-meta);
+  padding: var(--chat-gap-control) var(--chat-inset-panel) 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--host-color-accent) 30%, var(--host-color-border));
 }
+.chat-decision-tab {
+  display: inline-flex; align-items: center; gap: var(--chat-gap-meta);
+  min-block-size: var(--chat-control-compact); padding: var(--chat-gap-meta) var(--chat-inset-compact);
+  margin-block-end: -1px; border: 0; border-bottom: 2px solid transparent; background: transparent;
+  font: inherit; font-size: var(--chat-text-meta); color: var(--host-color-muted); cursor: pointer;
+  &[aria-selected='true'] { color: var(--chat-accent-ink); font-weight: 600; border-bottom-color: var(--host-color-accent); }
+  &:focus-visible { outline: 2px solid var(--host-color-accent); outline-offset: -2px; }
+}
+.chat-decision-panel { min-width: 0; }
+.chat-decision-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--chat-gap-control);
+  padding: var(--chat-inset-compact) var(--chat-inset-panel) 0;
+  font-size: var(--chat-text-label); line-height: var(--chat-leading-ui); font-weight: 600; color: var(--host-color-text);
+}
+.chat-decision-icon { flex: none; color: var(--host-color-muted); }
+.chat-decision-card[data-state='pending'] .chat-decision-icon { color: var(--chat-accent-ink); }
+.chat-decision-title { min-width: 0; }
+.chat-decision-source { min-width: 0; font-weight: 400; color: var(--host-color-muted); }
+.chat-decision-status {
+  display: inline-flex; align-items: center; gap: var(--chat-gap-meta); margin-inline-start: auto;
+  font-size: var(--chat-text-meta); font-weight: 400; color: var(--host-color-muted);
+}
+.chat-decision-card[data-state='pending'] .chat-decision-status { font-weight: 600; color: var(--chat-accent-ink); }
+.chat-decision-actions { flex: none; display: inline-flex; --ck-control-size: var(--chat-control-compact); }
+.chat-decision-body {
+  display: flex; flex-direction: column; gap: var(--chat-gap-content); min-width: 0;
+  padding: var(--chat-gap-control) var(--chat-inset-panel) var(--chat-inset-panel);
+}
+.chat-decision-answer {
+  display: flex; align-items: flex-start; gap: var(--chat-gap-control);
+  padding: var(--chat-inset-compact) var(--chat-inset-field); border-radius: var(--border-radius);
+  background: color-mix(in srgb, var(--host-color-text) 5%, transparent);
+  > .ck-icon { flex: none; margin-block-start: var(--chat-gap-meta); color: var(--chat-accent-ink); }
+}
+.chat-decision-answer-text {
+  flex: 1; min-width: 0; font-size: var(--chat-text-body); line-height: var(--chat-leading-decision);
+  > small { display: block; font-size: var(--chat-text-meta); color: var(--host-color-muted); }
+  .message-body > :first-child { margin-top: 0; }
+  .message-body > :last-child { margin-bottom: 0; }
+}
+.chat-decision-answer-body { white-space: pre-wrap; }
 .chat-ask-q {
   flex: none; font-size: var(--chat-text-body); font-weight: 500; margin: 0; line-height: var(--chat-leading-decision);
   white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text;
 }
-.chat-ask-choices { flex: none; display: flex; flex-wrap: wrap; gap: var(--chat-gap-control); }
+.chat-ask-choices {
+  flex: none; display: flex; flex-wrap: wrap; gap: var(--chat-gap-control);
+  &[data-layout='column'] { flex-direction: column; }
+}
 .chat-ask-choice {
   justify-content: flex-start;
   min-width: 0; max-width: 100%;
@@ -664,10 +681,6 @@ button.activity-head {
   border: 1px solid var(--host-color-border);
   position: relative; overflow: hidden;
 }
-// Pending card variants (plan / elicitation) reuse the ask card shell.
-.chat-pending-head { flex: none; display: flex; align-items: center; gap: var(--chat-gap-control); font-size: var(--chat-text-label); line-height: var(--chat-leading-ui); font-weight: 600; margin: 0; color: var(--chat-accent-ink); }
-.chat-pending-content { display: flex; flex-direction: column; gap: var(--chat-gap-content); min-width: 0; }
-// One bounded decision surface preserves room for the transcript and composer.
 .chat-pending-summary {
   margin: 0;
   .message-body { font-size: var(--chat-text-secondary); }
@@ -716,9 +729,6 @@ button.activity-head {
   .chat-copy { flex-direction: column; align-items: flex-start; }
   .chat-copy-button { min-block-size: var(--ck-control-size); }
   .chat-copy-error { overflow-wrap: anywhere; }
-}
-.chat-decisions {
-  display: flex; flex-direction: column; min-width: 0;
 }
 .chat-execution-head {
   flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--chat-gap-meta);
@@ -774,9 +784,4 @@ button.activity-head {
   .subagent-status { grid-column: 2; text-align: start; margin: 0; }
   .subagent-chevron { grid-column: 3; grid-row: 1; }
   .subagent-desc { padding-inline-start: var(--chat-inset-panel); }
-}
-@container chat-dock (max-width: 36rem) {
-  .chat-ask-choice { width: 100%; }
-  .chat-plan .chat-ask-choice, .chat-tool-confirm .chat-ask-choice { width: auto; flex: 1; }
-  .chat-plan .chat-ask-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

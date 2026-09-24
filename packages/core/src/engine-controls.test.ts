@@ -287,6 +287,26 @@ test('multiple native input callbacks retain independent promises and reveal the
   assert.deepEqual(await second, { answer: 'second answer', wasFreeform: true });
 });
 
+test('meta publishes every pending decision in arrival order alongside the first of each kind', async t => {
+  const h = harness(t);
+  const s = await h.load();
+  const config = h.configs.get(s.id)!;
+  void config.onUserInputRequest!({ question: 'First?' }, { sessionId: s.id });
+  void config.onExitPlanModeRequest!({ summary: 'Plan', actions: ['interactive'], recommendedAction: 'interactive' }, { sessionId: s.id });
+  void config.onUserInputRequest!({ question: 'Second?' }, { sessionId: s.id });
+  void config.onElicitationRequest!({ sessionId: s.id, message: 'Confirm', elicitationSource: 'fixture-mcp' });
+  const meta = (await h.engine.getMeta(s.id))!;
+  assert.deepEqual(meta.decisions?.map(d => d.kind), ['ask', 'plan', 'ask', 'elicitation']);
+  assert.deepEqual(meta.decisions?.map(d => d.request.requestId),
+    [meta.ask!.requestId, meta.planRequest!.requestId, meta.decisions![2]!.request.requestId, meta.elicitation!.requestId]);
+  assert.equal(meta.ask?.question, 'First?');
+  assert.equal(meta.elicitation?.source, 'fixture-mcp');
+  await h.engine.respondAsk(s.id, meta.ask!.requestId, 'one', true);
+  const next = (await h.engine.getMeta(s.id))!;
+  assert.deepEqual(next.decisions?.map(d => d.kind), ['plan', 'ask', 'elicitation']);
+  assert.equal(next.ask?.question, 'Second?');
+});
+
 test('plan callback rejects unoffered actions without resolving, then returns the exact native answer', async t => {
   const h = harness(t);
   const s = await h.load();
