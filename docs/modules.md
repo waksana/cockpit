@@ -7,19 +7,29 @@ pairing**; package format, install commands and APIs are in the
 
 ## Versions and compatibility
 
-Checked 2026-09-24 against GitHub Releases and each repository's `main`.
+Checked 2026-09-25. The released and previously accepted pairing is:
 
 | Module | Latest release | Paired host release | Status |
 | --- | --- | --- | --- |
-| [Cockpit File](https://github.com/waksana/cockpit-file) | [v0.2.2](https://github.com/waksana/cockpit-file/releases/tag/v0.2.2) | [Cockpit v0.4.5](https://github.com/waksana/cockpit/releases/tag/v0.4.5) | Installable. |
-| [Cockpit Notification](https://github.com/waksana/cockpit-notification) | [v0.1.15](https://github.com/waksana/cockpit-notification/releases/tag/v0.1.15) | [Cockpit v0.4.5](https://github.com/waksana/cockpit/releases/tag/v0.4.5) | Installable. |
-| [Cockpit Speech](https://github.com/waksana/cockpit-speech) | [v0.9.1](https://github.com/waksana/cockpit-speech/releases/tag/v0.9.1) | [Cockpit v0.4.5](https://github.com/waksana/cockpit/releases/tag/v0.4.5) | Installable; needs Azure Speech configuration. |
-| [Cockpit Task](https://github.com/waksana/cockpit-task) | [v0.1.12](https://github.com/waksana/cockpit-task/releases/tag/v0.1.12) | [Cockpit v0.4.5](https://github.com/waksana/cockpit/releases/tag/v0.4.5) | Installable. The older v1.2.7 is a legacy pre-release ZIP. |
+| [Cockpit File](https://github.com/waksana/cockpit-file) | [v0.2.3](https://github.com/waksana/cockpit-file/releases/tag/v0.2.3) | [Cockpit v0.4.6](https://github.com/waksana/cockpit/releases/tag/v0.4.6) | Installable. |
+| [Cockpit Notification](https://github.com/waksana/cockpit-notification) | [v0.1.16](https://github.com/waksana/cockpit-notification/releases/tag/v0.1.16) | [Cockpit v0.4.6](https://github.com/waksana/cockpit/releases/tag/v0.4.6) | Installable. |
+| [Cockpit Speech](https://github.com/waksana/cockpit-speech) | [v0.9.2](https://github.com/waksana/cockpit-speech/releases/tag/v0.9.2) | [Cockpit v0.4.6](https://github.com/waksana/cockpit/releases/tag/v0.4.6) | Installable; needs Azure Speech configuration. |
+| [Cockpit Task](https://github.com/waksana/cockpit-task) | [v0.1.13](https://github.com/waksana/cockpit-task/releases/tag/v0.1.13) | [Cockpit v0.4.6](https://github.com/waksana/cockpit/releases/tag/v0.4.6) | Installable. The older v1.2.7 is a legacy pre-release ZIP. |
 | [Cockpit WeChat Connector](https://github.com/waksana/cockpit-wechat-connector) | [v0.1.6](https://github.com/waksana/cockpit-wechat-connector/releases/tag/v0.1.6) (legacy ZIP) | — | Not yet adapted: uses `module.json` and a separate service protocol; the module CLI cannot install it. |
 
-These four releases were deployed and accepted together on Cockpit v0.4.5.
-Cockpit v0.4.5 **rejects** manifests that declare `frontend.next`, so File v0.2.0
-and Speech v0.9.0 (which declare it) need Cockpit v0.3.0.
+### Prepared next pairing
+
+The next joint deployment targets Cockpit 0.4.7 with File 0.2.4,
+Notification 0.1.17, Task 0.2.0 and the unchanged Speech 0.9.2 archive.
+This is source preparation, **not** a claim of deployment, acceptance or
+publication. The release table above changes only after those steps complete.
+
+Task v0.2.0 renames its public Task vocabulary and migrates schema v7 through
+v8 to v9 in place. Cockpit v0.4.6 and older do not provide the invocation
+metadata required by that module, while Task v0.1.13 and older refuse a v9
+database. Downgrading therefore requires restoring the coordinated pre-upgrade
+database backup and may discard later writes; it is not an automatic package
+rollback.
 
 The running host reports its own version at `/version`. Module capability checks
 (for example `menuVersion`, `chatWindowVersion`, `composerInputVersion`) are
@@ -52,7 +62,7 @@ next-start selection from what is currently loaded.
   sends automatically. The button stays visible but disabled when a native
   question disallows free text. Configuration is a file in the module's data
   directory; there is no settings page.
-- **Task** — structured tasks, explicit assignment, and Owner/Executor reports.
+- **Task** — structured tasks, explicit assignment, and orchestrator/assignee reports.
   It is not an automatic scheduler.
 - **WeChat Connector** — connects one authorized WeChat direct-message user to a
   chosen session for text and supported media; group chats and native voice are
