@@ -554,7 +554,7 @@ button.activity-head {
   .chat-input-card-body { display: block; overflow-y: auto; }
   .chat-input-context { overflow: visible; }
   .chat-composer, .chat-composer-body { display: contents; }
-  .chat-input { position: sticky; bottom: 0; z-index: 1; background: var(--chat-input-surface); }
+  .chat-composer-editor { position: sticky; bottom: 0; z-index: 1; background: var(--chat-input-surface); }
   &[data-controls-open='false'][data-decision] {
     .chat-input-context, .chat-composer-context, .chat-input { display: none; }
   }
@@ -574,6 +574,7 @@ button.activity-head {
   .chat-answer-question { flex: none; overflow: visible; }
   .chat-ask-choices { flex-direction: column; }
 }
+.chat-composer-editor { flex: none; min-width: 0; }
 .chat-composer-context {
   width: 100%; margin: 0; padding: var(--chat-inset-panel) var(--chat-inset-panel) 0;
   display: none; flex-direction: column; gap: var(--chat-gap-region);

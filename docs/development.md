@@ -161,6 +161,11 @@ directory with `cockpit.module.json` and `module-build.json`). Only inventoried
 frontend assets are served, module backends never run, and uploads use a bounded
 in-memory File API.
 
+Likewise, `COCKPIT_LAB_SPEECH_ROOT` mounts an extracted Speech package in
+`full-web` with `&modules=1` (for example `&case=ask`). Its backend never runs, so
+credentials are rejected; stub `navigator.mediaDevices.getUserMedia` with a pending
+promise to hold the "preparing" status while reviewing input-card layout.
+
 Stop temporary previews after review; do not publish user screenshots.
 
 ### Documentation images

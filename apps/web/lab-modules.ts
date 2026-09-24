@@ -22,7 +22,7 @@ export interface LabModules {
   assets: ReadonlyMap<string, Asset>;
 }
 
-export async function loadLabModules(roots: { file?: string }): Promise<LabModules> {
+export async function loadLabModules(roots: { file?: string; speech?: string }): Promise<LabModules> {
   const modules: ModuleAsset[] = [];
   const assets = new Map<string, Asset>();
   for (const [kind, requested] of Object.entries(roots)) {

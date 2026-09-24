@@ -87,7 +87,10 @@ function ComposerEditor(props: ComposerEditorProps) {
   const draft = resolveDraft(props.draft);
   const prepared = useSyncExternalStore(runtime.subscribe,
     () => runtime.isDraftPrepared(draft), () => runtime.isDraftPrepared(draft));
-  return prepared ? <EnhancedComposerEditor {...props} /> : <ComposerEditorBase {...props} />;
+  // Module content around the input row (status, file lists) stays with it when the card pins the editor.
+  return <div className="chat-composer-editor">
+    {prepared ? <EnhancedComposerEditor {...props} /> : <ComposerEditorBase {...props} />}
+  </div>;
 }
 function EnhancedComposerEditor(props: ComposerEditorProps) {
   return useModuleElement('composerEditor', ComposerEditorBase, props);

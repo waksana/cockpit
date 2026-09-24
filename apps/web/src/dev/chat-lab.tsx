@@ -277,6 +277,11 @@ if (scene === 'dialog-focus') {
 } else if (scene === 'full-web') {
   const { installFullWebFixture } = await import('./full-web-fixtures');
   const id = installFullWebFixture(useCockpit, new URLSearchParams(location.search).get('case') ?? 'mixed');
+  if (new URLSearchParams(location.search).get('modules') === '1') {
+    const { moduleRuntime } = await import('../lib/moduleRuntime');
+    await moduleRuntime.start('');
+    window.addEventListener('pagehide', () => moduleRuntime.stop(), { once: true });
+  }
   const { default: App } = await import('../App');
   root.render(<MemoryRouter initialEntries={[`/session/${id}`]}><App /><UxErrorNotifications /></MemoryRouter>);
 } else if (scene === 'workspace' || scene === 'resources' || scene === 'sidebar') {

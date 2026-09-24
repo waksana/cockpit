@@ -8,7 +8,7 @@ import { ModuleRuntime } from '../lib/moduleRuntime';
 import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';
 import { Composer } from './Composer';
 
-async function fixture(withInput = false) {
+async function fixture(withInput = false, withStatus = false) {
   const digest = 'a'.repeat(64);
   let context!: ModuleFrontendContext, handle!: DraftSchemaHandle<FixtureData>;
   function List({ draft, field }: { draft: ModuleDraft; field: DraftSchemaScope<FixtureData> }) {
@@ -56,7 +56,11 @@ async function fixture(withInput = false) {
             })),
           });
         },
-      }, {
+      }, ...withStatus ? [{
+        id: 'status', boundary: 'composerEditor' as const,
+        wrap: Base => props => h('div', { className: 'fixture-editor' },
+          h('div', { className: 'fixture-status', role: 'status' }, 'Recording'), h(Base, props)),
+      }] : [], {
         id: 'input', boundary: 'composerInput',
         wrap: Base => props => h(Fragment, null, h(Base, props), withInput && h('button', {
           type: 'button', 'aria-label': 'Microphone', disabled: props.disabled || props.sendBlocked,
@@ -97,6 +101,17 @@ test('left contributions, enhanced input and native send retain their DOM order 
   }
 });
 
+test('module content wrapped around the editor stays inside the host editor container for prompts and answers', async t => {
+  const f = await fixture(true, true);
+  t.after(() => f.runtime.stop());
+  for (const draft of [f.draft, new SessionDraft('fixture', undefined, { kind: 'ask', requestId: 'ask-request' })]) {
+    const html = f.render(draft);
+    // The controls card pins this container; content outside it would scroll under the pinned input row.
+    assert.match(html, /<div class="chat-composer-editor"><div class="fixture-editor"><div class="fixture-status" role="status">Recording<\/div><div class="chat-input ck-input-row">/);
+    assert.equal((html.match(/chat-composer-editor/g) ?? []).length, 1);
+  }
+});
+
 test('the module owns the full draft list directly above the editor without a host list or plumbing wrapper', async t => {
   const f = await fixture();
   t.after(() => f.runtime.stop());
@@ -108,7 +123,7 @@ test('the module owns the full draft list directly above the editor without a ho
   assert.match(html, /fixture-list/);
   assert.equal((html.match(/fixture-row/g) ?? []).length, 1);
   assert.doesNotMatch(html, /draft-attachments|draft-attachment"|module-draft-recovery|module-composer|chat-input-notice/);
-  assert.match(html, /<\/section><\/div><div class="chat-input ck-input-row">/);
+  assert.match(html, /<\/section><\/div><div class="chat-composer-editor"><div class="chat-input ck-input-row">/);
   assert.match(html, /<div class="chat-input ck-input-row"><button type="button" aria-label="Add item">Add item<\/button><textarea/);
   assert.equal((html.match(/<textarea\b/g) ?? []).length, 1);
   assert.equal((html.match(/class="chat-input-btn send ck-icon-button"/g) ?? []).length, 1);
