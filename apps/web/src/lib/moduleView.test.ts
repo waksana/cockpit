@@ -12,11 +12,11 @@ test('one view bridge projects focus, connection and visibility and releases all
   const runtime = new ModuleRuntime();
   const visibility = Object.assign(new EventTarget(), { visibilityState: 'visible' as DocumentVisibilityState });
   const invalidations: string[] = [];
-  t.mock.method(runtime, 'invalidate', id => { invalidations.push(id); });
+  t.mock.method(runtime, 'invalidate', (id: string) => { invalidations.push(id); });
   const listeners = new Set<(id: string) => void>();
   const eventListeners = new Set<(id: string, payload: ModuleEventPayload) => void>();
   const events: unknown[] = [];
-  t.mock.method(runtime, 'receiveEvent', (id, payload) => { events.push({ id, payload }); });
+  t.mock.method(runtime, 'receiveEvent', (id: string, payload: ModuleEventPayload) => { events.push({ id, payload }); });
   store.setState({ activeId: 'first', connState: 'open', onModuleInvalidated: listener => {
     listeners.add(listener);
     return () => { listeners.delete(listener); };

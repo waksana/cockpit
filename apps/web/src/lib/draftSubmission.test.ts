@@ -6,6 +6,7 @@ import { ModuleRuntime } from './moduleRuntime';
 import type { NativeDraftRequest } from './draft';
 import { observeLocalSubmissions } from './localSubmission';
 import { appendFixture, fixtureItem, fixtureSchema, memoryDraftStorage, type FixtureData } from '../test/draftFixture';
+import { failOnReport } from '../test/failOnReport';
 
 async function fixture(t: TestContext, options: {
   frontend?: ModuleFrontend;
@@ -127,7 +128,7 @@ for (const change of ['add', 'remove', 'modify', 'ABA', 'schema-loss', 'schema-g
     if (change === 'schema-loss' || change === 'schema-generation') {
       // Exercise field generation boundaries without revoking the capturing module.
       const { RegisteredDraftSchema } = await import('./draftSchemas');
-      const schema = new RegisteredDraftSchema('peer', 'peer', fixtureSchema(), assert.fail);
+      const schema = new RegisteredDraftSchema('peer', 'peer', fixtureSchema(), failOnReport);
       schema.prepare(f.source); schema.activate();
       if (change === 'schema-loss') schema.dispose();
       else t.after(() => schema.dispose());

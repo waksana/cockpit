@@ -51,8 +51,8 @@ test('resource refresh coalesces same-turn triggers and loops once for a late di
   assert.equal(task.refresh(load), result);
   await Promise.resolve();
   assert.equal(reads, 1);
-  task.refresh(load);
-  task.refresh(load);
+  void task.refresh(load);
+  void task.refresh(load);
   held.resolve('obsolete');
   assert.equal(await result, true);
   assert.equal(reads, 2);

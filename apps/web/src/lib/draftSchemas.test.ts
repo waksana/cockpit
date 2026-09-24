@@ -4,6 +4,7 @@ import type { DraftSchemaRegistration } from '@cockpit/module-api';
 import { RegisteredDraftSchema } from './draftSchemas';
 import { SessionDraft } from './textDraft';
 import { appendFixture, fixtureItem, fixtureSchema, memoryDraftStorage, type FixtureData } from '../test/draftFixture';
+import { failOnReport } from '../test/failOnReport';
 
 let generation = 0;
 function install(draft: SessionDraft, definition = fixtureSchema(), moduleId = 'files', reports: unknown[] = []) {
@@ -20,7 +21,7 @@ test('typed schema scopes prepare once, expose immutable data, and are absent fo
   const draft = new SessionDraft('A');
   const schema = new RegisteredDraftSchema('owner', 'files', fixtureSchema({
     create: () => { created++; return { items: [] }; },
-  }), assert.fail);
+  }), failOnReport);
   assert.throws(() => schema.handle.forDraft(draft.reference), /not prepared/);
   assert.equal(created, 0, 'lookup does not initialize data during render');
   schema.prepare(draft); schema.prepare(draft); schema.activate();

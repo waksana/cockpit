@@ -6,7 +6,9 @@ import { dismissUxError, getUxErrors, reportUxError } from '../lib/errorReporter
 import { ErrorBoundary } from './ErrorBoundary';
 import { UxErrorNotifications } from './UxErrorNotifications';
 
-beforeEach((t: TestContext) => {
+beforeEach((context) => {
+  // A top-level beforeEach runs once per test with that test's context.
+  const t = context as TestContext;
   t.mock.method(console, 'error', () => {});
   const fetch = t.mock.method(globalThis, 'fetch', () => {
     throw new Error('Notifications must not make requests');

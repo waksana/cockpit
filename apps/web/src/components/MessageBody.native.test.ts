@@ -9,6 +9,7 @@ import type { ChatMessage } from '@cockpit/protocol';
 import type { ActivateFrontend, MarkdownNode, MessageIdentity } from '@cockpit/module-api';
 import { ModuleRuntime, moduleRuntime } from '../lib/moduleRuntime';
 import { ModuleRuntimeProvider } from './ModuleComponents';
+import { failOnReport } from '../test/failOnReport';
 
 test('native text rendering does not fetch or preview media without an enhancement', () => {
   const html = renderToStaticMarkup(createElement(MessageBody, {
@@ -162,7 +163,7 @@ test('real adornments share the existing presentation parent without changing na
           createElement('span', { 'data-marker': context.moduleId, style: { position: 'absolute' } })),
       }) }],
     }))) satisfies ActivateFrontend }),
-    report: assert.fail,
+    report: failOnReport,
   });
   await runtime.start();
   t.after(() => runtime.stop());

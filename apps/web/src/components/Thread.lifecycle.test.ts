@@ -32,6 +32,7 @@ import { ConnectedThread } from './ConnectedThread';
 import { SessionControlBar } from './SessionControlBar';
 import { workspaceSessionId } from '../dev/workspace-fixtures';
 import App from '../App';
+import { failOnReport } from '../test/failOnReport';
 
 // A deterministic DOM host for real React mounts/effects, not a replacement
 // scroll owner. Each rendered message occupies 100px in a 300px viewport.
@@ -362,7 +363,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
           }) },
         ],
       })) satisfies ActivateFrontend }),
-      report: assert.fail,
+      report: failOnReport,
     });
     subtest.after(async () => {
       await act(() => root.render(null));
@@ -648,7 +649,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
           },
         }] };
       })) satisfies ActivateFrontend }),
-      report: assert.fail,
+      report: failOnReport,
     });
     subtest.mock.method(console, 'error', () => {});
     await runtime.start();
@@ -972,7 +973,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
         return { apiVersion: 2, writes: ['text'], sends: ['draft'] };
       } }),
       draftSubmission: { check: () => undefined, send },
-      report: assert.fail,
+      report: failOnReport,
     });
     await runtime.start();
     subtest.after(async () => { await act(() => root.render(null)); runtime.stop(); });
@@ -1960,7 +1961,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
           }), createElement('button', { type: 'button', 'aria-label': 'Microphone', disabled: props.disabled || props.sendBlocked }, 'Microphone'));
         },
       }] })) satisfies ActivateFrontend }),
-      report: assert.fail,
+      report: failOnReport,
     });
     subtest.after(async () => { await act(() => root.render(null)); runtime.stop(); });
     await runtime.start();
@@ -2137,7 +2138,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
           socketUrl: 'wss://synthetic.openai.azure.com/openai/v1/realtime?intent=transcription',
         });
       },
-      load: async url => ({ activate: url.includes('/file-fixture/') ? fileActivate : activate }), report: assert.fail,
+      load: async url => ({ activate: url.includes('/file-fixture/') ? fileActivate : activate }), report: failOnReport,
     });
     subtest.after(async () => { await act(() => root.render(null)); runtime.stop(); });
     await runtime.start();

@@ -208,7 +208,7 @@ test('aborting after dispatch keeps uncertainty across disconnect and guard remo
   t.mock.method(console, 'error', () => {});
   const net = client(t);
   const controller = new AbortController();
-  const fetch = t.mock.method(globalThis, 'fetch', (_url, init) => new Promise<Response>((_resolve, reject) => {
+  const fetch = t.mock.method(globalThis, 'fetch', (_url: RequestInfo | URL, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
     init?.signal?.addEventListener('abort', () => reject(new DOMException('Stopped waiting', 'AbortError')));
   }));
   const request = net.intent('cancel', { sessionId: 'unknown' }, { signal: controller.signal });

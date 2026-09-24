@@ -60,7 +60,7 @@ test('malformed SSE data and non-SSE responses fail explicitly instead of reconn
 
 test('chat stream transports its original all-agent cursor once and applies multiple pages without HTTP rereads', async t => {
   let streamSignal: AbortSignal | null | undefined;
-  const fetch = t.mock.method(globalThis, 'fetch', async (url, init) => {
+  const fetch = t.mock.method(globalThis, 'fetch', async (url: RequestInfo | URL, init?: RequestInit) => {
     assert.equal(url, CHAT_STREAM_URL);
     assert.equal(init?.method, 'POST');
     assert.equal(init?.credentials, 'include');
@@ -77,7 +77,7 @@ test('chat stream transports its original all-agent cursor once and applies mult
 
 test('view cancellation closes only its HTTP stream without a native cancel or follow-up request', async t => {
   let streamSignal: AbortSignal | null | undefined;
-  const fetch = t.mock.method(globalThis, 'fetch', async (_url, init) => {
+  const fetch = t.mock.method(globalThis, 'fetch', async (_url: RequestInfo | URL, init?: RequestInit) => {
     streamSignal = init?.signal;
     return new Response(new ReadableStream({
       start(controller) {

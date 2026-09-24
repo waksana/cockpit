@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { DraftCache } from './draftSelection';
 import { RegisteredDraftSchema } from './draftSchemas';
 import { appendFixture, fixtureItem, fixtureSchema, memoryDraftStorage } from '../test/draftFixture';
+import { failOnReport } from '../test/failOnReport';
 
 test('cache dirtiness follows hidden prompt and decision edits independently of view subscriptions', () => {
   const cache = new DraftCache();
@@ -30,7 +31,7 @@ test('ask interrupts with an independent draft while cached prompt uploads remai
   const cache = new DraftCache(storage), session = cache.session('A');
   const prompt = session.prompt;
   prompt.edit('Cached prompt');
-  const schema = new RegisteredDraftSchema('files', 'files', fixtureSchema(), assert.fail);
+  const schema = new RegisteredDraftSchema('files', 'files', fixtureSchema(), failOnReport);
   schema.prepare(prompt); schema.activate();
   const field = schema.handle.forDraft(prompt.reference)!;
   appendFixture(field, fixtureItem('ready'));
@@ -233,7 +234,7 @@ test('choice responses preserve the cached prompt and never project its schema',
   let projects = 0;
   const schema = new RegisteredDraftSchema('files', 'files', fixtureSchema({
     project: () => { projects++; return { attachments: [] }; },
-  }), assert.fail);
+  }), failOnReport);
   schema.prepare(session.prompt); schema.activate();
   const field = schema.handle.forDraft(session.prompt.reference)!;
   appendFixture(field, fixtureItem('prompt-only'));
