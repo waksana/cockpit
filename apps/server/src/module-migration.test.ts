@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { chmod, link, lstat, mkdir, readFile, readdir, rm, rmdir, symlink, writeFile } from 'node:fs/promises';
+import { chmod, link, lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test, type TestContext } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -203,7 +203,7 @@ test('partial cutover blocks boot and config writers; explicit same-parameter re
   await release();
 });
 
-test('SIGKILL during cutover keeps the journal boot fence and requires explicit stale writer-lock recovery', async t => {
+test('SIGKILL during cutover keeps the journal boot fence and leaves no stale writer lock', async t => {
   const f = await fixture(t);
   const script = `
 import fs from 'node:fs/promises';
@@ -228,8 +228,8 @@ await migrateModuleId(${JSON.stringify({ ...f.options, mode: 'apply' })});`;
   child.kill('SIGKILL');
   await ended;
   await assert.rejects(acquireModuleHostLease(f.hostRoot), /pending/);
-  await assert.rejects(migrateModuleId({ ...f.options, mode: 'resume' }), { code: 'EEXIST' });
-  await rmdir(join(f.paths.root, '.lock'));
+  // The kernel released the dead writer's lease: no stale lock needs manual removal.
+  await assert.rejects(lstat(join(f.paths.root, '.lock')), { code: 'ENOENT' });
   assert.equal((await migrateModuleId({ ...f.options, mode: 'resume' })).applied, true);
 });
 

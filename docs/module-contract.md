@@ -81,8 +81,8 @@ pnpm module migrate-id old-module new-module --version 1.0.0 --digest <sha256> -
 Resume requires the original parameters, re-verifies both installations, the complete role-file inventory, exact recorded before/after metadata, and the original data directory inode/device at exactly one expected location. Unexpected drift is an error, not data to merge or overwrite. Do not delete the journal to
 bypass an error. There is no automatic retry or rollback, and an error does not mean earlier changes were undone.
 
-After abrupt CLI death, the existing storage-writer `modules/.lock` directory may remain. Once all hosts and CLI writers are explicitly stopped, an operator may remove only that empty directory with `rmdir "$COCKPIT_HOME/modules/.lock"` before running `--resume`. Do not remove storage recursively or discard the
-journal. A nonempty lock, unexpected permissions, or unresolved metadata/data drift requires investigation.
+Storage writers (install, enable, disable and migration) are serialized by a separate root-specific Linux abstract-socket writer lease, so abrupt CLI death leaves no lock to remove before `--resume`. Do not remove storage recursively or discard the journal; unexpected permissions or unresolved metadata/data drift
+requires investigation. A `modules/.lock` directory left by an older version is no longer used; once every older host and CLI writer is stopped it may be removed with `rmdir`.
 
 On success the journal is retained as `modules/.migration-completed-<uuid>.json` with mode 0600 in private module storage. It preserves metadata originals, not a second copy of business data. Each journal is capped at 16 MiB and inventories at most 2,048 role files. Completed journals are not aliases, are not consulted
 during normal startup, and do not allow applying the migration a second time to the removed source selection. Cooperative fencing uses a root-specific Linux abstract Unix socket lease acquired before native runtime construction and held through host exit; SIGKILL releases the lease, but a pending journal still blocks
@@ -103,6 +103,10 @@ Native Copilot data is outside that tree. The host does not override native `bas
 
 The module CLI writes `config.json` with `apiVersion: 1`, selected `version`/`digest`/`enabled`, and a module-specific `config` object. Operators may edit documented config fields while preserving the identity fields written by the CLI. Config is passed on the next cold start. Do not put secrets in public module config
 or source packages. Disable, update, native session deletion, and ID migration do not delete module business data unless explicitly stated above.
+
+Install, enable, disable and migration require Linux and hold the writer lease, which excludes other writers but not a running host (writes still affect only the next cold start). Installation writes into private `modules/.install-<uuid>` staging, flushes every file and directory, publishes by one atomic rename and
+then flushes the publication's parent directories; metadata files use the same write, flush, rename and parent-flush sequence. Staging left by a dead writer is never installed and is removed by the next writer. An installed directory is used only after its complete file inventory and digests verify; a same-digest directory that
+fails verification is rejected, and reinstalling the identical archive moves it aside to `modules/.quarantine-<uuid>` for inspection and republishes verified content.
 <a id="typescript-contract"></a>
 ## 4. Public TypeScript contract
 The source of truth is [`packages/module-api/src/index.ts`](../packages/module-api/src/index.ts) for backend/manifest types and [`frontend.ts`](../packages/module-api/src/frontend.ts) for Web API v2. Modules should build against exported public types instead of copying declarations:

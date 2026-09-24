@@ -6,6 +6,7 @@ import { gunzipSync } from 'node:zlib';
 import { z } from 'zod';
 import { cockpitHome } from '@cockpit/core';
 import type { ModuleManifest } from '@cockpit/module-api';
+import { acquireAbstractLease } from './module-lease.ts';
 
 export const MANIFEST_FILE = 'cockpit.module.json';
 export const MODULE_LIMITS = { archive: 32 * 1024 * 1024, expanded: 128 * 1024 * 1024, file: 32 * 1024 * 1024, entries: 8192 };
@@ -261,16 +262,30 @@ export async function assertNoModuleMigration(hostRoot: string): Promise<void> {
   throw new Error('Module identity migration is pending; explicitly resume it before starting the host or changing modules');
 }
 
+/**
+ * Serializes storage writers (install, enable, disable, migration) with a kernel
+ * lease that SIGKILL releases, so an abrupt writer death never leaves a lock to
+ * remove by hand. A running host does not hold it: writes affect the next start.
+ */
 export async function withStorageLock<T>(hostRoot: string, work: () => Promise<T>, options: { allowMigration?: boolean } = {}): Promise<T> {
+  if (process.platform !== 'linux') throw new Error('Module storage writes currently require Linux abstract-socket fencing');
   const paths = modulePaths(hostRoot);
   for (const path of [paths.hostRoot, paths.root, paths.installed]) await directory(path, true);
-  const lock = join(paths.root, '.lock');
-  await mkdir(lock, { mode: 0o700 });
+  const release = await acquireAbstractLease(paths.hostRoot, 'writer',
+    'Module storage is being changed by another install, enable, disable or migration; retry after it finishes');
   try {
     if (!options.allowMigration) await assertNoModuleMigration(hostRoot);
+    await removeAbandonedStaging(paths.root);
     return await work();
   }
-  finally { await rm(lock, { recursive: true, force: true }); }
+  finally { await release(); }
+}
+
+/** Under the writer lease, any install staging left by a dead writer is unpublished garbage. */
+async function removeAbandonedStaging(root: string): Promise<void> {
+  const abandoned = (await readdir(root)).filter(name => /^\.install-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(name));
+  for (const name of abandoned) await removeUnpublishedStaging(join(root, name));
+  if (abandoned.length) await syncModuleDirectory(root);
 }
 
 async function writeSettings(settings: ModuleSettings, hostRoot: string): Promise<void> {
@@ -294,6 +309,14 @@ export async function writeModuleBytes(destination: string, bytes: string, stagi
     await rename(file, destination);
     await syncModuleDirectory(root);
   } finally { await handle.close(); await rm(file, { force: true }); }
+}
+
+async function writeDurableFile(path: string, bytes: Uint8Array | string): Promise<void> {
+  const handle = await open(path, 'wx', 0o444);
+  try {
+    await handle.writeFile(bytes);
+    await handle.sync();
+  } finally { await handle.close(); }
 }
 
 async function removeUnpublishedStaging(staging: string): Promise<void> {
@@ -330,7 +353,21 @@ export async function installLocalModule(packagePath: string, options: { trustLo
     await directory(versionRoot, true);
     const existing = await readdir(versionRoot);
     if (existing.some(name => name !== digest)) throw new Error('This module version is already installed with a different digest; publish a new version');
-    if (!existing.includes(digest)) {
+    let quarantined: string | undefined;
+    if (existing.includes(digest)) {
+      try { await readModuleInstallation(manifest.id, { version: manifest.version, digest }, hostRoot); }
+      catch {
+        // A same-digest directory that fails verification (for example, left
+        // partial by a crash before durable publication) is never treated as
+        // installed. Reinstalling the identical archive moves it aside, kept for
+        // inspection, and republishes verified content.
+        quarantined = join(modulePaths(hostRoot).root, `.quarantine-${randomUUID()}`);
+        await rename(base, quarantined);
+        await syncModuleDirectory(versionRoot);
+        await syncModuleDirectory(dirname(quarantined));
+      }
+    }
+    if (!existing.includes(digest) || quarantined) {
       const staging = join(modulePaths(hostRoot).root, `.install-${randomUUID()}`);
       const root = join(staging, 'package');
       await mkdir(staging, { mode: 0o700 });
@@ -338,17 +375,19 @@ export async function installLocalModule(packagePath: string, options: { trustLo
         await mkdir(root, { mode: 0o700 });
         for (const [path, bytes] of files) {
           await mkdir(dirname(join(root, path)), { recursive: true, mode: 0o700 });
-          const handle = await open(join(root, path), 'wx', 0o444);
-          try { await handle.writeFile(bytes); } finally { await handle.close(); }
+          await writeDurableFile(join(root, path), bytes);
         }
         const record = { apiVersion: 1 as const, manifest, digest, files: Object.fromEntries([...files].map(([path, bytes]) => [path, { bytes: bytes.length, sha256: sha256(bytes) }])) };
-        const handle = await open(join(staging, 'install.json'), 'wx', 0o444);
-        try { await handle.writeFile(JSON.stringify(record)); } finally { await handle.close(); }
+        await writeDurableFile(join(staging, 'install.json'), JSON.stringify(record));
+        // Every file and directory entry is flushed before the atomic publication
+        // rename, so a crash cannot publish a directory with missing or short files.
         const seal = async (path: string): Promise<void> => {
           for (const entry of await readdir(path, { withFileTypes: true })) if (entry.isDirectory()) await seal(join(path, entry.name));
+          await syncModuleDirectory(path);
           await chmod(path, 0o555);
         };
         await seal(root);
+        await syncModuleDirectory(staging);
         await rename(staging, base);
       } catch (error) {
         try { await removeUnpublishedStaging(staging); }
@@ -358,6 +397,11 @@ export async function installLocalModule(packagePath: string, options: { trustLo
           throw new AggregateError([error, cleanup], 'Module installation failed and unpublished staging cleanup failed', { cause: error });
         }
         throw error;
+      }
+      // Make the publication itself durable, including any version/ID directories just created.
+      for (let path = versionRoot; ; path = dirname(path)) {
+        await syncModuleDirectory(path);
+        if (path === modulePaths(hostRoot).hostRoot) break;
       }
     }
     const result = await readModuleInstallation(manifest.id, { version: manifest.version, digest }, hostRoot);

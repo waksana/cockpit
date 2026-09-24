@@ -24,6 +24,10 @@ for (const platform of ['darwin', 'win32'] as const) {
         await assert.rejects(moduleCli([...args, ...mode], { hostRoot: fixture.hostRoot }), /requires Linux/);
         assert.deepEqual(await readdir(modules), []);
       }
+      const packagePath = await fixture.package();
+      await assert.rejects(moduleCli(['install', packagePath, '--trust-local-code', '--enable'], { hostRoot: fixture.hostRoot }), /require Linux/);
+      await assert.rejects(moduleCli(['disable', 'fixture'], { hostRoot: fixture.hostRoot }), /require Linux/);
+      assert.deepEqual(await readdir(modules), []);
       const journal = join(modules, '.migration.json');
       await writeFile(journal, 'even a corrupt journal blocks startup', { mode: 0o600 });
       await assert.rejects(guardModuleHostStartup(fixture.hostRoot), /migration is pending/);
