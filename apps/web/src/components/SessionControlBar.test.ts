@@ -101,7 +101,9 @@ test('sticky control surfaces use the same existing input-card color, not a prev
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
   assert.match(css, /\.chat-input-card \{[^}]*--chat-input-surface: color-mix/);
   assert.match(css, /\.chat-controls-header \{[^}]*background: var\(--chat-input-surface\)/);
-  assert.match(css, /\.chat-input-card\[data-controls\] \.chat-input \{[^}]*background: var\(--chat-input-surface\)/);
+  // The pinned surface is the host editor container, so module content around the input row stays visible with it.
+  assert.match(css, /\.chat-input-card\[data-controls\] \.chat-composer-editor \{[^}]*position: sticky;[^}]*background: var\(--chat-input-surface\)/);
+  assert.doesNotMatch(css, /\.chat-input-card\[data-controls\] \.chat-input \{[^}]*sticky/);
   const activityCss = compile(new URL('../styles/components/session-activity.scss', import.meta.url).pathname).css;
   assert.match(activityCss, /\.session-activity-item\[data-activity=overall\] > \.spinner \{[^}]*color: var\(--host-color-accent\)/);
 });
