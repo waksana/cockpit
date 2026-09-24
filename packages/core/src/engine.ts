@@ -240,6 +240,7 @@ export class Engine {
       const assembled = await this.configurator.config(st, cwd);
       const config: SessionConfig = { ...assembled.config, onEvent: event => {
         if (st.eventOwner !== owner || this.k.failure) return;
+        assembled.subagents?.observe(event);
         this.events.observeNative(st, event);
         try { this.events.onLive(st, event); }
         catch (error) {

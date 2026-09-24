@@ -5,6 +5,8 @@ import type { IntentBody, IntentResult } from '@cockpit/protocol';
 export type { NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent, ServerEvent };
 export { MAX_MODULE_EVENT_BYTES } from '@cockpit/protocol';
 export type { ModuleEventPayload } from '@cockpit/protocol';
+export { MCP_INVOCATION_META_KEY } from '@cockpit/protocol';
+export type { McpInvocationMeta } from '@cockpit/protocol';
 export type * from './frontend.ts';
 
 export interface ModuleManifest {
