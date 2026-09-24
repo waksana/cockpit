@@ -1,7 +1,7 @@
+import { act, fireEvent, render } from '../test/dom';
 import assert from '../test/identityAssert';
 import { test, type TestContext } from 'node:test';
-import { act, createElement, type ReactNode } from 'react';
-import { createRoot } from 'react-dom/client';
+import { createElement, type ReactNode } from 'react';
 import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes, useNavigate } from 'react-router-dom';
 import type { IntentResult, McpServerStatus, SessionProjection } from '@cockpit/protocol';
 import { useCockpit } from '../net/store';
@@ -25,112 +25,6 @@ import { InspectorPane } from './Shell';
 import { recordLocation } from '../lib/nav';
 import { cockpitApi, type CockpitApi } from '../net/api';
 
-// The same deterministic React DOM host as Thread.lifecycle, limited to the
-// controls these panels use. Reads and mutations stay in fixture-owned stores.
-class HostNode extends EventTarget {
-  nodeType = 1;
-  nodeName: string;
-  tagName: string;
-  ownerDocument: HostDocument;
-  namespaceURI = 'http://www.w3.org/1999/xhtml';
-  type = '';
-  checked = false;
-  parentNode: HostNode | null = null;
-  childNodes: HostNode[] = [];
-  attributes = new Map<string, string>();
-  style = { setProperty() {}, removeProperty() {} };
-  private selectedValue = false;
-  get selected() { return this.selectedValue; }
-  set selected(value: boolean) {
-    if (value && this.tagName === 'OPTION') {
-      for (const sibling of this.parentNode?.childNodes ?? []) sibling.selectedValue = false;
-    }
-    this.selectedValue = value;
-  }
-  private measuredHeight = 21;
-  get scrollHeight() { return this.ownerDocument.textHeights.get(this.textContent) ?? this.measuredHeight; }
-  set scrollHeight(value: number) { this.measuredHeight = value; }
-  scrollWidth = 100;
-  clientWidth = 100;
-  private text = '';
-  constructor(tag: string, ownerDocument: HostDocument) {
-    super();
-    this.nodeName = this.tagName = tag.toUpperCase();
-    this.ownerDocument = ownerDocument;
-  }
-  get firstChild() { return this.childNodes[0] ?? null; }
-  get nodeValue() { return this.text; }
-  set nodeValue(text: string) { this.text = text; }
-  get textContent(): string { return this.text + this.childNodes.map(node => node.textContent).join(''); }
-  set textContent(text: string) {
-    this.text = text;
-    for (const node of this.childNodes) node.parentNode = null;
-    this.childNodes = [];
-  }
-  get options() { return this.childNodes; }
-  get value(): string {
-    return this.tagName === 'SELECT' ? this.options.find(option => option.selected)?.value ?? ''
-      : this.getAttribute('value') ?? this.textContent;
-  }
-  set value(value: string) {
-    for (const option of this.options) option.selected = option.value === value;
-  }
-  appendChild(node: HostNode) { return this.insertBefore(node, null); }
-  insertBefore(node: HostNode, before: HostNode | null) {
-    node.parentNode?.removeChild(node);
-    this.childNodes.splice(before ? this.childNodes.indexOf(before) : this.childNodes.length, 0, node);
-    node.parentNode = this;
-    return node;
-  }
-  removeChild(node: HostNode) {
-    this.childNodes.splice(this.childNodes.indexOf(node), 1);
-    node.parentNode = null;
-    return node;
-  }
-  setAttribute(name: string, value: string) { this.attributes.set(name, String(value)); }
-  removeAttribute(name: string) { this.attributes.delete(name); }
-  getAttribute(name: string) { return this.attributes.get(name) ?? null; }
-  focus() { this.ownerDocument.activeElement = this; }
-  open = false;
-  showModal() { this.open = true; this.ownerDocument.nativeModal = this; }
-  close() { this.open = false; if (this.ownerDocument.nativeModal === this) this.ownerDocument.nativeModal = null; }
-  getClientRects() { return [1]; }
-  closest(selector: string): HostNode | null {
-    return this.matches(selector) ? this : this.parentNode?.closest(selector) ?? null;
-  }
-  matches(selector: string): boolean {
-    if (selector.includes(', ')) return selector.split(', ').some(part => this.matches(part));
-    if (selector.endsWith(':not(:disabled)')) return !this.attributes.has('disabled') && this.matches(selector.slice(0, -15));
-    if (selector.startsWith('.')) return (this.getAttribute('class') ?? '').split(' ').includes(selector.slice(1));
-    const match = /^\[([^=\]]+)(?:="([^"]*)")?\]$/.exec(selector);
-    return match ? this.attributes.has(match[1]) && (match[2] === undefined || this.getAttribute(match[1]) === match[2])
-      : this.tagName === selector.toUpperCase();
-  }
-  querySelectorAll(selector: string): HostNode[] {
-    return this.childNodes.flatMap(node => [...(node.matches(selector) ? [node] : []), ...node.querySelectorAll(selector)]);
-  }
-  querySelector(selector: string) { return this.querySelectorAll(selector)[0] ?? null; }
-}
-
-class HostDocument extends EventTarget {
-  nodeType = 9;
-  textHeights = new Map<string, number>();
-  documentElement = new HostNode('html', this);
-  body = new HostNode('body', this);
-  activeElement = this.body;
-  nativeModal: HostNode | null = null;
-  querySelector(selector: string) { return selector === ':modal' ? this.nativeModal : this.body.querySelector(selector); }
-  querySelectorAll(selector: string) { return this.body.querySelectorAll(selector); }
-  createElement(tag: string) { return new HostNode(tag, this); }
-  createElementNS(_namespace: string, tag: string) { return this.createElement(tag); }
-  createTextNode(text: string) {
-    const node = new HostNode('#text', this);
-    node.nodeType = 3;
-    node.textContent = text;
-    return node;
-  }
-}
-
 type StoreAndApiPatch = Partial<ReturnType<typeof useCockpit.getState>> & Partial<CockpitApi>;
 // Fixtures patch store state and stateless API methods together; mount restores both.
 function setStoreAndApi(patch: StoreAndApiPatch) {
@@ -141,52 +35,31 @@ function setStoreAndApi(patch: StoreAndApiPatch) {
 }
 
 function mount(t: TestContext) {
-  const document = new HostDocument();
-  const observers = new Set<() => void>();
-  const globals = {
-    document, window: Object.assign(new EventTarget(), {
-      document, HTMLIFrameElement: class {}, history: { state: null },
-      matchMedia: () => Object.assign(new EventTarget(), { matches: false }),
-    }),
-    Element: HostNode, HTMLElement: HostNode, IS_REACT_ACT_ENVIRONMENT: true,
-    getComputedStyle: () => ({ lineHeight: '21px' }),
-    ResizeObserver: class {
-      private callback: () => void;
-      constructor(callback: () => void) { this.callback = callback; }
-      observe() { observers.add(this.callback); }
-      disconnect() { observers.delete(this.callback); }
-    },
-  };
-  const restore: (() => void)[] = [];
-  for (const [key, value] of Object.entries(globals)) {
-    const previous = Object.getOwnPropertyDescriptor(globalThis, key);
-    Object.defineProperty(globalThis, key, { value, configurable: true });
-    restore.push(() => previous ? Object.defineProperty(globalThis, key, previous) : Reflect.deleteProperty(globalThis, key));
-  }
   t.mock.method(globalThis, 'fetch', async () => assert.fail('Resource fixtures must not access a backend'));
   const state = useCockpit.getState();
   const api = { ...cockpitApi };
   useCockpit.setState({ connState: 'open', connectionGeneration: 1, sessions: [session], resourceRevisions: {} });
   const container = document.createElement('div');
-  const root = createRoot(container as unknown as HTMLElement);
+  document.body.appendChild(container);
+  let view: { rerender(children: ReactNode): void; unmount(): void } | undefined;
   t.after(async () => {
-    await act(async () => root.unmount());
+    if (view) await act(async () => view!.unmount());
+    container.remove();
     useCockpit.setState(state, true);
     Object.assign(cockpitApi, api);
-    for (const reset of restore) reset();
   });
   return {
-    container, document,
-    resize: () => act(async () => { observers.forEach(callback => callback()); }),
-    render: (children: ReactNode) => act(async () => root.render(children)),
-    event: (node: HostNode, type: string) => act(async () => {
-      const event = new Event(type, { bubbles: true, cancelable: true });
-      Object.defineProperty(event, 'target', { value: node });
-      if (type === 'click') Object.defineProperty(event, 'button', { value: 0 });
-      let eventRoot = node;
-      while (eventRoot.parentNode) eventRoot = eventRoot.parentNode;
-      eventRoot.dispatchEvent(event);
-    }),
+    container,
+    document,
+    render: async (children: ReactNode) => {
+      if (view) view.rerender(children);
+      else view = render(children, { container });
+      await act(async () => {});
+    },
+    event: async (node: Element, type: string) => {
+      if (type === 'click') await act(async () => { fireEvent.click(node); });
+      else await act(async () => { fireEvent(node, new Event(type, { bubbles: true, cancelable: true })); });
+    },
   };
 }
 
@@ -215,23 +88,70 @@ function deferred<T>() {
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
-function button(container: HostNode, text: string) {
-  const result = container.querySelectorAll('button').find(node => node.textContent === text);
+function all<E extends Element = HTMLElement>(root: ParentNode, selector: string) {
+  return Array.from(root.querySelectorAll<E>(selector));
+}
+function currentModal() {
+  return all<HTMLDialogElement>(document, 'dialog[open]').at(-1) ?? null;
+}
+function setHistoryIdx(idx: number) {
+  window.history.replaceState({ idx }, '', window.location.href);
+}
+function button(container: ParentNode, text: string) {
+  const result = all<HTMLButtonElement>(container, 'button').find(node => node.textContent === text);
   assert.ok(result, `Missing button: ${text}`);
   return result;
 }
-function disabled(node: HostNode) { return node.attributes.has('disabled'); }
-function headingAdd(container: HostNode) {
+function disabled(node: Element) { return node.hasAttribute('disabled') || node.getAttribute('aria-disabled') === 'true'; }
+function headingAdd(container: ParentNode) {
   const result = container.querySelector('.ui-section-actions')?.querySelector('[aria-label="追加模块角色"]');
   assert.ok(result, 'role addition belongs to the section heading actions');
   assert.equal(result.textContent, '追加');
   return result;
 }
-function actionRows(container: HostNode) { return container.querySelectorAll('.ui-action-row'); }
-function actionRow(container: HostNode, name: string) {
+function actionRows(container: ParentNode) { return all<HTMLElement>(container, '.ui-action-row'); }
+function actionRow(container: ParentNode, name: string) {
   const result = actionRows(container).find(node => node.querySelector('.ui-action-name')?.textContent === name);
   assert.ok(result, `Missing action row: ${name}`);
   return result;
+}
+function stubTextMeasurement(t: TestContext) {
+  const heights = new Map<string, number>();
+  const observers = new Set<ResizeObserverCallback>();
+  const scrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight');
+  const resizeObserver = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+  const readStyle = globalThis.getComputedStyle.bind(globalThis);
+  Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get() { return heights.get(this.textContent ?? '') ?? scrollHeight?.get?.call(this) ?? 0; },
+  });
+  Object.defineProperty(globalThis, 'ResizeObserver', {
+    configurable: true,
+    value: class {
+      private readonly callback: ResizeObserverCallback;
+      constructor(callback: ResizeObserverCallback) { this.callback = callback; }
+      observe() { observers.add(this.callback); }
+      unobserve() { observers.delete(this.callback); }
+      disconnect() { observers.delete(this.callback); }
+    },
+  });
+  t.mock.method(globalThis, 'getComputedStyle', (element: Element) => new Proxy(readStyle(element), {
+    get(target, property, receiver) {
+      return property === 'lineHeight' ? '21px' : Reflect.get(target, property, receiver);
+    },
+  }));
+  t.after(() => {
+    if (scrollHeight) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', scrollHeight);
+    else Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight');
+    if (resizeObserver) Object.defineProperty(globalThis, 'ResizeObserver', resizeObserver);
+    else Reflect.deleteProperty(globalThis, 'ResizeObserver');
+  });
+  return {
+    heights,
+    resize: () => act(async () => {
+      observers.forEach(callback => callback([], {} as ResizeObserver));
+    }),
+  };
 }
 
 test('settings reload keeps its exact target and pending state across page changes', async t => {
@@ -383,7 +303,7 @@ function settingsFixture(t: TestContext) {
   const open = async (label: string) => {
     await render();
     await h.event(actionRow(h.container, label), 'click');
-    assert.ok(h.document.nativeModal);
+    assert.ok(currentModal());
   };
   const confirm = (label: string) => h.event(button(h.document.body, label), 'click');
   const resolve = (result: unknown) => act(async () => { request.resolve(Response.json(result)); });
@@ -407,7 +327,7 @@ for (const action of ['unload', 'compact', 'fork'] satisfies SessionSettingsActi
     await h.confirm('处理中…');
       assert.equal(h.calls.length, 1);
     await h.render('other-settings');
-    assert.equal(h.document.nativeModal, null, 'target change closes old confirmation');
+    assert.equal(currentModal(), null, 'target change closes old confirmation');
     await h.resolve(action === 'unload' ? { ok: true } : action === 'fork' ? { sessionId: 'real-child' }
       : { ok: true, result: { success: false, tokensRemoved: 8, messagesRemoved: 1 } });
     assert.doesNotMatch(h.container.textContent, /已卸载|real-child|压缩上下文失败/);
@@ -453,7 +373,7 @@ for (const action of ['unload', 'compact', 'fork'] satisfies SessionSettingsActi
     await h.resolve(action === 'unload' ? { ok: true } : action === 'fork' ? { sessionId: 'real-child' }
       : { ok: true, result: { success: true, tokensRemoved: 12, messagesRemoved: 2 } });
     assert.ok(useCockpit.getState().connectionGeneration > generation, 'fixture delivers real refresh snapshot semantics');
-    assert.equal(h.document.nativeModal, null, 'confirmed operation must not leave a stale modal over its result');
+    assert.equal(currentModal(), null, 'confirmed operation must not leave a stale modal over its result');
     assert.match(h.container.textContent, action === 'unload' ? /已卸载/ : action === 'fork' ? /real-child/ : /已压缩上下文/);
     assert.equal(h.container.querySelector('pre'), null, 'native results are summarized, not dumped as JSON');
   });
@@ -464,7 +384,7 @@ test('store-owned pending keeps dialog input and confirmation busy across a snap
   await h.open('压缩上下文');
   await h.confirm('压缩上下文');
   await act(async () => h.snapshot());
-  assert.equal(h.document.nativeModal?.getAttribute('aria-busy'), 'true');
+  assert.equal(currentModal()?.getAttribute('aria-busy'), 'true');
   assert.equal(disabled(button(h.document.body, '处理中…')), true);
   assert.equal(disabled(button(h.document.body, '取消')), true);
   assert.equal(disabled(h.document.body.querySelector('input')!), true);
@@ -472,7 +392,7 @@ test('store-owned pending keeps dialog input and confirmation busy across a snap
   await h.confirm('处理中…');
   assert.equal(h.calls.length, 1);
   await h.resolve({ ok: true, result: { success: true, tokensRemoved: 3, messagesRemoved: 1 } });
-  assert.equal(h.document.nativeModal, null);
+  assert.equal(currentModal(), null);
 });
 
 test('cancelling an operation portal does not also close its settings inspector', async t => {
@@ -483,15 +403,15 @@ test('cancelling an operation portal does not also close its settings inspector'
     ariaLabel: 'Settings inspector', onClose: () => { parentCloses++; },
     children: createElement(SessionInfoPanel, { session, open: true, onClose: noop, onSetModel: noMutation }),
   }));
-  const parent = h.document.nativeModal!;
+  const parent = currentModal()!;
   await h.event(actionRow(h.container, '卸载'), 'click');
-  const confirmation = h.document.nativeModal!;
+  const confirmation = currentModal()!;
   assert.ok(confirmation !== parent);
   await act(async () => { confirmation.dispatchEvent(new Event('cancel', { cancelable: true })); });
   assert.equal(parentCloses, 0, 'React portal cancel must not propagate to the parent inspector');
   assert.equal(parent.open, true);
   assert.equal(confirmation.open, false);
-  assert.equal(h.document.body.querySelector('dialog'), null);
+  assert.equal(currentModal(), parent);
 });
 
 test('all settings controls react to unknown activity, background work and decisions while confirmation is open', async t => {
@@ -512,7 +432,7 @@ test('all settings controls react to unknown activity, background work and decis
     }
     assert.equal(h.container.querySelector('.ui-action-list')?.getAttribute('data-disabled'), 'true');
     const list = h.container.querySelector('.ui-action-list')!;
-    const siblings = list.parentNode!.childNodes;
+    const siblings = Array.from(list.parentElement!.children);
     assert.equal(siblings.filter(node => node.matches('.state-notice')).length, 1, 'the reason is shown once');
     assert.ok(siblings[siblings.indexOf(list) - 1].matches('.state-notice'), 'the reason sits directly above the list');
     await h.confirm('分叉会话');
@@ -569,7 +489,6 @@ function roleFixture(t: TestContext, overrides: Partial<ChatSession> = {}) {
     const checkbox = h.container.querySelector('input');
     assert.ok(checkbox);
     assert.equal(checkbox.type, 'checkbox');
-    checkbox.checked = true;
     await h.event(checkbox, 'click');
   };
   const submit = () => h.event(button(h.container, '保存追加角色'), 'click');
@@ -620,9 +539,9 @@ for (const state of [
     await h.render(createElement('div', null, createElement(SessionRoles, { session: target }),
       createElement(Sidebar, { sessions: [target], activeId: null, query: '', connected: true, snapshotReady: true,
         onSelect: () => {}, getMenuItems: () => [] })));
-    const lists = h.container.querySelectorAll('.session-role-badges');
+    const lists = all(h.container, '.session-role-badges');
     assert.equal(lists.length, 2, 'one saved list on each surface');
-    for (const list of lists) assert.deepEqual(list.querySelectorAll('.role-badge')
+    for (const list of lists) assert.deepEqual(all(list, '.role-badge')
       .map(badge => badge.getAttribute('data-unapplied') === 'true'), state.muted);
   });
 }
@@ -754,7 +673,7 @@ test('authoritative identity replaces saved and applied badges after another cli
   await h.choose();
   await h.submit();
   const saved = () => h.container.querySelector('[aria-label="已保存的模块角色"]')!;
-  const muted = () => saved().querySelectorAll('[data-unapplied="true"]').map(node => node.textContent);
+  const muted = () => all(saved(), '[data-unapplied="true"]').map(node => node.textContent);
   assert.match(saved().textContent, /Additional role/);
   assert.equal(muted().length, 1);
   assert.match(muted()[0], /Additional role/);
@@ -982,9 +901,9 @@ for (const Component of [SessionMcp, SessionSkills]) {
       mcpToggleSession: mutate, skillsToggleSession: mutate,
     });
     await h.render(createElement(Component, { session, onClose: noop }));
-    const rows = h.container.querySelectorAll('.manage-row');
+    const rows = all(h.container, '.manage-row');
     assert.equal(rows[0].querySelector('.resource-title-text')?.textContent, name);
-    assert.equal(rows[0].querySelector('.manage-row-name')?.firstChild?.getAttribute('class'), 'role-badge');
+    assert.equal(rows[0].querySelector('.manage-row-name')?.firstElementChild?.getAttribute('class'), 'role-badge');
     assert.equal(rows[0].querySelector('.module-label-name')?.textContent, 'Task');
     assert.equal(rows.length, 2, 'shared resources still have one row');
     assert.equal(rows[0].querySelector('.role-badge-name')?.textContent, 'Executor、Owner');
@@ -1002,35 +921,35 @@ for (const Component of [SessionMcp, SessionSkills]) {
 
 test('two-line disclosure measures overflow, keeps collapse while expanded, and remeasures resize and late text', async t => {
   const h = mount(t);
+  const measurements = stubTextMeasurement(t);
   const render = (text: string) => h.render(createElement(TextClamp, { text, label: '说明' }));
   await render('short');
   const text = h.container.querySelector('.ui-text-clamp-text')!;
   const clamp = h.container.querySelector('.ui-text-clamp')!;
   assert.equal(h.container.querySelector('button'), null);
-  text.scrollHeight = 63;
+  measurements.heights.set('late content with three lines', 63);
   await render('late content with three lines');
   const expand = button(h.container, '展开全文');
   assert.equal(expand.getAttribute('aria-expanded'), 'false');
   assert.equal(expand.getAttribute('aria-controls'), text.getAttribute('id'));
   await h.event(expand, 'click');
   assert.equal(clamp.getAttribute('data-expanded'), 'true');
-  await h.resize();
+  await measurements.resize();
   assert.equal(button(h.container, '收起').getAttribute('aria-expanded'), 'true');
   await h.event(button(h.container, '收起'), 'click');
   assert.equal(clamp.getAttribute('data-expanded'), null);
-  text.scrollHeight = 42;
-  await h.resize();
+  measurements.heights.set('late content with three lines', 42);
+  await measurements.resize();
   assert.equal(h.container.querySelector('button'), null, 'exactly two lines has no unnecessary disclosure');
-  text.scrollHeight = 84;
-  await h.resize();
+  measurements.heights.set('late content with three lines', 84);
+  await measurements.resize();
   await h.event(button(h.container, '展开全文'), 'click');
   await render('replacement content starts collapsed');
   assert.equal(clamp.getAttribute('data-expanded'), null);
-  text.scrollHeight = 21;
   await render('short again');
   assert.equal(h.container.querySelector('button'), null);
   await h.render(null);
-  await h.resize();
+  await measurements.resize();
 });
 
 test('model drafts survive queued results and newer native values; reset and apply stay manual', async t => {
@@ -1223,9 +1142,9 @@ for (const section of ['mcp', 'skills'] as const) {
   for (const selected of [false, true]) {
     test(`global ${section}: outer back pops the existing workspace behind ${selected ? 'detail' : 'list'}`, async t => {
       const h = navigationFixture(t, true, ['/', selected ? `/${section}/A` : `/${section}`]);
-      Object.assign(window.history, { state: { idx: 0 } });
+      setHistoryIdx(0);
       recordLocation('/');
-      Object.assign(window.history, { state: { idx: 1 } });
+      setHistoryIdx(1);
       await h.open();
       await h.exit();
       assert.equal(h.router.state.location.pathname, '/');
@@ -1239,17 +1158,17 @@ for (const section of ['mcp', 'skills'] as const) {
       const h = navigationFixture(t, false, [deepLink ? `/${section}/name%2Fpart` : `/${section}`]);
       await h.open();
       if (!deepLink) {
-        Object.assign(window.history, { state: { idx: 0 } });
+        setHistoryIdx(0);
         recordLocation(`/${section}`);
         await h.select('A');
-        Object.assign(window.history, { state: { idx: 1 } });
+        setHistoryIdx(1);
       }
       assert.equal(h.container.querySelector('.master-pane')!.getAttribute('aria-hidden'), 'true');
       assert.equal(h.container.querySelector('.detail-pane')!.getAttribute('aria-hidden'), null);
       await h.event(h.container.querySelector('.manage-detail-header')!.querySelector('[aria-label="返回"]')!, 'click');
       assert.equal(h.router.state.location.pathname, `/${section}`);
       assert.equal(h.router.state.historyAction, deepLink ? 'REPLACE' : 'POP');
-      Object.assign(window.history, { state: { idx: 0 } });
+      setHistoryIdx(0);
       assert.equal(h.container.querySelector('.master-pane')!.getAttribute('aria-hidden'), null);
       assert.equal(h.container.querySelector('.manage-detail-header'), null);
       await h.exit();
@@ -1290,8 +1209,8 @@ for (const section of ['mcp', 'skills'] as const) {
     assert.equal(link.getAttribute('href'), `/${section}/known`);
     assert.equal(toggle.getAttribute('aria-label'), '全局默认启用 known');
     const identity = row.querySelector('.manage-row-name')!;
-    assert.equal(identity.firstChild?.getAttribute('class'), 'role-badge');
-    assert.equal(identity.childNodes.at(-1)?.textContent, 'known');
+    assert.equal(identity.firstElementChild?.getAttribute('class'), 'role-badge');
+    assert.equal(Array.from(identity.childNodes).at(-1)?.textContent, 'known');
     assert.equal(row.querySelectorAll('.module-label').length, 2);
     assert.equal(row.querySelector('[data-unapplied]'), null);
     const unknown = h.container.querySelector('[data-resource-name="fixture-lookalike"]')!;
@@ -1335,7 +1254,11 @@ for (const desktop of [true, false]) {
     const frame = h.container.querySelector('dialog');
     assert.ok(frame);
     const modal = h.document.createElement('dialog');
-    h.document.nativeModal = modal;
+    h.document.body.appendChild(modal);
+    modal.showModal();
+    const querySelector = h.document.querySelector.bind(h.document);
+    t.mock.method(h.document, 'querySelector', (selector: string) =>
+      selector === ':modal' && modal.open ? modal : querySelector(selector));
     modal.focus();
     const key = async (value: string, prevented = false) => {
       const event = new Event('keydown', { cancelable: true });
@@ -1348,7 +1271,8 @@ for (const desktop of [true, false]) {
     assert.equal(h.document.activeElement, modal, 'background panel cannot steal modal focus');
     await key('Escape');
     assert.equal(h.container.querySelector('dialog'), frame, 'modal Escape cannot navigate the background');
-    h.document.nativeModal = null;
+    modal.close();
+    modal.remove();
     await key('Escape', true);
     assert.equal(h.container.querySelector('dialog'), frame, 'claimed Escape remains ignored');
     frame.focus();
@@ -1415,8 +1339,8 @@ for (const page of pages) {
     assert.match(h.container.textContent, /会话正在关闭，等待关闭完成/);
     assert.equal(h.container.querySelector('.spinner'), null, 'closing is not a resource read');
     assert.doesNotMatch(h.container.textContent, /没有可用的|本会话没有|加载失败/);
-    for (const node of h.container.querySelectorAll('select')) assert.equal(disabled(node), true);
-    for (const node of h.container.querySelectorAll('button.ck-button:not(.chat-copy-button, .copy-value-button, .ui-text-clamp-toggle)')) {
+    for (const node of all(h.container, 'select')) assert.equal(disabled(node), true);
+    for (const node of all(h.container, 'button.ck-button:not(.chat-copy-button, .copy-value-button, .ui-text-clamp-toggle)')) {
       if (node.getAttribute('aria-expanded') !== null) continue; // Passive role-entry disclosure, not a model action.
       assert.equal(disabled(node), true);
       await h.event(node, 'click');
@@ -1450,7 +1374,7 @@ for (const page of pages) {
     await h.render(page.render());
     assert.equal(reads, 1);
     assert.match(h.container.textContent, /Native model|native-item/);
-    const controls = () => [...h.container.querySelectorAll('select'), ...h.container.querySelectorAll('[role="switch"]')];
+    const controls = () => [...all(h.container, 'select'), ...all(h.container, '[role="switch"]')];
     assert.ok(controls().length > 0);
     assert.ok(controls().every(node => !disabled(node)));
     await act(async () => useCockpit.setState({
@@ -1565,7 +1489,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.equal(full.getAttribute('hidden'), null);
     await h.event(disclosure, 'click');
     assert.equal(full.getAttribute('hidden'), '');
-    assert.deepEqual(h.container.querySelectorAll('[role="alert"]').map(node => node.parentNode), [error],
+    assert.deepEqual(all(h.container, '[role="alert"]').map(node => node.parentNode), [error],
       'the row result is the only error box');
     assert.equal(control.getAttribute('aria-checked'), 'true');
     assert.equal(disabled(control), false);
@@ -1634,7 +1558,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
       skillsToggleSession: async (_id, name) => { calls.push(name); await mutation.promise; changed.add(name); },
     });
     await h.render(createElement(Component, { session, onClose: noop }));
-    const [first, second] = h.container.querySelectorAll('[role="switch"]');
+    const [first, second] = all(h.container, '[role="switch"]');
     const row = h.container.querySelector('[data-resource-name="one"]')!;
     const other = h.container.querySelector('[data-resource-name="two"]')!;
     const source = row.querySelector('.manage-row-source');
@@ -1685,7 +1609,7 @@ test('Skills supports independent pending rows and keeps an error with its own r
     },
   });
   await h.render(createElement(SessionSkills, { session, onClose: noop }));
-  const [first, second] = h.container.querySelectorAll('[role="switch"]');
+  const [first, second] = all(h.container, '[role="switch"]');
   await h.event(first, 'click');
   await h.event(second, 'click');
   await h.event(first, 'click');
@@ -1726,10 +1650,11 @@ test('MCP honors native busy or settling states after remount, without a local a
 for (const Component of [SessionMcp, SessionSkills]) {
   test(`${Component.name}: disclosures stay manual through late text, failed writes and repeated errors`, async t => {
     const h = mount(t);
+    const measurements = stubTextMeasurement(t);
     const name = 'a-long-native-resource-name';
     const long = 'Late native content that exceeds the collapsed line budget. '.repeat(8);
-    h.document.textHeights.set(name, 63);
-    h.document.textHeights.set(long, 210);
+    measurements.heights.set(name, 63);
+    measurements.heights.set(long, 210);
     let description = '', revision = 0;
     let mutation = deferred<void>();
     const read = async () => [
@@ -1767,7 +1692,7 @@ for (const Component of [SessionMcp, SessionSkills]) {
     assert.equal(row.querySelector('[data-expanded]'), null, 'late text never opens itself');
     for (const field of Component === SessionSkills ? ['摘要'] : []) {
       await open(field);
-      await h.resize();
+      await measurements.resize();
       await h.event(disclosure(`收起${name}${field}`), 'click');
       assert.equal(disclosure(`展开${name}${field}`).getAttribute('aria-expanded'), 'false');
     }
@@ -1841,7 +1766,7 @@ test('native MCP error revisions are discoverable but never inherit another erro
       skillsRead: async name => ({ name, source: 'builtin', body: 'Use native and builtin as literal user content.' }),
     });
     await h.render(createElement(SessionSkills, { session, onClose: noop }));
-    const sessionRows = h.container.querySelectorAll('.manage-row');
+    const sessionRows = all(h.container, '.manage-row');
     for (const row of sessionRows.slice(0, 3)) {
       assert.equal(row.querySelector('.manage-row-source'), null);
       assert.equal(row.querySelector('.resource-title-text')!.textContent, row.getAttribute('data-resource-name'));
@@ -1849,7 +1774,7 @@ test('native MCP error revisions are discoverable but never inherit another erro
     assert.deepEqual(sessionRows.slice(3).map(row => row.querySelector('.manage-row-source')!.textContent), ['个人', '项目']);
     await h.render(createElement(MemoryRouter, { initialEntries: ['/skills/native'] },
       createElement(Routes, null, createElement(Route, { path: '/:section/:item?', element: createElement(ManageWorkspace) }))));
-    const globalRows = h.container.querySelectorAll('.manage-row').filter(row => row.getAttribute('data-selectable'));
+    const globalRows = all(h.container, '.manage-row').filter(row => row.getAttribute('data-selectable'));
     assert.equal(globalRows.length, 5);
     assert.deepEqual(globalRows.slice(3).map(row => row.querySelector('.manage-row-source')!.textContent), ['个人', '项目']);
     for (const row of globalRows.slice(0, 3)) {
@@ -1883,15 +1808,15 @@ test('native MCP error revisions are discoverable but never inherit another erro
     await act(async () => request.reject(new Error(actionError)));
     assert.equal(group.querySelector('.manage-row-status')!.textContent, connection, 'failure must not erase needs-auth');
     assert.equal(group.querySelector('[role="switch"]')!.getAttribute('aria-checked'), 'true');
-    const summaries = row.querySelectorAll('.operation-result-text');
+    const summaries = all(row, '.operation-result-text');
     assert.deepEqual(summaries.map(node => node.textContent), [
       '连接错误：Transport refused the connection', '结果未知：Disable request was not acknowledged。刷新后确认，不会自动重试。',
     ]);
     assert.ok(summaries.every(node => !node.textContent.includes('at native.')));
-    const disclosures = row.querySelectorAll('.operation-result-disclosure');
+    const disclosures = all(row, '.operation-result-disclosure');
     for (const [index, disclosure] of disclosures.entries()) {
       await h.event(disclosure, 'click');
-      const full = row.querySelectorAll('.operation-result-details')[index];
+      const full = all(row, '.operation-result-details')[index];
       assert.equal(full.textContent, [nativeError, actionError][index]);
       assert.equal(full.getAttribute('hidden'), null);
     }
@@ -1927,9 +1852,10 @@ test('session MCP has no transport presentation while retaining actual operation
 
 test('session Skills rows show source · description as one summary line beside a status-free switch', async t => {
   const h = mount(t);
+  const measurements = stubTextMeasurement(t);
   const module = { id: 'cockpit-task', name: 'Task', roles: [{ id: 'owner', name: 'Owner' }] };
   const long = 'Use when authorized work requires changing version-controlled repository files. '.repeat(4);
-  h.document.textHeights.set(`个人 · ${long}`, 84);
+  measurements.heights.set(`个人 · ${long}`, 84);
   useCockpit.setState({
     skillsSession: async () => [
       { name: 'github-coding', module, source: 'personal-agents', description: long, enabled: true },
@@ -1943,7 +1869,8 @@ test('session Skills rows show source · description as one summary line beside 
   const identity = first.querySelector('.manage-resource-identity')!;
   assert.equal(identity.tagName, 'DIV', 'session rows never navigate to details');
   assert.equal(first.querySelector('a'), null);
-  assert.equal(first.querySelector('.manage-row-name')!.firstChild?.getAttribute('class'), 'role-badge', 'badge precedes the name');
+  assert.equal(first.querySelector('.manage-row-name')!.firstElementChild?.getAttribute('class'), 'role-badge',
+    'badge precedes the name');
   const clamp = first.querySelector('.manage-row-source')!.querySelector('.manage-row-text')!;
   const summary = clamp.querySelector('.ui-text-clamp-text')!;
   assert.equal(summary.textContent, `个人 · ${long}`);
@@ -1978,7 +1905,7 @@ for (const section of ['mcp', 'skills'] as const) {
       createElement(Routes, null, createElement(Route, { path: '/:section/:item?', element: createElement(ManageWorkspace) }))));
     assert.equal(h.container.textContent.match(/开关：新会话默认启用/g)?.length, 1);
     const hint = h.container.querySelector('.manage-list-hint')!;
-    const siblings = hint.parentNode!.childNodes;
+    const siblings = Array.from(hint.parentElement!.children);
     assert.equal(siblings[siblings.indexOf(hint) + 1].getAttribute('class'), 'manage-list', 'the hint sits above the list');
     const row = (name: string) => h.container.querySelector(`[data-resource-name="${name}"]`)!;
     assert.equal(row('A').querySelector('.manage-row-source')!.textContent, section === 'mcp' ? '本地进程 · node' : '个人 · First skill');
@@ -1989,7 +1916,7 @@ for (const section of ['mcp', 'skills'] as const) {
     await h.event(toggle, 'click');
     const controls = row('A').querySelector('.manage-resource-controls')!;
     assert.equal(controls.querySelector('.manage-row-status')!.textContent, '启用中');
-    const order = controls.childNodes.map(node => node.getAttribute('class'));
+    const order = Array.from(controls.childNodes).map(node => node instanceof Element ? node.getAttribute('class') : null);
     assert.deepEqual(order, ['manage-row-status', 'manage-global-control'], 'status precedes the switch');
     assert.equal(h.container.querySelectorAll('.spinner').length, 1);
     assert.equal(toggle.getAttribute('aria-checked'), 'false', 'no optimistic default');
@@ -2137,7 +2064,7 @@ test('model Apply has a pending label and busy state while preserving native res
   assert.equal(mutations, 0);
   await act(async () => read.resolve(modelData));
   const effort = h.container.querySelector('[aria-label="思考力度"]')!;
-  effort.value = 'high';
+  (effort as HTMLSelectElement).value = 'high';
   await h.event(effort, 'change');
   const apply = button(h.container, '应用');
   assert.equal(disabled(apply), false);
