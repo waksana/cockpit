@@ -6,7 +6,7 @@
 .lab-controls { flex: none; }
 .chat-lab:not([data-compact]) .lab-controls > summary { display: none; }
 .chat-lab[data-compact] .lab-controls {
-  position: absolute; inset-inline: 0; top: 0; z-index: 46;
+  position: absolute; inset-inline: 0; top: 0; z-index: var(--host-z-dev);
   font-size: var(--host-text-meta); background: var(--surface-color);
   > summary { cursor: pointer; text-align: center; padding: 0.25rem; border-bottom: 1px solid var(--border-color); }
 }

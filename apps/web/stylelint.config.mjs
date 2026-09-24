@@ -35,9 +35,6 @@ const rawSpacingPx = /(?:^|[\s(,+*/-])(?:[3-9]|\d{2,})(?:\.\d+)?px\b/;
 // Allowlists (whole files, with reasons). Prefer a scoped, described
 // `stylelint-disable-next-line <rule> -- <reason>` for a single intentional value.
 const portedTweb = ['src/styles/base.scss', 'src/styles/primitives/button.scss', 'src/styles/primitives/menu.scss'];
-// chat.scss (#159) and sidebar.scss (#158) are being changed in parallel; migrate
-// their legacy names, raw spacing and chat contrast hex overrides in a follow-up.
-const inFlight = ['src/styles/components/chat.scss', 'src/styles/components/sidebar.scss'];
 // Dev-only Chat Lab chrome, never loaded by the shipped entry.
 const devLab = ['src/dev/chat-lab.scss'];
 
@@ -60,10 +57,13 @@ export default {
       { '/^(margin|padding|gap|row-gap|column-gap|inset)(-|$)/': [rawSpacingPx] },
       { message: 'Use a spacing token (--host-space-*, --ck-*, component tokens) instead of a raw px value' },
     ],
+    'declaration-property-value-allowed-list': [
+      { 'z-index': [/^var\(--host-z-[a-z]+\)$/] },
+      { message: 'Use a --host-z-* stacking token (tokens.scss) instead of a raw z-index' },
+    ],
   },
   overrides: [
     { files: portedTweb, rules: { [legacyRule]: null } },
-    { files: inFlight, rules: { 'color-no-hex': null, [legacyRule]: null, 'declaration-property-value-disallowed-list': null } },
     { files: devLab, rules: { [legacyRule]: null, 'declaration-property-value-disallowed-list': null } },
   ],
 };

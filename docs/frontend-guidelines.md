@@ -282,9 +282,12 @@ only place defining raw colors and old tweb names:
 - Raw px of 3 or more in `margin`/`padding`/`gap`/`inset` is an error — use
   `--host-space-*`, `--ck-*` or component tokens. 0–2px hairlines/optical offsets and
   rem/em typographic rhythm are allowed.
+- `z-index` accepts only a `--host-z-*` stacking token. The scale in `tokens.scss`,
+  lowest to highest: `raised`, `sticky`, `fab`, `inspector`, `notice`, `dev`,
+  `dialog`, `menu`. Place a new layer by its role in this order; add a token only
+  for a genuinely new layer.
 
-`chat.scss` and `sidebar.scss` are temporarily exempt as whole files. A single
-intentional exception uses `// stylelint-disable-next-line <rule> -- <reason>`;
+A single intentional exception uses `// stylelint-disable-next-line <rule> -- <reason>`;
 disables without a reason or that are unneeded are errors.
 
 `styles/classDefinitions.test.ts` (in `pnpm test`) checks that every static class

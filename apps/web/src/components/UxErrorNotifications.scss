@@ -22,7 +22,7 @@
 
 .ux-error-notifications {
   position: fixed;
-  z-index: 45;
+  z-index: var(--host-z-notice);
   bottom: 0;
   inset-inline: 0;
   height: var(--ux-error-height);
