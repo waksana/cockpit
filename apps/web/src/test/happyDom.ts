@@ -47,12 +47,13 @@ function describeNode(value: unknown) {
   const attributes = Array.from(element.attributes, attribute => ` ${attribute.name}="${attribute.value}"`).join('');
   return `<${element.localName}${attributes}>`;
 }
-type Identity = (actual: unknown, expected: unknown, message?: string | Error) => void;
+type Identity = (...args: [actual: unknown, expected: unknown, message?: string | Error]) => void;
 for (const target of [assert, assert.strict] as unknown as Record<string, Identity>[]) {
   for (const [name, same] of [['equal', true], ['strictEqual', true], ['notEqual', false], ['notStrictEqual', false]] as const) {
     const original = target[name];
-    target[name] = function identity(actual, expected, message) {
-      if (!(actual instanceof window.Node) && !(expected instanceof window.Node)) return original(actual, expected, message);
+    target[name] = function identity(...args) {
+      const [actual, expected, message] = args;
+      if (args.length < 2 || (!(actual instanceof window.Node) && !(expected instanceof window.Node))) return original(...args);
       if ((actual === expected) === same) return;
       if (message instanceof Error) throw message;
       throw new assert.AssertionError({
