@@ -60,7 +60,8 @@ test('global Skills page groups module-provided skills read-only with derived mo
   setup(t, {
     skillsGlobal: async () => [
       { name: 'native-skill', enabled: true, description: 'native' },
-      { name: 'board-native', enabled: false, modules: [{ id: 'board', name: 'Board' }] },
+      { name: 'board-native', enabled: false,
+        modules: [{ id: 'board', name: 'Board', resourceId: 'board-native-id' }] },
     ],
     skillsSetGlobal: async name => { toggles.push(name); },
     roleResources: async () => catalog,
@@ -95,7 +96,8 @@ test('global Skills page groups module-provided skills read-only with derived mo
 test('module Skill opens its verified Markdown detail directly and from the list without native discovery', async t => {
   const reads: Array<[string, string]> = [];
   setup(t, {
-    skillsGlobal: async () => [{ name: 'board-native', enabled: false, modules: [{ id: 'board', name: 'Board' }] }],
+    skillsGlobal: async () => [{ name: 'board-native', enabled: false,
+      modules: [{ id: 'board', name: 'Board', resourceId: 'board-native-id' }] }],
     roleResources: async () => catalog,
     roleSkillRead: async (moduleId, resourceId) => {
       reads.push([moduleId, resourceId]);
@@ -150,10 +152,11 @@ test('verified native/module dedupe keeps the native Skill detail authoritative'
   let moduleReads = 0;
   setup(t, {
     skillsGlobal: async () => [
-      { name: 'board-native', enabled: false, modules: [{ id: 'board', name: 'Board' }] },
+      { name: 'board-native', enabled: false,
+        modules: [{ id: 'board', name: 'Board', resourceId: 'board-native-id' }] },
     ],
     skillsRead: async name => ({ name, enabled: false, body: '# Native authoritative body',
-      modules: [{ id: 'board', name: 'Board' }] }),
+      modules: [{ id: 'board', name: 'Board', resourceId: 'board-native-id' }] }),
     roleResources: async () => catalog,
     roleSkillRead: async () => {
       moduleReads++;

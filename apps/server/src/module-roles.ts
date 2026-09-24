@@ -4,7 +4,7 @@ import { readFile, realpath, stat } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
 import {
   MODULE_SKILL_NOT_FOUND, SessionRole,
-  type ModuleRoleResources, type ModuleRoleSkill, type ModuleSource, type RoleSelection,
+  type ModuleRoleResources, type ModuleRoleSkill, type ModuleSkillSource, type ModuleSource, type RoleSelection,
 } from '@cockpit/protocol';
 import type { RoleAssembly, RoleProvider, SessionInstructions } from '@cockpit/core';
 import type { ModuleInstallation } from './module-install.ts';
@@ -61,6 +61,10 @@ const moduleSkillNotFound = () => Object.assign(
   { code: MODULE_SKILL_NOT_FOUND, statusCode: 404 },
 );
 
+const moduleSkillReadFailed = (cause: unknown): never => {
+  throw new Error('Module Skill could not be verified or read', { cause });
+};
+
 const normalizedTools = (tools: Iterable<string>) => {
   const sorted = [...new Set(tools)].sort();
   return sorted.includes('*') ? ['*'] : sorted;
@@ -91,7 +95,7 @@ export class ModuleRoles implements RoleProvider {
           for (const path of roleSkillFiles(installation, directory)) {
             let parsed = bodies.get(path);
             if (!parsed) {
-              const body = await verifiedResource(installation, path);
+              const body = await verifiedResource(installation, path).catch(moduleSkillReadFailed);
               const description = skillDescription(body);
               bodies.set(path, parsed = { name: roleSkillName(body, path), ...(description ? { description } : {}) });
             }
@@ -130,7 +134,7 @@ export class ModuleRoles implements RoleProvider {
       (role.skillDirectories ?? []).flatMap(directory => roleSkillFiles(installation, directory))))];
     const path = paths.find(relative => roleSkillId(installation, relative) === resourceId);
     if (!path) throw moduleSkillNotFound();
-    const body = await verifiedResource(installation, path);
+    const body = await verifiedResource(installation, path).catch(moduleSkillReadFailed);
     const contributors = roles.filter(role => (role.skillDirectories ?? [])
       .some(directory => path.startsWith(`${directory}/`)));
     if (!contributors.length) throw moduleSkillNotFound();
@@ -158,14 +162,15 @@ export class ModuleRoles implements RoleProvider {
     }
   }
 
-  async globalSkillSources(path: string): Promise<ModuleSource[] | undefined> {
+  async globalSkillSources(path: string): Promise<ModuleSkillSource[] | undefined> {
     let canonical: string;
     try { canonical = await realpath(path); }
     catch (error) {
       if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return;
       throw error;
     }
-    for (const { manifest, root, files } of this.installations()) {
+    for (const installation of this.installations()) {
+      const { manifest, root, files } = installation;
       const prefix = `${resolve(root)}${sep}`;
       if (!canonical.startsWith(prefix)) continue;
       const relative = canonical.slice(prefix.length);
@@ -175,7 +180,12 @@ export class ModuleRoles implements RoleProvider {
       try {
         const bytes = await readFile(canonical);
         if (createHash('sha256').update(bytes).digest('hex') === record.sha256) {
-          return [{ id: manifest.id, name: manifest.name }];
+          const roleResource = (manifest.roles ?? []).some(role => (role.skillDirectories ?? [])
+            .some(directory => roleSkillFiles(installation, directory).includes(relative)));
+          return [{
+            id: manifest.id, name: manifest.name,
+            ...(roleResource ? { resourceId: roleSkillId(installation, relative) } : {}),
+          }];
         }
       } catch (error) {
         if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) throw error;

@@ -289,8 +289,10 @@ provenance. It is not a prefix convention, authorization, connection, enablement
 readiness or complete-role proof. Skill provenance requires native name/path match;
 MCP provenance records assembled role configuration, because live URL/config
 identity is not exposed. Global `mcp/global`, `skills/global`, and `skills/read`
-may include `modules: ModuleSource[]` only after verifying manifests by origin,
-digest, endpoint or real `SKILL.md` path/SHA-256. Unknown resources stay unlabeled.
+may include module sources only after verifying manifests by origin, digest,
+endpoint or real `SKILL.md` path/SHA-256. A global native Skill source includes
+the opaque role resource identity only when that exact verified path is declared
+by a current role. Unknown resources stay unlabeled.
 `mcp/global.connection.method` is `http`, `sse`, `stdio` or `unknown`; `target` is
 only hostname or executable basename. `mcp/session` has no `connection` field.
 
@@ -304,7 +306,9 @@ connection or readiness and omits endpoints, digests and file paths. The classic
 MCP/Skills pages show it as a separate read-only "模块提供" group without switches;
 the label names contributing roles unless every role of the module declares the
 resource, and an item already listed in native global configuration with the same
-verified module stays only there. Module resources cannot be turned off globally.
+verified opaque role resource identity stays only there. Module-only attribution
+or a same-name packaged Skill is not enough to deduplicate it. Module resources
+cannot be turned off globally.
 Session MCP/Skills rows with verified `module` provenance show "随角色启用" instead of
 a session switch, because role assembly restores them on reload or cold resume;
 status and errors remain visible, and a module Skill that native reports disabled in

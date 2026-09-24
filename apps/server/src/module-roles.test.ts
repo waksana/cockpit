@@ -17,7 +17,10 @@ test('global provenance verifies loaded module endpoints and file digests withou
     { id: 'second', name: 'Second', skillDirectories: ['skills'],
       mcpServers: { another: { type: 'http', path: '/mcp', tools: ['write'] } } },
   ] });
-  entries.push({ path: 'skills/shared/SKILL.md', content: '---\nname: native-name\n---\nNative body' });
+  entries.push(
+    { path: 'skills/shared/SKILL.md', content: '---\nname: native-name\n---\nNative body' },
+    { path: 'other/SKILL.md', content: '---\nname: native-name\n---\nOther native body' },
+  );
   const installed = await installLocalModule(await f.package(entries), { trustLocalCode: true, enable: true });
   let active = true;
   const provider = new ModuleRoles(f.hostRoot, 'http://127.0.0.1:12345', () => active ? [installed] : []);
@@ -31,10 +34,14 @@ test('global provenance verifies loaded module endpoints and file digests withou
     { ...config, url: url.replace(':12345', ':23456') }, { ...config, url: `${url}?unverified=1` },
   ]) assert.equal(provider.globalMcpSources(invalid), undefined);
   const path = join(installed.root, 'skills/shared/SKILL.md');
-  assert.deepEqual(await provider.globalSkillSources(path), [module]);
+  const roleSkill = { ...module,
+    resourceId: createHash('sha256').update(`${installed.digest}\0skills/shared/SKILL.md`).digest('hex') };
+  assert.deepEqual(await provider.globalSkillSources(path), [roleSkill]);
   const alias = join(f.root, 'SKILL.md');
   await symlink(path, alias);
-  assert.deepEqual(await provider.globalSkillSources(alias), [module], 'canonical installed identity, not path spelling');
+  assert.deepEqual(await provider.globalSkillSources(alias), [roleSkill], 'canonical installed identity, not path spelling');
+  assert.deepEqual(await provider.globalSkillSources(join(installed.root, 'other/SKILL.md')), [module],
+    'packaged same-name Skill outside role roots has module attribution but no role resource identity');
   const cyclic = join(f.root, 'cyclic-skill');
   await symlink(cyclic, cyclic);
   await assert.rejects(provider.globalSkillSources(cyclic), /ELOOP/, 'operational read failures must remain explicit');
@@ -247,13 +254,20 @@ test('role resource catalog lists loaded modules by contributing role without en
   await chmod(join(installed.root, 'skills/shared'), 0o700);
   await rm(shared);
   await symlink(outside, shared);
-  await assert.rejects(provider.readSkill('catalog', skillId('skills/shared/SKILL.md')), /escapes module/);
+  await assert.rejects(provider.readSkill('catalog', skillId('skills/shared/SKILL.md')),
+    (error: Error) => error.message === 'Module Skill could not be verified or read'
+      && error.cause instanceof Error && /escapes module/.test(error.cause.message));
   await rm(shared);
   await writeFile(shared, '---\nname: shared-skill\ndescription: "Shared text"\n---\nShared');
   await chmod(shared, 0o600);
   await writeFile(shared, 'tampered');
-  await assert.rejects(provider.resources(), /Role resource changed/);
-  await assert.rejects(provider.readSkill('catalog', skillId('skills/shared/SKILL.md')), /Role resource changed/);
+  await assert.rejects(provider.resources(),
+    (error: Error) => error.message === 'Module Skill could not be verified or read'
+      && error.cause instanceof Error && /Role resource changed/.test(error.cause.message));
+  await assert.rejects(provider.readSkill('catalog', skillId('skills/shared/SKILL.md')),
+    (error: Error) => error.message === 'Module Skill could not be verified or read'
+      && error.cause instanceof Error && /Role resource changed/.test(error.cause.message)
+      && !error.message.includes(installed.root) && !error.message.includes('skills/shared/SKILL.md'));
   loaded = [];
   assert.deepEqual(await provider.resources(), [], 'disabled or unloaded modules are omitted');
   await assert.rejects(provider.readSkill('catalog', skillId('skills/shared/SKILL.md')),

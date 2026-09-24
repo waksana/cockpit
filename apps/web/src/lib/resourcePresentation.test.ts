@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mcpConnectionLabel, resourceErrorSummary, skillSourceLabel } from './resourcePresentation';
+import { mcpConnectionLabel, moduleProvidedRows, resourceErrorSummary, skillSourceLabel } from './resourcePresentation';
 
 test('resource metadata omits internal source noise instead of inventing provenance', () => {
   for (const source of ['native', 'builtin', 'custom', 'sdk', 'project-copilot', 'unknown', undefined]) {
@@ -27,4 +27,22 @@ test('error summaries retain actual first-line text without dumping stacks or in
   assert.equal(resourceErrorSummary('Authentication required'), 'Authentication required');
   assert.equal(resourceErrorSummary('Exact ' + 'long '.repeat(80)).length, 161);
   assert.equal(resourceErrorSummary('\u{1F534}'.repeat(161)), '\u{1F534}'.repeat(160) + '…');
+});
+
+test('native attribution deduplicates only the exact opaque module Skill identity', () => {
+  const module = {
+    id: 'fixture', name: 'Fixture', roles: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }],
+    skills: [
+      { id: 'first', name: 'shared', roles: ['a'] },
+      { id: 'second', name: 'shared', roles: ['b'] },
+      { id: 'unique', name: 'unique', roles: ['a'] },
+    ],
+    mcpServers: [],
+  };
+  const native = [
+    { name: 'shared', modules: [{ id: 'fixture', name: 'Fixture', resourceId: 'first' }] },
+    { name: 'unique', modules: [{ id: 'fixture', name: 'Fixture' }] },
+  ];
+  assert.deepEqual(moduleProvidedRows([module], 'skills', native).map(row => row.resourceId), ['second', 'unique'],
+    'only exact native role-resource identity is deduplicated');
 });

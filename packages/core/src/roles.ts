@@ -1,5 +1,5 @@
 import type { SessionConfig } from '@github/copilot-sdk';
-import type { ModuleRoleResources, ModuleRoleSkill, ModuleSource, RoleSelection, SessionRole } from '@cockpit/protocol';
+import type { ModuleRoleResources, ModuleRoleSkill, ModuleSkillSource, ModuleSource, RoleSelection, SessionRole } from '@cockpit/protocol';
 
 export interface RoleAssembly {
   roles: SessionRole[];
@@ -19,7 +19,7 @@ export interface SessionInstructions {
 
 export interface RoleProvider {
   globalMcpSources?(config: object): ModuleSource[] | undefined;
-  globalSkillSources?(path: string): Promise<ModuleSource[] | undefined>;
+  globalSkillSources?(path: string): Promise<ModuleSkillSource[] | undefined>;
   list(): Array<SessionRole & { description?: string }>;
   /** Read-only catalog of resources each loaded module's roles assemble; not native global configuration. */
   resources?(): Promise<ModuleRoleResources[]>;

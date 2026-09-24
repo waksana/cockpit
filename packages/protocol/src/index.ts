@@ -219,6 +219,12 @@ export const ModuleSource = z.object({
 });
 export type ModuleSource = z.infer<typeof ModuleSource>;
 
+export const ModuleSkillSource = ModuleSource.extend({
+  resourceId: z.string().optional()
+    .describe('Opaque version-bound role Skill identity. Present only when the verified native path is a current role resource; omitted for other packaged Skills.'),
+});
+export type ModuleSkillSource = z.infer<typeof ModuleSkillSource>;
+
 export const McpConnection = z.object({
   method: z.enum(['http', 'sse', 'stdio', 'unknown']),
   target: z.string().optional().describe('HTTP/SSE hostname or local executable basename only; never URL credentials, path, query, fragment or command arguments.'),
@@ -297,7 +303,7 @@ export type McpToggleResult = z.infer<typeof McpToggleResult>;
 
 export const SkillGlobal = z.object({
   name: z.string(),
-  modules: z.array(ModuleSource).optional().describe('Modules verified against the native discovered skill path and installed file digest of currently loaded modules. Contributing roles remain unknown. Omitted when attribution is unproven.'),
+  modules: z.array(ModuleSkillSource).optional().describe('Modules verified against the native discovered skill path and installed file digest of currently loaded modules. An exact role resource identity is included only when that path is currently declared. Contributing roles remain unknown. Omitted when attribution is unproven.'),
   description: z.string().optional(),
   source: z.string().optional(),
   userInvocable: z.boolean().optional(),

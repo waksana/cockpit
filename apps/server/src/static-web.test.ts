@@ -30,7 +30,8 @@ test('the package serves its own assets without adopting a retired external asse
 });
 
 test('SPA fallback serves only recognized application routes', async () => {
-  for (const path of ['/', '/session/fixture', '/session/fixture/info', '/mcp', '/skills/project']) {
+  for (const path of ['/', '/session/fixture', '/session/fixture/info', '/mcp', '/skills/project',
+    '/skills/module/fixture/opaque-resource']) {
     const response = await app.inject({ method: 'GET', url: path });
     assert.equal(response.statusCode, 200, path);
     assert.match(response.headers['content-type'] ?? '', /text\/html/);

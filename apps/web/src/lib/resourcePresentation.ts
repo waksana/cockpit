@@ -1,4 +1,4 @@
-import type { McpConnection, ModuleRoleResources, ModuleSource } from '@cockpit/protocol';
+import type { McpConnection, ModuleRoleResources, ModuleSkillSource, ModuleSource } from '@cockpit/protocol';
 
 export function mcpConnectionLabel(connection?: McpConnection): string {
   if (!connection || connection.method === 'unknown') return '未知方式';
@@ -41,14 +41,14 @@ export interface ModuleProvidedRow {
 // unless every role of the module declares the resource. Rows already present
 // in native global configuration with the same verified module stay there only.
 export function moduleProvidedRows(modules: ModuleRoleResources[], kind: 'mcp' | 'skills',
-  native: ReadonlyArray<{ name: string; modules?: ModuleSource[] }> = []): ModuleProvidedRow[] {
+  native: ReadonlyArray<{ name: string; modules?: ModuleSkillSource[] }> = []): ModuleProvidedRow[] {
   return modules.flatMap(module => {
     const resources: Array<{ id?: string; name: string; roles: string[]; summary?: string }> = kind === 'mcp'
       ? module.mcpServers.map(server => ({ ...server,
         summary: server.tools.includes('*') ? '全部工具' : `工具：${server.tools.join('、')}` }))
       : module.skills.map(skill => ({ ...skill, summary: skill.description }));
     return resources.filter(resource => !native.some(row => row.name === resource.name
-      && row.modules?.some(source => source.id === module.id))).map(resource => {
+      && row.modules?.some(source => source.id === module.id && source.resourceId === resource.id))).map(resource => {
       const all = module.roles.every(role => resource.roles.includes(role.id));
       const roles = module.roles.filter(role => resource.roles.includes(role.id));
       return {
