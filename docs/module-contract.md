@@ -306,7 +306,8 @@ resource, and an item already listed in native global configuration with the sam
 verified module stays only there. Module resources cannot be turned off globally.
 Session MCP/Skills rows with verified `module` provenance show "随角色启用" instead of
 a session switch, because role assembly restores them on reload or cold resume;
-status and errors remain visible. Other rows keep their session switch.
+status and errors remain visible, and a module Skill that native reports disabled in
+the session shows "本会话已停用". Other rows keep their session switch.
 
 Readiness is explicit only. `roles/readiness`, `cockpit_role_readiness`, and
 `context.host.call('roles/readiness', ...)` check current assembly, native skill

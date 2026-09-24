@@ -138,6 +138,7 @@ for (const [label, Component] of [['MCP', SessionMcp], ['Skills', SessionSkills]
       skillsSession: async () => [
         { name: 'board', module, enabled: true },
         { name: 'module_board__lookalike', enabled: true },
+        { name: 'board-off', module, enabled: false },
       ],
       mcpToggleSession: mutate, skillsToggleSession: mutate,
     });
@@ -149,6 +150,12 @@ for (const [label, Component] of [['MCP', SessionMcp], ['Skills', SessionSkills]
     if (label === 'MCP') {
       assert.match(moduleRow.textContent!, /失败|failed/i);
       assert.match(moduleRow.textContent!, /Connection refused/);
+    }
+    if (label === 'Skills') {
+      assert.equal(within(moduleRow).queryByText('本会话已停用'), null);
+      const off = row(view.container, 'board-off');
+      assert.equal(within(off).queryByRole('switch'), null);
+      assert.ok(within(off).getByText('本会话已停用'), 'a natively disabled module Skill does not read as enabled');
     }
     const plain = row(view.container, 'module_board__lookalike');
     assert.equal(within(plain).queryByText('随角色启用'), null, 'provenance is never guessed from a name prefix');

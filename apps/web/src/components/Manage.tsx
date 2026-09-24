@@ -13,13 +13,14 @@ import { PaneBody, PaneHeader } from './PaneHeader';
 import { ModuleSourceBadge } from './ModuleLabel';
 import type { ModuleSource } from '@cockpit/protocol';
 import { ResourceError, ResourceProgress, ResourceRow, ResourceText, RoleEnabled } from './ResourceRow';
-import { Toggle } from './UI';
+import { Badge, Toggle } from './UI';
 import { ResourceStatus, StateNotice } from './StateNotice';
 import { useToggleRequests } from '../features/session-settings/useToggleRequests';
 import { skillSummary } from '../lib/resourcePresentation';
 
 // Role assembly restores module resources on reload, so a session switch for
 // them would only half apply; verified module provenance replaces the switch.
+// A module Skill has no connection status, so its native off state stays visible.
 function SessionToggleRow({ identity, name, summary, module, status, enabled, disabled, disabledReason, nativeError, onChange }: {
   identity: string; name: string; summary?: string; status?: ReactNode; enabled: boolean;
   module?: ModuleSource;
@@ -38,7 +39,8 @@ function SessionToggleRow({ identity, name, summary, module, status, enabled, di
         void action.run(() => onChange(name, next));
       }} />}
     status={action.busy ? <ResourceProgress>
-      {status ? desired ? '连接中' : '断开中' : desired ? '启用中' : '停用中'}</ResourceProgress> : status}
+      {status ? desired ? '连接中' : '断开中' : desired ? '启用中' : '停用中'}</ResourceProgress>
+      : status ?? (module && !enabled ? <Badge tone="off" appearance="text">本会话已停用</Badge> : undefined)}
     feedback={<>
       {nativeError && <ResourceError key={JSON.stringify([identity, 'native', nativeError])}
         error={nativeError} name={`${name}连接错误`} label="连接错误" />}
