@@ -17,8 +17,8 @@ Joint-deployment release for the accepted host changes merged after 0.4.6:
 - show module-provided Skills and MCP servers read-only in session resource
   management, including disabled Skills (#213).
 
-The prepared pairing is recorded in the [module catalog](modules.md). The next
-Task module requires the invocation metadata added by #205 and a coordinated,
-roll-forward-only schema v9 upgrade. This source preparation does not itself
-publish, install, migrate or restart anything; those remain separate steps of
-the authorized joint deployment.
+The accepted, published pairing is recorded in the [module catalog](modules.md).
+Its Task module requires the invocation metadata added by #205 and a coordinated,
+roll-forward-only schema v9 upgrade. The joint deployment was accepted before
+publication, and the Release archives match the deployed packages. Publication
+does not itself install, migrate or restart another instance.
