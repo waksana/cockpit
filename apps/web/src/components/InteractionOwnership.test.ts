@@ -137,7 +137,7 @@ test('panel keyboard scope includes the nonmodal error tray and dismissal does n
   assert.match(css, /bottom: var\(--ux-error-height, 0px\)/);
   assert.match(css, /height: calc\(100dvh - var\(--ux-error-height, 0px\)\)/);
   assert.match(css, /:root:has\(\.ux-error-notifications\) \.chat-input \{\s*padding-bottom: 0\.25rem/);
-  assert.match(css, /z-index: 45/);
+  assert.match(css, /z-index: var\(--host-z-notice\)/);
   assert.doesNotMatch(notifications, /aria-modal|onClose|navigate/);
 });
 

@@ -104,8 +104,11 @@ test('latest tool overview exposes explicit recorded failure and unknown states'
 
 test('Chat dark theme targets the mounted chat, not an impossible nested chat', () => {
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
-  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*\.chat \{[^}]*--host-color-text:/);
+  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*\.chat \{[^}]*--chat-danger-ink:/);
+  assert.match(css, /\.chat \{[^}]*--host-color-text: var\(--host-color-text-contrast\);/);
   assert.doesNotMatch(css, /\.chat \.chat \{/);
+  const tokens = compile(new URL('../styles/tokens.scss', import.meta.url).pathname).css;
+  assert.match(tokens, /@media \(prefers-color-scheme: dark\) \{\s*:root \{[^}]*--host-color-text-contrast:/);
 });
 
 test('one CSS height budget pins ordinary input but scrolls answer input with its question', () => {
@@ -166,7 +169,8 @@ test('spacing tokens own visible boundaries and placeholder stays distinct on fo
   assert.match(css, /\.msg-group\[data-gap=speaker\] \{[^}]*padding-block-start: var\(--chat-gap-speaker\)/);
   assert.match(css, /\.chat-input-message::placeholder \{[^}]*color: var\(--chat-placeholder-color\);[^}]*opacity: 1;/);
   assert.doesNotMatch(css, /:focus(?:::placeholder|[^{}]*\{[^}]*--chat-placeholder-color)/);
-  assert.equal((css.match(/--chat-placeholder-color:/g) ?? []).length, 2);
+  assert.equal((css.match(/--chat-placeholder-color:/g) ?? []).length, 1);
+  assert.equal((foundations.match(/--host-color-placeholder-contrast:/g) ?? []).length, 2, 'light and dark');
 });
 
 test('all input states share one full-width unframed editor row inside the same card', () => {
@@ -604,7 +608,7 @@ test('host controls do not add decorative hover while selection and keyboard foc
   const primitives = compile(new URL('../styles/primitives/public-ui.scss', import.meta.url).pathname).css;
   assert.match(primitives, /--ck-color-hover: var\(--host-color-hover\)/, 'retain the public token for module compatibility');
   assert.match(primitives, /:is\(\.ck-button, \.ck-icon-button, \.ck-input\):focus-visible \{[^}]*outline: 2px/);
-  assert.match(all, /\.chatlist-chat\.active \{[^}]*background-color: var\(--selected-fill\)/);
+  assert.match(all, /\.chatlist-chat\.active \{[^}]*background-color: var\(--host-color-selected\)/);
   assert.match(all, /\.manage-row\[data-selectable\]\[data-selected\] \{[^}]*background: color-mix/);
   assert.match(primitives, /\.ck-primary \{[^}]*background: var\(--ck-color-accent\)/);
 });

@@ -37,6 +37,9 @@ $sol-orange: #cb4b16;
 $sol-red:    #dc322f;  // danger
 $sol-blue:   #268bd2;  // link / info
 $sol-green:  #859900;  // ok
+// Chat composer placeholder: neutral grays tuned for contrast, outside Solarized.
+$chat-placeholder-light: #757570;
+$chat-placeholder-dark:  #92928c;
 
 :root {
   color-scheme: light dark;
@@ -93,6 +96,27 @@ $sol-green:  #859900;  // ok
   --host-color-success: #{$sol-green};
   --host-color-warning: #{$sol-orange};
   --host-color-hover: rgba(#{$sol-base00-rgb}, #{$hover-alpha});
+  --host-color-field: rgba(#{$sol-base00-rgb}, 0.08);
+  --host-color-placeholder: rgba(#{$sol-base00-rgb}, 0.5);
+  --host-color-selected: rgba(#{$sol-yellow-rgb}, 0.3);  // chatlist active row
+  --host-color-shadow: rgba(#{$sol-base03-rgb}, 0.16);
+  --host-shadow-menu: 0 0 10px var(--host-color-shadow);
+
+  // Chat reading contrast: Solarized hues, darkened (light) or lightened (dark)
+  // so small interactive text in the transcript keeps sufficient contrast.
+  --host-color-text-contrast: color-mix(in srgb, #{$sol-base01} 82%, #{$sol-base03});
+  --host-color-muted-contrast: #{$sol-base01};
+  --host-color-placeholder-contrast: #{$chat-placeholder-light};
+
+  // Stacking scale, lowest to highest. Use only these for z-index.
+  --host-z-raised: 1;      // above siblings in the same scroller (sticky editor, corner FAB)
+  --host-z-sticky: 2;      // sticky header above raised content in the same scroller
+  --host-z-fab: 30;        // floating actions over a pane
+  --host-z-inspector: 41;  // full-screen inspector overlay
+  --host-z-notice: 45;     // error notifications tray, above the inspector
+  --host-z-dev: 46;        // dev-only Chat Lab controls, above the notice tray
+  --host-z-dialog: 60;     // modal dialogs
+  --host-z-menu: 100;      // context menus, above everything including dialogs
 
   // ── Legacy tweb color NAMES → host roles (vendored rules, compatibility) ──
   --primary-color: var(--host-color-accent);
@@ -115,15 +139,15 @@ $sol-green:  #859900;  // ok
   --ripple-color: var(--host-color-hover);
   --badge-text-color: var(--host-color-on-accent);
 
-  --input-search-background-color: rgba(#{$sol-base00-rgb}, 0.08);
-  --input-placeholder-color: rgba(#{$sol-base00-rgb}, 0.5);
+  --input-search-background-color: var(--host-color-field);
+  --input-placeholder-color: var(--host-color-placeholder);
 
   --scrollbar-color: rgba(#{$sol-base00-rgb}, 0.25);
   --menu-background-color: var(--host-color-surface);
-  --menu-box-shadow-color: rgba(#{$sol-base03-rgb}, 0.16);
-  --menu-box-shadow: 0 0 10px var(--menu-box-shadow-color);
+  --menu-box-shadow-color: var(--host-color-shadow);
+  --menu-box-shadow: var(--host-shadow-menu);
 
-  --selected-fill: rgba(#{$sol-yellow-rgb}, 0.3);  // chatlist active row
+  --selected-fill: var(--host-color-selected);
 }
 
 // ── Dark theme (Solarized dark) ─────────────────────────────────────────────
@@ -137,8 +161,12 @@ $sol-green:  #859900;  // ok
     --host-color-on-accent: #{$sol-base03};
     --host-color-hover: rgba(#{$sol-base0-rgb}, #{$hover-alpha});
 
-    --input-search-background-color: rgba(#{$sol-base0-rgb}, 0.08);
-    --input-placeholder-color: rgba(#{$sol-base0-rgb}, 0.5);
+    --host-color-field: rgba(#{$sol-base0-rgb}, 0.08);
+    --host-color-placeholder: rgba(#{$sol-base0-rgb}, 0.5);
+    --host-color-text-contrast: color-mix(in srgb, #{$sol-base1} 85%, #{$sol-base3});
+    --host-color-muted-contrast: #{$sol-base1};
+    --host-color-placeholder-contrast: #{$chat-placeholder-dark};
+
     --scrollbar-color: rgba(#{$sol-base0-rgb}, 0.25);
   }
 }

@@ -5,7 +5,7 @@
 
 .btn-menu {
   position: fixed;
-  z-index: 100;
+  z-index: var(--host-z-menu);
   width: max-content;
   max-width: calc(100vw - 16px);
   font-size: var(--host-text-body);

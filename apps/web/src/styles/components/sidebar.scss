@@ -16,7 +16,7 @@
     position: absolute;
     inset-inline-start: 0.7rem;
     font-size: 1.35rem;
-    color: var(--secondary-text-color);
+    color: var(--host-color-muted);
     opacity: 0.6;
     pointer-events: none;
     display: inline-flex;
@@ -30,11 +30,11 @@
     width: 100%;
     height: var(--height);
     padding: 0 2.5rem;
-    padding-inline-end: calc(var(--ck-control-size) + 4px);
+    padding-inline-end: calc(var(--ck-control-size) + var(--host-space-xs));
     border: none;
     border-radius: calc(var(--height) / 2);
-    background-color: var(--input-search-background-color);
-    &::placeholder { color: var(--input-placeholder-color); }
+    background-color: var(--host-color-field);
+    &::placeholder { color: var(--host-color-placeholder); }
     &::-webkit-search-cancel-button { display: none; }
   }
   &-clear {
@@ -72,7 +72,7 @@
   border-radius: var(--border-radius-medium);
   overflow: hidden;             // clip content to the rounded row
 
-  &.active { background-color: var(--selected-fill); }
+  &.active { background-color: var(--host-color-selected); }
 
   // Unloaded = not resident in memory. Dim the row's identity/content so
   // "what's loaded" reads at a glance, replacing the old "空闲" status word.
@@ -95,7 +95,7 @@
     grid-area: time;
     justify-self: end;
     font-size: var(--font-size-12);
-    color: var(--tertiary-text-color);
+    color: var(--host-color-faint);
     white-space: nowrap;
   }
   .session-row-details {
@@ -131,7 +131,7 @@
     flex: 1 1 0;
     min-width: 0;
     font-size: var(--font-size-12);
-    color: var(--tertiary-text-color);
+    color: var(--host-color-faint);
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
@@ -147,9 +147,9 @@
   .dialog-status {
     font-size: var(--font-size-12);
     white-space: nowrap;
-    color: var(--secondary-text-color);
-    &[data-tone='running'], &[data-tone='waiting'] { color: var(--primary-color); }
-    &[data-tone='error'] { color: var(--danger-color); }
+    color: var(--host-color-muted);
+    &[data-tone='running'], &[data-tone='waiting'] { color: var(--host-color-accent); }
+    &[data-tone='error'] { color: var(--host-color-danger); }
   }
 }
 
@@ -157,5 +157,5 @@
   padding: 1.5rem 0.8rem;
   text-align: center;
   font-size: var(--font-size-14);
-  color: var(--secondary-text-color);
+  color: var(--host-color-muted);
 }

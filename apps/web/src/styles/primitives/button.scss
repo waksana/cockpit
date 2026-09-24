@@ -7,7 +7,7 @@
   bottom: var(--offset);
   inset-inline-end: var(--offset);
   transform: translate3d(0, var(--translateY), 0);
-  z-index: 1;
+  z-index: var(--host-z-raised);
   background-color: var(--primary-color);
   color: var(--badge-text-color);
   padding: 0;
