@@ -406,6 +406,22 @@ export const RoleSelection = z.object({ moduleId: z.string().regex(/^[a-z][a-z0-
 export type RoleSelection = z.infer<typeof RoleSelection>;
 export const SessionRole = RoleSelection.extend({ name: z.string(), moduleName: z.string() });
 export type SessionRole = z.infer<typeof SessionRole>;
+
+const RoleIds = z.array(z.string()).min(1)
+  .describe('IDs of this module\'s roles that declare the resource, sorted and deduplicated.');
+// Resources a loaded module's roles assemble into sessions selecting them. Not native global configuration.
+export const ModuleRoleResources = z.object({
+  id: z.string(),
+  name: z.string(),
+  roles: z.array(z.object({ id: z.string(), name: z.string() })).describe('Every role this module declares, sorted by ID.'),
+  skills: z.array(z.object({ name: z.string(), description: z.string().optional(), roles: RoleIds })),
+  mcpServers: z.array(z.object({
+    name: z.string(),
+    tools: z.array(z.string()).describe('Union of declared tool subsets; ["*"] means all tools the module server offers.'),
+    roles: RoleIds,
+  })),
+});
+export type ModuleRoleResources = z.infer<typeof ModuleRoleResources>;
 export const RoleReadiness = z.object({
   sessionId: z.string(), loaded: z.boolean(), ready: z.boolean(),
   roles: z.array(SessionRole), reasons: z.array(z.string()),
@@ -681,6 +697,11 @@ export const Intents = {
   'roles/list': {
     body: z.object({}).strict(),
     result: z.object({ roles: z.array(SessionRole.extend({ description: z.string().optional() })) }),
+  },
+  'roles/resources': {
+    description: 'Read the Skills and MCP servers that currently loaded modules\' roles assemble into sessions selecting those roles, by module and contributing role. Read-only: not native global configuration, enablement, connection or readiness, and it cannot be toggled globally. Omits endpoints, digests and file paths.',
+    body: z.object({}).strict(),
+    result: z.object({ modules: z.array(ModuleRoleResources) }),
   },
   'roles/add': {
     description: 'Save additional module roles for the same session, including while native work is busy. Does not load, reload, interrupt or send a prompt. Saved roles take effect on an explicit idle reload or the next cold load; ordinary native/global resource defaults apply. rolesNeedReload compares saved roles with the current handle. Saving does not establish capability readiness; inspect uncertain persistence before retrying.',

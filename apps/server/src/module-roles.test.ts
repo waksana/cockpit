@@ -198,6 +198,46 @@ test('shared skills retain only actual contributors through overlapping roots, d
     [{ id: 'executor', name: 'Executor' }, { id: 'owner', name: 'Current Owner' }]);
 });
 
+test('role resource catalog lists loaded modules by contributing role without endpoints, digests or paths', async t => {
+  const f = await moduleFixture(t);
+  const entries = moduleEntries('catalog', undefined, { roles: [
+    { id: 'owner', name: 'Owner', skillDirectories: ['skills', 'skills/shared'],
+      mcpServers: { tools: { type: 'http', path: '/mcp', tools: ['read'] } } },
+    { id: 'executor', name: 'Executor', skillDirectories: ['skills/shared'],
+      mcpServers: { tools: { type: 'http', path: '/mcp', tools: ['report', 'read'] },
+        wide: { type: 'http', path: '/wide', tools: ['*', 'x'] } } },
+    { id: 'observer', name: 'Observer' },
+  ] });
+  entries.push(
+    { path: 'skills/shared/SKILL.md', content: '---\nname: shared-skill\ndescription: "Shared text"\n---\nShared' },
+    { path: 'skills/owner/SKILL.md', content: '---\nname: owner-skill\ndescription: >\n  Folded\n  owner text\n---\nOwner' },
+  );
+  const installed = await installLocalModule(await f.package(entries), { trustLocalCode: true, enable: true });
+  const empty = await installLocalModule(await f.package(moduleEntries('plain')), { trustLocalCode: true, enable: true });
+  let loaded = [empty, installed];
+  const provider = new ModuleRoles(f.hostRoot, 'http://127.0.0.1', () => loaded);
+  const value = await provider.resources();
+  assert.deepEqual(value, [{
+    id: 'catalog', name: 'Fixture catalog',
+    roles: [{ id: 'executor', name: 'Executor' }, { id: 'observer', name: 'Observer' }, { id: 'owner', name: 'Owner' }],
+    skills: [
+      { name: 'owner-skill', description: 'Folded owner text', roles: ['owner'] },
+      { name: 'shared-skill', description: 'Shared text', roles: ['executor', 'owner'] },
+    ],
+    mcpServers: [
+      { name: 'tools', tools: ['read', 'report'], roles: ['executor', 'owner'] },
+      { name: 'wide', tools: ['*'], roles: ['executor'] },
+    ],
+  }], 'modules without role resources are omitted');
+  assert.doesNotMatch(JSON.stringify(value), new RegExp(`${installed.digest}|${installed.root}|/_modules/|http`));
+  const shared = join(installed.root, 'skills/shared/SKILL.md');
+  await chmod(shared, 0o600);
+  await writeFile(shared, 'tampered');
+  await assert.rejects(provider.resources(), /Role resource changed/);
+  loaded = [];
+  assert.deepEqual(await provider.resources(), [], 'disabled or unloaded modules are omitted');
+});
+
 test('unrelated modules cannot claim the same literal MCP name', async t => {
   const f = await moduleFixture(t);
   for (const id of ['first', 'second']) {

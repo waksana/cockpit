@@ -43,6 +43,11 @@ export function ResourceList({ hint, children }: { hint?: ReactNode; children: R
   </>;
 }
 
+// Module role resources follow role assembly; they have no switch here.
+export function RoleEnabled() {
+  return <span className="manage-role-enabled">随角色启用</span>;
+}
+
 export function ResourceProgress({ children }: { children: ReactNode }) {
   return <Badge className="mcp-status mcp-operation-status" tone="pending" appearance="text">
     <Icon name="loading" className="spinner" size={10} />{children}

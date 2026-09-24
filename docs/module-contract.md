@@ -258,6 +258,7 @@ reject such manifests, because the manifest schema is strict.
 | Intent | Shape |
 | --- | --- |
 | `roles/list {}` | `{ roles: [{ moduleId, roleId, moduleName, name, description? }] }` |
+| `roles/resources {}` | `{ modules: [{ id, name, roles: [{ id, name }], skills: [{ name, description?, roles }], mcpServers: [{ name, tools, roles }] }] }`; see below. |
 | `session/new { cwd, roles? }` | Creates one native session; result `{ sessionId }`. |
 | `roles/readiness { sessionId, roles? }` | Passive readiness: `sessionId`, `loaded`, `ready`, `roles`, `reasons`, optional `appliedRoles`, `rolesNeedReload`. |
 | `session/tools-initialize { sessionId }` | Initializes native tool table on a loaded idle session; `{ ok: true }`. |
@@ -291,6 +292,21 @@ may include `modules: ModuleSource[]` only after verifying manifests by origin,
 digest, endpoint or real `SKILL.md` path/SHA-256. Unknown resources stay unlabeled.
 `mcp/global.connection.method` is `http`, `sse`, `stdio` or `unknown`; `target` is
 only hostname or executable basename. `mcp/session` has no `connection` field.
+
+`roles/resources` is the read-only catalog of what currently loaded modules' roles
+assemble into sessions that select them: per module, every declared role, then each
+Skill (name, optional frontmatter description) and MCP server (name, union of tool
+subsets, `['*']` for all) with the IDs of the roles declaring it. Skill bodies are
+verified against the installed digest; changed files fail the read. Modules without
+role resources are omitted. It is not native global configuration, enablement,
+connection or readiness and omits endpoints, digests and file paths. The classic global
+MCP/Skills pages show it as a separate read-only "模块提供" group without switches;
+the label names contributing roles unless every role of the module declares the
+resource, and an item already listed in native global configuration with the same
+verified module stays only there. Module resources cannot be turned off globally.
+Session MCP/Skills rows with verified `module` provenance show "随角色启用" instead of
+a session switch, because role assembly restores them on reload or cold resume;
+status and errors remain visible. Other rows keep their session switch.
 
 Readiness is explicit only. `roles/readiness`, `cockpit_role_readiness`, and
 `context.host.call('roles/readiness', ...)` check current assembly, native skill

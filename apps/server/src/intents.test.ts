@@ -50,6 +50,7 @@ const engine: ServerEngine = {
   busyCount: async () => sessions.filter(sessionMetaBusy).length,
   newSession: async (...args) => record('newSession', args, 'created'),
   listRoles: (...args) => record('listRoles', args, []),
+  listRoleResources: async (...args) => record('listRoleResources', args, []),
   addRoles: async (...args) => record('addRoles', args, {
     sessionId: 's', status: 'saved' as const, roles: [], appliedRoles: [], loaded: true, rolesNeedReload: false,
   }),
@@ -163,6 +164,7 @@ const cases = {
   'runtime/snapshot': { body: {}, method: 'snapshot', args: [] },
   'session/new': { body: { cwd: '/fixture' }, method: 'newSession', args: ['/fixture'] },
   'roles/list': { body: {}, method: 'listRoles', args: [] },
+  'roles/resources': { body: {}, method: 'listRoleResources', args: [] },
   'roles/add': { body: { sessionId: 's', roles: [{ moduleId: 'fixture', roleId: 'owner' }] },
     method: 'addRoles', args: ['s', [{ moduleId: 'fixture', roleId: 'owner' }]] },
   'roles/readiness': { body: { sessionId: 's' }, method: 'roleReadiness', args: ['s', undefined] },
