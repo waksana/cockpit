@@ -16,6 +16,7 @@ export function chatLabPlugin(): Plugin {
     async configureServer(server) {
       const modules = labModuleHandler(await loadLabModules({
         file: process.env.COCKPIT_LAB_FILE_ROOT,
+        speech: process.env.COCKPIT_LAB_SPEECH_ROOT,
       }));
       server.httpServer?.once('close', () => modules.dispose());
       server.middlewares.use((request, response, next) => {
