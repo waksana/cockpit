@@ -1,7 +1,8 @@
+import { act, fireEvent } from '../test/dom';
 import assert, { assertIdentityList } from '../test/identityAssert';
 import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
-import { act, createElement, Fragment, useCallback, useLayoutEffect, useState, useSyncExternalStore } from 'react';
+import { createElement, Fragment, useCallback, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { getSessionDraft } from '../lib/textDraft';
@@ -34,175 +35,92 @@ import { workspaceSessionId } from '../dev/workspace-fixtures';
 import App from '../App';
 import { failOnReport } from '../test/failOnReport';
 
-// A deterministic DOM host for real React mounts/effects, not a replacement
-// scroll owner. Each rendered message occupies 100px in a 300px viewport.
-class HostNode extends EventTarget {
-  nodeType = 1;
-  nodeName: string;
-  tagName: string;
-  namespaceURI = 'http://www.w3.org/1999/xhtml';
-  ownerDocument: HostDocument;
-  parentNode: HostNode | null = null;
-  childNodes: HostNode[] = [];
-  attributes = new Map<string, string>();
-  style = { setProperty() {}, removeProperty() {} };
-  // React's input-event fallback is selected before this fixture installs a DOM.
-  attachEvent() {}
-  detachEvent() {}
-  scrollTop = 0;
-  clientTop = 0;
-  clientHeight = 300;
-  clientWidth = 600;
-  private text = '';
-  selected = false;
-  private controlValue = '';
-  selectionStart = 0;
-  selectionEnd = 0;
-  setSelectionRange(start: number, end: number) { this.selectionStart = start; this.selectionEnd = end; }
-
-  constructor(tag: string, document: HostDocument) {
-    super();
-    this.nodeName = this.tagName = tag.toUpperCase();
-    this.ownerDocument = document;
-  }
-
-  get firstChild() { return this.childNodes[0] ?? null; }
-  get isConnected(): boolean { return this === this.ownerDocument.body || (this.parentNode?.isConnected ?? false); }
-  focus() { this.ownerDocument.activeElement = this; }
-  scrollIntoView() {}
-  getClientRects() {
-    if (!this.isConnected || this.closest('[hidden]') || this.closest('[inert]')) return [];
-    for (let parent = this.parentNode; parent; parent = parent.parentNode) {
-      if (parent.tagName === 'DETAILS' && !parent.open
-        && !parent.childNodes.find(node => node.tagName === 'SUMMARY')?.contains(this)) return [];
-    }
-    return [this.getBoundingClientRect()];
-  }
-  get textContent(): string { return this.text + this.childNodes.map(node => node.textContent).join(''); }
-  set textContent(text: string) {
-    this.text = text;
-    for (const node of this.childNodes) node.parentNode = null;
-    this.childNodes = [];
-  }
-  get dataset() { return { messageId: this.getAttribute('data-message-id'), sessionId: this.getAttribute('data-session-id') }; }
-  get options(): HostNode[] { return this.childNodes; }
-  get open() { return this.attributes.has('open'); }
-  set open(value: boolean) { if (value) this.setAttribute('open', ''); else this.removeAttribute('open'); }
-  showModal() { this.open = true; }
-  close() { this.open = false; }
-  get value(): string {
-    if (this.tagName === 'OPTION') return this.getAttribute('value') ?? this.textContent;
-    if (this.tagName === 'SELECT') return this.options.find(option => option.selected)?.value ?? '';
-    return this.controlValue;
-  }
-  set value(value: string) {
-    this.controlValue = value;
-    if (this.tagName === 'SELECT') for (const option of this.options) option.selected = option.value === value;
-  }
-  get scrollHeight() { return this.querySelectorAll('[data-message-frame]').length * 100; }
-  appendChild(node: HostNode) { return this.insertBefore(node, null); }
-  insertBefore(node: HostNode, before: HostNode | null) {
-    node.parentNode?.removeChild(node);
-    const index = before ? this.childNodes.indexOf(before) : this.childNodes.length;
-    this.childNodes.splice(index, 0, node);
-    node.parentNode = this;
-    return node;
-  }
-  removeChild(node: HostNode) {
-    if (node.contains(this.ownerDocument.activeElement)) this.ownerDocument.activeElement = this.ownerDocument.body;
-    this.childNodes.splice(this.childNodes.indexOf(node), 1);
-    node.parentNode = null;
-    return node;
-  }
-  setAttribute(name: string, value: string) {
-    this.attributes.set(name, String(value));
-    if (name === 'disabled' && this.ownerDocument.activeElement === this) this.ownerDocument.activeElement = this.ownerDocument.body;
-  }
-  removeAttribute(name: string) { this.attributes.delete(name); }
-  getAttribute(name: string) { return this.attributes.get(name) ?? null; }
-  matches(selector: string): boolean {
-    if (selector.endsWith(':not(:disabled)')) return !this.attributes.has('disabled') && this.matches(selector.slice(0, -':not(:disabled)'.length));
-    if (selector === ':disabled') return this.attributes.has('disabled');
-    if (/^[a-z]+$/i.test(selector)) return this.tagName === selector.toUpperCase();
-    if (selector.startsWith('.')) return (this.getAttribute('class') ?? '').split(' ').includes(selector.slice(1));
-    const match = /^\[([^=\]]+)(?:="([^"]*)")?\]$/.exec(selector);
-    return !!match && this.attributes.has(match[1])
-      && (match[2] === undefined || this.getAttribute(match[1]) === match[2]);
-  }
-  closest(selector: string): HostNode | null {
-    return this.matches(selector) ? this : this.parentNode?.closest(selector) ?? null;
-  }
-  querySelectorAll(selector: string): HostNode[] {
-    return this.childNodes.flatMap(node => [
-      ...(node.matches(selector) ? [node] : []), ...node.querySelectorAll(selector),
-    ]);
-  }
-  querySelector(selector: string) { return this.querySelectorAll(selector)[0] ?? null; }
-  contains(node: HostNode | null): boolean {
-    return node === this || this.childNodes.some(child => child.contains(node));
-  }
-  getBoundingClientRect(): { top: number; bottom: number; left: number; right: number } {
-    const viewport = this.closest('.chat-messages');
-    if (!viewport || this === viewport) return { top: 0, bottom: 300, left: 0, right: this.clientWidth };
-    const frame = this.closest('[data-message-frame]');
-    const top = frame ? viewport.querySelectorAll('[data-message-frame]').indexOf(frame) * 100 - viewport.scrollTop
-      : -viewport.scrollTop;
-    return { top, bottom: top + (frame ? 100 : viewport.scrollHeight), left: 0, right: this.clientWidth };
-  }
-}
-
-class HostDocument extends EventTarget {
-  nodeType = 9;
-  visibilityState = 'visible';
-  documentElement = new HostNode('html', this);
-  body = new HostNode('body', this);
-  activeElement = this.body;
-  createElement(tag: string) { return new HostNode(tag, this); }
-  createElementNS(_namespace: string, tag: string) { return this.createElement(tag); }
-  createTextNode(text: string) {
-    const node = new HostNode('#text', this);
-    node.nodeType = 3;
-    node.textContent = text;
-    return node;
-  }
-  getSelection() { return null; }
-}
-
-class HostWindow extends EventTarget {
-  override removeEventListener(type: string, callback: EventListenerOrEventListenerObject | null, options?: EventListenerOptions | boolean) {
-    // Node's EventTarget does not normalize boolean capture options on removal.
-    super.removeEventListener(type, callback, typeof options === 'boolean' ? { capture: options } : options);
-  }
-}
+type TestElement = HTMLElement & {
+  value: string;
+  selectionStart: number;
+  selectionEnd: number;
+  setSelectionRange(start: number, end: number): void;
+  open: boolean;
+  scrollLeft: number;
+};
 
 test('Thread lifecycle: re-entry follows latest while mounted updates preserve the reader and resources', async t => {
-  const document = new HostDocument();
   const frames = new Map<number, FrameRequestCallback>();
   const resizes = new Set<() => void>();
   let frameId = 0;
-  const globals: Record<string, unknown> = {
-    document,
-    window: Object.assign(new HostWindow(), { document, HTMLIFrameElement: class {}, innerWidth: 1000, innerHeight: 800,
-      history: { state: null } }),
-    Element: HostNode, HTMLElement: HostNode, HTMLButtonElement: HostNode,
-    CSS: { escape: (id: string) => id, supports: () => false },
-    IS_REACT_ACT_ENVIRONMENT: true,
-    requestAnimationFrame: (callback: FrameRequestCallback) => { frames.set(++frameId, callback); return frameId; },
-    cancelAnimationFrame: (id: number) => { frames.delete(id); },
-    getComputedStyle: () => ({ lineHeight: '21px' }),
-    ResizeObserver: class {
-      private callback: () => void;
-      constructor(callback: () => void) { this.callback = callback; resizes.add(callback); }
-      observe() {}
-      disconnect() { resizes.delete(this.callback); }
-    },
-  };
-  const restoreGlobals: (() => void)[] = [];
-  for (const [key, value] of Object.entries(globals)) {
-    const original = Object.getOwnPropertyDescriptor(globalThis, key);
-    Object.defineProperty(globalThis, key, { value, configurable: true });
-    restoreGlobals.push(() => original ? Object.defineProperty(globalThis, key, original) : Reflect.deleteProperty(globalThis, key));
-  }
+  t.mock.method(globalThis, 'requestAnimationFrame', (callback: FrameRequestCallback) => { frames.set(++frameId, callback); return frameId; });
+  t.mock.method(globalThis, 'cancelAnimationFrame', (id: number) => { frames.delete(id); });
+  t.mock.method(globalThis, 'getComputedStyle', () => ({ lineHeight: '21px' }) as CSSStyleDeclaration);
+  const originalResizeObserver = Object.getOwnPropertyDescriptor(globalThis, 'ResizeObserver');
+  Object.defineProperty(globalThis, 'ResizeObserver', { configurable: true, value: class {
+    private observed = new Set<Element>();
+    private callback: () => void;
+    constructor(callback: ResizeObserverCallback) {
+      this.callback = () => callback(Array.from(this.observed).map(target => ({
+        target, contentRect: target.getBoundingClientRect(),
+      }) as ResizeObserverEntry), this as unknown as ResizeObserver);
+      resizes.add(this.callback);
+    }
+    observe(target: Element) { this.observed.add(target); }
+    unobserve(target: Element) { this.observed.delete(target); }
+    disconnect() { this.observed.clear(); resizes.delete(this.callback); }
+  } });
+  const originalClientHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight');
+  const originalClientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+  const originalScrollHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollHeight');
+  const originalScrollWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollWidth');
+  const heights = new WeakMap<Element, number>();
+  const widths = new WeakMap<Element, number>();
+  const scrollWidths = new WeakMap<Element, number>();
+  // happy-dom has no layout; these metrics preserve the old 300px viewport
+  // and 100px-per-message model used by the scroll lifecycle assertions.
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+    configurable: true, get() { return heights.get(this) ?? 300; }, set(value) { heights.set(this, value); },
+  });
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+    configurable: true, get() { return widths.get(this) ?? 600; }, set(value) { widths.set(this, value); },
+  });
+  Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get() { return this.querySelectorAll('[data-message-frame]').length * 100; },
+  });
+  Object.defineProperty(HTMLElement.prototype, 'scrollWidth', {
+    configurable: true,
+    get() { return scrollWidths.get(this) ?? this.clientWidth; },
+    set(value) { scrollWidths.set(this, value); },
+  });
+  const originalQuerySelector = Element.prototype.querySelector;
+  const originalQuerySelectorAll = Element.prototype.querySelectorAll;
+  t.mock.method(Element.prototype, 'querySelector', function (this: Element, selector: string) {
+    try {
+      return originalQuerySelector.call(this, selector);
+    } catch (error) {
+      if (selector.startsWith('[data-message-id="') && selector.endsWith('"]')) {
+        return Array.from(originalQuerySelectorAll.call(this, '[data-message-id]'))
+          .find(node => `[data-message-id="${CSS.escape(node.getAttribute('data-message-id') ?? '')}"]` === selector) ?? null;
+      }
+      throw error;
+    }
+  });
+  t.mock.method(HTMLElement.prototype, 'getBoundingClientRect', function (this: HTMLElement) {
+    const viewport = this.closest<HTMLElement>('.chat-messages');
+    const width = this.clientWidth;
+    if (!viewport || this === viewport) return { top: 0, bottom: 300, left: 0, right: width, width, height: 300, x: 0, y: 0, toJSON() { return this; } } as DOMRect;
+    const frame = this.closest<HTMLElement>('[data-message-frame]');
+    const top = frame ? Array.from(viewport.querySelectorAll('[data-message-frame]')).indexOf(frame) * 100 - viewport.scrollTop
+      : -viewport.scrollTop;
+    const height = frame ? 100 : viewport.scrollHeight;
+    return { top, bottom: top + height, left: 0, right: width, width, height, x: 0, y: top, toJSON() { return this; } } as DOMRect;
+  });
+  t.mock.method(HTMLElement.prototype, 'getClientRects', function (this: HTMLElement) {
+    if (!this.isConnected || this.closest('[hidden]') || this.closest('[inert]')) return [] as unknown as DOMRectList;
+    for (let parent = this.parentElement; parent; parent = parent.parentElement) {
+      if (parent instanceof HTMLDetailsElement && !parent.open
+        && !parent.querySelector('summary')?.contains(this)) return [] as unknown as DOMRectList;
+    }
+    return [this.getBoundingClientRect()] as unknown as DOMRectList;
+  });
+  t.mock.method(Element.prototype, 'scrollIntoView', () => {});
   t.mock.method(globalThis, 'fetch', async () => { throw new Error('Lifecycle fixture must not access a backend'); });
   const previousConnection = useCockpit.getState().connState;
   const previousSnapshotReady = useCockpit.getState().snapshotReady;
@@ -210,11 +128,21 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   useCockpit.setState({ connState: 'open', snapshotReady: true });
   const container = document.createElement('div');
   document.body.appendChild(container);
-  const root = createRoot(container as unknown as HTMLElement);
+  const root = createRoot(container);
   t.after(async () => {
     await act(() => root.unmount());
+    container.remove();
     useCockpit.setState({ connState: previousConnection, snapshotReady: previousSnapshotReady, sessions: previousSessions });
-    for (const restore of restoreGlobals) restore();
+    if (originalResizeObserver) Object.defineProperty(globalThis, 'ResizeObserver', originalResizeObserver);
+    else Reflect.deleteProperty(globalThis, 'ResizeObserver');
+    if (originalClientHeight) Object.defineProperty(HTMLElement.prototype, 'clientHeight', originalClientHeight);
+    else Reflect.deleteProperty(HTMLElement.prototype, 'clientHeight');
+    if (originalClientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', originalClientWidth);
+    else Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth');
+    if (originalScrollHeight) Object.defineProperty(HTMLElement.prototype, 'scrollHeight', originalScrollHeight);
+    else Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight');
+    if (originalScrollWidth) Object.defineProperty(HTMLElement.prototype, 'scrollWidth', originalScrollWidth);
+    else Reflect.deleteProperty(HTMLElement.prototype, 'scrollWidth');
   });
   await t.test('module decorations receive exact speech and host ask identities, and failed modules release their resources', async subtest => {
     type Observation = MessageIdentity & { complete: boolean; element: HTMLDivElement };
@@ -288,14 +216,14 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(Object.hasOwn(speech, 'agentId'), false, 'root does not invent an agent identifier');
     assert.equal(speech.complete, false);
     assert.equal(speech.element?.textContent, 'Exact root speech');
-    assert.equal((speech.element as unknown as HostNode).parentNode?.querySelector('.fixture-decoration')?.parentNode,
-      (speech.element as unknown as HostNode).parentNode, 'the real marker is a sibling in the existing presentation parent');
+    assert.equal(speech.element.parentElement?.querySelector('.fixture-decoration')?.parentElement,
+      speech.element.parentElement, 'the real marker is a sibling in the existing presentation parent');
     assert.equal(container.querySelector('.module-message-decorations'), null, 'the marker has no framework placeholder');
     const ask = contexts.get(JSON.stringify(['ask', 'host-request', undefined]))!;
     assert.equal(ask.sessionId, 'host-route');
     assert.equal(ask.complete, true);
     assert.equal(ask.element?.textContent, 'Exact pending question');
-    assert.equal((ask.element as unknown as HostNode).getAttribute('class'), 'chat-ask-q');
+    assert.equal(ask.element.getAttribute('class'), 'chat-ask-q');
     assert.equal(contexts.size, 4, 'closed children, thoughts and unattributed system text have no message boundary');
     const user = contexts.get(JSON.stringify(['message', 'user', undefined]))!;
     assert.equal(user.kind, 'message');
@@ -304,9 +232,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(contexts.get(JSON.stringify(['message', 'fragment-native', undefined]))?.complete, false,
       'a loaded history fragment is not treated as a completed assistant reply');
     const clickChild = async () => {
-      const event = new Event('click', { bubbles: true });
-      Object.defineProperty(event, 'target', { value: container.querySelector('.subagent-head') });
-      await act(() => container.dispatchEvent(event));
+      const target = container.querySelector<HTMLElement>('.subagent-head');
+      assert.ok(target);
+      await act(async () => { fireEvent.click(target); });
     };
     await clickChild();
     const child = contexts.get(JSON.stringify(['message', 'native-shared', 'native-child']))!;
@@ -372,13 +300,11 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const node = (selector: string) => {
       const result = container.querySelector(selector);
       assert.ok(result, selector);
-      return result;
+      return result as HTMLElement;
     };
-    const click = async (target: HostNode) => {
+    const click = async (target: HTMLElement) => {
       target.focus();
-      const event = new Event('click', { bubbles: true, cancelable: true });
-      Object.defineProperty(event, 'target', { value: target });
-      await act(async () => { container.dispatchEvent(event); });
+      await act(async () => { fireEvent.click(target); });
     };
     function Location() { return createElement('output', { className: 'fixture-route' }, useLocation().pathname); }
     function Management() {
@@ -396,7 +322,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       })));
     };
     const noNestedButtons = () => {
-      for (const button of container.querySelectorAll('button')) assert.equal(button.querySelector('button'), null);
+      for (const button of Array.from(container.querySelectorAll('button'))) assert.equal(button.querySelector('button'), null);
     };
     for (const enhanced of [false, true]) {
       if (enhanced) await act(async () => { await runtime.start(); });
@@ -407,13 +333,11 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(container.querySelectorAll('button').length, 1, 'menu extensions do not add a main-view button');
       await click(trigger);
       assert.equal(trigger.getAttribute('aria-expanded'), 'true');
-      const items = container.querySelectorAll('[role="menuitem"]');
+      const items = Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]'));
       assert.deepEqual(items.map(item => item.textContent), enhanced ? ['全局 MCP', '全局 Skills', 'Module navigation'] : ['全局 MCP', '全局 Skills']);
       assert.equal(document.activeElement, items[0], 'opening focuses the first native menu command');
-      const end = new Event('keydown', { bubbles: true, cancelable: true });
-      Object.defineProperties(end, { target: { value: items[0] }, key: { value: 'End' } });
-      await act(() => container.dispatchEvent(end));
-      assert.equal(document.activeElement, items.at(-1));
+      await act(() => { fireEvent.keyDown(items[0], { key: 'End' }); });
+      assert.equal(document.activeElement, items[items.length - 1]);
       noNestedButtons();
       await act(() => new Promise(resolve => setTimeout(resolve, 1)));
       const escape = new Event('keydown', { cancelable: true });
@@ -425,12 +349,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(document.activeElement, trigger);
       if (enhanced) {
         await click(trigger);
-        await click(container.querySelectorAll('[role="menuitem"]')[2]);
+        await click(Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]'))[2]);
         assert.equal(container.querySelector('[role="menu"]'), null);
         assert.equal(document.activeElement, trigger, 'module actions share native menu close/focus behavior');
       }
       await click(trigger);
-      await click(container.querySelectorAll('[role="menuitem"]')[1]);
+      await click(Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]'))[1]);
       assert.equal(node('.fixture-route').textContent, '/skills');
       assert.equal(container.querySelector('[role="menu"]'), null);
       assert.equal(document.activeElement, trigger);
@@ -440,7 +364,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(document.activeElement, document.body, 'entering management does not move focus to Back');
       assert.equal(node('.pane-title').textContent, '全局 Skills');
       const refresh = node('[aria-label="刷新"]');
-      assert.equal(refresh.attributes.has('disabled'), false);
+      assert.equal(refresh.hasAttribute('disabled'), false);
       await click(refresh);
       assert.equal(refreshes, enhanced ? 2 : 1);
       if (enhanced) await click(node('[aria-label="Module list action"]'));
@@ -501,18 +425,18 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       runtime.stop();
       useCockpit.setState(previous, true);
     });
-    const event = async (target: HostNode, type: string, fields: Record<string, unknown> = {}) => {
+    const event = async (target: Element, type: string, fields: Record<string, unknown> = {}) => {
       const input = new Event(type, { bubbles: true, cancelable: true });
-      Object.defineProperties(input, Object.fromEntries(Object.entries({ target, ...fields }).map(([key, value]) => [key, { value }])));
-      await act(() => { container.dispatchEvent(input); });
+      Object.defineProperties(input, Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, { value }])));
+      await act(() => { fireEvent(target, input); });
     };
-    const click = (target: HostNode) => event(target, 'click', { detail: 0 });
+    const click = (target: Element) => event(target, 'click', { detail: 0 });
     const node = (selector: string) => {
       const value = container.querySelector(selector);
       assert.ok(value, selector);
-      return value;
+      return value as HTMLElement;
     };
-    const items = () => container.querySelectorAll('[role="menuitem"]');
+    const items = () => Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]'));
     const labels = () => items().map(item => item.textContent);
     const refresh = () => act(() => { for (const listener of listeners) listener(); });
     await act(() => root.render(createElement(ModuleRuntimeProvider, { runtime,
@@ -534,7 +458,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     disabled = true;
     await refresh();
     assert.equal(document.activeElement, items()[0], 'a disabled focused module command returns to a valid native command');
-    assert.equal(items()[4].attributes.has('disabled'), true);
+    assert.equal(items()[4].hasAttribute('disabled'), true);
     await event(items()[0], 'keydown', { key: 'End' });
     assert.equal(document.activeElement, items()[3], 'keyboard skips disabled module commands');
     visible = false;
@@ -593,11 +517,13 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       return createElement('button', { ...useLongPress(() => { opens++; }), className: 'gesture' });
     }
     const pointer = async (type: string, fields: Record<string, unknown> = {}) => {
+      const target = container.querySelector('.gesture');
+      assert.ok(target);
       const event = new Event(type, { bubbles: true, cancelable: true });
       for (const [key, value] of Object.entries({
-        target: container.querySelector('.gesture'), pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 20, ...fields,
+        pointerType: 'touch', isPrimary: true, button: 0, clientX: 20, clientY: 20, ...fields,
       })) Object.defineProperty(event, key, { value });
-      await act(() => container.dispatchEvent(event));
+      await act(() => { fireEvent(target, event); });
     };
     const tick = () => act(() => subtest.mock.timers.tick(500));
     await act(() => root.render(createElement(Gesture)));
@@ -668,7 +594,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     }) }));
     await act(show);
     assert.ok(container.querySelector('.fixture-prompt-files'));
-    container.querySelector('.chat-input-message')!.focus();
+    container.querySelector<HTMLElement>('.chat-input-message')!.focus();
     value = { ...value, ask: { requestId: 'first', question: 'Question one', choices: ['Choice'] } };
     await act(show);
     assert.equal(document.activeElement, container.querySelector('.chat-input-message'), 'a focused editor follows the isolated answer draft');
@@ -690,8 +616,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const staleChoice = (choice as unknown as Record<string, { onClick(): void }>)[key].onClick;
     await act(() => answer.edit('Retained answer'));
     const enter = new Event('click', { bubbles: true, cancelable: true });
-    Object.defineProperties(enter, { target: { value: container.querySelector('.send') } });
-    await act(() => container.dispatchEvent(enter));
+    await act(() => { fireEvent(container.querySelector('.send')!, enter); });
     assert.equal(sent.length, 1);
     assert.deepEqual(sent[0], { intent: 'respondAsk', body: { sessionId: value.sessionId, requestId: 'first', answer: 'Retained answer', wasFreeform: true } });
     assert.equal(prompt.getSnapshot().pending, false);
@@ -729,18 +654,18 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     }
     await act(() => root.render(createElement(Menu)));
     await act(() => subtest.mock.timers.tick(1));
-    window.dispatchEvent(new Event('pointerdown'));
+    fireEvent.pointerDown(window);
     const key = (value: string) => {
       const event = new Event('keydown', { cancelable: true });
       Object.defineProperty(event, 'key', { value });
-      window.dispatchEvent(event);
+      fireEvent(window, event);
       return event;
     };
     assert.equal(key('Escape').defaultPrevented, true);
     assert.equal(key('Tab').defaultPrevented, false, 'native Tab navigation remains in charge');
     assert.deepEqual(requests, [false, undefined, undefined]);
     await act(() => root.render(null));
-    window.dispatchEvent(new Event('pointerdown'));
+    fireEvent.pointerDown(window);
     assert.equal(requests.length, 3, 'dismiss listeners are removed with the menu');
   });
   await t.test('Markdown table arrow keys belong to the focused scroll region, not its child links', async () => {
@@ -751,15 +676,15 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const table = container.querySelector('[data-chat-table]')!;
     const link = table.querySelector('[href="https://example.invalid"]')!;
     Object.assign(table, { scrollWidth: 1000, scrollLeft: 0 });
-    const key = async (target: HostNode) => {
+    const key = async (target: Element) => {
       const event = new Event('keydown', { bubbles: true, cancelable: true });
-      Object.defineProperties(event, { target: { value: target }, key: { value: 'ArrowRight' } });
-      await act(() => container.dispatchEvent(event));
+      Object.defineProperty(event, 'key', { value: 'ArrowRight' });
+      await act(() => { fireEvent(target, event); });
       return event;
     };
     assert.equal((await key(link)).defaultPrevented, false);
     assert.equal((await key(region)).defaultPrevented, true);
-    assert.equal((table as HostNode & { scrollLeft: number }).scrollLeft, 80);
+    assert.equal((table as HTMLElement & { scrollLeft: number }).scrollLeft, 80);
     await act(() => root.render(null));
   });
   let prefetches = 0;
@@ -796,7 +721,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   const viewport = () => {
     const node = container.querySelector('.chat-messages');
     assert.ok(node);
-    return node;
+    return node as HTMLElement;
   };
   const bottom = () => viewport().scrollHeight - viewport().clientHeight;
   const readAt = async (top: number) => {
@@ -804,15 +729,15 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await act(() => {
       const wheel = new Event('wheel');
       Object.defineProperties(wheel, { deltaY: { value: -20 }, ctrlKey: { value: false } });
-      node.dispatchEvent(wheel);
+      fireEvent(node, wheel);
       node.scrollTop = top;
-      node.dispatchEvent(new Event('scroll'));
-      node.dispatchEvent(new Event('scrollend'));
+      fireEvent.scroll(node);
+      fireEvent(node, new Event('scrollend'));
     });
     await flush();
   };
   const anchor = () => {
-    const rows = viewport().querySelectorAll('[data-message-id]');
+    const rows = Array.from(viewport().querySelectorAll<HTMLElement>('[data-message-id]'));
     const row = rows.find(node => node.getBoundingClientRect().bottom > 1);
     assert.ok(row);
     return { id: row.dataset.messageId, offset: row.getBoundingClientRect().top };
@@ -828,21 +753,19 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       mirror();
       await act(() => root.render(createElement(ConnectedThread, { sessionId: workspaceSessionId })));
       await flush();
-      const click = async (selector: string, scope = container) => {
+      const click = async (selector: string, scope: Element = container) => {
         const target = scope.querySelector(selector);
         assert.ok(target, selector);
-        const event = new Event('click', { bubbles: true });
-        Object.defineProperty(event, 'target', { value: target });
-        await act(() => container.dispatchEvent(event));
+        await act(() => { fireEvent.click(target); });
         await flush();
       };
-      const indicators = container.querySelector('.chat-controls-header')!.querySelectorAll('.session-activity-item');
+      const indicators = Array.from(container.querySelector('.chat-controls-header')!.querySelectorAll('.session-activity-item'));
       assert.equal(indicators[0].getAttribute('data-activity'), 'overall');
       assert.equal(indicators.length, 1, 'task and queue summaries live in headings while expanded');
       assert.ok(indicators[0].querySelector('.spinner'));
       assert.ok(container.querySelector('[aria-label="Agent 列表"]'));
       assert.ok(container.querySelector('[aria-label="Terminal 列表"]'));
-      const editor = container.querySelector('.chat-input-message')!;
+      const editor = container.querySelector<TestElement>('.chat-input-message')!;
       await act(() => getSessionDraft(workspaceSessionId).edit('普通消息草稿'));
       editor.focus();
       await click('.chat-controls-toggle');
@@ -860,7 +783,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.ok(container.querySelector('[data-activity="decision"]'));
       assert.equal(container.querySelector('.chat-controls-header')?.querySelector('[data-activity="decision"]'), null);
       assert.equal(container.querySelector('.chat-controls-decisions'), null);
-      assert.equal(container.querySelector('.chat-question-row')?.firstChild?.getAttribute('data-icon'), 'decision');
+      assert.equal((container.querySelector('.chat-question-row')?.firstChild as Element | null)?.getAttribute('data-icon'), 'decision');
       assert.ok(container.querySelector('[aria-label="取消问题并中断当前回合"]'));
       await click('.chat-ask-choice');
       assert.equal(container.querySelector('.chat-input-message'), editor);
@@ -924,7 +847,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(viewport().scrollTop, bottom(), `${initial}: layout effect must position before queued frames`);
       await flush();
       await act(() => {
-        viewport().clientHeight -= 40;
+        (viewport() as HTMLElement & { clientHeight: number }).clientHeight -= 40;
         for (const resize of resizes) resize();
       });
       assert.equal(viewport().scrollTop, bottom(), 'input/viewport resize must settle before RO returns, not next RAF');
@@ -988,9 +911,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       const target = container.querySelector(selector);
       assert.ok(target, selector);
       const event = new Event(type, { bubbles: true, cancelable: true });
-      Object.defineProperty(event, 'target', { value: target });
       for (const [key, value] of Object.entries(properties)) Object.defineProperty(event, key, { value });
-      await act(() => container.dispatchEvent(event));
+      await act(() => { fireEvent(target, event); });
     };
     for (const surface of ['button', 'queued-button', 'enter', 'ctrl-enter', 'meta-enter', 'module',
       'ask-choice', 'ask-enter', 'ask-module', 'plan-choice', 'plan-enter', 'plan-module', 'elicitation'] as const) {
@@ -1036,7 +958,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       }] };
       await show(value);
       assert.equal(viewport().scrollTop, bottom(), 'the native DOM append may follow the ACK frame');
-      viewport().clientHeight = 250;
+      (viewport() as HTMLElement & { clientHeight: number }).clientHeight = 250;
       await act(() => { for (const resize of resizes) resize(); });
       await flush();
       assert.equal(viewport().scrollTop, bottom(), 'later input-card layout changes keep following');
@@ -1207,7 +1129,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   assert.equal(prefetches, beforeFill + 3, 'two measured screens complete the fill');
   const enlarged = viewport();
   await act(() => {
-    enlarged.clientHeight = 500;
+    (enlarged as HTMLElement & { clientHeight: number }).clientHeight = 500;
     for (const resize of resizes) resize();
   });
   await flush();
@@ -1283,13 +1205,11 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const node = (selector: string) => {
       const element = container.querySelector(selector);
       assert.ok(element, selector);
-      return element;
+      return element as TestElement;
     };
-    const click = async (target: HostNode) => {
-      target.focus();
-      const event = new Event('click', { bubbles: true });
-      Object.defineProperty(event, 'target', { value: target });
-      await act(() => container.dispatchEvent(event));
+    const click = async (target: Element) => {
+      if (target instanceof HTMLElement) target.focus();
+      await act(() => { fireEvent.click(target); });
     };
     await act(show);
     let editor = node('.chat-input-message');
@@ -1352,17 +1272,15 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
         show();
       },
     }));
-    const click = async (target: HostNode) => {
-      const event = new Event('click', { bubbles: true });
-      Object.defineProperty(event, 'target', { value: target });
-      await act(() => container.dispatchEvent(event));
+    const click = async (target: Element) => {
+      await act(() => { fireEvent.click(target); });
     };
     await act(show);
-    const editor = container.querySelector('.chat-input-message')!;
-    const stop = container.querySelector('.chat-typing-stop')!;
+    const editor = container.querySelector<TestElement>('.chat-input-message')!;
+    const stop = container.querySelector<TestElement>('.chat-typing-stop')!;
     stop.focus();
     await click(stop);
-    assert.equal(stop.attributes.has('disabled'), false);
+    assert.equal(stop.hasAttribute('disabled'), false);
     assert.equal(stop.getAttribute('aria-disabled'), 'true');
     assert.equal(stop.getAttribute('aria-busy'), 'true');
     assert.equal(document.activeElement, stop, 'pending native cancellation must not force focus to BODY');
@@ -1374,7 +1292,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
 
     value = { ...value, status: 'running' };
     await act(show);
-    const nextStop = container.querySelector('.chat-typing-stop')!;
+    const nextStop = container.querySelector<TestElement>('.chat-typing-stop')!;
     nextStop.focus();
     await click(nextStop);
     const outside = document.createElement('button');
@@ -1387,7 +1305,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
 
     value = { ...value, status: 'running' };
     await act(show);
-    const retry = container.querySelector('.chat-typing-stop')!;
+    const retry = container.querySelector<TestElement>('.chat-typing-stop')!;
     retry.focus();
     await click(retry);
     value = { ...value, cancelling: false, activeOperations: 0 };
@@ -1412,9 +1330,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       };
       await show();
       const stop = container.querySelector('.chat-typing-stop')!;
-      const event = new Event('click', { bubbles: true });
-      Object.defineProperty(event, 'target', { value: stop });
-      await act(() => container.dispatchEvent(event));
+      await act(() => { fireEvent.click(stop); });
       assert.equal(calls, 1);
       assert.equal(stop.getAttribute('aria-busy'), 'true');
       if (switchTarget) value = { ...fixtureSession('reading'), sessionId: 'different-stop-target' };
@@ -1431,7 +1347,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
         assert.ok(container.querySelector('[data-activity="shell"]'));
         assert.ok(container.querySelector('[data-activity="agent"]'));
         assert.equal(container.querySelector('[data-activity="processing"]'), null);
-        assert.equal(container.querySelector('.chat-typing-stop')?.attributes.has('disabled'), true);
+        assert.equal(container.querySelector('.chat-typing-stop')?.hasAttribute('disabled'), true);
       }
     }
   });
@@ -1458,10 +1374,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       })));
       await flush();
     };
-    const click = async (target: HostNode) => {
-      const event = new Event('click', { bubbles: true });
-      Object.defineProperty(event, 'target', { value: target });
-      await act(() => container.dispatchEvent(event));
+    const click = async (target: Element) => {
+      await act(() => { fireEvent.click(target); });
     };
     await show();
     const localDraft = getDraftSession(value.sessionId).current(value);
@@ -1475,11 +1389,11 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.deepEqual(copied, [value.queue![0].text]);
     assert.deepEqual(removed, []);
     assert.equal(stops, 0);
-    assert.equal(queueEntry.attributes.has('data-expanded'), false, 'copying does not require or trigger expansion');
+    assert.equal(queueEntry.hasAttribute('data-expanded'), false, 'copying does not require or trigger expansion');
     assert.equal(queueCopy.querySelector('.chat-copy-label-text')?.textContent, '已复制');
     queueEntry.setAttribute('data-expanded', '');
     await click(queueCopy);
-    assert.equal(queueEntry.attributes.has('data-expanded'), true, 'expanded copying does not collapse the entry');
+    assert.equal(queueEntry.hasAttribute('data-expanded'), true, 'expanded copying does not collapse the entry');
     assert.deepEqual(copied, [value.queue![0].text, value.queue![0].text]);
     const decision = container.querySelector('.chat-input-card')!;
     assert.equal(decision.getAttribute('data-decision'), 'true');
@@ -1502,7 +1416,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(folded(), true, 'submission feedback does not reopen a manually folded card');
     assert.equal(container.querySelector('.chat-execution-progress')?.textContent, '正在提交回答…');
     assert.equal(container.querySelector('.chat-pending-hint'), null, 'progress belongs to the header, not the answer body');
-    assert.equal(container.querySelector('.chat-ask-choice')?.attributes.has('disabled'), true);
+    assert.equal(container.querySelector('.chat-ask-choice')?.hasAttribute('disabled'), true);
     assert.equal(container.querySelector('.send')?.getAttribute('aria-busy'), 'true');
     await act(async () => { finishReply(false); await reply; });
     assert.equal(folded(), true);
@@ -1539,7 +1453,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await click(container.querySelector('.chat-typing-stop')!);
     assert.equal(stops, 1);
     await show({ cancelling: true });
-    assert.equal(container.querySelector('.chat-typing-stop')?.attributes.has('disabled'), false);
+    assert.equal(container.querySelector('.chat-typing-stop')?.hasAttribute('disabled'), false);
     assert.equal(container.querySelector('.chat-typing-stop')?.getAttribute('aria-disabled'), 'true');
     await click(container.querySelector('.chat-typing-stop')!);
     assert.equal(stops, 1);
@@ -1552,9 +1466,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(folded(), true);
     await show({ status: 'idle', ask: null, queue: [], activity: activityFixture() });
     assert.equal(folded(), false);
-    assert.equal(execution.attributes.has('hidden'), true, 'idle input has no folding control or extra status row');
+    assert.equal(execution.hasAttribute('hidden'), true, 'idle input has no folding control or extra status row');
     assert.equal(getDraftSession(value.sessionId).current({}), promptDraft);
-    assert.equal(container.querySelector('.chat-input-message')?.value, 'Cached ordinary prompt');
+    assert.equal(container.querySelector<TestElement>('.chat-input-message')?.value, 'Cached ordinary prompt');
     await show({ ask: null });
     assert.equal(folded(), false, 'the next run opens afresh even though its fold key recurs');
   });
@@ -1601,12 +1515,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const control = (label: string) => {
       const node = container.querySelector(`[aria-label="${label}"]`);
       assert.ok(node, label);
-      return node;
+      return node as TestElement;
     };
-    const event = async (node: HostNode, type: string) => act(() => {
-      const event = new Event(type, { bubbles: true });
-      Object.defineProperty(event, 'target', { value: node });
-      container.dispatchEvent(event);
+    const event = async (node: Element, type: string) => act(() => {
+      fireEvent(node, new Event(type, { bubbles: true }));
     });
     const change = async (label: string, value: string) => {
       const node = control(label);
@@ -1614,7 +1526,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await event(node, 'change');
     };
     const apply = async () => {
-      const button = container.querySelector('.ui-pending-bar')?.querySelectorAll('.ck-button').find(node => node.textContent === '应用');
+      const button = Array.from(container.querySelector('.ui-pending-bar')?.querySelectorAll<HTMLElement>('.ck-button') ?? [])
+        .find(node => node.textContent === '应用');
       assert.ok(button);
       await event(button, 'click');
     };
@@ -1689,16 +1602,14 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const node = (selector: string) => {
       const found = container.querySelector(selector);
       assert.ok(found, selector);
-      return found;
+      return found as TestElement;
     };
-    const event = (target: HostNode, type: string) => act(() => {
-      const event = new Event(type, { bubbles: true });
-      Object.defineProperty(event, 'target', { value: target });
-      container.dispatchEvent(event);
+    const event = (target: Element, type: string) => act(() => {
+      fireEvent(target, new Event(type, { bubbles: true }));
     });
     const change = async (label: string, value: string) => {
       const target = node(`[aria-label="${label}"]`);
-      assert.equal(target.attributes.has('disabled'), false, `${label} remains editable`);
+      assert.equal(target.hasAttribute('disabled'), false, `${label} remains editable`);
       target.value = value;
       await event(target, 'change');
     };
@@ -1721,12 +1632,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(reads.length, 1);
       const roleEntry = container.querySelector('.ui-section-actions')?.querySelector('[aria-label="追加模块角色"]');
       assert.ok(roleEntry);
-      assert.equal(roleEntry.attributes.has('disabled'), false, 'passive role disclosure is independent of model availability');
+      assert.equal(roleEntry.hasAttribute('disabled'), false, 'passive role disclosure is independent of model availability');
       assert.equal(container.querySelector('.ui-pending-bar'), null, 'summary metadata cannot authorize Apply');
-      assert.equal(node('[aria-label="选择模型"]').attributes.has('disabled'), true);
+      assert.equal(node('[aria-label="选择模型"]').hasAttribute('disabled'), true);
       assert.equal(container.querySelectorAll('.spinner').length, 1, 'first read has only the body loader');
       assert.equal(refresh().getAttribute('aria-busy'), 'false');
-      assert.equal(refresh().attributes.has('disabled'), true);
+      assert.equal(refresh().hasAttribute('disabled'), true);
       assert.ok(node('[aria-label="复制 session ID"]'), 'ID copying is directly available');
       await act(() => reads[0].resolve(native));
       assert.equal(node('[aria-label="思考力度"]').value, 'high', 'selects show the native current value');
@@ -1741,7 +1652,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(container.querySelectorAll('.spinner').length, 1, 'background refresh has only the icon spinner');
       assert.equal(refresh().getAttribute('aria-busy'), 'true');
       assert.doesNotMatch(container.textContent, /加载中/);
-      assert.equal(apply().attributes.has('disabled'), false, 'accepted same-generation data still authorizes Apply');
+      assert.equal(apply().hasAttribute('disabled'), false, 'accepted same-generation data still authorizes Apply');
       await event(apply(), 'click');
       assert.equal(mutations.length, 1);
       assert.deepEqual(mutations[0].opts, { reasoningEffort: 'max', contextTier: 'long_context' });
@@ -1749,7 +1660,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(apply().getAttribute('aria-busy'), 'true');
       assert.equal(container.querySelectorAll('.spinner').length, 0, 'submission owns the sole busy feedback');
       assert.doesNotMatch(container.textContent, /正在应用|正在提交配置/);
-      assert.equal(apply().attributes.has('disabled'), true);
+      assert.equal(apply().hasAttribute('disabled'), true);
       await event(apply(), 'click');
       assert.equal(mutations.length, 1);
       await change('思考力度', 'high');
@@ -1760,7 +1671,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await act(() => mutations[0].resolve({ ok: true, result: { status: 'applied', deferred: true } }));
       assert.match(node('.info-model-status').textContent, /已接受，等待生效/);
       assert.doesNotMatch(node('.info-model-status').textContent, /已应用/);
-      assert.equal(apply().attributes.has('disabled'), false, 'the newer draft can be submitted explicitly');
+      assert.equal(apply().hasAttribute('disabled'), false, 'the newer draft can be submitted explicitly');
       await event(apply(), 'click');
       assert.equal(mutations.length, 2);
       assert.deepEqual(mutations[1].opts, { reasoningEffort: 'high', contextTier: 'long_context' });
@@ -1776,14 +1687,14 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.match(container.textContent, /加载失败：Native read unavailable/);
       assert.equal(container.querySelectorAll('.spinner').length, 0);
       assert.equal(node('[aria-label="上下文长度"]').value, 'default');
-      assert.equal(node('[aria-label="上下文长度"]').attributes.has('disabled'), true);
-      assert.equal(apply().attributes.has('disabled'), true);
+      assert.equal(node('[aria-label="上下文长度"]').hasAttribute('disabled'), true);
+      assert.equal(apply().hasAttribute('disabled'), true);
       await event(apply(), 'click');
       assert.equal(mutations.length, 2, 'an unavailable read blocks further mutations');
       assert.equal(reads.length, 3, 'neither failure is automatically retried');
       await act(() => useCockpit.setState({ connState: 'connecting' }));
-      assert.equal(refresh().attributes.has('disabled'), true);
-      assert.equal(node('[aria-label="选择模型"]').attributes.has('disabled'), true);
+      assert.equal(refresh().hasAttribute('disabled'), true);
+      assert.equal(node('[aria-label="选择模型"]').hasAttribute('disabled'), true);
       assert.match(container.textContent, /等待连接/);
     } finally {
       await act(() => root.render(null));
@@ -1842,13 +1753,13 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
   const firstThoughtKey = JSON.stringify(['A', 'thought', processMessage.id]);
   await renderProcess(true, [processMessage, secondThought], firstThoughtKey);
   assert.equal(container.querySelector('.process-summary-count')?.getAttribute('title'), '2 次思考');
-  assert.deepEqual(container.querySelectorAll('.thought-toggle').map(node => node.getAttribute('aria-expanded')), ['false', 'true']);
+  assert.deepEqual(Array.from(container.querySelectorAll('.thought-toggle')).map(node => node.getAttribute('aria-expanded')), ['false', 'true']);
   await act(() => toggleChoice());
   await renderProcess(true, [processMessage, secondThought, { ...secondThought, id: 'third-thought' }], firstThoughtKey);
-  assert.deepEqual(container.querySelectorAll('.thought-toggle').map(node => node.getAttribute('aria-expanded')), ['true', 'false', 'true'],
+  assert.deepEqual(Array.from(container.querySelectorAll('.thought-toggle')).map(node => node.getAttribute('aria-expanded')), ['true', 'false', 'true'],
     'only latest thought opens automatically; a manually opened old thought stays open');
   await renderProcess(true, [processMessage, secondThought], firstThoughtKey, 'newer-body');
-  assert.deepEqual(container.querySelectorAll('.thought-toggle').map(node => node.getAttribute('aria-expanded')), ['true', 'false'],
+  assert.deepEqual(Array.from(container.querySelectorAll('.thought-toggle')).map(node => node.getAttribute('aria-expanded')), ['true', 'false'],
     'newer speech closes automatic thought selection but retains the manually opened thought');
 
   const response = { ...processMessage, id: 'response-body-first', content: 'Body first', thought: undefined };
@@ -1924,16 +1835,15 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await act(() => root.render(createElement(Composer, {
       runtime, draft, onSend: async () => assert.fail('DOM passthrough does not submit'),
     })));
-    const editor = container.querySelector('.chat-input-message')!;
+    const editor = container.querySelector<TestElement>('.chat-input-message')!;
     const row = container.querySelector('.chat-input')!;
     assert.equal(editor.parentNode, row);
     assert.equal(container.querySelector('.send')?.parentNode, row);
-    assert.deepEqual(row.childNodes.map(node => node.tagName), ['TEXTAREA', 'BUTTON']);
+    assert.deepEqual(Array.from(row.childNodes).map(node => (node as Element).tagName), ['TEXTAREA', 'BUTTON']);
     const snapshot = draft.getSnapshot();
     for (const type of ['paste', 'drop']) {
       const event = new Event(type, { bubbles: true, cancelable: true });
-      Object.defineProperty(event, 'target', { value: editor });
-      await act(() => container.dispatchEvent(event));
+      await act(() => { fireEvent(editor, event); });
       assert.equal(event.defaultPrevented, false);
     }
     assert.equal(draft.getSnapshot(), snapshot);
@@ -1975,19 +1885,19 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       editorRef: objectRef, ...options,
     })));
     const dispatch = async (type: string, properties: Record<string, unknown> = {}) => {
+      const target = container.querySelector('.chat-input-message');
+      assert.ok(target);
       const event = new Event(type, { bubbles: true, cancelable: true });
-      Object.defineProperty(event, 'target', { value: container.querySelector('.chat-input-message') });
       for (const [key, value] of Object.entries(properties)) Object.defineProperty(event, key, { value });
-      await act(() => container.dispatchEvent(event));
+      await act(() => { fireEvent(target, event); });
       return event;
     };
     await renderInput();
-    const editor = container.querySelector('.chat-input-message')!;
+    const editor = container.querySelector<TestElement>('.chat-input-message')!;
     assert.equal(objectRef.current, editor);
     assert.equal(input.draft, draft.reference);
     await dispatch('focusin');
-    Object.getOwnPropertyDescriptor(HostNode.prototype, 'value')!.set!.call(editor, 'Native edit');
-    await dispatch('keyup', { key: 't' });
+    await act(() => { fireEvent.input(editor, { target: { value: 'Native edit' } }); });
     assert.equal(draft.getSnapshot().text, 'Native edit');
     assert.deepEqual(events, ['change']);
     await dispatch('paste');
@@ -2000,14 +1910,14 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     preventKey = false;
     assert.equal(sends, 0);
     await renderInput({ sendBlocked: true });
-    assert.equal(editor.attributes.has('disabled'), false);
+    assert.equal(editor.hasAttribute('disabled'), false);
     await dispatch('keydown', { key: 'Enter', metaKey: true });
     input.onSubmit();
     assert.equal(sends, 0);
     await renderInput();
     await dispatch('keydown', { key: 'Enter', ctrlKey: true });
     assert.equal(sends, 1);
-    assert.equal(editor.attributes.has('disabled'), false, 'pending submit must not disable native editing');
+    assert.equal(editor.hasAttribute('disabled'), false, 'pending submit must not disable native editing');
     await act(() => draft.edit('Newer edit'));
     await dispatch('keydown', { key: 'Enter' });
     assert.equal(sends, 1);
@@ -2149,43 +2059,42 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     const refCalls: (HTMLTextAreaElement | null)[] = [];
     const editorRef = (node: HTMLTextAreaElement | null) => { refCalls.push(node); return () => { cleaned++; }; };
     await act(() => root.render(createElement(Composer, { runtime, draft, editorRef, onSend: async () => assert.fail('speech never sends') })));
-    const editor = container.querySelector('.chat-input-message')!;
+    const editor = container.querySelector<TestElement>('.chat-input-message')!;
     assertIdentityList(refCalls, [editor]);
     const row = container.querySelector('.chat-input')!;
-    const inputControls = (node: HostNode): HostNode[] => node.childNodes.flatMap(child => [
-      ...(['BUTTON', 'TEXTAREA'].includes(child.tagName) ? [child] : []), ...inputControls(child),
+    const inputControls = (node: Element): HTMLElement[] => Array.from(node.childNodes).flatMap(child => [
+      ...(child instanceof HTMLElement && ['BUTTON', 'TEXTAREA'].includes(child.tagName) ? [child] : []),
+      ...(child instanceof Element ? inputControls(child) : []),
     ]);
     const file = row.querySelector('[aria-label="File fixture"]')!;
-    const microphone = row.querySelector('.cockpit-speech-mic')!;
+    const microphone = row.querySelector<HTMLElement>('.cockpit-speech-mic')!;
     const send = row.querySelector('.send')!;
     assertIdentityList(inputControls(row), [file, editor, microphone, send],
       'input middleware may wrap the editor without changing control order or duplicating controls');
     assert.equal(file.parentNode, row);
     assert.equal(microphone.parentNode, row);
     assert.equal(send.parentNode, row);
-    assert.match(row.attributes.get('class') ?? '', /ck-input-row/, 'native row owns the shared public layout');
+    assert.match(row.getAttribute('class') ?? '', /ck-input-row/, 'native row owns the shared public layout');
     const click = async (selector: string) => {
       const target = container.querySelector(selector);
       assert.ok(target, selector);
-      const event = new Event('click', { bubbles: true, cancelable: true });
-      Object.defineProperty(event, 'target', { value: target });
-      await act(async () => { container.dispatchEvent(event); });
+      await act(async () => { fireEvent.click(target); });
     };
     editor.setSelectionRange(6, 11);
     microphone.focus();
     await click('.cockpit-speech-mic');
     assert.equal(draft.getSnapshot().blocks.length, 1);
-    assert.equal(container.querySelector('.send')!.attributes.has('disabled'), true);
+    assert.equal(container.querySelector('.send')!.hasAttribute('disabled'), true);
     assert.equal(container.querySelector('.cockpit-speech-panel'), null, 'recording is expressed by the button, not a phase panel');
-    assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.get('aria-label'), '停止录音并收取剩余文字');
+    assert.equal(container.querySelector('.cockpit-speech-mic')!.getAttribute('aria-label'), '停止录音并收取剩余文字');
     const status = container.querySelector('.cockpit-speech-status')!;
     assert.ok(status);
     assert.equal(row.contains(status), false, 'status wraps the full input row instead of living inside it');
     assert.equal(status.parentNode, row.parentNode);
     assert.match(status.textContent, /正在录音/);
     await click('.cockpit-speech-mic');
-    assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.has('disabled'), true);
-    assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.get('aria-busy'), 'true');
+    assert.equal(container.querySelector('.cockpit-speech-mic')!.hasAttribute('disabled'), true);
+    assert.equal(container.querySelector('.cockpit-speech-mic')!.getAttribute('aria-busy'), 'true');
     assert.match(container.querySelector('.cockpit-speech-status')!.textContent, /正在处理录音/);
     assert.equal(requests, 1);
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 300)); finish('speech'); });
@@ -2194,7 +2103,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(editor.selectionStart, 12);
     assert.equal(editor.selectionEnd, 12);
     assert.equal(draft.getSnapshot().blocks.length, 0);
-    assert.equal(container.querySelector('.cockpit-speech-mic')!.attributes.has('disabled'), false);
+    assert.equal(container.querySelector('.cockpit-speech-mic')!.hasAttribute('disabled'), false);
     assert.equal(container.querySelector('.cockpit-speech-panel'), null, 'successful insertion does not lift the editor with a notice');
     assert.equal(container.querySelector('.chat-input-message'), editor);
     assert.equal(container.querySelector('.cockpit-speech-status'), null);
@@ -2210,12 +2119,10 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(row.contains(panel), false);
     assert.equal(panel.parentNode, container.querySelector('.chat-composer')!.parentNode);
     assert.equal(container.querySelector('.cockpit-speech-panel')!.contains(editor), false);
-    const recoveryButton = container.querySelectorAll('button').find(node => node.textContent === '插入原输入框光标处')!;
-    assert.equal(recoveryButton.attributes.has('disabled'), false);
+    const recoveryButton = Array.from(container.querySelectorAll('button')).find(node => node.textContent === '插入原输入框光标处')!;
+    assert.equal(recoveryButton.hasAttribute('disabled'), false);
     editor.setSelectionRange(3, 7);
-    const recoveryClick = new Event('click', { bubbles: true });
-    Object.defineProperty(recoveryClick, 'target', { value: recoveryButton });
-    await act(() => container.dispatchEvent(recoveryClick));
+    await act(() => { fireEvent.click(recoveryButton); });
     assert.equal(editor.value, 'manrecoveryual text');
     assert.equal(editor.selectionStart, 11);
     assert.equal(document.activeElement, editor);
@@ -2226,7 +2133,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)); });
     assert.equal(draft.getSnapshot().blocks.length, 0);
     assert.equal(container.querySelector('.cockpit-speech-panel'), null, 'failure stays on the retry button');
-    assert.match(container.querySelector('.cockpit-speech-mic')!.attributes.get('class')!, /\bck-danger\b/);
+    assert.match(container.querySelector('.cockpit-speech-mic')!.getAttribute('class')!, /\bck-danger\b/);
     const capturesBeforeRetry = captures;
     await click('.cockpit-speech-mic');
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 40)); finish('replayed'); });
@@ -2321,16 +2228,15 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       const target = container.querySelector(selector);
       assert.ok(target, selector);
       const event = new Event(type, { bubbles: true, cancelable: true });
-      Object.defineProperty(event, 'target', { value: target });
       for (const [key, value] of Object.entries(properties)) Object.defineProperty(event, key, { value });
-      await act(async () => { container.dispatchEvent(event); });
+      await act(async () => { fireEvent(target, event); });
       return event;
     };
     await renderComposer();
     let field = handle.forDraft(draft.reference)!;
     await dispatch('.chat-input-message', 'focusin');
     const action = container.querySelector('[aria-label="Module action"]');
-    const editor = container.querySelector('.chat-input-message');
+    const editor = container.querySelector<TestElement>('.chat-input-message');
     const context = container.querySelector('.chat-composer-context');
     assert.ok(context);
     assert.equal(context.querySelector('.fixture-state-panel'), null);
@@ -2367,7 +2273,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(aboveMounts, 1, 'empty/nonempty module content and notices must not remount contributions');
     assert.equal(container.querySelector('.chat-input-message'), editor);
     assert.equal(container.querySelector('[aria-label="Module action"]'), action);
-    const answerCard = container.querySelector('.fixture-input-card')!;
+    const answerCard = container.querySelector<HTMLDetailsElement>('.fixture-input-card')!;
     answerCard.open = false;
     let releaseFold!: () => void;
     await act(() => { releaseFold = scope.block('Folded module work'); draft.edit('Draft updated while folded'); });
