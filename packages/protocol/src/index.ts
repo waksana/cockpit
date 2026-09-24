@@ -9,6 +9,8 @@ export type { ErrorCode } from './errors.ts';
 import { snapshotModuleEventPayload } from './module-event.ts';
 export { MAX_MODULE_EVENT_BYTES, snapshotModuleEventPayload } from './module-event.ts';
 export type { ModuleEventPayload } from './module-event.ts';
+export { MCP_INVOCATION_META_KEY } from './mcp-invocation.ts';
+export type { McpInvocationMeta } from './mcp-invocation.ts';
 import type { ChatMessage } from './validation.ts';
 import type { ErrorCode } from './errors.ts';
 export type { ChatMessage, ChatRole, SubagentInfo, ToolCall } from './validation.ts';
