@@ -10,6 +10,7 @@ import { ContextMenu, type MenuItem } from './ContextMenu';
 import { useLongPress } from '../lib/longpress';
 import { filterSessions } from '../pages/session-list';
 import { StateNotice } from './StateNotice';
+import { RegionErrorBoundary } from './ErrorBoundary';
 import { SessionStatus } from './ModuleComponents';
 import { RoleBadge } from './ModuleLabel';
 import { useCockpit } from '../net/store';
@@ -39,7 +40,7 @@ function SessionRow({ s, active, actions, connected }: {
   const lp = useLongPress(actions.onMenu, firedRef);
 
   return (
-    <li><button
+    <button
       type="button"
       className={`chatlist-chat ck-button${active ? ' active' : ''}${s.loaded ? '' : ' is-unloaded'}`}
       data-session-id={s.sessionId}
@@ -75,7 +76,7 @@ function SessionRow({ s, active, actions, connected }: {
           activityDisplay={s.activityDisplay}
           activity={s.activity} needsDecision={!!(s.ask || s.planRequest || s.elicitation)} />
       </span>
-    </button></li>
+    </button>
   );
 }
 
@@ -125,13 +126,14 @@ export function Sidebar(props: SidebarProps) {
   };
 
   const renderRow = (s: SessionMeta) => (
-    <SessionRow
-      key={s.sessionId}
-      s={s}
-      connected={connected && snapshotReady}
-      active={s.sessionId === activeId}
-      actions={{ onSelect: () => onSelect(s.sessionId), onMenu: openMenu(s) }}
-    />
+    <li key={s.sessionId}><RegionErrorBoundary label="这条会话" resetKey={s} className="chatlist-error">
+      <SessionRow
+        s={s}
+        connected={connected && snapshotReady}
+        active={s.sessionId === activeId}
+        actions={{ onSelect: () => onSelect(s.sessionId), onMenu: openMenu(s) }}
+      />
+    </RegionErrorBoundary></li>
   );
 
   return (

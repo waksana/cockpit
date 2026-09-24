@@ -26,6 +26,7 @@ import { SessionDetails } from './components/SessionDetails';
 import { SessionDeleteDialog } from './components/SessionDeleteDialog';
 import { StateNotice } from './components/StateNotice';
 import { ManagementShell } from './components/ManagementShell';
+import { RegionErrorBoundary } from './components/ErrorBoundary';
 import { moduleRuntime } from './lib/moduleRuntime';
 import { observeModuleView } from './lib/moduleView';
 import { PHONE_QUERY } from './lib/layout';
@@ -199,22 +200,23 @@ function Workspace() {
           />
         }
       >
-        <Sidebar
-          sessions={sessions}
-          activeId={routeId}
-          query={query}
-          snapshotReady={snapshotReady}
-          connected={connState === 'open'}
-          onSelect={selectSession}
-          getMenuItems={getSessionMenuItems}
-        />
+        <RegionErrorBoundary label="会话列表" resetKey={sessions} className="pane-error">
+          <Sidebar
+            sessions={sessions}
+            activeId={routeId}
+            query={query}
+            snapshotReady={snapshotReady}
+            connected={connState === 'open'}
+            onSelect={selectSession}
+            getMenuItems={getSessionMenuItems}
+          />
+        </RegionErrorBoundary>
       </MasterPane>}
       main={<DetailPane ariaLabel="对话" mobileVisible={mobileView === 'detail'} header={detailHeader}>
         {active ? (
-          <ConnectedThread
-            key={active.sessionId}
-            sessionId={active.sessionId}
-          />
+          <RegionErrorBoundary key={active.sessionId} label="对话" className="pane-error">
+            <ConnectedThread sessionId={active.sessionId} />
+          </RegionErrorBoundary>
         ) : syncing ? (
           <StateNotice kind="loading" placement="pane">正在同步会话…</StateNotice>
         ) : notFound ? (

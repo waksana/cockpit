@@ -123,3 +123,25 @@ export function installWorkspaceFixture(store: ReturnType<typeof createCockpitSt
     },
   } satisfies Partial<CockpitApi>);
 }
+
+// Deliberately malformed native data for the region error-boundary review
+// (`?scene=workspace&failures=1`): one message, the active session row and its
+// settings panel crash in place while the rest of the App stays usable.
+// `repairRenderFailures` restores valid data so automatic recovery can be checked.
+export const renderFailureMessageId = 'malformed-attachment';
+export function injectRenderFailures(store: ReturnType<typeof createCockpitStore>, now = Date.now()) {
+  store.setState(state => ({ sessions: state.sessions.map(session => session.sessionId !== workspaceSessionId ? session : {
+    ...session,
+    roles: [null] as unknown as ChatSession['roles'],
+    messages: [...session.messages.slice(0, 2), {
+      id: renderFailureMessageId, role: 'user', content: '这条合成消息带有格式错误的附件。', timestamp: now - 110_000,
+      attachments: [null] as unknown as ChatMessage['attachments'],
+    }, ...session.messages.slice(2)],
+  }) }));
+}
+export function repairRenderFailures(store: ReturnType<typeof createCockpitStore>) {
+  store.setState(state => ({ sessions: state.sessions.map(session => session.sessionId !== workspaceSessionId ? session : {
+    ...session, roles: [],
+    messages: session.messages.map(message => message.id === renderFailureMessageId ? { ...message, attachments: [] } : message),
+  }) }));
+}

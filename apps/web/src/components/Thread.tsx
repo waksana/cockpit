@@ -31,6 +31,7 @@ import { useDisclosureChoice } from '../lib/disclosureChoice';
 import { groupTranscript, transcriptGap, type TranscriptRow, type ProcessItem } from '../lib/transcriptRows';
 import { PlanCard, ElicitationCard } from './PendingDecision';
 import { StateNotice } from './StateNotice';
+import { RegionErrorBoundary } from './ErrorBoundary';
 import { useModuleRuntime } from './ModuleComponents';
 import { hasNewTranscriptContent } from '../lib/transcriptActivity';
 import { useRemovedControlFocus } from '../lib/useRemovedControlFocus';
@@ -275,7 +276,9 @@ const MessageGroup = memo(function MessageGroup({ m, sessionId, date, showByline
       data-gap={gap}
       data-assistant-message={plainAssistant && !empty || undefined} data-empty={empty || undefined}>
       {date && !empty && <div className="date-separator" aria-hidden="true">{date}</div>}
-      <MessageRow m={m} sessionId={sessionId} showByline={showByline} nested={nested} />
+      <RegionErrorBoundary label="这条消息" resetKey={m}>
+        <MessageRow m={m} sessionId={sessionId} showByline={showByline} nested={nested} />
+      </RegionErrorBoundary>
     </div>
   );
 });
@@ -306,8 +309,10 @@ const TranscriptMessages = memo(function TranscriptMessages({ messages, sessionI
       data-gap={gap}
       data-message-frame={nested ? undefined : row.key} data-child-message-frame={nested ? row.key : undefined}>
       {date && <div className="date-separator" aria-hidden="true">{date}</div>}
-      <MessageProcess items={row.items} identity={row.key} sessionId={sessionId}
-        latest={row === lastProcess} latestItemId={latestItemId} />
+      <RegionErrorBoundary label="这组过程记录" resetKey={row}>
+        <MessageProcess items={row.items} identity={row.key} sessionId={sessionId}
+          latest={row === lastProcess} latestItemId={latestItemId} />
+      </RegionErrorBoundary>
     </div>;
     return (
       <MessageGroup key={m.id} m={m} sessionId={sessionId}
@@ -544,10 +549,11 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
                 <div className="chat-empty-hint"><Icon name="newchat" size={28} />
                   <strong>开始对话</strong><span>输入消息开始讨论。</span><code>{session.cwd}</code></div>
               )}
-              <TranscriptMessages messages={messages} sessionId={session.sessionId}
-                liveId={session.status === 'running' ? session.messages.at(-1)?.id : undefined}
-                today={new Date().setHours(0, 0, 0, 0)} />
-
+              <RegionErrorBoundary label="对话记录" resetKey={messages}>
+                <TranscriptMessages messages={messages} sessionId={session.sessionId}
+                  liveId={session.status === 'running' ? session.messages.at(-1)?.id : undefined}
+                  today={new Date().setHours(0, 0, 0, 0)} />
+              </RegionErrorBoundary>
             </div>
           </div>
         </div>

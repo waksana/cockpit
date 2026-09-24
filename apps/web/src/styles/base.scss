@@ -76,6 +76,11 @@ a { color: var(--link-color); text-decoration: none; }
 }
 *::-webkit-scrollbar-track { background: transparent; }
 
+// A region's render-crash fallback (components/ErrorBoundary.tsx RegionErrorBoundary).
+.region-error { min-width: 0; padding-block: var(--host-space-xs); }
+.region-error.pane-error { padding: var(--host-space-lg); }
+.region-error.chatlist-error { padding: var(--host-space-sm) var(--host-space-md); }
+
 // ErrorBoundary fallback (render crash) — minimal centered notice.
 .crash-fallback {
   position: fixed;

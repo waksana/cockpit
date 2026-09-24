@@ -6,6 +6,7 @@ import { SESSION_PANEL_LABELS, type SessionPanel } from '../lib/routeOwnership';
 import { PanelPageShell } from './PanelPage';
 import { InspectorPane } from './Shell';
 import { UxErrorNotifications } from './UxErrorNotifications';
+import { RegionErrorBoundary } from './ErrorBoundary';
 import type { SessionInfoPanelProps } from './SessionInfoPanel';
 
 const SessionInfoPanel = lazy(() => import('./SessionInfoPanel').then((m) => ({ default: m.SessionInfoPanel })));
@@ -21,9 +22,12 @@ export function SessionDetails({ sessionId, panel }: { sessionId: string; panel:
   );
   if (!session) return null;
   const title = `${SESSION_PANEL_LABELS[panel]} · ${session.title}`;
+  const pageTitle = panel === 'info' ? '会话设置' : `本会话 ${SESSION_PANEL_LABELS[panel]}`;
   return (
     <InspectorPane ariaLabel={title} onClose={onClose} modalFooter={<UxErrorNotifications withinDialog />}>
-        <Suspense fallback={<PanelPageShell title={panel === 'info' ? '会话设置' : `本会话 ${SESSION_PANEL_LABELS[panel]}`} onClose={onClose} loading />}>
+        <RegionErrorBoundary key={panel} label={pageTitle} resetKey={session}
+          frame={fallback => <PanelPageShell title={pageTitle} onClose={onClose}>{fallback}</PanelPageShell>}>
+        <Suspense fallback={<PanelPageShell title={pageTitle} onClose={onClose} loading />}>
           {panel === 'info'
             ? <SessionInfoPanel session={session} open onClose={onClose}
                 onSetModel={onSetModel} />
@@ -31,6 +35,7 @@ export function SessionDetails({ sessionId, panel }: { sessionId: string; panel:
               ? <SessionMcp session={session} onClose={onClose} />
               : <SessionSkills session={session} onClose={onClose} />}
         </Suspense>
+        </RegionErrorBoundary>
     </InspectorPane>
   );
 }
