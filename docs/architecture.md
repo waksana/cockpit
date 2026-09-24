@@ -20,7 +20,7 @@ MCP client ── same backend API ──────────┘            
 | Path | Responsibility |
 | --- | --- |
 | `packages/protocol` | Input/result schemas, typed `Intents`, native events and the shared Web fold. |
-| `packages/core` | The `Engine`: SDK handles, real callbacks, in-flight operations, native adapters and safety guards. |
+| `packages/core` | The `Engine` facade: SDK handles, real callbacks, in-flight operations, native adapters and safety guards. `SessionKernel` (`kernel.ts`) owns per-session handles, admission and transition gates; focused services (roles, skills, MCP, schedules, resource reads, native events, decisions, controls, settings, preparation) share it. |
 | `packages/module-api` | Public TypeScript interfaces between host and modules; holds no business or native state. |
 | `apps/server` | Fastify HTTP/SSE, static Web, module host and CLI, instance info and graceful shutdown. |
 | `apps/web` | React UI: current event window, drafts, reading position, native controls and local error feedback. |
