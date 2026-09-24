@@ -303,6 +303,11 @@ if (scene === 'dialog-focus') {
     });
   }
   getSessionDraft(workspaceSessionId).edit(workspaceDraft);
+  if (scene === 'workspace' && new URLSearchParams(location.search).get('failures') === '1') {
+    const { injectRenderFailures, repairRenderFailures } = await import('./workspace-fixtures');
+    injectRenderFailures(useCockpit);
+    Object.assign(window, { renderFailureLab: { repair: () => repairRenderFailures(useCockpit) } });
+  }
   const { default: App } = await import('../App');
   const page = new URLSearchParams(location.search).get('page');
   const item = new URLSearchParams(location.search).get('item');

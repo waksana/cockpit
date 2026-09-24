@@ -150,6 +150,7 @@ Select a scene with `?scene=<id>`:
 | `sidebar` | Two-line session rows with long/unbroken titles, roles, statuses and module badges. Run `await import('/src/dev/sidebar-checks.ts').then(m => m.runSidebarChecks())` at desktop and narrow touch widths. |
 | `resources` (`&longNames=1`, `&page=mcp|skills|session-mcp|session-skills`, `&item=`, `&empty=1`, `&fail=1`, `&delay=1`) | Session list, role picker, settings and global/session MCP/Skills pages against a synthetic store. Run `await import('/src/dev/role-picker-checks.ts').then(m => m.runRolePickerChecks())` with a role picker open. Check 1600, 1024 and 390px. |
 | `workspace`, `full-web` (`&case=tool-loading`, `agent-unloaded`) | The complete App on a synthetic store, including the session control bar. |
+| `workspace&failures=1` | [Region error boundaries](frontend-guidelines.md#error-boundaries): a malformed message, session row and settings panel fail in place with no global notice. `window.renderFailureLab.repair()` restores valid data to check automatic recovery. |
 
 Use real mouse, touch and keyboard actions, both themes and narrow widths
 (`&pane=narrow` constrains the chat pane to 456px). The checks measure geometry and

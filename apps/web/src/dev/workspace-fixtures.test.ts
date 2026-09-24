@@ -4,7 +4,9 @@ import { SessionMeta, SessionProjection } from '@cockpit/protocol';
 import { ChatMessage } from '@cockpit/protocol/validation';
 import { createCockpitStore } from '../net/store';
 import { groupTranscript } from '../lib/transcriptRows';
-import { installWorkspaceFixture, workspaceSessionId, workspaceSessions } from './workspace-fixtures';
+import {
+  injectRenderFailures, installWorkspaceFixture, renderFailureMessageId, repairRenderFailures, workspaceSessionId, workspaceSessions,
+} from './workspace-fixtures';
 import { cockpitApi } from '../net/api';
 
 test('workspace scene has realistic contract-valid input, nested work and both old and latest tool groups', () => {
@@ -47,4 +49,19 @@ test('workspace App lifecycle, settings and sends use only local synthetic state
   await assert.rejects(store.getState().getResources('not-a-fixture', ['model']), /Unknown synthetic session/);
   await assert.rejects(store.getState().newSession('/workspace/unused'), /未连接/);
   assert.equal(fetch.mock.callCount(), 0);
+});
+
+test('render-failure scene breaks only the intended message and session data, and repairs it', () => {
+  const store = createCockpitStore();
+  installWorkspaceFixture(store, 1_789_441_200_000);
+  injectRenderFailures(store, 1_789_441_200_000);
+  const [active, ...others] = store.getState().sessions;
+  assert.equal(active.sessionId, workspaceSessionId);
+  assert.deepEqual(active.roles, [null]);
+  assert.deepEqual(active.messages.find(message => message.id === renderFailureMessageId)?.attachments, [null]);
+  for (const session of others) SessionMeta.parse(session);
+  repairRenderFailures(store);
+  const repaired = store.getState().sessions[0];
+  SessionMeta.parse(repaired);
+  repaired.messages.forEach(message => ChatMessage.parse(message));
 });

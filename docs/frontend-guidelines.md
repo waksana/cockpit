@@ -128,6 +128,18 @@ silent; unowned failures fall back to the global notice. A mutation whose owner 
 unmounted is reported globally once, instead of vanishing. Identical global notices
 within a short window are merged.
 
+<a id="error-boundaries"></a>
+Render crashes follow the same rule. `RegionErrorBoundary` (`components/ErrorBoundary.tsx`)
+owns a region's crash: it shows a failed `OperationResult` with a local 重试 in place,
+records the cause only in the console and keeps the global notice silent; new input
+for the region (its `resetKey`) retries automatically. A failed lazy module load
+cannot be retried in place (React caches the rejection), so its fallback offers a
+page reload instead. The classic UI isolates each
+message and process group, the transcript, the conversation pane, each session row,
+the session list and the session detail panels (settings, MCP, Skills). Only a crash
+outside every region reaches the top-level `ErrorBoundary`, which reports globally
+and offers a page reload. Module slots keep their own `ModuleErrorBoundary`.
+
 <a id="operation-feedback"></a>
 ### Operation feedback
 

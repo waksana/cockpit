@@ -81,6 +81,18 @@ export function describeReason(reason: unknown, includeStack = true): string {
   return `[${ctor}]`;
 }
 
+// Keep a local console record of a failure its owner already shows in place,
+// without a global notice. Never throws.
+export function recordUxDiagnostic(raw: string): void {
+  try {
+    const msg = raw.trim();
+    if (!msg) return;
+    console.error('[cockpit] local error (shown in place):', msg.length > MAX_LEN ? `${msg.slice(0, MAX_LEN)}…（已截断）` : msg);
+  } catch {
+    // Diagnostics must never create another uncaught error.
+  }
+}
+
 // Publish an ownerless failure to the console and local notification UI. Owned
 // failures are shown where they started (docs/frontend-guidelines.md#error-ownership).
 // Identical text is shown once per window. Never throws.
