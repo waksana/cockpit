@@ -54,15 +54,18 @@
   -webkit-touch-callout: none;
 }
 
-// Two lines: title + time, then roles + directory + status. Line 2 yields in a
-// fixed order: the directory shrinks first, then role badges; status never shrinks.
+// Title (up to two lines) with the time beside its first line, then roles +
+// directory + status. The details line yields in a fixed order: the directory
+// shrinks first, then role badges; status never shrinks.
 .chatlist-chat {
+  --session-title-line: calc(var(--font-size-16) * var(--host-leading-ui));
+
   position: relative;
   width: 100%;
   text-align: start;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-areas: 'title time' 'details details';
+  grid-template-areas: 'title title' 'details details';
   align-items: center;
   align-content: center;
   column-gap: 0.6rem;
@@ -82,19 +85,38 @@
     .session-row-title, .dialog-time, .dialog-subtitle { opacity: 0.45; }
   }
 
+  // At most two lines, ellipsized after the second. The time overlays the
+  // first line's end; an invisible float of the same text reserves its width
+  // on that line only, so a second line runs underneath the time.
   .session-row-title {
     grid-area: title;
     min-width: 0;
     font-size: var(--font-size-16);
     font-weight: 500;
-    white-space: nowrap;
+    line-height: var(--session-title-line);
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
     overflow: hidden;
-    text-overflow: ellipsis;
+    overflow-wrap: anywhere;
+    &::before {
+      content: attr(data-time);
+      float: inline-end;
+      height: 1px;
+      margin-inline-start: 0.6rem;
+      font-size: var(--font-size-12);
+      font-weight: normal;
+      white-space: nowrap;
+      visibility: hidden;
+    }
   }
   .dialog-time {
-    grid-area: time;
+    grid-area: title;
     justify-self: end;
+    align-self: start;
     font-size: var(--font-size-12);
+    line-height: var(--session-title-line);
     color: var(--host-color-faint);
     white-space: nowrap;
   }
