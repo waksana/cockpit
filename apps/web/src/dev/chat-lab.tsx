@@ -334,8 +334,12 @@ if (scene === 'dialog-focus') {
   const { default: App } = await import('../App');
   const page = new URLSearchParams(location.search).get('page');
   const item = new URLSearchParams(location.search).get('item');
+  const moduleId = new URLSearchParams(location.search).get('module');
+  const resourceId = new URLSearchParams(location.search).get('resource');
   const initialRoute = scene === 'sidebar' ? '/' : scene === 'resources' && (page === 'mcp' || page === 'skills')
-    ? `/${page}${item ? `/${encodeURIComponent(item)}` : ''}` : scene === 'resources' && (page === 'session-mcp' || page === 'session-skills')
+    ? page === 'skills' && moduleId && resourceId
+      ? `/skills/module/${encodeURIComponent(moduleId)}/${encodeURIComponent(resourceId)}`
+      : `/${page}${item ? `/${encodeURIComponent(item)}` : ''}` : scene === 'resources' && (page === 'session-mcp' || page === 'session-skills')
       ? `/session/${workspaceSessionId}/${page.slice('session-'.length)}` : `/session/${workspaceSessionId}/info`;
   const app = <MemoryRouter initialEntries={[initialRoute]}>
     <App /><UxErrorNotifications />

@@ -66,11 +66,13 @@ test('folded-message validators are absent from the production wire entry point'
 test('global catalog and skill detail preserve optional provenance without inventing roles or defaults', () => {
   for (const modules of [
     undefined, [{ id: 'fixture', name: 'Fixture' }],
-    [{ id: 'fixture', name: 'Fixture', roles: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] },
+    [{ id: 'fixture', name: 'Fixture', resourceId: 'opaque-role-skill',
+      roles: [{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }] },
       { id: 'another', name: 'Another' }],
   ]) {
     const metadata = modules ? { modules } : {};
-    const mcp = { name: 'native-literal', detail: 'native', defaultOn: false, ...metadata };
+    const mcpMetadata = modules ? { modules: modules.map(module => Protocol.ModuleSource.parse(module)) } : {};
+    const mcp = { name: 'native-literal', detail: 'native', defaultOn: false, ...mcpMetadata };
     const skill = { name: 'native-literal', source: 'custom', ...metadata };
     assert.deepEqual(Intents['mcp/global'].result.parse({ servers: [mcp] }).servers, [mcp]);
     assert.deepEqual(Intents['skills/global'].result.parse({ skills: [skill] }).skills, [skill]);
@@ -559,8 +561,12 @@ const intentFixtures = {
   'session/new': { body: { cwd: minimalMeta.cwd }, result: sid },
   'roles/list': { body: {}, result: { roles: [] } },
   'roles/resources': { body: {}, result: { modules: [{ id: 'fixture', name: 'Fixture',
-    roles: [{ id: 'owner', name: 'Owner' }], skills: [{ name: 'review', description: 'Review', roles: ['owner'] }],
+    roles: [{ id: 'owner', name: 'Owner' }],
+    skills: [{ id: 'review-id', name: 'review', description: 'Review', roles: ['owner'] }],
     mcpServers: [{ name: 'fixture', tools: ['*'], roles: ['owner'] }] }] } },
+  'roles/skill-read': { body: { moduleId: 'fixture', resourceId: 'review-id' },
+    result: { id: 'review-id', name: 'review', description: 'Review', body: '# Review',
+      module: { id: 'fixture', name: 'Fixture', roles: [{ id: 'owner', name: 'Owner' }] } } },
   'roles/add': { body: { ...sid, roles: [{ moduleId: 'fixture', roleId: 'owner' }] },
     result: { ...sid, status: 'saved', roles: [], appliedRoles: [], loaded: true, rolesNeedReload: false } },
   'roles/readiness': { body: sid, result: { ...sid, roles: [], loaded: false, ready: false, reasons: ['Session is unloaded'] } },

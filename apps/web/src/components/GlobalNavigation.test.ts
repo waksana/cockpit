@@ -13,6 +13,7 @@ test('global lists and item deep links have strict hierarchical parents', () => 
     assert.equal(parentOf(`/${section}/name%2Fpart`), `/${section}`);
     assert.equal(parentOf(`/${section}/name%2Fpart/`), `/${section}`);
   }
+  assert.equal(parentOf('/skills/module/fixture/resource-id'), '/skills');
   assert.equal(parentOf('/session/A/info'), '/session/A');
   assert.equal(parentOf('/session/A'), '/');
   assert.equal(parentOf('/files'), '/');

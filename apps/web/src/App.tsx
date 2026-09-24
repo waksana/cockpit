@@ -62,6 +62,7 @@ export default function App() {
       <Route path="/mcp" element={<ManagementRoute />} />
       <Route path="/mcp/:item" element={<ManagementRoute />} />
       <Route path="/skills" element={<ManagementRoute />} />
+      <Route path="/skills/module/:moduleId/:resourceId" element={<ManagementRoute />} />
       <Route path="/skills/:item" element={<ManagementRoute />} />
       <Route path="/session/:sessionId" element={<Workspace />} />
       {SESSION_PANELS.map(panel => (

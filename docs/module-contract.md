@@ -258,7 +258,8 @@ reject such manifests, because the manifest schema is strict.
 | Intent | Shape |
 | --- | --- |
 | `roles/list {}` | `{ roles: [{ moduleId, roleId, moduleName, name, description? }] }` |
-| `roles/resources {}` | `{ modules: [{ id, name, roles: [{ id, name }], skills: [{ name, description?, roles }], mcpServers: [{ name, tools, roles }] }] }`; see below. |
+| `roles/resources {}` | `{ modules: [{ id, name, roles: [{ id, name }], skills: [{ id, name, description?, roles }], mcpServers: [{ name, tools, roles }] }] }`; see below. |
+| `roles/skill-read { moduleId, resourceId }` | Reads one verified packaged `SKILL.md` by the opaque identity from `roles/resources`; returns `{ id, name, description?, body, module }`. |
 | `session/new { cwd, roles? }` | Creates one native session; result `{ sessionId }`. |
 | `roles/readiness { sessionId, roles? }` | Passive readiness: `sessionId`, `loaded`, `ready`, `roles`, `reasons`, optional `appliedRoles`, `rolesNeedReload`. |
 | `session/tools-initialize { sessionId }` | Initializes native tool table on a loaded idle session; `{ ok: true }`. |
@@ -288,14 +289,16 @@ provenance. It is not a prefix convention, authorization, connection, enablement
 readiness or complete-role proof. Skill provenance requires native name/path match;
 MCP provenance records assembled role configuration, because live URL/config
 identity is not exposed. Global `mcp/global`, `skills/global`, and `skills/read`
-may include `modules: ModuleSource[]` only after verifying manifests by origin,
-digest, endpoint or real `SKILL.md` path/SHA-256. Unknown resources stay unlabeled.
+may include module sources only after verifying manifests by origin, digest,
+endpoint or real `SKILL.md` path/SHA-256. A global native Skill source includes
+the opaque role resource identity only when that exact verified path is declared
+by a current role. Unknown resources stay unlabeled.
 `mcp/global.connection.method` is `http`, `sse`, `stdio` or `unknown`; `target` is
 only hostname or executable basename. `mcp/session` has no `connection` field.
 
 `roles/resources` is the read-only catalog of what currently loaded modules' roles
 assemble into sessions that select them: per module, every declared role, then each
-Skill (name, optional frontmatter description) and MCP server (name, union of tool
+Skill (opaque version-bound ID, name, optional frontmatter description) and MCP server (name, union of tool
 subsets, `['*']` for all) with the IDs of the roles declaring it. Skill bodies are
 verified against the installed digest; changed files fail the read. Modules without
 role resources are omitted. It is not native global configuration, enablement,
@@ -303,11 +306,25 @@ connection or readiness and omits endpoints, digests and file paths. The classic
 MCP/Skills pages show it as a separate read-only "模块提供" group without switches;
 the label names contributing roles unless every role of the module declares the
 resource, and an item already listed in native global configuration with the same
-verified module stays only there. Module resources cannot be turned off globally.
+verified opaque role resource identity stays only there. Module-only attribution
+or a same-name packaged Skill is not enough to deduplicate it. Module resources
+cannot be turned off globally.
 Session MCP/Skills rows with verified `module` provenance show "随角色启用" instead of
 a session switch, because role assembly restores them on reload or cold resume;
 status and errors remain visible, and a module Skill that native reports disabled in
 the session shows "本会话已停用". Other rows keep their session switch.
+
+The classic global Skills page links module-provided rows to the same read-only
+Markdown detail layout as native Skills. `roles/skill-read` accepts only a loaded
+module ID and an opaque Skill identity issued by the current catalog. The server
+resolves that identity through current role `skillDirectories`, rechecks the
+installation inventory, real-path boundary and SHA-256, and returns only that
+`SKILL.md`; it accepts no client path and exposes no installed path or module
+digest. A disabled, unloaded or replaced module and an unknown or stale identity
+fail with `MODULE_SKILL_NOT_FOUND`. Integrity and file read failures stay explicit
+and never fall back to a same-name native Skill, another module or another version.
+Related `references/`, `scripts/` and `assets/` are not listed or readable through
+this intent.
 
 Readiness is explicit only. `roles/readiness`, `cockpit_role_readiness`, and
 `context.host.call('roles/readiness', ...)` check current assembly, native skill

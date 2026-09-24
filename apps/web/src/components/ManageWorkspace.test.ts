@@ -83,8 +83,8 @@ test('both global toggles refresh authoritative detail and list after success or
   assert.match(source, /action.run\(\(\) => onChange\(name, next\)\)/);
   assert.match(source, /<McpList catalog=\{mcpCatalog\}/);
   assert.match(source, /<SkillsList catalog=\{skillCatalog\}/);
-  assert.match(source, /<McpDetail catalog=\{mcpCatalog\} name=\{item\}/);
-  assert.match(source, /<SkillDetail revision=\{refreshNonce\} name=\{item\}/);
+  assert.match(source, /<McpDetail catalog=\{mcpCatalog\} name=\{item!\}/);
+  assert.match(source, /<SkillDetail revision=\{refreshNonce\} name=\{item!\}/);
   assert.match(source, /feedback=\{action.error && !action.busy && <ResourceError /);
 });
 

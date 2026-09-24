@@ -191,10 +191,10 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
         { id: module.id, name: module.name,
           roles: roles.map(role => ({ id: role.roleId, name: role.name })).sort((a, b) => a.id.localeCompare(b.id)),
           skills: [
-            { name: 'cockpit-task-executor', description: roles[1].description, roles: ['executor'] },
-            { name: 'cockpit-task-owner', description: roles[0].description, roles: ['owner'] },
-            { name: 'task-executor-guide', description: '合成的单角色模块 Skill。', roles: ['executor'] },
-            { name: 'task-tree', description: longNames ? 'LongUnbrokenModuleSkillDescription'.repeat(8) : '合成的全角色模块 Skill。', roles: roleIds },
+            { id: 'task-executor', name: 'cockpit-task-executor', description: roles[1].description, roles: ['executor'] },
+            { id: 'task-owner', name: 'cockpit-task-owner', description: roles[0].description, roles: ['owner'] },
+            { id: 'task-guide', name: 'task-executor-guide', description: '合成的单角色模块 Skill。', roles: ['executor'] },
+            { id: 'task-tree', name: 'task-tree', description: longNames ? 'LongUnbrokenModuleSkillDescription'.repeat(8) : '合成的全角色模块 Skill。', roles: roleIds },
           ],
           mcpServers: [
             { name: 'cockpit-task', tools: ['*'], roles: roleIds },
@@ -202,8 +202,27 @@ export function installResourceFixture(store: ReturnType<typeof createCockpitSto
           ] },
         { id: additionalRole.moduleId, name: additionalRole.moduleName,
           roles: [{ id: additionalRole.roleId, name: additionalRole.name }],
-          skills: [{ name: 'notes-review', roles: [additionalRole.roleId] }], mcpServers: [] },
+          skills: [{ id: 'notes-review', name: 'notes-review', roles: [additionalRole.roleId] }], mcpServers: [] },
       ];
+    },
+    roleSkillRead: async (moduleId, resourceId) => {
+      await request();
+      const moduleResource = (await cockpitApi.roleResources())
+        .find(item => item.id === moduleId)?.skills.find(skill => skill.id === resourceId);
+      if (!moduleResource) throw new IntentHttpError(
+        'Synthetic module Skill is unavailable, disabled, replaced or no longer current', 404, 'MODULE_SKILL_NOT_FOUND');
+      const contributors = roles.filter(role => moduleResource.roles.includes(role.roleId));
+      const sourceModule = moduleId === module.id
+        ? { ...module, ...(contributors.length === roles.length ? {} : {
+          roles: contributors.map(role => ({ id: role.roleId, name: role.name })),
+        }) }
+        : { id: additionalRole.moduleId, name: additionalRole.moduleName };
+      return {
+        id: resourceId, name: moduleResource.name, description: moduleResource.description,
+        body: `---\nname: ${moduleResource.name}\ndescription: ${moduleResource.description ?? ''}\n---\n`
+          + `# ${moduleResource.name}\n\nSynthetic packaged module Skill body.\n`,
+        module: sourceModule,
+      };
     },
     mcpRefresh: async () => { await request(); },
     mcpSetDefault: async (name, defaultOn) => {
