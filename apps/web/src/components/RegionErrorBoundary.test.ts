@@ -304,3 +304,20 @@ test('a crashing session panel keeps its header and close control inside the ins
   assert.equal(getUxErrors().length, 0);
   assert.match(diagnostics.join('\n'), /会话设置渲染失败：Cannot read properties of null/);
 });
+
+test('a failed lazy module load offers a page reload, because retrying cannot recover it', async t => {
+  const h = mount(t);
+  let reloads = 0;
+  Object.assign(globalThis.window, { location: { reload: () => { reloads++; } } });
+  function Chunk(): ReactNode {
+    throw new TypeError('Failed to fetch dynamically imported module: http://127.0.0.1/assets/SessionInfoPanel-abc.js');
+  }
+  await h.render(createElement(RegionErrorBoundary, { label: '会话设置', children: createElement(Chunk) }));
+  const [fallback] = fallbacks(h.container);
+  assert.ok(!fallback.querySelectorAll('button').some(node => node.textContent === '重试'));
+  const reload = fallback.querySelectorAll('button').find(node => node.textContent === '重新加载页面');
+  assert.ok(reload);
+  await h.click(reload);
+  assert.equal(reloads, 1);
+  assert.equal(getUxErrors().length, 0);
+});

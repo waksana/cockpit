@@ -52,14 +52,18 @@ interface RegionProps {
   frame?: (fallback: ReactNode) => ReactNode;
   className?: string;
 }
-interface RegionState { error: string | null; resetKey: unknown }
+interface RegionState { error: string | null; moduleLoad: boolean; resetKey: unknown }
+
+// React.lazy caches a rejected import, so only a page reload can recover it.
+const MODULE_LOAD_FAILURE = /dynamically imported module|importing a module script failed|error loading dynamically imported module/i;
 
 export class RegionErrorBoundary extends Component<RegionProps, RegionState> {
-  state: RegionState = { error: null, resetKey: this.props.resetKey };
+  state: RegionState = { error: null, moduleLoad: false, resetKey: this.props.resetKey };
   private recorded: string | null = null;
 
   static getDerivedStateFromError(error: unknown): Partial<RegionState> {
-    return { error: describeReason(error, false) || '未知错误' };
+    const text = describeReason(error, false) || '未知错误';
+    return { error: text, moduleLoad: MODULE_LOAD_FAILURE.test(text) };
   }
 
   static getDerivedStateFromProps(props: RegionProps, state: RegionState): Partial<RegionState> | null {
@@ -77,12 +81,12 @@ export class RegionErrorBoundary extends Component<RegionProps, RegionState> {
   private retry = (): void => { this.setState({ error: null }); };
 
   render(): ReactNode {
-    const { error } = this.state;
+    const { error, moduleLoad } = this.state;
     if (error === null) return this.props.children;
     const { label, frame, className = '' } = this.props;
     const fallback = <div className={`region-error ${className}`.trim()} data-region-error={label}>
       <OperationResult state="failed" name={label} details={error}
-        action={{ label: '重试', onClick: this.retry }}>
+        action={moduleLoad ? { label: '重新加载页面', onClick: () => window.location.reload() } : { label: '重试', onClick: this.retry }}>
         {`${copy.failed(`显示${label}`, '')}，其余界面不受影响。`}
       </OperationResult>
     </div>;

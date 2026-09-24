@@ -132,7 +132,9 @@ within a short window are merged.
 Render crashes follow the same rule. `RegionErrorBoundary` (`components/ErrorBoundary.tsx`)
 owns a region's crash: it shows a failed `OperationResult` with a local 重试 in place,
 records the cause only in the console and keeps the global notice silent; new input
-for the region (its `resetKey`) retries automatically. The classic UI isolates each
+for the region (its `resetKey`) retries automatically. A failed lazy module load
+cannot be retried in place (React caches the rejection), so its fallback offers a
+page reload instead. The classic UI isolates each
 message and process group, the transcript, the conversation pane, each session row,
 the session list and the session detail panels (settings, MCP, Skills). Only a crash
 outside every region reaches the top-level `ErrorBoundary`, which reports globally
