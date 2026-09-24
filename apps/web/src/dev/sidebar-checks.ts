@@ -58,15 +58,8 @@ export function runSidebarChecks() {
       check(lines === 2 && title.scrollHeight > title.clientHeight + 1, 'long title stops at two lines with an ellipsis');
     }
     check(titleBox.left - box.left < 16, 'no empty avatar column');
-    const firstLine = lineRects.filter(rect => Math.round(rect.top) === lineTops[0]);
-    check(firstLine.every(rect => rect.right <= timeBox.left + 0.5), 'title first line does not overlap time');
-    if (lines === 2) {
-      const secondLine = lineRects.filter(rect => Math.round(rect.top) === lineTops[1]);
-      check(secondLine.every(rect => rect.top >= timeBox.bottom - 1), 'second title line starts below the time');
-      if (clampedTitles.has(session.sessionId)) {
-        check(Math.max(...secondLine.map(rect => rect.right)) > timeBox.left, 'second title line may use the space under the time');
-      }
-    }
+    check(titleBox.right <= timeBox.left + 0.5 && lineRects.every(rect => rect.right <= timeBox.left + 0.5),
+      'every title line stays left of the time');
     check(time.scrollWidth <= time.clientWidth + 0.5 && timeBox.right <= contentRight + 0.5, 'time fully visible');
     check(Math.abs(timeBox.top + timeBox.height / 2 - (titleBox.top + lineHeight / 2)) < 3, 'time on the first title line');
     check(detailsBox.top >= titleBox.bottom - 1, 'details line below title');

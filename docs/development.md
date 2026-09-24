@@ -218,8 +218,8 @@ owns its registration, notifications and badges. Production builds have a single
   Read ownership and scrolling belong to the route/window and single scroll owner.
 - Session rows have a title of up to two lines and a details line, without a directory
   avatar. The title ellipsizes after its second line (full text on hover and in the
-  accessible name); the always-visible time sits at the end of its first line, and a
-  second title line may run under it. One-line titles share one row height; a
+  accessible name); the always-visible time sits beside its first line, and both title
+  lines stay left of it. One-line titles share one row height; a
   two-line title adds exactly one title line. Details line: role badges, cwd basename
   (full path on hover) and status. When space runs out the directory yields first, then role badges share
   the rest equally (short ones whole, long ones ellipsized down to outlined stubs with

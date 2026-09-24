@@ -48,7 +48,6 @@ export function sessionRowOutline(html: string) {
       lines: row.children.map(value => value.attrs.class),
       details: details?.children.map(value => value.attrs.class) ?? [],
       title: { text: title?.text, hover: title?.attrs.title },
-      titleTime: title?.attrs['data-time'],
       time: child(row, 'dialog-time')?.text,
       directory: { text: directory?.text, hover: directory?.attrs.title },
       roles: roles ? all(roles, node => hasClass(node, 'role-badge')).map(badge => badge.attrs.title) : [],

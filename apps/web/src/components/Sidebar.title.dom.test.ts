@@ -19,7 +19,7 @@ const sidebar = (sessions: ChatSession[]) => createElement(Sidebar, {
   onSelect() {}, getMenuItems: () => [],
 });
 
-test('short and long titles keep full text, hover and reading order; the reserved time follows updates', () => {
+test('short and long titles keep full text, hover and reading order', () => {
   const long = `前端改进 B：${'会话列表标题最多显示两行并保留完整名称 '.repeat(6)}`;
   const now = Date.now();
   const view = render(sidebar([session('short', 'Short', now), session('long', long, now - 3_600_000)]));
@@ -30,15 +30,8 @@ test('short and long titles keep full text, hover and reading order; the reserve
     assert.equal(titleEl.textContent, title);
     assert.equal(titleEl.title, title);
     assert.ok(time.textContent);
-    assert.equal(titleEl.dataset.time, time.textContent);
     assert.deepEqual(Array.from(row.children, child => child.className),
       ['session-row-title', 'dialog-time', 'session-row-details']);
     assert.ok(screen.getByRole('button', { name: new RegExp(`^${title.trim().slice(0, 12)}`) }));
   }
-  const before = view.container.querySelector<HTMLElement>('[data-session-id="long"] .session-row-title')!.dataset.time;
-  view.rerender(sidebar([session('short', 'Short', now), session('long', long, now - 3 * 86_400_000)]));
-  const row = view.container.querySelector<HTMLElement>('[data-session-id="long"]')!;
-  const after = row.querySelector<HTMLElement>('.session-row-title')!.dataset.time;
-  assert.notEqual(after, before);
-  assert.equal(after, row.querySelector('.dialog-time')!.textContent);
 });

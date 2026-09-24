@@ -38,7 +38,6 @@ function SessionRow({ s, active, actions, connected }: {
   const firedRef = useRef(false);
   const activityRefreshing = useCockpit(state => state.activityRefreshingIds.includes(s.sessionId));
   const lp = useLongPress(actions.onMenu, firedRef);
-  const time = relTime(s.lastActivity);
 
   return (
     <button
@@ -64,8 +63,8 @@ function SessionRow({ s, active, actions, connected }: {
       onPointerUp={lp.onPointerUp}
       onPointerCancel={lp.onPointerCancel}
     >
-      <span className="session-row-title" title={s.title} data-time={time}>{s.title}</span>
-      <span className="dialog-time">{time}</span>
+      <span className="session-row-title" title={s.title}>{s.title}</span>
+      <span className="dialog-time">{relTime(s.lastActivity)}</span>
       <span className="session-row-details">
         {!!s.roles?.length && <span className="dialog-roles session-role-badges">
           {s.roles.map(role => <RoleBadge key={`${role.moduleId}/${role.roleId}`} role={role} session={s} connected={connected} />)}
