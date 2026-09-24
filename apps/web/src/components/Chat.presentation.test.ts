@@ -11,7 +11,7 @@ import { copyText } from '../lib/copyText';
 import { compile } from 'sass';
 import { getSessionDraft } from '../lib/textDraft';
 import { getDraftSession } from '../lib/draftSelection';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { ActivityHeader } from './ActivityHeader';
 import { ChatHeader } from './ChatHeader';
 import { PlanCard } from './PendingDecision';
@@ -335,7 +335,7 @@ test('Chat regions and optional composer context each have a single spacing owne
   assert.match(css, /\.chat-history-actions:empty \{\s*display: none;/);
   assert.doesNotMatch(css, /--chat-space-/);
   assert.doesNotMatch(css, /data-preparing/);
-  for (const file of ['./Thread.tsx', './Transcript.tsx', '../features/thread/ThreadTranscript.tsx', '../features/thread/useThreadScroll.ts']) {
+  for (const file of ['./Thread.tsx', './Transcript.tsx', ...readdirSync(new URL('../features/thread/', import.meta.url)).map(name => `../features/thread/${name}`)]) {
     assert.doesNotMatch(readFileSync(new URL(file, import.meta.url), 'utf8'), /readySession|preparingHistory|data-preparing/, file);
   }
 });
