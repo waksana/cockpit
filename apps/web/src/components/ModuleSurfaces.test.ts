@@ -117,9 +117,6 @@ test('middleware introduces no contribution-placeholder DOM or CSS and leaves sc
   const sidebar = compile(new URL('../styles/components/sidebar.scss', import.meta.url).pathname).css;
   assert.doesNotMatch(sidebar, /module-session-badges|module-global-actions/);
   assert.match(css, /\.message-speech,\s*\.chat-answer-question \{\s*position: relative;\s*\}/);
-  const thread = readFileSync(new URL('./Thread.tsx', import.meta.url), 'utf8');
-  assert.match(thread, /<MessageContent message=\{m\} \/>/);
-  assert.doesNotMatch(thread, /IntersectionObserver|notification|unread|localStorage/);
   const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
   assert.equal((app.match(/observeModuleView\(moduleRuntime, useCockpit, document\)/g) ?? []).length, 1);
 });

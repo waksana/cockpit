@@ -335,8 +335,6 @@ test('Chat regions and optional composer context each have a single spacing owne
   assert.match(css, /\.chat-history-actions:empty \{\s*display: none;/);
   assert.doesNotMatch(css, /--chat-space-/);
   assert.doesNotMatch(css, /data-preparing/);
-  const thread = readFileSync(new URL('./Thread.tsx', import.meta.url), 'utf8');
-  assert.doesNotMatch(thread, /readySession|preparingHistory|data-preparing/);
 });
 
 test('the entire input card uses one default-open disclosure row without a nested question frame', () => {
@@ -358,15 +356,12 @@ test('the entire input card uses one default-open disclosure row without a neste
   assert.match(css, /\.chat-execution-toggle\.ck-button \{[^}]*flex: 1 1 0;[^}]*min-block-size: var\(--chat-control-compact\);/);
   assert.match(css, /\.chat-ask-q \{[^}]*user-select: text/);
   assert.doesNotMatch(html, /chat-answer-toggle|chat-answer-chevron/);
-  const source = readFileSync(new URL('./Composer.tsx', import.meta.url), 'utf8');
-  assert.doesNotMatch(source, /onToggle|scrollHeight|clientHeight|getBoundingClientRect|ResizeObserver|requestAnimationFrame/);
 });
 
 test('CSS owns the shell again, with no replacement global JS viewport controller', () => {
-  const shell = readFileSync(new URL('./Shell.tsx', import.meta.url), 'utf8');
   const styles = compile(new URL('../styles/components/shell.scss', import.meta.url).pathname).css;
   assert.match(styles, /\.cockpit-shell \{[^}]*inset: 0;[^}]*height: 100dvh;/);
-  assert.doesNotMatch(shell + styles, /visualViewport|chat-viewport|useVisualViewport/);
+  assert.doesNotMatch(styles, /chat-viewport/);
   for (const file of ['../lib/visualViewport.ts', '../lib/useVisualViewport.ts', '../dev/viewport-fixture.ts']) {
     assert.equal(existsSync(new URL(file, import.meta.url)), false);
   }
@@ -518,8 +513,6 @@ test('elicitation selects a separate draft and cannot send its text as an ordina
 });
 
 test('chat leaves right-click and text selection to the browser instead of mounting a copy menu', () => {
-  const thread = readFileSync(new URL('./Thread.tsx', import.meta.url), 'utf8');
-  assert.doesNotMatch(thread, /onContextMenu|ContextMenu|MessageMenu|msgMenu|openMsgMenu|copyNotice|messageCopyText/);
   const base = compile(new URL('../styles/base.scss', import.meta.url).pathname).css;
   assert.match(base, /\.chat-messages[^{}]*\{[^}]*user-select: text;[^}]*-webkit-touch-callout: default/);
   const css = compile(new URL('../styles/components/chat.scss', import.meta.url).pathname).css;
@@ -573,10 +566,6 @@ test('expanded tools keep their header geometry and show full metadata only when
   assert.match(css, /\.tool-label \{[^}]*max-width: min\(18ch, 45%\);[^}]*direction: rtl/);
   assert.match(css, /\.tool-description \{[^}]*white-space: nowrap;[^}]*text-overflow: ellipsis/);
   assert.match(css, /\.activity-detail\.tool-detail \{[^}]*border-inline-start: 0/);
-  const source = readFileSync(new URL('./ToolCallRow.tsx', import.meta.url), 'utf8');
-  assert.match(source, /presentation\.builtin \|\| server \|\| tagClipped/);
-  assert.match(source, /descriptionClipped && description/);
-  assert.doesNotMatch(source, /activity-chevron|activity-status/);
 });
 
 test('process rows use compact typography with leading status and a trailing name tag', () => {

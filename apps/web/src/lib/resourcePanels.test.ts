@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import { readFileSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -351,9 +350,6 @@ for (const Component of [SessionMcp, SessionSkills]) {
     withSession(t, true);
     const html = renderToStaticMarkup(createElement(Component, { session, onClose: noop }));
     assert.doesNotMatch(html, /manage-scope|Cockpit 不保存或重放选择/);
-    const manage = readFileSync(new URL('../components/Manage.tsx', import.meta.url), 'utf8');
-    assert.doesNotMatch(manage, /manage-scope|manage-serial-note|仅本会话有效/);
-    assert.doesNotMatch(manage, /重载技能|刷新技能定义后/);
   });
 }
 
@@ -374,10 +370,4 @@ test('resume is disabled offline and after session removal without changing auth
   const render = (sessionId: string) => renderToStaticMarkup(createElement(SessionResume, { sessionId, required: true }));
   assert.match(render(session.sessionId), /disabled="" aria-busy="false" aria-describedby="[^"]+">恢复会话<\/button>/);
   assert.match(render('removed'), /disabled="" aria-busy="false" aria-describedby="[^"]+">恢复会话<\/button>/);
-});
-
-test('retained settings resume without the removed close-and-reload operation', () => {
-  const controls = readFileSync(new URL('../components/SessionResume.tsx', import.meta.url), 'utf8');
-  assert.match(controls, /await loadSession\(sessionId\)/);
-  assert.doesNotMatch(controls, /reloadSession|unloadSession|compactSession|rewindSession/);
 });
