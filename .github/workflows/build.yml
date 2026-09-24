@@ -39,9 +39,11 @@ jobs:
           COCKPIT_NATIVE_MODEL_SMOKE: '1'
           COCKPIT_NATIVE_STATE_SMOKE: '1'
           COCKPIT_NATIVE_ROLES: '1'
+          COCKPIT_NATIVE_MCP_META: '1'
         run: >-
           pnpm --filter @cockpit/core exec node --import tsx --test
           src/runtime-smoke.test.ts src/model-settings-native.test.ts src/native-state-smoke.test.ts src/roles-native.test.ts
+          src/mcp-invocation-native.test.ts
       - run: pnpm build
       - name: Isolated MCP graceful-shutdown smoke
         env:

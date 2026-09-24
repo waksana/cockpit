@@ -207,6 +207,34 @@ names are manifest keys. The host generates
 `X-Cockpit-Module-Digest`. Same-module roles with the same endpoint union tool
 lists; `['*']` means all tools and `[]` means none.
 
+<a id="mcp-invocation-meta"></a>
+#### MCP invocation metadata
+
+For every `tools/call` sent to a module role MCP server, the host adds its native
+observation of the caller to the request `_meta` under the key `cockpit/invocation`
+(exported as `MCP_INVOCATION_META_KEY`, value type `McpInvocationMeta` in
+`@cockpit/module-api`). The values come from the native runtime hook, not from tool
+arguments, so the model cannot see or change them; any other `_meta` entries (such as
+`progressToken`) are kept, and a value already under this key is replaced.
+
+```json
+{"_meta":{"progressToken":1,"cockpit/invocation":{"sessionId":"<main>","runtimeSessionId":"<caller>","subagent":true,"agentName":"general-purpose"}}}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `sessionId` | Cockpit (native main) session that owns the MCP connection. |
+| `runtimeSessionId` | Native runtime session that issued the call; equals `sessionId` for the main agent. |
+| `subagent` | `true` when `runtimeSessionId` differs from `sessionId`, meaning a subagent (for example one started by the `task` tool) made the call. |
+| `agentName` | Optional native internal agent name of that subagent (for example `general-purpose`), when the host observed its start event. Never set for the main agent. |
+
+The host only labels calls; it never allows, denies or rewrites them, and it does not
+know module tools. Modules decide how to use the label, for example rejecting a
+subagent write that claims to be the main session. User-configured or other non-module
+MCP servers never receive this key. Fields may be added later; ignore unknown fields.
+Servers that do not read `_meta` behave as before. Requests without the key come from
+an older host or a non-Cockpit client, not from a verified main agent.
+
 <a id="default-instructions"></a>
 #### Default instructions
 

@@ -7,6 +7,7 @@ import type { RoleAssembly, SessionInstructions } from './roles.ts';
 import type { RoleService } from './role-service.ts';
 import type { SkillsService } from './skills-service.ts';
 import type { DecisionBroker } from './decisions.ts';
+import { moduleMcpInvocationHook, SubagentNames } from './mcp-invocation.ts';
 
 type UserInputResponse = Awaited<ReturnType<NonNullable<SessionConfig['onUserInputRequest']>>>;
 const planActions = new Set<string>(['exit_only', 'interactive', 'autopilot', 'autopilot_fleet']);
@@ -28,7 +29,9 @@ export class SessionConfigurator {
     this.decisions = decisions;
   }
 
-  async config(st: SessionHandle, cwd?: string): Promise<{ config: SessionConfig; assembly?: RoleAssembly; instructions?: SessionInstructions }> {
+  async config(st: SessionHandle, cwd?: string): Promise<{
+    config: SessionConfig; assembly?: RoleAssembly; instructions?: SessionInstructions; subagents?: SubagentNames;
+  }> {
     const disabled = await this.skills.globalDisabledSkills();
     const selected = await this.roleService.savedRoles(st.id);
     const assembly = selected.length ? await this.k.roles!.assemble(st.id, selected) : undefined;
@@ -64,8 +67,11 @@ export class SessionConfigurator {
     }
     const instructions = await this.k.roles?.sessionInstructions?.(st.id, assembly);
     const systemMessage = instructions ? { mode: 'append' as const, content: instructions.content } : assembly?.config.systemMessage;
-    return { assembly, instructions, config: {
+    const moduleServers = new Set(Object.keys(assembly?.config.mcpServers ?? {}));
+    const subagents = moduleServers.size ? new SubagentNames() : undefined;
+    return { assembly, instructions, subagents, config: {
       ...assembly?.config, ...(systemMessage ? { systemMessage } : {}),
+      ...(subagents ? { hooks: { onPreMcpToolCall: moduleMcpInvocationHook(moduleServers, subagents) } } : {}),
       sessionId: st.id, ...(cwd ? { workingDirectory: cwd } : {}), streaming: true,
       enableConfigDiscovery: true,
       // Runtime 1.0.83 discovers skills but does not apply its global disabled

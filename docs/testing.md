@@ -109,6 +109,15 @@ unloaded staying unloaded, repeated saves, uncertain persistence, lifecycle
 concurrency and load-time resource validation. Mock injection is not production
 failure evidence.
 
+**MCP invocation metadata.** Synthetic: `pnpm --filter @cockpit/core exec node --import tsx --test src/mcp-invocation.test.ts`
+— attaching [invocation metadata](module-contract.md#mcp-invocation-meta) only for
+module role servers, preserving and merging existing request `_meta`, replacing a
+forged namespace value, main agent versus subagent, subagent names and a fresh name
+table after reload. Native:
+`COCKPIT_NATIVE_MCP_META=1 pnpm --filter @cockpit/core exec node --import tsx --test src/mcp-invocation-native.test.ts`
+— a real main-agent call and a `task` subagent call reach a loopback HTTP MCP server
+with the expected metadata; a non-module server receives none.
+
 **Tool metadata.** The same native entry covers null tool metadata after model/Skill
 changes, MCP reload not restoring it, explicit `session/tools-initialize` restoring it
 without inference or reload, and re-enabling a Skill after cold resume. Check that
