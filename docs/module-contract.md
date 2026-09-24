@@ -46,7 +46,7 @@ pnpm module list --server http://127.0.0.1:8771
 ```
 The equivalent runtime-package command is:
 ```sh
-node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/module-cli.ts ...
+node --enable-source-maps apps/server/dist/module-cli.js ...
 ```
 `install` requires `--trust-local-code`; the flag means the operator trusts this executable code, not that a signature was verified. Validation completes before any entry is imported and before any script can run. The same id/version with a different digest is not overwritten. `--enable` selects the installed digest
 for the next start. `enable` may specify `--version` and `--digest`; without them it selects an installed module by id according to current CLI rules. `disable` changes only the next-start selection. `list` reads installed packages and selection, then optionally queries `/_modules` from a loopback HTTP origin; an

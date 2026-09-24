@@ -22,14 +22,25 @@ portable dependency export, performed offline from the shared lockfile; the
 workspace injection/deduplication settings and the lockfile must stay together
 for that to work.
 
-Entry points from an extracted package root (no pnpm or checkout needed):
+`pnpm build` compiles the server, core, protocol and MCP client to `dist/` with
+source maps (shared settings in [`tsconfig.runtime.json`](../tsconfig.runtime.json));
+the packager requires those outputs and the built Web. Entry points from an
+extracted package root (no pnpm, checkout or TypeScript loader needed):
 
 ```sh
-node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/index.ts   # service
-node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js        # stdio MCP client
+node --enable-source-maps apps/server/dist/index.js   # service
+node --enable-source-maps apps/mcp/dist/index.js      # stdio MCP client
 ```
 
-The package also contains the local module CLI (`apps/server/src/module-cli.ts`)
+<a id="entry-point-upgrade"></a>
+Packages built before this change started with
+`node --import …/tsx/dist/loader.mjs apps/server/src/index.ts` (and the same loader
+for `apps/mcp/dist/index.js`). Those loaders are no longer shipped: when deploying a
+newer package, update every existing launch command — the service unit and each
+Copilot MCP registration — to the commands above. The root `package.json` of a
+package lists them as `start`, `start:mcp` and `module`.
+
+The package also contains the local module CLI (`apps/server/dist/module-cli.js`)
 and the public type export script (`scripts/export-module-api.mjs`); see the
 [module contract](module-contract.md). Modules are released separately and are
 never bundled.
@@ -37,9 +48,12 @@ never bundled.
 <a id="package-contents"></a>
 ## Package contents and identity
 
-The archive keeps the workspace layout: server entry and TypeScript sources,
-built Web, compiled MCP client, `packages/module-api`, required loaders, runtime
-dependencies including the SDK's native platform assets, and LICENSE/NOTICE.
+The archive keeps the workspace layout: compiled server, core, protocol and MCP
+client JavaScript with source maps (workspace manifests are rewritten to resolve
+`dist`), built Web without source maps, the protocol and `packages/module-api`
+TypeScript sources used by the public type export, production dependencies
+including the SDK's native platform assets, and LICENSE/NOTICE. It contains no
+TypeScript loader (`tsx`/`esbuild`); the packager refuses a closure that does.
 It excludes Node, user modules, `.cockpit` data, credentials, tests, fixtures,
 development diagnostics, docs (except license files) and Git. It must run without
 symlinks into a development tree.

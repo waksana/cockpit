@@ -36,12 +36,13 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.30.0
         version: 1.30.0(zod@3.25.76)
-      tsx:
-        specifier: ^4.23.13
-        version: 4.23.13
       zod:
         specifier: ^3.25.76
         version: 3.25.76
+    devDependencies:
+      tsx:
+        specifier: ^4.23.13
+        version: 4.23.13
 
   apps/server:
     dependencies:
@@ -60,15 +61,16 @@ importers:
       fastify:
         specifier: ^5.12.3
         version: 5.12.3
-      tsx:
-        specifier: ^4.23.13
-        version: 4.23.13
       zod:
         specifier: ^3.25.76
         version: 3.25.76
       zod-to-json-schema:
         specifier: ^3.25.2
         version: 3.25.2(zod@3.25.76)
+    devDependencies:
+      tsx:
+        specifier: ^4.23.13
+        version: 4.23.13
 
   apps/web:
     dependencies:

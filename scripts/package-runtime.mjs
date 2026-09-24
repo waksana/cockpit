@@ -8,23 +8,29 @@ import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const START_COMMAND = 'node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/index.ts';
-export const MCP_START_COMMAND = 'node --import ./apps/mcp/node_modules/tsx/dist/loader.mjs apps/mcp/dist/index.js';
-export const MODULE_COMMAND = 'node --import ./apps/server/node_modules/tsx/dist/loader.mjs apps/server/src/module-cli.ts';
+// Packaged entry points run precompiled JavaScript directly; no TypeScript loader ships.
+export const START_COMMAND = 'node --enable-source-maps apps/server/dist/index.js';
+export const MCP_START_COMMAND = 'node --enable-source-maps apps/mcp/dist/index.js';
+export const MODULE_COMMAND = 'node --enable-source-maps apps/server/dist/module-cli.js';
 export const REQUIRED_FILES = [
   'LICENSE', 'NOTICE.md', 'package.json',
-  'apps/server/package.json', 'apps/server/src/index.ts',
-  'apps/server/src/module-cli.ts',
-  'apps/server/node_modules/tsx/dist/loader.mjs',
+  'apps/server/package.json', 'apps/server/dist/index.js', 'apps/server/dist/index.js.map',
+  'apps/server/dist/module-cli.js',
   'apps/web/dist/index.html',
   'apps/web/dist/licenses/lucide.txt', 'apps/web/dist/licenses/frontend.txt',
   'apps/mcp/package.json', 'apps/mcp/dist/index.js',
-  'apps/mcp/node_modules/tsx/dist/loader.mjs',
-  'packages/core/package.json', 'packages/core/src/index.ts',
-  'packages/protocol/package.json', 'packages/protocol/src/index.ts',
+  'packages/core/package.json', 'packages/core/dist/index.js',
+  'packages/protocol/package.json', 'packages/protocol/dist/index.js',
+  // The public type export copies protocol and module-api sources.
+  'packages/protocol/src/index.ts',
   'packages/module-api/package.json', 'packages/module-api/src/index.ts',
   'scripts/export-module-api.mjs',
 ];
+// Build outputs copied from the checkout; the Web is separately copied into the runtime.
+const compiledPackages = ['apps/server', 'apps/mcp', 'packages/core', 'packages/protocol'];
+const compiledMap = /^(?:apps\/(?:server|mcp)|packages\/(?:core|protocol))\/dist\/.+\.js\.map$/;
+// Development-only loaders must never reach the runtime closure.
+const forbiddenRuntimeDependency = /(?:^|\/)node_modules\/(?:\.pnpm\/)?(?:tsx|esbuild|@esbuild[+/])/;
 const packagePaths = ['apps/server', 'apps/mcp', 'packages/core', 'packages/protocol', 'packages/module-api'];
 const sourceRoots = [
   'LICENSE', 'NOTICE.md', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml',
@@ -66,6 +72,7 @@ export function safeRelativePath(path) {
 
 export function firstPartyRuntimePath(path) {
   if (path === 'NOTICE.md') return true;
+  if (compiledMap.test(path)) return safeRelativePath(path) && !path.split('/').some(part => omittedDirectories.has(part));
   return safeRelativePath(path)
     && !path.split('/').some(part => omittedDirectories.has(part))
     && !/(?:\.test\.|\.spec\.|\.map$|\.mdx?$|\.rst$)/i.test(path)
@@ -88,12 +95,12 @@ export async function sha256(path) {
   return hash.digest('hex');
 }
 
-async function copyBuiltTree(source, target, path = '') {
+async function copyBuiltTree(source, target, path) {
   const stat = await lstat(source);
   if (!stat.isDirectory()) throw new Error(`Build input is not a regular directory: ${source}`);
   await mkdir(target, { recursive: true });
   for (const entry of await readdir(source, { withFileTypes: true })) {
-    const name = path ? `${path}/${entry.name}` : entry.name;
+    const name = `${path}/${entry.name}`;
     if (!safeRelativePath(name)) throw new Error(`Unsafe build input path: ${name}`);
     if (!entry.isFile() && !entry.isDirectory()) throw new Error(`Build inputs cannot contain links or special files: ${name}`);
     if (!firstPartyRuntimePath(name)) continue;
@@ -161,9 +168,22 @@ async function relocateWorkspace(root, app, name, destination, reuse = false) {
   await symlink(relative(dirname(source), target), source, 'dir');
 }
 
-async function runtimePackageJson(path) {
-  const { devDependencies: _devDependencies, files: _files, scripts, ...manifest } = await json(path);
-  if (scripts?.start) manifest.scripts = { start: scripts.start };
+const compiledEntry = value => typeof value === 'string' ? value.replace(/^\.\/src\/(.+)\.ts$/, './dist/$1.js') : value;
+
+// Workspace manifests point at TypeScript sources for development; the runtime resolves compiled output.
+// Nested scripts are dropped: the root package.json holds the supported runtime commands.
+async function runtimePackageJson(path, compiled) {
+  const { devDependencies: _devDependencies, files: _files, scripts: _scripts, ...manifest } = await json(path);
+  if (compiled) {
+    delete manifest.types;
+    if (manifest.main) manifest.main = compiledEntry(manifest.main);
+    if (manifest.exports) {
+      manifest.exports = Object.fromEntries(Object.entries(manifest.exports).map(([key, value]) => [key, compiledEntry(value)]));
+    }
+    for (const value of [manifest.main, ...Object.values(manifest.exports ?? {})]) {
+      if (value !== undefined && !/^\.\/dist\/.+\.js$/.test(value)) throw new Error(`Unsupported runtime entry in ${path}: ${JSON.stringify(value)}`);
+    }
+  }
   await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
 }
 
@@ -270,11 +290,13 @@ export async function packageRuntime({ repository, sourceSha, output = 'runtime-
   cleanHead(repository, sourceSha, run);
   const sourceTime = run('git', ['show', '-s', '--format=%ct', sourceSha], repository).trim();
   if (!/^\d+$/.test(sourceTime)) throw new Error('Invalid source commit timestamp');
-  for (const directory of ['apps/web/dist', 'apps/mcp/dist']) {
+  for (const directory of ['apps/web/dist', ...compiledPackages.map(path => `${path}/dist`)]) {
     const path = join(repository, directory);
     if (await realpath(path) !== path) throw new Error(`Build input paths cannot contain symlinks: ${directory}`);
   }
-  for (const path of ['apps/web/dist/index.html', 'apps/mcp/dist/index.js']) await nonemptyFile(join(repository, path));
+  for (const path of ['apps/web/dist/index.html', ...compiledPackages.map(path => `${path}/dist/index.js`)]) {
+    await nonemptyFile(join(repository, path));
+  }
   await mkdir(outputPath); // Exclusive creation: never merge with or replace previous output.
   const work = join(outputPath, '.work'), source = join(work, 'source'), runtime = join(work, 'runtime');
   try {
@@ -286,15 +308,16 @@ export async function packageRuntime({ repository, sourceSha, output = 'runtime-
     const corePackage = await json(join(source, 'packages/core/package.json'));
     const sdkVersion = corePackage.dependencies?.['@github/copilot-sdk'];
     if (!/^\d+\.\d+\.\d+$/.test(sdkVersion ?? '')) throw new Error('The SDK runtime must be pinned to an exact version');
-    if (rootPackage.scripts?.start !== START_COMMAND || rootPackage.scripts?.['start:mcp'] !== MCP_START_COMMAND
-        || !serverPackage.dependencies?.tsx || !mcpPackage.dependencies?.tsx) {
-      throw new Error('The direct Node start command and production tsx dependency are required');
+    if (serverPackage.dependencies?.tsx || mcpPackage.dependencies?.tsx) {
+      throw new Error('The runtime runs compiled JavaScript; tsx must stay a development dependency');
     }
     if (!rootPackage.engines?.node || !serverPackage.version) throw new Error('Missing Node prerequisite or server version');
     if (rootPackage.packageManager !== `pnpm@${run('pnpm', ['--version'], source).trim()}`) {
       throw new Error('Use the exact pnpm version pinned in package.json');
     }
-    await copyBuiltTree(join(repository, 'apps/mcp/dist'), join(source, 'apps/mcp/dist'));
+    for (const path of compiledPackages) {
+      await copyBuiltTree(join(repository, path, 'dist'), join(source, path, 'dist'), `${path}/dist`);
+    }
     await mkdir(join(runtime, 'apps'), { recursive: true });
     for (const app of ['server', 'mcp']) {
       run('pnpm', [
@@ -308,8 +331,10 @@ export async function packageRuntime({ repository, sourceSha, output = 'runtime-
     await relocateWorkspace(runtime, 'apps/server', '@cockpit/protocol', 'packages/protocol');
     await relocateWorkspace(runtime, 'apps/server', '@cockpit/module-api', 'packages/module-api');
     await relocateWorkspace(runtime, 'apps/mcp', '@cockpit/protocol', 'packages/protocol', true);
-    for (const path of packagePaths) await runtimePackageJson(join(runtime, path, 'package.json'));
-    await copyBuiltTree(join(repository, 'apps/web/dist'), join(runtime, 'apps/web/dist'));
+    for (const path of packagePaths) {
+      await runtimePackageJson(join(runtime, path, 'package.json'), ['packages/core', 'packages/protocol'].includes(path));
+    }
+    await copyBuiltTree(join(repository, 'apps/web/dist'), join(runtime, 'apps/web/dist'), 'apps/web/dist');
     await copyFile(join(source, 'LICENSE'), join(runtime, 'LICENSE'));
     await copyFile(join(source, 'NOTICE.md'), join(runtime, 'NOTICE.md'));
     await mkdir(join(runtime, 'scripts'));
@@ -321,6 +346,8 @@ export async function packageRuntime({ repository, sourceSha, output = 'runtime-
     }, null, 2)}\n`);
     const sdk = await validateRuntime(runtime, sdkVersion);
     const files = await inventoryTree(runtime, { normalizeModes: true });
+    const loader = files.find(file => forbiddenRuntimeDependency.test(file.path));
+    if (loader) throw new Error(`Development loader in the runtime closure: ${loader.path}`);
     const manifest = {
       format: 1, product: 'cockpit', version: serverPackage.version, sourceSha,
       node: process.versions.node, nodeRequirement: rootPackage.engines.node, platform: process.platform, arch: process.arch,

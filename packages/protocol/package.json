@@ -3,6 +3,11 @@
   "version": "0.4.5",
   "type": "module",
   "files": [
+    "dist",
+    "!dist/**/*.test.*",
+    "!dist/**/__tests__/**",
+    "!dist/**/__fixtures__/**",
+    "!dist/**/fixtures/**",
     "src",
     "!src/**/*.test.*",
     "!src/**/__tests__/**",
