@@ -36,6 +36,8 @@ for (const key of [...Object.keys(descriptors), ...Object.getOwnPropertySymbols(
   Object.defineProperty(globalThis, key, { ...descriptor, configurable: true });
 }
 (window.document as unknown as Record<symbol, unknown>)[PropertySymbol.defaultView] = globalThis;
+// Direct createRoot/act users get React's act environment too, not only Testing Library.
+(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 after(async () => {
   for (const [key, previous] of restore.reverse()) {
