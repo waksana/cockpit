@@ -107,7 +107,7 @@ test('running state and pending decisions remain without schedule indicators or 
   assert.doesNotMatch(html, /未读|已读|dialog-unread|dialog-pinned/);
 });
 
-test('each row renders two lines: title with time, then roles, directory and status', () => {
+test('each row renders a title of up to two lines with its time, then roles, directory and status', () => {
   const [row] = sessionRowOutline(render([session('cwd', { cwd: '/work/项目/', title: 'A very long title '.repeat(8) })]));
   assert.deepEqual(row.lines, ['session-row-title', 'dialog-time', 'session-row-details']);
   assert.deepEqual(row.details, ['dialog-subtitle', 'dialog-meta']);
@@ -155,12 +155,16 @@ test('busy session rows retain the leading overall spinner alongside specific ac
   }
 });
 
-test('second-line space yields directory first, then roles, never status', () => {
+test('title clamps at two lines beside the time; details yield directory first, then roles, never status', () => {
   const css = compile(new URL('../styles/components/sidebar.scss', import.meta.url).pathname).css;
   const rule = (selector: string) => css.match(new RegExp(`${selector.replace(/[.*]/g, '\\$&')} \\{([^}]*)\\}`))?.[1] ?? '';
   assert.match(rule('.chatlist-chat'), /grid-template-areas: "title time" "details details";/);
-  assert.match(rule('.chatlist-chat .session-row-title'), /white-space: nowrap;[^]*text-overflow: ellipsis;/);
-  assert.match(rule('.chatlist-chat .dialog-time'), /white-space: nowrap;/);
+  assert.doesNotMatch(rule('.chatlist-chat'), /[^-]height: /);
+  const title = rule('.chatlist-chat .session-row-title');
+  assert.match(title, /-webkit-line-clamp: 2;[^]*line-clamp: 2;[^]*overflow: hidden;/);
+  assert.doesNotMatch(title, /white-space: nowrap|[^-]height:/);
+  assert.doesNotMatch(css, /session-row-title::before|float:/);
+  assert.match(rule('.chatlist-chat .dialog-time'), /grid-area: time;[^]*align-self: start;[^]*white-space: nowrap;/);
   assert.match(rule('.chatlist-chat .dialog-subtitle'), /flex: 1 1 0;/);
   assert.match(rule('.chatlist-chat .dialog-roles'), /flex: 0 1 auto;/);
   assert.match(rule('.chatlist-chat .dialog-meta'), /flex: none;/);

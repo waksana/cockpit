@@ -147,7 +147,7 @@ Select a scene with `?scene=<id>`:
 | `thought-markdown` | Formatted thinking, code copy and incremental updates. |
 | `history-loading`, `history-progressive`, `initial-history`, `reading` | History-start hint, progressive pages with retained anchors, first-page positioning (`&frame=1` late commit, `&short=1`, `&cards=1` growing card). Record actual first paint, not just scroll positions. |
 | `dialog-focus` | Confirmation, `DirectoryModal` and `InspectorPane` (modal at 1000×800, docked above 1200px). Run `await import('/src/dev/dialog-focus-checks.ts').then(m => m.checkDialogFocus('pointer'))` (or `'keyboard'`/`'input'`) after each open/close. `window.dialogFocusLab` exposes `directoryReady()`, `replaceTrigger()`, `removeTrigger()` and `release()`. |
-| `sidebar` | Two-line session rows with long/unbroken titles, roles, statuses and module badges. Run `await import('/src/dev/sidebar-checks.ts').then(m => m.runSidebarChecks())` at desktop and narrow touch widths. |
+| `sidebar` | Session rows with short, two-line and clamped long/unbroken titles, roles, statuses and module badges. Run `await import('/src/dev/sidebar-checks.ts').then(m => m.runSidebarChecks())` at desktop and narrow touch widths. |
 | `resources` (`&longNames=1`, `&page=mcp|skills|session-mcp|session-skills`, `&item=`, `&empty=1`, `&fail=1`, `&delay=1`) | Session list, role picker, settings and global/session MCP/Skills pages against a synthetic store. Run `await import('/src/dev/role-picker-checks.ts').then(m => m.runRolePickerChecks())` with a role picker open. Check 1600, 1024 and 390px. |
 | `workspace`, `full-web` (`&case=tool-loading`, `agent-unloaded`) | The complete App on a synthetic store, including the session control bar. |
 | `workspace&failures=1` | [Region error boundaries](frontend-guidelines.md#error-boundaries): a malformed message, session row and settings panel fail in place with no global notice. `window.renderFailureLab.repair()` restores valid data to check automatic recovery. |
@@ -216,10 +216,12 @@ owns its registration, notifications and badges. Production builds have a single
 - `PendingDecision` shares plan/elicitation/question content inside the input card;
   questions reuse the composer; callbacks and native action lists stay distinct.
   Read ownership and scrolling belong to the route/window and single scroll owner.
-- Session rows have exactly two lines and one height, without a directory avatar.
-  Line 1: single-line ellipsized title (full text on hover and in the accessible name)
-  and the always-visible time. Line 2: role badges, cwd basename (full path on hover)
-  and status. When space runs out the directory yields first, then role badges share
+- Session rows have a title of up to two lines and a details line, without a directory
+  avatar. The title ellipsizes after its second line (full text on hover and in the
+  accessible name); the always-visible time sits beside its first line, and both title
+  lines stay left of it. One-line titles share one row height; a
+  two-line title adds exactly one title line. Details line: role badges, cwd basename
+  (full path on hover) and status. When space runs out the directory yields first, then role badges share
   the rest equally (short ones whole, long ones ellipsized down to outlined stubs with
   full titles); status never shrinks, wraps or overlaps, and host attention indicators
   (overall, then decision) come first.
