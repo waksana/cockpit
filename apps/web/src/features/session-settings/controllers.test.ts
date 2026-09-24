@@ -1,7 +1,7 @@
+import { act, render, type RenderResult } from '../../test/dom';
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import { act, createElement, type ReactNode } from 'react';
-import { createRoot } from 'react-dom/client';
+import { createElement, type ReactNode } from 'react';
 import type { IntentResult } from '@cockpit/protocol';
 import { useCockpit } from '../../net/store';
 import { cockpitApi } from '../../net/api';
@@ -10,29 +10,16 @@ import { useModelSettings } from './useModelSettings';
 import { useSessionRoles } from './useSessionRoles';
 import { hasHostLeaveRisk } from '../../lib/hostLeave';
 
-// Headless production hooks need a mounted React owner, not a browser emulator.
 function mount(t: TestContext) {
-  const document = Object.assign(new EventTarget(), { nodeType: 9, activeElement: null });
-  const container = Object.assign(new EventTarget(), {
-    nodeType: 1, nodeName: 'DIV', tagName: 'DIV', ownerDocument: document,
-    namespaceURI: 'http://www.w3.org/1999/xhtml', textContent: '',
-  });
-  const globals = { document, window: { document, HTMLIFrameElement: class {} }, IS_REACT_ACT_ENVIRONMENT: true };
-  const restores = Object.entries(globals).map(([key, value]) => {
-    const previous = Object.getOwnPropertyDescriptor(globalThis, key);
-    Object.defineProperty(globalThis, key, { value, configurable: true });
-    return () => previous ? Object.defineProperty(globalThis, key, previous) : Reflect.deleteProperty(globalThis, key);
-  });
   const previous = useCockpit.getState();
   useCockpit.setState({ connState: 'open', connectionGeneration: 1, snapshotReady: true, sessions: [session] });
   t.mock.method(globalThis, 'fetch', async () => assert.fail('Synthetic controller tests cannot use a backend'));
-  const root = createRoot(container as unknown as HTMLElement);
-  t.after(async () => {
-    await act(async () => root.unmount());
-    useCockpit.setState(previous, true);
-    restores.forEach(restore => restore());
+  let view: RenderResult | undefined;
+  t.after(() => { useCockpit.setState(previous, true); });
+  return (children: ReactNode) => act(async () => {
+    if (view) view.rerender(children);
+    else view = render(children);
   });
-  return (children: ReactNode) => act(async () => root.render(children));
 }
 const session: ChatSession = {
   sessionId: 'settings-controller', title: 'Synthetic controller', cwd: '/fixture', loaded: true,

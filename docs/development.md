@@ -152,6 +152,9 @@ Select a scene with `?scene=<id>`:
 | `workspace`, `full-web` (`&case=tool-loading`, `agent-unloaded`) | The complete App on a synthetic store, including the session control bar. |
 | `workspace&failures=1` | [Region error boundaries](frontend-guidelines.md#error-boundaries): a malformed message, session row and settings panel fail in place with no global notice. `window.renderFailureLab.repair()` restores valid data to check automatic recovery. |
 
+CI covers a subset of these scenes automatically in the [Chat Lab smoke](testing.md#chat-lab-smoke);
+it saves screenshots but does not replace manual review.
+
 Use real mouse, touch and keyboard actions, both themes and narrow widths
 (`&pane=narrow` constrains the chat pane to 456px). The checks measure geometry and
 focus; they are not native, iOS or production evidence.

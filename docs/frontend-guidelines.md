@@ -300,8 +300,8 @@ cover style files and className literals only, not inline TSX styles.
 <a id="type-guardrails"></a>
 ### Type guardrails
 
-Web code compiles with TypeScript `strict` (`tsconfig.app.json` and
-`tsconfig.node.json`, both in `pnpm --filter @cockpit/web typecheck`). ESLint is
+Web code compiles with TypeScript `strict` (`tsconfig.app.json`, `tsconfig.node.json`
+and `tsconfig.e2e.json` for the browser smoke, all in `pnpm --filter @cockpit/web typecheck`). ESLint is
 type-aware and rejects floating and misused promises: await, return or handle a
 promise, or discard it explicitly with `void` when its failure is already owned
 elsewhere (for example, a store mutation that reports its own error). Top-level

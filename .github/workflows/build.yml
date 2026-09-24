@@ -61,3 +61,36 @@ jobs:
             runtime-output/runtime.tar.gz.sha256
           if-no-files-found: error
           retention-days: 7
+
+  chat-lab-smoke:
+    # Browser smoke on synthetic Chat Lab fixtures only (docs/testing.md#chat-lab-smoke).
+    # Runs in parallel with Required checks; screenshots are the visual baseline artifact.
+    name: Chat Lab smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24.20.0
+      - run: pnpm install --frozen-lockfile
+      - name: Install Playwright Chromium
+        run: pnpm --filter @cockpit/web exec playwright install --with-deps --only-shell chromium
+      - name: Chat Lab browser smoke
+        run: pnpm --filter @cockpit/web test:smoke
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: ${{ !cancelled() }}
+        with:
+          name: chat-lab-screenshots-${{ github.sha }}
+          path: |
+            apps/web/chat-lab-screenshots/
+            apps/web/test-results/
+          if-no-files-found: warn
+          retention-days: 30
