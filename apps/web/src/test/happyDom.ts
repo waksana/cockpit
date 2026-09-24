@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import { after } from 'node:test';
 import { GlobalWindow, PropertySymbol } from 'happy-dom';
 
@@ -36,6 +37,31 @@ for (const key of [...Object.keys(descriptors), ...Object.getOwnPropertySymbols(
   Object.defineProperty(globalThis, key, { ...descriptor, configurable: true });
 }
 (window.document as unknown as Record<symbol, unknown>)[PropertySymbol.defaultView] = globalThis;
+// Node's AssertionError formats operands with customInspect disabled and depth
+// 1000, so a failing identity assertion on a happy-dom node walks the whole
+// window graph and appears to hang. Identity checks on nodes fail fast instead.
+function describeNode(value: unknown) {
+  if (!(value instanceof window.Node)) return String(value);
+  if (value.nodeType !== 1) return `[${value.nodeName}]`;
+  const element = value as unknown as Element;
+  const attributes = Array.from(element.attributes, attribute => ` ${attribute.name}="${attribute.value}"`).join('');
+  return `<${element.localName}${attributes}>`;
+}
+type Identity = (actual: unknown, expected: unknown, message?: string | Error) => void;
+for (const target of [assert, assert.strict] as unknown as Record<string, Identity>[]) {
+  for (const [name, same] of [['equal', true], ['strictEqual', true], ['notEqual', false], ['notStrictEqual', false]] as const) {
+    const original = target[name];
+    target[name] = function identity(actual, expected, message) {
+      if (!(actual instanceof window.Node) && !(expected instanceof window.Node)) return original(actual, expected, message);
+      if ((actual === expected) === same) return;
+      if (message instanceof Error) throw message;
+      throw new assert.AssertionError({
+        message: message ?? `Expected ${describeNode(actual)} ${same ? 'to be' : 'not to be'} ${describeNode(expected)}`,
+        operator: name, stackStartFn: identity,
+      });
+    };
+  }
+}
 // Direct createRoot/act users get React's act environment too, not only Testing Library.
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 

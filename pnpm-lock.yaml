@@ -105,9 +105,6 @@ importers:
       '@eslint/js':
         specifier: ^10.0.1
         version: 10.0.1(eslint@10.10.0(jiti@2.7.0))
-      '@happy-dom/global-registrator':
-        specifier: ^20.14.5
-        version: 20.14.5
       '@playwright/test':
         specifier: 1.63.0
         version: 1.63.0
@@ -597,10 +594,6 @@ packages:
   '@github/copilot-sdk@1.0.13':
     resolution: {integrity: sha512-/j6/tGc9HOtcupuYFloOKk0fpScdpy65EVF1LKg2Z2VQOojCGPgBGkhgVGVDaqW7UB6TV2qbQZa9rKJimJ0wWQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
-
-  '@happy-dom/global-registrator@20.14.5':
-    resolution: {integrity: sha512-B05ID9DhSwLs6mlm1fzlkAtTIvB3duCvjJjfr19LBrlTK7VZtRjDqoTRIVv13GuYuNdhByu8LSZgThwV3Rkj7g==}
-    engines: {node: '>=20.0.0'}
 
   '@hono/node-server@2.1.1':
     resolution: {integrity: sha512-ELuehkj5VCBdgEw9zs+ivkKwyzzUCSQuE96YmiPvn1ECBoZCczbFXJLeEGMTYjphP6gydh4pHMqEYPVMYUVgQg==}
@@ -3160,14 +3153,6 @@ snapshots:
       '@github/copilot-sdk-linuxmusl-x64': 1.0.13
       '@github/copilot-sdk-win32-arm64': 1.0.13
       '@github/copilot-sdk-win32-x64': 1.0.13
-
-  '@happy-dom/global-registrator@20.14.5':
-    dependencies:
-      '@types/node': 25.9.5
-      happy-dom: 20.14.5
-    transitivePeerDependencies:
-      - bufferutil
-      - utf-8-validate
 
   '@hono/node-server@2.1.1(hono@4.13.7)':
     dependencies:

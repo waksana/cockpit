@@ -102,7 +102,7 @@ function button(container: ParentNode, text: string) {
   assert.ok(result, `Missing button: ${text}`);
   return result;
 }
-function disabled(node: Element) { return node.hasAttribute('disabled') || node.getAttribute('aria-disabled') === 'true'; }
+function disabled(node: Element) { return node.hasAttribute('disabled'); }
 function headingAdd(container: ParentNode) {
   const result = container.querySelector('.ui-section-actions')?.querySelector('[aria-label="追加模块角色"]');
   assert.ok(result, 'role addition belongs to the section heading actions');

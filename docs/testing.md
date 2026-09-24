@@ -69,7 +69,13 @@ test. Tests that only need `document` for a manual `createRoot` can import
 - Registering the DOM also provides `localStorage` and other browser APIs; keep
   tests that assert no-DOM or no-storage behavior on the plain Node runner.
 - Assert behavior, not product source text. Reading files is reserved for static
-  guardrails such as stylesheets, class definitions, `index.html` and licenses.
+  guardrails such as stylesheets, class definitions, `index.html` and licenses, and
+  for negative architecture guards (a component must not import or measure
+  something) that no rendered behavior can observe.
+- The harness makes `assert.equal`/`strictEqual` and their negations compare DOM
+  nodes by identity with a short failure message; Node's default formatting of a
+  happy-dom node walks the whole window and looks like a hang. Do not
+  `deepEqual` nodes.
 - Static markup (`renderToStaticMarkup`) remains fine for pure presentation checks.
 
 <a id="chat-lab-smoke"></a>

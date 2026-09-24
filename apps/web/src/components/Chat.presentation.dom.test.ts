@@ -17,7 +17,7 @@ function withConnectedStore(t: TestContext) {
   t.after(() => { useCockpit.setState(previous, true); });
 }
 
-test('chat input uses one disclosure-owned composer without measuring or mode controls', async t => {
+test('chat input uses one disclosure-owned composer without mode controls', async t => {
   withConnectedStore(t);
   const session = fixtureSession('ask-queued');
   const prompt = getSessionDraft(session.sessionId);
@@ -38,15 +38,23 @@ test('chat input uses one disclosure-owned composer without measuring or mode co
   assert.equal(card.dataset.question, 'true');
   assert.equal(screen.getAllByRole('textbox', { name: '消息输入' }).length, 1);
   assert.equal(screen.queryByRole('button', { name: /模式|mode/i }), null);
-  assert.equal(document.body.textContent?.includes('mode-menu'), false);
-  assert.equal(document.body.textContent?.includes('chat-topbar-mode'), false);
-  assert.equal(document.body.textContent?.includes('chat-answer-toggle'), false);
+  assert.equal(document.querySelector('.mode-menu, .chat-topbar-mode, .chat-answer-toggle, .chat-answer-chevron'), null);
   await userEvent.setup().click(screen.getByRole('button', { name: /^收起输入卡片：/ }));
-  assert.equal(card.dataset.open, 'false');
   assert.equal(card.dataset.open, 'false');
 });
 
-test('CSS shell ownership has no JavaScript viewport controller side effects', () => {
+test('CSS shell ownership has no JavaScript viewport controller side effects', t => {
+  const viewportListeners: string[] = [];
+  const viewport = Object.assign(new EventTarget(), { width: 1000, height: 800, offsetTop: 0, offsetLeft: 0, scale: 1 });
+  t.mock.method(viewport, 'addEventListener', (type: string) => { viewportListeners.push(type); });
+  Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
+  t.after(() => { Reflect.deleteProperty(window, 'visualViewport'); });
+  const windowListeners: string[] = [];
+  const addWindowListener = window.addEventListener.bind(window);
+  t.mock.method(window, 'addEventListener', (type: string, ...rest: [EventListenerOrEventListenerObject, AddEventListenerOptions?]) => {
+    windowListeners.push(type);
+    addWindowListener(type, ...rest);
+  });
   render(createElement(Shell, {
     ariaLabel: 'layout',
     main: createElement(DetailPane, {
@@ -55,7 +63,8 @@ test('CSS shell ownership has no JavaScript viewport controller side effects', (
     }),
   }));
   assert.ok(document.querySelector('.cockpit-shell'));
-  assert.equal('visualViewport' in window, false);
+  assert.deepEqual(viewportListeners, []);
+  assert.equal(windowListeners.includes('resize'), false);
   assert.equal(document.querySelector('[data-chat-viewport], .chat-viewport'), null);
 });
 
@@ -63,10 +72,11 @@ test('right click keeps browser text selection ownership instead of mounting a c
   const session = fixtureSession('reading');
   render(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
   const transcript = screen.getByLabelText('对话消息');
-  transcript.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+  const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+  transcript.dispatchEvent(event);
+  assert.equal(event.defaultPrevented, false);
   assert.equal(screen.queryByRole('menu'), null);
   assert.equal(screen.queryByRole('button', { name: '复制消息' }), null);
-  assert.equal(document.body.textContent?.includes('copyNotice'), false);
 });
 
 test('expanded tools show full metadata only when observable clipping requires it', async t => {
@@ -108,6 +118,5 @@ test('expanded tools show full metadata only when observable clipping requires i
   assert.ok(screen.getByText('functions.view'));
   assert.ok(screen.getByText('说明'));
   assert.ok(screen.getAllByText('Read source').length >= 2);
-  assert.equal(document.body.textContent?.includes('activity-chevron'), false);
-  assert.equal(document.body.textContent?.includes('activity-status'), false);
+  assert.equal(document.querySelector('.activity-chevron, .activity-status'), null);
 });

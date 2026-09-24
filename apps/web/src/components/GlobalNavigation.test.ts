@@ -1,5 +1,6 @@
 import { render, screen, userEvent, waitFor } from '../test/dom';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test, type TestContext } from 'node:test';
 import { createElement } from 'react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
@@ -34,18 +35,21 @@ function mount(t: TestContext) {
       ? { left: 20, right: 60, top: 10, bottom: 42, width: 40, height: 32, x: 20, y: 10, toJSON() {} }
       : { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0, x: 0, y: 0, toJSON() {} };
   });
+  const before = document.createElement('input');
+  before.setAttribute('aria-label', 'before');
+  document.body.append(before);
+  t.after(() => { before.remove(); });
+  before.focus();
   render(createElement(MemoryRouter, { initialEntries: ['/'] },
     createElement(Routes, null,
       createElement(Route, { path: '*', element: createElement('div', null,
-        createElement('input', { 'aria-label': 'before' }),
         createElement(GlobalNavigation),
         createElement(LocationProbe)) }))));
+  return before;
 }
 
 test('global menu exposes only global sections, does not steal focus on mount, and pushes navigation', async t => {
-  mount(t);
-  const before = screen.getByLabelText('before') as HTMLInputElement;
-  before.focus();
+  const before = mount(t);
   assert.equal(document.activeElement, before);
   assert.equal(screen.queryByRole('menu'), null);
 
@@ -63,4 +67,9 @@ test('global menu exposes only global sections, does not steal focus on mount, a
   await user.click(screen.getByRole('button', { name: '全局导航' }));
   await user.click(await screen.findByRole('menuitem', { name: /全局 Skills/ }));
   await waitFor(() => assert.equal(screen.getByLabelText('location').textContent, '/skills'));
+});
+
+test('management workspace does not mount the global menu', () => {
+  const management = readFileSync(new URL('./ManageWorkspace.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(management, /GlobalNavigation/);
 });

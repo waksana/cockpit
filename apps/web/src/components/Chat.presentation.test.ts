@@ -335,6 +335,8 @@ test('Chat regions and optional composer context each have a single spacing owne
   assert.match(css, /\.chat-history-actions:empty \{\s*display: none;/);
   assert.doesNotMatch(css, /--chat-space-/);
   assert.doesNotMatch(css, /data-preparing/);
+  const thread = readFileSync(new URL('./Thread.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(thread, /readySession|preparingHistory|data-preparing/);
 });
 
 test('the entire input card uses one default-open disclosure row without a nested question frame', () => {
@@ -356,6 +358,8 @@ test('the entire input card uses one default-open disclosure row without a neste
   assert.match(css, /\.chat-execution-toggle\.ck-button \{[^}]*flex: 1 1 0;[^}]*min-block-size: var\(--chat-control-compact\);/);
   assert.match(css, /\.chat-ask-q \{[^}]*user-select: text/);
   assert.doesNotMatch(html, /chat-answer-toggle|chat-answer-chevron/);
+  const composer = readFileSync(new URL('./Composer.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(composer, /onToggle|scrollHeight|clientHeight|getBoundingClientRect|ResizeObserver|requestAnimationFrame/);
 });
 
 test('CSS owns the shell again, with no replacement global JS viewport controller', () => {
