@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fsyncSync, mkdirSync, openSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
-import { join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { SessionRole, type ModuleSource, type RoleSelection } from '@cockpit/protocol';
 import type { RoleAssembly, RoleProvider, SessionInstructions } from '@cockpit/core';
 import type { ModuleInstallation } from './module-install.ts';
@@ -134,11 +134,24 @@ export class ModuleRoles implements RoleProvider {
 
   save(sessionId: string, roles: SessionRole[]): void {
     const file = this.file(sessionId);
-    mkdirSync(join(this.root, 'session-roles'), { recursive: true, mode: 0o700 });
+    const directory = join(this.root, 'session-roles');
+    const created = mkdirSync(directory, { recursive: true, mode: 0o700 });
     const pending = `${file}.${randomUUID()}.pending`;
-    writeFileSync(pending, JSON.stringify(SessionRole.array().parse(roles)), { mode: 0o600, flag: 'wx' });
-    try { renameSync(pending, file); }
-    finally { rmSync(pending, { force: true }); }
+    const bytes = JSON.stringify(SessionRole.array().parse(roles));
+    try {
+      const handle = openSync(pending, 'wx', 0o600);
+      try {
+        writeFileSync(handle, bytes);
+        fsyncSync(handle);
+      } finally { closeSync(handle); }
+      renameSync(pending, file);
+    } finally { rmSync(pending, { force: true }); }
+    syncDirectory(directory);
+    // A freshly created directory chain must also be durable in its parents.
+    if (created) for (let path = dirname(directory); ; path = dirname(path)) {
+      syncDirectory(path);
+      if (path === dirname(created) || path === dirname(path)) break;
+    }
   }
 
   async assemble(sessionId: string, selections: RoleSelection[]): Promise<RoleAssembly> {
@@ -215,4 +228,9 @@ export class ModuleRoles implements RoleProvider {
     return { roles, config, skills: [...skills.values()], mcpSources, instructionSources,
       fingerprint: createHash('sha256').update(JSON.stringify(config)).digest('hex') };
   }
+}
+
+function syncDirectory(path: string): void {
+  const handle = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  try { fsyncSync(handle); } finally { closeSync(handle); }
 }
