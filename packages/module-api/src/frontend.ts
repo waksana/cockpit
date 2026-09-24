@@ -23,7 +23,7 @@ export interface ChatWindowMessage {
   readonly role: 'user' | 'assistant' | 'system' | 'tool';
   readonly text: string;
   readonly complete: boolean;
-  readonly subtype?: 'ask-reply' | 'subagent' | 'skill';
+  readonly subtype?: 'ask-reply' | 'plan-reply' | 'elicitation-reply' | 'subagent' | 'skill';
   readonly children: readonly ChatWindowMessage[];
 }
 

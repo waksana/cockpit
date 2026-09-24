@@ -330,7 +330,7 @@ export class SessionKernel {
       loaded: false, status: error ? 'error' : 'unloaded', nativeProcessing: false, activity: null, controls: null,
       appliedRoles: [], rolesNeedReload: false,
       activeSubagents: 0, activeMcpOperations: 0, compacting: false,
-      queue: [], ask: null, planRequest: null, elicitation: null, intent: null,
+      queue: [], ask: null, planRequest: null, elicitation: null, decisions: [], intent: null,
       ...(error ? { error: error.message } : {}),
     });
     this.release(st);

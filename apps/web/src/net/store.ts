@@ -21,6 +21,7 @@ import { sessionReloadBlockReason } from '../lib/sessionReload';
 import { sessionSettingsBlockReason, type SessionSettingsAction, type SessionSettingsOperation } from '../lib/sessionSettingsActions';
 import type { NativeDraftRequest } from '../lib/draft';
 import { observeDraftDecisions, retireDraftSession } from '../lib/draftSelection';
+import { findPendingDecision } from '../lib/pendingDecisions';
 import type { DraftReference, DraftSendBlockReason, ModuleEventPayload } from '@cockpit/module-api';
 
 // Background tabs release their native chat read.
@@ -704,9 +705,10 @@ export const createCockpitStore = () => create<CockpitState>((set, get) => {
       if (purpose.kind === 'elicitation') return 'unsupported';
       if (!session.loaded) return 'unavailable';
       if (purpose.kind === 'ask') {
-        if (session.ask?.requestId !== purpose.requestId) return 'decision-changed';
-        if (session.ask.allowFreeform === false) return 'unsupported';
-      } else if (session.planRequest?.requestId !== purpose.requestId) return 'decision-changed';
+        const ask = findPendingDecision(session, 'ask', purpose.requestId);
+        if (!ask) return 'decision-changed';
+        if (ask.request.allowFreeform === false) return 'unsupported';
+      } else if (!findPendingDecision(session, 'plan', purpose.requestId)) return 'decision-changed';
     },
 
     watchControls(sid) {

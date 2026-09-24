@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useSyncExternalStore } f
 import type { ChatSession } from '../../net/types';
 import type { NativeDraftRequest } from '../../lib/draft';
 import { getDraftSession } from '../../lib/draftSelection';
+import { pendingDecisions, pendingDecisionKey, type PendingDecision } from '../../lib/pendingDecisions';
 import type { SessionDraft } from '../../lib/textDraft';
 import { useModuleRuntime } from '../../components/ModuleComponents';
 
@@ -16,22 +17,15 @@ export function useThreadDrafts(session: ChatSession, { readOnly, authoritative,
   const runtime = useModuleRuntime();
   useLayoutEffect(() => { runtime.prepareDraft(drafts.prompt, readOnly); }, [runtime, drafts, readOnly]);
   const draftRevision = useSyncExternalStore(drafts.subscribe, drafts.getSnapshot, drafts.getSnapshot);
-  const ask = session.ask;
-  const askId = ask?.requestId, planId = session.planRequest?.requestId, elicitationId = session.elicitation?.requestId;
-  const decisions = useMemo(() => ({
-    loaded: session.loaded,
-    ask,
-    planRequest: planId !== undefined ? { requestId: planId } : null,
-    elicitation: elicitationId !== undefined ? { requestId: elicitationId } : null,
-  }), [ask, planId, elicitationId, session.loaded]);
+  const { decisions: list, ask, planRequest, elicitation, loaded } = session;
+  const pending = useMemo(() => pendingDecisions({ decisions: list, ask, planRequest, elicitation }),
+    [list, ask, planRequest, elicitation]);
+  const decisions = useMemo(() => ({ loaded, decisions: pending }), [pending, loaded]);
   const draft = useMemo(() => {
     void draftRevision;
     return drafts.current(decisions, authoritative);
   }, [drafts, decisions, authoritative, draftRevision]);
   useLayoutEffect(() => { drafts.synchronize(decisions, authoritative); }, [drafts, decisions, authoritative]);
-  const askDraft = askId !== undefined ? drafts.candidate({ kind: 'ask', requestId: askId }) : undefined;
-  const planDraft = planId !== undefined ? drafts.candidate({ kind: 'plan', requestId: planId }) : undefined;
-  const elicitationDraft = elicitationId !== undefined ? drafts.candidate({ kind: 'elicitation', requestId: elicitationId }) : undefined;
   useLayoutEffect(() => { runtime.prepareDraft(draft, readOnly); }, [runtime, draft, readOnly]);
   const canAct = useRef(false);
   useLayoutEffect(() => {
@@ -40,21 +34,38 @@ export function useThreadDrafts(session: ChatSession, { readOnly, authoritative,
   }, [session.sessionId, authoritative, readOnly]);
   const { pending: actionPending, hasContent } = useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getSnapshot);
 
+  const draftFor = useCallback((decision: PendingDecision): SessionDraft => (
+    drafts.candidate({ kind: decision.kind, requestId: decision.request.requestId })
+  ), [drafts]);
+  // Handlers capture this render's drafts, so a saved callback cannot answer a
+  // later occurrence that reuses the same native request ID.
+  const draftOf = useMemo(() => {
+    const byKey = new Map(pending.map(decision => [pendingDecisionKey(decision), draftFor(decision)]));
+    return (kind: PendingDecision['kind'], requestId: string) => byKey.get(pendingDecisionKey({ kind, request: { requestId } }));
+  }, [pending, draftFor]);
+  const purpose = draft.reference.purpose;
+  const selected = purpose.kind === 'prompt' ? undefined
+    : pending.find(decision => decision.kind === purpose.kind && decision.request.requestId === purpose.requestId);
+  const select = useCallback((decision: PendingDecision) => {
+    drafts.select({ kind: decision.kind, requestId: decision.request.requestId });
+  }, [drafts]);
+
   const runAction = useCallback((target: SessionDraft, send: () => Promise<boolean> | undefined): Promise<boolean> => (
     target.runAction(send, () => canAct.current && drafts.isLive(target))
   ), [drafts]);
 
-  // A composer send answers a pending ask (respondAsk), submits feedback on
-  // a pending plan (planSupersede), or otherwise sends a normal prompt.
+  // A composer send answers the selected ask (respondAsk), submits feedback on
+  // the selected plan (planSupersede), or otherwise sends a normal prompt.
   const handleSend = useCallback((): Promise<boolean> => draft.send(
     request => onSend?.(request) ?? Promise.resolve(false), () => canAct.current && drafts.isCurrent(draft),
   ), [draft, drafts, onSend]);
 
-  const handleChoice = useCallback((choice: string): Promise<boolean> => {
-    if (!ask || !askDraft) return Promise.resolve(false);
-    return runAction(askDraft, () => onRespondAsk?.(ask.requestId, choice, false));
-  }, [ask, askDraft, onRespondAsk, runAction]);
+  const handleChoice = useCallback((requestId: string, choice: string): Promise<boolean> => {
+    const target = draftOf('ask', requestId);
+    if (!target) return Promise.resolve(false);
+    return runAction(target, () => onRespondAsk?.(requestId, choice, false));
+  }, [draftOf, onRespondAsk, runAction]);
 
-  const decisionKey = askId ? `ask:${askId}` : planId ? `plan:${planId}` : elicitationId ? `elicitation:${elicitationId}` : undefined;
-  return { draft, planDraft, elicitationDraft, actionPending, hasContent, decisionKey, runAction, handleSend, handleChoice };
+  const decisionKey = selected ? pendingDecisionKey(selected) : undefined;
+  return { draft, pending, selected, select, draftOf, actionPending, hasContent, decisionKey, runAction, handleSend, handleChoice };
 }

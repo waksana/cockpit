@@ -190,7 +190,8 @@ export const scenarios = [
   ['plan-queued', '计划 / 队列 / 停止'],
   ['elicitation-queued', '工具确认 / 队列 / 停止'],
   ['idle-queued', '空闲 / 保留队列'],
-  ['decision-stack', '多个待确认请求 / 长队列'],
+  ['decision-stack', '多个待确认请求 / 标签切换 / 长队列'],
+  ['decision-history', '已回答问题 / 已确认计划 / 已处理确认'],
   ['choice-only', '仅选项回答'],
   ['freeform', '自由输入提问'],
   ['plan', '计划 / 完整计划 / 新指令'],
@@ -284,7 +285,7 @@ export function fixtureSession(scenario: Scenario): ChatSession {
     planContent: Array.from({ length: 24 }, (_, i) => `${i + 1}. 检查组件展开、聚焦、长内容与错误反馈；不更改原生语义。`).join('\n'),
     actions: ['interactive', 'autopilot', 'autopilot_fleet', 'exit_only'], recommendedAction: 'interactive',
   };
-  if (['elicitation', 'elicitation-queued', 'decision-stack'].includes(scenario)) session.elicitation = { requestId: 'lab-elicitation', message: '此工具请求你的确认。是否允许读取选定目录？这是隔离组件场景，不会调用真实工具。', actions: ['accept', 'decline', 'cancel'] };
+  if (['elicitation', 'elicitation-queued', 'decision-stack'].includes(scenario)) session.elicitation = { requestId: 'lab-elicitation', message: '此工具请求你的确认。是否允许读取选定目录？这是隔离组件场景，不会调用真实工具。', source: 'fixture-mcp', actions: ['accept', 'decline', 'cancel'] };
   if (session.ask || session.planRequest || session.elicitation) Object.assign(session, { status: 'running', nativeProcessing: true });
   if (scenario.endsWith('-queued') || scenario === 'decision-stack') session.queue = [
     { id: 'queued-short', text: '完成之后，再检查窄屏布局。' },
@@ -294,6 +295,20 @@ export function fixtureSession(scenario: Scenario): ChatSession {
   if (scenario === 'ask-queued' || scenario === 'decision-stack') session.ask!.question =
     '安装包已准备好。是否允许在当前会话结束后继续完成后续操作，并记录结果？' +
     '这里保留完整条件说明，以检查问题内容和独立队列在窄屏及键盘弹出后的可达性。'.repeat(5);
+  // A second question of the same kind is only visible through the ordered list.
+  if (scenario === 'decision-stack') session.decisions = [
+    { kind: 'ask', request: session.ask! }, { kind: 'plan', request: session.planRequest! },
+    { kind: 'ask', request: { requestId: 'lab-ask-2', question: '第二个问题：窄屏下标签是否需要换行？', choices: ['换行', '横向滚动'], allowFreeform: true } },
+    { kind: 'elicitation', request: session.elicitation! },
+  ];
+  if (scenario === 'decision-history') session.messages = [
+    message('history-user', 'user', '先整理计划，再征求我的确认。'),
+    message('reply-lab-ask', 'user', '阅读层级与代码（推荐）', { subtype: 'ask-reply', replyQuestion: '这次精修先聚焦哪一组组件？' }),
+    message('reply-lab-plan-1', 'user', '修改意见：第二步先做窄屏检查。', { subtype: 'plan-reply', replyQuestion: '## 组件精修计划\n\n1. 统一阅读节奏。\n2. 明确工具与子代理状态。' }),
+    message('reply-lab-plan-2', 'user', '已批准：开始执行（交互）', { subtype: 'plan-reply', replyQuestion: '## 组件精修计划（修订）\n\n1. 先做窄屏检查。\n2. 统一阅读节奏。' }),
+    message('elicitation-lab', 'user', '此工具请求你的确认。是否允许读取选定目录？', { subtype: 'elicitation-reply' }),
+    message('history-answer', 'assistant', '已按确认的计划开始执行。'),
+  ];
   if (scenario === 'empty' || scenario === 'loading' || scenario === 'initial-history' || scenario === 'history-progressive') session.messages = [];
   if (scenario === 'loading' || scenario === 'initial-history' || scenario === 'history-progressive') Object.assign(session, { materialized: false, loadingHistory: true, hasMore: true });
   if (scenario === 'history') session.hasMore = true;

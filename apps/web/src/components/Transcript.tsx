@@ -4,6 +4,8 @@
 import { memo, useId, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { MessageBody } from './MessageBody';
 import { MessageContent } from './MessageContent';
+import { AnsweredAskCard, AnsweredElicitationCard, AnsweredPlanCard } from './PendingDecision';
+import { elicitationRecordId, useElicitationRecords } from '../lib/decisionRecords';
 import { hasMessageContent } from '../lib/messageContent';
 import { Icon } from './Icon';
 import type { ChatMessage } from '../net/types';
@@ -184,6 +186,11 @@ function SubagentDetails({ m, sessionId }: { m: ChatMessage; sessionId: string }
   );
 }
 
+function ElicitationRecordCard({ sessionId, message }: { sessionId: string; message: ChatMessage }) {
+  const record = useElicitationRecords(sessionId).find(value => elicitationRecordId(value.requestId) === message.id);
+  return <AnsweredElicitationCard message={message.content} source={record?.source} action={record?.action} />;
+}
+
 // One rendered message. Per @waksana's doctrine:
 //  - user messages are right-aligned bubbles, time just outside, no label;
 //  - assistant replies are NOT bubbles — they read as a full-width document,
@@ -194,17 +201,25 @@ const MessageRow = memo(function MessageRow({ m, sessionId, showByline, nested }
   if (m.subtype === 'subagent' && m.subagent) {
     return <div className="message is-doc" data-message-id={anchorId}><SubagentCard key={m.subagent.toolCallId ?? m.id} m={m} sessionId={sessionId} /></div>;
   }
+  if (m.subtype === 'ask-reply') {
+    return <div className="message is-doc" data-message-id={anchorId}>
+      <AnsweredAskCard question={m.replyQuestion}><MessageContent message={m} /></AnsweredAskCard>
+    </div>;
+  }
+  if (m.subtype === 'plan-reply') {
+    return <div className="message is-doc" data-message-id={anchorId}>
+      <AnsweredPlanCard summary={m.replyQuestion} result={m.content} />
+    </div>;
+  }
+  if (m.subtype === 'elicitation-reply') {
+    return <div className="message is-doc" data-message-id={anchorId}>
+      <ElicitationRecordCard sessionId={sessionId} message={m} />
+    </div>;
+  }
   if (m.role === 'user') {
-    const isAskReply = m.subtype === 'ask-reply';
-    const cls = ['message', 'is-out'];
-    if (isAskReply) cls.push('is-ask-reply');
     return (
       <div className="user-message">
-        <div className={cls.join(' ')} data-message-id={anchorId}>
-          {isAskReply && <div className="ask-reply-question" aria-label="回答的问题">
-            <span className="ask-reply-label">问题</span>
-            {m.replyQuestion || '原问题记录不可用'}
-          </div>}
+        <div className="message is-out" data-message-id={anchorId}>
           <MessageContent message={m} />
         </div>
         <div className="user-message-meta">

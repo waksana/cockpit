@@ -9,7 +9,8 @@ import { MessageProcess } from './Transcript';
 import { CopyButton } from './CopyButton';
 import { groupTranscript } from '../lib/transcriptRows';
 import { ToolCallRow } from './ToolCallRow';
-import { PlanCard, ElicitationCard } from './PendingDecision';
+import { PendingDecisionCard, type PendingDecisionHandlers } from './PendingDecision';
+import type { PendingDecision } from '@cockpit/protocol';
 
 const message: ChatMessage = { id: 'body', role: 'assistant', content: '', timestamp: 1000 };
 const items: ChatMessage[] = [
@@ -34,10 +35,16 @@ test('process rows and decision cards share activity semantic icons', () => {
     assert.match(html, new RegExp(`data-icon="${icon}"`));
     assert.match(html, /data-icon="success"/, 'execution outcome remains independent of tool kind');
   }
-  for (const html of [
-    renderToStaticMarkup(createElement(PlanCard, { request: { requestId: 'plan', summary: 'Plan' }, pending: false, onSelect() {} })),
-    renderToStaticMarkup(createElement(ElicitationCard, { request: { requestId: 'tool', message: 'Confirm' }, pending: false, onSelect() {} })),
-  ]) assert.match(html, /data-icon="decision"/);
+  const handlers: PendingDecisionHandlers = {
+    sessionId: 'fixture', pending: false, disabled: { ask: false, plan: false, elicitation: false },
+    onChoice() {}, onPlan() {}, onElicitation() {},
+  };
+  const card = (decision: PendingDecision) => renderToStaticMarkup(createElement(PendingDecisionCard, {
+    ...handlers, decisions: [decision], selected: decision, onSelect() {},
+  }));
+  assert.match(card({ kind: 'ask', request: { requestId: 'ask', question: 'Q' } }), /chat-decision-icon" data-icon="decision"/);
+  assert.match(card({ kind: 'plan', request: { requestId: 'plan', summary: 'Plan' } }), /chat-decision-icon" data-icon="mode_plan"/);
+  assert.match(card({ kind: 'elicitation', request: { requestId: 'tool', message: 'Confirm' } }), /chat-decision-icon" data-icon="mcp"/);
   assert.match(renderToStaticMarkup(createElement(Thread, {
     session: fixtureSession('process'), readOnly: true, onLoadMore() {},
   })), /class="subagent-ico"><span class="ck-icon" data-icon="agent"/);

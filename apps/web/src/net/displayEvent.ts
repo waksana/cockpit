@@ -1,8 +1,8 @@
 import type { NativeChatEvent } from '@cockpit/protocol';
-import { askAnswerOf, nativeToolTitle, toolArgsOf, toolOutputOf } from '@cockpit/protocol/chat';
+import { askAnswerOf, nativeToolTitle, planAnswerOf, toolArgsOf, toolOutputOf } from '@cockpit/protocol/chat';
 
 export type DisplayEvent = NativeChatEvent & {
-  display?: { toolOutput?: string; toolArgs?: string; askAnswer?: string; askQuestion?: string };
+  display?: { toolOutput?: string; toolArgs?: string; askAnswer?: string; askQuestion?: string; planAnswer?: string; planSummary?: string };
 };
 
 // Retain only details the browser can display. HTTP/MCP still receive the native
@@ -14,18 +14,21 @@ export function displayEvent(event: NativeChatEvent): DisplayEvent {
       ? args as Record<string, unknown> : undefined;
     const question = data.toolName === 'ask_user' && args && typeof args === 'object' && 'question' in args
       && typeof args.question === 'string' ? args.question : undefined;
+    const summary = data.toolName === 'exit_plan_mode' && args && typeof args === 'object' && 'summary' in args
+      && typeof args.summary === 'string' ? args.summary : undefined;
     return { ...event, data: { ...data, ...(task ? { arguments: {
       description: task.description, agent_type: task.agent_type,
     } } : {}) }, display: {
       toolArgs: toolArgsOf(typeof data.toolName === 'string' ? data.toolName : undefined, args),
       ...(question ? { askQuestion: question } : {}),
+      ...(summary ? { planSummary: summary } : {}),
     } };
   }
   if (event.type === 'tool.execution_complete') {
     const { result, error, toolTelemetry: _telemetry, ...data } = event.data;
     return {
       ...event, data: { ...data, ...(error != null ? { error: true } : {}) },
-      display: { toolOutput: toolOutputOf(result, error), askAnswer: askAnswerOf(event.data) },
+      display: { toolOutput: toolOutputOf(result, error), askAnswer: askAnswerOf(event.data), planAnswer: planAnswerOf(event.data) },
     };
   }
   if (event.type === 'assistant.message' && Array.isArray(event.data.toolRequests)) {
@@ -35,12 +38,14 @@ export function displayEvent(event: NativeChatEvent): DisplayEvent {
       const title = nativeToolTitle(value);
       const task = value.name === 'task';
       const ask = value.name === 'ask_user';
-      if (!title && !task && !ask) return [];
+      const plan = value.name === 'exit_plan_mode';
+      if (!title && !task && !ask && !plan) return [];
       return [{ ...(typeof value.name === 'string' ? { name: value.name } : {}), toolCallId: value.toolCallId,
         ...(title ? { intentionSummary: title } : {}),
         ...(args && typeof args === 'object' ? task
           ? { arguments: { description: args.description, agent_type: args.agent_type } }
-          : ask && typeof args.question === 'string' ? { arguments: { question: args.question } } : {} : {}) }];
+          : ask && typeof args.question === 'string' ? { arguments: { question: args.question } }
+            : plan && typeof args.summary === 'string' ? { arguments: { summary: args.summary } } : {} : {}) }];
     });
     return { ...event, data: { ...event.data, toolRequests } };
   }

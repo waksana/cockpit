@@ -35,9 +35,10 @@ test('sidebar preserves full identity, independent roles, activity and module un
     assert.equal(row.unread, 1);
   }
   assert.deepEqual(rows.find(row => row.id === 'demo-extreme')!.status,
-    ['overall', 'decision', 'compaction', 'agent', 'shell', 'queue', 'mcp']);
+    ['overall', 'compaction', 'agent', 'shell', 'queue', 'mcp']);
   assert.deepEqual(rows.find(row => row.id === 'demo-plain')!.details, ['dialog-subtitle', 'dialog-meta']);
-  for (const state of ['decision', 'shell', 'agent']) assert.ok(html.includes(`data-activity="${state}"`));
+  for (const state of ['shell', 'agent']) assert.ok(html.includes(`data-activity="${state}"`));
+  assert.ok(html.includes('data-icon="decision"'));
   assert.match(html, /data-icon="error"/);
   assert.match(html, /已应用/);
   assert.match(html, /未应用/);

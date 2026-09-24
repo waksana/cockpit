@@ -1,5 +1,5 @@
 import type { CopilotSession } from '@github/copilot-sdk';
-import type { IntentResult, SessionMeta, SessionResource } from '@cockpit/protocol';
+import type { IntentResult, PendingDecision, SessionMeta, SessionResource } from '@cockpit/protocol';
 import type { RoleAssembly, SessionInstructions } from './roles.ts';
 
 export type DecisionKind = 'ask' | 'planRequest' | 'elicitation';
@@ -81,6 +81,7 @@ export class SessionHandle {
       ask: decisions.find(d => d.kind === 'ask')?.value as SessionMeta['ask'] ?? null,
       planRequest: decisions.find(d => d.kind === 'planRequest')?.value as SessionMeta['planRequest'] ?? null,
       elicitation: decisions.find(d => d.kind === 'elicitation')?.value as SessionMeta['elicitation'] ?? null,
+      decisions: decisions.map(d => ({ kind: d.kind === 'planRequest' ? 'plan' : d.kind, request: d.value }) as PendingDecision),
     };
   }
 }

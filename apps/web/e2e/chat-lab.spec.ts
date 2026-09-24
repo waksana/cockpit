@@ -55,7 +55,9 @@ const componentScenes: [scene: string, ready: string][] = [
   ['process-summary', '[data-message-frame]'],
   ['ordered-events', '[data-message-frame]'],
   ['input-states', '.chat-input-card'],
-  ['ask', '.chat-input-card'],
+  ['ask', '.chat-decision-card[data-state="pending"]'],
+  ['decision-stack', '.chat-decision-tabs'],
+  ['decision-history', '.chat-decision-card[data-state="done"]'],
 ];
 
 for (const [scene, ready] of componentScenes) {

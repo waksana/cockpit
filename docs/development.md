@@ -140,7 +140,8 @@ Select a scene with `?scene=<id>`:
 | Scene | Use it for |
 | --- | --- |
 | `all` (default), `streaming`, `idle-queued`, `plan`, `user-time` | General transcript and input states. |
-| `ask`, `ask-queued` (`&compact=1`) | Unified input card: folding by the status header, shared scroller for queue/question/choices/editor, request-ID changes, hold/failure controls for local-send following. |
+| `ask`, `ask-queued` (`&compact=1`) | Pending question card at the end of the transcript, input card folding by the status header, request-ID changes, hold/failure controls for local-send following. |
+| `decision-stack`, `decision-history` | One pending card with tabs for several asks/plans/tool confirmations (the input answers the selected tab; arrow keys move between tabs); answered question, plan and tool-confirmation cards. |
 | `input-states` | Idle, execution, questions (including no free text: editable but submission and input enhancements blocked), plans, tool confirmations and disabled input on one mounted editor; draft geometry must not change. |
 | `process-summary` | Process headers: one icon/count pair per category, accessible labels, statuses and nested details. |
 | `ordered-events` | Historical/live/reconnect pages through the production projection ([ordering](native-chat.md#ordered-presentation)). |

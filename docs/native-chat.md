@@ -184,13 +184,22 @@ clip in headers and wrap only in details. Thinking uses the safe Markdown render
 first/last Markdown blocks have no outside margins. Right-click uses the browser menu;
 code/tool copy buttons remain.
 
-Execution status/actions, queue, decisions and composer share one default-open input card
+Pending decisions (ask_user, plan confirmation, MCP elicitation) are one card at the end
+of the transcript, not part of the input card: native callbacks carry no tool call
+position. Several pending requests share that card as tabs in arrival order
+(`SessionMeta.decisions`); a new arrival never steals the selection, and the composer
+answers the selected tab (ask: answer; plan: feedback; elicitation: card buttons only).
+Answered requests stay in the transcript as done cards: ask and plan replies come from
+native history (`ask-reply`, `plan-reply`); elicitation answers are not in native history,
+so the browser tab keeps a local "handled" marker whose chosen action is lost on refresh.
+
+Execution status/actions, queue and composer share one default-open input card
 when a header is needed. The header is a shared [disclosure](frontend-guidelines.md#disclosure)
 row with a leading chevron; it folds content below but leaves status and Stop/interrupt
 controls as siblings. Header
 minimum is 32px desktop and 44px coarse pointer. Idle input has no header; long content
 and streaming do not auto-fold. The input stays in normal flow at the bottom with one flex
-budget capping notices/queue/questions/answers at 70% of Chat height; the card body
+budget capping notices/queue/editor at 70% of Chat height; the card body
 participates in that flex layout. Questions and choices wrap
 continuous identifiers at their component boundary without clipping or widening. Choices
 submit the complete original value; freeform uses existing send; choice-only questions

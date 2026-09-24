@@ -780,12 +780,13 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(container.querySelector('.chat-input-message'), editor);
       assert.equal(editor.value, '');
       assert.equal(document.activeElement, editor);
-      assert.ok(container.querySelector('[data-activity="overall"]')?.querySelector('.spinner'));
-      assert.ok(container.querySelector('[data-activity="decision"]'));
-      assert.equal(container.querySelector('.chat-controls-header')?.querySelector('[data-activity="decision"]'), null);
-      assert.equal(container.querySelector('.chat-controls-decisions'), null);
-      assert.equal((container.querySelector('.chat-question-row')?.firstChild as Element | null)?.getAttribute('data-icon'), 'decision');
-      assert.ok(container.querySelector('[aria-label="取消问题并中断当前回合"]'));
+      const overall = container.querySelector('.chat-controls-header [data-activity="overall"]');
+      assert.ok(overall?.querySelector('.spinner') || overall?.querySelector('[data-icon="decision"]'));
+      assert.equal(container.querySelector('[data-activity="decision"]'), null, 'the overall item owns the decision state');
+      assert.equal(container.querySelector('.chat-controls-decisions, .chat-question-row'), null);
+      const card = container.querySelector('.chat-messages .chat-decision-card[data-state="pending"]');
+      assert.ok(card, 'the question is a transcript card');
+      assert.ok(card.querySelector('[aria-label="取消问题并中断当前回合"]'), 'cancel lives on the card head');
       await click('.chat-ask-choice');
       assert.equal(container.querySelector('.chat-input-message'), editor);
       assert.equal(editor.value, '普通消息草稿');
@@ -1398,7 +1399,8 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.deepEqual(copied, [value.queue![0].text, value.queue![0].text]);
     const decision = container.querySelector('.chat-input-card')!;
     assert.equal(decision.getAttribute('data-decision'), 'true');
-    assert.equal(decision.getAttribute('data-question'), 'true');
+    assert.equal(decision.hasAttribute('data-question'), false);
+    assert.equal(decision.querySelector('.chat-decision-card'), null, 'the question is in the transcript');
     assert.equal(execution.parentNode, decision);
     const inputContext = container.querySelector('.chat-input-context')!;
     const cardBody = container.querySelector('.chat-input-card-body')!;
@@ -1421,7 +1423,7 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
     assert.equal(container.querySelector('.send')?.getAttribute('aria-busy'), 'true');
     await act(async () => { finishReply(false); await reply; });
     assert.equal(folded(), true);
-    assert.equal(container.querySelector('[data-activity="decision"]')?.getAttribute('aria-label'), '等待你的回答或确认');
+    assert.equal(container.querySelector('[data-activity="overall"]')?.getAttribute('aria-label'), '总状态：等待你回答或确认');
     const error = container.querySelector('.chat-input-notice')!;
     assert.ok(container.querySelector('.chat-input-notices')?.contains(error));
     assert.equal(decision.contains(error), false, 'an unconfirmed result remains outside the card disclosure');

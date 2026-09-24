@@ -83,9 +83,11 @@ export interface ChatMessage {
   /** A text delta not yet replaced by its complete native assistant message. */
   streaming?: boolean;
   toolCalls?: ToolCall[];
-  // 'ask-reply' = the user's answer to an ask_user tool; 'subagent' = a sub-agent
+  // 'ask-reply' = the user's answer to an ask_user tool; 'plan-reply' = the
+  // user's exit_plan_mode decision; 'elicitation-reply' = a browser-local record
+  // of a handled elicitation (never native history); 'subagent' = a sub-agent
   // card; 'skill' = a compact skill-activation pill.
-  subtype?: 'ask-reply' | 'subagent' | 'skill';
+  subtype?: 'ask-reply' | 'plan-reply' | 'elicitation-reply' | 'subagent' | 'skill';
   replyQuestion?: string;
   // Severity for system messages (runtime errors/warnings folded into the thread).
   level?: 'info' | 'warning' | 'error';
@@ -104,7 +106,7 @@ export const ChatMessage: z.ZodType<ChatMessage> = z.lazy(() => z.object({
   incomplete: z.string().optional(),
   streaming: z.boolean().optional(),
   toolCalls: z.array(ToolCall).optional(),
-  subtype: z.enum(['ask-reply', 'subagent', 'skill']).optional(),
+  subtype: z.enum(['ask-reply', 'plan-reply', 'elicitation-reply', 'subagent', 'skill']).optional(),
   replyQuestion: z.string().optional(),
   level: z.enum(['info', 'warning', 'error']).optional(),
   subagent: SubagentInfo.optional(),

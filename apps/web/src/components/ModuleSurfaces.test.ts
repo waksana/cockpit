@@ -56,7 +56,7 @@ test('semantic middleware preserves real navigation and management controls with
       onSelect() {}, getMenuItems: () => [],
     }));
     controls(sidebar, 1);
-    assert.match(sidebar, /data-activity="decision"/);
+    assert.match(sidebar, /data-activity="overall"[^>]*><span[^>]*data-icon="decision"/);
     assert.doesNotMatch(sidebar, />回复中<|>选</);
     if (enhanced) assert.match(sidebar, /<\/span><span data-fixture-session="[^"]+">7<\/span><\/span>/);
     else assert.doesNotMatch(sidebar, /data-fixture-session/);
@@ -104,7 +104,7 @@ test('concurrent activity and decisions preserve trailing module badges without 
     }));
     if (status === 'unloaded') assert.doesNotMatch(html, /data-activity=|未加载/);
     else if (status === 'error') assert.match(html, /data-icon="error"/);
-    else assert.match(html, new RegExp(`data-activity="${expected}"`));
+    else assert.match(html, expected === 'decision' ? /data-icon="decision"/ : new RegExp(`data-activity="${expected}"`));
     assert.match(html, /<span data-unread="true">1<\/span><\/span>$/);
     if (status !== 'unloaded') for (const type of ['shell', 'agent']) assert.match(html, new RegExp(`data-activity="${type}"`));
     assert.doesNotMatch(html, /回复中/);
@@ -116,7 +116,7 @@ test('middleware introduces no contribution-placeholder DOM or CSS and leaves sc
   assert.doesNotMatch(css, /module-message-decorations|module-composer-actions|module-composer-above/);
   const sidebar = compile(new URL('../styles/components/sidebar.scss', import.meta.url).pathname).css;
   assert.doesNotMatch(sidebar, /module-session-badges|module-global-actions/);
-  assert.match(css, /\.message-speech,\s*\.chat-answer-question \{\s*position: relative;\s*\}/);
+  assert.match(css, /\.message-speech,\s*\.chat-decision-body \{\s*position: relative;\s*\}/);
   const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
   assert.equal((app.match(/observeModuleView\(moduleRuntime, useCockpit, document\)/g) ?? []).length, 1);
 });

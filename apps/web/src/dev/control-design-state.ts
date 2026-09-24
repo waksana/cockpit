@@ -228,7 +228,8 @@ export function applyControlAction(state: ControlDesignState, action: ControlAct
         planRequest: action.kind === 'plan' ? null : state.session.planRequest,
         elicitation: action.kind === 'elicitation' ? null : state.session.elicitation,
         messages: action.record === false ? state.session.messages : [...state.session.messages, { id: action.id, role: 'user', content: action.text,
-          timestamp: Date.now(), ...(state.session.ask ? { subtype: 'ask-reply', replyQuestion: state.session.ask.question } : {}) }],
+          timestamp: Date.now(), ...(action.kind === 'ask' ? { subtype: 'ask-reply', replyQuestion: state.session.ask?.question }
+            : action.kind === 'plan' ? { subtype: 'plan-reply', replyQuestion: state.session.planRequest?.summary } : {}) }],
       } };
     }
   }

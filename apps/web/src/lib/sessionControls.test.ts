@@ -7,13 +7,15 @@ test('overall status leads the bar and is not suppressed by concrete activities'
   for (const [scene] of controlScenes) {
     const model = controlDesignState(scene);
     const items = controlIndicators(controlSession(model), model, true);
+    const session = controlSession(model);
+    const waiting = !!(session.ask || session.planRequest || session.elicitation);
     assert.equal(items[0].key, 'overall');
-    assert.equal(items[0].icon, scene === 'idle' ? 'radiooff' : 'loading', scene);
-    assert.equal(items.filter(item => item.icon === 'loading').length, scene === 'idle' ? 0 : 1);
+    assert.equal(items[0].icon, scene === 'idle' ? 'radiooff' : waiting ? 'decision' : 'loading', scene);
+    assert.equal(items.filter(item => item.icon === 'loading').length, scene === 'idle' || waiting ? 0 : 1);
   }
   const mixed = controlDesignState('ask');
-  assert.deepEqual(controlIndicators(controlSession(mixed), mixed, true).map(item => item.key),
-    ['overall', 'decision', 'agent', 'shell', 'queue']);
+  assert.deepEqual(controlIndicators(controlSession(mixed), mixed, true).map(item => [item.key, item.icon]),
+    [['overall', 'decision'], ['agent', 'agent'], ['shell', 'shell'], ['queue', 'queue']]);
 });
 
 test('offline and errors are explicit overall states, not a spinning success claim', () => {

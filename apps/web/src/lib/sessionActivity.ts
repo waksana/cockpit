@@ -35,14 +35,14 @@ export function sessionActivityIndicators(session: {
   if (error) items.push({ key: 'overall', icon: 'error',
     label: session.error ? `总状态：会话出错，${error}` : session.status === 'error'
       ? '总状态：会话出错' : `总状态：活动状态读取失败：${error}` });
+  else if (session.needsDecision) items.push({ key: 'overall', icon: 'decision', label: '总状态：等待你回答或确认' });
   else if (!activity) items.push({ key: 'overall', icon: 'loading', label: session.activityRefreshing
     ? '总状态：正在刷新活动状态' : '总状态：等待活动状态，不代表模型正在生成' });
   else if (busy) {
     const overall: ActivityIndicator = { key: 'overall', icon: 'loading',
       label: `总状态：会话有活动，不代表模型正在生成${activity.tasks.unknown ? `；${activity.tasks.unknown} 项任务状态未知` : ''}` };
-    items.push(session.needsDecision || session.compacting ? overall : retained(overall));
+    items.push(session.compacting ? overall : retained(overall));
   } else if (showIdle) items.push(retained({ key: 'overall', icon: 'radiooff', label: '总状态：空闲' }));
-  if (session.needsDecision) items.push({ key: 'decision', icon: 'decision', label: '等待你的回答或确认' });
   if (session.compacting) items.push({ key: 'compaction', icon: 'compress', label: '正在压缩上下文' });
   if (!activity) return items;
   if (activity.tasks.activeAgents) items.push(retained({

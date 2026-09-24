@@ -16,7 +16,10 @@ import { useThreadActivity } from '../features/thread/useThreadActivity';
 import { useThreadScroll } from '../features/thread/useThreadScroll';
 import { useInputCard } from '../features/thread/useInputCard';
 import { ThreadTranscript } from '../features/thread/ThreadTranscript';
-import { ExecutionHead, PendingDecisions, QueuedMessages, ThreadInputNotices } from '../features/thread/ThreadInputCard';
+import { ExecutionHead, QueuedMessages, ThreadInputNotices } from '../features/thread/ThreadInputCard';
+import { PendingDecisionCard } from './PendingDecision';
+import { recordElicitation } from '../lib/decisionRecords';
+import { pendingDecisionKey } from '../lib/pendingDecisions';
 
 interface ThreadProps {
   session: ChatSession;
@@ -50,20 +53,18 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   });
   const { queueCount } = execution;
   const {
-    draft, planDraft, elicitationDraft, actionPending, hasContent, decisionKey, runAction, handleSend, handleChoice,
+    draft, pending, selected, select, draftOf, actionPending, hasContent, decisionKey, runAction, handleSend, handleChoice,
   } = useThreadDrafts(session, { readOnly, authoritative, onSend, onRespondAsk });
   const { activityRefreshing, activityItems, executionProgress, executionLabel } = useThreadActivity(session, { authoritative, actionPending, readOnly });
   const { scrollRef, contentRef, messages, hasNewContent, awayFromBottom, follow } = useThreadScroll(session, { readOnly, connected, snapshotReady, onLoadMore });
 
-  const ask = session.ask;
-  const planRequest = session.planRequest;
-  const hasPendingDecision = !readOnly && !!(planRequest || session.elicitation);
+  const hasPendingDecision = !readOnly && pending.length > 0;
   const hasExecution = session.compacting || session.status === 'running' || (!readOnly && queueCount > 0);
-  const hasInputHeader = !controls && composerControls === undefined && !!(hasExecution || hasPendingDecision || (!readOnly && ask) || activityItems.length);
+  const hasInputHeader = !controls && composerControls === undefined && !!(hasExecution || hasPendingDecision || activityItems.length);
   const {
     cardRef, bodyId, open: inputOpen, controlsOpen, releaseEditorSize, executionControlRef, toggle: toggleInput, toggleControls,
   } = useInputCard({
-    sessionId: session.sessionId, foldIdentity: [ask?.requestId, planRequest?.requestId, session.elicitation?.requestId],
+    sessionId: session.sessionId, foldIdentity: pending.map(pendingDecisionKey),
     hasInputHeader, sharedControls: !!controls, draftId: draft.reference.id, decisionKey,
   });
   const cancelDecision = (kind: 'ask' | 'plan' | 'elicitation', requestId: string, pending: boolean) =>
@@ -74,10 +75,35 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
         || !!session.controlsStale || activityRefreshing}
       controlRef={executionControlRef} onAction={() => onControlAction({ type: 'cancel-decision', kind, requestId })} /> : undefined;
   const operation = draft.reference.purpose.kind;
+  const answering = readOnly ? undefined : selected;
+  const decisionCard = answering && <PendingDecisionCard decisions={pending} selected={answering} onSelect={select}
+    sessionId={session.sessionId} pending={actionPending}
+    disabled={{ ask: !authoritative || !onRespondAsk, plan: !authoritative || !onRespondPlan, elicitation: !authoritative || !onRespondElicitation }}
+    actions={cancelDecision(answering.kind, answering.request.requestId, actionPending)}
+    onChoice={(requestId, choice) => { void handleChoice(requestId, choice); }}
+    onPlan={(requestId, action) => {
+      const target = draftOf('plan', requestId);
+      if (target) void runAction(target, () => onRespondPlan?.(requestId, action));
+    }}
+    onElicitation={(request, action) => {
+      const target = draftOf('elicitation', request.requestId);
+      if (!target) return;
+      const anchor = session.messages.at(-1)?.id ?? null;
+      void runAction(target, () => onRespondElicitation?.(request.requestId, action)).then(ok => {
+        if (ok) recordElicitation(session.sessionId, { requestId: request.requestId, message: request.message,
+          ...(request.source ? { source: request.source } : {}), anchor, timestamp: Date.now(), action });
+      });
+    }} />;
+  const answer = answering?.kind === 'ask' ? answering.request : undefined;
+  const placeholder = session.compacting && session.status !== 'running' ? '正在压缩…'
+    : answer ? (answer.allowFreeform === false ? '请在上方卡片中选择' : '回答上方问题…')
+      : answering?.kind === 'plan' ? '输入修改意见…'
+        : answering?.kind === 'elicitation' ? '请在上方卡片中选择'
+          : promptBusy ? '加入队列' : '输入消息…';
 
   return (
     <DisclosureChoices key={session.sessionId}><main className="chat">
-      <ThreadTranscript session={session} messages={messages} scrollRef={scrollRef} contentRef={contentRef}
+      <ThreadTranscript session={session} messages={messages} decision={decisionCard} scrollRef={scrollRef} contentRef={contentRef}
         awayFromBottom={awayFromBottom} hasNewContent={hasNewContent}
         onFollow={follow} onRetryHistory={onRetryHistory} />
 
@@ -88,8 +114,7 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
         <div className="chat-input-card" ref={cardRef} data-open={inputOpen}
           data-controls={!!controls || undefined} data-controls-open={controls ? controlsOpen : undefined}
           onChange={controls ? event => { if (event.target instanceof HTMLTextAreaElement) releaseEditorSize(); } : undefined}
-          data-header={hasInputHeader || undefined} data-decision={!!(!readOnly && (ask || hasPendingDecision)) || undefined}
-          data-question={(!readOnly && operation === 'ask') || undefined}>
+          data-header={hasInputHeader || undefined} data-decision={hasPendingDecision || undefined}>
           <ExecutionHead hidden={!hasInputHeader} open={inputOpen} bodyId={bodyId} onToggle={toggleInput}
             label={executionLabel} progress={executionProgress} activityItems={activityItems}
             foldedDraft={!readOnly && hasContent && !inputOpen} operationsActive={!!session.activeOperations}
@@ -103,26 +128,21 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
             <div className="chat-input-context">
               {!readOnly && !onControlAction && composerControls === undefined && queueCount > 0 && <QueuedMessages
                 queue={session.queue} connected={connected} controlRef={executionControlRef} onRemove={onRemoveQueued} />}
-              {hasPendingDecision && <PendingDecisions session={session} authoritative={authoritative}
-                planDraft={planDraft} elicitationDraft={elicitationDraft} cancelAction={cancelDecision}
-                runAction={runAction} onRespondPlan={onRespondPlan} onRespondElicitation={onRespondElicitation} />}
             </div>
             {readOnly ? (
               <div className="chat-readonly-note" aria-label="只读会话">只读会话</div>
             ) : (
               <Composer
                 key={!onControlAction && composerControls === undefined ? draft.reference.id : 'shared-composer'}
-                busy={promptBusy && !ask && !planRequest}
-                submitLabel={ask ? '提交回答' : planRequest ? '发送新指令' : undefined}
+                busy={promptBusy && !answering}
+                submitLabel={operation === 'ask' ? '提交回答' : operation === 'plan' ? '提交修改意见' : undefined}
                 disabled={!!session.compacting && session.status !== 'running'}
-                placeholder={(session.compacting && session.status !== 'running') ? '正在压缩…' : (ask ? (ask.allowFreeform === false ? '请选择上方选项' : '输入回答…') : (planRequest ? '输入新指令…' : operation === 'elicitation' ? '请选择上方操作' : promptBusy ? '加入队列' : '输入消息…'))}
+                placeholder={placeholder}
                 draft={draft}
                 editorRef={executionControlRef}
                 statusInHeader={hasInputHeader}
-                ask={ask ? { request: ask, disabled: !authoritative || !onRespondAsk, onChoice: choice => { void handleChoice(choice); },
-                  actions: cancelDecision('ask', ask.requestId, actionPending) } : undefined}
                 onSend={handleSend}
-                sendBlocked={!connected || !snapshotReady || ask?.allowFreeform === false || operation === 'elicitation' || !onSend}
+                sendBlocked={!connected || !snapshotReady || answer?.allowFreeform === false || operation === 'elicitation' || !onSend}
               />
             )}
           </div>

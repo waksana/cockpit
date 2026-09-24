@@ -15,23 +15,36 @@ test('overall spinner leads concrete activities without hiding shell and agent c
     processing: true, hasActiveWork: true, abortable: true,
     tasks: { activeAgents: 2, activeShells: 1, unknown: 0 },
   });
-  const items = sessionActivityIndicators({ ...session, activity, needsDecision: true }, true);
-  assert.deepEqual(items.map(item => item.key), ['overall', 'decision', 'agent', 'shell']);
+  const items = indicators(activity);
+  assert.deepEqual(items.map(item => item.key), ['overall', 'agent', 'shell']);
   const html = renderToStaticMarkup(createElement(SessionActivity, { items }));
-  for (const icon of ['shell', 'agent', 'decision']) assert.match(html, new RegExp(`data-icon="${icon}"`));
+  for (const icon of ['shell', 'agent', 'loading']) assert.match(html, new RegExp(`data-icon="${icon}"`));
   assert.match(html, /aria-label="后台 shell 1"/);
   assert.match(html, /aria-label="活动 agent 2"/);
   assert.equal((html.match(/data-icon="loading"/g) ?? []).length, 1);
   assert.doesNotMatch(html, /回复中|<button|<details|<summary/);
 });
 
-test('overall status rotates both alone and alongside a pending question', () => {
+test('a pending decision replaces the overall spinner with one question icon', () => {
+  const activity = activityFixture({
+    processing: true, hasActiveWork: true, abortable: true,
+    tasks: { activeAgents: 2, activeShells: 1, unknown: 0 },
+  });
+  const items = sessionActivityIndicators({ ...session, activity, needsDecision: true }, true);
+  assert.deepEqual(items.map(item => [item.key, item.icon]), [['overall', 'decision'], ['agent', 'agent'], ['shell', 'shell']]);
+  assert.equal(items[0].label, '总状态：等待你回答或确认');
+  const html = renderToStaticMarkup(createElement(SessionActivity, { items }));
+  assert.doesNotMatch(html, /data-icon="loading"|spinner/);
+  assert.equal((html.match(/data-icon="decision"/g) ?? []).length, 1);
+});
+
+test('overall status rotates alone and waits on a question even before activity arrives', () => {
   const html = renderToStaticMarkup(createElement(SessionActivity, { items: indicators(activityFixture({ processing: true })) }));
   assert.match(html, /class="ck-icon spinner" data-icon="loading"/);
   assert.match(html, /不代表模型正在生成/);
   for (const activityRefreshing of [true, false]) {
     assert.deepEqual(sessionActivityIndicators({ ...session, activity: null, needsDecision: true, activityRefreshing }, true)
-      .map(item => item.key), ['overall', 'decision']);
+      .map(item => [item.key, item.icon]), [['overall', 'decision']]);
   }
 });
 
@@ -82,7 +95,7 @@ test('refresh retains the previous visual facts, including empty idle, without r
   assert.deepEqual(items.map(item => [item.key, item.count]), [['overall', undefined], ['shell', 2]]);
   assert.match(items[0].label, /上次采样，等待更新/);
   assert.equal(value.activity, null);
-  assert.deepEqual(sessionActivityIndicators({ ...value, needsDecision: true }, true).map(item => item.key), ['overall', 'decision', 'shell']);
+  assert.deepEqual(sessionActivityIndicators({ ...value, needsDecision: true }, true).map(item => [item.key, item.icon]), [['overall', 'decision'], ['shell', 'shell']]);
   assert.deepEqual(sessionActivityIndicators({ ...value,
     activityDisplay: { previous: { status: 'idle', activity: activityFixture() } } }, true), []);
   assert.deepEqual(sessionActivityIndicators({ ...value, activity: activityFixture({ processing: true }) }, true)

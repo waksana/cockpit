@@ -300,3 +300,18 @@ test('decision-index storage failures do not veto authoritative current input or
     assert.equal(calls, 2);
   }
 });
+
+test('a newly arriving singular decision never takes the shown selection on older hosts', () => {
+  const session = new DraftCache().session('A');
+  const pendingPlan = { planRequest: { requestId: 'plan' } };
+  session.synchronize(pendingPlan);
+  const feedback = session.current(pendingPlan);
+  assert.deepEqual(feedback.reference.purpose, { kind: 'plan', requestId: 'plan' });
+  feedback.edit('Keep typing');
+  const both = { ask: { requestId: 'ask' }, planRequest: { requestId: 'plan' } };
+  assert.equal(session.current(both), feedback);
+  session.synchronize(both);
+  assert.equal(session.current(both), feedback);
+  session.synchronize({ ask: { requestId: 'ask' } });
+  assert.deepEqual(session.current({ ask: { requestId: 'ask' } }).reference.purpose, { kind: 'ask', requestId: 'ask' });
+});
