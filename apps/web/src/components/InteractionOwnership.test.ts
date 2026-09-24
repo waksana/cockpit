@@ -12,7 +12,7 @@ import { useCockpit } from '../net/store';
 const source = (name: string) => readFileSync(new URL(name, import.meta.url), 'utf8').replace(/\s+/g, ' ');
 
 test('session absence is gated by the applied snapshot rather than the open transport', () => {
-  const app = source('../App.tsx');
+  const app = source('../features/workspace/Workspace.tsx');
   assert.match(app, /snapshotReady: s.snapshotReady/);
   assert.match(app, /const notFound = !active && routeId != null && snapshotReady/);
   assert.doesNotMatch(app, /const notFound = [^;]*connState === 'open'/);
@@ -36,7 +36,7 @@ test('a deep link shows synchronization before the snapshot and absence only aft
 });
 
 test('creation has one native action owner and no first-message or virtual identity path', () => {
-  const app = source('../App.tsx');
+  const app = ['../App.tsx', '../features/workspace/Workspace.tsx', '../features/workspace/WorkspaceParts.tsx'].map(source).join(' ');
   const picker = source('./DirPicker.tsx');
   assert.match(app, /<DirPicker key=\{location.key\} onCreate=\{newSession\} onCreated=\{selectSession\}/);
   assert.match(app, /<DirectoryModal onCancel=/);

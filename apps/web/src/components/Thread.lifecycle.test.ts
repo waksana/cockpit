@@ -12,7 +12,8 @@ import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../
 import { createCockpitStore, useCockpit } from '../net/store';
 import type { ChatSession } from '../net/types';
 import type { IntentResult, SessionProjection } from '@cockpit/protocol';
-import { MessageProcess, Thread } from './Thread';
+import { Thread } from './Thread';
+import { MessageProcess } from './Transcript';
 import { ModelControls, SessionInfoPanel } from './SessionInfoPanel';
 import { MessageBody } from './MessageBody';
 import { DisclosureChoices } from './DisclosureChoices';
