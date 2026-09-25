@@ -2,6 +2,7 @@ import type { ChatMessage } from '@cockpit/protocol';
 import type { ChatSession } from '../net/types';
 import { orderedFixture } from './ordered-fixtures';
 import { activityFixture } from './activity-fixtures';
+import { askMarkdownChoices, askMarkdownQuestion } from './ask-markdown-fixture';
 
 const timestamp = new Date('2026-09-11T09:40:00').getTime();
 
@@ -185,6 +186,8 @@ export const scenarios = [
   ['input-states', '同一输入框 / 状态切换 / 尺寸稳定'],
   ['cancelling', '停止请求中'],
   ['ask', '选择 / 自由回答'],
+  ['ask-markdown', 'Markdown 问题 / 选项 / 独立选择'],
+  ['ask-markdown-history', 'Markdown 原问题 / 已回答历史'],
   ['ask-unbroken', '连续长问句 / 长选项换行'],
   ['ask-queued', '长问题 / 队列 / 停止'],
   ['plan-queued', '计划 / 队列 / 停止'],
@@ -280,6 +283,13 @@ export function fixtureSession(scenario: Scenario): ChatSession {
     requestId: 'lab-ask-unbroken', question: 'UnbrokenQuestion'.repeat(60), allowFreeform: true,
     choices: ['UnbrokenChoice'.repeat(60), '保留完整条件，并继续检查。'],
   };
+  if (scenario === 'ask-markdown') {
+    session.messages = [];
+    session.ask = { requestId: 'lab-ask-markdown', question: askMarkdownQuestion, choices: askMarkdownChoices, allowFreeform: true };
+  }
+  if (scenario === 'ask-markdown-history') session.messages = [
+    message('reply-ask-markdown', 'user', askMarkdownChoices[1], { subtype: 'ask-reply', replyQuestion: askMarkdownQuestion }),
+  ];
   if (['plan', 'plan-queued', 'decision-stack'].includes(scenario)) session.planRequest = {
     requestId: 'lab-plan', summary: '## 组件精修计划\n\n保留薄原生适配，优先调整展示层。\n\n1. 统一阅读节奏。\n2. 明确工具与子代理状态。\n3. 覆盖草稿与输入的完整反馈。\n\n> 按钮只呈现原生提供的操作；推荐不代表自动执行。',
     planContent: Array.from({ length: 24 }, (_, i) => `${i + 1}. 检查组件展开、聚焦、长内容与错误反馈；不更改原生语义。`).join('\n'),

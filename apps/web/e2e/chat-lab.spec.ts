@@ -1,5 +1,6 @@
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import type { SessionMeta } from '@cockpit/protocol';
+import { askMarkdownChoices } from '../src/dev/ask-markdown-fixture';
 
 // Chat Lab browser smoke: every page loads the production components on
 // synthetic fixtures only. Screenshots are saved as the CI visual baseline
@@ -186,6 +187,83 @@ test('composer accepts real typing without sending anything', async ({ page }) =
   await page.keyboard.type('合成输入 smoke');
   await expect(editor).toHaveValue(/合成输入 smoke/);
   await expectHealthy(page, guard);
+});
+
+test('ask_user Markdown keeps links and code actions independent from exact-value selection', async ({ page }, testInfo) => {
+  await page.addInitScript(() => {
+    const copied: string[] = [];
+    Object.assign(window, { askMarkdownCopies: copied });
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (text: string) => { copied.push(text); },
+    } });
+  });
+  const guard = await open(page, 'scene=ask-markdown&compact=1');
+  const card = page.locator('.chat-decision-card[data-state="pending"]');
+  const question = card.locator('.chat-ask-q');
+  await expect(question.getByRole('heading', { name: '选择实现方案' })).toBeVisible();
+  await expect(question.locator('strong')).toHaveText('原始选项');
+  await expect(question.locator('ul')).toBeVisible();
+  await expect(question.locator('ol')).toBeVisible();
+  await expect(question.locator('pre code')).toBeVisible();
+  const table = question.getByRole('region', { name: '表格（可横向滚动）' });
+  await expect(table).toBeVisible();
+  await table.scrollIntoViewIfNeeded();
+  await table.focus();
+  await page.keyboard.press('ArrowRight');
+  const tableSize = await table.locator('table').evaluate(element => ({
+    width: element.clientWidth, scrollWidth: element.scrollWidth, scrollLeft: element.scrollLeft,
+  }));
+  if (tableSize.scrollWidth > tableSize.width) expect(tableSize.scrollLeft).toBeGreaterThan(0);
+  else expect(tableSize.scrollLeft).toBe(0);
+  const codeSize = await question.locator('pre').evaluate(element => ({
+    width: element.clientWidth, scrollWidth: element.scrollWidth,
+  }));
+  expect(codeSize.scrollWidth).toBeGreaterThan(codeSize.width);
+  await question.getByRole('heading').scrollIntoViewIfNeeded();
+  await snapshot(page, testInfo, 'ask-markdown-question');
+  const option = card.locator('.chat-ask-option').nth(1);
+  await expect(option.locator('strong').first()).toHaveText('查看细节');
+  await option.getByRole('button', { name: '复制代码', exact: true }).click();
+  expect(await page.evaluate(() => (window as typeof window & { askMarkdownCopies: string[] }).askMarkdownCopies))
+    .toEqual(['pnpm --filter @cockpit/web test\n']);
+  await expect(card).toBeVisible();
+
+  await page.context().route('**/synthetic/ask-guide', route => route.fulfill({ status: 200, contentType: 'text/plain', body: 'Synthetic guide' }));
+  const opened = page.waitForEvent('popup');
+  await option.getByRole('link', { name: '参考说明' }).click();
+  const guide = await opened;
+  await expect(guide.locator('body')).toHaveText('Synthetic guide');
+  await guide.close();
+  await expect(option.getByRole('link', { name: '参考说明' })).toBeFocused();
+  await expect(card).toBeVisible();
+  await expect(card.locator('button a, button button, button input, button [tabindex], p div')).toHaveCount(0);
+  await snapshot(page, testInfo, 'ask-markdown-choice');
+  const select = option.getByRole('button', { name: /^选择 查看细节/ });
+  await select.focus();
+  await page.keyboard.press('Enter');
+  await expect(card).toHaveCount(0);
+  const answered = page.getByRole('group', { name: '已回答的问题', exact: true });
+  await expect(answered.getByRole('heading', { name: '选择实现方案' })).toBeVisible();
+  await expect(answered.locator('.chat-decision-answer strong').first()).toHaveText('查看细节');
+  await expect(page.locator('.lab-receipt')).toContainText(askMarkdownChoices[1]);
+  await expect(page.locator('.lab-receipt')).toContainText('freeform=false');
+  await expectHealthy(page, guard);
+});
+
+test('restored ask_user Markdown history remains formatted after reload', async ({ page }, testInfo) => {
+  const guard = await open(page, 'scene=ask-markdown-history&compact=1');
+  for (const reload of [false, true]) {
+    if (reload) await page.reload();
+    const card = page.getByRole('group', { name: '已回答的问题', exact: true });
+    await expect(card.getByRole('heading', { name: '选择实现方案' })).toBeVisible();
+    await expect(card.locator('.chat-ask-q strong')).toHaveText('原始选项');
+    await expect(card.locator('.chat-decision-answer strong').first()).toHaveText('查看细节');
+    await expect(card.locator('button.chat-ask-choice')).toHaveCount(0);
+    await expect(card.locator('.chat-ask-q pre code')).toBeVisible();
+    await card.getByRole('heading').scrollIntoViewIfNeeded();
+    await expectHealthy(page, guard);
+  }
+  await snapshot(page, testInfo, 'ask-markdown-history');
 });
 
 test('ask_user multiline submission restores empty shared-composer geometry', async ({ page }, testInfo) => {

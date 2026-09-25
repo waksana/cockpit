@@ -103,10 +103,12 @@ function PendingBody({ decision, sessionId, pending, disabled, onChoice, onPlan,
   if (decision.kind === 'ask') {
     const request = decision.request;
     return <>
-      <MessagePresentation className="chat-ask-q" identity={{ sessionId, kind: 'ask', id: request.requestId }} complete>{request.question}</MessagePresentation>
+      <MessagePresentation className="chat-ask-q" identity={{ sessionId, kind: 'ask', id: request.requestId }} complete>
+        <MessageBody body={request.question} />
+      </MessagePresentation>
       {!!request.choices?.length && <div className="chat-ask-choices" data-layout="column">
-        {request.choices.map(choice => <Button key={choice} className="chat-ask-choice"
-          disabled={pending || disabled.ask} onClick={() => onChoice(request.requestId, choice)}>{choice}</Button>)}
+        {request.choices.map(choice => <AskChoice key={choice} choice={choice}
+          disabled={pending || disabled.ask} onSelect={() => onChoice(request.requestId, choice)} />)}
       </div>}
     </>;
   }
@@ -141,6 +143,16 @@ function PendingBody({ decision, sessionId, pending, disabled, onChoice, onPlan,
   </>;
 }
 
+function AskChoice({ choice, disabled, onSelect }: { choice: string; disabled: boolean; onSelect: () => void }) {
+  const id = useId();
+  // Markdown may contain links and copy controls, so it must not be inside the answer button.
+  return <div className="chat-ask-option">
+    <div id={`${id}-text`} className="chat-ask-option-body"><MessageBody body={choice} /></div>
+    <Button id={`${id}-select`} className="chat-ask-choice" aria-labelledby={`${id}-select ${id}-text`}
+      disabled={disabled} onClick={onSelect}>选择</Button>
+  </div>;
+}
+
 function Answer({ label, children }: { label: string; children: ReactNode }) {
   return <div className="chat-decision-answer">
     <Icon name="success" size={16} />
@@ -152,7 +164,9 @@ export function AnsweredAskCard({ question, children }: { question?: string; chi
   return <div className="chat-decision-card" data-state="done" data-kind="ask" role="group" aria-label="已回答的问题">
     <CardHead kind="ask" state="done" />
     <div className="chat-decision-body">
-      <div className="chat-ask-q" aria-label="回答的问题">{question || '原问题记录不可用'}</div>
+      <div className="chat-ask-q" aria-label="回答的问题">
+        {question ? <MessageBody body={question} /> : '原问题记录不可用'}
+      </div>
       <Answer label="你的回答">{children}</Answer>
     </div>
   </div>;

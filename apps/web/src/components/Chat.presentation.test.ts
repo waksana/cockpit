@@ -500,7 +500,7 @@ test('answered questions become done cards that retain the original question wit
   ];
   const html = renderToStaticMarkup(createElement(Thread, { session, readOnly: true, onLoadMore() {} }));
   assert.equal((html.match(/class="chat-decision-card" data-state="done" data-kind="ask"/g) ?? []).length, 2);
-  assert.match(html, /class="chat-ask-q" aria-label="回答的问题">Keep this setting\?/);
+  assert.match(html, /class="chat-ask-q" aria-label="回答的问题"><div class="message-body">/);
   assert.doesNotMatch(html, /ask-reply-question|user-message/);
   assert.match(html, /Keep this setting\?/);
   assert.match(html, /原问题记录不可用/);

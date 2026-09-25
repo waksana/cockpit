@@ -193,6 +193,14 @@ Answered requests stay in the transcript as done cards: ask and plan replies com
 native history (`ask-reply`, `plan-reply`); elicitation answers are not in native history,
 so the browser tab keeps a local "handled" marker whose chosen action is lost on refresh.
 
+Ask questions and their recorded originals use the existing chat Markdown renderer,
+including lists, links, code and tables. Choice content uses that same renderer beside
+a separate **Choose** button: links and code-copy controls never submit an answer.
+Selection sends the complete original choice string, not rendered text or HTML.
+The pending question keeps its ask message identity for module presentation; Markdown
+does not invent a native message origin for callbacks or historical question text.
+Missing original questions retain the explicit unavailable notice.
+
 Execution status/actions, queue and composer share one default-open input card
 when a header is needed. The header is a shared [disclosure](frontend-guidelines.md#disclosure)
 row with a leading chevron; it folds content below but leaves status and Stop/interrupt
