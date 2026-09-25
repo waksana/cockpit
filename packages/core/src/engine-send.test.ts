@@ -206,6 +206,7 @@ for (const operation of ['create', 'resume'] as const) {
       h.runtime.createSession.mock.mockImplementation(async config => {
         s.sdk.sessionId = config.sessionId!;
         s.id = config.sessionId!;
+        s.state.model.modelId = config.model!;
         h.natives.set(s.id, s);
         return allocate(config);
       });

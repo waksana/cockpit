@@ -78,6 +78,31 @@ const appPages: [name: string, query: string, ready: string][] = [
   ['full-web', 'scene=full-web', '.chat-input-card'],
 ];
 
+test('global default-model menu saves a future-session choice and restores keyboard focus', async ({ page }, testInfo) => {
+  const guard = await open(page, 'scene=sidebar');
+  const trigger = page.getByRole('button', { name: '全局导航' });
+  await trigger.focus();
+  await page.keyboard.press('Enter');
+  await page.getByRole('menuitem', { name: '默认新会话模型' }).focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: '默认新会话模型' });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(/仅影响之后新建的会话/)).toBeVisible();
+  await expect(dialog.getByRole('combobox')).toHaveValue('gpt-6-astra');
+  await dialog.getByRole('combobox').selectOption('gpt-5.4-mini');
+  await snapshot(page, testInfo, 'default-new-session-model');
+  await dialog.getByRole('button', { name: '保存', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await page.getByRole('menuitem', { name: '默认新会话模型' }).click();
+  await expect(dialog.getByRole('combobox')).toHaveValue('gpt-5.4-mini');
+  await page.keyboard.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expectHealthy(page, guard);
+});
+
 for (const [name, query, ready] of appPages) {
   test(`app page ${name} renders the complete App on a synthetic store`, async ({ page }, testInfo) => {
     const guard = await open(page, query);

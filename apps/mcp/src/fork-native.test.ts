@@ -10,6 +10,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { z } from 'zod';
 import { Intents, type IntentBody, type IntentName } from '@cockpit/protocol';
+import { fixtureModelCatalog, memorySessionDefaults } from '../../../packages/core/test-support/session-defaults.ts';
 
 test('connected MCP uses native fork and graceful shutdown waits for an actual native turn', {
   skip: process.env.COCKPIT_NATIVE_FORK !== '1', timeout: 60_000,
@@ -77,7 +78,7 @@ test('connected MCP uses native fork and graceful shutdown waits for an actual n
   const runtime = new OfficialRuntime({
     clientOptions: {
       mode: 'empty', baseDirectory: home, workingDirectory: work, useLoggedInUser: false,
-      enableRemoteSessions: false, builtinPluginDirectories: [], onListModels: () => [], logLevel: 'error',
+      enableRemoteSessions: false, builtinPluginDirectories: [], onListModels: fixtureModelCatalog, logLevel: 'error',
     },
     sessionConfig: {
       model: 'gpt-4.1',
@@ -90,7 +91,7 @@ test('connected MCP uses native fork and graceful shutdown waits for an actual n
       availableTools: [], skillDirectories: [], pluginDirectories: [], instructionDirectories: [],
     },
   });
-  const engine = new Engine({ runtime });
+  const engine = new Engine({ runtime, sessionDefaults: memorySessionDefaults('gpt-4.1') });
   let shutdownCompleted = false, completeShutdown!: () => void;
   const closed = new Promise<void>(resolve => { completeShutdown = resolve; });
   const shutdownErrors: unknown[] = [];

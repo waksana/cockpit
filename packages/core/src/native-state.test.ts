@@ -7,6 +7,7 @@ import { setImmediate as nextTurn } from 'node:timers/promises';
 import type { CopilotSession, SessionConfig, SessionEvent, SessionMetadata } from '@github/copilot-sdk';
 import { Engine, type EngineRuntime } from './engine.ts';
 import { errorWithCode } from '../test-support/errors.ts';
+import { memorySessionDefaults } from '../test-support/session-defaults.ts';
 
 type Rpc = CopilotSession['rpc'];
 const runningAgent = (id: string): Awaited<ReturnType<Rpc['tasks']['list']>>['tasks'][number] => ({
@@ -663,7 +664,7 @@ function fixture(t: TestContext) {
       user: { settings: { get: async () => ({ settings: { disabledSkills: { value: [] } } }) } },
     },
   } as unknown as EngineRuntime;
-  const engine = new Engine({ runtime });
+  const engine = new Engine({ runtime, sessionDefaults: memorySessionDefaults('first-model') });
   const retained = () => (engine as unknown as { sessions: Map<string, Record<string, unknown>> }).sessions;
   return { engine, native, rpc, sdk, runtime, retained, config: () => config,
     closeNative: () => { native.live = false; onClosed?.(sdk); } };

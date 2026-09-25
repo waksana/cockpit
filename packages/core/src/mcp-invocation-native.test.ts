@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fixtureModelCatalog, memorySessionDefaults } from '../test-support/session-defaults.ts';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
@@ -91,7 +92,7 @@ test('native module MCP invocation _meta: main agent, subagent and third-party s
       clientOptions: {
         connection: RuntimeConnection.forStdio({ env }), mode: 'empty', baseDirectory: dirs.state,
         workingDirectory: dirs.work, builtinPluginDirectories: [], useLoggedInUser: false,
-        enableRemoteSessions: false, logLevel: 'error', onListModels: () => [],
+        enableRemoteSessions: false, logLevel: 'error', onListModels: fixtureModelCatalog,
       },
       sessionConfig: {
         model: 'gpt-4.1', provider: { type: 'openai', wireApi: 'completions', baseUrl: `${providerUrl}/v1`, modelId: 'gpt-4.1' },
@@ -104,7 +105,7 @@ test('native module MCP invocation _meta: main agent, subagent and third-party s
         mcpServers: { third_party: { type: 'http', url: `${mcpUrl}/third`, tools: ['*'] } },
       },
     });
-    engine = new Engine({ runtime });
+    engine = new Engine({ runtime, sessionDefaults: memorySessionDefaults('gpt-4.1') });
     const role: SessionRole = { moduleId: 'fixture', moduleName: 'Fixture', roleId: 'node', name: 'Node' };
     const saved = new Map<string, SessionRole[]>();
     const roles: RoleProvider = {

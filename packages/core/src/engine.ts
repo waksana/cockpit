@@ -32,6 +32,7 @@ import { SessionConfigurator } from './session-config.ts';
 import { ResourcePreparation } from './resource-preparation.ts';
 import { SessionControlService } from './session-controls.ts';
 import { SessionSettings } from './session-settings.ts';
+import { SessionDefaults, type SessionDefaultsStore } from './session-defaults.ts';
 import { listDir } from './list-dir.ts';
 
 export { boundedMap } from './async.ts';
@@ -75,8 +76,9 @@ export class Engine {
   private readonly preparation: ResourcePreparation;
   private readonly controls: SessionControlService;
   private readonly settings: SessionSettings;
+  private readonly defaults: SessionDefaults;
 
-  constructor(options: { runtime?: EngineRuntime } = {}) {
+  constructor(options: { runtime?: EngineRuntime; sessionDefaults?: SessionDefaultsStore } = {}) {
     this.k = new SessionKernel(options.runtime ?? new OfficialRuntime(), {
       ensureLoaded: (st, create, cwd) => this.ensureLoaded(st, create, cwd),
     });
@@ -92,6 +94,7 @@ export class Engine {
     this.preparation = new ResourcePreparation(this.k, this.roleService, this.mcp);
     this.controls = new SessionControlService(this.k, this.decisions, this.reader);
     this.settings = new SessionSettings(this.k);
+    this.defaults = new SessionDefaults(this.k, options.sessionDefaults);
   }
 
   get log() { return this.k.log; }
@@ -161,6 +164,9 @@ export class Engine {
     this.k.emit(await this.snapshot());
   }
 
+  getSessionDefaults() { return this.defaults.read(); }
+  setSessionDefaults(modelId: string) { return this.defaults.set(modelId); }
+
   async newSession(cwd: string, roles: RoleSelection[] = []): Promise<string> {
     this.k.assertAvailable();
     if (this.k.stopped) throw engineStopped('Engine is stopped; start it before creating sessions');
@@ -170,14 +176,15 @@ export class Engine {
     const id = randomUUID();
     if (this.k.creating.has(id) || this.sessions.has(id)) throw conflict('Session identity already has an active handle or creation');
     const st = new SessionHandle(id);
-    if (roles.length) {
-      if (!this.k.roles) throw unavailable('Module roles are unavailable');
-      const assembly = await this.k.roles.assemble(id, roles);
-      this.k.roles.save(id, assembly.roles);
-    }
     this.k.creating.add(id);
     try {
-      await this.ensureLoaded(st, true, directory);
+      const model = await this.defaults.capture();
+      if (roles.length) {
+        if (!this.k.roles) throw unavailable('Module roles are unavailable');
+        const assembly = await this.k.roles.assemble(id, roles);
+        this.k.roles.save(id, assembly.roles);
+      }
+      await this.ensureLoaded(st, true, directory, model);
       return id;
     } catch (error) {
       if (st.sdk?.sessionId === id) {
@@ -224,7 +231,7 @@ export class Engine {
     });
   }
 
-  private async ensureLoaded(st: SessionHandle, create = false, cwd?: string): Promise<void> {
+  private async ensureLoaded(st: SessionHandle, create = false, cwd?: string, model?: string): Promise<void> {
     this.k.assertAdmission(st);
     if (st.load) return st.load;
     if (!create) this.sessions.set(st.id, st);
@@ -238,7 +245,7 @@ export class Engine {
       st.eventOwner = owner;
       if (create) st.observedCwd = cwd ?? null;
       const assembled = await this.configurator.config(st, cwd);
-      const config: SessionConfig = { ...assembled.config, onEvent: event => {
+      const config: SessionConfig = { ...assembled.config, ...(create ? { model } : {}), onEvent: event => {
         if (st.eventOwner !== owner || this.k.failure) return;
         assembled.subagents?.observe(event);
         this.events.observeNative(st, event);
@@ -271,6 +278,9 @@ export class Engine {
       if (st.roleAssembly) await this.k.withSession(st, sdk, () => sdk.rpc.tools.initializeAndValidate());
       const meta = await this.reader.getResources(st.id, summaryResources);
       if (!meta) throw new Error('Native session metadata is unavailable after loading');
+      if (create && meta.currentModelId !== model) {
+        throw new Error(`Requested new-session model "${model}", but native readback returned "${meta.currentModelId}". No model substitution is accepted`);
+      }
       if (!owner.contextChanged) st.observedCwd = meta.cwd || null;
       this.k.emit({ type: 'session/added', session: completeMeta({ ...meta, error: null }) });
     })).catch(error => {

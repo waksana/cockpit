@@ -59,6 +59,17 @@ export const ModelOption = z.object({
 });
 export type ModelOption = z.infer<typeof ModelOption>;
 
+export const INITIAL_SESSION_MODEL = 'gpt-6-astra';
+export const NewSessionDefaults = z.object({
+  modelId: z.string().trim().min(1).max(200),
+}).strict();
+export type NewSessionDefaults = z.infer<typeof NewSessionDefaults>;
+export const NewSessionDefaultsView = NewSessionDefaults.extend({
+  models: z.array(ModelOption).nullable(),
+  modelError: z.string().nullable(),
+});
+export type NewSessionDefaultsView = z.infer<typeof NewSessionDefaultsView>;
+
 export function cleanSessionTitle(raw: string | undefined): string {
   const trimmed = (raw ?? '').trim();
   return trimmed.split('\n')[0]?.trim() ?? '';
@@ -710,9 +721,19 @@ export const Intents = {
     result: Snapshot,
   },
   'session/new': {
-    description: 'Create one native session with optional module roles, combined instructions, skills and HTTP MCP tool subsets. No startup message or global/project config writes. Role selection is not live readiness. Never recreate on an uncertain result.',
+    description: 'Create one native session using the Cockpit default new-session model, with optional module roles, combined instructions, skills and HTTP MCP tool subsets. The default is captured once; an unavailable model fails without substitution. No startup message or Copilot global/project config writes. Role selection is not live readiness. Never recreate on an uncertain result.',
     body: z.object({ cwd: z.string().min(1), roles: z.array(RoleSelection).max(64).optional() }).strict(),
     result: z.object({ sessionId: z.string() }),
+  },
+  'settings/session-defaults': {
+    description: 'Read the persistent Cockpit default model for new sessions (initially gpt-6-astra) and the current native model catalog. The saved modelId is retained when unavailable; modelError explains catalog failures or unavailable models. Does not read or modify existing sessions.',
+    body: z.object({}).strict(),
+    result: NewSessionDefaultsView,
+  },
+  'settings/session-defaults-set': {
+    description: 'Persist the Cockpit default model for future new sessions only. Requires a currently available native model. No existing session, resume, reload, fork, reasoning effort, context tier, mode or Copilot user configuration is changed. A failed/uncertain persistence acknowledgement must be inspected, never automatically retried.',
+    body: NewSessionDefaults,
+    result: NewSessionDefaults.extend({}),
   },
   'roles/list': {
     body: z.object({}).strict(),

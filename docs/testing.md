@@ -198,6 +198,18 @@ and read them via the native view; the four attachment schemas do not prove each
 media type/model is readable. The full MCP/native fork test is in the
 [fork guide](../apps/mcp/README.md#session-fork).
 
+**Default new-session model.** `packages/core/src/session-defaults.test.ts`,
+`apps/server/src/session-defaults.test.ts`, `apps/server/src/intents.test.ts` and
+`apps/mcp/src/tools/session-defaults.test.ts` cover create-only defaults, captured
+concurrent choices, storage and catalog errors, and MCP-to-host dispatch. Run
+`COCKPIT_NATIVE_MODEL_SMOKE=1 pnpm --filter @cockpit/server exec node --import tsx --test src/session-defaults-native.test.ts`
+for isolated real SDK/HTTP/module creation and model readback, durable settings,
+unchanged existing sessions/resume/reload/fork and later per-session switching.
+It uses synthetic homes and a loopback model stand-in, not production credentials.
+The Web DOM tests are `DefaultModelDialog.test.ts` and `GlobalNavigation.test.ts`;
+Chat Lab smoke covers the global entry, persistence across reopening, focus and
+desktop/narrow layout.
+
 **Packages.** A runtime package must come from a clean fixed commit via the existing
 packager and manifest checks. Only tests against the actual tar prove that package;
 keep exact bytes and executable modes and run from the package's own dependencies,
