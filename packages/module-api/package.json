@@ -1,6 +1,6 @@
 {
   "name": "@waksana/cockpit-module-sdk",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "license": "GPL-3.0-only",
   "description": "Public TypeScript SDK for trusted Cockpit modules",

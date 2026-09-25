@@ -116,7 +116,7 @@ backend/manifest types and [`frontend.ts`](../packages/module-api/src/frontend.t
 for Web API v2. Modules should install the package and import its public types
 instead of copying declarations:
 ```sh
-npm install --save-dev @waksana/cockpit-module-sdk@0.1.0
+npm install --save-dev @waksana/cockpit-module-sdk@0.1.1
 ```
 The package contains compiled ESM and declarations, with no internal protocol or
 source-checkout dependency. Build, authentication, compatibility and independent
