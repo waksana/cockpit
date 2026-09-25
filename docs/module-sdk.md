@@ -1,7 +1,7 @@
 # Module SDK
 
 `@waksana/cockpit-module-sdk` is the public TypeScript contract for trusted
-Cockpit modules. It is published independently from the host to
+Cockpit modules. It targets independent npm releases to
 `https://npm.pkg.github.com` and contains compiled ESM JavaScript plus declaration
 files. It does not contain React, host implementation code, the internal protocol
 registry, or workspace/file dependencies.
@@ -22,22 +22,31 @@ Configure the `@waksana` scope without writing a token into the repository:
 //npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}
 ```
 
-Then install an explicit SDK version:
+Before migrating a consumer, confirm that the chosen version is available from
+the registry to both the developer and the consumer's CI identity. A source
+version, Git tag, or successful local pack does not establish publication or
+package access. Do not merge consumer dependencies on an unavailable version.
+
+Set `SDK_VERSION` to that verified version and install it exactly (not as npm's
+default semver range):
 
 ```sh
-NODE_AUTH_TOKEN=... npm install --save-dev @waksana/cockpit-module-sdk@0.1.1
+npm install --save-dev --save-exact "@waksana/cockpit-module-sdk@${SDK_VERSION:?Set a verified published SDK version}"
 ```
 
-For a private package, a developer token needs `read:packages` and repository
-access. A GitHub Actions workflow may use `GITHUB_TOKEN` only after the package
-grants that repository read access; set `NODE_AUTH_TOKEN: ${{ github.token }}` and
+Supply `NODE_AUTH_TOKEN` through the environment. GitHub Packages
+[requires authentication even for public npm packages](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-npm-registry#authenticating-to-github-packages);
+a developer personal access token (classic) needs `read:packages` and access to
+the package. A GitHub Actions workflow may use `GITHUB_TOKEN` only after the
+package grants that repository read access; set `NODE_AUTH_TOKEN: ${{ github.token }}` and
 use `actions/setup-node` with `registry-url: https://npm.pkg.github.com`. Never
 commit `.npmrc` credentials, a personal access token, or generated auth files.
 
 React and its type declarations are peers because frontend modules reuse the
 host's React instance. Backend-only modules do not load React at runtime. A module
 with a frontend should develop against a supported `react` and `@types/react`
-version without bundling React into the module.
+version without bundling React into the module. Commit the dependency and
+lockfile together, retaining the resolved package integrity.
 
 ## Build and verify
 
@@ -52,8 +61,10 @@ pnpm --filter @waksana/cockpit-module-sdk pack --pack-destination sdk-output
 
 The pack test installs the generated archive into an isolated npm consumer,
 imports its runtime constants, compiles a TypeScript consumer, and rejects
-workspace/file dependencies or source-only output. Missing peers or an invalid
-package fail explicitly; there is no source-checkout fallback.
+workspace/file dependencies or source-only output. It uses local peer type
+declarations and is not a registry authentication or peer-installation test.
+Consumer CI must separately exercise an authenticated, frozen-lockfile clean
+install without a host-source or local-tarball fallback.
 
 ## Versions and compatibility
 
