@@ -41,8 +41,9 @@ Copilot MCP registration — to the commands above. The root `package.json` of a
 package lists them as `start`, `start:mcp` and `module`.
 
 The package also contains the local module CLI (`apps/server/dist/module-cli.js`).
-The public [module SDK](module-sdk.md) and modules are released separately and
-are never bundled.
+The public [module SDK](module-sdk.md) is released separately to npm; its compiled
+contract is also a host runtime dependency. Modules are released separately and
+are never bundled with the host.
 
 <a id="package-contents"></a>
 ## Package contents and identity
