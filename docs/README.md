@@ -24,8 +24,9 @@ work. Suggested path: [public TypeScript contract](module-contract.md#public-api
 | Page | Contents |
 | --- | --- |
 | [Module contract](module-contract.md) | Package format, cold loading, backend API, Web extension mechanisms, data boundaries, module ID migration. |
+| [Module SDK](module-sdk.md) | GitHub Packages install/authentication, build, independent semver, compatibility and release. |
 | [Module UI guide](module-ui-guide.md) | Public styles, menu capability checks, theme variables, icons, composition, runnable example. |
-| [Public types](../packages/module-api/src/index.ts) | Backend API; [frontend.ts](../packages/module-api/src/frontend.ts) for the Web API. |
+| [Public types](../packages/module-api/src/index.ts) | Package source: backend API; [frontend.ts](../packages/module-api/src/frontend.ts) for the Web API. |
 
 ## Internals
 

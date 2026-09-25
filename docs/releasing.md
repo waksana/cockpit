@@ -40,19 +40,17 @@ newer package, update every existing launch command — the service unit and eac
 Copilot MCP registration — to the commands above. The root `package.json` of a
 package lists them as `start`, `start:mcp` and `module`.
 
-The package also contains the local module CLI (`apps/server/dist/module-cli.js`)
-and the public type export script (`scripts/export-module-api.mjs`); see the
-[module contract](module-contract.md). Modules are released separately and are
-never bundled.
+The package also contains the local module CLI (`apps/server/dist/module-cli.js`).
+The public [module SDK](module-sdk.md) and modules are released separately and
+are never bundled.
 
 <a id="package-contents"></a>
 ## Package contents and identity
 
 The archive keeps the workspace layout: compiled server, core, protocol and MCP
 client JavaScript with source maps (workspace manifests are rewritten to resolve
-`dist`), built Web without source maps, the protocol and `packages/module-api`
-TypeScript sources used by the public type export, production dependencies
-including the SDK's native platform assets, and LICENSE/NOTICE. It contains no
+`dist`), built Web without source maps, production dependencies including the
+native Copilot SDK's platform assets, and LICENSE/NOTICE. It contains no
 TypeScript loader (`tsx`/`esbuild`); the packager refuses a closure that does.
 It excludes Node, user modules, `.cockpit` data, credentials, tests, fixtures,
 development diagnostics, docs (except license files) and Git. It must run without
@@ -100,15 +98,17 @@ bump the version. Keep old installations for explicit rollback.
 
 Choose versions by each repository's compatibility rules; not every change is a
 patch. During 0.x, record incompatible changes and required host capabilities
-explicitly. Modules version independently; the host's Web/backend/MCP and all
-workspace `package.json` versions stay identical. Published tags never move.
+explicitly. Modules and the public module SDK version independently; the host's
+Web/backend/MCP, core and internal protocol package versions stay identical.
+Published tags never move. See the [module SDK version rules](module-sdk.md#versions-and-compatibility).
 
 Before each delivery:
 
 1. Check the target's installed versions/digests and selection; the candidate
    version must be unused and built from a verified commit.
-2. Update all workspace versions (the MCP self-reported version is read from
+2. Update the host workspace versions (the MCP self-reported version is read from
    `apps/mcp/package.json`), the lockfile if needed and `docs/release-notes.md`.
+   Do not change the independently versioned module SDK merely to match the host.
    `pnpm test` (via `scripts/check-release.test.mjs`) checks that they agree.
 3. Build from one clean commit, run relevant checks and consumer pairing checks,
    and use CI on the latest head.

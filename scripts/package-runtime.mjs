@@ -21,14 +21,13 @@ export const REQUIRED_FILES = [
   'apps/mcp/package.json', 'apps/mcp/dist/index.js',
   'packages/core/package.json', 'packages/core/dist/index.js',
   'packages/protocol/package.json', 'packages/protocol/dist/index.js',
-  // The public type export copies protocol and module-api sources.
   'packages/protocol/src/index.ts',
-  'packages/module-api/package.json', 'packages/module-api/src/index.ts',
-  'scripts/export-module-api.mjs',
+  'packages/module-api/package.json', 'packages/module-api/dist/index.js',
+  'packages/module-api/dist/index.d.ts', 'packages/module-api/runtime.js',
 ];
 // Build outputs copied from the checkout; the Web is separately copied into the runtime.
-const compiledPackages = ['apps/server', 'apps/mcp', 'packages/core', 'packages/protocol'];
-const compiledMap = /^(?:apps\/(?:server|mcp)|packages\/(?:core|protocol))\/dist\/.+\.js\.map$/;
+const compiledPackages = ['apps/server', 'apps/mcp', 'packages/core', 'packages/protocol', 'packages/module-api'];
+const compiledMap = /^(?:apps\/(?:server|mcp)|packages\/(?:core|protocol|module-api))\/dist\/.+\.js\.map$/;
 // Development-only loaders must never reach the runtime closure.
 const forbiddenRuntimeDependency = /(?:^|\/)node_modules\/(?:\.pnpm\/)?(?:tsx|esbuild|@esbuild[+/])/;
 const packagePaths = ['apps/server', 'apps/mcp', 'packages/core', 'packages/protocol', 'packages/module-api'];
@@ -36,8 +35,8 @@ const sourceRoots = [
   'LICENSE', 'NOTICE.md', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml',
   'apps/web/package.json',
   ...packagePaths.map(path => `${path}/package.json`),
-  'apps/server/src', 'packages/core/src', 'packages/protocol/src', 'packages/module-api/src',
-  'scripts/export-module-api.mjs',
+  'packages/module-api/runtime.js', 'packages/module-api/runtime.d.ts',
+  'apps/server/src', 'packages/core/src', 'packages/protocol/src',
 ];
 const omittedDirectories = new Set([
   '.git', '.github', '.delivery', 'module-staging', 'modules', 'consumer', 'deploy',
@@ -146,10 +145,10 @@ async function internalPath(root, path) {
   return actual;
 }
 
-async function relocateWorkspace(root, app, name, destination, reuse = false) {
+async function relocateWorkspace(root, app, name, destination, reuse = false, packageName = name) {
   const source = await internalPath(root, join(root, app, 'node_modules', name));
   const target = join(root, destination);
-  if ((await json(join(source, 'package.json'))).name !== name) throw new Error(`Unexpected workspace dependency at ${source}`);
+  if ((await json(join(source, 'package.json'))).name !== packageName) throw new Error(`Unexpected workspace dependency at ${source}`);
   // pnpm's scoped package lives beside its dependency links in a virtual node_modules.
   const peers = dirname(dirname(source));
   if (basename(peers) !== 'node_modules' || !source.includes(`${sep}.pnpm${sep}`)) {
@@ -169,6 +168,11 @@ async function relocateWorkspace(root, app, name, destination, reuse = false) {
 }
 
 const compiledEntry = value => typeof value === 'string' ? value.replace(/^\.\/src\/(.+)\.ts$/, './dist/$1.js') : value;
+const compiledExport = value => {
+  if (typeof value === 'string') return compiledEntry(value);
+  if (value && typeof value === 'object') return compiledEntry(value.import ?? value.default);
+  return value;
+};
 
 // Workspace manifests point at TypeScript sources for development; the runtime resolves compiled output.
 // Nested scripts are dropped: the root package.json holds the supported runtime commands.
@@ -178,10 +182,12 @@ async function runtimePackageJson(path, compiled) {
     delete manifest.types;
     if (manifest.main) manifest.main = compiledEntry(manifest.main);
     if (manifest.exports) {
-      manifest.exports = Object.fromEntries(Object.entries(manifest.exports).map(([key, value]) => [key, compiledEntry(value)]));
+      manifest.exports = Object.fromEntries(Object.entries(manifest.exports).map(([key, value]) => [key, compiledExport(value)]));
     }
     for (const value of [manifest.main, ...Object.values(manifest.exports ?? {})]) {
-      if (value !== undefined && !/^\.\/dist\/.+\.js$/.test(value)) throw new Error(`Unsupported runtime entry in ${path}: ${JSON.stringify(value)}`);
+      if (value !== undefined && !/^\.\/(?:dist\/.+|runtime)\.js$/.test(value)) {
+        throw new Error(`Unsupported runtime entry in ${path}: ${JSON.stringify(value)}`);
+      }
     }
   }
   await writeFile(path, `${JSON.stringify(manifest, null, 2)}\n`);
@@ -329,18 +335,18 @@ export async function packageRuntime({ repository, sourceSha, output = 'runtime-
     }
     await relocateWorkspace(runtime, 'apps/server', '@cockpit/core', 'packages/core');
     await relocateWorkspace(runtime, 'apps/server', '@cockpit/protocol', 'packages/protocol');
-    await relocateWorkspace(runtime, 'apps/server', '@cockpit/module-api', 'packages/module-api');
+    await relocateWorkspace(runtime, 'apps/server', '@cockpit/module-api', 'packages/module-api', false,
+      '@waksana/cockpit-module-sdk');
     await relocateWorkspace(runtime, 'apps/mcp', '@cockpit/protocol', 'packages/protocol', true);
     for (const path of packagePaths) {
-      await runtimePackageJson(join(runtime, path, 'package.json'), ['packages/core', 'packages/protocol'].includes(path));
+      await runtimePackageJson(join(runtime, path, 'package.json'),
+        ['packages/core', 'packages/protocol', 'packages/module-api'].includes(path));
     }
     // pnpm always packs a manifest's `main`; core's TypeScript entry is not a runtime input.
     await rm(join(runtime, 'packages/core/src'), { recursive: true, force: true });
     await copyBuiltTree(join(repository, 'apps/web/dist'), join(runtime, 'apps/web/dist'), 'apps/web/dist');
     await copyFile(join(source, 'LICENSE'), join(runtime, 'LICENSE'));
     await copyFile(join(source, 'NOTICE.md'), join(runtime, 'NOTICE.md'));
-    await mkdir(join(runtime, 'scripts'));
-    await copyFile(join(source, 'scripts/export-module-api.mjs'), join(runtime, 'scripts/export-module-api.mjs'));
     await writeFile(join(runtime, 'package.json'), `${JSON.stringify({
       name: 'cockpit', private: true, version: serverPackage.version, type: 'module',
       license: rootPackage.license, engines: rootPackage.engines,

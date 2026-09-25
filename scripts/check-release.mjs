@@ -5,8 +5,7 @@ import { readFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export function checkTagTarget(tag, sourceSha, refs) {
-  assert.match(tag, /^v\d+\.\d+\.\d+$/);
+function checkExactTagTarget(tag, sourceSha, refs) {
   const targets = new Map();
   for (const line of refs.trim().split('\n').filter(Boolean)) {
     const [sha, ref, extra] = line.trim().split(/\s+/);
@@ -20,10 +19,20 @@ export function checkTagTarget(tag, sourceSha, refs) {
     sourceSha, 'Release tag moved after this workflow started');
 }
 
+export function checkTagTarget(tag, sourceSha, refs) {
+  assert.match(tag, /^v\d+\.\d+\.\d+$/);
+  checkExactTagTarget(tag, sourceSha, refs);
+}
+
+export function checkSdkTagTarget(tag, sourceSha, refs) {
+  assert.match(tag, /^module-sdk-v\d+\.\d+\.\d+$/);
+  checkExactTagTarget(tag, sourceSha, refs);
+}
+
 export function checkSourceVersion(repository = resolve(fileURLToPath(new URL('..', import.meta.url)))) {
   const { version } = JSON.parse(readFileSync(resolve(repository, 'package.json'), 'utf8'));
   assert.match(version, /^\d+\.\d+\.\d+$/, 'Delivery versions use MAJOR.MINOR.PATCH');
-  for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol', 'packages/module-api']) {
+  for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol']) {
     const metadata = JSON.parse(readFileSync(resolve(repository, name, 'package.json'), 'utf8'));
     assert.equal(metadata.version, version, `${name || 'root'} version does not match ${version}`);
   }
@@ -40,6 +49,36 @@ export function checkSourceVersion(repository = resolve(fileURLToPath(new URL('.
   });
   assert.equal(extra, undefined, 'Release notes must describe only the current version; earlier notes belong in GitHub Releases');
   return version;
+}
+
+export function checkSdkSourceVersion(repository = resolve(fileURLToPath(new URL('..', import.meta.url)))) {
+  const manifest = JSON.parse(readFileSync(resolve(repository, 'packages/module-api/package.json'), 'utf8'));
+  assert.equal(manifest.name, '@waksana/cockpit-module-sdk');
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/, 'SDK versions use MAJOR.MINOR.PATCH');
+  assert.equal(manifest.publishConfig?.registry, 'https://npm.pkg.github.com');
+  assert.equal(manifest.dependencies, undefined, 'SDK publication must not have runtime dependencies');
+  assert.doesNotMatch(JSON.stringify(manifest), /(?:workspace|file):/, 'SDK publication must not reference the workspace');
+  return manifest.version;
+}
+
+export function checkSdkRelease(tag, sourceSha, archive, repository = resolve(fileURLToPath(new URL('..', import.meta.url)))) {
+  assert.match(tag, /^module-sdk-v\d+\.\d+\.\d+$/, 'SDK release tags use module-sdk-vMAJOR.MINOR.PATCH');
+  assert.match(sourceSha, /^[a-f0-9]{40}$/, 'SDK release source must be an exact commit');
+  const version = tag.slice('module-sdk-v'.length);
+  assert.equal(checkSdkSourceVersion(repository), version, 'SDK version must match the tag');
+  const manifest = JSON.parse(execFileSync('tar', ['-xOzf', archive, 'package/package.json'], {
+    encoding: 'utf8',
+    maxBuffer: 16 * 1024 * 1024,
+  }));
+  assert.equal(manifest.name, '@waksana/cockpit-module-sdk');
+  assert.equal(manifest.version, version);
+  assert.equal(manifest.publishConfig?.registry, 'https://npm.pkg.github.com');
+  assert.equal(manifest.dependencies, undefined, 'Packed SDK must not have runtime dependencies');
+  assert.doesNotMatch(JSON.stringify(manifest), /(?:workspace|file):/, 'Packed SDK must not reference the workspace');
+  const files = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' }).trim().split('\n');
+  assert.ok(files.includes('package/dist/index.js'), 'Packed SDK is missing JavaScript');
+  assert.ok(files.includes('package/dist/index.d.ts'), 'Packed SDK is missing declarations');
+  return { tag, sourceSha, version, package: manifest.name, registry: manifest.publishConfig.registry };
 }
 
 export function checkRelease(tag, sourceSha, archive, repository = resolve(fileURLToPath(new URL('..', import.meta.url)))) {

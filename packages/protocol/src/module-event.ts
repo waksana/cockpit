@@ -1,11 +1,12 @@
+import { MAX_MODULE_EVENT_BYTES } from '@waksana/cockpit-module-sdk/runtime';
+
 /** Module-owned JSON data, never a host event envelope or a live resource. */
 export type ModuleEventPayload =
   | null | boolean | number | string
   | readonly ModuleEventPayload[]
   | { readonly [key: string]: ModuleEventPayload };
 
-/** Maximum UTF-8 byte length of the serialized payload, excluding its host envelope. */
-export const MAX_MODULE_EVENT_BYTES = 64 * 1024;
+export { MAX_MODULE_EVENT_BYTES };
 const MAX_DEPTH = 64;
 const encoder = new TextEncoder();
 

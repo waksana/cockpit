@@ -112,9 +112,10 @@ and `src/components/InteractionOwnership.test.ts`. The synthetic App mount cover
 the overflow button, context menu, long press, dynamic state, exact session and late
 results after withdrawal, without native services or push channels.
 
-Public type exports: `node --test scripts/export-module-api.test.mjs`. A module must
-still export from a clean matching SHA and build itself; host tests do not replace a
-real module package and consumer.
+Public SDK package closure:
+`pnpm --filter @waksana/cockpit-module-sdk test`. This builds and packs the SDK,
+installs it into an isolated npm consumer, checks runtime constants and compiles
+a type consumer. Host tests do not replace a real module package and consumer.
 
 Current-window reads and input enhancement: `src/lib/moduleChatWindow.test.ts`,
 `src/lib/moduleView.test.ts`, `src/lib/moduleRuntime.test.ts`,

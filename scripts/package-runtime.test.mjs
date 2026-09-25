@@ -6,7 +6,7 @@ import {
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   command, firstPartyRuntimePath, inventoryTree, MCP_START_COMMAND, MODULE_COMMAND, packageRuntime, REQUIRED_FILES, safeRelativePath, sha256, START_COMMAND,
 } from './package-runtime.mjs';
@@ -35,11 +35,17 @@ function fakeDeploy(source, target, app, state) {
   cpSync(join(source, `apps/${app}/package.json`), join(target, 'package.json'));
   cpSync(join(source, `apps/${app}/dist`), join(target, 'dist'), { recursive: true });
   const modules = join(target, 'node_modules');
-  // Mirrors each workspace manifest's published `files`: compiled output, plus sources the type export needs.
-  const published = { core: ['dist', 'src'], protocol: ['dist', 'src'], 'module-api': ['src'] };
+  const published = {
+    core: ['dist', 'src'],
+    protocol: ['dist', 'src'],
+    'module-api': ['dist', 'runtime.js', 'runtime.d.ts'],
+  };
   const workspace = name => {
-    const peers = join(modules, '.pnpm', `@cockpit+${name}@file+packages+${name}`, 'node_modules');
-    const path = join(peers, '@cockpit', name);
+    const packageName = name === 'module-api' ? '@waksana/cockpit-module-sdk' : `@cockpit/${name}`;
+    const scope = packageName.slice(1).split('/')[0];
+    const basename = packageName.split('/')[1];
+    const peers = join(modules, '.pnpm', `${scope}+${basename}@file+packages+${name}`, 'node_modules');
+    const path = join(peers, `@${scope}`, basename);
     mkdirSync(path, { recursive: true });
     cpSync(join(source, 'packages', name, 'package.json'), join(path, 'package.json'));
     for (const directory of published[name]) cpSync(join(source, 'packages', name, directory), join(path, directory), { recursive: true });
@@ -52,7 +58,7 @@ function fakeDeploy(source, target, app, state) {
   put(protocol.peers, 'zod/LICENSE', 'Synthetic dependency license');
   if (app === 'server') {
     const moduleApi = workspace('module-api');
-    link(protocol.path, join(moduleApi.peers, '@cockpit/protocol'));
+    link(moduleApi.path, join(protocol.peers, '@waksana/cockpit-module-sdk'));
     const core = workspace('core');
     link(protocol.path, join(core.peers, '@cockpit/protocol'));
     put(core.peers, '.bin/build-shim', 'Must not retain a package-manager shim with a build-machine path');
@@ -88,7 +94,7 @@ async function fixture(t, { realDeploy = false } = {}) {
   };
   for (const path of ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', 'apps/web/package.json',
     'apps/server/package.json', 'apps/mcp/package.json', 'packages/core/package.json', 'packages/protocol/package.json',
-    'packages/module-api/package.json', 'scripts/export-module-api.mjs']) {
+    'packages/module-api/package.json', 'packages/module-api/runtime.js', 'packages/module-api/runtime.d.ts']) {
     track(path, readFileSync(join(repository, path), 'utf8'));
   }
   track('LICENSE', 'Synthetic first-party license');
@@ -106,7 +112,8 @@ enum Fixture { READY = 7 }
 export const marker = [Fixture.READY, typeof CopilotClient, protocolMarker];
 `);
   track('packages/protocol/src/index.ts', 'export const protocolMarker: string = "synthetic";');
-  track('packages/module-api/src/index.ts', 'export interface ModuleFixture { apiVersion: 1 }');
+  put(source, 'packages/module-api/dist/index.js', 'export const MAX_MODULE_EVENT_BYTES = 65536;\n');
+  put(source, 'packages/module-api/dist/index.d.ts', 'export declare const MAX_MODULE_EVENT_BYTES = 65536;\n');
   track('apps/server/src/module-cli.ts', 'console.log("Synthetic local module CLI");');
   // Build outputs, as `pnpm build` leaves them in the checkout.
   put(source, 'apps/server/dist/index.js', `
@@ -508,11 +515,6 @@ test('the real fixed-commit archive has the complete inventoried runtime and no 
   const expected = (await readFile(`${archive}.sha256`, 'utf8')).trim();
   assert.equal(expected, `${await sha256(archive)}  ${basename(archive)}`);
   await unpack(archive, join(root, 'runtime'));
-  // The public type export runs from the package and must resolve its shipped sources.
-  execFileSync(process.execPath, ['scripts/export-module-api.mjs', join(root, 'sdk')], { cwd: join(root, 'runtime') });
-  for (const name of ['protocol', 'module-api']) {
-    const manifest = JSON.parse(await readFile(join(root, 'sdk', name, 'package.json'), 'utf8'));
-    const entries = [manifest.types, manifest.main, ...Object.values(manifest.exports ?? {}).flatMap(value => typeof value === 'string' ? [value] : Object.values(value))];
-    for (const entry of entries.filter(Boolean)) assert.ok((await lstat(join(root, 'sdk', name, entry))).isFile(), `${name} ${entry}`);
-  }
+  const sdk = await import(pathToFileURL(join(root, 'runtime/packages/module-api/dist/index.js')));
+  assert.equal(sdk.MAX_MODULE_EVENT_BYTES, 65_536);
 });

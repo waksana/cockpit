@@ -6,12 +6,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
-import { checkRelease, checkSourceVersion, checkTagTarget } from './check-release.mjs';
+import {
+  checkRelease,
+  checkSdkRelease,
+  checkSdkSourceVersion,
+  checkSdkTagTarget,
+  checkSourceVersion,
+  checkTagTarget,
+} from './check-release.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(join(tmpdir(), 'cockpit-release-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol', 'packages/module-api']) {
+  for (const name of ['', 'apps/server', 'apps/mcp', 'apps/web', 'packages/core', 'packages/protocol']) {
     mkdirSync(join(root, name), { recursive: true });
     writeFileSync(join(root, name, 'package.json'), JSON.stringify({ version: '0.1.0' }));
   }
@@ -20,6 +27,12 @@ function fixture(t) {
   writeFileSync(join(root, 'apps/mcp/src/index.ts'),
     "const server = new McpServer({ name: 'cockpit-mcp-server', version: MCP_SERVER_VERSION });\n");
   writeFileSync(join(root, 'docs/release-notes.md'), '# Cockpit 0.1.0\n');
+  mkdirSync(join(root, 'packages/module-api'), { recursive: true });
+  writeFileSync(join(root, 'packages/module-api/package.json'), JSON.stringify({
+    name: '@waksana/cockpit-module-sdk',
+    version: '0.1.0',
+    publishConfig: { registry: 'https://npm.pkg.github.com' },
+  }));
   const manifest = { format: 1, product: 'cockpit', version: '0.1.0', sourceSha: 'a'.repeat(40),
     node: process.versions.node, platform: 'linux', arch: 'x64' };
   const archive = join(root, 'runtime.tar.gz');
@@ -57,10 +70,37 @@ test('delivery rejects a hard-coded MCP self-reported version', t => {
   assert.throws(f.check, /MCP self-reported version/);
 });
 
-test('delivery rejects a module SDK workspace version that differs from its host', t => {
+test('host delivery permits an independently versioned module SDK', t => {
   const f = fixture(t);
   writeFileSync(join(f.root, 'packages/module-api/package.json'), JSON.stringify({ version: '0.0.9' }));
-  assert.throws(f.check, /packages\/module-api version/);
+  f.check();
+});
+
+test('SDK source version is independent but keeps strict package identity', t => {
+  const f = fixture(t);
+  assert.equal(checkSdkSourceVersion(f.root), '0.1.0');
+  const manifest = JSON.parse(readFileSync(join(f.root, 'packages/module-api/package.json'), 'utf8'));
+  manifest.version = '2.3.4';
+  writeFileSync(join(f.root, 'packages/module-api/package.json'), JSON.stringify(manifest));
+  assert.equal(checkSdkSourceVersion(f.root), '2.3.4');
+  manifest.dependencies = { internal: 'workspace:*' };
+  writeFileSync(join(f.root, 'packages/module-api/package.json'), JSON.stringify(manifest));
+  assert.throws(() => checkSdkSourceVersion(f.root), /runtime dependencies|workspace/);
+});
+
+test('SDK release binds its independent tag to the packed name and version', t => {
+  const f = fixture(t);
+  const sdkRoot = join(f.root, 'sdk-pack');
+  mkdirSync(join(sdkRoot, 'package/dist'), { recursive: true });
+  writeFileSync(join(sdkRoot, 'package/package.json'), readFileSync(join(f.root, 'packages/module-api/package.json')));
+  writeFileSync(join(sdkRoot, 'package/dist/index.js'), 'export {};\n');
+  writeFileSync(join(sdkRoot, 'package/dist/index.d.ts'), 'export {};\n');
+  const archive = join(f.root, 'sdk.tgz');
+  execFileSync('tar', ['-czf', archive, '-C', sdkRoot, 'package']);
+  assert.equal(checkSdkRelease('module-sdk-v0.1.0', 'a'.repeat(40), archive, f.root).package,
+    '@waksana/cockpit-module-sdk');
+  assert.throws(() => checkSdkRelease('v0.1.0', 'a'.repeat(40), archive, f.root), /SDK release tags/);
+  assert.throws(() => checkSdkRelease('module-sdk-v0.1.1', 'a'.repeat(40), archive, f.root), /match the tag/);
 });
 
 test('release metadata binds the tag, all workspace versions, fixed archive and current Node platform', t => {
@@ -104,4 +144,10 @@ test('release binds both lightweight and annotated remote tags and rejects moved
   assert.throws(() => checkTagTarget('v0.1.0', sha, `${other}\trefs/tags/v0.1.0\n`), /tag moved/);
   assert.throws(() => checkTagTarget('v0.1.0', sha, `${sha}\trefs/tags/v0.1.0\n${other}\trefs/tags/v0.1.0^{}\n`), /tag moved/);
   assert.throws(() => checkTagTarget('v0.1.0', sha, ''), /no longer exists/);
+});
+
+test('SDK release binds its own tag namespace without accepting host tags', () => {
+  const sha = 'a'.repeat(40);
+  checkSdkTagTarget('module-sdk-v0.1.0', sha, `${sha}\trefs/tags/module-sdk-v0.1.0\n`);
+  assert.throws(() => checkSdkTagTarget('v0.1.0', sha, `${sha}\trefs/tags/v0.1.0\n`));
 });

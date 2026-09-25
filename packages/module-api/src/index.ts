@@ -1,12 +1,14 @@
 import type { Readable } from 'node:stream';
-import type { ModuleEventPayload, NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent, ServerEvent } from '@cockpit/protocol';
-import type { IntentBody, IntentResult } from '@cockpit/protocol';
+import type {
+  ModuleEventPayload,
+  ModuleHostIntent,
+  ModuleHostIntentBody,
+  ModuleHostIntentResult,
+  NativeChatEvent,
+  ServerEvent,
+} from './contract.ts';
 
-export type { NativeAttachment, NativeAttachmentDescriptor, NativeChatEvent, ServerEvent };
-export { MAX_MODULE_EVENT_BYTES } from '@cockpit/protocol';
-export type { ModuleEventPayload } from '@cockpit/protocol';
-export { MCP_INVOCATION_META_KEY } from '@cockpit/protocol';
-export type { McpInvocationMeta } from '@cockpit/protocol';
+export * from './contract.ts';
 export type * from './frontend.ts';
 
 export interface ModuleManifest {
@@ -35,11 +37,13 @@ export interface ModuleRole {
   mcpServers?: Record<string, { type: 'http'; path: string; tools: string[] }>;
 }
 
-export type ModuleHostIntent = 'session/new' | 'session/get' | 'session/rename' | 'roles/readiness' | 'session/resources-prepare' | 'prompt';
 export interface ModuleHostApi {
   /** Check before resource-aware creation/preparation; absent on older hosts. */
   readonly resourcePreparationVersion?: 1;
-  call<N extends ModuleHostIntent>(name: N, body: IntentBody<N>): Promise<IntentResult<N>>;
+  call<Name extends ModuleHostIntent>(
+    name: Name,
+    body: ModuleHostIntentBody<Name>,
+  ): Promise<ModuleHostIntentResult<Name>>;
 }
 
 export interface NativeObservation {
