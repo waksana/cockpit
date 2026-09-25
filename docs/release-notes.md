@@ -1,8 +1,9 @@
 # Cockpit 0.5.0
 
-Delivery candidate for the host features merged after 0.4.7. The minor version
-marks new user-facing capabilities and the changed default for newly created
-sessions, rather than a patch-only update:
+Accepted joint-deployment release, deployed on 2026-09-25 from
+`e528d116c2bde03451f453b3afba36572c58fea3`. The minor version marks new
+user-facing capabilities and the changed default for newly created sessions,
+rather than a patch-only update:
 
 - open module-provided Skill details with validated module and Skill identity
   (#218);
@@ -20,20 +21,19 @@ explicit error, not a silent fallback.
 
 The host, Web, MCP, core and internal protocol report 0.5.0. The published
 `@waksana/cockpit-module-sdk` remains independently versioned at 0.2.0; this host
-version does not republish it. Modules consume its documented public entry
+version does not republish it. SDK consumers use its documented public entry
 points and continue to check host capabilities independently of SDK semver.
 
-This candidate has not been deployed or accepted in production. The
-[module catalog](modules.md) retains the last accepted pairing until a new
-deployment is actually accepted. The planned Task schema v10 upgrade requires a
-reviewed migration plan for every existing v9 database, a consistent backup,
-stopped writers and explicit migration/cutover authorization; ordinary startup
-is not a substitute. Older Task packages cannot open v10, and restoring a
-historical database would discard later writes and requires separate
-authorization. See the Task module's
-[migration procedure](https://github.com/waksana/cockpit-task/blob/9dfdb1b14bd6541eecd6176b67517f20352ddacd/docs/task-implementation.md#schema-v10-migration).
+The [module catalog](modules.md#accepted-pairing-and-upgrade-boundary) records
+the accepted pairing, matching published archives, the explicit Task schema v10
+upgrade and recovery boundary, and the approved File publication exception.
+The deployment preserved Task identities, relationships and histories and
+confirmed the running host/module identities and served assets. It did not
+exercise real microphone/Azure recognition or real-device push delivery.
 
-Version preparation does not install packages, select modules, migrate data,
-restart a service, or create runtime tags and Releases. Joint-deployment
-publication remains gated on actual acceptance under the
-[release procedure](releasing.md#release-after-acceptance).
+The schema v10 upgrade used a reviewed fingerprint-bound plan, a WAL-consistent
+backup and stopped writers. Older Task packages cannot open v10; restoring a
+pre-upgrade database discards later writes and requires separate authorization.
+Publication followed acceptance under the
+[release procedure](releasing.md#release-after-acceptance); it does not authorize
+installation, migration or restart on another instance.

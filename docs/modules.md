@@ -12,31 +12,49 @@ deployment.
 
 | Module | Latest release | Paired host release | Status |
 | --- | --- | --- | --- |
-| [Cockpit File](https://github.com/waksana/cockpit-file) | [v0.2.4](https://github.com/waksana/cockpit-file/releases/tag/v0.2.4) | [Cockpit v0.4.7](https://github.com/waksana/cockpit/releases/tag/v0.4.7) | Installable. |
-| [Cockpit Notification](https://github.com/waksana/cockpit-notification) | [v0.1.17](https://github.com/waksana/cockpit-notification/releases/tag/v0.1.17) | [Cockpit v0.4.7](https://github.com/waksana/cockpit/releases/tag/v0.4.7) | Installable. |
-| [Cockpit Speech](https://github.com/waksana/cockpit-speech) | [v0.9.2](https://github.com/waksana/cockpit-speech/releases/tag/v0.9.2) | [Cockpit v0.4.7](https://github.com/waksana/cockpit/releases/tag/v0.4.7) | Installable; needs Azure Speech configuration. |
-| [Cockpit Task](https://github.com/waksana/cockpit-task) | [v0.2.0](https://github.com/waksana/cockpit-task/releases/tag/v0.2.0) | [Cockpit v0.4.7](https://github.com/waksana/cockpit/releases/tag/v0.4.7) | Installable. Requires host-provided MCP invocation identity and schema v9. The older v1.2.7 is a legacy pre-release ZIP. |
+| [Cockpit File](https://github.com/waksana/cockpit-file) | [v0.2.5](https://github.com/waksana/cockpit-file/releases/tag/v0.2.5) | [Cockpit v0.5.0](https://github.com/waksana/cockpit/releases/tag/v0.5.0) | Installable. |
+| [Cockpit Notification](https://github.com/waksana/cockpit-notification) | [v0.1.18](https://github.com/waksana/cockpit-notification/releases/tag/v0.1.18) | [Cockpit v0.5.0](https://github.com/waksana/cockpit/releases/tag/v0.5.0) | Installable. |
+| [Cockpit Speech](https://github.com/waksana/cockpit-speech) | [v0.9.3](https://github.com/waksana/cockpit-speech/releases/tag/v0.9.3) | [Cockpit v0.5.0](https://github.com/waksana/cockpit/releases/tag/v0.5.0) | Installable; needs Azure Speech configuration. |
+| [Cockpit Task](https://github.com/waksana/cockpit-task) | [v0.3.0](https://github.com/waksana/cockpit-task/releases/tag/v0.3.0) | [Cockpit v0.5.0](https://github.com/waksana/cockpit/releases/tag/v0.5.0) | Installable. Requires host-provided MCP invocation identity and schema v10; existing v9 data needs an explicit reviewed migration. The older v1.2.7 is a legacy pre-release ZIP. |
 | [Cockpit WeChat Connector](https://github.com/waksana/cockpit-wechat-connector) | [v0.1.6](https://github.com/waksana/cockpit-wechat-connector/releases/tag/v0.1.6) (legacy ZIP) | — | Not yet adapted: uses `module.json` and a separate service protocol; the module CLI cannot install it. |
 
 ### Accepted pairing and upgrade boundary
 
-These four module versions were accepted together on Cockpit 0.4.7. Host,
-File, Notification and Task have new releases; Speech retains its existing
-0.9.2 archive. Each published archive matches the package used by the accepted
-deployment. Publication does not itself install or restart another instance.
+These four module versions were accepted together on Cockpit 0.5.0. All five
+Releases are marked Latest, and each downloaded archive's SHA256 matches the
+original CI package used by the accepted deployment. Publication does not itself
+install or restart another instance.
 
-Task v0.2.0 renames its public Task vocabulary and migrates schema v7 through
-v8 to v9 in place. Cockpit v0.4.6 and older do not provide the invocation
-metadata required by that module, while Task v0.1.13 and older refuse a v9
-database. Downgrading therefore requires restoring the coordinated pre-upgrade
-database backup and may discard later writes; it is not an automatic package
-rollback.
+Task v0.3.0 introduces the incompatible schema v10 lifecycle and durable
+prerequisite relations. Every existing v9 database needs a reviewed,
+fingerprint-bound plan, even without legacy `blocked` or `in_review` Tasks.
+The accepted deployment applied its plan with stopped writers and a
+WAL-consistent backup, preserving Task identities, relationships and histories.
+Follow the Task module's
+[migration procedure](https://github.com/waksana/cockpit-task/blob/v0.3.0/docs/task-implementation.md#schema-v10-migration);
+ordinary startup cannot replace inventory, review, preflight and explicit apply.
+Task v0.2.0 cannot open v10. Switching binaries is not a database rollback;
+restoring the pre-upgrade backup discards later writes and requires separate
+authorization.
+
+The [File Release publication record](https://github.com/waksana/cockpit-file/releases/tag/v0.2.5)
+documents the operator-approved, one-time release-note-heading exception.
+Its tagged `Required checks` passed, but the publish job rejected the source
+preparation heading. The unchanged main CI archive was published manually with
+all package identity checks retained; neither the tag nor archive was replaced.
+The failed workflow record and future release gates remain unchanged.
+
+Acceptance covered running package identities, Task migration integrity and
+history, module activation and served Web/module assets. It did not exercise
+real microphone/Azure recognition or real-device push delivery.
 
 The running host reports its own version at `/version`. Module capability checks
 (for example `menuVersion`, `chatWindowVersion`, `composerInputVersion`) are
 described in the [module contract](module-contract.md); pairings are not inferred
-from version numbers. Exact SDK source pins live in each module's
-`tooling/host-sdk.json`.
+from version numbers. File, Notification and Speech lock the independently
+published [module SDK](module-sdk.md) and record separate integration-host pins
+in their own repositories. SDK semver and those source pins do not replace the
+accepted release pairing or runtime capability checks.
 
 ## Install
 
