@@ -114,8 +114,11 @@ results after withdrawal, without native services or push channels.
 
 Public SDK package closure:
 `pnpm --filter @waksana/cockpit-module-sdk test`. This builds and packs the SDK,
-installs it into an isolated npm consumer, checks runtime constants and compiles
-a type consumer. Host tests do not replace a real module package and consumer.
+installs it into isolated, locked npm consumers with real peers and strict
+declaration checks, and covers the [supported SDK entry points and matrix](module-sdk.md#build-and-verify).
+`pnpm sdk:check` rejects stale generated wire types. PR CI separately checks
+[independent SDK version decisions](module-sdk.md#versions-and-compatibility).
+Host tests do not replace a real module package and consumer.
 
 Current-window reads and input enhancement: `src/lib/moduleChatWindow.test.ts`,
 `src/lib/moduleView.test.ts`, `src/lib/moduleRuntime.test.ts`,

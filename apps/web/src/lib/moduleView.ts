@@ -1,5 +1,5 @@
 import type { ModuleRuntime } from './moduleRuntime';
-import type { ModuleEventPayload } from '@cockpit/module-api';
+import type { ModuleEventPayload } from '@cockpit/module-api/frontend';
 import { EMPTY_CHAT_WINDOW, ModuleChatWindow, type WindowSource } from './moduleChatWindow';
 
 interface ViewStore {

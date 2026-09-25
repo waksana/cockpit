@@ -3,7 +3,7 @@
 import { useCallback, useLayoutEffect, useRef, useSyncExternalStore } from 'react';
 import type { SessionDraft } from '../lib/textDraft';
 import { IconButton } from './Button';
-import type { ComposerProps as PublicComposerProps, ComposerEditorProps, ComposerInputProps } from '@cockpit/module-api';
+import type { ComposerProps as PublicComposerProps, ComposerEditorProps, ComposerInputProps } from '@cockpit/module-api/frontend';
 import { ModuleRuntimeProvider, useModuleElement, useModuleRuntime } from './ModuleComponents';
 import type { ModuleRuntime } from '../lib/moduleRuntime';
 import { resolveDraft } from '../lib/textDraft';

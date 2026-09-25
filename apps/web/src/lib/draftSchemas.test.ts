@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { DraftSchemaRegistration } from '@cockpit/module-api';
+import type { DraftSchemaRegistration } from '@cockpit/module-api/frontend';
 import { RegisteredDraftSchema } from './draftSchemas';
 import { SessionDraft } from './textDraft';
 import { appendFixture, fixtureItem, fixtureSchema, memoryDraftStorage, type FixtureData } from '../test/draftFixture';

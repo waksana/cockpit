@@ -5,7 +5,7 @@ import { chmod, readFile, unlink, symlink } from 'node:fs/promises';
 import { request as httpRequest } from 'node:http';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { MAX_MODULE_EVENT_BYTES, type ModuleEventPayload } from '@cockpit/module-api';
+import { MAX_MODULE_EVENT_BYTES, type ModuleEventPayload } from '@cockpit/module-api/backend';
 import { setTimeout as delay } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { installLocalModule, selectModule } from './module-install.ts';

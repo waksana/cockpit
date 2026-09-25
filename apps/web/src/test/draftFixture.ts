@@ -1,4 +1,4 @@
-import type { DraftSchemaRegistration, DraftSchemaScope, NativeAttachment } from '@cockpit/module-api';
+import type { DraftSchemaRegistration, DraftSchemaScope, NativeAttachment } from '@cockpit/module-api/frontend';
 
 export interface FixtureItem { readonly id: string; readonly value: NativeAttachment }
 export interface FixtureData { readonly items: readonly FixtureItem[] }

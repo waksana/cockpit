@@ -1,6 +1,6 @@
 import type {
   DraftNativeFields, DraftReference, DraftSchemaHandle, DraftSchemaRegistration, DraftSchemaScope, DraftSubmission,
-} from '@cockpit/module-api';
+} from '@cockpit/module-api/frontend';
 import { draftRecord, immutableDraftData, resolveDraft, type DraftField, type DraftReport, type SessionDraft } from './textDraft';
 
 export interface RuntimeDraftSchema {

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
-import type { DraftSchemaHandle, DraftSchemaRegistration, DraftSendBlockReason, ModuleFrontend, ModuleFrontendContext } from '@cockpit/module-api';
+import type { DraftSchemaHandle, DraftSchemaRegistration, DraftSendBlockReason, ModuleFrontend, ModuleFrontendContext } from '@cockpit/module-api/frontend';
 import { DraftCache } from './draftSelection';
 import { ModuleRuntime } from './moduleRuntime';
 import type { NativeDraftRequest } from './draft';

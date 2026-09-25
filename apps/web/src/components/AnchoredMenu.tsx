@@ -10,7 +10,7 @@ import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import { MenuItemButton, type MenuItem } from './ContextMenu';
 import { useMenuDismiss } from '../lib/useMenuDismiss';
 import { menuFocusTarget } from '../lib/menuFocus';
-import type { ModuleMenuTarget } from '@cockpit/module-api';
+import type { ModuleMenuTarget } from '@cockpit/module-api/frontend';
 import { useRegisteredMenu } from './useRegisteredMenu';
 
 export function AnchoredMenu({ triggerRef, items: nativeItems, onClose, align = 'right', label, moduleTarget }: {

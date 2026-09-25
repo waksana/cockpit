@@ -10,7 +10,7 @@ import { types } from 'node:util';
 import { z } from 'zod';
 import { cockpitHome, type Engine } from '@cockpit/core';
 import { ServerEvent, snapshotModuleEventPayload } from '@cockpit/protocol';
-import type { ModuleAsset, ModuleBackend, ModuleBackendContext, ModuleEventPayload, ModuleRoute, NativeObservation, ModuleHostApi } from '@cockpit/module-api';
+import type { ModuleAsset, ModuleBackend, ModuleBackendContext, ModuleEventPayload, ModuleRoute, NativeObservation, ModuleHostApi } from '@cockpit/module-api/backend';
 import { ModuleRoles } from './module-roles.ts';
 import { isDeclaredAsset, moduleDataRoot, MODULE_WORKER_LIMIT, readModuleInstallation, readModuleSettings, safeModulePath, type ModuleInstallation } from './module-install.ts';
 

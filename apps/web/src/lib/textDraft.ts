@@ -2,7 +2,7 @@ import type {
   DraftAskContext, DraftNativeFields, DraftPurpose, DraftReference, DraftRestoreInput, DraftSubmission,
   DraftWrite, ModuleDraft, ModuleDraftSnapshot,
   CapturedDraftSend, DraftSendBlockReason, DraftSendResult,
-} from '@cockpit/module-api';
+} from '@cockpit/module-api/frontend';
 import { CORE_DRAFT_FIELDS, nativeDraftRequest, type NativeDraftRequest } from './draft';
 import { describeReason, reportUxError } from './errorReporter';
 import { captureLocalSubmission } from './localSubmission';

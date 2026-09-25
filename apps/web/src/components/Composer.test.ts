@@ -4,7 +4,7 @@ import { createElement as h, Fragment, useSyncExternalStore } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type {
   DraftSchemaHandle, DraftSchemaScope, ModuleComponentMiddleware, ModuleDraft, ModuleFrontend, ModuleFrontendContext,
-} from '@cockpit/module-api';
+} from '@cockpit/module-api/frontend';
 import { SessionDraft } from '../lib/textDraft';
 import { ModuleRuntime } from '../lib/moduleRuntime';
 import { appendFixture, fixtureItem, fixtureSchema, type FixtureData } from '../test/draftFixture';

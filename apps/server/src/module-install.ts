@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, resolve, win32 } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import { z } from 'zod';
 import { cockpitHome } from '@cockpit/core';
-import type { ModuleManifest } from '@cockpit/module-api';
+import type { ModuleManifest } from '@cockpit/module-api/backend';
 import { acquireAbstractLease } from './module-lease.ts';
 
 export const MANIFEST_FILE = 'cockpit.module.json';

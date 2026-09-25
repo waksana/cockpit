@@ -7,7 +7,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { Icon, type IconName } from './Icon';
 import { useMenuDismiss } from '../lib/useMenuDismiss';
-import type { ModuleMenuTarget } from '@cockpit/module-api';
+import type { ModuleMenuTarget } from '@cockpit/module-api/frontend';
 import { useRegisteredMenu } from './useRegisteredMenu';
 import { menuFocusTarget } from '../lib/menuFocus';
 

@@ -1,6 +1,6 @@
 import type { SessionMeta } from '@cockpit/protocol';
 import type { IconName } from '../components/Icon';
-import type { SessionActivityDisplay } from '@cockpit/module-api';
+import type { SessionActivityDisplay } from '@cockpit/module-api/frontend';
 
 export interface ActivityIndicator {
   key: string;

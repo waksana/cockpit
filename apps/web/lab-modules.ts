@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, realpath } from 'node:fs/promises';
 import { isAbsolute, join, relative, sep } from 'node:path';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { ModuleAsset } from '@cockpit/module-api';
+import type { ModuleAsset } from '@cockpit/module-api/frontend';
 
 const maxFileBytes = 1024 * 1024;
 const nativePrefix = '/synthetic/lab/files/';

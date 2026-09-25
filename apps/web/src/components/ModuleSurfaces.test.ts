@@ -11,7 +11,7 @@ import { GlobalNavigation } from './GlobalNavigation';
 import { ManagementShell } from './ManagementShell';
 import { Sidebar } from './Sidebar';
 import { fixtureSession } from '../dev/chat-fixtures';
-import type { ActivateFrontend } from '@cockpit/module-api';
+import type { ActivateFrontend } from '@cockpit/module-api/frontend';
 import { activityFixture } from '../dev/activity-fixtures';
 
 test('semantic middleware preserves real navigation and management controls without nested buttons or placeholders', async t => {

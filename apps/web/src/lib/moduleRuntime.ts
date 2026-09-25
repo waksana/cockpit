@@ -6,7 +6,7 @@ import type {
   DraftSchemaRegistration, ModuleEventPayload, ModuleFrontend, ModuleFrontendContext, ModuleStateRegistration,
   ModuleMenuRegistration, ModuleMenuState, ModuleMenuTarget,
   DraftReference, DraftSendBlockReason,
-} from '@cockpit/module-api';
+} from '@cockpit/module-api/frontend';
 import { resolveDraft, type SessionDraft } from './textDraft';
 import { RegisteredDraftSchema, type RuntimeDraftSchema } from './draftSchemas';
 import { describeReason, reportUxError } from './errorReporter';

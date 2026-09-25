@@ -1,5 +1,5 @@
 import { useLayoutEffect, useMemo, useSyncExternalStore } from 'react';
-import type { ModuleMenuTarget } from '@cockpit/module-api';
+import type { ModuleMenuTarget } from '@cockpit/module-api/frontend';
 import { useCockpit } from '../net/store';
 import { ModuleErrorBoundary, type MenuTargetSource } from '../lib/moduleRuntime';
 import { useModuleRuntime } from './ModuleComponents';

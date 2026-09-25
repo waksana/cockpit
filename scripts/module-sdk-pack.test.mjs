@@ -1,70 +1,122 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const sdkRoot = join(repository, 'packages/module-api');
+const npmOptions = ['--ignore-scripts', '--no-audit', '--no-fund'];
+const fixtures = [
+  { name: 'common', types: [], lib: ['ES2022'], source: `
+    import { MAX_MODULE_EVENT_BYTES, type SessionMeta } from '@waksana/cockpit-module-sdk';
+    import { MCP_INVOCATION_META_KEY } from '@waksana/cockpit-module-sdk/runtime';
+    declare const session: SessionMeta;
+    const id: string = session.sessionId;
+    void [id, MAX_MODULE_EVENT_BYTES, MCP_INVOCATION_META_KEY];
+  ` },
+  ...['backend', 'backend-current'].map(name => ({ name, types: ['node'], lib: ['ES2022'], source: `
+    import { Readable } from 'node:stream';
+    import type { ModuleBackend, ModuleHostIntentResult, ModuleResponse } from '@waksana/cockpit-module-sdk/backend';
+    const backend: ModuleBackend = { routes: [] };
+    const response: ModuleResponse = { body: Readable.from('ok') };
+    const created: ModuleHostIntentResult<'session/new'> = { sessionId: 's' };
+    // @ts-expect-error sessionId is part of the canonical host result.
+    const invalid: ModuleHostIntentResult<'session/new'> = { id: 's' };
+    void [backend, response, created, invalid];
+  ` })),
+  ...['frontend-18', 'frontend-19'].map(name => ({ name, types: ['react'], lib: ['ES2022', 'DOM'], source: `
+    import type * as React from 'react';
+    import type { ModuleFrontendContext, ModuleAsset, ComposerProps } from '@waksana/cockpit-module-sdk/frontend';
+    declare const frontend: ModuleFrontendContext;
+    declare const asset: ModuleAsset;
+    declare const props: ComposerProps;
+    const children: React.ReactNode = props.children;
+    const apiVersion: 2 = frontend.apiVersion;
+    void [children, apiVersion, asset.id];
+  ` })),
+];
 
-test('module SDK pack is a standalone JS and declaration package', async t => {
+test('module SDK archive is standalone across the supported consumer matrix', { timeout: 300_000 }, async t => {
   const root = mkdtempSync(join(tmpdir(), 'cockpit-module-sdk-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const packOutput = execFileSync('pnpm', ['pack', '--pack-destination', root, '--json'], {
-    cwd: sdkRoot,
-    encoding: 'utf8',
+  const run = (command, args, cwd) => execFileSync(command, args, {
+    cwd, encoding: 'utf8', timeout: 120_000, stdio: 'pipe',
   });
-  const packed = JSON.parse(packOutput.slice(packOutput.lastIndexOf('\n{') + 1));
-  const archive = packed.filename;
-  const files = execFileSync('tar', ['-tzf', archive], { encoding: 'utf8' }).trim().split('\n');
-  for (const required of [
-    'package/dist/index.js', 'package/dist/index.d.ts', 'package/dist/contract.js',
-    'package/runtime.js', 'package/runtime.d.ts',
-  ]) {
-    assert.ok(files.includes(required), `${required} is missing`);
+  const packOutput = run('pnpm', ['pack', '--pack-destination', root, '--json'], sdkRoot);
+  const archive = JSON.parse(packOutput.slice(packOutput.lastIndexOf('\n{') + 1)).filename;
+  const files = run('tar', ['-tzf', archive], root).trim().split('\n');
+  for (const entry of ['index', 'backend', 'frontend', 'contract', 'wire', 'manifest']) {
+    for (const extension of ['js', 'd.ts']) assert.ok(files.includes(`package/dist/${entry}.${extension}`));
   }
-  assert.ok(files.every(file => !file.startsWith('package/src/')), 'source TypeScript must not be published');
+  for (const file of ['runtime.js', 'runtime.d.ts', 'LICENSE']) assert.ok(files.includes(`package/${file}`));
+  assert.ok(files.every(file => /^(?:package\/(?:dist\/[^/]+|runtime\.(?:js|d\.ts)|package\.json|LICENSE))$/.test(file)),
+    'SDK archive must not include host, source, runtime dependencies or workspace files');
 
-  const manifest = JSON.parse(execFileSync('tar', ['-xOzf', archive, 'package/package.json'], { encoding: 'utf8' }));
+  const manifest = JSON.parse(run('tar', ['-xOzf', archive, 'package/package.json'], root));
   assert.equal(manifest.name, '@waksana/cockpit-module-sdk');
-  assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
-  assert.equal(manifest.main, './dist/index.js');
-  assert.equal(manifest.types, './dist/index.d.ts');
+  assert.equal(manifest.version, JSON.parse(readFileSync(join(sdkRoot, 'package.json'), 'utf8')).version);
   assert.equal(manifest.publishConfig.registry, 'https://npm.pkg.github.com');
   assert.equal(manifest.dependencies, undefined);
   assert.doesNotMatch(JSON.stringify(manifest), /(?:workspace|file):/);
 
-  const consumer = join(root, 'consumer');
-  mkdirSync(consumer);
-  writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
-  execFileSync('npm', [
-    'install', '--ignore-scripts', '--no-audit', '--no-fund', '--no-package-lock', '--legacy-peer-deps', archive,
-  ], { cwd: consumer, stdio: 'pipe' });
-  const sdk = await import(pathToFileURL(join(consumer, 'node_modules/@waksana/cockpit-module-sdk/dist/index.js')));
-  assert.equal(sdk.MAX_MODULE_EVENT_BYTES, 65_536);
-  assert.equal(sdk.MCP_INVOCATION_META_KEY, 'cockpit/invocation');
-
-  const typeRoot = join(consumer, 'node_modules/@types');
-  mkdirSync(typeRoot, { recursive: true });
-  for (const name of ['node', 'react']) {
-    symlinkSync(join(sdkRoot, 'node_modules/@types', name), join(typeRoot, name), 'dir');
+  for (const fixture of fixtures) {
+    await t.test(fixture.name, () => {
+      const consumer = join(root, fixture.name);
+      cpSync(join(repository, 'scripts/fixtures/module-sdk', fixture.name), consumer, { recursive: true });
+      run('npm', ['ci', ...npmOptions], consumer);
+      run('npm', ['install', '--no-save', ...npmOptions, archive], consumer);
+      const frontend = fixture.name.startsWith('frontend');
+      assert.equal(existsSync(join(consumer, 'node_modules/react')), frontend);
+      assert.equal(existsSync(join(consumer, 'node_modules/@types/react')), frontend);
+      assert.equal(existsSync(join(consumer, 'node_modules/@types/node')), fixture.name.startsWith('backend'));
+      writeFileSync(join(consumer, 'consume.mts'), fixture.source);
+      for (const [module, moduleResolution] of [['NodeNext', 'NodeNext'], ['ESNext', 'Bundler']]) {
+        writeFileSync(join(consumer, 'tsconfig.json'), JSON.stringify({
+          compilerOptions: { noEmit: true, strict: true, skipLibCheck: false, target: 'ES2022',
+            module, moduleResolution, lib: fixture.lib, types: fixture.types },
+          files: ['consume.mts'],
+        }));
+        run(process.execPath, ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.json'], consumer);
+      }
+      if (fixture.name === 'common') {
+        writeFileSync(join(consumer, 'consume.mts'), `
+          import type { ModuleBackend } from '@waksana/cockpit-module-sdk/backend';
+          import type { ModuleFrontendContext } from '@waksana/cockpit-module-sdk/frontend';
+          declare const backend: ModuleBackend, frontend: ModuleFrontendContext;
+          void [backend, frontend];
+        `);
+        assert.throws(() => run(process.execPath, ['node_modules/typescript/bin/tsc', '-p', 'tsconfig.json'], consumer),
+          error => error.status !== 0 && /Cannot find module 'node:stream'/.test(error.stdout)
+            && /Cannot find module 'react'/.test(error.stdout),
+          'Environment entries must require their peers rather than degrade to any');
+      }
+      run(process.execPath, ['--input-type=module', '--eval', `
+        import assert from 'node:assert/strict';
+        import { MAX_MODULE_EVENT_BYTES } from '@waksana/cockpit-module-sdk';
+        import { MCP_INVOCATION_META_KEY } from '@waksana/cockpit-module-sdk/runtime';
+        import '@waksana/cockpit-module-sdk/backend';
+        import '@waksana/cockpit-module-sdk/frontend';
+        assert.equal(MAX_MODULE_EVENT_BYTES, 65536);
+        assert.equal(MCP_INVOCATION_META_KEY, 'cockpit/invocation');
+        await assert.rejects(import('@waksana/cockpit-module-sdk/dist/contract.js'),
+          { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
+      `], consumer);
+    });
   }
-  writeFileSync(join(consumer, 'consume.mts'), `
-    import {
-      MAX_MODULE_EVENT_BYTES,
-      type ModuleBackend,
-      type ModuleFrontendContext,
-      type ModuleHostIntentResult,
-    } from '@waksana/cockpit-module-sdk';
-    const backend: ModuleBackend = { routes: [] };
-    const created: ModuleHostIntentResult<'session/new'> = { sessionId: 's' };
-    declare const frontend: ModuleFrontendContext;
-    console.log(MAX_MODULE_EVENT_BYTES, backend.routes.length, created.sessionId, frontend.apiVersion);
-  `);
-  execFileSync(join(repository, 'node_modules/.bin/tsc'), [
-    '--noEmit', '--strict', '--skipLibCheck', '--module', 'NodeNext', '--moduleResolution', 'NodeNext',
-    '--target', 'ES2022', '--types', 'node,react', join(consumer, 'consume.mts'),
-  ], { cwd: consumer, stdio: 'pipe' });
+
+  await t.test('runtime-only installation does not auto-install optional peers', () => {
+    const consumer = join(root, 'runtime');
+    mkdirSync(consumer);
+    writeFileSync(join(consumer, 'package.json'), '{"private":true,"type":"module"}');
+    run('npm', ['install', ...npmOptions, archive], consumer);
+    for (const dependency of ['react', '@types/react', '@types/node']) {
+      assert.equal(existsSync(join(consumer, 'node_modules', dependency)), false);
+    }
+    assert.equal(run(process.execPath, ['--input-type=module', '--eval',
+      "import { MAX_MODULE_EVENT_BYTES } from '@waksana/cockpit-module-sdk/runtime'; process.stdout.write(String(MAX_MODULE_EVENT_BYTES));"],
+    consumer), '65536');
+  });
 });

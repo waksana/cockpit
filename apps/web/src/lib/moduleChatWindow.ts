@@ -1,4 +1,4 @@
-import type { ChatWindowMessage, ChatWindowSnapshot } from '@cockpit/module-api';
+import type { ChatWindowMessage, ChatWindowSnapshot } from '@cockpit/module-api/frontend';
 import type { ChatMessage, ChatSession } from '../net/types';
 
 const NO_MESSAGES: readonly ChatWindowMessage[] = Object.freeze([]);

@@ -3,7 +3,7 @@ import type { Ref } from 'react';
 import { MessageBody } from './MessageBody';
 import { hasMessageContent } from '../lib/messageContent';
 import { Attachment, MessagePresentation } from './ModuleComponents';
-import type { MessageIdentity } from '@cockpit/module-api';
+import type { MessageIdentity } from '@cockpit/module-api/frontend';
 
 export function MessageContent({ message, elementRef }: { message: ChatMessage; elementRef?: Ref<HTMLDivElement> }) {
   if (!hasMessageContent(message)) return null;

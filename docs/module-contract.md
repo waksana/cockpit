@@ -111,8 +111,9 @@ fails verification is rejected, and reinstalling the identical archive moves it 
 ## 4. Public TypeScript contract
 The source of truth is the independently versioned
 [`@waksana/cockpit-module-sdk`](module-sdk.md). Its repository sources are
-[`packages/module-api/src/index.ts`](../packages/module-api/src/index.ts) for
-backend/manifest types and [`frontend.ts`](../packages/module-api/src/frontend.ts)
+[`backend.ts`](../packages/module-api/src/backend.ts) and
+[`manifest.ts`](../packages/module-api/src/manifest.ts) for backend/manifest types,
+and [`frontend.ts`](../packages/module-api/src/frontend.ts)
 for Web API v2. Modules should
 [install an available, exact package version](module-sdk.md#install-from-github-packages)
 and import its public types instead of copying declarations.

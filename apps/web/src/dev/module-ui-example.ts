@@ -1,4 +1,4 @@
-import type { ActivateFrontend, ComposerContext } from '@cockpit/module-api';
+import type { ActivateFrontend, ComposerContext } from '@cockpit/module-api/frontend';
 
 // SquarePen paths from Lucide 1.46.0; distributed license: public/licenses/lucide.txt.
 export const activate: ActivateFrontend = context => {
