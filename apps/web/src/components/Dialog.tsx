@@ -36,6 +36,7 @@ export function DirectoryModal({ children, busy = false, onCancel }: {
 interface DialogProps {
   title: string;
   message?: string;
+  children?: ReactNode;
   // When provided, renders a text input seeded with this value; the confirm
   // handler receives the entered text.
   input?: { placeholder?: string; initial?: string; optional?: boolean };
@@ -58,7 +59,7 @@ export function Dialog(props: DialogProps) {
 }
 
 function DialogContent({
-  title, message, input, confirmLabel = '确定', destructive, confirmDisabled, error, errorState = 'unknown', pending = false,
+  title, message, children, input, confirmLabel = '确定', destructive, confirmDisabled, error, errorState = 'unknown', pending = false,
   actionKey, onConfirm, onSuccess, onCancel,
 }: DialogProps) {
   const [value, setValue] = useState(input?.initial ?? '');
@@ -90,6 +91,7 @@ function DialogContent({
       <div className="dialog-card ck-surface">
         <h3 className="dialog-title ck-heading" data-dialog-focus>{title}</h3>
         {message && <p id={`${identity}-message`} className="dialog-message">{message}</p>}
+        {children}
         {input && (
           <input
             className="dialog-input ck-input"

@@ -558,6 +558,10 @@ const intentFixtures = {
   'system/status': { body: {}, result: { running: 0, busy: 0, inFlightRequests: 0,
     shutdown: { phase: 'running', requestedAt: null, error: null }, sessions: [] } },
   'runtime/snapshot': { body: {}, result: snapshot },
+  'settings/session-defaults': { body: {}, result: {
+    modelId: 'gpt-6-astra', models: [{ modelId: 'gpt-6-astra', name: 'GPT-6 Astra' }], modelError: null,
+  } },
+  'settings/session-defaults-set': { body: { modelId: 'gpt-6-astra' }, result: { modelId: 'gpt-6-astra' } },
   'session/new': { body: { cwd: minimalMeta.cwd }, result: sid },
   'roles/list': { body: {}, result: { roles: [] } },
   'roles/resources': { body: {}, result: { modules: [{ id: 'fixture', name: 'Fixture',

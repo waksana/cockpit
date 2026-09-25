@@ -612,7 +612,7 @@ function gatedEngine(h: Harness) {
       createSession: (config: SessionConfig) => fake.createSession(config),
       resumeSession: (id: string, config: SessionConfig) => fake.resumeSession(id, config),
       deleteSession: (id: string) => fake.deleteSession(id),
-      rpc: { ...fake.rpc, models: { list: async () => ({ models: [] }) }, sessions: {
+      rpc: { ...fake.rpc, models: { list: async () => ({ models: [{ id: 'gpt-6-astra', name: 'GPT-6 Astra' }] }) }, sessions: {
         ...fake.rpc.sessions,
         open: async ({ sessionId }: { sessionId: string }) => ({ status: h.attached.has(sessionId) ? 'resumed' : 'not_found' }),
       } },

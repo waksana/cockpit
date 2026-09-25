@@ -15,6 +15,7 @@ import { beginHostMutation } from '../lib/hostLeave';
 
 // Exhaustive so adding a host intent requires an explicit read/write decision.
 export const HOST_INTENT_MUTATES = {
+  'settings/session-defaults': false, 'settings/session-defaults-set': true,
   'system/shutdown': true, 'system/status': false, 'runtime/snapshot': false,
   'session/chat': false, 'session/new': true, 'roles/list': false, 'roles/resources': false,
   'roles/skill-read': false, 'roles/add': true,

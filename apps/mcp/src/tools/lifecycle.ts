@@ -15,6 +15,9 @@ export function registerLifecycleTools(server: McpServer): void {
         'Create a new Copilot session rooted at a working directory (its cwd, which sets the ' +
         'project identity and which AGENTS.md/skills apply). Returns the new session id. ' +
         'Uses the same session/new API as Web and returns the real native ID; ' +
+        'all new sessions use the persistent Cockpit default model (initially gpt-6-astra), also shared by modules. ' +
+        'Read/change it through settings/session-defaults and settings/session-defaults-set with cockpit_call_intent; ' +
+        'an unavailable default fails without substitution. ' +
         'it never sends a message. Send subsequent content with cockpit_send_prompt to that ID. ' +
         'An empty session with no first message may not survive unload. ' +
         'A persisted session can be resumed with its original ID; a missing one is never silently recreated. ' +

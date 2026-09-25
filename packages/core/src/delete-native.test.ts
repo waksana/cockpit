@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fixtureModelCatalog, memorySessionDefaults } from '../test-support/session-defaults.ts';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -47,7 +48,7 @@ test('Engine deletion without an extra confirmation uses native SDK and preserve
       } }),
       mode: 'empty', baseDirectory: state, workingDirectory: work,
       builtinPluginDirectories: [], useLoggedInUser: false,
-      enableRemoteSessions: false, logLevel: 'error', onListModels: () => [],
+      enableRemoteSessions: false, logLevel: 'error', onListModels: fixtureModelCatalog,
     },
     sessionConfig: {
       model: 'gpt-4.1', workingDirectory: work, configDirectory: state,
@@ -63,7 +64,7 @@ test('Engine deletion without an extra confirmation uses native SDK and preserve
   const prefsFile = join(root, 'prefs.json');
   const legacyPrefs = '{"pinnedSessions":["retained-legacy-id"],"inbox":{"unread":1}}';
   writeFileSync(prefsFile, legacyPrefs);
-  const engine = new Engine({ runtime });
+  const engine = new Engine({ runtime, sessionDefaults: memorySessionDefaults('gpt-4.1') });
   let deleted = false;
   try {
     await engine.start();

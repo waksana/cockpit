@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fixtureModelCatalog, memorySessionDefaults } from '../test-support/session-defaults.ts';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
@@ -77,7 +78,7 @@ test('native state: isolated public reads, no cached metadata and explicit unloa
       clientOptions: {
         connection: RuntimeConnection.forStdio({ env }), mode: 'empty', baseDirectory: dirs.state,
         workingDirectory: dirs.work, builtinPluginDirectories: [], useLoggedInUser: false,
-        enableRemoteSessions: false, logLevel: 'error', onListModels: () => [],
+        enableRemoteSessions: false, logLevel: 'error', onListModels: fixtureModelCatalog,
       },
       sessionConfig: {
         model: 'gpt-4.1',
@@ -89,7 +90,7 @@ test('native state: isolated public reads, no cached metadata and explicit unloa
         enableSessionTelemetry: false, remoteSession: 'off', enableExperimentalMode: true, availableTools: ['bash'],
       },
     });
-    engine = new Engine({ runtime });
+    engine = new Engine({ runtime, sessionDefaults: memorySessionDefaults('gpt-4.1') });
     await engine.start();
     assert.deepEqual((await engine.snapshot()).sessions, []);
     const id = await engine.newSession(dirs.work!);

@@ -335,7 +335,9 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       await click(trigger);
       assert.equal(trigger.getAttribute('aria-expanded'), 'true');
       const items = Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]'));
-      assert.deepEqual(items.map(item => item.textContent), enhanced ? ['全局 MCP', '全局 Skills', 'Module navigation'] : ['全局 MCP', '全局 Skills']);
+      assert.deepEqual(items.map(item => item.textContent), enhanced
+        ? ['默认新会话模型', '全局 MCP', '全局 Skills', 'Module navigation']
+        : ['默认新会话模型', '全局 MCP', '全局 Skills']);
       assert.equal(document.activeElement, items[0], 'opening focuses the first native menu command');
       await act(() => { fireEvent.keyDown(items[0], { key: 'End' }); });
       assert.equal(document.activeElement, items[items.length - 1]);
@@ -350,12 +352,12 @@ test('Thread lifecycle: re-entry follows latest while mounted updates preserve t
       assert.equal(document.activeElement, trigger);
       if (enhanced) {
         await click(trigger);
-        await click(Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]'))[2]);
+        await click(Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(item => item.textContent === 'Module navigation')!);
         assert.equal(container.querySelector('[role="menu"]'), null);
         assert.equal(document.activeElement, trigger, 'module actions share native menu close/focus behavior');
       }
       await click(trigger);
-      await click(Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]'))[1]);
+      await click(Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(item => item.textContent === '全局 Skills')!);
       assert.equal(node('.fixture-route').textContent, '/skills');
       assert.equal(container.querySelector('[role="menu"]'), null);
       assert.equal(document.activeElement, trigger);

@@ -26,6 +26,7 @@ import { registerChatStream } from './chat-stream.ts';
 import { serviceIdentity } from './identity.ts';
 import { ModuleHost } from './module-host.ts';
 import { guardModuleHostStartup, type ModuleStartupGuard } from './module-lifetime.ts';
+import { HostSessionDefaults } from './session-defaults.ts';
 
 const HOST = '127.0.0.1';
 const PORT = Number(process.env.COCKPIT_PORT ?? 8771);
@@ -54,6 +55,7 @@ export type ServerEngine = Pick<Engine,
   | 'listGlobalSkills' | 'setGlobalSkill' | 'readSkillBody' | 'listSessionSkills' | 'toggleSessionSkill' | 'refreshSkills'
   | 'addSchedule' | 'stopSchedule' | 'listSchedules' | 'listDir'
   | 'listRoles' | 'listRoleResources' | 'readRoleSkill' | 'roleReadiness' | 'addRoles'
+  | 'getSessionDefaults' | 'setSessionDefaults'
 >;
 let engine: ServerEngine;
 let moduleHost: ModuleHost | undefined;
@@ -311,6 +313,8 @@ const handlers: IntentHandlers = {
   'system/shutdown': () => ({ ok: true, shutdown: shutdown.request() }),
   'system/status': serviceStatus,
   'runtime/snapshot': async () => engine.snapshot(),
+  'settings/session-defaults': async () => engine.getSessionDefaults(),
+  'settings/session-defaults-set': async b => engine.setSessionDefaults(b.modelId),
   'session/new': async (b) => ({ sessionId: await (b.roles ? engine.newSession(b.cwd, b.roles) : engine.newSession(b.cwd)) }),
   'roles/list': async () => ({ roles: engine.listRoles() }),
   'roles/resources': async () => ({ modules: await engine.listRoleResources() }),
@@ -468,6 +472,7 @@ function errorStatus(error: unknown): number {
 }
 
 const readIntents = new Set<IntentName>([
+  'settings/session-defaults',
   'roles/list', 'roles/resources', 'roles/skill-read', 'roles/readiness',
   'system/status', 'runtime/snapshot', 'session/chat', 'session/list', 'session/get', 'session/refresh',
   'session/resources', 'session/usage', 'session/plan', 'session/panels', 'session/panel',
@@ -541,16 +546,18 @@ app.post('/intent/*', async (req, reply) => {
   }
 });
 
+export async function callModuleIntent<K extends IntentName>(name: K, body: IntentBody<K>): Promise<IntentResult<K>> {
+  const state = shutdown.snapshot();
+  if (state.phase !== 'running') throw new Error('Host is shutting down');
+  const release = shutdown.retain();
+  try { return await dispatch(name, body); }
+  finally { release(); }
+}
+
 async function main(runtime: Engine): Promise<void> {
   moduleHost = new ModuleHost({
     origin: `http://${HOST}:${PORT}`,
-    host: { call: async (name, body) => {
-      const state = shutdown.snapshot();
-      if (state.phase !== 'running') throw new Error('Host is shutting down');
-      const release = shutdown.retain();
-      try { return await dispatch(name, body); }
-      finally { release(); }
-    } },
+    host: { call: callModuleIntent },
     observer: runtime,
     onInvalidate: moduleId => onEngineEvent({ type: 'module/invalidated', moduleId }),
     onEvent: (moduleId, payload) => onEngineEvent({ type: 'module/event', moduleId, payload }),
@@ -599,7 +606,7 @@ async function boot(): Promise<void> {
     app.log.warn({ platform: moduleStartupGuard.platform }, 'Module migration fencing unavailable; ordinary startup only, module ID migration disabled');
   }
   const native = new OfficialRuntime();
-  const runtime = new Engine({ runtime: native });
+  const runtime = new Engine({ runtime: native, sessionDefaults: new HostSessionDefaults() });
   runtime.log = (msg, data) => app.log.warn(data ?? {}, msg);
   engine = runtime;
   const stop = () => {
