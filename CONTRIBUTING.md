@@ -69,7 +69,9 @@ production components with synthetic inputs. Do not add a parallel chat app.
 Only Web/backend/MCP from the same release are supported. During 0.x, the baseline
 is a fresh installation, without old API aliases or automatic migration.
 Breaking changes still require a new public version and clear release notes.
-Workspace packages are internal parts of Cockpit, not separately supported SDKs.
+Host workspace packages are internal parts of Cockpit. The public
+[module SDK](docs/module-sdk.md) is the exception: it has its own version and
+npm release, independent of host releases.
 
 Commits do not each need a version bump. Before publishing or deploying changed
 package contents, allocate a new version and follow the
