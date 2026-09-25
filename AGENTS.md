@@ -20,8 +20,7 @@ client · `scripts` packaging/release checks · `docs` (index: `docs/README.md`)
 
 ## Safety
 
-- Never touch a running installation: not port 8771, not the real `~/.copilot`,
-  `~/.cockpit` or user sessions. Run servers and native tests with isolated
+- Run development servers and native tests with isolated
   `HOME`, `COPILOT_HOME`, `COCKPIT_HOME` and a free `COCKPIT_PORT`.
 - Never commit credentials, tokens, transcripts or real screenshots.
 - A green build is not permission to deploy, tag or bump versions.
