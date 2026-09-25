@@ -59,6 +59,7 @@ test('global menu exposes only global sections, does not steal focus on mount, a
   const menu = await screen.findByRole('menu');
   assert.ok(screen.getByRole('menuitem', { name: /全局 MCP/ }));
   assert.ok(screen.getByRole('menuitem', { name: /全局 Skills/ }));
+  assert.ok(screen.getByRole('menuitem', { name: /默认新会话模型/ }));
   for (const removed of ['会话列表', '文件', '通知设置', 'SystemVersions', '垃圾桶', 'trash']) {
     assert.equal(menu.textContent?.includes(removed), false, removed);
   }

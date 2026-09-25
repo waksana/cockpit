@@ -83,6 +83,8 @@ with their request or connection.
   as such; no follow-up prompt is sent automatically.
 - `session/new` returns the real native ID and sends nothing. An empty,
   never-messaged session may vanish when unloaded and is not recreated.
+  All callers use the [Cockpit default new-session model](#session-default-model);
+  resume, reload and fork do not apply this preset.
 - Native idle timeout is 30 minutes; future schedules do not keep a session
   loaded. Unloading pauses schedules and relative delays restart on resume.
 - Global MCP/skill settings and cold resume follow native configuration; the
@@ -204,6 +206,36 @@ Interaction rules:
   acceptance with no newer edit; failures and unknown results keep the text and are
   never resent automatically. No `localStorage` or legacy import.
 - Chat text uses the browser's native context menu; code and tool details keep copy buttons.
+
+<a id="session-default-model"></a>
+### Default model for new sessions
+
+**Global menu → 默认新会话模型** selects the model used only for future new
+sessions. Cockpit owns this preference in `$COCKPIT_HOME/config.json`
+(`~/.cockpit/config.json` when unset), as `{ "modelId": "gpt-6-astra" }`.
+An absent file means `gpt-6-astra`; saving atomically replaces it and survives
+refresh and restart. Invalid settings and storage errors are explicit, not a
+reset. Copilot's own user configuration is never written.
+
+`settings/session-defaults` returns the saved ID, fresh native model candidates
+and `modelError`. A catalog failure returns `models:null` with the saved ID and
+error; an unavailable/disabled saved ID stays visible without a substitute.
+`settings/session-defaults-set` accepts only `{modelId}` and returns it after a
+durable save. A failed or uncertain acknowledgement is not success; read settings
+before deciding whether to retry. MCP exposes both through `cockpit_call_intent`.
+
+`Engine.newSession` captures and validates the default once per creation and
+passes it explicitly to the SDK, including Web, HTTP/MCP and module callers
+(such as Task). Concurrent saves cannot change an already captured selection.
+Unavailable models or catalog failures prevent creation, and an unexpected native
+model readback yields `SESSION_CREATION_INCOMPLETE` with the created identity:
+inspect it, never automatically retry. Model selection still follows native
+policy; no claim is made that the preference grants access to a model.
+
+Existing sessions are not visited or switched when saving. Resume/reload/cold
+resume and fork keep their native model semantics. Per-session switching remains
+available. Only the model ID is preset, not reasoning effort, context tier, mode
+or permission policy.
 
 `/events` carries control/invalidation; `/chat/stream` carries the shared
 all-agent event window. History, reconnection and media are specified in

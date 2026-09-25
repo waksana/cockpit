@@ -78,6 +78,8 @@ export function workspaceSessions(now = Date.now()): ChatSession[] {
 // actions retain the disconnected store's explicit error instead of reaching a backend.
 export function installWorkspaceFixture(store: ReturnType<typeof createCockpitStore>, now = Date.now()) {
   const sessions = workspaceSessions(now);
+  let defaultModel = 'gpt-6-astra';
+  const defaultModels = [{ modelId: defaultModel, name: 'GPT-6 Astra' }, ...models];
   const find = (id: string) => {
     const session = store.getState().sessions.find(item => item.sessionId === id);
     if (!session) throw new Error(`Unknown synthetic session: ${id}`);
@@ -113,6 +115,12 @@ export function installWorkspaceFixture(store: ReturnType<typeof createCockpitSt
     },
   });
   Object.assign(cockpitApi, {
+    sessionDefaults: async () => ({ modelId: defaultModel, models: defaultModels, modelError: null }),
+    setSessionDefaults: async modelId => {
+      if (!defaultModels.some(model => model.modelId === modelId)) throw new Error('Unknown synthetic model');
+      defaultModel = modelId;
+      return { modelId };
+    },
     setModel: async (id, modelId, options) => {
       const session = find(id);
       if (!session.availableModels?.some(model => model.modelId === modelId)) throw new Error('Unknown synthetic model');

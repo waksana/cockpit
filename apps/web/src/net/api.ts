@@ -33,6 +33,8 @@ export function createCockpitApi(store: ReturnType<typeof createCockpitStore>) {
   };
 
   return {
+    sessionDefaults: (signal?: AbortSignal) => read(net => net.intent('settings/session-defaults', {}, { ...OWNED, signal })),
+    setSessionDefaults: (modelId: string) => read(net => net.intent('settings/session-defaults-set', { modelId }, OWNED)),
     listDir: (path?: string): Promise<DirListing> => read(net => net.listDir(path, OWNED)),
     listRoles: (): Promise<IntentResult<'roles/list'>['roles']> => read(net => net.listRoles(OWNED)).then(result => result.roles),
     roleResources: (): Promise<ModuleRoleResources[]> => read(net => net.roleResources(OWNED)).then(result => result.modules),
@@ -62,3 +64,4 @@ export const loadGlobalMcp = () => cockpitApi.mcpGlobal();
 export const loadGlobalSkills = () => cockpitApi.skillsGlobal();
 export const loadRoleCatalog = () => cockpitApi.listRoles();
 export const loadRoleResources = () => cockpitApi.roleResources();
+export const loadSessionDefaults = (signal: AbortSignal) => cockpitApi.sessionDefaults(signal);

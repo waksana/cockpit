@@ -82,10 +82,15 @@ invent decisions, alter native side effects or lose the information that separat
 accepted, applied, failed and unknown.
 
 Keep MCP connection/auth/stopped states, schedule kinds, model effort/context tier
-and queue semantics. Missing, unsupported and unknown values stay distinct; model
-tiers and defaults are never hard-coded or guessed, and queued/accepted never means
-applied. An unrelated later read failure must not turn a successful change into a
-reported failure.
+and queue semantics. Missing, unsupported and unknown values stay distinct; native
+model tiers and defaults are never guessed, and queued/accepted never means applied.
+Cockpit's explicit product preset is one persistent default model for new sessions,
+initially `gpt-6-astra`, selected through the global menu from native candidates.
+Web, MCP and module creation share it; existing sessions, resume/reload and fork
+are not reset. Unavailable defaults fail explicitly without substitution. This
+preset does not set effort, context tier, mode or permissions; its storage and API
+are documented in [architecture](architecture.md#session-default-model).
+An unrelated later read failure must not turn a successful change into a reported failure.
 
 Web, MCP and other consumers share native create/send semantics:
 `session/new(cwd) → real native ID → prompt`. Creation sends no hidden initial

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { fixtureModelCatalog, memorySessionDefaults } from '../test-support/session-defaults.ts';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
@@ -95,7 +96,7 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
       clientOptions: {
         connection: RuntimeConnection.forStdio({ env }), mode: 'empty', baseDirectory: dirs.state,
         workingDirectory: dirs.work, builtinPluginDirectories: [], useLoggedInUser: false,
-        enableRemoteSessions: false, logLevel: 'error', onListModels: () => [],
+        enableRemoteSessions: false, logLevel: 'error', onListModels: fixtureModelCatalog,
       },
       sessionConfig: {
         model: 'gpt-4.1', provider: { type: 'openai', wireApi: 'completions', baseUrl: `${providerUrl}/v1`, modelId: 'gpt-4.1' },
@@ -107,7 +108,7 @@ test('native roles: selected skills, HTTP tool union, appended instructions and 
         availableTools: new ToolSet().addMcp('*'),
       },
     });
-    engine = new Engine({ runtime });
+    engine = new Engine({ runtime, sessionDefaults: memorySessionDefaults('gpt-4.1') });
     let filterReport = false;
     let userText = 'Synthetic user instructions v1';
     const roles: RoleProvider = {

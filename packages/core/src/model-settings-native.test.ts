@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { errorWithCode } from '../test-support/errors.ts';
+import { memorySessionDefaults } from '../test-support/session-defaults.ts';
 
 test('native model settings: complete queued selections, omitted native options, schedules and cold readback', {
   skip: process.env.COCKPIT_NATIVE_MODEL_SMOKE !== '1', timeout: 60_000,
@@ -78,7 +79,7 @@ test('native model settings: complete queued selections, omitted native options,
         enableSessionTelemetry: false, remoteSession: 'off', availableTools: [],
       },
     });
-    engine = new Engine({ runtime });
+    engine = new Engine({ runtime, sessionDefaults: memorySessionDefaults('local/reasoner') });
     await engine.start();
     assert.deepEqual(await runtime.listSessions(), [], 'synthetic home contains no user sessions');
     const id = await engine.newSession(dirs.work!);

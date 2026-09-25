@@ -11,6 +11,7 @@ import { NativeChatRead } from '@cockpit/protocol';
 import type { Engine, EngineRuntime, NativeObservation } from './engine.ts';
 import { CHAT_EVENT_TYPES } from './native-chat.ts';
 import { errorWithCode } from '../test-support/errors.ts';
+import { fixtureModelCatalog, memorySessionDefaults } from '../test-support/session-defaults.ts';
 
 type PersistedPage = Awaited<ReturnType<CopilotClient['rpc']['sessions']['readPersistedEvents']>>;
 const draftModels = ['confirmed-model', 'unconfirmed-model', 'first-model', 'last-model'].map(id => ({
@@ -113,7 +114,7 @@ async function draftFixture(t: TestContext) {
     if (sdk) for (const listener of closed) listener(sdk);
   };
   const runtime = {
-    start: async () => {}, stop: async () => {}, models: async () => [],
+    start: async () => {}, stop: async () => {}, models: async () => [{ modelId: 'default-model', name: 'Fixture default' }],
     getAuthStatus: async () => ({ isAuthenticated: false }),
     onFatal: () => () => {}, failure: undefined,
     onSessionClosed: (handler: (sdk: CopilotSession) => void) => { closed.add(handler); return () => { closed.delete(handler); }; },
@@ -157,7 +158,7 @@ async function draftFixture(t: TestContext) {
       }),
     } },
   };
-  const engine = new Engine({ runtime: runtime as unknown as EngineRuntime });
+  const engine = new Engine({ runtime: runtime as unknown as EngineRuntime, sessionDefaults: memorySessionDefaults('default-model') });
   t.after(async () => {
     try {
       for (const id of live.keys()) expire(id);
@@ -398,7 +399,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       baseDirectory: dirs.state, workingDirectory: dirs.work, builtinPluginDirectories: [],
       useLoggedInUser: false, enableRemoteSessions: false, logLevel: 'error' as const,
       // BYOK inventory is host-owned: never ask GitHub for authenticated inventory.
-      onListModels: () => [],
+      onListModels: fixtureModelCatalog,
     };
     const ownRuntime = () => {
       const pids = runtimeChildren();
@@ -448,7 +449,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
     const defaultArgv = readFileSync(`/proc/${firstPid}/cmdline`, 'utf8').split('\0');
     assert.equal(defaultArgv[defaultArgv.indexOf('--session-idle-timeout') + 1], '1800');
     assert.deepEqual(await bounded(runtime.listSessions()), []);
-    assert.deepEqual(await bounded(runtime.models()), []);
+    assert.deepEqual((await bounded(runtime.models())).map(model => model.modelId), ['gpt-4.1']);
     authStatus = await bounded(runtime.getAuthStatus());
     assert.equal(authStatus.isAuthenticated, false);
     assert.equal(authStatus.login, undefined);
@@ -553,11 +554,11 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
     checks.push('cold cursor paging loads no native sessions, mutates no journals and performs no inference');
 
     const { Engine } = await import('./engine.ts');
-    engine = new Engine({ runtime });
+    engine = new Engine({ runtime, sessionDefaults: memorySessionDefaults('gpt-4.1') });
     await bounded(engine.start());
     const snapshot = (await engine.snapshot());
     assert.equal(snapshot.permissionPolicy, 'allow-all');
-    assert.deepEqual(snapshot.models, []);
+    assert.deepEqual(snapshot.models.map(model => model.modelId), ['gpt-4.1']);
     assert.ok(snapshot.sessions.some(session => session.sessionId === a.sessionId));
     const page = await nativeChat(engine, a.sessionId, { direction: 'forward', max: 256 });
     assert.ok(page.events.some(event => event.type === 'user.message' && event.data.content === 'SMOKE_ACCEPTED'), JSON.stringify(page));
@@ -637,7 +638,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
       append('subagent.completed', life(outer), outerAgent);
       const log = join(dirs.state!, 'session-state', synthetic.sessionId, 'events.jsonl');
       writeFileSync(log, source.map(event => JSON.stringify(event)).join('\n') + '\n');
-      const proof = new Engine({ runtime: adapter });
+      const proof = new Engine({ runtime: adapter, sessionDefaults: memorySessionDefaults('gpt-4.1') });
       await bounded(proof.refreshList());
       let nativeSnapshot!: () => Promise<SessionEvent[]>;
       const pages: { events: number; bytes: number; direction: string }[] = [];
@@ -1084,7 +1085,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
     await t.test('OfficialRuntime + Engine: native idle, passive pages, explicit resume and scheduled stop', async (t) => {
       runtime = new OfficialRuntime({ clientOptions: { ...clientOptions, sessionIdleTimeoutSeconds: 1 }, sessionConfig });
       const adapter = runtime;
-      engine = new Engine({ runtime: adapter });
+      engine = new Engine({ runtime: adapter, sessionDefaults: memorySessionDefaults('gpt-4.1') });
       const host = engine;
       const calls: { kind: string; id: string; prompt?: string }[] = [];
       const displayReads: { direction: string; events: number; bytes: number }[] = [];
@@ -1313,7 +1314,7 @@ test('native runtime: isolated BYOK, history, rollback, idle timeout and schedul
     await t.test('OfficialRuntime + Engine: confirmed child exit aborts uncertain mutation without replay', async () => {
       runtime = new OfficialRuntime({ clientOptions: { ...clientOptions, sessionIdleTimeoutSeconds: 1 }, sessionConfig });
       const adapter = runtime;
-      engine = new Engine({ runtime: adapter });
+      engine = new Engine({ runtime: adapter, sessionDefaults: memorySessionDefaults('gpt-4.1') });
       const host = engine;
       const runtimeFatals: Error[] = [];
       const engineFatals: Error[] = [];

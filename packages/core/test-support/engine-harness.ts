@@ -7,7 +7,8 @@ import { type TestContext } from 'node:test';
 import { setImmediate as nextTurn } from 'node:timers/promises';
 import type { CopilotClient, CopilotSession, SessionConfig, SessionEvent, SessionMetadata } from '@github/copilot-sdk';
 import type { ModelOption, ServerEvent } from '@cockpit/protocol';
-import { NativeChatRead } from '@cockpit/protocol';
+import { INITIAL_SESSION_MODEL, NativeChatRead } from '@cockpit/protocol';
+import type { SessionDefaultsStore } from '../src/session-defaults.ts';
 import { Engine, type EngineRuntime } from '../src/engine.ts';
 import { errorWithCode } from './errors.ts';
 
@@ -257,6 +258,7 @@ export function fakeSession(t: TestContext, sessionId: string) {
 export function harness(t: TestContext, options: {
   mcpServers?: McpDefinitions;
   prefs?: Record<string, unknown>;
+  sessionDefaults?: SessionDefaultsStore;
 } = {}) {
   t.mock.timers.enable({ apis: ['setInterval'] });
   const relativeRoot = `.engine-test-${randomUUID()}`;
@@ -312,7 +314,7 @@ export function harness(t: TestContext, options: {
       attached.clear();
       trace.push('stop');
     }),
-    models: t.mock.fn(async (): Promise<ModelOption[]> => []),
+    models: t.mock.fn(async (): Promise<ModelOption[]> => [{ modelId: INITIAL_SESSION_MODEL, name: 'GPT-6 Astra' }]),
     getAuthStatus: t.mock.fn(async (): ReturnType<CopilotClient['getAuthStatus']> => ({ isAuthenticated: false })),
     listSessions: t.mock.fn(async () => structuredClone(rows)),
     getSessionMetadata: t.mock.fn(async (id: string): Promise<SessionMetadata | undefined> => rows.find(row => row.sessionId === id)),
@@ -327,6 +329,7 @@ export function harness(t: TestContext, options: {
       assert.ok(config.sessionId);
       const native = fakeSession(t, config.sessionId);
       native.state.cwd = config.workingDirectory ?? cwd;
+      native.state.model.modelId = config.model ?? native.state.model.modelId;
       natives.set(config.sessionId, native);
       if (!rows.some(row => row.sessionId === config.sessionId)) {
         rows.push({
@@ -427,7 +430,7 @@ export function harness(t: TestContext, options: {
   };
   // The SDK class contains private transport fields. Only this boundary casts;
   // every exercised public method above is structural and independently observable.
-  const engine = new Engine({ runtime: runtime as unknown as EngineRuntime });
+  const engine = new Engine({ runtime: runtime as unknown as EngineRuntime, sessionDefaults: options.sessionDefaults });
   const off = engine.onEvent(value => events.push(structuredClone(value)));
   t.after(async () => {
     await nextTurn();

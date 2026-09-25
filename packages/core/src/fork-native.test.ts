@@ -8,6 +8,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import type { SessionConfig } from '@github/copilot-sdk';
 import { validateForkHistory } from './fork.ts';
 import { errorWithCode } from '../test-support/errors.ts';
+import { fixtureModelCatalog, memorySessionDefaults } from '../test-support/session-defaults.ts';
 
 test('native fork: isolated history boundaries and independent continuation', {
   skip: process.env.COCKPIT_NATIVE_FORK !== '1', timeout: 90_000,
@@ -73,7 +74,7 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
   const client = new CopilotClient({
     connection: RuntimeConnection.forStdio({ env }), mode: 'empty', baseDirectory: home,
     workingDirectory: work, builtinPluginDirectories: [], useLoggedInUser: false,
-    enableRemoteSessions: false, onListModels: () => [], logLevel: 'error',
+    enableRemoteSessions: false, onListModels: fixtureModelCatalog, logLevel: 'error',
   });
   try {
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -217,11 +218,11 @@ require('node:readline').createInterface({ input: process.stdin }).on('line', li
       clientOptions: {
         connection: RuntimeConnection.forStdio({ env }), mode: 'empty', baseDirectory: home,
         workingDirectory: work, builtinPluginDirectories: [], useLoggedInUser: false,
-        enableRemoteSessions: false, onListModels: () => [], logLevel: 'error',
+        enableRemoteSessions: false, onListModels: fixtureModelCatalog, logLevel: 'error',
       },
       sessionConfig: { ...config, enableConfigDiscovery: false },
     });
-    const engine = new Engine({ runtime });
+    const engine = new Engine({ runtime, sessionDefaults: memorySessionDefaults('gpt-4.1') });
     const chat = async (id: string) => {
       const page = await engine.chat({
         sessionId: id, source: 'persisted', direction: 'backward', max: 256, waitMs: 0, bootstrap: false,
