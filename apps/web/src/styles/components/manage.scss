@@ -8,6 +8,7 @@
   align-items: center;
   column-gap: var(--host-space-md); row-gap: var(--host-space-xs);
   padding-block: var(--host-space-sm);
+  &:not(:has(> .manage-resource-controls)) { grid-template-columns: minmax(0, 1fr); }
 }
 .manage-resource-controls {
   display: flex; align-items: center; justify-content: flex-end;
@@ -19,6 +20,7 @@
 .manage-resource-identity {
   display: flex; flex-direction: column; justify-content: center; align-items: stretch;
   min-width: 0; gap: var(--host-space-xs);
+  min-block-size: var(--ck-control-size);
   .manage-row-name { font-weight: 500; }
   .manage-row-source { display: block; margin: 0; }
 }
@@ -57,33 +59,26 @@
   font-size: var(--host-text-meta);
   color: var(--host-color-muted);
 }
-// Selectable master rows: the identity link is the navigation target and the
-// switch stays a separate control.
-.manage-row[data-selectable] {
+// Every global resource uses the same row layout; links and switches keep their own semantics.
+.manage-list .manage-row {
   padding: 0 var(--host-space-sm) 0 0;
   border: 0;
   border-radius: var(--host-radius-control);
-  &[data-selected] { background: color-mix(in srgb, var(--host-color-accent) 16%, var(--host-color-surface)); }
+  &[data-selectable][data-selected] { background: color-mix(in srgb, var(--host-color-accent) 16%, var(--host-color-surface)); }
   > .manage-resource-identity {
     padding: var(--host-space-sm);
     text-align: start;
     text-decoration: none;
     color: inherit;
+    font-size: var(--host-text-body);
+    line-height: var(--host-leading-ui);
   }
   > .manage-row-error { padding: 0 var(--host-space-sm) var(--host-space-sm); }
 }
 .manage-global-control { display: flex; }
 .manage-global-unknown { font-size: var(--host-text-meta); color: var(--host-color-muted); }
-// Module-provided resources: read-only, grouped apart from native configuration.
-.manage-role-enabled {
-  display: inline-flex; align-items: center;
-  min-block-size: var(--ck-control-size); // same row height as a switch
-  font-size: var(--host-text-meta); color: var(--host-color-muted); white-space: nowrap;
-}
 .manage-group + .manage-group { margin-top: var(--host-space-md); }
 .manage-group-heading { padding: var(--host-space-sm) var(--host-space-lg) 0; }
-// Read-only rows align with the selectable rows above them.
-.manage-module-group .manage-row { padding: var(--host-space-sm); border: 0; }
 .manage-detail-header {
   height: auto;
   padding-block: var(--host-space-sm);

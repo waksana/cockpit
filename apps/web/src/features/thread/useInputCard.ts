@@ -4,9 +4,9 @@ import { useRemovedControlFocus } from '../../lib/useRemovedControlFocus';
 
 // Fold state for the input card and the shared control bar. The fold survives
 // ordinary updates; a new request or idle input opens afresh.
-export function useInputCard({ sessionId, foldIdentity, hasInputHeader, sharedControls, draftId, decisionKey }: {
+export function useInputCard({ sessionId, foldIdentity, hasInputHeader, sharedControls, decisionKey }: {
   sessionId: string; foldIdentity: readonly unknown[]; hasInputHeader: boolean;
-  sharedControls: boolean; draftId: string; decisionKey?: string;
+  sharedControls: boolean; decisionKey?: string;
 }) {
   const cardRef = useRef<HTMLDivElement | null>(null);
   const bodyId = useId();
@@ -16,10 +16,10 @@ export function useInputCard({ sessionId, foldIdentity, hasInputHeader, sharedCo
   const open = fold.key !== foldKey || !fold.folded;
   const [controlsDisclosure, setControlsDisclosure] = useState<{ decision?: string; open: boolean }>({ open: true });
   const controlsOpen = decisionKey && decisionKey !== controlsDisclosure.decision ? true : controlsDisclosure.open;
-  const releaseEditorSize = useControlComposer(cardRef, sharedControls, draftId, decisionKey);
+  useControlComposer(cardRef, sharedControls, decisionKey);
   const executionControlRef = useRemovedControlFocus(sessionId, cardRef);
   return {
-    cardRef, bodyId, open, controlsOpen, releaseEditorSize, executionControlRef,
+    cardRef, bodyId, open, controlsOpen, executionControlRef,
     toggle: () => setFold({ key: foldKey, folded: open }),
     toggleControls: () => { setControlsDisclosure({ decision: decisionKey, open: !controlsOpen }); },
   };

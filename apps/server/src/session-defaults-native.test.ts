@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -71,6 +71,9 @@ test('isolated native HTTP and module creation use durable host defaults without
       created.push(sdk);
       return sdk;
     });
+    const configPath = join(dirs.cockpit!, 'config.json');
+    const hostConfig = { schemaVersion: 1, revision: 3, values: { releaseSequence: 23, releaseMetadataDigest: 'synthetic-digest' } };
+    await writeFile(configPath, JSON.stringify(hostConfig));
     const store = new HostSessionDefaults();
     engine = new Engine({ runtime, sessionDefaults: store });
     const roles: SessionRole[] = [{ moduleId: 'fixture', moduleName: 'Fixture', roleId: 'node', name: 'Node' }];
@@ -94,6 +97,9 @@ test('isolated native HTTP and module creation use durable host defaults without
     await created[0]!.sendAndWait({ prompt: 'Synthetic fixture for persisted model inheritance.' });
     await post('settings/session-defaults-set', { modelId: 'gpt-4.1' });
     assert.deepEqual(await new HostSessionDefaults().read(), { modelId: 'gpt-4.1' });
+    assert.deepEqual(JSON.parse(await readFile(configPath, 'utf8')), {
+      ...hostConfig, revision: 4, values: { ...hostConfig.values, sessionDefaults: { modelId: 'gpt-4.1' } },
+    });
     const second: string = (await post('session/new', { cwd: dirs.work })).json().sessionId;
     const moduleSession = await host.callModuleIntent('session/new', {
       cwd: dirs.work!, roles: [{ moduleId: 'fixture', roleId: 'node' }],

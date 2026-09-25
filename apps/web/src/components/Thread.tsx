@@ -62,10 +62,10 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
   const hasExecution = session.compacting || session.status === 'running' || (!readOnly && queueCount > 0);
   const hasInputHeader = !controls && composerControls === undefined && !!(hasExecution || hasPendingDecision || activityItems.length);
   const {
-    cardRef, bodyId, open: inputOpen, controlsOpen, releaseEditorSize, executionControlRef, toggle: toggleInput, toggleControls,
+    cardRef, bodyId, open: inputOpen, controlsOpen, executionControlRef, toggle: toggleInput, toggleControls,
   } = useInputCard({
     sessionId: session.sessionId, foldIdentity: pending.map(pendingDecisionKey),
-    hasInputHeader, sharedControls: !!controls, draftId: draft.reference.id, decisionKey,
+    hasInputHeader, sharedControls: !!controls, decisionKey,
   });
   const cancelDecision = (kind: 'ask' | 'plan' | 'elicitation', requestId: string, pending: boolean) =>
     controls && onControlAction ? <SessionControlActionButton
@@ -113,7 +113,6 @@ export function Thread({ session, onSend, onRespondAsk, onRespondPlan, onRespond
           onRetryControls={onRetryControls} onRetryHistory={onRetryHistory} />
         <div className="chat-input-card" ref={cardRef} data-open={inputOpen}
           data-controls={!!controls || undefined} data-controls-open={controls ? controlsOpen : undefined}
-          onChange={controls ? event => { if (event.target instanceof HTMLTextAreaElement) releaseEditorSize(); } : undefined}
           data-header={hasInputHeader || undefined} data-decision={hasPendingDecision || undefined}>
           <ExecutionHead hidden={!hasInputHeader} open={inputOpen} bodyId={bodyId} onToggle={toggleInput}
             label={executionLabel} progress={executionProgress} activityItems={activityItems}
