@@ -109,7 +109,7 @@ test('native MCP server and tool names survive browser history projection and li
 
 test('persisted ask questions converge from starts, requests and assistant metadata on every page split', () => {
   for (const source of ['start', 'request', 'assistant']) {
-    const question = 'Original question\nwith detail';
+    const question = '**Original question**\n\n- with `detail`\n\n[reference](/synthetic/guide)\n\n| A | B |\n| --- | --- |\n| kept | raw |';
     const questionEvent = source === 'start'
       ? event('question', 'tool.execution_start', { toolCallId: 'ask', toolName: 'ask_user', arguments: { question } })
       : source === 'request'
