@@ -1,39 +1,40 @@
-# Cockpit 0.5.0
+# Cockpit 0.6.0
 
-Accepted joint-deployment release, deployed on 2026-09-25 from
-`e528d116c2bde03451f453b3afba36572c58fea3`. The minor version marks new
-user-facing capabilities and the changed default for newly created sessions,
-rather than a patch-only update:
+Delivery candidate for the merged default-model and presentation fixes (#235)
+and `ask_user` Markdown support (#237). This source preparation is not a
+deployment or publication record. The minor version marks the new user-facing
+Markdown capability rather than treating the delivery as patch-only.
 
-- open module-provided Skill details with validated module and Skill identity
-  (#218);
-- provide the independently published module SDK, with separate public entry
-  points, generated wire contracts and isolated consumer checks
-  (#219, #220, #222, #226); and
-- configure the default model for future sessions from the global menu, shared
-  by Web, HTTP/MCP and module-created sessions (#223).
+- Render pending questions, choices and the original question in answered or
+  restored records with the shared Markdown renderer. Existing links, code,
+  lists, quotes and tables retain the same safety rules.
+- Keep each choice's Markdown content separate from its selection button.
+  Opening a link or copying code does not answer the question; selecting an
+  option submits its complete original string, including Markdown and newlines.
+- Read default-model preferences from the versioned host configuration without
+  treating `schemaVersion`, `revision` or `values` as model settings. Explicit
+  saves preserve unrelated values and use the host writer lease. Existing flat
+  preferences remain readable and upgrade only on an explicit save.
+- Let the answer composer return to its natural height after an accepted answer,
+  clearing or question changes, while preserving failed or unaccepted drafts.
+- Align global module MCP/Skill rows with the native resource list and remove
+  redundant role-enabled slogans without removing provenance, connection/error
+  state or existing detail interactions.
 
-Without a saved Cockpit default, new sessions use `gpt-6-astra`. An existing
-saved default is preserved. Saving a default does not change existing sessions;
-resume and reload retain their native model settings, and fork retains native
-inheritance. An unavailable default or a creation-time model mismatch is an
-explicit error, not a silent fallback.
+The host, Web, MCP, core and internal protocol report 0.6.0. The independently
+versioned [module SDK](module-sdk.md) is unchanged and is not republished.
+Default-model changes still apply only to newly created sessions; existing
+sessions, resume/reload and fork retain their native model behavior. An
+unavailable default or creation-time model mismatch remains an explicit error.
 
-The host, Web, MCP, core and internal protocol report 0.5.0. The published
-`@waksana/cockpit-module-sdk` remains independently versioned at 0.2.0; this host
-version does not republish it. SDK consumers use its documented public entry
-points and continue to check host capabilities independently of SDK semver.
+This candidate does not change module packages or introduce a Task database
+migration. The [module catalog](modules.md#accepted-pairing-and-upgrade-boundary)
+retains the last accepted pairing until this candidate is deployed and accepted.
+Existing schema v10 data must not be passed through the earlier v9 upgrade again;
+restoring a database backup discards later writes and requires separate
+authorization.
 
-The [module catalog](modules.md#accepted-pairing-and-upgrade-boundary) records
-the accepted pairing, matching published archives, the explicit Task schema v10
-upgrade and recovery boundary, and the approved File publication exception.
-The deployment preserved Task identities, relationships and histories and
-confirmed the running host/module identities and served assets. It did not
-exercise real microphone/Azure recognition or real-device push delivery.
-
-The schema v10 upgrade used a reviewed fingerprint-bound plan, a WAL-consistent
-backup and stopped writers. Older Task packages cannot open v10; restoring a
-pre-upgrade database discards later writes and requires separate authorization.
-Publication followed acceptance under the
-[release procedure](releasing.md#release-after-acceptance); it does not authorize
-installation, migration or restart on another instance.
+Deployment acceptance, immutable tags and publication remain separate from
+source preparation under the [release procedure](releasing.md#release-after-acceptance).
+Synthetic component/browser and isolated native coverage do not establish
+real-device, microphone/Azure recognition or push-delivery acceptance.
