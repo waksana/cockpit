@@ -1,5 +1,10 @@
 import type * as React from 'react';
-import type { ModuleEventPayload, NativeAttachmentDescriptor, SessionMeta, SessionStatus } from '@cockpit/protocol';
+import type {
+  ModuleEventPayload,
+  NativeAttachmentDescriptor,
+  PublicSessionMeta,
+  SessionStatus,
+} from './contract.ts';
 
 type ReadonlyData<T> = { readonly [Key in keyof T]: ReadonlyData<T[Key]> };
 
@@ -465,7 +470,7 @@ export interface MessageProps extends React.HTMLAttributes<HTMLDivElement> {
 export interface SessionActivityDisplay {
   readonly previous?: {
     readonly status: SessionStatus;
-    readonly activity: ReadonlyData<NonNullable<SessionMeta['activity']>>;
+    readonly activity: ReadonlyData<NonNullable<PublicSessionMeta['activity']>>;
   };
   readonly error?: string;
 }
@@ -478,7 +483,7 @@ export interface SessionStatusProps {
   readonly compacting?: boolean;
   readonly error?: string | null;
   /** Missing activity is unknown, not idle. Legacy status remains a safety aggregate. */
-  readonly activity?: ReadonlyData<SessionMeta['activity']>;
+  readonly activity?: ReadonlyData<PublicSessionMeta['activity']>;
   /** A browser-owned control read is pending; not evidence of native processing. */
   readonly activityRefreshing?: boolean;
   /** Retains the previous appearance during reconciliation, separate from native facts. */

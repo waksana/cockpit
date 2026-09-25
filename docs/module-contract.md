@@ -109,11 +109,18 @@ then flushes the publication's parent directories; metadata files use the same w
 fails verification is rejected, and reinstalling the identical archive moves it aside to `modules/.quarantine-<uuid>` for inspection and republishes verified content.
 <a id="typescript-contract"></a>
 ## 4. Public TypeScript contract
-The source of truth is [`packages/module-api/src/index.ts`](../packages/module-api/src/index.ts) for backend/manifest types and [`frontend.ts`](../packages/module-api/src/frontend.ts) for Web API v2. Modules should build against exported public types instead of copying declarations:
+The source of truth is the independently versioned
+[`@waksana/cockpit-module-sdk`](module-sdk.md). Its repository sources are
+[`packages/module-api/src/index.ts`](../packages/module-api/src/index.ts) for
+backend/manifest types and [`frontend.ts`](../packages/module-api/src/frontend.ts)
+for Web API v2. Modules should install the package and import its public types
+instead of copying declarations:
 ```sh
-node scripts/export-module-api.mjs /absolute/new/sdk-directory
+npm install --save-dev @waksana/cockpit-module-sdk@0.1.0
 ```
-The export contains `module-api` and its protocol dependency; it does not contain SDK credentials, native data, or a second runtime authority.
+The package contains compiled ESM and declarations, with no internal protocol or
+source-checkout dependency. Build, authentication, compatibility and independent
+release rules are in the [module SDK guide](module-sdk.md).
 
 Backend packages export `activate(context)` and return `ModuleBackend`:
 | Field | Contract |

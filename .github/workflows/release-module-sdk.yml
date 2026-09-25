@@ -1,0 +1,55 @@
+name: Release module SDK
+on:
+  push:
+    tags: ['module-sdk-v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-module-sdk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+
+  publish:
+    needs: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 24.20.0
+          registry-url: https://npm.pkg.github.com
+          scope: '@waksana'
+      - run: pnpm install --frozen-lockfile
+      - name: Build and pack the SDK
+        run: |
+          mkdir sdk-output
+          pnpm --filter @waksana/cockpit-module-sdk pack --pack-destination "$PWD/sdk-output"
+      - name: Verify SDK release identity
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          node scripts/check-sdk-release.mjs "$RELEASE_TAG" "$GITHUB_SHA" \
+            sdk-output/waksana-cockpit-module-sdk-*.tgz
+      - name: Publish to GitHub Packages
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: npm publish sdk-output/waksana-cockpit-module-sdk-*.tgz

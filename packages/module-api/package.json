@@ -1,13 +1,30 @@
 {
-  "name": "@cockpit/module-api",
-  "version": "0.4.7",
+  "name": "@waksana/cockpit-module-sdk",
+  "version": "0.1.0",
   "type": "module",
   "license": "GPL-3.0-only",
-  "files": ["src"],
-  "types": "./src/index.ts",
-  "exports": { ".": { "types": "./src/index.ts", "default": "./src/index.ts" } },
-  "dependencies": {
-    "@cockpit/protocol": "workspace:*"
+  "description": "Public TypeScript SDK for trusted Cockpit modules",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/waksana/cockpit.git",
+    "directory": "packages/module-api"
+  },
+  "files": ["dist"],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "peerDependencies": {
+    "@types/node": ">=22",
+    "@types/react": ">=18 <20",
+    "react": ">=18 <20"
   },
   "devDependencies": {
     "@types/node": "^25.9.5",
@@ -15,6 +32,8 @@
     "typescript": "^5.9.3"
   },
   "scripts": {
-    "build": "tsc --noEmit"
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "pnpm build",
+    "test": "node --test ../../scripts/module-sdk-pack.test.mjs"
   }
 }

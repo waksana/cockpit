@@ -13,7 +13,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@cockpit/module-api": "workspace:*",
+    "@cockpit/module-api": "workspace:@waksana/cockpit-module-sdk@*",
     "@cockpit/protocol": "workspace:*",
     "lucide-react": "1.46.0",
     "react": "^19.2.8",
